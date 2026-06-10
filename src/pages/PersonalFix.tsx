@@ -2223,12 +2223,13 @@ export default function PersonalFixPage() {
   }
 
   // ── Flex-Aufstellung pro Woche (für Budget-Auswertung) ───────────────────
-  const flexByWeek = useMemo((): Array<{ weekKey: string; label: string; planFlex: number; istFlex: number }> => {
-    const weekMap = new Map<string, { planFlex: number; istFlex: number }>();
+  const flexByWeek = useMemo((): Array<{ weekKey: string; label: string; planFlex: number; istFlex: number; dateRange: string }> => {
+    const weekMap = new Map<string, { planFlex: number; istFlex: number; minDay: number; maxDay: number }>();
     const weekOrder: string[] = [];
     for (let day = 1; day <= daysInSelectedMonth; day++) {
       const wk = `KW${getISOWeek(new Date(selectedYear, selectedMonth - 1, day))}`;
-      if (!weekMap.has(wk)) { weekMap.set(wk, { planFlex: 0, istFlex: 0 }); weekOrder.push(wk); }
+      if (!weekMap.has(wk)) { weekMap.set(wk, { planFlex: 0, istFlex: 0, minDay: day, maxDay: day }); weekOrder.push(wk); }
+      else { weekMap.get(wk)!.maxDay = day; }
     }
     for (const emp of variableEmployees) {
       const wage = emp.hourlyWage ?? 0;
@@ -2244,17 +2245,24 @@ export default function PersonalFixPage() {
         const e = weekMap.get(wk); if (e) e.istFlex += d.cost;
       }
     }
-    return weekOrder.map(wk => ({
-      weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: weekMap.get(wk)!.planFlex, istFlex: weekMap.get(wk)!.istFlex,
-    }));
+    const mm = String(selectedMonth).padStart(2, '0');
+    return weekOrder.map(wk => {
+      const e = weekMap.get(wk)!;
+      const dateRange = `${String(e.minDay).padStart(2,'0')}.${mm}–${String(e.maxDay).padStart(2,'0')}.${mm}`;
+      return { weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: e.planFlex, istFlex: e.istFlex, dateRange };
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey]);
 
   // ── Budget-Umsatz abgeleitete Werte ───────────────────────────────────────
-  const budgetPkqPct = personnelBudget > 0 && budgetRevenue != null && budgetRevenue > 0
-    ? (personnelBudget / budgetRevenue) * 100 : null;
-  const adjustedPersonnelBudget = budgetRevenue != null && budgetRevenue > 0 && budgetPkqPct != null
-    ? budgetRevenue * (budgetPkqPct / 100) : personnelBudget;
+  // basePkqPct: immer aus der Budget-Planung (personnelBudget / revenueBudget aus Budget-Modul)
+  const basePkqPct = personnelBudget > 0 && budgetData.revenueBudget > 0
+    ? (personnelBudget / budgetData.revenueBudget) * 100 : null;
+  // effectiveBudgetRevenue: manuelle Überschreibung > Budget-Planung
+  const effectiveBudgetRevenue = budgetRevenue ?? budgetData.revenueBudget;
+  // adjustedPersonnelBudget: nur neu berechnen wenn manueller Umsatz gesetzt
+  const adjustedPersonnelBudget = budgetRevenue != null && budgetRevenue > 0 && basePkqPct != null
+    ? budgetRevenue * (basePkqPct / 100) : personnelBudget;
   const totalFlexForBudget = flexByWeek.reduce(
     (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
   );
@@ -2964,51 +2972,132 @@ export default function PersonalFixPage() {
           <div className="flex items-center gap-2 px-4 py-3 bg-violet-50/40 dark:bg-violet-950/20 border-b border-border">
             <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
             <span className="text-sm font-bold">Budget-Auswertung — {getMonthLabel(selectedYear, selectedMonth)}</span>
+            {budgetRevenue != null && (
+              <span className="ml-2 text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-700">
+                Szenario aktiv
+              </span>
+            )}
           </div>
 
           <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* LINKS: Budget-Zahlen */}
-            <div className="space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">Budget-Basis</p>
+            {/* LINKS: Budget-Basis aus Budgetplanung */}
+            <div className="space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">Budget-Basis ({selectedYear})</p>
+
+              {/* Budget Umsatz */}
               <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
                 <span className="text-muted-foreground">Budget Umsatz</span>
-                <span className="font-mono font-semibold">
-                  {budgetRevenue != null ? fmtCHF(budgetRevenue) : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
-                </span>
+                <div className="flex items-center gap-2">
+                  {budgetRevenue != null && (
+                    <span className="text-[10px] text-muted-foreground line-through font-mono">{fmtCHF(budgetData.revenueBudget)}</span>
+                  )}
+                  <span className="font-mono font-semibold">
+                    {effectiveBudgetRevenue > 0
+                      ? fmtCHF(effectiveBudgetRevenue)
+                      : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
+                  </span>
+                </div>
               </div>
+
+              {/* Budget Personalkosten + PKQ% */}
               <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
                 <span className="text-muted-foreground">Budget Personalkosten</span>
-                <span className="font-mono font-semibold">
-                  {personnelBudget > 0 ? fmtCHF(personnelBudget) : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
-                </span>
+                <div className="flex items-center gap-2">
+                  {basePkqPct != null && (
+                    <span className={cn('text-[10px] font-semibold px-1.5 py-0.5 rounded',
+                      basePkqPct < 30 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+                        : basePkqPct < 40 ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400'
+                        : 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400')}>
+                      {basePkqPct.toFixed(1)} %
+                    </span>
+                  )}
+                  <span className="font-mono font-semibold">
+                    {personnelBudget > 0
+                      ? fmtCHF(adjustedPersonnelBudget)
+                      : <span className="text-muted-foreground italic text-xs">nicht hinterlegt</span>}
+                  </span>
+                </div>
               </div>
-              {budgetPkqPct != null && (
-                <div className="flex justify-between items-center py-1.5 text-sm">
-                  <span className="text-muted-foreground">Budget PKQ %</span>
-                  <span className={cn(
-                    'font-mono font-bold',
-                    budgetPkqPct < 30 ? 'text-emerald-600 dark:text-emerald-400'
-                      : budgetPkqPct < 40 ? 'text-amber-600 dark:text-amber-400'
-                      : 'text-red-600 dark:text-red-400',
-                  )}>{budgetPkqPct.toFixed(1)} %</span>
+
+              {/* Adjusted info wenn Szenario aktiv */}
+              {budgetRevenue != null && basePkqPct != null && (
+                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-3 py-2 space-y-1 mt-2">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-amber-700 dark:text-amber-300 font-medium">Szenario PKQ bleibt</span>
+                    <span className="font-mono font-bold text-amber-700 dark:text-amber-300">{basePkqPct.toFixed(1)} %</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">→ Adj. PK-Budget</span>
+                    <span className="font-mono font-semibold">{fmtCHF(adjustedPersonnelBudget)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Differenz zum Plan</span>
+                    <span className={cn('font-mono font-semibold', adjustedPersonnelBudget - personnelBudget >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                      {adjustedPersonnelBudget - personnelBudget >= 0 ? '+' : ''}{fmtCHF(adjustedPersonnelBudget - personnelBudget)}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* RECHTS: Manuelle Budget-Umsatz Eingabe */}
+            {/* RECHTS: Umsatz-Szenario Eingabe */}
             <div className="space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-3">
-                Budget Umsatz — manuelle Eingabe
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-1">
+                Umsatz-Szenario
               </p>
-              <p className="text-xs text-muted-foreground">
-                Budget Umsatz überschreiben → PK-Budget passt sich automatisch an (gleiche PKQ %).
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Umsatz überschreiben → PK-Budget passt sich an (gleiche PKQ %).
+                Budget-Basis: <span className="font-mono font-semibold text-foreground">
+                  {budgetData.revenueBudget > 0 ? fmtCHF(budgetData.revenueBudget) : '—'}
+                </span>
               </p>
+
+              {/* Quick-Step-Buttons */}
+              {budgetData.revenueBudget > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {[-20000, -10000, -5000, +5000, +10000, +20000].map(delta => {
+                    const target = (budgetRevenue ?? budgetData.revenueBudget) + delta;
+                    if (target <= 0) return null;
+                    return (
+                      <button
+                        key={delta}
+                        onClick={() => {
+                          setBudgetRevenue(target);
+                          setBudgetRevenueInput(String(target));
+                          saveBudgetRevenue(selectedYear, selectedMonth, target, tenantKey);
+                        }}
+                        className={cn(
+                          'text-[10px] font-semibold px-2 py-1 rounded border transition-colors cursor-pointer',
+                          delta > 0
+                            ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40'
+                            : 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 hover:bg-red-100 dark:hover:bg-red-900/40',
+                        )}
+                      >
+                        {delta > 0 ? '+' : ''}{(delta / 1000).toFixed(0)}k
+                      </button>
+                    );
+                  })}
+                  {budgetRevenue != null && (
+                    <button
+                      onClick={() => {
+                        setBudgetRevenue(null); setBudgetRevenueInput('');
+                        saveBudgetRevenue(selectedYear, selectedMonth, null, tenantKey);
+                      }}
+                      className="text-[10px] font-semibold px-2 py-1 rounded border border-border bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Manuelle Eingabe */}
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-medium pointer-events-none">CHF</span>
                   <Input
                     className="pl-10 h-9 font-mono text-sm"
-                    placeholder="z. B. 250000"
+                    placeholder={budgetData.revenueBudget > 0 ? String(Math.round(budgetData.revenueBudget)) : 'z. B. 250000'}
                     value={budgetRevenueInput}
                     onChange={e => setBudgetRevenueInput(e.target.value)}
                     onKeyDown={e => {
@@ -3026,44 +3115,40 @@ export default function PersonalFixPage() {
                   const val = !isNaN(v) && v > 0 ? v : null;
                   setBudgetRevenue(val);
                   saveBudgetRevenue(selectedYear, selectedMonth, val, tenantKey);
-                }}>Übernehmen</Button>
-                {budgetRevenue !== null && (
-                  <Button size="sm" variant="ghost" className="h-9 shrink-0 text-muted-foreground" onClick={() => {
-                    setBudgetRevenue(null); setBudgetRevenueInput('');
-                    saveBudgetRevenue(selectedYear, selectedMonth, null, tenantKey);
-                  }}><X className="h-3.5 w-3.5" /></Button>
-                )}
+                }}>Setzen</Button>
               </div>
-              {budgetRevenue != null && budgetPkqPct != null && (
-                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 px-3 py-2 space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-violet-700 dark:text-violet-300 font-medium">Budget PKQ</span>
-                    <span className="font-mono font-bold text-violet-700 dark:text-violet-300">{budgetPkqPct.toFixed(1)} %</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-muted-foreground">→ PK-Budget bei diesem Umsatz</span>
-                    <span className="font-mono font-bold">{fmtCHF(adjustedPersonnelBudget)}</span>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
           {/* ── Aufstellung ──────────────────────────────────────────────────── */}
-          {(personnelBudget > 0 || budgetRevenue != null) && (
+          {(personnelBudget > 0 || effectiveBudgetRevenue > 0) && (
             <div className="border-t border-border px-4 py-4 space-y-1.5">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-3">Aufstellung</p>
 
               {/* Zeile 1: Budget Personalkosten */}
               <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
                 <span className="text-muted-foreground">Budget Personalkosten</span>
-                <span className="font-mono font-semibold">{adjustedPersonnelBudget > 0 ? fmtCHF(adjustedPersonnelBudget) : '—'}</span>
+                <div className="flex items-center gap-2">
+                  {effectiveBudgetRevenue > 0 && adjustedPersonnelBudget > 0 && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {((adjustedPersonnelBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                    </span>
+                  )}
+                  <span className="font-mono font-semibold">{adjustedPersonnelBudget > 0 ? fmtCHF(adjustedPersonnelBudget) : '—'}</span>
+                </div>
               </div>
 
               {/* Zeile 2: Personal FIX Ist gesamt */}
               <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
                 <span className="text-muted-foreground">− Personal FIX Ist gesamt</span>
-                <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(pfix.active.fix)}</span>
+                <div className="flex items-center gap-2">
+                  {effectiveBudgetRevenue > 0 && pfix.active.fix > 0 && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {((pfix.active.fix / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                    </span>
+                  )}
+                  <span className="font-mono text-blue-700 dark:text-blue-400">− {fmtCHF(pfix.active.fix)}</span>
+                </div>
               </div>
 
               {/* Zeile 3: Verfügbar für Flex */}
@@ -3072,18 +3157,26 @@ export default function PersonalFixPage() {
                   ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300'
                   : 'bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-300')}>
                 <span>= Verfügbar für Flex</span>
-                <span className="font-mono text-base">{fmtCHF(verfügbarFlexBudget)}</span>
+                <div className="flex items-center gap-2">
+                  {effectiveBudgetRevenue > 0 && (
+                    <span className="text-xs font-normal opacity-70 font-mono">
+                      {((verfügbarFlexBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                    </span>
+                  )}
+                  <span className="font-mono text-base">{fmtCHF(verfügbarFlexBudget)}</span>
+                </div>
               </div>
 
               {/* Wochen-Toggles */}
               {flexByWeek.length > 0 && (
-                <div className="pt-2 pb-1">
-                  <p className="text-xs text-muted-foreground mb-2">
-                    Personal Flex — wähle pro Woche ob <strong>Plan</strong>- oder <strong>Ist</strong>-Kosten verwendet werden:
+                <div className="pt-3 pb-1">
+                  <p className="text-xs text-muted-foreground mb-2.5">
+                    Personal Flex — Klick wechselt zwischen <strong className="text-blue-600 dark:text-blue-400">Plan</strong> und <strong className="text-orange-600 dark:text-orange-400">Ist</strong>:
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {flexByWeek.map(w => {
                       const useIst = weekIstSet.has(w.weekKey);
+                      const pctDiff = w.planFlex > 0 ? ((w.istFlex - w.planFlex) / w.planFlex) * 100 : null;
                       const toggleWeek = () => {
                         const next = new Set(weekIstSet);
                         if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
@@ -3095,22 +3188,40 @@ export default function PersonalFixPage() {
                           key={w.weekKey}
                           onClick={toggleWeek}
                           className={cn(
-                            'flex flex-col items-center rounded-lg border-2 px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer min-w-[80px]',
+                            'flex flex-col items-start rounded-lg border-2 px-3 py-2 text-xs font-semibold transition-all cursor-pointer min-w-[110px]',
                             useIst
                               ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300'
                               : 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300',
                           )}
                         >
-                          <span className="font-bold">{w.label}</span>
-                          <span className="text-[10px] font-normal mt-0.5">
-                            {useIst
-                              ? `Ist: ${fmtCHF(w.istFlex)}`
-                              : `Plan: ${fmtCHF(w.planFlex)}`}
-                          </span>
-                          <span className={cn('mt-1 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded',
-                            useIst ? 'bg-orange-200 dark:bg-orange-900/40' : 'bg-blue-200 dark:bg-blue-900/40')}>
-                            {useIst ? 'Ist ✓' : 'Plan'}
-                          </span>
+                          <div className="flex items-center justify-between w-full gap-1">
+                            <span className="font-bold">{w.label}</span>
+                            <span className={cn('text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded',
+                              useIst ? 'bg-orange-200 dark:bg-orange-900/40' : 'bg-blue-200 dark:bg-blue-900/40')}>
+                              {useIst ? 'Ist ✓' : 'Plan'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-normal text-muted-foreground mt-0.5">{w.dateRange}</span>
+                          <div className="mt-1.5 w-full space-y-0.5">
+                            <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
+                              <span className="text-blue-600 dark:text-blue-400">Plan</span>
+                              <span className="font-mono">{fmtCHF(w.planFlex)}</span>
+                            </div>
+                            <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
+                              <span className="text-orange-600 dark:text-orange-400">Ist</span>
+                              <span className="font-mono">{fmtCHF(w.istFlex)}</span>
+                            </div>
+                            {pctDiff != null && (
+                              <div className="flex justify-end">
+                                <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
+                                  pctDiff > 5 ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
+                                    : pctDiff < -5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
+                                    : 'bg-muted text-muted-foreground')}>
+                                  Ist {pctDiff >= 0 ? '+' : ''}{pctDiff.toFixed(1)} %
+                                </span>
+                              </div>
+                            )}
+                          </div>
                         </button>
                       );
                     })}
@@ -3119,16 +3230,23 @@ export default function PersonalFixPage() {
               )}
 
               {/* Zeile 4: Personal Flex */}
-              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm mt-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-muted-foreground">− Personal Flex</span>
                   <span className="text-[10px] text-muted-foreground/60">
-                    ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wochen Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
+                    ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
                   </span>
                 </div>
-                <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
-                  − {fmtCHF(totalFlexForBudget)}
-                </span>
+                <div className="flex items-center gap-2">
+                  {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
+                    <span className="text-[10px] text-muted-foreground font-mono">
+                      {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                    </span>
+                  )}
+                  <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
+                    − {fmtCHF(totalFlexForBudget)}
+                  </span>
+                </div>
               </div>
 
               {/* Zeile 5: Resultat */}
@@ -3139,10 +3257,17 @@ export default function PersonalFixPage() {
                 <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
                   {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
                 </span>
-                <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                  {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
-                  {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
-                </span>
+                <div className="flex items-center gap-2">
+                  {effectiveBudgetRevenue > 0 && (
+                    <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                      {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                    </span>
+                  )}
+                  <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                    {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
+                    {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
+                  </span>
+                </div>
               </div>
             </div>
           )}
