@@ -2478,13 +2478,34 @@ export default function PersonalFixPage() {
   [flexByWeek, totalFixCost, daysInSelectedMonth, activeFixedEmployees]);
 
   // ── Wochenweise Ist-Umsatz netto aus dailyBudgets (Brutto ÷ 1.081) ────────
+  // Fallback: Wenn keine Ist-Daten vorhanden, Budget-Umsatz pro rata verwenden.
   const weekActualNetRevenue = useMemo((): Record<string, number> => {
     const result: Record<string, number> = {};
     for (const w of flexByWeek) {
       const gross = w.dates.reduce(
         (sum, d) => sum + (monthlyRevenues[d]?.actualRevenue ?? 0), 0,
       );
-      if (gross > 0) result[w.weekKey] = gross / 1.081;
+      if (gross > 0) {
+        result[w.weekKey] = gross / 1.081;
+      } else {
+        const budgetRev = budgetRevenue ?? budgetData.revenueBudget;
+        if (budgetRev > 0 && daysInSelectedMonth > 0) {
+          result[w.weekKey] = budgetRev * (w.daysInWeek / daysInSelectedMonth);
+        }
+      }
+    }
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flexByWeek, monthlyRevenues, budgetRevenue, budgetData.revenueBudget, daysInSelectedMonth]);
+
+  // Welche Wochen nutzen Budget-Schätzung (kein Ist-Umsatz vorhanden)?
+  const weekRevenueIsEstimate = useMemo((): Record<string, boolean> => {
+    const result: Record<string, boolean> = {};
+    for (const w of flexByWeek) {
+      const gross = w.dates.reduce(
+        (sum, d) => sum + (monthlyRevenues[d]?.actualRevenue ?? 0), 0,
+      );
+      result[w.weekKey] = gross <= 0;
     }
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3691,7 +3712,8 @@ export default function PersonalFixPage() {
                           const budgetW  = adjustedPersonnelBudget > 0 && daysInSelectedMonth > 0
                             ? adjustedPersonnelBudget * (w.daysInWeek / daysInSelectedMonth) : 0;
                           const deltaB   = budgetW > 0 ? activeTotal - budgetW : null;
-                          const weekNetRev = weekActualNetRevenue[w.weekKey] ?? null;
+                          const weekNetRev  = weekActualNetRevenue[w.weekKey] ?? null;
+                          const isEstimate  = weekRevenueIsEstimate[w.weekKey] ?? false;
 
                           const toggleWeek = () => {
                             const next = new Set(weekIstSet);
@@ -3732,10 +3754,22 @@ export default function PersonalFixPage() {
 
                               {/* Ist-Umsatz netto (Berechnungsbasis) — ganz links */}
                               {hasAnyWeekRevenue && (
-                                <td className="px-2 py-2 text-right font-mono text-emerald-700 dark:text-emerald-400">
-                                  {weekNetRev != null
-                                    ? <span className="text-xs">{fmtCHF(weekNetRev)}</span>
-                                    : <span className="opacity-30 text-muted-foreground">—</span>}
+                                <td className={cn(
+                                  'px-2 py-2 text-right font-mono',
+                                  isEstimate
+                                    ? 'text-muted-foreground/60'
+                                    : 'text-emerald-700 dark:text-emerald-400',
+                                )}>
+                                  {weekNetRev != null ? (
+                                    <div className="flex flex-col items-end gap-0.5">
+                                      <span className="text-xs">{fmtCHF(weekNetRev)}</span>
+                                      {isEstimate && (
+                                        <span className="text-[9px] font-normal italic opacity-70">Budget p.r.</span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="opacity-30">—</span>
+                                  )}
                                 </td>
                               )}
 
