@@ -1093,6 +1093,183 @@ function FlexPeriodPopup({
   );
 }
 
+// ── WeekDetailPopup ────────────────────────────────────────────────────────────
+
+interface WeekDetailData {
+  weekLabel: string;
+  dateRange: string;
+  dates: string[];
+  daysInWeek: number;
+  daysInMonth: number;
+  fixEmps: Array<{ name: string; dept: string; monthlyCost: number; weeklyCost: number }>;
+  flexEmps: Array<{ id: string; name: string; hourlyWage: number }>;
+  year: number;
+  month: number;
+}
+
+function WeekDetailPopup({ data, onClose }: { data: WeekDetailData | null; onClose: () => void }) {
+  const { tenantKey } = useTenant();
+  if (!data) return null;
+  const { weekLabel, dateRange, dates, daysInWeek, daysInMonth, fixEmps, flexEmps, year, month } = data;
+
+  // Flex per employee for this week
+  const flexRows = flexEmps.map(emp => {
+    const wage = emp.hourlyWage ?? 0;
+    if (!wage) return null;
+    const planW = loadDailyPlanDetails(emp.id, year, month, null, wage, tenantKey).filter(r => dates.includes(r.date));
+    const istW  = loadDailyIstDetails(emp.id, year, month, null, wage, tenantKey).filter(r => dates.includes(r.date));
+    const planH = planW.reduce((s, r) => s + r.hours, 0);
+    const istH  = istW.reduce((s, r) => s + r.hours, 0);
+    const planCost = planW.reduce((s, r) => s + r.cost, 0);
+    const istCost  = istW.reduce((s, r) => s + r.cost, 0);
+    if (planH === 0 && istH === 0) return null;
+    return { name: emp.name, planH, istH, planCost, istCost, diff: istCost - planCost };
+  }).filter(Boolean) as Array<{ name: string; planH: number; istH: number; planCost: number; istCost: number; diff: number }>;
+
+  const totalFixWeek  = fixEmps.reduce((s, e) => s + e.weeklyCost, 0);
+  const totalFlexPlan = flexRows.reduce((s, r) => s + r.planCost, 0);
+  const totalFlexIst  = flexRows.reduce((s, r) => s + r.istCost, 0);
+  const totalPlan = totalFixWeek + totalFlexPlan;
+  const totalIst  = totalFixWeek + totalFlexIst;
+
+  const diffCls = (v: number) => v > 0.005 ? 'text-red-600 dark:text-red-400' : v < -0.005 ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground';
+  const fmtD = (v: number) => `${v > 0.005 ? '+' : v < -0.005 ? '−' : ''}${fmtCHF(Math.abs(v))}`;
+
+  return (
+    <Dialog open={!!data} onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="p-0 gap-0 max-w-none w-[min(780px,95vw)] flex flex-col max-h-[85vh] overflow-hidden">
+        {/* Header */}
+        <div className="shrink-0 px-5 py-4 border-b border-border bg-violet-50/40 dark:bg-violet-950/20">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold">{weekLabel} — Kostendetail</h2>
+              <p className="text-xs text-muted-foreground mt-0.5">{dateRange} · {daysInWeek} von {daysInMonth} Tagen</p>
+            </div>
+            <div className="flex gap-4 text-xs font-mono">
+              <span className="text-muted-foreground">Plan Total <span className="text-foreground font-bold">{fmtCHF(totalPlan)}</span></span>
+              <span className="text-muted-foreground">Ist Total <span className="text-foreground font-bold">{fmtCHF(totalIst)}</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* FIX Section */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
+                Personal FIX (pro-rata {daysInWeek}/{daysInMonth} Tage)
+              </p>
+              <span className="text-xs font-mono font-semibold text-blue-700 dark:text-blue-300">{fmtCHF(totalFixWeek)}</span>
+            </div>
+            {fixEmps.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">Keine Fix-Mitarbeiter</p>
+            ) : (
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/60">
+                      <th className="px-3 py-1.5 text-left font-semibold text-muted-foreground">Mitarbeiter</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-muted-foreground">Monat</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-muted-foreground">Woche ({daysInWeek}T)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fixEmps.map((e, i) => (
+                      <tr key={i} className="border-t border-border">
+                        <td className="px-3 py-1.5 font-medium">{e.name} <span className="text-muted-foreground font-normal">({e.dept})</span></td>
+                        <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{fmtCHF(e.monthlyCost)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono font-semibold">{fmtCHF(e.weeklyCost)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-border bg-muted/40 font-bold">
+                      <td className="px-3 py-1.5">Total FIX</td>
+                      <td className="px-3 py-1.5 text-right font-mono"></td>
+                      <td className="px-3 py-1.5 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFixWeek)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* FLEX Section */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400">Personal FLEX</p>
+              <div className="flex gap-3 text-xs font-mono">
+                <span className="text-blue-600 dark:text-blue-400">Plan {fmtCHF(totalFlexPlan)}</span>
+                <span className="text-orange-600 dark:text-orange-400">Ist {fmtCHF(totalFlexIst)}</span>
+                <span className={cn('font-semibold', diffCls(totalFlexIst - totalFlexPlan))}>{fmtD(totalFlexIst - totalFlexPlan)}</span>
+              </div>
+            </div>
+            {flexRows.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">Kein Flex-Einsatz in dieser Woche</p>
+            ) : (
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/60">
+                      <th className="px-3 py-1.5 text-left font-semibold text-muted-foreground">Mitarbeiter</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-blue-600 dark:text-blue-400">Plan Std</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-blue-600 dark:text-blue-400">Plan CHF</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-orange-600 dark:text-orange-400">Ist Std</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-orange-600 dark:text-orange-400">Ist CHF</th>
+                      <th className="px-3 py-1.5 text-right font-semibold text-muted-foreground">Δ CHF</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {flexRows.map((r, i) => (
+                      <tr key={i} className="border-t border-border">
+                        <td className="px-3 py-1.5 font-medium">{r.name}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{r.planH.toFixed(1)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(r.planCost)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{r.istH.toFixed(1)}</td>
+                        <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(r.istCost)}</td>
+                        <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', diffCls(r.diff))}>{fmtD(r.diff)}</td>
+                      </tr>
+                    ))}
+                    <tr className="border-t-2 border-border bg-muted/40 font-bold">
+                      <td className="px-3 py-1.5">Total FLEX</td>
+                      <td className="px-3 py-1.5 text-right font-mono"></td>
+                      <td className="px-3 py-1.5 text-right font-mono text-blue-600 dark:text-blue-400">{fmtCHF(totalFlexPlan)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono"></td>
+                      <td className="px-3 py-1.5 text-right font-mono text-orange-600 dark:text-orange-400">{fmtCHF(totalFlexIst)}</td>
+                      <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', diffCls(totalFlexIst - totalFlexPlan))}>{fmtD(totalFlexIst - totalFlexPlan)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Total row */}
+          <div className="rounded-lg border-2 border-violet-200 dark:border-violet-800 bg-violet-50/30 dark:bg-violet-950/20 px-4 py-3">
+            <div className="grid grid-cols-3 gap-4 text-sm">
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">FIX (Woche)</p>
+                <p className="font-mono font-bold text-blue-700 dark:text-blue-300">{fmtCHF(totalFixWeek)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">Total Plan</p>
+                <p className="font-mono font-bold">{fmtCHF(totalPlan)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase font-semibold text-muted-foreground mb-0.5">Total Ist</p>
+                <p className={cn('font-mono font-bold', diffCls(totalIst - totalPlan))}>{fmtCHF(totalIst)}</p>
+                {Math.abs(totalIst - totalPlan) > 0.5 && (
+                  <p className={cn('text-[10px] font-semibold font-mono', diffCls(totalIst - totalPlan))}>
+                    {fmtD(totalIst - totalPlan)} vs. Plan
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── FlexBreakdownModal ─────────────────────────────────────────────────────────
 
 function FlexBreakdownModal({ target, onClose }: {
@@ -1488,6 +1665,8 @@ export default function PersonalFixPage() {
     return v != null ? String(v) : '';
   });
   const [scenarioPkqInput, setScenarioPkqInput] = useState('');
+  const [weekDetailTarget, setWeekDetailTarget] = useState<string | null>(null);
+  const [showWeekSummary, setShowWeekSummary] = useState(false);
 
   // ── Pro-Rata-Abgrenzung ────────────────────────────────────────────────────
   // null = aus; Zahl = Stichtag (1–letzter Tag des Monats)
@@ -2250,13 +2429,14 @@ export default function PersonalFixPage() {
   }
 
   // ── Flex-Aufstellung pro Woche (für Budget-Auswertung) ───────────────────
-  const flexByWeek = useMemo((): Array<{ weekKey: string; label: string; planFlex: number; istFlex: number; dateRange: string }> => {
-    const weekMap = new Map<string, { planFlex: number; istFlex: number; minDay: number; maxDay: number }>();
+  const flexByWeek = useMemo((): Array<{ weekKey: string; label: string; planFlex: number; istFlex: number; dateRange: string; dates: string[]; daysInWeek: number }> => {
+    const weekMap = new Map<string, { planFlex: number; istFlex: number; minDay: number; maxDay: number; days: number }>();
     const weekOrder: string[] = [];
+    const mm = String(selectedMonth).padStart(2, '0');
     for (let day = 1; day <= daysInSelectedMonth; day++) {
       const wk = `KW${getISOWeek(new Date(selectedYear, selectedMonth - 1, day))}`;
-      if (!weekMap.has(wk)) { weekMap.set(wk, { planFlex: 0, istFlex: 0, minDay: day, maxDay: day }); weekOrder.push(wk); }
-      else { weekMap.get(wk)!.maxDay = day; }
+      if (!weekMap.has(wk)) { weekMap.set(wk, { planFlex: 0, istFlex: 0, minDay: day, maxDay: day, days: 1 }); weekOrder.push(wk); }
+      else { const e = weekMap.get(wk)!; e.maxDay = day; e.days++; }
     }
     for (const emp of variableEmployees) {
       const wage = emp.hourlyWage ?? 0;
@@ -2272,14 +2452,30 @@ export default function PersonalFixPage() {
         const e = weekMap.get(wk); if (e) e.istFlex += d.cost;
       }
     }
-    const mm = String(selectedMonth).padStart(2, '0');
     return weekOrder.map(wk => {
       const e = weekMap.get(wk)!;
       const dateRange = `${String(e.minDay).padStart(2,'0')}.${mm}–${String(e.maxDay).padStart(2,'0')}.${mm}`;
-      return { weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: e.planFlex, istFlex: e.istFlex, dateRange };
+      const dates: string[] = [];
+      for (let d = e.minDay; d <= e.maxDay; d++) dates.push(`${selectedYear}-${mm}-${String(d).padStart(2,'0')}`);
+      return { weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: e.planFlex, istFlex: e.istFlex, dateRange, dates, daysInWeek: e.days };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey]);
+
+  // ── Fix-Kosten pro Woche (pro-rata nach Tagen) ────────────────────────────
+  const fixByWeek = useMemo(() =>
+    flexByWeek.map(w => ({
+      weekKey: w.weekKey,
+      fixCost: daysInSelectedMonth > 0 ? totalFixCost * (w.daysInWeek / daysInSelectedMonth) : 0,
+      empCosts: activeFixedEmployees.map(r => ({
+        name: r.emp.name,
+        dept: r.emp.department,
+        monthlyCost: r.cost,
+        weeklyCost: daysInSelectedMonth > 0 ? r.cost * (w.daysInWeek / daysInSelectedMonth) : 0,
+      })),
+    })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [flexByWeek, totalFixCost, daysInSelectedMonth, activeFixedEmployees]);
 
   // ── Budget-Umsatz abgeleitete Werte ───────────────────────────────────────
   // basePkqPct: PKQ% aus der Budget-Planung (Basis für Szenario-Berechnungen)
@@ -3223,48 +3419,139 @@ export default function PersonalFixPage() {
                 </div>
               </div>
 
-              {/* Wochen-Toggles */}
+              {/* Wochen-Toggles + Wochenübersicht */}
               {flexByWeek.length > 0 && (
-                <div className="pt-3 pb-1">
-                  <p className="text-xs text-muted-foreground mb-2.5">
-                    Personal Flex — Klick wechselt zwischen <strong className="text-blue-600 dark:text-blue-400">Plan</strong> und <strong className="text-orange-600 dark:text-orange-400">Ist</strong>:
-                  </p>
+                <div className="pt-3 pb-1 space-y-3">
+                  {/* Toolbar */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      Personal Flex — Klick wechselt zwischen <strong className="text-blue-600 dark:text-blue-400">Plan</strong> und <strong className="text-orange-600 dark:text-orange-400">Ist</strong>:
+                    </p>
+                    <button
+                      onClick={() => setShowWeekSummary(v => !v)}
+                      className={cn(
+                        'text-[10px] font-semibold px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1',
+                        showWeekSummary
+                          ? 'border-violet-400 dark:border-violet-600 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
+                          : 'border-border bg-muted text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <BarChart2 className="h-3 w-3" />
+                      Wochenübersicht
+                    </button>
+                  </div>
+
+                  {/* Wochenübersicht-Tabelle (Fix + Flex pro KW) */}
+                  {showWeekSummary && (
+                    <div className="rounded-lg border border-border overflow-hidden text-xs">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="bg-muted/60">
+                            <th className="px-2.5 py-2 text-left font-semibold text-muted-foreground">KW</th>
+                            <th className="px-2.5 py-2 text-left font-semibold text-muted-foreground">Datum</th>
+                            <th className="px-2.5 py-2 text-right font-semibold text-blue-600 dark:text-blue-400">Fix</th>
+                            <th className="px-2.5 py-2 text-right font-semibold text-blue-400 dark:text-blue-500">Flex Plan</th>
+                            <th className="px-2.5 py-2 text-right font-semibold text-orange-500 dark:text-orange-400">Flex Ist</th>
+                            <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Total Plan</th>
+                            <th className="px-2.5 py-2 text-right font-semibold text-muted-foreground">Total Ist</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {flexByWeek.map((w, i) => {
+                            const fix = fixByWeek[i]?.fixCost ?? 0;
+                            const totalP = fix + w.planFlex;
+                            const totalI = fix + w.istFlex;
+                            const diff = totalI - totalP;
+                            return (
+                              <tr key={w.weekKey} className="border-t border-border hover:bg-muted/30">
+                                <td className="px-2.5 py-1.5 font-bold">{w.label}</td>
+                                <td className="px-2.5 py-1.5 text-muted-foreground">{w.dateRange}</td>
+                                <td className="px-2.5 py-1.5 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(fix)}</td>
+                                <td className="px-2.5 py-1.5 text-right font-mono">{fmtCHF(w.planFlex)}</td>
+                                <td className="px-2.5 py-1.5 text-right font-mono">{fmtCHF(w.istFlex)}</td>
+                                <td className="px-2.5 py-1.5 text-right font-mono font-semibold">{fmtCHF(totalP)}</td>
+                                <td className={cn('px-2.5 py-1.5 text-right font-mono font-semibold', diff > 0.5 ? 'text-red-600 dark:text-red-400' : diff < -0.5 ? 'text-emerald-600 dark:text-emerald-400' : '')}>{fmtCHF(totalI)}</td>
+                              </tr>
+                            );
+                          })}
+                          <tr className="border-t-2 border-border bg-muted/50 font-bold">
+                            <td className="px-2.5 py-2" colSpan={2}>Total</td>
+                            <td className="px-2.5 py-2 text-right font-mono text-blue-700 dark:text-blue-300">{fmtCHF(totalFixCost)}</td>
+                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(flexByWeek.reduce((s,w)=>s+w.planFlex,0))}</td>
+                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(flexByWeek.reduce((s,w)=>s+w.istFlex,0))}</td>
+                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(totalFixCost + flexByWeek.reduce((s,w)=>s+w.planFlex,0))}</td>
+                            <td className="px-2.5 py-2 text-right font-mono">{fmtCHF(totalFixCost + flexByWeek.reduce((s,w)=>s+w.istFlex,0))}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* KW-Boxen */}
                   <div className="flex flex-wrap gap-2">
-                    {flexByWeek.map(w => {
+                    {flexByWeek.map((w, i) => {
                       const useIst = weekIstSet.has(w.weekKey);
                       const pctDiff = w.planFlex > 0 ? ((w.istFlex - w.planFlex) / w.planFlex) * 100 : null;
-                      const toggleWeek = () => {
+                      const fixW = fixByWeek[i]?.fixCost ?? 0;
+                      const toggleWeek = (e: React.MouseEvent) => {
+                        e.stopPropagation();
                         const next = new Set(weekIstSet);
                         if (next.has(w.weekKey)) next.delete(w.weekKey); else next.add(w.weekKey);
                         setWeekIstSet(next);
                         saveWeekIstSet(selectedYear, selectedMonth, [...next], tenantKey);
                       };
+                      const openDetail = (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        setWeekDetailTarget(w.weekKey);
+                      };
                       return (
-                        <button
+                        <div
                           key={w.weekKey}
-                          onClick={toggleWeek}
                           className={cn(
-                            'flex flex-col items-start rounded-lg border-2 px-3 py-2 text-xs font-semibold transition-all cursor-pointer min-w-[110px]',
+                            'flex flex-col items-start rounded-lg border-2 px-3 py-2 text-xs font-semibold min-w-[120px] relative',
                             useIst
                               ? 'border-orange-400 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300'
                               : 'border-blue-300 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300',
                           )}
                         >
-                          <div className="flex items-center justify-between w-full gap-1">
+                          {/* Header row: label + detail icon */}
+                          <div className="flex items-center justify-between w-full gap-1 mb-0.5">
                             <span className="font-bold">{w.label}</span>
-                            <span className={cn('text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded',
-                              useIst ? 'bg-orange-200 dark:bg-orange-900/40' : 'bg-blue-200 dark:bg-blue-900/40')}>
-                              {useIst ? 'Ist ✓' : 'Plan'}
-                            </span>
+                            <div className="flex items-center gap-1">
+                              {/* Info icon → Popup */}
+                              <button
+                                onClick={openDetail}
+                                title="Kostendetail anzeigen"
+                                className={cn(
+                                  'p-0.5 rounded transition-colors cursor-pointer',
+                                  useIst ? 'hover:bg-orange-200 dark:hover:bg-orange-900/40' : 'hover:bg-blue-200 dark:hover:bg-blue-900/40',
+                                )}
+                              >
+                                <Info className="h-3 w-3 opacity-70" />
+                              </button>
+                              {/* Plan/Ist toggle badge */}
+                              <button
+                                onClick={toggleWeek}
+                                className={cn('text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded cursor-pointer transition-colors',
+                                  useIst ? 'bg-orange-200 dark:bg-orange-900/40 hover:bg-orange-300' : 'bg-blue-200 dark:bg-blue-900/40 hover:bg-blue-300')}
+                              >
+                                {useIst ? 'Ist ✓' : 'Plan'}
+                              </button>
+                            </div>
                           </div>
-                          <span className="text-[10px] font-normal text-muted-foreground mt-0.5">{w.dateRange}</span>
+                          <span className="text-[10px] font-normal text-muted-foreground">{w.dateRange}</span>
+                          {/* Fix row */}
                           <div className="mt-1.5 w-full space-y-0.5">
+                            <div className="flex justify-between text-[10px] text-muted-foreground">
+                              <span>Fix</span>
+                              <span className="font-mono">{fmtCHF(fixW)}</span>
+                            </div>
                             <div className={cn('flex justify-between text-[10px]', !useIst && 'font-bold')}>
-                              <span className="text-blue-600 dark:text-blue-400">Plan</span>
+                              <span className="text-blue-600 dark:text-blue-400">Plan Flex</span>
                               <span className="font-mono">{fmtCHF(w.planFlex)}</span>
                             </div>
                             <div className={cn('flex justify-between text-[10px]', useIst && 'font-bold')}>
-                              <span className="text-orange-600 dark:text-orange-400">Ist</span>
+                              <span className="text-orange-600 dark:text-orange-400">Ist Flex</span>
                               <span className="font-mono">{fmtCHF(w.istFlex)}</span>
                             </div>
                             {pctDiff != null && (
@@ -3278,7 +3565,7 @@ export default function PersonalFixPage() {
                               </div>
                             )}
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -3970,6 +4257,26 @@ export default function PersonalFixPage() {
         onClose={() => setFlexPeriodPopup(null)}
       />
       <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
+
+      {/* ── KW-Detail-Popup (Fix + Flex pro Woche) ───────────────────────── */}
+      {weekDetailTarget && (() => {
+        const idx = flexByWeek.findIndex(w => w.weekKey === weekDetailTarget);
+        const w   = flexByWeek[idx];
+        const fix = fixByWeek[idx];
+        if (!w || !fix) return null;
+        const detailData: WeekDetailData = {
+          weekLabel:   w.label,
+          dateRange:   w.dateRange,
+          dates:       w.dates,
+          daysInWeek:  w.daysInWeek,
+          daysInMonth: daysInSelectedMonth,
+          fixEmps:     fix.empCosts,
+          flexEmps:    variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: e.hourlyWage ?? 0 })),
+          year:        selectedYear,
+          month:       selectedMonth,
+        };
+        return <WeekDetailPopup data={detailData} onClose={() => setWeekDetailTarget(null)} />;
+      })()}
 
       {/* ── Tag-Detail-Modal ──────────────────────────────────────────────── */}
       <Dialog open={dayDetailModal !== null} onOpenChange={open => { if (!open) setDayDetailModal(null); }}>
