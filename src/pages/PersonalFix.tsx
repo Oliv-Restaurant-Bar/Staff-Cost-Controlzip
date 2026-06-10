@@ -3456,7 +3456,48 @@ export default function PersonalFixPage() {
               {flexByWeek.length > 0 && (
                 <div className="pt-3 pb-1 space-y-3">
 
-                  {/* 1. KW-Boxen */}
+                  {/* 1. Personal Flex Zusammenfassung */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground">− Personal Flex</span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                        </span>
+                      )}
+                      <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
+                        − {fmtCHF(totalFlexForBudget)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 2. Resultat */}
+                  <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg',
+                    budgetResultat >= 0
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
+                      : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
+                    <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
+                      {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {effectiveBudgetRevenue > 0 && (
+                        <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                          {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                        </span>
+                      )}
+                      <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                        {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
+                        {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 3. KW-Boxen */}
                   <div className="flex flex-wrap gap-2">
                     {flexByWeek.map((w, i) => {
                       const useIst  = weekIstSet.has(w.weekKey);
@@ -3552,47 +3593,6 @@ export default function PersonalFixPage() {
                         </div>
                       );
                     })}
-                  </div>
-
-                  {/* 2. Personal Flex Zusammenfassung */}
-                  <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground">− Personal Flex</span>
-                      <span className="text-[10px] text-muted-foreground/60">
-                        ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
-                        </span>
-                      )}
-                      <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
-                        − {fmtCHF(totalFlexForBudget)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* 3. Resultat */}
-                  <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg',
-                    budgetResultat >= 0
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
-                      : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
-                    <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
-                      {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {effectiveBudgetRevenue > 0 && (
-                        <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                          {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
-                        </span>
-                      )}
-                      <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                        {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
-                        {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
-                      </span>
-                    </div>
                   </div>
 
                   {/* 4. Wochenübersicht Toggle + aufklappbare Tabelle */}
