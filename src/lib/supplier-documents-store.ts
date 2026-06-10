@@ -230,9 +230,14 @@ export function getMonthSummary(year: number, month: number): SupplierMonthSumma
     !(d.documentType === 'delivery_note' && d.matchStatus === 'linked'),
   );
 
-  const foodCost     = countable.filter(d => d.category === 'food')    .reduce((s, d) => s + d.amount, 0);
-  const beverageCost = countable.filter(d => d.category === 'beverage').reduce((s, d) => s + d.amount, 0);
-  const otherCost    = countable.filter(d => d.category === 'other')   .reduce((s, d) => s + d.amount, 0);
+  // Betriebsaufwand (Konto 6040) wird separat ausgewiesen und NICHT in totalCost eingerechnet
+  const warenDocs       = countable.filter(d => d.accountNumber !== '6040');
+  const betriebsDocs    = countable.filter(d => d.accountNumber === '6040');
+
+  const foodCost             = warenDocs.filter(d => d.category === 'food')    .reduce((s, d) => s + d.amount, 0);
+  const beverageCost         = warenDocs.filter(d => d.category === 'beverage').reduce((s, d) => s + d.amount, 0);
+  const otherCost            = warenDocs.filter(d => d.category === 'other')   .reduce((s, d) => s + d.amount, 0);
+  const betriebsaufwandCost  = betriebsDocs.reduce((s, d) => s + d.amount, 0);
 
   return {
     year,
@@ -240,6 +245,7 @@ export function getMonthSummary(year: number, month: number): SupplierMonthSumma
     foodCost,
     beverageCost,
     otherCost,
+    betriebsaufwandCost,
     totalCost:     foodCost + beverageCost + otherCost,
     documentCount: docs.length,
     documents:     docs,

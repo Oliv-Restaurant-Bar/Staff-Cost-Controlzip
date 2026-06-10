@@ -16,6 +16,7 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -148,12 +149,18 @@ function CatBadge({ cat }: { cat: DocumentCategory }) {
 
 // ─── Zusammenfassungskarten ───────────────────────────────────────────────────
 
-function SummaryCards({ foodCost, beverageCost, otherCost, totalCost, docCount }: {
+function SummaryCards({ foodCost, beverageCost, otherCost, totalCost, betriebsaufwandCost, docCount }: {
   foodCost: number; beverageCost: number; otherCost: number;
-  totalCost: number; docCount: number;
+  totalCost: number; betriebsaufwandCost: number; docCount: number;
 }) {
+  const hasBetrieb = betriebsaufwandCost > 0;
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className={cn(
+      'grid gap-3',
+      hasBetrieb
+        ? 'grid-cols-2 md:grid-cols-5'
+        : 'grid-cols-2 md:grid-cols-4',
+    )}>
       <Card className="bg-orange-50 border-orange-200">
         <CardContent className="pt-4 pb-4">
           <p className="text-xs text-orange-600 flex items-center gap-1">
@@ -181,13 +188,27 @@ function SummaryCards({ foodCost, beverageCost, otherCost, totalCost, docCount }
           <p className="text-[10px] text-muted-foreground mt-0.5">Operative Schätzung</p>
         </CardContent>
       </Card>
+      {hasBetrieb && (
+        <Card className="bg-amber-50 border-amber-200">
+          <CardContent className="pt-4 pb-4">
+            <p className="text-xs text-amber-700 flex items-center gap-1">
+              <Package className="h-3 w-3" /> Betriebsaufwand
+              <span className="font-mono bg-amber-100 px-1 rounded text-[10px]">6040</span>
+            </p>
+            <p className="text-xl font-bold text-amber-900 mt-0.5">{chf(betriebsaufwandCost)}</p>
+            <p className="text-[10px] text-amber-600 mt-0.5">separat · nicht in WK%</p>
+          </CardContent>
+        </Card>
+      )}
       <Card className="bg-zinc-900 border-zinc-700">
         <CardContent className="pt-4 pb-4">
           <p className="text-xs text-zinc-300 flex items-center gap-1">
             <Truck className="h-3 w-3" /> Total · {docCount} Belege
           </p>
           <p className="text-xl font-bold text-white mt-0.5">{chf(totalCost)}</p>
-          <p className="text-[10px] text-zinc-400 mt-0.5">Gesamt Warenkosten</p>
+          <p className="text-[10px] text-zinc-400 mt-0.5">
+            Warenkosten {hasBetrieb ? '(exkl. Betriebsaufwand)' : 'gesamt'}
+          </p>
         </CardContent>
       </Card>
     </div>
@@ -245,12 +266,15 @@ function ForecastCard({
   onForecastChange,
   forecastTarget,
   onTargetChange,
+  actualNetRevenue,
 }: {
   totalCost: number;
   forecastRevenue: number | null;
   onForecastChange: (v: number | null) => void;
   forecastTarget: number | null;
   onTargetChange: (v: number | null) => void;
+  /** Kumulierter Ist-Umsatz netto aus dailyBudgets (÷ 1.081). null = keine Daten. */
+  actualNetRevenue: number | null;
 }) {
   const [rawInput, setRawInput] = useState(
     forecastRevenue !== null ? String(forecastRevenue) : '',
@@ -277,12 +301,20 @@ function ForecastCard({
     }
   }
 
+  // Ist-Umsatz netto hat Vorrang vor Forecast für die WK%-Berechnung
+  const hasActual  = actualNetRevenue !== null && actualNetRevenue > 0;
+  const effectiveRevenue = hasActual ? actualNetRevenue : forecastRevenue;
+
+  const actualPct   = hasActual
+    ? (totalCost / actualNetRevenue!) * 100
+    : null;
   const forecastPct = forecastRevenue && forecastRevenue > 0
     ? (totalCost / forecastRevenue) * 100
     : null;
+  const displayPct  = actualPct ?? forecastPct;
 
-  const isOnTarget = forecastTarget !== null && forecastPct !== null
-    ? forecastPct <= forecastTarget
+  const isOnTarget = forecastTarget !== null && displayPct !== null
+    ? displayPct <= forecastTarget
     : null;
 
   const statusColor = isOnTarget === null
@@ -299,15 +331,62 @@ function ForecastCard({
     <Card className="border-dashed border-2 border-slate-300 dark:border-slate-600">
       <CardContent className="pt-4 pb-4 space-y-3">
 
-        {/* Header */}
+        {/* Ist-Umsatz netto – prominente Anzeige wenn Daten vorhanden */}
+        {hasActual && (
+          <div className="rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-700 px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+              <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300 uppercase tracking-widest">
+                Kumulierter Ist-Umsatz (netto)
+              </p>
+              <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 px-1.5 py-px rounded font-mono">
+                Brutto ÷ 1.081
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <div className="rounded-lg border border-emerald-200 bg-white dark:bg-emerald-950/20 px-4 py-2 text-center">
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mb-0.5">Umsatz netto (kum.)</p>
+                <p className="text-base font-bold tabular-nums text-emerald-900 dark:text-emerald-200">
+                  {chf(actualNetRevenue!)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-white dark:bg-emerald-950/20 px-4 py-2 text-center">
+                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mb-0.5">Warenkosten (exkl. BA)</p>
+                <p className="text-base font-bold tabular-nums text-emerald-900 dark:text-emerald-200">
+                  {chf(totalCost)}
+                </p>
+              </div>
+              <div className={cn('rounded-lg border-2 px-4 py-2 text-center', statusColor)}>
+                <p className="text-[10px] text-muted-foreground mb-0.5">WK% auf Ist-Umsatz netto</p>
+                <p className={cn('text-xl font-black tabular-nums', pctColor)}>
+                  {actualPct !== null ? `${actualPct.toFixed(1)} %` : '–'}
+                </p>
+                {isOnTarget !== null && (
+                  <p className={cn('text-[10px] font-semibold mt-0.5', pctColor)}>
+                    {isOnTarget
+                      ? `✓ Im Ziel (≤ ${forecastTarget}%)`
+                      : `↑ Ziel ${forecastTarget}% überschritten`}
+                  </p>
+                )}
+                {isOnTarget === null && forecastTarget !== null && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Zielwert unten setzen</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Header Forecast-Eingabe */}
         <div className="flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-muted-foreground" />
           <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-            Forecast Umsatz Monat
+            {hasActual ? 'Forecast Umsatz (Vergleich / laufender Monat)' : 'Forecast Umsatz Monat'}
           </p>
-          <span className="text-[10px] text-muted-foreground">
-            — Warenkostenquote hochrechnen ohne echte Umsatzdaten zu überschreiben
-          </span>
+          {!hasActual && (
+            <span className="text-[10px] text-muted-foreground">
+              — WK% hochrechnen ohne Umsatzdaten zu überschreiben
+            </span>
+          )}
         </div>
 
         {/* Input row */}
@@ -368,7 +447,7 @@ function ForecastCard({
           ))}
         </div>
 
-        {/* Result + Zielvergleich */}
+        {/* Forecast-Ergebnis (nur wenn kein Ist-Umsatz, oder als Zusatz) */}
         {forecastRevenue && forecastRevenue > 0 ? (
           <div className="flex flex-wrap gap-3 pt-1">
             <div className="rounded-lg border bg-muted/40 px-4 py-2 text-center">
@@ -379,29 +458,39 @@ function ForecastCard({
               <p className="text-[10px] text-muted-foreground mb-0.5">Warenkosten bisher</p>
               <p className="text-base font-bold tabular-nums">{chf(totalCost)}</p>
             </div>
-            <div className={cn('rounded-lg border-2 px-4 py-2 text-center', statusColor)}>
-              <p className="text-[10px] text-muted-foreground mb-0.5">Forecast Warenkosten %</p>
-              <p className={cn('text-xl font-black tabular-nums', pctColor)}>
-                {forecastPct !== null ? `${forecastPct.toFixed(1)} %` : '–'}
-              </p>
-              {isOnTarget !== null && (
-                <p className={cn('text-[10px] font-semibold mt-0.5', pctColor)}>
-                  {isOnTarget
-                    ? `✓ Im Ziel (≤ ${forecastTarget}%)`
-                    : `↑ Ziel ${forecastTarget}% überschritten`}
+            {!hasActual && (
+              <div className={cn('rounded-lg border-2 px-4 py-2 text-center', statusColor)}>
+                <p className="text-[10px] text-muted-foreground mb-0.5">Forecast WK%</p>
+                <p className={cn('text-xl font-black tabular-nums', pctColor)}>
+                  {forecastPct !== null ? `${forecastPct.toFixed(1)} %` : '–'}
                 </p>
-              )}
-              {isOnTarget === null && forecastTarget === null && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">Ziel unten eingeben</p>
-              )}
-            </div>
+                {isOnTarget !== null && (
+                  <p className={cn('text-[10px] font-semibold mt-0.5', pctColor)}>
+                    {isOnTarget
+                      ? `✓ Im Ziel (≤ ${forecastTarget}%)`
+                      : `↑ Ziel ${forecastTarget}% überschritten`}
+                  </p>
+                )}
+                {isOnTarget === null && forecastTarget === null && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Ziel unten eingeben</p>
+                )}
+              </div>
+            )}
+            {hasActual && forecastPct !== null && (
+              <div className="rounded-lg border bg-muted/40 px-4 py-2 text-center">
+                <p className="text-[10px] text-muted-foreground mb-0.5">Forecast WK% (nachrichtlich)</p>
+                <p className="text-base font-semibold tabular-nums text-muted-foreground">
+                  {forecastPct.toFixed(1)} %
+                </p>
+              </div>
+            )}
           </div>
-        ) : (
+        ) : !hasActual ? (
           <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
             <Info className="h-3.5 w-3.5 shrink-0" />
             Forecast Umsatz eingeben um die Warenkostenquote zu berechnen
           </p>
-        )}
+        ) : null}
 
         {/* Zielwert-Input */}
         <div className="flex items-center gap-2 pt-2 border-t">
@@ -1343,8 +1432,38 @@ function SupplierMasterPanel({
 
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
+/**
+ * Liest den kumulierten Ist-Umsatz (netto) aus dailyBudgets für einen Monat.
+ * Brutto-Umsatz (actualRevenue) wird durch 1.081 geteilt (8.1% MwSt → netto).
+ * Gibt null zurück wenn keine Daten vorhanden.
+ */
+function readCumulativeNetRevenue(
+  tkFn: (key: string) => string,
+  year: number,
+  month: number,
+): number | null {
+  try {
+    const raw = localStorage.getItem(tkFn('dailyBudgets'));
+    if (!raw) return null;
+    const all: Record<string, { actualRevenue?: number }> = JSON.parse(raw);
+    const prefix = `${year}-${String(month).padStart(2, '0')}`;
+    let total = 0;
+    let hasData = false;
+    for (const [dateKey, day] of Object.entries(all)) {
+      if (dateKey.startsWith(prefix) && (day.actualRevenue ?? 0) > 0) {
+        total += day.actualRevenue!;
+        hasData = true;
+      }
+    }
+    return hasData ? total / 1.081 : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function SupplierDocumentsPage() {
   const { isAdmin } = usePermissions();
+  const { tenantKey } = useTenant();
 
   const [year, setYear]   = useState(CURRENT_YEAR);
   const [month, setMonth] = useState(CURRENT_MONTH);
@@ -1380,6 +1499,12 @@ export default function SupplierDocumentsPage() {
 
   const summary    = useMemo(() => getMonthSummary(year, month),      [docs, year, month]);
   const comparison = useMemo(() => buildCostComparison(year, month),  [docs, year, month]);
+
+  // Kumulierter Ist-Umsatz netto aus dailyBudgets (Brutto ÷ 1.081)
+  const actualNetRevenue = useMemo(
+    () => readCumulativeNetRevenue(tenantKey, year, month),
+    [tenantKey, year, month, docs],
+  );
 
   function reload(y: number, m: number) {
     setDocs(loadDocumentsForMonth(y, m));
@@ -1677,6 +1802,7 @@ export default function SupplierDocumentsPage() {
         beverageCost={summary.beverageCost}
         otherCost={summary.otherCost}
         totalCost={summary.totalCost}
+        betriebsaufwandCost={summary.betriebsaufwandCost}
         docCount={summary.documentCount}
       />
 
@@ -1687,6 +1813,7 @@ export default function SupplierDocumentsPage() {
         onForecastChange={handleForecastChange}
         forecastTarget={forecastTarget}
         onTargetChange={handleTargetChange}
+        actualNetRevenue={actualNetRevenue}
       />
 
       {/* ── Match-Vorschläge Panel ─────────────────────────────────────────── */}

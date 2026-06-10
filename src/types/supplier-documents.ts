@@ -275,7 +275,15 @@ export interface SupplierMonthSummary {
   beverageCost: number;
   /** Operative Schätzung Sonstiger Warenaufwand (CHF) */
   otherCost: number;
-  /** Gesamte operative Warenkostenschätzung (CHF) */
+  /**
+   * Betriebsaufwand-Belege (Konto 6040).
+   * Werden NICHT in totalCost eingerechnet – separat ausgewiesen.
+   */
+  betriebsaufwandCost: number;
+  /**
+   * Gesamte operative Warenkostenschätzung (CHF).
+   * Exkl. Betriebsaufwand (6040) – nur food + beverage + other.
+   */
   totalCost: number;
   /** Anzahl erfasster Belege */
   documentCount: number;
