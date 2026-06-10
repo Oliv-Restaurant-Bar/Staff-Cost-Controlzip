@@ -3419,9 +3419,30 @@ export default function PersonalFixPage() {
                 </div>
               </div>
 
-              {/* Wochen-Übersicht — integrierte Tabelle mit Plan/Ist-Toggle */}
+              {/* Wochen-Übersicht — aufklappbare Tabelle + Flex-Zusammenfassung + Resultat */}
               {flexByWeek.length > 0 && (
-                <div className="pt-3 pb-1">
+                <div className="pt-3 pb-1 space-y-2">
+                  {/* Toggle-Button */}
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      Flex-Modus pro Woche: <strong className="text-blue-600 dark:text-blue-400">○ Plan</strong> / <strong className="text-orange-600 dark:text-orange-400">● Ist</strong> — per Klick umschalten
+                    </p>
+                    <button
+                      onClick={() => setShowWeekSummary(v => !v)}
+                      className={cn(
+                        'text-[10px] font-semibold px-2.5 py-1 rounded border transition-colors cursor-pointer flex items-center gap-1',
+                        showWeekSummary
+                          ? 'border-violet-400 dark:border-violet-600 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300'
+                          : 'border-border bg-muted text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      <BarChart2 className="h-3 w-3" />
+                      Wochenübersicht
+                    </button>
+                  </div>
+
+                  {/* Aufklappbare Tabelle */}
+                  {showWeekSummary && (
                   <div className="rounded-lg border border-border overflow-hidden text-xs">
                     <table className="w-full">
                       <thead>
@@ -3585,49 +3606,50 @@ export default function PersonalFixPage() {
                       </tbody>
                     </table>
                   </div>
+                  )}
+
+                  {/* Zeile 4: Personal Flex — immer sichtbar */}
+                  <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-muted-foreground">− Personal Flex</span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                        </span>
+                      )}
+                      <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
+                        − {fmtCHF(totalFlexForBudget)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Zeile 5: Resultat — immer sichtbar */}
+                  <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg',
+                    budgetResultat >= 0
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
+                      : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
+                    <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
+                      {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {effectiveBudgetRevenue > 0 && (
+                        <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                          {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
+                        </span>
+                      )}
+                      <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
+                        {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
+                        {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
-
-              {/* Zeile 4: Personal Flex */}
-              <div className="flex justify-between items-center py-1.5 border-b border-dashed border-border text-sm mt-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-muted-foreground">− Personal Flex</span>
-                  <span className="text-[10px] text-muted-foreground/60">
-                    ({weekIstSet.size === 0 ? 'Plan gesamt' : weekIstSet.size === flexByWeek.length ? 'Ist gesamt' : `${weekIstSet.size} Wo. Ist, ${flexByWeek.length - weekIstSet.size} Plan`})
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {effectiveBudgetRevenue > 0 && totalFlexForBudget > 0 && (
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {((totalFlexForBudget / effectiveBudgetRevenue) * 100).toFixed(1)} %
-                    </span>
-                  )}
-                  <span className={cn('font-mono', totalFlexForBudget > verfügbarFlexBudget ? 'text-red-600 dark:text-red-400' : 'text-foreground')}>
-                    − {fmtCHF(totalFlexForBudget)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Zeile 5: Resultat */}
-              <div className={cn('flex justify-between items-center py-2.5 px-3 rounded-lg mt-1',
-                budgetResultat >= 0
-                  ? 'bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800'
-                  : 'bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800')}>
-                <span className={cn('text-sm font-bold', budgetResultat >= 0 ? 'text-emerald-800 dark:text-emerald-300' : 'text-red-700 dark:text-red-400')}>
-                  {budgetResultat >= 0 ? '✓ Im Budget' : '⛔ Überschreitung'}
-                </span>
-                <div className="flex items-center gap-2">
-                  {effectiveBudgetRevenue > 0 && (
-                    <span className={cn('text-xs font-semibold font-mono', budgetResultat >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                      {((Math.abs(budgetResultat) / effectiveBudgetRevenue) * 100).toFixed(1)} %
-                    </span>
-                  )}
-                  <span className={cn('font-mono font-bold text-lg', budgetResultat >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400')}>
-                    {budgetResultat >= 0 ? '' : '+'}{fmtCHF(Math.abs(budgetResultat))}
-                    {budgetResultat < 0 && <span className="text-xs font-normal ml-1">zu viel</span>}
-                  </span>
-                </div>
-              </div>
             </div>
           )}
         </section>
