@@ -3485,12 +3485,17 @@ export default function PersonalFixPage() {
                                 {adjustedPersonnelBudget > 0 && (
                                   <>
                                     <td className="px-2.5 py-1.5 text-right font-mono text-violet-700 dark:text-violet-300">{fmtCHF(budgetW)}</td>
-                                    <td className={cn('px-2.5 py-1.5 text-right font-mono font-semibold',
+                                    <td className={cn('px-2.5 py-1.5 text-right font-mono',
                                       deltaB == null ? 'text-muted-foreground'
                                         : deltaB > 0.5 ? 'text-red-600 dark:text-red-400'
                                         : deltaB < -0.5 ? 'text-emerald-600 dark:text-emerald-400'
                                         : 'text-muted-foreground')}>
-                                      {deltaB == null ? '—' : `${deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}${fmtCHF(Math.abs(deltaB)).replace('CHF\u00a0','')}`}
+                                      {deltaB == null ? '—' : (
+                                        <div className="flex flex-col items-end gap-0.5">
+                                          <span className="font-semibold">{deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{fmtCHF(Math.abs(deltaB)).replace('CHF\u00a0','')}</span>
+                                          <span className="text-[9px] font-normal opacity-60">{useIstRow ? 'Basis: Ist' : 'Basis: Plan'}</span>
+                                        </div>
+                                      )}
                                     </td>
                                   </>
                                 )}
@@ -3614,13 +3619,14 @@ export default function PersonalFixPage() {
                                     </span>
                                   )}
                                   {deltaB != null && (
-                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded',
+                                    <span className={cn('text-[9px] font-semibold px-1 py-0.5 rounded flex flex-col items-end leading-tight',
                                       deltaB > 0.5  ? 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400'
                                       : deltaB < -0.5 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400'
                                       : 'bg-muted text-muted-foreground')}>
-                                      Δ Bdg {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{Math.abs(deltaB) < 1000
+                                      <span>vs Bdg {deltaB > 0.5 ? '+' : deltaB < -0.5 ? '−' : ''}{Math.abs(deltaB) < 1000
                                         ? Math.round(Math.abs(deltaB))
-                                        : `${(Math.abs(deltaB)/1000).toFixed(1)}k`}
+                                        : `${(Math.abs(deltaB)/1000).toFixed(1)}k`}</span>
+                                      <span className="opacity-60 font-normal">{useIst ? 'Basis: Ist' : 'Basis: Plan'}</span>
                                     </span>
                                   )}
                                 </div>
