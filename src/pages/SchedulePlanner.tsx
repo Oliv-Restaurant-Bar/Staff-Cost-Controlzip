@@ -59,6 +59,7 @@ import { DaysOffConfigDialog } from '@/components/schedule-planner/DaysOffConfig
 import { Apply8HoursDialog, getPreferredWeekdaysFromDates } from '@/components/schedule-planner/Apply8HoursDialog';
 import { MonthlyCostSummary } from '@/components/schedule-planner/MonthlyCostSummary';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { SICK_CODES, ACCIDENT_CODES, VACATION_CODES } from '@/lib/absence-utils';
 import { ExportOptionsDialog, ExportOptions } from '@/components/schedule-planner/ExportOptionsDialog';
 import { ImportMatchPreviewDialog, NameMatchOverride } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComparison';
@@ -1500,17 +1501,22 @@ const SchedulePlanner = () => {
     });
 
     // ── Auto-Kopie Abwesenheit → Ist-Stunden ───────────────────────────────
-    // Wenn FE/K/U im Plan gesetzt wird → Ist-Eintrag mit absenceType gesetzt.
-    // FE: hours=0 + absenceType='FE'
-    // K/U: konfigurierte Stunden + absenceType='K'/'U' (bezahlte Abwesenheit)
-    // Andere Abwesenheiten → wie bisher mit konfigurierten Stunden.
-    if (absenceType) {
-      const isFE = absenceType === 'FE';
-      const isKU = absenceType === 'K' || absenceType === 'U';
-      const isF  = absenceType === 'F';
+    // Normalisierung: alle Sick/Accident/Vacation-Codes → kanonischen Wert
+    // (SICK_CODES → 'K', ACCIDENT_CODES → 'U', VACATION_CODES → 'FE', 'F' → 'F')
+    const canonicalAbsence = !absenceType ? null
+      : SICK_CODES.has(absenceType)     ? 'K'
+      : ACCIDENT_CODES.has(absenceType) ? 'U'
+      : VACATION_CODES.has(absenceType) ? 'FE'
+      : absenceType === 'F'             ? 'F'
+      : absenceType;
+
+    if (canonicalAbsence) {
+      const isFE = canonicalAbsence === 'FE';
+      const isKU = canonicalAbsence === 'K' || canonicalAbsence === 'U';
+      const isF  = canonicalAbsence === 'F';
       const absShiftCfg = Object.values(shiftMap).find(s => s.abbrev === absenceType);
       const absHours = absShiftCfg?.hours ?? 0;
-      // FE, K, U, F werden immer nach Ist kopiert; andere nur wenn konfigurierte Stunden > 0
+      // FE/K/U/F immer kopieren; andere Abwesenheiten nur wenn konfigurierte Stunden > 0
       const shouldCopy = isFE || isKU || isF || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
 
       if (shouldCopy) {
@@ -1523,15 +1529,18 @@ const SchedulePlanner = () => {
 
           // FE/F: 0h + absenceType; K/U: konfigurierte Stunden + absenceType; andere: nur Stunden
           const newEntry: ActualHoursEntry = (isFE || isF)
-            ? { hours: 0, absenceType: absenceType as 'FE' | 'F' }
+            ? { hours: 0, absenceType: canonicalAbsence as 'FE' | 'F' }
             : isKU
-            ? { hours: absHours, absenceType: absenceType as 'K' | 'U' }
+            ? { hours: absHours, absenceType: canonicalAbsence as 'K' | 'U' }
             : { hours: absHours };
 
-          console.log(`[PLAN-IST] plan->ist übernommen: ${employeeId} ${date} absenceType=${absenceType} → Ist hours=${newEntry.hours}`);
+          if (absenceType !== canonicalAbsence) {
+            console.log(`[PLAN-IST] normalisiert: ${absenceType} → ${canonicalAbsence}`);
+          }
+          console.log(`[PLAN-IST] plan->ist übernommen: ${employeeId} ${date} absenceType=${canonicalAbsence} → Ist hours=${newEntry.hours}`);
 
-          // FE/F: 0h, kein Supabase-Save (keine absenceType-Spalte).
-          // K/U: Stunden nach Supabase; absenceType nur lokal/KV.
+          // FE/F: kein Supabase-Save (keine absenceType-Spalte).
+          // K/U: Stunden nach Supabase; absenceType nur lokal.
           if (!isFE && !isF) {
             saveActualHourEntry(employeeId, date, newEntry).catch(err =>
               console.error('[SCHEDULE] auto-absence actualHours error:', err)
@@ -1546,6 +1555,23 @@ const SchedulePlanner = () => {
           return { ...prevActual, [cellKey]: newEntry };
         });
       }
+    } else if (absenceType === null) {
+      // Plan-Absenz gelöscht → auto-kopierten Ist-Eintrag (hours=0 + absenceType) entfernen
+      setActualHoursData(prevActual => {
+        const existing = prevActual[cellKey];
+        if (!existing?.absenceType || existing.hours > 0) return prevActual;
+        const newState = { ...prevActual };
+        delete newState[cellKey];
+        const mk = format(currentMonth, 'yyyy-MM');
+        const stored: Record<string, unknown> = (() => {
+          try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}'); }
+          catch { return {}; }
+        })();
+        delete (stored as Record<string, unknown>)[cellKey];
+        localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(stored));
+        console.log(`[PLAN-IST] plan absence entfernt → auto-kopierten Ist-Eintrag gelöscht: ${cellKey}`);
+        return newState;
+      });
     }
     // ── Ende Auto-Kopie ────────────────────────────────────────────────────
 

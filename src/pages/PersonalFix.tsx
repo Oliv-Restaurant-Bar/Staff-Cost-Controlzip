@@ -4039,13 +4039,24 @@ export default function PersonalFixPage() {
                       'grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed transition-colors',
                       kuInBudget ? 'border-red-200 dark:border-red-800/40' : 'border-border/30',
                     )}>
-                      <div className="flex items-center gap-2 pl-5">
+                      <label htmlFor="ku-unfall-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          id="ku-unfall-in-budget"
+                          checked={kuInBudget}
+                          onChange={e => {
+                            const v = e.target.checked;
+                            setKuInBudget(v);
+                            saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
+                          }}
+                          className="h-3.5 w-3.5 accent-red-500 cursor-pointer shrink-0"
+                        />
                         <span className={cn('text-xs transition-colors',
                           kuInBudget ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground/50',
                         )}>
                           − Unfallkosten (80 %)
                         </span>
-                      </div>
+                      </label>
                       <div />
                       <span className={cn(
                         'text-right text-xs font-mono tabular-nums transition-colors',
