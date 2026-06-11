@@ -1940,7 +1940,7 @@ export default function PersonalFixPage() {
   const [kuPlanDetail, setKuPlanDetail] = useState<Record<string, KUDayEntry[]>>({});
   const [kuIstDetail, setKuIstDetail]   = useState<Record<string, KUDayEntry[]>>({});
   // Popup: Detail-Tage für einen Mitarbeiter anzeigen
-  const [showKuDetail, setShowKuDetail] = useState<{empId: string; source: 'plan'|'ist'; empName: string; typeFilter?: 'krank'|'unfall'} | null>(null);
+  const [showKuDetail, setShowKuDetail] = useState<{empId: string; empName: string; typeFilter?: 'krank'|'unfall'} | null>(null);
   // Checkbox: K/U-Kosten in Budget-Auswertung einbeziehen
   const [kuInBudget, setKuInBudget] = useState(false);
   // Krank / Unfall separat (Plan + Ist)
@@ -2183,6 +2183,47 @@ export default function PersonalFixPage() {
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick]);
+
+  // ── K/U-Plan-Eintrag direkt bearbeiten ────────────────────────────────────
+  const handleKuPlanEdit = useCallback((empId: string, date: string, action: 'delete' | 'frei') => {
+    const mk          = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const scheduleKey = tenantKey(`schedule-v2-${mk}`);
+    const actualKey   = tenantKey(`actual-hours-${mk}`);
+    const cellKey     = `${empId}-${date}`;
+    try {
+      const schedule = JSON.parse(localStorage.getItem(scheduleKey) || '{}') as Record<string, {
+        früh?: unknown; spät?: unknown; frühAbsence?: string | null; spätAbsence?: string | null;
+      }>;
+      const entry = schedule[cellKey];
+      if (entry) {
+        if (action === 'delete') {
+          entry.frühAbsence = null;
+          entry.spätAbsence = null;
+          if (!entry.früh && !entry.spät) { delete schedule[cellKey]; }
+          else { schedule[cellKey] = entry; }
+        } else {
+          if (entry.frühAbsence) entry.frühAbsence = 'F';
+          if (entry.spätAbsence) entry.spätAbsence = 'F';
+          schedule[cellKey] = entry;
+        }
+        localStorage.setItem(scheduleKey, JSON.stringify(schedule));
+      }
+      const actual = JSON.parse(localStorage.getItem(actualKey) || '{}') as Record<string, { hours: number; absenceType?: string }>;
+      if (actual[cellKey]?.absenceType) {
+        if (action === 'delete') { delete actual[cellKey]; }
+        else { actual[cellKey] = { hours: 0, absenceType: 'F' }; }
+        localStorage.setItem(actualKey, JSON.stringify(actual));
+      }
+    } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('schedule-updated'));
+    setKuPlanDays(loadKUDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    setKuIstDays(loadKUDaysFromStorage(selectedYear, selectedMonth, tenantKey));
+    setKuPlanDetail(loadKUDetailFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    setKuIstDetail(loadKUDetailFromIstStorage(selectedYear, selectedMonth, tenantKey));
+    setKuPlanBreakdown(loadKUBreakdownFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantId]);
 
   // Mandantenwechsel: varHours/varWeekly/etc. neu laden
   useEffect(() => {
@@ -5045,7 +5086,7 @@ export default function PersonalFixPage() {
                         cls: string,
                       ) => val > 0 ? (
                         <button
-                          onClick={() => setShowKuDetail({ empId: emp.id, source: src, empName: emp.name, typeFilter: tf })}
+                          onClick={() => setShowKuDetail({ empId: emp.id, empName: emp.name, typeFilter: tf })}
                           className={cn('tabular-nums', hasDetail ? 'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity' : 'cursor-default')}
                           title={hasDetail ? 'Tage anzeigen' : undefined}
                           disabled={!hasDetail}
@@ -5465,48 +5506,88 @@ export default function PersonalFixPage() {
 
       {/* ── K/U-Detail-Popup: welche Tage genau ──────────────────────────── */}
       {showKuDetail && (() => {
-        const { empId, source, empName, typeFilter } = showKuDetail;
-        const allEntries = source === 'plan' ? (kuPlanDetail[empId] ?? []) : (kuIstDetail[empId] ?? []);
-        const entries = typeFilter === 'krank'  ? allEntries.filter(e => SICK_CODES.has(e.type))
-                       : typeFilter === 'unfall' ? allEntries.filter(e => ACCIDENT_CODES.has(e.type))
-                       : allEntries;
-        const label   = source === 'plan' ? 'Plan-Dienstplan' : 'Mirus Ist';
+        const { empId, empName, typeFilter } = showKuDetail;
+        const planAll = kuPlanDetail[empId] ?? [];
+        const istAll  = kuIstDetail[empId]  ?? [];
+        const filter = (arr: KUDayEntry[]) =>
+          typeFilter === 'krank'  ? arr.filter(e => SICK_CODES.has(e.type))
+          : typeFilter === 'unfall' ? arr.filter(e => ACCIDENT_CODES.has(e.type))
+          : arr;
+        const planEntries = filter(planAll);
+        const istEntries  = filter(istAll);
+        const allDates = [...new Set([...planEntries.map(e => e.date), ...istEntries.map(e => e.date)])].sort();
+        const planMap  = Object.fromEntries(planEntries.map(e => [e.date, e]));
+        const istMap   = Object.fromEntries(istEntries.map(e => [e.date, e]));
         const typeLabel = typeFilter === 'krank' ? 'Krank' : typeFilter === 'unfall' ? 'Unfall' : 'K/U';
+        const Badge = ({ entry }: { entry: KUDayEntry | undefined }) => {
+          if (!entry) return <span className="text-muted-foreground/30 text-xs">–</span>;
+          const isK = SICK_CODES.has(entry.type);
+          return (
+            <span className={cn('text-xs font-semibold px-1.5 py-0.5 rounded-full',
+              isK ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                  : 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300')}>
+              {isK ? 'K' : 'U'}
+            </span>
+          );
+        };
         return (
           <Dialog open onOpenChange={open => { if (!open) setShowKuDetail(null); }}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
-                <DialogTitle className="text-sm">
-                  {typeLabel}-Tage — {empName}
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">({label})</span>
-                </DialogTitle>
+                <DialogTitle className="text-sm">{typeLabel}-Tage — {empName}</DialogTitle>
               </DialogHeader>
-              {entries.length === 0 ? (
+              {allDates.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-2">Keine Detail-Daten verfügbar.</p>
               ) : (
-                <ul className="divide-y divide-border text-sm">
-                  {entries.map(({ date, type }) => {
-                    const d = new Date(date + 'T00:00:00');
-                    const isK = SICK_CODES.has(type);
-                    return (
-                      <li key={date} className="flex items-center justify-between py-1.5 px-1">
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })}
-                        </span>
-                        <span className={cn(
-                          'text-xs font-semibold px-2 py-0.5 rounded-full',
-                          isK
-                            ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
-                            : 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
-                        )}>
-                          {isK ? 'Krank' : 'Unfall'}
-                          <span className="ml-1 opacity-60 text-[10px]">{type}</span>
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <div className="overflow-auto max-h-72">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-border/60">
+                        <th className="text-left py-1.5 font-medium">Datum</th>
+                        <th className="text-center py-1.5 px-3 font-medium">Plan</th>
+                        <th className="text-center py-1.5 px-3 font-medium">Ist</th>
+                        <th className="py-1.5 w-16" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {allDates.map(date => {
+                        const pe = planMap[date];
+                        const ie = istMap[date];
+                        const d  = new Date(date + 'T00:00:00');
+                        const hasDiff = Boolean(pe) !== Boolean(ie) || (pe?.type !== ie?.type);
+                        return (
+                          <tr key={date} className={cn('group', hasDiff && 'bg-amber-50/70 dark:bg-amber-950/15')}>
+                            <td className="py-2 font-mono text-muted-foreground">
+                              {d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                            </td>
+                            <td className="py-2 px-3 text-center"><Badge entry={pe} /></td>
+                            <td className="py-2 px-3 text-center"><Badge entry={ie} /></td>
+                            <td className="py-2 text-right">
+                              {pe && (
+                                <span className="inline-flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => handleKuPlanEdit(empId, date, 'frei')}
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-muted hover:bg-muted/70 text-muted-foreground hover:text-foreground transition-colors"
+                                    title="In Frei (F) ändern"
+                                  >→ F</button>
+                                  <button
+                                    onClick={() => handleKuPlanEdit(empId, date, 'delete')}
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 hover:bg-red-200 dark:bg-red-950/30 dark:hover:bg-red-950/60 text-red-600 dark:text-red-400 transition-colors"
+                                    title="Plan-Eintrag löschen"
+                                  >×</button>
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
+              <p className="text-[10px] text-muted-foreground/50 pt-1">
+                Aktionen (→F, ×) ändern nur den Plan-Dienstplan. Hover über Zeile zum Anzeigen.
+              </p>
             </DialogContent>
           </Dialog>
         );
