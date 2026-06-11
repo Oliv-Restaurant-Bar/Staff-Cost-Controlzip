@@ -489,14 +489,37 @@ function loadKUDetailFromIstStorage(year: number, month: number, keyFn: (k: stri
 }
 
 /** Checkbox: K/U-Kosten in Budget-Auswertung einbeziehen */
-function loadKuInBudget(tenantId: string, year: number, month: number): boolean {
+function loadKrankInBudget(tenantId: string, year: number, month: number): boolean {
   try {
-    return localStorage.getItem(`pfix_ku_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`) === '1';
+    // Migrate from old unified key
+    const oldKey = `pfix_ku_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    const newKey = `pfix_krank_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    if (localStorage.getItem(newKey) !== null) {
+      return localStorage.getItem(newKey) === '1';
+    }
+    return localStorage.getItem(oldKey) === '1';
   } catch { return false; }
 }
-function saveKuInBudget(tenantId: string, year: number, month: number, v: boolean): void {
+function saveKrankInBudget(tenantId: string, year: number, month: number, v: boolean): void {
   try {
-    const key = `pfix_ku_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    const key = `pfix_krank_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    if (v) localStorage.setItem(key, '1'); else localStorage.removeItem(key);
+  } catch { /* quota */ }
+}
+function loadUnfallInBudget(tenantId: string, year: number, month: number): boolean {
+  try {
+    // Migrate from old unified key
+    const oldKey = `pfix_ku_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    const newKey = `pfix_unfall_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    if (localStorage.getItem(newKey) !== null) {
+      return localStorage.getItem(newKey) === '1';
+    }
+    return localStorage.getItem(oldKey) === '1';
+  } catch { return false; }
+}
+function saveUnfallInBudget(tenantId: string, year: number, month: number, v: boolean): void {
+  try {
+    const key = `pfix_unfall_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
     if (v) localStorage.setItem(key, '1'); else localStorage.removeItem(key);
   } catch { /* quota */ }
 }
@@ -1942,7 +1965,8 @@ export default function PersonalFixPage() {
   // Popup: Detail-Tage für einen Mitarbeiter anzeigen
   const [showKuDetail, setShowKuDetail] = useState<{empId: string; empName: string; typeFilter?: 'krank'|'unfall'} | null>(null);
   // Checkbox: K/U-Kosten in Budget-Auswertung einbeziehen
-  const [kuInBudget, setKuInBudget] = useState(false);
+  const [krankInBudget, setKrankInBudget] = useState(false);
+  const [unfallInBudget, setUnfallInBudget] = useState(false);
   // Krank / Unfall separat (Plan + Ist)
   const [kuPlanBreakdown, setKuPlanBreakdown] = useState<Record<string, KUBreakdown>>({});
   const [kuIstBreakdown, setKuIstBreakdown]   = useState<Record<string, KUBreakdown>>({});
@@ -2067,7 +2091,8 @@ export default function PersonalFixPage() {
     setKuIstDays(istKU);
     setKuPlanDetail(loadKUDetailFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     setKuIstDetail(loadKUDetailFromIstStorage(selectedYear, selectedMonth, tenantKey));
-    setKuInBudget(loadKuInBudget(tenantId, selectedYear, selectedMonth));
+    setKrankInBudget(loadKrankInBudget(tenantId, selectedYear, selectedMonth));
+    setUnfallInBudget(loadUnfallInBudget(tenantId, selectedYear, selectedMonth));
     setKuPlanBreakdown(loadKUBreakdownFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
 
@@ -3001,7 +3026,7 @@ export default function PersonalFixPage() {
     (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
   );
   const verfügbarFlexBudget = adjustedPersonnelBudget > 0 ? adjustedPersonnelBudget - pfix.active.fix : 0;
-  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - (ferienInBudget ? totalFerienabbauCHF : 0) - (kuInBudget ? totalKuCHF : 0);
+  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - (ferienInBudget ? totalFerienabbauCHF : 0) + (krankInBudget ? totalKrankCHF : 0) + (unfallInBudget ? totalUnfallCHF : 0);
   // Szenario aktiv wenn Umsatz oder PK überschrieben
   const scenarioActive = budgetRevenue != null || scenarioPkCost != null;
 
@@ -4025,74 +4050,74 @@ export default function PersonalFixPage() {
                 </div>
               )}
 
-              {/* K/U-Zeilen: Krank (orange) + Unfall (rot), optional aktivierbar */}
+              {/* K/U-Zeilen: Krank (grün) + Unfall (grün), optional als Einsparung aktivierbar */}
               {(totalKrankCHF > 0 || totalUnfallCHF > 0) && (
                 <>
                   {totalKrankCHF > 0 && (
                     <div className={cn(
                       'grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed transition-colors',
-                      kuInBudget ? 'border-orange-200 dark:border-orange-800/40' : 'border-border/30',
+                      krankInBudget ? 'border-emerald-200 dark:border-emerald-800/40' : 'border-border/30',
                     )}>
-                      <label htmlFor="ku-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
+                      <label htmlFor="krank-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          id="ku-in-budget"
-                          checked={kuInBudget}
+                          id="krank-in-budget"
+                          checked={krankInBudget}
                           onChange={e => {
                             const v = e.target.checked;
-                            setKuInBudget(v);
-                            saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
+                            setKrankInBudget(v);
+                            saveKrankInBudget(tenantId, selectedYear, selectedMonth, v);
                           }}
-                          className="h-3.5 w-3.5 accent-orange-500 cursor-pointer shrink-0"
+                          className="h-3.5 w-3.5 accent-emerald-600 cursor-pointer shrink-0"
                         />
                         <span className={cn('text-xs transition-colors',
-                          kuInBudget ? 'text-orange-700 dark:text-orange-400' : 'text-muted-foreground/50',
+                          krankInBudget ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/50',
                         )}>
-                          − Krankenkosten (80 %)
+                          {krankInBudget ? '+ Krankenkosten (Einsparung)' : '− Krankenkosten (80 %)'}
                         </span>
                       </label>
                       <div />
                       <span className={cn(
                         'text-right text-xs font-mono tabular-nums transition-colors',
-                        kuInBudget
-                          ? 'font-semibold text-orange-700 dark:text-orange-400'
+                        krankInBudget
+                          ? 'font-semibold text-emerald-700 dark:text-emerald-400'
                           : 'font-normal text-muted-foreground/40',
                       )}>
-                        {fmtCHF(totalKrankCHF)}
+                        {krankInBudget ? '+' : ''}{fmtCHF(totalKrankCHF)}
                       </span>
                     </div>
                   )}
                   {totalUnfallCHF > 0 && (
                     <div className={cn(
                       'grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed transition-colors',
-                      kuInBudget ? 'border-red-200 dark:border-red-800/40' : 'border-border/30',
+                      unfallInBudget ? 'border-emerald-200 dark:border-emerald-800/40' : 'border-border/30',
                     )}>
-                      <label htmlFor="ku-unfall-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
+                      <label htmlFor="unfall-in-budget" className="flex items-center gap-2 cursor-pointer select-none">
                         <input
                           type="checkbox"
-                          id="ku-unfall-in-budget"
-                          checked={kuInBudget}
+                          id="unfall-in-budget"
+                          checked={unfallInBudget}
                           onChange={e => {
                             const v = e.target.checked;
-                            setKuInBudget(v);
-                            saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
+                            setUnfallInBudget(v);
+                            saveUnfallInBudget(tenantId, selectedYear, selectedMonth, v);
                           }}
-                          className="h-3.5 w-3.5 accent-red-500 cursor-pointer shrink-0"
+                          className="h-3.5 w-3.5 accent-emerald-600 cursor-pointer shrink-0"
                         />
                         <span className={cn('text-xs transition-colors',
-                          kuInBudget ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground/50',
+                          unfallInBudget ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground/50',
                         )}>
-                          − Unfallkosten (80 %)
+                          {unfallInBudget ? '+ Unfallkosten (Einsparung)' : '− Unfallkosten (80 %)'}
                         </span>
                       </label>
                       <div />
                       <span className={cn(
                         'text-right text-xs font-mono tabular-nums transition-colors',
-                        kuInBudget
-                          ? 'font-semibold text-red-700 dark:text-red-400'
+                        unfallInBudget
+                          ? 'font-semibold text-emerald-700 dark:text-emerald-400'
                           : 'font-normal text-muted-foreground/40',
                       )}>
-                        {fmtCHF(totalUnfallCHF)}
+                        {unfallInBudget ? '+' : ''}{fmtCHF(totalUnfallCHF)}
                       </span>
                     </div>
                   )}
