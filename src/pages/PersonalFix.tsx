@@ -316,6 +316,75 @@ function loadKUDaysFromPlanStorage(year: number, month: number, keyFn: (k: strin
   } catch { return {}; }
 }
 
+export type KUDayEntry = { date: string; type: string };
+
+/** Detail-Liste: Plan-K/U-Tage pro Mitarbeiter (empId → [{date, type}]) */
+function loadKUDetailFromPlanStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, KUDayEntry[]> {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, KUDayEntry[]> = {};
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const früh = ds?.frühAbsence as string | null | undefined;
+      const spät = ds?.spätAbsence as string | null | undefined;
+      const type = (früh && (SICK_CODES.has(früh) || ACCIDENT_CODES.has(früh))) ? früh
+                 : (spät && (SICK_CODES.has(spät) || ACCIDENT_CODES.has(spät))) ? spät
+                 : null;
+      if (type) {
+        if (!out[empId]) out[empId] = [];
+        out[empId].push({ date, type });
+      }
+    }
+    for (const arr of Object.values(out)) arr.sort((a, b) => a.date.localeCompare(b.date));
+    return out;
+  } catch { return {}; }
+}
+
+/** Detail-Liste: Ist-K/U-Tage pro Mitarbeiter (empId → [{date, type}]) */
+function loadKUDetailFromIstStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, KUDayEntry[]> {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, KUDayEntry[]> = {};
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const type = typeof val === 'object' ? val?.absenceType as string | undefined : undefined;
+      if (type && (SICK_CODES.has(type) || ACCIDENT_CODES.has(type))) {
+        if (!out[empId]) out[empId] = [];
+        out[empId].push({ date, type });
+      }
+    }
+    for (const arr of Object.values(out)) arr.sort((a, b) => a.date.localeCompare(b.date));
+    return out;
+  } catch { return {}; }
+}
+
+/** Checkbox: K/U-Kosten in Budget-Auswertung einbeziehen */
+function loadKuInBudget(tenantId: string, year: number, month: number): boolean {
+  try {
+    return localStorage.getItem(`pfix_ku_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`) === '1';
+  } catch { return false; }
+}
+function saveKuInBudget(tenantId: string, year: number, month: number, v: boolean): void {
+  try {
+    const key = `pfix_ku_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    if (v) localStorage.setItem(key, '1'); else localStorage.removeItem(key);
+  } catch { /* quota */ }
+}
+
 
 /**
  * Liest Ist-Stunden aus localStorage (actual-hours-YYYY-MM = Mirus-Import).
@@ -1744,6 +1813,13 @@ export default function PersonalFixPage() {
   );
   const [weekRevEditKey, setWeekRevEditKey] = useState<string | null>(null);
   const [weekRevEditVal, setWeekRevEditVal] = useState('');
+  // K/U Detail-Daten (welche Tage genau)
+  const [kuPlanDetail, setKuPlanDetail] = useState<Record<string, KUDayEntry[]>>({});
+  const [kuIstDetail, setKuIstDetail]   = useState<Record<string, KUDayEntry[]>>({});
+  // Popup: Detail-Tage für einen Mitarbeiter anzeigen
+  const [showKuDetail, setShowKuDetail] = useState<{empId: string; source: 'plan'|'ist'; empName: string} | null>(null);
+  // Checkbox: K/U-Kosten in Budget-Auswertung einbeziehen
+  const [kuInBudget, setKuInBudget] = useState(false);
   const [scenarioPkCost, setScenarioPkCost] = useState<number | null>(() =>
     loadScenarioPkCost(today.getFullYear(), today.getMonth() + 1, tenantKey),
   );
@@ -1857,11 +1933,14 @@ export default function PersonalFixPage() {
     const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setFerienPlanDays(planFE);
     console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
-    // K/U-Tage aus localStorage (Krank/Unfall 80%) — Plan + Ist
+    // K/U-Tage aus localStorage (Krank/Unfall 80%) — Plan + Ist + Detail
     const planKU = loadKUDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setKuPlanDays(planKU);
     const istKU = loadKUDaysFromStorage(selectedYear, selectedMonth, tenantKey);
     setKuIstDays(istKU);
+    setKuPlanDetail(loadKUDetailFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    setKuIstDetail(loadKUDetailFromIstStorage(selectedYear, selectedMonth, tenantKey));
+    setKuInBudget(loadKuInBudget(tenantId, selectedYear, selectedMonth));
 
     // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
     // This ensures plan data is always current even if the user never opened Dienstplanung
@@ -2688,7 +2767,7 @@ export default function PersonalFixPage() {
     (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
   );
   const verfügbarFlexBudget = adjustedPersonnelBudget > 0 ? adjustedPersonnelBudget - pfix.active.fix : 0;
-  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget;
+  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - (kuInBudget ? totalKuCHF : 0);
   // Szenario aktiv wenn Umsatz oder PK überschrieben
   const scenarioActive = budgetRevenue != null || scenarioPkCost != null;
 
@@ -3674,6 +3753,36 @@ export default function PersonalFixPage() {
                 </span>
               </div>
 
+              {/* K/U-Zeile: nur wenn K/U-Kosten vorhanden */}
+              {totalKuCHF > 0 && (
+                <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-amber-200 dark:border-amber-800/40">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="ku-in-budget"
+                      checked={kuInBudget}
+                      onChange={e => {
+                        const v = e.target.checked;
+                        setKuInBudget(v);
+                        saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
+                      }}
+                      className="h-3.5 w-3.5 accent-amber-500 cursor-pointer"
+                      title="K/U-Kosten in Budget-Auswertung einbeziehen"
+                    />
+                    <label htmlFor="ku-in-budget" className="text-xs text-amber-700 dark:text-amber-400 cursor-pointer select-none">
+                      − K/U-Kosten (80 %)
+                    </label>
+                  </div>
+                  <div />
+                  <span className={cn(
+                    'text-right text-xs font-mono font-semibold tabular-nums',
+                    kuInBudget ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground/40 line-through',
+                  )}>
+                    {fmtCHF(totalKuCHF)}
+                  </span>
+                </div>
+              )}
+
               {/* Wochen-Übersicht — KW-Boxen + Zusammenfassung + aufklappbare Tabelle */}
               {flexByWeek.length > 0 && (
                 <div className="pt-3 pb-1 space-y-3">
@@ -4650,16 +4759,42 @@ export default function PersonalFixPage() {
                       const dailyH    = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
                       const wage      = emp.hourlyWage ?? 0;
                       const chf80     = basisDays * dailyH * wage * 0.8;
+                      const hasPlanDetail = (kuPlanDetail[emp.id]?.length ?? 0) > 0;
+                      const hasIstDetail  = (kuIstDetail[emp.id]?.length ?? 0) > 0;
                       return (
                         <tr key={emp.id} className={cn(
                           i % 2 === 0 ? 'bg-background' : 'bg-muted/10',
                         )}>
                           <td className="px-4 py-2.5 font-medium">{emp.name}</td>
                           <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-400">
-                            {planDays > 0 ? planDays : '–'}
+                            {planDays > 0 ? (
+                              <button
+                                onClick={() => setShowKuDetail({ empId: emp.id, source: 'plan', empName: emp.name })}
+                                className={cn(
+                                  'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity',
+                                  hasPlanDetail ? '' : 'no-underline cursor-default',
+                                )}
+                                title={hasPlanDetail ? 'Tage anzeigen' : undefined}
+                                disabled={!hasPlanDetail}
+                              >
+                                {planDays}
+                              </button>
+                            ) : '–'}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono text-amber-500/80 dark:text-amber-500/60">
-                            {istDays > 0 ? istDays : '–'}
+                            {istDays > 0 ? (
+                              <button
+                                onClick={() => setShowKuDetail({ empId: emp.id, source: 'ist', empName: emp.name })}
+                                className={cn(
+                                  'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity',
+                                  hasIstDetail ? '' : 'no-underline cursor-default',
+                                )}
+                                title={hasIstDetail ? 'Tage anzeigen' : undefined}
+                                disabled={!hasIstDetail}
+                              >
+                                {istDays}
+                              </button>
+                            ) : '–'}
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
@@ -5014,6 +5149,51 @@ export default function PersonalFixPage() {
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* ── K/U-Detail-Popup: welche Tage genau ──────────────────────────── */}
+      {showKuDetail && (() => {
+        const { empId, source, empName } = showKuDetail;
+        const entries = source === 'plan' ? (kuPlanDetail[empId] ?? []) : (kuIstDetail[empId] ?? []);
+        const label   = source === 'plan' ? 'Plan-Dienstplan' : 'Mirus Ist';
+        return (
+          <Dialog open onOpenChange={open => { if (!open) setShowKuDetail(null); }}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle className="text-sm">
+                  K/U-Tage — {empName}
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">({label})</span>
+                </DialogTitle>
+              </DialogHeader>
+              {entries.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">Keine Detail-Daten verfügbar.</p>
+              ) : (
+                <ul className="divide-y divide-border text-sm">
+                  {entries.map(({ date, type }) => {
+                    const d = new Date(date + 'T00:00:00');
+                    const isK = SICK_CODES.has(type);
+                    return (
+                      <li key={date} className="flex items-center justify-between py-1.5 px-1">
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                        </span>
+                        <span className={cn(
+                          'text-xs font-semibold px-2 py-0.5 rounded-full',
+                          isK
+                            ? 'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                            : 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
+                        )}>
+                          {isK ? 'Krank' : 'Unfall'}
+                          <span className="ml-1 opacity-60 text-[10px]">{type}</span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }
