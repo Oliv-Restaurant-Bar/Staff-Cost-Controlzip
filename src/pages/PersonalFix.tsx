@@ -316,6 +316,68 @@ function loadKUDaysFromPlanStorage(year: number, month: number, keyFn: (k: strin
   } catch { return {}; }
 }
 
+/** Detail-Liste: Ist-FE-Tage pro Mitarbeiter (empId → [{date}]) */
+function loadFerienDetailFromStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, { date: string }[]> {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, { date: string }[]> = {};
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
+      if (absenceType === 'FE') {
+        if (!out[empId]) out[empId] = [];
+        out[empId].push({ date });
+      }
+    }
+    for (const arr of Object.values(out)) arr.sort((a, b) => a.date.localeCompare(b.date));
+    return out;
+  } catch { return {}; }
+}
+
+/** Detail-Liste: Plan-FE-Tage pro Mitarbeiter (empId → [{date}]) */
+function loadFerienDetailFromPlanStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, { date: string }[]> {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, { date: string }[]> = {};
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') {
+        if (!out[empId]) out[empId] = [];
+        out[empId].push({ date });
+      }
+    }
+    for (const arr of Object.values(out)) arr.sort((a, b) => a.date.localeCompare(b.date));
+    return out;
+  } catch { return {}; }
+}
+
+/** Checkbox: Ferienabbau in Budget-Auswertung einbeziehen */
+function loadFerienInBudget(tenantId: string, year: number, month: number): boolean {
+  try {
+    return localStorage.getItem(`pfix_ferien_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`) === '1';
+  } catch { return false; }
+}
+function saveFerienInBudget(tenantId: string, year: number, month: number, v: boolean): void {
+  try {
+    const key = `pfix_ferien_budget_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    if (v) localStorage.setItem(key, '1'); else localStorage.removeItem(key);
+  } catch { /* quota */ }
+}
+
 export type KUDayEntry = { date: string; type: string };
 
 /** Detail-Liste: Plan-K/U-Tage pro Mitarbeiter (empId → [{date, type}]) */
@@ -1788,6 +1850,13 @@ export default function PersonalFixPage() {
   const [kuIstDays, setKuIstDays] = useState<Record<string, number>>({});
   // Ferienabbau Drill-down aufgeklappt
   const [showFerienDetail, setShowFerienDetail] = useState(false);
+  // Ferien Detail-Daten (welche Tage genau)
+  const [ferienPlanDetail, setFerienPlanDetail] = useState<Record<string, { date: string }[]>>({});
+  const [ferienIstDetail, setFerienIstDetail]   = useState<Record<string, { date: string }[]>>({});
+  // Popup: Detail-Tage für einen Mitarbeiter anzeigen
+  const [showFerienDayDetail, setShowFerienDayDetail] = useState<{empId: string; source: 'plan'|'ist'; empName: string} | null>(null);
+  // Checkbox: Ferienabbau in Budget-Auswertung einbeziehen
+  const [ferienInBudget, setFerienInBudget] = useState(false);
   // Tagesumsätze für den gewählten Monat (für Stichtag Controlling)
   const [monthlyRevenues, setMonthlyRevenues] = useState<Record<string, { actualRevenue?: number; takeawayRevenue?: number }>>({});
   // Manuelle Umsatz-Annahme für PKQ-Berechnung (gespeichert per Monat/Tenant)
@@ -1933,6 +2002,9 @@ export default function PersonalFixPage() {
     const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setFerienPlanDays(planFE);
     console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
+    setFerienPlanDetail(loadFerienDetailFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    setFerienIstDetail(loadFerienDetailFromStorage(selectedYear, selectedMonth, tenantKey));
+    setFerienInBudget(loadFerienInBudget(tenantId, selectedYear, selectedMonth));
     // K/U-Tage aus localStorage (Krank/Unfall 80%) — Plan + Ist + Detail
     const planKU = loadKUDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setKuPlanDays(planKU);
@@ -2767,7 +2839,7 @@ export default function PersonalFixPage() {
     (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
   );
   const verfügbarFlexBudget = adjustedPersonnelBudget > 0 ? adjustedPersonnelBudget - pfix.active.fix : 0;
-  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - (kuInBudget ? totalKuCHF : 0);
+  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - (ferienInBudget ? totalFerienabbauCHF : 0) - (kuInBudget ? totalKuCHF : 0);
   // Szenario aktiv wenn Umsatz oder PK überschrieben
   const scenarioActive = budgetRevenue != null || scenarioPkCost != null;
 
@@ -3753,6 +3825,36 @@ export default function PersonalFixPage() {
                 </span>
               </div>
 
+              {/* Ferienabbau-Zeile: nur wenn Ferienabbau vorhanden */}
+              {totalFerienabbauCHF > 0 && (
+                <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-blue-200 dark:border-blue-800/40">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="ferien-in-budget"
+                      checked={ferienInBudget}
+                      onChange={e => {
+                        const v = e.target.checked;
+                        setFerienInBudget(v);
+                        saveFerienInBudget(tenantId, selectedYear, selectedMonth, v);
+                      }}
+                      className="h-3.5 w-3.5 accent-blue-500 cursor-pointer"
+                      title="Ferienabbau in Budget-Auswertung einbeziehen"
+                    />
+                    <label htmlFor="ferien-in-budget" className="text-xs text-blue-700 dark:text-blue-400 cursor-pointer select-none">
+                      − Ferienabbau (FE)
+                    </label>
+                  </div>
+                  <div />
+                  <span className={cn(
+                    'text-right text-xs font-mono font-semibold tabular-nums',
+                    ferienInBudget ? 'text-blue-700 dark:text-blue-400' : 'text-muted-foreground/40 line-through',
+                  )}>
+                    {fmtCHF(totalFerienabbauCHF)}
+                  </span>
+                </div>
+              )}
+
               {/* K/U-Zeile: nur wenn K/U-Kosten vorhanden */}
               {totalKuCHF > 0 && (
                 <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-amber-200 dark:border-amber-800/40">
@@ -4693,11 +4795,41 @@ export default function PersonalFixPage() {
                         const wage     = emp.hourlyWage ?? 0;
                         const planCHF  = planDays * dailyH * wage;
                         const istCHF   = istDays  * dailyH * wage;
+                        const hasPlanDetail = (ferienPlanDetail[emp.id]?.length ?? 0) > 0;
+                        const hasIstDetail  = (ferienIstDetail[emp.id]?.length ?? 0) > 0;
                         return (
                           <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
                             <td className="px-4 py-2 font-medium">{emp.name}</td>
-                            <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{planDays > 0 ? planDays : '–'}</td>
-                            <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{istDays > 0 ? istDays : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">
+                              {planDays > 0 ? (
+                                <button
+                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'plan', empName: emp.name })}
+                                  className={cn(
+                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
+                                    hasPlanDetail ? 'cursor-pointer' : 'no-underline cursor-default',
+                                  )}
+                                  title={hasPlanDetail ? 'Tage anzeigen' : undefined}
+                                  disabled={!hasPlanDetail}
+                                >
+                                  {planDays}
+                                </button>
+                              ) : '–'}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">
+                              {istDays > 0 ? (
+                                <button
+                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'ist', empName: emp.name })}
+                                  className={cn(
+                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
+                                    hasIstDetail ? 'cursor-pointer' : 'no-underline cursor-default',
+                                  )}
+                                  title={hasIstDetail ? 'Tage anzeigen' : undefined}
+                                  disabled={!hasIstDetail}
+                                >
+                                  {istDays}
+                                </button>
+                              ) : '–'}
+                            </td>
                             <td className="px-3 py-2 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
                             <td className="px-3 py-2 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
                             <td className="px-3 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{planCHF > 0 ? fmtCHF(planCHF) : '–'}</td>
@@ -5149,6 +5281,44 @@ export default function PersonalFixPage() {
           })()}
         </DialogContent>
       </Dialog>
+
+      {/* ── Ferienabbau-Detail-Popup: welche Tage genau ─────────────────── */}
+      {showFerienDayDetail && (() => {
+        const { empId, source, empName } = showFerienDayDetail;
+        const entries = source === 'plan' ? (ferienPlanDetail[empId] ?? []) : (ferienIstDetail[empId] ?? []);
+        const label   = source === 'plan' ? 'Plan-Dienstplan' : 'Mirus Ist';
+        return (
+          <Dialog open onOpenChange={open => { if (!open) setShowFerienDayDetail(null); }}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle className="text-sm">
+                  Ferientage — {empName}
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">({label})</span>
+                </DialogTitle>
+              </DialogHeader>
+              {entries.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">Keine Detail-Daten verfügbar.</p>
+              ) : (
+                <ul className="divide-y divide-border text-sm">
+                  {entries.map(({ date }) => {
+                    const d = new Date(date + 'T00:00:00');
+                    return (
+                      <li key={date} className="flex items-center justify-between py-1.5 px-1">
+                        <span className="font-mono text-xs text-muted-foreground">
+                          {d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                        </span>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                          Ferien
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
 
       {/* ── K/U-Detail-Popup: welche Tage genau ──────────────────────────── */}
       {showKuDetail && (() => {
