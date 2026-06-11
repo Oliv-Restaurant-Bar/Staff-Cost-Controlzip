@@ -4981,7 +4981,7 @@ export default function PersonalFixPage() {
                 <Calendar className="h-4 w-4 text-blue-500" />
                 Ferienabbau — Mitarbeiter-Detail
                 <Badge variant="secondary" className="text-xs">
-                  {variableEmployees.filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0).length} MA
+                  {[...fixedEmployees, ...variableEmployees].filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0).length} MA
                 </Badge>
               </div>
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -5005,9 +5005,10 @@ export default function PersonalFixPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {variableEmployees
+                    {[...fixedEmployees, ...variableEmployees]
                       .filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0)
                       .map((emp, i) => {
+                        const isFixed   = fixedEmployees.some(fe => fe.id === emp.id);
                         const planDays = ferienPlanDays[emp.id] ?? 0;
                         const istDays  = ferienIstDays[emp.id] ?? 0;
                         const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
@@ -5018,7 +5019,16 @@ export default function PersonalFixPage() {
                         const hasIstDetail  = (ferienIstDetail[emp.id]?.length ?? 0) > 0;
                         return (
                           <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                            <td className="px-4 py-2 font-medium">{emp.name}</td>
+                            <td className="px-4 py-2 font-medium">
+                              <div className="flex items-center gap-1.5">
+                                {emp.name}
+                                {isFixed && (
+                                  <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
+                                    Fixlohn
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">
                               {planDays > 0 ? (
                                 <button
