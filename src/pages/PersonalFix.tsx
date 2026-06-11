@@ -378,6 +378,60 @@ function saveFerienInBudget(tenantId: string, year: number, month: number, v: bo
   } catch { /* quota */ }
 }
 
+export type KUBreakdown = { krank: number; unfall: number };
+
+/** Krank / Unfall separat aus Plan-Dienstplan (schedule-v2) */
+function loadKUBreakdownFromPlanStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, KUBreakdown> {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, KUBreakdown> = {};
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const früh = ds?.frühAbsence as string | null | undefined;
+      const spät = ds?.spätAbsence as string | null | undefined;
+      const type = (früh && (SICK_CODES.has(früh) || ACCIDENT_CODES.has(früh))) ? früh
+                 : (spät && (SICK_CODES.has(spät) || ACCIDENT_CODES.has(spät))) ? spät
+                 : null;
+      if (!type) continue;
+      if (!out[empId]) out[empId] = { krank: 0, unfall: 0 };
+      if (SICK_CODES.has(type)) out[empId].krank++;
+      else out[empId].unfall++;
+    }
+    return out;
+  } catch { return {}; }
+}
+
+/** Krank / Unfall separat aus Ist-Stunden (actual-hours) */
+function loadKUBreakdownFromStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, KUBreakdown> {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, KUBreakdown> = {};
+    for (const [cellKey, val] of Object.entries(data)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const type = typeof val === 'object' ? val?.absenceType as string | undefined : undefined;
+      if (!type || (!SICK_CODES.has(type) && !ACCIDENT_CODES.has(type))) continue;
+      if (!out[empId]) out[empId] = { krank: 0, unfall: 0 };
+      if (SICK_CODES.has(type)) out[empId].krank++;
+      else out[empId].unfall++;
+    }
+    return out;
+  } catch { return {}; }
+}
+
 export type KUDayEntry = { date: string; type: string };
 
 /** Detail-Liste: Plan-K/U-Tage pro Mitarbeiter (empId → [{date, type}]) */
@@ -1886,9 +1940,12 @@ export default function PersonalFixPage() {
   const [kuPlanDetail, setKuPlanDetail] = useState<Record<string, KUDayEntry[]>>({});
   const [kuIstDetail, setKuIstDetail]   = useState<Record<string, KUDayEntry[]>>({});
   // Popup: Detail-Tage für einen Mitarbeiter anzeigen
-  const [showKuDetail, setShowKuDetail] = useState<{empId: string; source: 'plan'|'ist'; empName: string} | null>(null);
+  const [showKuDetail, setShowKuDetail] = useState<{empId: string; source: 'plan'|'ist'; empName: string; typeFilter?: 'krank'|'unfall'} | null>(null);
   // Checkbox: K/U-Kosten in Budget-Auswertung einbeziehen
   const [kuInBudget, setKuInBudget] = useState(false);
+  // Krank / Unfall separat (Plan + Ist)
+  const [kuPlanBreakdown, setKuPlanBreakdown] = useState<Record<string, KUBreakdown>>({});
+  const [kuIstBreakdown, setKuIstBreakdown]   = useState<Record<string, KUBreakdown>>({});
   const [scenarioPkCost, setScenarioPkCost] = useState<number | null>(() =>
     loadScenarioPkCost(today.getFullYear(), today.getMonth() + 1, tenantKey),
   );
@@ -2013,6 +2070,8 @@ export default function PersonalFixPage() {
     setKuPlanDetail(loadKUDetailFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     setKuIstDetail(loadKUDetailFromIstStorage(selectedYear, selectedMonth, tenantKey));
     setKuInBudget(loadKuInBudget(tenantId, selectedYear, selectedMonth));
+    setKuPlanBreakdown(loadKUBreakdownFromPlanStorage(selectedYear, selectedMonth, tenantKey));
+    setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
 
     // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
     // This ensures plan data is always current even if the user never opened Dienstplanung
@@ -4872,62 +4931,60 @@ export default function PersonalFixPage() {
                 )}
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[480px]">
+                <table className="w-full text-xs min-w-[600px]">
                   <thead>
                     <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
-                      <th className="px-3 py-2 text-right font-medium text-amber-600">Tage Plan</th>
-                      <th className="px-3 py-2 text-right font-medium text-amber-500">Tage Ist</th>
-                      <th className="px-3 py-2 text-right font-medium">h / Tag</th>
-                      <th className="px-3 py-2 text-right font-medium">CHF / h</th>
-                      <th className="px-3 py-2 text-right font-medium">80 % CHF (Info)</th>
+                      <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Mitarbeiter</th>
+                      <th className="px-2 py-1 text-center font-medium text-orange-600 border-b border-border/40" colSpan={2}>Krank (K)</th>
+                      <th className="px-2 py-1 text-center font-medium text-red-600 border-b border-border/40" colSpan={2}>Unfall (U)</th>
+                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>h / Tag</th>
+                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>CHF / h</th>
+                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>80 % CHF</th>
+                    </tr>
+                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                      <th className="px-2 py-1 text-right font-medium text-orange-500">Plan</th>
+                      <th className="px-2 py-1 text-right font-medium text-orange-400/80">Ist</th>
+                      <th className="px-2 py-1 text-right font-medium text-red-500">Plan</th>
+                      <th className="px-2 py-1 text-right font-medium text-red-400/80">Ist</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {empWithKU.map((emp, i) => {
+                      const planBrk   = kuPlanBreakdown[emp.id] ?? { krank: 0, unfall: 0 };
+                      const istBrk    = kuIstBreakdown[emp.id]  ?? { krank: 0, unfall: 0 };
                       const planDays  = kuPlanDays[emp.id] ?? 0;
-                      const istDays   = kuIstDays[emp.id] ?? 0;
+                      const istDays   = kuIstDays[emp.id]  ?? 0;
                       const basisDays = planDays > 0 ? planDays : istDays;
                       const dailyH    = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
                       const wage      = emp.hourlyWage ?? 0;
                       const chf80     = basisDays * dailyH * wage * 0.8;
-                      const hasPlanDetail = (kuPlanDetail[emp.id]?.length ?? 0) > 0;
-                      const hasIstDetail  = (kuIstDetail[emp.id]?.length ?? 0) > 0;
+                      const hasKPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => SICK_CODES.has(e.type));
+                      const hasKIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => SICK_CODES.has(e.type));
+                      const hasUPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => ACCIDENT_CODES.has(e.type));
+                      const hasUIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => ACCIDENT_CODES.has(e.type));
+                      const mkBtn = (
+                        val: number,
+                        src: 'plan'|'ist',
+                        tf: 'krank'|'unfall',
+                        hasDetail: boolean,
+                        cls: string,
+                      ) => val > 0 ? (
+                        <button
+                          onClick={() => setShowKuDetail({ empId: emp.id, source: src, empName: emp.name, typeFilter: tf })}
+                          className={cn('tabular-nums', hasDetail ? 'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity' : 'cursor-default')}
+                          title={hasDetail ? 'Tage anzeigen' : undefined}
+                          disabled={!hasDetail}
+                        >
+                          <span className={cls}>{val}</span>
+                        </button>
+                      ) : <span className="text-muted-foreground/40">–</span>;
                       return (
-                        <tr key={emp.id} className={cn(
-                          i % 2 === 0 ? 'bg-background' : 'bg-muted/10',
-                        )}>
+                        <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
                           <td className="px-4 py-2.5 font-medium">{emp.name}</td>
-                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-400">
-                            {planDays > 0 ? (
-                              <button
-                                onClick={() => setShowKuDetail({ empId: emp.id, source: 'plan', empName: emp.name })}
-                                className={cn(
-                                  'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity',
-                                  hasPlanDetail ? '' : 'no-underline cursor-default',
-                                )}
-                                title={hasPlanDetail ? 'Tage anzeigen' : undefined}
-                                disabled={!hasPlanDetail}
-                              >
-                                {planDays}
-                              </button>
-                            ) : '–'}
-                          </td>
-                          <td className="px-3 py-2.5 text-right font-mono text-amber-500/80 dark:text-amber-500/60">
-                            {istDays > 0 ? (
-                              <button
-                                onClick={() => setShowKuDetail({ empId: emp.id, source: 'ist', empName: emp.name })}
-                                className={cn(
-                                  'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity',
-                                  hasIstDetail ? '' : 'no-underline cursor-default',
-                                )}
-                                title={hasIstDetail ? 'Tage anzeigen' : undefined}
-                                disabled={!hasIstDetail}
-                              >
-                                {istDays}
-                              </button>
-                            ) : '–'}
-                          </td>
+                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.krank, 'plan', 'krank', hasKPlanDetail, 'text-orange-600 dark:text-orange-400')}</td>
+                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.krank,  'ist',  'krank', hasKIstDetail,  'text-orange-500/70 dark:text-orange-400/60')}</td>
+                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.unfall, 'plan', 'unfall', hasUPlanDetail, 'text-red-600 dark:text-red-400')}</td>
+                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.unfall, 'ist',  'unfall', hasUIstDetail,  'text-red-500/70 dark:text-red-400/60')}</td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
                           <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-700 dark:text-amber-400">
@@ -4937,18 +4994,29 @@ export default function PersonalFixPage() {
                       );
                     })}
                   </tbody>
-                  {totalKuCHF > 0 && (
-                    <tfoot>
-                      <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold">
-                        <td className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" colSpan={5}>Total K/U (80 %, nur Info)</td>
-                        <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
-                      </tr>
-                    </tfoot>
-                  )}
+                  {totalKuCHF > 0 && (() => {
+                    const totKP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.krank  ?? 0), 0);
+                    const totKI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.krank   ?? 0), 0);
+                    const totUP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.unfall  ?? 0), 0);
+                    const totUI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.unfall   ?? 0), 0);
+                    return (
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold text-xs">
+                          <td className="px-4 py-2 text-amber-800 dark:text-amber-300">Total</td>
+                          <td className="px-2 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{totKP > 0 ? totKP : '–'}</td>
+                          <td className="px-2 py-2 text-right font-mono text-orange-500/70">{totKI > 0 ? totKI : '–'}</td>
+                          <td className="px-2 py-2 text-right font-mono text-red-600 dark:text-red-400">{totUP > 0 ? totUP : '–'}</td>
+                          <td className="px-2 py-2 text-right font-mono text-red-500/70">{totUI > 0 ? totUI : '–'}</td>
+                          <td colSpan={2} />
+                          <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
                 </table>
               </div>
               <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
-                Nur Information — fliesst nicht in die Personalkosten ein. Basis: Tage Plan × h/Tag × CHF/h × 80 % (bei fehlendem Plan: Ist-Tage).
+                Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × CHF/h × 80 % (bei fehlendem Plan: Ist-Tage).
               </p>
             </section>
           );
@@ -5322,15 +5390,19 @@ export default function PersonalFixPage() {
 
       {/* ── K/U-Detail-Popup: welche Tage genau ──────────────────────────── */}
       {showKuDetail && (() => {
-        const { empId, source, empName } = showKuDetail;
-        const entries = source === 'plan' ? (kuPlanDetail[empId] ?? []) : (kuIstDetail[empId] ?? []);
+        const { empId, source, empName, typeFilter } = showKuDetail;
+        const allEntries = source === 'plan' ? (kuPlanDetail[empId] ?? []) : (kuIstDetail[empId] ?? []);
+        const entries = typeFilter === 'krank'  ? allEntries.filter(e => SICK_CODES.has(e.type))
+                       : typeFilter === 'unfall' ? allEntries.filter(e => ACCIDENT_CODES.has(e.type))
+                       : allEntries;
         const label   = source === 'plan' ? 'Plan-Dienstplan' : 'Mirus Ist';
+        const typeLabel = typeFilter === 'krank' ? 'Krank' : typeFilter === 'unfall' ? 'Unfall' : 'K/U';
         return (
           <Dialog open onOpenChange={open => { if (!open) setShowKuDetail(null); }}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
                 <DialogTitle className="text-sm">
-                  K/U-Tage — {empName}
+                  {typeLabel}-Tage — {empName}
                   <span className="ml-2 text-xs font-normal text-muted-foreground">({label})</span>
                 </DialogTitle>
               </DialogHeader>
