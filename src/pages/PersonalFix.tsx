@@ -38,6 +38,7 @@ import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { SICK_CODES, ACCIDENT_CODES } from '@/lib/absence-utils';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -258,6 +259,51 @@ function loadFerienDaysFromPlanStorage(year: number, month: number, keyFn: (k: s
     }
     return out;
   } catch { return {}; }
+}
+
+/**
+ * Liest K/U-Absenztage aus localStorage (actual-hours-YYYY-MM).
+ * Zählt Einträge mit absenceType in SICK_CODES oder ACCIDENT_CODES.
+ * Gibt eine Map empId → Anzahl K+U-Tage zurück.
+ */
+function loadKUDaysFromStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  const key = keyFn(`actual-hours-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, number> = {};
+    for (const [cellKey, val] of Object.entries(data)) {
+      const entryDate = cellKey.slice(-10);
+      if (!entryDate.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const absenceType = typeof val === 'object' ? val?.absenceType : undefined;
+      if (absenceType && (SICK_CODES.has(absenceType) || ACCIDENT_CODES.has(absenceType))) {
+        out[empId] = (out[empId] ?? 0) + 1;
+      }
+    }
+    return out;
+  } catch { return {}; }
+}
+
+/** Lädt die Menge der MA-IDs, für die K/U-Tage als 80%-Personalkosten gelten. */
+function loadSick80pctEnabled(tenantId: string, year: number, month: number): Set<string> {
+  try {
+    const key = `pfix_sick80pct_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch { return new Set(); }
+}
+
+/** Speichert die aktivierten MA-IDs für K/U 80%-Personalkosten in localStorage. */
+function saveSick80pctEnabled(tenantId: string, year: number, month: number, s: Set<string>): void {
+  try {
+    const key = `pfix_sick80pct_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
+    localStorage.setItem(key, JSON.stringify([...s]));
+  } catch { /* quota */ }
 }
 
 /**
@@ -1656,6 +1702,12 @@ export default function PersonalFixPage() {
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
   // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
   const [ferienPlanDays, setFerienPlanDays] = useState<Record<string, number>>({});
+  // empId → Anzahl K+U-Tage im Ist (absenceType in SICK_CODES|ACCIDENT_CODES)
+  const [kuIstDays, setKuIstDays] = useState<Record<string, number>>({});
+  // Menge der MA-IDs, für die K/U-Tage als 80%-Personalkosten gelten
+  const [sick80pctEnabled, setSick80pctEnabled] = useState<Set<string>>(new Set());
+  // Ferienabbau Drill-down aufgeklappt
+  const [showFerienDetail, setShowFerienDetail] = useState(false);
   // Tagesumsätze für den gewählten Monat (für Stichtag Controlling)
   const [monthlyRevenues, setMonthlyRevenues] = useState<Record<string, { actualRevenue?: number; takeawayRevenue?: number }>>({});
   // Manuelle Umsatz-Annahme für PKQ-Berechnung (gespeichert per Monat/Tenant)
@@ -1794,6 +1846,10 @@ export default function PersonalFixPage() {
     const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setFerienPlanDays(planFE);
     console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
+    // K/U-Tage aus localStorage (Krank/Unfall 80%)
+    const istKU = loadKUDaysFromStorage(selectedYear, selectedMonth, tenantKey);
+    setKuIstDays(istKU);
+    setSick80pctEnabled(loadSick80pctEnabled(tenantId, selectedYear, selectedMonth));
 
     // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
     // This ensures plan data is always current even if the user never opened Dienstplanung
@@ -2209,6 +2265,21 @@ export default function PersonalFixPage() {
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (emp.hourlyWage ?? 0);
   }, [ferienPlanDays]);
+
+  // ── K/U 80%-Kosten ───────────────────────────────────────────────────────────
+  // K/U-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn × 80 %
+  // Nur für MA, die per Checkbox im PersonalFix aktiviert sind.
+  const getEmpKuCHF = useCallback((emp: Employee): number => {
+    const days = kuIstDays[emp.id] ?? 0;
+    if (!days || !sick80pctEnabled.has(emp.id)) return 0;
+    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
+  }, [kuIstDays, sick80pctEnabled]);
+
+  const totalKuCHF = useMemo(() =>
+    variableEmployees.reduce((s, e) => s + getEmpKuCHF(e), 0),
+    [variableEmployees, getEmpKuCHF],
+  );
 
   // Ferienabbau Plan + Ist gesamt (für Stichtag-Controlling)
   const ferienIstTotalCHF = useMemo(() =>
@@ -4455,6 +4526,166 @@ export default function PersonalFixPage() {
           );
         })()}
 
+        {/* ── Ferienabbau Drill-down ──────────────────────────────────────── */}
+        {(ferienIstTotalCHF > 0 || ferienPlanTotalCHF > 0) && (
+          <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+            <button
+              onClick={() => setShowFerienDetail(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-blue-50/40 dark:bg-blue-950/10 hover:bg-blue-50/70 dark:hover:bg-blue-950/20 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
+                <Calendar className="h-4 w-4 text-blue-500" />
+                Ferienabbau — Mitarbeiter-Detail
+                <Badge variant="secondary" className="text-xs">
+                  {variableEmployees.filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0).length} MA
+                </Badge>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="hidden sm:inline">Plan: <strong className="font-mono text-blue-600 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</strong></span>
+                <span className="hidden sm:inline">Ist: <strong className="font-mono text-orange-600 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</strong></span>
+                <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', showFerienDetail && 'rotate-180')} />
+              </div>
+            </button>
+            {showFerienDetail && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[520px]">
+                  <thead>
+                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                      <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
+                      <th className="px-3 py-2 text-right font-medium text-blue-500">Tage Plan</th>
+                      <th className="px-3 py-2 text-right font-medium text-orange-500">Tage Ist</th>
+                      <th className="px-3 py-2 text-right font-medium">h / Tag</th>
+                      <th className="px-3 py-2 text-right font-medium">CHF / h</th>
+                      <th className="px-3 py-2 text-right font-medium text-blue-600">Plan CHF</th>
+                      <th className="px-3 py-2 text-right font-medium text-orange-600">Ist CHF</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {variableEmployees
+                      .filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0)
+                      .map((emp, i) => {
+                        const planDays = ferienPlanDays[emp.id] ?? 0;
+                        const istDays  = ferienIstDays[emp.id] ?? 0;
+                        const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+                        const wage     = emp.hourlyWage ?? 0;
+                        const planCHF  = planDays * dailyH * wage;
+                        const istCHF   = istDays  * dailyH * wage;
+                        return (
+                          <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
+                            <td className="px-4 py-2 font-medium">{emp.name}</td>
+                            <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{planDays > 0 ? planDays : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{istDays > 0 ? istDays : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{planCHF > 0 ? fmtCHF(planCHF) : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{istCHF > 0 ? fmtCHF(istCHF) : '–'}</td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30 font-bold">
+                      <td className="px-4 py-2 text-sm" colSpan={5}>Total Ferienabbau</td>
+                      <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ── Kranken-/Unfallkosten (80 %) ─────────────────────────────────── */}
+        {(() => {
+          const empWithKU = variableEmployees.filter(e => (kuIstDays[e.id] ?? 0) > 0);
+          if (empWithKU.length === 0) return null;
+          return (
+            <section className="rounded-xl border border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20">
+                <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+                  <AlertCircle className="h-4 w-4 text-amber-500" />
+                  Kranken-/Unfallkosten (80 %)
+                  <Badge variant="secondary" className="text-xs">{empWithKU.length} MA mit K/U-Tagen</Badge>
+                </div>
+                {totalKuCHF > 0 && (
+                  <span className="text-sm font-mono font-bold text-amber-700 dark:text-amber-400">
+                    {fmtCHF(totalKuCHF)}
+                  </span>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[520px]">
+                  <thead>
+                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                      <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
+                      <th className="px-3 py-2 text-right font-medium text-amber-600">K/U-Tage</th>
+                      <th className="px-3 py-2 text-right font-medium">h / Tag</th>
+                      <th className="px-3 py-2 text-right font-medium">CHF / h</th>
+                      <th className="px-3 py-2 text-right font-medium">80 % CHF</th>
+                      <th className="px-3 py-2 text-center font-medium">Als PK erfassen</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {empWithKU.map((emp, i) => {
+                      const days    = kuIstDays[emp.id] ?? 0;
+                      const dailyH  = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+                      const wage    = emp.hourlyWage ?? 0;
+                      const chf80   = days * dailyH * wage * 0.8;
+                      const enabled = sick80pctEnabled.has(emp.id);
+                      const toggle  = () => {
+                        setSick80pctEnabled(prev => {
+                          const next = new Set(prev);
+                          if (next.has(emp.id)) next.delete(emp.id); else next.add(emp.id);
+                          saveSick80pctEnabled(tenantId, selectedYear, selectedMonth, next);
+                          return next;
+                        });
+                      };
+                      return (
+                        <tr key={emp.id} className={cn(
+                          i % 2 === 0 ? 'bg-background' : 'bg-muted/10',
+                          enabled && 'bg-amber-50/50 dark:bg-amber-950/10',
+                        )}>
+                          <td className="px-4 py-2.5 font-medium">{emp.name}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-400">{days}</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
+                          <td className={cn(
+                            'px-3 py-2.5 text-right font-mono font-semibold',
+                            enabled ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground/50',
+                          )}>
+                            {chf80 > 0 ? fmtCHF(chf80) : '–'}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <input
+                              type="checkbox"
+                              checked={enabled}
+                              onChange={toggle}
+                              className="h-4 w-4 rounded border-border accent-amber-500 cursor-pointer"
+                              title={enabled ? 'K/U-Kosten als Personalkosten erfasst' : 'K/U-Kosten als Personalkosten erfassen'}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  {totalKuCHF > 0 && (
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold">
+                        <td className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" colSpan={4}>Total K/U Personalkosten (80 %)</td>
+                        <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
+                        <td className="px-3 py-2" />
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+              <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
+                K/U-Tage × h/Tag × CHF/h × 80 %. Häkchen setzen um die Kosten als Personalkosten zu erfassen (gespeichert pro Monat).
+              </p>
+            </section>
+          );
+        })()}
 
         {/* ── Erklärung ────────────────────────────────────────────────────── */}
         <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
