@@ -262,7 +262,7 @@ function loadFerienDaysFromPlanStorage(year: number, month: number, keyFn: (k: s
 }
 
 /**
- * Liest K/U-Absenztage aus localStorage (actual-hours-YYYY-MM).
+ * Liest K/U-Absenztage aus localStorage (actual-hours-YYYY-MM, IST).
  * Zählt Einträge mit absenceType in SICK_CODES oder ACCIDENT_CODES.
  * Gibt eine Map empId → Anzahl K+U-Tage zurück.
  */
@@ -283,6 +283,34 @@ function loadKUDaysFromStorage(year: number, month: number, keyFn: (k: string) =
       if (absenceType && (SICK_CODES.has(absenceType) || ACCIDENT_CODES.has(absenceType))) {
         out[empId] = (out[empId] ?? 0) + 1;
       }
+    }
+    return out;
+  } catch { return {}; }
+}
+
+/**
+ * Liest K/U-Absenztage aus dem PLAN-Dienstplan (schedule-v2-YYYY-MM).
+ * Zählt Einträge wo frühAbsence oder spätAbsence in SICK_CODES|ACCIDENT_CODES liegt.
+ * Gibt eine Map empId → Anzahl Plan-K/U-Tage zurück.
+ */
+function loadKUDaysFromPlanStorage(year: number, month: number, keyFn: (k: string) => string = k => k): Record<string, number> {
+  const key = keyFn(`schedule-v2-${year}-${String(month).padStart(2, '0')}`);
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const data: Record<string, any> = JSON.parse(raw);
+    const out: Record<string, number> = {};
+    for (const [cellKey, ds] of Object.entries(data)) {
+      const entryDate = cellKey.slice(-10);
+      if (!entryDate.startsWith(monthPrefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!empId) continue;
+      const früh = ds?.frühAbsence as string | null | undefined;
+      const spät = ds?.spätAbsence as string | null | undefined;
+      const hasKU = (früh && (SICK_CODES.has(früh) || ACCIDENT_CODES.has(früh))) ||
+                    (spät && (SICK_CODES.has(spät) || ACCIDENT_CODES.has(spät)));
+      if (hasKU) out[empId] = (out[empId] ?? 0) + 1;
     }
     return out;
   } catch { return {}; }
@@ -1702,7 +1730,9 @@ export default function PersonalFixPage() {
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
   // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
   const [ferienPlanDays, setFerienPlanDays] = useState<Record<string, number>>({});
-  // empId → Anzahl K+U-Tage im Ist (absenceType in SICK_CODES|ACCIDENT_CODES)
+  // empId → Anzahl K+U-Tage im Plan (frühAbsence/spätAbsence in schedule-v2-*)
+  const [kuPlanDays, setKuPlanDays] = useState<Record<string, number>>({});
+  // empId → Anzahl K+U-Tage im Ist (absenceType in SICK_CODES|ACCIDENT_CODES in actual-hours-*)
   const [kuIstDays, setKuIstDays] = useState<Record<string, number>>({});
   // Menge der MA-IDs, für die K/U-Tage als 80%-Personalkosten gelten
   const [sick80pctEnabled, setSick80pctEnabled] = useState<Set<string>>(new Set());
@@ -1846,7 +1876,9 @@ export default function PersonalFixPage() {
     const planFE = loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
     setFerienPlanDays(planFE);
     console.log(`[FERIEN] preserved on reload: ist=${Object.values(istFE).reduce((s, v) => s + v, 0)} plan=${Object.values(planFE).reduce((s, v) => s + v, 0)} FE-Tage gesamt`);
-    // K/U-Tage aus localStorage (Krank/Unfall 80%)
+    // K/U-Tage aus localStorage (Krank/Unfall 80%) — Plan + Ist
+    const planKU = loadKUDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey);
+    setKuPlanDays(planKU);
     const istKU = loadKUDaysFromStorage(selectedYear, selectedMonth, tenantKey);
     setKuIstDays(istKU);
     setSick80pctEnabled(loadSick80pctEnabled(tenantId, selectedYear, selectedMonth));
@@ -2270,11 +2302,14 @@ export default function PersonalFixPage() {
   // K/U-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn × 80 %
   // Nur für MA, die per Checkbox im PersonalFix aktiviert sind.
   const getEmpKuCHF = useCallback((emp: Employee): number => {
-    const days = kuIstDays[emp.id] ?? 0;
+    // Basis: Plan-Tage (wie Ferienabbau); fallback auf Ist wenn kein Plan vorhanden
+    const days = (kuPlanDays[emp.id] ?? 0) > 0
+      ? (kuPlanDays[emp.id] ?? 0)
+      : (kuIstDays[emp.id] ?? 0);
     if (!days || !sick80pctEnabled.has(emp.id)) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
-  }, [kuIstDays, sick80pctEnabled]);
+  }, [kuPlanDays, kuIstDays, sick80pctEnabled]);
 
   const totalKuCHF = useMemo(() =>
     variableEmployees.reduce((s, e) => s + getEmpKuCHF(e), 0),
@@ -4598,7 +4633,9 @@ export default function PersonalFixPage() {
 
         {/* ── Kranken-/Unfallkosten (80 %) ─────────────────────────────────── */}
         {(() => {
-          const empWithKU = variableEmployees.filter(e => (kuIstDays[e.id] ?? 0) > 0);
+          const empWithKU = variableEmployees.filter(e =>
+            (kuPlanDays[e.id] ?? 0) > 0 || (kuIstDays[e.id] ?? 0) > 0
+          );
           if (empWithKU.length === 0) return null;
           return (
             <section className="rounded-xl border border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
@@ -4615,11 +4652,12 @@ export default function PersonalFixPage() {
                 )}
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[520px]">
+                <table className="w-full text-xs min-w-[580px]">
                   <thead>
                     <tr className="bg-muted/30 border-b border-border text-muted-foreground">
                       <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
-                      <th className="px-3 py-2 text-right font-medium text-amber-600">K/U-Tage</th>
+                      <th className="px-3 py-2 text-right font-medium text-amber-600">Tage Plan</th>
+                      <th className="px-3 py-2 text-right font-medium text-amber-500">Tage Ist</th>
                       <th className="px-3 py-2 text-right font-medium">h / Tag</th>
                       <th className="px-3 py-2 text-right font-medium">CHF / h</th>
                       <th className="px-3 py-2 text-right font-medium">80 % CHF</th>
@@ -4628,12 +4666,15 @@ export default function PersonalFixPage() {
                   </thead>
                   <tbody className="divide-y divide-border">
                     {empWithKU.map((emp, i) => {
-                      const days    = kuIstDays[emp.id] ?? 0;
-                      const dailyH  = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-                      const wage    = emp.hourlyWage ?? 0;
-                      const chf80   = days * dailyH * wage * 0.8;
-                      const enabled = sick80pctEnabled.has(emp.id);
-                      const toggle  = () => {
+                      const planDays = kuPlanDays[emp.id] ?? 0;
+                      const istDays  = kuIstDays[emp.id] ?? 0;
+                      // Kostenbasis: Plan-Tage bevorzugt (wie Ferienabbau), Ist als Fallback
+                      const basisDays = planDays > 0 ? planDays : istDays;
+                      const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+                      const wage     = emp.hourlyWage ?? 0;
+                      const chf80    = basisDays * dailyH * wage * 0.8;
+                      const enabled  = sick80pctEnabled.has(emp.id);
+                      const toggle   = () => {
                         setSick80pctEnabled(prev => {
                           const next = new Set(prev);
                           if (next.has(emp.id)) next.delete(emp.id); else next.add(emp.id);
@@ -4647,7 +4688,12 @@ export default function PersonalFixPage() {
                           enabled && 'bg-amber-50/50 dark:bg-amber-950/10',
                         )}>
                           <td className="px-4 py-2.5 font-medium">{emp.name}</td>
-                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-400">{days}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-400">
+                            {planDays > 0 ? planDays : '–'}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-mono text-amber-500/80 dark:text-amber-500/60">
+                            {istDays > 0 ? istDays : '–'}
+                          </td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
                           <td className={cn(
@@ -4672,7 +4718,7 @@ export default function PersonalFixPage() {
                   {totalKuCHF > 0 && (
                     <tfoot>
                       <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold">
-                        <td className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" colSpan={4}>Total K/U Personalkosten (80 %)</td>
+                        <td className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" colSpan={5}>Total K/U Personalkosten (80 %)</td>
                         <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
                         <td className="px-3 py-2" />
                       </tr>
@@ -4681,7 +4727,7 @@ export default function PersonalFixPage() {
                 </table>
               </div>
               <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
-                K/U-Tage × h/Tag × CHF/h × 80 %. Häkchen setzen um die Kosten als Personalkosten zu erfassen (gespeichert pro Monat).
+                Tage Plan × h/Tag × CHF/h × 80 % (bei fehlendem Plan: Ist-Tage). Häkchen setzen um die Kosten als Personalkosten zu erfassen (gespeichert pro Monat).
               </p>
             </section>
           );
