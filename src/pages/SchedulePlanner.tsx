@@ -1507,9 +1507,11 @@ const SchedulePlanner = () => {
     if (absenceType) {
       const isFE = absenceType === 'FE';
       const isKU = absenceType === 'K' || absenceType === 'U';
+      const isF  = absenceType === 'F';
       const absShiftCfg = Object.values(shiftMap).find(s => s.abbrev === absenceType);
       const absHours = absShiftCfg?.hours ?? 0;
-      const shouldCopy = isFE || isKU || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
+      // FE, K, U, F werden immer nach Ist kopiert; andere nur wenn konfigurierte Stunden > 0
+      const shouldCopy = isFE || isKU || isF || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
 
       if (shouldCopy) {
         setActualHoursData(prevActual => {
@@ -1519,18 +1521,18 @@ const SchedulePlanner = () => {
           // Echten Ist-Import (hours > 0, kein absenceType) nicht überschreiben
           if (existing && existing.hours > 0 && !existing.absenceType) return prevActual;
 
-          // FE: 0h + absenceType='FE'; K/U: Stunden + absenceType; andere: nur Stunden
-          const newEntry: ActualHoursEntry = isFE
-            ? { hours: 0, absenceType: 'FE' as const }
+          // FE/F: 0h + absenceType; K/U: konfigurierte Stunden + absenceType; andere: nur Stunden
+          const newEntry: ActualHoursEntry = (isFE || isF)
+            ? { hours: 0, absenceType: absenceType as 'FE' | 'F' }
             : isKU
             ? { hours: absHours, absenceType: absenceType as 'K' | 'U' }
             : { hours: absHours };
 
-          console.log(`[FERIEN] plan->ist übernommen: ${employeeId} ${date} absenceType=${absenceType} → Ist hours=${newEntry.hours}`);
+          console.log(`[PLAN-IST] plan->ist übernommen: ${employeeId} ${date} absenceType=${absenceType} → Ist hours=${newEntry.hours}`);
 
-          // FE-Einträge werden NICHT nach Supabase gespeichert — Supabase hat keine absenceType-Spalte.
-          // K/U: Stunden werden nach Supabase gespeichert; absenceType nur lokal/KV.
-          if (!isFE) {
+          // FE/F: 0h, kein Supabase-Save (keine absenceType-Spalte).
+          // K/U: Stunden nach Supabase; absenceType nur lokal/KV.
+          if (!isFE && !isF) {
             saveActualHourEntry(employeeId, date, newEntry).catch(err =>
               console.error('[SCHEDULE] auto-absence actualHours error:', err)
             );
