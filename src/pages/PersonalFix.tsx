@@ -17,7 +17,7 @@ import {
 } from '@/lib/personalfix-export';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
+import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth, saveScheduleEntry } from '@/lib/supabase-db';
 import {
   loadExtraCostPeople, upsertExtraCostPerson, extraCostPersonToEmployee,
   type ExtraCostPerson,
@@ -2049,10 +2049,8 @@ export default function PersonalFixPage() {
   // scheduleRefreshTick: incremented by schedule-updated listener → triggers re-read
   // without full Supabase round-trip (skip the async enrichment on tick-only changes).
   useEffect(() => {
-    // Fast local read first (instant, no flicker)
+    // Fast local read first (instant, no flicker) — runs on every refresh (tick or month change)
     setPlanHours(loadPlanHoursFromStorage(selectedYear, selectedMonth, tenantKey));
-    setFerienPlanDays(loadFerienDaysFromPlanStorage(selectedYear, selectedMonth, tenantKey));
-    if (scheduleRefreshTick > 0) return; // tick-only refresh: localStorage is already current
     // FE-Ferientage immer aus localStorage (Supabase speichert kein absenceType)
     const istFE = loadFerienDaysFromStorage(selectedYear, selectedMonth, tenantKey);
     setFerienIstDays(istFE);
@@ -2072,6 +2070,10 @@ export default function PersonalFixPage() {
     setKuInBudget(loadKuInBudget(tenantId, selectedYear, selectedMonth));
     setKuPlanBreakdown(loadKUBreakdownFromPlanStorage(selectedYear, selectedMonth, tenantKey));
     setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
+
+    // tick-only refresh (schedule-updated event): localStorage is already current,
+    // skip the expensive async Supabase round-trips.
+    if (scheduleRefreshTick > 0) return;
 
     // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
     // This ensures plan data is always current even if the user never opened Dienstplanung
@@ -2098,19 +2100,10 @@ export default function PersonalFixPage() {
       }
       const scheduleKey = tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
       try {
-        // Merge existing isAdditionalCostPlan / isAdditionalCost flags from localStorage
-        // before overwriting — these are stored locally only and must survive a Supabase reload.
-        const existingRaw = localStorage.getItem(scheduleKey);
-        const existing: Record<string, Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : {};
+        // isAdditionalCostPlan is saved to Supabase by SchedulePlanner → trust Supabase only.
+        // Do NOT copy it from old localStorage (would perpetuate stale flags indefinitely).
+        // isAdditionalCost (actual-hours) is localStorage-only → no merge needed here (handled below).
         const merged: Record<string, unknown> = { ...supabaseSchedule };
-        for (const [cellKey, val] of Object.entries(existing)) {
-          if (val?.isAdditionalCostPlan) {
-            (merged[cellKey] as Record<string, unknown>) = { ...((merged[cellKey] as Record<string, unknown>) ?? {}), isAdditionalCostPlan: true };
-          }
-          if (val?.isAdditionalCost) {
-            (merged[cellKey] as Record<string, unknown>) = { ...((merged[cellKey] as Record<string, unknown>) ?? {}), isAdditionalCost: true };
-          }
-        }
         localStorage.setItem(scheduleKey, JSON.stringify(merged));
       } catch { /* quota exceeded */ }
       // Re-read plan hours and ferien plan from the freshly written cache
@@ -2224,6 +2217,41 @@ export default function PersonalFixPage() {
     setKuIstBreakdown(loadKUBreakdownFromStorage(selectedYear, selectedMonth, tenantKey));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId]);
+
+  // ── Zusatzkosten-Plan-Flags für einen MA bereinigen ──────────────────────
+  // Entfernt isAdditionalCostPlan aus allen Einträgen des MA für den aktuellen Monat
+  // in localStorage UND Supabase (saveScheduleEntry). Danach schedule-updated dispatchen.
+  const clearZusatzkostenPlan = useCallback(async (empId: string, empName: string) => {
+    const mk          = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const scheduleKey = tenantKey(`schedule-v2-${mk}`);
+    try {
+      const raw = localStorage.getItem(scheduleKey);
+      if (!raw) return;
+      const data: Record<string, any> = JSON.parse(raw);
+      const toSave: Array<{ date: string; entry: Record<string, unknown> }> = [];
+      for (const [cellKey, entry] of Object.entries(data)) {
+        const empIdFromKey = cellKey.slice(0, cellKey.length - 11);
+        if (empIdFromKey !== empId) continue;
+        if (!entry?.isAdditionalCostPlan) continue;
+        const date = cellKey.slice(-10);
+        const updated = { ...entry };
+        delete updated.isAdditionalCostPlan;
+        data[cellKey] = updated;
+        toSave.push({ date, entry: updated });
+      }
+      if (toSave.length === 0) return;
+      localStorage.setItem(scheduleKey, JSON.stringify(data));
+      // Sync removals to Supabase
+      await Promise.all(toSave.map(({ date, entry }) => saveScheduleEntry(empId, date, entry)));
+      console.log(`[ZK-CLEAR] ${empName}: ${toSave.length} Einträge bereinigt`);
+      window.dispatchEvent(new CustomEvent('schedule-updated'));
+      toast.success(`Zusatzkosten für ${empName} entfernt (${toSave.length} ${toSave.length === 1 ? 'Tag' : 'Tage'})`);
+    } catch (e) {
+      console.error('[ZK-CLEAR] Fehler beim Bereinigen:', e);
+      toast.error('Fehler beim Entfernen der Zusatzkosten');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantKey]);
 
   // Mandantenwechsel: varHours/varWeekly/etc. neu laden
   useEffect(() => {
@@ -4897,8 +4925,13 @@ export default function PersonalFixPage() {
                                 <div className="flex items-center gap-2">
                                   {row.name}
                                   {isZusatz && (
-                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
                                       Zusatzkosten
+                                      <button
+                                        onClick={e => { e.stopPropagation(); clearZusatzkostenPlan(row.id, row.name); }}
+                                        className="ml-0.5 leading-none text-orange-500 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                                        title="Zusatzkosten-Markierung entfernen"
+                                      >×</button>
                                     </span>
                                   )}
                                   {!isZusatz && row.hourlyWage === 0 && (
