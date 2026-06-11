@@ -2932,7 +2932,7 @@ export default function PersonalFixPage() {
     (sum, w) => sum + (weekIstSet.has(w.weekKey) ? w.istFlex : w.planFlex), 0,
   );
   const verfügbarFlexBudget = adjustedPersonnelBudget > 0 ? adjustedPersonnelBudget - pfix.active.fix : 0;
-  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - (ferienInBudget ? totalFerienabbauCHF : 0) - (kuInBudget ? totalKuCHF : 0);
+  const budgetResultat       = verfügbarFlexBudget - totalFlexForBudget - totalFerienabbauCHF - totalKuCHF;
   // Szenario aktiv wenn Umsatz oder PK überschrieben
   const scenarioActive = budgetRevenue != null || scenarioPkCost != null;
 
@@ -3918,85 +3918,41 @@ export default function PersonalFixPage() {
                 </span>
               </div>
 
-              {/* Ferienabbau-Zeile: nur wenn Ferienabbau vorhanden */}
+              {/* Ferienabbau-Zeile: immer abgezogen wenn vorhanden */}
               {totalFerienabbauCHF > 0 && (
                 <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-blue-200 dark:border-blue-800/40">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="ferien-in-budget"
-                      checked={ferienInBudget}
-                      onChange={e => {
-                        const v = e.target.checked;
-                        setFerienInBudget(v);
-                        saveFerienInBudget(tenantId, selectedYear, selectedMonth, v);
-                      }}
-                      className="h-3.5 w-3.5 accent-blue-500 cursor-pointer"
-                      title="Ferienabbau in Budget-Auswertung einbeziehen"
-                    />
-                    <label htmlFor="ferien-in-budget" className="text-xs text-blue-700 dark:text-blue-400 cursor-pointer select-none">
-                      − Ferienabbau (FE)
-                    </label>
-                  </div>
+                  <span className="text-xs text-blue-700 dark:text-blue-400">
+                    − Ferienabbau (FE)
+                  </span>
                   <div />
-                  <span className={cn(
-                    'text-right text-xs font-mono font-semibold tabular-nums',
-                    ferienInBudget ? 'text-blue-700 dark:text-blue-400' : 'text-muted-foreground/40 line-through',
-                  )}>
+                  <span className="text-right text-xs font-mono font-semibold tabular-nums text-blue-700 dark:text-blue-400">
                     {fmtCHF(totalFerienabbauCHF)}
                   </span>
                 </div>
               )}
 
-              {/* K/U-Zeilen: Krank (orange) + Unfall (rot) separat */}
-              {totalKuCHF > 0 && (
-                <>
-                  {totalKrankCHF > 0 && (
-                    <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-orange-200 dark:border-orange-800/40">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id="ku-in-budget"
-                          checked={kuInBudget}
-                          onChange={e => {
-                            const v = e.target.checked;
-                            setKuInBudget(v);
-                            saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
-                          }}
-                          className="h-3.5 w-3.5 accent-orange-500 cursor-pointer"
-                          title="K/U-Kosten in Budget-Auswertung einbeziehen"
-                        />
-                        <label htmlFor="ku-in-budget" className="text-xs text-orange-700 dark:text-orange-400 cursor-pointer select-none">
-                          − Krankenkosten (80 %)
-                        </label>
-                      </div>
-                      <div />
-                      <span className={cn(
-                        'text-right text-xs font-mono font-semibold tabular-nums',
-                        kuInBudget ? 'text-orange-700 dark:text-orange-400' : 'text-muted-foreground/40 line-through',
-                      )}>
-                        {fmtCHF(totalKrankCHF)}
-                      </span>
-                    </div>
-                  )}
-                  {totalUnfallCHF > 0 && (
-                    <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-red-200 dark:border-red-800/40">
-                      <div className="flex items-center gap-2">
-                        <span className="h-3.5 w-3.5 inline-block" />
-                        <span className="text-xs text-red-700 dark:text-red-400 select-none">
-                          − Unfallkosten (80 %)
-                        </span>
-                      </div>
-                      <div />
-                      <span className={cn(
-                        'text-right text-xs font-mono font-semibold tabular-nums',
-                        kuInBudget ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground/40 line-through',
-                      )}>
-                        {fmtCHF(totalUnfallCHF)}
-                      </span>
-                    </div>
-                  )}
-                </>
+              {/* K/U-Zeilen: Krank (orange) + Unfall (rot), immer abgezogen */}
+              {totalKrankCHF > 0 && (
+                <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-orange-200 dark:border-orange-800/40">
+                  <span className="text-xs text-orange-700 dark:text-orange-400">
+                    − Krankenkosten (80 %)
+                  </span>
+                  <div />
+                  <span className="text-right text-xs font-mono font-semibold tabular-nums text-orange-700 dark:text-orange-400">
+                    {fmtCHF(totalKrankCHF)}
+                  </span>
+                </div>
+              )}
+              {totalUnfallCHF > 0 && (
+                <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-red-200 dark:border-red-800/40">
+                  <span className="text-xs text-red-700 dark:text-red-400">
+                    − Unfallkosten (80 %)
+                  </span>
+                  <div />
+                  <span className="text-right text-xs font-mono font-semibold tabular-nums text-red-700 dark:text-red-400">
+                    {fmtCHF(totalUnfallCHF)}
+                  </span>
+                </div>
               )}
 
               {/* Wochen-Übersicht — KW-Boxen + Zusammenfassung + aufklappbare Tabelle */}
