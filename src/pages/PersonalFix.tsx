@@ -2500,9 +2500,43 @@ export default function PersonalFixPage() {
     return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
   }, [kuPlanDays, kuIstDays]);
 
+  const getEmpKrankCHF = useCallback((emp: Employee): number => {
+    const planK = kuPlanBreakdown[emp.id]?.krank ?? 0;
+    const istK  = kuIstBreakdown[emp.id]?.krank  ?? 0;
+    const days  = planK > 0 ? planK : istK;
+    if (!days) return 0;
+    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
+  }, [kuPlanBreakdown, kuIstBreakdown]);
+
+  const getEmpUnfallCHF = useCallback((emp: Employee): number => {
+    const planU = kuPlanBreakdown[emp.id]?.unfall ?? 0;
+    const istU  = kuIstBreakdown[emp.id]?.unfall  ?? 0;
+    const days  = planU > 0 ? planU : istU;
+    if (!days) return 0;
+    const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+    return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
+  }, [kuPlanBreakdown, kuIstBreakdown]);
+
+  // Alle Mitarbeitenden (Fix + Variable) für K/U-Kosten
+  const allKUEmployees = useMemo(() =>
+    [...fixedEmployees, ...variableEmployees],
+    [fixedEmployees, variableEmployees],
+  );
+
   const totalKuCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + getEmpKuCHF(e), 0),
-    [variableEmployees, getEmpKuCHF],
+    allKUEmployees.reduce((s, e) => s + getEmpKuCHF(e), 0),
+    [allKUEmployees, getEmpKuCHF],
+  );
+
+  const totalKrankCHF = useMemo(() =>
+    allKUEmployees.reduce((s, e) => s + getEmpKrankCHF(e), 0),
+    [allKUEmployees, getEmpKrankCHF],
+  );
+
+  const totalUnfallCHF = useMemo(() =>
+    allKUEmployees.reduce((s, e) => s + getEmpUnfallCHF(e), 0),
+    [allKUEmployees, getEmpUnfallCHF],
   );
 
   // Ferienabbau Plan + Ist gesamt (für Stichtag-Controlling)
@@ -3914,34 +3948,55 @@ export default function PersonalFixPage() {
                 </div>
               )}
 
-              {/* K/U-Zeile: nur wenn K/U-Kosten vorhanden */}
+              {/* K/U-Zeilen: Krank (orange) + Unfall (rot) separat */}
               {totalKuCHF > 0 && (
-                <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-amber-200 dark:border-amber-800/40">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="ku-in-budget"
-                      checked={kuInBudget}
-                      onChange={e => {
-                        const v = e.target.checked;
-                        setKuInBudget(v);
-                        saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
-                      }}
-                      className="h-3.5 w-3.5 accent-amber-500 cursor-pointer"
-                      title="K/U-Kosten in Budget-Auswertung einbeziehen"
-                    />
-                    <label htmlFor="ku-in-budget" className="text-xs text-amber-700 dark:text-amber-400 cursor-pointer select-none">
-                      − K/U-Kosten (80 %)
-                    </label>
-                  </div>
-                  <div />
-                  <span className={cn(
-                    'text-right text-xs font-mono font-semibold tabular-nums',
-                    kuInBudget ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground/40 line-through',
-                  )}>
-                    {fmtCHF(totalKuCHF)}
-                  </span>
-                </div>
+                <>
+                  {totalKrankCHF > 0 && (
+                    <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-orange-200 dark:border-orange-800/40">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="ku-in-budget"
+                          checked={kuInBudget}
+                          onChange={e => {
+                            const v = e.target.checked;
+                            setKuInBudget(v);
+                            saveKuInBudget(tenantId, selectedYear, selectedMonth, v);
+                          }}
+                          className="h-3.5 w-3.5 accent-orange-500 cursor-pointer"
+                          title="K/U-Kosten in Budget-Auswertung einbeziehen"
+                        />
+                        <label htmlFor="ku-in-budget" className="text-xs text-orange-700 dark:text-orange-400 cursor-pointer select-none">
+                          − Krankenkosten (80 %)
+                        </label>
+                      </div>
+                      <div />
+                      <span className={cn(
+                        'text-right text-xs font-mono font-semibold tabular-nums',
+                        kuInBudget ? 'text-orange-700 dark:text-orange-400' : 'text-muted-foreground/40 line-through',
+                      )}>
+                        {fmtCHF(totalKrankCHF)}
+                      </span>
+                    </div>
+                  )}
+                  {totalUnfallCHF > 0 && (
+                    <div className="grid grid-cols-[1fr_52px_120px] items-center py-1.5 border-b border-dashed border-red-200 dark:border-red-800/40">
+                      <div className="flex items-center gap-2">
+                        <span className="h-3.5 w-3.5 inline-block" />
+                        <span className="text-xs text-red-700 dark:text-red-400 select-none">
+                          − Unfallkosten (80 %)
+                        </span>
+                      </div>
+                      <div />
+                      <span className={cn(
+                        'text-right text-xs font-mono font-semibold tabular-nums',
+                        kuInBudget ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground/40 line-through',
+                      )}>
+                        {fmtCHF(totalUnfallCHF)}
+                      </span>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Wochen-Übersicht — KW-Boxen + Zusammenfassung + aufklappbare Tabelle */}
