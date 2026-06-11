@@ -18,6 +18,10 @@ import {
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { loadEmployees, upsertEmployee, loadActualHoursForMonth, loadScheduleForMonth } from '@/lib/supabase-db';
+import {
+  loadExtraCostPeople, upsertExtraCostPerson, extraCostPersonToEmployee,
+  type ExtraCostPerson,
+} from '@/lib/extra-cost-people-db';
 import type { ActualHourEntry } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
@@ -1636,6 +1640,7 @@ export default function PersonalFixPage() {
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
   const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
   const [loading, setLoading] = useState(true);
@@ -1719,12 +1724,16 @@ export default function PersonalFixPage() {
   useEffect(() => {
     setLoading(true);
     console.log(`[EMPLOYEE LOAD] tenant: ${tenantId}`);
-    loadEmployees(tenantId).then(async emps => {
+    Promise.all([
+      loadEmployees(tenantId),
+      loadExtraCostPeople(tenantId),
+    ]).then(async ([emps, extraPeople]) => {
+      setExtraCostPeople(extraPeople.filter(p => p.isActive));
       if (emps) {
         const effectiveDate = firstOfMonth(selectedYear, selectedMonth);
         const enriched = await applyEffectiveWages(emps, effectiveDate, tenantId);
         setEmployees(enriched);
-        console.log(`[EMPLOYEE LOAD] count: ${enriched.length}`);
+        console.log(`[EMPLOYEE LOAD] count: ${enriched.length} + ${extraPeople.length} ExtraCost`);
         // ─── [CONSISTENCY] Standardformat-Logs ───────────────────────────
         console.log(`[CONSISTENCY] tenant: ${tenantId}`);
         console.log(`[CONSISTENCY] personal_fix employees: ${emps.length}`);
@@ -1968,13 +1977,22 @@ export default function PersonalFixPage() {
 
   const handleHourlyWageSaved = useCallback(async (empId: string, val: number) => {
     setSaving(empId);
+    if (String(empId).includes('aush_')) {
+      const person = extraCostPeople.find(p => p.id === empId);
+      if (person) {
+        const saved = await upsertExtraCostPerson({ ...person, hourlyWage: val }, tenantId);
+        if (saved) setExtraCostPeople(prev => prev.map(p => p.id === empId ? saved : p));
+      }
+      setSaving(null);
+      return;
+    }
     const emp = employees.find(e => e.id === empId);
     if (!emp) { setSaving(null); return; }
     const updated: Employee = { ...emp, hourlyWage: val };
     await upsertEmployee(updated, tenantId);
     setEmployees(prev => prev.map(e => e.id === empId ? updated : e));
     setSaving(null);
-  }, [employees, tenantId]);
+  }, [employees, extraCostPeople, tenantId]);
 
   const handleSaved = async (empId: string, field: 'monthlySalary' | 'monthlySalaryWith13th', val: number) => {
     setSaving(empId);
@@ -2001,12 +2019,16 @@ export default function PersonalFixPage() {
     [employees, selectedYear, selectedMonth],
   );
 
-  const variableEmployees = useMemo(() =>
-    employees
-      .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
-      .sort((a, b) => a.name.localeCompare(b.name, 'de')),
-    [employees, selectedYear, selectedMonth],
-  );
+  const variableEmployees = useMemo(() => {
+    const fromEmployees = employees
+      .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth));
+    const existingIds = new Set(fromEmployees.map(e => e.id));
+    const fromExtraCost = extraCostPeople
+      .map(extraCostPersonToEmployee)
+      .filter(e => !existingIds.has(e.id));
+    return [...fromEmployees, ...fromExtraCost]
+      .sort((a, b) => a.name.localeCompare(b.name, 'de'));
+  }, [employees, extraCostPeople, selectedYear, selectedMonth]);
 
   // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
   const missingWageEmployees = useMemo(() =>
