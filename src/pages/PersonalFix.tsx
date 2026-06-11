@@ -316,23 +316,6 @@ function loadKUDaysFromPlanStorage(year: number, month: number, keyFn: (k: strin
   } catch { return {}; }
 }
 
-/** Lädt die Menge der MA-IDs, für die K/U-Tage als 80%-Personalkosten gelten. */
-function loadSick80pctEnabled(tenantId: string, year: number, month: number): Set<string> {
-  try {
-    const key = `pfix_sick80pct_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
-    const raw = localStorage.getItem(key);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw) as string[]);
-  } catch { return new Set(); }
-}
-
-/** Speichert die aktivierten MA-IDs für K/U 80%-Personalkosten in localStorage. */
-function saveSick80pctEnabled(tenantId: string, year: number, month: number, s: Set<string>): void {
-  try {
-    const key = `pfix_sick80pct_${tenantId}_${year}_${String(month).padStart(2, '0')}`;
-    localStorage.setItem(key, JSON.stringify([...s]));
-  } catch { /* quota */ }
-}
 
 /**
  * Liest Ist-Stunden aus localStorage (actual-hours-YYYY-MM = Mirus-Import).
@@ -1734,8 +1717,6 @@ export default function PersonalFixPage() {
   const [kuPlanDays, setKuPlanDays] = useState<Record<string, number>>({});
   // empId → Anzahl K+U-Tage im Ist (absenceType in SICK_CODES|ACCIDENT_CODES in actual-hours-*)
   const [kuIstDays, setKuIstDays] = useState<Record<string, number>>({});
-  // Menge der MA-IDs, für die K/U-Tage als 80%-Personalkosten gelten
-  const [sick80pctEnabled, setSick80pctEnabled] = useState<Set<string>>(new Set());
   // Ferienabbau Drill-down aufgeklappt
   const [showFerienDetail, setShowFerienDetail] = useState(false);
   // Tagesumsätze für den gewählten Monat (für Stichtag Controlling)
@@ -1881,7 +1862,6 @@ export default function PersonalFixPage() {
     setKuPlanDays(planKU);
     const istKU = loadKUDaysFromStorage(selectedYear, selectedMonth, tenantKey);
     setKuIstDays(istKU);
-    setSick80pctEnabled(loadSick80pctEnabled(tenantId, selectedYear, selectedMonth));
 
     // Enrich plan hours from Supabase (schedule_entries) — same pattern as ist-hours below.
     // This ensures plan data is always current even if the user never opened Dienstplanung
@@ -2298,18 +2278,17 @@ export default function PersonalFixPage() {
     return days * dailyH * (emp.hourlyWage ?? 0);
   }, [ferienPlanDays]);
 
-  // ── K/U 80%-Kosten ───────────────────────────────────────────────────────────
+  // ── K/U 80%-Kosten (info-only, immer anzeigen wenn K/U-Tage vorhanden) ───────
   // K/U-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn × 80 %
-  // Nur für MA, die per Checkbox im PersonalFix aktiviert sind.
   const getEmpKuCHF = useCallback((emp: Employee): number => {
     // Basis: Plan-Tage (wie Ferienabbau); fallback auf Ist wenn kein Plan vorhanden
     const days = (kuPlanDays[emp.id] ?? 0) > 0
       ? (kuPlanDays[emp.id] ?? 0)
       : (kuIstDays[emp.id] ?? 0);
-    if (!days || !sick80pctEnabled.has(emp.id)) return 0;
+    if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
     return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
-  }, [kuPlanDays, kuIstDays, sick80pctEnabled]);
+  }, [kuPlanDays, kuIstDays]);
 
   const totalKuCHF = useMemo(() =>
     variableEmployees.reduce((s, e) => s + getEmpKuCHF(e), 0),
@@ -4652,7 +4631,7 @@ export default function PersonalFixPage() {
                 )}
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[580px]">
+                <table className="w-full text-xs min-w-[480px]">
                   <thead>
                     <tr className="bg-muted/30 border-b border-border text-muted-foreground">
                       <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
@@ -4660,32 +4639,20 @@ export default function PersonalFixPage() {
                       <th className="px-3 py-2 text-right font-medium text-amber-500">Tage Ist</th>
                       <th className="px-3 py-2 text-right font-medium">h / Tag</th>
                       <th className="px-3 py-2 text-right font-medium">CHF / h</th>
-                      <th className="px-3 py-2 text-right font-medium">80 % CHF</th>
-                      <th className="px-3 py-2 text-center font-medium">Als PK erfassen</th>
+                      <th className="px-3 py-2 text-right font-medium">80 % CHF (Info)</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {empWithKU.map((emp, i) => {
-                      const planDays = kuPlanDays[emp.id] ?? 0;
-                      const istDays  = kuIstDays[emp.id] ?? 0;
-                      // Kostenbasis: Plan-Tage bevorzugt (wie Ferienabbau), Ist als Fallback
+                      const planDays  = kuPlanDays[emp.id] ?? 0;
+                      const istDays   = kuIstDays[emp.id] ?? 0;
                       const basisDays = planDays > 0 ? planDays : istDays;
-                      const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-                      const wage     = emp.hourlyWage ?? 0;
-                      const chf80    = basisDays * dailyH * wage * 0.8;
-                      const enabled  = sick80pctEnabled.has(emp.id);
-                      const toggle   = () => {
-                        setSick80pctEnabled(prev => {
-                          const next = new Set(prev);
-                          if (next.has(emp.id)) next.delete(emp.id); else next.add(emp.id);
-                          saveSick80pctEnabled(tenantId, selectedYear, selectedMonth, next);
-                          return next;
-                        });
-                      };
+                      const dailyH    = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+                      const wage      = emp.hourlyWage ?? 0;
+                      const chf80     = basisDays * dailyH * wage * 0.8;
                       return (
                         <tr key={emp.id} className={cn(
                           i % 2 === 0 ? 'bg-background' : 'bg-muted/10',
-                          enabled && 'bg-amber-50/50 dark:bg-amber-950/10',
                         )}>
                           <td className="px-4 py-2.5 font-medium">{emp.name}</td>
                           <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-600 dark:text-amber-400">
@@ -4696,20 +4663,8 @@ export default function PersonalFixPage() {
                           </td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
                           <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
-                          <td className={cn(
-                            'px-3 py-2.5 text-right font-mono font-semibold',
-                            enabled ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground/50',
-                          )}>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-700 dark:text-amber-400">
                             {chf80 > 0 ? fmtCHF(chf80) : '–'}
-                          </td>
-                          <td className="px-3 py-2.5 text-center">
-                            <input
-                              type="checkbox"
-                              checked={enabled}
-                              onChange={toggle}
-                              className="h-4 w-4 rounded border-border accent-amber-500 cursor-pointer"
-                              title={enabled ? 'K/U-Kosten als Personalkosten erfasst' : 'K/U-Kosten als Personalkosten erfassen'}
-                            />
                           </td>
                         </tr>
                       );
@@ -4718,16 +4673,15 @@ export default function PersonalFixPage() {
                   {totalKuCHF > 0 && (
                     <tfoot>
                       <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold">
-                        <td className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" colSpan={5}>Total K/U Personalkosten (80 %)</td>
+                        <td className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" colSpan={5}>Total K/U (80 %, nur Info)</td>
                         <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
-                        <td className="px-3 py-2" />
                       </tr>
                     </tfoot>
                   )}
                 </table>
               </div>
               <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
-                Tage Plan × h/Tag × CHF/h × 80 % (bei fehlendem Plan: Ist-Tage). Häkchen setzen um die Kosten als Personalkosten zu erfassen (gespeichert pro Monat).
+                Nur Information — fliesst nicht in die Personalkosten ein. Basis: Tage Plan × h/Tag × CHF/h × 80 % (bei fehlendem Plan: Ist-Tage).
               </p>
             </section>
           );
