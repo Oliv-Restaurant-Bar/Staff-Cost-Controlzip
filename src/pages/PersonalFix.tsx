@@ -4912,7 +4912,7 @@ export default function PersonalFixPage() {
 
         {/* ── Kranken-/Unfallkosten (80 %) ─────────────────────────────────── */}
         {(() => {
-          const empWithKU = [...fixEmployees, ...variableEmployees].filter(e =>
+          const empWithKU = [...fixedEmployees, ...variableEmployees].filter(e =>
             (kuPlanDays[e.id] ?? 0) > 0 || (kuIstDays[e.id] ?? 0) > 0
           );
           if (empWithKU.length === 0) return null;
