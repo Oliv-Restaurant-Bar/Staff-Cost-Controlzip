@@ -196,6 +196,8 @@ function loadPlanHoursFromStorage(year: number, month: number, keyFn: (k: string
       // cellKey = "${empId}-YYYY-MM-DD" → empId = alles außer letzten 11 Zeichen
       const empId = cellKey.slice(0, cellKey.length - 11);
       if (!empId) continue;
+      // FE-markierte Einträge überspringen — konsistent mit loadDailyPlanDetails
+      if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
       const früh = calcSlotHours(ds?.früh);
       const spät = calcSlotHours(ds?.spät);
       const gross = früh + spät;
@@ -4549,13 +4551,18 @@ export default function PersonalFixPage() {
                                   )}
                                 </div>
                               </td>
-                              {/* Flex Plan total + % */}
+                              {/* Flex Plan/Eff. total + % */}
                               <td className="px-2 py-2.5 text-right font-mono text-blue-700 dark:text-blue-300">
                                 <div className="flex flex-col items-end gap-0.5">
-                                  <span>{fmtCHF(totalFlexPlan)}</span>
-                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFlexPlan > 0 && (
+                                  <span>{fmtCHF(weekIstSet.size > 0 ? totalFlexForBudget : totalFlexPlan)}</span>
+                                  {weekIstSet.size > 0 && Math.abs(totalFlexForBudget - totalFlexPlan) > 0.5 && (
+                                    <span className="text-[9px] font-normal tabular-nums text-blue-400/70 dark:text-blue-500/60">
+                                      Plan {fmtCHF(totalFlexPlan)}
+                                    </span>
+                                  )}
+                                  {totalNetRevenue != null && totalNetRevenue > 0 && totalFlexForBudget > 0 && (
                                     <span className="text-[9px] font-normal tabular-nums text-blue-500/70 dark:text-blue-400/60">
-                                      {((totalFlexPlan / totalNetRevenue) * 100).toFixed(1)} %
+                                      {(((weekIstSet.size > 0 ? totalFlexForBudget : totalFlexPlan) / totalNetRevenue) * 100).toFixed(1)} %
                                     </span>
                                   )}
                                 </div>
