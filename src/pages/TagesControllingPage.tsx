@@ -1846,6 +1846,78 @@ export default function TagesControllingPage() {
                         );
                       })
                   }
+                  {/* ── Total-Zeile (unten, am Ende der Tabelle) ─────────────── */}
+                  <tr className={cn(
+                    'border-t-2 font-semibold',
+                    effectiveCutoffDay !== null
+                      ? 'bg-amber-50/60 dark:bg-amber-900/20 border-amber-300/50'
+                      : 'bg-primary/5 dark:bg-primary/10 border-primary/20',
+                  )}>
+                    <td className="px-3 py-2 text-left" colSpan={period === 'jahr' ? 1 : 2} style={period === 'jahr' ? colStyle('datum') : { width: (colWidths.datum ?? 110) + (colWidths.wt ?? 40) }}>
+                      <span className="text-[11px] text-muted-foreground uppercase tracking-wide">Total</span>
+                    </td>
+                    {viewMode === 'personal' ? (<>
+                      <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatz')}>
+                        {fmtN(total.sumUmsatz)}
+                      </td>
+                      {showMarketingCol && (
+                        <td className="px-2 py-2 text-right tabular-nums text-[11px] border-l border-violet-200/40 dark:border-violet-800/40 font-semibold text-violet-700 dark:text-violet-400" style={colStyle('maison')}>
+                          {total.sumMaison > 0 ? fmtN(total.sumMaison) : ''}
+                        </td>
+                      )}
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('pkPlan')}>
+                        {fmtN(total.sumPkPlan)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums" style={colStyle('pkIst')}>
+                        {total.sumPkIst > 0 ? fmtN(total.sumPkIst) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50 font-semibold', (() => {
+                        const d = total.sumPkIst - total.sumPkPlan;
+                        if (total.sumPkIst === 0 || total.sumPkPlan === 0) return 'text-muted-foreground';
+                        return d > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                      })())} style={colStyle('delta')}>
+                        {(() => {
+                          if (total.sumPkIst === 0 || total.sumPkPlan === 0) return '–';
+                          const d = total.sumPkIst - total.sumPkPlan;
+                          return (d > 0 ? '+' : '') + fmtN(d);
+                        })()}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums border-l border-border/50', pctCls(total.pkPlanPct))} style={colStyle('pkPlanPct')}>
+                        {fmtPct(total.pkPlanPct, total.sumUmsatz > 0)}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(total.pkIstPct))} style={colStyle('pkIstPct')}>
+                        {fmtPct(total.pkIstPct, total.sumPkIst > 0 && total.sumUmsatz > 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50" style={colStyle('wesChf')}>
+                        {total.sumWes > 0 ? fmtN(total.sumWes) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums', pctCls(total.wesPct))} style={colStyle('wesPct')}>
+                        {fmtPct(total.wesPct, total.sumWes > 0 && total.sumUmsatz > 0)}
+                      </td>
+                    </>) : (<>
+                      <td className="px-3 py-2 text-right tabular-nums" style={colStyle('umsatzTotal')}>
+                        {fmtN(total.sumUmsatzTotal)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50 text-emerald-700 dark:text-emerald-400" style={colStyle('umsatzFood')}>
+                        {total.sumUmsatzFood > 0 ? fmtN(total.sumUmsatzFood) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-400" style={colStyle('umsatzBev')}>
+                        {total.sumUmsatzBev > 0 ? fmtN(total.sumUmsatzBev) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50 text-emerald-700 dark:text-emerald-400" style={colStyle('wkFoodChf')}>
+                        {total.sumWesFood > 0 ? fmtN(total.sumWesFood) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums text-emerald-700 dark:text-emerald-400', pctCls(total.wesFoodPct))} style={colStyle('wkFoodPct')}>
+                        {fmtPct(total.wesFoodPct, total.sumWesFood > 0 && total.sumUmsatzFood > 0)}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums border-l border-border/50 text-blue-700 dark:text-blue-400" style={colStyle('wkBevChf')}>
+                        {total.sumWesBev > 0 ? fmtN(total.sumWesBev) : <span className="text-muted-foreground font-normal">–</span>}
+                      </td>
+                      <td className={cn('px-3 py-2 text-right tabular-nums text-blue-700 dark:text-blue-400', pctCls(total.wesBevPct))} style={colStyle('wkBevPct')}>
+                        {fmtPct(total.wesBevPct, total.sumWesBev > 0 && total.sumUmsatzBev > 0)}
+                      </td>
+                    </>)}
+                  </tr>
                 </tbody>
               </table>
             </div>
