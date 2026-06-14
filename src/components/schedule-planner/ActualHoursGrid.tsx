@@ -120,6 +120,8 @@ const ActualHoursCell = ({
   const [chfInput, setChfInput] = useState('');
   const [startInput, setStartInput] = useState('');
   const [endInput, setEndInput] = useState('');
+  const [startInput2, setStartInput2] = useState('');
+  const [endInput2, setEndInput2] = useState('');
   const [isAdditionalCost, setIsAdditionalCost] = useState(false);
 
   // Ist dieser MA ein Fixlohn-MA (hat Monatslohn)?
@@ -154,6 +156,8 @@ const ActualHoursCell = ({
       setChfInput(effectiveRate > 0 ? (entry.hours * effectiveRate).toFixed(0) : '');
       setStartInput(entry.start || '');
       setEndInput(entry.end || '');
+      setStartInput2(entry.start2 || '');
+      setEndInput2(entry.end2 || '');
       setInputMode(entry.start && entry.end ? 'times' : 'hours');
       setIsAdditionalCost(entry.isAdditionalCost ?? false);
     } else {
@@ -161,6 +165,8 @@ const ActualHoursCell = ({
       setChfInput('');
       setStartInput('');
       setEndInput('');
+      setStartInput2('');
+      setEndInput2('');
       setInputMode('hours');
       setIsAdditionalCost(false);
     }
@@ -186,8 +192,16 @@ const ActualHoursCell = ({
       }
     } else {
       if (startInput && endInput) {
-        const hours = calculateHoursFromTimes(startInput, endInput);
-        onSave({ hours, start: startInput, end: endInput, isAdditionalCost: zusatz });
+        const hours1 = calculateHoursFromTimes(startInput, endInput);
+        const hours2 = (startInput2 && endInput2) ? calculateHoursFromTimes(startInput2, endInput2) : 0;
+        const totalHours = Math.round((hours1 + hours2) * 100) / 100;
+        onSave({
+          hours: totalHours,
+          start: startInput,
+          end: endInput,
+          ...(startInput2 && endInput2 ? { start2: startInput2, end2: endInput2 } : {}),
+          isAdditionalCost: zusatz,
+        });
       }
     }
     setIsEditing(false);
@@ -480,29 +494,79 @@ const ActualHoursCell = ({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Start</Label>
-                <Input
-                  type="time"
-                  value={startInput}
-                  onChange={(e) => setStartInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  autoFocus
-                />
+            <div className="space-y-3">
+              {/* Schicht 1 */}
+              <div>
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">Schicht 1</Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Start</Label>
+                    <Input
+                      type="time"
+                      value={startInput}
+                      onChange={(e) => setStartInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Ende</Label>
+                    <Input
+                      type="time"
+                      value={endInput}
+                      onChange={(e) => setEndInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                    />
+                  </div>
+                </div>
+                {startInput && endInput && (
+                  <div className="text-xs text-muted-foreground mt-1 text-right">
+                    {calculateHoursFromTimes(startInput, endInput).toFixed(1)} h
+                  </div>
+                )}
               </div>
-              <div className="space-y-2">
-                <Label>Ende</Label>
-                <Input
-                  type="time"
-                  value={endInput}
-                  onChange={(e) => setEndInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                />
+
+              {/* Schicht 2 (optional) */}
+              <div>
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1.5 block">
+                  Schicht 2 <span className="normal-case font-normal">(optional)</span>
+                </Label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Start</Label>
+                    <Input
+                      type="time"
+                      value={startInput2}
+                      onChange={(e) => setStartInput2(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="—"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Ende</Label>
+                    <Input
+                      type="time"
+                      value={endInput2}
+                      onChange={(e) => setEndInput2(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="—"
+                    />
+                  </div>
+                </div>
+                {startInput2 && endInput2 && (
+                  <div className="text-xs text-muted-foreground mt-1 text-right">
+                    {calculateHoursFromTimes(startInput2, endInput2).toFixed(1)} h
+                  </div>
+                )}
               </div>
+
+              {/* Gesamtanzeige */}
               {startInput && endInput && (
-                <div className="col-span-2 text-sm text-center text-muted-foreground">
-                  = {calculateHoursFromTimes(startInput, endInput).toFixed(1)} Stunden
+                <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-center font-medium">
+                  Total: {(
+                    calculateHoursFromTimes(startInput, endInput) +
+                    (startInput2 && endInput2 ? calculateHoursFromTimes(startInput2, endInput2) : 0)
+                  ).toFixed(1)} Stunden
                 </div>
               )}
             </div>
