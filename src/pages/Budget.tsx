@@ -51,6 +51,7 @@ import {
   Calculator, Copy, Plus, Trash2,
   AlertTriangle, CheckCircle2,
   RefreshCw, ChevronDown, ChevronRight, SplitSquareHorizontal,
+  Pencil, ArrowRight,
 } from 'lucide-react';
 
 // ─── Hilfsfunktionen ──────────────────────────────────────────────────────────
@@ -185,6 +186,11 @@ function BudgetContent() {
   const [deleteDialog,   setDeleteDialog]  = useState(false);
   const [resetPLDialog,  setResetPLDialog] = useState(false);
 
+  // Top-Down Budget-Eingabe (Zwischentotal → proportionale Verteilung)
+  const [topDownDialog,  setTopDownDialog] = useState<{ cat: BudgetPLCategory; yearTotal: number } | null>(null);
+  const [topDownMode,    setTopDownMode]   = useState<'chf' | 'pct'>('chf');
+  const [topDownInput,   setTopDownInput]  = useState('');
+
   const reload = useCallback((year: number) => {
     setBudget(loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)));
     setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
@@ -301,6 +307,67 @@ function BudgetContent() {
       cancel: { label: 'Abbrechen', onClick: () => {} },
       duration: 8000,
     });
+  };
+
+  // ── Top-Down: Zwischentotal → proportionale Verteilung ──────────────────────
+
+  const openTopDown = (cat: BudgetPLCategory, yearTotal: number) => {
+    setTopDownMode('chf');
+    setTopDownInput(String(Math.round(yearTotal)));
+    setTopDownDialog({ cat, yearTotal });
+  };
+
+  const parseTopDownInput = () =>
+    parseFloat(topDownInput.replace(/['\u2019\s]/g, '').replace(',', '.')) || 0;
+
+  const calcTopDownTargetCHF = () => {
+    const val = parseTopDownInput();
+    return topDownMode === 'pct' ? val / 100 * totalRevenue : val;
+  };
+
+  const applyTopDown = () => {
+    if (!topDownDialog) return;
+    const { cat } = topDownDialog;
+    const targetCHF = calcTopDownTargetCHF();
+    if (targetCHF <= 0) { toast.error('Bitte einen gültigen Wert (> 0) eingeben.'); return; }
+
+    // Nur item-Kategorien (keine result-Kategorien) sind skalierbar
+    const contribCatIds = (cat.resultFormula ?? [])
+      .map(f => f.categoryId)
+      .filter(catId => categories.find(c => c.id === catId)?.type === 'items');
+
+    const affectedItems = lineItems.filter(
+      i => contribCatIds.includes(i.categoryId) && !i.isHidden && !i.isInternal
+    );
+
+    if (affectedItems.length === 0) {
+      toast.error('Keine anpassbaren Konten gefunden.');
+      return;
+    }
+
+    const currentTotal = affectedItems.reduce((s, item) => s + itemYearly(item), 0);
+    if (currentTotal === 0) {
+      toast.error('Aktuelles Total ist 0 – bitte Konten zuerst manuell befüllen.');
+      return;
+    }
+
+    const factor = targetCHF / currentTotal;
+
+    // Jedes betroffene Konto skalieren (chained savePLLineItem – liest jedes Mal aus localStorage)
+    let upd: BudgetYear = budget;
+    for (const item of affectedItems) {
+      const newVals = item.monthlyValues.map(v =>
+        Math.round(v * factor)
+      ) as BudgetPLLineItem['monthlyValues'];
+      upd = savePLLineItem(selectedYear, { ...item, monthlyValues: newVals }, tenantKey(BUDGET_STORAGE_KEY));
+    }
+    setBudget(upd);
+    setTopDownDialog(null);
+
+    const pct = totalRevenue > 0 ? (targetCHF / totalRevenue * 100).toFixed(1) : null;
+    toast.success(
+      `${cat.label} auf CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}% des Umsatzes)` : ''} angepasst – ${affectedItems.length} Konten skaliert`
+    );
   };
 
   const handleApplyRules = () => {
@@ -459,19 +526,51 @@ function BudgetContent() {
                     // ── Zwischenergebnis-Zeile (type='result') ────────────────
                     if (cat.type === 'result') {
                       const catPct = totalRevenue > 0 ? yearTotal / totalRevenue * 100 : null;
+                      // Top-Down editierbar wenn mind. eine beitragende Kategorie type='items' hat
+                      const isTopDownable = isAdmin && (cat.resultFormula ?? []).some(
+                        f => categories.find(c => c.id === f.categoryId)?.type === 'items'
+                      );
                       return (
                         <tr key={cat.id} className={cn('border-t-2 border-b border-border', style.result)}>
                           <td className={cn('sticky left-0 z-10 py-2.5 px-4 font-bold text-sm border-r border-border', style.result)}>
-                            {cat.label}
+                            <div className="flex items-center gap-2">
+                              <span>{cat.label}</span>
+                              {isTopDownable && (
+                                <button
+                                  title="Top-Down: Gesamtwert eingeben und proportional verteilen"
+                                  className="opacity-0 group-hover:opacity-100 hover:opacity-100 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-opacity"
+                                  onClick={() => openTopDown(cat, yearTotal)}
+                                >
+                                  <Pencil className="h-3 w-3 opacity-60" />
+                                </button>
+                              )}
+                            </div>
                           </td>
-                          {/* Kumuliert CHF */}
-                          <td className={cn('text-right py-2.5 px-3 font-mono font-bold text-sm', style.kum,
-                            yearTotal < 0 ? 'text-red-700 dark:text-red-400' : '')}>
-                            {CHF(yearTotal)}
+                          {/* Kumuliert CHF – klickbar für Top-Down */}
+                          <td
+                            className={cn(
+                              'text-right py-2.5 px-3 font-mono font-bold text-sm', style.kum,
+                              yearTotal < 0 ? 'text-red-700 dark:text-red-400' : '',
+                              isTopDownable ? 'cursor-pointer hover:ring-2 hover:ring-primary/40 hover:ring-inset rounded transition-all' : '',
+                            )}
+                            onClick={isTopDownable ? () => openTopDown(cat, yearTotal) : undefined}
+                            title={isTopDownable ? 'Klicken: Gesamtwert eingeben und proportional auf alle Konten verteilen' : undefined}
+                          >
+                            <div className="flex items-center justify-end gap-1">
+                              {CHF(yearTotal)}
+                              {isTopDownable && <Pencil className="h-3 w-3 opacity-30 hover:opacity-70 flex-shrink-0" />}
+                            </div>
                           </td>
-                          {/* Kumuliert % */}
-                          <td className={cn('text-right py-2.5 px-2 font-mono font-bold text-xs border-r-2 border-amber-300', style.kum,
-                            catPct !== null && catPct < 0 ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400')}>
+                          {/* Kumuliert % – klickbar für Top-Down */}
+                          <td
+                            className={cn(
+                              'text-right py-2.5 px-2 font-mono font-bold text-xs border-r-2 border-amber-300', style.kum,
+                              catPct !== null && catPct < 0 ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400',
+                              isTopDownable ? 'cursor-pointer hover:ring-2 hover:ring-amber-400/40 hover:ring-inset rounded transition-all' : '',
+                            )}
+                            onClick={isTopDownable ? () => { openTopDown(cat, yearTotal); setTopDownMode('pct'); setTopDownInput(catPct !== null ? catPct.toFixed(1) : '0'); } : undefined}
+                            title={isTopDownable ? 'Klicken: %-Ziel eingeben und proportional auf alle Konten verteilen' : undefined}
+                          >
                             {catPct !== null ? `${catPct.toFixed(1)}%` : '–'}
                           </td>
                           {monthly.map((v, m) => (
@@ -806,6 +905,140 @@ function BudgetContent() {
           }}
         />
       )}
+
+      {/* ── Top-Down Dialog: Zwischentotal → proportionale Verteilung ── */}
+      <Dialog open={!!topDownDialog} onOpenChange={open => !open && setTopDownDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calculator className="h-4 w-4" />
+              Top-Down: {topDownDialog?.cat.label}
+            </DialogTitle>
+          </DialogHeader>
+          {topDownDialog && (() => {
+            const contribCatIds = (topDownDialog.cat.resultFormula ?? [])
+              .map(f => f.categoryId)
+              .filter(catId => categories.find(c => c.id === catId)?.type === 'items');
+            const affectedCats  = categories.filter(c => contribCatIds.includes(c.id));
+            const affectedItems = lineItems.filter(i => contribCatIds.includes(i.categoryId) && !i.isHidden && !i.isInternal);
+            const currentTotal  = affectedItems.reduce((s, item) => s + itemYearly(item), 0);
+            const targetCHF     = calcTopDownTargetCHF();
+            const factor        = currentTotal > 0 && targetCHF > 0 ? targetCHF / currentTotal : null;
+            const targetPct     = totalRevenue > 0 && targetCHF > 0 ? targetCHF / totalRevenue * 100 : null;
+            const canApply      = targetCHF > 0 && currentTotal > 0 && affectedItems.length > 0;
+
+            return (
+              <div className="space-y-4">
+                {/* Aktueller Wert */}
+                <div className="rounded-md bg-muted/50 px-3 py-2.5 text-sm">
+                  <div className="text-muted-foreground text-xs mb-1">Aktueller Jahreswert</div>
+                  <div className="font-mono font-bold text-base flex items-center gap-2">
+                    CHF {CHF(Math.round(topDownDialog.yearTotal))}
+                    {totalRevenue > 0 && topDownDialog.yearTotal !== 0 && (
+                      <span className="text-amber-600 text-xs font-normal">
+                        = {(topDownDialog.yearTotal / totalRevenue * 100).toFixed(1)}% des Umsatzes
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Modus + Eingabe */}
+                <div className="space-y-2">
+                  <Label>Neuer Zielwert</Label>
+                  <div className="flex gap-2 items-center">
+                    <div className="flex border rounded-md overflow-hidden text-sm font-semibold flex-shrink-0">
+                      <button
+                        className={cn('px-3 py-1.5 transition-colors', topDownMode === 'chf' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+                        onClick={() => {
+                          setTopDownMode('chf');
+                          if (topDownMode === 'pct') {
+                            const pctVal = parseTopDownInput();
+                            setTopDownInput(totalRevenue > 0 ? String(Math.round(pctVal / 100 * totalRevenue)) : topDownInput);
+                          }
+                        }}
+                      >CHF</button>
+                      <button
+                        className={cn('px-3 py-1.5 transition-colors', topDownMode === 'pct' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+                        onClick={() => {
+                          setTopDownMode('pct');
+                          if (topDownMode === 'chf') {
+                            const chfVal = parseTopDownInput();
+                            setTopDownInput(totalRevenue > 0 ? (chfVal / totalRevenue * 100).toFixed(1) : topDownInput);
+                          }
+                        }}
+                      >%</button>
+                    </div>
+                    <Input
+                      autoFocus
+                      value={topDownInput}
+                      onChange={e => setTopDownInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && canApply && applyTopDown()}
+                      placeholder={topDownMode === 'chf' ? "z.B. 120000" : "z.B. 32.5"}
+                      className="font-mono flex-1"
+                    />
+                    {topDownMode === 'pct' && (
+                      <span className="text-sm text-muted-foreground flex-shrink-0">% des Umsatzes</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Vorschau */}
+                {factor !== null && (
+                  <div className="rounded-md border px-3 py-2.5 space-y-1.5 text-sm">
+                    <div className="font-semibold text-xs text-muted-foreground uppercase tracking-wide mb-1">Vorschau</div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Neues Total</span>
+                      <span className="font-mono font-bold">
+                        CHF {CHF(Math.round(targetCHF))}
+                        {targetPct !== null && <span className="text-amber-600 ml-1.5 font-normal text-xs">({targetPct.toFixed(1)}%)</span>}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Skalierungsfaktor</span>
+                      <span className={cn('font-mono text-xs', factor > 1 ? 'text-green-600' : 'text-orange-600')}>
+                        × {factor.toFixed(4)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Betroffene Konten</span>
+                      <span className="font-mono text-xs">{affectedItems.length} in {affectedCats.length} Gruppen</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground pt-0.5 border-t">
+                      {affectedCats.map(c => c.label).join(' · ')}
+                    </div>
+                  </div>
+                )}
+
+                {currentTotal === 0 && affectedItems.length > 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      Aktuelles Total ist 0 – bitte Konten zuerst manuell befüllen, dann skalieren.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {affectedItems.length === 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>Keine anpassbaren Konten gefunden.</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTopDownDialog(null)}>Abbrechen</Button>
+            <Button
+              onClick={applyTopDown}
+              disabled={calcTopDownTargetCHF() <= 0}
+              className="gap-1.5"
+            >
+              <ArrowRight className="h-3.5 w-3.5" />
+              Proportional verteilen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deleteDialog} onOpenChange={setDeleteDialog}>
         <DialogContent>
