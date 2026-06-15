@@ -22,12 +22,14 @@ function getDailySumForMonth(year: number, month: number, storageKey: string): n
 
 type RowStatus = 'ok' | 'warning' | 'error' | 'missing';
 
-function getRowStatus(netExklMaison: number, dailySum: number): RowStatus {
+const VAT_FACTOR = 1.081;
+
+function getRowStatus(netExklMaison: number, dailySumNet: number): RowStatus {
   const hasER    = netExklMaison > 0;
-  const hasDaily = dailySum > 0;
+  const hasDaily = dailySumNet > 0;
   if (!hasER && !hasDaily) return 'missing';
   if (!hasER || !hasDaily) return 'warning';
-  const diff = Math.abs(dailySum - netExklMaison);
+  const diff = Math.abs(dailySumNet - netExklMaison);
   const pct  = diff / netExklMaison;
   if (pct < 0.02) return 'ok';
   if (pct < 0.05) return 'warning';
@@ -126,7 +128,9 @@ export function UmsatzAbstimmung({
   const totalMaison      = (maisonMonthlyNet ?? []).reduce((s, v) => s + v, 0);
   const totalNetExkl     = Math.max(0, totalNetER - totalMaison);
   const totalDaily       = dailySums.reduce((s, v) => s + v, 0);
-  const totalDiff        = totalNetExkl > 0 && totalDaily > 0 ? totalDaily - totalNetExkl : undefined;
+  // Tagesumsätze sind Brutto (inkl. MwSt 8.1%) → für Vergleich mit Netto ER umrechnen
+  const totalDailyNet    = totalDaily / VAT_FACTOR;
+  const totalDiff        = totalNetExkl > 0 && totalDaily > 0 ? totalDailyNet - totalNetExkl : undefined;
 
   return (
     <Card className="border-blue-200 dark:border-blue-800">
@@ -164,11 +168,11 @@ export function UmsatzAbstimmung({
               )}
               <th className="text-right py-2 px-2 font-semibold min-w-[110px]">
                 Summe Tage
-                <span className="block text-[10px] font-normal">Tagesansicht</span>
+                <span className="block text-[10px] font-normal">Brutto (Tagesansicht)</span>
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[90px]">
-                Diff. Tage/ER
-                <span className="block text-[10px] font-normal">Tage − Netto</span>
+                Diff. Netto/ER
+                <span className="block text-[10px] font-normal">Tage÷1.081 − ER</span>
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[80px]">
                 MwSt impl.
@@ -191,12 +195,14 @@ export function UmsatzAbstimmung({
               const hasGross     = (gross ?? 0) > 0;
               const hasMaisonRow = maisonNet > 0;
 
-              const status    = getRowStatus(netExkl, dailySum);
-              const isEditing = editing[m.month] !== undefined;
-              const isSaving  = !!saving[m.month];
+              // Tagesumsätze Brutto → Netto umrechnen (÷1.081), dann mit ER vergleichen
+              const dailySumNet  = hasDaily ? dailySum / VAT_FACTOR : 0;
+              const status       = getRowStatus(netExkl, dailySumNet);
+              const isEditing    = editing[m.month] !== undefined;
+              const isSaving     = !!saving[m.month];
 
-              // Diff: Tagesumsätze minus ER exkl. Marketing (Ziel: 0)
-              const diff = hasExkl && hasDaily ? dailySum - netExkl : undefined;
+              // Diff: Tage Netto (÷1.081) minus ER exkl. Marketing (Ziel: 0)
+              const diff = hasExkl && hasDaily ? dailySumNet - netExkl : undefined;
 
               // MwSt implizit: (Brutto − Netto exkl. Mkt.) / Netto exkl. Mkt.
               const implVat = hasGross && hasExkl
@@ -373,12 +379,14 @@ export function UmsatzAbstimmung({
 
         <div className="mt-2.5 px-1 flex flex-col gap-0.5 text-[10px] text-muted-foreground/60">
           <span>
-            <strong>Netto ER exkl. Mkt.:</strong> Nettoumsatz aus Erfolgsrechnung abzüglich Maison-Marketing-Umsatz
-            {hasMaison ? ' — in Klammern der Bruttowert inkl. Marketing.' : '.'}
+            <strong>Netto ER exkl. Mkt.:</strong> Nettoumsatz aus Erfolgsrechnung-Import abzüglich Maison-Marketing-Umsatz.
+            {hasMaison ? ' In Klammern: inkl. Marketing.' : ''}{' '}
+            <em>Fehlt ein Wert, wurde für diesen Monat noch kein ER-Import durchgeführt.</em>
           </span>
-          <span><strong>Diff. Tage/ER:</strong> Summe Tagesumsätze minus Netto ER exkl. Marketing — Ziel: 0 (keine Abweichung).</span>
-          <span><strong>MwSt impl.:</strong> (Bruttoumsatz − Netto ER exkl. Mkt.) / Netto ER exkl. Mkt. — Ziel: ≈ 7.7 %. Grün = 6.5–9.5 %.</span>
-          <span><strong>Status ✓:</strong> Diff. Tage/ER &lt; 2 %. Gelb = 2–5 %. Rot = &gt; 5 %.</span>
+          <span><strong>Summe Tage (Brutto):</strong> Summe der Tagesumsätze aus Tagesansicht/Tages-Controlling — Brutto inkl. 8.1 % MwSt.</span>
+          <span><strong>Diff. Netto/ER:</strong> (Summe Tage ÷ 1.081) − Netto ER exkl. Mkt. — Vergleich auf Nettobasis. Ziel: 0.</span>
+          <span><strong>MwSt impl.:</strong> (Bruttoumsatz − Netto ER) / Netto ER — sollte ≈ 8.1 % ergeben. Grün = 6.5–9.5 %.</span>
+          <span><strong>Status ✓:</strong> Diff. Netto/ER &lt; 2 %. Gelb = 2–5 %. Rot = &gt; 5 %.</span>
         </div>
       </CardContent>
     </Card>
