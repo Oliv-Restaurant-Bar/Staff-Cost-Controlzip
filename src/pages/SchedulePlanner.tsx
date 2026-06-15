@@ -1025,7 +1025,7 @@ const SchedulePlanner = () => {
   useEffect(() => {
     const handleScheduleUpdated = () => {
       const monthKey = format(currentMonth, 'yyyy-MM');
-      const storageKey = `actual-hours-${monthKey}`;
+      const storageKey = tenantKey(`actual-hours-${monthKey}`);
       try {
         const saved = localStorage.getItem(storageKey);
         if (saved) {
@@ -1035,7 +1035,7 @@ const SchedulePlanner = () => {
     };
     window.addEventListener('schedule-updated', handleScheduleUpdated);
     return () => window.removeEventListener('schedule-updated', handleScheduleUpdated);
-  }, [currentMonth]);
+  }, [currentMonth, tenantKey]);
 
   // Load plan-copied IST keys from localStorage whenever the month changes
   useEffect(() => {
@@ -1913,17 +1913,10 @@ const SchedulePlanner = () => {
     setActualHoursData(prev => {
       if (entry === null) {
         const newState = { ...prev };
-        const existing = prev[cellKey];
         delete newState[cellKey];
 
-        // FE/K/F absences are localStorage-only — they were NEVER saved to Supabase,
-        // so there is nothing to delete there. Calling delete would be a no-op at best;
-        // at worst it could accidentally delete a real hours row for the same slot.
-        if (existing?.absenceType) {
-          console.log(`[FERIEN-IST] delete skipped Supabase (absence entry): ${cellKey} type=${existing.absenceType}`);
-        } else {
-          saveActualHourEntry(employeeId, date, null);
-        }
+        // Always delete from Supabase — absence_type column exists and loadActualHoursForMonth now reads it back.
+        saveActualHourEntry(employeeId, date, null);
 
         const monthKey = format(currentMonth, 'yyyy-MM');
         localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
@@ -1933,17 +1926,13 @@ const SchedulePlanner = () => {
 
       const newState = { ...prev, [cellKey]: entry };
 
-      // ── BUG 1 FIX ─────────────────────────────────────────────────────────
-      // FE/K/F absences must NOT be persisted to Supabase.
-      // Supabase has no "absenceType" column, so it would store only hours=0.
-      // On the next page load from a fresh browser session (empty localStorage),
-      // the merge logic would see hours=0 from Supabase with no local absenceType
-      // and LOSE the FE information.  These entries live ONLY in localStorage.
+      // Always persist to Supabase — including FE/FT/K/U/F absence entries.
+      // loadActualHoursForMonth now maps absence_type back, so absences survive
+      // browser cache clears and device switches without depending on localStorage.
       if (entry.absenceType) {
-        console.log(`[FERIEN-IST] manual holiday preserved (localStorage-only, NOT sent to Supabase): ${cellKey} type=${entry.absenceType}`);
-      } else {
-        saveActualHourEntry(employeeId, date, entry);
+        console.log(`[FERIEN-IST] saving absence to Supabase: ${cellKey} type=${entry.absenceType}`);
       }
+      saveActualHourEntry(employeeId, date, entry);
 
       const monthKey = format(currentMonth, 'yyyy-MM');
       localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));

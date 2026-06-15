@@ -916,6 +916,7 @@ export async function loadActualHoursForMonth(month: Date, tenantId?: TenantId):
         hours: Number(row.hours ?? 0),
         start: row.start_time ?? undefined,
         end: row.end_time ?? undefined,
+        ...(row.absence_type ? { absenceType: row.absence_type as ActualHourEntry['absenceType'] } : {}),
         ...(row.is_additional_cost_ist ? { isAdditionalCost: true } : {}),
       };
     }
