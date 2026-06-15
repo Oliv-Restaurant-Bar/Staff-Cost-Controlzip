@@ -163,6 +163,7 @@ export default function BudgetPage() {
 // ─── Haupt-Inhalt ─────────────────────────────────────────────────────────────
 
 function BudgetContent() {
+  const { isAdmin } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(currentYear);
