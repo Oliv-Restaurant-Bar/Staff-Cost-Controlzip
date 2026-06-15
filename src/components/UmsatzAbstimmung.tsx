@@ -6,6 +6,9 @@ import { cn } from '@/lib/utils';
 import { CheckCircle2, AlertTriangle, XCircle, Scale } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
+// ── Konstanten ─────────────────────────────────────────────────────────────────
+const VAT_TAKEAWAY = 1.026; // 2.6 % MwSt (Takeout/Lieferung)
+
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
 function getDailyGrossForMonth(year: number, month: number, storageKey: string): number {
@@ -35,6 +38,10 @@ function fmt(n: number): string {
   return new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(n);
 }
 
+function fmt2(n: number): string {
+  return new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+}
+
 function fmtDiff(diff: number): string {
   return `${diff >= 0 ? '+' : ''}${fmt(diff)}`;
 }
@@ -59,11 +66,13 @@ interface UmsatzAbstimmungProps {
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 
+type EditField = 'gross' | 'takeAway';
+
 export function UmsatzAbstimmung({
-  year, months, dailyBudgetsKey, storeKey, onRefresh, maisonMonthlyNet,
+  year, months, dailyBudgetsKey, storeKey, onRefresh,
 }: UmsatzAbstimmungProps) {
-  const [editing, setEditing] = useState<Record<number, string>>({});
-  const [saving,  setSaving]  = useState<Record<number, boolean>>({});
+  const [editing, setEditing] = useState<Record<string, string>>({});
+  const [saving,  setSaving]  = useState<Record<string, boolean>>({});
   const [dailySums, setDailySums] = useState<number[]>(() =>
     Array.from({ length: 12 }, (_, i) => getDailyGrossForMonth(year, i + 1, dailyBudgetsKey)),
   );
@@ -82,45 +91,58 @@ export function UmsatzAbstimmung({
     return () => window.removeEventListener('store-synced', refresh);
   }, [year, dailyBudgetsKey]);
 
-  const handleGrossBlur = useCallback(async (month: number) => {
-    const raw = editing[month];
+  const editKey = (month: number, field: EditField) => `${month}:${field}`;
+
+  const handleBlur = useCallback(async (month: number, field: EditField) => {
+    const key = editKey(month, field);
+    const raw = editing[key];
     if (raw === undefined) return;
-    setEditing(ed => { const n = { ...ed }; delete n[month]; return n; });
+    setEditing(ed => { const n = { ...ed }; delete n[key]; return n; });
 
     const val = parseInput(raw);
-    const existing = months.find(m => m.month === month)?.grossRevenueManual;
+    const rec = months.find(m => m.month === month);
+    const existing = field === 'gross' ? rec?.grossRevenueManual : rec?.takeAwayGrossManual;
     if (val === existing) return;
 
-    setSaving(s => ({ ...s, [month]: true }));
+    const saveKey = `${month}:${field}`;
+    setSaving(s => ({ ...s, [saveKey]: true }));
     try {
       saveMonth(
-        { year, month, grossRevenueManual: val },
+        {
+          year,
+          month,
+          ...(field === 'gross'    ? { grossRevenueManual:  val } : {}),
+          ...(field === 'takeAway' ? { takeAwayGrossManual: val } : {}),
+        },
         'manual_entry',
         'update',
-        { note: 'Bruttoumsatz manuell' },
+        { note: field === 'gross' ? 'Bruttoumsatz manuell' : 'Take Away Bruttoumsatz manuell' },
         storeKey,
       );
       onRefresh();
     } finally {
-      setSaving(s => { const n = { ...s }; delete n[month]; return n; });
+      setSaving(s => { const n = { ...s }; delete n[saveKey]; return n; });
     }
   }, [editing, months, year, storeKey, onRefresh]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, month: number) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, month: number, field: EditField) => {
+    const key = editKey(month, field);
     if (e.key === 'Enter')  (e.target as HTMLInputElement).blur();
-    if (e.key === 'Escape') setEditing(ed => { const n = { ...ed }; delete n[month]; return n; });
+    if (e.key === 'Escape') setEditing(ed => { const n = { ...ed }; delete n[key]; return n; });
   };
 
-  const hasAnyData = months.some(m => (m.revenueActual ?? 0) > 0 || dailySums[m.month - 1] > 0 || (m.grossRevenueManual ?? 0) > 0);
+  const hasAnyData = months.some(m =>
+    (m.grossRevenueManual ?? 0) > 0 ||
+    (m.takeAwayGrossManual ?? 0) > 0 ||
+    dailySums[m.month - 1] > 0,
+  );
   if (!hasAnyData) return null;
 
   // Jahressummen
-  const totalManual   = months.reduce((s, m) => s + (m.grossRevenueManual ?? 0), 0);
-  const totalNetER    = months.reduce((s, m) => s + (m.revenueActual ?? 0), 0);
-  const totalMaison   = (maisonMonthlyNet ?? []).reduce((s, v) => s + v, 0);
-  const totalNetExkl  = Math.max(0, totalNetER - totalMaison);
-  const totalDaily    = dailySums.reduce((s, v) => s + v, 0);
-  const totalDiff     = totalManual > 0 && totalDaily > 0 ? totalManual - totalDaily : undefined;
+  const totalManual  = months.reduce((s, m) => s + (m.grossRevenueManual   ?? 0), 0);
+  const totalTakeAway = months.reduce((s, m) => s + (m.takeAwayGrossManual ?? 0), 0);
+  const totalDaily   = dailySums.reduce((s, v) => s + v, 0);
+  const totalDiff    = totalManual > 0 && totalDaily > 0 ? totalManual - totalDaily : undefined;
 
   return (
     <Card className="border-blue-200 dark:border-blue-800">
@@ -130,18 +152,22 @@ export function UmsatzAbstimmung({
           Umsatz-Abstimmung {year}
         </CardTitle>
         <p className="text-[11px] text-muted-foreground mt-0.5">
-          Bruttoumsatz (manuell, exkl. Maison) eingeben und mit Summe der Tageseinträge abgleichen.
-          Differenz soll 0 sein. Netto ER (aus Import) als Referenz.
+          Bruttoumsatz (exkl. Maison) und Take-Away-Umsatz (2.6 % MwSt) manuell eingeben
+          und mit den Tageseinträgen abgleichen. Differenz soll 0 sein.
         </p>
       </CardHeader>
       <CardContent className="pt-0 overflow-x-auto">
-        <table className="w-full text-xs border-collapse min-w-[580px]">
+        <table className="w-full text-xs border-collapse min-w-[620px]">
           <thead>
             <tr className="border-b-2 border-border text-muted-foreground">
               <th className="text-left py-2 px-2 font-semibold min-w-[68px]">Monat</th>
               <th className="text-right py-2 px-2 font-semibold min-w-[130px]">
                 Bruttoumsatz
                 <span className="block text-[10px] font-normal">manuell, exkl. Maison</span>
+              </th>
+              <th className="text-right py-2 px-2 font-semibold min-w-[130px] text-orange-700 dark:text-orange-400">
+                Take Away
+                <span className="block text-[10px] font-normal">Brutto inkl. 2.6 % MwSt</span>
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[120px]">
                 Summe Tage
@@ -151,38 +177,37 @@ export function UmsatzAbstimmung({
                 Differenz
                 <span className="block text-[10px] font-normal">Manuell − Tage</span>
               </th>
-              <th className="text-right py-2 px-2 font-semibold min-w-[110px]">
-                Netto ER
-                <span className="block text-[10px] font-normal">exkl. Maison (Referenz)</span>
-              </th>
               <th className="text-center py-2 px-2 font-semibold min-w-[50px]">OK?</th>
             </tr>
           </thead>
           <tbody>
             {months.map((m, idx) => {
-              const daily     = dailySums[m.month - 1] ?? 0;
-              const manual    = m.grossRevenueManual;
-              const netER     = m.revenueActual;
-              const maisonNet = maisonMonthlyNet?.[m.month - 1] ?? 0;
-              const netExkl   = Math.max(0, (netER ?? 0) - maisonNet);
+              const daily       = dailySums[m.month - 1] ?? 0;
+              const manual      = m.grossRevenueManual;
+              const takeAway    = m.takeAwayGrossManual;
+              const hasManual   = (manual   ?? 0) > 0;
+              const hasDaily    = daily > 0;
+              const hasTakeAway = (takeAway ?? 0) > 0;
 
-              const hasManual = (manual ?? 0) > 0;
-              const hasDaily  = daily > 0;
-              const hasER     = netExkl > 0;
+              // Take Away Netto & MwSt
+              const taNet = hasTakeAway ? (takeAway! / VAT_TAKEAWAY) : 0;
+              const taMwSt = hasTakeAway ? (takeAway! - taNet)       : 0;
 
-              const status    = getRowStatus(manual ?? undefined, daily);
-              const isEditing = editing[m.month] !== undefined;
-              const isSaving  = !!saving[m.month];
+              const status  = getRowStatus(manual ?? undefined, daily);
+              const diff    = hasManual && hasDaily ? (manual! - daily) : undefined;
+              const diffPct = diff !== undefined && manual! > 0 ? Math.abs(diff) / manual! : undefined;
 
-              const diff = hasManual && hasDaily ? (manual! - daily) : undefined;
-              const diffPct = diff !== undefined && manual! > 0
-                ? Math.abs(diff) / manual! : undefined;
+              const grossKey = editKey(m.month, 'gross');
+              const taKey    = editKey(m.month, 'takeAway');
+              const isEditingGross = editing[grossKey] !== undefined;
+              const isEditingTA    = editing[taKey]    !== undefined;
+              const isSavingGross  = !!saving[`${m.month}:gross`];
+              const isSavingTA     = !!saving[`${m.month}:takeAway`];
 
-              const inputVal = isEditing
-                ? editing[m.month]
-                : (hasManual ? fmt(manual!) : '');
+              const grossInput = isEditingGross ? editing[grossKey] : (hasManual   ? fmt(manual!)   : '');
+              const taInput    = isEditingTA    ? editing[taKey]    : (hasTakeAway ? fmt(takeAway!) : '');
 
-              if (!hasER && !hasDaily && !hasManual) {
+              if (!hasManual && !hasTakeAway && !hasDaily) {
                 return (
                   <tr key={m.month} className="border-b border-border/30 opacity-40">
                     <td className="py-1.5 px-2 font-medium">{MONTH_NAMES_DE[m.month]}</td>
@@ -207,22 +232,49 @@ export function UmsatzAbstimmung({
                   <td className="py-1 px-2">
                     <input
                       type="text"
-                      value={inputVal}
+                      value={grossInput}
                       placeholder="eingeben…"
-                      disabled={isSaving}
-                      onFocus={e => setEditing(ed => ({ ...ed, [m.month]: e.target.value }))}
-                      onChange={e => setEditing(ed => ({ ...ed, [m.month]: e.target.value }))}
-                      onBlur={() => handleGrossBlur(m.month)}
-                      onKeyDown={e => handleKeyDown(e, m.month)}
+                      disabled={isSavingGross}
+                      onFocus={e => setEditing(ed => ({ ...ed, [grossKey]: e.target.value }))}
+                      onChange={e => setEditing(ed => ({ ...ed, [grossKey]: e.target.value }))}
+                      onBlur={() => handleBlur(m.month, 'gross')}
+                      onKeyDown={e => handleKeyDown(e, m.month, 'gross')}
                       className={cn(
                         'w-full text-right font-mono text-xs bg-transparent',
                         'border-b border-transparent hover:border-blue-300 dark:hover:border-blue-700',
                         'focus:border-blue-500 focus:outline-none px-1 py-0.5 rounded-sm',
                         'focus:bg-blue-50/80 dark:focus:bg-blue-950/30 transition-colors',
-                        isSaving && 'opacity-40',
-                        !hasManual && !isEditing && 'text-muted-foreground/50 italic',
+                        isSavingGross && 'opacity-40',
+                        !hasManual && !isEditingGross && 'text-muted-foreground/50 italic',
                       )}
                     />
+                  </td>
+
+                  {/* Take Away – editierbar */}
+                  <td className="py-1 px-2">
+                    <input
+                      type="text"
+                      value={taInput}
+                      placeholder="eingeben…"
+                      disabled={isSavingTA}
+                      onFocus={e => setEditing(ed => ({ ...ed, [taKey]: e.target.value }))}
+                      onChange={e => setEditing(ed => ({ ...ed, [taKey]: e.target.value }))}
+                      onBlur={() => handleBlur(m.month, 'takeAway')}
+                      onKeyDown={e => handleKeyDown(e, m.month, 'takeAway')}
+                      className={cn(
+                        'w-full text-right font-mono text-xs bg-transparent',
+                        'border-b border-transparent hover:border-orange-300 dark:hover:border-orange-700',
+                        'focus:border-orange-500 focus:outline-none px-1 py-0.5 rounded-sm',
+                        'focus:bg-orange-50/80 dark:focus:bg-orange-950/30 transition-colors',
+                        isSavingTA && 'opacity-40',
+                        !hasTakeAway && !isEditingTA && 'text-muted-foreground/50 italic',
+                      )}
+                    />
+                    {hasTakeAway && (
+                      <span className="block text-[10px] text-muted-foreground/50 text-right px-1 leading-tight">
+                        Netto: {fmt2(taNet)} / MwSt: {fmt2(taMwSt)}
+                      </span>
+                    )}
                   </td>
 
                   {/* Summe Tage Brutto */}
@@ -252,11 +304,6 @@ export function UmsatzAbstimmung({
                     ) : '—'}
                   </td>
 
-                  {/* Netto ER exkl. Maison (Referenz) */}
-                  <td className={cn('py-1.5 px-2 text-right font-mono', !hasER && 'text-muted-foreground/30 italic')}>
-                    {hasER ? fmt(netExkl) : '—'}
-                  </td>
-
                   {/* Status */}
                   <td className="py-1.5 px-2 text-center">
                     {status === 'ok'      && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mx-auto" title="Bruttoumsatz stimmt mit Tageseinträgen überein (< 1 % Diff.)" />}
@@ -276,6 +323,16 @@ export function UmsatzAbstimmung({
               <td className="py-2 px-2 text-right font-mono text-xs">
                 {totalManual > 0 ? fmt(totalManual) : '—'}
               </td>
+              <td className="py-2 px-2 text-right font-mono text-xs text-orange-700 dark:text-orange-400">
+                {totalTakeAway > 0 ? (
+                  <span>
+                    {fmt(totalTakeAway)}
+                    <span className="block text-[10px] font-normal text-muted-foreground/50">
+                      Netto: {fmt(totalTakeAway / VAT_TAKEAWAY)}
+                    </span>
+                  </span>
+                ) : '—'}
+              </td>
               <td className="py-2 px-2 text-right font-mono text-xs">
                 {totalDaily > 0 ? fmt(totalDaily) : '—'}
               </td>
@@ -288,19 +345,16 @@ export function UmsatzAbstimmung({
               )}>
                 {totalDiff !== undefined ? fmtDiff(totalDiff) : '—'}
               </td>
-              <td className="py-2 px-2 text-right font-mono text-xs">
-                {totalNetExkl > 0 ? fmt(totalNetExkl) : '—'}
-              </td>
               <td />
             </tr>
           </tfoot>
         </table>
 
         <div className="mt-2.5 px-1 flex flex-col gap-0.5 text-[10px] text-muted-foreground/60">
-          <span><strong>Bruttoumsatz (manuell):</strong> Dein Referenzwert, exkl. Maison/Marketing. Klick in Zelle zum Eingeben.</span>
-          <span><strong>Summe Tage:</strong> Automatisch — Summe aller Tageseinträge aus Tagesansicht/Tages-Controlling (Brutto, ohne Maison).</span>
+          <span><strong>Bruttoumsatz (manuell):</strong> Gesamtumsatz des Monats, exkl. Maison/Marketing, inkl. MwSt. Klick in Zelle zum Eingeben.</span>
+          <span><strong>Take Away:</strong> Bruttoumsatz Takeaway, inkl. 2.6 % MwSt. Netto und MwSt-Betrag werden automatisch berechnet (÷ 1.026).</span>
+          <span><strong>Summe Tage:</strong> Automatisch — Summe der Tageseinträge aus Tagesansicht/Tages-Controlling (Brutto, ohne Maison).</span>
           <span><strong>Differenz:</strong> Manuell minus Summe Tage — Ziel: 0. Grün &lt; 1 %, Gelb = 1–3 %, Rot &gt; 3 %.</span>
-          <span><strong>Netto ER:</strong> Aus Erfolgsrechnung-Import, zur Orientierung. Fehlt der Wert = kein Import für diesen Monat.</span>
         </div>
       </CardContent>
     </Card>

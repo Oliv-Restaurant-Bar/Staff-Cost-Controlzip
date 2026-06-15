@@ -111,7 +111,7 @@ export function saveMonth(
   // Feststellen welche Felder sich ändern
   const affectedFields: (keyof MonthlyFinancialRecord)[] = [];
   const trackableFields: (keyof MonthlyFinancialRecord)[] = [
-    'revenueActual', 'revenueBudget', 'revenuePreviousYear', 'grossRevenueManual',
+    'revenueActual', 'revenueBudget', 'revenuePreviousYear', 'grossRevenueManual', 'takeAwayGrossManual',
     'personnelCostActual', 'personnelCostPlanned', 'personnelCostPreviousYear',
     'expenseCategories', 'expenseCategoriesPreviousYear',
   ];
@@ -151,6 +151,7 @@ export function saveMonth(
     if (incoming.revenueBudget          !== undefined) merged.revenueBudget          = incoming.revenueBudget;
     if (incoming.revenuePreviousYear    !== undefined) merged.revenuePreviousYear    = incoming.revenuePreviousYear;
     if (incoming.grossRevenueManual     !== undefined) merged.grossRevenueManual     = incoming.grossRevenueManual;
+    if (incoming.takeAwayGrossManual    !== undefined) merged.takeAwayGrossManual    = incoming.takeAwayGrossManual;
     if (incoming.personnelCostActual    !== undefined) merged.personnelCostActual    = incoming.personnelCostActual;
     if (incoming.personnelCostPlanned   !== undefined) merged.personnelCostPlanned   = incoming.personnelCostPlanned;
     if (incoming.personnelCostPreviousYear !== undefined) merged.personnelCostPreviousYear = incoming.personnelCostPreviousYear;

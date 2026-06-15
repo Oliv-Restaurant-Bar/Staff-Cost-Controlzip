@@ -123,6 +123,12 @@ export interface MonthlyFinancialRecord {
    * und der Summe der Tagesumsätze (Tagesansicht / Tagescontrolling).
    */
   grossRevenueManual?: number;
+  /**
+   * Manuell erfasster Take-Away-Umsatz (CHF, Brutto inkl. 2.6 % MwSt).
+   * Wird für die Umsatzabstimmung separat ausgewiesen, da der reduzierte
+   * MwSt-Satz (2.6 %) gilt.
+   */
+  takeAwayGrossManual?: number;
 
   // ── Personalkosten ──────────────────────────────────────────────────
   /** Tatsächliche Personalkosten (CHF) – aus Lohnlauf */
