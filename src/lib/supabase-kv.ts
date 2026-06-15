@@ -219,6 +219,82 @@ function mergeDailyBudgets(
 }
 
 /**
+ * Sicherer Monats-Upsert für reporting_v1.
+ * ==========================================
+ * PROBLEM: saveAll() in reporting-store.ts schreibt den gesamten localStorage-Blob
+ *   direkt nach Supabase (kvSet = komplettes Ersetzen). Wenn localStorage beim
+ *   Import nicht vollständig synchronisiert war (frischer Login, anderer Browser,
+ *   Race-Condition beim Startup-Sync), überschreibt saveAll() Supabase mit
+ *   unvollständigen Daten — bestehende Monate (z.B. April) werden dauerhaft gelöscht.
+ *
+ * LÖSUNG: Immer zuerst den aktuellen Supabase-Stand laden, dann NUR den einen
+ *   veränderten Monat aktualisieren, dann zurückschreiben.
+ *
+ * Ablauf:
+ *   1. Supabase KV lesen (Master – enthält alle Monate aller Geräte/Sessions)
+ *   2. Nur monthId aktualisieren (alle anderen Monate bleiben unberührt)
+ *   3. Zurückschreiben: Supabase + localStorage (mit vollständigen Daten)
+ */
+export async function safeUpsertReportingMonth(
+  monthId: string,
+  monthRecord: unknown,
+  storeKey: string,
+): Promise<void> {
+  if (!(await isAvailable())) return;
+  try {
+    // 1. Aktuellen Supabase-Stand laden (Master)
+    const remote = await kvGet(storeKey);
+    const base: Record<string, unknown> =
+      remote && typeof remote === 'object' && !Array.isArray(remote)
+        ? (remote as Record<string, unknown>)
+        : {};
+    // 2. Nur den einen Monat aktualisieren — alle anderen Monate bleiben erhalten
+    const merged = { ...base, [monthId]: monthRecord };
+    // 3. Nach Supabase schreiben
+    await (supabase as any)
+      .from('app_settings')
+      .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
+    // 4. localStorage mit dem vollständigen Stand synchronisieren
+    localStorage.setItem(storeKey, JSON.stringify(merged));
+    notifyKV(storeKey);
+    console.log(`[REPORTING] safeUpsertReportingMonth: ${storeKey} / ${monthId} ✓`);
+  } catch (err) {
+    console.error(`[REPORTING] safeUpsertReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
+    // Fallback: bestmöglicher direkter Schreibversuch
+    kvSet(storeKey, { [monthId]: monthRecord }).catch(() => {});
+  }
+}
+
+/**
+ * Sicheres Löschen eines Monats aus reporting_v1.
+ * Liest Supabase-Stand, entfernt NUR den angegebenen Monat, schreibt zurück.
+ * Verhindert, dass andere Monate verschwinden.
+ */
+export async function safeDeleteReportingMonth(
+  monthId: string,
+  storeKey: string,
+): Promise<void> {
+  if (!(await isAvailable())) return;
+  try {
+    const remote = await kvGet(storeKey);
+    const base: Record<string, unknown> =
+      remote && typeof remote === 'object' && !Array.isArray(remote)
+        ? (remote as Record<string, unknown>)
+        : {};
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { [monthId]: _removed, ...rest } = base;
+    await (supabase as any)
+      .from('app_settings')
+      .upsert({ key: storeKey, value: rest }, { onConflict: 'key' });
+    localStorage.setItem(storeKey, JSON.stringify(rest));
+    notifyKV(storeKey);
+    console.log(`[REPORTING] safeDeleteReportingMonth: ${storeKey} / ${monthId} ✓`);
+  } catch (err) {
+    console.error(`[REPORTING] safeDeleteReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
+  }
+}
+
+/**
  * Feld-Level-Merge zweier reporting_v1-Objekte.
  * Für jeden Monatsdatensatz gewinnt das Feld mit dem "mehr Inhalt":
  * - arrays: längere Liste gewinnt

@@ -39,7 +39,7 @@ import {
   SageJournalEntry,
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet } from './supabase-kv';
+import { kvGet, kvSet, safeUpsertReportingMonth, safeDeleteReportingMonth } from './supabase-kv';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -56,9 +56,9 @@ function loadAll(storeKey: string = STORAGE_KEY): Record<string, MonthlyFinancia
 }
 
 function saveAll(data: Record<string, MonthlyFinancialRecord>, storeKey: string = STORAGE_KEY): void {
+  // Nur localStorage – Supabase-Schreib erfolgt via safeUpsertReportingMonth / safeDeleteReportingMonth
+  // (verhindert stale-Overwrite anderer Monate bei unvollständig synchronisiertem localStorage)
   localStorage.setItem(storeKey, JSON.stringify(data));
-  // Asynchron zu Supabase synchronisieren (fire-and-forget) — nutzt storeKey damit Beaulieu unter beaulieu:reporting_v1 landet
-  kvSet(storeKey, data).catch(() => { /* silently ignore */ });
 }
 
 // ─── Öffentliche API ──────────────────────────────────────────────────────────
@@ -176,6 +176,11 @@ export function saveMonth(
 
   all[id] = saved;
   saveAll(all, storeKey);
+  // Sicher nach Supabase schreiben: erst KV-Stand lesen, nur diesen Monat mergen,
+  // dann zurückschreiben — verhindert Datenverlust bei stale localStorage
+  safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
+    console.error('[REPORTING] saveMonth: safeUpsertReportingMonth fehlgeschlagen', err);
+  });
   return saved;
 }
 
@@ -183,9 +188,15 @@ export function saveMonth(
  * Monat löschen (Admin-Funktion, z.B. Testdaten entfernen).
  */
 export function deleteMonth(year: number, month: number, storeKey: string = STORAGE_KEY): void {
+  const id = monthId(year, month);
   const all = loadAll(storeKey);
-  delete all[monthId(year, month)];
+  delete all[id];
   saveAll(all, storeKey);
+  // Sicher aus Supabase entfernen: erst KV-Stand lesen, nur diesen Monat entfernen,
+  // dann zurückschreiben — andere Monate bleiben erhalten
+  safeDeleteReportingMonth(id, storeKey).catch(err => {
+    console.error('[REPORTING] deleteMonth: safeDeleteReportingMonth fehlgeschlagen', err);
+  });
 }
 
 /**
