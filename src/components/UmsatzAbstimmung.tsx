@@ -22,16 +22,13 @@ function getDailySumForMonth(year: number, month: number, storageKey: string): n
 
 type RowStatus = 'ok' | 'warning' | 'error' | 'missing';
 
-function getRowStatus(
-  netER: number | undefined,
-  dailySum: number,
-): RowStatus {
-  const hasER    = netER !== undefined && netER > 0;
+function getRowStatus(netExklMaison: number, dailySum: number): RowStatus {
+  const hasER    = netExklMaison > 0;
   const hasDaily = dailySum > 0;
   if (!hasER && !hasDaily) return 'missing';
   if (!hasER || !hasDaily) return 'warning';
-  const diff = Math.abs(dailySum - netER);
-  const pct  = diff / netER;
+  const diff = Math.abs(dailySum - netExklMaison);
+  const pct  = diff / netExklMaison;
   if (pct < 0.02) return 'ok';
   if (pct < 0.05) return 'warning';
   return 'error';
@@ -60,12 +57,14 @@ interface UmsatzAbstimmungProps {
   dailyBudgetsKey: string;
   storeKey: string;
   onRefresh: () => void;
+  /** Netto-Marketing-Umsatz (Maison) pro Monat, Index 0 = Januar. 0 wenn kein Maison. */
+  maisonMonthlyNet?: number[];
 }
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
 
 export function UmsatzAbstimmung({
-  year, months, dailyBudgetsKey, storeKey, onRefresh,
+  year, months, dailyBudgetsKey, storeKey, onRefresh, maisonMonthlyNet,
 }: UmsatzAbstimmungProps) {
   const [editing, setEditing] = useState<Record<number, string>>({});
   const [saving,  setSaving]  = useState<Record<number, boolean>>({});
@@ -119,9 +118,15 @@ export function UmsatzAbstimmung({
   const hasAnyData = months.some(m => (m.revenueActual ?? 0) > 0 || dailySums[m.month - 1] > 0);
   if (!hasAnyData) return null;
 
-  const totalGross = months.reduce((s, m) => s + (m.grossRevenueManual ?? 0), 0);
-  const totalNet   = months.reduce((s, m) => s + (m.revenueActual     ?? 0), 0);
-  const totalDaily = dailySums.reduce((s, v) => s + v, 0);
+  const hasMaison = (maisonMonthlyNet ?? []).some(v => v > 0);
+
+  // Jahressummen (exkl. Marketing)
+  const totalGross       = months.reduce((s, m) => s + (m.grossRevenueManual ?? 0), 0);
+  const totalNetER       = months.reduce((s, m) => s + (m.revenueActual ?? 0), 0);
+  const totalMaison      = (maisonMonthlyNet ?? []).reduce((s, v) => s + v, 0);
+  const totalNetExkl     = Math.max(0, totalNetER - totalMaison);
+  const totalDaily       = dailySums.reduce((s, v) => s + v, 0);
+  const totalDiff        = totalNetExkl > 0 && totalDaily > 0 ? totalDaily - totalNetExkl : undefined;
 
   return (
     <Card className="border-blue-200 dark:border-blue-800">
@@ -131,8 +136,9 @@ export function UmsatzAbstimmung({
           Umsatz-Abstimmung {year}
         </CardTitle>
         <p className="text-[11px] text-muted-foreground mt-0.5">
-          Bruttoumsatz (manuell, inkl. MwSt) abgleichen mit Nettoumsatz Erfolgsrechnung
-          und Summe der Tagesumsätze. Klick in Brutto-Zelle zum Eingeben.
+          Bruttoumsatz (manuell, inkl. MwSt, <strong>exkl. Marketing</strong>) abgleichen
+          mit Nettoumsatz ER exkl. Marketing und Summe der Tagesumsätze.
+          Klick in Brutto-Zelle zum Eingeben.
         </p>
       </CardHeader>
       <CardContent className="pt-0 overflow-x-auto">
@@ -142,12 +148,20 @@ export function UmsatzAbstimmung({
               <th className="text-left py-2 px-2 font-semibold min-w-[68px]">Monat</th>
               <th className="text-right py-2 px-2 font-semibold min-w-[120px]">
                 Bruttoumsatz
-                <span className="block text-[10px] font-normal">manuell (inkl. MwSt)</span>
+                <span className="block text-[10px] font-normal">manuell, exkl. Mkt.</span>
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[110px]">
-                Nettoumsatz ER
-                <span className="block text-[10px] font-normal">Erfolgsrechnung</span>
+                Netto ER
+                <span className="block text-[10px] font-normal">
+                  {hasMaison ? 'exkl. Marketing' : 'Erfolgsrechnung'}
+                </span>
               </th>
+              {hasMaison && (
+                <th className="text-right py-2 px-2 font-semibold min-w-[90px] text-purple-700 dark:text-purple-400">
+                  Marketing
+                  <span className="block text-[10px] font-normal">Maison Netto</span>
+                </th>
+              )}
               <th className="text-right py-2 px-2 font-semibold min-w-[110px]">
                 Summe Tage
                 <span className="block text-[10px] font-normal">Tagesansicht</span>
@@ -165,22 +179,32 @@ export function UmsatzAbstimmung({
           </thead>
           <tbody>
             {months.map((m, idx) => {
-              const dailySum  = dailySums[m.month - 1] ?? 0;
-              const netER     = m.revenueActual;
-              const gross     = m.grossRevenueManual;
-              const hasER     = (netER ?? 0) > 0;
-              const hasDaily  = dailySum > 0;
-              const hasGross  = (gross ?? 0) > 0;
-              const status    = getRowStatus(netER, dailySum);
+              const dailySum     = dailySums[m.month - 1] ?? 0;
+              const netER        = m.revenueActual;
+              const gross        = m.grossRevenueManual;
+              const maisonNet    = maisonMonthlyNet?.[m.month - 1] ?? 0;
+              // Vergleichsbasis: ER exkl. Marketing-Umsatz
+              const netExkl      = Math.max(0, (netER ?? 0) - maisonNet);
+              const hasER        = (netER ?? 0) > 0;
+              const hasExkl      = netExkl > 0;
+              const hasDaily     = dailySum > 0;
+              const hasGross     = (gross ?? 0) > 0;
+              const hasMaisonRow = maisonNet > 0;
+
+              const status    = getRowStatus(netExkl, dailySum);
               const isEditing = editing[m.month] !== undefined;
               const isSaving  = !!saving[m.month];
-              const diff      = hasER && hasDaily ? dailySum - (netER ?? 0) : undefined;
-              const implVat   = hasGross && hasER
-                ? ((gross! - netER!) / netER! * 100)
-                : undefined;
-              const vatOk     = implVat !== undefined && implVat >= 6.5 && implVat <= 9.5;
 
-              const inputVal  = isEditing
+              // Diff: Tagesumsätze minus ER exkl. Marketing (Ziel: 0)
+              const diff = hasExkl && hasDaily ? dailySum - netExkl : undefined;
+
+              // MwSt implizit: (Brutto − Netto exkl. Mkt.) / Netto exkl. Mkt.
+              const implVat = hasGross && hasExkl
+                ? ((gross! - netExkl) / netExkl * 100)
+                : undefined;
+              const vatOk   = implVat !== undefined && implVat >= 6.5 && implVat <= 9.5;
+
+              const inputVal = isEditing
                 ? editing[m.month]
                 : (hasGross ? fmt(gross!) : '');
 
@@ -188,7 +212,9 @@ export function UmsatzAbstimmung({
                 return (
                   <tr key={m.month} className="border-b border-border/30 opacity-40">
                     <td className="py-1.5 px-2 font-medium">{MONTH_NAMES_DE[m.month]}</td>
-                    <td colSpan={6} className="py-1.5 px-2 text-center text-muted-foreground/50 italic">keine Daten</td>
+                    <td colSpan={hasMaison ? 7 : 6} className="py-1.5 px-2 text-center text-muted-foreground/50 italic">
+                      keine Daten
+                    </td>
                   </tr>
                 );
               }
@@ -225,29 +251,50 @@ export function UmsatzAbstimmung({
                     />
                   </td>
 
-                  {/* Nettoumsatz ER */}
-                  <td className={cn('py-1.5 px-2 text-right font-mono', !hasER && 'text-muted-foreground/40 italic')}>
-                    {hasER ? fmt(netER!) : '—'}
+                  {/* Netto ER exkl. Marketing */}
+                  <td className="py-1.5 px-2 text-right font-mono">
+                    {hasExkl ? (
+                      <span>
+                        {fmt(netExkl)}
+                        {hasMaisonRow && hasER && (
+                          <span className="block text-[10px] text-muted-foreground/50">
+                            inkl. Mkt: {fmt(netER!)}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/40 italic">—</span>
+                    )}
                   </td>
+
+                  {/* Marketing (Maison Netto) — nur wenn Maison vorhanden */}
+                  {hasMaison && (
+                    <td className={cn(
+                      'py-1.5 px-2 text-right font-mono',
+                      !hasMaisonRow ? 'text-muted-foreground/30' : 'text-purple-700 dark:text-purple-400',
+                    )}>
+                      {hasMaisonRow ? fmt(maisonNet) : '—'}
+                    </td>
+                  )}
 
                   {/* Summe Tagesumsätze */}
                   <td className={cn('py-1.5 px-2 text-right font-mono', !hasDaily && 'text-muted-foreground/40 italic')}>
                     {hasDaily ? fmt(dailySum) : '—'}
                   </td>
 
-                  {/* Diff Tage/ER */}
+                  {/* Diff Tage / ER exkl. Mkt. */}
                   <td className={cn(
                     'py-1.5 px-2 text-right font-mono',
-                    diff === undefined                              ? 'text-muted-foreground/40 italic' :
-                    Math.abs(diff) < 500                           ? 'text-emerald-600 dark:text-emerald-400' :
-                    Math.abs(diff) / (netER ?? 1) < 0.02          ? 'text-emerald-600 dark:text-emerald-400' :
-                    Math.abs(diff) / (netER ?? 1) < 0.05          ? 'text-amber-600 dark:text-amber-400' :
+                    diff === undefined                                    ? 'text-muted-foreground/40 italic' :
+                    Math.abs(diff) < 500                                  ? 'text-emerald-600 dark:text-emerald-400' :
+                    Math.abs(diff) / Math.max(netExkl, 1) < 0.02        ? 'text-emerald-600 dark:text-emerald-400' :
+                    Math.abs(diff) / Math.max(netExkl, 1) < 0.05        ? 'text-amber-600 dark:text-amber-400' :
                     'text-red-600',
                   )}>
                     {diff !== undefined ? fmtDiff(diff) : '—'}
                   </td>
 
-                  {/* MwSt impl. */}
+                  {/* MwSt implizit (Brutto vs. Netto exkl. Mkt.) */}
                   <td className={cn(
                     'py-1.5 px-2 text-right font-mono',
                     implVat === undefined ? 'text-muted-foreground/40 italic' :
@@ -259,8 +306,8 @@ export function UmsatzAbstimmung({
 
                   {/* Status */}
                   <td className="py-1.5 px-2 text-center">
-                    {status === 'ok'      && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mx-auto" title="Tagesumsätze stimmen mit Erfolgsrechnung überein (< 2 % Abw.)" />}
-                    {status === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 mx-auto" title="Abweichung zwischen Tagesumsätzen und Erfolgsrechnung oder Daten fehlen" />}
+                    {status === 'ok'      && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mx-auto" title="Tagesumsätze stimmen mit ER exkl. Marketing überein (< 2 % Abw.)" />}
+                    {status === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-500 mx-auto" title="Abweichung vorhanden oder Daten fehlen" />}
                     {status === 'error'   && <XCircle className="h-3.5 w-3.5 text-red-500 mx-auto" title="Grosse Abweichung (> 5 %) — bitte prüfen" />}
                     {status === 'missing' && <span className="text-muted-foreground/30 text-[10px]">–</span>}
                   </td>
@@ -277,35 +324,46 @@ export function UmsatzAbstimmung({
                 {totalGross > 0 ? fmt(totalGross) : '—'}
               </td>
               <td className="py-2 px-2 text-right font-mono text-xs">
-                {totalNet > 0 ? fmt(totalNet) : '—'}
+                {totalNetExkl > 0 ? (
+                  <span>
+                    {fmt(totalNetExkl)}
+                    {hasMaison && totalNetER > 0 && (
+                      <span className="block text-[10px] text-muted-foreground/50">
+                        inkl. Mkt: {fmt(totalNetER)}
+                      </span>
+                    )}
+                  </span>
+                ) : '—'}
               </td>
+              {hasMaison && (
+                <td className="py-2 px-2 text-right font-mono text-xs text-purple-700 dark:text-purple-400">
+                  {totalMaison > 0 ? fmt(totalMaison) : '—'}
+                </td>
+              )}
               <td className="py-2 px-2 text-right font-mono text-xs">
                 {totalDaily > 0 ? fmt(totalDaily) : '—'}
               </td>
               <td className={cn(
                 'py-2 px-2 text-right font-mono text-xs',
-                totalNet > 0 && totalDaily > 0 ? (
-                  Math.abs(totalDaily - totalNet) / Math.max(totalNet, 1) < 0.02
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : Math.abs(totalDaily - totalNet) / Math.max(totalNet, 1) < 0.05
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-red-600'
-                ) : 'text-muted-foreground/40',
+                totalDiff === undefined ? 'text-muted-foreground/40' :
+                Math.abs(totalDiff) / Math.max(totalNetExkl, 1) < 0.02 ? 'text-emerald-600 dark:text-emerald-400' :
+                Math.abs(totalDiff) / Math.max(totalNetExkl, 1) < 0.05 ? 'text-amber-600 dark:text-amber-400' :
+                'text-red-600',
               )}>
-                {totalNet > 0 && totalDaily > 0 ? fmtDiff(totalDaily - totalNet) : '—'}
+                {totalDiff !== undefined ? fmtDiff(totalDiff) : '—'}
               </td>
               <td className={cn(
                 'py-2 px-2 text-right font-mono text-xs',
                 (() => {
-                  if (!totalGross || !totalNet) return 'text-muted-foreground/40';
-                  const vat = (totalGross - totalNet) / totalNet * 100;
+                  if (!totalGross || !totalNetExkl) return 'text-muted-foreground/40';
+                  const vat = (totalGross - totalNetExkl) / totalNetExkl * 100;
                   return vat >= 6.5 && vat <= 9.5
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-amber-600 dark:text-amber-400';
                 })(),
               )}>
-                {totalGross > 0 && totalNet > 0
-                  ? `${((totalGross - totalNet) / totalNet * 100).toFixed(1)}%`
+                {totalGross > 0 && totalNetExkl > 0
+                  ? `${((totalGross - totalNetExkl) / totalNetExkl * 100).toFixed(1)}%`
                   : '—'}
               </td>
               <td />
@@ -314,9 +372,13 @@ export function UmsatzAbstimmung({
         </table>
 
         <div className="mt-2.5 px-1 flex flex-col gap-0.5 text-[10px] text-muted-foreground/60">
-          <span><strong>Diff. Tage/ER:</strong> Summe Tagesumsätze minus Nettoumsatz aus Erfolgsrechnung — Ziel: nahe 0.</span>
-          <span><strong>MwSt impl.:</strong> (Brutto − Netto) / Netto — Ziel: ≈ 7.7 % (CH-Normalsatz). Grün = 6.5–9.5 %, Gelb = ausserhalb.</span>
-          <span><strong>Status ✓:</strong> Abweichung Tage/ER &lt; 2 %. Gelb = 2–5 %. Rot = &gt; 5 %.</span>
+          <span>
+            <strong>Netto ER exkl. Mkt.:</strong> Nettoumsatz aus Erfolgsrechnung abzüglich Maison-Marketing-Umsatz
+            {hasMaison ? ' — in Klammern der Bruttowert inkl. Marketing.' : '.'}
+          </span>
+          <span><strong>Diff. Tage/ER:</strong> Summe Tagesumsätze minus Netto ER exkl. Marketing — Ziel: 0 (keine Abweichung).</span>
+          <span><strong>MwSt impl.:</strong> (Bruttoumsatz − Netto ER exkl. Mkt.) / Netto ER exkl. Mkt. — Ziel: ≈ 7.7 %. Grün = 6.5–9.5 %.</span>
+          <span><strong>Status ✓:</strong> Diff. Tage/ER &lt; 2 %. Gelb = 2–5 %. Rot = &gt; 5 %.</span>
         </div>
       </CardContent>
     </Card>

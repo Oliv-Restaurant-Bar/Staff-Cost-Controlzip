@@ -2448,6 +2448,7 @@ const Reporting = () => {
           dailyBudgetsKey={tenantKey('dailyBudgets')}
           storeKey={tenantKey('reporting_v1')}
           onRefresh={() => setMonths(loadYear(year, tenantKey('reporting_v1')))}
+          maisonMonthlyNet={maisonMonthlyNet}
         />
 
         {/* ── Diagramme: Umsatz ── */}
