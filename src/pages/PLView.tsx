@@ -207,13 +207,14 @@ const MonthRow = ({
 const NET_REV_ROW_IDX = PL_STRUCTURE.findIndex(r => r.id === 'net_revenue');
 
 const YearRow = ({
-  rows, rowIndex, onClickMonth, pctMode = 'off', revenueTotal = 0,
+  rows, rowIndex, onClickMonth, pctMode = 'off', revenueTotal = 0, excludeMonthIdx = -1,
 }: {
   rows: PLComputedRow[][];  // rows[monthIndex][rowIndex]
   rowIndex: number;
   onClickMonth: (month: number) => void;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueTotal?: number;
+  excludeMonthIdx?: number; // 0-basiert; -1 = kein Ausschluss
 }) => {
   const def = PL_STRUCTURE[rowIndex];
   const showPct = pctMode !== 'off';
@@ -231,8 +232,9 @@ const YearRow = ({
     );
   }
 
+  // Total: laufenden Monat bei Bedarf ausschliessen
   const vals = rows
-    .map(r => r[rowIndex]?.values.actual)
+    .map((r, i) => (i === excludeMonthIdx ? undefined : r[rowIndex]?.values.actual))
     .filter((v): v is number => v !== undefined);
   const total = vals.length > 0 ? vals.reduce((a, b) => a + b, 0) : undefined;
   const pctStr = showPct && revenueTotal > 0 && total !== undefined && total !== 0
@@ -495,13 +497,18 @@ const YearView = ({
   onClickMonth,
   pctMode = 'off',
   revenueTotal = 0,
+  excludeMonthIdx = -1,
 }: {
   results: PLMonthResult[];
   onClickMonth: (month: number) => void;
   pctMode?: 'off' | 'normal' | 'subtle';
   revenueTotal?: number;
+  excludeMonthIdx?: number; // 0-basiert; -1 = kein Ausschluss
 }) => {
   const allRows = results.map(r => r.rows);
+  const totalLabel = excludeMonthIdx >= 0
+    ? `Jan–${MONTH_NAMES_SHORT_DE[excludeMonthIdx] ?? '?'} (ohne ${MONTH_NAMES_SHORT_DE[excludeMonthIdx + 1] ?? '?'})`
+    : 'Total';
 
   return (
     <div className="overflow-x-auto">
@@ -512,8 +519,10 @@ const YearView = ({
             <th className={cn(
               'text-right px-2 py-2 whitespace-nowrap font-bold bg-[#3d5640]',
               pctMode === 'off' && 'border-r-2 border-[#3d5640]',
-            )}>
-              Total
+            )}
+              title={excludeMonthIdx >= 0 ? `Summe Jan–${MONTH_NAMES_DE[excludeMonthIdx] ?? '?'} (laufender Monat ausgeschlossen)` : 'Jahressumme aller Monate'}
+            >
+              {totalLabel}
             </th>
             {pctMode !== 'off' && (
               <th className={cn(
@@ -523,28 +532,39 @@ const YearView = ({
                 % Ums.
               </th>
             )}
-            {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => (
-              <React.Fragment key={i}>
-                <th
-                  className="text-right px-2 py-2 cursor-pointer hover:bg-[#3d5640] whitespace-nowrap"
-                  onClick={() => onClickMonth(i + 1)}
-                  title={`Zu ${MONTH_NAMES_DE[i + 1]} wechseln`}
-                >
-                  {m}
-                </th>
-                {pctMode !== 'off' && (
+            {MONTH_NAMES_SHORT_DE.slice(1).map((m, i) => {
+              const isExcluded = i === excludeMonthIdx;
+              return (
+                <React.Fragment key={i}>
                   <th
                     className={cn(
-                      'text-right px-1.5 py-2 whitespace-nowrap text-[10px]',
-                      pctMode === 'subtle' ? 'opacity-50 italic' : 'text-[#d4e8c4]',
+                      'text-right px-2 py-2 cursor-pointer whitespace-nowrap',
+                      isExcluded
+                        ? 'bg-slate-600/60 opacity-60 italic'
+                        : 'hover:bg-[#3d5640]',
                     )}
-                    title={`% Umsatz ${MONTH_NAMES_DE[i + 1]}`}
+                    onClick={() => onClickMonth(i + 1)}
+                    title={isExcluded
+                      ? `${MONTH_NAMES_DE[i + 1]} – laufender Monat (vom Total ausgeschlossen)`
+                      : `Zu ${MONTH_NAMES_DE[i + 1]} wechseln`}
                   >
-                    %
+                    {m}{isExcluded ? ' *' : ''}
                   </th>
-                )}
-              </React.Fragment>
-            ))}
+                  {pctMode !== 'off' && (
+                    <th
+                      className={cn(
+                        'text-right px-1.5 py-2 whitespace-nowrap text-[10px]',
+                        isExcluded ? 'opacity-40 italic' : '',
+                        pctMode === 'subtle' ? 'opacity-50 italic' : 'text-[#d4e8c4]',
+                      )}
+                      title={`% Umsatz ${MONTH_NAMES_DE[i + 1]}`}
+                    >
+                      %
+                    </th>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -556,6 +576,7 @@ const YearView = ({
               onClickMonth={onClickMonth}
               pctMode={pctMode}
               revenueTotal={revenueTotal}
+              excludeMonthIdx={excludeMonthIdx}
             />
           ))}
         </tbody>
@@ -2256,6 +2277,7 @@ const PLViewPage = () => {
   const [bplDrilldown,    setBplDrilldown]    = useState<BPLRowWithValues | null>(null);
   const [accountAction,   setAccountAction]   = useState<BPLRowWithValues | null>(null);
   const [compact,          setCompact]          = useState(false);
+  const [excludeCurrentMonth, setExcludeCurrentMonth] = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
   const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat'>('all');
@@ -2704,11 +2726,20 @@ const PLViewPage = () => {
     { label: 'Betriebsergebnis EBIT', values: ebit,  suffix: netRev?.actual ? ` (${((ebit?.actual ?? 0) / netRev.actual * 100).toFixed(1)} %)` : '' },
   ]) as Array<{ label: string; values: { actual?: number } | undefined; suffix: string }>;
 
-  // KPI-Karten Jahresansicht (Summe über alle Monate)
-  const yearNetRevTotal  = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearResult]);
-  const yearGP1Total     = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_1')?.values.actual ?? 0), 0), [yearResult]);
-  const yearGP2Total     = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_2')?.values.actual ?? 0), 0), [yearResult]);
-  const yearEbitTotal    = useMemo(() => yearResult.months.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'ebit')?.values.actual ?? 0), 0), [yearResult]);
+  // KPI-Karten Jahresansicht (Summe über alle / nur abgeschlossene Monate)
+  // excludeMonthIdx: 0-basiert (currentMonth - 1); -1 = kein Ausschluss
+  const excludeMonthIdx = (excludeCurrentMonth && year === currentYear) ? currentMonth - 1 : -1;
+  const yearEffectiveMonths = useMemo(
+    () => excludeMonthIdx >= 0
+      ? yearResult.months.filter((_, i) => i !== excludeMonthIdx)
+      : yearResult.months,
+    [yearResult, excludeMonthIdx],
+  );
+  const yearNetRevTotal  = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearGP1Total     = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_1')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearGP2Total     = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_2')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearEbitTotal    = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'ebit')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearMonthLabel   = excludeMonthIdx >= 0 ? `Jan–${MONTH_NAMES_DE[excludeMonthIdx] ?? ''}` : String(year);
   const yearKpis = [
     { label: 'Betriebsertrag netto', val: yearNetRevTotal, suffix: '' },
     { label: 'Bruttogewinn 1',       val: yearGP1Total,    suffix: yearNetRevTotal > 0 ? `(${(yearGP1Total / yearNetRevTotal * 100).toFixed(1)} %)` : '' },
@@ -2843,6 +2874,27 @@ const PLViewPage = () => {
             )}
 
             {/* % Anteil am Umsatz */}
+            {/* Laufenden Monat ausschliessen (nur Jahresansicht, nur laufendes Jahr) */}
+            {mode === 'yearly' && year === currentYear && (
+              <button
+                title={excludeCurrentMonth
+                  ? `${MONTH_NAMES_DE[currentMonth]} wieder einschliessen (Total = alle Monate)`
+                  : `${MONTH_NAMES_DE[currentMonth]} (laufender Monat) vom Total ausschliessen – vermeidet Verzerrung durch unvollständige Daten`}
+                onClick={() => setExcludeCurrentMonth(v => !v)}
+                className={cn(
+                  'h-8 px-2 flex items-center gap-1 rounded border text-xs transition-colors',
+                  excludeCurrentMonth
+                    ? 'bg-orange-500 text-white border-orange-500'
+                    : 'bg-card border-border hover:bg-muted text-muted-foreground',
+                )}
+              >
+                <span className="hidden sm:inline">
+                  {excludeCurrentMonth ? `Ohne ${MONTH_NAMES_DE[currentMonth]}` : `${MONTH_NAMES_DE[currentMonth]} ausschl.`}
+                </span>
+                <span className="sm:hidden">⊘ Mtl.</span>
+              </button>
+            )}
+
             {(mode === 'budget_pl' || mode === 'yearly') && (
               <button
                 title={
@@ -3002,6 +3054,18 @@ const PLViewPage = () => {
 
         {/* KPI-Karten Jahresansicht */}
         {mode === 'yearly' && (
+          <>
+            {/* Info-Banner wenn laufender Monat ausgeschlossen */}
+            {excludeCurrentMonth && year === currentYear && (
+              <div className="rounded-lg border border-orange-200 bg-orange-50 dark:border-orange-800 dark:bg-orange-950/20 px-4 py-2.5 flex items-center gap-2 text-xs text-orange-800 dark:text-orange-300">
+                <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                <span>
+                  <strong>{MONTH_NAMES_DE[currentMonth]}</strong> (laufender Monat) ist vom Total ausgeschlossen —
+                  Jahressumme zeigt <strong>{yearMonthLabel}</strong> (nur abgeschlossene Monate).
+                  Der Monat bleibt als Spalte sichtbar, wird aber nicht summiert.
+                </span>
+              </div>
+            )}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {yearKpis.map(kpi => {
               const isPositive = kpi.val >= 0;
@@ -3015,6 +3079,7 @@ const PLViewPage = () => {
                 )}>
                   <CardContent className="p-3">
                     <p className="text-[11px] text-muted-foreground mb-1 leading-tight">{kpi.label}</p>
+                    <p className="text-[9px] text-orange-500 mb-0.5">{excludeCurrentMonth && year === currentYear ? yearMonthLabel : ''}</p>
                     {hasData ? (
                       <>
                         <p className={cn('text-lg font-bold', isPositive ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
@@ -3030,6 +3095,7 @@ const PLViewPage = () => {
               );
             })}
           </div>
+          </>
         )}
 
         {/* Datenvollständigkeit-Hinweis */}
@@ -3166,7 +3232,7 @@ const PLViewPage = () => {
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
-            : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} />
+            : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} excludeMonthIdx={excludeMonthIdx} />
           }
         </div>
 
