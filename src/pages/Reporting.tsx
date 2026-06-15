@@ -86,6 +86,7 @@ import {
 } from '@/lib/maison-store';
 import { useMaison } from '@/contexts/MaisonContext';
 import { kvGet } from '@/lib/supabase-kv';
+import { UmsatzAbstimmung } from '@/components/UmsatzAbstimmung';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -2439,6 +2440,15 @@ const Reporting = () => {
             </div>
           </section>
         )}
+
+        {/* ── Umsatz-Abstimmung ── */}
+        <UmsatzAbstimmung
+          year={year}
+          months={months}
+          dailyBudgetsKey={tenantKey('dailyBudgets')}
+          storeKey={tenantKey('reporting_v1')}
+          onRefresh={() => setMonths(loadYear(year, tenantKey('reporting_v1')))}
+        />
 
         {/* ── Diagramme: Umsatz ── */}
         <section className="space-y-4">

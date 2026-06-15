@@ -111,7 +111,7 @@ export function saveMonth(
   // Feststellen welche Felder sich ändern
   const affectedFields: (keyof MonthlyFinancialRecord)[] = [];
   const trackableFields: (keyof MonthlyFinancialRecord)[] = [
-    'revenueActual', 'revenueBudget', 'revenuePreviousYear',
+    'revenueActual', 'revenueBudget', 'revenuePreviousYear', 'grossRevenueManual',
     'personnelCostActual', 'personnelCostPlanned', 'personnelCostPreviousYear',
     'expenseCategories', 'expenseCategoriesPreviousYear',
   ];
@@ -147,11 +147,12 @@ export function saveMonth(
     // Update: nur gelieferte Felder überschreiben
     const merged: MonthlyFinancialRecord = { ...existing };
 
-    if (incoming.revenueActual        !== undefined) merged.revenueActual        = incoming.revenueActual;
-    if (incoming.revenueBudget        !== undefined) merged.revenueBudget        = incoming.revenueBudget;
-    if (incoming.revenuePreviousYear  !== undefined) merged.revenuePreviousYear  = incoming.revenuePreviousYear;
-    if (incoming.personnelCostActual  !== undefined) merged.personnelCostActual  = incoming.personnelCostActual;
-    if (incoming.personnelCostPlanned !== undefined) merged.personnelCostPlanned = incoming.personnelCostPlanned;
+    if (incoming.revenueActual          !== undefined) merged.revenueActual          = incoming.revenueActual;
+    if (incoming.revenueBudget          !== undefined) merged.revenueBudget          = incoming.revenueBudget;
+    if (incoming.revenuePreviousYear    !== undefined) merged.revenuePreviousYear    = incoming.revenuePreviousYear;
+    if (incoming.grossRevenueManual     !== undefined) merged.grossRevenueManual     = incoming.grossRevenueManual;
+    if (incoming.personnelCostActual    !== undefined) merged.personnelCostActual    = incoming.personnelCostActual;
+    if (incoming.personnelCostPlanned   !== undefined) merged.personnelCostPlanned   = incoming.personnelCostPlanned;
     if (incoming.personnelCostPreviousYear !== undefined) merged.personnelCostPreviousYear = incoming.personnelCostPreviousYear;
 
     // Für Ausgabenkategorien: vorhandene Kategorien aktualisieren

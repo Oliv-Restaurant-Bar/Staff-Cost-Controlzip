@@ -117,6 +117,12 @@ export interface MonthlyFinancialRecord {
   revenueBudget?: number;
   /** Umsatz Vorjahr (CHF) – gleicher Monat */
   revenuePreviousYear?: number;
+  /**
+   * Manuell eingegebener Bruttoumsatz (CHF, inkl. MwSt).
+   * Dient als Kontrollwert für den Abgleich mit Nettoumsatz (Erfolgsrechnung)
+   * und der Summe der Tagesumsätze (Tagesansicht / Tagescontrolling).
+   */
+  grossRevenueManual?: number;
 
   // ── Personalkosten ──────────────────────────────────────────────────
   /** Tatsächliche Personalkosten (CHF) – aus Lohnlauf */
