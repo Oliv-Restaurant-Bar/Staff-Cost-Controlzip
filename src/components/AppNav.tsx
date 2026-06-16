@@ -30,7 +30,7 @@ import {
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
   Wallet, BarChart3, ShoppingCart, LineChart, TrendingUp,
-  Menu, ClipboardCheck, ShieldAlert,
+  Menu, ClipboardCheck, ShieldAlert, Scale,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -114,6 +114,13 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Analyse / Reporting',
         shortLabel: 'Analyse',
         icon: LineChart,
+        adminOnly: true,
+      },
+      {
+        path: '/umsatzabstimmung',
+        label: 'Umsatzabstimmung',
+        shortLabel: 'Abstimmung',
+        icon: Scale,
         adminOnly: true,
       },
       {

@@ -2284,6 +2284,7 @@ const PLViewPage = () => {
   const [annualDistribInput, setAnnualDistribInput] = useState('');
   const [hochYearOpen,  setHochYearOpen]  = useState(true);
   const [hochMonthOpen, setHochMonthOpen] = useState(true);
+  const [persFixed,     setPersFixed]     = useState(false);
   const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat'>('all');
   const [cmpMonth,         setCmpMonth]         = useState<number>(() => month > 1 ? month - 1 : 12);
   const [cmpYear,          setCmpYear]          = useState<number>(() => month > 1 ? new Date().getFullYear() : new Date().getFullYear() - 1);
@@ -2768,11 +2769,10 @@ const PLViewPage = () => {
       const reqNetRev    = targetEbit / (ebitPct as number);
       const factor       = reqNetRev / monthNetRev;
       const reqCogs      = monthCogs * factor;
-      // Personalkosten skaliert 0.75× des Mehrumsatzes (Fixkostenanteil ~25 %)
-      const reqPersonnel = monthPersonnel * (1 + 0.75 * (factor - 1));
+      const reqPersonnel = persFixed ? monthPersonnel : monthPersonnel * factor;
       return { monthNetRev, monthCogs, monthPersonnel, monthGP1, monthGP2, monthEbit, cogsQuote, persQuote, targetEbit, hasInput, canCompute: true as const, reqNetRev, factor, reqCogs, reqPersonnel };
     });
-  }, [yearResult.months, monthlyEbitInputs]);
+  }, [yearResult.months, monthlyEbitInputs, persFixed]);
 
   const hochrechnungTotal = useMemo(() => {
     const active = hochrechnungMonths.filter(m => m.canCompute);
@@ -3341,6 +3341,10 @@ const PLViewPage = () => {
                 >
                   Zurücksetzen
                 </button>
+                <label className="flex items-center gap-1.5 text-[11px] text-indigo-200 cursor-pointer select-none border border-indigo-400 rounded px-2 py-1 hover:border-indigo-300 transition-colors">
+                  <input type="checkbox" checked={persFixed} onChange={e => setPersFixed(e.target.checked)} className="h-3 w-3 accent-indigo-400" />
+                  PK CHF fixieren
+                </label>
               </div>
             </div>
 
@@ -3553,7 +3557,7 @@ const PLViewPage = () => {
                   {/* ── Personalkostenquote % ── */}
                   <tr className="bg-white dark:bg-background text-[10px]">
                     <td className="px-2 py-0.5 text-blue-600 dark:text-blue-400 pl-5 sticky left-0 bg-white dark:bg-background z-10 whitespace-nowrap">
-                      Personalkostenquote <span className="text-muted-foreground font-normal">(skaliert 0.75×)</span>
+                      Personalkostenquote <span className="text-muted-foreground font-normal">{persFixed ? '(CHF fixiert)' : '(gleiche Quote)'}</span>
                     </td>
                     {hochrechnungMonths.map((m, i) => (
                       <td key={i} className="text-right px-1.5 py-0.5 tabular-nums text-blue-600 dark:text-blue-400">
@@ -3578,7 +3582,8 @@ const PLViewPage = () => {
                     </td>
                   </tr>
 
-                  {/* ── Δ Personalkosten ── */}
+                  {/* ── Δ Personalkosten (nur wenn nicht fixiert) ── */}
+                  {!persFixed && (
                   <tr className="bg-white dark:bg-background text-[11px]">
                     <td className="px-2 py-0.5 pl-8 text-blue-700 dark:text-blue-500 italic sticky left-0 bg-white dark:bg-background z-10">davon Veränderung</td>
                     {hochrechnungMonths.map((m, i) => {
@@ -3604,6 +3609,24 @@ const PLViewPage = () => {
                       })() : '–'}
                     </td>
                   </tr>
+                  )}
+
+                  {/* ── Neue Personalkostenquote (nur wenn CHF fixiert) ── */}
+                  {persFixed && (
+                  <tr className="bg-blue-50/60 dark:bg-blue-950/10 text-[10px]">
+                    <td className="px-2 py-0.5 pl-8 text-blue-600 dark:text-blue-400 italic sticky left-0 bg-blue-50/60 dark:bg-blue-950/10 z-10 whitespace-nowrap">→ neue Quote</td>
+                    {hochrechnungMonths.map((m, i) => {
+                      if (!m.canCompute || !m.reqNetRev || m.reqNetRev <= 0) return <td key={i} className="text-right px-1.5 py-0.5 text-muted-foreground">–</td>;
+                      const nq = (m.monthPersonnel / m.reqNetRev) * 100;
+                      return <td key={i} className="text-right px-1.5 py-0.5 tabular-nums font-semibold text-blue-700 dark:text-blue-300">{nq.toFixed(1)} %</td>;
+                    })}
+                    <td className="text-right px-2 py-0.5 tabular-nums font-semibold text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-900/20">
+                      {hochrechnungTotal.activeMonths > 0 && hochrechnungTotal.reqNetRev > 0
+                        ? `${(hochrechnungTotal.activePers / hochrechnungTotal.reqNetRev * 100).toFixed(1)} %`
+                        : '–'}
+                    </td>
+                  </tr>
+                  )}
 
                 </tbody>
               </table>
@@ -3634,12 +3657,12 @@ const PLViewPage = () => {
           const reqNetRev = canCompute ? targetEbit / ebitPct! : null;
           const factor    = (reqNetRev !== null && mNetRev > 0) ? reqNetRev / mNetRev : null;
           const reqCogs   = (factor !== null) ? mCogs * factor : null;
-          // Personalkosten skaliert 0.75× des Mehrumsatzes
-          const reqPers   = (factor !== null) ? mPers * (1 + 0.75 * (factor - 1)) : null;
+          const reqPers   = (factor !== null) ? (persFixed ? mPers : mPers * factor) : null;
           const dCogsChf  = reqCogs !== null ? reqCogs - mCogs : null;
           const dCogsPct  = (dCogsChf !== null && mCogs > 0) ? (dCogsChf / mCogs) * 100 : null;
-          const dPersChf  = reqPers !== null ? reqPers - mPers : null;
+          const dPersChf  = (reqPers !== null && !persFixed) ? reqPers - mPers : null;
           const dPersPct  = (dPersChf !== null && mPers > 0) ? (dPersChf / mPers) * 100 : null;
+          const persNewQuote = (persFixed && reqNetRev !== null && reqNetRev > 0) ? (mPers / reqNetRev) * 100 : null;
           return (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
               <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
@@ -3683,14 +3706,17 @@ const PLViewPage = () => {
                   {mNetRev > 0 && cogsQuote !== null && (
                     <span className="text-xs text-muted-foreground">
                       Warenquote: <strong className="text-amber-700 dark:text-amber-400">{cogsQuote.toFixed(1)} %</strong>
-                      <span className="text-[10px] ml-1">(1:1)</span>
+                      <span className="text-[10px] ml-1">(gleiche Quote)</span>
                     </span>
                   )}
                   {mNetRev > 0 && persQuote !== null && (
-                    <span className="text-xs text-muted-foreground">
-                      Personalkostenquote: <strong className="text-blue-700 dark:text-blue-400">{persQuote.toFixed(1)} %</strong>
-                      <span className="text-[10px] ml-1">(0.75×)</span>
-                    </span>
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                      <span>Personalkosten: <strong className="text-blue-700 dark:text-blue-400">{persQuote.toFixed(1)} %</strong></span>
+                      <span className="flex items-center gap-1 text-[10px] border border-indigo-300 dark:border-indigo-600 rounded px-1.5 py-0.5 bg-white dark:bg-indigo-950/30">
+                        <input type="checkbox" checked={persFixed} onChange={e => setPersFixed(e.target.checked)} className="h-3 w-3 accent-indigo-500" />
+                        CHF fixieren
+                      </span>
+                    </label>
                   )}
                   {mNetRev <= 0 && (
                     <span className="text-xs text-red-600">Keine Ist-Daten für diesen Monat</span>
@@ -3725,10 +3751,17 @@ const PLViewPage = () => {
                     )}
                     {mPers > 0 && reqPers !== null && (
                       <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
-                        <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">Personalkosten Ziel <span className="font-normal normal-case">(0.75×)</span></p>
+                        <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">
+                          Personalkosten Ziel <span className="font-normal normal-case">{persFixed ? '(CHF fix)' : '(gleiche Quote)'}</span>
+                        </p>
                         <p className="text-base font-bold text-blue-800 dark:text-blue-300">{Math.round(reqPers).toLocaleString('de-CH')}</p>
                         <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')} ({persQuote !== null ? `${persQuote.toFixed(1)} %` : '—'})</p>
-                        {dPersChf !== null && (
+                        {persNewQuote !== null ? (
+                          <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">
+                            neue Quote: {persNewQuote.toFixed(1)} %
+                            {persQuote !== null && <span className="text-muted-foreground font-normal ml-1">(Ist: {persQuote.toFixed(1)} %)</span>}
+                          </p>
+                        ) : dPersChf !== null && (
                           <p className={`text-[11px] font-medium ${dPersChf > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                             {'\u0394 '}{dPersChf > 0 ? '+' : ''}{Math.round(dPersChf).toLocaleString('de-CH')}{dPersPct !== null ? ` (${dPersChf > 0 ? '+' : ''}${dPersPct.toFixed(1)}%)` : ''}
                           </p>
