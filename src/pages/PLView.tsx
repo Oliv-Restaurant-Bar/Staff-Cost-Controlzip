@@ -3364,10 +3364,10 @@ const PLViewPage = () => {
                   <span className="text-muted-foreground">Ziel-Warenaufwand: </span>
                   <strong className="text-amber-800 dark:text-amber-300">CHF {Math.round(hochrechnungTotal.reqCogs).toLocaleString('de-CH')}</strong>
                 </span>
-                <span>
-                  <span className="text-muted-foreground">Δ Nettoumsatz: </span>
-                  <strong className={hochrechnungTotal.reqNetRev >= yearNetRevTotal ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}>
-                    {hochrechnungTotal.reqNetRev >= yearNetRevTotal ? '+' : ''}{Math.round(hochrechnungTotal.reqNetRev - yearNetRevTotal).toLocaleString('de-CH')} CHF
+                <span title="Differenz zwischen erforderlichem Ziel-Nettoumsatz und aktuellem Ist-Umsatz der gleichen Monate">
+                  <span className="text-muted-foreground">Mehrumsatz nötig: </span>
+                  <strong className={hochrechnungTotal.reqNetRev >= hochrechnungTotal.activeNetRev ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}>
+                    {hochrechnungTotal.reqNetRev >= hochrechnungTotal.activeNetRev ? '+' : ''}{Math.round(hochrechnungTotal.reqNetRev - hochrechnungTotal.activeNetRev).toLocaleString('de-CH')} CHF
                   </strong>
                 </span>
               </div>
@@ -3663,6 +3663,7 @@ const PLViewPage = () => {
           const dPersChf  = (reqPers !== null && !persFixed) ? reqPers - mPers : null;
           const dPersPct  = (dPersChf !== null && mPers > 0) ? (dPersChf / mPers) * 100 : null;
           const persNewQuote = (persFixed && reqNetRev !== null && reqNetRev > 0) ? (mPers / reqNetRev) * 100 : null;
+          const persZielQuote = (reqPers !== null && reqNetRev !== null && reqNetRev > 0) ? (reqPers / reqNetRev) * 100 : null;
           return (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
               <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
@@ -3754,14 +3755,12 @@ const PLViewPage = () => {
                         <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">
                           Personalkosten Ziel <span className="font-normal normal-case">{persFixed ? '(CHF fix)' : '(gleiche Quote)'}</span>
                         </p>
-                        <p className="text-base font-bold text-blue-800 dark:text-blue-300">{Math.round(reqPers).toLocaleString('de-CH')}</p>
+                        <p className="text-base font-bold text-blue-800 dark:text-blue-300">
+                          {Math.round(reqPers).toLocaleString('de-CH')}
+                          {persZielQuote !== null && <span className="text-sm font-semibold text-blue-600 dark:text-blue-400 ml-1.5">({persZielQuote.toFixed(1)} %)</span>}
+                        </p>
                         <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')} ({persQuote !== null ? `${persQuote.toFixed(1)} %` : '—'})</p>
-                        {persNewQuote !== null ? (
-                          <p className="text-[11px] font-semibold text-blue-600 dark:text-blue-400">
-                            neue Quote: {persNewQuote.toFixed(1)} %
-                            {persQuote !== null && <span className="text-muted-foreground font-normal ml-1">(Ist: {persQuote.toFixed(1)} %)</span>}
-                          </p>
-                        ) : dPersChf !== null && (
+                        {dPersChf !== null && (
                           <p className={`text-[11px] font-medium ${dPersChf > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                             {'\u0394 '}{dPersChf > 0 ? '+' : ''}{Math.round(dPersChf).toLocaleString('de-CH')}{dPersPct !== null ? ` (${dPersChf > 0 ? '+' : ''}${dPersPct.toFixed(1)}%)` : ''}
                           </p>
