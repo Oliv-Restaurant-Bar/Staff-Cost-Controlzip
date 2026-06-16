@@ -534,14 +534,13 @@ function BudgetContent() {
                 >
                   Proportional verteilen
                 </button>
-                {hasAny && (
-                  <button
-                    onClick={() => { setBudgetHochInputs(Array(12).fill('')); setBudgetAnnualDistrib(''); }}
-                    className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors"
-                  >
-                    ✕ löschen
-                  </button>
-                )}
+                <button
+                  disabled={!hasAny && budgetAnnualDistrib === ''}
+                  onClick={() => { setBudgetHochInputs(Array(12).fill('')); setBudgetAnnualDistrib(''); }}
+                  className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Zurücksetzen
+                </button>
               </div>
             </div>
 

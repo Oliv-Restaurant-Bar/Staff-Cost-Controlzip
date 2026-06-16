@@ -3317,14 +3317,13 @@ const PLViewPage = () => {
                 >
                   Proportional verteilen
                 </button>
-                {monthlyEbitInputs.some(v => v !== '') && (
-                  <button
-                    onClick={() => { setMonthlyEbitInputs(Array(12).fill('')); setAnnualDistribInput(''); }}
-                    className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors"
-                  >
-                    ✕ löschen
-                  </button>
-                )}
+                <button
+                  disabled={!monthlyEbitInputs.some(v => v !== '') && annualDistribInput === ''}
+                  onClick={() => { setMonthlyEbitInputs(Array(12).fill('')); setAnnualDistribInput(''); }}
+                  className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Zurücksetzen
+                </button>
               </div>
             </div>
 
@@ -3515,14 +3514,13 @@ const PLViewPage = () => {
                     <p className="text-[11px] text-indigo-200">Ziel-EBIT eingeben → erforderlicher Nettoumsatz bei gleicher Kostenstruktur</p>
                   </div>
                 </div>
-                {hasInput && (
-                  <button
-                    onClick={() => { const next = [...monthlyEbitInputs]; next[month - 1] = ''; setMonthlyEbitInputs(next); }}
-                    className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors"
-                  >
-                    ✕ löschen
-                  </button>
-                )}
+                <button
+                  disabled={!hasInput}
+                  onClick={() => { const next = [...monthlyEbitInputs]; next[month - 1] = ''; setMonthlyEbitInputs(next); }}
+                  className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Zurücksetzen
+                </button>
               </div>
               <div className="p-4 space-y-4">
                 <div className="flex flex-wrap gap-4 items-center">
