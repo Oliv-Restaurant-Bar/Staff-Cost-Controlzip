@@ -194,6 +194,7 @@ function BudgetContent() {
 
   const [budgetHochInputs,     setBudgetHochInputs]     = useState<string[]>(() => Array(12).fill(''));
   const [budgetAnnualDistrib,  setBudgetAnnualDistrib]  = useState('');
+  const [budgetHochOpen,       setBudgetHochOpen]       = useState(true);
 
   const reload = useCallback((year: number) => {
     setBudget(loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)));
@@ -518,13 +519,14 @@ function BudgetContent() {
         return (
           <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
             <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
+              <button onClick={() => setBudgetHochOpen(v => !v)} className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity">
+                <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${budgetHochOpen ? '' : '-rotate-90'}`} />
                 <TrendingUp className="h-4 w-4 shrink-0" />
                 <div>
                   <h3 className="text-sm font-bold">Hochrechnung — Ziel-EBITDA auf Nettoumsatz</h3>
                   <p className="text-[11px] text-indigo-200">Ziel-EBITDA pro Monat eingeben → erforderlicher Umsatz bei gleicher Budgetstruktur</p>
                 </div>
-              </div>
+              </button>
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-indigo-200 whitespace-nowrap">Jahreswert verteilen:</span>
                 <input
@@ -552,6 +554,7 @@ function BudgetContent() {
               </div>
             </div>
 
+            {budgetHochOpen && <>
             {activeMonths.length > 0 && (
               <div className="bg-indigo-100 dark:bg-indigo-900/30 px-4 py-2 flex flex-wrap gap-x-6 gap-y-0.5 text-xs border-b border-indigo-200 dark:border-indigo-700">
                 <span>
@@ -726,6 +729,7 @@ function BudgetContent() {
                 Placeholder-Werte (grau) = aktueller Budget-EBITDA des Monats.
               </p>
             </div>
+            </>}
           </div>
         );
       })()}

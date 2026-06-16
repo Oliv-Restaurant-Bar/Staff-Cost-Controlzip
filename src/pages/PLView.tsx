@@ -2282,6 +2282,8 @@ const PLViewPage = () => {
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
   const [monthlyEbitInputs,  setMonthlyEbitInputs]  = useState<string[]>(() => Array(12).fill(''));
   const [annualDistribInput, setAnnualDistribInput] = useState('');
+  const [hochYearOpen,  setHochYearOpen]  = useState(true);
+  const [hochMonthOpen, setHochMonthOpen] = useState(true);
   const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat'>('all');
   const [cmpMonth,         setCmpMonth]         = useState<number>(() => month > 1 ? month - 1 : 12);
   const [cmpYear,          setCmpYear]          = useState<number>(() => month > 1 ? new Date().getFullYear() : new Date().getFullYear() - 1);
@@ -2774,10 +2776,20 @@ const PLViewPage = () => {
 
   const hochrechnungTotal = useMemo(() => {
     const active = hochrechnungMonths.filter(m => m.canCompute);
+    const activeCogs      = active.reduce((s, m) => s + m.monthCogs,       0);
+    const activePers      = active.reduce((s, m) => s + m.monthPersonnel,   0);
+    const activeNetRev    = active.reduce((s, m) => s + m.monthNetRev,      0);
+    const reqCogs         = active.reduce((s, m) => s + (m.reqCogs      ?? 0), 0);
+    const reqPersonnel    = active.reduce((s, m) => s + (m.reqPersonnel  ?? 0), 0);
     return {
-      reqNetRev:    active.reduce((s, m) => s + (m.reqNetRev    ?? 0), 0),
-      reqCogs:      active.reduce((s, m) => s + (m.reqCogs      ?? 0), 0),
-      reqPersonnel: active.reduce((s, m) => s + (m.reqPersonnel ?? 0), 0),
+      reqNetRev:    active.reduce((s, m) => s + (m.reqNetRev ?? 0), 0),
+      reqCogs,
+      reqPersonnel,
+      activeCogs,
+      activePers,
+      activeNetRev,
+      deltaCogs:    reqCogs      - activeCogs,
+      deltaPers:    reqPersonnel - activePers,
       targetEbit:   hochrechnungMonths.filter(m => m.hasInput).reduce((s, m) => s + (m.targetEbit ?? 0), 0),
       activeMonths: active.length,
     };
@@ -3296,13 +3308,14 @@ const PLViewPage = () => {
         {mode === 'yearly' && (
           <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
             <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
+              <button onClick={() => setHochYearOpen(v => !v)} className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity">
+                <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${hochYearOpen ? '' : '-rotate-90'}`} />
                 <TrendingUp className="h-4 w-4 shrink-0" />
                 <div>
                   <h3 className="text-sm font-bold">Hochrechnung — Betriebsergebnis auf Nettoumsatz</h3>
                   <p className="text-[11px] text-indigo-200">Ziel-EBIT pro Monat eingeben → erforderlicher Nettoumsatz bei gleichen %-Sätzen</p>
                 </div>
-              </div>
+              </button>
               {/* Jahreswert-Verteiler */}
               <div className="flex items-center gap-2">
                 <span className="text-[11px] text-indigo-200 whitespace-nowrap">Jahreswert verteilen:</span>
@@ -3331,6 +3344,7 @@ const PLViewPage = () => {
               </div>
             </div>
 
+            {hochYearOpen && (<>
             {/* Zusammenfassung (nur wenn mind. 1 Monat hat Eingabe) */}
             {hochrechnungTotal.activeMonths > 0 && (
               <div className="bg-indigo-100 dark:bg-indigo-900/30 px-4 py-2 flex flex-wrap gap-x-6 gap-y-0.5 text-xs border-b border-indigo-200 dark:border-indigo-700">
@@ -3496,6 +3510,33 @@ const PLViewPage = () => {
                     </td>
                   </tr>
 
+                  {/* ── Δ Warenaufwand ── */}
+                  <tr className="bg-white dark:bg-background text-[11px]">
+                    <td className="px-2 py-0.5 pl-8 text-amber-700 dark:text-amber-500 italic sticky left-0 bg-white dark:bg-background z-10">davon Veränderung</td>
+                    {hochrechnungMonths.map((m, i) => {
+                      if (!m.canCompute) return <td key={i} className="text-right px-1.5 py-0.5 text-muted-foreground">–</td>;
+                      const delta = m.reqCogs! - m.monthCogs;
+                      const pct = m.monthCogs > 0 ? delta / m.monthCogs * 100 : null;
+                      const pos = delta > 0;
+                      return (
+                        <td key={i} className={`text-right px-1.5 py-0.5 tabular-nums font-medium ${pos ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {pos ? '+' : ''}{Math.round(delta).toLocaleString('de-CH')}
+                          {pct !== null && <span className="ml-0.5 text-[9px] opacity-75">({pos ? '+' : ''}{pct.toFixed(1)}%)</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="text-right px-2 py-0.5 tabular-nums bg-slate-50 dark:bg-slate-900/20">
+                      {hochrechnungTotal.activeMonths > 0 ? (() => {
+                        const delta = hochrechnungTotal.deltaCogs;
+                        const pct = hochrechnungTotal.activeCogs > 0 ? delta / hochrechnungTotal.activeCogs * 100 : null;
+                        const pos = delta > 0;
+                        return <span className={`font-medium ${pos ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {pos ? '+' : ''}{Math.round(delta).toLocaleString('de-CH')}{pct !== null ? ` (${pos ? '+' : ''}${pct.toFixed(1)}%)` : ''}
+                        </span>;
+                      })() : '–'}
+                    </td>
+                  </tr>
+
                   {/* ── Personalkosten Ist ── */}
                   <tr className="bg-slate-50 dark:bg-slate-900/20">
                     <td className="px-2 py-1 text-muted-foreground pl-5 sticky left-0 bg-slate-50 dark:bg-slate-900/20 z-10">Personalkosten Ist</td>
@@ -3537,6 +3578,33 @@ const PLViewPage = () => {
                     </td>
                   </tr>
 
+                  {/* ── Δ Personalkosten ── */}
+                  <tr className="bg-white dark:bg-background text-[11px]">
+                    <td className="px-2 py-0.5 pl-8 text-blue-700 dark:text-blue-500 italic sticky left-0 bg-white dark:bg-background z-10">davon Veränderung</td>
+                    {hochrechnungMonths.map((m, i) => {
+                      if (!m.canCompute) return <td key={i} className="text-right px-1.5 py-0.5 text-muted-foreground">–</td>;
+                      const delta = m.reqPersonnel! - m.monthPersonnel;
+                      const pct = m.monthPersonnel > 0 ? delta / m.monthPersonnel * 100 : null;
+                      const pos = delta > 0;
+                      return (
+                        <td key={i} className={`text-right px-1.5 py-0.5 tabular-nums font-medium ${pos ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {pos ? '+' : ''}{Math.round(delta).toLocaleString('de-CH')}
+                          {pct !== null && <span className="ml-0.5 text-[9px] opacity-75">({pos ? '+' : ''}{pct.toFixed(1)}%)</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="text-right px-2 py-0.5 tabular-nums bg-slate-50 dark:bg-slate-900/20">
+                      {hochrechnungTotal.activeMonths > 0 ? (() => {
+                        const delta = hochrechnungTotal.deltaPers;
+                        const pct = hochrechnungTotal.activePers > 0 ? delta / hochrechnungTotal.activePers * 100 : null;
+                        const pos = delta > 0;
+                        return <span className={`font-medium ${pos ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {pos ? '+' : ''}{Math.round(delta).toLocaleString('de-CH')}{pct !== null ? ` (${pos ? '+' : ''}${pct.toFixed(1)}%)` : ''}
+                        </span>;
+                      })() : '–'}
+                    </td>
+                  </tr>
+
                 </tbody>
               </table>
             </div>
@@ -3546,6 +3614,7 @@ const PLViewPage = () => {
               Monate ohne Ist-Daten werden übersprungen. «n/a» = EBIT-Quote nahe 0, Hochrechnung nicht sinnvoll.
               Placeholder-Werte (grau) = aktueller Ist-EBIT des Monats.
             </p>
+            </>)}
           </div>
         )}
 
@@ -3567,16 +3636,21 @@ const PLViewPage = () => {
           const reqCogs   = (factor !== null) ? mCogs * factor : null;
           // Personalkosten skaliert 0.75× des Mehrumsatzes
           const reqPers   = (factor !== null) ? mPers * (1 + 0.75 * (factor - 1)) : null;
+          const dCogsChf  = reqCogs !== null ? reqCogs - mCogs : null;
+          const dCogsPct  = (dCogsChf !== null && mCogs > 0) ? (dCogsChf / mCogs) * 100 : null;
+          const dPersChf  = reqPers !== null ? reqPers - mPers : null;
+          const dPersPct  = (dPersChf !== null && mPers > 0) ? (dPersChf / mPers) * 100 : null;
           return (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
               <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
+                <button onClick={() => setHochMonthOpen(v => !v)} className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity">
+                  <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${hochMonthOpen ? '' : '-rotate-90'}`} />
                   <TrendingUp className="h-4 w-4 shrink-0" />
                   <div>
                     <h3 className="text-sm font-bold">Hochrechnung — Betriebsergebnis auf Nettoumsatz</h3>
                     <p className="text-[11px] text-indigo-200">Ziel-EBIT eingeben → erforderlicher Nettoumsatz bei gleicher Kostenstruktur</p>
                   </div>
-                </div>
+                </button>
                 <button
                   disabled={!hasInput}
                   onClick={() => { const next = [...monthlyEbitInputs]; next[month - 1] = ''; setMonthlyEbitInputs(next); }}
@@ -3585,7 +3659,7 @@ const PLViewPage = () => {
                   Zurücksetzen
                 </button>
               </div>
-              <div className="p-4 space-y-4">
+              {hochMonthOpen && (<div className="p-4 space-y-4">
                 <div className="flex flex-wrap gap-4 items-center">
                   <div className="flex items-center gap-2">
                     <label className="text-xs text-muted-foreground whitespace-nowrap">Ziel EBIT (CHF):</label>
@@ -3641,7 +3715,12 @@ const PLViewPage = () => {
                       <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
                         <p className="text-[10px] text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-0.5">Warenaufwand Ziel</p>
                         <p className="text-base font-bold text-amber-800 dark:text-amber-300">{Math.round(reqCogs).toLocaleString('de-CH')}</p>
-                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mCogs).toLocaleString('de-CH')}</p>
+                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mCogs).toLocaleString('de-CH')} ({cogsQuote !== null ? `${cogsQuote.toFixed(1)} %` : '—'})</p>
+                        {dCogsChf !== null && (
+                          <p className={`text-[11px] font-medium ${dCogsChf > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            {'\u0394 '}{dCogsChf > 0 ? '+' : ''}{Math.round(dCogsChf).toLocaleString('de-CH')}{dCogsPct !== null ? ` (${dCogsChf > 0 ? '+' : ''}${dCogsPct.toFixed(1)}%)` : ''}
+                          </p>
+                        )}
                       </div>
                     )}
                     {mPers > 0 && reqPers !== null && (
@@ -3649,11 +3728,16 @@ const PLViewPage = () => {
                         <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">Personalkosten Ziel <span className="font-normal normal-case">(0.75×)</span></p>
                         <p className="text-base font-bold text-blue-800 dark:text-blue-300">{Math.round(reqPers).toLocaleString('de-CH')}</p>
                         <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')} ({persQuote !== null ? `${persQuote.toFixed(1)} %` : '—'})</p>
+                        {dPersChf !== null && (
+                          <p className={`text-[11px] font-medium ${dPersChf > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                            {'\u0394 '}{dPersChf > 0 ? '+' : ''}{Math.round(dPersChf).toLocaleString('de-CH')}{dPersPct !== null ? ` (${dPersChf > 0 ? '+' : ''}${dPersPct.toFixed(1)}%)` : ''}
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>
                 )}
-              </div>
+              </div>)}
             </div>
           );
         })()}
