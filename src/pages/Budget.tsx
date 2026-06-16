@@ -502,9 +502,8 @@ function BudgetContent() {
           const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && rev > 0;
           const reqRev = canCompute ? targetEbitda / ebitPct! : null;
           const factor = (reqRev !== null && rev > 0) ? reqRev / rev : null;
-          // Warenaufwand 1:1, Personalkosten 0.75× des Mehrumsatzes
           const reqCogs = factor !== null ? cogs * factor : null;
-          const reqPers = factor !== null ? pers * (1 + 0.75 * (factor - 1)) : null;
+          const reqPers = factor !== null ? pers * factor : null;
           return { rev, ebitda, cogs, pers, cogsQuote, persQuote, targetEbitda: hasInput ? targetEbitda : null, hasInput, canCompute, reqRev, factor, reqCogs, reqPers };
         });
 
@@ -696,7 +695,7 @@ function BudgetContent() {
                   {/* Zeile: Personalkostenquote % */}
                   <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-blue-50/40 dark:bg-blue-950/10">
                     <td className="sticky left-0 bg-blue-50/60 dark:bg-blue-950/20 z-10 py-1 px-3 text-blue-600 dark:text-blue-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
-                      Personalkostenquote <span className="text-muted-foreground">(0.75×)</span>
+                      Personalkostenquote <span className="text-muted-foreground">(gleiche Quote)</span>
                     </td>
                     {months.map((m, i) => (
                       <td key={i} className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
@@ -709,14 +708,30 @@ function BudgetContent() {
                   </tr>
                   {/* Zeile: Personalkosten Ziel */}
                   <tr className="border-b border-indigo-100 dark:border-indigo-800">
-                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-blue-800 dark:text-blue-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Ziel <span className="font-normal text-[10px]">(0.75×)</span></td>
+                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-blue-800 dark:text-blue-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Ziel <span className="font-normal text-[10px]">(gleiche Quote)</span></td>
                     {months.map((m, i) => (
-                      <td key={i} className="py-1.5 px-2 text-center text-blue-700 dark:text-blue-400 font-semibold">
-                        {m.canCompute && m.reqPers !== null ? Math.round(m.reqPers).toLocaleString('de-CH') : '—'}
+                      <td key={i} className="py-1.5 px-2 text-center text-blue-700 dark:text-blue-400 font-semibold leading-tight">
+                        {m.canCompute && m.reqPers !== null ? (
+                          <>
+                            {Math.round(m.reqPers).toLocaleString('de-CH')}
+                            {m.persQuote !== null && (
+                              <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">{m.persQuote.toFixed(1)} %</div>
+                            )}
+                          </>
+                        ) : '—'}
                       </td>
                     ))}
-                    <td className="py-1.5 px-2 text-center font-bold text-blue-800 dark:text-blue-300">
-                      {activeMonths.length > 0 ? Math.round(totalReqPers).toLocaleString('de-CH') : '—'}
+                    <td className="py-1.5 px-2 text-center font-bold text-blue-800 dark:text-blue-300 leading-tight">
+                      {activeMonths.length > 0 ? (
+                        <>
+                          {Math.round(totalReqPers).toLocaleString('de-CH')}
+                          {totalReqRev > 0 && (
+                            <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">
+                              {(totalReqPers / totalReqRev * 100).toFixed(1)} %
+                            </div>
+                          )}
+                        </>
+                      ) : '—'}
                     </td>
                   </tr>
                 </tbody>
