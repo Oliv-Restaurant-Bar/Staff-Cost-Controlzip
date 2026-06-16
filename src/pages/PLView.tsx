@@ -2280,6 +2280,7 @@ const PLViewPage = () => {
   const [excludeCurrentMonth, setExcludeCurrentMonth] = useState(false);
   const [highlightVariance, setHighlightVariance] = useState(false);
   const [pctMode,          setPctMode]          = useState<'off' | 'normal' | 'subtle'>('off');
+  const [targetEbitInput,  setTargetEbitInput]  = useState('');
   const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat'>('all');
   const [cmpMonth,         setCmpMonth]         = useState<number>(() => month > 1 ? month - 1 : 12);
   const [cmpYear,          setCmpYear]          = useState<number>(() => month > 1 ? new Date().getFullYear() : new Date().getFullYear() - 1);
@@ -2735,10 +2736,12 @@ const PLViewPage = () => {
       : yearResult.months,
     [yearResult, excludeMonthIdx],
   );
-  const yearNetRevTotal  = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
-  const yearGP1Total     = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_1')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
-  const yearGP2Total     = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_2')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
-  const yearEbitTotal    = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'ebit')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearNetRevTotal      = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearGP1Total         = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_1')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearGP2Total         = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'gross_profit_2')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearEbitTotal        = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'ebit')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearCogsTotal        = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'total_cogs')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
+  const yearPersonnelTotal   = useMemo(() => yearEffectiveMonths.reduce((s, m) => s + (m.rows.find(r => r.def.id === 'total_personnel')?.values.actual ?? 0), 0), [yearEffectiveMonths]);
   const yearMonthLabel   = excludeMonthIdx >= 0 ? `Jan–${MONTH_NAMES_DE[excludeMonthIdx] ?? ''}` : String(year);
   const yearKpis = [
     { label: 'Betriebsertrag netto', val: yearNetRevTotal, suffix: '' },
@@ -3235,6 +3238,220 @@ const PLViewPage = () => {
             : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} excludeMonthIdx={excludeMonthIdx} />
           }
         </div>
+
+        {/* ── Hochrechnung: Betriebsergebnis → Nettoumsatz ──────────────────── */}
+        {mode === 'yearly' && (
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
+            <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 shrink-0" />
+              <div>
+                <h3 className="text-sm font-bold">Hochrechnung — Betriebsergebnis auf Nettoumsatz</h3>
+                <p className="text-[11px] text-indigo-200">Zielbetrag eingeben → erforderlicher Nettoumsatz bei gleichen %-Sätzen für alle Kostenpositionen</p>
+              </div>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* Eingabe */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="text-xs font-semibold text-indigo-800 dark:text-indigo-300 whitespace-nowrap">
+                  Ziel Betriebsergebnis (EBIT) in CHF:
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="z.B. 250000"
+                  value={targetEbitInput}
+                  onChange={e => setTargetEbitInput(e.target.value)}
+                  className="h-8 w-44 border border-indigo-300 rounded px-2 text-sm text-right bg-white dark:bg-background focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                />
+                {targetEbitInput && (
+                  <button
+                    onClick={() => setTargetEbitInput('')}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    ✕ löschen
+                  </button>
+                )}
+              </div>
+
+              {/* Ergebnis */}
+              {(() => {
+                const raw = targetEbitInput.trim().replace(/[''\s]/g, '').replace(',', '.');
+                const targetEbit = parseFloat(raw);
+                const chf = (v: number) => Math.round(v).toLocaleString('de-CH');
+                const pctStr = (v: number) => `${(v * 100).toFixed(1)} %`;
+
+                if (!raw || isNaN(targetEbit)) return (
+                  <p className="text-xs text-indigo-600 dark:text-indigo-400 italic">
+                    {yearNetRevTotal > 0
+                      ? `Aktueller EBIT: CHF ${chf(yearEbitTotal)} (${pctStr(yearEbitTotal / yearNetRevTotal)} vom Nettoumsatz CHF ${chf(yearNetRevTotal)})`
+                      : 'Noch keine Jahres-Ist-Daten vorhanden.'}
+                  </p>
+                );
+                if (yearNetRevTotal <= 0) return (
+                  <p className="text-xs text-red-600">Keine Ist-Daten vorhanden — Hochrechnung nicht möglich.</p>
+                );
+                const ebitPct = yearEbitTotal / yearNetRevTotal;
+                if (Math.abs(ebitPct) < 0.0001) return (
+                  <p className="text-xs text-red-600">EBIT-Quote zu nahe an 0 % — Hochrechnung nicht sinnvoll.</p>
+                );
+
+                const requiredNetRev       = targetEbit / ebitPct;
+                const factor               = requiredNetRev / yearNetRevTotal;
+                const cogsPct              = yearCogsTotal     / yearNetRevTotal;
+                const gp1Pct               = yearGP1Total      / yearNetRevTotal;
+                const personnelPct         = yearPersonnelTotal / yearNetRevTotal;
+                const gp2Pct               = yearGP2Total      / yearNetRevTotal;
+                const betriebsaufwandAmt   = yearGP2Total - yearEbitTotal;
+                const betriebsaufwandPct   = betriebsaufwandAmt / yearNetRevTotal;
+
+                const reqCogs      = yearCogsTotal      * factor;
+                const reqGP1       = yearGP1Total       * factor;
+                const reqPersonnel = yearPersonnelTotal  * factor;
+                const reqGP2       = yearGP2Total       * factor;
+                const reqBetrieb   = betriebsaufwandAmt * factor;
+
+                const tableRows: { label: string; pct: number; reqAmt: number; istAmt: number; isResult?: boolean; isEbit?: boolean }[] = [
+                  { label: 'Nettoumsatz',     pct: 1,                   istAmt: yearNetRevTotal,     reqAmt: requiredNetRev, isResult: true },
+                  { label: 'Warenaufwand',    pct: cogsPct,             istAmt: yearCogsTotal,       reqAmt: reqCogs },
+                  { label: 'Bruttogewinn 1',  pct: gp1Pct,              istAmt: yearGP1Total,        reqAmt: reqGP1,        isResult: true },
+                  { label: 'Personalaufwand', pct: personnelPct,        istAmt: yearPersonnelTotal,  reqAmt: reqPersonnel },
+                  { label: 'Deckungsbeitrag', pct: gp2Pct,              istAmt: yearGP2Total,        reqAmt: reqGP2,        isResult: true },
+                  { label: 'Betriebsaufwand', pct: betriebsaufwandPct,  istAmt: betriebsaufwandAmt,  reqAmt: reqBetrieb },
+                  { label: 'EBIT (Ziel)',     pct: ebitPct,             istAmt: yearEbitTotal,       reqAmt: targetEbit,    isResult: true, isEbit: true },
+                ];
+
+                const months12      = yearResult.months;
+                const monthNetRevs  = months12.map(m => m.rows.find(r => r.def.id === 'net_revenue')?.values.actual  ?? 0);
+                const monthCogs     = months12.map(m => m.rows.find(r => r.def.id === 'total_cogs')?.values.actual   ?? 0);
+                const reqMonthRevs  = monthNetRevs.map(v => v * factor);
+                const reqMonthCogs  = monthCogs.map(v => v * factor);
+
+                const deltaStr = (req: number, ist: number) => {
+                  const d = req - ist;
+                  if (Math.abs(d) < 1) return '–';
+                  return (d > 0 ? '+' : '') + chf(d);
+                };
+
+                return (
+                  <div className="space-y-4">
+                    {/* Kurzfassung */}
+                    <div className="rounded bg-indigo-100 dark:bg-indigo-900/30 px-3 py-2 flex flex-wrap gap-x-6 gap-y-1 text-xs">
+                      <span>
+                        <span className="text-muted-foreground">Erforderlicher Nettoumsatz: </span>
+                        <strong className="text-indigo-900 dark:text-indigo-200">CHF {chf(requiredNetRev)}</strong>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Faktor: </span>
+                        <strong className={factor >= 1 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}>
+                          {factor.toFixed(3)}× ({factor >= 1 ? '+' : ''}{((factor - 1) * 100).toFixed(1)} % ggü. Ist-Umsatz)
+                        </strong>
+                      </span>
+                      <span>
+                        <span className="text-muted-foreground">Ist-Umsatz: </span>
+                        <strong>CHF {chf(yearNetRevTotal)}</strong>
+                      </span>
+                    </div>
+
+                    {/* P&L-Tabelle */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-indigo-700 text-white text-[11px]">
+                            <th className="text-left px-3 py-1.5 min-w-[160px]">Position</th>
+                            <th className="text-right px-2 py-1.5">% Umsatz</th>
+                            <th className="text-right px-2 py-1.5">Ist CHF</th>
+                            <th className="text-right px-2 py-1.5 font-bold bg-indigo-600">Ziel CHF</th>
+                            <th className="text-right px-2 py-1.5">Δ CHF</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableRows.map((row, i) => {
+                            const diff = row.reqAmt - row.istAmt;
+                            const diffColor = row.isEbit
+                              ? (diff >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')
+                              : row.isResult
+                                ? (diff >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')
+                                : (diff >= 0 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400');
+                            return (
+                              <tr key={i} className={cn(
+                                row.isResult
+                                  ? 'bg-indigo-100 dark:bg-indigo-900/30 border-t border-indigo-200 dark:border-indigo-700'
+                                  : i % 2 === 0 ? 'bg-white dark:bg-background' : 'bg-slate-50 dark:bg-slate-900/20',
+                              )}>
+                                <td className={cn('px-3 py-1.5', row.isResult ? 'font-semibold' : 'pl-6 text-muted-foreground')}>{row.label}</td>
+                                <td className="text-right px-2 py-1.5 tabular-nums text-muted-foreground">{pctStr(row.pct)}</td>
+                                <td className="text-right px-2 py-1.5 tabular-nums text-muted-foreground">{chf(row.istAmt)}</td>
+                                <td className={cn('text-right px-2 py-1.5 tabular-nums font-semibold', row.isEbit ? 'text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-900/40' : '')}>
+                                  {chf(row.reqAmt)}
+                                </td>
+                                <td className={cn('text-right px-2 py-1.5 tabular-nums text-[11px]', diffColor)}>
+                                  {deltaStr(row.reqAmt, row.istAmt)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Monatstabelle */}
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-semibold text-indigo-800 dark:text-indigo-300">
+                        Monatliche Zielwerte (Faktor {factor.toFixed(3)}× auf Ist-Monatswerte):
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="text-[11px] border-collapse w-full" style={{ minWidth: '860px' }}>
+                          <thead>
+                            <tr className="bg-indigo-600 text-white">
+                              <th className="text-left px-2 py-1 min-w-[160px]">Position</th>
+                              {MONTH_NAMES_SHORT_DE.slice(1).map(m => (
+                                <th key={m} className="text-right px-1.5 py-1 whitespace-nowrap">{m}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr className="bg-slate-50 dark:bg-slate-900/20">
+                              <td className="px-2 py-1 text-muted-foreground">Nettoumsatz Ist</td>
+                              {monthNetRevs.map((v, i) => (
+                                <td key={i} className="text-right px-1.5 py-1 tabular-nums text-muted-foreground">
+                                  {v > 0 ? chf(v) : '–'}
+                                </td>
+                              ))}
+                            </tr>
+                            <tr className="bg-indigo-100 dark:bg-indigo-900/30 font-bold text-indigo-800 dark:text-indigo-200">
+                              <td className="px-2 py-1">Nettoumsatz Ziel</td>
+                              {reqMonthRevs.map((v, i) => (
+                                <td key={i} className="text-right px-1.5 py-1 tabular-nums">
+                                  {monthNetRevs[i] > 0 ? chf(v) : '–'}
+                                </td>
+                              ))}
+                            </tr>
+                            <tr className="bg-white dark:bg-background">
+                              <td className="px-2 py-1 text-muted-foreground pl-4">Warenaufwand Ist</td>
+                              {monthCogs.map((v, i) => (
+                                <td key={i} className="text-right px-1.5 py-1 tabular-nums text-muted-foreground">
+                                  {v > 0 ? chf(v) : '–'}
+                                </td>
+                              ))}
+                            </tr>
+                            <tr className="bg-amber-50 dark:bg-amber-950/20 font-semibold text-amber-800 dark:text-amber-300">
+                              <td className="px-2 py-1 pl-4">Warenaufwand Ziel</td>
+                              {reqMonthCogs.map((v, i) => (
+                                <td key={i} className="text-right px-1.5 py-1 tabular-nums">
+                                  {monthCogs[i] > 0 ? chf(v) : '–'}
+                                </td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
 
         {/* Legende */}
         {(mode === 'monthly' || mode === 'budget_pl') && (
