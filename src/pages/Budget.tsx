@@ -484,6 +484,7 @@ function BudgetContent() {
         type MonthCalc = {
           rev: number; ebitda: number; cogs: number; pers: number;
           targetEbitda: number | null; hasInput: boolean;
+          cogsQuote: number | null; persQuote: number | null;
           canCompute: boolean; reqRev: number | null; factor: number | null;
           reqCogs: number | null; reqPers: number | null;
         };
@@ -491,6 +492,8 @@ function BudgetContent() {
           const ebitda = ebitdaMonths[i] ?? 0;
           const cogs   = cogsMonths[i]  ?? 0;
           const pers   = personnelMonths[i] ?? 0;
+          const cogsQuote = rev > 0 ? cogs / rev * 100 : null;
+          const persQuote = rev > 0 ? pers / rev * 100 : null;
           const ebitPct = rev > 0 ? ebitda / rev : null;
           const raw = (budgetHochInputs[i] ?? '').trim().replace(/['''\s]/g, '').replace(',', '.');
           const targetEbitda = parseFloat(raw);
@@ -498,13 +501,18 @@ function BudgetContent() {
           const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && rev > 0;
           const reqRev = canCompute ? targetEbitda / ebitPct! : null;
           const factor = (reqRev !== null && rev > 0) ? reqRev / rev : null;
-          return { rev, ebitda, cogs, pers, targetEbitda: hasInput ? targetEbitda : null, hasInput, canCompute, reqRev, factor, reqCogs: factor !== null ? cogs * factor : null, reqPers: factor !== null ? pers * factor : null };
+          // Warenaufwand 1:1, Personalkosten 0.75× des Mehrumsatzes
+          const reqCogs = factor !== null ? cogs * factor : null;
+          const reqPers = factor !== null ? pers * (1 + 0.75 * (factor - 1)) : null;
+          return { rev, ebitda, cogs, pers, cogsQuote, persQuote, targetEbitda: hasInput ? targetEbitda : null, hasInput, canCompute, reqRev, factor, reqCogs, reqPers };
         });
 
         const activeMonths = months.filter(m => m.canCompute);
         const totalTargetEbitda = months.filter(m => m.hasInput).reduce((s, m) => s + (m.targetEbitda ?? 0), 0);
         const totalReqRev       = activeMonths.reduce((s, m) => s + (m.reqRev ?? 0), 0);
         const totalReqCogs      = activeMonths.reduce((s, m) => s + (m.reqCogs ?? 0), 0);
+        const totalReqPers      = activeMonths.reduce((s, m) => s + (m.reqPers ?? 0), 0);
+        const totalPers         = activeMonths.reduce((s, m) => s + m.pers, 0);
         const hasAny            = months.some(m => m.hasInput);
 
         return (
@@ -644,6 +652,20 @@ function BudgetContent() {
                     ))}
                     <td className="py-1.5 px-2 text-center text-muted-foreground">—</td>
                   </tr>
+                  {/* Zeile: Warenquote % */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-amber-50/40 dark:bg-amber-950/10">
+                    <td className="sticky left-0 bg-amber-50/60 dark:bg-amber-950/20 z-10 py-1 px-3 text-amber-600 dark:text-amber-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
+                      Warenquote <span className="text-muted-foreground">(1:1)</span>
+                    </td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1 px-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
+                        {m.cogsQuote !== null ? `${m.cogsQuote.toFixed(1)} %` : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1 px-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
+                      {totalRevenue > 0 ? `${(months.reduce((s, m) => s + m.cogs, 0) / totalRevenue * 100).toFixed(1)} %` : '—'}
+                    </td>
+                  </tr>
                   {/* Zeile: Warenaufwand Ziel */}
                   <tr className="border-b border-indigo-100 dark:border-indigo-800">
                     <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-amber-800 dark:text-amber-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Warenaufwand Ziel</td>
@@ -654,6 +676,44 @@ function BudgetContent() {
                     ))}
                     <td className="py-1.5 px-2 text-center font-bold text-amber-800 dark:text-amber-300">
                       {activeMonths.length > 0 ? Math.round(totalReqCogs).toLocaleString('de-CH') : '—'}
+                    </td>
+                  </tr>
+                  {/* Zeile: Personalkosten Budget */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
+                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Budget</td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center text-gray-600 dark:text-gray-400">
+                        {m.rev > 0 ? Math.round(m.pers).toLocaleString('de-CH') : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-semibold text-gray-700 dark:text-gray-300">
+                      {Math.round(months.reduce((s, m) => s + m.pers, 0)).toLocaleString('de-CH')}
+                    </td>
+                  </tr>
+                  {/* Zeile: Personalkostenquote % */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-blue-50/40 dark:bg-blue-950/10">
+                    <td className="sticky left-0 bg-blue-50/60 dark:bg-blue-950/20 z-10 py-1 px-3 text-blue-600 dark:text-blue-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
+                      Personalkostenquote <span className="text-muted-foreground">(0.75×)</span>
+                    </td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
+                        {m.persQuote !== null ? `${m.persQuote.toFixed(1)} %` : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
+                      {totalRevenue > 0 ? `${(months.reduce((s, m) => s + m.pers, 0) / totalRevenue * 100).toFixed(1)} %` : '—'}
+                    </td>
+                  </tr>
+                  {/* Zeile: Personalkosten Ziel */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
+                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-blue-800 dark:text-blue-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Ziel <span className="font-normal text-[10px]">(0.75×)</span></td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center text-blue-700 dark:text-blue-400 font-semibold">
+                        {m.canCompute && m.reqPers !== null ? Math.round(m.reqPers).toLocaleString('de-CH') : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-bold text-blue-800 dark:text-blue-300">
+                      {activeMonths.length > 0 ? Math.round(totalReqPers).toLocaleString('de-CH') : '—'}
                     </td>
                   </tr>
                 </tbody>

@@ -2756,25 +2756,29 @@ const PLViewPage = () => {
       const raw = (monthlyEbitInputs[i] ?? '').trim().replace(/[''\s]/g, '').replace(',', '.');
       const targetEbit = parseFloat(raw);
       const hasInput = raw !== '' && !isNaN(targetEbit);
+      const cogsQuote = monthNetRev > 0 ? monthCogs      / monthNetRev * 100 : null;
+      const persQuote = monthNetRev > 0 ? monthPersonnel / monthNetRev * 100 : null;
       const ebitPct = monthNetRev > 0 ? monthEbit / monthNetRev : null;
       const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && monthNetRev > 0;
       if (!canCompute) {
-        return { monthNetRev, monthCogs, monthPersonnel, monthGP1, monthGP2, monthEbit, targetEbit: hasInput ? targetEbit : null, hasInput, canCompute: false as const, reqNetRev: null, factor: null, reqCogs: null, reqPersonnel: null };
+        return { monthNetRev, monthCogs, monthPersonnel, monthGP1, monthGP2, monthEbit, cogsQuote, persQuote, targetEbit: hasInput ? targetEbit : null, hasInput, canCompute: false as const, reqNetRev: null, factor: null, reqCogs: null, reqPersonnel: null };
       }
       const reqNetRev    = targetEbit / (ebitPct as number);
       const factor       = reqNetRev / monthNetRev;
       const reqCogs      = monthCogs * factor;
-      const reqPersonnel = monthPersonnel * factor;
-      return { monthNetRev, monthCogs, monthPersonnel, monthGP1, monthGP2, monthEbit, targetEbit, hasInput, canCompute: true as const, reqNetRev, factor, reqCogs, reqPersonnel };
+      // Personalkosten skaliert 0.75× des Mehrumsatzes (Fixkostenanteil ~25 %)
+      const reqPersonnel = monthPersonnel * (1 + 0.75 * (factor - 1));
+      return { monthNetRev, monthCogs, monthPersonnel, monthGP1, monthGP2, monthEbit, cogsQuote, persQuote, targetEbit, hasInput, canCompute: true as const, reqNetRev, factor, reqCogs, reqPersonnel };
     });
   }, [yearResult.months, monthlyEbitInputs]);
 
   const hochrechnungTotal = useMemo(() => {
     const active = hochrechnungMonths.filter(m => m.canCompute);
     return {
-      reqNetRev:   active.reduce((s, m) => s + (m.reqNetRev  ?? 0), 0),
-      reqCogs:     active.reduce((s, m) => s + (m.reqCogs    ?? 0), 0),
-      targetEbit:  hochrechnungMonths.filter(m => m.hasInput).reduce((s, m) => s + (m.targetEbit ?? 0), 0),
+      reqNetRev:    active.reduce((s, m) => s + (m.reqNetRev    ?? 0), 0),
+      reqCogs:      active.reduce((s, m) => s + (m.reqCogs      ?? 0), 0),
+      reqPersonnel: active.reduce((s, m) => s + (m.reqPersonnel ?? 0), 0),
+      targetEbit:   hochrechnungMonths.filter(m => m.hasInput).reduce((s, m) => s + (m.targetEbit ?? 0), 0),
       activeMonths: active.length,
     };
   }, [hochrechnungMonths]);
@@ -3464,6 +3468,21 @@ const PLViewPage = () => {
                     </td>
                   </tr>
 
+                  {/* ── Warenquote % ── */}
+                  <tr className="bg-white dark:bg-background text-[10px]">
+                    <td className="px-2 py-0.5 text-amber-600 dark:text-amber-400 pl-5 sticky left-0 bg-white dark:bg-background z-10 whitespace-nowrap">
+                      Warenquote <span className="text-muted-foreground font-normal">(skaliert 1:1)</span>
+                    </td>
+                    {hochrechnungMonths.map((m, i) => (
+                      <td key={i} className="text-right px-1.5 py-0.5 tabular-nums text-amber-600 dark:text-amber-400">
+                        {m.cogsQuote !== null ? `${m.cogsQuote.toFixed(1)} %` : '–'}
+                      </td>
+                    ))}
+                    <td className="text-right px-2 py-0.5 tabular-nums text-amber-600 dark:text-amber-400 bg-slate-50 dark:bg-slate-900/20">
+                      {yearNetRevTotal > 0 ? `${(yearCogsTotal / yearNetRevTotal * 100).toFixed(1)} %` : '–'}
+                    </td>
+                  </tr>
+
                   {/* ── Warenaufwand Ziel ── */}
                   <tr className="bg-amber-50 dark:bg-amber-950/20 font-semibold text-amber-800 dark:text-amber-300">
                     <td className="px-2 py-1.5 pl-5 sticky left-0 bg-amber-50 dark:bg-amber-950/20 z-10">Warenaufwand Ziel</td>
@@ -3474,6 +3493,47 @@ const PLViewPage = () => {
                     ))}
                     <td className="text-right px-2 py-1.5 tabular-nums bg-amber-100 dark:bg-amber-900/30">
                       {hochrechnungTotal.activeMonths > 0 ? Math.round(hochrechnungTotal.reqCogs).toLocaleString('de-CH') : '–'}
+                    </td>
+                  </tr>
+
+                  {/* ── Personalkosten Ist ── */}
+                  <tr className="bg-slate-50 dark:bg-slate-900/20">
+                    <td className="px-2 py-1 text-muted-foreground pl-5 sticky left-0 bg-slate-50 dark:bg-slate-900/20 z-10">Personalkosten Ist</td>
+                    {hochrechnungMonths.map((m, i) => (
+                      <td key={i} className="text-right px-1.5 py-1 tabular-nums text-muted-foreground">
+                        {m.monthPersonnel > 0 ? Math.round(m.monthPersonnel).toLocaleString('de-CH') : '–'}
+                      </td>
+                    ))}
+                    <td className="text-right px-2 py-1 tabular-nums text-muted-foreground bg-slate-100 dark:bg-slate-800/30">
+                      {Math.round(yearPersonnelTotal).toLocaleString('de-CH')}
+                    </td>
+                  </tr>
+
+                  {/* ── Personalkostenquote % ── */}
+                  <tr className="bg-white dark:bg-background text-[10px]">
+                    <td className="px-2 py-0.5 text-blue-600 dark:text-blue-400 pl-5 sticky left-0 bg-white dark:bg-background z-10 whitespace-nowrap">
+                      Personalkostenquote <span className="text-muted-foreground font-normal">(skaliert 0.75×)</span>
+                    </td>
+                    {hochrechnungMonths.map((m, i) => (
+                      <td key={i} className="text-right px-1.5 py-0.5 tabular-nums text-blue-600 dark:text-blue-400">
+                        {m.persQuote !== null ? `${m.persQuote.toFixed(1)} %` : '–'}
+                      </td>
+                    ))}
+                    <td className="text-right px-2 py-0.5 tabular-nums text-blue-600 dark:text-blue-400 bg-slate-50 dark:bg-slate-900/20">
+                      {yearNetRevTotal > 0 ? `${(yearPersonnelTotal / yearNetRevTotal * 100).toFixed(1)} %` : '–'}
+                    </td>
+                  </tr>
+
+                  {/* ── Personalkosten Ziel ── */}
+                  <tr className="bg-blue-50 dark:bg-blue-950/20 font-semibold text-blue-800 dark:text-blue-300">
+                    <td className="px-2 py-1.5 pl-5 sticky left-0 bg-blue-50 dark:bg-blue-950/20 z-10">Personalkosten Ziel</td>
+                    {hochrechnungMonths.map((m, i) => (
+                      <td key={i} className="text-right px-1.5 py-1.5 tabular-nums">
+                        {m.canCompute ? Math.round(m.reqPersonnel!).toLocaleString('de-CH') : '–'}
+                      </td>
+                    ))}
+                    <td className="text-right px-2 py-1.5 tabular-nums bg-blue-100 dark:bg-blue-900/30">
+                      {hochrechnungTotal.activeMonths > 0 ? Math.round(hochrechnungTotal.reqPersonnel).toLocaleString('de-CH') : '–'}
                     </td>
                   </tr>
 
@@ -3495,6 +3555,8 @@ const PLViewPage = () => {
           const mEbit   = mode === 'budget_pl' ? (bplKpiEbitda?.actual ?? 0) : (ebit?.actual ?? 0);
           const mCogs   = monthResult.rows.find(r => r.def.id === 'total_cogs')?.values.actual ?? 0;
           const mPers   = monthResult.rows.find(r => r.def.id === 'total_personnel')?.values.actual ?? 0;
+          const cogsQuote = mNetRev > 0 ? mCogs / mNetRev * 100 : null;
+          const persQuote = mNetRev > 0 ? mPers / mNetRev * 100 : null;
           const ebitPct = mNetRev > 0 ? mEbit / mNetRev : null;
           const rawInput = (monthlyEbitInputs[month - 1] ?? '').trim().replace(/['''\s]/g, '').replace(',', '.');
           const targetEbit = parseFloat(rawInput);
@@ -3503,7 +3565,8 @@ const PLViewPage = () => {
           const reqNetRev = canCompute ? targetEbit / ebitPct! : null;
           const factor    = (reqNetRev !== null && mNetRev > 0) ? reqNetRev / mNetRev : null;
           const reqCogs   = (factor !== null) ? mCogs * factor : null;
-          const reqPers   = (factor !== null) ? mPers * factor : null;
+          // Personalkosten skaliert 0.75× des Mehrumsatzes
+          const reqPers   = (factor !== null) ? mPers * (1 + 0.75 * (factor - 1)) : null;
           return (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
               <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
@@ -3543,6 +3606,18 @@ const PLViewPage = () => {
                       </strong>
                     </span>
                   )}
+                  {mNetRev > 0 && cogsQuote !== null && (
+                    <span className="text-xs text-muted-foreground">
+                      Warenquote: <strong className="text-amber-700 dark:text-amber-400">{cogsQuote.toFixed(1)} %</strong>
+                      <span className="text-[10px] ml-1">(1:1)</span>
+                    </span>
+                  )}
+                  {mNetRev > 0 && persQuote !== null && (
+                    <span className="text-xs text-muted-foreground">
+                      Personalkostenquote: <strong className="text-blue-700 dark:text-blue-400">{persQuote.toFixed(1)} %</strong>
+                      <span className="text-[10px] ml-1">(0.75×)</span>
+                    </span>
+                  )}
                   {mNetRev <= 0 && (
                     <span className="text-xs text-red-600">Keine Ist-Daten für diesen Monat</span>
                   )}
@@ -3571,9 +3646,9 @@ const PLViewPage = () => {
                     )}
                     {mPers > 0 && reqPers !== null && (
                       <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
-                        <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">Personalkosten Ziel</p>
+                        <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">Personalkosten Ziel <span className="font-normal normal-case">(0.75×)</span></p>
                         <p className="text-base font-bold text-blue-800 dark:text-blue-300">{Math.round(reqPers).toLocaleString('de-CH')}</p>
-                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')}</p>
+                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')} ({persQuote !== null ? `${persQuote.toFixed(1)} %` : '—'})</p>
                       </div>
                     )}
                   </div>
