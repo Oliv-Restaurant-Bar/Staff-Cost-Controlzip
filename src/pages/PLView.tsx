@@ -3364,8 +3364,8 @@ const PLViewPage = () => {
                   <span className="text-muted-foreground">Ziel-Warenaufwand: </span>
                   <strong className="text-amber-800 dark:text-amber-300">CHF {Math.round(hochrechnungTotal.reqCogs).toLocaleString('de-CH')}</strong>
                 </span>
-                <span title="Differenz zwischen erforderlichem Ziel-Nettoumsatz und aktuellem Ist-Umsatz der gleichen Monate">
-                  <span className="text-muted-foreground">Mehrumsatz nötig: </span>
+                <span>
+                  <span className="text-muted-foreground">Δ Umsatz <span className="text-[10px] opacity-70">(Ziel−Ist)</span>: </span>
                   <strong className={hochrechnungTotal.reqNetRev >= hochrechnungTotal.activeNetRev ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}>
                     {hochrechnungTotal.reqNetRev >= hochrechnungTotal.activeNetRev ? '+' : ''}{Math.round(hochrechnungTotal.reqNetRev - hochrechnungTotal.activeNetRev).toLocaleString('de-CH')} CHF
                   </strong>
@@ -3573,12 +3573,30 @@ const PLViewPage = () => {
                   <tr className="bg-blue-50 dark:bg-blue-950/20 font-semibold text-blue-800 dark:text-blue-300">
                     <td className="px-2 py-1.5 pl-5 sticky left-0 bg-blue-50 dark:bg-blue-950/20 z-10">Personalkosten Ziel</td>
                     {hochrechnungMonths.map((m, i) => (
-                      <td key={i} className="text-right px-1.5 py-1.5 tabular-nums">
-                        {m.canCompute ? Math.round(m.reqPersonnel!).toLocaleString('de-CH') : '–'}
+                      <td key={i} className="text-right px-1.5 py-1.5 tabular-nums leading-tight">
+                        {m.canCompute ? (
+                          <>
+                            {Math.round(m.reqPersonnel!).toLocaleString('de-CH')}
+                            {m.reqNetRev && m.reqNetRev > 0 && (
+                              <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">
+                                {(m.reqPersonnel! / m.reqNetRev * 100).toFixed(1)} %
+                              </div>
+                            )}
+                          </>
+                        ) : '–'}
                       </td>
                     ))}
-                    <td className="text-right px-2 py-1.5 tabular-nums bg-blue-100 dark:bg-blue-900/30">
-                      {hochrechnungTotal.activeMonths > 0 ? Math.round(hochrechnungTotal.reqPersonnel).toLocaleString('de-CH') : '–'}
+                    <td className="text-right px-2 py-1.5 tabular-nums bg-blue-100 dark:bg-blue-900/30 leading-tight">
+                      {hochrechnungTotal.activeMonths > 0 ? (
+                        <>
+                          {Math.round(hochrechnungTotal.reqPersonnel).toLocaleString('de-CH')}
+                          {hochrechnungTotal.reqNetRev > 0 && (
+                            <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">
+                              {(hochrechnungTotal.reqPersonnel / hochrechnungTotal.reqNetRev * 100).toFixed(1)} %
+                            </div>
+                          )}
+                        </>
+                      ) : '–'}
                     </td>
                   </tr>
 
