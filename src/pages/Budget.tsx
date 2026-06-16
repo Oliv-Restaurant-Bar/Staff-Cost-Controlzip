@@ -361,6 +361,7 @@ function BudgetContent() {
       return;
     }
 
+    const snapshot = affectedItems.map(item => ({ itemId: item.id, monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'] }));
     const factor = targetCHF / currentTotal;
 
     // Jedes betroffene Konto skalieren (chained savePLLineItem – liest jedes Mal aus localStorage)
@@ -376,7 +377,8 @@ function BudgetContent() {
 
     const pct = totalRevenue > 0 ? (targetCHF / totalRevenue * 100).toFixed(1) : null;
     toast.success(
-      `${cat.label} auf CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}% des Umsatzes)` : ''} angepasst – ${affectedItems.length} Konten skaliert`
+      `${cat.label} auf CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}% des Umsatzes)` : ''} angepasst`,
+      { action: { label: 'Rückgängig', onClick: () => restoreTopDownSnapshot(snapshot) } }
     );
   };
 
@@ -405,6 +407,8 @@ function BudgetContent() {
     const currentMonthTotal = affectedItems.reduce((s, item) => s + (item.monthlyValues[monthIdx] ?? 0), 0);
     if (currentMonthTotal === 0) { toast.error('Aktueller Monatswert ist 0 – bitte zuerst manuell befüllen.'); return; }
 
+    const snapshot = affectedItems.map(item => ({ itemId: item.id, monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'] }));
+
     const factor = targetCHF / currentMonthTotal;
     let upd: BudgetYear = budget;
     for (const item of affectedItems) {
@@ -417,8 +421,21 @@ function BudgetContent() {
     const revM = revenueByMonth[monthIdx] ?? 0;
     const pct = revM > 0 ? (targetCHF / revM * 100).toFixed(1) : null;
     toast.success(
-      `${cat.label} ${BUDGET_MONTH_NAMES[monthIdx]}: CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}%)` : ''} – ${affectedItems.length} Konten skaliert`
+      `${cat.label} ${BUDGET_MONTH_NAMES[monthIdx]}: CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}%)` : ''}`,
+      { action: { label: 'Rückgängig', onClick: () => restoreTopDownSnapshot(snapshot) } }
     );
+  };
+
+  const restoreTopDownSnapshot = (snapshot: { itemId: string; monthlyValues: BudgetPLLineItem['monthlyValues'] }[]) => {
+    const freshItems = loadBudgetWithPL(selectedYear, tenantKey(BUDGET_STORAGE_KEY)).plLineItems ?? [];
+    let upd: BudgetYear = budget;
+    for (const s of snapshot) {
+      const item = freshItems.find(i => i.id === s.itemId);
+      if (!item) continue;
+      upd = savePLLineItem(selectedYear, { ...item, monthlyValues: s.monthlyValues }, tenantKey(BUDGET_STORAGE_KEY));
+    }
+    setBudget(upd);
+    toast.success('Änderung rückgängig gemacht');
   };
 
   const handleApplyRules = () => {
@@ -587,7 +604,7 @@ function BudgetContent() {
                   onClick={handleDistribute}
                   className="h-7 px-2.5 rounded bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-semibold transition-colors whitespace-nowrap"
                 >
-                  Proportional verteilen
+                  Übernehmen
                 </button>
                 <button
                   disabled={!hasAny && budgetAnnualDistrib === ''}
@@ -1382,7 +1399,7 @@ function BudgetContent() {
               className="gap-1.5"
             >
               <ArrowRight className="h-3.5 w-3.5" />
-              Proportional verteilen
+              Übernehmen
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1510,7 +1527,7 @@ function BudgetContent() {
               className="gap-1.5"
             >
               <ArrowRight className="h-3.5 w-3.5" />
-              Proportional verteilen
+              Übernehmen
             </Button>
           </DialogFooter>
         </DialogContent>

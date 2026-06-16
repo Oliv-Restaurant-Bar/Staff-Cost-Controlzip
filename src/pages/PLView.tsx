@@ -20,18 +20,21 @@ import {
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
+  Calculator, ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
@@ -43,7 +46,7 @@ import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
 import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
-import { BudgetYear, BudgetPLCategory, BudgetPLLineItem } from '@/types/budget';
+import { BudgetYear, BudgetPLCategory, BudgetPLLineItem, BUDGET_MONTH_NAMES_FULL } from '@/types/budget';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { exportPLToPDF, PLExportOptions } from '@/lib/pl-export';
@@ -608,6 +611,7 @@ interface BPLRow {
   itemAccountNumber?: string;
   itemId?: string;
   isInternal?: boolean;
+  isTopDownable?: boolean;
 }
 
 interface BPLRowWithValues extends BPLRow {
@@ -901,9 +905,12 @@ function computeBPLRows(
         });
       }
     } else if (cat.type === 'result') {
+      const isTopDownable = (cat.resultFormula ?? []).some(
+        f => cats.find(c => c.id === f.categoryId)?.type === 'items'
+      );
       rows.push({
         catId: cat.id, catLabel: cat.label, catType: 'result',
-        isExpense: cat.isExpense, isCategory: true,
+        isExpense: cat.isExpense, isCategory: true, isTopDownable,
         values: makeCell(catA[cat.id] ?? 0, catB[cat.id] ?? 0, catP[cat.id] ?? 0, cat.isExpense),
       });
     }
@@ -1064,7 +1071,7 @@ const InlineRevenueEntry = ({
   );
 };
 
-const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse }: {
+const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, highlightVariance, pctMode = 'off', revenueActual = 0, revenueBudget = 0, revenuePrevYear = 0, compareMode = 'all', isCollapsed, onToggleCollapse, onBudgetEdit }: {
   row: BPLRowWithValues;
   onClick: () => void;
   compact: boolean;
@@ -1080,6 +1087,7 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
   compareMode?: 'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat';
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
+  onBudgetEdit?: (catId: string, monthIdx: number, budgetVal: number) => void;
 }) => {
   const [editingIst, setEditingIst] = useState(false);
   const { values: v } = row;
@@ -1125,7 +1133,23 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
             {p ?? <span className="opacity-30">—</span>}
           </td>
         )}
-        {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult)}>{fmt(v.budget)}</td>}
+        {showBudget && (
+          <td
+            className={cn(
+              'px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult,
+              onBudgetEdit && row.isTopDownable
+                ? 'cursor-pointer hover:bg-amber-50 dark:hover:bg-amber-900/20 hover:ring-1 hover:ring-inset hover:ring-amber-300 dark:hover:ring-amber-600 transition-colors group'
+                : '',
+            )}
+            onClick={onBudgetEdit && row.isTopDownable ? () => onBudgetEdit(row.catId, month - 1, v.budget) : undefined}
+            title={onBudgetEdit && row.isTopDownable ? `Budget ${row.catLabel} anpassen (Top-Down)` : undefined}
+          >
+            <span className="flex items-center justify-end gap-1">
+              {fmt(v.budget)}
+              {onBudgetEdit && row.isTopDownable && <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-50 shrink-0 transition-opacity" />}
+            </span>
+          </td>
+        )}
         {showBudget && pctMode !== 'off' && <td className={cn('px-2 text-right font-mono tabular-nums text-xs text-gray-500 dark:text-gray-400 font-bold', pyResult)}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
         {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} isExpense={row.isExpense} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-700 dark:text-gray-300', pyResult)}>{fmt(v.prevYear)}</td>}
@@ -1278,6 +1302,7 @@ const BudgetPLView = ({
   maisonEnabled = false,
   maisonNet = 0,
   prevYearLabel = 'Vorjahr',
+  onBudgetEdit,
 }: {
   rows: BPLRowWithValues[];
   onRowClick: (row: BPLRowWithValues) => void;
@@ -1296,6 +1321,7 @@ const BudgetPLView = ({
   maisonEnabled?: boolean;
   maisonNet?: number;
   prevYearLabel?: string;
+  onBudgetEdit?: (catId: string, monthIdx: number, budgetVal: number) => void;
 }) => {
   const showBudget   = compareMode !== 'ist_vorjahr' && compareMode !== 'monat_vs_monat';
   const showPrevYear = compareMode !== 'ist_budget';
@@ -1363,6 +1389,7 @@ const BudgetPLView = ({
                 compareMode={compareMode}
                 isCollapsed={row.isCategory ? collapsedCats.has(row.catId) : undefined}
                 onToggleCollapse={row.isCategory ? () => toggleCat(row.catId) : undefined}
+                onBudgetEdit={onBudgetEdit}
               />
               {isLastRevItem && maisonEnabled && maisonNet > 0 && (
                 <tr className="bg-violet-50/70 dark:bg-violet-950/20 border-b border-violet-100 dark:border-violet-900/50">
@@ -2291,6 +2318,11 @@ const PLViewPage = () => {
   const [refreshKey,       setRefreshKey]       = useState(0);
   const [addKontoOpen,    setAddKontoOpen]    = useState(false);
 
+  // Per-Monat Top-Down Budget (PLView)
+  const [bplTopDownDialog,  setBplTopDownDialog]  = useState<{ catId: string; catLabel: string; monthIdx: number; monthBudgetTotal: number } | null>(null);
+  const [bplTopDownMode,    setBplTopDownMode]    = useState<'chf' | 'pct'>('chf');
+  const [bplTopDownInput,   setBplTopDownInput]   = useState('');
+
   // ── Maison / Marketing Umsatzkanal ───────────────────────────────────────
   const [maisonEnabled, setMaisonEnabled] = useState(() => getMaisonEnabledSync(tenantKey));
   const [maisonMonthly]                   = useState<Record<string, number>>(() => getMaisonMonthlySync(tenantKey));
@@ -2628,6 +2660,64 @@ const PLViewPage = () => {
     const dd = getDrilldown(rowId, monthResult);
     if (dd) setDrilldown(dd);
   }, [monthResult]);
+
+  const parseBplTopDownInput = () =>
+    parseFloat(bplTopDownInput.replace(/['\u2019\s]/g, '').replace(',', '.')) || 0;
+
+  const calcBplTopDownTargetCHF = () => {
+    const val = parseBplTopDownInput();
+    return bplTopDownMode === 'pct' ? val / 100 * bplBudgetRevenue : val;
+  };
+
+  const restoreBplSnapshot = (snapshot: { itemId: string; monthlyValues: BudgetPLLineItem['monthlyValues'] }[]) => {
+    const freshItems = loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)).plLineItems ?? [];
+    for (const s of snapshot) {
+      const item = freshItems.find(i => i.id === s.itemId);
+      if (!item) continue;
+      savePLLineItem(year, { ...item, monthlyValues: s.monthlyValues }, tenantKey(BUDGET_STORAGE_KEY));
+    }
+    setRefreshKey(k => k + 1);
+    toast.success('Änderung rückgängig gemacht');
+  };
+
+  const applyBplTopDownMonth = () => {
+    if (!bplTopDownDialog) return;
+    const { catId, catLabel, monthIdx } = bplTopDownDialog;
+    const targetCHF = calcBplTopDownTargetCHF();
+    if (targetCHF <= 0) { toast.error('Bitte einen gültigen Wert (> 0) eingeben.'); return; }
+
+    const cats = budgetData.plCategories ?? [];
+    const items = budgetData.plLineItems ?? [];
+    const cat = cats.find(c => c.id === catId);
+    if (!cat) return;
+
+    const contribCatIds = (cat.resultFormula ?? [])
+      .map(f => f.categoryId)
+      .filter(cId => cats.find(c => c.id === cId)?.type === 'items');
+    const affectedItems = items.filter(i => contribCatIds.includes(i.categoryId) && !i.isHidden && !i.isInternal);
+    if (affectedItems.length === 0) { toast.error('Keine anpassbaren Konten gefunden.'); return; }
+
+    const currentMonthTotal = affectedItems.reduce((s, item) => s + (item.monthlyValues[monthIdx] ?? 0), 0);
+    if (currentMonthTotal === 0) { toast.error('Aktueller Monatswert ist 0 – bitte zuerst manuell befüllen.'); return; }
+
+    const snapshot = affectedItems.map(item => ({ itemId: item.id, monthlyValues: [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'] }));
+
+    const factor = targetCHF / currentMonthTotal;
+    const storeKey = tenantKey(BUDGET_STORAGE_KEY);
+    for (const item of affectedItems) {
+      const newVals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
+      newVals[monthIdx] = Math.round((newVals[monthIdx] ?? 0) * factor);
+      savePLLineItem(year, { ...item, monthlyValues: newVals }, storeKey);
+    }
+    setRefreshKey(k => k + 1);
+    setBplTopDownDialog(null);
+    setBplTopDownInput('');
+    const pct = bplBudgetRevenue > 0 ? (targetCHF / bplBudgetRevenue * 100).toFixed(1) : null;
+    toast.success(
+      `${catLabel} ${BUDGET_MONTH_NAMES_FULL[monthIdx]}: CHF ${Math.round(targetCHF).toLocaleString('de-CH')}${pct ? ` (${pct}%)` : ''}`,
+      { action: { label: 'Rückgängig', onClick: () => restoreBplSnapshot(snapshot) } }
+    );
+  };
 
   const [pdfDialogOpen, setPdfDialogOpen] = useState(false);
 
@@ -3297,6 +3387,12 @@ const PLViewPage = () => {
                 maisonEnabled={maisonEnabled && maisonColPref}
                 maisonNet={maisonMonthNet}
                 prevYearLabel={prevYearColLabel}
+                onBudgetEdit={(catId, monthIdx, budgetVal) => {
+                  const catLabel = effectiveBplRows.find(r => r.catId === catId && r.catType === 'result' && r.isCategory)?.catLabel ?? catId;
+                  setBplTopDownDialog({ catId, catLabel, monthIdx, monthBudgetTotal: budgetVal });
+                  setBplTopDownInput('');
+                  setBplTopDownMode('chf');
+                }}
               />
             : mode === 'monthly'
             ? <MonthlyView result={monthResult} onDrilldown={handleDrilldown} />
@@ -3846,6 +3942,136 @@ const PLViewPage = () => {
         existingItems={budgetData.plLineItems ?? []}
         onSaved={() => setRefreshKey(k => k + 1)}
       />
+
+      {/* Per-Monat Top-Down Budget Dialog (PLView) */}
+      <Dialog open={!!bplTopDownDialog} onOpenChange={open => !open && setBplTopDownDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calculator className="h-4 w-4" />
+              {bplTopDownDialog?.catLabel} — {bplTopDownDialog !== null ? BUDGET_MONTH_NAMES_FULL[bplTopDownDialog.monthIdx] : ''}
+            </DialogTitle>
+          </DialogHeader>
+          {bplTopDownDialog && (() => {
+            const { catId, monthIdx, monthBudgetTotal } = bplTopDownDialog;
+            const cats = budgetData.plCategories ?? [];
+            const items = budgetData.plLineItems ?? [];
+            const cat = cats.find(c => c.id === catId);
+            const contribCatIds = (cat?.resultFormula ?? [])
+              .map(f => f.categoryId)
+              .filter(cId => cats.find(c => c.id === cId)?.type === 'items');
+            const affectedItems = items.filter(i => contribCatIds.includes(i.categoryId) && !i.isHidden && !i.isInternal);
+            const affectedCats  = cats.filter(c => contribCatIds.includes(c.id));
+            const currentMonthTotal = affectedItems.reduce((s, item) => s + (item.monthlyValues[monthIdx] ?? 0), 0);
+            const targetCHF = calcBplTopDownTargetCHF();
+            const factor = currentMonthTotal > 0 && targetCHF > 0 ? targetCHF / currentMonthTotal : null;
+            const targetPct = bplBudgetRevenue > 0 && targetCHF > 0 ? targetCHF / bplBudgetRevenue * 100 : null;
+            const currentPct = bplBudgetRevenue > 0 && monthBudgetTotal !== 0 ? monthBudgetTotal / bplBudgetRevenue * 100 : null;
+            const canApply = targetCHF > 0 && currentMonthTotal > 0 && affectedItems.length > 0;
+            return (
+              <div className="space-y-4">
+                <div className="rounded-md bg-muted/50 px-3 py-2.5 text-sm">
+                  <div className="text-muted-foreground text-xs mb-1">Aktueller Budget-Wert ({BUDGET_MONTH_NAMES_FULL[monthIdx]})</div>
+                  <div className="font-mono font-bold text-base flex items-center gap-2">
+                    CHF {monthBudgetTotal.toLocaleString('de-CH', { maximumFractionDigits: 0 })}
+                    {currentPct !== null && (
+                      <span className="text-amber-600 text-xs font-normal">= {currentPct.toFixed(1)}% des Umsatzes</span>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Neuer Zielwert</Label>
+                  <div className="flex gap-2 items-center">
+                    <div className="flex border rounded-md overflow-hidden text-sm font-semibold flex-shrink-0">
+                      <button
+                        className={cn('px-3 py-1.5 transition-colors', bplTopDownMode === 'chf' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+                        onClick={() => {
+                          setBplTopDownMode('chf');
+                          if (bplTopDownMode === 'pct') {
+                            const pv = parseBplTopDownInput();
+                            setBplTopDownInput(bplBudgetRevenue > 0 ? String(Math.round(pv / 100 * bplBudgetRevenue)) : bplTopDownInput);
+                          }
+                        }}
+                      >CHF</button>
+                      <button
+                        className={cn('px-3 py-1.5 transition-colors', bplTopDownMode === 'pct' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+                        onClick={() => {
+                          setBplTopDownMode('pct');
+                          if (bplTopDownMode === 'chf') {
+                            const cv = parseBplTopDownInput();
+                            setBplTopDownInput(bplBudgetRevenue > 0 ? (cv / bplBudgetRevenue * 100).toFixed(1) : bplTopDownInput);
+                          }
+                        }}
+                      >%</button>
+                    </div>
+                    <Input
+                      autoFocus
+                      value={bplTopDownInput}
+                      onChange={e => setBplTopDownInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && canApply && applyBplTopDownMonth()}
+                      placeholder={bplTopDownMode === 'chf' ? 'z.B. 180000' : 'z.B. 75.0'}
+                      className="font-mono flex-1"
+                    />
+                    {bplTopDownMode === 'pct' && (
+                      <span className="text-sm text-muted-foreground flex-shrink-0">% des Umsatzes</span>
+                    )}
+                  </div>
+                </div>
+                {factor !== null && (
+                  <div className="rounded-md border px-3 py-2.5 space-y-1.5 text-sm">
+                    <div className="font-semibold text-xs text-muted-foreground uppercase tracking-wide mb-1">Vorschau</div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Neuer Wert</span>
+                      <span className="font-mono font-bold">
+                        CHF {Math.round(targetCHF).toLocaleString('de-CH')}
+                        {targetPct !== null && <span className="text-amber-600 ml-1.5 font-normal text-xs">({targetPct.toFixed(1)}%)</span>}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Skalierungsfaktor</span>
+                      <span className={cn('font-mono text-xs', factor > 1 ? 'text-green-600' : 'text-orange-600')}>
+                        × {factor.toFixed(4)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Betroffene Konten</span>
+                      <span className="font-mono text-xs">{affectedItems.length} in {affectedCats.length} Gruppen</span>
+                    </div>
+                    {affectedCats.length > 0 && (
+                      <div className="text-xs text-muted-foreground pt-0.5 border-t">
+                        {affectedCats.map(c => c.label).join(' · ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {currentMonthTotal === 0 && affectedItems.length > 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>Monatswert ist 0 – bitte Konten zuerst manuell befüllen.</AlertDescription>
+                  </Alert>
+                )}
+                {affectedItems.length === 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>Keine anpassbaren Konten gefunden.</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBplTopDownDialog(null)}>Abbrechen</Button>
+            <Button
+              onClick={applyBplTopDownMonth}
+              disabled={calcBplTopDownTargetCHF() <= 0}
+              className="gap-1.5"
+            >
+              <ArrowRight className="h-3.5 w-3.5" />
+              Übernehmen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* PDF Export Dialog */}
       <PDFExportDialog
