@@ -3659,8 +3659,7 @@ const PLViewPage = () => {
           </div>
         )}
 
-        {/* ── Hochrechnung: Monatsansicht (Klassisch / Budget P&L) ─────────────── */}
-        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (() => {
+        {false && (mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (() => {
           const mNetRev = mode === 'budget_pl' ? (bplKpiNetRev?.actual ?? 0) : (netRev?.actual ?? 0);
           const mEbit   = mode === 'budget_pl' ? (bplKpiEbitda?.actual ?? 0) : (ebit?.actual ?? 0);
           const mCogs   = monthResult.rows.find(r => r.def.id === 'total_cogs')?.values.actual ?? 0;

@@ -196,6 +196,11 @@ function BudgetContent() {
   const [budgetAnnualDistrib,  setBudgetAnnualDistrib]  = useState('');
   const [budgetHochOpen,       setBudgetHochOpen]       = useState(true);
 
+  // Per-Monat Top-Down (Zwischentotal-Zeile → einzelner Monat skalieren)
+  const [topDownMonthDialog,  setTopDownMonthDialog]   = useState<{ cat: BudgetPLCategory; monthIdx: number; monthTotal: number } | null>(null);
+  const [topDownMonthMode,    setTopDownMonthMode]     = useState<'chf' | 'pct'>('chf');
+  const [topDownMonthInput,   setTopDownMonthInput]    = useState('');
+
   const reload = useCallback((year: number) => {
     setBudget(loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)));
     setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
@@ -372,6 +377,47 @@ function BudgetContent() {
     const pct = totalRevenue > 0 ? (targetCHF / totalRevenue * 100).toFixed(1) : null;
     toast.success(
       `${cat.label} auf CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}% des Umsatzes)` : ''} angepasst – ${affectedItems.length} Konten skaliert`
+    );
+  };
+
+  const parseTopDownMonthInput = () =>
+    parseFloat(topDownMonthInput.replace(/['\u2019\s]/g, '').replace(',', '.')) || 0;
+
+  const calcTopDownMonthTargetCHF = (monthIdx: number) => {
+    const val = parseTopDownMonthInput();
+    return topDownMonthMode === 'pct' ? val / 100 * (revenueByMonth[monthIdx] ?? 0) : val;
+  };
+
+  const applyTopDownMonth = () => {
+    if (!topDownMonthDialog) return;
+    const { cat, monthIdx } = topDownMonthDialog;
+    const targetCHF = calcTopDownMonthTargetCHF(monthIdx);
+    if (targetCHF <= 0) { toast.error('Bitte einen gültigen Wert (> 0) eingeben.'); return; }
+
+    const contribCatIds = (cat.resultFormula ?? [])
+      .map(f => f.categoryId)
+      .filter(catId => categories.find(c => c.id === catId)?.type === 'items');
+    const affectedItems = lineItems.filter(
+      i => contribCatIds.includes(i.categoryId) && !i.isHidden && !i.isInternal
+    );
+    if (affectedItems.length === 0) { toast.error('Keine anpassbaren Konten gefunden.'); return; }
+
+    const currentMonthTotal = affectedItems.reduce((s, item) => s + (item.monthlyValues[monthIdx] ?? 0), 0);
+    if (currentMonthTotal === 0) { toast.error('Aktueller Monatswert ist 0 – bitte zuerst manuell befüllen.'); return; }
+
+    const factor = targetCHF / currentMonthTotal;
+    let upd: BudgetYear = budget;
+    for (const item of affectedItems) {
+      const newVals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
+      newVals[monthIdx] = Math.round((newVals[monthIdx] ?? 0) * factor);
+      upd = savePLLineItem(selectedYear, { ...item, monthlyValues: newVals }, tenantKey(BUDGET_STORAGE_KEY));
+    }
+    setBudget(upd);
+    setTopDownMonthDialog(null);
+    const revM = revenueByMonth[monthIdx] ?? 0;
+    const pct = revM > 0 ? (targetCHF / revM * 100).toFixed(1) : null;
+    toast.success(
+      `${cat.label} ${BUDGET_MONTH_NAMES[monthIdx]}: CHF ${CHF(Math.round(targetCHF))}${pct ? ` (${pct}%)` : ''} – ${affectedItems.length} Konten skaliert`
     );
   };
 
@@ -861,10 +907,25 @@ function BudgetContent() {
                             {catPct !== null ? `${catPct.toFixed(1)}%` : '–'}
                           </td>
                           {monthly.map((v, m) => (
-                            <td key={m} className={cn('text-right py-2.5 px-2 font-mono font-bold text-xs', style.result,
-                              v < 0 ? 'text-red-700 dark:text-red-400' : '')}>
+                            <td
+                              key={m}
+                              className={cn(
+                                'text-right py-2.5 px-2 font-mono font-bold text-xs', style.result,
+                                v < 0 ? 'text-red-700 dark:text-red-400' : '',
+                                isTopDownable ? 'cursor-pointer hover:ring-2 hover:ring-primary/30 hover:ring-inset rounded transition-all' : '',
+                              )}
+                              title={isTopDownable ? `${BUDGET_MONTH_NAMES_FULL[m]}: Klicken zum Bearbeiten` : undefined}
+                              onClick={isTopDownable ? () => {
+                                setTopDownMonthMode('chf');
+                                setTopDownMonthInput(String(Math.round(v)));
+                                setTopDownMonthDialog({ cat, monthIdx: m, monthTotal: v });
+                              } : undefined}
+                            >
                               <div className="flex flex-col items-end leading-tight gap-px">
-                                <span>{v !== 0 ? CHF(v) : '–'}</span>
+                                <div className="flex items-center gap-0.5">
+                                  <span>{v !== 0 ? CHF(v) : '–'}</span>
+                                  {isTopDownable && <Pencil className="h-2 w-2 opacity-0 group-hover:opacity-40 flex-shrink-0" />}
+                                </div>
                                 {v !== 0 && revenueByMonth[m] > 0 && (
                                   <span className="text-[9px] font-normal opacity-55">{(v / revenueByMonth[m] * 100).toFixed(1)}%</span>
                                 )}
@@ -1318,6 +1379,134 @@ function BudgetContent() {
             <Button
               onClick={applyTopDown}
               disabled={calcTopDownTargetCHF() <= 0}
+              className="gap-1.5"
+            >
+              <ArrowRight className="h-3.5 w-3.5" />
+              Proportional verteilen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Per-Monat Top-Down Dialog ──────────────────────────────────── */}
+      <Dialog open={!!topDownMonthDialog} onOpenChange={open => !open && setTopDownMonthDialog(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calculator className="h-4 w-4" />
+              {topDownMonthDialog?.cat.label} — {topDownMonthDialog !== null ? BUDGET_MONTH_NAMES_FULL[topDownMonthDialog.monthIdx] : ''}
+            </DialogTitle>
+          </DialogHeader>
+          {topDownMonthDialog && (() => {
+            const { cat, monthIdx, monthTotal } = topDownMonthDialog;
+            const contribCatIds = (cat.resultFormula ?? [])
+              .map(f => f.categoryId)
+              .filter(catId => categories.find(c => c.id === catId)?.type === 'items');
+            const affectedCats  = categories.filter(c => contribCatIds.includes(c.id));
+            const affectedItems = lineItems.filter(i => contribCatIds.includes(i.categoryId) && !i.isHidden && !i.isInternal);
+            const mRev          = revenueByMonth[monthIdx] ?? 0;
+            const targetCHF     = calcTopDownMonthTargetCHF(monthIdx);
+            const currentMonthTotal = affectedItems.reduce((s, item) => s + (item.monthlyValues[monthIdx] ?? 0), 0);
+            const factor        = currentMonthTotal > 0 && targetCHF > 0 ? targetCHF / currentMonthTotal : null;
+            const targetPct     = mRev > 0 && targetCHF > 0 ? targetCHF / mRev * 100 : null;
+            const currentPct    = mRev > 0 && monthTotal !== 0 ? monthTotal / mRev * 100 : null;
+            const canApply      = targetCHF > 0 && currentMonthTotal > 0 && affectedItems.length > 0;
+            return (
+              <div className="space-y-4">
+                <div className="rounded-md bg-muted/50 px-3 py-2.5 text-sm">
+                  <div className="text-muted-foreground text-xs mb-1">Aktueller Wert ({BUDGET_MONTH_NAMES_FULL[monthIdx]})</div>
+                  <div className="font-mono font-bold text-base flex items-center gap-2">
+                    CHF {CHF(Math.round(monthTotal))}
+                    {currentPct !== null && (
+                      <span className="text-amber-600 text-xs font-normal">= {currentPct.toFixed(1)}% des Umsatzes</span>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Neuer Zielwert</Label>
+                  <div className="flex gap-2 items-center">
+                    <div className="flex border rounded-md overflow-hidden text-sm font-semibold flex-shrink-0">
+                      <button
+                        className={cn('px-3 py-1.5 transition-colors', topDownMonthMode === 'chf' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+                        onClick={() => {
+                          setTopDownMonthMode('chf');
+                          if (topDownMonthMode === 'pct') {
+                            const pv = parseTopDownMonthInput();
+                            setTopDownMonthInput(mRev > 0 ? String(Math.round(pv / 100 * mRev)) : topDownMonthInput);
+                          }
+                        }}
+                      >CHF</button>
+                      <button
+                        className={cn('px-3 py-1.5 transition-colors', topDownMonthMode === 'pct' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}
+                        onClick={() => {
+                          setTopDownMonthMode('pct');
+                          if (topDownMonthMode === 'chf') {
+                            const cv = parseTopDownMonthInput();
+                            setTopDownMonthInput(mRev > 0 ? (cv / mRev * 100).toFixed(1) : topDownMonthInput);
+                          }
+                        }}
+                      >%</button>
+                    </div>
+                    <Input
+                      autoFocus
+                      value={topDownMonthInput}
+                      onChange={e => setTopDownMonthInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && canApply && applyTopDownMonth()}
+                      placeholder={topDownMonthMode === 'chf' ? 'z.B. 180000' : 'z.B. 75.0'}
+                      className="font-mono flex-1"
+                    />
+                    {topDownMonthMode === 'pct' && (
+                      <span className="text-sm text-muted-foreground flex-shrink-0">% des Umsatzes</span>
+                    )}
+                  </div>
+                </div>
+                {factor !== null && (
+                  <div className="rounded-md border px-3 py-2.5 space-y-1.5 text-sm">
+                    <div className="font-semibold text-xs text-muted-foreground uppercase tracking-wide mb-1">Vorschau</div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Neuer Wert</span>
+                      <span className="font-mono font-bold">
+                        CHF {CHF(Math.round(targetCHF))}
+                        {targetPct !== null && <span className="text-amber-600 ml-1.5 font-normal text-xs">({targetPct.toFixed(1)}%)</span>}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Skalierungsfaktor</span>
+                      <span className={cn('font-mono text-xs', factor > 1 ? 'text-green-600' : 'text-orange-600')}>
+                        × {factor.toFixed(4)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Betroffene Konten</span>
+                      <span className="font-mono text-xs">{affectedItems.length} in {affectedCats.length} Gruppen</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground pt-0.5 border-t">
+                      {affectedCats.map(c => c.label).join(' · ')}
+                    </div>
+                  </div>
+                )}
+                {currentMonthTotal === 0 && affectedItems.length > 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      Monatswert ist 0 – bitte Konten zuerst manuell befüllen.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {affectedItems.length === 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>Keine anpassbaren Konten gefunden.</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            );
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTopDownMonthDialog(null)}>Abbrechen</Button>
+            <Button
+              onClick={applyTopDownMonth}
+              disabled={topDownMonthDialog !== null ? calcTopDownMonthTargetCHF(topDownMonthDialog.monthIdx) <= 0 : true}
               className="gap-1.5"
             >
               <ArrowRight className="h-3.5 w-3.5" />
