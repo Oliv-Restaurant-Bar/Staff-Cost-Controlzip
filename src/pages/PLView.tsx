@@ -3490,6 +3490,101 @@ const PLViewPage = () => {
           </div>
         )}
 
+        {/* ── Hochrechnung: Monatsansicht (Klassisch / Budget P&L) ─────────────── */}
+        {(mode === 'monthly' || mode === 'budget_pl') && monthResult.hasData && (() => {
+          const mNetRev = mode === 'budget_pl' ? (bplKpiNetRev?.actual ?? 0) : (netRev?.actual ?? 0);
+          const mEbit   = mode === 'budget_pl' ? (bplKpiEbitda?.actual ?? 0) : (ebit?.actual ?? 0);
+          const mCogs   = monthResult.rows.find(r => r.def.id === 'total_cogs')?.values.actual ?? 0;
+          const mPers   = monthResult.rows.find(r => r.def.id === 'total_personnel')?.values.actual ?? 0;
+          const ebitPct = mNetRev > 0 ? mEbit / mNetRev : null;
+          const rawInput = (monthlyEbitInputs[month - 1] ?? '').trim().replace(/['''\s]/g, '').replace(',', '.');
+          const targetEbit = parseFloat(rawInput);
+          const hasInput = rawInput !== '' && !isNaN(targetEbit);
+          const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && mNetRev > 0;
+          const reqNetRev = canCompute ? targetEbit / ebitPct! : null;
+          const factor    = (reqNetRev !== null && mNetRev > 0) ? reqNetRev / mNetRev : null;
+          const reqCogs   = (factor !== null) ? mCogs * factor : null;
+          const reqPers   = (factor !== null) ? mPers * factor : null;
+          return (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
+              <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 shrink-0" />
+                  <div>
+                    <h3 className="text-sm font-bold">Hochrechnung — Betriebsergebnis auf Nettoumsatz</h3>
+                    <p className="text-[11px] text-indigo-200">Ziel-EBIT eingeben → erforderlicher Nettoumsatz bei gleicher Kostenstruktur</p>
+                  </div>
+                </div>
+                {hasInput && (
+                  <button
+                    onClick={() => { const next = [...monthlyEbitInputs]; next[month - 1] = ''; setMonthlyEbitInputs(next); }}
+                    className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors"
+                  >
+                    ✕ löschen
+                  </button>
+                )}
+              </div>
+              <div className="p-4 space-y-4">
+                <div className="flex flex-wrap gap-4 items-center">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground whitespace-nowrap">Ziel EBIT (CHF):</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder={mNetRev > 0 ? String(Math.round(mEbit)) : '—'}
+                      value={monthlyEbitInputs[month - 1] ?? ''}
+                      onChange={e => { const next = [...monthlyEbitInputs]; next[month - 1] = e.target.value; setMonthlyEbitInputs(next); }}
+                      className="h-8 w-36 border border-indigo-300 rounded px-2 text-sm text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white dark:bg-indigo-950/30"
+                    />
+                  </div>
+                  {mNetRev > 0 && ebitPct !== null && (
+                    <span className="text-xs text-muted-foreground">
+                      Aktueller EBIT:{' '}
+                      <strong className={mEbit >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'}>
+                        {Math.round(mEbit).toLocaleString('de-CH')} CHF ({(ebitPct * 100).toFixed(1)} %)
+                      </strong>
+                    </span>
+                  )}
+                  {mNetRev <= 0 && (
+                    <span className="text-xs text-red-600">Keine Ist-Daten für diesen Monat</span>
+                  )}
+                </div>
+                {ebitPct !== null && Math.abs(ebitPct) < 0.0001 && hasInput && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">EBIT-Quote nahe 0 % — Hochrechnung nicht sinnvoll.</p>
+                )}
+                {canCompute && reqNetRev !== null && factor !== null && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="rounded-md bg-indigo-100 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 px-3 py-2">
+                      <p className="text-[10px] text-indigo-600 dark:text-indigo-300 uppercase tracking-wide mb-0.5">Erforderlicher Nettoumsatz</p>
+                      <p className="text-base font-bold text-indigo-900 dark:text-indigo-100">{Math.round(reqNetRev).toLocaleString('de-CH')}</p>
+                      <p className="text-[11px] text-indigo-500">{reqNetRev >= mNetRev ? '+' : ''}{Math.round(reqNetRev - mNetRev).toLocaleString('de-CH')} CHF vs. Ist</p>
+                    </div>
+                    <div className={cn('rounded-md border px-3 py-2', factor >= 1 ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800' : 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800')}>
+                      <p className="text-[10px] uppercase tracking-wide mb-0.5 text-muted-foreground">Faktor</p>
+                      <p className={cn('text-base font-bold', factor >= 1 ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400')}>{factor.toFixed(2)}×</p>
+                      <p className="text-[11px] text-muted-foreground">{factor >= 1 ? 'mehr Umsatz nötig' : 'weniger Umsatz nötig'}</p>
+                    </div>
+                    {mCogs > 0 && reqCogs !== null && (
+                      <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-3 py-2">
+                        <p className="text-[10px] text-amber-700 dark:text-amber-400 uppercase tracking-wide mb-0.5">Warenaufwand Ziel</p>
+                        <p className="text-base font-bold text-amber-800 dark:text-amber-300">{Math.round(reqCogs).toLocaleString('de-CH')}</p>
+                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mCogs).toLocaleString('de-CH')}</p>
+                      </div>
+                    )}
+                    {mPers > 0 && reqPers !== null && (
+                      <div className="rounded-md bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 px-3 py-2">
+                        <p className="text-[10px] text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-0.5">Personalkosten Ziel</p>
+                        <p className="text-base font-bold text-blue-800 dark:text-blue-300">{Math.round(reqPers).toLocaleString('de-CH')}</p>
+                        <p className="text-[11px] text-muted-foreground">Ist: {Math.round(mPers).toLocaleString('de-CH')}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Legende */}
         {(mode === 'monthly' || mode === 'budget_pl') && (
           <p className="text-[11px] text-muted-foreground flex items-center gap-1 flex-wrap">
