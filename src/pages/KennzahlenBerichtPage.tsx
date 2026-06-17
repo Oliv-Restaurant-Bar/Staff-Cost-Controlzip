@@ -26,7 +26,7 @@ import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
-import { getGuestsForPeriod } from '@/lib/gn-personen-db';
+import { getGuestsForPeriod, getAvgReceiptForPeriod } from '@/lib/gn-personen-db';
 import type { DailyBudget } from '@/types/personnel';
 
 // ── Period ────────────────────────────────────────────────────────────────
@@ -86,6 +86,8 @@ interface Summary {
   revPerGuest: number;
   weekRevPerGuest: number;
   vjRevPerGuest: number;
+  avgReceipt: number;
+  weekAvgReceipt: number;
 }
 
 // Excel-Zeile: type 'data' oder 'empty' (Leerzeile wie in der Vorlage)
@@ -162,6 +164,10 @@ function buildExcelRows(s: Summary): XRow[] {
   const wRevPG     = s.weekRevPerGuest > 0 ? s.weekRevPerGuest : null;
   const vjRevPG    = s.vjRevPerGuest   > 0 ? s.vjRevPerGuest   : null;
 
+  // Durchschnittsbon: importierter Wert hat Priorität; Fallback auf Umsatz/Gast
+  const avgBon     = s.avgReceipt      > 0 ? s.avgReceipt      : revPG;
+  const wAvgBon    = s.weekAvgReceipt  > 0 ? s.weekAvgReceipt  : wRevPG;
+
   const e = (): XRow => ({ type: 'empty', budget: null, vj: null, week: null, weekBudget: null, month: null });
   const d = (
     label: string,
@@ -185,7 +191,7 @@ function buildExcelRows(s: Summary): XRow[] {
     // ── Zeilen 14–15: leer ──────────────────────────────────────────────
     e(), e(),
     // ── Zeilen 16–18: Durchschnitt ───────────────────────────────────────
-    d('Durchschnittsverkauf / zum Budget',    revPG, wRevPG, null, null, null),
+    d('Durchschnittsverkauf / zum Budget',    avgBon, wAvgBon, null, null, null),
     d('Durchschnittsverkauf TA / zum Budget', null, null, null, null, null),
     d('Take Away Anteil',                     null, null, null, null, null, { isPct: true }),
     // ── Zeilen 19–20: leer ──────────────────────────────────────────────
@@ -222,7 +228,7 @@ function buildExcelRows(s: Summary): XRow[] {
     // ── Zeilen 42–49: Produktivität & WES ───────────────────────────────
     d('Produktive Stunden',                   null,           null,             null, null, null, { isCount: true }),
     d('Produktive Stunden geplant',           null,           null,             null, null, null, { isCount: true }),
-    d('Produktivität',                        null,           null,             null, null, null, { isPct:  true }),
+    d('Produktivität',                        null,           null,             null, null, null),
     d('Umsatz pro Gast',                      revPG,          wRevPG,           null, null, null),
     d('Warenaufwand nach GN in %',            wesPct,         wesWeekPct,       null, null, null, { isPct:  true }),
     d('Inventur Wert nach Einkauf / Verkauf', null,           null,             null, null, null),
@@ -347,12 +353,14 @@ export default function KennzahlenBerichtPage() {
         const vjToIso      = format(subYears(to,   1), 'yyyy-MM-dd');
 
         const months  = [...new Set(days.map(d => format(d, 'yyyy-MM')))];
-        const [allInv, guestsCur, guestsWeek, guestsVj] = await Promise.all([
+        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek] = await Promise.all([
           Promise.all(months.map(m => loadMonthInvoices(tenantId, m))).then(res => res.flat()
             .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } })),
           getGuestsForPeriod(tenantId, fromIso, toIso),
           getGuestsForPeriod(tenantId, weekFromIso, toIso),
           getGuestsForPeriod(tenantId, vjFromIso, vjToIso),
+          getAvgReceiptForPeriod(tenantId, fromIso, toIso),
+          getAvgReceiptForPeriod(tenantId, weekFromIso, toIso),
         ]);
 
         const warenFood  = allInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
@@ -404,6 +412,8 @@ export default function KennzahlenBerichtPage() {
           chart: Array.from(chartMap.entries()).map(([label, v]) => ({ label, ...v })),
           guestCount: gCount, weekGuestCount: wGCount, vjGuestCount: vjGCount,
           revPerGuest: revPG, weekRevPerGuest: wRevPG, vjRevPerGuest: vjRevPG,
+          avgReceipt: avgRcptCur.avgReceipt,
+          weekAvgReceipt: avgRcptWeek.avgReceipt,
         });
       } catch (err) {
         console.error('[KennzahlenBericht] load error', err);

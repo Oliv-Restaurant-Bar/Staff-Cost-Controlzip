@@ -28,7 +28,7 @@ import {
 import type { GnImportRow } from '@/lib/gn-zbericht-db';
 
 import { parseGnPersonReport } from '@/lib/gn-personen-parser';
-import type { GnParsedPersonReport } from '@/lib/gn-personen-parser';
+import type { GnParsedPersonReport, PersonCsvType } from '@/lib/gn-personen-parser';
 import {
   savePersonImport, loadPersonImports, deletePersonImport,
   checkPersonDuplicate, checkPersonTablesExist,
@@ -75,9 +75,10 @@ export default function GastronoviZBerichtPage() {
   const [zHistory,  setZHistory]  = useState<GnImportRow[]>([]);
 
   // Personen State
-  const [parsedPerson,   setParsedPerson]   = useState<GnParsedPersonReport | null>(null);
-  const [dupPersonInfo,  setDupPersonInfo]  = useState<{ existingId: string; importedAt: string } | null>(null);
-  const [personHistory,  setPersonHistory]  = useState<GnPersonImportRow[]>([]);
+  const [parsedPerson,    setParsedPerson]    = useState<GnParsedPersonReport | null>(null);
+  const [dupPersonInfo,   setDupPersonInfo]   = useState<{ existingId: string; importedAt: string } | null>(null);
+  const [personHistory,   setPersonHistory]   = useState<GnPersonImportRow[]>([]);
+  const [csvTypeOverride, setCsvTypeOverride] = useState<PersonCsvType | null>(null);
 
   // History
   const [histLoading, setHistLoading] = useState(false);
@@ -115,6 +116,7 @@ export default function GastronoviZBerichtPage() {
   const resetWizard = useCallback(() => {
     setParsed(null); setDupInfo(null);
     setParsedPerson(null); setDupPersonInfo(null);
+    setCsvTypeOverride(null);
     setParseError(null); setStep('upload');
   }, []);
 
@@ -183,7 +185,11 @@ export default function GastronoviZBerichtPage() {
       const { error } = await saveGnImport(tenantId, parsed, undefined, replace && dupInfo ? dupInfo.existingId : undefined);
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
     } else if (importType === 'personen' && parsedPerson) {
-      const { error } = await savePersonImport(tenantId, parsedPerson, replace && dupPersonInfo ? dupPersonInfo.existingId : undefined);
+      const { error } = await savePersonImport(
+        tenantId, parsedPerson,
+        replace && dupPersonInfo ? dupPersonInfo.existingId : undefined,
+        csvTypeOverride ?? undefined,
+      );
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
     }
     toast.success('Import erfolgreich gespeichert');
@@ -230,11 +236,27 @@ export default function GastronoviZBerichtPage() {
   const pTotalRev          = parsedPerson ? (parsedPerson.totalRevenue ?? 0) : 0;
   const pRowCount          = parsedPerson ? parsedPerson.rowCount : 0;
   const pWarnCount         = parsedPerson ? parsedPerson.warnings.length : 0;
+  const pDurchschnBon      = parsedPerson ? parsedPerson.avgReceiptMonthly : 0;
   const activeDupInfo      = importType === 'zbericht' ? dupInfo : dupPersonInfo;
   const activeWarnCount    = importType === 'zbericht' ? warnCount : pWarnCount;
   const activeWarnings     = importType === 'zbericht' ? (parsed?.warnings ?? []) : (parsedPerson?.warnings ?? []);
 
   const historyCount = zHistory.length + personHistory.length;
+
+// ── Typ-Konstanten ─────────────────────────────────────────────────────────────
+
+const CSV_TYPE_LABELS: Record<PersonCsvType, string> = {
+  personen:          'Personen (kombiniert)',
+  anzahl_personen:   'Anzahl Personen',
+  umsatz_pro_person: 'Umsatz pro Person',
+  durchschnittsbon:  'Durchschnittsbon',
+};
+const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
+  { value: 'anzahl_personen',   label: 'Anzahl Personen' },
+  { value: 'umsatz_pro_person', label: 'Umsatz pro Person' },
+  { value: 'durchschnittsbon',  label: 'Durchschnittsbon' },
+  { value: 'personen',          label: 'Personen (kombiniert)' },
+];
 
   // ── Setup-Banner ─────────────────────────────────────────────────────────────
 
@@ -259,6 +281,9 @@ export default function GastronoviZBerichtPage() {
             </code>
             <code className="block bg-white dark:bg-black/20 border border-amber-200 rounded p-2.5 text-xs font-mono">
               supabase/migrations/20260617_gn_personen.sql
+            </code>
+            <code className="block bg-white dark:bg-black/20 border border-amber-200 rounded p-2.5 text-xs font-mono">
+              supabase/migrations/20260617_gn_analysis.sql
             </code>
           </div>
           <button onClick={() => Promise.all([checkGnTablesExist(), checkPersonTablesExist()]).then(([z, p]) => setTablesOk(z && p))}
@@ -461,36 +486,91 @@ export default function GastronoviZBerichtPage() {
           {/* ── Personen Vorschau ─────────────────────────────────────────── */}
           {importType === 'personen' && parsedPerson && <>
             <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <MetaCell label="Zeitraum"  value={`${fdate(parsedPerson.periodFrom)} – ${fdate(parsedPerson.periodTo)}`} />
+              <MetaCell label="Zeitraum"    value={`${fdate(parsedPerson.periodFrom)} – ${fdate(parsedPerson.periodTo)}`} />
               <MetaCell label="Datenzeilen" value={String(pRowCount)} />
-              <MetaCell label="Datei"     value={parsedPerson.fileName} />
+              <MetaCell label="Datei"       value={parsedPerson.fileName} />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <KpiMini label="Gäste Total"         value={pTotalGuests > 0 ? NUM0.format(pTotalGuests) : '—'} bold />
-              <KpiMini label="Ø Umsatz pro Gast"   value={pAvgRev > 0 ? fc(pAvgRev) : '—'} />
-              <KpiMini label="Umsatz Total"        value={pTotalRev > 0 ? fc(pTotalRev) : '—'} />
-              <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
+            {/* Erkannter Typ + Override */}
+            <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-muted/20 px-4 py-3">
+              <span className="text-xs text-muted-foreground">Erkannter Analysetyp:</span>
+              <span className={cn('px-2 py-0.5 rounded text-[11px] font-semibold',
+                (csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon'
+                  ? 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300'
+                  : (csvTypeOverride ?? parsedPerson.detectedCsvType) === 'umsatz_pro_person'
+                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+              )}>
+                {CSV_TYPE_LABELS[csvTypeOverride ?? parsedPerson.detectedCsvType]}
+              </span>
+              <span className="text-[11px] text-muted-foreground ml-auto">Typ ändern:</span>
+              <select
+                value={csvTypeOverride ?? parsedPerson.detectedCsvType}
+                onChange={e => setCsvTypeOverride(e.target.value as PersonCsvType)}
+                className="text-xs rounded border border-border bg-background px-2 py-1">
+                {CSV_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </div>
+
+            {/* KPIs je nach Typ */}
+            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon' && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <KpiMini label="Ø Durchschnittsbon"  value={pDurchschnBon > 0 ? fc(pDurchschnBon) : '—'} bold />
+                <KpiMini label="Tageswerte erkannt"  value={pRowCount > 0 ? 'Ja' : 'Nein'} />
+                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
+                <KpiMini label="Zeitraum"            value={`${fdate(parsedPerson.periodFrom)} – ${fdate(parsedPerson.periodTo)}`} />
+              </div>
+            )}
+            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'umsatz_pro_person' && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <KpiMini label="Ø Umsatz pro Person" value={pAvgRev > 0 ? fc(pAvgRev) : '—'} bold />
+                <KpiMini label="Umsatz Total"        value={pTotalRev > 0 ? fc(pTotalRev) : '—'} />
+                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
+              </div>
+            )}
+            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'anzahl_personen' && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <KpiMini label="Gäste Total"         value={pTotalGuests > 0 ? NUM0.format(pTotalGuests) : '—'} bold />
+                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
+              </div>
+            )}
+            {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'personen' && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <KpiMini label="Gäste Total"         value={pTotalGuests > 0 ? NUM0.format(pTotalGuests) : '—'} bold />
+                <KpiMini label="Ø Umsatz pro Gast"   value={pAvgRev > 0 ? fc(pAvgRev) : '—'} />
+                <KpiMini label="Umsatz Total"        value={pTotalRev > 0 ? fc(pTotalRev) : '—'} />
+                <KpiMini label="Erkannte Zeilen"     value={String(pRowCount)} />
+              </div>
+            )}
 
             {parsedPerson.rows.length > 0 && (
               <div className="rounded-lg border border-border overflow-hidden">
                 <div className="px-4 py-2 bg-muted/40 border-b text-xs font-semibold">
-                  Einzelne Zeilen (erste {Math.min(parsedPerson.rows.length, 20)})
+                  Vorschau (erste {Math.min(parsedPerson.rows.length, 20)} Zeilen)
                 </div>
                 <table className="w-full text-xs">
                   <thead><tr className="border-b bg-muted/20 text-right">
                     <th className="px-3 py-1.5 text-left font-medium">Datum / Periode</th>
-                    <th className="px-3 py-1.5 font-medium">Personen</th>
-                    <th className="px-3 py-1.5 font-medium">Umsatz / Person</th>
+                    {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
+                      <th className="px-3 py-1.5 font-medium">Personen</th>}
+                    {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'anzahl_personen' &&
+                     (csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
+                      <th className="px-3 py-1.5 font-medium">Umsatz / Person</th>}
+                    {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon' &&
+                      <th className="px-3 py-1.5 font-medium">Durchschnittsbon</th>}
                     <th className="px-3 py-1.5 font-medium">Umsatz Total</th>
                   </tr></thead>
                   <tbody>
                     {parsedPerson.rows.slice(0, 20).map((r, i) => (
                       <tr key={i} className="border-b border-border/40 last:border-0">
                         <td className="px-3 py-1.5">{r.date ? fdate(r.date) : (r.periodLabel ?? '—')}</td>
-                        <td className="px-3 py-1.5 text-right">{r.guestsCount > 0 ? NUM0.format(r.guestsCount) : '—'}</td>
-                        <td className="px-3 py-1.5 text-right">{r.revPerPerson > 0 ? fc(r.revPerPerson) : '—'}</td>
+                        {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
+                          <td className="px-3 py-1.5 text-right">{r.guestsCount > 0 ? NUM0.format(r.guestsCount) : '—'}</td>}
+                        {(csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'anzahl_personen' &&
+                         (csvTypeOverride ?? parsedPerson.detectedCsvType) !== 'durchschnittsbon' &&
+                          <td className="px-3 py-1.5 text-right">{r.revPerPerson > 0 ? fc(r.revPerPerson) : '—'}</td>}
+                        {(csvTypeOverride ?? parsedPerson.detectedCsvType) === 'durchschnittsbon' &&
+                          <td className="px-3 py-1.5 text-right">{r.averageReceipt ? fc(r.averageReceipt) : '—'}</td>}
                         <td className="px-3 py-1.5 text-right">{r.revTotal ? fc(r.revTotal) : '—'}</td>
                       </tr>
                     ))}

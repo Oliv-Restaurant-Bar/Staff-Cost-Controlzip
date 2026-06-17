@@ -1,0 +1,76 @@
+Erweitere den bestehenden Gastronovi Personen Import um den dritten Analyse-Typ "Durchschnittsbon".
+
+Aktuell sind Z-Bericht und Personen-Bericht umgesetzt. Zusätzlich gibt es eine separate Gastronovi CSV "Durchschnittsbon.csv". Diese soll nicht aus Umsatz / Bons berechnet werden, sondern als offizielle Gastronovi Kennzahl importiert werden.
+
+Anforderungen:
+
+1. Parser erweitern
+- Der Parser src/lib/gn-personen-parser.ts soll automatisch erkennen:
+  - Anzahl Personen
+  - Umsatz pro Person
+  - Durchschnittsbon
+- Alternativ soll der Benutzer den Typ manuell auswählen können, falls Auto-Erkennung unsicher ist.
+
+2. Datenbank erweitern
+Falls gn_person_metrics bereits geeignet ist, erweitere sie um:
+- average_receipt nullable
+- metric_type, falls noch nicht vorhanden
+
+Falls sauberer, erstelle eine zusätzliche Tabelle:
+gn_gastronovi_analysis_metrics
+- id
+- import_id
+- metric_type
+- date nullable
+- period_label nullable
+- value
+- source_row_json
+- created_at
+
+metric_type Werte:
+- guests_count
+- revenue_per_person
+- average_receipt
+
+3. Import-Vorschau
+Beim Upload von Durchschnittsbon.csv soll die Vorschau anzeigen:
+- Zeitraum
+- erkannte Zeilen
+- Durchschnittsbon Monat
+- Tageswerte vorhanden ja/nein
+
+4. Reporting Mapping
+Die Kennzahlen Bericht Seite und Excel Vorlage Ansicht sollen verwenden:
+- Durchschnittsbon direkt aus Durchschnittsbon Import
+- Umsatz pro Person direkt aus Umsatz pro Person Import
+- Gäste direkt aus Anzahl Personen Import
+
+Wichtig:
+- Durchschnittsbon nicht mehr aus Bruttoumsatz / Bons berechnen, wenn ein importierter Durchschnittsbon vorhanden ist.
+- Fallback nur verwenden, wenn kein Durchschnittsbon CSV importiert wurde.
+- Umsatz pro Person nicht mehr berechnen, wenn importierter Wert vorhanden ist.
+- Gäste nie aus Bons schätzen.
+
+5. Produktivität korrigieren
+Produktivität soll berechnet werden als:
+Nettoumsatz / Ist-Stunden total
+
+Nicht Umsatz pro Gast.
+
+Wenn Ist-Stunden fehlen:
+- Produktivität als "—" anzeigen.
+
+6. Excel Mapping
+Folgende Zeilen in der Excel Vorlage befüllen:
+- Durchschnittsverkauf / zum Budget = Durchschnittsbon aus Import
+- Durchschnittsverkauf TA / zum Budget = vorbereitet, falls Take Away Durchschnitt später vorhanden
+- Umsatz pro Gast = Umsatz pro Person aus Import
+- Produktivität = Nettoumsatz / Ist-Stunden total
+
+7. Nach Umsetzung
+- TypeScript Check ausführen
+- Liste geänderte Dateien
+- Kurze Testanleitung mit diesen 3 CSVs:
+  - Anzahl Personen.csv
+  - Umsatz pro Person.csv
+  - Durchschnittsbon.csv
