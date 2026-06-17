@@ -530,288 +530,6 @@ function BudgetContent() {
         />
       </div>
 
-      {/* ── Hochrechnung: Ziel-EBITDA → erforderlicher Nettoumsatz ─────────────── */}
-      {(() => {
-        const cogsMonths      = getMonthly('pl_goods_cost');
-        const personnelMonths = getMonthly('pl_total_personnel');
-
-        const handleDistribute = () => {
-          const raw = budgetAnnualDistrib.trim().replace(/['''\s]/g, '').replace(',', '.');
-          const annual = parseFloat(raw);
-          if (isNaN(annual) || totalRevenue <= 0) return;
-          const next = revenueByMonth.map(rev =>
-            totalRevenue > 0 ? Math.round(annual * (rev / totalRevenue)) : Math.round(annual / 12)
-          );
-          setBudgetHochInputs(next.map(String));
-        };
-
-        type MonthCalc = {
-          rev: number; ebitda: number; cogs: number; pers: number;
-          targetEbitda: number | null; hasInput: boolean;
-          cogsQuote: number | null; persQuote: number | null;
-          canCompute: boolean; reqRev: number | null; factor: number | null;
-          reqCogs: number | null; reqPers: number | null;
-        };
-        const months: MonthCalc[] = revenueByMonth.map((rev, i) => {
-          const ebitda = ebitdaMonths[i] ?? 0;
-          const cogs   = cogsMonths[i]  ?? 0;
-          const pers   = personnelMonths[i] ?? 0;
-          const cogsQuote = rev > 0 ? cogs / rev * 100 : null;
-          const persQuote = rev > 0 ? pers / rev * 100 : null;
-          const ebitPct = rev > 0 ? ebitda / rev : null;
-          const raw = (budgetHochInputs[i] ?? '').trim().replace(/['''\s]/g, '').replace(',', '.');
-          const targetEbitda = parseFloat(raw);
-          const hasInput = raw !== '' && !isNaN(targetEbitda);
-          const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && rev > 0;
-          const reqRev = canCompute ? targetEbitda / ebitPct! : null;
-          const factor = (reqRev !== null && rev > 0) ? reqRev / rev : null;
-          const reqCogs = factor !== null ? cogs * factor : null;
-          const reqPers = factor !== null ? pers * factor : null;
-          return { rev, ebitda, cogs, pers, cogsQuote, persQuote, targetEbitda: hasInput ? targetEbitda : null, hasInput, canCompute, reqRev, factor, reqCogs, reqPers };
-        });
-
-        const activeMonths = months.filter(m => m.canCompute);
-        const totalTargetEbitda = months.filter(m => m.hasInput).reduce((s, m) => s + (m.targetEbitda ?? 0), 0);
-        const totalReqRev       = activeMonths.reduce((s, m) => s + (m.reqRev ?? 0), 0);
-        const totalReqCogs      = activeMonths.reduce((s, m) => s + (m.reqCogs ?? 0), 0);
-        const totalReqPers      = activeMonths.reduce((s, m) => s + (m.reqPers ?? 0), 0);
-        const totalPers         = activeMonths.reduce((s, m) => s + m.pers, 0);
-        const hasAny            = months.some(m => m.hasInput);
-
-        return (
-          <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
-            <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-              <button onClick={() => setBudgetHochOpen(v => !v)} className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity">
-                <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${budgetHochOpen ? '' : '-rotate-90'}`} />
-                <TrendingUp className="h-4 w-4 shrink-0" />
-                <div>
-                  <h3 className="text-sm font-bold">Hochrechnung — Ziel-EBITDA auf Nettoumsatz</h3>
-                  <p className="text-[11px] text-indigo-200">Ziel-EBITDA pro Monat eingeben → erforderlicher Umsatz bei gleicher Budgetstruktur</p>
-                </div>
-              </button>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-indigo-200 whitespace-nowrap">Jahreswert verteilen:</span>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="z.B. 300000"
-                  value={budgetAnnualDistrib}
-                  onChange={e => setBudgetAnnualDistrib(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleDistribute()}
-                  className="h-7 w-32 border border-indigo-400 rounded px-2 text-xs text-right bg-white/10 text-white placeholder-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-300"
-                />
-                <button
-                  onClick={handleDistribute}
-                  className="h-7 px-2.5 rounded bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-semibold transition-colors whitespace-nowrap"
-                >
-                  Übernehmen
-                </button>
-                <button
-                  disabled={!hasAny && budgetAnnualDistrib === ''}
-                  onClick={() => { setBudgetHochInputs(Array(12).fill('')); setBudgetAnnualDistrib(''); }}
-                  className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Zurücksetzen
-                </button>
-              </div>
-            </div>
-
-            {budgetHochOpen && <>
-            {activeMonths.length > 0 && (
-              <div className="bg-indigo-100 dark:bg-indigo-900/30 px-4 py-2 flex flex-wrap gap-x-6 gap-y-0.5 text-xs border-b border-indigo-200 dark:border-indigo-700">
-                <span>
-                  <span className="text-muted-foreground">Ziel-EBITDA ({activeMonths.length} Monate): </span>
-                  <strong className="text-indigo-900 dark:text-indigo-200">CHF {Math.round(totalTargetEbitda).toLocaleString('de-CH')}</strong>
-                </span>
-                <span>
-                  <span className="text-muted-foreground">Ziel-Nettoumsatz: </span>
-                  <strong className="text-indigo-900 dark:text-indigo-200">CHF {Math.round(totalReqRev).toLocaleString('de-CH')}</strong>
-                </span>
-                <span>
-                  <span className="text-muted-foreground">Ziel-Warenaufwand: </span>
-                  <strong className="text-amber-800 dark:text-amber-300">CHF {Math.round(totalReqCogs).toLocaleString('de-CH')}</strong>
-                </span>
-                <span>
-                  <span className="text-muted-foreground">&Delta; Nettoumsatz: </span>
-                  <strong className={totalReqRev >= totalRevenue ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}>
-                    {totalReqRev >= totalRevenue ? '+' : ''}{Math.round(totalReqRev - activeMonths.reduce((s, m) => s + m.rev, 0)).toLocaleString('de-CH')} CHF
-                  </strong>
-                </span>
-              </div>
-            )}
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse" style={{ minWidth: '900px' }}>
-                <thead>
-                  <tr className="bg-indigo-100/80 dark:bg-indigo-900/20 border-b border-indigo-200 dark:border-indigo-700">
-                    <td className="sticky left-0 bg-indigo-100/80 dark:bg-indigo-900/30 z-10 py-1.5 px-3 font-semibold text-indigo-800 dark:text-indigo-200 w-[160px] min-w-[160px] border-r border-indigo-200 dark:border-indigo-700"></td>
-                    {BUDGET_MONTH_NAMES.map(m => (
-                      <td key={m} className="py-1.5 px-2 text-center font-semibold text-indigo-800 dark:text-indigo-200 min-w-[72px]">{m}</td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center font-semibold text-indigo-800 dark:text-indigo-200 min-w-[80px]">Total</td>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Zeile: Ziel EBITDA Eingabe */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
-                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-indigo-700 dark:text-indigo-300 font-medium border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
-                      Ziel EBITDA (CHF)
-                    </td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1 px-1 text-center">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          placeholder={m.rev > 0 ? String(Math.round(m.ebitda)) : ''}
-                          value={budgetHochInputs[i] ?? ''}
-                          onChange={e => { const next = [...budgetHochInputs]; next[i] = e.target.value; setBudgetHochInputs(next); }}
-                          className="w-full h-6 border border-indigo-200 rounded px-1 text-right text-xs text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-indigo-950/30 dark:text-indigo-200"
-                        />
-                      </td>
-                    ))}
-                    <td className="py-1 px-2 text-center text-[11px] text-indigo-400">—</td>
-                  </tr>
-                  {/* Zeile: EBITDA Ist (Budget) */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
-                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">EBITDA Budget</td>
-                    {months.map((m, i) => (
-                      <td key={i} className={cn('py-1.5 px-2 text-center', m.ebitda >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
-                        {m.rev > 0 ? Math.round(m.ebitda).toLocaleString('de-CH') : '—'}
-                      </td>
-                    ))}
-                    <td className={cn('py-1.5 px-2 text-center font-semibold', ebitdaTotal >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
-                      {Math.round(ebitdaTotal).toLocaleString('de-CH')}
-                    </td>
-                  </tr>
-                  {/* Zeile: Nettoumsatz Budget */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
-                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Nettoumsatz Budget</td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1.5 px-2 text-center text-gray-600 dark:text-gray-400">
-                        {m.rev > 0 ? Math.round(m.rev).toLocaleString('de-CH') : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center font-semibold text-gray-700 dark:text-gray-300">
-                      {Math.round(totalRevenue).toLocaleString('de-CH')}
-                    </td>
-                  </tr>
-                  {/* Zeile: Erforderlicher Nettoumsatz */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
-                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-indigo-900 dark:text-indigo-100 font-bold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Nettoumsatz Ziel</td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1.5 px-2 text-center font-bold text-indigo-900 dark:text-indigo-100">
-                        {m.canCompute && m.reqRev !== null ? Math.round(m.reqRev).toLocaleString('de-CH') : (m.hasInput && !m.canCompute ? <span className="text-amber-500 font-normal">n/a</span> : '—')}
-                      </td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center font-bold text-indigo-900 dark:text-indigo-100">
-                      {activeMonths.length > 0 ? Math.round(totalReqRev).toLocaleString('de-CH') : '—'}
-                    </td>
-                  </tr>
-                  {/* Zeile: Faktor */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
-                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800">Faktor</td>
-                    {months.map((m, i) => (
-                      <td key={i} className={cn('py-1.5 px-2 text-center font-semibold', !m.canCompute ? 'text-muted-foreground' : m.factor! >= 1 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>
-                        {m.canCompute && m.factor !== null ? `${m.factor.toFixed(2)}×` : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center text-muted-foreground">—</td>
-                  </tr>
-                  {/* Zeile: Warenquote % */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-amber-50/40 dark:bg-amber-950/10">
-                    <td className="sticky left-0 bg-amber-50/60 dark:bg-amber-950/20 z-10 py-1 px-3 text-amber-600 dark:text-amber-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
-                      Warenquote <span className="text-muted-foreground">(1:1)</span>
-                    </td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1 px-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
-                        {m.cogsQuote !== null ? `${m.cogsQuote.toFixed(1)} %` : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1 px-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
-                      {totalRevenue > 0 ? `${(months.reduce((s, m) => s + m.cogs, 0) / totalRevenue * 100).toFixed(1)} %` : '—'}
-                    </td>
-                  </tr>
-                  {/* Zeile: Warenaufwand Ziel */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
-                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-amber-800 dark:text-amber-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Warenaufwand Ziel</td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400 font-semibold">
-                        {m.canCompute && m.reqCogs !== null ? Math.round(m.reqCogs).toLocaleString('de-CH') : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center font-bold text-amber-800 dark:text-amber-300">
-                      {activeMonths.length > 0 ? Math.round(totalReqCogs).toLocaleString('de-CH') : '—'}
-                    </td>
-                  </tr>
-                  {/* Zeile: Personalkosten Budget */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
-                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Budget</td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1.5 px-2 text-center text-gray-600 dark:text-gray-400">
-                        {m.rev > 0 ? Math.round(m.pers).toLocaleString('de-CH') : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center font-semibold text-gray-700 dark:text-gray-300">
-                      {Math.round(months.reduce((s, m) => s + m.pers, 0)).toLocaleString('de-CH')}
-                    </td>
-                  </tr>
-                  {/* Zeile: Personalkostenquote % */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-blue-50/40 dark:bg-blue-950/10">
-                    <td className="sticky left-0 bg-blue-50/60 dark:bg-blue-950/20 z-10 py-1 px-3 text-blue-600 dark:text-blue-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
-                      Personalkostenquote <span className="text-muted-foreground">(gleiche Quote)</span>
-                    </td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
-                        {m.persQuote !== null ? `${m.persQuote.toFixed(1)} %` : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
-                      {totalRevenue > 0 ? `${(months.reduce((s, m) => s + m.pers, 0) / totalRevenue * 100).toFixed(1)} %` : '—'}
-                    </td>
-                  </tr>
-                  {/* Zeile: Personalkosten Ziel */}
-                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
-                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-blue-800 dark:text-blue-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Ziel <span className="font-normal text-[10px]">(gleiche Quote)</span></td>
-                    {months.map((m, i) => (
-                      <td key={i} className="py-1.5 px-2 text-center text-blue-700 dark:text-blue-400 font-semibold leading-tight">
-                        {m.canCompute && m.reqPers !== null ? (
-                          <>
-                            {Math.round(m.reqPers).toLocaleString('de-CH')}
-                            {m.persQuote !== null && (
-                              <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">{m.persQuote.toFixed(1)} %</div>
-                            )}
-                          </>
-                        ) : '—'}
-                      </td>
-                    ))}
-                    <td className="py-1.5 px-2 text-center font-bold text-blue-800 dark:text-blue-300 leading-tight">
-                      {activeMonths.length > 0 ? (
-                        <>
-                          {Math.round(totalReqPers).toLocaleString('de-CH')}
-                          {totalReqRev > 0 && (
-                            <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">
-                              {(totalReqPers / totalReqRev * 100).toFixed(1)} %
-                            </div>
-                          )}
-                        </>
-                      ) : '—'}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div className="px-4 py-2 border-t border-indigo-100 dark:border-indigo-800">
-              <p className="text-[11px] text-muted-foreground">
-                Monate ohne Budget-Umsatz werden übersprungen. «n/a» = EBITDA-Quote nahe 0, Hochrechnung nicht sinnvoll.
-                Placeholder-Werte (grau) = aktueller Budget-EBITDA des Monats.
-              </p>
-            </div>
-            </>}
-          </div>
-        );
-      })()}
-
       {/* ── Tabs ── */}
       <Tabs value={activeTab} onValueChange={v => setActiveTab(v as 'pl' | 'rules')}>
         <TabsList>
@@ -1238,6 +956,288 @@ function BudgetContent() {
           </Button>
         </TabsContent>
       </Tabs>
+
+      {/* ── Hochrechnung: Ziel-EBITDA → erforderlicher Nettoumsatz ─────────────── */}
+      {(() => {
+        const cogsMonths      = getMonthly('pl_goods_cost');
+        const personnelMonths = getMonthly('pl_total_personnel');
+
+        const handleDistribute = () => {
+          const raw = budgetAnnualDistrib.trim().replace(/['''\s]/g, '').replace(',', '.');
+          const annual = parseFloat(raw);
+          if (isNaN(annual) || totalRevenue <= 0) return;
+          const next = revenueByMonth.map(rev =>
+            totalRevenue > 0 ? Math.round(annual * (rev / totalRevenue)) : Math.round(annual / 12)
+          );
+          setBudgetHochInputs(next.map(String));
+        };
+
+        type MonthCalc = {
+          rev: number; ebitda: number; cogs: number; pers: number;
+          targetEbitda: number | null; hasInput: boolean;
+          cogsQuote: number | null; persQuote: number | null;
+          canCompute: boolean; reqRev: number | null; factor: number | null;
+          reqCogs: number | null; reqPers: number | null;
+        };
+        const months: MonthCalc[] = revenueByMonth.map((rev, i) => {
+          const ebitda = ebitdaMonths[i] ?? 0;
+          const cogs   = cogsMonths[i]  ?? 0;
+          const pers   = personnelMonths[i] ?? 0;
+          const cogsQuote = rev > 0 ? cogs / rev * 100 : null;
+          const persQuote = rev > 0 ? pers / rev * 100 : null;
+          const ebitPct = rev > 0 ? ebitda / rev : null;
+          const raw = (budgetHochInputs[i] ?? '').trim().replace(/['''\s]/g, '').replace(',', '.');
+          const targetEbitda = parseFloat(raw);
+          const hasInput = raw !== '' && !isNaN(targetEbitda);
+          const canCompute = hasInput && ebitPct !== null && Math.abs(ebitPct) > 0.0001 && rev > 0;
+          const reqRev = canCompute ? targetEbitda / ebitPct! : null;
+          const factor = (reqRev !== null && rev > 0) ? reqRev / rev : null;
+          const reqCogs = factor !== null ? cogs * factor : null;
+          const reqPers = factor !== null ? pers * factor : null;
+          return { rev, ebitda, cogs, pers, cogsQuote, persQuote, targetEbitda: hasInput ? targetEbitda : null, hasInput, canCompute, reqRev, factor, reqCogs, reqPers };
+        });
+
+        const activeMonths = months.filter(m => m.canCompute);
+        const totalTargetEbitda = months.filter(m => m.hasInput).reduce((s, m) => s + (m.targetEbitda ?? 0), 0);
+        const totalReqRev       = activeMonths.reduce((s, m) => s + (m.reqRev ?? 0), 0);
+        const totalReqCogs      = activeMonths.reduce((s, m) => s + (m.reqCogs ?? 0), 0);
+        const totalReqPers      = activeMonths.reduce((s, m) => s + (m.reqPers ?? 0), 0);
+        const totalPers         = activeMonths.reduce((s, m) => s + m.pers, 0);
+        const hasAny            = months.some(m => m.hasInput);
+
+        return (
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50 dark:border-indigo-800 dark:bg-indigo-950/20 overflow-hidden shadow-sm">
+            <div className="bg-indigo-700 text-white px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+              <button onClick={() => setBudgetHochOpen(v => !v)} className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity">
+                <ChevronDown className={`h-4 w-4 shrink-0 transition-transform duration-200 ${budgetHochOpen ? '' : '-rotate-90'}`} />
+                <TrendingUp className="h-4 w-4 shrink-0" />
+                <div>
+                  <h3 className="text-sm font-bold">Hochrechnung — Ziel-EBITDA auf Nettoumsatz</h3>
+                  <p className="text-[11px] text-indigo-200">Ziel-EBITDA pro Monat eingeben → erforderlicher Umsatz bei gleicher Budgetstruktur</p>
+                </div>
+              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-indigo-200 whitespace-nowrap">Jahreswert verteilen:</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="z.B. 300000"
+                  value={budgetAnnualDistrib}
+                  onChange={e => setBudgetAnnualDistrib(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleDistribute()}
+                  className="h-7 w-32 border border-indigo-400 rounded px-2 text-xs text-right bg-white/10 text-white placeholder-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                />
+                <button
+                  onClick={handleDistribute}
+                  className="h-7 px-2.5 rounded bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-semibold transition-colors whitespace-nowrap"
+                >
+                  Übernehmen
+                </button>
+                <button
+                  disabled={!hasAny && budgetAnnualDistrib === ''}
+                  onClick={() => { setBudgetHochInputs(Array(12).fill('')); setBudgetAnnualDistrib(''); }}
+                  className="h-7 px-2 rounded border border-indigo-400 text-indigo-200 hover:text-white text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  Zurücksetzen
+                </button>
+              </div>
+            </div>
+
+            {budgetHochOpen && <>
+            {activeMonths.length > 0 && (
+              <div className="bg-indigo-100 dark:bg-indigo-900/30 px-4 py-2 flex flex-wrap gap-x-6 gap-y-0.5 text-xs border-b border-indigo-200 dark:border-indigo-700">
+                <span>
+                  <span className="text-muted-foreground">Ziel-EBITDA ({activeMonths.length} Monate): </span>
+                  <strong className="text-indigo-900 dark:text-indigo-200">CHF {Math.round(totalTargetEbitda).toLocaleString('de-CH')}</strong>
+                </span>
+                <span>
+                  <span className="text-muted-foreground">Ziel-Nettoumsatz: </span>
+                  <strong className="text-indigo-900 dark:text-indigo-200">CHF {Math.round(totalReqRev).toLocaleString('de-CH')}</strong>
+                </span>
+                <span>
+                  <span className="text-muted-foreground">Ziel-Warenaufwand: </span>
+                  <strong className="text-amber-800 dark:text-amber-300">CHF {Math.round(totalReqCogs).toLocaleString('de-CH')}</strong>
+                </span>
+                <span>
+                  <span className="text-muted-foreground">&Delta; Nettoumsatz: </span>
+                  <strong className={totalReqRev >= totalRevenue ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}>
+                    {totalReqRev >= totalRevenue ? '+' : ''}{Math.round(totalReqRev - activeMonths.reduce((s, m) => s + m.rev, 0)).toLocaleString('de-CH')} CHF
+                  </strong>
+                </span>
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse" style={{ minWidth: '900px' }}>
+                <thead>
+                  <tr className="bg-indigo-100/80 dark:bg-indigo-900/20 border-b border-indigo-200 dark:border-indigo-700">
+                    <td className="sticky left-0 bg-indigo-100/80 dark:bg-indigo-900/30 z-10 py-1.5 px-3 font-semibold text-indigo-800 dark:text-indigo-200 w-[160px] min-w-[160px] border-r border-indigo-200 dark:border-indigo-700"></td>
+                    {BUDGET_MONTH_NAMES.map(m => (
+                      <td key={m} className="py-1.5 px-2 text-center font-semibold text-indigo-800 dark:text-indigo-200 min-w-[72px]">{m}</td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-semibold text-indigo-800 dark:text-indigo-200 min-w-[80px]">Total</td>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Zeile: Ziel EBITDA Eingabe */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
+                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-indigo-700 dark:text-indigo-300 font-medium border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
+                      Ziel EBITDA (CHF)
+                    </td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1 px-1 text-center">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder={m.rev > 0 ? String(Math.round(m.ebitda)) : ''}
+                          value={budgetHochInputs[i] ?? ''}
+                          onChange={e => { const next = [...budgetHochInputs]; next[i] = e.target.value; setBudgetHochInputs(next); }}
+                          className="w-full h-6 border border-indigo-200 rounded px-1 text-right text-xs text-gray-700 placeholder-gray-300 focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white dark:bg-indigo-950/30 dark:text-indigo-200"
+                        />
+                      </td>
+                    ))}
+                    <td className="py-1 px-2 text-center text-[11px] text-indigo-400">—</td>
+                  </tr>
+                  {/* Zeile: EBITDA Ist (Budget) */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
+                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">EBITDA Budget</td>
+                    {months.map((m, i) => (
+                      <td key={i} className={cn('py-1.5 px-2 text-center', m.ebitda >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
+                        {m.rev > 0 ? Math.round(m.ebitda).toLocaleString('de-CH') : '—'}
+                      </td>
+                    ))}
+                    <td className={cn('py-1.5 px-2 text-center font-semibold', ebitdaTotal >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600')}>
+                      {Math.round(ebitdaTotal).toLocaleString('de-CH')}
+                    </td>
+                  </tr>
+                  {/* Zeile: Nettoumsatz Budget */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
+                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Nettoumsatz Budget</td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center text-gray-600 dark:text-gray-400">
+                        {m.rev > 0 ? Math.round(m.rev).toLocaleString('de-CH') : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-semibold text-gray-700 dark:text-gray-300">
+                      {Math.round(totalRevenue).toLocaleString('de-CH')}
+                    </td>
+                  </tr>
+                  {/* Zeile: Erforderlicher Nettoumsatz */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
+                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-indigo-900 dark:text-indigo-100 font-bold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Nettoumsatz Ziel</td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center font-bold text-indigo-900 dark:text-indigo-100">
+                        {m.canCompute && m.reqRev !== null ? Math.round(m.reqRev).toLocaleString('de-CH') : (m.hasInput && !m.canCompute ? <span className="text-amber-500 font-normal">n/a</span> : '—')}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-bold text-indigo-900 dark:text-indigo-100">
+                      {activeMonths.length > 0 ? Math.round(totalReqRev).toLocaleString('de-CH') : '—'}
+                    </td>
+                  </tr>
+                  {/* Zeile: Faktor */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
+                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800">Faktor</td>
+                    {months.map((m, i) => (
+                      <td key={i} className={cn('py-1.5 px-2 text-center font-semibold', !m.canCompute ? 'text-muted-foreground' : m.factor! >= 1 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>
+                        {m.canCompute && m.factor !== null ? `${m.factor.toFixed(2)}×` : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center text-muted-foreground">—</td>
+                  </tr>
+                  {/* Zeile: Warenquote % */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-amber-50/40 dark:bg-amber-950/10">
+                    <td className="sticky left-0 bg-amber-50/60 dark:bg-amber-950/20 z-10 py-1 px-3 text-amber-600 dark:text-amber-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
+                      Warenquote <span className="text-muted-foreground">(1:1)</span>
+                    </td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1 px-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
+                        {m.cogsQuote !== null ? `${m.cogsQuote.toFixed(1)} %` : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1 px-2 text-center text-[11px] text-amber-600 dark:text-amber-400">
+                      {totalRevenue > 0 ? `${(months.reduce((s, m) => s + m.cogs, 0) / totalRevenue * 100).toFixed(1)} %` : '—'}
+                    </td>
+                  </tr>
+                  {/* Zeile: Warenaufwand Ziel */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
+                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-amber-800 dark:text-amber-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Warenaufwand Ziel</td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center text-amber-700 dark:text-amber-400 font-semibold">
+                        {m.canCompute && m.reqCogs !== null ? Math.round(m.reqCogs).toLocaleString('de-CH') : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-bold text-amber-800 dark:text-amber-300">
+                      {activeMonths.length > 0 ? Math.round(totalReqCogs).toLocaleString('de-CH') : '—'}
+                    </td>
+                  </tr>
+                  {/* Zeile: Personalkosten Budget */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-950/10">
+                    <td className="sticky left-0 bg-indigo-50/80 dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-muted-foreground border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Budget</td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center text-gray-600 dark:text-gray-400">
+                        {m.rev > 0 ? Math.round(m.pers).toLocaleString('de-CH') : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-semibold text-gray-700 dark:text-gray-300">
+                      {Math.round(months.reduce((s, m) => s + m.pers, 0)).toLocaleString('de-CH')}
+                    </td>
+                  </tr>
+                  {/* Zeile: Personalkostenquote % */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800 bg-blue-50/40 dark:bg-blue-950/10">
+                    <td className="sticky left-0 bg-blue-50/60 dark:bg-blue-950/20 z-10 py-1 px-3 text-blue-600 dark:text-blue-400 text-[11px] border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">
+                      Personalkostenquote <span className="text-muted-foreground">(gleiche Quote)</span>
+                    </td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
+                        {m.persQuote !== null ? `${m.persQuote.toFixed(1)} %` : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1 px-2 text-center text-[11px] text-blue-600 dark:text-blue-400">
+                      {totalRevenue > 0 ? `${(months.reduce((s, m) => s + m.pers, 0) / totalRevenue * 100).toFixed(1)} %` : '—'}
+                    </td>
+                  </tr>
+                  {/* Zeile: Personalkosten Ziel */}
+                  <tr className="border-b border-indigo-100 dark:border-indigo-800">
+                    <td className="sticky left-0 bg-white dark:bg-indigo-950/30 z-10 py-1.5 px-3 text-blue-800 dark:text-blue-300 font-semibold border-r border-indigo-100 dark:border-indigo-800 whitespace-nowrap">Personalkosten Ziel <span className="font-normal text-[10px]">(gleiche Quote)</span></td>
+                    {months.map((m, i) => (
+                      <td key={i} className="py-1.5 px-2 text-center text-blue-700 dark:text-blue-400 font-semibold leading-tight">
+                        {m.canCompute && m.reqPers !== null ? (
+                          <>
+                            {Math.round(m.reqPers).toLocaleString('de-CH')}
+                            {m.persQuote !== null && (
+                              <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">{m.persQuote.toFixed(1)} %</div>
+                            )}
+                          </>
+                        ) : '—'}
+                      </td>
+                    ))}
+                    <td className="py-1.5 px-2 text-center font-bold text-blue-800 dark:text-blue-300 leading-tight">
+                      {activeMonths.length > 0 ? (
+                        <>
+                          {Math.round(totalReqPers).toLocaleString('de-CH')}
+                          {totalReqRev > 0 && (
+                            <div className="text-[9px] font-normal text-blue-500 dark:text-blue-400">
+                              {(totalReqPers / totalReqRev * 100).toFixed(1)} %
+                            </div>
+                          )}
+                        </>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="px-4 py-2 border-t border-indigo-100 dark:border-indigo-800">
+              <p className="text-[11px] text-muted-foreground">
+                Monate ohne Budget-Umsatz werden übersprungen. «n/a» = EBITDA-Quote nahe 0, Hochrechnung nicht sinnvoll.
+                Placeholder-Werte (grau) = aktueller Budget-EBITDA des Monats.
+              </p>
+            </div>
+            </>}
+          </div>
+        );
+      })()}
 
       {/* ── Dialoge ── */}
       <CopyYearDialog
