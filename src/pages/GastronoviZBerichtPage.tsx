@@ -270,7 +270,7 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
     const checks    = diagnostic?.checks ?? [];
     const failures  = checks.filter(c => !c.ok);
     const isPerm    = failures.some(f => f.errorCode === '42501');
-    const isMissing = failures.some(f => f.errorCode === '42P01');
+    const isMissing = failures.some(f => f.errorCode === '42P01' || f.errorCode === 'PGRST205');
     const isSchema  = diagnostic?.schemaHint ?? false;
 
     // Group checks by migration file for display
@@ -287,6 +287,7 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
       '20260617_gn_zbericht.sql',
       '20260617_gn_personen.sql',
       '20260617_gn_analysis.sql',
+      '20260617_gn_analysis_create_missing_tables.sql',
       '20260617_gn_grants.sql',
     ];
 

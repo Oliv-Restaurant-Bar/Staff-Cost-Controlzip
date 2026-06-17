@@ -21,3 +21,6 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON gn_payment_accounts  TO authenticated, a
 -- Personen Tabellen (20260617_gn_personen.sql + 20260617_gn_analysis.sql)
 GRANT SELECT, INSERT, UPDATE, DELETE ON gn_person_imports    TO authenticated, anon;
 GRANT SELECT, INSERT, UPDATE, DELETE ON gn_person_metrics    TO authenticated, anon;
+
+-- Hinweis: gn_analysis_imports + gn_analysis_metrics sind in
+-- 20260617_gn_analysis_create_missing_tables.sql bereits mit GRANT versehen.

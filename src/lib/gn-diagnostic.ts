@@ -44,13 +44,13 @@ async function checkTable(
     console.error(`[GN-DIAG] ${table}.${column}: [${code}] ${msg}`);
 
     let hint: string | null = null;
-    if (code === '42P01' || msg.includes('does not exist')) {
-      hint = `Tabelle "${table}" existiert nicht → Migration ausführen: ${migration}`;
-    } else if (code === '42703' || msg.includes('column') && msg.includes('does not exist')) {
+    if (code === '42P01' || code === 'PGRST205' || msg.includes('does not exist') || msg.includes('schema cache')) {
+      hint = `Fehlende Tabelle: ${table} → Migration ausführen: ${migration}`;
+    } else if (code === '42703' || (msg.includes('column') && msg.includes('does not exist'))) {
       hint = `Spalte "${column}" fehlt in "${table}" → Migration ausführen: ${migration}`;
     } else if (code === '42501' || msg.includes('permission denied')) {
       hint = `Keine SELECT-Berechtigung auf "${table}" → GRANT-Migration ausführen`;
-    } else if (code === 'PGRST200' || msg.includes('schema cache')) {
+    } else if (code === 'PGRST200') {
       hint = `Supabase Schema Cache veraltet → Seite neu laden oder Cache aktualisieren`;
     }
 
@@ -91,6 +91,10 @@ export async function runGnDiagnostic(): Promise<GnDiagnosticResult> {
     checkTable('gn_person_imports',    '20260617_gn_analysis.sql',  'csv_type'),
     checkTable('gn_person_metrics',    '20260617_gn_analysis.sql',  'average_receipt'),
     checkTable('gn_person_metrics',    '20260617_gn_analysis.sql',  'metric_type'),
+
+    // ── Migration 4: gn_analysis_create_missing_tables.sql ──────────────────
+    checkTable('gn_analysis_imports',  '20260617_gn_analysis_create_missing_tables.sql'),
+    checkTable('gn_analysis_metrics',  '20260617_gn_analysis_create_missing_tables.sql'),
   ]);
 
   const failures = results.filter(r => !r.ok);
