@@ -1,0 +1,134 @@
+Passe die Gastronovi Import-Funktion an.
+
+Wichtig:
+Der PDF Import wird nicht benötigt. Bitte PDF Upload komplett weglassen. Es sollen nur CSV-Dateien importiert werden.
+
+Baue zwei CSV Importtypen:
+
+1. Gastronovi Z-Bericht CSV
+2. Gastronovi Personen / Umsatz pro Person CSV
+
+Neue Import-Seite:
+"Importe → Gastronovi"
+
+Oben soll der Benutzer auswählen können:
+- Z-Bericht importieren
+- Personen Bericht importieren
+
+Z-Bericht Import:
+Importiert weiterhin:
+- Zeitraum
+- Z-Zähler
+- Kostenstelle
+- Bruttoumsatz
+- Nettoumsatz
+- Steuerbericht
+- Kostenstellen
+- Kellner
+- Bezahlarten
+- Hauptwarengruppen
+- Rabatte
+- Positionsrabatte
+- Stornierte Artikel
+- Buchungskonten
+- Zahlungskonten
+
+Personen Bericht Import:
+Erstelle einen separaten Parser für den externen Gastronovi CSV Export aus:
+Analyse → Verkäufe → Personen / Umsatz pro Person
+
+Dieser Import soll speichern:
+- Zeitraum
+- Datum oder Periodenbezeichnung
+- Personen/Gäste total
+- Umsatz pro Person
+- Umsatz total, falls im Export vorhanden
+- Vergleichswerte, falls vorhanden
+- Gruppierung Tag/Woche/Monat, falls im Export vorhanden
+
+Neue Tabellen:
+Falls noch nicht vorhanden:
+
+gn_person_imports
+- id
+- file_name
+- period_from
+- period_to
+- import_type
+- checksum
+- imported_at
+- status
+- raw_csv_json
+- created_at
+
+gn_person_metrics
+- id
+- import_id
+- date nullable
+- period_label nullable
+- guests_count
+- revenue_per_person
+- revenue_total nullable
+- source_row_json
+- created_at
+
+Deduplication:
+Auch beim Personen Import verhindern, dass dieselbe CSV doppelt importiert wird.
+Nutze:
+- period_from
+- period_to
+- checksum
+- import_type
+
+Reporting Mapping:
+Verbinde die Personenwerte mit dem bestehenden Kennzahlen Bericht und der Excel Vorlage Ansicht.
+
+Folgende Felder sollen automatisch befüllt werden:
+- Gäste / Personen
+- Umsatz pro Gast
+- Gäste IN zum Budget, wenn Budget vorhanden
+- Gäste letztes Jahr, wenn Vorjahrsdaten importiert wurden
+- Gäste +/- zum Vorjahr
+- Durchschnittsverkauf
+- Durchschnittsverkauf zum Budget
+- Umsatz pro Person
+
+Wichtig:
+Gäste/Personen dürfen nicht aus Bons oder Anzahl Verkäufe geschätzt werden.
+Nur den Personen CSV Import verwenden.
+
+Wenn kein Personen CSV importiert wurde:
+- Gäste/Personen anzeigen als "—"
+- Umsatz pro Person anzeigen als "—"
+- Keine Fehlermeldung
+
+Import Vorschau:
+Beim Personen CSV Upload soll vor dem Speichern eine Vorschau erscheinen:
+- Zeitraum
+- Anzahl erkannte Zeilen
+- Gäste total
+- Umsatz pro Person Durchschnitt
+- Umsatz total, falls vorhanden
+
+Excel Vorlage Ansicht:
+Die Excel Vorlage Ansicht soll die Gästezahlen aus gn_person_metrics verwenden.
+Mappe insbesondere:
+- Gäste IN zum Budget
+- Gäste letztes Jahr
+- Gäste +/- zum Vorjahr
+- Umsatz pro Gast
+- Durchschnittsverkauf
+- Durchschnittsverkauf letztes Jahr
+
+Z-Bericht und Personen Bericht sollen zeitlich zusammengeführt werden:
+Wenn der Benutzer im Reporting einen Zeitraum auswählt, sollen beide Datenquellen anhand Datum/Zeitraum aggregiert werden:
+- Umsatzdaten aus Z-Bericht CSV
+- Gäste/Personen aus Personen CSV
+
+Bitte die bestehende Dashboard Ansicht nicht beschädigen.
+
+Nach Umsetzung:
+1. Liste alle geänderten Dateien auf.
+2. Erkläre den Unterschied zwischen Z-Bericht Import und Personen Bericht Import.
+3. Erkläre, welche Kennzahlen jetzt automatisch aus welchem Import kommen.
+4. Gib eine kurze Testanleitung.
