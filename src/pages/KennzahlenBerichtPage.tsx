@@ -76,6 +76,8 @@ interface Summary {
   warenTotal: number;
   suppliers: Record<string, number>;
   week: PeriodSlice;
+  weekFrom: Date;
+  weekTo: Date;
   chart: { label: string; net: number; planned: number; vj: number }[];
 }
 
@@ -351,6 +353,8 @@ export default function KennzahlenBerichtPage() {
           laborActual, laborPlanned,
           warenFood, warenBev, warenSonst, warenTotal: warenFood + warenBev + warenSonst,
           suppliers: supplierMap,
+          weekFrom: weekFromDate,
+          weekTo: to,
           week: {
             netTotal: wNet, grossTotal: wGross,
             vjNet: grossToNet(wVjGross), plannedNet: grossToNet(wPlanGross),
@@ -757,7 +761,7 @@ export default function KennzahlenBerichtPage() {
 
         {/* ── Excel Vorlage view ───────────────────────────────────────── */}
         {!loading && summary && viewMode === 'excel' && (
-          <ExcelTemplateView rows={excelRows} from={from} />
+          <ExcelTemplateView rows={excelRows} from={from} weekFrom={summary.weekFrom} weekTo={summary.weekTo} />
         )}
 
         {!loading && !summary && (
@@ -784,8 +788,9 @@ const COL_C_W = 300;
 const COL_DI_W = 115;
 const COL_PM_W = 90;
 
-function ExcelTemplateView({ rows, from }: { rows: XRow[]; from: Date }) {
+function ExcelTemplateView({ rows, from, weekFrom, weekTo }: { rows: XRow[]; from: Date; weekFrom: Date; weekTo: Date }) {
   const monthLabel = format(from, 'MMMM yyyy', { locale: de });
+  const weekLabel  = `${format(weekFrom, 'dd.MM.', { locale: de })}–${format(weekTo, 'dd.MM.', { locale: de })}`;
 
   const thStyle = (align: 'left' | 'right' | 'center' = 'center'): CSSProperties => ({
     ...CELL_PAD,
@@ -829,7 +834,10 @@ function ExcelTemplateView({ rows, from }: { rows: XRow[]; from: Date }) {
             <th style={{ ...thStyle('left'), fontSize: '13px' }}>{monthLabel}</th>
             <th style={thStyle()}>Budget</th>
             <th style={thStyle()}>Vorjahr</th>
-            <th style={thStyle()}>Woche</th>
+            <th style={thStyle()}>
+              <div style={{ lineHeight: 1.3 }}>Woche</div>
+              <div style={{ fontWeight: 'normal', fontSize: '10px', color: '#666', letterSpacing: 0 }}>{weekLabel}</div>
+            </th>
             <th style={{ ...thStyle(), color: '#555', fontSize: '11px' }}>+/- in %</th>
             <th style={thStyle()}>Monat</th>
             <th style={{ ...thStyle(), color: '#555', fontSize: '11px' }}>+/- in %</th>
