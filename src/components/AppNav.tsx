@@ -30,7 +30,7 @@ import {
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, LineChart, TrendingUp,
-  Menu, ClipboardCheck, ShieldAlert, Scale,
+  Menu, ClipboardCheck, ShieldAlert, Scale, FileText,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -215,6 +215,13 @@ const NAV_GROUPS: NavGroup[] = [
     groupLabel: 'Admin',
     adminOnly: true,
     items: [
+      {
+        path: '/gastronovi-import',
+        label: 'Gastronovi Z-Bericht',
+        shortLabel: 'Z-Bericht',
+        icon: FileText,
+        adminOnly: true,
+      },
       {
         path: '/import',
         label: 'Import-Zentrale',

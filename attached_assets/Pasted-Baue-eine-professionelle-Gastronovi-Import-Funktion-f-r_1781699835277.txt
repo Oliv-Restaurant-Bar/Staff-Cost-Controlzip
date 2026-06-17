@@ -1,0 +1,242 @@
+Baue eine professionelle Gastronovi Import-Funktion für die Control App.
+
+Ziel:
+Wir möchten Gastronovi Z-Berichte als CSV importieren und daraus automatisch möglichst viele Kennzahlen für das Reporting, die Excel-Vorlage-Ansicht und das Management Dashboard ableiten. PDF soll optional zusätzlich hochgeladen und als Kontrollbeleg gespeichert werden, aber CSV ist die primäre Datenquelle.
+
+Wichtig:
+Bitte zuerst die bestehende Datenbankstruktur analysieren und keine bestehenden Funktionen beschädigen.
+
+Neue Seite:
+Erstelle im Menü einen neuen Punkt:
+"Importe" oder "Gastronovi Import"
+
+Auf dieser Seite soll möglich sein:
+1. CSV-Datei hochladen
+2. Optional PDF-Datei hochladen
+3. Import prüfen
+4. Vorschau der erkannten Daten anzeigen
+5. Import bestätigen
+6. Bereits importierte Berichte anzeigen
+7. Import löschen oder erneut verarbeiten
+
+CSV Parsing:
+Die CSV ist ein Gastronovi Z-Bericht mit Bereichen wie:
+- Zeitraum
+- Umsatz
+- Steuerbericht
+- Kostenstellen
+- Kellner
+- Bezahlarten
+- Hauptwarengruppen
+- Rundungsdifferenzen
+- Trinkgeld
+- Kunden auf Rechnung
+- Aufladung Kundenkarten
+- Rabatte
+- Positionsrabatte
+- Stornierte Artikel
+- Buchungskonten
+- Zahlungskonten
+
+Bitte schreibe einen robusten Parser, der die Abschnitte erkennt und sauber strukturiert speichert.
+
+Datenbank:
+Erstelle falls noch nicht vorhanden folgende Tabellen:
+
+1. gn_imports
+- id
+- file_name
+- pdf_file_name nullable
+- z_counter
+- cost_center
+- period_from
+- period_to
+- imported_at
+- status
+- raw_csv_json
+- checksum
+- created_at
+
+2. gn_revenue_summary
+- import_id
+- total_gross
+- total_excl_tip
+- total_excl_rounding
+- total_excl_customer_card_topups
+
+3. gn_tax_summary
+- import_id
+- tax_rate
+- net_amount
+- tax_amount
+- gross_amount
+
+4. gn_cost_centers
+- import_id
+- name
+- count
+- amount
+
+5. gn_waiters
+- import_id
+- name
+- count
+- amount
+
+6. gn_payment_methods
+- import_id
+- name
+- count nullable
+- amount
+
+7. gn_product_groups
+- import_id
+- name
+- count
+- original_amount nullable
+- amount
+
+8. gn_discounts
+- import_id
+- type
+- name
+- count
+- amount
+
+9. gn_cancellations
+- import_id
+- name
+- count
+- amount
+
+10. gn_accounting_lines
+- import_id
+- name
+- account
+- tax_rate
+- gross_amount
+
+11. gn_payment_accounts
+- import_id
+- name
+- account
+- gross_amount
+
+Deduplication:
+Beim Import muss verhindert werden, dass derselbe Z-Bericht doppelt importiert wird.
+Nutze dafür:
+- z_counter
+- period_from
+- period_to
+- cost_center
+- checksum der CSV
+
+Wenn ein Import bereits existiert, zeige:
+"Dieser Gastronovi Bericht wurde bereits importiert."
+Optionen:
+- Abbrechen
+- Bestehenden Import ersetzen
+
+Reporting Mapping:
+Verbinde die importierten Daten mit dem bestehenden Kennzahlen Bericht.
+
+Die folgenden Werte sollen aus Gastronovi CSV automatisch ins Reporting einfliessen:
+
+Umsatz:
+- Brutto Umsatz aus gn_revenue_summary.total_gross
+- Netto Umsatz aus Steuerbericht Total Netto
+- Umsatz exkl. Trinkgeld
+- Umsatz Food aus Hauptwarengruppen Food
+- Umsatz Beverage aus Hauptwarengruppen Beverage
+- Non-Food Umsatz
+- Bar Umsatz aus Kostenstellen Bar
+- Terrasse Umsatz aus Kostenstellen Terrasse
+- Hauptkostenstelle Umsatz
+- Take Away Umsatz wenn Kellner "Oliv Take Away" vorhanden ist
+- Durchschnittsbon = Umsatz / Anzahl Bons, falls Anzahl ableitbar
+
+Rabatte und Stornos:
+- Rabatte gesamt aus Abschnitt Rabatte Total
+- Positionsrabatte gesamt aus Positionsrabatte Total
+- Stornos gesamt aus Stornierte Artikel Total
+- Marketing aus Rabatte oder Buchungskonten mit Name Marketing/marketing
+- Maison aus Rabatte oder Positionsrabatte mit Name Maison
+
+Zahlungsarten:
+- Bar
+- TWINT
+- Visa
+- MasterCard
+- Rechnung
+- Kundenkarte
+- EC-Karte
+- Kartenzahlung
+- Gastronovi Pay
+
+Kellner:
+- Umsatz pro Kellner
+- Anzahl Verkäufe pro Kellner
+- Take Away separat erkennen über Kellnername "Oliv Take Away"
+
+Warenaufwand / WES:
+- Noch nicht aus diesem Gastronovi Z-Bericht ableitbar, ausser es gibt separate Wareneinsatzdaten.
+- Felder aber vorbereitet lassen.
+- Später sollen Lieferantenrechnungen, Inventur und Produkt-WES diese Werte füllen.
+
+Gäste / Personen:
+- Falls CSV keine Personen/Gäste enthält, Feld vorbereitet lassen.
+- Später separaten Gastronovi Analyse Export "Personen" importieren.
+- Gäste dürfen nicht mit Bons verwechselt werden.
+
+Excel Vorlage Ansicht:
+Die Excel Vorlage Ansicht soll diese Importdaten verwenden.
+Beispiele:
+- Brutto Umsatz aus importiertem Gastronovi Umsatz
+- Netto Umsatz aus Steuerbericht Netto Total
+- Wein / Spirituose aus Buchungskonten oder Warengruppen, sofern erkennbar
+- Bar Umsatz aus Kostenstelle Bar
+- Küchen Umsatz aus Food
+- Take Away Anteil aus Kellner "Oliv Take Away" oder Kostenstelle Take Away, sofern vorhanden
+- Marketing aus Rabatten/Buchungskonten
+- Maison aus Rabatten/Buchungskonten
+- Storno aus Stornierte Artikel
+- Gäste, Produktivität, Warenaufwand und Lieferanten bleiben vorbereitet, bis separate Datenquellen vorhanden sind.
+
+Import Vorschau:
+Nach Upload soll eine Vorschau erscheinen:
+- Zeitraum
+- Z-Zähler
+- Kostenstelle
+- Bruttoumsatz
+- Nettoumsatz
+- Food Umsatz
+- Beverage Umsatz
+- Bar Umsatz
+- Terrasse Umsatz
+- Take Away Umsatz
+- Rabatte
+- Stornos
+- Anzahl Zahlungsarten
+- Anzahl Kellner
+- Anzahl Buchungskonten
+
+PDF:
+PDF Upload optional ermöglichen.
+PDF Datei speichern und mit gn_imports verknüpfen.
+PDF nicht primär parsen.
+PDF dient als Originalbeleg und Kontrollansicht.
+
+Fehlerbehandlung:
+- Ungültige CSV erkennen
+- Fehlende Abschnitte nicht als Fehler behandeln, sondern als Warnung anzeigen
+- Schweizer Zahlenformate wie 1'843 korrekt parsen
+- CHF Werte korrekt als Dezimalzahlen speichern
+- Negative Beträge korrekt speichern
+- Import darf bei fehlenden Feldern nicht abstürzen
+
+Nach Umsetzung:
+1. Liste alle neu erstellten und geänderten Dateien auf.
+2. Erkläre, welche Gastronovi Bereiche importiert werden.
+3. Erkläre, welche Kennzahlen dadurch im Reporting automatisch befüllt werden.
+4. Erkläre, welche Kennzahlen noch zusätzliche Datenquellen brauchen.
+5. Gib eine kurze Testanleitung mit genau dieser CSV-Datei.

@@ -65,6 +65,7 @@ import StaffSchedulePage from "./pages/StaffSchedulePage";
 import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
+import GastronoviZBerichtPage from "./pages/GastronoviZBerichtPage";
 
 const queryClient = new QueryClient();
 
@@ -224,6 +225,7 @@ const AppContent = () => {
             <Route path="/umsatzabstimmung"
               element={isBeaulieuManager ? <BlockedRoute path="/umsatzabstimmung" /> : <UmsatzAbstimmungPage />}
             />
+            <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
             />
