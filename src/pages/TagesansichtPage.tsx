@@ -23,7 +23,7 @@ import {
 import { de } from 'date-fns/locale';
 import {
   ChevronLeft, ChevronRight, Table2, TrendingUp, TrendingDown,
-  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle, ShoppingBag,
+  Pencil, CheckCircle2, X, AlertTriangle, CheckCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
@@ -141,27 +141,10 @@ export default function TagesansichtPage() {
     }
   };
 
-  // Take-Away Monats-Erfassung
-  const [monthlyTakeaway,  setMonthlyTakeaway]  = useState(0);
-  const [taEditOpen,       setTaEditOpen]       = useState(false);
-  const [taEditInput,      setTaEditInput]      = useState('');
-  const taInputRef = useRef<HTMLInputElement>(null);
-
   // Manuelle Ist-Eingabe
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [editValue,   setEditValue]   = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Take-Away Monatswert aus KV laden
-  useEffect(() => {
-    const mm  = String(month).padStart(2, '0');
-    const key = tenantKey(`takeaway-monthly-${year}`);
-    kvGet(key).then(raw => {
-      const val = (raw as Record<string, number> | null)?.[`${year}-${mm}`] ?? 0;
-      setMonthlyTakeaway(val);
-    }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, tenantId]);
 
   // VJ-Supabase-Daten für den angezeigten VJ-Monat laden
   useEffect(() => {
@@ -440,58 +423,7 @@ export default function TagesansichtPage() {
     setTimeout(() => inputRef.current?.select(), 30);
   }, []);
 
-  const saveTakeaway = useCallback(async () => {
-    const parsed = parseFloat(taEditInput.replace(/['''\s]/g, '').replace(',', '.'));
-    const gross  = isNaN(parsed) || parsed < 0 ? 0 : Math.round(parsed);
-    setTaEditOpen(false);
-    setTaEditInput('');
-    setMonthlyTakeaway(gross);
-    const mm  = String(month).padStart(2, '0');
-    const key = tenantKey(`takeaway-monthly-${year}`);
-    try {
-      const existing = ((await kvGet(key)) as Record<string, number> | null) ?? {};
-      await kvSet(key, { ...existing, [`${year}-${mm}`]: gross });
-    } catch {
-      console.error('[TakeAway] KV-Schreibfehler');
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taEditInput, year, month, tenantId]);
-
-  // Berechneter angepasster Netto-Umsatz mit monatlichem Take-Away
-  const adjustedMonthlyNet = useMemo(() => {
-    if (!monthlyTakeaway || monthlyTakeaway <= 0) return null;
-    let totalGross = 0;
-    monthDays.forEach(day => {
-      const d = format(day, 'yyyy-MM-dd');
-      totalGross += dailyBudgets[d]?.actualRevenue ?? 0;
-    });
-    if (totalGross <= 0) return null;
-    // monthlyTakeaway ist der NETTO-Betrag aus der Buchhaltung (Konto 3010 Haben)
-    // Für den Brutto-Split wird er mit 1.026 multipliziert.
-    const ta_netto  = monthlyTakeaway;
-    const ta_brutto = Math.min(ta_netto * 1.026, totalGross);
-    const withTA    = grossToNet(totalGross, ta_brutto);
-    const withoutTA = totalGross / 1.081;
-    return { totalGross, ta_netto, ta: ta_brutto, withTA, withoutTA, diff: withTA - withoutTA };
-  }, [monthlyTakeaway, monthDays, dailyBudgets]);
-
-  // Korrigierte Gesamt-Zeile: cumIst mit Take-Away-Netto-Korrektur überschreiben
-  // (nur wenn Netto-Anzeige aktiv + monatlicher Take-Away erfasst)
-  const gesamtRow = useMemo(() => {
-    if (!lastRow) return null;
-    if (!showNetRevenue || !adjustedMonthlyNet) return lastRow;
-    const c   = adjustedMonthlyNet.withTA;
-    const vj  = lastRow.cumVj;
-    const bud = lastRow.cumBud;
-    return {
-      ...lastRow,
-      cumIst:       c,
-      cumDevVj:     c - vj,
-      cumDevVjPct:  vj  > 0 ? ((c - vj)  / vj)  * 100 : 0,
-      cumDevBud:    c - bud,
-      cumDevBudPct: bud > 0 ? ((c - bud) / bud) * 100 : 0,
-    };
-  }, [lastRow, showNetRevenue, adjustedMonthlyNet]);
+  const gesamtRow = lastRow;
 
   // KPI-Cards: bei zurückliegenden Monaten korrigierten Wert nutzen
   const kpiRow = isCurrentMonth ? lastDataRow : (gesamtRow ?? lastDataRow);
@@ -679,99 +611,6 @@ export default function TagesansichtPage() {
             )}
           </div>
         )}
-
-        {/* ── Take-Away Monats-Erfassung ───────────────────────────────────── */}
-        <div className="flex items-start gap-3 px-3 py-2.5 rounded-lg border bg-orange-50 dark:bg-orange-950/20 border-orange-200 dark:border-orange-800">
-          <ShoppingBag className="h-4 w-4 text-orange-600 dark:text-orange-400 mt-0.5 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-semibold text-orange-800 dark:text-orange-300">
-                Take-Away Umsatz {format(refDate, 'MMMM yyyy', { locale: de })}
-              </span>
-              <span className="text-[11px] text-orange-700/70 dark:text-orange-400/70">
-                (Netto-Betrag Kto. 3010 · bereits im Gesamtumsatz enthalten)
-              </span>
-            </div>
-
-            {taEditOpen ? (
-              <div className="flex items-center gap-2 mt-1.5">
-                <span className="text-xs text-muted-foreground">CHF</span>
-                <input
-                  ref={taInputRef}
-                  type="text"
-                  inputMode="numeric"
-                  value={taEditInput}
-                  onChange={e => setTaEditInput(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter')  saveTakeaway();
-                    if (e.key === 'Escape') { setTaEditOpen(false); setTaEditInput(''); }
-                  }}
-                  className="w-32 px-2 py-0.5 text-xs border border-orange-400 rounded bg-white dark:bg-background focus:outline-none focus:ring-1 focus:ring-orange-400"
-                  placeholder="0"
-                  autoFocus
-                />
-                <button
-                  onMouseDown={saveTakeaway}
-                  className="text-emerald-600 hover:text-emerald-700 text-xs font-medium px-2 py-0.5 rounded border border-emerald-300 bg-white dark:bg-background"
-                >
-                  Speichern
-                </button>
-                <button
-                  onMouseDown={() => { setTaEditOpen(false); setTaEditInput(''); }}
-                  className="text-muted-foreground hover:text-foreground text-xs"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-3 mt-1">
-                <span className="text-sm font-bold text-orange-700 dark:text-orange-300">
-                  {monthlyTakeaway > 0 ? `CHF ${NUM.format(monthlyTakeaway)}` : '—  nicht erfasst'}
-                </span>
-                <button
-                  onClick={() => {
-                    setTaEditInput(monthlyTakeaway > 0 ? String(monthlyTakeaway) : '');
-                    setTaEditOpen(true);
-                  }}
-                  className="text-orange-600 hover:text-orange-700 dark:text-orange-400"
-                  title="Take-Away erfassen / ändern"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
-            {adjustedMonthlyNet && showNetRevenue && (
-              <div className="mt-1.5 text-[11px] text-orange-700/80 dark:text-orange-400/70 space-y-0.5">
-                <div>
-                  Netto Kto. 3010 (Take-Away):&nbsp;
-                  <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.ta_netto))}</span>
-                  &ensp;·&ensp;
-                  Netto Kto. 3000 (Restaurant):&nbsp;
-                  <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.withTA - adjustedMonthlyNet.ta_netto))}</span>
-                </div>
-                <div>
-                  Netto Gesamt:&nbsp;
-                  <span className="font-medium">CHF {NUM.format(Math.round(adjustedMonthlyNet.withTA))}</span>
-                  &ensp;
-                  <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                    (+{NUM.format(Math.round(adjustedMonthlyNet.diff))} vs. nur 8.1%)
-                  </span>
-                </div>
-                <div className="text-orange-600/60 dark:text-orange-500/60">
-                  Formel: ({NUM.format(Math.round(adjustedMonthlyNet.totalGross))} – {NUM.format(Math.round(adjustedMonthlyNet.ta_netto))}×1.026) / 1.081
-                  &thinsp;+&thinsp;{NUM.format(Math.round(adjustedMonthlyNet.ta_netto))}
-                  &thinsp;=&thinsp;{NUM.format(Math.round(adjustedMonthlyNet.withTA))} Netto
-                </div>
-              </div>
-            )}
-            {adjustedMonthlyNet && !showNetRevenue && (
-              <p className="mt-1 text-[11px] text-orange-600/70">
-                Wirkung sichtbar im Netto-Modus (Anzeige-Umschalter oben)
-              </p>
-            )}
-          </div>
-        </div>
 
         {/* ── Tabelle ──────────────────────────────────────────────────────── */}
         <Card>
