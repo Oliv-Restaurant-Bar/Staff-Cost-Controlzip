@@ -7,3 +7,4 @@
 - [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees. FK on schedule_entries.employee_id was dropped in migration. See extra-cost-people-db.ts.
 - [Kawtar/Party employee migration](kawtar-party-migration.md) — Migrated from schedule_extra_cost_people to employees (IDs: kawtar, party). SQL in 20260606_kawtar_party_zu_normalen_mitarbeitern.sql. loadEmployees filters isActive !== false to hide archived aush_* ghosts.
 - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
+- [gn_* RLS live-DB state](gn-rls-live-state.md) — live DB had RLS on + zero policies (default-deny) despite DISABLE-RLS in setup; verify RLS empirically (anon=RLS error vs service_role=permission-denied). Mgmt API PAT 401 → DDL is manual.
