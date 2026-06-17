@@ -29,7 +29,7 @@ import {
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, X, Eye, Table2, Activity,
-  Wallet, BarChart3, ShoppingCart, LineChart, TrendingUp,
+  Wallet, BarChart2, BarChart3, ShoppingCart, LineChart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -93,6 +93,14 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Tage',
         icon: Table2,
         module: 'tagesansicht' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
+        path: '/kennzahlen-bericht',
+        label: 'Kennzahlen Bericht',
+        shortLabel: 'KPI',
+        icon: BarChart2,
+        adminOnly: true,
+        beaulieuAllowed: true,
       },
       {
         path: '/produkt-analyse',

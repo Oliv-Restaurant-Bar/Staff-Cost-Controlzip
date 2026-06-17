@@ -54,6 +54,7 @@ import KategorienAnalyse from "./pages/KategorienAnalyse";
 import ProduktStamm from "./pages/ProduktStamm";
 import TagesansichtPage from "./pages/TagesansichtPage";
 import TagesControllingPage from "./pages/TagesControllingPage";
+import KennzahlenBerichtPage from "./pages/KennzahlenBerichtPage";
 import WarenrechnungenPage from "./pages/Warenrechnungen";
 import ForecastPlanung from "./pages/ForecastPlanung";
 import MirusParserTest from "./pages/MirusParserTest";
@@ -245,6 +246,7 @@ const AppContent = () => {
             <Route path="/tages-controlling"
               element={canAccessModule('tages_controlling') ? <TagesControllingPage /> : <Navigate to="/personal" replace />}
             />
+            <Route path="/kennzahlen-bericht" element={<KennzahlenBerichtPage />} />
             <Route path="/forecast" element={<ForecastPlanung />} />
             <Route path="/verkauf-dashboard"
               element={<VerkaufsDashboard />}

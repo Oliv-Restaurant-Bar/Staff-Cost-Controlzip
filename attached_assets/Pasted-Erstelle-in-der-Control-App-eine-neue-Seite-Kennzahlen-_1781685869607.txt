@@ -1,0 +1,136 @@
+Erstelle in der Control App eine neue Seite "Kennzahlen Bericht" bzw. "Management Report", die optisch und inhaltlich so nah wie möglich an einem gastronovi Z-Bericht / Analysebericht aufgebaut ist.
+
+Ziel:
+Die Seite soll automatisch Kennzahlen aus den vorhandenen Daten der Control App berechnen und anzeigen. Der Bericht soll später regelmässig als PDF exportiert werden können.
+
+Bitte zuerst die bestehende Datenbankstruktur analysieren und keine bestehenden Funktionen beschädigen.
+
+Neue Seite:
+- Menüpunkt im Hauptmenü: "Kennzahlen Bericht"
+- Zeitraumfilter oben:
+  - Heute
+  - Gestern
+  - Woche
+  - Monat
+  - Jahr
+  - Benutzerdefinierter Zeitraum von/bis
+- Optionaler Filter:
+  - Standort/Betrieb, falls multi-location bereits vorbereitet ist
+  - Bereich/Department, falls vorhanden
+  - Kostenstelle, falls vorhanden
+
+Der Bericht soll folgende Bereiche enthalten:
+
+1. Kopfbereich
+- Restaurantname/Betrieb
+- Berichtstitel
+- Zeitraum von/bis
+- Erstellungsdatum
+- Export Button "PDF exportieren"
+
+2. Umsatzübersicht
+- Gesamtumsatz brutto
+- Gesamtumsatz netto, falls Mehrwertsteuerdaten vorhanden sind
+- Umsatz exkl. Trinkgeld, falls Trinkgeld vorhanden ist
+- Umsatz Food
+- Umsatz Beverage
+- Umsatz sonstige Artikel
+- Anzahl Verkäufe/Bons/Rechnungen
+- Durchschnittsbon
+- Rabatte gesamt
+- Stornos gesamt
+
+3. Gäste/Kunden Kennzahlen
+- Anzahl Personen/Gäste, falls in den importierten gastronovi Daten vorhanden
+- Umsatz pro Person
+- Durchschnittliche Gäste pro Tag
+- Bons pro Gast, falls ableitbar
+- Falls Personen/Gäste noch nicht in der Datenbank vorhanden sind, bitte die Seite so bauen, dass das Feld vorbereitet ist und aktuell "Keine Daten vorhanden" anzeigt.
+
+4. Personal Kennzahlen
+- Geplante Stunden
+- Ist Stunden
+- Differenz Soll/Ist
+- Personalkosten geplant
+- Personalkosten Ist
+- Personalkostenquote in Prozent vom Umsatz
+- Personalkosten pro Gast, falls Gästezahl vorhanden ist
+- Umsatz pro Arbeitsstunde
+- Vergleich pro Department, z. B. Küche und Service, falls vorhanden
+
+5. Warenaufwand / WES Kennzahlen
+- Warenaufwand Food CHF
+- Warenaufwand Beverage CHF
+- WES Food in Prozent
+- WES Beverage in Prozent
+- WES gesamt in Prozent
+- Deckungsbeitrag, soweit ableitbar
+- Falls einzelne Werte noch nicht vorhanden sind, Platzhalter anzeigen und die Berechnungslogik sauber vorbereiten.
+
+6. Vergleichswerte
+- Umsatz Vorperiode
+- Umsatz Vorjahr, falls vorhanden
+- Budget Umsatz, falls vorhanden
+- Abweichung zu Budget CHF und %
+- Abweichung zu Vorjahr CHF und %
+- Personalkostenquote vs Zielwert
+- WES Quote vs Zielwert
+
+7. Tabellenbereich ähnlich Z-Bericht
+Erstelle klare Tabellenblöcke wie:
+- Nach Kostenstelle
+- Nach Hauptwarengruppe
+- Nach Zahlungsart, falls Daten vorhanden
+- Nach Mitarbeiter/Kellner, falls Daten vorhanden
+- Nach Artikelgruppe
+- Rabatte
+- Stornos
+- Gäste/Personen pro Tag
+
+8. Visualisierung
+- KPI Karten oben
+- Balkendiagramm Umsatz pro Tag
+- Linie Personalkostenquote pro Tag
+- Balken Food/Beverage Umsatz
+- Kleine Ampellogik:
+  - Grün, wenn Ziel erreicht
+  - Gelb, wenn nahe am Ziel
+  - Rot, wenn kritisch
+
+9. PDF Export
+Implementiere einen Button "PDF exportieren".
+Der PDF Export soll genau den aktuell gefilterten Bericht exportieren.
+Das PDF soll professionell aussehen:
+- A4
+- Logo/Restaurantname oben
+- klare Tabellen
+- Seitenumbrüche sauber
+- keine abgeschnittenen Inhalte
+- Datum und Zeitraum sichtbar
+
+10. Technische Anforderungen
+- Bestehende UI und Styling der App beibehalten
+- Keine bestehenden Seiten beschädigen
+- Berechnungen zentral in wiederverwendbaren Funktionen auslagern
+- Wenn Daten fehlen, keine Fehler anzeigen, sondern "Keine Daten vorhanden"
+- Alle Kennzahlen sauber mit Fallbacks berechnen
+- Loading State und Error State einbauen
+- Mobile muss nicht perfekt sein, Desktop Ansicht hat Priorität
+- PDF Export soll über eine robuste Lösung umgesetzt werden, z. B. browser print stylesheet, html2pdf oder serverseitige PDF Generierung, je nachdem was im Projekt bereits sinnvoll vorhanden ist
+
+11. Wichtig
+Bitte baue die Seite so, dass später weitere Datenquellen ergänzt werden können:
+- gastronovi Umsatzimport
+- Personen/Gäste aus gastronovi
+- Lohnstunden
+- Dienstplanung
+- Budgetwerte
+- Vorjahreswerte
+- Lieferantenrechnungen
+- Buchhaltungsimport
+
+Nach der Umsetzung:
+- Liste mir alle neu erstellten oder geänderten Dateien auf
+- Erkläre kurz, welche Kennzahlen bereits aus vorhandenen Daten berechnet werden
+- Erkläre, welche Kennzahlen vorbereitet sind, aber noch Daten benötigen
+- Gib mir eine kurze Testanleitung
