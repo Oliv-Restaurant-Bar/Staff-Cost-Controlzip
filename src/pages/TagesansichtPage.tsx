@@ -338,6 +338,7 @@ export default function TagesansichtPage() {
   }, [monthDays, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily, maisonExclude]);
 
   const lastRow = rows[rows.length - 1];
+  const totalMaisonNet = rows.reduce((s, r) => s + r.maisonNet, 0);
 
   // ── KPI: kumulierter Stand bis heute (letzter Tag mit Ist-Daten) ───────────
   const isCurrentMonth = isSameMonth(refDate, today);
@@ -1034,7 +1035,14 @@ export default function TagesansichtPage() {
                       <tr className="border-t-2 border-border bg-muted/50 font-semibold text-xs">
                         <td className={cn(tdL, 'text-muted-foreground text-[11px]')} colSpan={2}>Gesamt</td>
                         <td className={tdR}>{fmtN(gr.cumIst)}</td>
-                        {showMarketingCol && <td />}
+                        {showMarketingCol && (
+                          <td className={cn(
+                            'px-1 py-[3px] text-right tabular-nums text-[10px] border-l border-violet-200/40 dark:border-violet-800/40 font-semibold',
+                            maisonExclude ? 'text-muted-foreground/40' : 'text-violet-600 dark:text-violet-400',
+                          )}>
+                            {totalMaisonNet > 0 ? fmtN(totalMaisonNet) : '–'}
+                          </td>
+                        )}
                         {showVjCols && <td className={cn(tdR, 'text-muted-foreground')}>{fmtN(gr.cumVj)}</td>}
                         {showVjCols && <td className={tdL} />}
                         {showDevVj  && <td className={cn(tdR, devCls(gr.cumDevVj, gr.cumIst > 0))}>{fmtDev(gr.cumDevVj)}</td>}

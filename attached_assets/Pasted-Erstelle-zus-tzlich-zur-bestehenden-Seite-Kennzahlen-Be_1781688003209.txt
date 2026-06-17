@@ -1,0 +1,128 @@
+Erstelle zusätzlich zur bestehenden Seite "Kennzahlen Bericht" eine zweite Ansicht mit dem Namen "Excel Ansicht" oder "Spaltenbericht".
+
+Ziel:
+Diese neue Ansicht soll optisch möglichst genau wie die hochgeladene Excel-Vorlage "oliv.xlsx" aufgebaut sein: spaltenweise, schlicht, tabellarisch, mit Kennzahlen links und Zeit-/Vergleichsspalten rechts.
+
+Die bestehende Kennzahlen-Bericht-Seite darf nicht entfernt werden. Bitte nur eine zusätzliche Umschaltmöglichkeit einbauen:
+
+- Button/Tabs oben:
+  - Dashboard Ansicht
+  - Excel Ansicht
+
+Die Excel Ansicht soll folgende Spalten haben:
+
+1. Kennzahl
+2. Budget
+3. Vorjahr
+4. Woche
+5. +/- in %
+6. Monat
+7. +/- in %
+
+Die Zeilen sollen sich an der Excel-Vorlage orientieren:
+
+Bereich Umsatz:
+- Brutto Umsatz
+- Netto Umsatz
+- Brutto Plan
+- Netto Plan zum Budget
+- Gäste Inhouse zum Budget
+- Gäste Take Away Budget
+- Gruppen ab 20 Pax Budget
+
+Bereich Durchschnitt:
+- Durchschnittsverkauf zum Budget
+- Durchschnittsverkauf Take Away zum Budget
+- Take Away Anteil
+
+Bereich Vorjahr:
+- Brutto Umsatz letztes Jahr
+- Gäste letztes Jahr
+- Gäste +/- zum Vorjahr
+- Durchschnittsverkauf letztes Jahr
+
+Bereich Umsatzgruppen:
+- Wein / Spirituosen
+- Bar Umsatz
+- Küchen Umsatz
+- Wein / Spirituosen letztes Jahr
+- Bar Umsatz letztes Jahr
+- Küchen Umsatz letztes Jahr
+
+Bereich Bewertungen:
+- Google Rezension 5 Sterne
+- Google Rezension 3 Sterne
+- Google Rezension 1 Stern
+- Tripadvisor 5 Sterne
+- Tripadvisor 3 Sterne
+- Tripadvisor 1 Stern
+
+Bereich Brunch:
+- Brunch Umsatz / Anteil
+
+Bereich Produktivität:
+- Produktive Stunden
+- Produktive Stunden geplant
+- Produktivität
+- Umsatz pro Gast
+
+Bereich Warenaufwand:
+- Warenaufwand nach gastronovi in %
+- Inventurwert nach Einkauf / Verkauf
+- Food
+- Getränke
+- Einkauf Gesamt
+
+Bereich Lieferanten:
+- Spahni
+- Transgourmet
+- Gourmador
+- Ambro
+- Feldschlössli
+- Terravigna
+- Weitere Lieferanten
+- Zusammen
+
+Bereich Korrekturen / Kosten:
+- Rohabfall
+- Marketing
+- Maison
+- Storno
+- Kosten ohne Rezeptur
+- Total Warenaufwand nach Rechnung
+
+Design:
+- Möglichst ähnlich wie Excel
+- Weisser Hintergrund
+- Dünne Tabellenlinien
+- Graue Abschnittsüberschriften
+- Fett formatierte Hauptzeilen
+- Zahlen rechtsbündig
+- CHF Werte im Format CHF 1'234
+- Prozentwerte im Format 0.0 %
+- Fehlende Daten als "—" anzeigen
+- Keine Kartenansicht in dieser Ansicht
+- Keine grossen Diagramme in dieser Ansicht
+
+Funktionalität:
+- Die Werte sollen automatisch aus den bestehenden Daten der Control App berechnet werden, soweit Daten vorhanden sind.
+- Wenn Daten noch nicht vorhanden sind, bitte Feld vorbereiten und "—" anzeigen.
+- Die bestehenden Filter oben sollen auch für diese Ansicht gelten:
+  - Heute
+  - Gestern
+  - Woche
+  - Monat
+  - Vormonat
+  - Jahr
+  - Benutzerdefiniert
+- Der PDF Export Button soll auch diese Excel Ansicht exportieren können.
+- Wenn der Benutzer in der Excel Ansicht ist und "PDF exportieren" klickt, soll exakt diese spaltenweise Tabellenansicht als PDF exportiert werden.
+
+Wichtig:
+Bitte die Berechnungslogik zentral wiederverwendbar machen, damit Dashboard Ansicht und Excel Ansicht dieselben Kennzahlen verwenden.
+
+Bitte nach Umsetzung:
+1. Liste alle geänderten Dateien auf.
+2. Erkläre kurz, welche Felder bereits automatisch befüllt werden.
+3. Erkläre, welche Felder noch vorbereitet sind, aber Daten benötigen.
+4. Gib mir eine kurze Testanleitung.
