@@ -172,19 +172,54 @@ function matchSectionName(text: string): string | null {
 }
 
 /**
+ * Bekannte Tabellenkopf-Bezeichnungen (Spaltenüberschriften).
+ * Umlaute sind bereits zu ae/oe/ue/ss normalisiert (siehe normalizeHeaderCell).
+ */
+const COLUMN_HEADER_KEYWORDS = new Set<string>([
+  'anzahl', 'betrag', 'name', 'typ', 'art', 'bezeichnung',
+  'netto', 'brutto', 'mwst', 'mehrwertsteuer', 'steuer', 'steuersatz', 'satz',
+  'umsatz', 'summe', 'total', 'gesamt',
+  'konto', 'kontonummer', 'kontonr', 'original',
+  'menge', 'preis', 'wert', 'prozent', 'differenz', 'waehrung',
+  'chf', 'eur', 'euro',
+]);
+
+/** Normalisiert eine Zelle: klein + Umlaute zu ASCII. */
+function normalizeHeaderCell(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss');
+}
+
+/**
+ * Prüft, ob eine Zelle eine typische Spaltenüberschrift ist
+ * (z. B. "Anzahl", "Betrag", "Netto", "MwSt").
+ * Werte mit Ziffern (z. B. "CHF 75'535.90") oder freie Texte
+ * (z. B. "Restaurant Oliv") gelten NICHT als Spaltenüberschrift.
+ */
+function isColumnHeaderCell(cell: string): boolean {
+  const trimmed = cell.trim();
+  if (!trimmed) return true;                 // leere Zellen sind unkritisch
+  if (/\d/.test(trimmed)) return false;      // Werte mit Ziffern → keine Überschrift
+  const tokens = normalizeHeaderCell(trimmed).split(/[^a-z]+/).filter(Boolean);
+  return tokens.some(t => COLUMN_HEADER_KEYWORDS.has(t));
+}
+
+/**
  * Prüft ob eine Zeile eine Sektionsüberschrift ist.
- * Kriterium: erste Zelle matcht einen Sektionsnamen UND
- * keine weitere Zelle enthält einen numerischen Wert (= Datenzeile wäre es).
- * Textspalten (Spaltenköpfe wie "Anzahl", "Betrag") sind erlaubt!
+ * Strenge Regel (robust gegen Metadaten-Zeilen wie "Kostenstelle;Restaurant Oliv"):
+ *   1. Erste Zelle matcht einen bekannten Sektionsnamen (canonical != null).
+ *   2. Jede weitere nicht-leere Zelle ist eine typische Spaltenüberschrift
+ *      (Anzahl, Betrag, Name, Typ, Netto, Brutto, MwSt, …).
+ * Ein Sektionsname allein auf einer Zeile (keine weiteren Zellen) gilt ebenfalls
+ * als Sektionskopf. Eine Zeile wie "Kostenstelle;Restaurant Oliv" wird NICHT
+ * als Sektionskopf erkannt, da "Restaurant Oliv" keine Spaltenüberschrift ist.
  */
 function isSectionHeaderRow(row: string[], canonical: string | null): boolean {
   if (!canonical) return false;
-  // Wenn alle anderen Zellen leer oder nur Text sind → Sektionskopf
   const otherCells = row.slice(1).filter(c => c.trim());
-  const hasNumericData = otherCells.some(c =>
-    /^-?\d[\d'.]*([.,]\d+)?$/.test(c.trim())
-  );
-  return !hasNumericData;
+  if (otherCells.length === 0) return true;  // Sektionsname allein → Sektionskopf
+  return otherCells.every(isColumnHeaderCell);
 }
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
