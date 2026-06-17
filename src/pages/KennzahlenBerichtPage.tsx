@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import {
   startOfWeek, endOfMonth, startOfMonth, startOfYear,
-  subDays, subMonths, eachDayOfInterval, format, parseISO,
+  subDays, subMonths, subYears, eachDayOfInterval, format, parseISO,
   isBefore, isAfter,
 } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
+import { getGuestsForPeriod } from '@/lib/gn-personen-db';
 import type { DailyBudget } from '@/types/personnel';
 
 // ── Period ────────────────────────────────────────────────────────────────
@@ -79,6 +80,12 @@ interface Summary {
   weekFrom: Date;
   weekTo: Date;
   chart: { label: string; net: number; planned: number; vj: number }[];
+  guestCount: number;
+  weekGuestCount: number;
+  vjGuestCount: number;
+  revPerGuest: number;
+  weekRevPerGuest: number;
+  vjRevPerGuest: number;
 }
 
 // Excel-Zeile: type 'data' oder 'empty' (Leerzeile wie in der Vorlage)
@@ -147,6 +154,14 @@ function buildExcelRows(s: Summary): XRow[] {
   const wesPct     = s.netTotal    > 0 && s.warenTotal    > 0 ? (s.warenTotal    / s.netTotal)    * 100 : null;
   const wesWeekPct = week.netTotal > 0 && week.warenTotal > 0 ? (week.warenTotal / week.netTotal) * 100 : null;
 
+  const gCount     = s.guestCount     > 0 ? s.guestCount     : null;
+  const wGCount    = s.weekGuestCount > 0 ? s.weekGuestCount : null;
+  const vjGCount   = s.vjGuestCount   > 0 ? s.vjGuestCount   : null;
+  const gDiff      = gCount !== null && vjGCount !== null ? gCount - vjGCount : null;
+  const revPG      = s.revPerGuest     > 0 ? s.revPerGuest     : null;
+  const wRevPG     = s.weekRevPerGuest > 0 ? s.weekRevPerGuest : null;
+  const vjRevPG    = s.vjRevPerGuest   > 0 ? s.vjRevPerGuest   : null;
+
   const e = (): XRow => ({ type: 'empty', budget: null, vj: null, week: null, weekBudget: null, month: null });
   const d = (
     label: string,
@@ -164,22 +179,22 @@ function buildExcelRows(s: Summary): XRow[] {
     d('Netto Umsatz',              M(s.netTotal),          M(week.netTotal),         M(week.plannedNet),       M(s.plannedNet),       M(s.vjNet),       { isBold: true }),
     d('Brutto Plan',               M(s.plannedNet*1.081),  null,                    null,                     null,                  null),
     d('Netto Plan zum Budget',     M(s.plannedNet),        M(week.plannedNet),       null,                     null,                  null),
-    d('Gäste IN zum Budget',       null, null, null, null, null),
+    d('Gäste IN zum Budget',       gCount, wGCount, null, null, null, { isCount: true }),
     d('Gäste Take Away Budget',    null, null, null, null, null),
     d('Gruppen ab 20 Pax Budget',  null, null, null, null, null),
     // ── Zeilen 14–15: leer ──────────────────────────────────────────────
     e(), e(),
     // ── Zeilen 16–18: Durchschnitt ───────────────────────────────────────
-    d('Durchschnittsverkauf / zum Budget',    null, null, null, null, null),
+    d('Durchschnittsverkauf / zum Budget',    revPG, wRevPG, null, null, null),
     d('Durchschnittsverkauf TA / zum Budget', null, null, null, null, null),
     d('Take Away Anteil',                     null, null, null, null, null, { isPct: true }),
     // ── Zeilen 19–20: leer ──────────────────────────────────────────────
     e(), e(),
     // ── Zeilen 21–24: Vorjahr ────────────────────────────────────────────
     d('Brutto Umsatz Letztes Jahr',           s.vjNet>0 ? s.vjNet*1.081 : null, week.vjNet>0 ? week.vjNet*1.081 : null, null, null, null),
-    d('Gäste Letztes Jahr',                   null, null, null, null, null, { isCount: true }),
-    d('Gäste +/- zum Vorjahr',               null, null, null, null, null, { isCount: true }),
-    d('Durchschnittsverkauf letztes Jahr',    null, null, null, null, null),
+    d('Gäste Letztes Jahr',                   vjGCount, null, null, null, null, { isCount: true }),
+    d('Gäste +/- zum Vorjahr',               gDiff, null, null, null, null, { isCount: true }),
+    d('Durchschnittsverkauf letztes Jahr',    vjRevPG, null, null, null, null),
     // ── Zeile 25: leer ──────────────────────────────────────────────────
     e(),
     // ── Zeilen 26–31: Umsatzgruppen ──────────────────────────────────────
@@ -208,7 +223,7 @@ function buildExcelRows(s: Summary): XRow[] {
     d('Produktive Stunden',                   null,           null,             null, null, null, { isCount: true }),
     d('Produktive Stunden geplant',           null,           null,             null, null, null, { isCount: true }),
     d('Produktivität',                        null,           null,             null, null, null, { isPct:  true }),
-    d('Umsatz pro Gast',                      null,           null,             null, null, null),
+    d('Umsatz pro Gast',                      revPG,          wRevPG,           null, null, null),
     d('Warenaufwand nach GN in %',            wesPct,         wesWeekPct,       null, null, null, { isPct:  true }),
     d('Inventur Wert nach Einkauf / Verkauf', null,           null,             null, null, null),
     d('Food',                                 M(s.warenFood), M(week.warenFood),null, null, null),
@@ -325,9 +340,20 @@ export default function KennzahlenBerichtPage() {
           }
         }
 
+        const fromIso      = format(from, 'yyyy-MM-dd');
+        const toIso        = format(to,   'yyyy-MM-dd');
+        const weekFromIso  = format(weekFromDate, 'yyyy-MM-dd');
+        const vjFromIso    = format(subYears(from, 1), 'yyyy-MM-dd');
+        const vjToIso      = format(subYears(to,   1), 'yyyy-MM-dd');
+
         const months  = [...new Set(days.map(d => format(d, 'yyyy-MM')))];
-        const allInv  = (await Promise.all(months.map(m => loadMonthInvoices(tenantId, m)))).flat()
-          .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } });
+        const [allInv, guestsCur, guestsWeek, guestsVj] = await Promise.all([
+          Promise.all(months.map(m => loadMonthInvoices(tenantId, m))).then(res => res.flat()
+            .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } })),
+          getGuestsForPeriod(tenantId, fromIso, toIso),
+          getGuestsForPeriod(tenantId, weekFromIso, toIso),
+          getGuestsForPeriod(tenantId, vjFromIso, vjToIso),
+        ]);
 
         const warenFood  = allInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
         const warenBev   = allInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
@@ -344,12 +370,24 @@ export default function KennzahlenBerichtPage() {
           supplierMap[name] = (supplierMap[name] ?? 0) + (inv.amountNet ?? 0);
         }
 
+        const calcNet    = grossToNet(plannedGross);
+        const netTotalFinal = netTotal;
+        const wNetFinal     = wNet;
+        const vjNetFinal    = grossToNet(vjGross);
+
+        const gCount      = guestsCur.totalGuests;
+        const wGCount     = guestsWeek.totalGuests;
+        const vjGCount    = guestsVj.totalGuests;
+        const revPG       = gCount   > 0 && netTotalFinal > 0 ? netTotalFinal / gCount   : (guestsCur.avgRevPerGuest  > 0 ? guestsCur.avgRevPerGuest  : 0);
+        const wRevPG      = wGCount  > 0 && wNetFinal     > 0 ? wNetFinal     / wGCount  : (guestsWeek.avgRevPerGuest > 0 ? guestsWeek.avgRevPerGuest : 0);
+        const vjRevPG     = vjGCount > 0 && vjNetFinal    > 0 ? vjNetFinal    / vjGCount : (guestsVj.avgRevPerGuest   > 0 ? guestsVj.avgRevPerGuest   : 0);
+
         if (!alive) return;
         setSummary({
           daysTotal: days.length, daysWithData,
           netTotal, grossTotal,
           foodNet: foodGross / 1.081, bevNet: bevGross / 1.081,
-          plannedNet: grossToNet(plannedGross), vjNet: grossToNet(vjGross),
+          plannedNet: calcNet, vjNet: vjNetFinal,
           laborActual, laborPlanned,
           warenFood, warenBev, warenSonst, warenTotal: warenFood + warenBev + warenSonst,
           suppliers: supplierMap,
@@ -364,6 +402,8 @@ export default function KennzahlenBerichtPage() {
             foodNet: wFoodGross / 1.081, bevNet: wBevGross / 1.081,
           },
           chart: Array.from(chartMap.entries()).map(([label, v]) => ({ label, ...v })),
+          guestCount: gCount, weekGuestCount: wGCount, vjGuestCount: vjGCount,
+          revPerGuest: revPG, weekRevPerGuest: wRevPG, vjRevPerGuest: vjRevPG,
         });
       } catch (err) {
         console.error('[KennzahlenBericht] load error', err);
