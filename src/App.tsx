@@ -61,7 +61,6 @@ import MirusExcelTest from "./pages/MirusExcelTest";
 import MirusImportPreview from "./pages/MirusImportPreview";
 import MirusReview from "./pages/MirusReview";
 import StaffSchedulePage from "./pages/StaffSchedulePage";
-import ArbeitszeitblaetterPage from "./pages/ArbeitszeitblaetterPage";
 import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
@@ -219,7 +218,6 @@ const AppContent = () => {
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
-            <Route path="/arbeitszeitblaetter" element={<ArbeitszeitblaetterPage />} />
             <Route path="/integrity-test" element={<DataIntegrityTest />} />
             <Route path="/employee-integrity" element={<EmployeeIntegrityPanel />} />
             <Route path="/umsatzabstimmung"

@@ -150,14 +150,6 @@ const NAV_GROUPS: NavGroup[] = [
         icon: DollarSign,
         module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
       },
-      {
-        path: '/arbeitszeitblaetter',
-        label: 'Arbeitszeitblätter',
-        shortLabel: 'AZ-Blätter',
-        icon: ClipboardCheck,
-        adminOnly: true,
-        beaulieuAllowed: true,
-      },
     ],
   },
   {
