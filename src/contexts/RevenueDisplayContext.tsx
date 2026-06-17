@@ -1,6 +1,4 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-
-const STORAGE_KEY = 'revenue-display-mode';
+import { createContext, useContext, ReactNode } from 'react';
 
 interface RevenueDisplayContextType {
   showNetRevenue: boolean;
@@ -10,22 +8,8 @@ interface RevenueDisplayContextType {
 const RevenueDisplayContext = createContext<RevenueDisplayContextType | undefined>(undefined);
 
 export const RevenueDisplayProvider = ({ children }: { children: ReactNode }) => {
-  const [showNetRevenue, setShowNetRevenueState] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved !== 'brutto'; // default: netto (nur explizit 'brutto' schaltet um)
-  });
-
-  // Persist to localStorage whenever the value changes
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, showNetRevenue ? 'netto' : 'brutto');
-  }, [showNetRevenue]);
-
-  const setShowNetRevenue = (value: boolean) => {
-    setShowNetRevenueState(value);
-  };
-
   return (
-    <RevenueDisplayContext.Provider value={{ showNetRevenue, setShowNetRevenue }}>
+    <RevenueDisplayContext.Provider value={{ showNetRevenue: true, setShowNetRevenue: () => {} }}>
       {children}
     </RevenueDisplayContext.Provider>
   );

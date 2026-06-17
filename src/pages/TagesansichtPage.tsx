@@ -541,10 +541,7 @@ export default function TagesansichtPage() {
             </button>
           </div>
 
-          <span className="text-[11px] text-muted-foreground">
-            {showNetRevenue ? 'Netto' : 'Brutto'}
-            {!hasBud && ' · kein Budget'}
-          </span>
+          {!hasBud && <span className="text-[11px] text-muted-foreground">kein Budget</span>}
 
           {/* Vergleichs-Buttons */}
           <div className="ml-auto flex items-center bg-muted rounded-lg p-0.5 gap-0.5">

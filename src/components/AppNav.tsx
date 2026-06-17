@@ -329,7 +329,7 @@ export const AppSidebar = () => {
   const { user, signOut } = useAuth();
   const { role, isAdmin, isManager, isBeaulieuManager, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
-  const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+
   const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
   const { tenant } = useTenant();
 
@@ -455,41 +455,6 @@ export const AppSidebar = () => {
       {/* Stichtag-Picker */}
       <StichtagPicker />
 
-      {/* Umsatzbasis-Toggle */}
-      <div className="border-t border-border px-3 py-2.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
-          Umsatzbasis
-        </p>
-        <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
-          <button
-            type="button"
-            onClick={() => setShowNetRevenue(true)}
-            className={cn(
-              'flex-1 transition-colors font-medium',
-              showNetRevenue ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
-            )}
-          >
-            Netto
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowNetRevenue(false)}
-            className={cn(
-              'flex-1 transition-colors font-medium',
-              !showNetRevenue ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:bg-muted',
-            )}
-          >
-            Brutto
-          </button>
-        </div>
-        <p className="text-[9px] mt-1 px-0.5 leading-tight">
-          {showNetRevenue
-            ? <span className="text-emerald-700 dark:text-emerald-400 font-medium">✓ Controlling-Basis · exkl. MWST</span>
-            : <span className="text-amber-600 dark:text-amber-400 font-medium">⚠ Kontrollansicht · inkl. MWST</span>
-          }
-        </p>
-      </div>
-
       {/* Marketing / Maison Toggle */}
       <div className="border-t border-border px-3 py-2.5">
         <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
@@ -587,7 +552,7 @@ export const AppBottomNav = () => {
   const navigate = useNavigate();
   const { isAdmin, isBeaulieuManager, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
-  const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
+
   const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
   const { tenant } = useTenant();
   const { user, signOut } = useAuth();
@@ -718,33 +683,6 @@ export const AppBottomNav = () => {
 
           {/* Stichtag + Umsatzbasis im Sheet-Footer */}
           <div className="shrink-0 border-t border-border px-4 py-3 space-y-3">
-            {/* Umsatzbasis */}
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
-                Umsatzbasis
-              </p>
-              <div className="flex rounded-md overflow-hidden border border-border text-xs h-8">
-                <button
-                  onClick={() => setShowNetRevenue(true)}
-                  className={cn(
-                    'flex-1 transition-colors font-medium',
-                    showNetRevenue ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted',
-                  )}
-                >
-                  Netto
-                </button>
-                <button
-                  onClick={() => setShowNetRevenue(false)}
-                  className={cn(
-                    'flex-1 transition-colors font-medium',
-                    !showNetRevenue ? 'bg-amber-500 text-white' : 'text-muted-foreground hover:bg-muted',
-                  )}
-                >
-                  Brutto
-                </button>
-              </div>
-            </div>
-
             {/* Marketing / Maison Toggle (Mobile) */}
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
