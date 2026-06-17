@@ -401,7 +401,13 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   if (periodRaw) {
     const parts = periodRaw.split(/\s*[-–]\s*/);
     periodFrom = parseGermanDate(parts[0] ?? '');
-    periodTo   = parseGermanDate(parts[parts.length > 1 ? 1 : 0] ?? '');
+    // Nur eine echte Bereichszeile ("von - bis") liefert auch das Enddatum.
+    // Eine einzelne "Von"-Zeile liefert NUR das Startdatum — periodTo kommt
+    // dann aus der separaten "Bis"-Zeile (Fallback unten). Sonst würde das
+    // Startdatum fälschlich auch als Enddatum übernommen.
+    if (parts.length > 1) {
+      periodTo = parseGermanDate(parts[parts.length - 1] ?? '');
+    }
   }
   // Fallback: Von / Bis als separate Header
   if (!periodFrom) {
