@@ -1,0 +1,151 @@
+Die aktuelle "Excel Ansicht" ist noch nicht nah genug an meiner Excel-Vorlage. Bitte baue sie nochmals neu und orientiere dich 1:1 an der hochgeladenen Datei "oliv.xlsx".
+
+Wichtig:
+Es soll KEINE Dashboard-Optik sein.
+Es soll KEINE Karten, Boxen oder Bericht-Blöcke haben.
+Es soll aussehen wie eine einfache Excel-Tabelle.
+
+Baue eine zusätzliche Ansicht:
+"Excel Vorlage Ansicht"
+
+Layout exakt so:
+
+Spalten:
+A und B leer / Abstand
+C = Kennzahl
+D = Budget
+E = Vorjahr
+F = Woche
+G = +/- in %
+H = Monat
+I = +/- in %
+
+Die Tabelle soll ab Zeile 6 beginnen.
+
+Zeile 6 Header:
+C6 = Monat Juni
+D6 = Budget
+E6 = Vorjahr
+F6 = Woche
+G6 = +/- in %
+H6 = Monat
+I6 = +/- in %
+
+Danach die Zeilen exakt in dieser Reihenfolge:
+
+7 Brutto umsatz
+8 Netto umsatz
+9 Brutto Plan
+10 Netto Plan zum Budget
+11 Gäste IN Zum Budget
+12 Gäste Take Away Budget
+13 Gruppen ab 20 Pax Budget
+
+16 Durchschnittverkauf / zum Budget
+17 Durchschnittverkauf TA / zum Budget
+18 Take Away Anteil
+
+21 Brutto Umsatz Letztes Jahr
+22 Gäste Letztes Jahr
+23 Gäste +/- zum Vorjahr
+24 Durchschnittsverkauf letztes Jahr
+
+26 Wein / Spirituose
+27 Bar Umsatz
+28 Küchen Umsatz
+29 Wein / Spirituose letztes Jahr
+30 Bar Umsatz letztes Jahr
+31 Küchen Umsatz letztes Jahr
+
+33 Google Rezension 5 Stern
+34 Google Rezension 3 Stern
+35 Google Rezension 1 Stern
+36 Tripadvisor 5 Stern
+37 Tripadvisor 3 Stern
+38 Tripadvisor 1 Stern
+
+40 Brunch Umsatz / Anteil
+
+42 Produktive Stunden
+43 Produktive Stunden geplant
+44 Produktivität
+45 Umsatz pro Gast
+46 Warenaufwand nach GN in %
+47 Inventur Wert nach Einkauf / Verkauf
+48 Food
+49 Getränke
+
+51 Einkauf Gesamt
+
+53 Spahni
+54 Transgourmet
+55 Gourmador
+56 Ambro
+57 Feldschlössli
+58 Terravigna
+59 Weitere Lieferanten 1
+60 Weitere Lieferanten 2
+61 Zusammen
+62 Rohabfall
+63 Marketing
+64 Maison
+65 Storno
+66 Kosten ohne Rezeptur
+
+68 Total Warenaufwand nach Rechnung
+
+Design exakt Excel-nah:
+- Weisser Hintergrund
+- Keine Cards
+- Keine Schatten
+- Keine grossen Überschriften
+- Dünne hellgraue Gridlinien
+- Spalte C breit, ca. 280 bis 320 px
+- Spalten D bis I schmaler, ca. 110 bis 130 px
+- Zahlen rechtsbündig
+- Texte linksbündig
+- Headerzeile fett
+- Leere Zeilen wie in der Vorlage beibehalten
+- Schrift ähnlich Excel: Arial oder system sans-serif, 12 bis 13 px
+- Tabellenbereich soll kompakt sein
+- Keine grossen Abstände zwischen den Zeilen
+
+Werte:
+- Wenn Daten vorhanden sind, automatisch einfüllen.
+- Wenn Daten fehlen, Feld leer lassen oder "—" anzeigen.
+- CHF Format: CHF 1'234
+- Prozentformat: 12.3 %
+- Gäste und Stunden ohne CHF anzeigen.
+
+Berechnung:
+Nutze die bereits vorhandene Kennzahlenlogik, aber mappe die Werte exakt in diese Tabellenzellen.
+Beispiele:
+- Brutto Umsatz → Zeile 7
+- Netto Umsatz → Zeile 8
+- Budgetwerte → Spalte D
+- Vorjahrwerte → Spalte E
+- Wochenwerte → Spalte F
+- Wochenabweichung → Spalte G
+- Monatswerte → Spalte H
+- Monatsabweichung → Spalte I
+
+PDF Export:
+Wenn diese Ansicht aktiv ist und ich auf "PDF exportieren" klicke, muss genau diese Excel-ähnliche Tabelle exportiert werden.
+Das PDF darf NICHT wie der aktuelle Bericht mit dunklem Header und grossen Tabellenblöcken aussehen.
+PDF soll querformat A4 sein.
+Die Tabelle soll möglichst 1:1 wie auf dem Bildschirm erscheinen.
+
+Technisch:
+- Die bestehende Dashboard Ansicht nicht löschen.
+- Einen Tab oder Umschalter hinzufügen:
+  Dashboard Ansicht | Excel Vorlage Ansicht
+- Der Export Button muss erkennen, welche Ansicht aktiv ist.
+- Für die Excel Vorlage Ansicht bitte eine eigene CSS-Klasse erstellen, z.B. excel-template-report.
+- Print CSS separat erstellen, damit der PDF Export exakt wie die Excel Tabelle aussieht.
+- Keine bestehenden Funktionen beschädigen.
+
+Nach Umsetzung:
+1. Liste alle geänderten Dateien.
+2. Erkläre, welche Zeilen automatisch befüllt werden.
+3. Erkläre, welche Zeilen noch keine Datenquelle haben.
+4. Gib mir eine kurze Testanleitung.

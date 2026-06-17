@@ -2,16 +2,12 @@
  * KennzahlenBerichtPage — Management Report
  *
  * Zwei Ansichten:
- *   Dashboard — KPI-Karten + Diagramm
- *   Excel     — Spaltenbericht (Kennzahl | Budget | Vorjahr | Woche +/- | Monat +/-)
- *
- * Datenquellen:
- *   dailyBudgets (localStorage / Supabase KV): Umsatz, PK, Budget, VJ
- *   Warenrechnungen (Supabase KV): WES Food / Beverage / Lieferanten
+ *   Dashboard      — KPI-Karten + Diagramm
+ *   Excel Vorlage  — Excel-ähnlicher Spaltenbericht (Kennzahl C | D-I Spalten)
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import {
   startOfWeek, endOfMonth, startOfMonth, startOfYear,
   subDays, subMonths, eachDayOfInterval, format, parseISO,
@@ -83,17 +79,18 @@ interface Summary {
   chart: { label: string; net: number; planned: number; vj: number }[];
 }
 
+// Excel-Zeile: type 'data' oder 'empty' (Leerzeile wie in der Vorlage)
 interface XRow {
-  label: string;
-  isSection?: boolean;
+  type: 'data' | 'empty';
+  label?: string;
   isBold?: boolean;
-  isIndent?: boolean;
+  isPct?: boolean;
+  isCount?: boolean;
   budget: number | null;
   vj: number | null;
   week: number | null;
   weekBudget: number | null;
   month: number | null;
-  isPct?: boolean;
 }
 
 // ── Module-level helpers ──────────────────────────────────────────────────
@@ -105,13 +102,11 @@ function readBudgets(tenantId: string): Record<string, DailyBudget> {
   } catch { return {}; }
 }
 
-const FMT = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-function fmtChf(v: number) { return `CHF ${FMT.format(Math.round(v))}`; }
+const NUM = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+function fmtChf(v: number) { return `CHF ${NUM.format(Math.round(v))}`; }
 function fmtPct(v: number) { return v.toFixed(1) + ' %'; }
 function fmtDev(v: number) { return (v >= 0 ? '+' : '') + v.toFixed(1) + ' %'; }
 function sgn(v: number) { return v >= 0 ? '+' : ''; }
-function n2(v: number | null): string { return v !== null && v > 0 ? fmtChf(v) : '—'; }
-function p2(v: number | null): string { return v !== null && v > 0 ? fmtPct(v) : '—'; }
 
 function tLight(actual: number, target: number, lowerIsBetter = false): 'green' | 'yellow' | 'red' {
   if (target <= 0 || actual <= 0) return 'yellow';
@@ -122,11 +117,9 @@ function tLight(actual: number, target: number, lowerIsBetter = false): 'green' 
 
 function getSupp(supp: Record<string, number>, pattern: string): number {
   const lower = pattern.toLowerCase();
-  return Object.entries(supp)
-    .filter(([n]) => n.toLowerCase().includes(lower))
+  return Object.entries(supp).filter(([n]) => n.toLowerCase().includes(lower))
     .reduce((s, [, v]) => s + v, 0);
 }
-
 function getSuppOther(supp: Record<string, number>, patterns: string[]): number {
   const lowers = patterns.map(p => p.toLowerCase());
   return Object.entries(supp)
@@ -134,119 +127,115 @@ function getSuppOther(supp: Record<string, number>, patterns: string[]): number 
     .reduce((s, [, v]) => s + v, 0);
 }
 
-// ── Build Excel Rows (shared computation) ────────────────────────────────
+// ── Build Excel Rows (exakte Zeilennummern nach Vorlage) ──────────────────
 
 function buildExcelRows(s: Summary): XRow[] {
   const { week } = s;
-
-  // Supplier breakdown
-  const SUPP_PATTERNS = ['spahni', 'transgourmet', 'gourmador', 'ambro', 'feldschlöss', 'terravigna'];
-  const spahni       = getSupp(s.suppliers, 'spahni');
-  const transgourmet = getSupp(s.suppliers, 'transgourmet');
-  const gourmador    = getSupp(s.suppliers, 'gourmador');
-  const ambro        = getSupp(s.suppliers, 'ambro');
-  const feldschl     = getSupp(s.suppliers, 'feldschlöss');
-  const terravigna   = getSupp(s.suppliers, 'terravigna');
-  const weitere      = getSuppOther(s.suppliers, SUPP_PATTERNS);
-
-  // WES %
-  const wesPct     = s.netTotal  > 0 && s.warenTotal  > 0 ? (s.warenTotal  / s.netTotal)  * 100 : null;
-  const wesWeekPct = week.netTotal > 0 && week.warenTotal > 0 ? (week.warenTotal / week.netTotal) * 100 : null;
-
-  const r = (
-    label: string,
-    month: number | null,
-    week: number | null = null,
-    weekBudget: number | null = null,
-    budget: number | null = null,
-    vj: number | null = null,
-    opts: Partial<XRow> = {},
-  ): XRow => ({ label, month, week, weekBudget, budget, vj, ...opts });
-
-  const sec = (label: string): XRow =>
-    ({ label, isSection: true, budget: null, vj: null, week: null, weekBudget: null, month: null });
-
   const M = (v: number) => v > 0 ? v : null;
 
+  const SUPP_PATTERNS = ['spahni', 'transgourmet', 'gourmador', 'ambro', 'feldschlöss', 'terravigna'];
+  const spahni        = getSupp(s.suppliers, 'spahni');
+  const transgourmet  = getSupp(s.suppliers, 'transgourmet');
+  const gourmador     = getSupp(s.suppliers, 'gourmador');
+  const ambro         = getSupp(s.suppliers, 'ambro');
+  const feldschl      = getSupp(s.suppliers, 'feldschlöss');
+  const terravigna    = getSupp(s.suppliers, 'terravigna');
+  const weitere       = getSuppOther(s.suppliers, SUPP_PATTERNS);
+
+  const wesPct     = s.netTotal    > 0 && s.warenTotal    > 0 ? (s.warenTotal    / s.netTotal)    * 100 : null;
+  const wesWeekPct = week.netTotal > 0 && week.warenTotal > 0 ? (week.warenTotal / week.netTotal) * 100 : null;
+
+  const e = (): XRow => ({ type: 'empty', budget: null, vj: null, week: null, weekBudget: null, month: null });
+  const d = (
+    label: string,
+    month: number | null,
+    wk: number | null,
+    wkBud: number | null,
+    budget: number | null,
+    vj: number | null,
+    opts: Partial<XRow> = {},
+  ): XRow => ({ type: 'data', label, month, week: wk, weekBudget: wkBud, budget, vj, ...opts });
+
   return [
-    // ── Umsatz ──────────────────────────────────────────────────────────
-    sec('Umsatz'),
-    r('Brutto Umsatz',              M(s.grossTotal), M(week.grossTotal), M(week.plannedNet * 1.081), M(s.plannedNet * 1.081), M(s.vjNet * 1.081)),
-    r('Netto Umsatz',               M(s.netTotal),   M(week.netTotal),   M(week.plannedNet),         M(s.plannedNet),         M(s.vjNet), { isBold: true }),
-    r('Netto Plan zum Budget',      M(s.plannedNet), M(week.plannedNet), null, null, null),
-    r('Gäste Inhouse zum Budget',   null, null, null, null, null),
-    r('Gäste Take Away Budget',     null, null, null, null, null),
-    r('Gruppen ab 20 Pax Budget',   null, null, null, null, null),
-
-    // ── Durchschnitt ────────────────────────────────────────────────────
-    sec('Durchschnitt'),
-    r('Durchschnittsverkauf',             null, null, null, null, null),
-    r('Durchschnittsverkauf Take Away',   null, null, null, null, null),
-    r('Take Away Anteil',                 null, null, null, null, null, { isPct: true }),
-
-    // ── Vorjahr ─────────────────────────────────────────────────────────
-    sec('Vorjahr'),
-    r('Brutto Umsatz letztes Jahr',        s.vjNet > 0 ? s.vjNet * 1.081 : null, week.vjNet > 0 ? week.vjNet * 1.081 : null, null, null, null),
-    r('Netto Umsatz letztes Jahr',         M(s.vjNet), M(week.vjNet), null, null, null),
-    r('Gäste letztes Jahr',                null, null, null, null, null),
-    r('Durchschnittsverkauf letztes Jahr', null, null, null, null, null),
-
-    // ── Umsatzgruppen ───────────────────────────────────────────────────
-    sec('Umsatzgruppen'),
-    r('Wein / Spirituosen',           null, null, null, null, null),
-    r('Bar Umsatz',                   M(s.bevNet),  null, null, null, null),
-    r('Küchen Umsatz',                M(s.foodNet), null, null, null, null),
-    r('Wein / Spirituosen letztes Jahr', null, null, null, null, null),
-    r('Bar Umsatz letztes Jahr',      null, null, null, null, null),
-    r('Küchen Umsatz letztes Jahr',   null, null, null, null, null),
-
-    // ── Bewertungen ─────────────────────────────────────────────────────
-    sec('Bewertungen'),
-    r('Google Rezension 5 Sterne', null, null, null, null, null),
-    r('Google Rezension 3 Sterne', null, null, null, null, null),
-    r('Google Rezension 1 Stern',  null, null, null, null, null),
-    r('Tripadvisor 5 Sterne',      null, null, null, null, null),
-    r('Tripadvisor 3 Sterne',      null, null, null, null, null),
-    r('Tripadvisor 1 Stern',       null, null, null, null, null),
-
-    // ── Brunch ──────────────────────────────────────────────────────────
-    sec('Brunch'),
-    r('Brunch Umsatz / Anteil', null, null, null, null, null),
-
-    // ── Produktivität ───────────────────────────────────────────────────
-    sec('Produktivität'),
-    r('Produktive Stunden',         null, null, null, null, null),
-    r('Produktive Stunden geplant', null, null, null, null, null),
-    r('Produktivität',              null, null, null, null, null, { isPct: true }),
-    r('Umsatz pro Gast',            null, null, null, null, null),
-
-    // ── Warenaufwand ────────────────────────────────────────────────────
-    sec('Warenaufwand'),
-    r('Warenaufwand nach gastronovi in %', wesPct, wesWeekPct, null, null, null, { isPct: true }),
-    r('Inventurwert (Einkauf / Verkauf)',  null,   null,        null, null, null),
-    r('Food',          M(s.warenFood), M(week.warenFood), null, null, null, { isIndent: true }),
-    r('Getränke',      M(s.warenBev),  M(week.warenBev),  null, null, null, { isIndent: true }),
-    r('Einkauf Gesamt', M(s.warenTotal), M(week.warenTotal), null, null, null, { isBold: true }),
-
-    // ── Lieferanten ─────────────────────────────────────────────────────
-    sec('Lieferanten'),
-    r('Spahni',        spahni       > 0 ? spahni       : null, null, null, null, null, { isIndent: true }),
-    r('Transgourmet',  transgourmet > 0 ? transgourmet : null, null, null, null, null, { isIndent: true }),
-    r('Gourmador',     gourmador    > 0 ? gourmador    : null, null, null, null, null, { isIndent: true }),
-    r('Ambro',         ambro        > 0 ? ambro        : null, null, null, null, null, { isIndent: true }),
-    r('Feldschlössli', feldschl     > 0 ? feldschl     : null, null, null, null, null, { isIndent: true }),
-    r('Terravigna',    terravigna   > 0 ? terravigna   : null, null, null, null, null, { isIndent: true }),
-    r('Weitere',       weitere      > 0 ? weitere      : null, null, null, null, null, { isIndent: true }),
-    r('Zusammen',      M(s.warenTotal), M(week.warenTotal), null, null, null, { isBold: true }),
-
-    // ── Korrekturen / Kosten ────────────────────────────────────────────
-    sec('Korrekturen / Kosten'),
-    r('Rohabfall',                     null, null, null, null, null),
-    r('Marketing',                     null, null, null, null, null),
-    r('Maison',                        null, null, null, null, null),
-    r('Storno',                        null, null, null, null, null),
-    r('Kosten ohne Rezeptur',          null, null, null, null, null),
-    r('Total Warenaufwand n. Rechnung', M(s.warenTotal), M(week.warenTotal), null, null, null, { isBold: true }),
+    // ── Zeilen 7–13: Umsatz ─────────────────────────────────────────────
+    d('Brutto Umsatz',             M(s.grossTotal),        M(week.grossTotal),      M(week.plannedNet*1.081), M(s.plannedNet*1.081), M(s.vjNet*1.081)),
+    d('Netto Umsatz',              M(s.netTotal),          M(week.netTotal),         M(week.plannedNet),       M(s.plannedNet),       M(s.vjNet),       { isBold: true }),
+    d('Brutto Plan',               M(s.plannedNet*1.081),  null,                    null,                     null,                  null),
+    d('Netto Plan zum Budget',     M(s.plannedNet),        M(week.plannedNet),       null,                     null,                  null),
+    d('Gäste IN zum Budget',       null, null, null, null, null),
+    d('Gäste Take Away Budget',    null, null, null, null, null),
+    d('Gruppen ab 20 Pax Budget',  null, null, null, null, null),
+    // ── Zeilen 14–15: leer ──────────────────────────────────────────────
+    e(), e(),
+    // ── Zeilen 16–18: Durchschnitt ───────────────────────────────────────
+    d('Durchschnittsverkauf / zum Budget',    null, null, null, null, null),
+    d('Durchschnittsverkauf TA / zum Budget', null, null, null, null, null),
+    d('Take Away Anteil',                     null, null, null, null, null, { isPct: true }),
+    // ── Zeilen 19–20: leer ──────────────────────────────────────────────
+    e(), e(),
+    // ── Zeilen 21–24: Vorjahr ────────────────────────────────────────────
+    d('Brutto Umsatz Letztes Jahr',           s.vjNet>0 ? s.vjNet*1.081 : null, week.vjNet>0 ? week.vjNet*1.081 : null, null, null, null),
+    d('Gäste Letztes Jahr',                   null, null, null, null, null, { isCount: true }),
+    d('Gäste +/- zum Vorjahr',               null, null, null, null, null, { isCount: true }),
+    d('Durchschnittsverkauf letztes Jahr',    null, null, null, null, null),
+    // ── Zeile 25: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeilen 26–31: Umsatzgruppen ──────────────────────────────────────
+    d('Wein / Spirituose',              null,         null, null, null, null),
+    d('Bar Umsatz',                     M(s.bevNet),  null, null, null, null),
+    d('Küchen Umsatz',                  M(s.foodNet), null, null, null, null),
+    d('Wein / Spirituose letztes Jahr', null, null, null, null, null),
+    d('Bar Umsatz letztes Jahr',        null, null, null, null, null),
+    d('Küchen Umsatz letztes Jahr',     null, null, null, null, null),
+    // ── Zeile 32: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeilen 33–38: Bewertungen ────────────────────────────────────────
+    d('Google Rezension 5 Stern',  null, null, null, null, null, { isCount: true }),
+    d('Google Rezension 3 Stern',  null, null, null, null, null, { isCount: true }),
+    d('Google Rezension 1 Stern',  null, null, null, null, null, { isCount: true }),
+    d('Tripadvisor 5 Stern',       null, null, null, null, null, { isCount: true }),
+    d('Tripadvisor 3 Stern',       null, null, null, null, null, { isCount: true }),
+    d('Tripadvisor 1 Stern',       null, null, null, null, null, { isCount: true }),
+    // ── Zeile 39: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeile 40: Brunch ────────────────────────────────────────────────
+    d('Brunch Umsatz / Anteil', null, null, null, null, null),
+    // ── Zeile 41: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeilen 42–49: Produktivität & WES ───────────────────────────────
+    d('Produktive Stunden',                   null,           null,             null, null, null, { isCount: true }),
+    d('Produktive Stunden geplant',           null,           null,             null, null, null, { isCount: true }),
+    d('Produktivität',                        null,           null,             null, null, null, { isPct:  true }),
+    d('Umsatz pro Gast',                      null,           null,             null, null, null),
+    d('Warenaufwand nach GN in %',            wesPct,         wesWeekPct,       null, null, null, { isPct:  true }),
+    d('Inventur Wert nach Einkauf / Verkauf', null,           null,             null, null, null),
+    d('Food',                                 M(s.warenFood), M(week.warenFood),null, null, null),
+    d('Getränke',                             M(s.warenBev),  M(week.warenBev), null, null, null),
+    // ── Zeile 50: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeile 51: Einkauf Gesamt ────────────────────────────────────────
+    d('Einkauf Gesamt', M(s.warenTotal), M(week.warenTotal), null, null, null, { isBold: true }),
+    // ── Zeile 52: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeilen 53–66: Lieferanten & Korrekturen ──────────────────────────
+    d('Spahni',              spahni>0      ? spahni       : null, null, null, null, null),
+    d('Transgourmet',        transgourmet>0? transgourmet : null, null, null, null, null),
+    d('Gourmador',           gourmador>0   ? gourmador    : null, null, null, null, null),
+    d('Ambro',               ambro>0       ? ambro        : null, null, null, null, null),
+    d('Feldschlössli',       feldschl>0    ? feldschl     : null, null, null, null, null),
+    d('Terravigna',          terravigna>0  ? terravigna   : null, null, null, null, null),
+    d('Weitere Lieferanten 1', weitere>0   ? weitere      : null, null, null, null, null),
+    d('Weitere Lieferanten 2', null, null, null, null, null),
+    d('Zusammen',            M(s.warenTotal), M(week.warenTotal), null, null, null, { isBold: true }),
+    d('Rohabfall',           null, null, null, null, null),
+    d('Marketing',           null, null, null, null, null),
+    d('Maison',              null, null, null, null, null),
+    d('Storno',              null, null, null, null, null),
+    d('Kosten ohne Rezeptur',null, null, null, null, null),
+    // ── Zeile 67: leer ──────────────────────────────────────────────────
+    e(),
+    // ── Zeile 68: Total ─────────────────────────────────────────────────
+    d('Total Warenaufwand nach Rechnung', M(s.warenTotal), M(week.warenTotal), null, null, null, { isBold: true }),
   ];
 }
 
@@ -267,26 +256,15 @@ export default function KennzahlenBerichtPage() {
 
   const { from, to } = useMemo(() => {
     switch (period) {
-      case 'heute':
-        return { from: today, to: today };
-      case 'gestern': {
-        const y = subDays(today, 1);
-        return { from: y, to: y };
-      }
-      case 'woche':
-        return { from: startOfWeek(today, { weekStartsOn: 1 }), to: today };
-      case 'monat':
-        return { from: startOfMonth(today), to: today };
-      case 'letzter_monat': {
-        const lm = subMonths(today, 1);
-        return { from: startOfMonth(lm), to: endOfMonth(lm) };
-      }
-      case 'jahr':
-        return { from: startOfYear(today), to: today };
+      case 'heute':         return { from: today, to: today };
+      case 'gestern': { const y = subDays(today,1); return { from: y, to: y }; }
+      case 'woche':         return { from: startOfWeek(today, { weekStartsOn: 1 }), to: today };
+      case 'monat':         return { from: startOfMonth(today), to: today };
+      case 'letzter_monat': { const lm = subMonths(today,1); return { from: startOfMonth(lm), to: endOfMonth(lm) }; }
+      case 'jahr':          return { from: startOfYear(today), to: today };
       default: {
-        try {
-          return { from: parseISO(customFrom), to: parseISO(customTo) };
-        } catch { return { from: today, to: today }; }
+        try { return { from: parseISO(customFrom), to: parseISO(customTo) }; }
+        catch { return { from: today, to: today }; }
       }
     }
   }, [period, customFrom, customTo, today]);
@@ -303,25 +281,19 @@ export default function KennzahlenBerichtPage() {
     (async () => {
       setLoading(true);
       try {
-        const budgets     = readBudgets(tenantId);
-        const days        = eachDayOfInterval({ start: from, end: to });
-        const nDays       = days.length;
-        const lblFmt      = nDays > 90 ? 'MMM yy' : nDays > 14 ? 'dd.MM' : 'dd.MM.';
-        const weekFromMs  = Math.max(from.getTime(), subDays(to, 6).getTime());
+        const budgets      = readBudgets(tenantId);
+        const days         = eachDayOfInterval({ start: from, end: to });
+        const nDays        = days.length;
+        const lblFmt       = nDays > 90 ? 'MMM yy' : nDays > 14 ? 'dd.MM' : 'dd.MM.';
+        const weekFromMs   = Math.max(from.getTime(), subDays(to, 6).getTime());
         const weekFromDate = new Date(weekFromMs);
 
-        // Month accumulators
-        let grossTotal = 0, netTotal = 0;
-        let foodGross = 0, bevGross = 0;
-        let plannedGross = 0, vjGross = 0;
-        let laborActual = 0, laborPlanned = 0;
+        let grossTotal = 0, netTotal = 0, foodGross = 0, bevGross = 0;
+        let plannedGross = 0, vjGross = 0, laborActual = 0, laborPlanned = 0;
         let daysWithData = 0;
-        const chartMap = new Map<string, { net: number; planned: number; vj: number }>();
-
-        // Week accumulators
         let wGross = 0, wNet = 0, wVjGross = 0, wPlanGross = 0;
-        let wFoodGross = 0, wBevGross = 0;
-        let wLabor = 0;
+        let wFoodGross = 0, wBevGross = 0, wLabor = 0;
+        const chartMap = new Map<string, { net: number; planned: number; vj: number }>();
 
         for (const day of days) {
           const key   = format(day, 'yyyy-MM-dd');
@@ -332,63 +304,38 @@ export default function KennzahlenBerichtPage() {
           const planG = d?.plannedRevenue   ?? 0;
           const vjG   = d?.previousYearRevenue ?? 0;
 
-          grossTotal   += gross;
-          netTotal     += net;
+          grossTotal   += gross;  netTotal     += net;
           foodGross    += d?.actualFood     ?? 0;
           bevGross     += d?.actualBeverage ?? 0;
-          plannedGross += planG;
-          vjGross      += vjG;
+          plannedGross += planG; vjGross      += vjG;
           laborActual  += d?.actualLaborCost  ?? 0;
           laborPlanned += d?.plannedLaborCost ?? 0;
           if (gross > 0) daysWithData++;
 
           const lbl = format(day, lblFmt, { locale: de });
           const ex  = chartMap.get(lbl) ?? { net: 0, planned: 0, vj: 0 };
-          chartMap.set(lbl, {
-            net:     ex.net     + Math.round(net),
-            planned: ex.planned + Math.round(grossToNet(planG)),
-            vj:      ex.vj      + Math.round(grossToNet(vjG)),
-          });
+          chartMap.set(lbl, { net: ex.net + Math.round(net), planned: ex.planned + Math.round(grossToNet(planG)), vj: ex.vj + Math.round(grossToNet(vjG)) });
 
-          // Week slice
           if (!isBefore(day, weekFromDate)) {
-            wGross     += gross;
-            wNet       += net;
-            wVjGross   += vjG;
-            wPlanGross += planG;
-            wFoodGross += d?.actualFood     ?? 0;
-            wBevGross  += d?.actualBeverage ?? 0;
+            wGross += gross; wNet += net; wVjGross += vjG; wPlanGross += planG;
+            wFoodGross += d?.actualFood ?? 0; wBevGross += d?.actualBeverage ?? 0;
             wLabor     += d?.actualLaborCost ?? 0;
           }
         }
 
-        // Waren invoices
         const months  = [...new Set(days.map(d => format(d, 'yyyy-MM')))];
-        const allInv  = (await Promise.all(months.map(m => loadMonthInvoices(tenantId, m))))
-          .flat()
-          .filter(inv => {
-            try {
-              const d = parseISO(inv.date);
-              return !isBefore(d, from) && !isAfter(d, to);
-            } catch { return false; }
-          });
+        const allInv  = (await Promise.all(months.map(m => loadMonthInvoices(tenantId, m)))).flat()
+          .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } });
 
-        const warenFood  = allInv.filter(i => i.kategorie === 'Food')
-                           .reduce((s, i) => s + (i.amountNet ?? 0), 0);
-        const warenBev   = allInv.filter(i => i.kategorie === 'Beverage')
-                           .reduce((s, i) => s + (i.amountNet ?? 0), 0);
-        const warenSonst = allInv.filter(i => i.kategorie === 'Sonstiges')
-                           .reduce((s, i) => s + (i.amountNet ?? 0), 0);
+        const warenFood  = allInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
+        const warenBev   = allInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
+        const warenSonst = allInv.filter(i => i.kategorie === 'Sonstiges').reduce((s, i) => s + (i.amountNet ?? 0), 0);
 
-        // Week waren
-        const weekInv    = allInv.filter(inv => {
-          try { return !isBefore(parseISO(inv.date), weekFromDate); } catch { return false; }
-        });
+        const weekInv    = allInv.filter(inv => { try { return !isBefore(parseISO(inv.date), weekFromDate); } catch { return false; } });
         const wWarenFood  = weekInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
         const wWarenBev   = weekInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
         const wWarenSonst = weekInv.filter(i => i.kategorie === 'Sonstiges').reduce((s, i) => s + (i.amountNet ?? 0), 0);
 
-        // Supplier map
         const supplierMap: Record<string, number> = {};
         for (const inv of allInv) {
           const name = inv.supplierName?.trim() || 'Unbekannt';
@@ -397,33 +344,20 @@ export default function KennzahlenBerichtPage() {
 
         if (!alive) return;
         setSummary({
-          daysTotal:   days.length,
-          daysWithData,
-          netTotal,
-          grossTotal,
-          foodNet:     foodGross / 1.081,
-          bevNet:      bevGross  / 1.081,
-          plannedNet:  grossToNet(plannedGross),
-          vjNet:       grossToNet(vjGross),
-          laborActual,
-          laborPlanned,
-          warenFood,
-          warenBev,
-          warenSonst,
-          warenTotal:  warenFood + warenBev + warenSonst,
-          suppliers:   supplierMap,
+          daysTotal: days.length, daysWithData,
+          netTotal, grossTotal,
+          foodNet: foodGross / 1.081, bevNet: bevGross / 1.081,
+          plannedNet: grossToNet(plannedGross), vjNet: grossToNet(vjGross),
+          laborActual, laborPlanned,
+          warenFood, warenBev, warenSonst, warenTotal: warenFood + warenBev + warenSonst,
+          suppliers: supplierMap,
           week: {
-            netTotal:   wNet,
-            grossTotal: wGross,
-            vjNet:      grossToNet(wVjGross),
-            plannedNet: grossToNet(wPlanGross),
+            netTotal: wNet, grossTotal: wGross,
+            vjNet: grossToNet(wVjGross), plannedNet: grossToNet(wPlanGross),
             laborActual: wLabor,
-            warenFood:  wWarenFood,
-            warenBev:   wWarenBev,
-            warenSonst: wWarenSonst,
+            warenFood: wWarenFood, warenBev: wWarenBev, warenSonst: wWarenSonst,
             warenTotal: wWarenFood + wWarenBev + wWarenSonst,
-            foodNet:    wFoodGross / 1.081,
-            bevNet:     wBevGross  / 1.081,
+            foodNet: wFoodGross / 1.081, bevNet: wBevGross / 1.081,
           },
           chart: Array.from(chartMap.entries()).map(([label, v]) => ({ label, ...v })),
         });
@@ -437,12 +371,9 @@ export default function KennzahlenBerichtPage() {
     return () => { alive = false; };
   }, [tenantId, from, to]);
 
-  // ── Excel rows (shared computation) ──────────────────────────────────
+  // ── Excel rows ────────────────────────────────────────────────────────
 
-  const excelRows = useMemo(() => {
-    if (!summary) return [];
-    return buildExcelRows(summary);
-  }, [summary]);
+  const excelRows = useMemo(() => (summary ? buildExcelRows(summary) : []), [summary]);
 
   // ── PDF export ────────────────────────────────────────────────────────
 
@@ -452,55 +383,73 @@ export default function KennzahlenBerichtPage() {
     const { default: autoTable } = await import('jspdf-autotable');
 
     if (viewMode === 'excel') {
-      // ── Excel view PDF (Landscape A4) ────────────────────────────────
+      // ── Excel Vorlage PDF (Landscape A4, Excel-nah) ──────────────────
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-      const PW = 297; const M = 12;
+      const PW = 297; const M = 10;
+      const monthLabel = format(from, 'MMMM yyyy', { locale: de });
 
-      doc.setFillColor(30, 41, 59);
-      doc.rect(0, 0, PW, 24, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12);
-      doc.setTextColor(255, 255, 255);
-      doc.text('Kennzahlen Bericht — Spaltenbericht', M, 10);
-      doc.setFontSize(7.5);
+      // Minimaler Header
       doc.setFont('helvetica', 'normal');
-      doc.text(rangeLabel, M, 18);
-      doc.text(`Erstellt: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, PW - M, 18, { align: 'right' });
+      doc.setFontSize(8);
+      doc.setTextColor(80);
+      doc.text(`Kennzahlen Bericht – ${monthLabel}`, M, 8);
+      doc.text(`${rangeLabel}  |  Erstellt: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, PW - M, 8, { align: 'right' });
 
+      // Baue Table-Body aus excelRows
       const head = [['Kennzahl', 'Budget', 'Vorjahr', 'Woche', '+/- %', 'Monat', '+/- %']];
       const body: string[][] = [];
 
       for (const row of excelRows) {
-        if (row.isSection) {
-          body.push([row.label, '', '', '', '', '', '']);
+        if (row.type === 'empty') {
+          body.push(['', '', '', '', '', '', '']);
           continue;
         }
-        const fmt = row.isPct ? p2 : n2;
-        // Compute deviations (all division precomputed here, not in JSX)
-        const wDev  = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
+
+        const fmtCell = (v: number | null) => {
+          if (v === null) return '—';
+          if (row.isPct)  return v.toFixed(1) + ' %';
+          if (row.isCount) return NUM.format(Math.round(v));
+          return fmtChf(v);
+        };
+
+        // Precompute deviations (no division in callback)
+        const wDev = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
           ? ((row.week - row.weekBudget) / row.weekBudget) * 100 : null;
-        const mDev  = row.month !== null && row.budget !== null && row.budget > 0
+        const mDev = row.month !== null && row.budget !== null && row.budget > 0
           ? ((row.month - row.budget) / row.budget) * 100 : null;
-        const indent = row.isIndent ? '   ' : '';
+
         body.push([
-          indent + row.label,
-          fmt(row.budget),
-          fmt(row.vj),
-          fmt(row.week),
+          row.label ?? '',
+          fmtCell(row.budget),
+          fmtCell(row.vj),
+          fmtCell(row.week),
           wDev !== null ? fmtDev(wDev) : '—',
-          fmt(row.month),
+          fmtCell(row.month),
           mDev !== null ? fmtDev(mDev) : '—',
         ]);
       }
 
       autoTable(doc, {
-        startY: 28, margin: { left: M, right: M },
+        startY: 12, margin: { left: M, right: M },
         head,
         body,
-        styles: { fontSize: 7, cellPadding: 1.5 },
-        headStyles: { fillColor: [30, 41, 59], fontSize: 7.5 },
+        styles: {
+          fontSize: 6.5,
+          cellPadding: { top: 1, bottom: 1, left: 2, right: 2 },
+          lineWidth: 0.1,
+          lineColor: [210, 210, 210],
+        },
+        headStyles: {
+          fillColor: [242, 242, 242],
+          textColor: [0, 0, 0],
+          fontStyle: 'bold',
+          lineWidth: 0.3,
+          lineColor: [160, 160, 160],
+          fontSize: 7,
+        },
+        alternateRowStyles: { fillColor: [255, 255, 255] },
         columnStyles: {
-          0: { cellWidth: 80 },
+          0: { cellWidth: 76 },
           1: { cellWidth: 28, halign: 'right' },
           2: { cellWidth: 28, halign: 'right' },
           3: { cellWidth: 28, halign: 'right' },
@@ -509,22 +458,23 @@ export default function KennzahlenBerichtPage() {
           6: { cellWidth: 22, halign: 'right' },
         },
         didParseCell: (data) => {
-          if (data.section === 'body') {
-            const row = excelRows[data.row.index];
-            if (row?.isSection) {
-              data.cell.styles.fillColor = [241, 245, 249];
-              data.cell.styles.textColor = [71, 85, 105];
-              data.cell.styles.fontStyle = 'bold';
-              data.cell.styles.fontSize  = 7;
-            } else if (row?.isBold) {
-              data.cell.styles.fontStyle = 'bold';
-            }
-            // Color +/- columns
-            if ((data.column.index === 4 || data.column.index === 6) && typeof data.cell.raw === 'string') {
-              const v = data.cell.raw as string;
-              if (v.startsWith('+')) data.cell.styles.textColor = [4, 120, 87];
-              else if (v.startsWith('-')) data.cell.styles.textColor = [185, 28, 28];
-            }
+          if (data.section !== 'body') return;
+          const row = excelRows[data.row.index];
+          if (!row) return;
+
+          if (row.type === 'empty') {
+            data.cell.styles.minCellHeight = 3;
+            data.cell.styles.lineWidth      = 0;
+            return;
+          }
+          if (row.isBold) {
+            data.cell.styles.fontStyle = 'bold';
+          }
+          // Farbe für +/- Spalten
+          if (data.column.index === 4 || data.column.index === 6) {
+            const v = data.cell.raw as string;
+            if (typeof v === 'string' && v.startsWith('+')) data.cell.styles.textColor = [25, 107, 36];
+            else if (typeof v === 'string' && v.startsWith('-')) data.cell.styles.textColor = [192, 0, 0];
           }
         },
       });
@@ -532,11 +482,10 @@ export default function KennzahlenBerichtPage() {
       const pages = doc.getNumberOfPages();
       for (let i = 1; i <= pages; i++) {
         doc.setPage(i);
-        doc.setFontSize(6.5);
-        doc.setTextColor(150);
+        doc.setFontSize(6); doc.setTextColor(160);
         doc.text(`Seite ${i} / ${pages}`, PW / 2, 205, { align: 'center' });
       }
-      doc.save(`spaltenbericht-${format(from, 'yyyy-MM-dd')}.pdf`);
+      doc.save(`kennzahlen-vorlage-${format(from, 'yyyy-MM-dd')}.pdf`);
 
     } else {
       // ── Dashboard PDF (Portrait A4) ─────────────────────────────────
@@ -545,14 +494,10 @@ export default function KennzahlenBerichtPage() {
       const HS = { fillColor: [30, 41, 59] as [number, number, number] };
       const ST = { fontSize: 8.5 };
 
-      doc.setFillColor(30, 41, 59);
-      doc.rect(0, 0, PW, 28, 'F');
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(13);
-      doc.setTextColor(255, 255, 255);
+      doc.setFillColor(30, 41, 59); doc.rect(0, 0, PW, 28, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(255, 255, 255);
       doc.text('Kennzahlen Bericht', M, 12);
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal');
       doc.text(rangeLabel, M, 20);
       doc.text(`Erstellt: ${format(new Date(), 'dd.MM.yyyy HH:mm')}`, PW - M, 20, { align: 'right' });
 
@@ -573,15 +518,14 @@ export default function KennzahlenBerichtPage() {
 
       sec('Umsatzübersicht');
       autoTable(doc, {
-        startY: y, margin: { left: M, right: M },
-        head: [['Kennzahl', 'Wert']],
+        startY: y, margin: { left: M, right: M }, head: [['Kennzahl', 'Wert']],
         body: [
-          ['Nettoumsatz Total',       fmtChf(summary.netTotal)],
-          ['Bruttoumsatz Total',      fmtChf(summary.grossTotal)],
-          ['Budget Nettoumsatz',      summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'],
-          ['Abw. Budget',             summary.plannedNet > 0 ? `${sgn(budDiffP)}${fmtChf(budDiffP)} (${sgn(budDiffPP)}${budDiffPP.toFixed(1)} %)` : '—'],
-          ['Vorjahr Nettoumsatz',     summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'],
-          ['Abw. Vorjahr',            summary.vjNet > 0 ? `${sgn(vjDiffP)}${fmtChf(vjDiffP)} (${sgn(vjDiffPP)}${vjDiffPP.toFixed(1)} %)` : '—'],
+          ['Nettoumsatz Total',   fmtChf(summary.netTotal)],
+          ['Bruttoumsatz Total',  fmtChf(summary.grossTotal)],
+          ['Budget Nettoumsatz',  summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'],
+          ['Abw. Budget',         summary.plannedNet > 0 ? `${sgn(budDiffP)}${fmtChf(budDiffP)} (${sgn(budDiffPP)}${budDiffPP.toFixed(1)} %)` : '—'],
+          ['Vorjahr Nettoumsatz', summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'],
+          ['Abw. Vorjahr',        summary.vjNet > 0 ? `${sgn(vjDiffP)}${fmtChf(vjDiffP)} (${sgn(vjDiffPP)}${vjDiffPP.toFixed(1)} %)` : '—'],
         ],
         headStyles: HS, styles: ST,
       });
@@ -589,8 +533,7 @@ export default function KennzahlenBerichtPage() {
 
       sec('Personal Kennzahlen');
       autoTable(doc, {
-        startY: y, margin: { left: M, right: M },
-        head: [['Kennzahl', 'Wert']],
+        startY: y, margin: { left: M, right: M }, head: [['Kennzahl', 'Wert']],
         body: [
           ['Personalkosten Ist',  fmtChf(summary.laborActual)],
           ['Personalkosten Plan', summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'],
@@ -602,21 +545,20 @@ export default function KennzahlenBerichtPage() {
 
       sec('Warenaufwand / WES');
       autoTable(doc, {
-        startY: y, margin: { left: M, right: M },
-        head: [['Kategorie', 'CHF', '% vom Umsatz']],
+        startY: y, margin: { left: M, right: M }, head: [['Kategorie', 'CHF', '% vom Umsatz']],
         body: [
-          ['Food',      n2(summary.warenFood),  wFPdf > 0 ? fmtPct(wFPdf) : '—'],
-          ['Beverage',  n2(summary.warenBev),   wBPdf > 0 ? fmtPct(wBPdf) : '—'],
-          ['Sonstiges', n2(summary.warenSonst), '—'],
-          ['Total',     n2(summary.warenTotal), summary.netTotal > 0 && summary.warenTotal > 0 ? fmtPct(wesPctPdf) : '—'],
+          ['Food',      summary.warenFood  > 0 ? `${NUM.format(Math.round(summary.warenFood))}` : '—',  wFPdf > 0 ? fmtPct(wFPdf) : '—'],
+          ['Beverage',  summary.warenBev   > 0 ? `${NUM.format(Math.round(summary.warenBev))}` : '—',   wBPdf > 0 ? fmtPct(wBPdf) : '—'],
+          ['Sonstiges', summary.warenSonst > 0 ? `${NUM.format(Math.round(summary.warenSonst))}` : '—', '—'],
+          ['Total',     summary.warenTotal > 0 ? `${NUM.format(Math.round(summary.warenTotal))}` : '—',
+            summary.netTotal > 0 && summary.warenTotal > 0 ? fmtPct(wesPctPdf) : '—'],
         ],
         headStyles: HS, styles: ST,
       });
 
       const pages = doc.getNumberOfPages();
       for (let i = 1; i <= pages; i++) {
-        doc.setPage(i);
-        doc.setFontSize(7); doc.setTextColor(150);
+        doc.setPage(i); doc.setFontSize(7); doc.setTextColor(150);
         doc.text(`Seite ${i} / ${pages}`, PW / 2, 288, { align: 'center' });
       }
       doc.save(`kennzahlen-bericht-${format(from, 'yyyy-MM-dd')}.pdf`);
@@ -655,27 +597,22 @@ export default function KennzahlenBerichtPage() {
           </div>
           <span className="text-xs text-muted-foreground hidden sm:block">{rangeLabel}</span>
 
-          {/* View toggle */}
           <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5 ml-2">
             <button
               onClick={() => setViewMode('dashboard')}
-              className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
-                viewMode === 'dashboard' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground',
-              )}
+              className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+                viewMode === 'dashboard' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}
             >
               <LayoutDashboard className="h-3 w-3" />
               Dashboard
             </button>
             <button
               onClick={() => setViewMode('excel')}
-              className={cn(
-                'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
-                viewMode === 'excel' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground',
-              )}
+              className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+                viewMode === 'excel' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}
             >
               <Table2 className="h-3 w-3" />
-              Excel Ansicht
+              Excel Vorlage
             </button>
           </div>
 
@@ -692,21 +629,14 @@ export default function KennzahlenBerichtPage() {
         </div>
       </header>
 
-      <main className={cn('mx-auto px-4 py-4 space-y-4', viewMode === 'excel' ? 'max-w-5xl' : 'max-w-7xl')}>
+      <main className={cn('mx-auto px-4 py-4 space-y-4', viewMode === 'excel' ? 'max-w-6xl' : 'max-w-7xl')}>
 
         {/* ── Period selector ──────────────────────────────────────────── */}
         <div className="flex flex-wrap gap-1.5 items-center">
           {PERIOD_BTNS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setPeriod(key)}
-              className={cn(
-                'px-3 py-1 rounded-full text-xs font-medium transition-colors border',
-                period === key
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'text-muted-foreground hover:text-foreground border-border',
-              )}
-            >
+            <button key={key} onClick={() => setPeriod(key)}
+              className={cn('px-3 py-1 rounded-full text-xs font-medium transition-colors border',
+                period === key ? 'bg-primary text-primary-foreground border-primary' : 'text-muted-foreground hover:text-foreground border-border')}>
               {label}
             </button>
           ))}
@@ -731,7 +661,6 @@ export default function KennzahlenBerichtPage() {
 
         {/* ── Dashboard view ───────────────────────────────────────────── */}
         {!loading && summary && viewMode === 'dashboard' && <>
-
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <KpiCard label="Nettoumsatz"    value={fmtChf(summary.netTotal)}
               sub={summary.daysWithData > 0 ? `${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} light={tlRev} />
@@ -753,65 +682,47 @@ export default function KennzahlenBerichtPage() {
               <Row label="Ø Tagesumsatz (netto)"   value={avgDaily > 0 ? fmtChf(avgDaily) : '—'} />
               <Row label="Anzahl Bons / Gäste"     value="—" hint="gastronovi Import" />
               <Row label="Durchschnittsbon"        value="—" hint="gastronovi Import" />
-              <Row label="Rabatte / Stornos"       value="—" hint="gastronovi Import" />
             </DGrid>
           </BSection>
 
           <BSection title="Vergleichswerte" icon={<TrendingUp className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Budget Nettoumsatz"
-                value={summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'} />
-              <Row label="Abw. Budget (CHF)"
-                value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
+              <Row label="Budget Nettoumsatz"  value={summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'} />
+              <Row label="Abw. Budget (CHF)"   value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
                 diff={budDiff !== null ? (budDiff >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Abw. Budget (%)"
-                value={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : '—'}
+              <Row label="Abw. Budget (%)"     value={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : '—'}
                 diff={budPct !== null ? (budPct >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Vorjahr Nettoumsatz"
-                value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} />
-              <Row label="Abw. Vorjahr (CHF)"
-                value={vjDiff !== null ? `${sgn(vjDiff)}${fmtChf(vjDiff)}` : '—'}
+              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} />
+              <Row label="Abw. Vorjahr (CHF)"  value={vjDiff !== null ? `${sgn(vjDiff)}${fmtChf(vjDiff)}` : '—'}
                 diff={vjDiff !== null ? (vjDiff >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Abw. Vorjahr (%)"
-                value={vjPct !== null ? `${sgn(vjPct)}${fmtPct(vjPct)}` : '—'}
+              <Row label="Abw. Vorjahr (%)"    value={vjPct !== null ? `${sgn(vjPct)}${fmtPct(vjPct)}` : '—'}
                 diff={vjPct !== null ? (vjPct >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="PK-Quote vs. Ziel (35 %)"
-                value={summary.netTotal > 0 ? fmtPct(pkPct) : '—'}
-                diff={summary.netTotal > 0 ? (pkPct <= 35 ? 'pos' : 'neg') : undefined} />
-              <Row label="WES-Quote vs. Ziel (32 %)"
-                value={summary.netTotal > 0 && summary.warenTotal > 0 ? fmtPct(wesPct) : '—'}
-                diff={summary.netTotal > 0 && summary.warenTotal > 0 ? (wesPct <= 32 ? 'pos' : 'neg') : undefined} />
             </DGrid>
           </BSection>
 
           <BSection title="Personal Kennzahlen" icon={<Clock className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Personalkosten Ist"    value={fmtChf(summary.laborActual)} bold />
-              <Row label="Personalkosten Plan"   value={summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'} />
+              <Row label="Personalkosten Ist"  value={fmtChf(summary.laborActual)} bold />
+              <Row label="Personalkosten Plan" value={summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'} />
               <Row label="Abw. Personalkosten"
                 value={summary.laborPlanned > 0 ? `${sgn(laborDiff)}${fmtChf(laborDiff)}` : '—'}
                 diff={summary.laborPlanned > 0 ? (laborDiff <= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Personalkostenquote"   value={summary.netTotal > 0 ? fmtPct(pkPct) : '—'} bold />
-              <Row label="Geplante Stunden"      value="—" hint="Dienstplanung" />
-              <Row label="Ist Stunden"           value="—" hint="Mirus Import" />
-              <Row label="Umsatz / Arbeitsstunde" value="—" hint="Stundenerfassung" />
-              <Row label="PK pro Gast"           value="—" hint="Gästezahlen" />
+              <Row label="Personalkostenquote" value={summary.netTotal > 0 ? fmtPct(pkPct) : '—'} bold />
+              <Row label="Geplante Stunden"    value="—" hint="Dienstplanung" />
+              <Row label="Ist Stunden"         value="—" hint="Mirus Import" />
             </DGrid>
           </BSection>
 
           <BSection title="Warenaufwand / WES" icon={<Package className="h-4 w-4" />}>
             {summary.warenTotal === 0 ? (
-              <p className="text-sm text-muted-foreground py-1">
-                Keine Warenrechnungen für diesen Zeitraum — Daten werden unter Warenrechnungen gepflegt.
-              </p>
+              <p className="text-sm text-muted-foreground py-1">Keine Warenrechnungen für diesen Zeitraum.</p>
             ) : (
               <DGrid>
-                <Row label="Warenaufwand Food"      value={summary.warenFood  > 0 ? fmtChf(summary.warenFood)  : '—'} />
-                <Row label="WES Food %"             value={summary.foodNet > 0 && summary.warenFood > 0 ? fmtPct(wesFoodPct) : '—'} />
-                <Row label="Warenaufwand Beverage"  value={summary.warenBev   > 0 ? fmtChf(summary.warenBev)   : '—'} />
-                <Row label="WES Beverage %"         value={summary.bevNet > 0 && summary.warenBev > 0 ? fmtPct(wesBevPct) : '—'} />
-                <Row label="Warenaufwand Sonstiges" value={summary.warenSonst > 0 ? fmtChf(summary.warenSonst) : '—'} />
-                <Row label="WES Total %"            value={summary.netTotal > 0 ? fmtPct(wesPct) : '—'} bold />
+                <Row label="Warenaufwand Food"     value={summary.warenFood  > 0 ? fmtChf(summary.warenFood)  : '—'} />
+                <Row label="WES Food %"            value={summary.foodNet > 0 && summary.warenFood > 0 ? fmtPct(wesFoodPct) : '—'} />
+                <Row label="Warenaufwand Beverage" value={summary.warenBev   > 0 ? fmtChf(summary.warenBev)   : '—'} />
+                <Row label="WES Beverage %"        value={summary.bevNet > 0 && summary.warenBev > 0 ? fmtPct(wesBevPct) : '—'} />
+                <Row label="WES Total %"           value={summary.netTotal > 0 ? fmtPct(wesPct) : '—'} bold />
               </DGrid>
             )}
           </BSection>
@@ -821,7 +732,6 @@ export default function KennzahlenBerichtPage() {
               <Row label="Anzahl Gäste / Personen" value="—" hint="gastronovi Import" />
               <Row label="Umsatz pro Gast"         value="—" hint="Gästezahlen" />
               <Row label="Ø Gäste pro Tag"         value="—" hint="Gästezahlen" />
-              <Row label="Bons pro Gast"           value="—" hint="gastronovi Z-Bericht" />
             </DGrid>
           </BSection>
 
@@ -832,11 +742,11 @@ export default function KennzahlenBerichtPage() {
                   <ComposedChart data={summary.chart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="label" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} width={42} />
-                    <Tooltip formatter={(val: number, name: string) => [fmtChf(val), name]} contentStyle={{ fontSize: 11 }} labelStyle={{ fontWeight: 600 }} />
+                    <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} tickFormatter={v => `${(v/1000).toFixed(0)}k`} width={42} />
+                    <Tooltip formatter={(val: number, name: string) => [fmtChf(val), name]} contentStyle={{ fontSize: 11 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="net"     name="Ist (netto)" fill="hsl(217 91% 60%)"  radius={[2,2,0,0]} />
-                    <Bar dataKey="planned" name="Budget"      fill="hsl(215 20% 68%)"  radius={[2,2,0,0]} opacity={0.55} />
+                    <Bar dataKey="net"     name="Ist (netto)" fill="hsl(217 91% 60%)" radius={[2,2,0,0]} />
+                    <Bar dataKey="planned" name="Budget"      fill="hsl(215 20% 68%)" radius={[2,2,0,0]} opacity={0.55} />
                     <Line dataKey="vj"     name="Vorjahr"     stroke="hsl(38 92% 50%)" strokeDasharray="4 2" dot={false} strokeWidth={1.5} />
                   </ComposedChart>
                 </ResponsiveContainer>
@@ -845,9 +755,9 @@ export default function KennzahlenBerichtPage() {
           )}
         </>}
 
-        {/* ── Excel view ───────────────────────────────────────────────── */}
+        {/* ── Excel Vorlage view ───────────────────────────────────────── */}
         {!loading && summary && viewMode === 'excel' && (
-          <ExcelView rows={excelRows} rangeLabel={rangeLabel} />
+          <ExcelTemplateView rows={excelRows} from={from} />
         )}
 
         {!loading && !summary && (
@@ -861,104 +771,132 @@ export default function KennzahlenBerichtPage() {
   );
 }
 
-// ── Excel View ────────────────────────────────────────────────────────────
+// ── Excel Vorlage View ────────────────────────────────────────────────────
 
-function ExcelView({ rows, rangeLabel }: { rows: XRow[]; rangeLabel: string }) {
+const EXCEL_FONT: CSSProperties = {
+  fontFamily: 'Arial, "Helvetica Neue", system-ui, sans-serif',
+  fontSize: '12px',
+};
+
+const CELL_BORDER = '1px solid #d0d0d0';
+const CELL_PAD: CSSProperties = { padding: '2px 6px', borderRight: CELL_BORDER };
+const COL_C_W = 300;
+const COL_DI_W = 115;
+const COL_PM_W = 90;
+
+function ExcelTemplateView({ rows, from }: { rows: XRow[]; from: Date }) {
+  const monthLabel = format(from, 'MMMM yyyy', { locale: de });
+
+  const thStyle = (align: 'left' | 'right' | 'center' = 'center'): CSSProperties => ({
+    ...CELL_PAD,
+    textAlign: align,
+    fontWeight: 'bold',
+    background: '#f2f2f2',
+    color: '#222',
+    borderBottom: '2px solid #aaa',
+    whiteSpace: 'nowrap',
+  });
+
   return (
-    <div className="rounded-lg border border-border bg-white dark:bg-card overflow-hidden shadow-sm">
-      {/* Table header info */}
-      <div className="px-4 py-2 bg-slate-800 text-white flex items-center justify-between">
-        <span className="text-xs font-semibold tracking-wide">SPALTENBERICHT</span>
-        <span className="text-xs opacity-70">{rangeLabel}</span>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          {/* Column headers */}
-          <thead>
-            <tr className="bg-slate-100 dark:bg-muted border-b-2 border-slate-300 dark:border-border">
-              <th className="text-left px-3 py-2 font-semibold text-slate-700 dark:text-foreground w-[40%]">
-                Kennzahl
-              </th>
-              <th className="text-right px-2 py-2 font-semibold text-slate-700 dark:text-foreground whitespace-nowrap">
-                Budget
-              </th>
-              <th className="text-right px-2 py-2 font-semibold text-slate-700 dark:text-foreground whitespace-nowrap">
-                Vorjahr
-              </th>
-              <th className="text-right px-2 py-2 font-semibold text-slate-700 dark:text-foreground whitespace-nowrap">
-                Woche
-              </th>
-              <th className="text-right px-2 py-2 font-semibold text-slate-500 dark:text-muted-foreground whitespace-nowrap text-[11px]">
-                +/- %
-              </th>
-              <th className="text-right px-2 py-2 font-semibold text-slate-700 dark:text-foreground whitespace-nowrap">
-                Monat
-              </th>
-              <th className="text-right px-2 py-2 font-semibold text-slate-500 dark:text-muted-foreground whitespace-nowrap text-[11px]">
-                +/- %
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, i) => <ExcelRow key={i} row={row} />)}
-          </tbody>
-        </table>
-      </div>
+    <div
+      className="excel-template-report"
+      style={{ background: '#fff', overflowX: 'auto', border: '1px solid #c8c8c8', borderRadius: '2px' }}
+    >
+      <table
+        style={{
+          ...EXCEL_FONT,
+          borderCollapse: 'collapse',
+          minWidth: '860px',
+          width: '100%',
+        }}
+      >
+        <colgroup>
+          <col style={{ width: '8px' }} />
+          <col style={{ width: '8px' }} />
+          <col style={{ width: `${COL_C_W}px` }} />
+          <col style={{ width: `${COL_DI_W}px` }} />
+          <col style={{ width: `${COL_DI_W}px` }} />
+          <col style={{ width: `${COL_DI_W}px` }} />
+          <col style={{ width: `${COL_PM_W}px` }} />
+          <col style={{ width: `${COL_DI_W}px` }} />
+          <col style={{ width: `${COL_PM_W}px` }} />
+        </colgroup>
+        <thead>
+          {/* Zeile 6: Header */}
+          <tr style={{ borderBottom: '2px solid #aaa' }}>
+            <th style={{ ...thStyle(), background: '#fff', borderBottom: '2px solid #aaa' }} />
+            <th style={{ ...thStyle(), background: '#fff', borderBottom: '2px solid #aaa' }} />
+            <th style={{ ...thStyle('left'), fontSize: '13px' }}>{monthLabel}</th>
+            <th style={thStyle()}>Budget</th>
+            <th style={thStyle()}>Vorjahr</th>
+            <th style={thStyle()}>Woche</th>
+            <th style={{ ...thStyle(), color: '#555', fontSize: '11px' }}>+/- in %</th>
+            <th style={thStyle()}>Monat</th>
+            <th style={{ ...thStyle(), color: '#555', fontSize: '11px' }}>+/- in %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => <ExcelTemplateRow key={i} row={row} />)}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function ExcelRow({ row }: { row: XRow }) {
-  if (row.isSection) {
+function ExcelTemplateRow({ row }: { row: XRow }) {
+  if (row.type === 'empty') {
     return (
-      <tr className="bg-slate-100 dark:bg-muted/60 border-t border-slate-200 dark:border-border">
-        <td colSpan={7} className="px-3 py-1.5 font-semibold text-slate-600 dark:text-muted-foreground text-[11px] uppercase tracking-wider">
-          {row.label}
-        </td>
+      <tr style={{ height: '10px' }}>
+        <td colSpan={9} style={{ borderRight: CELL_BORDER, background: '#fff' }} />
       </tr>
     );
   }
 
-  const fmt = row.isPct ? p2 : n2;
-
   // Pre-compute deviations (no division in JSX)
-  const wDev  = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
+  const wDev = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
     ? ((row.week - row.weekBudget) / row.weekBudget) * 100 : null;
-  const mDev  = row.month !== null && row.budget !== null && row.budget > 0
+  const mDev = row.month !== null && row.budget !== null && row.budget > 0
     ? ((row.month - row.budget) / row.budget) * 100 : null;
 
-  const wDevStr = wDev !== null ? fmtDev(wDev) : '—';
-  const mDevStr = mDev !== null ? fmtDev(mDev) : '—';
-  const wDevCls = wDev !== null ? (wDev >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground';
-  const mDevCls = mDev !== null ? (mDev >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400') : 'text-muted-foreground';
+  const fmtCell = (v: number | null): string => {
+    if (v === null) return '—';
+    if (row.isPct)   return v.toFixed(1) + ' %';
+    if (row.isCount) return NUM.format(Math.round(v));
+    return fmtChf(v);
+  };
+
+  const devStr  = (v: number | null) => v !== null ? fmtDev(v) : '';
+  const devColor = (v: number | null): string => v === null ? '#999' : v >= 0 ? '#196b24' : '#c00000';
+
+  const baseRow: CSSProperties = { height: '22px', background: '#fff' };
+  const cellBase: CSSProperties = { ...CELL_PAD, borderBottom: CELL_BORDER };
+  const cellNum: CSSProperties  = { ...cellBase, textAlign: 'right', tabularNums: true } as CSSProperties;
 
   return (
-    <tr className="border-b border-slate-100 dark:border-border/30 hover:bg-slate-50 dark:hover:bg-muted/20 transition-colors">
-      <td className={cn(
-        'px-3 py-1.5 text-slate-800 dark:text-foreground',
-        row.isBold   && 'font-semibold',
-        row.isIndent && 'pl-7 text-slate-600 dark:text-muted-foreground',
-      )}>
+    <tr style={baseRow}>
+      <td style={{ ...cellBase, borderRight: CELL_BORDER }} />
+      <td style={{ ...cellBase, borderRight: CELL_BORDER }} />
+      <td style={{
+        ...cellBase,
+        fontWeight: row.isBold ? 'bold' : 'normal',
+        color: '#1a1a1a',
+        whiteSpace: 'nowrap',
+      }}>
         {row.label}
       </td>
-      <td className="text-right px-2 py-1.5 tabular-nums text-slate-500 dark:text-muted-foreground">
-        {fmt(row.budget)}
+      <td style={{ ...cellNum, color: '#555' }}>{fmtCell(row.budget)}</td>
+      <td style={{ ...cellNum, color: '#555' }}>{fmtCell(row.vj)}</td>
+      <td style={{ ...cellNum, fontWeight: row.isBold ? 'bold' : 'normal', color: '#1a1a1a' }}>
+        {fmtCell(row.week)}
       </td>
-      <td className="text-right px-2 py-1.5 tabular-nums text-slate-500 dark:text-muted-foreground">
-        {fmt(row.vj)}
+      <td style={{ ...cellNum, color: devColor(wDev), fontSize: '11px' }}>
+        {devStr(wDev)}
       </td>
-      <td className={cn('text-right px-2 py-1.5 tabular-nums', row.isBold ? 'font-semibold' : '')}>
-        {fmt(row.week)}
+      <td style={{ ...cellNum, fontWeight: row.isBold ? 'bold' : 'normal', color: '#1a1a1a' }}>
+        {fmtCell(row.month)}
       </td>
-      <td className={cn('text-right px-2 py-1.5 tabular-nums text-[11px]', wDevCls)}>
-        {wDevStr}
-      </td>
-      <td className={cn('text-right px-2 py-1.5 tabular-nums', row.isBold ? 'font-semibold' : '')}>
-        {fmt(row.month)}
-      </td>
-      <td className={cn('text-right px-2 py-1.5 tabular-nums text-[11px]', mDevCls)}>
-        {mDevStr}
+      <td style={{ ...cellNum, color: devColor(mDev), fontSize: '11px' }}>
+        {devStr(mDev)}
       </td>
     </tr>
   );
