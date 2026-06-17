@@ -49,6 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_gn_daily_restaurant_date ON gn_zbericht_daily(res
 ALTER TABLE gn_zbericht_daily DISABLE ROW LEVEL SECURITY;
 
 -- ── Berechtigungen ───────────────────────────────────────────────────────────
+-- Konsistent mit 20260617_gn_grants.sql: beide Rollen erhalten Vollzugriff.
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON gn_zbericht_daily TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON gn_imports         TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON gn_zbericht_daily TO authenticated, anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON gn_imports         TO authenticated, anon;
