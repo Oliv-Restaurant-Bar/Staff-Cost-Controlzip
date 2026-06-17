@@ -83,6 +83,12 @@ export interface GnParseDebug {
   periodLine: number | null;
   /** Zeilennummer des Z-Zählers (1-basiert) */
   zCounterLine: number | null;
+  /** Mögliche Zeitraum-Treffer: Zeilen mit Zeitraum-Schlüsselwörtern */
+  periodCandidates: Array<{ lineNumber: number; rawText: string }>;
+  /** Mögliche Z-Zähler-Treffer */
+  zCounterCandidates: Array<{ lineNumber: number; rawText: string }>;
+  /** Mögliche Treffer je fehlender Sektion */
+  sectionCandidates: Record<string, Array<{ lineNumber: number; rawText: string }>>;
 }
 
 export interface GnParsedZBericht {
@@ -371,6 +377,61 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
     if (!periodTo && periodFrom) periodTo = periodFrom; // Tagesbericht
   }
 
+  // Fix: Von-Zeile gefunden aber Bis-Zeile noch nicht gematcht
+  if (periodFrom && !periodTo) {
+    const bisOnly = getHeaderEntry(headerRows, allRows, 'bis', 'ende', 'end', 'period to');
+    if (bisOnly.value) periodTo = parseGermanDate(bisOnly.value);
+    if (!periodTo) periodTo = periodFrom;
+  }
+
+  // ── Kandidaten-Scanning (für Diagnose) ─────────────────────────────────────
+  const PERIOD_SCAN_RE = /zeitraum|berichtszeitraum|periode|period\s*from|datumsbereich/i;
+  const VON_BIS_RE     = /^(von|bis|datum|beginn|ende)\s*[;,\t:]/i;
+  const periodCandidates: Array<{ lineNumber: number; rawText: string }> = [];
+  if (!periodFrom || !periodTo) {
+    rawLines.forEach((line, idx) => {
+      if (!line.trim()) return;
+      if (PERIOD_SCAN_RE.test(line) || VON_BIS_RE.test(line)) {
+        periodCandidates.push({ lineNumber: idx + 1, rawText: line });
+      }
+    });
+  }
+
+  const ZCOUNTER_SCAN_RE = /z[-\s]?z[äa]hler|z[-\s]?zaehler|z[-\s]?counter|z[-\s]?nummer|z[-\s]?nr\b|abschluss[-\s]?nr|^bericht[-\s]?nr/i;
+  const zCounterCandidates: Array<{ lineNumber: number; rawText: string }> = [];
+  if (!zCounterRaw) {
+    rawLines.forEach((line, idx) => {
+      if (!line.trim()) return;
+      if (ZCOUNTER_SCAN_RE.test(line)) {
+        zCounterCandidates.push({ lineNumber: idx + 1, rawText: line });
+      }
+    });
+  }
+
+  const SECTION_SCAN: Record<string, RegExp> = {
+    'Steuerbericht':       /steuer|tax\b|mwst|mehrwertsteuer/i,
+    'Kostenstellen':       /kostenstell|cost.?cent/i,
+    'Kellner':             /kellner|bedienung|server\b|waiter/i,
+    'Bezahlarten':         /bezahl|zahlungs?art|payment.?method/i,
+    'Hauptwarengruppen':   /waren.?grupp|produkt.?grupp|hauptgrupp|article.?group/i,
+    'Rabatte':             /\brabatt\b|discount/i,
+    'Positionsrabatte':    /positions?rabatt/i,
+    'Stornierte Artikel':  /storni|storniert|cancel/i,
+    'Buchungskonten':      /buchungs?kont/i,
+    'Zahlungskonten':      /zahlungs?kont/i,
+  };
+  const sectionCandidates: Record<string, Array<{ lineNumber: number; rawText: string }>> = {};
+  for (const sec of missingSections) {
+    const kw = SECTION_SCAN[sec];
+    if (!kw) continue;
+    const cands: Array<{ lineNumber: number; rawText: string }> = [];
+    rawLines.forEach((line, idx) => {
+      if (!line.trim()) return;
+      if (kw.test(line)) cands.push({ lineNumber: idx + 1, rawText: line });
+    });
+    if (cands.length > 0) sectionCandidates[sec] = cands;
+  }
+
   // ── Debug-Informationen zusammenstellen ────────────────────────────────────
   const foundSections   = sections.map(s => s.name);
   const missingSections = EXPECTED_SECTIONS.filter(n => !foundSections.includes(n));
@@ -389,6 +450,9 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
     costCenterRaw: costCenter,
     periodLine:    periodEntry.lineNumber,
     zCounterLine:  zEntry.lineNumber,
+    periodCandidates,
+    zCounterCandidates,
+    sectionCandidates,
   };
 
   // ── Console-Debug-Ausgabe ───────────────────────────────────────────────────

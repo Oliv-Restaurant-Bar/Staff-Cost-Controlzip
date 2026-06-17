@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertTriangle, Loader2,
   Trash2, ChevronDown, ChevronUp, RefreshCw,
-  Info, AlertCircle, Database, Users,
+  Info, AlertCircle, Database, Users, Copy,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -274,6 +274,44 @@ export default function GastronoviZBerichtPage() {
     : 0;
 
   const historyCount = zHistory.length + personHistory.length;
+
+  // ── Diagnose kopieren ─────────────────────────────────────────────────────
+  const copyDiagnostic = () => {
+    if (!parsed) return;
+    const db = parsed.debug;
+    const lines: string[] = [
+      '=== Gastronovi Parser-Diagnose ===',
+      `Datei: ${parsed.fileName}`,
+      `Trennzeichen: ${db.delimiter} (;=${db.delimCounts.semicolon} ,=${db.delimCounts.comma} Tab=${db.delimCounts.tab})`,
+      '',
+      `Zeitraum: ${parsed.periodFrom
+        ? `${parsed.periodFrom} – ${parsed.periodTo}`
+        : `NICHT ERKANNT (raw: "${db.periodRaw || '—'}")`}`,
+      `Z-Zähler: ${parsed.zCounter || 'NICHT ERKANNT'}`,
+      `Kostenstelle: ${parsed.costCenter || '—'}`,
+      '',
+      `Gefundene Sektionen (${db.foundSections.length}): ${db.foundSections.join(', ') || 'keine'}`,
+      `Fehlende Sektionen (${db.missingSections.length}): ${db.missingSections.join(', ') || 'keine'}`,
+    ];
+    if (db.periodCandidates.length > 0) {
+      lines.push('', 'Zeitraum-Kandidaten:');
+      db.periodCandidates.forEach(c => lines.push(`  Zeile ${c.lineNumber}: "${c.rawText}"`));
+    }
+    if (db.zCounterCandidates.length > 0) {
+      lines.push('', 'Z-Zähler-Kandidaten:');
+      db.zCounterCandidates.forEach(c => lines.push(`  Zeile ${c.lineNumber}: "${c.rawText}"`));
+    }
+    for (const sec of db.missingSections) {
+      const cands = db.sectionCandidates[sec];
+      if (cands && cands.length > 0) {
+        lines.push('', `Kandidaten für "${sec}":`);
+        cands.forEach(c => lines.push(`  Zeile ${c.lineNumber}: "${c.rawText}"`));
+      }
+    }
+    navigator.clipboard.writeText(lines.join('\n'))
+      .then(() => toast.success('Diagnose in Zwischenablage kopiert'))
+      .catch(() => toast.error('Kopieren fehlgeschlagen'));
+  };
 
 // ── Typ-Konstanten ─────────────────────────────────────────────────────────────
 
@@ -717,7 +755,15 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                       </span>
                     )}
                   </span>
-                  {showDebug ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  <span className="flex items-center gap-2">
+                    <button
+                      onClick={e => { e.stopPropagation(); copyDiagnostic(); }}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-[10px] font-medium">
+                      <Copy className="h-2.5 w-2.5" />
+                      Diagnose kopieren
+                    </button>
+                    {showDebug ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  </span>
                 </button>
 
                 {showDebug && (
@@ -761,6 +807,24 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                       </div>
                     </div>
 
+                    {/* Zeitraum-Kandidaten */}
+                    {!parsed.periodFrom && parsed.debug.periodCandidates.length > 0 && (
+                      <CandidateBlock
+                        title="Mögliche Zeitraum-Treffer"
+                        color="blue"
+                        candidates={parsed.debug.periodCandidates}
+                      />
+                    )}
+
+                    {/* Z-Zähler-Kandidaten */}
+                    {!parsed.zCounter && parsed.debug.zCounterCandidates.length > 0 && (
+                      <CandidateBlock
+                        title="Mögliche Z-Zähler-Treffer"
+                        color="violet"
+                        candidates={parsed.debug.zCounterCandidates}
+                      />
+                    )}
+
                     {/* Sektionen */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-1">
@@ -788,20 +852,35 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                         </div>
                         {parsed.debug.missingSections.length === 0
                           ? <div className="text-green-600 dark:text-green-400">Alle Pflicht-Sektionen gefunden ✓</div>
-                          : parsed.debug.missingSections.map(s => (
-                            <div key={s} className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
-                              <span className="shrink-0">✗</span>
-                              <span className="font-mono">{s}</span>
-                            </div>
-                          ))
+                          : parsed.debug.missingSections.map(s => {
+                            const cands = parsed.debug.sectionCandidates[s];
+                            return (
+                              <div key={s} className="space-y-0.5">
+                                <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                                  <span className="shrink-0">✗</span>
+                                  <span className="font-mono">{s}</span>
+                                  {cands && cands.length > 0 && (
+                                    <span className="text-[9px] text-slate-400 ml-1">{cands.length} Kandidat{cands.length !== 1 ? 'en' : ''}</span>
+                                  )}
+                                </div>
+                                {cands && cands.map((c, ci) => (
+                                  <div key={ci} className="ml-4 flex gap-1.5 text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate">
+                                    <span className="text-slate-400 shrink-0">Z{c.lineNumber}:</span>
+                                    <span className="truncate">{c.rawText}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })
                         }
                       </div>
                     </div>
 
-                    {/* Erste 30 Zeilen roh */}
+                    {/* Rohdaten anzeigen */}
                     <details className="rounded border border-slate-200 dark:border-slate-700">
-                      <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
-                        Erste 30 CSV-Zeilen (roh) — klicken zum Aufklappen
+                      <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                        <span>Rohdaten anzeigen</span>
+                        <span className="text-[10px] font-normal text-muted-foreground">(erste 30 CSV-Zeilen)</span>
                       </summary>
                       <div className="overflow-x-auto max-h-72 overflow-y-auto">
                         <table className="w-full font-mono text-[10px] border-collapse">
@@ -1155,6 +1234,29 @@ function SectionTable<T>({ title, rows, cols, render }: {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function CandidateBlock({ title, color = 'blue', candidates }: {
+  title: string;
+  color?: 'blue' | 'violet' | 'amber';
+  candidates: Array<{ lineNumber: number; rawText: string }>;
+}) {
+  const colors = {
+    blue:   { border: 'border-blue-200 dark:border-blue-900', bg: 'bg-blue-50 dark:bg-blue-950/30', head: 'text-blue-700 dark:text-blue-400', line: 'text-blue-400 dark:text-blue-600', text: 'text-blue-800 dark:text-blue-300' },
+    violet: { border: 'border-violet-200 dark:border-violet-900', bg: 'bg-violet-50 dark:bg-violet-950/30', head: 'text-violet-700 dark:text-violet-400', line: 'text-violet-400 dark:text-violet-600', text: 'text-violet-800 dark:text-violet-300' },
+    amber:  { border: 'border-amber-200 dark:border-amber-900', bg: 'bg-amber-50 dark:bg-amber-950/30', head: 'text-amber-700 dark:text-amber-400', line: 'text-amber-400 dark:text-amber-600', text: 'text-amber-800 dark:text-amber-300' },
+  }[color];
+  return (
+    <div className={`rounded border ${colors.border} ${colors.bg} p-3 space-y-1.5`}>
+      <div className={`text-[10px] font-semibold uppercase tracking-wide ${colors.head}`}>{title}</div>
+      {candidates.map((c, i) => (
+        <div key={i} className="flex gap-2 font-mono text-[10px]">
+          <span className={`${colors.line} shrink-0 w-10 text-right`}>Z{c.lineNumber}:</span>
+          <span className={`${colors.text} break-all`}>{c.rawText}</span>
+        </div>
+      ))}
     </div>
   );
 }

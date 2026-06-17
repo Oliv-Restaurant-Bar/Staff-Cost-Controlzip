@@ -1,0 +1,87 @@
+Bitte verbessere die Parser-Diagnose im Gastronovi Import.
+
+Ziel:
+Wenn der Parser etwas nicht erkennt, soll die App nicht nur melden "nicht erkannt", sondern konkret zeigen, welche Zeilen mögliche Treffer sein könnten.
+
+Aufgabe:
+
+1. Zeitraum-Diagnose verbessern
+Wenn Zeitraum nicht erkannt wird, zeige:
+- alle Zeilen, die Begriffe enthalten wie:
+  - Zeitraum
+  - Von
+  - Bis
+  - Datum
+  - Berichtszeitraum
+  - Periode
+- jeweils mit Zeilennummer und Rohtext
+
+Beispiel:
+Zeitraum nicht erkannt.
+Mögliche Treffer:
+Zeile 4: "Von;31.05.2026, 22:24"
+Zeile 5: "Bis;17.06.2026, 00:30"
+
+2. Z-Zähler-Diagnose verbessern
+Wenn Z-Zähler nicht erkannt wird, zeige:
+- alle Zeilen mit Begriffen wie:
+  - Z-Zähler
+  - Zähler
+  - Z Counter
+  - Abschluss
+  - Bericht
+- jeweils mit Zeilennummer und Rohtext
+
+3. Sektions-Diagnose verbessern
+Wenn eine Sektion fehlt, zeige mögliche ähnliche Treffer.
+
+Beispiel:
+Kostenstellen nicht erkannt.
+Mögliche Treffer:
+Zeile 18: "Kostenstelle;Anzahl;Betrag"
+Zeile 19: "Hauptkostenstelle;1843;CHF 75'535.90"
+
+Für folgende Sektionen:
+- Steuerbericht
+- Kostenstellen
+- Kellner
+- Bezahlarten
+- Hauptwarengruppen
+- Rabatte
+- Positionsrabatte
+- Stornierte Artikel
+- Buchungskonten
+- Zahlungskonten
+
+4. UI Debug Panel erweitern
+Im Parser-Diagnose-Panel sollen zusätzlich erscheinen:
+- Mögliche Zeitraum-Treffer
+- Mögliche Z-Zähler-Treffer
+- Mögliche Treffer je fehlender Sektion
+- Button "Rohdaten anzeigen"
+- Button "Diagnose kopieren"
+
+5. Diagnose kopieren
+Der Button "Diagnose kopieren" soll eine kompakte Text-Zusammenfassung in die Zwischenablage kopieren:
+- Dateiname
+- Trennzeichen
+- erkannter Zeitraum
+- erkannter Z-Zähler
+- gefundene Sektionen
+- fehlende Sektionen
+- mögliche Treffer mit Zeilennummern
+
+6. Parser robuster machen
+Falls möglich, verbessere die Erkennung anhand der gefundenen möglichen Treffer:
+- Zeitraum aus getrennten Zeilen "Von" und "Bis" zusammensetzen
+- Z-Zähler aus Zeilen mit "Z-Zähler" und Zahlenbereich erkennen
+- Sektionen auch erkennen, wenn die Überschrift nicht exakt gleich ist
+
+7. Wichtig
+Keine bestehenden Importfunktionen beschädigen.
+Nur Diagnose und robuste Erkennung verbessern.
+
+8. Nach Umsetzung
+- Liste alle geänderten Dateien auf
+- TypeScript Check ausführen
+- Kurze Testanleitung geben
