@@ -88,6 +88,7 @@ export default function GastronoviZBerichtPage() {
   const [histLoading, setHistLoading] = useState(false);
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set());
   const [deleting,    setDeleting]    = useState<string | null>(null);
+  const [showDebug,   setShowDebug]   = useState(false);
 
   const csvRef = useRef<HTMLInputElement>(null);
 
@@ -590,6 +591,141 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                     </tr>
                   </tbody>
                 </table>
+              </div>
+            )}
+
+
+            {/* ── Parser-Diagnose ─────────────────────────────────────────── */}
+            {parsed.debug && (
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <button
+                  onClick={() => setShowDebug(v => !v)}
+                  className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">
+                  <span className="flex items-center gap-2">
+                    <Info className="h-3.5 w-3.5" />
+                    Parser-Diagnose
+                    {parsed.debug.missingSections.length > 0 && (
+                      <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">
+                        {parsed.debug.missingSections.length} Sektionen fehlen
+                      </span>
+                    )}
+                  </span>
+                  {showDebug ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+
+                {showDebug && (
+                  <div className="p-4 space-y-4 text-xs">
+
+                    {/* Trennzeichen + Metadaten */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+                        <div className="text-muted-foreground mb-0.5">Trennzeichen</div>
+                        <div className="font-mono font-bold">{parsed.debug.delimiter}</div>
+                        <div className="text-muted-foreground mt-1">
+                          ;={parsed.debug.delimCounts.semicolon} ,={parsed.debug.delimCounts.comma} ⇥={parsed.debug.delimCounts.tab}
+                        </div>
+                      </div>
+                      <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+                        <div className="text-muted-foreground mb-0.5">
+                          Zeitraum {parsed.debug.periodLine ? `(Zeile ${parsed.debug.periodLine})` : ''}
+                        </div>
+                        <div className={`font-mono font-bold ${!parsed.debug.periodRaw ? 'text-red-500' : ''}`}>
+                          {parsed.debug.periodRaw || '(nicht gefunden)'}
+                        </div>
+                        {parsed.periodFrom && (
+                          <div className="text-muted-foreground mt-1">
+                            → {parsed.periodFrom} – {parsed.periodTo}
+                          </div>
+                        )}
+                      </div>
+                      <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+                        <div className="text-muted-foreground mb-0.5">
+                          Z-Zähler {parsed.debug.zCounterLine ? `(Zeile ${parsed.debug.zCounterLine})` : ''}
+                        </div>
+                        <div className={`font-mono font-bold ${!parsed.debug.zCounterRaw ? 'text-red-500' : ''}`}>
+                          {parsed.debug.zCounterRaw || '(nicht gefunden)'}
+                        </div>
+                      </div>
+                      <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+                        <div className="text-muted-foreground mb-0.5">Kostenstelle</div>
+                        <div className={`font-mono font-bold ${!parsed.debug.costCenterRaw ? 'text-amber-500' : ''}`}>
+                          {parsed.debug.costCenterRaw || '(nicht gefunden)'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Sektionen */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-1">
+                        <div className="font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                          Erkannte Sektionen ({parsed.debug.foundSections.length})
+                        </div>
+                        {parsed.debug.foundSections.length === 0
+                          ? <div className="text-muted-foreground italic">keine</div>
+                          : parsed.debug.foundSections.map(s => (
+                            <div key={s} className="flex items-center gap-1.5">
+                              <span className="text-green-500 shrink-0">✓</span>
+                              <span className="font-mono">{s}</span>
+                              {parsed.debug.rawSectionNames.find(x => x.canonical === s)?.raw !== s && (
+                                <span className="text-muted-foreground ml-1">
+                                  (CSV: &ldquo;{parsed.debug.rawSectionNames.find(x => x.canonical === s)?.raw}&rdquo;)
+                                </span>
+                              )}
+                            </div>
+                          ))
+                        }
+                      </div>
+                      <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-1">
+                        <div className="font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                          Fehlende Sektionen ({parsed.debug.missingSections.length})
+                        </div>
+                        {parsed.debug.missingSections.length === 0
+                          ? <div className="text-green-600 dark:text-green-400">Alle Pflicht-Sektionen gefunden ✓</div>
+                          : parsed.debug.missingSections.map(s => (
+                            <div key={s} className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                              <span className="shrink-0">✗</span>
+                              <span className="font-mono">{s}</span>
+                            </div>
+                          ))
+                        }
+                      </div>
+                    </div>
+
+                    {/* Erste 30 Zeilen roh */}
+                    <details className="rounded border border-slate-200 dark:border-slate-700">
+                      <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800">
+                        Erste 30 CSV-Zeilen (roh) — klicken zum Aufklappen
+                      </summary>
+                      <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                        <table className="w-full font-mono text-[10px] border-collapse">
+                          <thead>
+                            <tr className="bg-slate-100 dark:bg-slate-800 sticky top-0">
+                              <th className="px-2 py-1 text-right border-r border-slate-200 dark:border-slate-700 text-slate-400 w-8">#</th>
+                              <th className="px-2 py-1 text-left text-slate-500">Zeile</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parsed.debug.firstRawLines.slice(0, 30).map((line, i) => (
+                              <tr key={i} className={`border-t border-slate-100 dark:border-slate-800 ${
+                                parsed.debug.rawSectionNames.some(x =>
+                                  line.startsWith(x.raw)
+                                ) ? 'bg-blue-50 dark:bg-blue-950/20 font-bold' : ''
+                              }`}>
+                                <td className="px-2 py-0.5 text-right border-r border-slate-200 dark:border-slate-700 text-slate-400">
+                                  {i + 1}
+                                </td>
+                                <td className="px-2 py-0.5 text-slate-700 dark:text-slate-300 whitespace-pre max-w-0 overflow-hidden">
+                                  {line || <span className="text-slate-300">(leer)</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+
+                  </div>
+                )}
               </div>
             )}
           </>}
