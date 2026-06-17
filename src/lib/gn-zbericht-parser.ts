@@ -408,6 +408,10 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
     });
   }
 
+  // ── foundSections / missingSections zuerst berechnen (werden im Scan unten gebraucht) ──
+  const foundSections   = sections.map(s => s.name);
+  const missingSections = EXPECTED_SECTIONS.filter(n => !foundSections.includes(n));
+
   const SECTION_SCAN: Record<string, RegExp> = {
     'Steuerbericht':       /steuer|tax\b|mwst|mehrwertsteuer/i,
     'Kostenstellen':       /kostenstell|cost.?cent/i,
@@ -433,8 +437,6 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   }
 
   // ── Debug-Informationen zusammenstellen ────────────────────────────────────
-  const foundSections   = sections.map(s => s.name);
-  const missingSections = EXPECTED_SECTIONS.filter(n => !foundSections.includes(n));
 
   const debug: GnParseDebug = {
     delimiter:     delim === '\t' ? 'Tab' : delim === ';' ? 'Semikolon' : 'Komma',
