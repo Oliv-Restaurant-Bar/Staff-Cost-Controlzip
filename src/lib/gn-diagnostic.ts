@@ -95,6 +95,11 @@ export async function runGnDiagnostic(): Promise<GnDiagnosticResult> {
     // ── Migration 4: gn_analysis_create_missing_tables.sql ──────────────────
     checkTable('gn_analysis_imports',  '20260617_gn_analysis_create_missing_tables.sql'),
     checkTable('gn_analysis_metrics',  '20260617_gn_analysis_create_missing_tables.sql'),
+
+    // ── Migration 5: gn_zbericht_v2.sql — neue Spalten + Tages-Tabelle ──────
+    checkTable('gn_imports',           '20260618_gn_zbericht_v2.sql', 'import_type'),
+    checkTable('gn_imports',           '20260618_gn_zbericht_v2.sql', 'gross_revenue'),
+    checkTable('gn_zbericht_daily',    '20260618_gn_zbericht_v2.sql'),
   ]);
 
   const failures = results.filter(r => !r.ok);

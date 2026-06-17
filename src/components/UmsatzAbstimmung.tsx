@@ -62,6 +62,7 @@ interface UmsatzAbstimmungProps {
   storeKey: string;
   onRefresh: () => void;
   maisonMonthlyNet?: number[];
+  gnRevenueByMonth?: number[];
 }
 
 // ── Hauptkomponente ────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ interface UmsatzAbstimmungProps {
 type EditField = 'gross' | 'takeAway';
 
 export function UmsatzAbstimmung({
-  year, months, dailyBudgetsKey, storeKey, onRefresh,
+  year, months, dailyBudgetsKey, storeKey, onRefresh, gnRevenueByMonth,
 }: UmsatzAbstimmungProps) {
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [saving,  setSaving]  = useState<Record<string, boolean>>({});
@@ -138,11 +139,15 @@ export function UmsatzAbstimmung({
   );
   if (!hasAnyData) return null;
 
+  const hasGn = gnRevenueByMonth && gnRevenueByMonth.some(v => v > 0);
+
   // Jahressummen
-  const totalManual  = months.reduce((s, m) => s + (m.grossRevenueManual   ?? 0), 0);
+  const totalManual   = months.reduce((s, m) => s + (m.grossRevenueManual   ?? 0), 0);
   const totalTakeAway = months.reduce((s, m) => s + (m.takeAwayGrossManual ?? 0), 0);
-  const totalDaily   = dailySums.reduce((s, v) => s + v, 0);
-  const totalDiff    = totalManual > 0 && totalDaily > 0 ? totalManual - totalDaily : undefined;
+  const totalDaily    = dailySums.reduce((s, v) => s + v, 0);
+  const totalDiff     = totalManual > 0 && totalDaily > 0 ? totalManual - totalDaily : undefined;
+  const totalGn       = hasGn ? (gnRevenueByMonth ?? []).reduce((s, v) => s + v, 0) : 0;
+  const totalGnDiff   = totalManual > 0 && totalGn > 0 ? totalManual - totalGn : undefined;
 
   return (
     <Card className="border-blue-200 dark:border-blue-800">
@@ -177,6 +182,18 @@ export function UmsatzAbstimmung({
                 Differenz
                 <span className="block text-[10px] font-normal">Manuell − Tage</span>
               </th>
+              {hasGn && (
+                <th className="text-right py-2 px-2 font-semibold min-w-[110px] text-violet-700 dark:text-violet-400">
+                  Gastronovi
+                  <span className="block text-[10px] font-normal">Z-Bericht Brutto</span>
+                </th>
+              )}
+              {hasGn && (
+                <th className="text-right py-2 px-2 font-semibold min-w-[90px]">
+                  Diff GN
+                  <span className="block text-[10px] font-normal">Manuell − GN</span>
+                </th>
+              )}
               <th className="text-center py-2 px-2 font-semibold min-w-[50px]">OK?</th>
             </tr>
           </thead>
@@ -188,14 +205,20 @@ export function UmsatzAbstimmung({
               const hasManual   = (manual   ?? 0) > 0;
               const hasDaily    = daily > 0;
               const hasTakeAway = (takeAway ?? 0) > 0;
+              const gnRev       = gnRevenueByMonth ? (gnRevenueByMonth[m.month - 1] ?? 0) : 0;
+              const hasGnRow    = hasGn && gnRev > 0;
 
               // Take Away Netto & MwSt
-              const taNet = hasTakeAway ? (takeAway! / VAT_TAKEAWAY) : 0;
-              const taMwSt = hasTakeAway ? (takeAway! - taNet)       : 0;
+              const taNet  = hasTakeAway ? (takeAway! / VAT_TAKEAWAY) : 0;
+              const taMwSt = hasTakeAway ? (takeAway! - taNet)        : 0;
 
               const status  = getRowStatus(manual ?? undefined, daily);
               const diff    = hasManual && hasDaily ? (manual! - daily) : undefined;
               const diffPct = diff !== undefined && manual! > 0 ? Math.abs(diff) / manual! : undefined;
+
+              // GN Differenz
+              const gnDiff    = hasManual && hasGnRow ? (manual! - gnRev) : undefined;
+              const gnDiffPct = gnDiff !== undefined && manual! > 0 ? Math.abs(gnDiff) / manual! : undefined;
 
               const grossKey = editKey(m.month, 'gross');
               const taKey    = editKey(m.month, 'takeAway');
@@ -207,11 +230,11 @@ export function UmsatzAbstimmung({
               const grossInput = isEditingGross ? editing[grossKey] : (hasManual   ? fmt(manual!)   : '');
               const taInput    = isEditingTA    ? editing[taKey]    : (hasTakeAway ? fmt(takeAway!) : '');
 
-              if (!hasManual && !hasTakeAway && !hasDaily) {
+              if (!hasManual && !hasTakeAway && !hasDaily && !hasGnRow) {
                 return (
                   <tr key={m.month} className="border-b border-border/30 opacity-40">
                     <td className="py-1.5 px-2 font-medium">{MONTH_NAMES_DE[m.month]}</td>
-                    <td colSpan={5} className="py-1.5 px-2 text-center text-muted-foreground/50 italic">
+                    <td colSpan={hasGn ? 7 : 5} className="py-1.5 px-2 text-center text-muted-foreground/50 italic">
                       keine Daten
                     </td>
                   </tr>
@@ -304,6 +327,40 @@ export function UmsatzAbstimmung({
                     ) : '—'}
                   </td>
 
+                  {/* Gastronovi Z-Bericht */}
+                  {hasGn && (
+                    <td className={cn(
+                      'py-1.5 px-2 text-right font-mono text-violet-700 dark:text-violet-400',
+                      !hasGnRow && 'text-muted-foreground/30 italic',
+                    )}>
+                      {hasGnRow ? fmt(gnRev) : '—'}
+                    </td>
+                  )}
+
+                  {/* Diff GN: Manuell − Gastronovi */}
+                  {hasGn && (
+                    <td className={cn(
+                      'py-1.5 px-2 text-right font-mono',
+                      gnDiff === undefined ? 'text-muted-foreground/30 italic' :
+                      gnDiffPct === undefined ? 'text-muted-foreground/30' :
+                      gnDiffPct < 0.005 ? 'text-emerald-600 dark:text-emerald-400' :
+                      gnDiffPct < 0.01  ? 'text-emerald-600 dark:text-emerald-400' :
+                      gnDiffPct < 0.03  ? 'text-amber-600 dark:text-amber-400' :
+                      'text-red-600',
+                    )}>
+                      {gnDiff !== undefined ? (
+                        <span>
+                          {fmtDiff(gnDiff)}
+                          {gnDiffPct !== undefined && gnDiffPct > 0.001 && (
+                            <span className="block text-[10px]">
+                              {(gnDiffPct * 100).toFixed(1)} %
+                            </span>
+                          )}
+                        </span>
+                      ) : '—'}
+                    </td>
+                  )}
+
                   {/* Status */}
                   <td className="py-1.5 px-2 text-center">
                     {status === 'ok'      && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mx-auto" title="Bruttoumsatz stimmt mit Tageseinträgen überein (< 1 % Diff.)" />}
@@ -345,6 +402,22 @@ export function UmsatzAbstimmung({
               )}>
                 {totalDiff !== undefined ? fmtDiff(totalDiff) : '—'}
               </td>
+              {hasGn && (
+                <td className="py-2 px-2 text-right font-mono text-xs text-violet-700 dark:text-violet-400">
+                  {totalGn > 0 ? fmt(totalGn) : '—'}
+                </td>
+              )}
+              {hasGn && (
+                <td className={cn(
+                  'py-2 px-2 text-right font-mono text-xs',
+                  totalGnDiff === undefined ? 'text-muted-foreground/40' :
+                  Math.abs(totalGnDiff) / Math.max(totalManual, 1) < 0.01 ? 'text-emerald-600 dark:text-emerald-400' :
+                  Math.abs(totalGnDiff) / Math.max(totalManual, 1) < 0.03 ? 'text-amber-600 dark:text-amber-400' :
+                  'text-red-600',
+                )}>
+                  {totalGnDiff !== undefined ? fmtDiff(totalGnDiff) : '—'}
+                </td>
+              )}
               <td />
             </tr>
           </tfoot>
@@ -355,6 +428,7 @@ export function UmsatzAbstimmung({
           <span><strong>Take Away:</strong> Bruttoumsatz Takeaway, inkl. 2.6 % MwSt. Netto und MwSt-Betrag werden automatisch berechnet (÷ 1.026).</span>
           <span><strong>Summe Tage:</strong> Automatisch — Summe der Tageseinträge aus Tagesansicht/Tages-Controlling (Brutto, ohne Maison).</span>
           <span><strong>Differenz:</strong> Manuell minus Summe Tage — Ziel: 0. Grün &lt; 1 %, Gelb = 1–3 %, Rot &gt; 3 %.</span>
+          {hasGn && <span><strong>Gastronovi Z-Bericht:</strong> Bruttoumsatz aus importierten Gastronovi Z-Berichten (Summe nach Monat von period_from).</span>}
         </div>
       </CardContent>
     </Card>

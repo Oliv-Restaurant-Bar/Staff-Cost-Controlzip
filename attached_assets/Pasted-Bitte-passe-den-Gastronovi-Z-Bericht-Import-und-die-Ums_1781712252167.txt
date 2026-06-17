@@ -1,0 +1,164 @@
+Bitte passe den Gastronovi Z-Bericht Import und die Umsatzabstimmung an.
+
+Ziel:
+Der Gastronovi Z-Bericht CSV soll flexibel importiert werden können:
+- täglich
+- wöchentlich
+- monatlich
+- oder für einen beliebigen Zeitraum
+
+Der Import darf nicht zwingend pro Tag erfolgen.
+
+Wichtig:
+Wenn für dieselbe Zeitperiode bereits Gastronovi-Daten vorhanden sind, soll die App nicht einfach blockieren. Stattdessen soll eine Vorschau anzeigen, welche Daten neu sind und welche überschrieben werden.
+
+Neue Importlogik:
+
+1. Zeitraumserkennung
+Der Parser soll den Zeitraum aus der CSV erkennen:
+- period_from
+- period_to
+- falls nicht eindeutig erkennbar, Benutzer soll Zeitraum manuell setzen können
+
+2. Importmodus
+Beim Upload soll die App automatisch prüfen:
+- Welche Tage innerhalb des Importzeitraums sind bereits vorhanden?
+- Welche Tage sind neu?
+- Welche bestehenden Gastronovi-Importe überschneiden sich mit dem neuen Import?
+
+3. Vorschau Pop-up vor dem Speichern
+Nach dem Upload und vor dem Import soll ein Pop-up erscheinen mit:
+
+Titel:
+"Import-Vorschau"
+
+Inhalt:
+- Erkannter Zeitraum
+- Importart: Tagesimport / Wochenimport / Monatsimport / Benutzerdefiniert
+- Anzahl Tage im Import
+- Neue Tage
+- Bereits vorhandene Tage
+- Überschneidende bestehende Importe
+- Welche Daten werden überschrieben
+- Welche Daten werden neu hinzugefügt
+
+Beispiel:
+Neue Tage:
+- 17.06.2026
+- 18.06.2026
+
+Werden überschrieben:
+- 10.06.2026
+- 11.06.2026
+- 12.06.2026
+
+Bestehender Import:
+- Z-Bericht 10.06.2026 bis 16.06.2026
+
+4. Bestätigung erforderlich
+Der Import darf erst gespeichert werden, wenn der Benutzer bestätigt:
+
+Buttons:
+- Abbrechen
+- Importieren und bestehende Daten überschreiben
+
+5. Überschreiblogik
+Wenn bestätigt wird:
+- Alle bestehenden Gastronovi-Daten, die sich mit dem neuen Zeitraum überschneiden, sollen für diese Periode ersetzt werden.
+- Nicht überschneidende Daten dürfen nicht gelöscht werden.
+- Wenn ein bestehender Wochenimport teilweise überschrieben wird, soll die App sauber damit umgehen.
+
+Wichtig:
+Wenn der bestehende Import nur als Periodensumme ohne Tagesdaten gespeichert wurde, soll der ganze überschneidende Import ersetzt werden, nicht künstlich aufgeteilt.
+
+6. Datenmodell
+Falls nötig, ergänze eine Tagesebene für Gastronovi Importdaten:
+
+gn_zbericht_daily
+- id
+- import_id
+- date
+- gross_revenue
+- net_revenue
+- food_revenue
+- beverage_revenue
+- take_away_revenue
+- discounts_total
+- cancellations_total
+- average_receipt
+- receipts_count
+- source_period_from
+- source_period_to
+- created_at
+
+Wichtig:
+Wenn die CSV echte Tageswerte enthält, speichere sie pro Tag.
+Wenn die CSV nur Periodensummen enthält, speichere sie als Periodensumme und markiere:
+aggregation_level = period
+
+7. Importhistorie
+In der Importhistorie anzeigen:
+- Datei
+- Zeitraum
+- Importart
+- Aggregationslevel: Tag / Woche / Monat / Periode
+- Bruttoumsatz
+- Nettoumsatz
+- Status
+- Importdatum
+- Aktion: Löschen / Ersetzen / Details ansehen
+
+8. Umsatzabstimmung erweitern
+In der bestehenden Umsatzabstimmung soll eine zusätzliche Spalte ergänzt werden:
+
+Aktuelle Spalten bleiben bestehen.
+Neue Spalte:
+- Gastronovi Z-Bericht Umsatz
+
+Die Umsatzabstimmung soll künftig vergleichen:
+
+- Umsatz aus bestehender App-Tagesumsatzquelle
+- Umsatz aus Erfolgsrechnung
+- Umsatz aus Tagesansicht / Tagescontrolling
+- Gastronovi Z-Bericht Umsatz
+
+Dann berechnen:
+- Differenz App vs. Gastronovi CHF
+- Differenz App vs. Gastronovi %
+- Differenz Erfolgsrechnung vs. Gastronovi CHF
+- Status Ampel
+
+9. Verwendung im Reporting
+Der bestehende App-Umsatz bleibt die Hauptquelle für Tagesansicht, Tagescontrolling und Erfolgsrechnung.
+
+Gastronovi Z-Bericht Umsatz wird zusätzlich verwendet für:
+- Kontrollabgleich in der Umsatzabstimmung
+- Food / Beverage Split
+- Rabatte
+- Stornos
+- Take Away
+- Durchschnittsbon, falls kein separater Durchschnittsbon Analyseimport vorhanden ist
+- Kellner / Zahlungsarten / Kostenstellen
+
+10. Keine Duplikate
+Doppelte Importe für gleiche Zeiträume sollen nicht mehrfach addiert werden.
+Wenn gleicher Zeitraum erneut importiert wird:
+- Vorschau anzeigen
+- Benutzer bestätigt
+- alte überschneidende Daten ersetzen
+- neue Daten speichern
+
+11. Setup / SQL
+Falls neue Tabellen oder Spalten nötig sind:
+- Neue Migration erstellen
+- Keine alten Migrationen rückwirkend ändern
+- Am Schluss exakt sagen, welche SQL-Dateien ich in Supabase ausführen muss
+
+12. Nach Umsetzung
+Bitte am Schluss ausgeben:
+- Geänderte Dateien
+- Neue SQL-Dateien
+- Vollständiger SQL-Code aller neuen Migrationen
+- Welche SQL-Dateien ich in welcher Reihenfolge in Supabase ausführen muss
+- Kurze Testanleitung
+- TypeScript Check Ergebnis

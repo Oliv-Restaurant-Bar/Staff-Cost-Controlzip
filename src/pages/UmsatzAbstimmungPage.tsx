@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,17 +8,28 @@ import type { MonthlyFinancialRecord } from '@/types/reporting';
 import { loadYear, availableYears } from '@/lib/reporting-store';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { loadGnRevenueForYear } from '@/lib/gn-zbericht-db';
 
 const currentYear = new Date().getFullYear();
 
 export default function UmsatzAbstimmungPage() {
   const { isAdmin, isBeaulieuManager } = usePermissions();
-  const { tenantKey } = useTenant();
+  const { tenantKey, tenantId } = useTenant();
 
   const [year, setYear] = useState(currentYear);
   const [months, setMonths] = useState<MonthlyFinancialRecord[]>(() =>
     loadYear(year, tenantKey('reporting_v1')),
   );
+  const [gnRevByMonth, setGnRevByMonth] = useState<number[]>(() => new Array(12).fill(0) as number[]);
+
+  const loadGnData = useCallback(async (y: number) => {
+    const data = await loadGnRevenueForYear(tenantId, y);
+    setGnRevByMonth(data);
+  }, [tenantId]);
+
+  useEffect(() => {
+    loadGnData(year);
+  }, [year, loadGnData]);
 
   const handleYearChange = useCallback((y: number) => {
     setYear(y);
@@ -27,7 +38,8 @@ export default function UmsatzAbstimmungPage() {
 
   const handleRefresh = useCallback(() => {
     setMonths(loadYear(year, tenantKey('reporting_v1')));
-  }, [year, tenantKey]);
+    loadGnData(year);
+  }, [year, tenantKey, loadGnData]);
 
   if (isBeaulieuManager || !isAdmin) return <Navigate to="/" replace />;
 
@@ -67,6 +79,7 @@ export default function UmsatzAbstimmungPage() {
           dailyBudgetsKey={tenantKey('dailyBudgets')}
           storeKey={tenantKey('reporting_v1')}
           onRefresh={handleRefresh}
+          gnRevenueByMonth={gnRevByMonth}
         />
       </main>
     </div>

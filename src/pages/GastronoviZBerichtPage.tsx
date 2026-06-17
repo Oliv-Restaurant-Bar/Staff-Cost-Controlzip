@@ -23,9 +23,10 @@ import { toast } from 'sonner';
 import { parseGnZBericht } from '@/lib/gn-zbericht-parser';
 import type { GnParsedZBericht } from '@/lib/gn-zbericht-parser';
 import {
-  saveGnImport, loadGnImports, deleteGnImport, checkDuplicate,
+  saveGnImport, loadGnImports, deleteGnImport,
+  checkOverlappingImports, importTypeLabel,
 } from '@/lib/gn-zbericht-db';
-import type { GnImportRow } from '@/lib/gn-zbericht-db';
+import type { GnImportRow, OverlapInfo } from '@/lib/gn-zbericht-db';
 
 import { parseGnPersonReport } from '@/lib/gn-personen-parser';
 import type { GnParsedPersonReport, PersonCsvType } from '@/lib/gn-personen-parser';
@@ -74,9 +75,11 @@ export default function GastronoviZBerichtPage() {
   const [diagnostic,  setDiagnostic]  = useState<GnDiagnosticResult | null>(null);
 
   // Z-Bericht State
-  const [parsed,    setParsed]    = useState<GnParsedZBericht | null>(null);
-  const [dupInfo,   setDupInfo]   = useState<{ existingId: string; importedAt: string } | null>(null);
-  const [zHistory,  setZHistory]  = useState<GnImportRow[]>([]);
+  const [parsed,           setParsed]           = useState<GnParsedZBericht | null>(null);
+  const [overlapInfo,      setOverlapInfo]       = useState<OverlapInfo[]>([]);
+  const [manualPeriodFrom, setManualPeriodFrom]  = useState('');
+  const [manualPeriodTo,   setManualPeriodTo]    = useState('');
+  const [zHistory,         setZHistory]          = useState<GnImportRow[]>([]);
 
   // Personen State
   const [parsedPerson,    setParsedPerson]    = useState<GnParsedPersonReport | null>(null);
@@ -121,7 +124,8 @@ export default function GastronoviZBerichtPage() {
   // ── Typ wechseln → Reset ──────────────────────────────────────────────────
 
   const resetWizard = useCallback(() => {
-    setParsed(null); setDupInfo(null);
+    setParsed(null);
+    setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
     setParsedPerson(null); setDupPersonInfo(null);
     setCsvTypeOverride(null);
     setParseError(null); setStep('upload');
@@ -136,7 +140,8 @@ export default function GastronoviZBerichtPage() {
 
   const processCSV = useCallback(async (file: File) => {
     setParseError(null); setParsed(null); setParsedPerson(null);
-    setDupInfo(null); setDupPersonInfo(null);
+    setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
+    setDupPersonInfo(null);
 
     try {
       const text = await file.text();
@@ -147,9 +152,9 @@ export default function GastronoviZBerichtPage() {
           setParseError('Datei konnte nicht als Gastronovi Z-Bericht erkannt werden. Bitte prüfe das Format.');
           return;
         }
-        const dup = await checkDuplicate(tenantId, result.checksum, result.zCounter, result.periodFrom, result.periodTo);
-        if (dup.isDuplicate && dup.existingId) {
-          setDupInfo({ existingId: dup.existingId, importedAt: dup.existingImportedAt ?? '' });
+        if (result.periodFrom && result.periodTo) {
+          const overlaps = await checkOverlappingImports(tenantId, result.periodFrom, result.periodTo);
+          setOverlapInfo(overlaps);
         }
         setParsed(result);
       } else {
@@ -186,15 +191,26 @@ export default function GastronoviZBerichtPage() {
 
   // ── Bestätigen ─────────────────────────────────────────────────────────────
 
-  const handleConfirm = async (replace = false) => {
+  // Manuelles Zeitraum-Update → Überschneidungen neu prüfen
+  useEffect(() => {
+    if (!parsed || importType !== 'zbericht') return;
+    if (parsed.periodFrom && parsed.periodTo) return; // bereits in processCSV gecheckt
+    if (!manualPeriodFrom || !manualPeriodTo) return;
+    checkOverlappingImports(tenantId, manualPeriodFrom, manualPeriodTo).then(setOverlapInfo);
+  }, [manualPeriodFrom, manualPeriodTo, tenantId, parsed, importType]);
+
+  const handleConfirm = async (replacePersonDup = false) => {
     setStep('saving');
     if (importType === 'zbericht' && parsed) {
-      const { error } = await saveGnImport(tenantId, parsed, undefined, replace && dupInfo ? dupInfo.existingId : undefined);
+      const pFrom  = parsed.periodFrom || manualPeriodFrom || undefined;
+      const pTo    = parsed.periodTo   || manualPeriodTo   || undefined;
+      const ids    = overlapInfo.map(o => o.id);
+      const { error } = await saveGnImport(tenantId, parsed, undefined, ids, pFrom, pTo);
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
     } else if (importType === 'personen' && parsedPerson) {
       const { error } = await savePersonImport(
         tenantId, parsedPerson,
-        replace && dupPersonInfo ? dupPersonInfo.existingId : undefined,
+        replacePersonDup && dupPersonInfo ? dupPersonInfo.existingId : undefined,
         csvTypeOverride ?? undefined,
       );
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
@@ -244,9 +260,18 @@ export default function GastronoviZBerichtPage() {
   const pRowCount          = parsedPerson ? parsedPerson.rowCount : 0;
   const pWarnCount         = parsedPerson ? parsedPerson.warnings.length : 0;
   const pDurchschnBon      = parsedPerson ? parsedPerson.avgReceiptMonthly : 0;
-  const activeDupInfo      = importType === 'zbericht' ? dupInfo : dupPersonInfo;
+  const activeDupInfo      = importType === 'personen' ? dupPersonInfo : null;
   const activeWarnCount    = importType === 'zbericht' ? warnCount : pWarnCount;
   const activeWarnings     = importType === 'zbericht' ? (parsed?.warnings ?? []) : (parsedPerson?.warnings ?? []);
+  const hasOverlap         = importType === 'zbericht' && overlapInfo.length > 0;
+
+  // Effektiver Zeitraum (Parser-Ergebnis hat Vorrang, dann manuell)
+  const effectivePeriodFrom = parsed?.periodFrom || manualPeriodFrom || '';
+  const effectivePeriodTo   = parsed?.periodTo   || manualPeriodTo   || '';
+  const needsManualPeriod   = importType === 'zbericht' && parsed && !parsed.periodFrom;
+  const importDayCount      = effectivePeriodFrom && effectivePeriodTo
+    ? Math.round((new Date(effectivePeriodTo).getTime() - new Date(effectivePeriodFrom).getTime()) / 86400000) + 1
+    : 0;
 
   const historyCount = zHistory.length + personHistory.length;
 
@@ -290,6 +315,7 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
       '20260617_gn_analysis.sql',
       '20260617_gn_analysis_create_missing_tables.sql',
       '20260617_gn_grants.sql',
+      '20260618_gn_zbericht_v2.sql',
     ];
 
     const recheck = () => {
@@ -531,10 +557,91 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
           {/* ── Z-Bericht Vorschau ─────────────────────────────────────────── */}
           {importType === 'zbericht' && parsed && <>
             <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <MetaCell label="Zeitraum"     value={`${fdate(parsed.periodFrom)} – ${fdate(parsed.periodTo)}`} />
+              <MetaCell label="Zeitraum"     value={`${fdate(effectivePeriodFrom || parsed.periodFrom)} – ${fdate(effectivePeriodTo || parsed.periodTo)}`} />
               <MetaCell label="Z-Zähler"     value={parsed.zCounter || '—'} />
               <MetaCell label="Kostenstelle" value={parsed.costCenter || '—'} />
             </div>
+
+            {/* Manueller Zeitraum (nur wenn Parser keinen Zeitraum erkennt) */}
+            {needsManualPeriod && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-3">
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  Zeitraum nicht erkannt — bitte manuell eingeben
+                </p>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Von</label>
+                    <input type="date" value={manualPeriodFrom}
+                      onChange={e => setManualPeriodFrom(e.target.value)}
+                      className="text-xs border border-border rounded px-2 py-1.5 bg-background" />
+                  </div>
+                  <span className="text-muted-foreground mt-4">–</span>
+                  <div>
+                    <label className="text-xs text-muted-foreground block mb-1">Bis</label>
+                    <input type="date" value={manualPeriodTo}
+                      onChange={e => setManualPeriodTo(e.target.value)}
+                      className="text-xs border border-border rounded px-2 py-1.5 bg-background" />
+                  </div>
+                  {importDayCount > 0 && (
+                    <span className="text-xs text-muted-foreground mt-4">{importDayCount} Tag{importDayCount !== 1 ? 'e' : ''}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Import-Vorschau: Importart + Überschneidungen */}
+            {(effectivePeriodFrom || hasOverlap) && (
+              <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <div className="text-muted-foreground mb-0.5">Importart</div>
+                    <div className="font-semibold">
+                      {importDayCount === 1 ? 'Tagesimport'
+                        : importDayCount <= 7 && importDayCount > 1 ? 'Wochenimport'
+                        : importDayCount >= 28 && importDayCount <= 32 ? 'Monatsimport'
+                        : importDayCount > 0 ? 'Zeitraumimport' : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground mb-0.5">Anzahl Tage</div>
+                    <div className="font-semibold">{importDayCount > 0 ? importDayCount : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground mb-0.5">Zeitraum</div>
+                    <div className="font-semibold text-[11px]">
+                      {effectivePeriodFrom ? `${fdate(effectivePeriodFrom)} – ${fdate(effectivePeriodTo)}` : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground mb-0.5">Überschneidungen</div>
+                    <div className={`font-semibold ${overlapInfo.length > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {overlapInfo.length > 0 ? `${overlapInfo.length} Import${overlapInfo.length > 1 ? 'e' : ''}` : 'Keine'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Überschneidende Importe auflisten */}
+                {overlapInfo.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      Folgende Importe werden beim Bestätigen ersetzt:
+                    </p>
+                    {overlapInfo.map(o => (
+                      <div key={o.id} className="flex items-center justify-between gap-3 text-xs rounded bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 px-3 py-1.5">
+                        <span className="font-medium truncate flex-1 min-w-0">{o.file_name}</span>
+                        <span className="text-muted-foreground shrink-0">{fdate(o.period_from)} – {fdate(o.period_to)}</span>
+                        <span className="font-mono shrink-0 text-right">{o.gross_revenue !== null && o.gross_revenue > 0 ? `CHF ${NUM.format(o.gross_revenue)}` : '—'}</span>
+                        {o.import_type && o.import_type !== 'period' && (
+                          <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded shrink-0">{importTypeLabel(o.import_type)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               <KpiMini label="Brutto Umsatz" value={fc(grossTotal)} />
@@ -829,16 +936,21 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
 
           {/* Bestätigen-Buttons */}
           {!activeDupInfo && (
-            <div className="flex gap-3 pt-2">
+            <div className="flex gap-3 pt-2 flex-wrap">
               <button onClick={resetWizard}
                 className="px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
                 Abbrechen
               </button>
               <button onClick={() => handleConfirm(false)} disabled={step === 'saving'}
-                className="px-5 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2 transition-colors">
+                className={cn(
+                  'px-5 py-2 text-sm rounded-md disabled:opacity-50 flex items-center gap-2 transition-colors',
+                  hasOverlap
+                    ? 'bg-amber-600 text-white hover:bg-amber-700'
+                    : 'bg-primary text-primary-foreground hover:bg-primary/90',
+                )}>
                 {step === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Import bestätigen
+                {hasOverlap ? 'Importieren und Daten ersetzen' : 'Import bestätigen'}
               </button>
             </div>
           )}
@@ -892,7 +1004,7 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                 return (
                   <HistoryRow key={row.id} id={row.id} fileName={row.file_name}
                     subLine={`${fdate(row.period_from)} – ${fdate(row.period_to)}${row.cost_center ? ` · ${row.cost_center}` : ''}${row.z_counter ? ` · Z-Nr. ${row.z_counter}` : ''}`}
-                    badge="Z-Bericht"
+                    badge={`Z-Bericht${row.import_type && row.import_type !== 'period' ? ' · ' + importTypeLabel(row.import_type) : ''}`}
                     mainValue={fc(gross)} subValue={net > 0 ? `Netto ${fc(net)}` : undefined}
                     importedAt={fdate(row.imported_at?.slice(0, 10))}
                     isOpen={isOpen} deleting={deleting === row.id}
