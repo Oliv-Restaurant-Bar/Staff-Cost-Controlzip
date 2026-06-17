@@ -23,7 +23,7 @@ import { toast } from 'sonner';
 import { parseGnZBericht } from '@/lib/gn-zbericht-parser';
 import type { GnParsedZBericht } from '@/lib/gn-zbericht-parser';
 import {
-  saveGnImport, loadGnImports, deleteGnImport, checkDuplicate, checkGnTablesExist,
+  saveGnImport, loadGnImports, deleteGnImport, checkDuplicate,
 } from '@/lib/gn-zbericht-db';
 import type { GnImportRow } from '@/lib/gn-zbericht-db';
 
@@ -31,9 +31,12 @@ import { parseGnPersonReport } from '@/lib/gn-personen-parser';
 import type { GnParsedPersonReport, PersonCsvType } from '@/lib/gn-personen-parser';
 import {
   savePersonImport, loadPersonImports, deletePersonImport,
-  checkPersonDuplicate, checkPersonTablesExist,
+  checkPersonDuplicate,
 } from '@/lib/gn-personen-db';
 import type { GnPersonImportRow } from '@/lib/gn-personen-db';
+
+import { runGnDiagnostic } from '@/lib/gn-diagnostic';
+import type { GnDiagnosticResult } from '@/lib/gn-diagnostic';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -67,7 +70,8 @@ export default function GastronoviZBerichtPage() {
   const [step,       setStep]       = useState<WizardStep>('upload');
   const [isDragging, setIsDragging] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [tablesOk,   setTablesOk]   = useState<boolean | null>(null);
+  const [tablesOk,    setTablesOk]    = useState<boolean | null>(null);
+  const [diagnostic,  setDiagnostic]  = useState<GnDiagnosticResult | null>(null);
 
   // Z-Bericht State
   const [parsed,    setParsed]    = useState<GnParsedZBericht | null>(null);
@@ -90,8 +94,10 @@ export default function GastronoviZBerichtPage() {
   // ── Setup prüfen ────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    Promise.all([checkGnTablesExist(), checkPersonTablesExist()])
-      .then(([z, p]) => setTablesOk(z && p));
+    runGnDiagnostic().then(result => {
+      setDiagnostic(result);
+      setTablesOk(result.allOk);
+    });
   }, []);
 
   // ── History laden ─────────────────────────────────────────────────────────
@@ -261,33 +267,108 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
   // ── Setup-Banner ─────────────────────────────────────────────────────────────
 
   if (tablesOk === false) {
+    const failures  = diagnostic?.checks.filter(c => !c.ok) ?? [];
+    const isPerm    = failures.some(f => f.errorCode === '42501');
+    const isMissing = failures.some(f => f.errorCode === '42P01');
+    const isSchema  = diagnostic?.schemaHint ?? false;
+
+    // Unique failed tables / columns for display
+    const failedItems = Array.from(
+      new Map(failures.map(f => [`${f.table}.${f.column ?? 'id'}`, f])).values()
+    ).slice(0, 8);
+
     return (
       <div className="max-w-3xl mx-auto px-4 py-8 space-y-4">
         <h1 className="text-base font-bold flex items-center gap-2">
           <Database className="h-5 w-5 text-muted-foreground" />
           Gastronovi Import
         </h1>
-        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-5 space-y-3">
-          <p className="font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+
+        {/* Hauptfehler-Box */}
+        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 p-5 space-y-3">
+          <p className="font-semibold text-red-800 dark:text-red-300 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
-            Datenbank-Setup erforderlich
+            {isPerm
+              ? 'Fehlende Datenbankrechte (permission denied)'
+              : isMissing
+              ? 'Tabellen fehlen — Migration noch nicht ausgeführt'
+              : 'Datenbank-Setup unvollständig'}
           </p>
-          <p className="text-sm text-amber-700 dark:text-amber-400">
-            Bitte führe beide SQL-Migrations-Scripts im Supabase SQL-Editor aus:
-          </p>
-          <div className="space-y-1.5">
-            <code className="block bg-white dark:bg-black/20 border border-amber-200 rounded p-2.5 text-xs font-mono">
-              supabase/migrations/20260617_gn_zbericht.sql
-            </code>
-            <code className="block bg-white dark:bg-black/20 border border-amber-200 rounded p-2.5 text-xs font-mono">
-              supabase/migrations/20260617_gn_personen.sql
-            </code>
-            <code className="block bg-white dark:bg-black/20 border border-amber-200 rounded p-2.5 text-xs font-mono">
-              supabase/migrations/20260617_gn_analysis.sql
-            </code>
-          </div>
-          <button onClick={() => Promise.all([checkGnTablesExist(), checkPersonTablesExist()]).then(([z, p]) => setTablesOk(z && p))}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-amber-600 text-white text-sm hover:bg-amber-700">
+
+          {/* Spezifische Fehler */}
+          {failedItems.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-red-700 dark:text-red-400">
+                Betroffene Tabellen / Spalten:
+              </p>
+              {failedItems.map((f, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs">
+                  <span className="text-red-500 mt-0.5">✗</span>
+                  <span className="font-mono text-red-800 dark:text-red-300">
+                    {f.table}{f.column && f.column !== 'id' ? `.${f.column}` : ''}
+                  </span>
+                  <span className="text-red-600 dark:text-red-400">
+                    [{f.errorCode}] {f.errorMessage}
+                  </span>
+                </div>
+              ))}
+              {failures.length > 8 && (
+                <p className="text-xs text-red-500">…und {failures.length - 8} weitere</p>
+              )}
+            </div>
+          )}
+
+          {/* Lösung */}
+          {isPerm && (
+            <div className="rounded border border-red-200 bg-white dark:bg-black/20 p-3 space-y-2">
+              <p className="text-xs font-semibold text-red-700 dark:text-red-400">
+                Lösung: GRANT-Migration im Supabase SQL-Editor ausführen:
+              </p>
+              <code className="block text-xs font-mono text-red-800 dark:text-red-300">
+                supabase/migrations/20260617_gn_grants.sql
+              </code>
+              <p className="text-xs text-red-600 dark:text-red-400">
+                Die Tabellen existieren, aber dem <code>authenticated</code>-Role fehlen die Zugriffsrechte.
+                Dieses Script fügt <code>GRANT SELECT, INSERT, UPDATE, DELETE</code> hinzu.
+              </p>
+            </div>
+          )}
+          {isMissing && (
+            <div className="rounded border border-amber-200 bg-white dark:bg-black/20 p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-amber-700">Noch auszuführende Migrationen:</p>
+              {['20260617_gn_zbericht.sql', '20260617_gn_personen.sql', '20260617_gn_analysis.sql', '20260617_gn_grants.sql'].map(f => (
+                <code key={f} className="block text-xs font-mono">supabase/migrations/{f}</code>
+              ))}
+            </div>
+          )}
+          {!isPerm && !isMissing && failures.length > 0 && (
+            <div className="rounded border border-amber-200 bg-white dark:bg-black/20 p-3">
+              <p className="text-xs text-amber-700">
+                Bitte alle vier Migrations-Scripts im Supabase SQL-Editor ausführen:
+              </p>
+              {['20260617_gn_zbericht.sql', '20260617_gn_personen.sql', '20260617_gn_analysis.sql', '20260617_gn_grants.sql'].map(f => (
+                <code key={f} className="block text-xs font-mono mt-1">supabase/migrations/{f}</code>
+              ))}
+            </div>
+          )}
+
+          {isSchema && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+              <Info className="h-3 w-3 shrink-0" />
+              Supabase Schema Cache könnte veraltet sein — App neu laden oder Cache aktualisieren.
+            </p>
+          )}
+
+          <button
+            onClick={() => {
+              setTablesOk(null);
+              setDiagnostic(null);
+              runGnDiagnostic().then(result => {
+                setDiagnostic(result);
+                setTablesOk(result.allOk);
+              });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700">
             <RefreshCw className="h-3.5 w-3.5" />
             Erneut prüfen
           </button>
