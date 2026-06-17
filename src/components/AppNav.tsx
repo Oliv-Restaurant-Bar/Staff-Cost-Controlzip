@@ -95,13 +95,6 @@ const NAV_GROUPS: NavGroup[] = [
         module: 'tagesansicht' as import('@/hooks/usePermissions').AppModule,
       },
       {
-        path: '/tages-controlling',
-        label: 'Tages-Controlling',
-        shortLabel: 'Controlling',
-        icon: Activity,
-        module: 'tages_controlling' as import('@/hooks/usePermissions').AppModule,
-      },
-      {
         path: '/produkt-analyse',
         label: 'Produktanalyse',
         shortLabel: 'Produkte',

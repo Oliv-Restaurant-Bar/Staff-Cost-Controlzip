@@ -20,6 +20,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear,
   eachDayOfInterval, format, addWeeks, subWeeks, addMonths, subMonths,
@@ -383,6 +384,7 @@ const pctCls = (pct: number) =>
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
 
 export default function TagesControllingPage() {
+  const goToView = useNavigate();
   const { tenantId, tenantKey } = useTenant();
   const { showNetRevenue } = useRevenueDisplay();
   const today = useMemo(() => new Date(), []);
@@ -1276,6 +1278,21 @@ export default function TagesControllingPage() {
             <p className="text-xs text-muted-foreground mt-0.5 hidden sm:block">
               Umsatz · Personalkosten Plan/Ist · Warenkosten
             </p>
+          </div>
+
+          {/* ── View-Switcher ── */}
+          <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+            <button
+              onClick={() => goToView('/tagesansicht')}
+              className="px-2.5 py-1 text-[11px] font-medium rounded-md transition-all text-muted-foreground hover:text-foreground whitespace-nowrap"
+            >
+              Tagesansicht
+            </button>
+            <button
+              className="px-2.5 py-1 text-[11px] font-medium rounded-md transition-all bg-background text-foreground shadow-sm whitespace-nowrap"
+            >
+              Controlling
+            </button>
           </div>
 
           {/* Periode-Auswahl */}

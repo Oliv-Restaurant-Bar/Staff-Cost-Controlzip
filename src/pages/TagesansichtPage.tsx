@@ -15,6 +15,7 @@
  */
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   startOfMonth, endOfMonth, eachDayOfInterval, format,
   addMonths, subMonths, isSameMonth,
@@ -79,6 +80,7 @@ function readDailyBudgets(keyFn: (k: string) => string = k => k): Record<string,
 // ── Hauptkomponente ───────────────────────────────────────────────────────────
 
 export default function TagesansichtPage() {
+  const navigate = useNavigate();
   const { showNetRevenue } = useRevenueDisplay();
   const { tenantId, tenantKey } = useTenant();
   const today = useMemo(() => new Date(), []);
@@ -503,6 +505,21 @@ export default function TagesansichtPage() {
           <div className="flex items-center gap-2">
             <Table2 className="h-4 w-4 text-muted-foreground" />
             <h1 className="text-sm font-semibold">Tagesansicht</h1>
+          </div>
+
+          {/* ── View-Switcher ── */}
+          <div className="flex items-center bg-muted rounded-lg p-0.5 gap-0.5">
+            <button
+              className="px-2.5 py-1 text-[11px] font-medium rounded-md transition-all bg-background text-foreground shadow-sm whitespace-nowrap"
+            >
+              Tagesansicht
+            </button>
+            <button
+              onClick={() => navigate('/tages-controlling')}
+              className="px-2.5 py-1 text-[11px] font-medium rounded-md transition-all text-muted-foreground hover:text-foreground whitespace-nowrap"
+            >
+              Controlling
+            </button>
           </div>
 
           {/* Monat-Navigator */}
