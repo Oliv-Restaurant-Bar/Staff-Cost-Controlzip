@@ -267,15 +267,37 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
   // ── Setup-Banner ─────────────────────────────────────────────────────────────
 
   if (tablesOk === false) {
-    const failures  = diagnostic?.checks.filter(c => !c.ok) ?? [];
+    const checks    = diagnostic?.checks ?? [];
+    const failures  = checks.filter(c => !c.ok);
     const isPerm    = failures.some(f => f.errorCode === '42501');
     const isMissing = failures.some(f => f.errorCode === '42P01');
     const isSchema  = diagnostic?.schemaHint ?? false;
 
-    // Unique failed tables / columns for display
-    const failedItems = Array.from(
-      new Map(failures.map(f => [`${f.table}.${f.column ?? 'id'}`, f])).values()
-    ).slice(0, 8);
+    // Group checks by migration file for display
+    const byMigration: Record<string, typeof checks> = {};
+    for (const c of checks) {
+      const key = c.migration ?? 'Unbekannt';
+      if (!byMigration[key]) byMigration[key] = [];
+      byMigration[key].push(c);
+    }
+
+    // Deduplicate: if a table appears multiple times (table check + column checks),
+    // show the table once, then its columns
+    const migrationOrder = [
+      '20260617_gn_zbericht.sql',
+      '20260617_gn_personen.sql',
+      '20260617_gn_analysis.sql',
+      '20260617_gn_grants.sql',
+    ];
+
+    const recheck = () => {
+      setTablesOk(null);
+      setDiagnostic(null);
+      runGnDiagnostic().then(result => {
+        setDiagnostic(result);
+        setTablesOk(result.allOk);
+      });
+    };
 
     return (
       <div className="max-w-3xl mx-auto px-4 py-8 space-y-4">
@@ -285,69 +307,90 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
         </h1>
 
         {/* Hauptfehler-Box */}
-        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 p-5 space-y-3">
-          <p className="font-semibold text-red-800 dark:text-red-300 flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4" />
-            {isPerm
-              ? 'Fehlende Datenbankrechte (permission denied)'
-              : isMissing
-              ? 'Tabellen fehlen — Migration noch nicht ausgeführt'
-              : 'Datenbank-Setup unvollständig'}
-          </p>
+        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/20 p-5 space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <p className="font-semibold text-red-800 dark:text-red-300 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {isPerm
+                ? 'Fehlende DB-Zugriffsrechte (permission denied 42501)'
+                : isMissing
+                ? 'Tabellen fehlen — Migration nicht ausgeführt (42P01)'
+                : 'Datenbank-Setup unvollständig'}
+            </p>
+            <button onClick={recheck}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-600 text-white text-xs hover:bg-red-700">
+              <RefreshCw className="h-3 w-3" />
+              Prüfen
+            </button>
+          </div>
 
-          {/* Spezifische Fehler */}
-          {failedItems.length > 0 && (
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-red-700 dark:text-red-400">
-                Betroffene Tabellen / Spalten:
-              </p>
-              {failedItems.map((f, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs">
-                  <span className="text-red-500 mt-0.5">✗</span>
-                  <span className="font-mono text-red-800 dark:text-red-300">
-                    {f.table}{f.column && f.column !== 'id' ? `.${f.column}` : ''}
-                  </span>
-                  <span className="text-red-600 dark:text-red-400">
-                    [{f.errorCode}] {f.errorMessage}
-                  </span>
+          {/* Vollständige Prüfliste gruppiert nach Migration */}
+          {checks.length > 0 && (
+            <div className="space-y-3">
+              {migrationOrder.filter(m => byMigration[m]).map(migration => (
+                <div key={migration} className="rounded border border-red-200 bg-white dark:bg-black/20 overflow-hidden">
+                  <div className="px-3 py-1.5 bg-red-100 dark:bg-red-900/20 border-b border-red-200 flex items-center justify-between">
+                    <code className="text-xs font-mono font-semibold text-red-700 dark:text-red-400">
+                      supabase/migrations/{migration}
+                    </code>
+                    <span className="text-xs text-red-500">
+                      {byMigration[migration].filter(c => !c.ok).length}/{byMigration[migration].length} Fehler
+                    </span>
+                  </div>
+                  <div className="divide-y divide-red-100 dark:divide-red-900/20">
+                    {byMigration[migration].map((c, i) => (
+                      <div key={i} className="px-3 py-1.5 flex items-start gap-2 text-xs">
+                        <span className={c.ok ? 'text-green-500' : 'text-red-500'}>
+                          {c.ok ? '✓' : '✗'}
+                        </span>
+                        <span className={`font-mono ${c.ok ? 'text-green-700 dark:text-green-400' : 'text-red-800 dark:text-red-300'}`}>
+                          {c.table}{c.column && c.column !== 'id' ? `.${c.column}` : ''}
+                        </span>
+                        {!c.ok && (
+                          <span className="text-red-500 dark:text-red-400 ml-1">
+                            [{c.errorCode}]&nbsp;
+                            {c.errorCode === '42501' ? 'permission denied' :
+                             c.errorCode === '42P01' ? 'Tabelle fehlt' :
+                             c.errorCode === '42703' ? 'Spalte fehlt' :
+                             c.errorMessage ?? ''}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
-              {failures.length > 8 && (
-                <p className="text-xs text-red-500">…und {failures.length - 8} weitere</p>
-              )}
             </div>
           )}
 
           {/* Lösung */}
           {isPerm && (
-            <div className="rounded border border-red-200 bg-white dark:bg-black/20 p-3 space-y-2">
-              <p className="text-xs font-semibold text-red-700 dark:text-red-400">
-                Lösung: GRANT-Migration im Supabase SQL-Editor ausführen:
+            <div className="rounded border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                Lösung: eine einzige Migration im Supabase SQL-Editor ausführen:
               </p>
-              <code className="block text-xs font-mono text-red-800 dark:text-red-300">
+              <code className="block text-sm font-mono font-bold text-amber-900 dark:text-amber-200">
                 supabase/migrations/20260617_gn_grants.sql
               </code>
-              <p className="text-xs text-red-600 dark:text-red-400">
-                Die Tabellen existieren, aber dem <code>authenticated</code>-Role fehlen die Zugriffsrechte.
-                Dieses Script fügt <code>GRANT SELECT, INSERT, UPDATE, DELETE</code> hinzu.
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Die Tabellen existieren. Dem <code>authenticated</code>-Role fehlen nur die
+                {' '}<code>GRANT SELECT, INSERT, UPDATE, DELETE</code>-Rechte.
               </p>
             </div>
           )}
           {isMissing && (
-            <div className="rounded border border-amber-200 bg-white dark:bg-black/20 p-3 space-y-1.5">
-              <p className="text-xs font-semibold text-amber-700">Noch auszuführende Migrationen:</p>
+            <div className="rounded border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-amber-800">In dieser Reihenfolge ausführen:</p>
               {['20260617_gn_zbericht.sql', '20260617_gn_personen.sql', '20260617_gn_analysis.sql', '20260617_gn_grants.sql'].map(f => (
                 <code key={f} className="block text-xs font-mono">supabase/migrations/{f}</code>
               ))}
             </div>
           )}
           {!isPerm && !isMissing && failures.length > 0 && (
-            <div className="rounded border border-amber-200 bg-white dark:bg-black/20 p-3">
-              <p className="text-xs text-amber-700">
-                Bitte alle vier Migrations-Scripts im Supabase SQL-Editor ausführen:
-              </p>
+            <div className="rounded border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-1">
+              <p className="text-xs font-semibold text-amber-800">In dieser Reihenfolge ausführen:</p>
               {['20260617_gn_zbericht.sql', '20260617_gn_personen.sql', '20260617_gn_analysis.sql', '20260617_gn_grants.sql'].map(f => (
-                <code key={f} className="block text-xs font-mono mt-1">supabase/migrations/{f}</code>
+                <code key={f} className="block text-xs font-mono mt-0.5">supabase/migrations/{f}</code>
               ))}
             </div>
           )}
@@ -358,20 +401,6 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               Supabase Schema Cache könnte veraltet sein — App neu laden oder Cache aktualisieren.
             </p>
           )}
-
-          <button
-            onClick={() => {
-              setTablesOk(null);
-              setDiagnostic(null);
-              runGnDiagnostic().then(result => {
-                setDiagnostic(result);
-                setTablesOk(result.allOk);
-              });
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-red-600 text-white text-sm hover:bg-red-700">
-            <RefreshCw className="h-3.5 w-3.5" />
-            Erneut prüfen
-          </button>
         </div>
       </div>
     );
