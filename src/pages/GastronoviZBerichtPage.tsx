@@ -26,8 +26,15 @@ import type { GnParsedZBericht } from '@/lib/gn-zbericht-parser';
 import {
   saveGnImport, loadGnImports, deleteGnImport,
   checkOverlappingImports, importTypeLabel,
+  fetchBatchOverlaps, saveGnZBerichtBatch,
 } from '@/lib/gn-zbericht-db';
-import type { GnImportRow, OverlapInfo } from '@/lib/gn-zbericht-db';
+import type { GnImportRow, OverlapInfo, BatchSaveItem, BatchSaveResult } from '@/lib/gn-zbericht-db';
+import {
+  parseZBerichtBatch, planBatchImport,
+} from '@/lib/gn-zbericht-multi';
+import type {
+  BatchParseResult, FileImportPlan, ConflictAction, ErrorPolicy,
+} from '@/lib/gn-zbericht-multi';
 
 import { parseGnPersonReport } from '@/lib/gn-personen-parser';
 import type { GnParsedPersonReport, PersonCsvType } from '@/lib/gn-personen-parser';
@@ -90,6 +97,15 @@ export default function GastronoviZBerichtPage() {
   const [manualPeriodTo,   setManualPeriodTo]    = useState('');
   const [zHistory,         setZHistory]          = useState<GnImportRow[]>([]);
 
+  // Z-Bericht Multi-Datei (Batch) State
+  const [batchResult,      setBatchResult]      = useState<BatchParseResult | null>(null);
+  const [batchOverlaps,    setBatchOverlaps]    = useState<Record<string, OverlapInfo[]>>({});
+  const [batchConflict,    setBatchConflict]    = useState<ConflictAction>('replace');
+  const [batchErrorPolicy, setBatchErrorPolicy] = useState<ErrorPolicy>('only_valid');
+  const [batchPlans,       setBatchPlans]       = useState<FileImportPlan[] | null>(null);
+  const [batchSaveResults, setBatchSaveResults] = useState<BatchSaveResult[] | null>(null);
+  const [batchExpanded,    setBatchExpanded]    = useState<Set<string>>(new Set());
+
   // Personen State
   const [parsedPerson,    setParsedPerson]    = useState<GnParsedPersonReport | null>(null);
   const [dupPersonInfo,   setDupPersonInfo]   = useState<{ existingId: string; importedAt: string } | null>(null);
@@ -146,6 +162,9 @@ export default function GastronoviZBerichtPage() {
   const resetWizard = useCallback(() => {
     setParsed(null);
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
+    setBatchResult(null); setBatchOverlaps({}); setBatchPlans(null);
+    setBatchSaveResults(null); setBatchExpanded(new Set());
+    setBatchConflict('replace'); setBatchErrorPolicy('only_valid');
     setParsedPerson(null); setDupPersonInfo(null);
     setCsvTypeOverride(null);
     setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null);
@@ -249,10 +268,50 @@ export default function GastronoviZBerichtPage() {
     processCSV(file);
   };
 
+  // Mehrere Z-Berichte gleichzeitig parsen, klassifizieren und Überschneidungen prüfen.
+  const processBatch = useCallback(async (files: File[]) => {
+    setParseError(null);
+    setParsed(null); setParsedPerson(null); setParsedAvg(null);
+    setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
+    setBatchResult(null); setBatchOverlaps({}); setBatchPlans(null); setBatchSaveResults(null);
+    setBatchExpanded(new Set());
+
+    try {
+      const inputs = await Promise.all(
+        files.map(async f => ({ name: f.name, text: await f.text() })),
+      );
+      const result = parseZBerichtBatch(inputs);
+      setBatchResult(result);
+
+      // Überschneidungen nur für erkennbare Dateien mit Zeitraum prüfen.
+      const items = result.files
+        .filter(f => f.status !== 'error' && f.periodFrom)
+        .map(f => ({ id: f.id, periodFrom: f.periodFrom, periodTo: f.periodTo, costCenter: f.costCenter }));
+      const overlaps = await fetchBatchOverlaps(tenantId, items);
+      setBatchOverlaps(overlaps);
+      setStep('preview');
+    } catch (e) {
+      setParseError('Fehler: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }, [tenantId]);
+
+  // Routing: bei Z-Bericht mit mehreren Dateien → Batch, sonst Einzeldatei-Pfad.
+  const handleFilesSelected = (files: File[]) => {
+    const csvs = files.filter(f => f.name.toLowerCase().endsWith('.csv'));
+    if (csvs.length === 0) {
+      setParseError('Bitte eine CSV-Datei auswählen.');
+      return;
+    }
+    if (importType === 'zbericht' && csvs.length > 1) {
+      processBatch(csvs);
+    } else {
+      handleFileSelect(csvs[0]);
+    }
+  };
+
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault(); setIsDragging(false);
-    const file = Array.from(e.dataTransfer.files).find(f => f.name.toLowerCase().endsWith('.csv'));
-    if (file) handleFileSelect(file);
+    handleFilesSelected(Array.from(e.dataTransfer.files));
   };
 
   // ── Bestätigen ─────────────────────────────────────────────────────────────
@@ -287,6 +346,46 @@ export default function GastronoviZBerichtPage() {
     toast.success('Import erfolgreich gespeichert');
     setStep('done');
     setTab('history');
+    loadHistory();
+  };
+
+  // Multi-Datei-Import bestätigen: Plan berechnen, pro Datei atomar speichern.
+  const handleBatchConfirm = async () => {
+    if (!batchResult) return;
+    const plan = planBatchImport(batchResult.files, batchOverlaps, {
+      conflictAction: batchConflict,
+      errorPolicy:    batchErrorPolicy,
+    });
+    setBatchPlans(plan.plans);
+    if (!plan.canProceed) {
+      toast.error(plan.abortReason || 'Import nicht möglich.');
+      return;
+    }
+
+    setStep('saving');
+    const byId = new Map(batchResult.files.map(f => [f.id, f]));
+    const items: BatchSaveItem[] = plan.plans.map(p => {
+      const f = byId.get(p.id);
+      return {
+        id:         p.id,
+        fileName:   p.fileName,
+        parsed:     f?.parsed ?? null,
+        action:     p.action,
+        overlapIds: p.overlapIds,
+        periodFrom: f?.periodFrom || undefined,
+        periodTo:   f?.periodTo   || undefined,
+      };
+    });
+
+    const results = await saveGnZBerichtBatch(tenantId, items);
+    setBatchSaveResults(results);
+
+    const okN   = results.filter(r => r.ok).length;
+    const failN = results.filter(r => !r.ok && !r.skipped).length;
+    if (failN > 0) toast.error(`${okN} importiert, ${failN} fehlgeschlagen`);
+    else           toast.success(`${okN} Bericht${okN === 1 ? '' : 'e'} importiert`);
+
+    setStep('done');
     loadHistory();
   };
 
@@ -346,6 +445,7 @@ export default function GastronoviZBerichtPage() {
   const avgMax             = parsedAvg ? parsedAvg.averageMax : 0;
   const avgWarnCount       = parsedAvg ? parsedAvg.warnings.length : 0;
 
+  const isBatch            = importType === 'zbericht' && !!batchResult;
   const activeDupInfo      = importType === 'personen' ? dupPersonInfo : null;
   const activeWarnCount    = importType === 'zbericht' ? warnCount
     : importType === 'personen' ? pWarnCount : avgWarnCount;
@@ -666,12 +766,17 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             label={importType === 'zbericht' ? 'Gastronovi Z-Bericht CSV hier ablegen'
               : importType === 'personen' ? 'Gastronovi Personen-Bericht CSV hier ablegen'
               : 'Gastronovi Durchschnittsbon CSV hier ablegen'}
-            hint={importType === 'personen' ? 'Analyse → Verkäufe → Personen / Umsatz pro Person'
+            hint={importType === 'zbericht' ? 'Eine oder mehrere Tagesberichte gleichzeitig auswählbar'
+              : importType === 'personen' ? 'Analyse → Verkäufe → Personen / Umsatz pro Person'
               : importType === 'durchschnittsbon_bericht' ? 'Analyse → Verkäufe → Durchschnittsbon (Tageswerte als Spalten)'
               : undefined}
           />
           <input ref={csvRef} type="file" accept=".csv" className="hidden"
-            onChange={e => e.target.files?.[0] && handleFileSelect(e.target.files[0])} />
+            multiple={importType === 'zbericht'}
+            onChange={e => {
+              if (e.target.files && e.target.files.length) handleFilesSelected(Array.from(e.target.files));
+              e.target.value = '';
+            }} />
 
           {parseError && (
             <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-700 dark:text-red-400">
@@ -730,6 +835,123 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               ))}
             </div>
           )}
+
+          {/* ── Z-Bericht Multi-Datei Vorschau (Batch) ─────────────────────── */}
+          {isBatch && batchResult && <>
+            {/* Aggregat-Kacheln */}
+            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <MetaCell label="Dateien"      value={String(batchResult.aggregate.fileCount)} />
+              <MetaCell label="Tagesberichte" value={String(batchResult.aggregate.dailyReportCount)} />
+              <MetaCell label="Zeitraum-Berichte" value={String(batchResult.aggregate.periodReportCount)} />
+              <MetaCell label="Fehlerhaft"   value={String(batchResult.aggregate.errorCount)} />
+              <MetaCell label="Zeitraum"     value={`${fdate(batchResult.aggregate.dayFrom)} – ${fdate(batchResult.aggregate.dayTo)}`} />
+              <MetaCell label="Brutto Σ"     value={fc(batchResult.aggregate.totalGross)} />
+              <MetaCell label="Netto Σ"      value={fc(batchResult.aggregate.totalNet)} />
+              <MetaCell label="Getränke Σ"   value={fc(batchResult.aggregate.totalBev)} />
+            </div>
+
+            {/* Steuerung: Fehler-Richtlinie & Konfliktaktion */}
+            <div className="rounded-lg border border-border bg-muted/10 p-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-muted-foreground">Bei fehlerhaften Dateien</span>
+                <select value={batchErrorPolicy} disabled={step === 'saving'}
+                  onChange={e => setBatchErrorPolicy(e.target.value as ErrorPolicy)}
+                  className="w-full text-sm rounded-md border border-border bg-background px-3 py-2">
+                  <option value="only_valid">Nur gültige importieren</option>
+                  <option value="abort_on_error">Bei Fehlern abbrechen</option>
+                </select>
+              </label>
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold text-muted-foreground">Bei bestehenden Daten (Konflikt)</span>
+                <select value={batchConflict} disabled={step === 'saving'}
+                  onChange={e => setBatchConflict(e.target.value as ConflictAction)}
+                  className="w-full text-sm rounded-md border border-border bg-background px-3 py-2">
+                  <option value="replace">Ersetzen</option>
+                  <option value="skip">Überspringen</option>
+                  <option value="abort">Abbrechen</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Datei-Liste */}
+            <div className="space-y-2">
+              {batchResult.files.map((f, i) => {
+                const hasOv = (batchOverlaps[f.id]?.length ?? 0) > 0;
+                const open = batchExpanded.has(f.id);
+                const tone =
+                  f.status === 'error'   ? 'border-red-300 bg-red-50 dark:bg-red-950/20'
+                  : f.status === 'warning' ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/20'
+                  : 'border-border bg-card';
+                return (
+                  <div key={`${f.fileName}-${i}`} className={cn('rounded-lg border', tone)}>
+                    <button type="button"
+                      onClick={() => setBatchExpanded(prev => {
+                        const n = new Set(prev); open ? n.delete(f.id) : n.add(f.id); return n;
+                      })}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left">
+                      {f.status === 'error'   ? <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+                       : f.status === 'warning' ? <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
+                       : <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{f.fileName}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {f.periodFrom ? `${fdate(f.periodFrom)}${f.isMultiDay ? ` – ${fdate(f.periodTo)}` : ''}` : 'Kein Zeitraum'}
+                          {' · '}{f.importKindLabel}
+                          {f.costCenter ? ` · ${f.costCenter}` : ''}
+                          {f.zCounter ? ` · Z-Nr. ${f.zCounter}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasOv && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                            Bestehende Daten
+                          </span>
+                        )}
+                        <span className="text-sm font-semibold tabular-nums">{fc(f.grossRevenue ?? 0)}</span>
+                        {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                      </div>
+                    </button>
+                    {open && (
+                      <div className="border-t border-border px-4 py-3 space-y-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          <MetaCell label="Brutto"   value={fc(f.grossRevenue ?? 0)} />
+                          <MetaCell label="Netto"    value={fc(f.netRevenue ?? 0)} />
+                          <MetaCell label="Food"     value={fc(f.foodRevenue ?? 0)} />
+                          <MetaCell label="Getränke" value={fc(f.bevRevenue ?? 0)} />
+                        </div>
+                        {f.errorReason && (
+                          <p className="text-xs text-red-600 dark:text-red-400">{f.errorReason}</p>
+                        )}
+                        {f.warnings.length > 0 && (
+                          <div className="space-y-1">
+                            {f.warnings.map((w, wi) => (
+                              <p key={wi} className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
+                                <Info className="h-3 w-3 mt-0.5 shrink-0" />{w}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Aktionen */}
+            <div className="flex gap-3 pt-2 flex-wrap">
+              <button onClick={resetWizard} disabled={step === 'saving'}
+                className="px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50">
+                Abbrechen
+              </button>
+              <button onClick={handleBatchConfirm} disabled={step === 'saving'}
+                className="px-5 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2 transition-colors">
+                {step === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {batchConflict === 'replace' ? 'Importieren / Ersetzen' : 'Import bestätigen'}
+              </button>
+            </div>
+          </>}
 
           {/* ── Z-Bericht Vorschau ─────────────────────────────────────────── */}
           {importType === 'zbericht' && parsed && <>
@@ -1240,8 +1462,8 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             )}
           </>}
 
-          {/* Bestätigen-Buttons */}
-          {!activeDupInfo && (
+          {/* Bestätigen-Buttons (Einzeldatei) */}
+          {!activeDupInfo && !isBatch && (
             <div className="flex gap-3 pt-2 flex-wrap">
               <button onClick={resetWizard}
                 className="px-4 py-2 text-sm rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
@@ -1262,8 +1484,8 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
           )}
         </>}
 
-        {/* ── Step: Done ────────────────────────────────────────────────────── */}
-        {step === 'done' && (
+        {/* ── Step: Done (Einzeldatei) ──────────────────────────────────────── */}
+        {step === 'done' && !batchSaveResults && (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20 p-8 flex flex-col items-center gap-3 text-center">
             <CheckCircle2 className="h-10 w-10 text-emerald-500" />
             <p className="font-semibold text-emerald-800 dark:text-emerald-300">Import erfolgreich</p>
@@ -1273,6 +1495,54 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             </button>
           </div>
         )}
+
+        {/* ── Step: Done (Multi-Datei Ergebnis) ─────────────────────────────── */}
+        {step === 'done' && batchSaveResults && (() => {
+          const okN   = batchSaveResults.filter(r => r.ok).length;
+          const skipN = batchSaveResults.filter(r => r.skipped).length;
+          const failN = batchSaveResults.filter(r => !r.ok && !r.skipped).length;
+          const reasonFor = (id: string) =>
+            batchPlans?.find(p => p.id === id)?.reason ?? '';
+          return (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-border bg-card p-5 flex flex-wrap items-center gap-4">
+                <CheckCircle2 className={cn('h-8 w-8', failN > 0 ? 'text-amber-500' : 'text-emerald-500')} />
+                <div className="text-sm">
+                  <p className="font-semibold">
+                    {okN} importiert{skipN > 0 ? ` · ${skipN} übersprungen` : ''}{failN > 0 ? ` · ${failN} fehlgeschlagen` : ''}
+                  </p>
+                  <p className="text-muted-foreground text-xs">{batchSaveResults.length} Datei{batchSaveResults.length === 1 ? '' : 'en'} verarbeitet</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {batchSaveResults.map((r, i) => {
+                  const tone = r.ok ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/20'
+                    : r.skipped ? 'border-border bg-muted/20'
+                    : 'border-red-300 bg-red-50 dark:bg-red-950/20';
+                  return (
+                    <div key={`${r.fileName}-${i}`} className={cn('rounded-lg border px-4 py-3 flex items-center gap-3', tone)}>
+                      {r.ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                        : r.skipped ? <Info className="h-4 w-4 text-muted-foreground shrink-0" />
+                        : <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{r.fileName}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {r.ok ? 'Importiert' : r.skipped ? `Übersprungen${reasonFor(r.id) ? ` — ${reasonFor(r.id)}` : ''}` : `Fehler: ${r.error ?? 'Unbekannt'}`}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <button onClick={resetWizard}
+                className="px-4 py-2 text-sm rounded-md bg-emerald-600 text-white hover:bg-emerald-700">
+                Weiteren Import starten
+              </button>
+            </div>
+          );
+        })()}
       </>}
 
       {/* ── Importverlauf Tab ─────────────────────────────────────────────────── */}
