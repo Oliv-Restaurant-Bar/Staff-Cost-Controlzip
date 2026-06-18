@@ -178,3 +178,159 @@ describe('Durchschnittsbon Parser — Sonderfälle', () => {
     ]);
   });
 });
+
+describe('Durchschnittsbon Parser — echte Datei (Wide mit Zeitraum-Spalte)', () => {
+  // Reproduktion des realen Exports "Durchschnittsbon(1).csv":
+  //   Kopf : Bezeichnung;Zeitraum;01.06.;02.06.;…;17.06.
+  //   Wert : Durchschnitt;CHF 54,07;CHF 45,22;CHF 55,52;…
+  // Der Wert unter "Zeitraum" (54,07) ist der Gesamt-Durchschnitt und darf
+  // NICHT als Tageswert zählen — die Tageswerte beginnen erst bei 01.06.
+  const dayHeaders = Array.from({ length: 17 }, (_, i) => `${String(i + 1).padStart(2, '0')}.06.`);
+  const dayValues = [
+    45.22, 55.52, 50.10, 52.30, 58.90, 61.20, 49.80, 53.40, 47.60,
+    55.00, 56.70, 59.10, 62.40, 51.30, 48.20, 54.90, 57.80,
+  ];
+  const fmt = (n: number) => `CHF ${n.toFixed(2).replace('.', ',')}`;
+
+  it('erkennt alle 17 Tage (01.06–17.06) und überspringt den Gesamt-Durchschnitt', () => {
+    const header = ['Bezeichnung', 'Zeitraum', ...dayHeaders].map(c => `"${c}"`).join(';');
+    const row = ['Durchschnitt', fmt(54.07), ...dayValues.map(fmt)].map(c => `"${c}"`).join(';');
+    const csv = [header, row].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'Durchschnittsbon(1).csv');
+    const y = new Date().getFullYear();
+
+    expect(r.debug.detectedFormat).toBe('wide');
+    expect(r.rows.length).toBe(17);
+    expect(r.rows[0].date).toBe(`${y}-06-01`);
+    expect(r.rows[0].averageCheck).toBeCloseTo(45.22, 2);
+    expect(r.rows[1].averageCheck).toBeCloseTo(55.52, 2);
+    expect(r.rows[16].date).toBe(`${y}-06-17`);
+    expect(r.rows[16].averageCheck).toBeCloseTo(57.80, 2);
+    // Gesamt-Durchschnitt 54,07 darf NICHT als Tageswert auftauchen.
+    expect(r.rows.some(x => Math.abs(x.averageCheck - 54.07) < 1e-6)).toBe(false);
+  });
+
+  it('verwendet das aktuelle Jahr als Fallback und meldet es in der Diagnose', () => {
+    const header = ['Bezeichnung', 'Zeitraum', '01.06.', '02.06.'].join(';');
+    const row = ['Durchschnitt', fmt(54.07), fmt(45.22), fmt(55.52)].join(';');
+    const r = parseGnAverageCheck([header, row].join('\n'), 'Durchschnittsbon(1).csv');
+
+    expect(r.debug.usedYear).toBe(new Date().getFullYear());
+    expect(r.debug.usedYearSource).toBe('aktuelles Jahr');
+    expect(r.warnings.some(w => /Kein Jahr/i.test(w))).toBe(true);
+  });
+
+  it('leitet das Jahr aus dem Dateinamen ab, wenn die Header keines tragen', () => {
+    const header = ['Bezeichnung', 'Zeitraum', '01.06.', '02.06.'].join(';');
+    const row = ['Durchschnitt', 'CHF 54,07', 'CHF 45,22', 'CHF 55,52'].join(';');
+    const r = parseGnAverageCheck([header, row].join('\n'), 'Durchschnittsbon_2024.csv');
+
+    expect(r.rows[0].date).toBe('2024-06-01');
+    expect(r.debug.usedYear).toBe(2024);
+    expect(r.debug.usedYearSource).toBe('Dateiname');
+  });
+
+  it('füllt die Diagnosefelder Layout / skippedEmptyColumns', () => {
+    const header = ['Bezeichnung', 'Zeitraum', '01.06.', '02.06.', '03.06.'].join(';');
+    const row = ['Durchschnitt', 'CHF 54,07', 'CHF 45,22', '', 'CHF 50,10'].join(';');
+    const r = parseGnAverageCheck([header, row].join('\n'), 'Durchschnittsbon(1).csv');
+
+    expect(r.debug.detectedFormat).toBe('wide');
+    expect(r.debug.skippedEmptyColumns).toBe(1);
+    expect(r.rows.length).toBe(2);
+  });
+});
+
+describe('Durchschnittsbon Parser — Langformat (eine Zeile pro Tag)', () => {
+  it('liest das Langformat mit Header "Datum;Durchschnitt"', () => {
+    const csv = [
+      'Datum;Durchschnitt',
+      '01.06.2026;CHF 45,22',
+      '02.06.2026;CHF 55,52',
+      '03.06.2026;CHF 50,10',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'vertical.csv');
+
+    expect(r.debug.detectedFormat).toBe('vertical');
+    expect(r.rows.length).toBe(3);
+    expect(r.rows[0].date).toBe('2026-06-01');
+    expect(r.rows[0].averageCheck).toBeCloseTo(45.22, 2);
+    expect(r.rows[2].averageCheck).toBeCloseTo(50.10, 2);
+  });
+
+  it('wählt im Langformat die Durchschnitt-Spalte aus mehreren Wertspalten', () => {
+    const csv = [
+      'Datum;Umsatz;Durchschnitt',
+      '01.06.2026;CHF 5000,00;CHF 45,22',
+      '02.06.2026;CHF 6100,00;CHF 55,52',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'x.csv');
+
+    expect(r.rows.length).toBe(2);
+    expect(r.rows[0].averageCheck).toBeCloseTo(45.22, 2);
+    expect(r.rows[1].averageCheck).toBeCloseTo(55.52, 2);
+  });
+
+  it('liest Langformat ohne Header (Datum;Wert)', () => {
+    const csv = [
+      '01.06.2026;CHF 45,22',
+      '02.06.2026;CHF 55,52',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'x.csv');
+
+    expect(r.debug.detectedFormat).toBe('vertical');
+    expect(r.rows.length).toBe(2);
+    expect(r.rows[0].date).toBe('2026-06-01');
+  });
+
+  it('überspringt leere Tage auch im Langformat', () => {
+    const csv = [
+      'Datum;Durchschnitt',
+      '01.06.2026;CHF 45,22',
+      '02.06.2026;',
+      '03.06.2026;CHF 50,10',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'x.csv');
+
+    expect(r.rows.map(x => x.date)).toEqual(['2026-06-01', '2026-06-03']);
+    expect(r.debug.skippedEmptyColumns).toBe(1);
+  });
+});
+
+describe('Durchschnittsbon Parser — Jahres-Rollover (Dez → Jan, ohne Jahr)', () => {
+  it('rollt im Wide-Format über den Jahreswechsel', () => {
+    const csv = [
+      'Datum;30.12;31.12;01.01',
+      'Durchschnitt;CHF 50,00;CHF 55,00;CHF 60,00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'jahreswechsel.csv');
+    const y = new Date().getFullYear();
+
+    expect(r.rows.map(x => x.date)).toEqual([
+      `${y}-12-30`, `${y}-12-31`, `${y + 1}-01-01`,
+    ]);
+  });
+
+  it('rollt im Langformat über den Jahreswechsel', () => {
+    const csv = [
+      'Datum;Durchschnitt',
+      '30.12;CHF 50,00',
+      '31.12;CHF 55,00',
+      '01.01;CHF 60,00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'jahreswechsel.csv');
+    const y = new Date().getFullYear();
+
+    expect(r.debug.detectedFormat).toBe('vertical');
+    expect(r.rows.map(x => x.date)).toEqual([
+      `${y}-12-30`, `${y}-12-31`, `${y + 1}-01-01`,
+    ]);
+  });
+});

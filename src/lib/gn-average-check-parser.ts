@@ -60,6 +60,14 @@ export interface GnAverageCheckDebug {
   averageCandidates: Array<{ lineNumber: number; rawText: string }>;
   /** Anzahl Zellen mit Geldwert > 0 im GANZEN Dokument */
   moneyCellCount: number;
+  /** Erkanntes Layout: "wide" (Datums-Spalten) | "vertical" (eine Zeile pro Tag) | null */
+  detectedFormat: 'wide' | 'vertical' | null;
+  /** Für Datums-Header ohne Jahr verwendetes Jahr (null = alle Header hatten ein Jahr) */
+  usedYear: number | null;
+  /** Quelle des verwendeten Jahres ("Header" | "Zeitraum" | "Dateiname" | "aktuelles Jahr" | "—") */
+  usedYearSource: string;
+  /** Anzahl übersprungener leerer Tageswert-Spalten/-Zeilen (z. B. Ruhetage) */
+  skippedEmptyColumns: number;
   /** Grund, warum keine Tageswerte extrahiert wurden (null = erfolgreich) */
   failureReason: string | null;
 }
@@ -199,6 +207,17 @@ export function parseGnAverageCheck(
   const allLines = rawLines.map(l => parseCSVLine(l, delim));
   const nonEmptyLineCount = rawLines.filter(l => l.trim() !== '').length;
 
+  // Mehrdeutiges Komma-Format: Komma gleichzeitig als Trennzeichen UND als
+  // Dezimaltrenner (unquoted, z. B. "54,07") lässt sich nicht zuverlässig
+  // auseinanderhalten — sichtbarer Hinweis statt falscher Zuordnung.
+  if (delim === ',' && /\d,\d{2}(?:[,;]|\s|$)/m.test(csvText)) {
+    warnings.push(
+      'Trennzeichen als Komma erkannt, aber Geldwerte scheinen Komma-Dezimaltrennung zu nutzen ' +
+      '(z. B. "54,07"). Werte können dadurch falsch zugeordnet werden — bitte die Datei mit ' +
+      'Semikolon-Trennung exportieren.',
+    );
+  }
+
   // Datumsartige Zellen + Geldwert-Zellen im GANZEN Dokument zählen
   // (für die Diagnose / Langformat-Erkennung).
   let dateCellCount = 0;
@@ -235,6 +254,10 @@ export function parseGnAverageCheck(
     averageRowLabel:  '',
     averageCandidates,
     moneyCellCount,
+    detectedFormat:     null,
+    usedYear:           null,
+    usedYearSource:     '—',
+    skippedEmptyColumns: 0,
     failureReason:    null,
   };
 
@@ -262,119 +285,214 @@ export function parseGnAverageCheck(
     const count = allLines[i].reduce((acc, cell) => acc + (parseHeaderDate(cell) ? 1 : 0), 0);
     if (count > bestCount) { bestCount = count; headerRowIdx = i; }
   }
+  const isWide = headerRowIdx !== -1 && bestCount >= 2;
 
-  if (headerRowIdx === -1 || bestCount < 2) {
-    debug.failureReason =
-      `Keine Datums-Spalten-Kopfzeile erkannt: maximal ${bestCount} datumsartige ` +
-      `Zelle(n) in einer einzelnen Zeile gefunden (mindestens 2 nötig). ` +
-      `Im gesamten Dokument: ${dateCellCount} datumsartige Zelle(n), ` +
-      `${moneyCellCount} Geldwert-Zelle(n). ` +
-      (dateCellCount >= 2 && bestCount < 2
-        ? 'Hinweis: Datumswerte scheinen NICHT als Kopfzeile, sondern verteilt ' +
-          'vorzuliegen (z. B. Langformat mit einem Tag pro Zeile). Trennzeichen ' +
-          `erkannt als "${debug.delimiter}".`
-        : `Bitte prüfe Trennzeichen (erkannt: "${debug.delimiter}") und Format.`);
-    warnings.push('Keine Datums-Spalten gefunden. Bitte prüfe das CSV-Format (Tageswerte als Spalten 01.06, 02.06 …).');
-    return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
+  // ── Basis-Jahr bestimmen (gilt für Wide- UND Vertical-Layout) ────────────────
+  // Priorität: explizites Jahr in IRGENDeiner Datumszelle > Zeitraum > Dateiname > aktuell.
+  let explicitYear: number | null = null;
+  for (const line of allLines) {
+    for (const cell of line) {
+      const d = parseHeaderDate(cell);
+      if (d?.year) { explicitYear = d.year; break; }
+    }
+    if (explicitYear) break;
   }
-
-  debug.headerRowIdx = headerRowIdx + 1;
-  const headerCells = allLines[headerRowIdx];
-
-  // Basis-Jahr bestimmen: eigenes Jahr in Headern > Metadaten > Dateiname > aktuell.
-  const headerYear = headerCells
-    .map(parseHeaderDate)
-    .find(d => d && d.year)?.year ?? null;
-  const fallbackYear =
-    headerYear ??
-    extractYear(periodRaw, fileName) ??
-    new Date().getFullYear();
-  if (!headerYear && !extractYear(periodRaw, fileName)) {
+  const periodFileYear = extractYear(periodRaw, fileName);
+  let fallbackYear: number;
+  let usedYearSource: string;
+  if (explicitYear != null) {
+    fallbackYear = explicitYear;
+    usedYearSource = 'Datum';
+  } else if (periodFileYear != null) {
+    fallbackYear = periodFileYear;
+    usedYearSource = /(?:19|20)\d{2}/.test(periodRaw) ? 'Zeitraum' : 'Dateiname';
+  } else {
+    fallbackYear = new Date().getFullYear();
+    usedYearSource = 'aktuelles Jahr';
+  }
+  // usedYear = null, wenn alle Datumswerte bereits ein Jahr trugen (keine Annahme nötig).
+  debug.usedYear = explicitYear != null ? null : fallbackYear;
+  debug.usedYearSource = usedYearSource;
+  if (explicitYear == null && periodFileYear == null) {
     warnings.push(`Kein Jahr im Bericht erkannt — verwende ${fallbackYear}.`);
   }
 
-  // Spalten-Index → ISO-Datum (mit Jahres-Rollover für Mehrmonats-Berichte).
-  const colDates = new Map<number, { iso: string; raw: string }>();
-  let prevMonth = -1;
-  let yearOffset = 0;
-  for (let c = 0; c < headerCells.length; c++) {
-    const d = parseHeaderDate(headerCells[c]);
-    if (!d) continue;
-    if (prevMonth !== -1 && d.month < prevMonth && !d.year) yearOffset++;
-    prevMonth = d.month;
-    const y = d.year ?? (fallbackYear + yearOffset);
-    colDates.set(c, { iso: `${y}-${pad2(d.month)}-${pad2(d.day)}`, raw: cleanCell(headerCells[c]) });
-  }
+  // Datums-Zelle → ISO; eigene Rollover-Instanz je Layout (aufsteigende Monate).
+  const makeIsoResolver = () => {
+    let prevMonth = -1;
+    let yearOffset = 0;
+    return (cell: string): { iso: string; raw: string } | null => {
+      const d = parseHeaderDate(cell);
+      if (!d) return null;
+      if (prevMonth !== -1 && d.month < prevMonth && !d.year) yearOffset++;
+      prevMonth = d.month;
+      const y = d.year ?? (fallbackYear + yearOffset);
+      return { iso: `${y}-${pad2(d.month)}-${pad2(d.day)}`, raw: cleanCell(cell) };
+    };
+  };
 
-  debug.dateColumns = [...colDates.entries()].map(([col, v]) => ({ col, raw: v.raw, iso: v.iso }));
-
-  // ── "Durchschnitt"-Zeile (bzw. Zeile mit den meisten Tageswerten) finden ─────
-  const dateCols = [...colDates.keys()];
-
-  const labelOf = (line: string[]): string =>
-    line.filter((_, idx) => !colDates.has(idx)).map(cleanCell).join(' ').trim();
-
-  const valueCount = (line: string[]): number =>
-    dateCols.reduce((acc, idx) => acc + (parseMoney(line[idx] ?? '').value > 0 ? 1 : 0), 0);
-
-  let valueRowIdx = -1;
-  // 1) Zeile, deren Label "Durchschnitt" enthält und Tageswerte hat.
-  for (let i = 0; i < allLines.length; i++) {
-    if (i === headerRowIdx) continue;
-    if (/durchschnitt/i.test(labelOf(allLines[i])) && valueCount(allLines[i]) > 0) {
-      valueRowIdx = i; break;
-    }
-  }
-  // 2) Fallback: Zeile mit den meisten Tageswerten.
-  if (valueRowIdx === -1) {
-    let best = 0;
-    for (let i = 0; i < allLines.length; i++) {
-      if (i === headerRowIdx) continue;
-      const cnt = valueCount(allLines[i]);
-      if (cnt > best) { best = cnt; valueRowIdx = i; }
-    }
-    if (valueRowIdx !== -1) {
-      warnings.push('"Durchschnitt"-Zeile nicht eindeutig erkannt — verwende Zeile mit den meisten Tageswerten.');
-    }
-  }
-
-  if (valueRowIdx === -1) {
-    debug.failureReason =
-      `Datums-Spalten erkannt (${colDates.size}), aber keine Zeile mit ` +
-      `Tageswerten (Geldbeträgen) in diesen Spalten gefunden. ` +
-      `Im Dokument: ${moneyCellCount} Geldwert-Zelle(n)` +
-      (averageCandidates.length > 0
-        ? `, ${averageCandidates.length} Zeile(n) mit "Durchschnitt" (aber ohne Werte in den Datums-Spalten).`
-        : ', keine Zeile mit "Durchschnitt".');
-    warnings.push('Keine Durchschnittsbon-Tageswerte gefunden.');
-    return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
-  }
-
-  debug.averageRowIdx = valueRowIdx + 1;
-  debug.averageRowLabel = labelOf(allLines[valueRowIdx]);
-
-  // ── Tageswerte einlesen ──────────────────────────────────────────────────────
-  const valueRow = allLines[valueRowIdx];
   const currencyTally = new Map<string, number>();
   const rows: GnAverageCheckRow[] = [];
   let skippedEmpty = 0;
 
-  for (const c of dateCols) {
-    const col = colDates.get(c)!;
-    const raw = cleanCell(valueRow[c] ?? '');
-    const { value, currency } = parseMoney(raw);
-    if (value <= 0) { if (!raw) skippedEmpty++; continue; }
-    const cur = currency ?? 'CHF';
-    currencyTally.set(cur, (currencyTally.get(cur) ?? 0) + 1);
-    rows.push({ date: col.iso, averageCheck: value, currency: cur, rawDateHeader: col.raw, rawValue: raw });
+  if (isWide) {
+    // ════════════════════════ WIDE-Layout (Datums-Spalten) ════════════════════
+    debug.detectedFormat = 'wide';
+    debug.headerRowIdx = headerRowIdx + 1;
+    const headerCells = allLines[headerRowIdx];
+
+    // Spalten-Index → ISO-Datum (mit Jahres-Rollover für Mehrmonats-Berichte).
+    const resolve = makeIsoResolver();
+    const colDates = new Map<number, { iso: string; raw: string }>();
+    for (let c = 0; c < headerCells.length; c++) {
+      const v = resolve(headerCells[c]);
+      if (v) colDates.set(c, v);
+    }
+    debug.dateColumns = [...colDates.entries()].map(([col, v]) => ({ col, raw: v.raw, iso: v.iso }));
+
+    // ── "Durchschnitt"-Zeile (bzw. Zeile mit den meisten Tageswerten) finden ──
+    const dateCols = [...colDates.keys()];
+    const labelOf = (line: string[]): string =>
+      line.filter((_, idx) => !colDates.has(idx)).map(cleanCell).join(' ').trim();
+    const valueCount = (line: string[]): number =>
+      dateCols.reduce((acc, idx) => acc + (parseMoney(line[idx] ?? '').value > 0 ? 1 : 0), 0);
+
+    let valueRowIdx = -1;
+    // 1) Zeile, deren Label "Durchschnitt" enthält und Tageswerte hat.
+    for (let i = 0; i < allLines.length; i++) {
+      if (i === headerRowIdx) continue;
+      if (/durchschnitt/i.test(labelOf(allLines[i])) && valueCount(allLines[i]) > 0) {
+        valueRowIdx = i; break;
+      }
+    }
+    // 2) Fallback: Zeile mit den meisten Tageswerten.
+    if (valueRowIdx === -1) {
+      let best = 0;
+      for (let i = 0; i < allLines.length; i++) {
+        if (i === headerRowIdx) continue;
+        const cnt = valueCount(allLines[i]);
+        if (cnt > best) { best = cnt; valueRowIdx = i; }
+      }
+      if (valueRowIdx !== -1) {
+        warnings.push('"Durchschnitt"-Zeile nicht eindeutig erkannt — verwende Zeile mit den meisten Tageswerten.');
+      }
+    }
+
+    if (valueRowIdx === -1) {
+      debug.failureReason =
+        `Datums-Spalten erkannt (${colDates.size}), aber keine Zeile mit ` +
+        `Tageswerten (Geldbeträgen) in diesen Spalten gefunden. ` +
+        `Im Dokument: ${moneyCellCount} Geldwert-Zelle(n)` +
+        (averageCandidates.length > 0
+          ? `, ${averageCandidates.length} Zeile(n) mit "Durchschnitt" (aber ohne Werte in den Datums-Spalten).`
+          : ', keine Zeile mit "Durchschnitt".');
+      warnings.push('Keine Durchschnittsbon-Tageswerte gefunden.');
+      return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
+    }
+
+    debug.averageRowIdx = valueRowIdx + 1;
+    debug.averageRowLabel = labelOf(allLines[valueRowIdx]);
+
+    // ── Tageswerte einlesen ──
+    const valueRow = allLines[valueRowIdx];
+    for (const c of dateCols) {
+      const col = colDates.get(c)!;
+      const raw = cleanCell(valueRow[c] ?? '');
+      const { value, currency } = parseMoney(raw);
+      if (value <= 0) { if (!raw) skippedEmpty++; continue; }
+      const cur = currency ?? 'CHF';
+      currencyTally.set(cur, (currencyTally.get(cur) ?? 0) + 1);
+      rows.push({ date: col.iso, averageCheck: value, currency: cur, rawDateHeader: col.raw, rawValue: raw });
+    }
+  } else {
+    // ═══════════════════ VERTICAL-Layout (eine Zeile pro Tag) ══════════════════
+    // Erkennung: Datumswerte liegen zeilenweise vor (genau EINE Datumszelle +
+    // mind. ein Geldwert pro Zeile), z. B. "01.06.2026;CHF 45,22".
+    const dateRows: Array<{ lineIdx: number; dateCol: number; cell: string }> = [];
+    for (let i = 0; i < allLines.length; i++) {
+      const line = allLines[i];
+      const dateIdxs: number[] = [];
+      for (let c = 0; c < line.length; c++) if (parseHeaderDate(line[c])) dateIdxs.push(c);
+      if (dateIdxs.length !== 1) continue;
+      if (line.some(cell => parseMoney(cell).value > 0)) {
+        dateRows.push({ lineIdx: i, dateCol: dateIdxs[0], cell: line[dateIdxs[0]] });
+      }
+    }
+
+    if (dateRows.length === 0) {
+      debug.failureReason =
+        `Weder Datums-Spalten-Kopfzeile (max. ${bestCount} Datumszelle(n) in einer ` +
+        `Zeile) noch Langformat (eine Zeile pro Tag) erkannt. Im Dokument: ` +
+        `${dateCellCount} datumsartige Zelle(n), ${moneyCellCount} Geldwert-Zelle(n). ` +
+        `Bitte prüfe Trennzeichen (erkannt: "${debug.delimiter}") und Format.`;
+      warnings.push('Keine Datums-Spalten gefunden. Bitte prüfe das CSV-Format (Tageswerte als Spalten 01.06, 02.06 … oder eine Zeile pro Tag).');
+      return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
+    }
+
+    debug.detectedFormat = 'vertical';
+    warnings.push('Langformat erkannt (eine Zeile pro Tag).');
+
+    // Wert-Spalte bestimmen:
+    // 1) Header-Zeile (ohne Datum) mit "Durchschnitt"/"Ø Bon" → deren Spaltenindex.
+    // 2) sonst: Spalte, die über die Datumszeilen am häufigsten einen Geldwert > 0 trägt.
+    let valueCol = -1;
+    for (let i = 0; i < allLines.length; i++) {
+      const line = allLines[i];
+      if (line.some(c => parseHeaderDate(c))) continue; // Datumszeilen sind keine Header
+      for (let c = 0; c < line.length; c++) {
+        if (/durchschnitt|ø\s*bon|avg|mittel/i.test(cleanCell(line[c]))) { valueCol = c; break; }
+      }
+      if (valueCol !== -1) break;
+    }
+    if (valueCol === -1) {
+      const tally = new Map<number, number>();
+      for (const dr of dateRows) {
+        const line = allLines[dr.lineIdx];
+        for (let c = 0; c < line.length; c++) {
+          if (c === dr.dateCol) continue;
+          if (parseMoney(line[c]).value > 0) tally.set(c, (tally.get(c) ?? 0) + 1);
+        }
+      }
+      let best = 0;
+      for (const [c, n] of tally) if (n > best) { best = n; valueCol = c; }
+    }
+
+    if (valueCol === -1) {
+      debug.failureReason =
+        `Langformat erkannt (${dateRows.length} Datumszeile(n)), aber keine ` +
+        `Wert-Spalte mit Geldbeträgen gefunden.`;
+      warnings.push('Keine Durchschnittsbon-Werte im Langformat gefunden.');
+      return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
+    }
+
+    debug.averageRowLabel = `Langformat — Wert-Spalte ${valueCol + 1}`;
+
+    const resolve = makeIsoResolver();
+    for (const dr of dateRows) {
+      const col = resolve(dr.cell);
+      if (!col) continue;
+      const raw = cleanCell(allLines[dr.lineIdx][valueCol] ?? '');
+      const { value, currency } = parseMoney(raw);
+      if (value <= 0) { if (!raw) skippedEmpty++; continue; }
+      const cur = currency ?? 'CHF';
+      currencyTally.set(cur, (currencyTally.get(cur) ?? 0) + 1);
+      rows.push({ date: col.iso, averageCheck: value, currency: cur, rawDateHeader: col.raw, rawValue: raw });
+    }
+
+    // Diagnose: Datums-"Spalten" = erkannte Datumszeilen (chronologisch).
+    debug.dateColumns = rows
+      .map(r => ({ col: valueCol, raw: r.rawDateHeader, iso: r.date }))
+      .sort((a, b) => a.iso.localeCompare(b.iso));
   }
 
   rows.sort((a, b) => a.date.localeCompare(b.date));
+  debug.skippedEmptyColumns = skippedEmpty;
 
   if (rows.length === 0) {
     debug.failureReason =
-      `Durchschnitt-/Wertezeile erkannt (Zeile ${valueRowIdx + 1}), aber kein ` +
-      `Wert > 0 in den ${colDates.size} Datums-Spalten lesbar.`;
+      debug.failureReason ??
+      (`Layout erkannt (${debug.detectedFormat ?? '?'}), aber kein Wert > 0 in den ` +
+       `erkannten Tageswerten lesbar.`);
     warnings.push('Keine gültigen Durchschnittsbon-Werte (> 0) gefunden.');
   }
   if (skippedEmpty > 0) {
@@ -403,8 +521,11 @@ export function parseGnAverageCheck(
   console.group(`[GN-AVG-PARSER] ${fileName}`);
   console.log(`Trennzeichen: "${debug.delimiter}" — ;=${delimCounts.semicolon} ,=${delimCounts.comma} \\t=${delimCounts.tab}`);
   console.log(`Zeilen gesamt: ${debug.rawLineCount} (nicht leer: ${debug.nonEmptyLineCount})`);
-  console.log(`Datums-Kopfzeile: Zeile ${debug.headerRowIdx ?? '?'} — ${debug.dateColumns.length} Datums-Spalte(n)`);
+  console.log(`Layout: ${debug.detectedFormat ?? '?'}`);
+  console.log(`Datums-Kopfzeile: Zeile ${debug.headerRowIdx ?? '?'} — ${debug.dateColumns.length} Datums-Spalte(n)/-Zeile(n)`);
   console.log(`Wertezeile: Zeile ${debug.averageRowIdx ?? '?'} (Label: "${debug.averageRowLabel}")`);
+  console.log(`Jahr: ${debug.usedYear == null ? 'aus Datum' : `${debug.usedYear} (${debug.usedYearSource})`}`);
+  console.log(`Übersprungene leere Tage: ${debug.skippedEmptyColumns}`);
   console.log(`Datumsartige Zellen gesamt: ${dateCellCount}, Geldwert-Zellen gesamt: ${moneyCellCount}`);
   if (debug.failureReason) console.warn('Grund (keine Tageswerte):', debug.failureReason);
   console.log('Erste 20 Rohzeilen:');

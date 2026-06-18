@@ -384,9 +384,12 @@ export default function GastronoviZBerichtPage() {
       `Zeilen: ${d.rawLineCount} gesamt, ${d.nonEmptyLineCount} nicht leer`,
       `Datumsartige Zellen gesamt: ${d.dateCellCount} · Geldwert-Zellen gesamt: ${d.moneyCellCount}`,
       '',
-      `Datums-Kopfzeile: ${d.headerRowIdx ? `Zeile ${d.headerRowIdx}` : 'NICHT ERKANNT'}`,
-      `Datums-Spalten (${d.dateColumns.length}): ${d.dateColumns.map(c => `${c.raw}→${c.iso}`).join(', ') || '—'}`,
-      `Durchschnitt-/Wertezeile: ${d.averageRowIdx ? `Zeile ${d.averageRowIdx} (Label: "${d.averageRowLabel}")` : 'NICHT ERKANNT'}`,
+      `Layout: ${d.detectedFormat === 'wide' ? 'Wide (Datums-Spalten)' : d.detectedFormat === 'vertical' ? 'Langformat (eine Zeile pro Tag)' : 'NICHT ERKANNT'}`,
+      `Verwendetes Jahr: ${d.usedYear == null ? 'aus Datum übernommen' : `${d.usedYear} (Quelle: ${d.usedYearSource})`}`,
+      `Datums-Kopfzeile: ${d.headerRowIdx ? `Zeile ${d.headerRowIdx}` : (d.detectedFormat === 'vertical' ? '— (Langformat)' : 'NICHT ERKANNT')}`,
+      `Datums-Spalten/-Zeilen (${d.dateColumns.length}): ${d.dateColumns.map(c => `${c.raw}→${c.iso}`).join(', ') || '—'}`,
+      `Durchschnitt-/Wertezeile: ${d.averageRowIdx ? `Zeile ${d.averageRowIdx} (Label: "${d.averageRowLabel}")` : (d.averageRowLabel || 'NICHT ERKANNT')}`,
+      `Übersprungene leere Tage: ${d.skippedEmptyColumns}`,
       `Tageswerte extrahiert: ${parsedAvg?.rows.length ?? 0}`,
       `Grund (falls keine): ${d.failureReason ?? '—'}`,
     ];
@@ -1517,19 +1520,46 @@ function AvgDiagnostic({ debug, open, onToggle, onCopy }: {
               <div className="text-muted-foreground mb-0.5">
                 Datums-Kopfzeile
               </div>
-              <div className={`font-mono font-bold ${!debug.headerRowIdx ? 'text-red-500' : ''}`}>
-                {debug.headerRowIdx ? `Zeile ${debug.headerRowIdx}` : '(nicht erkannt)'}
+              <div className={`font-mono font-bold ${debug.detectedFormat === 'wide' && !debug.headerRowIdx ? 'text-red-500' : ''}`}>
+                {debug.headerRowIdx ? `Zeile ${debug.headerRowIdx}` : (debug.detectedFormat === 'vertical' ? '(Langformat)' : '(nicht erkannt)')}
               </div>
-              <div className="text-muted-foreground mt-1">{debug.dateColumns.length} Datums-Spalten</div>
+              <div className="text-muted-foreground mt-1">{debug.dateColumns.length} Datums-Spalten/-Zeilen</div>
             </div>
             <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
-              <div className="text-muted-foreground mb-0.5">Durchschnitt-Zeile</div>
-              <div className={`font-mono font-bold ${!debug.averageRowIdx ? 'text-red-500' : ''}`}>
-                {debug.averageRowIdx ? `Zeile ${debug.averageRowIdx}` : '(nicht erkannt)'}
+              <div className="text-muted-foreground mb-0.5">Durchschnitt-/Wertezeile</div>
+              <div className={`font-mono font-bold ${!debug.averageRowIdx && !debug.averageRowLabel ? 'text-red-500' : ''}`}>
+                {debug.averageRowIdx ? `Zeile ${debug.averageRowIdx}` : (debug.averageRowLabel ? '(Langformat)' : '(nicht erkannt)')}
               </div>
               {debug.averageRowLabel && (
                 <div className="text-muted-foreground mt-1 truncate">&ldquo;{debug.averageRowLabel}&rdquo;</div>
               )}
+            </div>
+          </div>
+
+          {/* Layout / Jahr / übersprungene Tage */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">Layout</div>
+              <div className={`font-mono font-bold ${!debug.detectedFormat ? 'text-red-500' : ''}`}>
+                {debug.detectedFormat === 'wide'
+                  ? 'Wide (Spalten)'
+                  : debug.detectedFormat === 'vertical'
+                    ? 'Langformat'
+                    : '(nicht erkannt)'}
+              </div>
+            </div>
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">Verwendetes Jahr</div>
+              <div className="font-mono font-bold">
+                {debug.usedYear == null ? 'aus Datum' : debug.usedYear}
+              </div>
+              {debug.usedYear != null && (
+                <div className="text-muted-foreground mt-1">Quelle: {debug.usedYearSource}</div>
+              )}
+            </div>
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">Leere Tage übersprungen</div>
+              <div className="font-mono font-bold">{debug.skippedEmptyColumns}</div>
             </div>
           </div>
 
@@ -1543,7 +1573,7 @@ function AvgDiagnostic({ debug, open, onToggle, onCopy }: {
           {debug.dateColumns.length > 0 && (
             <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-1">
               <div className="font-semibold mb-2 text-slate-700 dark:text-slate-300">
-                Erkannte Datums-Spalten ({debug.dateColumns.length})
+                {debug.detectedFormat === 'vertical' ? 'Erkannte Datums-Zeilen' : 'Erkannte Datums-Spalten'} ({debug.dateColumns.length})
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {debug.dateColumns.map((c, i) => (
