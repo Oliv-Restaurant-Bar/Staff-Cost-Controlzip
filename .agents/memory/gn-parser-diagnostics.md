@@ -40,9 +40,18 @@ correct the recognition — never blind-adapt the parser to a guessed format.
 The Durchschnittsbon export ships in two shapes. Distinguish them by structure,
 not by header labels: **wide** = one header row carries ≥2 date cells (days as
 columns); **vertical/long** = each data row carries exactly 1 date cell + ≥1 money
-cell (one day per row). Resolve the year ONCE before branching (explicit year in
-any date cell → Zeitraum range → filename → current-year fallback) and surface it
-as `usedYear`/`usedYearSource` in the debug object.
+cell (one day per row). Resolve the year ONCE before branching, with a strict
+priority where the year is NEVER silently guessed: (1) Datumsspalten — explicit
+year in any date cell; (2) Zeitraum — year parsed from a range/period in the
+report (numeric range with or without keyword, e.g. `01.06.2025 - 30.06.2025`,
+abbreviated `01.06. - 30.06.2025`, or textual `Zeitraum Juni 2025`); (3) Dateiname
+(e.g. `Durchschnittsbon_2025.csv`); (4) Benutzerwahl — a `userYear` param the
+caller (UI) supplies, whose UI default is the current year. The current year is
+ONLY that UI default for Benutzerwahl, NOT a silent parser fallback. Surface the
+resolved year as `usedYear`/`usedYearSource` and the matched period text as
+`detectedPeriod` in the debug object; on Benutzerwahl push a visible warning
+telling the user to verify the import year. The range regex must allow an optional
+year on BOTH dates so a standalone full range without a keyword is still detected.
 
 **Why:** the real wide file puts the OVERALL average under a `Zeitraum` column,
 right next to the daily date columns. It is excluded for free because daily values

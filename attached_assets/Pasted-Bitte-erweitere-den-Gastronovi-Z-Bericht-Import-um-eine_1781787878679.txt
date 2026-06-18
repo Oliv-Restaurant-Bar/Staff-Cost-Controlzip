@@ -1,0 +1,66 @@
+Bitte erweitere den Gastronovi Z-Bericht Import um einen Multi-Datei-Import für mehrere einzelne Tages-Z-Berichte.
+
+Ziel:
+Der Benutzer soll mehrere CSV-Dateien gleichzeitig hochladen können, z.B. alle Tages-Z-Berichte eines Monats. Jede Datei wird einzeln geparst, validiert und als eigener Tagesimport gespeichert.
+
+Wichtig:
+Kumulierte Zeitraum-Berichte sollen NICHT automatisch auf Tage verteilt werden. Sie dürfen importiert werden, aber nur mit klarer Warnung. Für Tagesauswertungen sollen einzelne Tagesberichte verwendet werden.
+
+Anforderungen UI:
+1. Beim Z-Bericht Upload mehrere Dateien gleichzeitig erlauben.
+2. Sammelvorschau anzeigen mit:
+   - Anzahl Dateien
+   - Anzahl erfolgreich erkannter Tagesberichte
+   - Anzahl fehlerhafte Dateien
+   - erkannte Tage von/bis
+   - Gesamtsumme Brutto
+   - Gesamtsumme Netto
+   - Gesamtsumme Food
+   - Gesamtsumme Beverage
+   - Liste pro Datei mit Status: OK / Warnung / Fehler
+3. Pro Datei anzeigen:
+   - Dateiname
+   - erkannter Zeitraum
+   - Importart: Tagesimport oder Zeitraumimport
+   - Kostenstelle
+   - Z-Zähler, falls vorhanden
+   - Brutto Umsatz
+   - Netto Umsatz
+   - Food
+   - Beverage
+   - Warnungen
+4. Wenn eine Datei mehrere Tage umfasst, Warnung anzeigen:
+   "Dieser Bericht umfasst mehrere Tage und wird nicht als Tagesbericht behandelt."
+5. Wenn ein Tag bereits vorhanden ist, Duplikat/Überschneidung anzeigen.
+
+Anforderungen Importlogik:
+1. Jede Datei separat parsen.
+2. Valide Tagesberichte können gesammelt importiert werden.
+3. Fehlerhafte Dateien blockieren nicht automatisch alle anderen Dateien.
+4. Vor Import muss der Benutzer wählen:
+   - Nur valide Dateien importieren
+   - Bei Fehlern abbrechen
+5. Bei bestehenden Daten für denselben Tag/Kostenstelle:
+   - ersetzen
+   - überspringen
+   - abbrechen
+6. Speicherung muss atomar pro Datei erfolgen.
+   Wenn Datei A fehlschlägt, dürfen bereits erfolgreiche Dateien nicht beschädigt werden.
+7. Bestehende Einzeldatei-Funktion darf nicht kaputtgehen.
+
+Datenintegrität:
+1. Keine delete-then-insert Logik ohne sichere Transaktion.
+2. Wenn möglich upsert oder saubere Transaktion verwenden.
+3. Importverlauf soll weiterhin pro Datei/Tag nachvollziehbar bleiben.
+4. Kumulierte Zeitraumimporte sollen klar als Zeitraumimport markiert werden.
+
+Tests:
+Bitte Tests ergänzen für:
+- eine einzelne Datei
+- mehrere valide Tagesdateien
+- gemischte valide und fehlerhafte Dateien
+- Datei mit Zeitraum statt Einzeltag
+- Duplikat für bestehenden Tag
+- Import mit Überspringen
+- Import mit Ersetzen
+- Parser Tests, Full Suite und TypeScript Check ausführen.

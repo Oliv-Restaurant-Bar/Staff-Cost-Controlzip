@@ -211,14 +211,14 @@ describe('Durchschnittsbon Parser — echte Datei (Wide mit Zeitraum-Spalte)', (
     expect(r.rows.some(x => Math.abs(x.averageCheck - 54.07) < 1e-6)).toBe(false);
   });
 
-  it('verwendet das aktuelle Jahr als Fallback und meldet es in der Diagnose', () => {
+  it('nutzt die Benutzerwahl (Standard = aktuelles Jahr), wenn kein Jahr im Bericht steht', () => {
     const header = ['Bezeichnung', 'Zeitraum', '01.06.', '02.06.'].join(';');
     const row = ['Durchschnitt', fmt(54.07), fmt(45.22), fmt(55.52)].join(';');
     const r = parseGnAverageCheck([header, row].join('\n'), 'Durchschnittsbon(1).csv');
 
     expect(r.debug.usedYear).toBe(new Date().getFullYear());
-    expect(r.debug.usedYearSource).toBe('aktuelles Jahr');
-    expect(r.warnings.some(w => /Kein Jahr/i.test(w))).toBe(true);
+    expect(r.debug.usedYearSource).toBe('Benutzerwahl');
+    expect(r.warnings.some(w => /Bitte Importjahr prüfen/i.test(w))).toBe(true);
   });
 
   it('leitet das Jahr aus dem Dateinamen ab, wenn die Header keines tragen', () => {
@@ -332,5 +332,138 @@ describe('Durchschnittsbon Parser — Jahres-Rollover (Dez → Jan, ohne Jahr)',
     expect(r.rows.map(x => x.date)).toEqual([
       `${y}-12-30`, `${y}-12-31`, `${y + 1}-01-01`,
     ]);
+  });
+
+  it('rollt mit dem Benutzer-Jahr als Basis über den Jahreswechsel', () => {
+    const csv = [
+      'Datum;30.12;31.12;01.01',
+      'Durchschnitt;CHF 50,00;CHF 55,00;CHF 60,00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'jahreswechsel.csv', 2024);
+
+    expect(r.debug.usedYearSource).toBe('Benutzerwahl');
+    expect(r.debug.usedYear).toBe(2024);
+    expect(r.rows.map(x => x.date)).toEqual([
+      '2024-12-30', '2024-12-31', '2025-01-01',
+    ]);
+  });
+});
+
+describe('Durchschnittsbon Parser — Jahresbestimmung (Priorität & Quelle)', () => {
+  // Das Jahr wird NIE stillschweigend geraten. Priorität:
+  //   1. Datumsspalten  2. Zeitraum  3. Dateiname  4. Benutzerwahl
+  // userYear (2099) wird in den oberen Stufen absichtlich übergeben, um zu
+  // beweisen, dass die stärkere Quelle gewinnt.
+
+  it('Quelle Datumsspalten: explizites Jahr in den Datumszellen hat Vorrang', () => {
+    const csv = [
+      'Datum;01.06.2026;02.06.2026',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr-im-namen.csv', 2099);
+
+    expect(r.debug.usedYear).toBe(2026);
+    expect(r.debug.usedYearSource).toBe('Datumsspalten');
+    expect(r.rows[0].date).toBe('2026-06-01');
+  });
+
+  it('Quelle Zeitraum: Jahr aus numerischem Zeitraum (01.06.2025 - 30.06.2025)', () => {
+    const csv = [
+      'Zeitraum;01.06.2025 - 30.06.2025',
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr.csv', 2099);
+
+    expect(r.debug.usedYear).toBe(2025);
+    expect(r.debug.usedYearSource).toBe('Zeitraum');
+    expect(r.debug.detectedPeriod).toMatch(/2025/);
+    expect(r.rows[0].date).toBe('2025-06-01');
+  });
+
+  it('Quelle Zeitraum: Jahr aus abgekürztem Zeitraum (01.06. - 30.06.2025)', () => {
+    const csv = [
+      'Zeitraum;01.06. - 30.06.2025',
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr.csv', 2099);
+
+    expect(r.debug.usedYear).toBe(2025);
+    expect(r.debug.usedYearSource).toBe('Zeitraum');
+    expect(r.rows[0].date).toBe('2025-06-01');
+  });
+
+  it('Quelle Zeitraum: Jahr aus vollständigem Datumsbereich ohne Schlüsselwort (01.06.2025 - 30.06.2025)', () => {
+    const csv = [
+      '01.06.2025 - 30.06.2025',
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr.csv', 2099);
+
+    expect(r.debug.usedYear).toBe(2025);
+    expect(r.debug.usedYearSource).toBe('Zeitraum');
+    expect(r.debug.detectedPeriod).toMatch(/2025/);
+    expect(r.rows[0].date).toBe('2025-06-01');
+  });
+
+  it('Quelle Zeitraum: Jahr aus Text-Zeitraum (Zeitraum Juni 2025)', () => {
+    const csv = [
+      'Zeitraum Juni 2025',
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr.csv', 2099);
+
+    expect(r.debug.usedYear).toBe(2025);
+    expect(r.debug.usedYearSource).toBe('Zeitraum');
+    expect(r.debug.detectedPeriod).toMatch(/Juni 2025/);
+    expect(r.rows[0].date).toBe('2025-06-01');
+  });
+
+  it('Quelle Dateiname: Jahr aus Dateiname schlägt Benutzerwahl', () => {
+    const csv = [
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'Durchschnittsbon_2023.csv', 2099);
+
+    expect(r.debug.usedYear).toBe(2023);
+    expect(r.debug.usedYearSource).toBe('Dateiname');
+    expect(r.rows[0].date).toBe('2023-06-01');
+  });
+
+  it('Quelle Benutzerwahl: nutzt das übergebene userYear, wenn nirgends ein Jahr steht', () => {
+    const csv = [
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr.csv', 2022);
+
+    expect(r.debug.usedYear).toBe(2022);
+    expect(r.debug.usedYearSource).toBe('Benutzerwahl');
+    expect(r.rows[0].date).toBe('2022-06-01');
+    expect(r.warnings.some(w => /Bitte Importjahr prüfen/i.test(w))).toBe(true);
+  });
+
+  it('Quelle Benutzerwahl: ohne userYear fällt das Basis-Jahr auf das aktuelle Jahr', () => {
+    const csv = [
+      'Datum;01.06;02.06',
+      'Durchschnitt;CHF 50.00;CHF 55.00',
+    ].join('\n');
+
+    const r = parseGnAverageCheck(csv, 'ohne-jahr.csv');
+
+    expect(r.debug.usedYear).toBe(new Date().getFullYear());
+    expect(r.debug.usedYearSource).toBe('Benutzerwahl');
   });
 });

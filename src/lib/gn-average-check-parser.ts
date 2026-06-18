@@ -62,10 +62,12 @@ export interface GnAverageCheckDebug {
   moneyCellCount: number;
   /** Erkanntes Layout: "wide" (Datums-Spalten) | "vertical" (eine Zeile pro Tag) | null */
   detectedFormat: 'wide' | 'vertical' | null;
-  /** Für Datums-Header ohne Jahr verwendetes Jahr (null = alle Header hatten ein Jahr) */
+  /** Verwendetes Basis-Jahr (immer gesetzt, sobald ein Layout erkannt wurde) */
   usedYear: number | null;
-  /** Quelle des verwendeten Jahres ("Header" | "Zeitraum" | "Dateiname" | "aktuelles Jahr" | "—") */
+  /** Quelle des Jahres: "Datumsspalten" | "Zeitraum" | "Dateiname" | "Benutzerwahl" | "—" */
   usedYearSource: string;
+  /** Erkannter Zeitraum-Text (Roh), z. B. "Zeitraum 01.06.2025 - 30.06.2025" oder "—" */
+  detectedPeriod: string;
   /** Anzahl übersprungener leerer Tageswert-Spalten/-Zeilen (z. B. Ruhetage) */
   skippedEmptyColumns: number;
   /** Grund, warum keine Tageswerte extrahiert wurden (null = erfolgreich) */
@@ -197,6 +199,8 @@ function extractYear(...sources: string[]): number | null {
 export function parseGnAverageCheck(
   csvText: string,
   fileName: string,
+  /** Vom Aufrufer (UI) gewähltes Importjahr — nur Fallback, wenn im Bericht/Dateinamen kein Jahr steht. */
+  userYear?: number,
 ): GnParsedAverageCheck {
   const warnings: string[] = [];
   const checksum = simpleHash(csvText);
@@ -257,26 +261,41 @@ export function parseGnAverageCheck(
     detectedFormat:     null,
     usedYear:           null,
     usedYearSource:     '—',
+    detectedPeriod:     '—',
     skippedEmptyColumns: 0,
     failureReason:    null,
   };
 
   // ── Metadaten (Zeitraum) ─────────────────────────────────────────────────────
+  // Erkennt sowohl Schlüsselwort-Zeilen ("Zeitraum: …", "Periode …") als auch
+  // reine Datumsbereiche ("01.06. - 30.06.2025"). Ein numerischer Zeitraum ist am
+  // aussagekräftigsten und bricht die Suche ab; eine Schlüsselwort-Zeile mit Jahr
+  // aber ohne numerisches Datum (z. B. "Zeitraum Juni 2025") wird als Fallback
+  // gemerkt. Die reine Datums-Kopfzeile ("01.06. 02.06. …") ohne Jahr zählt NICHT
+  // als Zeitraum.
   let periodRaw = '';
   let metaFrom = '';
   let metaTo = '';
+  const RANGE_RE = /\d{1,2}\.\d{1,2}\.?(?:\d{2,4})?\s*(?:-|–|—|bis)\s*\d{1,2}\.\d{1,2}\.\d{2,4}/i;
   for (let i = 0; i < Math.min(allLines.length, 25); i++) {
     const joined = allLines[i].map(cleanCell).join(' ').trim();
-    if (/zeitraum|periode|datum von|von .* bis/i.test(joined)) {
-      const dates = joined.match(/\d{1,2}\.\d{1,2}\.\d{2,4}/g);
-      if (dates && dates.length >= 1) {
-        periodRaw = joined;
-        metaFrom = parseGermanDate(dates[0]);
-        metaTo = parseGermanDate(dates[dates.length - 1]);
-        break;
-      }
+    if (!joined) continue;
+    const hasKeyword = /zeitraum|periode|datum von|von .* bis/i.test(joined);
+    const hasRange = RANGE_RE.test(joined);
+    if (!hasKeyword && !hasRange) continue;
+    const dates = joined.match(/\d{1,2}\.\d{1,2}\.\d{2,4}/g);
+    if (dates && dates.length >= 1) {
+      periodRaw = joined;
+      metaFrom = parseGermanDate(dates[0]);
+      metaTo = parseGermanDate(dates[dates.length - 1]);
+      break;
+    }
+    // Schlüsselwort-Zeile mit Jahr, aber ohne numerisches Datum ("Zeitraum Juni 2025").
+    if (hasKeyword && !periodRaw && /(?:19|20)\d{2}/.test(joined)) {
+      periodRaw = joined;
     }
   }
+  debug.detectedPeriod = periodRaw || '—';
 
   // ── Kopfzeile mit Datums-Spalten finden ──────────────────────────────────────
   let headerRowIdx = -1;
@@ -288,7 +307,13 @@ export function parseGnAverageCheck(
   const isWide = headerRowIdx !== -1 && bestCount >= 2;
 
   // ── Basis-Jahr bestimmen (gilt für Wide- UND Vertical-Layout) ────────────────
-  // Priorität: explizites Jahr in IRGENDeiner Datumszelle > Zeitraum > Dateiname > aktuell.
+  // Klare Priorität — das Jahr wird NIE stillschweigend geraten:
+  //   1. Datumsspalten  (explizites Jahr in einer Datumszelle, z. B. 01.06.2026)
+  //   2. Zeitraum       (Jahr aus einer Zeitraum-/Periode-Angabe im Bericht)
+  //   3. Dateiname      (z. B. Durchschnittsbon_2025.csv)
+  //   4. Benutzerwahl   (vom Aufrufer übergebenes Jahr; UI-Standard = aktuelles Jahr)
+  // Das aktuelle Jahr ist nur UI-Standardwert für die Benutzerwahl, KEIN stiller
+  // Parser-Fallback.
   let explicitYear: number | null = null;
   for (const line of allLines) {
     for (const cell of line) {
@@ -297,25 +322,27 @@ export function parseGnAverageCheck(
     }
     if (explicitYear) break;
   }
-  const periodFileYear = extractYear(periodRaw, fileName);
-  let fallbackYear: number;
+  const zeitraumYear = extractYear(periodRaw);
+  const fileYear = extractYear(fileName);
+
+  let baseYear: number;
   let usedYearSource: string;
   if (explicitYear != null) {
-    fallbackYear = explicitYear;
-    usedYearSource = 'Datum';
-  } else if (periodFileYear != null) {
-    fallbackYear = periodFileYear;
-    usedYearSource = /(?:19|20)\d{2}/.test(periodRaw) ? 'Zeitraum' : 'Dateiname';
+    baseYear = explicitYear;
+    usedYearSource = 'Datumsspalten';
+  } else if (zeitraumYear != null) {
+    baseYear = zeitraumYear;
+    usedYearSource = 'Zeitraum';
+  } else if (fileYear != null) {
+    baseYear = fileYear;
+    usedYearSource = 'Dateiname';
   } else {
-    fallbackYear = new Date().getFullYear();
-    usedYearSource = 'aktuelles Jahr';
+    baseYear = userYear ?? new Date().getFullYear();
+    usedYearSource = 'Benutzerwahl';
+    warnings.push('Bitte Importjahr prüfen, da im Bericht kein Jahr enthalten ist.');
   }
-  // usedYear = null, wenn alle Datumswerte bereits ein Jahr trugen (keine Annahme nötig).
-  debug.usedYear = explicitYear != null ? null : fallbackYear;
+  debug.usedYear = baseYear;
   debug.usedYearSource = usedYearSource;
-  if (explicitYear == null && periodFileYear == null) {
-    warnings.push(`Kein Jahr im Bericht erkannt — verwende ${fallbackYear}.`);
-  }
 
   // Datums-Zelle → ISO; eigene Rollover-Instanz je Layout (aufsteigende Monate).
   const makeIsoResolver = () => {
@@ -326,7 +353,7 @@ export function parseGnAverageCheck(
       if (!d) return null;
       if (prevMonth !== -1 && d.month < prevMonth && !d.year) yearOffset++;
       prevMonth = d.month;
-      const y = d.year ?? (fallbackYear + yearOffset);
+      const y = d.year ?? (baseYear + yearOffset);
       return { iso: `${y}-${pad2(d.month)}-${pad2(d.day)}`, raw: cleanCell(cell) };
     };
   };
@@ -524,7 +551,8 @@ export function parseGnAverageCheck(
   console.log(`Layout: ${debug.detectedFormat ?? '?'}`);
   console.log(`Datums-Kopfzeile: Zeile ${debug.headerRowIdx ?? '?'} — ${debug.dateColumns.length} Datums-Spalte(n)/-Zeile(n)`);
   console.log(`Wertezeile: Zeile ${debug.averageRowIdx ?? '?'} (Label: "${debug.averageRowLabel}")`);
-  console.log(`Jahr: ${debug.usedYear == null ? 'aus Datum' : `${debug.usedYear} (${debug.usedYearSource})`}`);
+  console.log(`Jahr: ${debug.usedYear} (Quelle: ${debug.usedYearSource})`);
+  console.log(`Erkannter Zeitraum: ${debug.detectedPeriod}`);
   console.log(`Übersprungene leere Tage: ${debug.skippedEmptyColumns}`);
   console.log(`Datumsartige Zellen gesamt: ${dateCellCount}, Geldwert-Zellen gesamt: ${moneyCellCount}`);
   if (debug.failureReason) console.warn('Grund (keine Tageswerte):', debug.failureReason);

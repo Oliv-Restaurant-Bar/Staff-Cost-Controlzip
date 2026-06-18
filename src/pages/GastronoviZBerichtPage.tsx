@@ -101,6 +101,8 @@ export default function GastronoviZBerichtPage() {
   const [avgHistory,      setAvgHistory]      = useState<GnAverageCheckImportGroup[]>([]);
   const [avgOverlapDates, setAvgOverlapDates] = useState<string[]>([]);
   const [avgDebug,        setAvgDebug]        = useState<GnAverageCheckDebug | null>(null);
+  const [avgImportYear,   setAvgImportYear]   = useState<number>(new Date().getFullYear());
+  const [avgRawText,      setAvgRawText]      = useState<string | null>(null);
 
   // History
   const [histLoading, setHistLoading] = useState(false);
@@ -147,6 +149,7 @@ export default function GastronoviZBerichtPage() {
     setParsedPerson(null); setDupPersonInfo(null);
     setCsvTypeOverride(null);
     setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null);
+    setAvgRawText(null); setAvgImportYear(new Date().getFullYear());
     setParseError(null); setStep('upload');
   }, []);
 
@@ -157,11 +160,37 @@ export default function GastronoviZBerichtPage() {
 
   // ── CSV verarbeiten ──────────────────────────────────────────────────────
 
+  // Durchschnittsbon parsen (auch erneut bei manueller Jahreswahl aufrufbar).
+  const runAvgParse = useCallback(async (text: string, fileName: string, year: number): Promise<boolean> => {
+    const result = parseGnAverageCheck(text, fileName, year);
+    setAvgDebug(result.debug);
+    if (result.rows.length === 0) {
+      setShowAvgDebug(true);
+      setParsedAvg(null);
+      setAvgOverlapDates([]);
+      setParseError(
+        'Datei konnte nicht als Gastronovi Durchschnittsbon-Bericht erkannt werden. '
+        + 'Es wurden keine Tageswerte gefunden. Siehe Parser-Diagnose unten.',
+      );
+      return false;
+    }
+    setParseError(null);
+    if (result.periodFrom && result.periodTo) {
+      const existing = await getOverlappingAverageCheckDates(tenantId, result.periodFrom, result.periodTo);
+      const dates = new Set(result.rows.map(r => r.date));
+      setAvgOverlapDates(existing.filter(d => dates.has(d)));
+    } else {
+      setAvgOverlapDates([]);
+    }
+    setParsedAvg(result);
+    return true;
+  }, [tenantId]);
+
   const processCSV = useCallback(async (file: File) => {
     setParseError(null); setParsed(null); setParsedPerson(null);
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
     setDupPersonInfo(null);
-    setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null);
+    setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null); setAvgRawText(null);
 
     try {
       const text = await file.text();
@@ -189,28 +218,28 @@ export default function GastronoviZBerichtPage() {
         }
         setParsedPerson(result);
       } else {
-        const result = parseGnAverageCheck(text, file.name);
-        setAvgDebug(result.debug);
-        if (result.rows.length === 0) {
-          setShowAvgDebug(true);
-          setParseError(
-            'Datei konnte nicht als Gastronovi Durchschnittsbon-Bericht erkannt werden. '
-            + 'Es wurden keine Tageswerte gefunden. Siehe Parser-Diagnose unten.',
-          );
-          return;
-        }
-        if (result.periodFrom && result.periodTo) {
-          const existing = await getOverlappingAverageCheckDates(tenantId, result.periodFrom, result.periodTo);
-          const dates = new Set(result.rows.map(r => r.date));
-          setAvgOverlapDates(existing.filter(d => dates.has(d)));
-        }
-        setParsedAvg(result);
+        // Erst-Parse mit aktuellem Jahr als Benutzerwahl-Standard; Rohtext für
+        // späteres erneutes Parsen bei manueller Jahreswahl merken.
+        const yr = new Date().getFullYear();
+        setAvgImportYear(yr);
+        setAvgRawText(text);
+        const ok = await runAvgParse(text, file.name, yr);
+        if (!ok) return;
       }
       setStep('preview');
     } catch (e) {
       setParseError('Fehler: ' + (e instanceof Error ? e.message : String(e)));
     }
-  }, [importType, tenantId]);
+  }, [importType, tenantId, runAvgParse]);
+
+  // Manuelle Jahreswahl (nur relevant, wenn das Jahr per Benutzerwahl bestimmt wurde):
+  // Rohtext mit dem neuen Jahr erneut parsen.
+  const handleAvgYearChange = async (year: number) => {
+    setAvgImportYear(year);
+    if (avgRawText && parsedAvg) {
+      await runAvgParse(avgRawText, parsedAvg.fileName, year);
+    }
+  };
 
   const handleFileSelect = (file: File) => {
     if (!file.name.toLowerCase().endsWith('.csv')) {
@@ -385,7 +414,8 @@ export default function GastronoviZBerichtPage() {
       `Datumsartige Zellen gesamt: ${d.dateCellCount} · Geldwert-Zellen gesamt: ${d.moneyCellCount}`,
       '',
       `Layout: ${d.detectedFormat === 'wide' ? 'Wide (Datums-Spalten)' : d.detectedFormat === 'vertical' ? 'Langformat (eine Zeile pro Tag)' : 'NICHT ERKANNT'}`,
-      `Verwendetes Jahr: ${d.usedYear == null ? 'aus Datum übernommen' : `${d.usedYear} (Quelle: ${d.usedYearSource})`}`,
+      `Verwendetes Jahr: ${d.usedYear ?? '—'} (Quelle: ${d.usedYearSource})`,
+      `Erkannter Zeitraum: ${d.detectedPeriod || '—'}`,
       `Datums-Kopfzeile: ${d.headerRowIdx ? `Zeile ${d.headerRowIdx}` : (d.detectedFormat === 'vertical' ? '— (Langformat)' : 'NICHT ERKANNT')}`,
       `Datums-Spalten/-Zeilen (${d.dateColumns.length}): ${d.dateColumns.map(c => `${c.raw}→${c.iso}`).join(', ') || '—'}`,
       `Durchschnitt-/Wertezeile: ${d.averageRowIdx ? `Zeile ${d.averageRowIdx} (Label: "${d.averageRowLabel}")` : (d.averageRowLabel || 'NICHT ERKANNT')}`,
@@ -1130,6 +1160,36 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               <MetaCell label="Datei"       value={parsedAvg.fileName} />
             </div>
 
+            {/* Importjahr-Wahl — nur wenn im Bericht kein Jahr gefunden wurde */}
+            {parsedAvg.debug.usedYearSource === 'Benutzerwahl' && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-2">
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Importjahr prüfen
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Bitte Importjahr prüfen, da im Bericht kein Jahr enthalten ist
+                  (weder in Datumsspalten, Zeitraum noch Dateiname). Die Tageswerte
+                  werden dem gewählten Jahr zugeordnet.
+                </p>
+                <div className="flex items-center gap-2">
+                  <label htmlFor="avg-import-year" className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                    Importjahr:
+                  </label>
+                  <select
+                    id="avg-import-year"
+                    value={avgImportYear}
+                    onChange={e => handleAvgYearChange(Number(e.target.value))}
+                    disabled={step === 'saving'}
+                    className="px-2 py-1 text-sm rounded border border-amber-400 bg-white dark:bg-slate-900 text-foreground disabled:opacity-50">
+                    {Array.from({ length: 8 }, (_, i) => new Date().getFullYear() + 1 - i).map(y => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <KpiMini label="Ø Durchschnittsbon" value={avgMean > 0 ? fc(avgMean) : '—'} bold />
               <KpiMini label="Minimum"            value={avgMin > 0 ? fc(avgMin) : '—'} />
@@ -1550,17 +1610,20 @@ function AvgDiagnostic({ debug, open, onToggle, onCopy }: {
             </div>
             <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
               <div className="text-muted-foreground mb-0.5">Verwendetes Jahr</div>
-              <div className="font-mono font-bold">
-                {debug.usedYear == null ? 'aus Datum' : debug.usedYear}
+              <div className={`font-mono font-bold ${debug.usedYearSource === 'Benutzerwahl' ? 'text-amber-600 dark:text-amber-400' : ''}`}>
+                {debug.usedYear ?? '—'}
               </div>
-              {debug.usedYear != null && (
-                <div className="text-muted-foreground mt-1">Quelle: {debug.usedYearSource}</div>
-              )}
+              <div className="text-muted-foreground mt-1">Quelle: {debug.usedYearSource}</div>
             </div>
             <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
               <div className="text-muted-foreground mb-0.5">Leere Tage übersprungen</div>
               <div className="font-mono font-bold">{debug.skippedEmptyColumns}</div>
             </div>
+          </div>
+
+          {/* Erkannter Zeitraum */}
+          <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5 text-muted-foreground">
+            Erkannter Zeitraum: <span className="font-mono font-bold text-foreground">{debug.detectedPeriod || '—'}</span>
           </div>
 
           {/* Zellzähler-Hinweis (Wide vs. Long) */}
