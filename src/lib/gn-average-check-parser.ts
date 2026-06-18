@@ -10,6 +10,12 @@
  *
  * Der Durchschnittsbon wird NICHT aus Umsatz/Bons berechnet, sondern als
  * offizielle Gastronovi-Kennzahl importiert.
+ *
+ * Diagnose: Jeder Parse liefert ein `debug`-Objekt (analog zum Z-Bericht), das
+ * die reale CSV-Struktur ausgibt — erkanntes Trennzeichen, Zeilen, Datums-
+ * Spalten, Durchschnitt-Zeile, erste Rohzeilen und den Grund, falls keine
+ * Tageswerte extrahiert wurden.  So lässt sich ein Erkennungsfehler an der
+ * tatsächlichen Datei diagnostizieren statt am erwarteten Format.
  */
 
 import { parseSwissNumber, simpleHash } from './gn-zbericht-parser';
@@ -25,10 +31,44 @@ export interface GnAverageCheckRow {
   rawValue: string;
 }
 
+export interface GnAverageCheckDebug {
+  /** Dateiname der analysierten CSV */
+  fileName: string;
+  /** Erkanntes Trennzeichen, menschenlesbar ("Semikolon" | "Komma" | "Tab") */
+  delimiter: string;
+  /** Anzahl Trennzeichen im CSV */
+  delimCounts: { semicolon: number; comma: number; tab: number };
+  /** Anzahl aller Zeilen (inkl. leerer) */
+  rawLineCount: number;
+  /** Anzahl nicht-leerer Zeilen */
+  nonEmptyLineCount: number;
+  /** Erste 20 Rohzeilen (Originaltext) */
+  firstRawLines: string[];
+  /** Erste 20 geparste Zeilen (Zellen-Arrays) */
+  firstParsedRows: string[][];
+  /** Index der erkannten Datums-Kopfzeile (1-basiert) oder null */
+  headerRowIdx: number | null;
+  /** Erkannte Datums-Spalten: Spaltenindex, Rohtext, ISO-Datum */
+  dateColumns: Array<{ col: number; raw: string; iso: string }>;
+  /** Anzahl datumsartiger Zellen im GANZEN Dokument (Langformat-Hinweis) */
+  dateCellCount: number;
+  /** Index der erkannten "Durchschnitt"-/Wertezeile (1-basiert) oder null */
+  averageRowIdx: number | null;
+  /** Label (Nicht-Datums-Zellen) der Wertezeile */
+  averageRowLabel: string;
+  /** Zeilen, die das Wort "Durchschnitt" enthalten (1-basiert) */
+  averageCandidates: Array<{ lineNumber: number; rawText: string }>;
+  /** Anzahl Zellen mit Geldwert > 0 im GANZEN Dokument */
+  moneyCellCount: number;
+  /** Grund, warum keine Tageswerte extrahiert wurden (null = erfolgreich) */
+  failureReason: string | null;
+}
+
 export interface GnParsedAverageCheck {
   fileName: string;
   checksum: string;
   warnings: string[];
+  debug: GnAverageCheckDebug;
 
   periodFrom: string;
   periodTo: string;
@@ -45,6 +85,24 @@ export interface GnParsedAverageCheck {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Trennzeichen ermitteln: zählt ; , \t und wählt das häufigste. */
+function detectDelimiter(text: string): { delim: string; counts: { semicolon: number; comma: number; tab: number } } {
+  const sample = text.slice(0, 4000);
+  const counts = {
+    semicolon: (sample.match(/;/g) ?? []).length,
+    comma:     (sample.match(/,/g) ?? []).length,
+    tab:       (sample.match(/\t/g) ?? []).length,
+  };
+  let delim = ';';
+  if (counts.tab > counts.semicolon && counts.tab > counts.comma) delim = '\t';
+  else if (counts.comma > counts.semicolon) delim = ',';
+  return { delim, counts };
+}
+
+function delimiterLabel(delim: string): string {
+  return delim === '\t' ? 'Tab' : delim === ';' ? 'Semikolon' : 'Komma';
+}
 
 function parseCSVLine(line: string, delim: string): string[] {
   const result: string[] = [];
@@ -134,9 +192,51 @@ export function parseGnAverageCheck(
 ): GnParsedAverageCheck {
   const warnings: string[] = [];
   const checksum = simpleHash(csvText);
-  const delim = csvText.includes(';') ? ';' : ',';
 
-  const allLines = csvText.split(/\r?\n/).map(l => parseCSVLine(l, delim));
+  const { delim, counts: delimCounts } = detectDelimiter(csvText);
+
+  const rawLines = csvText.split(/\r?\n/);
+  const allLines = rawLines.map(l => parseCSVLine(l, delim));
+  const nonEmptyLineCount = rawLines.filter(l => l.trim() !== '').length;
+
+  // Datumsartige Zellen + Geldwert-Zellen im GANZEN Dokument zählen
+  // (für die Diagnose / Langformat-Erkennung).
+  let dateCellCount = 0;
+  let moneyCellCount = 0;
+  for (const line of allLines) {
+    for (const cell of line) {
+      const isDate = !!parseHeaderDate(cell);
+      if (isDate) dateCellCount++;
+      // Datums-Zellen (z. B. "01.06.2026") nicht als Geldwert mitzählen.
+      if (!isDate && parseMoney(cell).value > 0) moneyCellCount++;
+    }
+  }
+
+  // Zeilen, die "Durchschnitt" enthalten (Kandidaten für die Wertezeile).
+  const averageCandidates: Array<{ lineNumber: number; rawText: string }> = [];
+  rawLines.forEach((line, idx) => {
+    if (line.trim() && /durchschnitt/i.test(line)) {
+      averageCandidates.push({ lineNumber: idx + 1, rawText: line });
+    }
+  });
+
+  const debug: GnAverageCheckDebug = {
+    fileName,
+    delimiter:        delimiterLabel(delim),
+    delimCounts,
+    rawLineCount:     rawLines.length,
+    nonEmptyLineCount,
+    firstRawLines:    rawLines.slice(0, 20),
+    firstParsedRows:  allLines.slice(0, 20),
+    headerRowIdx:     null,
+    dateColumns:      [],
+    dateCellCount,
+    averageRowIdx:    null,
+    averageRowLabel:  '',
+    averageCandidates,
+    moneyCellCount,
+    failureReason:    null,
+  };
 
   // ── Metadaten (Zeitraum) ─────────────────────────────────────────────────────
   let periodRaw = '';
@@ -164,10 +264,21 @@ export function parseGnAverageCheck(
   }
 
   if (headerRowIdx === -1 || bestCount < 2) {
+    debug.failureReason =
+      `Keine Datums-Spalten-Kopfzeile erkannt: maximal ${bestCount} datumsartige ` +
+      `Zelle(n) in einer einzelnen Zeile gefunden (mindestens 2 nötig). ` +
+      `Im gesamten Dokument: ${dateCellCount} datumsartige Zelle(n), ` +
+      `${moneyCellCount} Geldwert-Zelle(n). ` +
+      (dateCellCount >= 2 && bestCount < 2
+        ? 'Hinweis: Datumswerte scheinen NICHT als Kopfzeile, sondern verteilt ' +
+          'vorzuliegen (z. B. Langformat mit einem Tag pro Zeile). Trennzeichen ' +
+          `erkannt als "${debug.delimiter}".`
+        : `Bitte prüfe Trennzeichen (erkannt: "${debug.delimiter}") und Format.`);
     warnings.push('Keine Datums-Spalten gefunden. Bitte prüfe das CSV-Format (Tageswerte als Spalten 01.06, 02.06 …).');
-    return emptyResult(fileName, checksum, warnings, periodRaw, metaFrom, metaTo);
+    return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
   }
 
+  debug.headerRowIdx = headerRowIdx + 1;
   const headerCells = allLines[headerRowIdx];
 
   // Basis-Jahr bestimmen: eigenes Jahr in Headern > Metadaten > Dateiname > aktuell.
@@ -194,6 +305,8 @@ export function parseGnAverageCheck(
     const y = d.year ?? (fallbackYear + yearOffset);
     colDates.set(c, { iso: `${y}-${pad2(d.month)}-${pad2(d.day)}`, raw: cleanCell(headerCells[c]) });
   }
+
+  debug.dateColumns = [...colDates.entries()].map(([col, v]) => ({ col, raw: v.raw, iso: v.iso }));
 
   // ── "Durchschnitt"-Zeile (bzw. Zeile mit den meisten Tageswerten) finden ─────
   const dateCols = [...colDates.keys()];
@@ -226,9 +339,19 @@ export function parseGnAverageCheck(
   }
 
   if (valueRowIdx === -1) {
+    debug.failureReason =
+      `Datums-Spalten erkannt (${colDates.size}), aber keine Zeile mit ` +
+      `Tageswerten (Geldbeträgen) in diesen Spalten gefunden. ` +
+      `Im Dokument: ${moneyCellCount} Geldwert-Zelle(n)` +
+      (averageCandidates.length > 0
+        ? `, ${averageCandidates.length} Zeile(n) mit "Durchschnitt" (aber ohne Werte in den Datums-Spalten).`
+        : ', keine Zeile mit "Durchschnitt".');
     warnings.push('Keine Durchschnittsbon-Tageswerte gefunden.');
-    return emptyResult(fileName, checksum, warnings, periodRaw, metaFrom, metaTo);
+    return emptyResult(fileName, checksum, warnings, debug, periodRaw, metaFrom, metaTo);
   }
+
+  debug.averageRowIdx = valueRowIdx + 1;
+  debug.averageRowLabel = labelOf(allLines[valueRowIdx]);
 
   // ── Tageswerte einlesen ──────────────────────────────────────────────────────
   const valueRow = allLines[valueRowIdx];
@@ -249,6 +372,9 @@ export function parseGnAverageCheck(
   rows.sort((a, b) => a.date.localeCompare(b.date));
 
   if (rows.length === 0) {
+    debug.failureReason =
+      `Durchschnitt-/Wertezeile erkannt (Zeile ${valueRowIdx + 1}), aber kein ` +
+      `Wert > 0 in den ${colDates.size} Datums-Spalten lesbar.`;
     warnings.push('Keine gültigen Durchschnittsbon-Werte (> 0) gefunden.');
   }
   if (skippedEmpty > 0) {
@@ -273,10 +399,23 @@ export function parseGnAverageCheck(
   const averageMin = values.length > 0 ? Math.min(...values) : 0;
   const averageMax = values.length > 0 ? Math.max(...values) : 0;
 
+  // ── Console-Debug-Ausgabe (analog Z-Bericht) ───────────────────────────────
+  console.group(`[GN-AVG-PARSER] ${fileName}`);
+  console.log(`Trennzeichen: "${debug.delimiter}" — ;=${delimCounts.semicolon} ,=${delimCounts.comma} \\t=${delimCounts.tab}`);
+  console.log(`Zeilen gesamt: ${debug.rawLineCount} (nicht leer: ${debug.nonEmptyLineCount})`);
+  console.log(`Datums-Kopfzeile: Zeile ${debug.headerRowIdx ?? '?'} — ${debug.dateColumns.length} Datums-Spalte(n)`);
+  console.log(`Wertezeile: Zeile ${debug.averageRowIdx ?? '?'} (Label: "${debug.averageRowLabel}")`);
+  console.log(`Datumsartige Zellen gesamt: ${dateCellCount}, Geldwert-Zellen gesamt: ${moneyCellCount}`);
+  if (debug.failureReason) console.warn('Grund (keine Tageswerte):', debug.failureReason);
+  console.log('Erste 20 Rohzeilen:');
+  debug.firstRawLines.forEach((l, i) => console.log(`  Z${String(i + 1).padStart(2)}: ${l || '(leer)'}`));
+  console.groupEnd();
+
   return {
     fileName,
     checksum,
     warnings,
+    debug,
     periodFrom,
     periodTo,
     periodRaw,
@@ -293,12 +432,23 @@ function emptyResult(
   fileName: string,
   checksum: string,
   warnings: string[],
+  debug: GnAverageCheckDebug,
   periodRaw: string,
   periodFrom: string,
   periodTo: string,
 ): GnParsedAverageCheck {
+  // Console-Debug auch im Fehlerfall, damit die reale Struktur sichtbar ist.
+  console.group(`[GN-AVG-PARSER] ${fileName} — KEINE TAGESWERTE`);
+  console.log(`Trennzeichen: "${debug.delimiter}" — ;=${debug.delimCounts.semicolon} ,=${debug.delimCounts.comma} \\t=${debug.delimCounts.tab}`);
+  console.log(`Zeilen gesamt: ${debug.rawLineCount} (nicht leer: ${debug.nonEmptyLineCount})`);
+  console.log(`Datumsartige Zellen gesamt: ${debug.dateCellCount}, Geldwert-Zellen gesamt: ${debug.moneyCellCount}`);
+  console.warn('Grund:', debug.failureReason ?? 'unbekannt');
+  console.log('Erste 20 Rohzeilen:');
+  debug.firstRawLines.forEach((l, i) => console.log(`  Z${String(i + 1).padStart(2)}: ${l || '(leer)'}`));
+  console.groupEnd();
+
   return {
-    fileName, checksum, warnings,
+    fileName, checksum, warnings, debug,
     periodFrom, periodTo, periodRaw,
     currency: 'CHF',
     rows: [], rowCount: 0,

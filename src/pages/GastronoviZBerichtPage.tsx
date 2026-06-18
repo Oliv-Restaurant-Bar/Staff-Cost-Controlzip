@@ -38,7 +38,7 @@ import {
 import type { GnPersonImportRow } from '@/lib/gn-personen-db';
 
 import { parseGnAverageCheck } from '@/lib/gn-average-check-parser';
-import type { GnParsedAverageCheck } from '@/lib/gn-average-check-parser';
+import type { GnParsedAverageCheck, GnAverageCheckDebug } from '@/lib/gn-average-check-parser';
 import {
   saveAverageCheckImport, loadAverageCheckImports, deleteAverageCheckImport,
   getOverlappingAverageCheckDates,
@@ -100,12 +100,14 @@ export default function GastronoviZBerichtPage() {
   const [parsedAvg,       setParsedAvg]       = useState<GnParsedAverageCheck | null>(null);
   const [avgHistory,      setAvgHistory]      = useState<GnAverageCheckImportGroup[]>([]);
   const [avgOverlapDates, setAvgOverlapDates] = useState<string[]>([]);
+  const [avgDebug,        setAvgDebug]        = useState<GnAverageCheckDebug | null>(null);
 
   // History
   const [histLoading, setHistLoading] = useState(false);
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set());
   const [deleting,    setDeleting]    = useState<string | null>(null);
-  const [showDebug,   setShowDebug]   = useState(false);
+  const [showDebug,    setShowDebug]    = useState(false);
+  const [showAvgDebug, setShowAvgDebug] = useState(false);
 
   const csvRef = useRef<HTMLInputElement>(null);
 
@@ -144,7 +146,7 @@ export default function GastronoviZBerichtPage() {
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
     setParsedPerson(null); setDupPersonInfo(null);
     setCsvTypeOverride(null);
-    setParsedAvg(null); setAvgOverlapDates([]);
+    setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null);
     setParseError(null); setStep('upload');
   }, []);
 
@@ -159,7 +161,7 @@ export default function GastronoviZBerichtPage() {
     setParseError(null); setParsed(null); setParsedPerson(null);
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
     setDupPersonInfo(null);
-    setParsedAvg(null); setAvgOverlapDates([]);
+    setParsedAvg(null); setAvgOverlapDates([]); setAvgDebug(null);
 
     try {
       const text = await file.text();
@@ -188,8 +190,13 @@ export default function GastronoviZBerichtPage() {
         setParsedPerson(result);
       } else {
         const result = parseGnAverageCheck(text, file.name);
+        setAvgDebug(result.debug);
         if (result.rows.length === 0) {
-          setParseError('Datei konnte nicht als Gastronovi Durchschnittsbon-Bericht erkannt werden. Es wurden keine Tageswerte gefunden.');
+          setShowAvgDebug(true);
+          setParseError(
+            'Datei konnte nicht als Gastronovi Durchschnittsbon-Bericht erkannt werden. '
+            + 'Es wurden keine Tageswerte gefunden. Siehe Parser-Diagnose unten.',
+          );
           return;
         }
         if (result.periodFrom && result.periodTo) {
@@ -362,6 +369,33 @@ export default function GastronoviZBerichtPage() {
         cands.forEach(c => lines.push(`  Zeile ${c.lineNumber}: "${c.rawText}"`));
       }
     }
+    navigator.clipboard.writeText(lines.join('\n'))
+      .then(() => toast.success('Diagnose in Zwischenablage kopiert'))
+      .catch(() => toast.error('Kopieren fehlgeschlagen'));
+  };
+
+  const copyAvgDiagnostic = () => {
+    if (!avgDebug) return;
+    const d = avgDebug;
+    const lines: string[] = [
+      '=== Gastronovi Durchschnittsbon Parser-Diagnose ===',
+      `Datei: ${d.fileName || '—'}`,
+      `Trennzeichen: ${d.delimiter} (;=${d.delimCounts.semicolon} ,=${d.delimCounts.comma} Tab=${d.delimCounts.tab})`,
+      `Zeilen: ${d.rawLineCount} gesamt, ${d.nonEmptyLineCount} nicht leer`,
+      `Datumsartige Zellen gesamt: ${d.dateCellCount} · Geldwert-Zellen gesamt: ${d.moneyCellCount}`,
+      '',
+      `Datums-Kopfzeile: ${d.headerRowIdx ? `Zeile ${d.headerRowIdx}` : 'NICHT ERKANNT'}`,
+      `Datums-Spalten (${d.dateColumns.length}): ${d.dateColumns.map(c => `${c.raw}→${c.iso}`).join(', ') || '—'}`,
+      `Durchschnitt-/Wertezeile: ${d.averageRowIdx ? `Zeile ${d.averageRowIdx} (Label: "${d.averageRowLabel}")` : 'NICHT ERKANNT'}`,
+      `Tageswerte extrahiert: ${parsedAvg?.rows.length ?? 0}`,
+      `Grund (falls keine): ${d.failureReason ?? '—'}`,
+    ];
+    if (d.averageCandidates.length > 0) {
+      lines.push('', '"Durchschnitt"-Kandidaten:');
+      d.averageCandidates.forEach(c => lines.push(`  Zeile ${c.lineNumber}: "${c.rawText}"`));
+    }
+    lines.push('', `Erste ${d.firstRawLines.length} Rohzeilen:`);
+    d.firstRawLines.forEach((l, i) => lines.push(`  Z${String(i + 1).padStart(2)}: ${l || '(leer)'}`));
     navigator.clipboard.writeText(lines.join('\n'))
       .then(() => toast.success('Diagnose in Zwischenablage kopiert'))
       .catch(() => toast.error('Kopieren fehlgeschlagen'));
@@ -611,6 +645,16 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
               {parseError}
             </div>
+          )}
+
+          {/* Parser-Diagnose bei fehlgeschlagenem Durchschnittsbon-Import */}
+          {importType === 'durchschnittsbon_bericht' && avgDebug && (
+            <AvgDiagnostic
+              debug={avgDebug}
+              open={showAvgDebug}
+              onToggle={() => setShowAvgDebug(v => !v)}
+              onCopy={copyAvgDiagnostic}
+            />
           )}
         </>}
 
@@ -1122,6 +1166,15 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                 </div>
               </div>
             )}
+
+            {avgDebug && (
+              <AvgDiagnostic
+                debug={avgDebug}
+                open={showAvgDebug}
+                onToggle={() => setShowAvgDebug(v => !v)}
+                onCopy={copyAvgDiagnostic}
+              />
+            )}
           </>}
 
           {/* Bestätigen-Buttons */}
@@ -1397,6 +1450,155 @@ function CandidateBlock({ title, color = 'blue', candidates }: {
           <span className={`${colors.text} break-all`}>{c.rawText}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+function AvgDiagnostic({ debug, open, onToggle, onCopy }: {
+  debug: GnAverageCheckDebug;
+  open: boolean;
+  onToggle: () => void;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onToggle}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+        className="w-full cursor-pointer flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800">
+        <span className="flex items-center gap-2">
+          <Info className="h-3.5 w-3.5" />
+          Parser-Diagnose (Durchschnittsbon)
+          {debug.failureReason && (
+            <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400">
+              keine Tageswerte
+            </span>
+          )}
+        </span>
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onCopy(); }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-[10px] font-medium">
+            <Copy className="h-2.5 w-2.5" />
+            Diagnose kopieren
+          </button>
+          {open ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </span>
+      </div>
+
+      {open && (
+        <div className="p-4 space-y-4 text-xs">
+
+          {/* Grund (falls Erkennung fehlgeschlagen) */}
+          {debug.failureReason && (
+            <div className="rounded border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 p-3 text-amber-800 dark:text-amber-300">
+              <span className="font-semibold">Grund: </span>{debug.failureReason}
+            </div>
+          )}
+
+          {/* Trennzeichen + Metadaten */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">Trennzeichen</div>
+              <div className="font-mono font-bold">{debug.delimiter}</div>
+              <div className="text-muted-foreground mt-1">
+                ;={debug.delimCounts.semicolon} ,={debug.delimCounts.comma} ⇥={debug.delimCounts.tab}
+              </div>
+            </div>
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">Zeilen</div>
+              <div className="font-mono font-bold">{debug.rawLineCount}</div>
+              <div className="text-muted-foreground mt-1">{debug.nonEmptyLineCount} nicht leer</div>
+            </div>
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">
+                Datums-Kopfzeile
+              </div>
+              <div className={`font-mono font-bold ${!debug.headerRowIdx ? 'text-red-500' : ''}`}>
+                {debug.headerRowIdx ? `Zeile ${debug.headerRowIdx}` : '(nicht erkannt)'}
+              </div>
+              <div className="text-muted-foreground mt-1">{debug.dateColumns.length} Datums-Spalten</div>
+            </div>
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5">
+              <div className="text-muted-foreground mb-0.5">Durchschnitt-Zeile</div>
+              <div className={`font-mono font-bold ${!debug.averageRowIdx ? 'text-red-500' : ''}`}>
+                {debug.averageRowIdx ? `Zeile ${debug.averageRowIdx}` : '(nicht erkannt)'}
+              </div>
+              {debug.averageRowLabel && (
+                <div className="text-muted-foreground mt-1 truncate">&ldquo;{debug.averageRowLabel}&rdquo;</div>
+              )}
+            </div>
+          </div>
+
+          {/* Zellzähler-Hinweis (Wide vs. Long) */}
+          <div className="rounded border border-slate-200 dark:border-slate-700 p-2.5 text-muted-foreground">
+            Datumsartige Zellen gesamt: <span className="font-mono font-bold text-foreground">{debug.dateCellCount}</span>
+            {' · '}Geldwert-Zellen gesamt: <span className="font-mono font-bold text-foreground">{debug.moneyCellCount}</span>
+          </div>
+
+          {/* Erkannte Datums-Spalten */}
+          {debug.dateColumns.length > 0 && (
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-3 space-y-1">
+              <div className="font-semibold mb-2 text-slate-700 dark:text-slate-300">
+                Erkannte Datums-Spalten ({debug.dateColumns.length})
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {debug.dateColumns.map((c, i) => (
+                  <span key={i} className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                    {c.raw} → {c.iso}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* "Durchschnitt"-Kandidaten */}
+          {debug.averageCandidates.length > 0 && (
+            <CandidateBlock
+              title="Zeilen mit &ldquo;Durchschnitt&rdquo;"
+              color="violet"
+              candidates={debug.averageCandidates}
+            />
+          )}
+
+          {/* Rohdaten anzeigen */}
+          <details className="rounded border border-slate-200 dark:border-slate-700" open={!!debug.failureReason}>
+            <summary className="px-3 py-2 cursor-pointer font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-2">
+              <span>Rohdaten anzeigen</span>
+              <span className="text-[10px] font-normal text-muted-foreground">(erste {debug.firstRawLines.length} CSV-Zeilen)</span>
+            </summary>
+            <div className="overflow-x-auto max-h-72 overflow-y-auto">
+              <table className="w-full font-mono text-[10px] border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 dark:bg-slate-800 sticky top-0">
+                    <th className="px-2 py-1 text-right border-r border-slate-200 dark:border-slate-700 text-slate-400 w-8">#</th>
+                    <th className="px-2 py-1 text-left text-slate-500">Zeile</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {debug.firstRawLines.map((line, i) => (
+                    <tr key={i} className={`border-t border-slate-100 dark:border-slate-800 ${
+                      debug.averageRowIdx === i + 1 ? 'bg-violet-50 dark:bg-violet-950/20 font-bold'
+                        : debug.headerRowIdx === i + 1 ? 'bg-blue-50 dark:bg-blue-950/20 font-bold' : ''
+                    }`}>
+                      <td className="px-2 py-0.5 text-right border-r border-slate-200 dark:border-slate-700 text-slate-400">
+                        {i + 1}
+                      </td>
+                      <td className="px-2 py-0.5 text-slate-700 dark:text-slate-300 whitespace-pre max-w-0 overflow-hidden">
+                        {line || <span className="text-slate-300">(leer)</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+
+        </div>
+      )}
     </div>
   );
 }
