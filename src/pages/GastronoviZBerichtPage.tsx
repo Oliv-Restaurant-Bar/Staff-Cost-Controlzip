@@ -1,16 +1,17 @@
 /**
- * GastronoviZBerichtPage — Z-Bericht & Personen CSV Import
+ * GastronoviZBerichtPage — Z-Bericht, Personen & Durchschnittsbon CSV Import
  *
- * Zwei Importtypen:
- *   Z-Bericht    — Tagesumsatz, Kostenstellen, Kellner, Bezahlarten, etc.
- *   Personen     — Gäste / Umsatz pro Person (Analyse → Verkäufe → Personen)
+ * Drei Importtypen:
+ *   Z-Bericht        — Tagesumsatz, Kostenstellen, Kellner, Bezahlarten, etc.
+ *   Personen         — Gäste / Umsatz pro Person (Analyse → Verkäufe → Personen)
+ *   Durchschnittsbon — Durchschnittsbon pro Tag (offizielle Gastronovi-Kennzahl)
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertTriangle, Loader2,
   Trash2, ChevronDown, ChevronUp, RefreshCw,
-  Info, AlertCircle, Database, Users, Copy,
+  Info, AlertCircle, Database, Users, Copy, Receipt,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -36,6 +37,14 @@ import {
 } from '@/lib/gn-personen-db';
 import type { GnPersonImportRow } from '@/lib/gn-personen-db';
 
+import { parseGnAverageCheck } from '@/lib/gn-average-check-parser';
+import type { GnParsedAverageCheck } from '@/lib/gn-average-check-parser';
+import {
+  saveAverageCheckImport, loadAverageCheckImports, deleteAverageCheckImport,
+  getOverlappingAverageCheckDates,
+} from '@/lib/gn-average-check-db';
+import type { GnAverageCheckImportGroup } from '@/lib/gn-average-check-db';
+
 import { runGnDiagnostic } from '@/lib/gn-diagnostic';
 import type { GnDiagnosticResult } from '@/lib/gn-diagnostic';
 
@@ -53,7 +62,7 @@ function fdate(iso: string | null | undefined) {
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
-type ImportType  = 'zbericht' | 'personen';
+type ImportType  = 'zbericht' | 'personen' | 'durchschnittsbon_bericht';
 type WizardStep  = 'upload' | 'preview' | 'saving' | 'done';
 type Tab         = 'import' | 'history';
 
@@ -87,6 +96,11 @@ export default function GastronoviZBerichtPage() {
   const [personHistory,   setPersonHistory]   = useState<GnPersonImportRow[]>([]);
   const [csvTypeOverride, setCsvTypeOverride] = useState<PersonCsvType | null>(null);
 
+  // Durchschnittsbon State
+  const [parsedAvg,       setParsedAvg]       = useState<GnParsedAverageCheck | null>(null);
+  const [avgHistory,      setAvgHistory]      = useState<GnAverageCheckImportGroup[]>([]);
+  const [avgOverlapDates, setAvgOverlapDates] = useState<string[]>([]);
+
   // History
   const [histLoading, setHistLoading] = useState(false);
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set());
@@ -108,12 +122,14 @@ export default function GastronoviZBerichtPage() {
 
   const loadHistory = useCallback(async () => {
     setHistLoading(true);
-    const [z, p] = await Promise.all([
+    const [z, p, a] = await Promise.all([
       loadGnImports(tenantId),
       loadPersonImports(tenantId),
+      loadAverageCheckImports(tenantId),
     ]);
     setZHistory(z);
     setPersonHistory(p);
+    setAvgHistory(a);
     setHistLoading(false);
   }, [tenantId]);
 
@@ -128,6 +144,7 @@ export default function GastronoviZBerichtPage() {
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
     setParsedPerson(null); setDupPersonInfo(null);
     setCsvTypeOverride(null);
+    setParsedAvg(null); setAvgOverlapDates([]);
     setParseError(null); setStep('upload');
   }, []);
 
@@ -142,6 +159,7 @@ export default function GastronoviZBerichtPage() {
     setParseError(null); setParsed(null); setParsedPerson(null);
     setOverlapInfo([]); setManualPeriodFrom(''); setManualPeriodTo('');
     setDupPersonInfo(null);
+    setParsedAvg(null); setAvgOverlapDates([]);
 
     try {
       const text = await file.text();
@@ -157,7 +175,7 @@ export default function GastronoviZBerichtPage() {
           setOverlapInfo(overlaps);
         }
         setParsed(result);
-      } else {
+      } else if (importType === 'personen') {
         const result = parseGnPersonReport(text, file.name);
         if (result.rowCount === 0 && result.totalGuests === 0) {
           setParseError('Datei konnte nicht als Gastronovi Personen-Bericht erkannt werden. Bitte prüfe das Format.');
@@ -168,6 +186,18 @@ export default function GastronoviZBerichtPage() {
           setDupPersonInfo({ existingId: dup.existingId, importedAt: dup.existingImportedAt ?? '' });
         }
         setParsedPerson(result);
+      } else {
+        const result = parseGnAverageCheck(text, file.name);
+        if (result.rows.length === 0) {
+          setParseError('Datei konnte nicht als Gastronovi Durchschnittsbon-Bericht erkannt werden. Es wurden keine Tageswerte gefunden.');
+          return;
+        }
+        if (result.periodFrom && result.periodTo) {
+          const existing = await getOverlappingAverageCheckDates(tenantId, result.periodFrom, result.periodTo);
+          const dates = new Set(result.rows.map(r => r.date));
+          setAvgOverlapDates(existing.filter(d => dates.has(d)));
+        }
+        setParsedAvg(result);
       }
       setStep('preview');
     } catch (e) {
@@ -214,6 +244,9 @@ export default function GastronoviZBerichtPage() {
         csvTypeOverride ?? undefined,
       );
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
+    } else if (importType === 'durchschnittsbon_bericht' && parsedAvg) {
+      const { error } = await saveAverageCheckImport(tenantId, parsedAvg);
+      if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
     }
     toast.success('Import erfolgreich gespeichert');
     setStep('done');
@@ -241,6 +274,15 @@ export default function GastronoviZBerichtPage() {
     setDeleting(null);
   };
 
+  const handleDeleteAvg = async (id: string) => {
+    if (!confirm('Diesen Import wirklich löschen?')) return;
+    setDeleting(id);
+    const { error } = await deleteAverageCheckImport(id);
+    if (error) toast.error('Löschen fehlgeschlagen');
+    else { toast.success('Import gelöscht'); loadHistory(); }
+    setDeleting(null);
+  };
+
   // ── Precompute (kein Division in JSX) ─────────────────────────────────────
 
   const grossTotal         = parsed ? parsed.revenue.totalGross : 0;
@@ -260,10 +302,22 @@ export default function GastronoviZBerichtPage() {
   const pRowCount          = parsedPerson ? parsedPerson.rowCount : 0;
   const pWarnCount         = parsedPerson ? parsedPerson.warnings.length : 0;
   const pDurchschnBon      = parsedPerson ? parsedPerson.avgReceiptMonthly : 0;
+
+  const avgRows            = parsedAvg ? parsedAvg.rows : [];
+  const avgDayCount        = avgRows.length;
+  const avgMean            = parsedAvg ? parsedAvg.averageMean : 0;
+  const avgMin             = parsedAvg ? parsedAvg.averageMin : 0;
+  const avgMax             = parsedAvg ? parsedAvg.averageMax : 0;
+  const avgWarnCount       = parsedAvg ? parsedAvg.warnings.length : 0;
+
   const activeDupInfo      = importType === 'personen' ? dupPersonInfo : null;
-  const activeWarnCount    = importType === 'zbericht' ? warnCount : pWarnCount;
-  const activeWarnings     = importType === 'zbericht' ? (parsed?.warnings ?? []) : (parsedPerson?.warnings ?? []);
+  const activeWarnCount    = importType === 'zbericht' ? warnCount
+    : importType === 'personen' ? pWarnCount : avgWarnCount;
+  const activeWarnings     = importType === 'zbericht' ? (parsed?.warnings ?? [])
+    : importType === 'personen' ? (parsedPerson?.warnings ?? []) : (parsedAvg?.warnings ?? []);
   const hasOverlap         = importType === 'zbericht' && overlapInfo.length > 0;
+  const avgHasOverlap      = importType === 'durchschnittsbon_bericht' && avgOverlapDates.length > 0;
+  const showReplaceCta     = hasOverlap || avgHasOverlap;
 
   // Effektiver Zeitraum (Parser-Ergebnis hat Vorrang, dann manuell)
   const effectivePeriodFrom = parsed?.periodFrom || manualPeriodFrom || '';
@@ -273,7 +327,7 @@ export default function GastronoviZBerichtPage() {
     ? Math.round((new Date(effectivePeriodTo).getTime() - new Date(effectivePeriodFrom).getTime()) / 86400000) + 1
     : 0;
 
-  const historyCount = zHistory.length + personHistory.length;
+  const historyCount = zHistory.length + personHistory.length + avgHistory.length;
 
   // ── Diagnose kopieren ─────────────────────────────────────────────────────
   const copyDiagnostic = () => {
@@ -354,6 +408,8 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
       '20260617_gn_analysis_create_missing_tables.sql',
       '20260617_gn_grants.sql',
       '20260618_gn_zbericht_v2.sql',
+      '20260619_gn_rls_fix.sql',
+      '20260620_gn_average_checks.sql',
     ];
 
     const recheck = () => {
@@ -508,11 +564,13 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
       {tab === 'import' && <>
 
         {/* Import-Typ Auswahl */}
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <TypeBtn active={importType === 'zbericht'} onClick={() => handleTypeChange('zbericht')}
             icon={<FileText className="h-4 w-4" />} label="Z-Bericht" desc="Tagesumsatz, Kostenstellen, Kellner, Bezahlarten" />
           <TypeBtn active={importType === 'personen'} onClick={() => handleTypeChange('personen')}
             icon={<Users className="h-4 w-4" />} label="Personen Bericht" desc="Gäste / Umsatz pro Person" />
+          <TypeBtn active={importType === 'durchschnittsbon_bericht'} onClick={() => handleTypeChange('durchschnittsbon_bericht')}
+            icon={<Receipt className="h-4 w-4" />} label="Durchschnittsbon Bericht" desc="Durchschnittsbon pro Tag" />
         </div>
 
         {/* Wizard-Schritte */}
@@ -538,8 +596,12 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
             onClick={() => csvRef.current?.click()}
-            label={importType === 'zbericht' ? 'Gastronovi Z-Bericht CSV hier ablegen' : 'Gastronovi Personen-Bericht CSV hier ablegen'}
-            hint={importType === 'personen' ? 'Analyse → Verkäufe → Personen / Umsatz pro Person' : undefined}
+            label={importType === 'zbericht' ? 'Gastronovi Z-Bericht CSV hier ablegen'
+              : importType === 'personen' ? 'Gastronovi Personen-Bericht CSV hier ablegen'
+              : 'Gastronovi Durchschnittsbon CSV hier ablegen'}
+            hint={importType === 'personen' ? 'Analyse → Verkäufe → Personen / Umsatz pro Person'
+              : importType === 'durchschnittsbon_bericht' ? 'Analyse → Verkäufe → Durchschnittsbon (Tageswerte als Spalten)'
+              : undefined}
           />
           <input ref={csvRef} type="file" accept=".csv" className="hidden"
             onChange={e => e.target.files?.[0] && handleFileSelect(e.target.files[0])} />
@@ -1013,6 +1075,55 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
             )}
           </>}
 
+          {/* ── Durchschnittsbon Vorschau ─────────────────────────────────── */}
+          {importType === 'durchschnittsbon_bericht' && parsedAvg && <>
+            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <MetaCell label="Zeitraum"    value={`${fdate(parsedAvg.periodFrom)} – ${fdate(parsedAvg.periodTo)}`} />
+              <MetaCell label="Anzahl Tage" value={String(avgDayCount)} />
+              <MetaCell label="Datei"       value={parsedAvg.fileName} />
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <KpiMini label="Ø Durchschnittsbon" value={avgMean > 0 ? fc(avgMean) : '—'} bold />
+              <KpiMini label="Minimum"            value={avgMin > 0 ? fc(avgMin) : '—'} />
+              <KpiMini label="Maximum"            value={avgMax > 0 ? fc(avgMax) : '—'} />
+              <KpiMini label="Tageswerte"         value={avgDayCount > 0 ? `${avgDayCount} Tage` : '—'} />
+            </div>
+
+            {avgOverlapDates.length > 0 && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                {avgOverlapDates.length === 1
+                  ? '1 bereits importierter Tag wird beim Bestätigen ersetzt.'
+                  : `${avgOverlapDates.length} bereits importierte Tage werden beim Bestätigen ersetzt.`}
+              </div>
+            )}
+
+            {avgRows.length > 0 && (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <div className="px-4 py-2 bg-muted/40 border-b text-xs font-semibold">
+                  Tageswerte ({avgRows.length})
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead><tr className="border-b bg-muted/20 text-right sticky top-0 bg-card">
+                      <th className="px-3 py-1.5 text-left font-medium">Datum</th>
+                      <th className="px-3 py-1.5 font-medium">Durchschnittsbon</th>
+                    </tr></thead>
+                    <tbody>
+                      {avgRows.map((r, i) => (
+                        <tr key={i} className="border-b border-border/40 last:border-0">
+                          <td className="px-3 py-1.5">{fdate(r.date)}</td>
+                          <td className="px-3 py-1.5 text-right">{r.averageCheck > 0 ? fc(r.averageCheck) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </>}
+
           {/* Bestätigen-Buttons */}
           {!activeDupInfo && (
             <div className="flex gap-3 pt-2 flex-wrap">
@@ -1023,13 +1134,13 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               <button onClick={() => handleConfirm(false)} disabled={step === 'saving'}
                 className={cn(
                   'px-5 py-2 text-sm rounded-md disabled:opacity-50 flex items-center gap-2 transition-colors',
-                  hasOverlap
+                  showReplaceCta
                     ? 'bg-amber-600 text-white hover:bg-amber-700'
                     : 'bg-primary text-primary-foreground hover:bg-primary/90',
                 )}>
                 {step === 'saving' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                {hasOverlap ? 'Importieren und Daten ersetzen' : 'Import bestätigen'}
+                {showReplaceCta ? 'Importieren und Daten ersetzen' : 'Import bestätigen'}
               </button>
             </div>
           )}
@@ -1136,6 +1247,35 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                         <MetaCell label="Zeilen"       value={String(raw.rowCount ?? '—')} />
                       </div>
                     )}
+                  </HistoryRow>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Durchschnittsbon History */}
+          {!histLoading && avgHistory.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground px-1">Durchschnittsbon-Berichte ({avgHistory.length})</p>
+              {avgHistory.map(group => {
+                const isOpen = expanded.has(group.importId);
+                return (
+                  <HistoryRow key={group.importId} id={group.importId} fileName={group.fileName}
+                    subLine={`${fdate(group.periodFrom)} – ${fdate(group.periodTo)}`}
+                    badge="Durchschnittsbon"
+                    mainValue={group.mean > 0 ? `Ø ${fc(group.mean)}` : '—'}
+                    subValue={group.dayCount > 0 ? `${group.dayCount} Tag${group.dayCount === 1 ? '' : 'e'}` : undefined}
+                    importedAt={fdate(group.importedAt?.slice(0, 10))}
+                    isOpen={isOpen} deleting={deleting === group.importId}
+                    onToggle={() => setExpanded(prev => { const n = new Set(prev); isOpen ? n.delete(group.importId) : n.add(group.importId); return n; })}
+                    onDelete={() => handleDeleteAvg(group.importId)}
+                  >
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 py-3 bg-muted/10 border-t border-border">
+                      <MetaCell label="Mittelwert"  value={group.mean > 0 ? fc(group.mean) : '—'} />
+                      <MetaCell label="Minimum"     value={group.min > 0 ? fc(group.min) : '—'} />
+                      <MetaCell label="Maximum"     value={group.max > 0 ? fc(group.max) : '—'} />
+                      <MetaCell label="Anzahl Tage" value={String(group.dayCount)} />
+                    </div>
                   </HistoryRow>
                 );
               })}

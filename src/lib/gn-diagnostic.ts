@@ -100,6 +100,9 @@ export async function runGnDiagnostic(): Promise<GnDiagnosticResult> {
     checkTable('gn_imports',           '20260618_gn_zbericht_v2.sql', 'import_type'),
     checkTable('gn_imports',           '20260618_gn_zbericht_v2.sql', 'gross_revenue'),
     checkTable('gn_zbericht_daily',    '20260618_gn_zbericht_v2.sql'),
+
+    // ── Migration 6: gn_average_checks.sql — Durchschnittsbon-Bericht ────────
+    checkTable('gn_average_checks',    '20260620_gn_average_checks.sql'),
   ]);
 
   const failures = results.filter(r => !r.ok);
