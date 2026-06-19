@@ -29,6 +29,7 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 - **CSV/PDF Import:** `src/lib/csv-import-engine.ts`, `src/lib/pdf-import-engine.ts`, `src/pages/CSVImport.tsx`
 - **Supplier Documents:** `src/types/supplier-documents.ts`, `src/lib/supplier-documents-store.ts`, `src/pages/SupplierDocuments.tsx`, `src/pages/SupplierComparison.tsx`
 - **Onboarding Flow:** `src/pages/OnboardingPage.tsx`, `src/components/onboarding/`
+- **Reservations Import (Foratable):** `src/pages/ReservationenImportPage.tsx`, `src/lib/reservation-import-parser.ts`, `src/lib/reservation-analytics.ts`, `src/lib/reservation-import-db.ts`, `supabase/migrations/20260621_reservations.sql` (tables `reservation_imports`, `guest_profiles`, `reservation_records`). Separate from Gastronovi (`gn_*`) imports.
 
 ## Architecture decisions
 - **Multi-tenancy:** Implemented via ID prefixes (`b-` for Beaulieu) in Supabase `employees` and `app_settings` keys, avoiding a dedicated `restaurant_id` column for simplicity and backwards compatibility.
@@ -51,6 +52,7 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 - **Pattern Warnings:** Identifies operational risks in schedules (e.g., consecutive days, short recovery times).
 - **Product Master Data:** Centralized database for food/beverage articles, WES (cost of goods sold) per product, and tracking.
 - **WES Analysis:** Compares WES from recipes, suppliers, and accounting for cost control.
+- **Reservations Import:** Imports Foratable reservation-tool CSV exports (admin only) with upload→preview→save wizard and per-file history; recognizes returning guests (email→mobile→name) for guest/behavior analytics.
 
 ## User preferences
 

@@ -223,6 +223,13 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
+        path: '/reservationen-import',
+        label: 'Reservationen',
+        shortLabel: 'Reserv.',
+        icon: CalendarClock,
+        adminOnly: true,
+      },
+      {
         path: '/import',
         label: 'Import-Zentrale',
         shortLabel: 'Import',

@@ -1,0 +1,114 @@
+Bitte baue einen neuen Importbereich "Reservationen Import" für CSV Exporte aus unserem Reservationstool Foratable.
+
+Die echte Testdatei heisst: Foratable 05.2026.csv
+
+CSV Struktur:
+Restaurant;Res.Nr.;Personen;Zeit;Datum;Firma;Vorname;Nachname;Mobile;E-Mail;Status;"reserviert am";Kommentar;Notiz;Tisch;Auswahl;Gästeinformationen;Raum;Bereich
+
+Ziel:
+Die App soll Reservationen importieren und für spätere Gäste- und Verhaltensanalysen auswertbar speichern.
+
+Bitte erstelle:
+
+1. Neue Tabellen:
+reservation_imports
+reservation_records
+reservation_guests oder guest_profiles
+
+2. Wichtige Felder pro Reservation:
+restaurant_name
+external_reservation_id
+reservation_date
+reservation_time
+party_size
+company
+first_name
+last_name
+mobile
+email
+status
+reserved_at
+comment
+note
+table_name
+selection
+guest_information
+room
+area
+source_file_name
+created_at
+updated_at
+
+3. Gast-Erkennung:
+Gäste sollen wiedererkannt werden über:
+- E-Mail
+- Mobile
+- falls beides fehlt: normalisierter Vorname + Nachname
+
+Bitte ein guest_profile erstellen oder aktualisieren mit:
+first_name
+last_name
+email
+mobile
+first_seen_at
+last_seen_at
+total_reservations
+total_persons
+cancelled_reservations
+completed_reservations
+
+4. Datenschutz:
+E-Mail und Mobile sind personenbezogene Daten.
+Bitte keine anon Rechte.
+RLS authenticated wie im bestehenden Projektmuster.
+service_role Zugriff.
+Importdaten dürfen nicht öffentlich über anon lesbar sein.
+
+5. Importlogik:
+CSV mit Semikolon erkennen.
+UTF-8 BOM unterstützen.
+Mehrere Dateien später ermöglichen.
+Duplikate anhand external_reservation_id vermeiden.
+Wenn dieselbe Res.Nr. erneut importiert wird, soll aktualisiert werden statt doppelt gespeichert.
+
+6. UI:
+Neuer Menüpunkt "Reservationen Import"
+Upload Bereich für CSV
+Vorschau mit:
+- Zeitraum
+- Anzahl Reservationen
+- Anzahl Personen
+- Status Verteilung
+- abgeschlossene Reservationen
+- stornierte Reservationen
+- neue Gäste
+- wiederkehrende Gäste
+- Top Uhrzeiten
+- Räume/Bereiche
+
+7. Importverlauf:
+Pro Datei anzeigen:
+- Dateiname
+- Zeitraum
+- Anzahl Reservationen
+- Personen total
+- Stornos
+- abgeschlossene Reservationen
+- neue Gäste
+- wiederkehrende Gäste
+
+8. Spätere Analyse vorbereiten:
+Bitte bereits Datenmodell und Helper vorbereiten für:
+- Reservationen pro Tag
+- Personen pro Tag
+- Reservationen nach Uhrzeit
+- Gäste Wiederkehrrate
+- durchschnittliche Gruppengrösse
+- Stornoquote
+- Vorlaufzeit zwischen reserviert am und Besuch
+- Vergleich Reservationen mit Tagesumsatz aus Z-Bericht
+
+9. Bestehende Gastronovi Importe nicht verändern.
+
+Bitte zuerst Parser, Datenmodell, Migration, UI Vorschau und Importverlauf bauen.
+Danach Tests mit der echten Datei Foratable 05.2026.csv ergänzen und Parser Tests, Full Suite und TypeScript Check ausführen.
