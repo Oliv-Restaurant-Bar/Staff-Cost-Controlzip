@@ -2,13 +2,21 @@
 /**
  * Test: Foratable Reservationen — REAL-FILE-Validierung
  * =====================================================
- * Validiert den Parser gegen den ECHTEN Foratable-Export (Mai 2026), der als
- * Fixture im Projekt liegt:  `fixtures/foratable-05-2026.csv`
+ * Validiert den Parser gegen den echten Foratable-Export (Mai 2026).
+ * Fixture im Projekt:  `fixtures/foratable-05-2026.csv`
  *
- * Zweck: Spätere Änderungen am Parser werden automatisch gegen die reale
- * Exportdatei getestet (nicht nur gegen synthetische Fixtures). Die hier
- * geprüften Zahlen stammen 1:1 aus der echten Datei und ändern sich nur, wenn
- * sich die Fixture selbst ändert.
+ * DATENSCHUTZ: Die Fixture ist eine ANONYMISIERTE, strukturgleiche Kopie des
+ * realen Exports. Alle nicht-personenbezogenen Spalten (Datum, Zeit, Personen,
+ * Status, Räume/Bereiche, Res.Nr.) sind 1:1 übernommen; nur PII (Namen, Firma,
+ * Mobile, E-Mail, Freitext-Kommentare) wurde durch deterministische Pseudonyme
+ * ersetzt. Die Gast-Identitäts-Partition (756 distinkte Gäste, 27 Wiederkehrer,
+ * Quellen-Verteilung E-Mail/Mobile/Name) und sämtliche Kennzahlen bleiben dabei
+ * exakt erhalten — so testet die Fixture echtes Export-Verhalten ohne reale
+ * Gästedaten im Repository.
+ *
+ * Zweck: Spätere Änderungen am Parser werden automatisch gegen diese reale
+ * Exportstruktur getestet (nicht nur gegen synthetische Mini-Fixtures). Die
+ * geprüften Zahlen ändern sich nur, wenn sich die Fixture selbst ändert.
  *
  * Erkannte Spalten (19, Header 1:1 aus dem Export):
  *   Restaurant; Res.Nr.; Personen; Zeit; Datum; Firma; Vorname; Nachname;
@@ -18,7 +26,7 @@
  * Besonderheiten der echten Datei, die hier mit abgedeckt werden:
  *   - UTF-8 BOM am Dateianfang
  *   - in Anführungszeichen eingeschlossene Felder mit eingebetteten Semikolons
- *     UND eingebetteten Zeilenumbrüchen (mehrzeilige Adresse in Gästeinfo)
+ *     UND eingebetteten Zeilenumbrüchen (mehrzeilige, gequotete Freitext-Felder)
  *   - Status-Rohwerte: Abgeschlossen / Storniert / No-show / Abgelehnt /
  *     "Nicht beantwortet"  →  completed / cancelled / noshow / cancelled / pending
  *   - Gast-Erkennung E-Mail → Mobile → Name; wiederkehrende Gäste innerhalb der Datei
@@ -47,6 +55,17 @@ describe('Foratable Real-File — Parsing & Header', () => {
 
   it('parst die gesamte Datei fehlerfrei (inkl. mehrzeiliger, gequoteter Felder)', () => {
     expect(result.errors).toEqual([]);
+  });
+
+  it('hält gequotete Freitextfelder mit eingebettetem Semikolon UND Zeilenumbruch zusammen', () => {
+    // Robustheits-Nachweis: ein gequotetes Feld, das sowohl ';' (Delimiter) als
+    // auch '\n' (Zeilenumbruch) enthält, darf die Zeile nicht zerreissen.
+    const withBoth = result.reservations.filter(r =>
+      [r.comment, r.note, r.guestInformation].some(
+        v => v.includes(';') && v.includes('\n'),
+      ),
+    );
+    expect(withBoth.length).toBeGreaterThan(0);
   });
 
   it('liefert einen stabilen Datei-Checksum', () => {
@@ -131,9 +150,11 @@ describe('Foratable Real-File — Gast-Erkennung & Dedup', () => {
       if (r.matchKey) byKey.set(r.matchKey, (byKey.get(r.matchKey) ?? 0) + 1);
     }
     const returning = [...byKey.values()].filter(c => c > 1);
+    // 27 Gäste mit >1 Reservation; zusammen 33 "Mehrfach"-Reservationen
+    // (Summe (count-1) == reservationCount - distinctGuestKeys == 789 - 756).
     expect(returning.length).toBe(27);
-    // konkreter Wiederkehrer: gleiche E-Mail, zwei Reservationen
-    expect(byKey.get('email:meyerce@gmx.ch')).toBe(2);
+    expect(returning.reduce((a, c) => a + (c - 1), 0)).toBe(33);
+    expect(Math.max(...returning)).toBe(5);
   });
 
   it('enthält keine doppelten Res.Nr. (Dedup-Schlüssel ist eindeutig)', () => {
@@ -147,6 +168,7 @@ describe('Foratable Real-File — Einzelsatz-Parsing', () => {
   it('parst einen bekannten Datensatz (Res.Nr. 24326) vollständig korrekt', () => {
     const r = result.reservations.find(x => x.externalReservationId === '24326');
     expect(r).toBeDefined();
+    // Nicht-PII-Felder werden exakt geprüft (in der Fixture 1:1 erhalten):
     expect(r).toMatchObject({
       restaurantName: 'Oliv Restaurant & Bar',
       reservationDate: '2026-05-31',
@@ -154,12 +176,12 @@ describe('Foratable Real-File — Einzelsatz-Parsing', () => {
       partySize: 1,
       statusNormalized: 'completed',
       reservedAt: '2026-05-31T16:02:00',
-      normalizedEmail: 'mattia.corazzolla@outlook.it',
-      normalizedName: 'mattia corazzolla',
       room: 'Restaurant & Bar',
       area: 'Restaurant',
-      matchKey: 'email:mattia.corazzolla@outlook.it',
     });
+    // Gast-Identität: E-Mail-Quelle vorhanden (Wert pseudonymisiert).
+    expect(r!.normalizedEmail).toBeTruthy();
+    expect(r!.matchKey?.startsWith('email:')).toBe(true);
   });
 
   it('nutzt ein einziges Restaurant (Oliv Restaurant & Bar)', () => {

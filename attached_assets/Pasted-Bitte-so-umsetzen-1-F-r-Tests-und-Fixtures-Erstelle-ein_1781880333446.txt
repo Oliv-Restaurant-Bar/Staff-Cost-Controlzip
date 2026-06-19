@@ -1,0 +1,82 @@
+Bitte so umsetzen:
+
+1. Für Tests und Fixtures:
+Erstelle eine anonymisierte Fixture-Datei mit identischer Struktur und gleicher Anzahl Reservationen.
+Die echte Originaldatei darf nicht im Repository gespeichert werden.
+Anonymisieren:
+- Namen ersetzen
+- E-Mails ersetzen
+- Telefonnummern ersetzen
+- Kommentare/Freitext anonymisieren
+- Struktur, Datum, Uhrzeit, Gästezahl, Status, Reservierungs-ID und Sonderfälle beibehalten
+
+2. Für den produktiven Import:
+Die echten Gästedaten sollen beim echten Import in der Datenbank gespeichert werden, damit CRM-Analysen möglich sind.
+
+3. Datenmodell erweitern:
+Bitte eine saubere Gästetabelle ergänzen, falls noch nicht vorhanden:
+
+guests:
+- id
+- full_name
+- email
+- phone
+- created_at
+- updated_at
+
+reservations sollen mit guests verknüpft werden:
+- guest_id
+- reservation_date
+- reservation_time
+- party_size
+- status
+- source
+- notes
+
+4. Matching-Logik:
+Beim Import soll geprüft werden, ob ein Gast bereits existiert.
+Priorität:
+1. gleiche E-Mail
+2. gleiche Telefonnummer
+3. gleicher Name plus ähnliche Telefonnummer oder E-Mail
+Wenn ein bestehender Gast gefunden wird, soll die Reservation diesem Gast zugeordnet werden.
+Wenn nicht, soll ein neuer Gast erstellt werden.
+
+5. CRM-Statistiken berechnen:
+Bitte eine View oder Tabelle guest_statistics erstellen mit:
+- guest_id
+- total_visits
+- first_visit_date
+- last_visit_date
+- average_days_between_visits
+- days_since_last_visit
+- total_party_size
+- average_party_size
+- cancellation_count
+- no_show_count
+- completed_visit_count
+- guest_segment
+
+6. Guest Segments:
+Automatisch kategorisieren:
+- VIP: ab 20 Besuchen
+- Stammgast: 8 bis 19 Besuche
+- Wiederkehrender Gast: 3 bis 7 Besuche
+- Neukunde: 1 bis 2 Besuche
+- Inaktiv: früher Stammgast, aber seit mehr als 90 Tagen nicht mehr da
+
+7. Im UI ergänzen:
+Erstelle einen einfachen CRM-Bereich:
+- Liste aller Gäste
+- Suche nach Name, E-Mail oder Telefon
+- Anzeige Anzahl Besuche
+- letzter Besuch
+- erster Besuch
+- durchschnittliches Besuchsintervall
+- Segment
+- Detailseite pro Gast mit allen Reservationen chronologisch
+
+8. Wichtig:
+Die anonymisierte Fixture bleibt nur für Tests.
+Die echten Daten werden nur im produktiven Import verwendet.
+Bitte Datenschutz beachten und keine echten Gästedaten in Testdateien, Logs oder Seed-Dateien speichern.
