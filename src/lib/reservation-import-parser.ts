@@ -360,11 +360,11 @@ export function buildMatchKey(
 export function normalizeStatus(raw: string | undefined): ReservationStatusNormalized {
   const s = stripDiacritics((raw ?? '').trim().toLowerCase());
   if (!s) return 'unknown';
-  if (/(storn|abgesagt|cancel|annull)/.test(s)) return 'cancelled';
+  if (/(storn|abgesagt|abgelehnt|cancel|annull|declin|reject)/.test(s)) return 'cancelled';
   if (/(no.?show|nicht erschien|not arrived|nicht gekommen)/.test(s)) return 'noshow';
   if (/(abgeschloss|erledigt|beendet|eingecheckt|checked|besucht|seated|arrived|complete|eingelost|eingeloest|done)/.test(s)) return 'completed';
   if (/(bestatigt|confirmed|zugesagt|akzeptiert|accepted)/.test(s)) return 'confirmed';
-  if (/(offen|angefragt|pending|reserviert|wartet|open|request|neu|new)/.test(s)) return 'pending';
+  if (/(offen|angefragt|pending|reserviert|wartet|nicht beantwortet|unbeantwortet|keine antwort|open|request|neu|new)/.test(s)) return 'pending';
   return 'unknown';
 }
 

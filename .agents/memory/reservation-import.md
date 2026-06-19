@@ -33,6 +33,28 @@ Tenant isolation and admin-only access are enforced in app code (ID-prefix
 tenancy + `usePermissions`), NOT via DB-level policies. Do not add
 tenant/admin RLS to match an "ideal" model; it diverges from the project pattern.
 
+## Real-file validation & status mapping (Foratable export)
+The authoritative regression fixture is the real May-2026 export, frozen in the
+repo and asserted by a dedicated real-file test. Parser changes are validated
+against it, not only synthetic fixtures.
+
+Durable facts about the real Foratable export that synthetic fixtures missed:
+- Status rohwerte include more than the obvious ones. Beyond
+  Abgeschlossen/Storniert/No-show, the real file contains **"Abgelehnt"**
+  (restaurant declined) and **"Nicht beantwortet"** (request never answered).
+  Decision: `Abgelehnt → cancelled` (lost cover, did not take place) and
+  `Nicht beantwortet → pending` (unresolved request), so they leave the
+  `unknown` bucket. **Why:** unmapped statuses silently land in `unknown` and
+  distort the cancellation/active-reservation analytics. This mapping is a
+  judgement call — overridable if the operator wants declined tracked separately.
+- The export uses **multiline quoted fields** (e.g. a multi-line address inside
+  Gästeinformationen). The state-machine `parseDelimited` must handle embedded
+  newlines inside quotes — a naive line split corrupts the row count.
+- **Name-only guests collapse**: rows with no email/mobile and a generic name
+  (e.g. "walk-in") share a single `name:<x>` key. Known limitation of name-based
+  matching; not a bug, but it understates distinct-guest counts for anonymous
+  walk-ins.
+
 ## Save lifecycle is idempotent, not transactional
 `saveReservationImport` runs header `processing` → guests → records → recompute
 aggregates → `active` (or `failed` + error_message). There is no single DB

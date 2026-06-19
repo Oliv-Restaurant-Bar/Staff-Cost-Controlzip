@@ -59,11 +59,13 @@ describe('Reservationen Parser — Feldnormalisierung', () => {
     expect(normalizeStatus('eingecheckt')).toBe('completed');
     expect(normalizeStatus('Storniert')).toBe('cancelled');
     expect(normalizeStatus('abgesagt')).toBe('cancelled');
+    expect(normalizeStatus('Abgelehnt')).toBe('cancelled');
     expect(normalizeStatus('No-Show')).toBe('noshow');
     expect(normalizeStatus('nicht erschienen')).toBe('noshow');
     expect(normalizeStatus('Bestätigt')).toBe('confirmed');
     expect(normalizeStatus('Offen')).toBe('pending');
     expect(normalizeStatus('angefragt')).toBe('pending');
+    expect(normalizeStatus('Nicht beantwortet')).toBe('pending');
     expect(normalizeStatus('')).toBe('unknown');
     expect(normalizeStatus('irgendwas Komisches')).toBe('unknown');
   });
