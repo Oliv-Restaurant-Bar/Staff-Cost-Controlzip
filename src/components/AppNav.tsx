@@ -28,7 +28,7 @@ import {
   Package, Users,
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
-  CalendarClock, X, Eye, Table2, Activity,
+  CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, LineChart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, FileText,
 } from 'lucide-react';
@@ -227,6 +227,13 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'Reservationen',
         shortLabel: 'Reserv.',
         icon: CalendarClock,
+        adminOnly: true,
+      },
+      {
+        path: '/gaeste',
+        label: 'Gäste-CRM',
+        shortLabel: 'Gäste',
+        icon: Contact,
         adminOnly: true,
       },
       {
