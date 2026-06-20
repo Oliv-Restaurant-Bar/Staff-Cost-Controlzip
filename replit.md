@@ -30,6 +30,7 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 - **Supplier Documents:** `src/types/supplier-documents.ts`, `src/lib/supplier-documents-store.ts`, `src/pages/SupplierDocuments.tsx`, `src/pages/SupplierComparison.tsx`
 - **Onboarding Flow:** `src/pages/OnboardingPage.tsx`, `src/components/onboarding/`
 - **Reservations Import (Foratable):** `src/pages/ReservationenImportPage.tsx`, `src/lib/reservation-import-parser.ts`, `src/lib/reservation-analytics.ts`, `src/lib/reservation-import-db.ts`, `supabase/migrations/20260621_reservations.sql` (tables `reservation_imports`, `guest_profiles`, `reservation_records`). Separate from Gastronovi (`gn_*`) imports.
+- **Gäste-CRM:** `src/pages/GaesteCrmPage.tsx` (list+search+segments), `src/pages/GaesteDetailPage.tsx` (per-guest chronology), `src/lib/reservation-crm.ts` (segment/metric logic, single source of truth), `src/lib/reservation-crm-db.ts` (read-only CRM reads). Metrics/segments are computed live in TS over `guest_profiles`/`reservation_records` (no dedicated tables). Optional read-only SQL view `guest_statistics` in `supabase/migrations/20260622_guest_statistics_view.sql` mirrors the exact `reservation-crm.ts` semantics for direct Supabase querying.
 
 ## Architecture decisions
 - **Multi-tenancy:** Implemented via ID prefixes (`b-` for Beaulieu) in Supabase `employees` and `app_settings` keys, avoiding a dedicated `restaurant_id` column for simplicity and backwards compatibility.
@@ -53,6 +54,7 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 - **Product Master Data:** Centralized database for food/beverage articles, WES (cost of goods sold) per product, and tracking.
 - **WES Analysis:** Compares WES from recipes, suppliers, and accounting for cost control.
 - **Reservations Import:** Imports Foratable reservation-tool CSV exports (admin only) with upload→preview→save wizard and per-file history; recognizes returning guests (email→mobile→name) for guest/behavior analytics.
+- **Gäste-CRM:** Admin-only guest list with search (name/email/phone), visit count, first/last visit, average visit interval, and auto-segmentation (VIP ≥20 / Stammgast 8–19 / Wiederkehrend 3–7 / Neukunde 1–2 / Inaktiv >90d / Ohne Besuch). Per-guest detail page lists all reservations chronologically. A visit = a completed reservation. Optional `guest_statistics` SQL view exposes the same KPIs directly in Supabase.
 
 ## User preferences
 

@@ -34,3 +34,20 @@ Supabase read), not via row-level role policies.
 **How to apply:** if true DB-level admin enforcement is ever required, it needs
 an RLS/RPC change (a migration) for `guest_profiles` + `reservation_records` —
 a deliberate, app-wide security decision, not a per-page tweak.
+
+## guest_statistics SQL view must track reservation-crm.ts in lockstep
+
+There is an optional read-only view `guest_statistics`
+(`supabase/migrations/20260622_guest_statistics_view.sql`) over the existing
+tables — the app does NOT use it; it exists only for direct Supabase/SQL
+analysis. It re-implements the exact segment thresholds and visit/interval
+math from `reservation-crm.ts` (visits = completed only; inactive rule
+overrides; same VIP/Stammgast/… cutoffs).
+
+**Rule:** any change to the segment thresholds or visit/metric definitions in
+`reservation-crm.ts` must be reflected in this view's SQL in the same change,
+or the SQL view and the UI will disagree.
+**Why:** the whole point of the view is parity with what the CRM screens show.
+**How to apply:** view uses `security_invoker = true` so RLS of the base tables
+applies (anon blocked, PII safe); it must stay a pure read-only view (no data
+duplication, no migration of the base tables).
