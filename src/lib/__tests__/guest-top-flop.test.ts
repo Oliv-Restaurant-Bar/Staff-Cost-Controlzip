@@ -47,16 +47,11 @@ describe('resolveZeitraum', () => {
   it('letzter Monat = ganzer Vormonat', () => {
     expect(resolveZeitraum('letzter_monat', today)).toEqual({ from: '2026-05-01', to: '2026-05-31' });
   });
-  it('letzte 30 Tage endet heute', () => {
-    expect(resolveZeitraum('letzte_30', today)).toEqual({ from: '2026-05-16', to: '2026-06-15' });
-  });
   it('letzte 90 Tage endet heute und beginnt früher', () => {
     const r = resolveZeitraum('letzte_90', today);
     expect(r.to).toBe('2026-06-15');
+    expect(r.from).toBe('2026-03-17');
     expect(r.from < r.to).toBe(true);
-  });
-  it('YTD = Jahresanfang bis heute', () => {
-    expect(resolveZeitraum('ytd', today)).toEqual({ from: '2026-01-01', to: '2026-06-15' });
   });
   it('individuell nutzt custom (und tauscht verdrehte Grenzen)', () => {
     expect(resolveZeitraum('individuell', today, { from: '2026-02-01', to: '2026-02-28' }))
@@ -121,25 +116,29 @@ describe('buildTopList', () => {
   });
 });
 
-// ── Flop-Liste ────────────────────────────────────────────────────────────────
+// ── Flop-Liste (am stärksten überfällig = höchstes Rückkehrpotenzial) ─────────
 
 describe('buildFlopList', () => {
-  it('listet früher aktive Gäste ohne Besuch im Zeitraum, Tier↓ → Besuche↓ → Abwesenheit↓', () => {
+  it('rankt nach Überfälligkeit ↓ (overdueByDays), nur überfällige Gäste', () => {
     const metrics = [
-      metric({ id: 'vip', visits: 25, daysSinceLastVisit: 100 }),
-      metric({ id: 'reg1', visits: 10, daysSinceLastVisit: 200 }),
-      metric({ id: 'reg2', visits: 10, daysSinceLastVisit: 50 }),
-      metric({ id: 'never', visits: 0, daysSinceLastVisit: null }), // nie aktiv → raus
-      metric({ id: 'active', visits: 5, daysSinceLastVisit: 10 }),  // im Zeitraum aktiv → raus
+      // overdue = days − Ø×1,5
+      metric({ id: 'over70', visits: 10, daysSinceLastVisit: 100, avgDaysBetweenVisits: 20 }), // 70
+      metric({ id: 'over30', visits: 5,  daysSinceLastVisit: 60,  avgDaysBetweenVisits: 20 }), // 30
+      metric({ id: 'ontime', visits: 10, daysSinceLastVisit: 20,  avgDaysBetweenVisits: 20 }), // -10 → raus
+      metric({ id: 'tooFew', visits: 1,  daysSinceLastVisit: 200, avgDaysBetweenVisits: null }), // null → raus
+      metric({ id: 'never',  visits: 0,  daysSinceLastVisit: null, avgDaysBetweenVisits: null }), // null → raus
     ];
-    const counts = new Map<string, RangeVisitCount>([['active', { visits: 2, persons: 4 }]]);
-    const flop = buildFlopList(metrics, counts, 50);
-    expect(flop.map(r => r.metric.id)).toEqual(['vip', 'reg1', 'reg2']);
-    expect(flop.every(r => r.rangeVisits === 0)).toBe(true);
+    const flop = buildFlopList(metrics, 50);
+    expect(flop.map(r => r.metric.id)).toEqual(['over70', 'over30']);
+    expect(flop[0].overdueDays).toBe(70);
+    expect(flop[0].rangeVisits).toBe(0);
   });
 
   it('respektiert das Limit', () => {
-    const metrics = Array.from({ length: 60 }, (_, i) => metric({ id: `g${i}`, visits: 5, daysSinceLastVisit: i }));
-    expect(buildFlopList(metrics, new Map(), 50)).toHaveLength(50);
+    const metrics = Array.from({ length: 60 }, (_, i) =>
+      metric({ id: `g${i}`, visits: 5, daysSinceLastVisit: 100 + i, avgDaysBetweenVisits: 10 }),
+    );
+    expect(buildFlopList(metrics, 20)).toHaveLength(20);
+    expect(buildFlopList(metrics, 50)).toHaveLength(50);
   });
 });

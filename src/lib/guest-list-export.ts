@@ -44,8 +44,6 @@ const COLUMN_EXPORT: Record<GuestColumnKey, ColumnExport> = {
   companyCustomer: { headers: ['Firmenkunde'],              cells: m => [m.crm?.companyCustomer ? 'Ja' : ''] },
   newsletter:      { headers: ['Newsletter'],               cells: m => [m.crm?.newsletterOptIn ? 'Ja' : ''] },
   blocked:         { headers: ['Sperrliste'],               cells: m => [m.crm?.blockedGuest ? 'Ja' : ''] },
-  allergies:       { headers: ['Allergien'],                cells: m => [m.crm?.allergies ?? null] },
-  crmNote:         { headers: ['CRM-Notiz'],                cells: m => [m.crm?.crmNotes ?? null] },
 };
 
 /** Überschriften für die sichtbaren Spalten (kanonische Reihenfolge der Auswahl). */

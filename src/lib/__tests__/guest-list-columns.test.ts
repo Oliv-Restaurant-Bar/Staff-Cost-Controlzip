@@ -16,11 +16,13 @@ import {
 } from '../guest-list-columns';
 
 describe('GUEST_COLUMNS / Defaults', () => {
-  it('enthält 18 eindeutige Spalten in stabiler Reihenfolge', () => {
-    expect(GUEST_COLUMNS).toHaveLength(18);
+  it('enthält 16 eindeutige Spalten in stabiler Reihenfolge', () => {
+    expect(GUEST_COLUMNS).toHaveLength(16);
     const keys = GUEST_COLUMNS.map(c => c.key);
-    expect(new Set(keys).size).toBe(18);
+    expect(new Set(keys).size).toBe(16);
     expect(keys[0]).toBe('name');
+    expect(keys).not.toContain('allergies');
+    expect(keys).not.toContain('crmNote');
   });
 
   it('hat genau 9 Standardspalten inkl. Pflicht-Kennzahlen', () => {

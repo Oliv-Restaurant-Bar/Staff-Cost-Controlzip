@@ -16,7 +16,7 @@ import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
   ArrowRight, BarChart3, Filter, X, TrendingDown,
   Crown, Star, Building2, Mail, Ban, AlertTriangle,
-  FileDown, FileSpreadsheet, SlidersHorizontal, Columns3, Trophy, Calendar,
+  FileDown, FileSpreadsheet, Columns3, Trophy, Calendar,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -41,8 +41,9 @@ import {
   DEFAULT_GUEST_FILTERS, hasActiveFilters, searchAndFilterGuests, sortGuests,
   SEGMENT_FILTER_OPTIONS, VISIT_COUNT_FILTER_OPTIONS, LAST_VISIT_FILTER_OPTIONS,
   PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS, RETURN_RISK_FILTER_OPTIONS,
-  CRM_MERKMAL_OPTIONS,
-  type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption, type CrmMerkmal,
+  BOOL_FILTER_OPTIONS, CRM_BOOL_FILTERS,
+  type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
+  type CrmMerkmal, type BoolFilter,
 } from '@/lib/guest-list-filters';
 import {
   GUEST_COLUMNS, GUEST_COLUMN_BY_KEY, loadVisibleColumns, saveVisibleColumns, toggleColumn,
@@ -50,7 +51,7 @@ import {
 } from '@/lib/guest-list-columns';
 import {
   ZEITRAUM_OPTIONS, resolveZeitraum, inRangeVisitCounts, buildTopList, buildFlopList,
-  type ZeitraumPreset, type RangeVisitCount, type ActiveVisitRow,
+  type ZeitraumPreset, type TopFlopRow, type ActiveVisitRow,
 } from '@/lib/guest-top-flop';
 import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
@@ -58,7 +59,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { downloadCsv, downloadXlsx } from '@/lib/table-export';
 import { guestListExportTable } from '@/lib/guest-list-export';
 
-type TopFlopMode = 'off' | 'top10' | 'top20' | 'flop50';
+type TopFlopMode = 'off' | 'top10' | 'top20' | 'flop20' | 'flop50';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -239,17 +240,6 @@ function GuestCell({ colKey, m }: { colKey: GuestColumnKey; m: GuestListMetrics 
       return <BoolCell on={!!m.crm?.newsletterOptIn} />;
     case 'blocked':
       return <BoolCell on={!!m.crm?.blockedGuest} />;
-    case 'allergies':
-      return <span className="text-muted-foreground">{m.crm?.allergies || '—'}</span>;
-    case 'crmNote':
-      return (
-        <span
-          className="line-clamp-1 inline-block max-w-[220px] text-muted-foreground"
-          title={m.crm?.crmNotes ?? undefined}
-        >
-          {m.crm?.crmNotes || '—'}
-        </span>
-      );
     default:
       return null;
   }
@@ -291,6 +281,10 @@ export default function GaesteCrmPage() {
   const now = useMemo(() => new Date(), []);
   const today = useMemo(() => fmtDate(now, 'yyyy-MM-dd'), [now]);
   const isTopFlop = topFlopMode !== 'off';
+  // Top = Besuche im Zeitraum (braucht den Reservations-Read); Flop = Stand-heute
+  // Überfälligkeit (zeitraum-unabhängig, kein Read).
+  const isTopMode = topFlopMode === 'top10' || topFlopMode === 'top20';
+  const isFlopMode = topFlopMode === 'flop20' || topFlopMode === 'flop50';
 
   const range = useMemo(
     () => resolveZeitraum(zeitraum, now, { from: customFrom, to: customTo }),
@@ -363,7 +357,7 @@ export default function GaesteCrmPage() {
   // der Rangliste keine erneute Abfrage auslöst. Fehler → sichtbarer Hinweis,
   // kein stilles Verschlucken.
   useEffect(() => {
-    if (!isTopFlop || !tablesOk) return;
+    if (!isTopMode || !tablesOk) return;
     const key = `${tenantId}|${range.from}|${range.to}`;
     const cached = rangeCacheRef.current.get(key);
     if (cached) { setRangeRows(cached); setRangeError(false); setRangeLoading(false); return; }
@@ -383,7 +377,7 @@ export default function GaesteCrmPage() {
       })
       .finally(() => { if (!cancelled) setRangeLoading(false); });
     return () => { cancelled = true; };
-  }, [isTopFlop, tablesOk, tenantId, range]);
+  }, [isTopMode, tablesOk, tenantId, range]);
 
   const rangeCounts = useMemo(
     () => inRangeVisitCounts(rangeRows, range.from, range.to),
@@ -391,16 +385,19 @@ export default function GaesteCrmPage() {
   );
 
   // Top/Flop-Liste über die NUR durchsuchte (Filter pausiert) Gästemenge.
+  // Top = meiste Besuche im Zeitraum; Flop = höchstes Rückkehrpotenzial
+  // (am stärksten überfällig, Stand heute — zeitraum-unabhängig).
   const topFlopRows = useMemo(() => {
     if (!isTopFlop) return [];
     const base = searchAndFilterGuests(allMetrics, query, DEFAULT_GUEST_FILTERS);
-    if (topFlopMode === 'flop50') return buildFlopList(base, rangeCounts, 50);
+    if (topFlopMode === 'flop20') return buildFlopList(base, 20);
+    if (topFlopMode === 'flop50') return buildFlopList(base, 50);
     return buildTopList(base, rangeCounts, topFlopMode === 'top20' ? 20 : 10);
   }, [isTopFlop, topFlopMode, allMetrics, query, rangeCounts]);
 
-  const rangeById = useMemo(() => {
-    const m = new Map<string, RangeVisitCount>();
-    for (const r of topFlopRows) m.set(r.metric.id, { visits: r.rangeVisits, persons: r.rangePersons });
+  const topFlopById = useMemo(() => {
+    const m = new Map<string, TopFlopRow>();
+    for (const r of topFlopRows) m.set(r.metric.id, r);
     return m;
   }, [topFlopRows]);
 
@@ -419,13 +416,8 @@ export default function GaesteCrmPage() {
     setTopFlopMode(m => (m === mode ? 'off' : mode));
   };
 
-  const toggleMerkmal = (k: CrmMerkmal) => {
-    setFilters(f => ({
-      ...f,
-      crmMerkmale: f.crmMerkmale.includes(k)
-        ? f.crmMerkmale.filter(x => x !== k)
-        : [...f.crmMerkmale, k],
-    }));
+  const setCrmBool = (k: CrmMerkmal, v: BoolFilter) => {
+    setFilters(f => ({ ...f, [k]: v }));
   };
 
   const toggleSort = (key: GuestSortKey) => {
@@ -540,24 +532,28 @@ export default function GaesteCrmPage() {
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                 <Trophy className="h-3.5 w-3.5" /> Ranglisten
               </span>
-              {([['top10', 'Top 10'], ['top20', 'Top 20'], ['flop50', 'Flop 50']] as const).map(([mode, label]) => (
-                <button
-                  key={mode}
-                  onClick={() => toggleTopFlop(mode)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                    topFlopMode === mode
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-background text-foreground hover:bg-muted/60',
-                  )}
-                >
-                  {mode === 'flop50'
-                    ? <TrendingDown className="h-3.5 w-3.5" />
-                    : <Trophy className="h-3.5 w-3.5" />}
-                  {label}
-                </button>
-              ))}
-              {isTopFlop && (
+              {([['top10', 'Top 10'], ['top20', 'Top 20'], ['flop20', 'Flop 20'], ['flop50', 'Flop 50']] as const).map(([mode, label]) => {
+                const flop = mode === 'flop20' || mode === 'flop50';
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => toggleTopFlop(mode)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
+                      topFlopMode === mode
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background text-foreground hover:bg-muted/60',
+                    )}
+                  >
+                    {flop
+                      ? <TrendingDown className="h-3.5 w-3.5" />
+                      : <Trophy className="h-3.5 w-3.5" />}
+                    {label}
+                  </button>
+                );
+              })}
+              {/* Zeitraum nur für Top-Listen (Besuche im Zeitraum); Flop ist Stand heute. */}
+              {isTopMode && (
                 <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Calendar className="h-3.5 w-3.5" />
                   <select
@@ -573,7 +569,7 @@ export default function GaesteCrmPage() {
               )}
             </div>
 
-            {isTopFlop && zeitraum === 'individuell' && (
+            {isTopMode && zeitraum === 'individuell' && (
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <label className="flex items-center gap-1">
                   von
@@ -599,10 +595,12 @@ export default function GaesteCrmPage() {
             {isTopFlop && (
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {rangeLoading ? (
+                  {isTopMode && rangeLoading ? (
                     <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Zeitraum-Daten werden geladen…</>
-                  ) : (
+                  ) : isTopMode ? (
                     <>Besuche im Zeitraum {fdate(range.from)} – {fdate(range.to)} (bestätigt + abgeschlossen). Filter pausiert; Suche bleibt aktiv.</>
+                  ) : (
+                    <>Höchstes Rückkehrpotenzial — am stärksten überfällige Gäste (Stand heute, Ø-Intervall × 1,5). Filter pausiert; Suche bleibt aktiv.</>
                   )}
                 </span>
                 <button
@@ -614,7 +612,7 @@ export default function GaesteCrmPage() {
               </div>
             )}
 
-            {isTopFlop && rangeError && (
+            {isTopMode && rangeError && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
                 Die Besuche für den gewählten Zeitraum konnten nicht geladen werden.
@@ -665,53 +663,17 @@ export default function GaesteCrmPage() {
                 />
               </div>
 
-              {/* Manuelle CRM-Merkmale — EINE Mehrfachauswahl statt acht Dropdowns */}
-              <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-2 text-sm font-medium text-foreground hover:bg-muted/60">
-                      <SlidersHorizontal className="h-4 w-4" />
-                      CRM Merkmale
-                      {filters.crmMerkmale.length > 0 && (
-                        <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold leading-4 text-primary-foreground">
-                          {filters.crmMerkmale.length}
-                        </span>
-                      )}
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-64 p-2">
-                    <p className="px-1 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      Manuelle CRM-Merkmale
-                    </p>
-                    <div className="space-y-0.5">
-                      {CRM_MERKMAL_OPTIONS.map(o => (
-                        <label
-                          key={o.value}
-                          className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1.5 text-sm hover:bg-muted/60"
-                        >
-                          <Checkbox
-                            checked={filters.crmMerkmale.includes(o.value)}
-                            onCheckedChange={() => toggleMerkmal(o.value)}
-                          />
-                          {o.label}
-                        </label>
-                      ))}
-                    </div>
-                    {filters.crmMerkmale.length > 0 && (
-                      <button
-                        onClick={() => setFilters(f => ({ ...f, crmMerkmale: [] }))}
-                        className="mt-1 w-full rounded-md px-1.5 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted/60"
-                      >
-                        Auswahl zurücksetzen
-                      </button>
-                    )}
-                  </PopoverContent>
-                </Popover>
-                {filters.crmMerkmale.length > 0 && (
-                  <span className="text-xs text-muted-foreground">
-                    {filters.crmMerkmale.length} Merkmal{filters.crmMerkmale.length > 1 ? 'e' : ''} aktiv — alle müssen zutreffen
-                  </span>
-                )}
+              {/* Manuelle CRM-Merkmale — acht Ja/Nein/Alle-Dropdowns im Filterraster */}
+              <div className="grid grid-cols-2 gap-2 border-t border-border pt-3 sm:grid-cols-3 lg:grid-cols-4">
+                {CRM_BOOL_FILTERS.map(({ key, label }) => (
+                  <FilterSelect<BoolFilter>
+                    key={key}
+                    label={label}
+                    value={filters[key]}
+                    options={BOOL_FILTER_OPTIONS}
+                    onChange={v => setCrmBool(key, v)}
+                  />
+                ))}
               </div>
 
               {/* Schnellfilter: gefährdete Stammgäste (Rückkehrpotenzial) */}
@@ -821,9 +783,11 @@ export default function GaesteCrmPage() {
         <div className="rounded-lg border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
           {allMetrics.length === 0
             ? 'Noch keine Gäste vorhanden. Importiere zuerst Reservationen.'
-            : isTopFlop
+            : isTopMode
               ? 'Keine Gäste mit Besuchen im gewählten Zeitraum.'
-              : 'Keine Gäste passen zu Suche und Filter.'}
+              : isFlopMode
+                ? 'Keine überfälligen Gäste — niemand liegt über dem persönlichen Ø-Besuchsintervall.'
+                : 'Keine Gäste passen zu Suche und Filter.'}
         </div>
       ) : tablesOk ? (
         <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
@@ -833,9 +797,11 @@ export default function GaesteCrmPage() {
                 {isTopFlop && (
                   <th
                     className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
-                    title="Bestätigte + abgeschlossene Reservationen im gewählten Zeitraum"
+                    title={isTopMode
+                      ? 'Bestätigte + abgeschlossene Reservationen im gewählten Zeitraum'
+                      : 'Tage über dem persönlichen Ø-Besuchsintervall (× 1,5)'}
                   >
-                    Besuche Zeitraum
+                    {isTopMode ? 'Besuche Zeitraum' : 'Überfällig'}
                   </th>
                 )}
                 {visibleColumns.map(key => {
@@ -860,7 +826,7 @@ export default function GaesteCrmPage() {
             </thead>
             <tbody>
               {displayRows.map(m => {
-                const rc = rangeById.get(m.id);
+                const rc = topFlopById.get(m.id);
                 return (
                   <tr
                     key={m.id}
@@ -868,14 +834,26 @@ export default function GaesteCrmPage() {
                     className="cursor-pointer border-t border-border hover:bg-muted/40"
                   >
                     {isTopFlop && (
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        <span className="font-semibold">{NUM0.format(rc?.visits ?? 0)}</span>
-                        {rc && rc.persons > 0 && (
-                          <span className="ml-1 text-[11px] text-muted-foreground">
-                            ({NUM0.format(rc.persons)} P.)
-                          </span>
-                        )}
-                      </td>
+                      isTopMode ? (
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          <span className="font-semibold">{NUM0.format(rc?.rangeVisits ?? 0)}</span>
+                          {rc && rc.rangePersons > 0 && (
+                            <span className="ml-1 text-[11px] text-muted-foreground">
+                              ({NUM0.format(rc.rangePersons)} P.)
+                            </span>
+                          )}
+                        </td>
+                      ) : (
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {rc && rc.overdueDays != null ? (
+                            <span className="font-semibold text-orange-600 dark:text-orange-400">
+                              {NUM0.format(Math.round(rc.overdueDays))} Tage
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">–</span>
+                          )}
+                        </td>
+                      )
                     )}
                     {visibleColumns.map(key => (
                       <td

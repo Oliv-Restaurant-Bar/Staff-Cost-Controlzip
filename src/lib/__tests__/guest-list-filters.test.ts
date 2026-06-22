@@ -14,7 +14,7 @@ import {
   applyGuestFilters,
   searchAndFilterGuests,
   matchSearch,
-  matchCrmMerkmale,
+  matchCrmBools,
   sortGuests,
   type GuestFilterState,
   type CrmMerkmal,
@@ -69,10 +69,11 @@ describe('hasActiveFilters', () => {
     expect(hasActiveFilters(filters({ noShow: 'risk' }))).toBe(true);
     expect(hasActiveFilters(filters({ returnRisk: 'risk' }))).toBe(true);
   });
-  it('erkennt eine aktive CRM-Merkmal-Auswahl', () => {
-    expect(hasActiveFilters(filters({ crmMerkmale: ['vipManual'] }))).toBe(true);
-    expect(hasActiveFilters(filters({ crmMerkmale: ['stammgastManual', 'newsletter'] }))).toBe(true);
-    expect(hasActiveFilters(filters({ crmMerkmale: [] }))).toBe(false);
+  it('erkennt einen aktiven CRM-Bool-Filter (Ja/Nein)', () => {
+    expect(hasActiveFilters(filters({ vipManual: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ newsletter: 'nein' }))).toBe(true);
+    expect(hasActiveFilters(filters({ hasAllergies: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ vipManual: 'alle' }))).toBe(false);
   });
 });
 
@@ -301,9 +302,9 @@ describe('sortGuests', () => {
   });
 });
 
-// ── Manuelle CRM-Merkmale (Mehrfachauswahl, UND) ──────────────────────────────
+// ── Manuelle CRM-Merkmale (acht Ja/Nein/Alle-Dropdowns, UND) ──────────────────
 
-describe('CRM-Merkmale (Mehrfachauswahl, UND-verknüpft)', () => {
+describe('CRM-Bool-Filter (Alle/Ja/Nein, UND-verknüpft)', () => {
   // „yes" hat das Merkmal, „no" hat ein Profil ohne Merkmal, „none" hat gar kein Profil.
   const build = (id: string, c: GuestCrmProfile | null) => metric({ id, crm: c });
 
@@ -319,19 +320,27 @@ describe('CRM-Merkmale (Mehrfachauswahl, UND-verknüpft)', () => {
   ];
 
   for (const [key, withFlag] of cases) {
-    it(`${key}: nur Gäste mit Merkmal (Profil fehlt ⇒ nicht gesetzt)`, () => {
+    it(`${key}=ja: nur Gäste mit Merkmal (Profil fehlt ⇒ nicht gesetzt)`, () => {
       const data = [
         build('yes', withFlag),
         build('no', crm()),
         build('none', null),
       ];
-      expect(ids(applyGuestFilters(data, filters({ crmMerkmale: [key] })))).toEqual(['yes']);
+      expect(ids(applyGuestFilters(data, filters({ [key]: 'ja' })))).toEqual(['yes']);
+    });
+    it(`${key}=nein: nur Gäste ohne Merkmal (inkl. fehlendem Profil)`, () => {
+      const data = [
+        build('yes', withFlag),
+        build('no', crm()),
+        build('none', null),
+      ];
+      expect(ids(applyGuestFilters(data, filters({ [key]: 'nein' })))).toEqual(['no', 'none']);
     });
   }
 
-  it('leere Auswahl lässt alle Gäste durch', () => {
+  it('alle (Default) lässt alle Gäste durch', () => {
     const data = [build('a', crm({ vipManual: true })), build('b', null)];
-    expect(applyGuestFilters(data, filters({ crmMerkmale: [] }))).toHaveLength(2);
+    expect(applyGuestFilters(data, filters())).toHaveLength(2);
   });
 
   it('mehrere Merkmale sind UND-verknüpft (Gast muss alle erfüllen)', () => {
@@ -341,7 +350,7 @@ describe('CRM-Merkmale (Mehrfachauswahl, UND-verknüpft)', () => {
       build('onlyNews', crm({ newsletterOptIn: true })),
       build('none', null),
     ];
-    expect(ids(applyGuestFilters(data, filters({ crmMerkmale: ['vipManual', 'newsletter'] })))).toEqual(['both']);
+    expect(ids(applyGuestFilters(data, filters({ vipManual: 'ja', newsletter: 'ja' })))).toEqual(['both']);
   });
 
   it('leere/whitespace Allergien & Notizen zählen als „nicht gesetzt"', () => {
@@ -349,8 +358,8 @@ describe('CRM-Merkmale (Mehrfachauswahl, UND-verknüpft)', () => {
       build('blankAllerg', crm({ allergies: '   ' })),
       build('blankNote', crm({ crmNotes: '' })),
     ];
-    expect(applyGuestFilters(data, filters({ crmMerkmale: ['hasAllergies'] }))).toHaveLength(0);
-    expect(applyGuestFilters(data, filters({ crmMerkmale: ['hasCrmNote'] }))).toHaveLength(0);
+    expect(applyGuestFilters(data, filters({ hasAllergies: 'ja' }))).toHaveLength(0);
+    expect(applyGuestFilters(data, filters({ hasCrmNote: 'ja' }))).toHaveLength(0);
   });
 
   it('verknüpft CRM-Merkmal mit Standardfiltern UND', () => {
@@ -362,13 +371,14 @@ describe('CRM-Merkmale (Mehrfachauswahl, UND-verknüpft)', () => {
     data[0].segment = 'vip'; data[0].visits = 20;
     data[1].segment = 'neukunde'; data[1].visits = 1;
     data[2].segment = 'vip'; data[2].visits = 20;
-    expect(ids(applyGuestFilters(data, filters({ crmMerkmale: ['vipManual'], segment: 'vip' })))).toEqual(['a']);
+    expect(ids(applyGuestFilters(data, filters({ vipManual: 'ja', segment: 'vip' })))).toEqual(['a']);
   });
 
-  it('matchCrmMerkmale: leere Auswahl true, fehlendes Profil false bei Auswahl', () => {
-    expect(matchCrmMerkmale(metric({ crm: null }), [])).toBe(true);
-    expect(matchCrmMerkmale(metric({ crm: null }), ['vipManual'])).toBe(false);
-    expect(matchCrmMerkmale(metric({ crm: crm({ vipManual: true }) }), ['vipManual'])).toBe(true);
+  it('matchCrmBools: alle-Default true, fehlendes Profil je nach Ja/Nein', () => {
+    expect(matchCrmBools(metric({ crm: null }), filters())).toBe(true);
+    expect(matchCrmBools(metric({ crm: null }), filters({ vipManual: 'ja' }))).toBe(false);
+    expect(matchCrmBools(metric({ crm: null }), filters({ vipManual: 'nein' }))).toBe(true);
+    expect(matchCrmBools(metric({ crm: crm({ vipManual: true }) }), filters({ vipManual: 'ja' }))).toBe(true);
   });
 });
 

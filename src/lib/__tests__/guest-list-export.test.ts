@@ -38,7 +38,7 @@ function metric(p: Partial<GuestListMetrics>): GuestListMetrics {
   };
 }
 
-// Voll-Layout: alle Spalten. „name" expandiert zu 3 Zellen → 18 Spalten = 20 Zellen.
+// Voll-Layout: alle Spalten. „name" expandiert zu 3 Zellen → 16 Spalten = 18 Zellen.
 describe('guestListRowToCells (alle Spalten)', () => {
   it('bildet Datumswerte als Date-Zellen und Zahlen als Zahlen ab', () => {
     const cells = guestListRowToCells(metric({
@@ -53,7 +53,7 @@ describe('guestListRowToCells (alle Spalten)', () => {
       daysSinceLastVisit: 109,
       segment: 'stammgast',
     }), ALL_EXPORT_COLUMNS);
-    expect(cells).toHaveLength(20);
+    expect(cells).toHaveLength(18);
     expect(cells[0]).toBe('Anna');                 // Name
     expect(cells[1]).toBe('anna@example.test');    // E-Mail
     expect(cells[2]).toBe('+41 79 000 00 00');     // Telefon
@@ -78,8 +78,6 @@ describe('guestListRowToCells (alle Spalten)', () => {
     expect(cells[15]).toBe('');    // Firmenkunde
     expect(cells[16]).toBe('');    // Newsletter
     expect(cells[17]).toBe('');    // Sperrliste
-    expect(cells[18]).toBeNull();  // Allergien
-    expect(cells[19]).toBeNull();  // CRM-Notiz
   });
 
   it('übernimmt manuelle CRM-Felder (Ja/Text, Geburtstag als Date)', () => {
@@ -104,8 +102,6 @@ describe('guestListRowToCells (alle Spalten)', () => {
     expect(cells[15]).toBe('Ja');
     expect(cells[16]).toBe('Ja');
     expect(cells[17]).toBe('');
-    expect(cells[18]).toBe('Laktose');
-    expect(cells[19]).toBe('Tisch am Fenster');
   });
 });
 

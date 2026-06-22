@@ -18,7 +18,7 @@ export type GuestColumnKey =
   | 'name' | 'segment' | 'company' | 'birthday' | 'visits' | 'partySize'
   | 'firstVisit' | 'lastVisit' | 'interval' | 'sinceLast' | 'returnRisk'
   | 'vipManual' | 'stammgastManual' | 'companyCustomer' | 'newsletter'
-  | 'blocked' | 'allergies' | 'crmNote';
+  | 'blocked';
 
 export interface GuestColumn {
   key: GuestColumnKey;
@@ -36,24 +36,22 @@ export interface GuestColumn {
  * (gefiltert auf die sichtbaren Spalten) — unabhängig von der Speicher-Reihenfolge.
  */
 export const GUEST_COLUMNS: GuestColumn[] = [
-  { key: 'name',            label: 'Gast',                align: 'left',  sortKey: 'name',       default: true },
-  { key: 'segment',         label: 'Segment',             align: 'left',  sortKey: 'segment',    default: true },
-  { key: 'company',         label: 'Firma',               align: 'left',  sortKey: 'company',    default: false },
-  { key: 'birthday',        label: 'Geburtstag',          align: 'right', sortKey: 'birthday',   default: false },
-  { key: 'visits',          label: 'Besuche',             align: 'right', sortKey: 'visits',     default: true },
-  { key: 'partySize',       label: 'Ø Gruppe',            align: 'right', sortKey: 'partySize',  default: true },
-  { key: 'firstVisit',      label: 'Erster Besuch',       align: 'right', sortKey: 'firstVisit', default: true },
-  { key: 'lastVisit',       label: 'Letzter Besuch',      align: 'right', sortKey: 'lastVisit',  default: true },
-  { key: 'interval',        label: 'Ø Intervall',         align: 'right', sortKey: 'interval',   default: true },
-  { key: 'sinceLast',       label: 'Tage seit letztem',   align: 'right', sortKey: 'sinceLast',  default: true },
-  { key: 'returnRisk',      label: 'Rückkehr-Risiko',     align: 'right', sortKey: 'returnRisk', default: true },
-  { key: 'vipManual',       label: 'VIP (manuell)',       align: 'left',  default: false },
-  { key: 'stammgastManual', label: 'Stammgast (manuell)', align: 'left',  default: false },
-  { key: 'companyCustomer', label: 'Firmenkunde',         align: 'left',  default: false },
-  { key: 'newsletter',      label: 'Newsletter',          align: 'left',  default: false },
-  { key: 'blocked',         label: 'Sperrliste',          align: 'left',  default: false },
-  { key: 'allergies',       label: 'Allergien',           align: 'left',  default: false },
-  { key: 'crmNote',         label: 'CRM-Notiz',           align: 'left',  default: false },
+  { key: 'name',            label: 'Gast',                     align: 'left',  sortKey: 'name',       default: true },
+  { key: 'segment',         label: 'Segment',                  align: 'left',  sortKey: 'segment',    default: true },
+  { key: 'company',         label: 'Firma',                    align: 'left',  sortKey: 'company',    default: false },
+  { key: 'birthday',        label: 'Geburtstag',               align: 'right', sortKey: 'birthday',   default: false },
+  { key: 'visits',          label: 'Besuche',                  align: 'right', sortKey: 'visits',     default: true },
+  { key: 'partySize',       label: 'Ø Gruppengrösse',          align: 'right', sortKey: 'partySize',  default: true },
+  { key: 'firstVisit',      label: 'Erster Besuch',            align: 'right', sortKey: 'firstVisit', default: true },
+  { key: 'lastVisit',       label: 'Letzter Besuch',           align: 'right', sortKey: 'lastVisit',  default: true },
+  { key: 'interval',        label: 'Ø Intervall',              align: 'right', sortKey: 'interval',   default: true },
+  { key: 'sinceLast',       label: 'Tage seit letztem Besuch', align: 'right', sortKey: 'sinceLast',  default: true },
+  { key: 'returnRisk',      label: 'Rückkehrpotenzial',        align: 'right', sortKey: 'returnRisk', default: true },
+  { key: 'vipManual',       label: 'VIP manuell',              align: 'left',  default: false },
+  { key: 'stammgastManual', label: 'Stammgast manuell',        align: 'left',  default: false },
+  { key: 'companyCustomer', label: 'Firmenkunde',              align: 'left',  default: false },
+  { key: 'newsletter',      label: 'Newsletter',               align: 'left',  default: false },
+  { key: 'blocked',         label: 'Sperrliste',               align: 'left',  default: false },
 ];
 
 /** Schnellzugriff Schlüssel → Spaltendefinition. */

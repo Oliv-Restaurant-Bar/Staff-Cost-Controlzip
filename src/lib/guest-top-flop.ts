@@ -1,23 +1,26 @@
 /**
  * Gäste-CRM — Top/Flop-Listen + Zeitraum (reine Logik, KEINE DB/DOM)
  * =============================================================================
- * Rankt Gäste nach AKTIVEN Besuchen (bestätigt + abgeschlossen) innerhalb eines
- * wählbaren Zeitraums:
- *   • Top-Liste  — die aktivsten Gäste im Zeitraum (meiste Besuche).
- *   • Flop-Liste — früher aktive Gäste (Lebenszeit-Besuche ≥ 1), die im Zeitraum
- *                  NICHT da waren (0 Besuche) — Kandidaten zum Reaktivieren.
+ * Rankt Gäste für zwei Auswertungen:
+ *   • Top-Liste  — die aktivsten Gäste im gewählten Zeitraum (meiste AKTIVEN
+ *                  Besuche = bestätigt + abgeschlossen).
+ *   • Flop-Liste — die am stärksten überfälligen Gäste (höchstes Rückkehr-
+ *                  potenzial): Tage seit letztem Besuch deutlich über dem
+ *                  persönlichen Ø-Intervall (`overdueByDays`, Faktor 1,5). Das ist
+ *                  ein Stand-heute-Wert und damit unabhängig vom Zeitraum.
  *
  * Zeitraum-Auflösung erfolgt über date-fns; Datumsvergleiche laufen über ISO-
  * Strings (yyyy-MM-dd sortiert lexikografisch korrekt). Status-Prüfung nutzt
- * `isActiveStatus` (single source of truth in reservation-dashboard.ts).
+ * `isActiveStatus`, Überfälligkeit `overdueByDays` (single source of truth in
+ * reservation-dashboard.ts).
  */
 
-import { startOfMonth, endOfMonth, subMonths, subDays, startOfYear, format } from 'date-fns';
-import { isActiveStatus } from './reservation-dashboard';
-import { SEGMENT_ORDER, baseSegmentByVisits, type GuestListMetrics } from './reservation-crm';
+import { startOfMonth, endOfMonth, subMonths, subDays, format } from 'date-fns';
+import { isActiveStatus, overdueByDays } from './reservation-dashboard';
+import { type GuestListMetrics } from './reservation-crm';
 
 export type ZeitraumPreset =
-  | 'akt_monat' | 'letzter_monat' | 'letzte_30' | 'letzte_90' | 'ytd' | 'individuell';
+  | 'akt_monat' | 'letzter_monat' | 'letzte_90' | 'individuell';
 
 export interface ZeitraumRange {
   /** ISO-Startdatum (inklusive), yyyy-MM-dd. */
@@ -28,20 +31,18 @@ export interface ZeitraumRange {
 
 /** Auswahl-Optionen (Wert + deutsches Label) für den Zeitraum-Selector. */
 export const ZEITRAUM_OPTIONS: { value: ZeitraumPreset; label: string }[] = [
-  { value: 'akt_monat',     label: 'Aktueller Monat' },
+  { value: 'akt_monat',     label: 'Dieser Monat' },
   { value: 'letzter_monat', label: 'Letzter Monat' },
-  { value: 'letzte_30',     label: 'Letzte 30 Tage' },
   { value: 'letzte_90',     label: 'Letzte 90 Tage' },
-  { value: 'ytd',           label: 'Jahr bis heute' },
-  { value: 'individuell',   label: 'Individuell' },
+  { value: 'individuell',   label: 'Benutzerdefiniert' },
 ];
 
 const iso = (d: Date): string => format(d, 'yyyy-MM-dd');
 
 /**
- * Löst einen Preset (relativ zu `today`) in einen inklusiven ISO-Datumsbereich auf.
- * Für 'individuell' wird `custom` genutzt (fehlt es → heute…heute); ein verdrehter
- * Bereich (from > to) wird getauscht.
+ * Löst einen Preset (relativ zu `today`) in einen inklusiven ISO-Datumsbereich
+ * auf. Für 'individuell' wird `custom` genutzt (fehlt es → heute…heute); ein
+ * verdrehter Bereich (from > to) wird getauscht.
  */
 export function resolveZeitraum(
   preset: ZeitraumPreset,
@@ -55,12 +56,8 @@ export function resolveZeitraum(
       const prev = subMonths(today, 1);
       return { from: iso(startOfMonth(prev)), to: iso(endOfMonth(prev)) };
     }
-    case 'letzte_30':
-      return { from: iso(subDays(today, 30)), to: iso(today) };
     case 'letzte_90':
       return { from: iso(subDays(today, 90)), to: iso(today) };
-    case 'ytd':
-      return { from: iso(startOfYear(today)), to: iso(today) };
     case 'individuell': {
       // Leere/fehlende Eingaben → auf heute zurückfallen (kein gte('')/lte('')).
       const from = custom?.from || iso(today);
@@ -105,23 +102,23 @@ export function inRangeVisitCounts(
   return out;
 }
 
-/** Gast + seine Kennzahlen im gewählten Zeitraum (für Top/Flop-Tabellen). */
+/**
+ * Gast + Kennzahlen für die Top/Flop-Tabellen. Im Top-Modus zählen
+ * `rangeVisits`/`rangePersons` (Besuche im Zeitraum); im Flop-Modus trägt
+ * `overdueDays` die Überfälligkeit (Tage über der Erwartung), die anderen 0.
+ */
 export interface TopFlopRow {
   metric: GuestListMetrics;
   rangeVisits: number;
   rangePersons: number;
+  overdueDays: number | null;
 }
-
-const segIndex = (m: GuestListMetrics): number => {
-  const i = SEGMENT_ORDER.indexOf(baseSegmentByVisits(m.visits));
-  return i === -1 ? SEGMENT_ORDER.length : i;
-};
 
 const byName = (a: GuestListMetrics, b: GuestListMetrics): number =>
   a.displayName.localeCompare(b.displayName, 'de');
 
 /**
- * Top-Liste: Gäste mit ≥1 aktivem Besuch im Zeitraum, sortiert nach Besuchen ↓,
+ * Top-Liste: Gäste mit ≥ 1 aktivem Besuch im Zeitraum, sortiert nach Besuchen ↓,
  * dann Personen ↓, dann Lebenszeit-Besuche ↓, dann Name. Auf `limit` gekürzt.
  */
 export function buildTopList(
@@ -133,7 +130,7 @@ export function buildTopList(
   for (const m of metrics) {
     const c = counts.get(m.id);
     if (!c || c.visits < 1) continue;
-    rows.push({ metric: m, rangeVisits: c.visits, rangePersons: c.persons });
+    rows.push({ metric: m, rangeVisits: c.visits, rangePersons: c.persons, overdueDays: null });
   }
   rows.sort((a, b) =>
     b.rangeVisits - a.rangeVisits ||
@@ -145,26 +142,25 @@ export function buildTopList(
 }
 
 /**
- * Flop-Liste: früher aktive Gäste (Lebenszeit-Besuche ≥ 1) OHNE Besuch im
- * Zeitraum — Reaktivierungs-Kandidaten. Sortiert nach Wert-Tier (VIP zuerst),
- * dann Lebenszeit-Besuche ↓, dann längste Abwesenheit ↓, dann Name. Auf `limit`.
+ * Flop-Liste: die am stärksten überfälligen Gäste (höchstes Rückkehrpotenzial).
+ * Überfällig = Tage seit letztem Besuch über Ø-Intervall × 1,5 (`overdueByDays`
+ * > 0, setzt ≥ 2 Besuche und ein positives Ø-Intervall voraus). Sortiert nach
+ * Überfälligkeit ↓, dann Tage seit letztem Besuch ↓, dann Name. Auf `limit`.
+ * Stand-heute-Wert — unabhängig vom gewählten Zeitraum.
  */
 export function buildFlopList(
   metrics: GuestListMetrics[],
-  counts: Map<string, RangeVisitCount>,
   limit = 50,
 ): TopFlopRow[] {
   const rows: TopFlopRow[] = [];
   for (const m of metrics) {
-    if (m.visits < 1) continue;                       // nie aktiv → kein „Flop"
-    const c = counts.get(m.id);
-    if (c && c.visits > 0) continue;                  // im Zeitraum aktiv → kein Flop
-    rows.push({ metric: m, rangeVisits: 0, rangePersons: 0 });
+    const o = overdueByDays(m);
+    if (o === null || o <= 0) continue;          // nur überfällige Gäste
+    rows.push({ metric: m, rangeVisits: 0, rangePersons: 0, overdueDays: o });
   }
   rows.sort((a, b) =>
-    segIndex(a.metric) - segIndex(b.metric) ||
-    b.metric.visits - a.metric.visits ||
-    (b.metric.daysSinceLastVisit ?? -1) - (a.metric.daysSinceLastVisit ?? -1) ||
+    (b.overdueDays ?? 0) - (a.overdueDays ?? 0) ||
+    (b.metric.daysSinceLastVisit ?? 0) - (a.metric.daysSinceLastVisit ?? 0) ||
     byName(a.metric, b.metric),
   );
   return rows.slice(0, Math.max(0, limit));
