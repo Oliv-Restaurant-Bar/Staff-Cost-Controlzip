@@ -59,6 +59,7 @@ describe('hasActiveFilters', () => {
     expect(hasActiveFilters(filters({ lastVisit: '30' }))).toBe(true);
     expect(hasActiveFilters(filters({ partySize: '5+' }))).toBe(true);
     expect(hasActiveFilters(filters({ noShow: 'risk' }))).toBe(true);
+    expect(hasActiveFilters(filters({ returnRisk: 'risk' }))).toBe(true);
   });
 });
 
@@ -174,6 +175,43 @@ describe('No-Show-Risiko-Filter', () => {
   });
   it('ohne Risiko (< Schwelle)', () => {
     expect(ids(applyGuestFilters(data, filters({ noShow: 'norisk' })))).toEqual(['n0', 'n1']);
+  });
+});
+
+// ── Rückkehrpotenzial-Filter ──────────────────────────────────────────────────
+
+describe('Rückkehrpotenzial-Filter', () => {
+  const data = [
+    // gefährdet: Quote 3.0 (≥ Faktor 2), genügend Besuche
+    metric({ id: 'risk', visits: 10, daysSinceLastVisit: 60, avgDaysBetweenVisits: 20 }),
+    // im Rhythmus: Quote 1.0
+    metric({ id: 'ontime', visits: 10, daysSinceLastVisit: 20, avgDaysBetweenVisits: 20 }),
+    // zu wenige Besuche → kein belastbares Intervall
+    metric({ id: 'tooFew', visits: 2, daysSinceLastVisit: 200, avgDaysBetweenVisits: null }),
+    // ohne Besuch
+    metric({ id: 'never', visits: 0, daysSinceLastVisit: null, avgDaysBetweenVisits: null }),
+  ];
+  it('alle lässt alles durch', () => {
+    expect(applyGuestFilters(data, filters())).toHaveLength(4);
+  });
+  it('nur gefährdete Stammgäste', () => {
+    expect(ids(applyGuestFilters(data, filters({ returnRisk: 'risk' })))).toEqual(['risk']);
+  });
+});
+
+// ── Sortierung nach Rückkehr-Risiko ───────────────────────────────────────────
+
+describe('sortGuests — returnRisk', () => {
+  const data = [
+    metric({ id: 'r3', visits: 5, daysSinceLastVisit: 60, avgDaysBetweenVisits: 20 }), // 3.0
+    metric({ id: 'r1', visits: 5, daysSinceLastVisit: 20, avgDaysBetweenVisits: 20 }), // 1.0
+    metric({ id: 'rnull', visits: 1, daysSinceLastVisit: 50, avgDaysBetweenVisits: null }), // null
+  ];
+  it('absteigend: höchste Überfälligkeit zuerst, null ans Ende', () => {
+    expect(ids(sortGuests(data, 'returnRisk', 'desc'))).toEqual(['r3', 'r1', 'rnull']);
+  });
+  it('aufsteigend: null zuerst', () => {
+    expect(ids(sortGuests(data, 'returnRisk', 'asc'))).toEqual(['rnull', 'r1', 'r3']);
   });
 });
 

@@ -62,6 +62,18 @@ export const SEGMENT_WIEDERKEHREND_MIN = 3;
 export const INACTIVE_DAYS_THRESHOLD = 90;
 export const INACTIVE_MIN_VISITS = 3;
 
+/**
+ * Rückkehrpotenzial — Mindestanzahl früherer Besuche, damit das persönliche
+ * Ø-Besuchsintervall belastbar ist (sonst ist die „Überfälligkeit" Rauschen).
+ */
+export const RETURN_RISK_MIN_VISITS = 3;
+/**
+ * Rückkehrpotenzial — ein Gast gilt als gefährdet/überfällig, sobald die Tage
+ * seit dem letzten Besuch mindestens das Faktor-Fache seines persönlichen
+ * Ø-Intervalls betragen.
+ */
+export const RETURN_RISK_FACTOR = 2;
+
 // ── Eingabe-Typen (schlank, testbar) ─────────────────────────────────────────
 
 /** Teilmenge von `guest_profiles` (snake_case wie in der DB). */
@@ -347,6 +359,40 @@ export function guestListMetricsFromDetail(
     noShowCount: m.noShowCount,
     segment: m.segment,
   };
+}
+
+// ── Rückkehrpotenzial (gefährdete Stammgäste) ────────────────────────────────
+
+/** Minimal benötigte Kennzahlen zur Beurteilung des Rückkehrpotenzials. */
+export interface ReturnRiskInput {
+  /** Abgeschlossene Besuche. */
+  visits: number;
+  daysSinceLastVisit: number | null;
+  avgDaysBetweenVisits: number | null;
+}
+
+/**
+ * „Überfälligkeits-Quote" = Tage seit letztem Besuch ÷ persönliches Ø-Intervall.
+ * 1.0 bedeutet „genau im erwarteten Rhythmus fällig", 2.0 „doppelt so lange weg
+ * wie üblich".  Liefert null, wenn der Gast zu wenige Besuche (< RETURN_RISK_MIN_VISITS)
+ * für ein belastbares Intervall hat oder Kennzahlen fehlen/unbrauchbar sind.
+ */
+export function returnRiskRatio(m: ReturnRiskInput): number | null {
+  if (m.visits < RETURN_RISK_MIN_VISITS) return null;
+  if (m.daysSinceLastVisit === null || m.avgDaysBetweenVisits === null) return null;
+  if (m.avgDaysBetweenVisits <= 0) return null;
+  return m.daysSinceLastVisit / m.avgDaysBetweenVisits;
+}
+
+/**
+ * Gefährdeter Stammgast mit Rückkehrpotenzial: genügend frühere Besuche UND
+ * Tage seit letztem Besuch ≥ RETURN_RISK_FACTOR × persönliches Ø-Intervall.
+ * Bewusst unabhängig vom zahlbasierten Segment — erfasst auch (noch) nicht
+ * „inaktive" Gäste, die früh aus ihrem gewohnten Rhythmus fallen.
+ */
+export function isAtReturnRisk(m: ReturnRiskInput): boolean {
+  const r = returnRiskRatio(m);
+  return r !== null && r >= RETURN_RISK_FACTOR;
 }
 
 /** Zählt die Segmente einer Gästeliste (für Übersichts-Kacheln). */

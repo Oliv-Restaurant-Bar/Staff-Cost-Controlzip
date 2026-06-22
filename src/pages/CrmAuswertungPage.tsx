@@ -23,7 +23,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BarChart3, Loader2, Database, ArrowLeft, Users, UserCheck, UserX,
   UserPlus, Repeat, Star, Crown, CircleSlash, Ban, CalendarClock,
-  CalendarDays, CalendarRange, CalendarSearch, HelpCircle,
+  CalendarDays, CalendarRange, CalendarSearch, HelpCircle, TrendingDown,
   RotateCcw, Hourglass, AlertTriangle, Megaphone, Eye, Download, FileDown,
 } from 'lucide-react';
 import {
@@ -314,6 +314,7 @@ export default function CrmAuswertungPage() {
                 <Kpi icon={Star} label="Stammgäste" value={NUM0.format(guestKpis.stammgaeste)} accent="text-violet-600 dark:text-violet-400" />
                 <Kpi icon={CircleSlash} label="Ohne Besuch" value={NUM0.format(guestKpis.guestsWithoutVisit)} />
                 <Kpi icon={Ban} label="No-Show-Risiko (≥ 2)" value={NUM0.format(guestKpis.noShowRiskGuests)} accent="text-orange-600 dark:text-orange-400" sub="Gäste mit ≥ 2 No-Shows" />
+                <Kpi icon={TrendingDown} label="Rückkehrpotenzial" value={NUM0.format(guestKpis.returnRiskGuests)} accent="text-orange-600 dark:text-orange-400" sub="überfällige Stammgäste" />
               </div>
             </section>
 

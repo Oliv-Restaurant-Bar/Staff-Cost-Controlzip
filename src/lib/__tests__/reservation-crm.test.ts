@@ -13,6 +13,10 @@ import {
   guestListMetrics,
   guestDetailMetrics,
   countSegments,
+  returnRiskRatio,
+  isAtReturnRisk,
+  RETURN_RISK_MIN_VISITS,
+  RETURN_RISK_FACTOR,
   type GuestProfile,
   type GuestReservationRecord,
 } from '../reservation-crm';
@@ -260,6 +264,50 @@ describe('guestDetailMetrics', () => {
     expect(m.segment).toBe('ohne_besuch');
     expect(m.avgPartySize).toBeNull();
     expect(m.daysSinceLastVisit).toBeNull();
+  });
+});
+
+describe('returnRiskRatio', () => {
+  it('= Tage seit letztem Besuch ÷ Ø-Intervall', () => {
+    expect(returnRiskRatio({ visits: 5, daysSinceLastVisit: 60, avgDaysBetweenVisits: 30 })).toBe(2);
+    expect(returnRiskRatio({ visits: 4, daysSinceLastVisit: 45, avgDaysBetweenVisits: 30 })).toBe(1.5);
+  });
+
+  it('null bei zu wenigen Besuchen (Intervall nicht belastbar)', () => {
+    expect(returnRiskRatio({ visits: RETURN_RISK_MIN_VISITS - 1, daysSinceLastVisit: 200, avgDaysBetweenVisits: 10 })).toBeNull();
+  });
+
+  it('null bei fehlenden/unbrauchbaren Kennzahlen', () => {
+    expect(returnRiskRatio({ visits: 5, daysSinceLastVisit: null, avgDaysBetweenVisits: 30 })).toBeNull();
+    expect(returnRiskRatio({ visits: 5, daysSinceLastVisit: 60, avgDaysBetweenVisits: null })).toBeNull();
+    expect(returnRiskRatio({ visits: 5, daysSinceLastVisit: 60, avgDaysBetweenVisits: 0 })).toBeNull();
+  });
+});
+
+describe('isAtReturnRisk', () => {
+  it('gefährdet, sobald Quote ≥ Schwellenfaktor', () => {
+    expect(isAtReturnRisk({ visits: 5, daysSinceLastVisit: 60, avgDaysBetweenVisits: 30 })).toBe(true); // 2.0
+    expect(isAtReturnRisk({ visits: 5, daysSinceLastVisit: 90, avgDaysBetweenVisits: 30 })).toBe(true); // 3.0
+  });
+
+  it('nicht gefährdet im gewohnten Rhythmus (Quote < Faktor)', () => {
+    expect(isAtReturnRisk({ visits: 5, daysSinceLastVisit: 30, avgDaysBetweenVisits: 30 })).toBe(false); // 1.0
+    expect(isAtReturnRisk({ visits: 5, daysSinceLastVisit: 45, avgDaysBetweenVisits: 30 })).toBe(false); // 1.5
+  });
+
+  it('genau am Schwellenfaktor zählt als gefährdet', () => {
+    expect(isAtReturnRisk({ visits: 5, daysSinceLastVisit: RETURN_RISK_FACTOR * 20, avgDaysBetweenVisits: 20 })).toBe(true);
+  });
+
+  it('erfasst auch (noch) nicht inaktive Gäste früh (< 90 Tage abwesend)', () => {
+    // Ø-Intervall 7 Tage, seit 21 Tagen weg → Quote 3.0, aber noch nicht „inaktiv".
+    const m = { visits: 10, daysSinceLastVisit: 21, avgDaysBetweenVisits: 7 };
+    expect(isAtReturnRisk(m)).toBe(true);
+    expect(classifySegment(m.visits, m.daysSinceLastVisit)).not.toBe('inaktiv');
+  });
+
+  it('Gäste mit zu wenigen Besuchen sind nie gefährdet', () => {
+    expect(isAtReturnRisk({ visits: RETURN_RISK_MIN_VISITS - 1, daysSinceLastVisit: 365, avgDaysBetweenVisits: 5 })).toBe(false);
   });
 });
 

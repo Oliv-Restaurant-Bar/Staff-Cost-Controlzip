@@ -175,5 +175,13 @@ describe('guestDashboardKpis', () => {
     expect(k.activeGuests).toBe(0);
     expect(k.repeatRatePct).toBeNull();
     expect(k.noShowRiskGuests).toBe(0);
+    expect(k.returnRiskGuests).toBe(0);
+  });
+
+  it('zählt gefährdete Stammgäste (Rückkehrpotenzial)', () => {
+    // g2: Ø-Intervall = 731/9 ≈ 81 T., seit 169 T. weg → Quote ≈ 2.08 ≥ 2 → gefährdet.
+    // g1/g5/g6 sind im Rhythmus (kürzlich da); g3 hat 1 Besuch (kein Intervall).
+    const k = guestDashboardKpis(metrics, noShow, today);
+    expect(k.returnRiskGuests).toBe(1);      // nur g2
   });
 });

@@ -13,7 +13,10 @@
  *  - No-Show-Risiko  = ≥ NO_SHOW_RISK_MIN No-Shows (zentral in reservation-dashboard.ts).
  */
 
-import { SEGMENT_LABEL, SEGMENT_ORDER, type GuestListMetrics, type GuestSegment } from './reservation-crm';
+import {
+  SEGMENT_LABEL, SEGMENT_ORDER, returnRiskRatio, isAtReturnRisk,
+  type GuestListMetrics, type GuestSegment,
+} from './reservation-crm';
 import { NO_SHOW_RISK_MIN } from './reservation-dashboard';
 
 // ── Filter-Wertebereiche ──────────────────────────────────────────────────────
@@ -23,6 +26,7 @@ export type VisitCountFilter = 'alle' | '1' | '2-4' | '5-10' | '10+';
 export type LastVisitFilter = 'alle' | '30' | '60' | '90' | 'older90' | 'older180';
 export type PartySizeFilter = 'alle' | '1' | '2' | '3-4' | '5+';
 export type NoShowFilter = 'alle' | 'risk' | 'norisk';
+export type ReturnRiskFilter = 'alle' | 'risk';
 
 export interface GuestFilterState {
   segment: SegmentFilter;
@@ -30,6 +34,7 @@ export interface GuestFilterState {
   lastVisit: LastVisitFilter;
   partySize: PartySizeFilter;
   noShow: NoShowFilter;
+  returnRisk: ReturnRiskFilter;
 }
 
 export const DEFAULT_GUEST_FILTERS: GuestFilterState = {
@@ -38,6 +43,7 @@ export const DEFAULT_GUEST_FILTERS: GuestFilterState = {
   lastVisit: 'alle',
   partySize: 'alle',
   noShow: 'alle',
+  returnRisk: 'alle',
 };
 
 /** True, sobald mindestens ein Filter vom Default ('alle') abweicht. */
@@ -47,7 +53,8 @@ export function hasActiveFilters(f: GuestFilterState): boolean {
     f.visitCount !== 'alle' ||
     f.lastVisit !== 'alle' ||
     f.partySize !== 'alle' ||
-    f.noShow !== 'alle'
+    f.noShow !== 'alle' ||
+    f.returnRisk !== 'alle'
   );
 }
 
@@ -92,6 +99,11 @@ export const NO_SHOW_FILTER_OPTIONS: FilterOption<NoShowFilter>[] = [
   { value: 'alle', label: 'No-Show: alle' },
   { value: 'risk', label: 'Mit No-Show-Risiko' },
   { value: 'norisk', label: 'Ohne No-Show-Risiko' },
+];
+
+export const RETURN_RISK_FILTER_OPTIONS: FilterOption<ReturnRiskFilter>[] = [
+  { value: 'alle', label: 'Rückkehrpotenzial: alle' },
+  { value: 'risk', label: 'Nur gefährdete Stammgäste' },
 ];
 
 // ── Einzel-Prädikate (rein, defensiv bei null) ────────────────────────────────
@@ -148,6 +160,12 @@ function matchNoShow(m: GuestListMetrics, f: NoShowFilter): boolean {
   return f === 'risk' ? isRisk : !isRisk;
 }
 
+function matchReturnRisk(m: GuestListMetrics, f: ReturnRiskFilter): boolean {
+  if (f === 'alle') return true;
+  // 'risk' → nur gefährdete Stammgäste (überfällig ggü. persönlichem Intervall).
+  return isAtReturnRisk(m);
+}
+
 /**
  * Volltextsuche über Name, E-Mail und Telefon (case-insensitive).  Leere Anfrage
  * lässt alle Gäste durch.  Identisch zur bisherigen Inline-Suche der Seite.
@@ -169,7 +187,8 @@ export function applyGuestFilters(metrics: GuestListMetrics[], f: GuestFilterSta
     matchVisitCount(m, f.visitCount) &&
     matchLastVisit(m, f.lastVisit) &&
     matchPartySize(m, f.partySize) &&
-    matchNoShow(m, f.noShow),
+    matchNoShow(m, f.noShow) &&
+    matchReturnRisk(m, f.returnRisk),
   );
 }
 
@@ -186,7 +205,7 @@ export function searchAndFilterGuests(
 
 export type GuestSortKey =
   | 'name' | 'segment' | 'visits' | 'firstVisit'
-  | 'lastVisit' | 'interval' | 'sinceLast' | 'partySize';
+  | 'lastVisit' | 'interval' | 'sinceLast' | 'partySize' | 'returnRisk';
 export type SortDir = 'asc' | 'desc';
 
 /** Stabiler Vergleich zweier Gäste nach Schlüssel (immer aufsteigend). */
@@ -202,6 +221,7 @@ export function compareGuests(a: GuestListMetrics, b: GuestListMetrics, key: Gue
     case 'interval':   return nullableNum(a.avgDaysBetweenVisits) - nullableNum(b.avgDaysBetweenVisits);
     case 'sinceLast':  return nullableNum(a.daysSinceLastVisit) - nullableNum(b.daysSinceLastVisit);
     case 'partySize':  return nullableNum(a.avgPartySize) - nullableNum(b.avgPartySize);
+    case 'returnRisk': return nullableNum(returnRiskRatio(a)) - nullableNum(returnRiskRatio(b));
     default:           return 0;
   }
 }

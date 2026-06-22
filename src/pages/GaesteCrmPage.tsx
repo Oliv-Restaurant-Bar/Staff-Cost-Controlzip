@@ -14,7 +14,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
-  ArrowRight, BarChart3, Filter, X,
+  ArrowRight, BarChart3, Filter, X, TrendingDown,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -26,13 +26,14 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { fetchGuestProfiles, fetchCompletedVisitAggregates, fetchNoShowCountsByGuest } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import {
-  guestListMetrics, countSegments, SEGMENT_LABEL, SEGMENT_ORDER,
+  guestListMetrics, countSegments, returnRiskRatio, isAtReturnRisk,
+  SEGMENT_LABEL, SEGMENT_ORDER,
   type GuestListMetrics, type GuestSegment, type CompletedVisitAgg,
 } from '@/lib/reservation-crm';
 import {
   DEFAULT_GUEST_FILTERS, hasActiveFilters, searchAndFilterGuests, sortGuests,
   SEGMENT_FILTER_OPTIONS, VISIT_COUNT_FILTER_OPTIONS, LAST_VISIT_FILTER_OPTIONS,
-  PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS,
+  PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS, RETURN_RISK_FILTER_OPTIONS,
   type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
 } from '@/lib/guest-list-filters';
 import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
@@ -50,6 +51,35 @@ function fdate(iso: string | null | undefined): string {
 
 function fnum(n: number | null, fmt: Intl.NumberFormat): string {
   return n === null ? '—' : fmt.format(n);
+}
+
+// ── Rückkehr-Risiko-Zelle ─────────────────────────────────────────────────────
+
+/**
+ * Zeigt die „Überfälligkeits-Quote" (Tage seit letztem Besuch ÷ Ø-Intervall).
+ * Gäste ohne belastbares Intervall (< 3 Besuche / fehlende Werte) → „—".
+ * Ab dem Schwellenfaktor (gefährdet) wird die Quote farblich hervorgehoben.
+ */
+function ReturnRiskCell({ metric }: { metric: GuestListMetrics }) {
+  const ratio = returnRiskRatio(metric);
+  if (ratio === null) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const atRisk = isAtReturnRisk(metric);
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center justify-end gap-1 tabular-nums',
+        atRisk
+          ? 'font-semibold text-orange-600 dark:text-orange-400'
+          : 'text-muted-foreground',
+      )}
+      title={atRisk ? 'Überfällig gegenüber dem persönlichen Besuchsrhythmus' : undefined}
+    >
+      {atRisk && <TrendingDown className="h-3.5 w-3.5" />}
+      {NUM1.format(ratio)}×
+    </span>
+  );
 }
 
 // ── Filter-Auswahl (kompaktes Select) ─────────────────────────────────────────
@@ -127,6 +157,11 @@ export default function GaesteCrmPage() {
   );
 
   const segmentCounts = useMemo(() => countSegments(allMetrics), [allMetrics]);
+
+  const returnRiskCount = useMemo(
+    () => allMetrics.reduce((n, m) => n + (isAtReturnRisk(m) ? 1 : 0), 0),
+    [allMetrics],
+  );
 
   const filtered = useMemo(
     () => searchAndFilterGuests(allMetrics, query, filters),
@@ -241,7 +276,7 @@ export default function GaesteCrmPage() {
           </div>
 
           {/* Filterleiste — auf Mobile untereinander, auf Desktop kompakt nebeneinander */}
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             <FilterSelect
               label="Segment"
               value={filters.segment}
@@ -272,7 +307,32 @@ export default function GaesteCrmPage() {
               options={NO_SHOW_FILTER_OPTIONS}
               onChange={v => setFilters(f => ({ ...f, noShow: v }))}
             />
+            <FilterSelect
+              label="Rückkehrpotenzial"
+              value={filters.returnRisk}
+              options={RETURN_RISK_FILTER_OPTIONS}
+              onChange={v => setFilters(f => ({ ...f, returnRisk: v }))}
+            />
           </div>
+
+          {/* Schnellfilter: gefährdete Stammgäste (Rückkehrpotenzial) */}
+          {returnRiskCount > 0 && (
+            <button
+              onClick={() => setFilters(f => ({
+                ...DEFAULT_GUEST_FILTERS,
+                returnRisk: f.returnRisk === 'risk' ? 'alle' : 'risk',
+              }))}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
+                filters.returnRisk === 'risk'
+                  ? 'border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                  : 'border-border bg-background text-foreground hover:bg-muted/60',
+              )}
+            >
+              <TrendingDown className="h-3.5 w-3.5" />
+              {NUM0.format(returnRiskCount)} gefährdete Stammgäste
+            </button>
+          )}
 
           {filtersActive && (
             <div className="flex items-center justify-between gap-2">
@@ -317,6 +377,7 @@ export default function GaesteCrmPage() {
                 <SortHeader label="Letzter Besuch" k="lastVisit" align="right" />
                 <SortHeader label="Ø Intervall" k="interval" align="right" />
                 <SortHeader label="Tage seit letztem" k="sinceLast" align="right" />
+                <SortHeader label="Rückkehr-Risiko" k="returnRisk" align="right" />
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -347,6 +408,9 @@ export default function GaesteCrmPage() {
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                     {m.daysSinceLastVisit === null ? '—' : `${NUM0.format(m.daysSinceLastVisit)} Tage`}
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <ReturnRiskCell metric={m} />
                   </td>
                   <td className="px-3 py-2 text-right">
                     <ArrowRight className="ml-auto h-4 w-4 text-muted-foreground" />

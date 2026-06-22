@@ -20,6 +20,7 @@
 
 import {
   daysSince,
+  isAtReturnRisk,
   INACTIVE_DAYS_THRESHOLD,
   baseSegmentByVisits,
   type GuestListMetrics,
@@ -183,6 +184,11 @@ export interface GuestDashboardKpis {
   guestsWithoutVisit: number;
   /** Gäste mit ≥ 2 No-Shows. */
   noShowRiskGuests: number;
+  /**
+   * Gefährdete Stammgäste mit Rückkehrpotenzial: genügend frühere Besuche und
+   * überfällig ggü. dem persönlichen Ø-Besuchsintervall (siehe isAtReturnRisk).
+   */
+  returnRiskGuests: number;
 }
 
 /**
@@ -205,6 +211,7 @@ export function guestDashboardKpis(
   let vipGuests = 0;
   let guestsWithoutVisit = 0;
   let noShowRiskGuests = 0;
+  let returnRiskGuests = 0;
 
   for (const m of metrics) {
     if (m.visits > 0) {
@@ -224,6 +231,7 @@ export function guestDashboardKpis(
     if (m.segment === 'vip') vipGuests++;
 
     if ((noShowCounts.get(m.id) ?? 0) >= NO_SHOW_RISK_MIN) noShowRiskGuests++;
+    if (isAtReturnRisk(m)) returnRiskGuests++;
   }
 
   return {
@@ -236,6 +244,7 @@ export function guestDashboardKpis(
     vipGuests,
     guestsWithoutVisit,
     noShowRiskGuests,
+    returnRiskGuests,
   };
 }
 
