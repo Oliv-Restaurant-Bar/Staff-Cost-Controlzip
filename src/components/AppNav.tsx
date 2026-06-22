@@ -237,6 +237,13 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
+        path: '/gaeste/auswertung',
+        label: 'CRM Auswertung',
+        shortLabel: 'Auswertung',
+        icon: BarChart3,
+        adminOnly: true,
+      },
+      {
         path: '/import',
         label: 'Import-Zentrale',
         shortLabel: 'Import',

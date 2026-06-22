@@ -17,6 +17,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { GuestProfile, GuestReservationRecord, CompletedVisitAgg } from './reservation-crm';
 import type { ReservationStatusNormalized } from './reservation-import-parser';
+import type { ReservationAggRow } from './reservation-dashboard';
 
 const PROFILE_COLS =
   'id, restaurant_id, first_name, last_name, email, mobile, first_seen_at, last_seen_at, ' +
@@ -93,6 +94,88 @@ function normStatus(s: string | null): ReservationStatusNormalized {
   return STATUSES.includes(s as ReservationStatusNormalized)
     ? (s as ReservationStatusNormalized)
     : 'unknown';
+}
+
+/**
+ * No-Show-Anzahl je Gast (status_normalized = 'noshow'), paginiert.  Liefert nur
+ * `guest_id` (keine PII) und dient dem No-Show-Risiko im CRM-Dashboard.
+ */
+export async function fetchNoShowCountsByGuest(
+  restaurantId: string,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await (supabase as any)
+      .from('reservation_records')
+      .select('guest_id')
+      .eq('restaurant_id', restaurantId)
+      .eq('status_normalized', 'noshow')
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error || !data || data.length === 0) break;
+    for (const row of data as Array<{ guest_id: string | null }>) {
+      if (!row.guest_id) continue;
+      out.set(row.guest_id, (out.get(row.guest_id) ?? 0) + 1);
+    }
+    if (data.length < PAGE) break;
+  }
+  return out;
+}
+
+/**
+ * Lädt schlanke Reservations-Aggregatzeilen (nur Datum/Personen/Status, keine
+ * PII) eines Mandanten, optional begrenzt auf `reservation_date >= gte` und/oder
+ * `<= lte`.  Paginiert (1000er-Seiten).  Basis für Zukunfts- und Zeitraum-KPIs.
+ */
+async function fetchReservationAggRows(
+  restaurantId: string,
+  bounds: { gte?: string; lte?: string },
+): Promise<ReservationAggRow[]> {
+  const out: ReservationAggRow[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    let q = (supabase as any)
+      .from('reservation_records')
+      .select('reservation_date, party_size, status_normalized')
+      .eq('restaurant_id', restaurantId);
+    if (bounds.gte) q = q.gte('reservation_date', bounds.gte);
+    if (bounds.lte) q = q.lte('reservation_date', bounds.lte);
+    const { data, error } = await q
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error || !data || data.length === 0) break;
+    for (const r of data as Array<{
+      reservation_date: string | null;
+      party_size: number | null;
+      status_normalized: string | null;
+    }>) {
+      out.push({
+        date: r.reservation_date ?? null,
+        partySize: r.party_size ?? null,
+        status: normStatus(r.status_normalized ?? null),
+      });
+    }
+    if (data.length < PAGE) break;
+  }
+  return out;
+}
+
+/** Zukünftige Reservationen ab (inkl.) `fromDate` — z. B. ab heute. */
+export async function fetchFutureReservations(
+  restaurantId: string,
+  fromDate: string,
+): Promise<ReservationAggRow[]> {
+  return fetchReservationAggRows(restaurantId, { gte: fromDate });
+}
+
+/** Reservationen im Datumsbereich [from, to] (beide inklusive). */
+export async function fetchReservationsInRange(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<ReservationAggRow[]> {
+  return fetchReservationAggRows(restaurantId, { gte: from, lte: to });
 }
 
 /** Eine Reservation eines Gastes für die Detailanzeige (inkl. Rohstatus/Res.Nr.). */

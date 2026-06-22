@@ -7,6 +7,7 @@
 - [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees. FK on schedule_entries.employee_id was dropped in migration. See extra-cost-people-db.ts.
 - [Kawtar/Party employee migration](kawtar-party-migration.md) — Migrated from schedule_extra_cost_people to employees (IDs: kawtar, party). SQL in 20260606_kawtar_party_zu_normalen_mitarbeitern.sql. loadEmployees filters isActive !== false to hide archived aush_* ghosts.
 - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
+- [Vitest node environment](vitest-node-environment.md) — pure-logic test files need `// @vitest-environment node` line 1, else jsdom/canvas libuuid crash → confusing "no tests".
 - [Reservation CRM visit metrics & PII gating](reservation-crm-metrics.md) — never mix all-status first/last_seen_at with completed-only visit counts; guest PII is admin-gated in UI, not DB RLS.
 - [Reservationen Import (Foratable)](reservation-import.md) — separate from gn_* imports; cluster-based guest recognition (union-find + profile upgrade); PII tables authenticated-only RLS, REVOKE anon; real-file test uses an anonymized fixture.
 - [gn_imports data integrity](gn-import-data-integrity.md) — cost-center overlap filter only when non-empty; verify replace via .select rows-affected; batch keyed by stable id not fileName; never auto-split multi-day.

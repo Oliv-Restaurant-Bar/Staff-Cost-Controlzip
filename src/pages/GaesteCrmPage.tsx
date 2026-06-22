@@ -14,7 +14,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
-  Crown, Star, Repeat, UserPlus, Moon, CircleSlash, ArrowRight,
+  Crown, Star, Repeat, UserPlus, Moon, CircleSlash, ArrowRight, BarChart3,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -205,6 +205,13 @@ export default function GaesteCrmPage() {
             Reservationen ({tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv'}).
           </p>
         </div>
+        <button
+          onClick={() => navigate('/gaeste/auswertung')}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/60"
+        >
+          <BarChart3 className="h-4 w-4 text-primary" />
+          CRM Auswertung
+        </button>
       </div>
 
       {tablesOk === false && (

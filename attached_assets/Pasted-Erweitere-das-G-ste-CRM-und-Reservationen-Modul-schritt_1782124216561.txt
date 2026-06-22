@@ -1,0 +1,61 @@
+Erweitere das Gäste CRM und Reservationen Modul schrittweise.
+
+Ziel dieses Schritts:
+Baue ein CRM Dashboard mit zusätzlichen Vor-Auswertungen und eine Auswertung für zukünftige Reservationen.
+
+Bitte umsetzen:
+
+1. CRM Dashboard ergänzen
+Zeige KPI Karten für:
+- Gesamtgäste
+- aktive Gäste, letzter abgeschlossener Besuch innerhalb der letzten 90 Tage
+- inaktive Gäste, letzter abgeschlossener Besuch älter als 90 Tage
+- Neukunden letzte 30 Tage
+- Wiederkehrerquote
+- Stammgäste
+- VIP Gäste
+- Gäste ohne Besuch
+- No Show Risiko, Gäste mit mindestens 2 No Shows
+
+2. Zukunftsreservationen ergänzen
+Nutze reservation_records und werte zukünftige Reservationen aus.
+Wichtig: zukünftige Reservationen sind Reservationen mit reservation_date >= current_date.
+
+Zeige KPI Karten für:
+- zukünftige Reservationen laufender Monat
+- zukünftige Personen laufender Monat
+- zukünftige Reservationen nächster Monat
+- zukünftige Personen nächster Monat
+- zukünftige Reservationen nächste 30 Tage
+- zukünftige Reservationen nächste 60 Tage
+- zukünftige Reservationen nächste 90 Tage
+
+3. Individueller Zeitraum
+Baue zusätzlich eine einfache Datumsfilter-Auswertung:
+- Von Datum
+- Bis Datum
+- Anzahl Reservationen im Zeitraum
+- Anzahl Personen im Zeitraum
+
+4. Statuslogik
+Berücksichtige nur relevante zukünftige Reservationen.
+Storniert, abgelehnt und No-Show sollen in der Zukunftsauswertung nicht als aktive Reservationen zählen.
+Offen oder nicht beantwortet darf separat angezeigt werden, aber nicht mit abgeschlossenen/bestätigten aktiven Reservationen vermischen.
+
+5. UI
+Platziere diese Auswertungen sinnvoll im Gäste CRM oder auf einer neuen Unterseite "CRM Auswertung".
+Die bestehende Gäste Liste darf nicht kaputtgehen.
+Bestehende Import Logik nicht verändern.
+Bestehende guest_statistics View nicht ersetzen, nur bei Bedarf ergänzende Queries oder Views erstellen.
+
+6. Technische Anforderungen
+- Nutze bestehende Tabellen: reservation_records, guest_profiles, guest_statistics
+- Keine echten personenbezogenen Daten in Tests oder Logs ausgeben
+- Bestehende RLS/Sicherheitslogik respektieren
+- Falls neue SQL View sinnvoll ist, lege sie als neue Migration an
+- Baue defensive Logik für leere Datenbestände
+- Prüfe TypeScript Fehler
+- Führe Tests/Build aus
+
+Wichtig:
+Bitte zuerst nur dieses Dashboard und die Zukunftsreservationen umsetzen. Die erweiterten Filter, Rückkehrpotenzial, Kampagnenlisten und Detailseiten-Erweiterungen kommen danach in separaten Schritten.
