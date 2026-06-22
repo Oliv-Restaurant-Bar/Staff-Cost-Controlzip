@@ -24,7 +24,7 @@ import {
   BarChart3, Loader2, Database, ArrowLeft, Users, UserCheck, UserX,
   UserPlus, Repeat, Star, Crown, CircleSlash, Ban, CalendarClock,
   CalendarDays, CalendarRange, CalendarSearch, HelpCircle,
-  RotateCcw, Hourglass, AlertTriangle,
+  RotateCcw, Hourglass, AlertTriangle, Megaphone, Eye, Download, FileDown,
 } from 'lucide-react';
 import {
   format as fmtDate, parseISO, endOfMonth, startOfMonth, addMonths, addDays,
@@ -51,6 +51,11 @@ import {
   returnPotentialKpis, buildReturnPotentialList,
   type ReservationAggRow, type RangeCount, type FutureBoundaries,
 } from '@/lib/reservation-dashboard';
+import {
+  CAMPAIGNS, summarizeCampaigns, filterCampaign,
+  buildCampaignCsv, campaignCsvFilename,
+  type CampaignDef, type CampaignId,
+} from '@/lib/reservation-campaigns';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -178,10 +183,12 @@ export default function CrmAuswertungPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Gemeinsame Listen-Kennzahlen für Überblick, Rückkehrpotenzial und Liste.
+  // Gemeinsame Listen-Kennzahlen für Überblick, Rückkehrpotenzial, Liste und
+  // Kampagnen.  No-Show-Anzahl wird mitgegeben, damit die Kampagnen-/Detailspalte
+  // „No Shows" und der 2+-No-Show-Filter direkt aus den Kennzahlen kommen.
   const metrics = useMemo(
-    () => profiles.map(p => guestListMetrics(p, visitAggs.get(p.id), todayStr)),
-    [profiles, visitAggs, todayStr],
+    () => profiles.map(p => guestListMetrics(p, visitAggs.get(p.id), todayStr, noShowCounts.get(p.id) ?? 0)),
+    [profiles, visitAggs, noShowCounts, todayStr],
   );
 
   const guestKpis = useMemo(
@@ -196,6 +203,31 @@ export default function CrmAuswertungPage() {
 
   const returnPotential = useMemo(() => returnPotentialKpis(metrics), [metrics]);
   const overdueList = useMemo(() => buildReturnPotentialList(metrics), [metrics]);
+
+  // ── Kampagnen ────────────────────────────────────────────────────────────────
+  const campaignSummaries = useMemo(() => summarizeCampaigns(metrics, todayStr), [metrics, todayStr]);
+  const [activeCampaign, setActiveCampaign] = useState<CampaignId | null>(null);
+  const campaignDef = useMemo<CampaignDef | null>(
+    () => CAMPAIGNS.find(c => c.id === activeCampaign) ?? null,
+    [activeCampaign],
+  );
+  const campaignRows = useMemo(
+    () => (campaignDef ? filterCampaign(metrics, campaignDef, todayStr) : []),
+    [campaignDef, metrics, todayStr],
+  );
+
+  // CSV-Download nur der aktuell gefilterten Liste: UTF-8 mit BOM (Excel-Umlaute),
+  // Semikolon-getrennt, deutsche Kopfzeilen.  Reiner Download, kein Versand.
+  const exportCampaignCsv = useCallback((def: CampaignDef) => {
+    const csv = buildCampaignCsv(filterCampaign(metrics, def, todayStr));
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = campaignCsvFilename(def);
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [metrics, todayStr]);
 
   const runRange = useCallback(async () => {
     if (rangeInvalid) return;
@@ -260,6 +292,10 @@ export default function CrmAuswertungPage() {
             <TabsTrigger value="return" className="gap-1.5">
               <RotateCcw className="h-4 w-4" />
               Rückkehrpotenzial
+            </TabsTrigger>
+            <TabsTrigger value="campaigns" className="gap-1.5">
+              <Megaphone className="h-4 w-4" />
+              Kampagnen
             </TabsTrigger>
           </TabsList>
 
@@ -411,6 +447,131 @@ export default function CrmAuswertungPage() {
                 </div>
               )}
             </section>
+          </TabsContent>
+
+          {/* ── Reiter „Kampagnen" ──────────────────────────────────────────── */}
+          <TabsContent value="campaigns" className="space-y-4">
+            {campaignDef ? (
+              /* Detailansicht einer Kampagnenliste */
+              <section className="space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <button
+                      onClick={() => setActiveCampaign(null)}
+                      className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                      Zurück zu den Kampagnen
+                    </button>
+                    <h2 className="flex items-center gap-2 text-lg font-semibold">
+                      <Megaphone className="h-5 w-5 text-primary" />
+                      {campaignDef.label}
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-sm font-medium tabular-nums text-muted-foreground">
+                        {NUM0.format(campaignRows.length)}
+                      </span>
+                    </h2>
+                    <p className="max-w-3xl text-xs text-muted-foreground">{campaignDef.description}</p>
+                  </div>
+                  <button
+                    onClick={() => exportCampaignCsv(campaignDef)}
+                    disabled={campaignRows.length === 0}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Download className="h-4 w-4" />
+                    CSV exportieren
+                  </button>
+                </div>
+
+                {campaignRows.length === 0 ? (
+                  <div className="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+                    Für diese Kampagne gibt es aktuell keine passenden Gäste.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-border">
+                    <table className="w-full min-w-[920px] text-sm">
+                      <thead>
+                        <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                          <th className="px-3 py-2 font-medium">Name</th>
+                          <th className="px-3 py-2 font-medium">E-Mail</th>
+                          <th className="px-3 py-2 font-medium">Telefon</th>
+                          <th className="px-3 py-2 font-medium">Segment</th>
+                          <th className="px-3 py-2 text-right font-medium">Besuche</th>
+                          <th className="px-3 py-2 font-medium">Letzter Besuch</th>
+                          <th className="px-3 py-2 text-right font-medium">Tage seit letztem</th>
+                          <th className="px-3 py-2 text-right font-medium">Ø Intervall</th>
+                          <th className="px-3 py-2 text-right font-medium">No Shows</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {campaignRows.map(r => (
+                          <tr
+                            key={r.id}
+                            onClick={() => navigate(`/gaeste/${r.id}`)}
+                            className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/40"
+                          >
+                            <td className="px-3 py-2 font-medium text-foreground">{r.displayName}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{r.email ?? '—'}</td>
+                            <td className="px-3 py-2 tabular-nums text-muted-foreground">{r.mobile ?? '—'}</td>
+                            <td className="px-3 py-2"><SegmentBadge segment={r.segment} /></td>
+                            <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(r.visits)}</td>
+                            <td className="px-3 py-2 tabular-nums">{fdate(r.lastVisit)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{days(r.daysSinceLastVisit)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{days(r.avgDaysBetweenVisits)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(r.noShowCount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : (
+              /* Übersicht aller Kampagnenlisten */
+              <section className="space-y-3">
+                <SectionTitle icon={Megaphone}>Kampagnenlisten</SectionTitle>
+                <p className="text-xs text-muted-foreground">
+                  Vordefinierte Listen aus den bestehenden CRM-Daten. „Anzeigen"
+                  öffnet die Detailliste, „CSV exportieren" lädt nur die jeweils
+                  gefilterte Liste als Datei (UTF-8, Semikolon-getrennt) herunter.
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {campaignSummaries.map(({ def, count }) => (
+                    <div
+                      key={def.id}
+                      className="flex flex-col justify-between gap-3 rounded-lg border border-border bg-card p-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-semibold leading-tight text-foreground">{def.label}</h3>
+                          <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-sm font-bold tabular-nums text-foreground">
+                            {NUM0.format(count)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">{def.description}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setActiveCampaign(def.id)}
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={count === 0}
+                        >
+                          <Eye className="h-4 w-4" />
+                          Anzeigen
+                        </button>
+                        <button
+                          onClick={() => exportCampaignCsv(def)}
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={count === 0}
+                        >
+                          <FileDown className="h-4 w-4" />
+                          CSV exportieren
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </TabsContent>
         </Tabs>
       ) : null}
