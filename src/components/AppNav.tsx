@@ -5,15 +5,18 @@
  * Mobile: Bottom-Navigation (fixiert)
  *
  * Struktur:
- *   Dashboard   (standalone)
- *   Verkauf     → Verkaufs-Dashboard
- *   Personal    → Dienstplanung · Personal FIX
- *   Kosten      → WES-Analyse · Budget · Erfolgsrechnung
- *   Stammdaten  → Produkte
- *   Admin       → Upload · Einstellungen  (nur Admin)
+ *   Dashboard    (standalone)
+ *   Verkauf      → Verkaufsdashboard · Tagesansicht · Kennzahlen Bericht · Forecast Planung
+ *   Umsatz       → Umsatzabstimmung · Budget · Erfolgsrechnung · Produkteanalyse
+ *   Personal     → Dienstplanung · Personalkosten · Personalstamm · Datenintegrität MA
+ *   Warenkosten  → Warenrechnungen · WES Analyse · Produkte
+ *   Foratable    → Gäste CRM · Reservationen · CRM Auswertung
+ *   Admin        → Gastronovi Z-Bericht · Einstellungen
+ *   Import       → Import-Zentrale · Verkaufsdaten Upload
  *
  * Ausgeblendet (Routen existieren weiterhin, nur nicht verlinkt):
- *   /artikel    Artikelstamm
+ *   /reporting   Analyse / Reporting
+ *   /artikel     Artikelstamm
  *   /artikel-tracking
  *   /lunch-analyse
  *   /takeaway-analyse
@@ -29,7 +32,7 @@ import {
   Upload, Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, Contact, X, Eye, Table2, Activity,
-  Wallet, BarChart2, BarChart3, ShoppingCart, LineChart, TrendingUp,
+  Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, FileText,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -77,11 +80,10 @@ const DASHBOARD_ITEM: NavItem = {
 const NAV_GROUPS: NavGroup[] = [
   {
     groupLabel: 'Verkauf',
-    adminOnly: true,
     items: [
       {
         path: '/verkauf-dashboard',
-        label: 'Verkaufs-Dashboard',
+        label: 'Verkaufsdashboard',
         shortLabel: 'Verkauf',
         icon: PieChart,
         adminOnly: true,
@@ -103,28 +105,6 @@ const NAV_GROUPS: NavGroup[] = [
         beaulieuAllowed: true,
       },
       {
-        path: '/produkt-analyse',
-        label: 'Produktanalyse',
-        shortLabel: 'Produkte',
-        icon: BarChart3,
-        adminOnly: true,
-        beaulieuAllowed: true,
-      },
-      {
-        path: '/reporting',
-        label: 'Analyse / Reporting',
-        shortLabel: 'Analyse',
-        icon: LineChart,
-        adminOnly: true,
-      },
-      {
-        path: '/umsatzabstimmung',
-        label: 'Umsatzabstimmung',
-        shortLabel: 'Abstimmung',
-        icon: Scale,
-        adminOnly: true,
-      },
-      {
         path: '/forecast',
         label: 'Forecast Planung',
         shortLabel: 'Forecast',
@@ -135,42 +115,15 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    groupLabel: 'Personal',
-    items: [
-      {
-        path: '/personal',
-        label: 'Dienstplanung',
-        shortLabel: 'Dienst',
-        icon: Calendar,
-        module: 'dienstplanung',
-      },
-      {
-        path: '/personal-fix',
-        label: 'Personal FIX',
-        shortLabel: 'FIX',
-        icon: DollarSign,
-        module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
-      },
-    ],
-  },
-  {
-    groupLabel: 'Kosten',
+    groupLabel: 'Umsatz',
     adminOnly: true,
     items: [
       {
-        path: '/warenrechnungen',
-        label: 'Warenrechnungen',
-        shortLabel: 'Waren',
-        icon: ShoppingCart,
-        module: 'warenrechnungen' as import('@/hooks/usePermissions').AppModule,
-      },
-      {
-        path: '/wes-analyse',
-        label: 'WES-Analyse',
-        shortLabel: 'WES',
-        icon: TrendingDown,
+        path: '/umsatzabstimmung',
+        label: 'Umsatzabstimmung',
+        shortLabel: 'Abstimmung',
+        icon: Scale,
         adminOnly: true,
-        beaulieuAllowed: true,
       },
       {
         path: '/budget',
@@ -188,12 +141,33 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
         // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Erfolgsrechnung nicht sehen
       },
+      {
+        path: '/produkt-analyse',
+        label: 'Produkteanalyse',
+        shortLabel: 'Produkte',
+        icon: BarChart3,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
     ],
   },
   {
-    groupLabel: 'Stammdaten',
-    adminOnly: true,
+    groupLabel: 'Personal',
     items: [
+      {
+        path: '/personal',
+        label: 'Dienstplanung',
+        shortLabel: 'Dienst',
+        icon: Calendar,
+        module: 'dienstplanung',
+      },
+      {
+        path: '/personal-fix',
+        label: 'Personalkosten',
+        shortLabel: 'Kosten',
+        icon: DollarSign,
+        module: 'personal_fix' as import('@/hooks/usePermissions').AppModule,
+      },
       {
         path: '/personal-stamm',
         label: 'Personalstamm',
@@ -202,12 +176,66 @@ const NAV_GROUPS: NavGroup[] = [
         module: 'personalstamm' as import('@/hooks/usePermissions').AppModule,
       },
       {
+        path: '/employee-integrity',
+        label: 'Datenintegrität MA',
+        shortLabel: 'Integrität',
+        icon: ShieldAlert,
+        adminOnly: true,
+      },
+    ],
+  },
+  {
+    groupLabel: 'Warenkosten',
+    items: [
+      {
+        path: '/warenrechnungen',
+        label: 'Warenrechnungen',
+        shortLabel: 'Waren',
+        icon: ShoppingCart,
+        module: 'warenrechnungen' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
+        path: '/wes-analyse',
+        label: 'WES Analyse',
+        shortLabel: 'WES',
+        icon: TrendingDown,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
+      {
         path: '/produkt-stamm',
         label: 'Produkte',
         shortLabel: 'Produkte',
         icon: Package,
         adminOnly: true,
         beaulieuAllowed: true,
+      },
+    ],
+  },
+  {
+    groupLabel: 'Foratable',
+    adminOnly: true,
+    items: [
+      {
+        path: '/gaeste',
+        label: 'Gäste CRM',
+        shortLabel: 'Gäste',
+        icon: Contact,
+        adminOnly: true,
+      },
+      {
+        path: '/reservationen-import',
+        label: 'Reservationen',
+        shortLabel: 'Reserv.',
+        icon: CalendarClock,
+        adminOnly: true,
+      },
+      {
+        path: '/gaeste/auswertung',
+        label: 'CRM Auswertung',
+        shortLabel: 'Auswertung',
+        icon: BarChart3,
+        adminOnly: true,
       },
     ],
   },
@@ -223,26 +251,19 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
-        path: '/reservationen-import',
-        label: 'Reservationen',
-        shortLabel: 'Reserv.',
-        icon: CalendarClock,
+        path: '/settings',
+        label: 'Einstellungen',
+        shortLabel: 'Settings',
+        icon: Settings,
         adminOnly: true,
+        beaulieuAllowed: true,
       },
-      {
-        path: '/gaeste',
-        label: 'Gäste-CRM',
-        shortLabel: 'Gäste',
-        icon: Contact,
-        adminOnly: true,
-      },
-      {
-        path: '/gaeste/auswertung',
-        label: 'CRM Auswertung',
-        shortLabel: 'Auswertung',
-        icon: BarChart3,
-        adminOnly: true,
-      },
+    ],
+  },
+  {
+    groupLabel: 'Import',
+    adminOnly: true,
+    items: [
       {
         path: '/import',
         label: 'Import-Zentrale',
@@ -259,27 +280,31 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
         beaulieuAllowed: true,
       },
-      {
-        path: '/settings',
-        label: 'Einstellungen',
-        shortLabel: 'Settings',
-        icon: Settings,
-        adminOnly: true,
-        beaulieuAllowed: true,
-      },
-      {
-        path: '/employee-integrity',
-        label: 'Datenintegrität MA',
-        shortLabel: 'Integrität',
-        icon: ShieldAlert,
-        adminOnly: true,
-      },
     ],
   },
 ];
 
 // Flache Liste (für Mobile-Nav)
 const ALL_NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap(g => g.items);
+
+// Alle gruppierten Pfade (ohne Dashboard '/', das exakt geprüft wird).
+const ALL_NAV_PATHS: string[] = ALL_NAV_ITEMS.map(i => i.path);
+
+/**
+ * Liefert den am besten passenden (längsten) Navigationspfad für den aktuellen
+ * Standort — oder null. Über die Längen-Priorisierung wird genau EIN Menüpunkt
+ * aktiv markiert, auch bei verschachtelten Routen (z. B. `/gaeste` vs.
+ * `/gaeste/auswertung`, oder `/personal` vs. `/personal-fix` / `/personal-stamm`).
+ */
+function activeNavPath(pathname: string): string | null {
+  let best: string | null = null;
+  for (const p of ALL_NAV_PATHS) {
+    if (pathname === p || pathname.startsWith(p + '/')) {
+      if (best === null || p.length > best.length) best = p;
+    }
+  }
+  return best;
+}
 
 // ─── Rollen-Konfiguration ─────────────────────────────────────────────────────
 
@@ -394,8 +419,9 @@ export const AppSidebar = () => {
     return true;
   }
 
+  const currentActivePath = activeNavPath(location.pathname);
   function isLinkActive(path: string): boolean {
-    return location.pathname.startsWith(path);
+    return path === currentActivePath;
   }
 
   return (
@@ -611,8 +637,8 @@ export const AppBottomNav = () => {
   const pinnedItems = [DASHBOARD_ITEM, ...ALL_NAV_ITEMS]
     .filter(item => PINNED_PATHS.includes(item.path) && isItemVisible(item));
 
-  const anySubpageActive = location.pathname !== '/' &&
-    NAV_GROUPS.some(g => g.items.some(i => !PINNED_PATHS.includes(i.path) && location.pathname.startsWith(i.path)));
+  const currentActivePath = activeNavPath(location.pathname);
+  const anySubpageActive = currentActivePath !== null && !PINNED_PATHS.includes(currentActivePath);
 
   const stichtagInputValue = stichtag ? stichtag.toISOString().split('T')[0] : '';
 
@@ -624,7 +650,7 @@ export const AppBottomNav = () => {
           const Icon = item.icon;
           const isActive = item.path === '/'
             ? location.pathname === '/'
-            : location.pathname.startsWith(item.path);
+            : item.path === currentActivePath;
           return (
             <NavLink
               key={item.path}
@@ -696,7 +722,7 @@ export const AppBottomNav = () => {
                       const Icon = item.icon;
                       const active = item.path === '/'
                         ? location.pathname === '/'
-                        : location.pathname.startsWith(item.path);
+                        : item.path === currentActivePath;
                       return (
                         <button
                           key={item.path}

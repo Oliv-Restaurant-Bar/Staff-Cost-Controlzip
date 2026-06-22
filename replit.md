@@ -20,6 +20,7 @@ An internal reporting tool for revenue, personnel costs, schedules, and KPIs, su
 - **Database Schema:** `supabase/setup_new_project.sql` (and migration scripts in `supabase/migrations/`)
 - **Authentication & Permissions:** `src/contexts/AuthContext.tsx`, `src/hooks/usePermissions.ts`
 - **Routing:** Defined in `src/App.tsx`
+- **Navigation (Menüstruktur):** `src/components/AppNav.tsx` — `DASHBOARD_ITEM` + `NAV_GROUPS` (7 groups: Verkauf, Umsatz, Personal, Warenkosten, Foratable, Admin, Import) drive desktop sidebar, mobile bottom bar AND mobile sheet. Active highlighting uses the longest-path matcher `activeNavPath(pathname)`. `/reporting` is intentionally unlinked (route kept in `App.tsx`, reachable only by URL).
 - **UI Components:** `src/components/`
 - **Pages:** `src/pages/`
 - **Reporting & Financials:** `src/types/reporting.ts`, `src/lib/reporting-store.ts`, `src/types/pl.ts`, `src/lib/pl-engine.ts`, `src/pages/PLView.tsx`
