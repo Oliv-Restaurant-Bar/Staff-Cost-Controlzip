@@ -5,33 +5,57 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  isActiveStatus, isOpenStatus, countInRange, futureReservationKpis,
-  guestDashboardKpis,
+  isActiveStatus, isOpenStatus, isExcludedStatus, countInRange,
+  futureReservationKpis, guestDashboardKpis,
   type ReservationAggRow, type FutureBoundaries,
 } from '../reservation-dashboard';
 import {
   guestListMetrics, type GuestProfile, type CompletedVisitAgg,
 } from '../reservation-crm';
 
-// ── Status-Prädikate ──────────────────────────────────────────────────────────
+// ── Status-Prädikate (vom Nutzer vorgegebene Vokabularien) ──────────────────────
 
 describe('Statusprädikate', () => {
-  it('aktiv = bestätigt oder abgeschlossen', () => {
-    expect(isActiveStatus('confirmed')).toBe(true);
-    expect(isActiveStatus('completed')).toBe(true);
-    expect(isActiveStatus('cancelled')).toBe(false);
-    expect(isActiveStatus('noshow')).toBe(false);
-    expect(isActiveStatus('pending')).toBe(false);
-    expect(isActiveStatus('unknown')).toBe(false);
+  const ACTIVE = ['confirmed', 'completed', 'seated', 'arrived', 'active'];
+  const OPEN = ['pending', 'unknown', 'not_answered', 'offen'];
+  const EXCLUDED = ['cancelled', 'canceled', 'storniert', 'no_show', 'noshow', 'rejected', 'abgelehnt'];
+
+  it('erkennt alle aktiven Status', () => {
+    for (const s of ACTIVE) {
+      expect(isActiveStatus(s)).toBe(true);
+      expect(isOpenStatus(s)).toBe(false);
+      expect(isExcludedStatus(s)).toBe(false);
+    }
   });
 
-  it('offen = pending oder unknown', () => {
-    expect(isOpenStatus('pending')).toBe(true);
-    expect(isOpenStatus('unknown')).toBe(true);
-    expect(isOpenStatus('confirmed')).toBe(false);
-    expect(isOpenStatus('completed')).toBe(false);
-    expect(isOpenStatus('cancelled')).toBe(false);
-    expect(isOpenStatus('noshow')).toBe(false);
+  it('erkennt alle offenen/unbeantworteten Status', () => {
+    for (const s of OPEN) {
+      expect(isOpenStatus(s)).toBe(true);
+      expect(isActiveStatus(s)).toBe(false);
+      expect(isExcludedStatus(s)).toBe(false);
+    }
+  });
+
+  it('erkennt alle ausgeschlossenen Status (zählen nirgends)', () => {
+    for (const s of EXCLUDED) {
+      expect(isExcludedStatus(s)).toBe(true);
+      expect(isActiveStatus(s)).toBe(false);
+      expect(isOpenStatus(s)).toBe(false);
+    }
+  });
+
+  it('vergleicht case-insensitive und getrimmt', () => {
+    expect(isActiveStatus('  SEATED ')).toBe(true);
+    expect(isActiveStatus('Confirmed')).toBe(true);
+    expect(isExcludedStatus('STORNIERT')).toBe(true);
+    expect(isOpenStatus(' Not_Answered ')).toBe(true);
+  });
+
+  it('behandelt unbekannte Status als offen (Auffangkorb, nichts geht verloren)', () => {
+    expect(isOpenStatus('waitlist')).toBe(true);
+    expect(isOpenStatus('')).toBe(true);
+    expect(isActiveStatus('waitlist')).toBe(false);
+    expect(isExcludedStatus('waitlist')).toBe(false);
   });
 });
 
@@ -40,17 +64,18 @@ describe('Statusprädikate', () => {
 describe('countInRange', () => {
   const rows: ReservationAggRow[] = [
     { date: '2026-06-22', partySize: 4, status: 'confirmed' },   // Untergrenze inkl.
+    { date: '2026-06-29', partySize: 2, status: 'seated' },      // seated = aktiv
     { date: '2026-06-30', partySize: 2, status: 'completed' },   // Obergrenze inkl.
     { date: '2026-07-01', partySize: 5, status: 'confirmed' },   // ausserhalb
-    { date: '2026-06-25', partySize: 3, status: 'cancelled' },   // falscher Status
-    { date: '2026-06-26', partySize: null, status: 'confirmed' }, // Personen unbekannt → 0
+    { date: '2026-06-25', partySize: 3, status: 'storniert' },   // ausgeschlossen
+    { date: '2026-06-26', partySize: null, status: 'arrived' },  // aktiv, Personen unbekannt → 0
     { date: null, partySize: 9, status: 'confirmed' },           // ohne Datum → ignoriert
   ];
 
   it('zählt inklusive Grenzen und filtert nach Status', () => {
     const r = countInRange(rows, '2026-06-22', '2026-06-30', isActiveStatus);
-    expect(r.reservations).toBe(3);   // 22., 30., 26.
-    expect(r.persons).toBe(6);        // 4 + 2 + 0
+    expect(r.reservations).toBe(4);   // 22., 29.(seated), 30., 26.(arrived)
+    expect(r.persons).toBe(8);        // 4 + 2 + 2 + 0
   });
 
   it('leere Eingabe ergibt 0/0', () => {
@@ -73,12 +98,12 @@ describe('futureReservationKpis', () => {
 
   const rows: ReservationAggRow[] = [
     { date: '2026-06-25', partySize: 4, status: 'confirmed' },  // laufender Monat + 30/60/90
-    { date: '2026-07-10', partySize: 2, status: 'completed' },  // nächster Monat + 30/60/90
-    { date: '2026-08-15', partySize: 6, status: 'confirmed' },  // 60/90
+    { date: '2026-07-10', partySize: 2, status: 'seated' },     // nächster Monat + 30/60/90 (aktiv via seated)
+    { date: '2026-08-15', partySize: 6, status: 'arrived' },    // 60/90 (aktiv via arrived)
     { date: '2026-09-25', partySize: 3, status: 'confirmed' },  // jenseits +90 → nirgends
-    { date: '2026-06-28', partySize: 5, status: 'cancelled' },  // ausgeschlossen
-    { date: '2026-06-23', partySize: 8, status: 'noshow' },     // ausgeschlossen
-    { date: '2026-07-05', partySize: 2, status: 'pending' },    // offen separat
+    { date: '2026-06-28', partySize: 5, status: 'storniert' },  // ausgeschlossen
+    { date: '2026-06-23', partySize: 8, status: 'no_show' },    // ausgeschlossen
+    { date: '2026-07-05', partySize: 2, status: 'not_answered' }, // offen separat
   ];
 
   it('bucketet aktive Reservationen korrekt', () => {
@@ -90,7 +115,7 @@ describe('futureReservationKpis', () => {
     expect(k.next90).toEqual({ reservations: 3, persons: 12 });
   });
 
-  it('weist offene/unbeantwortete separat aus', () => {
+  it('weist offene/unbeantwortete separat aus (Stornos/No-Shows zählen nicht)', () => {
     const k = futureReservationKpis(rows, boundaries);
     expect(k.openNext90).toEqual({ reservations: 1, persons: 2 });
   });

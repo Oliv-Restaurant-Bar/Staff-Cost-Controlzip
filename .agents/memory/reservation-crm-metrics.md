@@ -51,3 +51,23 @@ or the SQL view and the UI will disagree.
 **How to apply:** view uses `security_invoker = true` so RLS of the base tables
 applies (anon blocked, PII safe); it must stay a pure read-only view (no data
 duplication, no migration of the base tables).
+
+## CRM Auswertung status buckets: open is a deliberate catch-all
+
+The dashboard predicates classify `status_normalized` into active /
+open / excluded per a user-specified vocabulary (active = confirmed/completed/
+seated/arrived/active; excluded = cancelled/canceled/storniert/no_show/noshow/
+rejected/abgelehnt; open = pending/unknown/not_answered/offen).
+
+**Rule:** `isOpenStatus` is intentionally a catch-all — explicit open list OR
+anything that is neither active nor excluded. Do NOT "tidy" it to a strict
+4-value list. Also feed the dashboard the **raw** `status_normalized` string
+(the read path must not pre-collapse non-canonical values to `unknown`), and
+keep the predicates case-insensitive/trimmed.
+**Why:** the importer already collapses raw statuses to 6 canonical values, but
+a strict open list + pre-collapse would silently drop any future/unexpected raw
+status from every KPI; catch-all mirrors the old importer→unknown→open behavior
+so nothing vanishes. Active future-reservation set must stay the full 5 values,
+not a "simplified" confirmed|completed.
+**How to apply:** import logic stays untouched — this is purely the CRM read
+path + pure predicates in `reservation-dashboard.ts`.

@@ -153,7 +153,9 @@ async function fetchReservationAggRows(
       out.push({
         date: r.reservation_date ?? null,
         partySize: r.party_size ?? null,
-        status: normStatus(r.status_normalized ?? null),
+        // Rohwert durchreichen — die Dashboard-Prädikate klassifizieren
+        // case-insensitive (inkl. seated/arrived/not_answered/storniert …).
+        status: r.status_normalized ?? 'unknown',
       });
     }
     if (data.length < PAGE) break;

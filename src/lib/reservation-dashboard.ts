@@ -6,17 +6,18 @@
  *  - Zukunftsreservationen (laufender/nächster Monat, nächste 30/60/90 Tage)
  *  - individueller Datumsbereich (Anzahl Reservationen + Personen)
  *
- * Statuslogik (vom Nutzer vorgegeben):
- *  - „aktive" (relevante) Reservationen  = bestätigt ODER abgeschlossen
- *  - „offen / nicht beantwortet"         = offen (pending) oder unbekannt → separat
- *  - storniert/abgelehnt und No-Show     = zählen NICHT als aktive Reservation
+ * Statuslogik (vom Nutzer vorgegeben, case-insensitive auf `status_normalized`):
+ *  - „aktiv" (relevant): confirmed, completed, seated, arrived, active
+ *  - „offen / nicht beantwortet" (separat): pending, unknown, not_answered, offen
+ *    (sowie alles, was weder aktiv noch ausgeschlossen ist → Auffangkorb)
+ *  - „ausgeschlossen" (zählt NICHT): cancelled, canceled, storniert, no_show,
+ *    noshow, rejected, abgelehnt
  *
  * Frei von Supabase/DOM, damit es als Unit ohne Datenbank getestet werden kann.
  * Datumswerte sind durchgehend ISO-Strings „yyyy-MM-dd" und werden lexikografisch
  * verglichen (korrekt für dieses Format).
  */
 
-import type { ReservationStatusNormalized } from './reservation-import-parser';
 import {
   daysSince,
   INACTIVE_DAYS_THRESHOLD,
@@ -33,15 +34,47 @@ export const NEW_GUEST_DAYS = 30;
 export const NO_SHOW_RISK_MIN = 2;
 
 // ── Statuslogik ──────────────────────────────────────────────────────────────
+// Vom Nutzer vorgegebene Status-Vokabularien. Vergleich case-insensitive und
+// getrimmt, damit Rohwerte aus `status_normalized` robust erkannt werden.
 
-/** Aktive/relevante Reservation: bestätigt oder abgeschlossen. */
-export function isActiveStatus(s: ReservationStatusNormalized): boolean {
-  return s === 'confirmed' || s === 'completed';
+/** Aktive / relevante Reservationen. */
+const ACTIVE_STATUSES = new Set<string>([
+  'confirmed', 'completed', 'seated', 'arrived', 'active',
+]);
+
+/** Offen / nicht beantwortet (separat ausweisen). */
+const OPEN_STATUSES = new Set<string>([
+  'pending', 'unknown', 'not_answered', 'offen',
+]);
+
+/** Ausgeschlossen (Storno / No-Show / abgelehnt) — zählt in keiner Kachel. */
+const EXCLUDED_STATUSES = new Set<string>([
+  'cancelled', 'canceled', 'storniert', 'no_show', 'noshow', 'rejected', 'abgelehnt',
+]);
+
+function statusKey(s: string): string {
+  return s.trim().toLowerCase();
 }
 
-/** Offen / nicht beantwortet (separat ausweisen, NICHT mit aktiven mischen). */
-export function isOpenStatus(s: ReservationStatusNormalized): boolean {
-  return s === 'pending' || s === 'unknown';
+/** Aktive/relevante Reservation (confirmed, completed, seated, arrived, active). */
+export function isActiveStatus(s: string): boolean {
+  return ACTIVE_STATUSES.has(statusKey(s));
+}
+
+/** Ausgeschlossen: storniert/abgelehnt/No-Show — zählt nicht als Reservation. */
+export function isExcludedStatus(s: string): boolean {
+  return EXCLUDED_STATUSES.has(statusKey(s));
+}
+
+/**
+ * Offen / nicht beantwortet: explizit gelistet (pending, unknown, not_answered,
+ * offen) ODER alles, was weder aktiv noch ausgeschlossen ist (Auffangkorb, damit
+ * keine Reservation verloren geht).  Wird stets separat von „aktiv" ausgewiesen.
+ */
+export function isOpenStatus(s: string): boolean {
+  const k = statusKey(s);
+  if (OPEN_STATUSES.has(k)) return true;
+  return !ACTIVE_STATUSES.has(k) && !EXCLUDED_STATUSES.has(k);
 }
 
 // ── Reservations-Aggregatzeile (schlank, ohne PII) ───────────────────────────
@@ -50,7 +83,7 @@ export function isOpenStatus(s: ReservationStatusNormalized): boolean {
 export interface ReservationAggRow {
   date: string | null;                 // "yyyy-MM-dd"
   partySize: number | null;
-  status: ReservationStatusNormalized;
+  status: string;                      // roher `status_normalized`-Wert
 }
 
 // ── Zeitraum-Zählung ─────────────────────────────────────────────────────────
@@ -69,7 +102,7 @@ export function countInRange(
   rows: ReservationAggRow[],
   from: string,
   to: string,
-  statusFilter: (s: ReservationStatusNormalized) => boolean,
+  statusFilter: (s: string) => boolean,
 ): RangeCount {
   let reservations = 0;
   let persons = 0;
