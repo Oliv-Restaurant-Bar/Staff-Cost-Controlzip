@@ -15,6 +15,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
   ArrowRight, BarChart3, Filter, X, TrendingDown,
+  Crown, Star, Building2, Mail, Ban, AlertTriangle,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -24,6 +25,8 @@ import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 
 import { fetchGuestProfiles, fetchCompletedVisitAggregates, fetchNoShowCountsByGuest } from '@/lib/reservation-crm-db';
+import { fetchGuestCrmProfilesByIds } from '@/lib/guest-crm-profile-db';
+import type { GuestCrmProfile } from '@/lib/guest-crm-profile';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import {
   guestListMetrics, countSegments, returnRiskRatio, isAtReturnRisk,
@@ -34,6 +37,7 @@ import {
   DEFAULT_GUEST_FILTERS, hasActiveFilters, searchAndFilterGuests, sortGuests,
   SEGMENT_FILTER_OPTIONS, VISIT_COUNT_FILTER_OPTIONS, LAST_VISIT_FILTER_OPTIONS,
   PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS, RETURN_RISK_FILTER_OPTIONS,
+  BOOL_FILTER_OPTIONS,
   type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
 } from '@/lib/guest-list-filters';
 import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
@@ -108,6 +112,47 @@ function FilterSelect<T extends string>({
   );
 }
 
+// ── Manuelle CRM-Badges (rein darstellend, aus guest_crm_profiles) ─────────────
+
+const CRM_CHIP = 'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium';
+
+/**
+ * Zeigt die manuell gepflegten CRM-Merkmale eines Gastes als kompakte Chips.
+ * Völlig unabhängig vom automatisch berechneten Segment; fehlt das Profil oder
+ * ist kein Merkmal gesetzt, wird nichts gerendert.
+ */
+function CrmBadges({ crm }: { crm?: GuestCrmProfile | null }) {
+  if (!crm) return null;
+  const chips: JSX.Element[] = [];
+  if (crm.vipManual) chips.push(
+    <span key="vip" className={cn(CRM_CHIP, 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300')}>
+      <Crown className="h-3 w-3" /> VIP
+    </span>,
+  );
+  if (crm.stammgastManual) chips.push(
+    <span key="stamm" className={cn(CRM_CHIP, 'border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-700 dark:bg-violet-950/40 dark:text-violet-300')}>
+      <Star className="h-3 w-3" /> Stammgast
+    </span>,
+  );
+  if (crm.companyCustomer) chips.push(
+    <span key="firma" className={cn(CRM_CHIP, 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300')}>
+      <Building2 className="h-3 w-3" /> Firmenkunde
+    </span>,
+  );
+  if (crm.newsletterOptIn) chips.push(
+    <span key="news" className={cn(CRM_CHIP, 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300')}>
+      <Mail className="h-3 w-3" /> Newsletter
+    </span>,
+  );
+  if (crm.blockedGuest) chips.push(
+    <span key="block" className={cn(CRM_CHIP, 'border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950/40 dark:text-red-300')}>
+      <Ban className="h-3 w-3" /> Sperrliste
+    </span>,
+  );
+  if (chips.length === 0) return null;
+  return <div className="mt-1 flex flex-wrap gap-1">{chips}</div>;
+}
+
 // ── Komponente ────────────────────────────────────────────────────────────────
 
 export default function GaesteCrmPage() {
@@ -120,6 +165,8 @@ export default function GaesteCrmPage() {
   const [profiles, setProfiles] = useState<Awaited<ReturnType<typeof fetchGuestProfiles>>>([]);
   const [visitAggs, setVisitAggs] = useState<Map<string, CompletedVisitAgg>>(new Map());
   const [noShowCounts, setNoShowCounts] = useState<Map<string, number>>(new Map());
+  const [crmProfiles, setCrmProfiles] = useState<Map<string, GuestCrmProfile>>(new Map());
+  const [crmError, setCrmError] = useState(false);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<GuestFilterState>(DEFAULT_GUEST_FILTERS);
   const [sortKey, setSortKey] = useState<GuestSortKey>('visits');
@@ -141,10 +188,23 @@ export default function GaesteCrmPage() {
       setProfiles(ps);
       setVisitAggs(aggs);
       setNoShowCounts(noShows);
+      // Manuelle CRM-Profile additiv nachladen. Schlägt das fehl, bleibt die
+      // Liste voll funktionsfähig (leere Map) und es erscheint ein Hinweis —
+      // kein stilles Verschlucken des Fehlers.
+      try {
+        const crm = await fetchGuestCrmProfilesByIds(ps.map(p => p.id));
+        setCrmProfiles(crm);
+        setCrmError(false);
+      } catch {
+        setCrmProfiles(new Map());
+        setCrmError(true);
+      }
     } else {
       setProfiles([]);
       setVisitAggs(new Map());
       setNoShowCounts(new Map());
+      setCrmProfiles(new Map());
+      setCrmError(false);
     }
     setLoading(false);
   }, [tenantId, isAdmin]);
@@ -152,8 +212,10 @@ export default function GaesteCrmPage() {
   useEffect(() => { void load(); }, [load]);
 
   const allMetrics = useMemo(
-    () => profiles.map(p => guestListMetrics(p, visitAggs.get(p.id), today, noShowCounts.get(p.id) ?? 0)),
-    [profiles, visitAggs, noShowCounts, today],
+    () => profiles.map(p => guestListMetrics(
+      p, visitAggs.get(p.id), today, noShowCounts.get(p.id) ?? 0, crmProfiles.get(p.id) ?? null,
+    )),
+    [profiles, visitAggs, noShowCounts, today, crmProfiles],
   );
 
   const segmentCounts = useMemo(() => countSegments(allMetrics), [allMetrics]);
@@ -242,6 +304,17 @@ export default function GaesteCrmPage() {
         </div>
       )}
 
+      {crmError && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>
+            Die manuellen CRM-Profile konnten nicht geladen werden. Die Gästeliste
+            wird ohne manuelle Merkmale (VIP/Stammgast manuell, Firmenkunde usw.)
+            angezeigt.
+          </span>
+        </div>
+      )}
+
       {/* Segment-Kacheln */}
       {tablesOk && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
@@ -315,6 +388,63 @@ export default function GaesteCrmPage() {
             />
           </div>
 
+          {/* Manuelle CRM-Merkmale (aus guest_crm_profiles) */}
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Manuelle CRM-Merkmale
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <FilterSelect
+                label="Manueller VIP"
+                value={filters.vipManual}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, vipManual: v }))}
+              />
+              <FilterSelect
+                label="Manueller Stammgast"
+                value={filters.stammgastManual}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, stammgastManual: v }))}
+              />
+              <FilterSelect
+                label="Firmenkunde"
+                value={filters.companyCustomer}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, companyCustomer: v }))}
+              />
+              <FilterSelect
+                label="Newsletter"
+                value={filters.newsletter}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, newsletter: v }))}
+              />
+              <FilterSelect
+                label="Sperrliste"
+                value={filters.blocked}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, blocked: v }))}
+              />
+              <FilterSelect
+                label="Hat Allergien"
+                value={filters.hasAllergies}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, hasAllergies: v }))}
+              />
+              <FilterSelect
+                label="Hat Geburtstag"
+                value={filters.hasBirthday}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, hasBirthday: v }))}
+              />
+              <FilterSelect
+                label="Hat CRM-Notiz"
+                value={filters.hasCrmNote}
+                options={BOOL_FILTER_OPTIONS}
+                onChange={v => setFilters(f => ({ ...f, hasCrmNote: v }))}
+              />
+            </div>
+          </div>
+
           {/* Schnellfilter: gefährdete Stammgäste (Rückkehrpotenzial) */}
           {returnRiskCount > 0 && (
             <button
@@ -371,6 +501,8 @@ export default function GaesteCrmPage() {
               <tr>
                 <SortHeader label="Gast" k="name" />
                 <SortHeader label="Segment" k="segment" />
+                <SortHeader label="Firma" k="company" />
+                <SortHeader label="Geburtstag" k="birthday" align="right" />
                 <SortHeader label="Besuche" k="visits" align="right" />
                 <SortHeader label="Ø Gruppe" k="partySize" align="right" />
                 <SortHeader label="Erster Besuch" k="firstVisit" align="right" />
@@ -395,8 +527,11 @@ export default function GaesteCrmPage() {
                         {m.email || m.mobile}
                       </div>
                     )}
+                    <CrmBadges crm={m.crm} />
                   </td>
                   <td className="px-3 py-2"><SegmentBadge segment={m.segment} /></td>
+                  <td className="px-3 py-2 text-muted-foreground">{m.crm?.company || '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{fdate(m.crm?.birthday)}</td>
                   <td className="px-3 py-2 text-right font-semibold tabular-nums">{NUM0.format(m.visits)}</td>
                   <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                     {m.avgPartySize === null ? '—' : fnum(m.avgPartySize, NUM1)}

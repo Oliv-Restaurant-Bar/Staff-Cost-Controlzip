@@ -41,6 +41,8 @@ import {
   fetchGuestProfiles, fetchCompletedVisitAggregates, fetchNoShowCountsByGuest,
   fetchFutureReservations, fetchReservationsInRange,
 } from '@/lib/reservation-crm-db';
+import { fetchGuestCrmProfilesByIds } from '@/lib/guest-crm-profile-db';
+import type { GuestCrmProfile } from '@/lib/guest-crm-profile';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import {
   guestListMetrics, type CompletedVisitAgg,
@@ -133,6 +135,8 @@ export default function CrmAuswertungPage() {
   const [profiles, setProfiles] = useState<Awaited<ReturnType<typeof fetchGuestProfiles>>>([]);
   const [visitAggs, setVisitAggs] = useState<Map<string, CompletedVisitAgg>>(new Map());
   const [noShowCounts, setNoShowCounts] = useState<Map<string, number>>(new Map());
+  const [crmProfiles, setCrmProfiles] = useState<Map<string, GuestCrmProfile>>(new Map());
+  const [crmError, setCrmError] = useState(false);
   const [futureRows, setFutureRows] = useState<ReservationAggRow[]>([]);
 
   const today = useMemo(() => new Date(), []);
@@ -172,11 +176,23 @@ export default function CrmAuswertungPage() {
       setVisitAggs(aggs);
       setNoShowCounts(ns);
       setFutureRows(fut);
+      // Manuelle CRM-Profile additiv nachladen, damit die CRM-Kampagnen
+      // (manuelle VIP/Stammgäste, Firmenkunden, …) befüllt werden. Schlägt es
+      // fehl, bleiben diese Listen leer statt die Seite zu blockieren.
+      try {
+        setCrmProfiles(await fetchGuestCrmProfilesByIds(ps.map(p => p.id)));
+        setCrmError(false);
+      } catch {
+        setCrmProfiles(new Map());
+        setCrmError(true);
+      }
     } else {
       setProfiles([]);
       setVisitAggs(new Map());
       setNoShowCounts(new Map());
       setFutureRows([]);
+      setCrmProfiles(new Map());
+      setCrmError(false);
     }
     setLoading(false);
   }, [tenantId, isAdmin, todayStr]);
@@ -187,8 +203,10 @@ export default function CrmAuswertungPage() {
   // Kampagnen.  No-Show-Anzahl wird mitgegeben, damit die Kampagnen-/Detailspalte
   // „No Shows" und der 2+-No-Show-Filter direkt aus den Kennzahlen kommen.
   const metrics = useMemo(
-    () => profiles.map(p => guestListMetrics(p, visitAggs.get(p.id), todayStr, noShowCounts.get(p.id) ?? 0)),
-    [profiles, visitAggs, noShowCounts, todayStr],
+    () => profiles.map(p => guestListMetrics(
+      p, visitAggs.get(p.id), todayStr, noShowCounts.get(p.id) ?? 0, crmProfiles.get(p.id) ?? null,
+    )),
+    [profiles, visitAggs, noShowCounts, todayStr, crmProfiles],
   );
 
   const guestKpis = useMemo(
@@ -273,6 +291,17 @@ export default function CrmAuswertungPage() {
           <span>
             Die Reservationstabellen existieren noch nicht. Bitte zuerst die
             Migration ausführen und Reservationen importieren.
+          </span>
+        </div>
+      )}
+
+      {crmError && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <span>
+            Die manuellen CRM-Profile konnten nicht geladen werden. Die manuellen
+            CRM-Kampagnen (manuelle VIP/Stammgäste, Firmenkunden usw.) werden ohne
+            diese Merkmale ausgewertet und können daher leer erscheinen.
           </span>
         </div>
       )}

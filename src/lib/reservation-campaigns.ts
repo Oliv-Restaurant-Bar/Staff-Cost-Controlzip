@@ -52,7 +52,15 @@ export type CampaignId =
   | 'stammgaeste'
   | 'vip'
   | 'neukunden-30'
-  | 'ohne-besuch';
+  | 'ohne-besuch'
+  // ── Manuelle CRM-Merkmale (guest_crm_profiles) ──────────────────────────────
+  | 'manuelle-vip'
+  | 'manuelle-stammgaeste'
+  | 'firmenkunden'
+  | 'newsletter'
+  | 'mit-allergien'
+  | 'mit-geburtstag'
+  | 'sperrliste';
 
 export interface CampaignDef {
   id: CampaignId;
@@ -209,6 +217,72 @@ export const CAMPAIGNS: CampaignDef[] = [
     predicate: m => m.segment === 'ohne_besuch',
     sort: cmpName,
   },
+  // ── Manuelle CRM-Merkmale (guest_crm_profiles) — rein additiv, unabhängig vom
+  //    automatisch berechneten Segment.  Fehlt das Profil, ist das Merkmal nicht
+  //    gesetzt (defensiv über `m.crm?`). ───────────────────────────────────────
+  {
+    id: 'manuelle-vip',
+    label: 'Manuelle VIP',
+    slug: 'manuelle-vip',
+    description:
+      'Gäste, die im CRM-Profil manuell als VIP markiert wurden.',
+    predicate: m => m.crm?.vipManual === true,
+    sort: byVisitsDesc,
+  },
+  {
+    id: 'manuelle-stammgaeste',
+    label: 'Manuelle Stammgäste',
+    slug: 'manuelle-stammgaeste',
+    description:
+      'Gäste, die im CRM-Profil manuell als Stammgast markiert wurden.',
+    predicate: m => m.crm?.stammgastManual === true,
+    sort: byVisitsDesc,
+  },
+  {
+    id: 'firmenkunden',
+    label: 'Firmenkunden',
+    slug: 'firmenkunden',
+    description:
+      'Gäste, die im CRM-Profil als Firmenkunde markiert sind.',
+    predicate: m => m.crm?.companyCustomer === true,
+    sort: cmpName,
+  },
+  {
+    id: 'newsletter',
+    label: 'Newsletter erlaubt',
+    slug: 'newsletter-erlaubt',
+    description:
+      'Gäste mit Newsletter-Einwilligung (Opt-in) im CRM-Profil.',
+    predicate: m => m.crm?.newsletterOptIn === true,
+    sort: cmpName,
+  },
+  {
+    id: 'mit-allergien',
+    label: 'Gäste mit Allergien',
+    slug: 'gaeste-mit-allergien',
+    description:
+      'Gäste mit hinterlegten Allergien im CRM-Profil.',
+    predicate: m => !!(m.crm?.allergies && m.crm.allergies.trim() !== ''),
+    sort: cmpName,
+  },
+  {
+    id: 'mit-geburtstag',
+    label: 'Gäste mit Geburtstag',
+    slug: 'gaeste-mit-geburtstag',
+    description:
+      'Gäste mit hinterlegtem Geburtstag im CRM-Profil.',
+    predicate: m => !!m.crm?.birthday,
+    sort: cmpName,
+  },
+  {
+    id: 'sperrliste',
+    label: 'Sperrliste',
+    slug: 'sperrliste',
+    description:
+      'Gäste, die im CRM-Profil auf die Sperrliste gesetzt wurden.',
+    predicate: m => m.crm?.blockedGuest === true,
+    sort: cmpName,
+  },
 ];
 
 /** Schneller Zugriff auf eine Kampagnen-Definition per Id. */
@@ -259,6 +333,15 @@ export const CSV_HEADERS: readonly string[] = [
   'Tage seit letztem Besuch',
   'Durchschnittliches Intervall',
   'No Shows',
+  // ── Manuelle CRM-Felder (guest_crm_profiles) — leer, wenn kein Profil ───────
+  'VIP (manuell)',
+  'Stammgast (manuell)',
+  'Firmenkunde',
+  'Newsletter',
+  'Sperrliste',
+  'Geburtstag',
+  'Firma',
+  'Allergien',
 ];
 
 /** ISO-Datum „yyyy-MM-dd" → „dd.MM.yyyy"; leer bei fehlendem/ungültigem Wert. */
@@ -276,8 +359,12 @@ function escapeCsvCell(value: string): string {
   return value;
 }
 
+/** „Ja" bei true, sonst leer — für boolesche Merkmal-Spalten. */
+const yesOrEmpty = (b: boolean | null | undefined): string => (b ? 'Ja' : '');
+
 /** Eine Kampagnenzeile als Zellwerte (fehlende Werte → leerer String). */
 export function campaignRowToCsvValues(m: GuestListMetrics): string[] {
+  const crm = m.crm ?? null;
   return [
     m.displayName,
     m.email ?? '',
@@ -288,6 +375,15 @@ export function campaignRowToCsvValues(m: GuestListMetrics): string[] {
     m.daysSinceLastVisit === null ? '' : String(m.daysSinceLastVisit),
     m.avgDaysBetweenVisits === null ? '' : String(Math.round(m.avgDaysBetweenVisits)),
     String(m.noShowCount),
+    // ── Manuelle CRM-Felder (leer, wenn kein Profil/Wert) ─────────────────────
+    yesOrEmpty(crm?.vipManual),
+    yesOrEmpty(crm?.stammgastManual),
+    yesOrEmpty(crm?.companyCustomer),
+    yesOrEmpty(crm?.newsletterOptIn),
+    yesOrEmpty(crm?.blockedGuest),
+    formatGermanDate(crm?.birthday ?? null),
+    crm?.company ?? '',
+    crm?.allergies ?? '',
   ];
 }
 

@@ -1,0 +1,123 @@
+CRM / Reservationen Erweiterung: Status-Spalte und Status-Filter
+
+Ziel:
+Reservationen sollen in Listen und Auswertungen nach Status sichtbar und filterbar sein.
+
+Statuswerte:
+
+* Provisorisch
+* Bestätigt
+* Storniert
+* Abgelehnt
+* No-show
+* Nicht beantwortet
+* Abgelaufen
+
+Aufgaben:
+
+1. Status-Spalte ergänzen
+
+In folgenden Tabellen eine Status-Spalte anzeigen, falls noch nicht vorhanden:
+
+* Gäste Detailseite → Reservierungshistorie
+* Reservationen Import Verlauf / Detailansicht, falls dort Reservationen angezeigt werden
+* CRM Auswertung, falls dort Reservationen oder Kampagnen mit Reservationsbezug angezeigt werden
+
+Status als Badge anzeigen:
+
+* Bestätigt
+* Provisorisch
+* Storniert
+* Abgelehnt
+* No-show
+* Nicht beantwortet
+* Abgelaufen
+
+2. Status-Filter einbauen
+
+Filteroptionen:
+
+* Alle
+* Bestätigte Besuche
+* Provisorisch
+* Storniert
+* Abgelehnt
+* No-show
+* Nicht beantwortet
+* Abgelaufen
+
+Wichtig:
+“Bestätigte Besuche” soll bestätigte und abgeschlossene Reservationen umfassen, also alle relevanten echten Besuche.
+
+3. Mehrfachauswahl ermöglichen
+
+Der Filter soll optional mehrere Status gleichzeitig erlauben, ähnlich wie im Screenshot.
+
+Beispiel:
+
+* Bestätigt + Provisorisch
+* Storniert + No-show
+* Alle aktiven
+* Alle ausgeschlossenen
+
+4. Statuslogik zentralisieren
+
+Bestehende Statuslogik aus reservation-dashboard.ts wiederverwenden.
+
+Keine doppelte Logik bauen.
+
+Mapping:
+
+* confirmed / completed / seated / arrived / active → Bestätigt / Besuch
+* pending / unknown / not_answered / offen → Offen / Nicht beantwortet
+* cancelled / canceled / storniert → Storniert
+* no_show / noshow → No-show
+* rejected / abgelehnt → Abgelehnt
+* expired / abgelaufen → Abgelaufen
+* provisional / provisorisch → Provisorisch
+
+5. Gäste Detailseite
+
+In der Reservierungshistorie:
+
+* Status-Spalte anzeigen
+* Status-Filter oberhalb der Tabelle
+* Standard: alle anzeigen
+* Optional Quick Filter:
+    * Nur Besuche
+    * Nur Storniert
+    * Nur No-show
+    * Nur Offen
+
+6. CRM Auswertung / Kampagnen
+
+Wo Reservationen oder Besucherlisten durch Status beeinflusst werden:
+
+* Status transparent anzeigen
+* Statusfilter ermöglichen, falls sinnvoll
+
+7. Tests
+
+Tests ergänzen für:
+
+* Status-Mapping
+* Status-Filter
+* Mehrfachauswahl
+* “Bestätigte Besuche” Logik
+* No-show / storniert / abgelehnt Ausschlusslogik
+
+8. Checks
+
+Vor Abschluss ausführen:
+
+* tsc
+* vitest
+* build
+* architect review
+
+Wichtig:
+Keine Importlogik ändern.
+Keine Migration.
+Keine guest_statistics Änderung.
+Keine Gastronovi Änderung.
+Nur Anzeige, Filter und zentrale Statuslogik verbessern.

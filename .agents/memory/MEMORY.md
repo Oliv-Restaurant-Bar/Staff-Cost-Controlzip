@@ -14,3 +14,4 @@
 - [gn_imports data integrity](gn-import-data-integrity.md) — cost-center overlap filter only when non-empty; verify replace via .select rows-affected; batch keyed by stable id not fileName; never auto-split multi-day.
 - [Gastronovi parser diagnostics](gn-parser-diagnostics.md) — every GN import parser must return a debug object + failureReason on all paths; surface real CSV structure on failure, never blind-adapt to a guessed format.
 - [gn_* RLS live-DB state](gn-rls-live-state.md) — live DB had RLS on + zero policies (default-deny) despite DISABLE-RLS in setup; verify RLS empirically (anon=RLS error vs service_role=permission-denied). Mgmt API PAT 401 → DDL is manual.
+- [vite build OOM (silent kill)](vite-build-oom.md) — `npm run build` exits -1 with NO output when OOM-killed; rerun with `NODE_OPTIONS=--max-old-space-size=4096 npx vite build`.

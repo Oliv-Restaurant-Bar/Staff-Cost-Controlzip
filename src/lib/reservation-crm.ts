@@ -25,6 +25,7 @@
  */
 
 import type { ReservationStatusNormalized } from './reservation-import-parser';
+import type { GuestCrmProfile } from './guest-crm-profile';
 
 // ── Segmente ─────────────────────────────────────────────────────────────────
 
@@ -214,6 +215,14 @@ export interface GuestListMetrics {
   /** Anzahl No-Shows des Gastes (für No-Show-Risiko-Filter). */
   noShowCount: number;
   segment: GuestSegment;
+  /**
+   * Manuell gepflegtes CRM-Profil (guest_crm_profiles) — rein additive, von der
+   * automatischen Segmentierung/Score-Berechnung STRIKT getrennte Information.
+   * Optional: fehlt es (noch kein Profil / nicht geladen), gelten alle manuellen
+   * Merkmale als „nicht gesetzt".  Wird NIE in classifySegment/computeCrmScore
+   * zurückgeführt.
+   */
+  crm?: GuestCrmProfile | null;
 }
 
 /**
@@ -250,6 +259,7 @@ export function guestListMetrics(
   visitAgg: CompletedVisitAgg | undefined,
   today: string,
   noShowCount = 0,
+  crm: GuestCrmProfile | null = null,
 ): GuestListMetrics {
   const visits = visitAgg?.visits ?? 0;
   const firstVisit = visitAgg?.firstVisit ?? null;
@@ -270,6 +280,7 @@ export function guestListMetrics(
     avgPartySize: visitAgg?.avgPartySize ?? null,
     noShowCount: noShowCount < 0 ? 0 : noShowCount,
     segment: classifySegment(visits, daysSinceLastVisit),
+    crm: crm ?? null,
   };
 }
 

@@ -28,6 +28,9 @@ export type PartySizeFilter = 'alle' | '1' | '2' | '3-4' | '5+';
 export type NoShowFilter = 'alle' | 'risk' | 'norisk';
 export type ReturnRiskFilter = 'alle' | 'risk';
 
+/** Ja/Nein-Filter für boolesche, manuell gepflegte CRM-Merkmale. */
+export type BoolFilter = 'alle' | 'ja' | 'nein';
+
 export interface GuestFilterState {
   segment: SegmentFilter;
   visitCount: VisitCountFilter;
@@ -35,6 +38,15 @@ export interface GuestFilterState {
   partySize: PartySizeFilter;
   noShow: NoShowFilter;
   returnRisk: ReturnRiskFilter;
+  // ── Manuelle CRM-Merkmale (guest_crm_profiles) — rein additiv ──────────────
+  vipManual: BoolFilter;
+  stammgastManual: BoolFilter;
+  companyCustomer: BoolFilter;
+  newsletter: BoolFilter;
+  blocked: BoolFilter;
+  hasAllergies: BoolFilter;
+  hasBirthday: BoolFilter;
+  hasCrmNote: BoolFilter;
 }
 
 export const DEFAULT_GUEST_FILTERS: GuestFilterState = {
@@ -44,6 +56,14 @@ export const DEFAULT_GUEST_FILTERS: GuestFilterState = {
   partySize: 'alle',
   noShow: 'alle',
   returnRisk: 'alle',
+  vipManual: 'alle',
+  stammgastManual: 'alle',
+  companyCustomer: 'alle',
+  newsletter: 'alle',
+  blocked: 'alle',
+  hasAllergies: 'alle',
+  hasBirthday: 'alle',
+  hasCrmNote: 'alle',
 };
 
 /** True, sobald mindestens ein Filter vom Default ('alle') abweicht. */
@@ -54,7 +74,15 @@ export function hasActiveFilters(f: GuestFilterState): boolean {
     f.lastVisit !== 'alle' ||
     f.partySize !== 'alle' ||
     f.noShow !== 'alle' ||
-    f.returnRisk !== 'alle'
+    f.returnRisk !== 'alle' ||
+    f.vipManual !== 'alle' ||
+    f.stammgastManual !== 'alle' ||
+    f.companyCustomer !== 'alle' ||
+    f.newsletter !== 'alle' ||
+    f.blocked !== 'alle' ||
+    f.hasAllergies !== 'alle' ||
+    f.hasBirthday !== 'alle' ||
+    f.hasCrmNote !== 'alle'
   );
 }
 
@@ -104,6 +132,13 @@ export const NO_SHOW_FILTER_OPTIONS: FilterOption<NoShowFilter>[] = [
 export const RETURN_RISK_FILTER_OPTIONS: FilterOption<ReturnRiskFilter>[] = [
   { value: 'alle', label: 'Rückkehrpotenzial: alle' },
   { value: 'risk', label: 'Nur gefährdete Stammgäste' },
+];
+
+/** Gemeinsame Alle/Ja/Nein-Optionen für alle booleschen CRM-Merkmal-Filter. */
+export const BOOL_FILTER_OPTIONS: FilterOption<BoolFilter>[] = [
+  { value: 'alle', label: 'Alle' },
+  { value: 'ja', label: 'Ja' },
+  { value: 'nein', label: 'Nein' },
 ];
 
 // ── Einzel-Prädikate (rein, defensiv bei null) ────────────────────────────────
@@ -166,6 +201,29 @@ function matchReturnRisk(m: GuestListMetrics, f: ReturnRiskFilter): boolean {
   return isAtReturnRisk(m);
 }
 
+// ── Manuelle CRM-Merkmale (defensiv: fehlendes Profil → Merkmal „nicht gesetzt") ─
+
+/** Vergleicht einen booleschen Ist-Wert gegen den Alle/Ja/Nein-Filter. */
+function matchBool(actual: boolean, f: BoolFilter): boolean {
+  if (f === 'alle') return true;
+  return f === 'ja' ? actual : !actual;
+}
+
+/** Liefert die aus dem CRM-Profil abgeleiteten booleschen Merkmale eines Gastes. */
+function crmFlags(m: GuestListMetrics) {
+  const crm = m.crm ?? null;
+  return {
+    vipManual: crm?.vipManual === true,
+    stammgastManual: crm?.stammgastManual === true,
+    companyCustomer: crm?.companyCustomer === true,
+    newsletter: crm?.newsletterOptIn === true,
+    blocked: crm?.blockedGuest === true,
+    hasAllergies: !!(crm?.allergies && crm.allergies.trim() !== ''),
+    hasBirthday: !!crm?.birthday,
+    hasCrmNote: !!(crm?.crmNotes && crm.crmNotes.trim() !== ''),
+  };
+}
+
 /**
  * Volltextsuche über Name, E-Mail und Telefon (case-insensitive).  Leere Anfrage
  * lässt alle Gäste durch.  Identisch zur bisherigen Inline-Suche der Seite.
@@ -182,14 +240,28 @@ export function matchSearch(m: GuestListMetrics, query: string): boolean {
 
 /** Wendet alle Filter (UND-verknüpft) auf die Gästeliste an. */
 export function applyGuestFilters(metrics: GuestListMetrics[], f: GuestFilterState): GuestListMetrics[] {
-  return metrics.filter(m =>
-    matchSegment(m, f.segment) &&
-    matchVisitCount(m, f.visitCount) &&
-    matchLastVisit(m, f.lastVisit) &&
-    matchPartySize(m, f.partySize) &&
-    matchNoShow(m, f.noShow) &&
-    matchReturnRisk(m, f.returnRisk),
-  );
+  return metrics.filter(m => {
+    if (!(
+      matchSegment(m, f.segment) &&
+      matchVisitCount(m, f.visitCount) &&
+      matchLastVisit(m, f.lastVisit) &&
+      matchPartySize(m, f.partySize) &&
+      matchNoShow(m, f.noShow) &&
+      matchReturnRisk(m, f.returnRisk)
+    )) return false;
+
+    const c = crmFlags(m);
+    return (
+      matchBool(c.vipManual, f.vipManual) &&
+      matchBool(c.stammgastManual, f.stammgastManual) &&
+      matchBool(c.companyCustomer, f.companyCustomer) &&
+      matchBool(c.newsletter, f.newsletter) &&
+      matchBool(c.blocked, f.blocked) &&
+      matchBool(c.hasAllergies, f.hasAllergies) &&
+      matchBool(c.hasBirthday, f.hasBirthday) &&
+      matchBool(c.hasCrmNote, f.hasCrmNote)
+    );
+  });
 }
 
 /** Kombiniert Suche und Filter (beides UND-verknüpft). */
@@ -205,13 +277,14 @@ export function searchAndFilterGuests(
 
 export type GuestSortKey =
   | 'name' | 'segment' | 'visits' | 'firstVisit'
-  | 'lastVisit' | 'interval' | 'sinceLast' | 'partySize' | 'returnRisk';
+  | 'lastVisit' | 'interval' | 'sinceLast' | 'partySize' | 'returnRisk'
+  | 'birthday' | 'company';
 export type SortDir = 'asc' | 'desc';
 
 /** Stabiler Vergleich zweier Gäste nach Schlüssel (immer aufsteigend). */
 export function compareGuests(a: GuestListMetrics, b: GuestListMetrics, key: GuestSortKey): number {
   const nullableNum = (x: number | null) => (x === null ? Number.NEGATIVE_INFINITY : x);
-  const nullableStr = (x: string | null) => x ?? '';
+  const nullableStr = (x: string | null | undefined) => x ?? '';
   switch (key) {
     case 'name':       return a.displayName.localeCompare(b.displayName, 'de');
     case 'segment':    return SEGMENT_ORDER.indexOf(a.segment) - SEGMENT_ORDER.indexOf(b.segment);
@@ -222,6 +295,10 @@ export function compareGuests(a: GuestListMetrics, b: GuestListMetrics, key: Gue
     case 'sinceLast':  return nullableNum(a.daysSinceLastVisit) - nullableNum(b.daysSinceLastVisit);
     case 'partySize':  return nullableNum(a.avgPartySize) - nullableNum(b.avgPartySize);
     case 'returnRisk': return nullableNum(returnRiskRatio(a)) - nullableNum(returnRiskRatio(b));
+    // Manuelle CRM-Felder: fehlend (null/kein Profil) → leerer String → in
+    // aufsteigender Sortierung zuerst, in absteigender zuletzt.
+    case 'birthday':   return nullableStr(a.crm?.birthday).localeCompare(nullableStr(b.crm?.birthday));
+    case 'company':    return nullableStr(a.crm?.company).localeCompare(nullableStr(b.crm?.company), 'de');
     default:           return 0;
   }
 }

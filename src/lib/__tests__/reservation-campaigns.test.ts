@@ -17,8 +17,14 @@ import {
   type CampaignId,
 } from '../reservation-campaigns';
 import { type GuestListMetrics, type GuestSegment } from '../reservation-crm';
+import { EMPTY_CRM_PROFILE, type GuestCrmProfile } from '../guest-crm-profile';
 
 const TODAY = '2026-06-22';
+
+/** Synthetisches CRM-Profil mit gezielten Overrides. */
+function crm(over: Partial<GuestCrmProfile> = {}): GuestCrmProfile {
+  return { ...EMPTY_CRM_PROFILE, ...over };
+}
 
 function metric(p: Partial<GuestListMetrics>): GuestListMetrics {
   return {
@@ -48,8 +54,8 @@ function matchingIds(m: GuestListMetrics): CampaignId[] {
 // ── Vollständigkeit & Datei-Slugs ────────────────────────────────────────────
 
 describe('Kampagnen-Katalog', () => {
-  it('enthält genau die 11 vordefinierten Kampagnen', () => {
-    expect(CAMPAIGNS).toHaveLength(11);
+  it('enthält genau die 18 vordefinierten Kampagnen', () => {
+    expect(CAMPAIGNS).toHaveLength(18);
     expect(CAMPAIGNS.map(c => c.id)).toEqual([
       'ueberfaellige',
       'gefaehrdete-stammgaeste',
@@ -62,6 +68,13 @@ describe('Kampagnen-Katalog', () => {
       'vip',
       'neukunden-30',
       'ohne-besuch',
+      'manuelle-vip',
+      'manuelle-stammgaeste',
+      'firmenkunden',
+      'newsletter',
+      'mit-allergien',
+      'mit-geburtstag',
+      'sperrliste',
     ]);
   });
 
@@ -154,6 +167,34 @@ describe('Kampagnen-Prädikate', () => {
     expect(matchingIds(fresh)).toContain('neukunden-30');
     expect(matchingIds(old)).not.toContain('neukunden-30');
   });
+
+  it('Manuelle CRM-Kampagnen greifen NUR bei gesetztem Flag', () => {
+    expect(matchingIds(metric({ crm: crm({ vipManual: true }) }))).toContain('manuelle-vip');
+    expect(matchingIds(metric({ crm: crm({ stammgastManual: true }) }))).toContain('manuelle-stammgaeste');
+    expect(matchingIds(metric({ crm: crm({ companyCustomer: true }) }))).toContain('firmenkunden');
+    expect(matchingIds(metric({ crm: crm({ newsletterOptIn: true }) }))).toContain('newsletter');
+    expect(matchingIds(metric({ crm: crm({ blockedGuest: true }) }))).toContain('sperrliste');
+    expect(matchingIds(metric({ crm: crm({ allergies: 'Nüsse' }) }))).toContain('mit-allergien');
+    expect(matchingIds(metric({ crm: crm({ birthday: '1990-05-01' }) }))).toContain('mit-geburtstag');
+  });
+
+  it('Manuelle CRM-Kampagnen greifen NICHT ohne Profil oder ohne Flag', () => {
+    const noProfile = metric({ visits: 5, segment: 'wiederkehrend' });
+    const emptyProfile = metric({ visits: 5, segment: 'wiederkehrend', crm: crm() });
+    for (const id of ['manuelle-vip', 'manuelle-stammgaeste', 'firmenkunden', 'newsletter', 'sperrliste', 'mit-allergien', 'mit-geburtstag'] as CampaignId[]) {
+      expect(matchingIds(noProfile)).not.toContain(id);
+      expect(matchingIds(emptyProfile)).not.toContain(id);
+    }
+    // leere/whitespace Allergien zählen nicht
+    expect(matchingIds(metric({ crm: crm({ allergies: '   ' }) }))).not.toContain('mit-allergien');
+  });
+
+  it('Manuelle CRM-Merkmale sind unabhängig vom berechneten Segment', () => {
+    // Gast ohne Besuch, aber manuell als VIP markiert → trifft manuelle-vip, nicht vip
+    const m = metric({ visits: 0, segment: 'ohne_besuch', crm: crm({ vipManual: true }) });
+    expect(matchingIds(m)).toContain('manuelle-vip');
+    expect(matchingIds(m)).not.toContain('vip');
+  });
 });
 
 // ── Filterung & Sortierung ───────────────────────────────────────────────────
@@ -214,7 +255,8 @@ describe('buildCampaignCsv', () => {
       segment: 'stammgast',
     });
     const [, line] = buildCampaignCsv([row]).split('\r\n');
-    expect(line).toBe('Test Gast;test@example.test;+41 79 000 00 00;Stammgast;12;05.03.2026;109;31;2');
+    // Ohne CRM-Profil bleiben die 8 angehängten CRM-Spalten leer (8 Semikolons).
+    expect(line).toBe('Test Gast;test@example.test;+41 79 000 00 00;Stammgast;12;05.03.2026;109;31;2;;;;;;;;');
   });
 
   it('lässt fehlende Werte leer (kein "null", keine Einheiten)', () => {
@@ -228,6 +270,45 @@ describe('buildCampaignCsv', () => {
     expect(values[7]).toBe('');
     expect(values[4]).toBe('0'); // Besuche
     expect(values[8]).toBe('0'); // No Shows
+    // Ohne CRM-Profil sind alle 8 CRM-Spalten (Index 9–16) leer.
+    expect(values).toHaveLength(CSV_HEADERS.length);
+    expect(values.slice(9)).toEqual(['', '', '', '', '', '', '', '']);
+  });
+
+  it('schreibt manuelle CRM-Felder als „Ja"/Text in die angehängten Spalten', () => {
+    const row = metric({
+      displayName: 'CRM Gast',
+      visits: 3,
+      segment: 'wiederkehrend',
+      crm: crm({
+        vipManual: true,
+        stammgastManual: false,
+        companyCustomer: true,
+        newsletterOptIn: true,
+        blockedGuest: false,
+        birthday: '1985-07-09',
+        company: 'Beispiel AG',
+        allergies: 'Laktose',
+      }),
+    });
+    const values = campaignRowToCsvValues(row);
+    expect(values.slice(9)).toEqual([
+      'Ja',          // VIP (manuell)
+      '',            // Stammgast (manuell) = false
+      'Ja',          // Firmenkunde
+      'Ja',          // Newsletter
+      '',            // Sperrliste = false
+      '09.07.1985',  // Geburtstag (deutsch)
+      'Beispiel AG', // Firma
+      'Laktose',     // Allergien
+    ]);
+  });
+
+  it('Kopfzeile enthält die 8 CRM-Spalten in fester Reihenfolge', () => {
+    expect(CSV_HEADERS.slice(9)).toEqual([
+      'VIP (manuell)', 'Stammgast (manuell)', 'Firmenkunde', 'Newsletter',
+      'Sperrliste', 'Geburtstag', 'Firma', 'Allergien',
+    ]);
   });
 
   it('quotet Zellen mit Semikolon oder Anführungszeichen korrekt', () => {

@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import type { GuestListMetrics, GuestSegment } from '../reservation-crm';
 import { NO_SHOW_RISK_MIN } from '../reservation-dashboard';
+import { EMPTY_CRM_PROFILE, type GuestCrmProfile } from '../guest-crm-profile';
 import {
   DEFAULT_GUEST_FILTERS,
   hasActiveFilters,
@@ -16,6 +17,11 @@ import {
   sortGuests,
   type GuestFilterState,
 } from '../guest-list-filters';
+
+/** Baut ein manuelles CRM-Profil mit gezielten Overrides (synthetisch). */
+function crm(over: Partial<GuestCrmProfile> = {}): GuestCrmProfile {
+  return { ...EMPTY_CRM_PROFILE, ...over };
+}
 
 // ── Synthetische Metrik-Fabrik ────────────────────────────────────────────────
 
@@ -60,6 +66,16 @@ describe('hasActiveFilters', () => {
     expect(hasActiveFilters(filters({ partySize: '5+' }))).toBe(true);
     expect(hasActiveFilters(filters({ noShow: 'risk' }))).toBe(true);
     expect(hasActiveFilters(filters({ returnRisk: 'risk' }))).toBe(true);
+  });
+  it('erkennt jeden einzelnen aktiven CRM-Bool-Filter', () => {
+    expect(hasActiveFilters(filters({ vipManual: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ stammgastManual: 'nein' }))).toBe(true);
+    expect(hasActiveFilters(filters({ companyCustomer: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ newsletter: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ blocked: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ hasAllergies: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ hasBirthday: 'ja' }))).toBe(true);
+    expect(hasActiveFilters(filters({ hasCrmNote: 'ja' }))).toBe(true);
   });
 });
 
@@ -285,5 +301,88 @@ describe('sortGuests', () => {
       metric({ id: 'none', avgPartySize: null }),
     ];
     expect(ids(sortGuests(withNull, 'partySize', 'asc'))).toEqual(['none', 'has']);
+  });
+});
+
+// ── Manuelle CRM-Bool-Filter ──────────────────────────────────────────────────
+
+describe('CRM-Bool-Filter (alle/ja/nein)', () => {
+  // „yes" hat das Merkmal, „no" hat ein Profil ohne Merkmal, „none" hat gar kein Profil.
+  const build = (id: string, c: GuestCrmProfile | null) => metric({ id, crm: c });
+
+  const cases: Array<[string, keyof GuestFilterState, GuestCrmProfile]> = [
+    ['vipManual', 'vipManual', crm({ vipManual: true })],
+    ['stammgastManual', 'stammgastManual', crm({ stammgastManual: true })],
+    ['companyCustomer', 'companyCustomer', crm({ companyCustomer: true })],
+    ['newsletter', 'newsletter', crm({ newsletterOptIn: true })],
+    ['blocked', 'blocked', crm({ blockedGuest: true })],
+    ['hasAllergies', 'hasAllergies', crm({ allergies: 'Nüsse' })],
+    ['hasBirthday', 'hasBirthday', crm({ birthday: '1990-05-01' })],
+    ['hasCrmNote', 'hasCrmNote', crm({ crmNotes: 'Stammtisch' })],
+  ];
+
+  for (const [name, key, withFlag] of cases) {
+    it(`${name}: ja/nein/alle (Profil fehlt ⇒ Merkmal nicht gesetzt)`, () => {
+      const data = [
+        build('yes', withFlag),
+        build('no', crm()),
+        build('none', null),
+      ];
+      expect(ids(applyGuestFilters(data, filters({ [key]: 'ja' } as Partial<GuestFilterState>)))).toEqual(['yes']);
+      expect(ids(applyGuestFilters(data, filters({ [key]: 'nein' } as Partial<GuestFilterState>)))).toEqual(['no', 'none']);
+      expect(applyGuestFilters(data, filters({ [key]: 'alle' } as Partial<GuestFilterState>))).toHaveLength(3);
+    });
+  }
+
+  it('leere/whitespace Allergien & Notizen zählen als „nicht gesetzt"', () => {
+    const data = [
+      build('blankAllerg', crm({ allergies: '   ' })),
+      build('blankNote', crm({ crmNotes: '' })),
+    ];
+    expect(applyGuestFilters(data, filters({ hasAllergies: 'ja' }))).toHaveLength(0);
+    expect(applyGuestFilters(data, filters({ hasCrmNote: 'ja' }))).toHaveLength(0);
+  });
+
+  it('verknüpft CRM-Bool-Filter mit Standardfiltern UND', () => {
+    const data = [
+      build('a', crm({ vipManual: true })),
+      build('b', crm({ vipManual: true })),
+      build('c', crm({ vipManual: false })),
+    ];
+    data[0].segment = 'vip'; data[0].visits = 20;
+    data[1].segment = 'neukunde'; data[1].visits = 1;
+    data[2].segment = 'vip'; data[2].visits = 20;
+    expect(ids(applyGuestFilters(data, filters({ vipManual: 'ja', segment: 'vip' })))).toEqual(['a']);
+  });
+});
+
+// ── Sortierung nach manuellen CRM-Feldern ─────────────────────────────────────
+
+describe('sortGuests — birthday & company', () => {
+  it('Geburtstag aufsteigend: fehlend zuerst, dann chronologisch', () => {
+    const data = [
+      metric({ id: 'late', crm: crm({ birthday: '1995-12-31' }) }),
+      metric({ id: 'early', crm: crm({ birthday: '1980-01-01' }) }),
+      metric({ id: 'none', crm: null }),
+      metric({ id: 'noField', crm: crm({ birthday: null }) }),
+    ];
+    expect(ids(sortGuests(data, 'birthday', 'asc'))).toEqual(['none', 'noField', 'early', 'late']);
+  });
+  it('Geburtstag absteigend: jüngstes Datum zuerst, fehlend zuletzt', () => {
+    const data = [
+      metric({ id: 'late', crm: crm({ birthday: '1995-12-31' }) }),
+      metric({ id: 'early', crm: crm({ birthday: '1980-01-01' }) }),
+      metric({ id: 'none', crm: null }),
+    ];
+    expect(ids(sortGuests(data, 'birthday', 'desc'))).toEqual(['late', 'early', 'none']);
+  });
+  it('Firma alphabetisch (de), fehlend zuerst aufsteigend', () => {
+    const data = [
+      metric({ id: 'zeta', crm: crm({ company: 'Zeta AG' }) }),
+      metric({ id: 'alpha', crm: crm({ company: 'Alpha GmbH' }) }),
+      metric({ id: 'none', crm: null }),
+    ];
+    expect(ids(sortGuests(data, 'company', 'asc'))).toEqual(['none', 'alpha', 'zeta']);
+    expect(ids(sortGuests(data, 'company', 'desc'))).toEqual(['zeta', 'alpha', 'none']);
   });
 });

@@ -1,0 +1,103 @@
+CRM Phase 1.2
+
+Ziel:
+Manuell gepflegte CRM Daten aus guest_crm_profiles sollen in der Gäste Liste, den Filtern und den Kampagnen nutzbar werden.
+
+Scope:
+
+* Keine Datenbankänderung
+* Keine Migration
+* Keine Importlogik ändern
+* Keine guest_statistics Änderung
+* Keine Gastronovi Änderung
+* Bestehende Routen beibehalten
+
+Aufgaben:
+
+1. Gäste Liste /gaeste erweitern
+
+CRM Daten aus guest_crm_profiles zusätzlich laden und mit guest_profiles verbinden.
+
+In der Gäste Liste anzeigen:
+
+* Manueller VIP Badge, wenn vip_manual = true
+* Manueller Stammgast Badge, wenn stammgast_manual = true
+* Firmenkunde Badge, wenn company_customer = true
+* Sperrliste Badge, wenn blocked_guest = true
+* Newsletter Badge, wenn newsletter_opt_in = true
+
+2. Filter erweitern
+
+Neue Filter:
+
+* Manueller VIP: alle / ja / nein
+* Manueller Stammgast: alle / ja / nein
+* Firmenkunde: alle / ja / nein
+* Newsletter erlaubt: alle / ja / nein
+* Sperrliste: alle / ja / nein
+* Hat Allergien: alle / ja / nein
+* Hat Geburtstag: alle / ja / nein
+* Hat CRM Notiz: alle / ja / nein
+
+Bestehende Filter und Suche müssen weiterhin funktionieren.
+
+3. Sortierung erweitern
+
+Neue Sortieroption:
+
+* Geburtstag aufsteigend
+* Geburtstag absteigend
+* Firma A-Z
+* Firma Z-A
+
+4. Kampagnen erweitern
+
+Kampagnen Tab in CRM Auswertung um folgende Listen ergänzen:
+
+* Manuelle VIP Gäste
+* Manuelle Stammgäste
+* Firmenkunden
+* Newsletter erlaubt
+* Gäste mit Allergien
+* Gäste mit Geburtstag
+* Gäste auf Sperrliste
+
+CSV Export für diese neuen Listen ebenfalls unterstützen.
+
+5. Gäste Detailseite
+
+Keine grosse Änderung nötig, aber sicherstellen:
+
+* Manuelle Badges bleiben sichtbar
+* gespeicherte CRM Daten werden nach Rückkehr zur Liste korrekt angezeigt
+
+6. Technisch
+
+* CRUD Layer für guest_crm_profiles wiederverwenden
+* Pure Filter Helper erweitern
+* Pure Kampagnen Helper erweitern
+* Defensive Logik bei fehlendem CRM Profil
+* Keine PII in Tests oder Logs
+* TypeScript sauber
+
+7. Tests
+
+Neue Tests:
+
+* Filter für manuelle VIPs
+* Filter für Firmenkunden
+* Filter für Sperrliste
+* Filter für Allergien
+* Sortierung Geburtstag
+* Sortierung Firma
+* Kampagnenlisten für manuelle CRM Daten
+* CSV Export der neuen Listen
+
+8. Checks
+
+Vor Abschluss ausführen:
+
+* tsc
+* vitest
+* build
+* architect review
