@@ -198,3 +198,29 @@ export function crmProfileEquals(a: GuestCrmProfile, b: GuestCrmProfile): boolea
 export function isCrmProfileDirty(current: GuestCrmProfile, saved: GuestCrmProfile): boolean {
   return !crmProfileEquals(current, saved);
 }
+
+// ── Manuelle Badges (VIP / Stammgast) ────────────────────────────────────────
+
+/** Art eines manuell gesetzten CRM-Badges. */
+export type ManualBadgeKind = 'vip' | 'stammgast';
+
+/** Anzuzeigendes manuelles Badge (rein darstellungsbezogen). */
+export interface ManualBadge {
+  kind: ManualBadgeKind;
+  label: string;
+}
+
+/**
+ * Ermittelt die MANUELL gesetzten Badges (VIP / Stammgast) eines Profils.
+ *
+ * Diese hängen AUSSCHLIESSLICH an den manuellen Flags `vipManual` /
+ * `stammgastManual` und sind völlig unabhängig vom automatisch berechneten
+ * Segment.  Sie werden NIE in die Segment-/Score-/Kampagnenlogik zurückgeführt.
+ */
+export function manualCrmBadges(profile: GuestCrmProfile | null | undefined): ManualBadge[] {
+  if (!profile) return [];
+  const badges: ManualBadge[] = [];
+  if (profile.vipManual) badges.push({ kind: 'vip', label: 'VIP (manuell)' });
+  if (profile.stammgastManual) badges.push({ kind: 'stammgast', label: 'Stammgast (manuell)' });
+  return badges;
+}

@@ -49,7 +49,8 @@ import {
 } from '@/lib/reservation-guest-profile';
 import { fetchGuestCrmProfile, upsertGuestCrmProfile } from '@/lib/guest-crm-profile-db';
 import {
-  EMPTY_CRM_PROFILE, isCrmProfileDirty, type GuestCrmProfile,
+  EMPTY_CRM_PROFILE, isCrmProfileDirty, manualCrmBadges,
+  type GuestCrmProfile, type ManualBadge, type ManualBadgeKind,
 } from '@/lib/guest-crm-profile';
 import { SegmentBadge } from '@/components/crm/SegmentBadge';
 import type { ReservationStatusNormalized } from '@/lib/reservation-import-parser';
@@ -140,6 +141,48 @@ function Tile({ icon: Icon, label, value, accent }: {
         {label}
       </div>
       <p className={cn('mt-1 text-xl font-bold tabular-nums', accent)}>{value}</p>
+    </div>
+  );
+}
+
+// ── Manuelle CRM-Badges (rein darstellungsbezogen) ───────────────────────────
+const MANUAL_BADGE_CLASS: Record<ManualBadgeKind, string> = {
+  vip:       'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
+  stammgast: 'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
+};
+const MANUAL_BADGE_ICON: Record<ManualBadgeKind, React.FC<{ className?: string }>> = {
+  vip: Crown, stammgast: Star,
+};
+
+/** Badge für ein MANUELL gesetztes Kennzeichen (VIP/Stammgast) — unabhängig vom Segment. */
+function ManualCrmBadge({ badge }: { badge: ManualBadge }) {
+  const Icon = MANUAL_BADGE_ICON[badge.kind];
+  return (
+    <span className={cn(
+      'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium',
+      MANUAL_BADGE_CLASS[badge.kind],
+    )}>
+      <Icon className="h-3 w-3" />
+      {badge.label}
+    </span>
+  );
+}
+
+/** Read-only-Feld für die CRM-Kurzübersicht (Text, mehrzeilig erlaubt). */
+function CrmSummaryField({ icon: Icon, label, value }: {
+  icon: React.FC<{ className?: string }>;
+  label: string;
+  value: string | null;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+        {label}
+      </div>
+      <p className="mt-1 whitespace-pre-wrap break-words text-sm">
+        {value && value.trim() !== '' ? value : '—'}
+      </p>
     </div>
   );
 }
@@ -278,6 +321,11 @@ export default function GaesteDetailPage() {
     if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
     setLoading(true);
     setCrmLoadError(null);
+    // Beim Gastwechsel (gleiche Route, neue guestId) zuerst den alten CRM-Stand
+    // verwerfen — sonst zeigt der Header/die Übersicht kurzzeitig (oder bei einem
+    // CRM-Lesefehler dauerhaft) die manuellen Daten des VORHERIGEN Gastes an.
+    setCrmSaved(EMPTY_CRM_PROFILE);
+    setCrmForm(EMPTY_CRM_PROFILE);
     const [p, recs] = await Promise.all([
       fetchGuestById(tenantId, guestId),
       fetchGuestReservations(tenantId, guestId),
@@ -295,6 +343,9 @@ export default function GaesteDetailPage() {
       setCrmSaved(crmProfile);
       setCrmForm(crmProfile);
     } catch (e) {
+      // Lesefehler: keine stillen Defaults UND keine Altdaten anzeigen.
+      setCrmSaved(EMPTY_CRM_PROFILE);
+      setCrmForm(EMPTY_CRM_PROFILE);
       setCrmLoadError(e instanceof Error ? e.message : 'CRM-Profil konnte nicht geladen werden.');
     }
     setLoading(false);
@@ -303,6 +354,8 @@ export default function GaesteDetailPage() {
   useEffect(() => { void load(); }, [load]);
 
   const crmDirty = useMemo(() => isCrmProfileDirty(crmForm, crmSaved), [crmForm, crmSaved]);
+  // Manuelle Badges aus dem GESPEICHERTEN Stand (nicht aus ungespeicherten Formularänderungen).
+  const manualBadges = useMemo(() => manualCrmBadges(crmSaved), [crmSaved]);
 
   const setCrmField = useCallback(
     <K extends keyof GuestCrmProfile>(key: K, value: GuestCrmProfile[K]) =>
@@ -395,7 +448,10 @@ export default function GaesteDetailPage() {
                 )}
               </div>
             </div>
-            <SegmentBadge segment={metrics.segment} />
+            <div className="flex flex-wrap items-center gap-1.5">
+              <SegmentBadge segment={metrics.segment} />
+              {manualBadges.map((b) => <ManualCrmBadge key={b.kind} badge={b} />)}
+            </div>
           </div>
 
           <Tabs defaultValue="overview">
@@ -411,6 +467,26 @@ export default function GaesteDetailPage() {
             </TabsList>
 
             <TabsContent value="overview" className="space-y-5">
+          {/* CRM-Profil (manuell gepflegt) — Kurzüberblick aus guest_crm_profiles */}
+          <Section icon={Pencil} title="CRM-Profil">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                {manualBadges.length > 0
+                  ? manualBadges.map((b) => <ManualCrmBadge key={b.kind} badge={b} />)
+                  : <span className="text-sm text-muted-foreground">Keine manuellen Kennzeichen gesetzt.</span>}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <CrmSummaryField
+                  icon={Cake} label="Geburtstag"
+                  value={crmSaved.birthday ? crmSaved.birthday.split('-').reverse().join('.') : null}
+                />
+                <CrmSummaryField icon={Building2} label="Firma" value={crmSaved.company} />
+                <CrmSummaryField icon={Wheat} label="Allergien" value={crmSaved.allergies} />
+              </div>
+              <CrmSummaryField icon={StickyNote} label="Notizen" value={crmSaved.crmNotes} />
+            </div>
+          </Section>
+
           {/* CRM-Score */}
           <Section icon={Gauge} title="CRM-Score">
             <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-center">
@@ -619,7 +695,7 @@ export default function GaesteDetailPage() {
                     disabled={!canEditCrm}
                   />
                   <FieldToggle
-                    icon={Lock} label="Gesperrt"
+                    icon={Lock} label="Sperrliste"
                     description="Gast für Reservationen sperren / besondere Vorsicht."
                     checked={crmForm.blockedGuest}
                     onChange={(v) => setCrmField('blockedGuest', v)}
@@ -658,7 +734,7 @@ export default function GaesteDetailPage() {
               <Section icon={MapPin} title="Präferenzen">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <FieldText
-                    icon={Hash} label="Lieblingstisch"
+                    icon={Hash} label="Lieblingsplatz"
                     value={crmForm.favoriteTable}
                     onChange={(v) => setCrmField('favoriteTable', v)}
                     disabled={!canEditCrm}
@@ -686,8 +762,8 @@ export default function GaesteDetailPage() {
                 </div>
               </Section>
 
-              {/* Allergien & Ernährung */}
-              <Section icon={Wheat} title="Allergien & Ernährung">
+              {/* Allergien & Unverträglichkeiten */}
+              <Section icon={Wheat} title="Allergien & Unverträglichkeiten">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <FieldArea
                     icon={Wheat} label="Allergien"
@@ -697,7 +773,7 @@ export default function GaesteDetailPage() {
                     placeholder="z. B. Nüsse, Laktose"
                   />
                   <FieldArea
-                    icon={Utensils} label="Ernährungshinweise"
+                    icon={Utensils} label="Unverträglichkeiten"
                     value={crmForm.dietaryNotes}
                     onChange={(v) => setCrmField('dietaryNotes', v)}
                     disabled={!canEditCrm}
@@ -727,12 +803,10 @@ export default function GaesteDetailPage() {
                       : <Save className="mr-2 h-4 w-4" />}
                     Speichern
                   </Button>
-                  {crmDirty && (
-                    <Button variant="outline" onClick={handleResetCrm} disabled={crmSaving}>
-                      <RotateCcw className="mr-2 h-4 w-4" />
-                      Zurücksetzen
-                    </Button>
-                  )}
+                  <Button variant="outline" onClick={handleResetCrm} disabled={crmSaving || !crmDirty}>
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Änderungen verwerfen
+                  </Button>
                   {crmDirty && (
                     <span className="text-xs text-muted-foreground">Es gibt ungespeicherte Änderungen.</span>
                   )}

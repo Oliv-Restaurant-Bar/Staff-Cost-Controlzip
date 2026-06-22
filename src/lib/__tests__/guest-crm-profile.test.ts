@@ -5,7 +5,7 @@
  * @vitest-environment node
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, expectTypeOf } from 'vitest';
 import {
   EMPTY_CRM_PROFILE,
   normalizeText,
@@ -15,8 +15,11 @@ import {
   crmProfileToRow,
   crmProfileEquals,
   isCrmProfileDirty,
+  manualCrmBadges,
   type GuestCrmProfile,
   type GuestCrmProfileRow,
+  type ManualBadge,
+  type ManualBadgeKind,
 } from '../guest-crm-profile';
 
 const GUEST_ID = '00000000-0000-0000-0000-000000000001';
@@ -186,5 +189,64 @@ describe('crmProfileEquals / isCrmProfileDirty', () => {
   });
   it('leeres Profil vs. befülltes Profil ist dirty', () => {
     expect(isCrmProfileDirty(EMPTY_CRM_PROFILE, sampleProfile())).toBe(true);
+  });
+});
+
+describe('manualCrmBadges (VIP-/Stammgast-Badge)', () => {
+  it('leeres/null/undefined Profil → keine Badges', () => {
+    expect(manualCrmBadges(EMPTY_CRM_PROFILE)).toEqual([]);
+    expect(manualCrmBadges(null)).toEqual([]);
+    expect(manualCrmBadges(undefined)).toEqual([]);
+  });
+  it('vipManual=true → VIP-Badge', () => {
+    const badges = manualCrmBadges({ ...EMPTY_CRM_PROFILE, vipManual: true });
+    expect(badges).toHaveLength(1);
+    expect(badges[0].kind).toBe('vip');
+    expect(badges[0].label).toMatch(/VIP/i);
+  });
+  it('stammgastManual=true → Stammgast-Badge', () => {
+    const badges = manualCrmBadges({ ...EMPTY_CRM_PROFILE, stammgastManual: true });
+    expect(badges).toHaveLength(1);
+    expect(badges[0].kind).toBe('stammgast');
+    expect(badges[0].label).toMatch(/Stammgast/i);
+  });
+  it('beide Flags → beide Badges in Reihenfolge [vip, stammgast]', () => {
+    const badges = manualCrmBadges({ ...EMPTY_CRM_PROFILE, vipManual: true, stammgastManual: true });
+    expect(badges.map(b => b.kind)).toEqual(['vip', 'stammgast']);
+  });
+  it('hängt NUR an den manuellen Flags — andere Felder erzeugen keine Badges', () => {
+    const badges = manualCrmBadges({
+      ...EMPTY_CRM_PROFILE,
+      companyCustomer: true, newsletterOptIn: true, blockedGuest: true,
+      company: 'Muster AG', allergies: 'Nuesse',
+    });
+    expect(badges).toEqual([]);
+  });
+});
+
+describe('Formular: Bearbeiten → Speichern → Verwerfen', () => {
+  it('Bearbeiten macht dirty, Verwerfen (zurück auf saved) macht clean', () => {
+    const saved = sampleProfile();
+    const edited: GuestCrmProfile = { ...saved, company: 'Andere AG', vipManual: !saved.vipManual };
+    expect(isCrmProfileDirty(edited, saved)).toBe(true);
+    const discarded: GuestCrmProfile = { ...saved }; // „Änderungen verwerfen" = Form auf saved
+    expect(isCrmProfileDirty(discarded, saved)).toBe(false);
+  });
+  it('erstes Speichern: leeres Formular ist gegen leeren saved-Stand nicht dirty', () => {
+    expect(isCrmProfileDirty(EMPTY_CRM_PROFILE, EMPTY_CRM_PROFILE)).toBe(false);
+  });
+});
+
+describe('Type Tests', () => {
+  it('manualCrmBadges liefert ManualBadge[]', () => {
+    expectTypeOf(manualCrmBadges(EMPTY_CRM_PROFILE)).toEqualTypeOf<ManualBadge[]>();
+  });
+  it('ManualBadgeKind ist auf vip|stammgast beschränkt', () => {
+    expectTypeOf<ManualBadgeKind>().toEqualTypeOf<'vip' | 'stammgast'>();
+  });
+  it('EMPTY_CRM_PROFILE erfüllt GuestCrmProfile, crmProfileToRow liefert guest_id:string', () => {
+    expectTypeOf(EMPTY_CRM_PROFILE).toMatchTypeOf<GuestCrmProfile>();
+    const row = crmProfileToRow(EMPTY_CRM_PROFILE, GUEST_ID);
+    expectTypeOf(row.guest_id).toBeString();
   });
 });
