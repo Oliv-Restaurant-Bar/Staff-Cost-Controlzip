@@ -28,8 +28,13 @@ export type PartySizeFilter = 'alle' | '1' | '2' | '3-4' | '5+';
 export type NoShowFilter = 'alle' | 'risk' | 'norisk';
 export type ReturnRiskFilter = 'alle' | 'risk';
 
-/** Ja/Nein-Filter für boolesche, manuell gepflegte CRM-Merkmale. */
-export type BoolFilter = 'alle' | 'ja' | 'nein';
+/**
+ * Manuell gepflegte CRM-Merkmale (guest_crm_profiles), gefiltert als kombinierbare
+ * Mehrfachauswahl. Leere Auswahl = keine Einschränkung; mehrere = UND-verknüpft.
+ */
+export type CrmMerkmal =
+  | 'vipManual' | 'stammgastManual' | 'companyCustomer' | 'newsletter'
+  | 'blocked' | 'hasAllergies' | 'hasBirthday' | 'hasCrmNote';
 
 export interface GuestFilterState {
   segment: SegmentFilter;
@@ -39,14 +44,8 @@ export interface GuestFilterState {
   noShow: NoShowFilter;
   returnRisk: ReturnRiskFilter;
   // ── Manuelle CRM-Merkmale (guest_crm_profiles) — rein additiv ──────────────
-  vipManual: BoolFilter;
-  stammgastManual: BoolFilter;
-  companyCustomer: BoolFilter;
-  newsletter: BoolFilter;
-  blocked: BoolFilter;
-  hasAllergies: BoolFilter;
-  hasBirthday: BoolFilter;
-  hasCrmNote: BoolFilter;
+  // Mehrfachauswahl: leer = alle, mehrere = UND-verknüpft (Gast erfüllt alle).
+  crmMerkmale: CrmMerkmal[];
 }
 
 export const DEFAULT_GUEST_FILTERS: GuestFilterState = {
@@ -56,14 +55,7 @@ export const DEFAULT_GUEST_FILTERS: GuestFilterState = {
   partySize: 'alle',
   noShow: 'alle',
   returnRisk: 'alle',
-  vipManual: 'alle',
-  stammgastManual: 'alle',
-  companyCustomer: 'alle',
-  newsletter: 'alle',
-  blocked: 'alle',
-  hasAllergies: 'alle',
-  hasBirthday: 'alle',
-  hasCrmNote: 'alle',
+  crmMerkmale: [],
 };
 
 /** True, sobald mindestens ein Filter vom Default ('alle') abweicht. */
@@ -75,14 +67,7 @@ export function hasActiveFilters(f: GuestFilterState): boolean {
     f.partySize !== 'alle' ||
     f.noShow !== 'alle' ||
     f.returnRisk !== 'alle' ||
-    f.vipManual !== 'alle' ||
-    f.stammgastManual !== 'alle' ||
-    f.companyCustomer !== 'alle' ||
-    f.newsletter !== 'alle' ||
-    f.blocked !== 'alle' ||
-    f.hasAllergies !== 'alle' ||
-    f.hasBirthday !== 'alle' ||
-    f.hasCrmNote !== 'alle'
+    f.crmMerkmale.length > 0
   );
 }
 
@@ -134,11 +119,16 @@ export const RETURN_RISK_FILTER_OPTIONS: FilterOption<ReturnRiskFilter>[] = [
   { value: 'risk', label: 'Nur gefährdete Stammgäste' },
 ];
 
-/** Gemeinsame Alle/Ja/Nein-Optionen für alle booleschen CRM-Merkmal-Filter. */
-export const BOOL_FILTER_OPTIONS: FilterOption<BoolFilter>[] = [
-  { value: 'alle', label: 'Alle' },
-  { value: 'ja', label: 'Ja' },
-  { value: 'nein', label: 'Nein' },
+/** Auswahl-Optionen der manuellen CRM-Merkmale (Mehrfachauswahl, UND-verknüpft). */
+export const CRM_MERKMAL_OPTIONS: FilterOption<CrmMerkmal>[] = [
+  { value: 'vipManual',       label: 'VIP (manuell)' },
+  { value: 'stammgastManual', label: 'Stammgast (manuell)' },
+  { value: 'companyCustomer', label: 'Firmenkunde' },
+  { value: 'newsletter',      label: 'Newsletter' },
+  { value: 'blocked',         label: 'Sperrliste' },
+  { value: 'hasAllergies',    label: 'Allergien hinterlegt' },
+  { value: 'hasBirthday',     label: 'Geburtstag hinterlegt' },
+  { value: 'hasCrmNote',      label: 'CRM-Notiz vorhanden' },
 ];
 
 // ── Einzel-Prädikate (rein, defensiv bei null) ────────────────────────────────
@@ -203,14 +193,8 @@ function matchReturnRisk(m: GuestListMetrics, f: ReturnRiskFilter): boolean {
 
 // ── Manuelle CRM-Merkmale (defensiv: fehlendes Profil → Merkmal „nicht gesetzt") ─
 
-/** Vergleicht einen booleschen Ist-Wert gegen den Alle/Ja/Nein-Filter. */
-function matchBool(actual: boolean, f: BoolFilter): boolean {
-  if (f === 'alle') return true;
-  return f === 'ja' ? actual : !actual;
-}
-
 /** Liefert die aus dem CRM-Profil abgeleiteten booleschen Merkmale eines Gastes. */
-function crmFlags(m: GuestListMetrics) {
+function crmFlags(m: GuestListMetrics): Record<CrmMerkmal, boolean> {
   const crm = m.crm ?? null;
   return {
     vipManual: crm?.vipManual === true,
@@ -222,6 +206,17 @@ function crmFlags(m: GuestListMetrics) {
     hasBirthday: !!crm?.birthday,
     hasCrmNote: !!(crm?.crmNotes && crm.crmNotes.trim() !== ''),
   };
+}
+
+/**
+ * Prüft die Mehrfachauswahl der manuellen CRM-Merkmale: leere Auswahl lässt alle
+ * Gäste durch, mehrere Merkmale sind UND-verknüpft (Gast muss alle erfüllen).
+ * Fehlendes Profil ⇒ alle Merkmale „nicht gesetzt".
+ */
+export function matchCrmMerkmale(m: GuestListMetrics, selected: CrmMerkmal[]): boolean {
+  if (selected.length === 0) return true;
+  const flags = crmFlags(m);
+  return selected.every(k => flags[k]);
 }
 
 /**
@@ -240,28 +235,15 @@ export function matchSearch(m: GuestListMetrics, query: string): boolean {
 
 /** Wendet alle Filter (UND-verknüpft) auf die Gästeliste an. */
 export function applyGuestFilters(metrics: GuestListMetrics[], f: GuestFilterState): GuestListMetrics[] {
-  return metrics.filter(m => {
-    if (!(
-      matchSegment(m, f.segment) &&
-      matchVisitCount(m, f.visitCount) &&
-      matchLastVisit(m, f.lastVisit) &&
-      matchPartySize(m, f.partySize) &&
-      matchNoShow(m, f.noShow) &&
-      matchReturnRisk(m, f.returnRisk)
-    )) return false;
-
-    const c = crmFlags(m);
-    return (
-      matchBool(c.vipManual, f.vipManual) &&
-      matchBool(c.stammgastManual, f.stammgastManual) &&
-      matchBool(c.companyCustomer, f.companyCustomer) &&
-      matchBool(c.newsletter, f.newsletter) &&
-      matchBool(c.blocked, f.blocked) &&
-      matchBool(c.hasAllergies, f.hasAllergies) &&
-      matchBool(c.hasBirthday, f.hasBirthday) &&
-      matchBool(c.hasCrmNote, f.hasCrmNote)
-    );
-  });
+  return metrics.filter(m =>
+    matchSegment(m, f.segment) &&
+    matchVisitCount(m, f.visitCount) &&
+    matchLastVisit(m, f.lastVisit) &&
+    matchPartySize(m, f.partySize) &&
+    matchNoShow(m, f.noShow) &&
+    matchReturnRisk(m, f.returnRisk) &&
+    matchCrmMerkmale(m, f.crmMerkmale),
+  );
 }
 
 /** Kombiniert Suche und Filter (beides UND-verknüpft). */

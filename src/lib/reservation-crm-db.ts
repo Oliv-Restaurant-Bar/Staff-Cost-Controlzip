@@ -18,6 +18,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { GuestProfile, GuestReservationRecord, CompletedVisitAgg } from './reservation-crm';
 import type { ReservationStatusNormalized } from './reservation-import-parser';
 import type { ReservationAggRow } from './reservation-dashboard';
+import type { ActiveVisitRow } from './guest-top-flop';
 
 const PROFILE_COLS =
   'id, restaurant_id, first_name, last_name, email, mobile, first_seen_at, last_seen_at, ' +
@@ -248,6 +249,52 @@ export async function fetchGuestReservations(
         area: r.area ?? null,
         note: r.note ?? null,
         comment: r.comment ?? null,
+      });
+    }
+    if (data.length < PAGE) break;
+  }
+  return out;
+}
+
+/**
+ * Alle AKTIVEN Reservationen (status_normalized ∈ {completed, confirmed}) eines
+ * Mandanten innerhalb [from, to] (ISO yyyy-MM-dd, inklusive) — liefert die
+ * Rohzeilen (guestId/Datum/Personen/Status) für die Top/Flop-Auswertung, ohne
+ * sie zu gruppieren. Mandantengefiltert, paginiert (1000), KEINE PII (nur
+ * IDs/Datum/Personenzahl). Server-seitige Status- und Datumsfilter; die pure
+ * Zählung (`inRangeVisitCounts`) prüft beides defensiv erneut.
+ */
+export async function fetchActiveVisitsByGuest(
+  restaurantId: string,
+  from: string,
+  to: string,
+): Promise<ActiveVisitRow[]> {
+  const out: ActiveVisitRow[] = [];
+  const PAGE = 1000;
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await (supabase as any)
+      .from('reservation_records')
+      .select('guest_id, reservation_date, party_size, status_normalized')
+      .eq('restaurant_id', restaurantId)
+      .in('status_normalized', ['completed', 'confirmed'])
+      .gte('reservation_date', from)
+      .lte('reservation_date', to)
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    for (const r of data as Array<{
+      guest_id: string | null;
+      reservation_date: string | null;
+      party_size: number | null;
+      status_normalized: string | null;
+    }>) {
+      if (!r.guest_id) continue;
+      out.push({
+        guestId: r.guest_id,
+        date: r.reservation_date ?? null,
+        partySize: typeof r.party_size === 'number' ? r.party_size : null,
+        status: r.status_normalized ?? '',
       });
     }
     if (data.length < PAGE) break;
