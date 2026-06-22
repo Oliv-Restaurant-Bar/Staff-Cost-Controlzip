@@ -14,8 +14,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
-  Crown, Star, Repeat, UserPlus, Moon, CircleSlash, ArrowRight, BarChart3,
-  Filter, X,
+  ArrowRight, BarChart3, Filter, X,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -36,6 +35,7 @@ import {
   PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS,
   type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
 } from '@/lib/guest-list-filters';
+import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -50,39 +50,6 @@ function fdate(iso: string | null | undefined): string {
 
 function fnum(n: number | null, fmt: Intl.NumberFormat): string {
   return n === null ? '—' : fmt.format(n);
-}
-
-// ── Segment-Darstellung ───────────────────────────────────────────────────────
-
-const SEGMENT_CLASS: Record<GuestSegment, string> = {
-  vip:           'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300',
-  stammgast:     'bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300',
-  wiederkehrend: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-  neukunde:      'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-  inaktiv:       'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
-  ohne_besuch:   'bg-muted text-muted-foreground',
-};
-
-const SEGMENT_ICON: Record<GuestSegment, React.FC<{ className?: string }>> = {
-  vip:           Crown,
-  stammgast:     Star,
-  wiederkehrend: Repeat,
-  neukunde:      UserPlus,
-  inaktiv:       Moon,
-  ohne_besuch:   CircleSlash,
-};
-
-function SegmentBadge({ segment }: { segment: GuestSegment }) {
-  const Icon = SEGMENT_ICON[segment];
-  return (
-    <span className={cn(
-      'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium',
-      SEGMENT_CLASS[segment],
-    )}>
-      <Icon className="h-3 w-3" />
-      {SEGMENT_LABEL[segment]}
-    </span>
-  );
 }
 
 // ── Filter-Auswahl (kompaktes Select) ─────────────────────────────────────────

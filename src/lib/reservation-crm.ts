@@ -134,6 +134,20 @@ export function averageDaysBetweenVisits(
 // ── Segmentierung ────────────────────────────────────────────────────────────
 
 /**
+ * Reines zahlbasiertes Segment (Tier) OHNE die Inaktiv-Überschreibung:
+ * VIP ≥ 20, Stammgast 8–19, Wiederkehrend 3–7, Neukunde 1–2, sonst „ohne Besuch".
+ * Wird für „gefährdete" hochwertige Gäste benötigt: deren Live-Segment kippt wegen
+ * der Inaktiv-Regel evtl. schon auf „inaktiv", das Tier bleibt aber VIP/Stammgast.
+ */
+export function baseSegmentByVisits(visits: number): GuestSegment {
+  if (visits <= 0) return 'ohne_besuch';
+  if (visits >= SEGMENT_VIP_MIN) return 'vip';
+  if (visits >= SEGMENT_STAMMGAST_MIN) return 'stammgast';
+  if (visits >= SEGMENT_WIEDERKEHREND_MIN) return 'wiederkehrend';
+  return 'neukunde';
+}
+
+/**
  * Bestimmt das Segment aus der Besuchszahl (abgeschlossene Reservationen) und
  * der Anzahl Tage seit dem letzten Besuch.  Die Inaktiv-Regel überschreibt die
  * zahlbasierten Segmente.
@@ -150,10 +164,7 @@ export function classifySegment(
   ) {
     return 'inaktiv';
   }
-  if (visits >= SEGMENT_VIP_MIN) return 'vip';
-  if (visits >= SEGMENT_STAMMGAST_MIN) return 'stammgast';
-  if (visits >= SEGMENT_WIEDERKEHREND_MIN) return 'wiederkehrend';
-  return 'neukunde';
+  return baseSegmentByVisits(visits);
 }
 
 // ── Anzeige-Name ─────────────────────────────────────────────────────────────

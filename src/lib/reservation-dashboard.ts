@@ -21,7 +21,9 @@
 import {
   daysSince,
   INACTIVE_DAYS_THRESHOLD,
+  baseSegmentByVisits,
   type GuestListMetrics,
+  type GuestSegment,
 } from './reservation-crm';
 
 // ── Schwellen ────────────────────────────────────────────────────────────────
@@ -235,4 +237,116 @@ export function guestDashboardKpis(
     guestsWithoutVisit,
     noShowRiskGuests,
   };
+}
+
+// ── Rückkehrpotenzial & gefährdete Stammgäste ────────────────────────────────
+// Reine Berechnung auf den bereits vorhandenen Listen-Kennzahlen (GuestListMetrics).
+// Keine neue DB-Abfrage, keine Migration, keine Änderung an der Import-Logik.
+
+/**
+ * Faktor auf das Ø-Besuchsintervall, ab dem ein Gast als „überfällig" gilt:
+ * Tage seit letztem Besuch > Ø-Intervall × Faktor.
+ */
+export const OVERDUE_INTERVAL_FACTOR = 1.5;
+
+/**
+ * Tage, um die ein Gast über der Überfällig-Schwelle (Ø-Intervall × Faktor)
+ * liegt.  Positiv ⟺ überfällig; 0/negativ ⟺ (noch) im gewohnten Rhythmus.
+ * null, wenn kein Ø-Intervall (< 2 Besuche) oder kein letzter Besuch bekannt ist.
+ */
+export function overdueByDays(m: GuestListMetrics): number | null {
+  // Überfälligkeit setzt mindestens zwei Besuche (≥1 Intervall) voraus; ohne
+  // positives Ø-Intervall gibt es keine Erwartungshaltung, die überschritten
+  // werden könnte. Guard hier, damit die reine Funktion unabhängig vom Aufrufer
+  // korrekt ist.
+  if (
+    m.daysSinceLastVisit === null ||
+    m.avgDaysBetweenVisits === null ||
+    m.avgDaysBetweenVisits <= 0 ||
+    m.visits < 2
+  ) return null;
+  return m.daysSinceLastVisit - m.avgDaysBetweenVisits * OVERDUE_INTERVAL_FACTOR;
+}
+
+/** Überfällig: Tage seit letztem Besuch > Ø-Intervall × Faktor (1,5). */
+export function isOverdue(m: GuestListMetrics): boolean {
+  const o = overdueByDays(m);
+  return o !== null && o > 0;
+}
+
+/**
+ * „Gefährdet" für ein hochwertiges Tier: Der Gast gehört nach Besuchszahl zum
+ * angegebenen Tier (Stammgast oder VIP) UND war seit mehr als 90 Tagen nicht
+ * mehr da.  Bewusst wird das zahlbasierte Tier (`baseSegmentByVisits`) geprüft,
+ * NICHT das Live-Segment — denn dieses ist bei > 90 Tagen bereits auf „inaktiv"
+ * gekippt, obwohl es sich nach wie vor um einen wertvollen Stammgast/VIP handelt.
+ */
+export function isAtRiskTier(m: GuestListMetrics, tier: 'stammgast' | 'vip'): boolean {
+  if (m.daysSinceLastVisit === null || m.daysSinceLastVisit <= INACTIVE_DAYS_THRESHOLD) {
+    return false;
+  }
+  return baseSegmentByVisits(m.visits) === tier;
+}
+
+export interface ReturnPotentialKpis {
+  /** Überfällige Gäste (Tage seit letztem Besuch > Ø-Intervall × 1,5). */
+  overdueGuests: number;
+  /** Gefährdete Stammgäste (Stammgast-Tier, > 90 Tage kein Besuch). */
+  atRiskStammgaeste: number;
+  /** Gefährdete VIP-Gäste (VIP-Tier, > 90 Tage kein Besuch). */
+  atRiskVips: number;
+}
+
+/** Verdichtet die Listen-Kennzahlen zu den Rückkehrpotenzial-Kacheln. */
+export function returnPotentialKpis(metrics: GuestListMetrics[]): ReturnPotentialKpis {
+  let overdueGuests = 0;
+  let atRiskStammgaeste = 0;
+  let atRiskVips = 0;
+  for (const m of metrics) {
+    if (isOverdue(m)) overdueGuests++;
+    if (isAtRiskTier(m, 'stammgast')) atRiskStammgaeste++;
+    if (isAtRiskTier(m, 'vip')) atRiskVips++;
+  }
+  return { overdueGuests, atRiskStammgaeste, atRiskVips };
+}
+
+/** Eine Zeile der „Rückkehrpotenzial"-Liste (nur überfällige Gäste). */
+export interface ReturnPotentialRow {
+  id: string;
+  displayName: string;
+  segment: GuestSegment;
+  visits: number;
+  avgDaysBetweenVisits: number | null;
+  lastVisit: string | null;
+  daysSinceLastVisit: number | null;
+  /** Tage über der Überfällig-Schwelle (immer > 0). */
+  overdueByDays: number;
+}
+
+/**
+ * Baut die „Rückkehrpotenzial"-Liste: alle überfälligen Gäste, sortiert nach den
+ * überfälligsten zuerst (overdueByDays absteigend; bei Gleichstand Tage seit
+ * letztem Besuch absteigend).
+ */
+export function buildReturnPotentialList(metrics: GuestListMetrics[]): ReturnPotentialRow[] {
+  const rows: ReturnPotentialRow[] = [];
+  for (const m of metrics) {
+    const o = overdueByDays(m);
+    if (o === null || o <= 0) continue;
+    rows.push({
+      id: m.id,
+      displayName: m.displayName,
+      segment: m.segment,
+      visits: m.visits,
+      avgDaysBetweenVisits: m.avgDaysBetweenVisits,
+      lastVisit: m.lastVisit,
+      daysSinceLastVisit: m.daysSinceLastVisit,
+      overdueByDays: o,
+    });
+  }
+  rows.sort((a, b) =>
+    b.overdueByDays - a.overdueByDays ||
+    (b.daysSinceLastVisit ?? 0) - (a.daysSinceLastVisit ?? 0),
+  );
+  return rows;
 }

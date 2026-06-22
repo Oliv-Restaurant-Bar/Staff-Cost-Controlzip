@@ -71,3 +71,21 @@ so nothing vanishes. Active future-reservation set must stay the full 5 values,
 not a "simplified" confirmed|completed.
 **How to apply:** import logic stays untouched — this is purely the CRM read
 path + pure predicates in `reservation-dashboard.ts`.
+
+## At-risk / return-potential must use the count-only tier, not the live segment
+
+"Gefährdete Stammgäste/VIP" (and any future at-risk detection) must classify a
+guest by visit count alone, via `baseSegmentByVisits(visits)` — NOT by the live
+`segment` (`classifySegment`).
+
+**Why:** the live segment applies an inactivity override (≥3 visits & >90d →
+`inaktiv`). So exactly the high-value guests you want to flag as at-risk (a VIP
+who hasn't come in 200 days) have already had their segment flipped to
+`inaktiv`. Keying off the live segment would make at-risk VIP/Stammgast count
+permanently 0. `baseSegmentByVisits` returns the count tier without the override.
+
+**How to apply:** at-risk = `baseSegmentByVisits(visits)` is `stammgast`/`vip`
+AND `daysSinceLastVisit > 90`. Overdue (return-potential) = `daysSinceLastVisit
+> avgDaysBetweenVisits × 1.5`, which requires ≥2 visits and a positive interval.
+Both live as pure functions in `reservation-dashboard.ts`; keep the count tier
+and the live segment as distinct concepts.
