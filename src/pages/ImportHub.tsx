@@ -2014,6 +2014,32 @@ const ImportHub = () => {
           <AnnualPersonnelCostImportSection />
         </Section>
 
+        {/* ── Foratable: Gästeexport (CRM-Anreicherung) ─────────────────── */}
+        <Section
+          id="foratable-gaesteexport"
+          title="Foratable Gästeexport"
+          subtitle="CRM-Profile bestehender Gäste aus dem Foratable-Gästeexport anreichern (nur leere Felder)"
+          icon={<Users className="h-4 w-4" />}
+          color="border-rose-400 dark:border-rose-600"
+          badge="CSV · CRM"
+          badgeColor="border-rose-300 text-rose-700 bg-rose-50 dark:bg-rose-950/20"
+        >
+          <div className="rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/10 p-4 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Importiere den Foratable-<span className="font-medium">Gästeexport</span> (nicht den
+              Reservations-Export). Bestehende Gäste werden über E-Mail, Telefon oder Name erkannt;
+              VIP, Newsletter, Sperrliste, Firma, Lieblingsplatz, Geburtstag und Notizen ergänzen die
+              manuellen CRM-Profile. Bereits gepflegte Werte bleiben unverändert.
+            </p>
+            <Link to="/gaeste-import">
+              <Button size="sm" className="h-8 text-xs gap-1.5 w-full">
+                <Upload className="h-3.5 w-3.5" />
+                Zum Gästeexport-Import
+              </Button>
+            </Link>
+          </div>
+        </Section>
+
         {/* ── Beaulieu: Mitarbeiter-Import ──────────────────────────────── */}
         {tenant.id === 'beaulieu' && (
           <Section

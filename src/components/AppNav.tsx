@@ -231,6 +231,13 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
+        path: '/gaeste-import',
+        label: 'Gästeexport Import',
+        shortLabel: 'Gäste-Imp.',
+        icon: Upload,
+        adminOnly: true,
+      },
+      {
         path: '/gaeste/auswertung',
         label: 'CRM Auswertung',
         shortLabel: 'Auswertung',

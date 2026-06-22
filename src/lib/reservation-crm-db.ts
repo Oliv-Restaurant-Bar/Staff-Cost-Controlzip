@@ -35,6 +35,24 @@ export async function fetchGuestProfiles(restaurantId: string): Promise<GuestPro
   return data as GuestProfile[];
 }
 
+/**
+ * Wie `fetchGuestProfiles`, wirft jedoch bei Lesefehlern statt still `[]`
+ * zurückzugeben. Für schreibende Workflows (z. B. den CRM-Import), die einen
+ * Supabase-Lesefehler nicht als „keine Gäste" fehlinterpretieren dürfen
+ * (Datenintegrität — kein stilles Fallback).
+ */
+export async function fetchGuestProfilesStrict(restaurantId: string): Promise<GuestProfile[]> {
+  const { data, error } = await (supabase as any)
+    .from('guest_profiles')
+    .select(PROFILE_COLS)
+    .eq('restaurant_id', restaurantId)
+    .order('last_seen_at', { ascending: false, nullsFirst: false });
+  if (error) {
+    throw new Error(`Gästeprofile konnten nicht geladen werden: ${error.message ?? 'unbekannter Fehler'}`);
+  }
+  return (data ?? []) as GuestProfile[];
+}
+
 /** Ein einzelnes Gästeprofil (mandantengeprüft). */
 export async function fetchGuestById(
   restaurantId: string,

@@ -1,0 +1,98 @@
+Foratable Gästeexport importieren als CRM Anreicherung
+
+Ziel:
+Den Foratable Gästeexport nutzen, um bestehende Gäste im CRM mit Kontaktdaten und CRM-Merkmalen anzureichern, ohne Reservationen, Auswertungen oder bestehende Segmentlogik zu beschädigen.
+
+Wichtig:
+Keine Änderungen an reservation_records.
+Keine Änderungen an guest_profiles, ausser falls zwingend nötig und vorher begründen.
+Keine Änderungen an guest_statistics.
+Keine Änderung an Importlogik für Reservationen.
+Keine bestehenden Besuchszahlen oder Segmente überschreiben.
+Der Gästeexport darf nur CRM Zusatzdaten in guest_crm_profiles ergänzen.
+
+Quelle:
+CSV Datei “Gäste Foratable.csv”
+
+Zieltabellen:
+Primär guest_crm_profiles.
+Bestehende guest_profiles nur zum Matching verwenden.
+
+Matching Logik:
+
+1. E-Mail exakt normalisiert matchen
+2. Falls keine E-Mail: Telefonnummer normalisiert matchen
+3. Falls keine Telefonnummer: Name normalisiert matchen
+4. Unsichere Matches nicht automatisch übernehmen, sondern als “nicht zugeordnet” protokollieren
+
+Import Verhalten:
+
+* Wenn guest_crm_profiles für guest_id existiert: aktualisieren
+* Wenn nicht existiert: neu erstellen
+* Leere Werte aus dem Gästeexport sollen bestehende CRM Werte nicht überschreiben
+* Bereits manuell gepflegte Felder sollen nicht ungefragt überschrieben werden
+* Bei Konflikt lieber bestehenden Wert behalten und Konflikt protokollieren
+
+Zu übernehmende Felder, falls im CSV vorhanden:
+
+* VIP → vip_manual
+* Newsletter → newsletter_opt_in
+* Blacklist / gesperrt → blocked_guest
+* Geburtstag → birthday
+* Firma → company
+* Sprache → language
+* Lieblingsplatz → favorite_table
+* Lieblingsbereich → favorite_area
+* Lieblingswein falls vorhanden → favorite_wine
+* Speisen / Präferenzen / Gästeinfo / Labels → crm_notes sinnvoll ergänzen
+* Allergien / Unverträglichkeiten falls vorhanden → allergies oder dietary_notes
+
+Neue Importseite oder Importtyp:
+In der Import-Zentrale einen neuen Importtyp ergänzen:
+
+“Foratable Gästeexport”
+
+Ablauf:
+
+1. CSV hochladen
+2. Vorschau anzeigen
+3. Matching Statistik anzeigen
+4. Button “CRM Daten importieren”
+5. Nach Import Ergebnis anzeigen
+
+Import Ergebnis:
+
+* Zeilen gelesen
+* Gäste gematcht
+* CRM Profile erstellt
+* CRM Profile aktualisiert
+* Konflikte übersprungen
+* Nicht zuordenbare Gäste
+* Fehlerhafte Zeilen
+
+Datenschutz:
+
+* Keine echten Gästedaten in Tests oder Logs
+* In Logs nur Zahlen und technische Statusmeldungen
+* Keine Kontaktdaten ausgeben
+
+Tests:
+
+* Parser Test mit synthetischer CSV
+* Matching Test E-Mail
+* Matching Test Telefon
+* Matching Test Name
+* Konflikt Test: bestehender Wert wird nicht überschrieben
+* Leere Werte überschreiben nichts
+* Nicht zuordenbare Gäste werden protokolliert
+
+Checks:
+
+* tsc
+* vitest
+* build
+* architect review
+
+Wichtig:
+Das Ziel ist CRM Anreicherung, nicht Reservationen-Import.
+Besuchszahlen, Segmente und Statistiken bleiben aus den Reservationen berechnet.

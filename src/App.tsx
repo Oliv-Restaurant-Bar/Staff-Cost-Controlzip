@@ -67,6 +67,7 @@ import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
 import GastronoviZBerichtPage from "./pages/GastronoviZBerichtPage";
 import ReservationenImportPage from "./pages/ReservationenImportPage";
+import GaesteImportPage from "./pages/GaesteImportPage";
 import GaesteCrmPage from "./pages/GaesteCrmPage";
 import CrmAuswertungPage from "./pages/CrmAuswertungPage";
 import GaesteDetailPage from "./pages/GaesteDetailPage";
@@ -231,6 +232,7 @@ const AppContent = () => {
             />
             <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
             <Route path="/reservationen-import" element={<ReservationenImportPage />} />
+            <Route path="/gaeste-import" element={<GaesteImportPage />} />
             <Route path="/gaeste" element={<GaesteCrmPage />} />
             <Route path="/gaeste/auswertung" element={<CrmAuswertungPage />} />
             <Route path="/gaeste/:guestId" element={<GaesteDetailPage />} />
