@@ -59,29 +59,50 @@ export async function fetchGuestById(
 export async function fetchCompletedVisitAggregates(
   restaurantId: string,
 ): Promise<Map<string, CompletedVisitAgg>> {
-  const out = new Map<string, CompletedVisitAgg>();
+  // Laufende Akkumulatoren inkl. Personenzahl-Summe/-Anzahl für die Ø-Gruppengrösse.
+  type Acc = {
+    visits: number;
+    firstVisit: string | null;
+    lastVisit: string | null;
+    partySizeSum: number;
+    partySizeCount: number;
+  };
+  const acc = new Map<string, Acc>();
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await (supabase as any)
       .from('reservation_records')
-      .select('guest_id, reservation_date')
+      .select('guest_id, reservation_date, party_size')
       .eq('restaurant_id', restaurantId)
       .eq('status_normalized', 'completed')
       .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error || !data || data.length === 0) break;
-    for (const row of data as Array<{ guest_id: string | null; reservation_date: string | null }>) {
+    for (const row of data as Array<{ guest_id: string | null; reservation_date: string | null; party_size: number | null }>) {
       if (!row.guest_id) continue;
-      const a = out.get(row.guest_id) ?? { visits: 0, firstVisit: null, lastVisit: null };
+      const a = acc.get(row.guest_id) ?? { visits: 0, firstVisit: null, lastVisit: null, partySizeSum: 0, partySizeCount: 0 };
       a.visits++;
       const d = row.reservation_date;
       if (d) {
         if (!a.firstVisit || d < a.firstVisit) a.firstVisit = d;
         if (!a.lastVisit || d > a.lastVisit) a.lastVisit = d;
       }
-      out.set(row.guest_id, a);
+      if (typeof row.party_size === 'number' && Number.isFinite(row.party_size)) {
+        a.partySizeSum += row.party_size;
+        a.partySizeCount++;
+      }
+      acc.set(row.guest_id, a);
     }
     if (data.length < PAGE) break;
+  }
+  const out = new Map<string, CompletedVisitAgg>();
+  for (const [id, a] of acc) {
+    out.set(id, {
+      visits: a.visits,
+      firstVisit: a.firstVisit,
+      lastVisit: a.lastVisit,
+      avgPartySize: a.partySizeCount > 0 ? a.partySizeSum / a.partySizeCount : null,
+    });
   }
   return out;
 }

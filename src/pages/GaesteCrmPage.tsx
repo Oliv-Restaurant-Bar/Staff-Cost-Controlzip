@@ -15,6 +15,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
   Crown, Star, Repeat, UserPlus, Moon, CircleSlash, ArrowRight, BarChart3,
+  Filter, X,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -23,12 +24,18 @@ import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 
-import { fetchGuestProfiles, fetchCompletedVisitAggregates } from '@/lib/reservation-crm-db';
+import { fetchGuestProfiles, fetchCompletedVisitAggregates, fetchNoShowCountsByGuest } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import {
   guestListMetrics, countSegments, SEGMENT_LABEL, SEGMENT_ORDER,
   type GuestListMetrics, type GuestSegment, type CompletedVisitAgg,
 } from '@/lib/reservation-crm';
+import {
+  DEFAULT_GUEST_FILTERS, hasActiveFilters, searchAndFilterGuests, sortGuests,
+  SEGMENT_FILTER_OPTIONS, VISIT_COUNT_FILTER_OPTIONS, LAST_VISIT_FILTER_OPTIONS,
+  PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS,
+  type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
+} from '@/lib/guest-list-filters';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -78,24 +85,30 @@ function SegmentBadge({ segment }: { segment: GuestSegment }) {
   );
 }
 
-// ── Sortierung ────────────────────────────────────────────────────────────────
+// ── Filter-Auswahl (kompaktes Select) ─────────────────────────────────────────
 
-type SortKey = 'name' | 'segment' | 'visits' | 'firstVisit' | 'lastVisit' | 'interval' | 'sinceLast';
-type SortDir = 'asc' | 'desc';
-
-function compare(a: GuestListMetrics, b: GuestListMetrics, key: SortKey): number {
-  const nullableNum = (x: number | null) => (x === null ? Number.NEGATIVE_INFINITY : x);
-  const nullableStr = (x: string | null) => x ?? '';
-  switch (key) {
-    case 'name':       return a.displayName.localeCompare(b.displayName, 'de');
-    case 'segment':    return SEGMENT_ORDER.indexOf(a.segment) - SEGMENT_ORDER.indexOf(b.segment);
-    case 'visits':     return a.visits - b.visits;
-    case 'firstVisit': return nullableStr(a.firstVisit).localeCompare(nullableStr(b.firstVisit));
-    case 'lastVisit':  return nullableStr(a.lastVisit).localeCompare(nullableStr(b.lastVisit));
-    case 'interval':   return nullableNum(a.avgDaysBetweenVisits) - nullableNum(b.avgDaysBetweenVisits);
-    case 'sinceLast':  return nullableNum(a.daysSinceLastVisit) - nullableNum(b.daysSinceLastVisit);
-    default:           return 0;
-  }
+function FilterSelect<T extends string>({
+  label, value, options, onChange,
+}: {
+  label: string;
+  value: T;
+  options: FilterOption<T>[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value as T)}
+        className="rounded-lg border border-border bg-background px-2.5 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/40"
+      >
+        {options.map(o => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 // ── Komponente ────────────────────────────────────────────────────────────────
@@ -109,8 +122,10 @@ export default function GaesteCrmPage() {
   const [tablesOk, setTablesOk] = useState<boolean | null>(null);
   const [profiles, setProfiles] = useState<Awaited<ReturnType<typeof fetchGuestProfiles>>>([]);
   const [visitAggs, setVisitAggs] = useState<Map<string, CompletedVisitAgg>>(new Map());
+  const [noShowCounts, setNoShowCounts] = useState<Map<string, number>>(new Map());
   const [query, setQuery] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('visits');
+  const [filters, setFilters] = useState<GuestFilterState>(DEFAULT_GUEST_FILTERS);
+  const [sortKey, setSortKey] = useState<GuestSortKey>('visits');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   const today = useMemo(() => fmtDate(new Date(), 'yyyy-MM-dd'), []);
@@ -121,15 +136,18 @@ export default function GaesteCrmPage() {
     const ok = await checkReservationTablesExist();
     setTablesOk(ok);
     if (ok) {
-      const [ps, aggs] = await Promise.all([
+      const [ps, aggs, noShows] = await Promise.all([
         fetchGuestProfiles(tenantId),
         fetchCompletedVisitAggregates(tenantId),
+        fetchNoShowCountsByGuest(tenantId),
       ]);
       setProfiles(ps);
       setVisitAggs(aggs);
+      setNoShowCounts(noShows);
     } else {
       setProfiles([]);
       setVisitAggs(new Map());
+      setNoShowCounts(new Map());
     }
     setLoading(false);
   }, [tenantId, isAdmin]);
@@ -137,32 +155,30 @@ export default function GaesteCrmPage() {
   useEffect(() => { void load(); }, [load]);
 
   const allMetrics = useMemo(
-    () => profiles.map(p => guestListMetrics(p, visitAggs.get(p.id), today)),
-    [profiles, visitAggs, today],
+    () => profiles.map(p => guestListMetrics(p, visitAggs.get(p.id), today, noShowCounts.get(p.id) ?? 0)),
+    [profiles, visitAggs, noShowCounts, today],
   );
 
   const segmentCounts = useMemo(() => countSegments(allMetrics), [allMetrics]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return allMetrics;
-    return allMetrics.filter(m =>
-      m.displayName.toLowerCase().includes(q) ||
-      (m.email ?? '').toLowerCase().includes(q) ||
-      (m.mobile ?? '').toLowerCase().includes(q),
-    );
-  }, [allMetrics, query]);
+  const filtered = useMemo(
+    () => searchAndFilterGuests(allMetrics, query, filters),
+    [allMetrics, query, filters],
+  );
 
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    arr.sort((a, b) => {
-      const base = compare(a, b, sortKey);
-      return sortDir === 'asc' ? base : -base;
-    });
-    return arr;
-  }, [filtered, sortKey, sortDir]);
+  const sorted = useMemo(
+    () => sortGuests(filtered, sortKey, sortDir),
+    [filtered, sortKey, sortDir],
+  );
 
-  const toggleSort = (key: SortKey) => {
+  const filtersActive = hasActiveFilters(filters) || query.trim().length > 0;
+
+  const resetFilters = () => {
+    setFilters(DEFAULT_GUEST_FILTERS);
+    setQuery('');
+  };
+
+  const toggleSort = (key: GuestSortKey) => {
     if (key === sortKey) {
       setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
     } else {
@@ -174,7 +190,7 @@ export default function GaesteCrmPage() {
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
-  const SortHeader = ({ label, k, align = 'left' }: { label: string; k: SortKey; align?: 'left' | 'right' }) => (
+  const SortHeader = ({ label, k, align = 'left' }: { label: string; k: GuestSortKey; align?: 'left' | 'right' }) => (
     <th
       className={cn(
         'cursor-pointer select-none px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground',
@@ -242,17 +258,70 @@ export default function GaesteCrmPage() {
         </div>
       )}
 
-      {/* Suche */}
+      {/* Suche + Filter */}
       {tablesOk && (
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Suche nach Name, E-Mail oder Telefon…"
-            className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
-          />
+        <div className="space-y-3 rounded-lg border border-border bg-card p-3">
+          {/* Suche */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Suche nach Name, E-Mail oder Telefon…"
+              className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-primary/40"
+            />
+          </div>
+
+          {/* Filterleiste — auf Mobile untereinander, auf Desktop kompakt nebeneinander */}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <FilterSelect
+              label="Segment"
+              value={filters.segment}
+              options={SEGMENT_FILTER_OPTIONS}
+              onChange={v => setFilters(f => ({ ...f, segment: v }))}
+            />
+            <FilterSelect
+              label="Besuchsanzahl"
+              value={filters.visitCount}
+              options={VISIT_COUNT_FILTER_OPTIONS}
+              onChange={v => setFilters(f => ({ ...f, visitCount: v }))}
+            />
+            <FilterSelect
+              label="Letzter Besuch"
+              value={filters.lastVisit}
+              options={LAST_VISIT_FILTER_OPTIONS}
+              onChange={v => setFilters(f => ({ ...f, lastVisit: v }))}
+            />
+            <FilterSelect
+              label="Gruppengrösse"
+              value={filters.partySize}
+              options={PARTY_SIZE_FILTER_OPTIONS}
+              onChange={v => setFilters(f => ({ ...f, partySize: v }))}
+            />
+            <FilterSelect
+              label="No-Show-Risiko"
+              value={filters.noShow}
+              options={NO_SHOW_FILTER_OPTIONS}
+              onChange={v => setFilters(f => ({ ...f, noShow: v }))}
+            />
+          </div>
+
+          {filtersActive && (
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Filter className="h-3.5 w-3.5" />
+                Filter aktiv — {NUM0.format(sorted.length)} von {NUM0.format(allMetrics.length)} Gästen
+              </span>
+              <button
+                onClick={resetFilters}
+                className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted/60"
+              >
+                <X className="h-3.5 w-3.5" />
+                Filter zurücksetzen
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -266,7 +335,7 @@ export default function GaesteCrmPage() {
         <div className="rounded-lg border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
           {allMetrics.length === 0
             ? 'Noch keine Gäste vorhanden. Importiere zuerst Reservationen.'
-            : 'Keine Gäste passen zur Suche.'}
+            : 'Keine Gäste passen zu Suche und Filter.'}
         </div>
       ) : tablesOk ? (
         <div className="overflow-x-auto rounded-lg border border-border">
@@ -276,6 +345,7 @@ export default function GaesteCrmPage() {
                 <SortHeader label="Gast" k="name" />
                 <SortHeader label="Segment" k="segment" />
                 <SortHeader label="Besuche" k="visits" align="right" />
+                <SortHeader label="Ø Gruppe" k="partySize" align="right" />
                 <SortHeader label="Erster Besuch" k="firstVisit" align="right" />
                 <SortHeader label="Letzter Besuch" k="lastVisit" align="right" />
                 <SortHeader label="Ø Intervall" k="interval" align="right" />
@@ -300,6 +370,9 @@ export default function GaesteCrmPage() {
                   </td>
                   <td className="px-3 py-2"><SegmentBadge segment={m.segment} /></td>
                   <td className="px-3 py-2 text-right font-semibold tabular-nums">{NUM0.format(m.visits)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                    {m.avgPartySize === null ? '—' : fnum(m.avgPartySize, NUM1)}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{fdate(m.firstVisit)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fdate(m.lastVisit)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">

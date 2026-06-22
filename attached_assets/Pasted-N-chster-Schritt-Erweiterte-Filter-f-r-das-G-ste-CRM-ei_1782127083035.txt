@@ -1,0 +1,72 @@
+Nächster Schritt: Erweiterte Filter für das Gäste CRM einbauen.
+
+Scope:
+Nur Gäste CRM und CRM Auswertung erweitern.
+Keine Importlogik ändern.
+guest_statistics View nicht ersetzen.
+Gastronovi nicht anfassen.
+Bestehende Seiten dürfen nicht kaputtgehen.
+
+Ziel:
+Die Gäste Liste soll sinnvoll filterbar werden, damit man CRM Segmente praktisch nutzen kann.
+
+Bitte umsetzen:
+
+1. Filterleiste auf /gaeste ergänzen
+
+Filter:
+- Segment: alle, vip, stammgast, wiederkehrend, neukunde, inaktiv, ohne_besuch
+- Besuchsanzahl: alle, 1 Besuch, 2 bis 4 Besuche, 5 bis 10 Besuche, mehr als 10 Besuche
+- Letzter Besuch: alle, letzte 30 Tage, letzte 60 Tage, letzte 90 Tage, älter als 90 Tage, älter als 180 Tage
+- Gruppengrösse: alle, 1 Person, 2 Personen, 3 bis 4 Personen, 5+ Personen
+- No Show Risiko: alle, mit Risiko, ohne Risiko
+
+2. Sortierung erweitern
+
+Sortieroptionen:
+- letzter Besuch absteigend
+- letzter Besuch aufsteigend
+- Besuche absteigend
+- Besuche aufsteigend
+- durchschnittliches Intervall absteigend
+- durchschnittliches Intervall aufsteigend
+- Gruppengrösse absteigend
+- Gruppengrösse aufsteigend
+
+3. Suchfeld behalten
+
+Die bestehende Suche nach Name, E-Mail und Telefon muss weiterhin funktionieren.
+Suche und Filter müssen kombinierbar sein.
+
+4. No Show Risiko
+
+Nutze bestehende neue Funktion fetchNoShowCountsByGuest.
+Ein Gast gilt als No Show Risiko, wenn er mindestens 2 No Shows hat.
+
+5. UI
+
+Filter sollen übersichtlich sein.
+Auf Mobile sollen sie untereinander stehen.
+Auf Desktop als kompakte Filterleiste.
+Zeige optional einen "Filter zurücksetzen" Button, wenn Filter aktiv sind.
+
+6. Technische Anforderungen
+
+Wenn sinnvoll:
+- neue reine Logik in reservation-crm.ts oder separate filter helper Datei
+- keine PII in Tests oder Logs
+- defensive Logik bei leeren Daten
+- TypeScript sauber
+- bestehende Tests dürfen nicht brechen
+- neue Tests für Filterlogik mit synthetischen Daten
+
+7. Checks
+
+Bitte ausführen:
+- tsc
+- vitest
+- build
+- architect review
+
+Wichtig:
+Nur diese Filter und Sortierung umsetzen. Rückkehrpotenzial, Kampagnenlisten, Geburtstage und Export kommen danach separat.

@@ -186,6 +186,10 @@ export interface GuestListMetrics {
   lastVisit: string | null;
   daysSinceLastVisit: number | null;
   avgDaysBetweenVisits: number | null;
+  /** Ø Gruppengrösse über die abgeschlossenen Besuche (null, wenn unbekannt). */
+  avgPartySize: number | null;
+  /** Anzahl No-Shows des Gastes (für No-Show-Risiko-Filter). */
+  noShowCount: number;
   segment: GuestSegment;
 }
 
@@ -201,6 +205,12 @@ export interface CompletedVisitAgg {
   firstVisit: string | null;
   /** Datum des letzten abgeschlossenen Besuchs ("yyyy-MM-dd") oder null. */
   lastVisit: string | null;
+  /**
+   * Ø Gruppengrösse über die abgeschlossenen Besuche mit bekannter Personenzahl
+   * (null, wenn keine Personenzahl bekannt ist).  Optional, damit bestehende
+   * Aufrufer/Tests, die das Feld nicht setzen, unverändert funktionieren.
+   */
+  avgPartySize?: number | null;
 }
 
 /**
@@ -216,6 +226,7 @@ export function guestListMetrics(
   profile: GuestProfile,
   visitAgg: CompletedVisitAgg | undefined,
   today: string,
+  noShowCount = 0,
 ): GuestListMetrics {
   const visits = visitAgg?.visits ?? 0;
   const firstVisit = visitAgg?.firstVisit ?? null;
@@ -233,6 +244,8 @@ export function guestListMetrics(
     lastVisit,
     daysSinceLastVisit,
     avgDaysBetweenVisits: averageDaysBetweenVisits(firstVisit, lastVisit, visits),
+    avgPartySize: visitAgg?.avgPartySize ?? null,
+    noShowCount: noShowCount < 0 ? 0 : noShowCount,
     segment: classifySegment(visits, daysSinceLastVisit),
   };
 }
