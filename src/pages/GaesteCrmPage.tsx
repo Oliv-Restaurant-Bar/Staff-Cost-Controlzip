@@ -16,6 +16,7 @@ import {
   Users, Search, Loader2, Database, ChevronUp, ChevronDown,
   ArrowRight, BarChart3, Filter, X, TrendingDown,
   Crown, Star, Building2, Mail, Ban, AlertTriangle,
+  FileDown, FileSpreadsheet,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -41,6 +42,8 @@ import {
   type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
 } from '@/lib/guest-list-filters';
 import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
+import { downloadCsv, downloadXlsx } from '@/lib/table-export';
+import { guestListExportTable } from '@/lib/guest-list-export';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -482,6 +485,26 @@ export default function GaesteCrmPage() {
         </div>
       )}
 
+      {/* Export der aktuell gefilterten Liste */}
+      {tablesOk && sorted.length > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            onClick={() => downloadCsv(guestListExportTable(sorted))}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            <FileDown className="h-4 w-4" />
+            CSV
+          </button>
+          <button
+            onClick={() => void downloadXlsx(guestListExportTable(sorted))}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            Excel
+          </button>
+        </div>
+      )}
+
       {/* Tabelle */}
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
@@ -495,9 +518,9 @@ export default function GaesteCrmPage() {
             : 'Keine Gäste passen zu Suche und Filter.'}
         </div>
       ) : tablesOk ? (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
           <table className="w-full border-collapse text-sm">
-            <thead className="bg-muted/50">
+            <thead className="bg-muted/50 [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
               <tr>
                 <SortHeader label="Gast" k="name" />
                 <SortHeader label="Segment" k="segment" />

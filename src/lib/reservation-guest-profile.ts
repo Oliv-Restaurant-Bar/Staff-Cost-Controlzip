@@ -15,6 +15,7 @@
  */
 
 import { daysBetween, type GuestReservationRecord, SEGMENT_VIP_MIN } from './reservation-crm';
+import { isoToDate, type ExportCell } from './export-cell';
 
 // ── Häufigkeits-Helfer ───────────────────────────────────────────────────────
 
@@ -304,4 +305,49 @@ export function totalPersonsOnVisits(
     if (typeof r.partySize === 'number' && Number.isFinite(r.partySize)) sum += r.partySize;
   }
   return sum;
+}
+
+// ── Export der Reservierungshistorie (CSV + Excel) ─────────────────────────────
+
+/** Spaltenüberschriften (deutsch) der Reservierungshistorie. */
+export const RESERVATION_HISTORY_HEADERS: string[] = [
+  'Datum',
+  'Uhrzeit',
+  'Personen',
+  'Bereich',
+  'Status',
+  'Notiz',
+];
+
+/** Minimal benötigte Felder einer Reservation für den Export. */
+export interface ReservationHistoryExportRow {
+  reservationDate: string | null;
+  reservationTime: string | null;
+  partySize: number | null;
+  room?: string | null;
+  area?: string | null;
+  statusNormalized: string;
+  note?: string | null;
+  comment?: string | null;
+}
+
+/**
+ * Eine Reservation als typisierte Export-Zellen (Reihenfolge =
+ * `RESERVATION_HISTORY_HEADERS`). Das Statuslabel wird übergeben, damit dieses
+ * Modul DOM-/Seiten-frei und testbar bleibt.
+ */
+export function reservationHistoryRowToCells(
+  r: ReservationHistoryExportRow,
+  statusLabel: (status: string) => string,
+): ExportCell[] {
+  const bereich = [r.room, r.area].filter(Boolean).join(' · ');
+  const notiz = [r.note, r.comment].filter(Boolean).join(' — ');
+  return [
+    isoToDate(r.reservationDate),
+    r.reservationTime ?? null,
+    r.partySize ?? null,
+    bereich || null,
+    statusLabel(r.statusNormalized),
+    notiz || null,
+  ];
 }

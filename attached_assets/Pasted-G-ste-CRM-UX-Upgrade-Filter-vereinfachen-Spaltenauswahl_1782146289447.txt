@@ -1,0 +1,169 @@
+Gäste CRM UX Upgrade: Filter vereinfachen, Spaltenauswahl, Top/Flop Listen
+
+Ziel:
+Die Gäste-Liste soll einfacher bedienbar und flexibler auswertbar werden.
+
+Scope:
+
+* Nur Gäste CRM Liste /gaeste erweitern
+* Keine Datenbankänderung
+* Keine Migration
+* Keine Importlogik ändern
+* Keine guest_statistics Änderung
+* Keine Gastronovi Änderung
+
+1. Manuelle CRM Merkmale vereinfachen
+
+Der Bereich “Manuelle CRM-Merkmale” soll nicht mehr als viele einzelne Dropdowns angezeigt werden.
+
+Stattdessen ein einzelner Dropdown / Multi-Select:
+
+Label:
+CRM Merkmale
+
+Auswahl:
+
+* Manueller VIP
+* Manueller Stammgast
+* Firmenkunde
+* Newsletter
+* Sperrliste
+* Hat Allergien
+* Hat Geburtstag
+* Hat CRM Notiz
+
+Verhalten:
+
+* Mehrfachauswahl möglich
+* Wenn nichts ausgewählt ist, werden alle Gäste angezeigt
+* Wenn ein oder mehrere Merkmale ausgewählt sind, werden nur Gäste angezeigt, welche diese Merkmale erfüllen
+* Optional später: UND/ODER Logik, aktuell reicht UND Logik
+
+2. Spaltenauswahl einbauen
+
+Oberhalb der Tabelle einen Button / Dropdown:
+
+“Spalten”
+
+Der Nutzer kann individuell auswählen, welche Spalten sichtbar sind.
+
+Verfügbare Spalten:
+
+* Gast
+* Segment
+* Firma
+* Geburtstag
+* Besuche
+* Ø Gruppe
+* Erster Besuch
+* Letzter Besuch
+* Ø Intervall
+* Tage seit letztem Besuch
+* Rückkehrrisiko
+* Manueller VIP
+* Manueller Stammgast
+* Firmenkunde
+* Newsletter
+* Sperrliste
+* Allergien
+* CRM Notiz
+
+Standard sichtbar:
+
+* Gast
+* Segment
+* Besuche
+* Ø Gruppe
+* Erster Besuch
+* Letzter Besuch
+* Ø Intervall
+* Tage seit letztem Besuch
+* Rückkehrrisiko
+
+Verhalten:
+
+* Ausgewählte Spalten anzeigen
+* Nicht ausgewählte Spalten ausblenden
+* Auswahl im Browser lokal speichern, z.B. localStorage
+* Mobile Darstellung darf nicht kaputtgehen
+* Export soll nur die aktuell sichtbaren Spalten exportieren, falls Export vorhanden ist
+
+3. Tabellenkopf fixieren
+
+Bei der Gäste-Liste soll der Tabellenkopf beim Scrollen sichtbar bleiben.
+
+Betroffene Tabelle:
+
+* /gaeste Gäste-Liste
+
+Anforderung:
+
+* Header bleibt sticky
+* horizontales Scrollen funktioniert weiterhin
+* mobile Darstellung bleibt nutzbar
+
+4. Top / Flop Buttons
+
+Oberhalb der Tabelle neue Schnellbuttons:
+
+* Top 10
+* Top 20
+* Flop 50
+
+Zeitraumsauswahl daneben:
+
+* aktueller Monat
+* letzter Monat
+* letzte 30 Tage
+* letzte 90 Tage
+* Jahr bis heute
+* individueller Zeitraum von/bis
+
+Logik:
+
+Top 10 / Top 20:
+Gäste mit den meisten abgeschlossenen Besuchen im gewählten Zeitraum.
+Bei Gleichstand nach Total Personen sortieren.
+
+Flop 50:
+Gäste mit früherer Aktivität, aber ohne Besuch im gewählten Zeitraum.
+Sortierung:
+
+* zuerst frühere Stammgäste/VIP
+* dann höchste frühere Besuchszahl
+* dann längste Zeit seit letztem Besuch
+
+Wichtig:
+Flop 50 soll keine Gäste ohne jemals abgeschlossenen Besuch enthalten.
+
+5. Zeitraumlogik
+
+Für Top/Flop nur abgeschlossene/bestätigte Besuche zählen.
+
+Statuslogik zentral wiederverwenden:
+
+* confirmed / completed / seated / arrived / active = zählt als Besuch
+* cancelled / no_show / rejected / expired = zählt nicht als Besuch
+* pending / unknown / offen = zählt nicht als abgeschlossener Besuch
+
+6. Tests
+
+Bitte Tests ergänzen für:
+
+* CRM Merkmale Multi-Filter
+* Spaltenauswahl
+* localStorage Default Verhalten
+* Top 10 Berechnung
+* Top 20 Berechnung
+* Flop 50 Berechnung
+* Zeitraumfilter
+* Sticky Header darf Layout nicht brechen, soweit testbar
+
+7. Checks
+
+Vor Abschluss:
+
+* tsc
+* vitest
+* build
+* architect review

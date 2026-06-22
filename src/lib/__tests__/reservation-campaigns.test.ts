@@ -13,6 +13,8 @@ import {
   summarizeCampaigns,
   buildCampaignCsv,
   campaignRowToCsvValues,
+  campaignRowToCells,
+  campaignExportTable,
   campaignCsvFilename,
   type CampaignId,
 } from '../reservation-campaigns';
@@ -317,5 +319,57 @@ describe('buildCampaignCsv', () => {
     const csvLine = buildCampaignCsv([row]).split('\r\n')[1];
     expect(values[0]).toBe('Müller; "Chef"');
     expect(csvLine.startsWith('"Müller; ""Chef""";')).toBe(true);
+  });
+});
+
+// ── Typisierter Export (Excel) ───────────────────────────────────────────────
+
+describe('campaignRowToCells & campaignExportTable', () => {
+  it('führt Datum als Date-Zelle und Zahlen als Zahlen (für Excel)', () => {
+    const cells = campaignRowToCells(metric({
+      displayName: 'Test Gast',
+      email: 'test@example.test',
+      visits: 12,
+      lastVisit: '2026-03-05',
+      daysSinceLastVisit: 109,
+      avgDaysBetweenVisits: 30.6,
+      noShowCount: 2,
+      segment: 'stammgast',
+    }));
+    expect(cells).toHaveLength(CSV_HEADERS.length);
+    expect(cells[0]).toBe('Test Gast');
+    expect(cells[3]).toBe('Stammgast');
+    expect(cells[4]).toBe(12);
+    expect(cells[5]).toBeInstanceOf(Date); // Letzter Besuch
+    expect(cells[6]).toBe(109);
+    expect(cells[7]).toBe(31);             // Ø Intervall gerundet
+    expect(cells[8]).toBe(2);
+  });
+
+  it('manuelle CRM-Felder: Ja/Text + Geburtstag als Date, sonst leer', () => {
+    const withCrm = campaignRowToCells(metric({
+      displayName: 'CRM Gast',
+      crm: crm({ vipManual: true, company: 'Beispiel AG', birthday: '1985-07-09', allergies: 'Laktose' }),
+    }));
+    expect(withCrm[9]).toBe('Ja');             // VIP manuell
+    expect(withCrm[14]).toBeInstanceOf(Date);  // Geburtstag
+    expect(withCrm[15]).toBe('Beispiel AG');   // Firma
+    expect(withCrm[16]).toBe('Laktose');       // Allergien
+
+    const noCrm = campaignRowToCells(metric({ displayName: 'Ohne CRM' }));
+    expect(noCrm.slice(9)).toEqual(['', '', '', '', '', null, null, null]);
+  });
+
+  it('campaignExportTable setzt slug-basierten Dateinamen, Header und nur die übergebenen Zeilen', () => {
+    const def = CAMPAIGN_BY_ID['ueberfaellige'];
+    const table = campaignExportTable(def, [
+      metric({ id: 'a', displayName: 'A' }),
+      metric({ id: 'b', displayName: 'B' }),
+    ]);
+    expect(table.filename).toBe(`crm-kampagne-${def.slug}`);
+    expect(table.sheetName).toBe('Kampagne');
+    expect(table.headers).toEqual(CSV_HEADERS.slice());
+    expect(table.rows).toHaveLength(2);
+    expect(table.rows[0][0]).toBe('A');
   });
 });

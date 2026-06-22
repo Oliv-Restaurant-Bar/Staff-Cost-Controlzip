@@ -25,6 +25,7 @@ import {
   UserPlus, Repeat, Star, Crown, CircleSlash, Ban, CalendarClock,
   CalendarDays, CalendarRange, CalendarSearch, HelpCircle, TrendingDown,
   RotateCcw, Hourglass, AlertTriangle, Megaphone, Eye, Download, FileDown,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   format as fmtDate, parseISO, endOfMonth, startOfMonth, addMonths, addDays,
@@ -45,19 +46,21 @@ import { fetchGuestCrmProfilesByIds } from '@/lib/guest-crm-profile-db';
 import type { GuestCrmProfile } from '@/lib/guest-crm-profile';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import {
-  guestListMetrics, type CompletedVisitAgg,
+  guestListMetrics, SEGMENT_LABEL, type CompletedVisitAgg,
 } from '@/lib/reservation-crm';
 import {
   guestDashboardKpis, futureReservationKpis, countInRange,
   isActiveStatus, isOpenStatus,
   returnPotentialKpis, buildReturnPotentialList,
+  RETURN_POTENTIAL_HEADERS, returnPotentialRowToCells,
   type ReservationAggRow, type RangeCount, type FutureBoundaries,
 } from '@/lib/reservation-dashboard';
 import {
   CAMPAIGNS, summarizeCampaigns, filterCampaign,
-  buildCampaignCsv, campaignCsvFilename,
+  buildCampaignCsv, campaignCsvFilename, campaignExportTable,
   type CampaignDef, type CampaignId,
 } from '@/lib/reservation-campaigns';
+import { downloadCsv, downloadXlsx } from '@/lib/table-export';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -247,6 +250,19 @@ export default function CrmAuswertungPage() {
     URL.revokeObjectURL(url);
   }, [metrics, todayStr]);
 
+  // Excel-Download der aktuell gefilterten Kampagnenliste (neben dem CSV-Export).
+  const exportCampaignXlsx = useCallback((def: CampaignDef) => {
+    void downloadXlsx(campaignExportTable(def, filterCampaign(metrics, def, todayStr)));
+  }, [metrics, todayStr]);
+
+  // Export der Liste überfälliger Gäste (CSV + Excel).
+  const overdueExportTable = useCallback(() => ({
+    filename: 'crm-rueckkehrpotenzial',
+    sheetName: 'Rückkehrpotenzial',
+    headers: RETURN_POTENTIAL_HEADERS,
+    rows: overdueList.map(r => returnPotentialRowToCells(r, s => SEGMENT_LABEL[s])),
+  }), [overdueList]);
+
   const runRange = useCallback(async () => {
     if (rangeInvalid) return;
     setRangeLoading(true);
@@ -435,15 +451,35 @@ export default function CrmAuswertungPage() {
             </section>
 
             <section>
-              <SectionTitle icon={Hourglass}>Überfällige Gäste</SectionTitle>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <SectionTitle icon={Hourglass}>Überfällige Gäste</SectionTitle>
+                {overdueList.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => downloadCsv(overdueExportTable())}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+                    >
+                      <FileDown className="h-4 w-4" />
+                      CSV
+                    </button>
+                    <button
+                      onClick={() => void downloadXlsx(overdueExportTable())}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                    >
+                      <FileSpreadsheet className="h-4 w-4" />
+                      Excel
+                    </button>
+                  </div>
+                )}
+              </div>
               {overdueList.length === 0 ? (
                 <div className="rounded-lg border border-border bg-card p-6 text-center text-sm text-muted-foreground">
                   Aktuell sind keine Gäste überfällig.
                 </div>
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-border">
+                <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
                   <table className="w-full min-w-[760px] text-sm">
-                    <thead>
+                    <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
                       <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                         <th className="px-3 py-2 font-medium">Gast</th>
                         <th className="px-3 py-2 font-medium">Segment</th>
@@ -502,14 +538,24 @@ export default function CrmAuswertungPage() {
                     </h2>
                     <p className="max-w-3xl text-xs text-muted-foreground">{campaignDef.description}</p>
                   </div>
-                  <button
-                    onClick={() => exportCampaignCsv(campaignDef)}
-                    disabled={campaignRows.length === 0}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Download className="h-4 w-4" />
-                    CSV exportieren
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => exportCampaignCsv(campaignDef)}
+                      disabled={campaignRows.length === 0}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Download className="h-4 w-4" />
+                      CSV
+                    </button>
+                    <button
+                      onClick={() => exportCampaignXlsx(campaignDef)}
+                      disabled={campaignRows.length === 0}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <FileSpreadsheet className="h-4 w-4" />
+                      Excel
+                    </button>
+                  </div>
                 </div>
 
                 {campaignRows.length === 0 ? (
@@ -517,9 +563,9 @@ export default function CrmAuswertungPage() {
                     Für diese Kampagne gibt es aktuell keine passenden Gäste.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-lg border border-border">
+                  <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
                     <table className="w-full min-w-[920px] text-sm">
-                      <thead>
+                      <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
                         <tr className="border-b border-border bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
                           <th className="px-3 py-2 font-medium">Name</th>
                           <th className="px-3 py-2 font-medium">E-Mail</th>
@@ -590,11 +636,19 @@ export default function CrmAuswertungPage() {
                         </button>
                         <button
                           onClick={() => exportCampaignCsv(def)}
-                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                           disabled={count === 0}
                         >
                           <FileDown className="h-4 w-4" />
-                          CSV exportieren
+                          CSV
+                        </button>
+                        <button
+                          onClick={() => exportCampaignXlsx(def)}
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={count === 0}
+                        >
+                          <FileSpreadsheet className="h-4 w-4" />
+                          Excel
                         </button>
                       </div>
                     </div>

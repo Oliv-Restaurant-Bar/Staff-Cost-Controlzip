@@ -18,6 +18,7 @@
  * verglichen (korrekt für dieses Format).
  */
 
+import { isoToDate, type ExportCell } from './export-cell';
 import {
   daysSince,
   isAtReturnRisk,
@@ -358,4 +359,37 @@ export function buildReturnPotentialList(metrics: GuestListMetrics[]): ReturnPot
     (b.daysSinceLastVisit ?? 0) - (a.daysSinceLastVisit ?? 0),
   );
   return rows;
+}
+
+// ── Export der Rückkehrpotenzial-Liste (CSV + Excel) ───────────────────────────
+
+/** Spaltenüberschriften (deutsch) der Rückkehrpotenzial-Liste. */
+export const RETURN_POTENTIAL_HEADERS: string[] = [
+  'Gast',
+  'Segment',
+  'Besuche',
+  'Ø Intervall (Tage)',
+  'Letzter Besuch',
+  'Tage seit letztem',
+  'Überfällig seit (Tage)',
+];
+
+/**
+ * Eine Rückkehrpotenzial-Zeile als typisierte Export-Zellen (Reihenfolge =
+ * `RETURN_POTENTIAL_HEADERS`). Das Segmentlabel wird übergeben, damit dieses
+ * Modul frei von Label-/UI-Abhängigkeiten bleibt.
+ */
+export function returnPotentialRowToCells(
+  r: ReturnPotentialRow,
+  segmentLabel: (segment: GuestSegment) => string,
+): ExportCell[] {
+  return [
+    r.displayName,
+    segmentLabel(r.segment),
+    r.visits,
+    r.avgDaysBetweenVisits === null ? null : Math.round(r.avgDaysBetweenVisits),
+    isoToDate(r.lastVisit),
+    r.daysSinceLastVisit,
+    Math.round(r.overdueByDays),
+  ];
 }

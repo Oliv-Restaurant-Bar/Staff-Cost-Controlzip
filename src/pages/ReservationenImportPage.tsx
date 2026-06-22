@@ -489,9 +489,9 @@ export default function ReservationenImportPage() {
               Noch keine Importe vorhanden.
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
               <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
                   <tr>
                     <th className="px-3 py-2 font-medium">Datei</th>
                     <th className="px-3 py-2 font-medium">Zeitraum</th>

@@ -31,6 +31,7 @@ import {
   NEW_GUEST_DAYS,
   NO_SHOW_RISK_MIN,
 } from './reservation-dashboard';
+import { isoToDate, type ExportCell, type ExportTable } from './export-cell';
 
 // ── Schwellen ────────────────────────────────────────────────────────────────
 
@@ -402,4 +403,47 @@ export function buildCampaignCsv(rows: GuestListMetrics[]): string {
 /** Dateiname für den Export, z. B. „crm-kampagne-ueberfaellige-gaeste.csv". */
 export function campaignCsvFilename(campaign: CampaignDef): string {
   return `crm-kampagne-${campaign.slug}.csv`;
+}
+
+// ── Typisierter Export (CSV + Excel) ──────────────────────────────────────────
+
+/**
+ * Eine Kampagnenzeile als typisierte Zellen (Spaltenreihenfolge = `CSV_HEADERS`):
+ * Datumswerte als `Date`, Zahlen als Zahlen — Basis für den Excel-Export. Bei
+ * fehlenden Werten leere Zellen (`null`); boolesche Merkmale als „Ja"/"".
+ */
+export function campaignRowToCells(m: GuestListMetrics): ExportCell[] {
+  const crm = m.crm ?? null;
+  return [
+    m.displayName,
+    m.email ?? null,
+    m.mobile ?? null,
+    SEGMENT_LABEL[m.segment],
+    m.visits,
+    isoToDate(m.lastVisit),
+    m.daysSinceLastVisit,
+    m.avgDaysBetweenVisits === null ? null : Math.round(m.avgDaysBetweenVisits),
+    m.noShowCount,
+    crm?.vipManual ? 'Ja' : '',
+    crm?.stammgastManual ? 'Ja' : '',
+    crm?.companyCustomer ? 'Ja' : '',
+    crm?.newsletterOptIn ? 'Ja' : '',
+    crm?.blockedGuest ? 'Ja' : '',
+    isoToDate(crm?.birthday ?? null),
+    crm?.company ?? null,
+    crm?.allergies ?? null,
+  ];
+}
+
+/** Baut eine `ExportTable` (für CSV/Excel) aus einer gefilterten Kampagnenliste. */
+export function campaignExportTable(
+  campaign: CampaignDef,
+  rows: GuestListMetrics[],
+): ExportTable {
+  return {
+    filename: `crm-kampagne-${campaign.slug}`,
+    sheetName: 'Kampagne',
+    headers: CSV_HEADERS.slice(),
+    rows: rows.map(campaignRowToCells),
+  };
 }

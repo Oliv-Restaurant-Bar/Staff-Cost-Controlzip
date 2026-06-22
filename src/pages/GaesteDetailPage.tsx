@@ -20,6 +20,7 @@ import {
   ShieldCheck, ShieldAlert, CalendarDays, Hash, Hourglass,
   LayoutGrid, Pencil, Save, RotateCcw, Crown, Star, Building2,
   BellRing, Lock, Cake, Languages, Utensils, Wine, Wheat,
+  FileDown, FileSpreadsheet,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -45,8 +46,11 @@ import { overdueByDays, isOverdue, isAtRiskTier } from '@/lib/reservation-dashbo
 import {
   computeGuestPreferences, computeVisitTrend, computeCrmScore, totalPersonsOnVisits,
   filterReservationHistory, CRM_SCORE_TIER_LABEL,
+  RESERVATION_HISTORY_HEADERS, reservationHistoryRowToCells,
   type HistoryFilter, type CrmScoreTier, type TrendDirection,
 } from '@/lib/reservation-guest-profile';
+import { downloadCsv, downloadXlsx } from '@/lib/table-export';
+import { exportSlug } from '@/lib/export-cell';
 import { fetchGuestCrmProfile, upsertGuestCrmProfile } from '@/lib/guest-crm-profile-db';
 import {
   EMPTY_CRM_PROFILE, isCrmProfileDirty, manualCrmBadges,
@@ -414,6 +418,16 @@ export default function GaesteDetailPage() {
   const trendMeta = TREND_META[trend.direction];
   const TrendIcon = trendMeta.icon;
 
+  // Export der aktuell gefilterten Reservierungshistorie (CSV + Excel).
+  const historyExportTable = () => ({
+    filename: `reservierungshistorie-${exportSlug(name)}`,
+    sheetName: 'Reservierungen',
+    headers: RESERVATION_HISTORY_HEADERS,
+    rows: filteredReservations.map(r =>
+      reservationHistoryRowToCells(r, s => STATUS_LABEL[s as ReservationStatusNormalized] ?? s),
+    ),
+  });
+
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
       <button
@@ -582,30 +596,50 @@ export default function GaesteDetailPage() {
 
           {/* Reservierungshistorie */}
           <Section icon={CalendarRange} title={`Reservierungshistorie (${NUM0.format(filteredReservations.length)})`}>
-            <div className="mb-3 flex flex-wrap gap-1.5">
-              {HISTORY_FILTERS.map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => setHistoryFilter(f.id)}
-                  className={cn(
-                    'rounded-md px-2.5 py-1 text-sm font-medium transition-colors',
-                    historyFilter === f.id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/70',
-                  )}
-                >
-                  {f.label}
-                </button>
-              ))}
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {HISTORY_FILTERS.map(f => (
+                  <button
+                    key={f.id}
+                    onClick={() => setHistoryFilter(f.id)}
+                    className={cn(
+                      'rounded-md px-2.5 py-1 text-sm font-medium transition-colors',
+                      historyFilter === f.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/70',
+                    )}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              {filteredReservations.length > 0 && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => downloadCsv(historyExportTable())}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
+                  >
+                    <FileDown className="h-4 w-4" />
+                    CSV
+                  </button>
+                  <button
+                    onClick={() => void downloadXlsx(historyExportTable())}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />
+                    Excel
+                  </button>
+                </div>
+              )}
             </div>
             {filteredReservations.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
                 Keine Reservationen für diese Auswahl.
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-border">
+              <div className="max-h-[70vh] overflow-auto rounded-lg border border-border">
                 <table className="w-full border-collapse text-sm">
-                  <thead className="bg-muted/50">
+                  <thead className="bg-muted/50 [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
                     <tr>
                       <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Datum</th>
                       <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Uhrzeit</th>
