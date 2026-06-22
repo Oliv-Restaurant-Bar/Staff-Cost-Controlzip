@@ -321,6 +321,34 @@ export function guestDetailMetrics(
   };
 }
 
+/**
+ * Adapter: baut aus einem Profil + den Detail-Kennzahlen ein vollständiges
+ * `GuestListMetrics`.  Damit kann die Detailseite die bestehende, getestete
+ * Rückkehrpotenzial-Logik (overdueByDays/isOverdue/isAtRiskTier) wiederverwenden,
+ * ohne das Objekt von Hand zusammenzusetzen (kein Typ-Drift auf Seitenebene).
+ */
+export function guestListMetricsFromDetail(
+  profile: GuestProfile,
+  m: GuestDetailMetrics,
+): GuestListMetrics {
+  return {
+    id: profile.id,
+    displayName: guestDisplayName(profile),
+    email: profile.email,
+    mobile: profile.mobile,
+    visits: m.visits,
+    totalReservations: m.totalReservations,
+    cancelledReservations: m.cancelledCount,
+    firstVisit: m.firstVisit,
+    lastVisit: m.lastVisit,
+    daysSinceLastVisit: m.daysSinceLastVisit,
+    avgDaysBetweenVisits: m.avgDaysBetweenVisits,
+    avgPartySize: m.avgPartySize,
+    noShowCount: m.noShowCount,
+    segment: m.segment,
+  };
+}
+
 /** Zählt die Segmente einer Gästeliste (für Übersichts-Kacheln). */
 export function countSegments(metrics: GuestListMetrics[]): Record<GuestSegment, number> {
   const out: Record<GuestSegment, number> = {

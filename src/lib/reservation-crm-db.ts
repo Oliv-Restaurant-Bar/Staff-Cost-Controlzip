@@ -208,33 +208,49 @@ export interface GuestReservationDisplay extends GuestReservationRecord {
   statusRaw: string | null;
 }
 
-/** Alle Reservationen eines Gastes, chronologisch (neueste zuerst). */
+/**
+ * Alle Reservationen eines Gastes, chronologisch (neueste zuerst).  Paginiert
+ * (1000er-Seiten wie die übrigen Lese-Helfer), damit Vielbesucher nicht still am
+ * Supabase-Standardlimit abgeschnitten werden — Detail-Kennzahlen, Trend und
+ * Score würden sonst auf unvollständigen Daten rechnen.  Stabile Sortierung über
+ * `id` als letzten Tiebreaker, damit die Seiten lückenlos aneinander anschliessen.
+ */
 export async function fetchGuestReservations(
   restaurantId: string,
   guestId: string,
 ): Promise<GuestReservationDisplay[]> {
-  const { data, error } = await (supabase as any)
-    .from('reservation_records')
-    .select(
-      'id, external_reservation_id, reservation_date, reservation_time, party_size, ' +
-      'status, status_normalized, room, area, note, comment',
-    )
-    .eq('restaurant_id', restaurantId)
-    .eq('guest_id', guestId)
-    .order('reservation_date', { ascending: false })
-    .order('reservation_time', { ascending: false });
-  if (error || !data) return [];
-  return (data as any[]).map(r => ({
-    id: r.id,
-    externalReservationId: r.external_reservation_id ?? null,
-    reservationDate: r.reservation_date ?? null,
-    reservationTime: r.reservation_time ?? null,
-    partySize: r.party_size ?? null,
-    statusNormalized: normStatus(r.status_normalized ?? null),
-    statusRaw: r.status ?? null,
-    room: r.room ?? null,
-    area: r.area ?? null,
-    note: r.note ?? null,
-    comment: r.comment ?? null,
-  }));
+  const out: GuestReservationDisplay[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await (supabase as any)
+      .from('reservation_records')
+      .select(
+        'id, external_reservation_id, reservation_date, reservation_time, party_size, ' +
+        'status, status_normalized, room, area, note, comment',
+      )
+      .eq('restaurant_id', restaurantId)
+      .eq('guest_id', guestId)
+      .order('reservation_date', { ascending: false })
+      .order('reservation_time', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error || !data || data.length === 0) break;
+    for (const r of data as any[]) {
+      out.push({
+        id: r.id,
+        externalReservationId: r.external_reservation_id ?? null,
+        reservationDate: r.reservation_date ?? null,
+        reservationTime: r.reservation_time ?? null,
+        partySize: r.party_size ?? null,
+        statusNormalized: normStatus(r.status_normalized ?? null),
+        statusRaw: r.status ?? null,
+        room: r.room ?? null,
+        area: r.area ?? null,
+        note: r.note ?? null,
+        comment: r.comment ?? null,
+      });
+    }
+    if (data.length < PAGE) break;
+  }
+  return out;
 }
