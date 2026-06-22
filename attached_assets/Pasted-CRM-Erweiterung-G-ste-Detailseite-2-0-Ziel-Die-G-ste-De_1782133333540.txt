@@ -1,0 +1,140 @@
+CRM Erweiterung: Gäste Detailseite 2.0
+
+Ziel:
+Die Gäste Detailseite soll von einer einfachen Übersicht zu einer vollständigen CRM Kundenakte erweitert werden.
+
+Scope:
+
+* Nur Gäste Detailseite erweitern
+* Keine Änderung an Importlogik
+* Keine Änderung an guest_statistics View
+* Keine Änderung an Gastronovi
+* Nur bestehende CRM Daten verwenden
+* Read-only
+
+Bitte umsetzen:
+
+1. Neuer Bereich “Besuchsverhalten”
+
+Zeige:
+
+* Segment
+* Total Besuche
+* Total Reservationen
+* Erster Besuch
+* Letzter Besuch
+* Tage seit letztem Besuch
+* Durchschnittliches Besuchsintervall
+* Durchschnittliche Gruppengrösse
+* Total Personen über alle Besuche
+
+2. Neuer Bereich “Präferenzen”
+
+Aus reservation_records berechnen:
+
+* Lieblingsbereich
+    (Restaurant / Terrasse / Bar)
+* Lieblingswochentag
+* Lieblingszeit
+    (z.B. 12:00, 18:30, 19:00)
+* Häufigste Gruppengrösse
+
+3. Neuer Bereich “Risiko”
+
+Anzeigen:
+
+* No Shows
+* Stornierungen
+* Überfällig ja/nein
+* Überfällig seit X Tagen
+* Gefährdet ja/nein
+
+Verwende bestehende Rückkehrpotenzial-Logik.
+
+4. Neuer Bereich “Trend”
+
+Berechnen:
+
+* Besuche letzte 90 Tage
+* Besuche davor (90 Tage Vergleich)
+
+Status:
+
+* steigend
+* stabil
+* rückläufig
+
+Mit einfacher visueller Kennzeichnung.
+
+5. Reservierungshistorie
+
+Tabelle:
+
+* Datum
+* Uhrzeit
+* Personen
+* Bereich
+* Status
+
+Sortierung:
+Neueste zuerst
+
+Filter:
+
+* Alle
+* Nur Besuche
+* Nur Storniert
+* Nur No Show
+
+6. CRM Score
+
+Neue Kennzahl:
+
+CRM Score 0-100
+
+Vorschlag:
+
+* Besuchsanzahl
+* Aktualität
+* Regelmässigkeit
+* Gruppengrösse
+
+Gewichtung dokumentieren.
+
+Anzeige:
+
+* 0-39 niedrig
+* 40-69 mittel
+* 70-89 hoch
+* 90-100 VIP Potenzial
+
+7. Technische Anforderungen
+
+* Pure Helper Datei für CRM Scoring
+* Keine PII in Tests oder Logs
+* Defensive Logik bei leeren Daten
+* TypeScript sauber
+* Wiederverwendung bestehender CRM Funktionen
+* Mobile und Desktop sauber
+
+8. Tests
+
+* CRM Score Tests
+* Trend Tests
+* Präferenzberechnung Tests
+* Historienfilter Tests
+
+9. Checks
+
+Bitte ausführen:
+
+* tsc
+* vitest
+* build
+* architect review
+
+Wichtig:
+
+Noch keine Umsatzdaten, keine POS Integration, keine E-Mail Funktionen.
+
+Nur die Gäste Detailseite deutlich aufwerten und zur vollständigen CRM Kundenakte ausbauen.
