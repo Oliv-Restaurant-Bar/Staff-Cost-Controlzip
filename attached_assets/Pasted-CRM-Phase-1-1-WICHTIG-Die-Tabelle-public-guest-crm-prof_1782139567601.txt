@@ -1,0 +1,129 @@
+CRM Phase 1.1
+
+WICHTIG:
+
+Die Tabelle public.guest_crm_profiles existiert bereits in Supabase.
+
+KEINE neue Migration erstellen.
+KEINE Änderung an guest_profiles.
+KEINE Änderung an guest_statistics.
+KEINE Änderung an Importlogik.
+KEINE Änderung an Gastronovi-Importen.
+
+Ziel:
+Auf der Gäste-Detailseite einen vollständigen CRM-Tab implementieren, der Daten aus guest_crm_profiles liest und speichert.
+
+1. CRUD Layer
+
+Erstelle einen neuen CRUD Layer für guest_crm_profiles:
+
+* Profil laden per guest_id
+* Profil erstellen falls noch keines existiert
+* Profil aktualisieren
+* TypeScript sauber typisieren
+* Bestehende Projektmuster für Supabase-Zugriffe wiederverwenden
+
+2. Gäste-Detailseite erweitern
+
+Neuen Tab hinzufügen:
+
+CRM
+
+Felder:
+
+Checkboxen:
+
+* VIP manuell
+* Stammgast manuell
+* Firmenkunde
+* Newsletter
+* Sperrliste
+
+Textfelder:
+
+* Firma
+* Sprache
+* Allergien
+* Unverträglichkeiten
+* Lieblingsplatz
+* Lieblingsbereich
+* Lieblingswein
+* Lieblingsgericht
+
+Datum:
+
+* Geburtstag
+
+Mehrzeilig:
+
+* CRM Notizen
+
+Buttons:
+
+* Speichern
+* Änderungen verwerfen
+
+Verhalten:
+
+* Speichern speichert alle Felder in die Datenbank
+* Änderungen verwerfen setzt das Formular auf den letzten gespeicherten Stand zurück
+* Keine separaten Speichern-Buttons pro Feld
+
+3. Erstes Speichern
+
+Wenn für einen Gast noch kein Datensatz in guest_crm_profiles existiert:
+
+* leeres Formular anzeigen
+* beim ersten Speichern automatisch Datensatz erstellen
+* danach normale Updates verwenden
+
+4. VIP / Stammgast Anzeige
+
+Manueller VIP:
+
+* Wenn vip_manual = true → VIP Badge anzeigen
+* Unabhängig vom automatisch berechneten Segment
+
+Manueller Stammgast:
+
+* Wenn stammgast_manual = true → Stammgast Badge anzeigen
+* Unabhängig vom automatisch berechneten Segment
+
+Automatische Segmente dürfen bestehen bleiben.
+
+5. Detailseite
+
+CRM-Daten zusätzlich im bestehenden Kundenprofil sichtbar machen:
+
+* VIP Status
+* Stammgast Status
+* Geburtstag
+* Firma
+* Allergien
+* Notizen
+
+Optisch passend zum bestehenden CRM Design.
+
+6. Tests
+
+Erstellen:
+
+* CRUD Tests
+* Formular Tests
+* VIP Badge Tests
+* Type Tests
+
+7. Validierung
+
+Vor Abschluss ausführen:
+
+* tsc
+* vitest
+* build
+* architect review
+
+Erst als fertig markieren wenn alle Checks erfolgreich sind.
+
+Keine Migration erstellen.
+Keine Datenbankstruktur ändern.
+Vorhandene Tabelle guest_crm_profiles verwenden.

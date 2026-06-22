@@ -1,12 +1,15 @@
 /**
  * GaesteDetailPage — Gäste-CRM (Kundenakte)
  * ==========================================
- * Vollständige CRM-Kundenakte eines einzelnen Gastes: Besuchsverhalten,
- * Präferenzen, Risiko, Besuchstrend, CRM-Score und die filterbare
- * Reservierungs-Historie.  Alle Kennzahlen werden live aus den
- * Einzelreservationen (`reservation_records`) berechnet (siehe
- * reservation-crm.ts / reservation-guest-profile.ts) — reine Lese-/
- * Analyseansicht, keine Bearbeitung.
+ * Vollständige CRM-Kundenakte eines einzelnen Gastes in zwei Tabs:
+ *
+ *  - „Übersicht": Besuchsverhalten, Präferenzen, Risiko, Besuchstrend,
+ *    CRM-Score und die filterbare Reservierungs-Historie.  Alle Kennzahlen
+ *    werden LIVE aus den Einzelreservationen (`reservation_records`) berechnet
+ *    (reservation-crm.ts / reservation-guest-profile.ts) — reine Leseansicht.
+ *  - „CRM": MANUELL gepflegte Stammdaten/Flags/Notizen (`guest_crm_profiles`),
+ *    bearbeitbar.  Diese Angaben sind STRIKT getrennt von den automatisch
+ *    berechneten Kennzahlen und beeinflussen Segment/Score/Kampagnen NICHT.
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
@@ -15,6 +18,8 @@ import {
   Clock, CalendarRange, Repeat, Mail, Phone, MapPin, StickyNote,
   Sigma, Gauge, TrendingUp, TrendingDown, Minus, AlertTriangle,
   ShieldCheck, ShieldAlert, CalendarDays, Hash, Hourglass,
+  LayoutGrid, Pencil, Save, RotateCcw, Crown, Star, Building2,
+  BellRing, Lock, Cake, Languages, Utensils, Wine, Wheat,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -22,6 +27,14 @@ import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useGuestSession } from '@/contexts/GuestSessionContext';
+import { useToast } from '@/hooks/use-toast';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 
 import { fetchGuestById, fetchGuestReservations, type GuestReservationDisplay } from '@/lib/reservation-crm-db';
 import {
@@ -34,6 +47,10 @@ import {
   filterReservationHistory, CRM_SCORE_TIER_LABEL,
   type HistoryFilter, type CrmScoreTier, type TrendDirection,
 } from '@/lib/reservation-guest-profile';
+import { fetchGuestCrmProfile, upsertGuestCrmProfile } from '@/lib/guest-crm-profile-db';
+import {
+  EMPTY_CRM_PROFILE, isCrmProfileDirty, type GuestCrmProfile,
+} from '@/lib/guest-crm-profile';
 import { SegmentBadge } from '@/components/crm/SegmentBadge';
 import type { ReservationStatusNormalized } from '@/lib/reservation-import-parser';
 
@@ -148,12 +165,90 @@ const HISTORY_FILTERS: { id: HistoryFilter; label: string }[] = [
   { id: 'noshow',    label: 'Nur No-Show' },
 ];
 
+// ── Formular-Bausteine (CRM-Tab) ──────────────────────────────────────────────
+
+function FieldText({ icon: Icon, label, value, onChange, disabled, placeholder, type }: {
+  icon?: React.FC<{ className?: string }>;
+  label: string;
+  value: string | null;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  type?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {Icon && <Icon className="h-3.5 w-3.5" />}
+        {label}
+      </Label>
+      <Input
+        type={type ?? 'text'}
+        value={value ?? ''}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+function FieldArea({ icon: Icon, label, value, onChange, disabled, placeholder, rows }: {
+  icon?: React.FC<{ className?: string }>;
+  label: string;
+  value: string | null;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  rows?: number;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {Icon && <Icon className="h-3.5 w-3.5" />}
+        {label}
+      </Label>
+      <Textarea
+        value={value ?? ''}
+        placeholder={placeholder}
+        disabled={disabled}
+        rows={rows ?? 3}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  );
+}
+
+function FieldToggle({ icon: Icon, label, description, checked, onChange, disabled }: {
+  icon: React.FC<{ className?: string }>;
+  label: string;
+  description?: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-3">
+      <div className="flex items-start gap-2">
+        <Icon className="mt-0.5 h-4 w-4 text-muted-foreground" />
+        <div>
+          <div className="text-sm font-medium">{label}</div>
+          {description && <div className="text-xs text-muted-foreground">{description}</div>}
+        </div>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+    </div>
+  );
+}
+
 // ── Komponente ────────────────────────────────────────────────────────────────
 
 export default function GaesteDetailPage() {
   const { guestId } = useParams<{ guestId: string }>();
   const { tenantId } = useTenant();
   const { isAdmin } = usePermissions();
+  const { isGuest } = useGuestSession();
+  const { toast } = useToast();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -161,22 +256,80 @@ export default function GaesteDetailPage() {
   const [reservations, setReservations] = useState<GuestReservationDisplay[]>([]);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('alle');
 
+  // Manuelles CRM-Profil (guest_crm_profiles): `crmSaved` = zuletzt gespeicherter
+  // Stand, `crmForm` = aktueller Formularstand. Differenz = ungespeicherte Änderung.
+  const [crmSaved, setCrmSaved] = useState<GuestCrmProfile>(EMPTY_CRM_PROFILE);
+  const [crmForm, setCrmForm] = useState<GuestCrmProfile>(EMPTY_CRM_PROFILE);
+  const [crmSaving, setCrmSaving] = useState(false);
+  // Lesefehler des CRM-Profils. Bei gesetztem Fehler ist Bearbeiten/Speichern
+  // gesperrt, damit ein Speichern nicht versehentlich echte Daten mit leeren
+  // Defaults überschreibt (das Formular zeigt sonst fälschlich „leer = gespeichert").
+  const [crmLoadError, setCrmLoadError] = useState<string | null>(null);
+
+  // Schreibrechte: nur echte Admins, NICHT Gast-Sessions (read-only Links erhalten
+  // isAdmin lediglich für Lesezugriffe und dürfen keine CRM-Daten verändern); und
+  // niemals bei fehlgeschlagenem CRM-Load.
+  const canEditCrm = isAdmin && !isGuest && !crmLoadError;
+
   const today = useMemo(() => fmtDate(new Date(), 'yyyy-MM-dd'), []);
 
   const load = useCallback(async () => {
     if (!guestId) return;
     if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
     setLoading(true);
+    setCrmLoadError(null);
     const [p, recs] = await Promise.all([
       fetchGuestById(tenantId, guestId),
       fetchGuestReservations(tenantId, guestId),
     ]);
     setProfile(p);
     setReservations(recs);
+
+    // CRM-Profil separat laden: ein echter Lesefehler darf NICHT als „leeres Profil"
+    // interpretiert werden — sonst würde ein anschliessendes Speichern bestehende
+    // manuelle Daten mit Defaults überschreiben. `fetchGuestCrmProfile` liefert null
+    // (= noch kein Profil), wirft aber bei echten Lesefehlern.
+    try {
+      const crm = await fetchGuestCrmProfile(tenantId, guestId);
+      const crmProfile = crm ?? EMPTY_CRM_PROFILE;
+      setCrmSaved(crmProfile);
+      setCrmForm(crmProfile);
+    } catch (e) {
+      setCrmLoadError(e instanceof Error ? e.message : 'CRM-Profil konnte nicht geladen werden.');
+    }
     setLoading(false);
   }, [tenantId, guestId, isAdmin]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const crmDirty = useMemo(() => isCrmProfileDirty(crmForm, crmSaved), [crmForm, crmSaved]);
+
+  const setCrmField = useCallback(
+    <K extends keyof GuestCrmProfile>(key: K, value: GuestCrmProfile[K]) =>
+      setCrmForm(prev => ({ ...prev, [key]: value })),
+    [],
+  );
+
+  const handleSaveCrm = useCallback(async () => {
+    if (!guestId || !canEditCrm) return;
+    setCrmSaving(true);
+    try {
+      const saved = await upsertGuestCrmProfile(tenantId, guestId, crmForm);
+      setCrmSaved(saved);
+      setCrmForm(saved);
+      toast({ title: 'CRM-Profil gespeichert' });
+    } catch (e) {
+      toast({
+        title: 'Speichern fehlgeschlagen',
+        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+        variant: 'destructive',
+      });
+    } finally {
+      setCrmSaving(false);
+    }
+  }, [tenantId, guestId, canEditCrm, crmForm, toast]);
+
+  const handleResetCrm = useCallback(() => setCrmForm(crmSaved), [crmSaved]);
 
   const metrics = useMemo(() => guestDetailMetrics(reservations, today), [reservations, today]);
   const preferences = useMemo(() => computeGuestPreferences(reservations), [reservations]);
@@ -245,6 +398,19 @@ export default function GaesteDetailPage() {
             <SegmentBadge segment={metrics.segment} />
           </div>
 
+          <Tabs defaultValue="overview">
+            <TabsList className="mb-4">
+              <TabsTrigger value="overview" className="gap-1.5">
+                <LayoutGrid className="h-4 w-4" />
+                Übersicht
+              </TabsTrigger>
+              <TabsTrigger value="crm" className="gap-1.5">
+                <Pencil className="h-4 w-4" />
+                CRM
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="overview" className="space-y-5">
           {/* CRM-Score */}
           <Section icon={Gauge} title="CRM-Score">
             <div className="grid gap-4 sm:grid-cols-[auto_1fr] sm:items-center">
@@ -405,6 +571,179 @@ export default function GaesteDetailPage() {
               </div>
             )}
           </Section>
+            </TabsContent>
+
+            {/* ── CRM (manuell gepflegt) ─────────────────────────────────── */}
+            <TabsContent value="crm" className="space-y-5">
+              <div className="rounded-lg border border-dashed border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Diese Angaben werden manuell gepflegt und beeinflussen die automatisch
+                berechneten Kennzahlen (Segment, CRM-Score, Kampagnen) NICHT.
+              </div>
+
+              {crmLoadError && (
+                <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                  CRM-Profil konnte nicht geladen werden: {crmLoadError}. Bearbeiten ist
+                  deaktiviert, um bestehende Daten nicht versehentlich zu überschreiben.
+                </div>
+              )}
+
+              {/* Status & Kennzeichen */}
+              <Section icon={Crown} title="Status & Kennzeichen">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <FieldToggle
+                    icon={Crown} label="VIP (manuell)"
+                    description="Manuelle Kennzeichnung – unabhängig vom berechneten Segment."
+                    checked={crmForm.vipManual}
+                    onChange={(v) => setCrmField('vipManual', v)}
+                    disabled={!canEditCrm}
+                  />
+                  <FieldToggle
+                    icon={Star} label="Stammgast (manuell)"
+                    description="Manuelle Kennzeichnung – unabhängig vom berechneten Segment."
+                    checked={crmForm.stammgastManual}
+                    onChange={(v) => setCrmField('stammgastManual', v)}
+                    disabled={!canEditCrm}
+                  />
+                  <FieldToggle
+                    icon={Building2} label="Firmenkunde"
+                    description="Geschäftskunde / Firmenbewirtung."
+                    checked={crmForm.companyCustomer}
+                    onChange={(v) => setCrmField('companyCustomer', v)}
+                    disabled={!canEditCrm}
+                  />
+                  <FieldToggle
+                    icon={BellRing} label="Newsletter"
+                    description="Einwilligung in Newsletter / Marketing liegt vor."
+                    checked={crmForm.newsletterOptIn}
+                    onChange={(v) => setCrmField('newsletterOptIn', v)}
+                    disabled={!canEditCrm}
+                  />
+                  <FieldToggle
+                    icon={Lock} label="Gesperrt"
+                    description="Gast für Reservationen sperren / besondere Vorsicht."
+                    checked={crmForm.blockedGuest}
+                    onChange={(v) => setCrmField('blockedGuest', v)}
+                    disabled={!canEditCrm}
+                  />
+                </div>
+              </Section>
+
+              {/* Stammdaten */}
+              <Section icon={CalendarDays} title="Stammdaten">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <FieldText
+                    icon={Cake} label="Geburtstag" type="date"
+                    value={crmForm.birthday}
+                    onChange={(v) => setCrmField('birthday', v || null)}
+                    disabled={!canEditCrm}
+                  />
+                  <FieldText
+                    icon={Building2} label="Firma"
+                    value={crmForm.company}
+                    onChange={(v) => setCrmField('company', v)}
+                    disabled={!canEditCrm}
+                    placeholder="z. B. Muster AG"
+                  />
+                  <FieldText
+                    icon={Languages} label="Sprache"
+                    value={crmForm.language}
+                    onChange={(v) => setCrmField('language', v)}
+                    disabled={!canEditCrm}
+                    placeholder="z. B. DE / FR / EN"
+                  />
+                </div>
+              </Section>
+
+              {/* Präferenzen */}
+              <Section icon={MapPin} title="Präferenzen">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FieldText
+                    icon={Hash} label="Lieblingstisch"
+                    value={crmForm.favoriteTable}
+                    onChange={(v) => setCrmField('favoriteTable', v)}
+                    disabled={!canEditCrm}
+                    placeholder="z. B. Tisch 12"
+                  />
+                  <FieldText
+                    icon={MapPin} label="Lieblingsbereich"
+                    value={crmForm.favoriteArea}
+                    onChange={(v) => setCrmField('favoriteArea', v)}
+                    disabled={!canEditCrm}
+                    placeholder="z. B. Terrasse"
+                  />
+                  <FieldText
+                    icon={Wine} label="Lieblingswein"
+                    value={crmForm.favoriteWine}
+                    onChange={(v) => setCrmField('favoriteWine', v)}
+                    disabled={!canEditCrm}
+                  />
+                  <FieldText
+                    icon={Utensils} label="Lieblingsgericht"
+                    value={crmForm.favoriteDish}
+                    onChange={(v) => setCrmField('favoriteDish', v)}
+                    disabled={!canEditCrm}
+                  />
+                </div>
+              </Section>
+
+              {/* Allergien & Ernährung */}
+              <Section icon={Wheat} title="Allergien & Ernährung">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FieldArea
+                    icon={Wheat} label="Allergien"
+                    value={crmForm.allergies}
+                    onChange={(v) => setCrmField('allergies', v)}
+                    disabled={!canEditCrm}
+                    placeholder="z. B. Nüsse, Laktose"
+                  />
+                  <FieldArea
+                    icon={Utensils} label="Ernährungshinweise"
+                    value={crmForm.dietaryNotes}
+                    onChange={(v) => setCrmField('dietaryNotes', v)}
+                    disabled={!canEditCrm}
+                    placeholder="z. B. vegetarisch, glutenfrei"
+                  />
+                </div>
+              </Section>
+
+              {/* Notizen */}
+              <Section icon={StickyNote} title="CRM-Notizen">
+                <FieldArea
+                  label="Interne Notizen"
+                  value={crmForm.crmNotes}
+                  onChange={(v) => setCrmField('crmNotes', v)}
+                  disabled={!canEditCrm}
+                  rows={5}
+                  placeholder="Interne Notizen zum Gast …"
+                />
+              </Section>
+
+              {/* Aktionen */}
+              {canEditCrm ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={handleSaveCrm} disabled={crmSaving || !crmDirty}>
+                    {crmSaving
+                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      : <Save className="mr-2 h-4 w-4" />}
+                    Speichern
+                  </Button>
+                  {crmDirty && (
+                    <Button variant="outline" onClick={handleResetCrm} disabled={crmSaving}>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Zurücksetzen
+                    </Button>
+                  )}
+                  {crmDirty && (
+                    <span className="text-xs text-muted-foreground">Es gibt ungespeicherte Änderungen.</span>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Nur Administratoren können CRM-Daten bearbeiten.
+                </p>
+              )}
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>
