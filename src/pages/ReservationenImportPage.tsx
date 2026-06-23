@@ -41,9 +41,9 @@ type Tab = 'import' | 'history';
 
 export default function ReservationenImportPage() {
   const { tenantId } = useTenant();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isGuest } = usePermissions();
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   const [tab, setTab] = useState<Tab>('import');
   const [step, setStep] = useState<WizardStep>('upload');
@@ -150,10 +150,14 @@ export default function ReservationenImportPage() {
     }
     toast.success(
       `Import erfolgreich — ${result.reservationCount} Reservationen `
-      + `(${result.newGuests} neue, ${result.returningGuests} wiederkehrende Gäste)`
+      + `(${result.inserted} neu, ${result.updated} aktualisiert)`
       + (result.duplicateKeyMerged > 0
-        ? ` · ${result.duplicateKeyMerged} Doppel-Res.Nr. zusammengeführt`
-        : ''),
+        ? ` · ${result.duplicateKeyMerged} Doppel-Res.Nr. in der CSV zusammengeführt`
+        : '')
+      + (result.skippedRows > 0
+        ? ` · ${result.skippedRows} Zeile(n) übersprungen`
+        : '')
+      + ` · ${result.newGuests} neue / ${result.returningGuests} wiederkehrende Gäste`,
     );
     setStep('done');
     loadHistory();

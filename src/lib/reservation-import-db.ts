@@ -281,9 +281,16 @@ export interface SaveReservationImportResult {
   error: string | null;
   newGuests: number;
   returningGuests: number;
+  /** Eindeutige Reservationen, die gespeichert wurden (= inserted + updated). */
   reservationCount: number;
+  /** Reservationen, deren Res.Nr. es für diesen Mandanten noch nicht gab (neu angelegt). */
+  inserted: number;
+  /** Reservationen, deren Res.Nr. bereits existierte (aktualisiert/ersetzt statt dupliziert). */
+  updated: number;
   /** Anzahl CSV-Zeilen, die wegen identischer Res.Nr. (Conflict-Key) zusammengeführt wurden. */
   duplicateKeyMerged: number;
+  /** CSV-Zeilen, die gar nicht importiert wurden (z. B. ohne Res.Nr.). */
+  skippedRows: number;
 }
 
 export async function saveReservationImport(
@@ -294,7 +301,10 @@ export async function saveReservationImport(
   const stats = parseResult.stats;
 
   const fail = (importId: string, error: string): SaveReservationImportResult =>
-    ({ importId: '', error, newGuests: 0, returningGuests: 0, reservationCount: 0, duplicateKeyMerged: 0 });
+    ({ importId: '', error, newGuests: 0, returningGuests: 0, reservationCount: 0, inserted: 0, updated: 0, duplicateKeyMerged: 0, skippedRows: 0 });
+
+  // Zeilen, die der Parser gar nicht erst übernommen hat (z. B. ohne Res.Nr.).
+  const skippedRows = (parseResult.errors ?? []).filter(e => e.kind === 'skipped').length;
 
   // 1. Import-Kopf als 'processing' anlegen.
   let importId = '';
@@ -422,6 +432,29 @@ export async function saveReservationImport(
     const dedupCompletedCount = dedupedReservations.filter(r => r.statusNormalized === 'completed').length;
     const dedupCancelledCount = dedupedReservations.filter(r => r.statusNormalized === 'cancelled').length;
 
+    // Vor dem Upsert die bereits gespeicherten Res.Nr. dieses Mandanten lesen, um
+    // neu-eingefügt vs. aktualisiert/ersetzt zu unterscheiden. Supabase' upsert
+    // meldet nicht, welche Zeilen INSERT vs. UPDATE waren, deshalb dieser
+    // gechunkte, tenant-gefilterte Read-before-write (Projektmuster, vgl.
+    // fetchExistingGuests). Race-Conditions sind hier unkritisch: der UNIQUE-
+    // Constraint verhindert Duplikate, die Zahlen sind nur Statistik.
+    const incomingExtIds = dedupedReservations.map(r => r.externalReservationId);
+    const existingExtIds = new Set<string>();
+    for (const part of chunk([...new Set(incomingExtIds)], 200)) {
+      if (part.length === 0) continue;
+      const { data, error } = await (supabase as any)
+        .from('reservation_records')
+        .select('external_reservation_id')
+        .eq('restaurant_id', restaurantId)
+        .in('external_reservation_id', part);
+      if (error) return await markFailed(`Bestehende Reservationen konnten nicht geprüft werden: ${error.message ?? error}`);
+      for (const row of (data ?? []) as Array<{ external_reservation_id: string }>) {
+        existingExtIds.add(row.external_reservation_id);
+      }
+    }
+    const updated = incomingExtIds.filter(id => existingExtIds.has(id)).length;
+    const inserted = incomingExtIds.length - updated;
+
     const recordRows = dedupedReservations.map(r => ({
       restaurant_id: restaurantId,
       external_reservation_id: r.externalReservationId,
@@ -487,7 +520,10 @@ export async function saveReservationImport(
       newGuests,
       returningGuests,
       reservationCount: dedupedReservations.length,
+      inserted,
+      updated,
       duplicateKeyMerged,
+      skippedRows,
     };
   } catch (e) {
     return await markFailed(e instanceof Error ? e.message : String(e));

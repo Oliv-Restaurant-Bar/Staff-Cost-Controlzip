@@ -57,6 +57,12 @@ export interface ParsedReservation {
 export interface ReservationParseError {
   rowNumber: number;
   message: string;
+  /**
+   * `skipped`  = Zeile wurde NICHT importiert (z. B. ohne Res.Nr.).
+   * `warning`  = Zeile wurde importiert, ein Feld war aber auffällig (z. B. Datum).
+   * Fehlt das Feld, handelt es sich um einen datei-/kopfbezogenen Fehler.
+   */
+  kind?: 'skipped' | 'warning';
 }
 
 export interface StatusDistributionEntry {
@@ -454,7 +460,7 @@ export function parseReservationsCsv(fileName: string, rawText: string): Reserva
     const rowNumber = r; // 1-basierte Datenzeile
     const externalReservationId = get(cells, 'externalReservationId');
     if (!externalReservationId) {
-      errors.push({ rowNumber, message: 'Zeile ohne Res.Nr. — übersprungen.' });
+      errors.push({ rowNumber, kind: 'skipped', message: 'Zeile ohne Res.Nr. — übersprungen.' });
       continue;
     }
 
@@ -472,7 +478,7 @@ export function parseReservationsCsv(fileName: string, rawText: string): Reserva
     const reservationDate = parseGermanDate(get(cells, 'reservationDate'));
 
     if (!reservationDate && get(cells, 'reservationDate')) {
-      errors.push({ rowNumber, message: `Datum "${get(cells, 'reservationDate')}" nicht erkannt (Res.Nr. ${externalReservationId}).` });
+      errors.push({ rowNumber, kind: 'warning', message: `Datum "${get(cells, 'reservationDate')}" nicht erkannt (Res.Nr. ${externalReservationId}).` });
     }
 
     reservations.push({

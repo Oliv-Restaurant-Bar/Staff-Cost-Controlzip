@@ -62,3 +62,22 @@ transaction (no RPC infra; migrations are run manually). This is acceptable
 because every write is an upsert keyed on a UNIQUE constraint, so re-running a
 failed import converges. Aggregate recompute is scoped to affected guest_ids via
 chunked `.in()` — never a global recompute, never deletes of unrelated rows.
+
+## Reporting inserted-vs-updated needs a read-before-write
+Supabase' `.upsert(..., { onConflict })` does NOT tell you which rows were
+INSERTed vs UPDATEd. To produce honest "neu eingefügt / aktualisiert" import
+stats, pre-fetch the existing conflict keys for the incoming (deduped) set with a
+chunked, tenant-filtered `.select('external_reservation_id').eq('restaurant_id',…)
+.in('external_reservation_id', part)` before the upsert; `updated` = keys already
+present, `inserted` = rest. Race conditions are irrelevant here — the UNIQUE
+constraint still prevents duplicates; the numbers are display-only statistics.
+
+## UNIQUE constraint lives inside CREATE TABLE IF NOT EXISTS — add it standalone too
+The `(restaurant_id, external_reservation_id)` UNIQUE constraint that makes the
+import idempotent is declared *inside* `CREATE TABLE IF NOT EXISTS` in the
+original reservations migration. If the table already existed when that line was
+added, `IF NOT EXISTS` is a no-op and the constraint silently never gets created.
+**Always ship a separate idempotent `ADD CONSTRAINT` migration** (guarded by a
+`pg_constraint` existence check, with a pre-dedup keeping the newest row per key)
+so older environments converge. Verify the constraint empirically — you cannot
+assume the in-CREATE-TABLE declaration actually ran.
