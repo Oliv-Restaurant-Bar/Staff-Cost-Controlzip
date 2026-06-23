@@ -679,53 +679,87 @@ export default function GaesteCrmPage() {
                 />
               </div>
 
-              {/* Manuelle CRM-Merkmale — acht Ja/Nein/Alle-Dropdowns im Filterraster */}
-              <div className="grid grid-cols-2 gap-2 border-t border-border pt-3 sm:grid-cols-3 lg:grid-cols-4">
-                {CRM_BOOL_FILTERS.map(({ key, label }) => (
-                  <FilterSelect<BoolFilter>
-                    key={key}
-                    label={label}
-                    value={filters[key]}
-                    options={BOOL_FILTER_OPTIONS}
-                    onChange={v => setCrmBool(key, v)}
-                  />
-                ))}
+              {/* Zusatzfilter (manuelle CRM-Merkmale) gesammelt in einem Dropdown
+                  + Aktiv-Status/Reset — hält den Hauptbereich kompakt. */}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <button className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted/60">
+                      <Filter className="h-4 w-4" />
+                      Weitere Filter
+                      {activeCrmCount > 0 && (
+                        <span className="rounded-full bg-primary/15 px-1.5 text-[10px] font-semibold leading-4 text-primary">
+                          {activeCrmCount}
+                        </span>
+                      )}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="max-h-[26rem] w-72 space-y-3 overflow-auto p-3">
+                    {/* gefährdete Stammgäste — nur sichtbar, wenn relevant (≥1) */}
+                    {returnRiskCount > 0 && (
+                      <button
+                        onClick={() => setFilters(f => ({
+                          ...f,
+                          returnRisk: f.returnRisk === 'risk' ? 'alle' : 'risk',
+                        }))}
+                        className={cn(
+                          'flex w-full items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-xs font-medium transition-colors',
+                          filters.returnRisk === 'risk'
+                            ? 'border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
+                            : 'border-border bg-background text-foreground hover:bg-muted/60',
+                        )}
+                      >
+                        <span className="inline-flex items-center gap-1.5">
+                          <TrendingDown className="h-3.5 w-3.5" />
+                          Gefährdete Stammgäste
+                        </span>
+                        <span className="tabular-nums">{NUM0.format(returnRiskCount)}</span>
+                      </button>
+                    )}
+
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Manuelle CRM-Merkmale
+                      </p>
+                      {CRM_BOOL_FILTERS.map(({ key, label }) => (
+                        <FilterSelect<BoolFilter>
+                          key={key}
+                          label={label}
+                          value={filters[key]}
+                          options={BOOL_FILTER_OPTIONS}
+                          onChange={v => setCrmBool(key, v)}
+                        />
+                      ))}
+                    </div>
+
+                    {activeCrmCount > 0 && (
+                      <button
+                        onClick={resetCrmFilters}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        CRM-Filter zurücksetzen
+                      </button>
+                    )}
+                  </PopoverContent>
+                </Popover>
+
+                {filtersActive && (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Filter className="h-3.5 w-3.5" />
+                      {NUM0.format(sorted.length)} von {NUM0.format(allMetrics.length)} Gästen
+                    </span>
+                    <button
+                      onClick={resetFilters}
+                      className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted/60"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Filter zurücksetzen
+                    </button>
+                  </div>
+                )}
               </div>
-
-              {/* Schnellfilter: gefährdete Stammgäste (Rückkehrpotenzial) */}
-              {returnRiskCount > 0 && (
-                <button
-                  onClick={() => setFilters(f => ({
-                    ...DEFAULT_GUEST_FILTERS,
-                    returnRisk: f.returnRisk === 'risk' ? 'alle' : 'risk',
-                  }))}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors',
-                    filters.returnRisk === 'risk'
-                      ? 'border-orange-400 bg-orange-100 text-orange-800 dark:border-orange-700 dark:bg-orange-950/40 dark:text-orange-300'
-                      : 'border-border bg-background text-foreground hover:bg-muted/60',
-                  )}
-                >
-                  <TrendingDown className="h-3.5 w-3.5" />
-                  {NUM0.format(returnRiskCount)} gefährdete Stammgäste
-                </button>
-              )}
-
-              {filtersActive && (
-                <div className="flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Filter className="h-3.5 w-3.5" />
-                    Filter aktiv — {NUM0.format(sorted.length)} von {NUM0.format(allMetrics.length)} Gästen
-                  </span>
-                  <button
-                    onClick={resetFilters}
-                    className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted/60"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Filter zurücksetzen
-                  </button>
-                </div>
-              )}
             </>
           )}
         </div>
