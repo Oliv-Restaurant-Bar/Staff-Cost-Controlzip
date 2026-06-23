@@ -41,7 +41,7 @@ import {
   DEFAULT_GUEST_FILTERS, hasActiveFilters, searchAndFilterGuests, sortGuests,
   SEGMENT_FILTER_OPTIONS, VISIT_COUNT_FILTER_OPTIONS, LAST_VISIT_FILTER_OPTIONS,
   PARTY_SIZE_FILTER_OPTIONS, NO_SHOW_FILTER_OPTIONS, RETURN_RISK_FILTER_OPTIONS,
-  BOOL_FILTER_OPTIONS, CRM_BOOL_FILTERS,
+  BOOL_FILTER_OPTIONS, CRM_BOOL_FILTERS, CRM_BOOL_FILTER_KEYS,
   type GuestFilterState, type GuestSortKey, type SortDir, type FilterOption,
   type CrmMerkmal, type BoolFilter,
 } from '@/lib/guest-list-filters';
@@ -406,6 +406,20 @@ export default function GaesteCrmPage() {
   const displayRows = isTopFlop ? topFlopRows.map(r => r.metric) : sorted;
 
   const filtersActive = hasActiveFilters(filters) || query.trim().length > 0;
+
+  // Anzahl aktiver manueller CRM-Filter (Badge am „Weitere Filter"-Knopf).
+  const activeCrmCount = useMemo(
+    () => CRM_BOOL_FILTER_KEYS.filter(k => filters[k] !== 'alle').length,
+    [filters],
+  );
+
+  const resetCrmFilters = () => {
+    setFilters(f => {
+      const next = { ...f };
+      for (const k of CRM_BOOL_FILTER_KEYS) next[k] = 'alle';
+      return next;
+    });
+  };
 
   const resetFilters = () => {
     setFilters(DEFAULT_GUEST_FILTERS);
