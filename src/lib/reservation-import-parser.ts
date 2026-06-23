@@ -538,7 +538,44 @@ function emptyStats(): ReservationPreviewStats {
 }
 
 export function computeStats(reservations: ParsedReservation[]): ReservationPreviewStats {
-  if (reservations.length === 0) return emptyStats();
+  return computeReservationStats(
+    reservations.map((r) => ({
+      partySize: r.partySize,
+      statusNormalized: r.statusNormalized,
+      statusRaw: r.statusRaw,
+      reservationTime: r.reservationTime,
+      reservationDate: r.reservationDate,
+      room: r.room,
+      area: r.area,
+      guestKey: r.matchKey,
+    })),
+  );
+}
+
+/**
+ * Schlanke Zeilenform für die Statistik-/Vorschau-Berechnung.  Sowohl frisch
+ * geparste Reservationen (`ParsedReservation`) als auch bereits importierte
+ * DB-Zeilen lassen sich darauf abbilden — so wird die Auswertungslogik (z. B.
+ * der Foratable Report) wiederverwendet statt dupliziert.  `guestKey` ist die
+ * stabile Gast-Identität (matchKey beim Import, guest_id bei DB-Zeilen).
+ */
+export interface ReservationStatsInput {
+  partySize: number | null;
+  statusNormalized: ReservationStatusNormalized;
+  statusRaw: string;
+  reservationTime: string | null;    // "HH:mm"
+  reservationDate: string | null;    // "yyyy-MM-dd"
+  room: string | null;
+  area: string | null;
+  guestKey: string | null;
+}
+
+/**
+ * Kern der Reservations-Auswertung — identisch für CSV-Vorschau und Report.
+ * Rein (ohne DB/DOM) und damit ohne Datenbank testbar.
+ */
+export function computeReservationStats(rows: ReservationStatsInput[]): ReservationPreviewStats {
+  if (rows.length === 0) return emptyStats();
 
   let totalPersons = 0;
   let personsKnown = 0;
@@ -556,37 +593,37 @@ export function computeStats(reservations: ParsedReservation[]): ReservationPrev
   const areaMap = new Map<string, number>();
   const guestKeys = new Set<string>();
 
-  for (const res of reservations) {
-    if (res.partySize !== null) { totalPersons += res.partySize; personsKnown++; }
+  for (const row of rows) {
+    if (row.partySize !== null) { totalPersons += row.partySize; personsKnown++; }
 
-    switch (res.statusNormalized) {
+    switch (row.statusNormalized) {
       case 'completed': completedCount++; break;
       case 'cancelled': cancelledCount++; break;
       case 'noshow':    noshowCount++; break;
       case 'unknown':   unknownStatusCount++; break;
     }
 
-    const statusLabel = res.statusRaw || '(leer)';
+    const statusLabel = row.statusRaw || '(leer)';
     const sd = statusMap.get(statusLabel);
     if (sd) sd.count++;
-    else statusMap.set(statusLabel, { status: statusLabel, normalized: res.statusNormalized, count: 1 });
+    else statusMap.set(statusLabel, { status: statusLabel, normalized: row.statusNormalized, count: 1 });
 
-    if (res.reservationTime) {
-      const tm = timeMap.get(res.reservationTime) ?? { count: 0, persons: 0 };
+    if (row.reservationTime) {
+      const tm = timeMap.get(row.reservationTime) ?? { count: 0, persons: 0 };
       tm.count++;
-      tm.persons += res.partySize ?? 0;
-      timeMap.set(res.reservationTime, tm);
+      tm.persons += row.partySize ?? 0;
+      timeMap.set(row.reservationTime, tm);
     }
 
-    if (res.room) roomMap.set(res.room, (roomMap.get(res.room) ?? 0) + 1);
-    if (res.area) areaMap.set(res.area, (areaMap.get(res.area) ?? 0) + 1);
+    if (row.room) roomMap.set(row.room, (roomMap.get(row.room) ?? 0) + 1);
+    if (row.area) areaMap.set(row.area, (areaMap.get(row.area) ?? 0) + 1);
 
-    if (res.matchKey) guestKeys.add(res.matchKey);
+    if (row.guestKey) guestKeys.add(row.guestKey);
     else reservationsWithoutGuestKey++;
 
-    if (res.reservationDate) {
-      if (!periodFrom || res.reservationDate < periodFrom) periodFrom = res.reservationDate;
-      if (!periodTo || res.reservationDate > periodTo) periodTo = res.reservationDate;
+    if (row.reservationDate) {
+      if (!periodFrom || row.reservationDate < periodFrom) periodFrom = row.reservationDate;
+      if (!periodTo || row.reservationDate > periodTo) periodTo = row.reservationDate;
     }
   }
 
@@ -599,7 +636,7 @@ export function computeStats(reservations: ParsedReservation[]): ReservationPrev
   const areas = [...areaMap.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
 
   return {
-    reservationCount: reservations.length,
+    reservationCount: rows.length,
     totalPersons,
     periodFrom,
     periodTo,
