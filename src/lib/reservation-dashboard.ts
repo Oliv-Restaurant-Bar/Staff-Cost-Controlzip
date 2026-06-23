@@ -165,6 +165,114 @@ export function futureReservationKpis(
   };
 }
 
+// ── Detailzeilen für klickbare Kacheln (Teil 1 & 2) ──────────────────────────
+// Erweitert die schlanke Aggregatzeile um Anzeigefelder. Die Zähl-Prädikate
+// (countInRange/futureReservationKpis) lesen NUR die Aggregatfelder, daher
+// stimmen Kachelzahl und Detaillistenlänge exakt überein, wenn beide aus
+// demselben Array berechnet werden.
+
+/** Reservations-Detailzeile (Aggregatfelder + Anzeigefelder für die Detailliste). */
+export interface ReservationDetailRow extends ReservationAggRow {
+  id: string;
+  displayName: string;
+  time: string | null;      // "HH:mm"
+  room: string | null;
+  area: string | null;
+  phone: string | null;
+  email: string | null;
+  comment: string | null;
+  note: string | null;
+}
+
+/** Auswählbare Zukunfts-Kachel. */
+export type FutureSelectionKey =
+  | 'currentMonth' | 'nextMonth' | 'next30' | 'next60' | 'next90' | 'openNext90';
+
+/** Aktiv/Offen-Auswahl im individuellen Zeitraum. */
+export type RangeSelectionKind = 'active' | 'open';
+
+/**
+ * [from, to] + Status-Prädikat einer Zukunfts-Kachel — EXAKT identisch zu den in
+ * `futureReservationKpis` verwendeten Grenzen/Prädikaten, damit die Detailliste
+ * genau die gezählten Reservationen enthält.
+ */
+export function futureSelectionBounds(
+  b: FutureBoundaries,
+  key: FutureSelectionKey,
+): { from: string; to: string; filter: (s: string) => boolean } {
+  switch (key) {
+    case 'currentMonth': return { from: b.today,          to: b.endOfMonth,   filter: isActiveStatus };
+    case 'nextMonth':    return { from: b.startNextMonth, to: b.endNextMonth, filter: isActiveStatus };
+    case 'next30':       return { from: b.today,          to: b.plus30,       filter: isActiveStatus };
+    case 'next60':       return { from: b.today,          to: b.plus60,       filter: isActiveStatus };
+    case 'next90':       return { from: b.today,          to: b.plus90,       filter: isActiveStatus };
+    case 'openNext90':   return { from: b.today,          to: b.plus90,       filter: isOpenStatus };
+  }
+}
+
+/** Späteste Datumsgrenze aller Zukunfts-Kacheln (begrenzt die Detail-Abfrage). */
+export function maxFutureBoundary(b: FutureBoundaries): string {
+  return [b.endOfMonth, b.endNextMonth, b.plus30, b.plus60, b.plus90]
+    .reduce((max, d) => (d > max ? d : max), b.today);
+}
+
+/** "HH:mm" → Minuten seit Mitternacht; leer/ungültig → +∞ (ans Ende sortieren). */
+function timeToMinutes(t: string | null): number {
+  if (!t) return Number.POSITIVE_INFINITY;
+  const m = /^(\d{1,2}):(\d{2})/.exec(t.trim());
+  if (!m) return Number.POSITIVE_INFINITY;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+/**
+ * Filtert Detailzeilen EXAKT wie `countInRange` (Datum in [from, to] inkl.,
+ * Status-Prädikat) und sortiert „nächste zuerst, dann chronologisch aufsteigend":
+ * Datum aufsteigend, dann Uhrzeit aufsteigend (leere Uhrzeit zuletzt), dann id.
+ */
+export function filterReservationDetails<T extends ReservationDetailRow>(
+  rows: T[],
+  from: string,
+  to: string,
+  statusFilter: (s: string) => boolean,
+): T[] {
+  const out = rows.filter(r => {
+    if (!r.date) return false;
+    const d = r.date.slice(0, 10);
+    if (d < from || d > to) return false;
+    return statusFilter(r.status);
+  });
+  out.sort((a, b) => {
+    const da = (a.date ?? '').slice(0, 10);
+    const db = (b.date ?? '').slice(0, 10);
+    if (da !== db) return da < db ? -1 : 1;
+    const ta = timeToMinutes(a.time);
+    const tb = timeToMinutes(b.time);
+    if (ta !== tb) return ta - tb;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  return out;
+}
+
+/** Detailliste einer Zukunfts-Kachel (gleicher Filter wie die Kachelzahl). */
+export function futureReservationList<T extends ReservationDetailRow>(
+  rows: T[],
+  b: FutureBoundaries,
+  key: FutureSelectionKey,
+): T[] {
+  const { from, to, filter } = futureSelectionBounds(b, key);
+  return filterReservationDetails(rows, from, to, filter);
+}
+
+/** Detailliste für den individuellen Zeitraum (aktiv bzw. offen). */
+export function rangeReservationList<T extends ReservationDetailRow>(
+  rows: T[],
+  from: string,
+  to: string,
+  kind: RangeSelectionKind,
+): T[] {
+  return filterReservationDetails(rows, from, to, kind === 'active' ? isActiveStatus : isOpenStatus);
+}
+
 // ── Gäste-Überblick ──────────────────────────────────────────────────────────
 
 export interface GuestDashboardKpis {

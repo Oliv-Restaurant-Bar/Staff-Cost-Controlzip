@@ -39,7 +39,7 @@ type Tab = 'import' | 'history';
 
 // ── Komponente ────────────────────────────────────────────────────────────────
 
-export default function ReservationenImportPage() {
+export default function ReservationenImportPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { tenantId } = useTenant();
   const { isAdmin, isGuest } = usePermissions();
 
@@ -185,26 +185,28 @@ export default function ReservationenImportPage() {
   );
 
   return (
-    <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-5">
+    <div className={embedded ? 'space-y-5' : 'mx-auto max-w-5xl p-4 md:p-6 space-y-5'}>
       {/* Kopf */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <CalendarRange className="h-6 w-6 text-primary" />
-            Reservationen Import
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Foratable-CSV-Export importieren — für Gäste- und Auslastungsanalysen.
-          </p>
+      {!embedded && (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <CalendarRange className="h-6 w-6 text-primary" />
+              Reservationen Import
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Foratable-CSV-Export importieren — für Gäste- und Auslastungsanalysen.
+            </p>
+          </div>
+          <Link
+            to="/gaeste"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/60"
+          >
+            <Users className="h-4 w-4" />
+            Zum Gäste-CRM
+          </Link>
         </div>
-        <Link
-          to="/gaeste"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/60"
-        >
-          <Users className="h-4 w-4" />
-          Zum Gäste-CRM
-        </Link>
-      </div>
+      )}
 
       {tablesMissingBanner}
 

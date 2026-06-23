@@ -17,7 +17,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { GuestProfile, GuestReservationRecord, CompletedVisitAgg } from './reservation-crm';
 import type { ReservationStatusNormalized } from './reservation-import-parser';
-import type { ReservationAggRow } from './reservation-dashboard';
+import type { ReservationDetailRow } from './reservation-dashboard';
 import type { ActiveVisitRow } from './guest-top-flop';
 
 const PROFILE_COLS =
@@ -163,39 +163,61 @@ export async function fetchNoShowCountsByGuest(
   return out;
 }
 
-/**
- * Lädt schlanke Reservations-Aggregatzeilen (nur Datum/Personen/Status, keine
- * PII) eines Mandanten, optional begrenzt auf `reservation_date >= gte` und/oder
- * `<= lte`.  Paginiert (1000er-Seiten).  Basis für Zukunfts- und Zeitraum-KPIs.
- */
-async function fetchReservationAggRows(
+// ── Reservations-Detailzeilen (für klickbare Detaillisten der Auswertung) ──────
+// Liefert zusätzlich Anzeigefelder (Name/Uhrzeit/Raum/Kontakt/Kommentar). Die
+// Zähl-Prädikate (countInRange/futureReservationKpis) lesen weiterhin NUR die
+// Aggregatfelder (date/partySize/status); werden Kacheln und Detailliste aus
+// demselben Array berechnet, stimmen die Zahlen exakt überein. Mandantengefiltert,
+// paginiert, KEINE PII-Logs.
+
+const DETAIL_COLS =
+  'id, reservation_date, reservation_time, party_size, status_normalized, ' +
+  'first_name, last_name, mobile, email, room, area, comment, note';
+
+function rowDisplayName(
+  first: string | null, last: string | null, email: string | null, mobile: string | null,
+): string {
+  const name = [first, last].map(s => (s ?? '').trim()).filter(Boolean).join(' ').trim();
+  if (name) return name;
+  if (email && email.trim()) return email.trim();
+  if (mobile && mobile.trim()) return mobile.trim();
+  return '—';
+}
+
+async function fetchReservationDetailRows(
   restaurantId: string,
   bounds: { gte?: string; lte?: string },
-): Promise<ReservationAggRow[]> {
-  const out: ReservationAggRow[] = [];
+): Promise<ReservationDetailRow[]> {
+  const out: ReservationDetailRow[] = [];
   const PAGE = 1000;
   for (let from = 0; ; from += PAGE) {
     let q = (supabase as any)
       .from('reservation_records')
-      .select('reservation_date, party_size, status_normalized')
+      .select(DETAIL_COLS)
       .eq('restaurant_id', restaurantId);
     if (bounds.gte) q = q.gte('reservation_date', bounds.gte);
     if (bounds.lte) q = q.lte('reservation_date', bounds.lte);
     const { data, error } = await q
+      .order('reservation_date', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error || !data || data.length === 0) break;
-    for (const r of data as Array<{
-      reservation_date: string | null;
-      party_size: number | null;
-      status_normalized: string | null;
-    }>) {
+    for (const r of data as any[]) {
       out.push({
+        id: String(r.id),
         date: r.reservation_date ?? null,
         partySize: r.party_size ?? null,
         // Rohwert durchreichen — die Dashboard-Prädikate klassifizieren
         // case-insensitive (inkl. seated/arrived/not_answered/storniert …).
         status: r.status_normalized ?? 'unknown',
+        displayName: rowDisplayName(r.first_name ?? null, r.last_name ?? null, r.email ?? null, r.mobile ?? null),
+        time: r.reservation_time ?? null,
+        room: r.room ?? null,
+        area: r.area ?? null,
+        phone: r.mobile ?? null,
+        email: r.email ?? null,
+        comment: r.comment ?? null,
+        note: r.note ?? null,
       });
     }
     if (data.length < PAGE) break;
@@ -203,12 +225,16 @@ async function fetchReservationAggRows(
   return out;
 }
 
-/** Zukünftige Reservationen ab (inkl.) `fromDate` — z. B. ab heute. */
+/**
+ * Zukünftige Reservationen ab (inkl.) `fromDate`, optional bis (inkl.) `toDate`.
+ * Die Auswertung begrenzt die Abfrage auf die späteste Zukunfts-Kachelgrenze.
+ */
 export async function fetchFutureReservations(
   restaurantId: string,
   fromDate: string,
-): Promise<ReservationAggRow[]> {
-  return fetchReservationAggRows(restaurantId, { gte: fromDate });
+  toDate?: string,
+): Promise<ReservationDetailRow[]> {
+  return fetchReservationDetailRows(restaurantId, { gte: fromDate, lte: toDate });
 }
 
 /** Reservationen im Datumsbereich [from, to] (beide inklusive). */
@@ -216,8 +242,8 @@ export async function fetchReservationsInRange(
   restaurantId: string,
   from: string,
   to: string,
-): Promise<ReservationAggRow[]> {
-  return fetchReservationAggRows(restaurantId, { gte: from, lte: to });
+): Promise<ReservationDetailRow[]> {
+  return fetchReservationDetailRows(restaurantId, { gte: from, lte: to });
 }
 
 /** Eine Reservation eines Gastes für die Detailanzeige (inkl. Rohstatus/Res.Nr.). */

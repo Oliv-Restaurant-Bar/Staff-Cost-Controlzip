@@ -59,7 +59,7 @@ function Tile({ icon: Icon, label, value, accent }: {
 
 // ── Komponente ─────────────────────────────────────────────────────────────────
 
-export default function GaesteImportPage() {
+export default function GaesteImportPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { tenantId } = useTenant();
   const { isAdmin } = usePermissions();
   const { isGuest } = useGuestSession();
@@ -165,27 +165,29 @@ export default function GaesteImportPage() {
   const willWrite = preview ? preview.created + preview.updated : 0;
 
   return (
-    <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-5">
+    <div className={embedded ? 'space-y-5' : 'mx-auto max-w-5xl p-4 md:p-6 space-y-5'}>
       {/* Kopf */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Contact className="h-6 w-6 text-primary" />
-            Gästeexport Import
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Foratable-<span className="font-medium">Gästeexport</span> importieren — reichert die
-            CRM-Profile bestehender Gäste an (füllt nur leere Felder).
-          </p>
+      {!embedded && (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <Contact className="h-6 w-6 text-primary" />
+              Gästeexport Import
+            </h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              Foratable-<span className="font-medium">Gästeexport</span> importieren — reichert die
+              CRM-Profile bestehender Gäste an (füllt nur leere Felder).
+            </p>
+          </div>
+          <Link
+            to="/gaeste"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/60"
+          >
+            <Users className="h-4 w-4" />
+            Zum Gäste-CRM
+          </Link>
         </div>
-        <Link
-          to="/gaeste"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/60"
-        >
-          <Users className="h-4 w-4" />
-          Zum Gäste-CRM
-        </Link>
-      </div>
+      )}
 
       {/* Hinweis zur Wirkungsweise */}
       <div className="rounded-lg border border-blue-200 bg-blue-50/60 dark:border-blue-900 dark:bg-blue-950/20 p-3 flex gap-2 text-sm text-blue-800 dark:text-blue-300">

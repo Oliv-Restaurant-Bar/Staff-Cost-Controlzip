@@ -2031,7 +2031,7 @@ const ImportHub = () => {
               VIP, Newsletter, Sperrliste, Firma, Lieblingsplatz, Geburtstag und Notizen ergänzen die
               manuellen CRM-Profile. Bereits gepflegte Werte bleiben unverändert.
             </p>
-            <Link to="/gaeste-import">
+            <Link to="/foratable-import?tab=gaeste">
               <Button size="sm" className="h-8 text-xs gap-1.5 w-full">
                 <Upload className="h-3.5 w-3.5" />
                 Zum Gästeexport-Import

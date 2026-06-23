@@ -37,6 +37,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { SegmentBadge } from '@/components/crm/SegmentBadge';
+import { ReservationDetailList } from '@/components/crm/ReservationDetailList';
 
 import {
   fetchGuestProfiles, fetchCompletedVisitAggregates, fetchNoShowCountsByGuest,
@@ -51,9 +52,11 @@ import {
 import {
   guestDashboardKpis, futureReservationKpis, countInRange,
   isActiveStatus, isOpenStatus,
+  futureReservationList, rangeReservationList, maxFutureBoundary,
   returnPotentialKpis, buildReturnPotentialList,
   RETURN_POTENTIAL_HEADERS, returnPotentialRowToCells,
-  type ReservationAggRow, type RangeCount, type FutureBoundaries,
+  type RangeCount, type FutureBoundaries,
+  type FutureSelectionKey, type ReservationDetailRow,
 } from '@/lib/reservation-dashboard';
 import {
   CAMPAIGNS, summarizeCampaigns, filterCampaign,
@@ -96,24 +99,52 @@ function overdueDays(n: number | null | undefined): string {
   return `${NUM0.format(v)} ${v === 1 ? 'Tag' : 'Tage'}`;
 }
 
+// Titel der Detailliste je Zukunfts-Auswahl.
+const FUTURE_SEL_LABEL: Record<FutureSelectionKey, string> = {
+  currentMonth: 'Laufender Monat',
+  nextMonth:    'Nächster Monat',
+  next30:       'Nächste 30 Tage',
+  next60:       'Nächste 60 Tage',
+  next90:       'Nächste 90 Tage',
+  openNext90:   'Offen / unbeantwortet (90 Tage)',
+};
+
 // ── Kachel ────────────────────────────────────────────────────────────────────
 
-function Kpi({ icon: Icon, label, value, sub, accent }: {
+function Kpi({ icon: Icon, label, value, sub, accent, onClick, active }: {
   icon: React.FC<{ className?: string }>;
   label: string;
   value: string;
   sub?: string;
   accent?: string;
+  onClick?: () => void;
+  active?: boolean;
 }) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-3">
+  const inner = (
+    <>
       <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         <Icon className="h-3.5 w-3.5 flex-shrink-0" />
         {label}
       </div>
       <p className={cn('mt-1 text-xl font-bold tabular-nums', accent)}>{value}</p>
       {sub && <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">{sub}</p>}
-    </div>
+    </>
+  );
+  if (!onClick) {
+    return <div className="rounded-lg border border-border bg-card p-3">{inner}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        'rounded-lg border bg-card p-3 text-left transition-colors hover:border-primary/60 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        active ? 'border-primary ring-2 ring-primary/30' : 'border-border',
+      )}
+    >
+      {inner}
+    </button>
   );
 }
 
@@ -140,7 +171,8 @@ export default function CrmAuswertungPage() {
   const [noShowCounts, setNoShowCounts] = useState<Map<string, number>>(new Map());
   const [crmProfiles, setCrmProfiles] = useState<Map<string, GuestCrmProfile>>(new Map());
   const [crmError, setCrmError] = useState(false);
-  const [futureRows, setFutureRows] = useState<ReservationAggRow[]>([]);
+  const [futureRows, setFutureRows] = useState<ReservationDetailRow[]>([]);
+  const [futureSel, setFutureSel] = useState<FutureSelectionKey | null>(null);
 
   const today = useMemo(() => new Date(), []);
   const todayStr = useMemo(() => fmtDate(today, 'yyyy-MM-dd'), [today]);
@@ -159,7 +191,8 @@ export default function CrmAuswertungPage() {
   const [rangeFrom, setRangeFrom] = useState(todayStr);
   const [rangeTo, setRangeTo] = useState(() => fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'));
   const [rangeLoading, setRangeLoading] = useState(false);
-  const [rangeResult, setRangeResult] = useState<{ active: RangeCount; open: RangeCount; from: string; to: string } | null>(null);
+  const [rangeResult, setRangeResult] = useState<{ active: RangeCount; open: RangeCount; from: string; to: string; rows: ReservationDetailRow[] } | null>(null);
+  const [rangeSel, setRangeSel] = useState<'active' | 'open' | null>(null);
   const rangeEmpty = !rangeFrom || !rangeTo;
   const rangeInvalid = rangeEmpty || rangeFrom > rangeTo;
 
@@ -173,7 +206,7 @@ export default function CrmAuswertungPage() {
         fetchGuestProfiles(tenantId),
         fetchCompletedVisitAggregates(tenantId),
         fetchNoShowCountsByGuest(tenantId),
-        fetchFutureReservations(tenantId, todayStr),
+        fetchFutureReservations(tenantId, todayStr, maxFutureBoundary(boundaries)),
       ]);
       setProfiles(ps);
       setVisitAggs(aggs);
@@ -198,7 +231,7 @@ export default function CrmAuswertungPage() {
       setCrmError(false);
     }
     setLoading(false);
-  }, [tenantId, isAdmin, isGuest, todayStr]);
+  }, [tenantId, isAdmin, isGuest, todayStr, boundaries]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -266,12 +299,14 @@ export default function CrmAuswertungPage() {
   const runRange = useCallback(async () => {
     if (rangeInvalid) return;
     setRangeLoading(true);
+    setRangeSel(null);
     const rows = await fetchReservationsInRange(tenantId, rangeFrom, rangeTo);
     setRangeResult({
       active: countInRange(rows, rangeFrom, rangeTo, isActiveStatus),
       open:   countInRange(rows, rangeFrom, rangeTo, isOpenStatus),
       from:   rangeFrom,
       to:     rangeTo,
+      rows,
     });
     setRangeLoading(false);
   }, [tenantId, rangeFrom, rangeTo, rangeInvalid]);
@@ -372,13 +407,20 @@ export default function CrmAuswertungPage() {
                 ausgewiesen.
               </p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                <Kpi icon={CalendarDays} label="Laufender Monat" value={NUM0.format(futureKpis.currentMonth.reservations)} sub={persons(futureKpis.currentMonth.persons)} accent="text-primary" />
-                <Kpi icon={CalendarDays} label="Nächster Monat" value={NUM0.format(futureKpis.nextMonth.reservations)} sub={persons(futureKpis.nextMonth.persons)} />
-                <Kpi icon={CalendarRange} label="Nächste 30 Tage" value={NUM0.format(futureKpis.next30.reservations)} sub={persons(futureKpis.next30.persons)} />
-                <Kpi icon={CalendarRange} label="Nächste 60 Tage" value={NUM0.format(futureKpis.next60.reservations)} sub={persons(futureKpis.next60.persons)} />
-                <Kpi icon={CalendarRange} label="Nächste 90 Tage" value={NUM0.format(futureKpis.next90.reservations)} sub={persons(futureKpis.next90.persons)} />
-                <Kpi icon={HelpCircle} label="Offen / unbeantwortet (90 T.)" value={NUM0.format(futureKpis.openNext90.reservations)} sub={persons(futureKpis.openNext90.persons)} accent="text-slate-500 dark:text-slate-400" />
+                <Kpi icon={CalendarDays} label="Laufender Monat" value={NUM0.format(futureKpis.currentMonth.reservations)} sub={persons(futureKpis.currentMonth.persons)} accent="text-primary" onClick={() => setFutureSel(s => s === 'currentMonth' ? null : 'currentMonth')} active={futureSel === 'currentMonth'} />
+                <Kpi icon={CalendarDays} label="Nächster Monat" value={NUM0.format(futureKpis.nextMonth.reservations)} sub={persons(futureKpis.nextMonth.persons)} onClick={() => setFutureSel(s => s === 'nextMonth' ? null : 'nextMonth')} active={futureSel === 'nextMonth'} />
+                <Kpi icon={CalendarRange} label="Nächste 30 Tage" value={NUM0.format(futureKpis.next30.reservations)} sub={persons(futureKpis.next30.persons)} onClick={() => setFutureSel(s => s === 'next30' ? null : 'next30')} active={futureSel === 'next30'} />
+                <Kpi icon={CalendarRange} label="Nächste 60 Tage" value={NUM0.format(futureKpis.next60.reservations)} sub={persons(futureKpis.next60.persons)} onClick={() => setFutureSel(s => s === 'next60' ? null : 'next60')} active={futureSel === 'next60'} />
+                <Kpi icon={CalendarRange} label="Nächste 90 Tage" value={NUM0.format(futureKpis.next90.reservations)} sub={persons(futureKpis.next90.persons)} onClick={() => setFutureSel(s => s === 'next90' ? null : 'next90')} active={futureSel === 'next90'} />
+                <Kpi icon={HelpCircle} label="Offen / unbeantwortet (90 T.)" value={NUM0.format(futureKpis.openNext90.reservations)} sub={persons(futureKpis.openNext90.persons)} accent="text-slate-500 dark:text-slate-400" onClick={() => setFutureSel(s => s === 'openNext90' ? null : 'openNext90')} active={futureSel === 'openNext90'} />
               </div>
+              {futureSel && (
+                <ReservationDetailList
+                  title={FUTURE_SEL_LABEL[futureSel]}
+                  rows={futureReservationList(futureRows, boundaries, futureSel)}
+                  persons={futureKpis[futureSel].persons}
+                />
+              )}
             </section>
 
             {/* 3. Individueller Zeitraum */}
@@ -424,11 +466,19 @@ export default function CrmAuswertungPage() {
 
                 {rangeResult && !rangeInvalid && (
                   <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <Kpi icon={CalendarRange} label="Aktive Reservationen" value={NUM0.format(rangeResult.active.reservations)} accent="text-primary" />
-                    <Kpi icon={Users} label="Personen (aktiv)" value={NUM0.format(rangeResult.active.persons)} />
-                    <Kpi icon={HelpCircle} label="Offen / unbeantwortet" value={NUM0.format(rangeResult.open.reservations)} accent="text-slate-500 dark:text-slate-400" />
-                    <Kpi icon={Users} label="Personen (offen)" value={NUM0.format(rangeResult.open.persons)} />
+                    <Kpi icon={CalendarRange} label="Aktive Reservationen" value={NUM0.format(rangeResult.active.reservations)} accent="text-primary" onClick={() => setRangeSel(s => s === 'active' ? null : 'active')} active={rangeSel === 'active'} />
+                    <Kpi icon={Users} label="Personen (aktiv)" value={NUM0.format(rangeResult.active.persons)} onClick={() => setRangeSel(s => s === 'active' ? null : 'active')} active={rangeSel === 'active'} />
+                    <Kpi icon={HelpCircle} label="Offen / unbeantwortet" value={NUM0.format(rangeResult.open.reservations)} accent="text-slate-500 dark:text-slate-400" onClick={() => setRangeSel(s => s === 'open' ? null : 'open')} active={rangeSel === 'open'} />
+                    <Kpi icon={Users} label="Personen (offen)" value={NUM0.format(rangeResult.open.persons)} onClick={() => setRangeSel(s => s === 'open' ? null : 'open')} active={rangeSel === 'open'} />
                   </div>
+                )}
+
+                {rangeResult && !rangeInvalid && rangeSel && (
+                  <ReservationDetailList
+                    title={rangeSel === 'active' ? 'Aktive Reservationen' : 'Offen / unbeantwortet'}
+                    rows={rangeReservationList(rangeResult.rows, rangeResult.from, rangeResult.to, rangeSel)}
+                    persons={rangeSel === 'active' ? rangeResult.active.persons : rangeResult.open.persons}
+                  />
                 )}
               </div>
             </section>

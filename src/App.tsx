@@ -66,8 +66,7 @@ import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
 import GastronoviZBerichtPage from "./pages/GastronoviZBerichtPage";
-import ReservationenImportPage from "./pages/ReservationenImportPage";
-import GaesteImportPage from "./pages/GaesteImportPage";
+import ForatableImportPage from "./pages/ForatableImportPage";
 import ForatableReportPage from "./pages/ForatableReportPage";
 import GaesteCrmPage from "./pages/GaesteCrmPage";
 import CrmAuswertungPage from "./pages/CrmAuswertungPage";
@@ -232,8 +231,9 @@ const AppContent = () => {
               element={isBeaulieuManager ? <BlockedRoute path="/umsatzabstimmung" /> : <UmsatzAbstimmungPage />}
             />
             <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
-            <Route path="/reservationen-import" element={<ReservationenImportPage />} />
-            <Route path="/gaeste-import" element={<GaesteImportPage />} />
+            <Route path="/foratable-import" element={<ForatableImportPage />} />
+            <Route path="/reservationen-import" element={<Navigate to="/foratable-import" replace />} />
+            <Route path="/gaeste-import" element={<Navigate to="/foratable-import?tab=gaeste" replace />} />
             <Route path="/foratable-report" element={<ForatableReportPage />} />
             <Route path="/gaeste" element={<GaesteCrmPage />} />
             <Route path="/gaeste/auswertung" element={<CrmAuswertungPage />} />
