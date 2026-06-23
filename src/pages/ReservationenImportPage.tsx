@@ -199,7 +199,10 @@ export default function ReservationenImportPage() {
     }
     toast.success(
       `Import erfolgreich — ${result.reservationCount} Reservationen `
-      + `(${result.newGuests} neue, ${result.returningGuests} wiederkehrende Gäste)`,
+      + `(${result.newGuests} neue, ${result.returningGuests} wiederkehrende Gäste)`
+      + (result.duplicateKeyMerged > 0
+        ? ` · ${result.duplicateKeyMerged} Doppel-Res.Nr. zusammengeführt`
+        : ''),
     );
     setStep('done');
     loadHistory();

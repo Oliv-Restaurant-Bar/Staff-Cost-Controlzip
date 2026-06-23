@@ -20,7 +20,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
-import { buildMatchKey } from './reservation-import-parser';
+import { buildMatchKey, dedupeReservationsByExternalId } from './reservation-import-parser';
 import type { ParsedReservation, ReservationParseResult } from './reservation-import-parser';
 
 // ── Typen ────────────────────────────────────────────────────────────────────
@@ -282,6 +282,8 @@ export interface SaveReservationImportResult {
   newGuests: number;
   returningGuests: number;
   reservationCount: number;
+  /** Anzahl CSV-Zeilen, die wegen identischer Res.Nr. (Conflict-Key) zusammengeführt wurden. */
+  duplicateKeyMerged: number;
 }
 
 export async function saveReservationImport(
@@ -292,7 +294,7 @@ export async function saveReservationImport(
   const stats = parseResult.stats;
 
   const fail = (importId: string, error: string): SaveReservationImportResult =>
-    ({ importId: '', error, newGuests: 0, returningGuests: 0, reservationCount: 0 });
+    ({ importId: '', error, newGuests: 0, returningGuests: 0, reservationCount: 0, duplicateKeyMerged: 0 });
 
   // 1. Import-Kopf als 'processing' anlegen.
   let importId = '';
@@ -405,7 +407,22 @@ export async function saveReservationImport(
     }
 
     // 3. Reservationen upserten (Dedup über (restaurant_id, external_reservation_id)).
-    const recordRows = reservations.map(r => ({
+    //    WICHTIG: Innerhalb derselben CSV können mehrere Zeilen dieselbe Res.Nr.
+    //    tragen. Ein einzelner Bulk-Upsert darf dieselbe Zielzeile nicht zweimal
+    //    treffen ("ON CONFLICT DO UPDATE command cannot affect row a second
+    //    time"), deshalb pro Conflict-Key nur einen Datensatz behalten
+    //    (deterministisch: letzte Zeile gewinnt).
+    const { deduped: dedupedReservations, duplicateKeyMerged } =
+      dedupeReservationsByExternalId(reservations);
+
+    // Kopf-Statistik aus dem tatsächlich gespeicherten (deduplizierten) Datensatz
+    // berechnen, damit reservation_count / total_persons / cancelled / completed
+    // konsistent dieselbe Datenmenge beschreiben (gleiche Definitionen wie der Parser).
+    const dedupTotalPersons = dedupedReservations.reduce((s, r) => s + (r.partySize ?? 0), 0);
+    const dedupCompletedCount = dedupedReservations.filter(r => r.statusNormalized === 'completed').length;
+    const dedupCancelledCount = dedupedReservations.filter(r => r.statusNormalized === 'cancelled').length;
+
+    const recordRows = dedupedReservations.map(r => ({
       restaurant_id: restaurantId,
       external_reservation_id: r.externalReservationId,
       guest_id: r.matchKey ? guestIdByMatchKey.get(r.matchKey) ?? null : null,
@@ -452,10 +469,10 @@ export async function saveReservationImport(
     const { error: finErr } = await (supabase as any)
       .from('reservation_imports')
       .update({
-        reservation_count: stats.reservationCount,
-        total_persons: stats.totalPersons,
-        cancelled_count: stats.cancelledCount,
-        completed_count: stats.completedCount,
+        reservation_count: dedupedReservations.length,
+        total_persons: dedupTotalPersons,
+        cancelled_count: dedupCancelledCount,
+        completed_count: dedupCompletedCount,
         new_guests: newGuests,
         returning_guests: returningGuests,
         status: 'active',
@@ -469,7 +486,8 @@ export async function saveReservationImport(
       error: null,
       newGuests,
       returningGuests,
-      reservationCount: stats.reservationCount,
+      reservationCount: dedupedReservations.length,
+      duplicateKeyMerged,
     };
   } catch (e) {
     return await markFailed(e instanceof Error ? e.message : String(e));

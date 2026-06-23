@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseReservationsCsv,
+  dedupeReservationsByExternalId,
   normalizeStatus,
   normalizeEmail,
   normalizeMobile,
@@ -210,5 +211,52 @@ describe('Reservationen Parser — CSV', () => {
     const a = parseReservationsCsv('f.csv', csv);
     const b = parseReservationsCsv('f.csv', '\uFEFF' + csv); // BOM darf Checksumme nicht ändern
     expect(a.checksum).toBe(b.checksum);
+  });
+});
+
+describe('Reservationen — Dedup nach Conflict-Key (Res.Nr.)', () => {
+  it('führt zwei CSV-Zeilen mit identischer Res.Nr. zu einer Upsert-Zeile zusammen (letzte gewinnt)', () => {
+    const csv = [
+      HEADER,
+      row({ resnr: '5005', personen: '2', zeit: '18:00', datum: '01.06.2026', email: 'dup@x.com', status: 'Bestätigt' }),
+      row({ resnr: '5005', personen: '4', zeit: '20:00', datum: '01.06.2026', email: 'dup@x.com', status: 'Abgeschlossen' }),
+      row({ resnr: '6006', personen: '3', zeit: '19:00', datum: '02.06.2026', email: 'other@x.com', status: 'Bestätigt' }),
+    ].join('\n');
+
+    const parsed = parseReservationsCsv('dups.csv', csv);
+    expect(parsed.reservations).toHaveLength(3); // Parser behält beide Doppel-Zeilen
+
+    const { deduped, duplicateKeyMerged } = dedupeReservationsByExternalId(parsed.reservations);
+
+    // Pro Conflict-Key (Res.Nr.) bleibt genau eine Zeile übrig.
+    expect(deduped).toHaveLength(2);
+    expect(duplicateKeyMerged).toBe(1);
+    expect(deduped.map(r => r.externalReservationId).sort()).toEqual(['5005', '6006']);
+
+    // Eindeutige Conflict-Keys im Upsert-Batch.
+    const keys = deduped.map(r => r.externalReservationId);
+    expect(new Set(keys).size).toBe(keys.length);
+
+    // Deterministisch: die zuletzt vorkommende Zeile für 5005 gewinnt.
+    const winner = deduped.find(r => r.externalReservationId === '5005')!;
+    expect(winner.partySize).toBe(4);
+    expect(winner.reservationTime).toBe('20:00');
+    expect(winner.statusNormalized).toBe('completed');
+
+    // Reihenfolge nach erstem Auftreten bleibt erhalten.
+    expect(deduped[0].externalReservationId).toBe('5005');
+    expect(deduped[1].externalReservationId).toBe('6006');
+  });
+
+  it('lässt eindeutige Schlüssel unverändert und meldet 0 Duplikate', () => {
+    const csv = [
+      HEADER,
+      row({ resnr: '1', email: 'a@x.com' }),
+      row({ resnr: '2', email: 'b@x.com' }),
+    ].join('\n');
+    const parsed = parseReservationsCsv('clean.csv', csv);
+    const { deduped, duplicateKeyMerged } = dedupeReservationsByExternalId(parsed.reservations);
+    expect(deduped).toHaveLength(2);
+    expect(duplicateKeyMerged).toBe(0);
   });
 });

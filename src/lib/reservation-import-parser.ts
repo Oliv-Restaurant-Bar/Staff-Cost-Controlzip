@@ -379,6 +379,33 @@ export function computeChecksum(text: string): string {
 
 // ── Hauptfunktion ────────────────────────────────────────────────────────────
 
+/**
+ * Dedupliziert Reservationen nach ihrem eindeutigen Upsert-Schlüssel
+ * (`externalReservationId` — entspricht dem DB-Conflict-Key
+ * `restaurant_id, external_reservation_id`). Mehrere CSV-Zeilen mit identischer
+ * Res.Nr. würden sonst denselben Datensatz im selben Bulk-Upsert mehrfach
+ * treffen ("ON CONFLICT DO UPDATE command cannot affect row a second time").
+ *
+ * Deterministisch: die **zuletzt** vorkommende Zeile gewinnt; die Reihenfolge
+ * (erstes Auftreten des Schlüssels) bleibt erhalten. Zeilen ohne Res.Nr. gibt
+ * es nach dem Parsen nicht (sie werden im Parser übersprungen).
+ *
+ * @returns `deduped` (eine Zeile pro Res.Nr.) und `duplicateKeyMerged`
+ *   (Anzahl der wegen identischem Schlüssel zusammengeführten Zeilen).
+ */
+export function dedupeReservationsByExternalId(
+  reservations: ParsedReservation[],
+): { deduped: ParsedReservation[]; duplicateKeyMerged: number } {
+  const byKey = new Map<string, ParsedReservation>();
+  for (const r of reservations) {
+    // Map.set behält bei vorhandenem Schlüssel die Einfügeposition, ersetzt aber
+    // den Wert → stabile Reihenfolge nach erstem Auftreten, letzte Zeile gewinnt.
+    byKey.set(r.externalReservationId, r);
+  }
+  const deduped = [...byKey.values()];
+  return { deduped, duplicateKeyMerged: reservations.length - deduped.length };
+}
+
 export function parseReservationsCsv(fileName: string, rawText: string): ReservationParseResult {
   const text = stripBom(rawText);
   const checksum = computeChecksum(text);
