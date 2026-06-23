@@ -33,6 +33,8 @@ import {
   previewForatableGuestImport, commitForatableGuestImport,
   type ForatableGuestImportOutcome,
 } from '@/lib/foratable-guest-import-db';
+import { logImportRun } from '@/lib/import-runs-db';
+import { buildGuestRunStats } from '@/lib/import-runs';
 
 const NUM0 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
@@ -59,7 +61,9 @@ function Tile({ icon: Icon, label, value, accent }: {
 
 // ── Komponente ─────────────────────────────────────────────────────────────────
 
-export default function GaesteImportPage({ embedded = false }: { embedded?: boolean } = {}) {
+export default function GaesteImportPage(
+  { embedded = false, onImported }: { embedded?: boolean; onImported?: () => void } = {},
+) {
   const { tenantId } = useTenant();
   const { isAdmin } = usePermissions();
   const { isGuest } = useGuestSession();
@@ -146,16 +150,34 @@ export default function GaesteImportPage({ embedded = false }: { embedded?: bool
 
   const handleConfirm = async () => {
     if (!parsed) return;
+    const startedAt = new Date().toISOString();
     setStep('saving');
     try {
       const outcome = await commitForatableGuestImport(tenantId, parsed);
       setResult(outcome);
+      await logImportRun(tenantId, {
+        importType: 'guest_export',
+        status: 'success',
+        fileName: parsed.fileName,
+        recordCount: outcome.rowsRead,
+        stats: buildGuestRunStats(outcome),
+        startedAt,
+      });
+      onImported?.();
       toast.success(
         `Anreicherung abgeschlossen — ${outcome.created} neu, ${outcome.updated} ergänzt`
         + (outcome.conflicts > 0 ? `, ${outcome.conflicts} Konflikt(e) übersprungen` : ''),
       );
       setStep('done');
     } catch (e) {
+      void logImportRun(tenantId, {
+        importType: 'guest_export',
+        status: 'failed',
+        fileName: parsed.fileName,
+        recordCount: parsed.stats?.rowCount ?? null,
+        errorMessage: e instanceof Error ? e.message : String(e),
+        startedAt,
+      });
       toast.error('Import fehlgeschlagen: ' + (e instanceof Error ? e.message : String(e)));
       setStep('preview');
     }

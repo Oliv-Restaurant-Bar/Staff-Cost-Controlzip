@@ -32,6 +32,8 @@ import {
   fetchReservationImports,
 } from '@/lib/reservation-import-db';
 import type { GuestClassification, ReservationImportRow } from '@/lib/reservation-import-db';
+import { logImportRun } from '@/lib/import-runs-db';
+import { buildReservationRunStats } from '@/lib/import-runs';
 import { ReservationSummary, fdate } from '@/components/reservations/ReservationSummary';
 
 type WizardStep = 'upload' | 'preview' | 'saving' | 'done';
@@ -39,7 +41,9 @@ type Tab = 'import' | 'history';
 
 // ── Komponente ────────────────────────────────────────────────────────────────
 
-export default function ReservationenImportPage({ embedded = false }: { embedded?: boolean } = {}) {
+export default function ReservationenImportPage(
+  { embedded = false, onImported }: { embedded?: boolean; onImported?: () => void } = {},
+) {
   const { tenantId } = useTenant();
   const { isAdmin, isGuest } = usePermissions();
 
@@ -141,13 +145,35 @@ export default function ReservationenImportPage({ embedded = false }: { embedded
   // ── Speichern ─────────────────────────────────────────────────────────────
   const handleConfirm = async () => {
     if (!parsed) return;
+    const startedAt = new Date().toISOString();
     setStep('saving');
     const result = await saveReservationImport(tenantId, parsed);
     if (result.error) {
+      void logImportRun(tenantId, {
+        importType: 'reservations',
+        status: 'failed',
+        fileName: parsed.fileName,
+        recordCount: parsed.stats?.reservationCount ?? null,
+        periodFrom: parsed.stats?.periodFrom ?? null,
+        periodTo: parsed.stats?.periodTo ?? null,
+        errorMessage: result.error,
+        startedAt,
+      });
       toast.error('Import fehlgeschlagen: ' + result.error);
       setStep('preview');
       return;
     }
+    await logImportRun(tenantId, {
+      importType: 'reservations',
+      status: 'success',
+      fileName: parsed.fileName,
+      recordCount: result.reservationCount,
+      periodFrom: parsed.stats?.periodFrom ?? null,
+      periodTo: parsed.stats?.periodTo ?? null,
+      stats: buildReservationRunStats(result),
+      startedAt,
+    });
+    onImported?.();
     toast.success(
       `Import erfolgreich — ${result.reservationCount} Reservationen `
       + `(${result.inserted} neu, ${result.updated} aktualisiert)`
