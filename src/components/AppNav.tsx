@@ -244,6 +244,13 @@ const NAV_GROUPS: NavGroup[] = [
         icon: BarChart3,
         adminOnly: true,
       },
+      {
+        path: '/foratable-report',
+        label: 'Foratable Report',
+        shortLabel: 'Report',
+        icon: BarChart2,
+        adminOnly: true,
+      },
     ],
   },
   {

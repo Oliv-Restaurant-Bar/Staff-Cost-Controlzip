@@ -32,59 +32,10 @@ import {
   fetchReservationImports,
 } from '@/lib/reservation-import-db';
 import type { GuestClassification, ReservationImportRow } from '@/lib/reservation-import-db';
-
-// ── Formatierung ──────────────────────────────────────────────────────────────
-
-const NUM0 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-const NUM1 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-
-function fdate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try { return fmtDate(parseISO(iso.slice(0, 10)), 'dd.MM.yyyy', { locale: de }); }
-  catch { return iso; }
-}
-
-// ── Status-Darstellung ────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<ReservationStatusNormalized, string> = {
-  completed: 'Abgeschlossen',
-  cancelled: 'Storniert',
-  noshow:    'No-Show',
-  confirmed: 'Bestätigt',
-  pending:   'Offen',
-  unknown:   'Unbekannt',
-};
-
-const STATUS_CLASS: Record<ReservationStatusNormalized, string> = {
-  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-  cancelled: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
-  noshow:    'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-300',
-  confirmed: 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300',
-  pending:   'bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300',
-  unknown:   'bg-muted text-muted-foreground',
-};
+import { ReservationSummary, fdate } from '@/components/reservations/ReservationSummary';
 
 type WizardStep = 'upload' | 'preview' | 'saving' | 'done';
 type Tab = 'import' | 'history';
-
-// ── Kachel ────────────────────────────────────────────────────────────────────
-
-function Tile({ icon: Icon, label, value, accent }: {
-  icon: React.FC<{ className?: string }>;
-  label: string;
-  value: string;
-  accent?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-3">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </div>
-      <p className={cn('mt-1 text-xl font-bold tabular-nums', accent)}>{value}</p>
-    </div>
-  );
-}
 
 // ── Komponente ────────────────────────────────────────────────────────────────
 
@@ -319,113 +270,15 @@ export default function ReservationenImportPage() {
                 <span className="font-medium">{parsed.fileName}</span>
               </div>
 
-              {/* Kacheln */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Tile icon={CalendarRange} label="Zeitraum"
-                  value={stats.periodFrom ? `${fdate(stats.periodFrom)} – ${fdate(stats.periodTo)}` : '—'} />
-                <Tile icon={FileText} label="Reservationen" value={NUM0.format(stats.reservationCount)} />
-                <Tile icon={Users} label="Personen" value={NUM0.format(stats.totalPersons)} />
-                <Tile icon={Users} label="Ø Gruppe"
-                  value={stats.avgPartySize !== null ? NUM1.format(stats.avgPartySize) : '—'} />
-                <Tile icon={CheckCircle2} label="Abgeschlossen" value={NUM0.format(stats.completedCount)}
-                  accent="text-emerald-600 dark:text-emerald-400" />
-                <Tile icon={Ban} label="Storniert" value={NUM0.format(stats.cancelledCount)}
-                  accent="text-red-600 dark:text-red-400" />
-                <Tile icon={UserPlus} label="Neue Gäste"
-                  value={classifying ? '…' : guestClass ? NUM0.format(guestClass.newGuests) : '—'}
-                  accent="text-blue-600 dark:text-blue-400" />
-                <Tile icon={UserCheck} label="Wiederkehrend"
-                  value={classifying ? '…' : guestClass ? NUM0.format(guestClass.returningGuests) : '—'}
-                  accent="text-violet-600 dark:text-violet-400" />
-              </div>
-
-              {/* Hinweise */}
-              {(skippedRows > 0 || stats.unknownStatusCount > 0 || stats.reservationsWithoutGuestKey > 0) && (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30 p-3 text-sm text-amber-800 dark:text-amber-300 space-y-1">
-                  {skippedRows > 0 && <p>• {skippedRows} Zeile(n) mit Hinweisen (z. B. ohne Res.Nr. oder unklares Datum).</p>}
-                  {stats.unknownStatusCount > 0 && <p>• {stats.unknownStatusCount} Reservation(en) mit unbekanntem Status.</p>}
-                  {stats.reservationsWithoutGuestKey > 0 && <p>• {stats.reservationsWithoutGuestKey} Reservation(en) ohne Gast-Kennung (keine E-Mail/Mobile/Name) — nicht einem Gast zugeordnet.</p>}
-                </div>
-              )}
-
-              <div className="grid md:grid-cols-2 gap-5">
-                {/* Status-Verteilung */}
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="text-sm font-semibold mb-3">Status-Verteilung</h3>
-                  <div className="space-y-1.5">
-                    {stats.statusDistribution.map((s) => (
-                      <div key={s.status} className="flex items-center justify-between text-sm">
-                        <span className="flex items-center gap-2">
-                          <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', STATUS_CLASS[s.normalized])}>
-                            {STATUS_LABEL[s.normalized]}
-                          </span>
-                          <span className="text-muted-foreground truncate max-w-[160px]">{s.status}</span>
-                        </span>
-                        <span className="font-medium tabular-nums">{NUM0.format(s.count)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Top-Zeiten */}
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
-                    <Clock className="h-4 w-4" /> Häufigste Zeiten
-                  </h3>
-                  {stats.topTimes.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Keine Zeiten erkannt.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {stats.topTimes.map((t) => (
-                        <div key={t.time} className="flex items-center justify-between text-sm">
-                          <span className="font-medium tabular-nums">{t.time}</span>
-                          <span className="text-muted-foreground">
-                            {NUM0.format(t.count)} Res. · {NUM0.format(t.persons)} Pers.
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Räume */}
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
-                    <MapPin className="h-4 w-4" /> Räume
-                  </h3>
-                  {stats.rooms.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Keine Räume erkannt.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {stats.rooms.slice(0, 10).map((r) => (
-                        <div key={r.name} className="flex items-center justify-between text-sm">
-                          <span className="truncate max-w-[200px]">{r.name}</span>
-                          <span className="font-medium tabular-nums">{NUM0.format(r.count)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Bereiche */}
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
-                    <MapPin className="h-4 w-4" /> Bereiche
-                  </h3>
-                  {stats.areas.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Keine Bereiche erkannt.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {stats.areas.slice(0, 10).map((a) => (
-                        <div key={a.name} className="flex items-center justify-between text-sm">
-                          <span className="truncate max-w-[200px]">{a.name}</span>
-                          <span className="font-medium tabular-nums">{NUM0.format(a.count)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <ReservationSummary
+                stats={stats}
+                newGuests={guestClass ? guestClass.newGuests : null}
+                returningGuests={guestClass ? guestClass.returningGuests : null}
+                guestsLoading={classifying}
+                extraNote={skippedRows > 0
+                  ? <p>• {skippedRows} Zeile(n) mit Hinweisen (z. B. ohne Res.Nr. oder unklares Datum).</p>
+                  : undefined}
+              />
 
               {/* Aktionen */}
               <div className="flex items-center gap-3">

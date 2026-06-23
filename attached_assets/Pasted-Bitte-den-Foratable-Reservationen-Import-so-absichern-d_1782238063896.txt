@@ -1,0 +1,33 @@
+Bitte den Foratable Reservationen-Import so absichern, dass niemals doppelte Reservationen gespeichert oder angezeigt werden.
+
+Wichtiges Ziel:
+Der Import muss idempotent sein. Ich lade im laufenden Jahr 2026 regelmässig neue Foratable-CSV-Exporte hoch, die auch bereits früher importierte zukünftige Reservationen enthalten. Diese Reservationen dürfen nicht doppelt gespeichert werden. Wenn eine Reservation bereits vorhanden ist, soll sie ersetzt bzw. aktualisiert werden.
+
+Gewünschtes Verhalten:
+
+1. Jede Reservation muss anhand eines stabilen eindeutigen Schlüssels erkannt werden, idealerweise Foratable Res.Nr..
+2. Wenn dieselbe Res.Nr. bereits existiert:
+    * bestehende Daten aktualisieren
+    * keine neue Zeile erstellen
+    * keine doppelte Anzeige in Reports oder Auswertungen
+3. Wenn dieselbe Res.Nr. mehrfach innerhalb derselben CSV vorkommt:
+    * vor dem Upsert deduplizieren
+    * pro Res.Nr. nur eine Zeile speichern
+    * deterministisch entscheiden, welche Zeile gewinnt, z.B. letzte CSV-Zeile oder vollständigere Zeile
+4. Der Import soll echte neue Reservationen hinzufügen.
+5. Der Import soll bestehende Reservationen aus früheren Uploads sauber überschreiben/aktualisieren.
+6. Import-Statistik ergänzen:
+    * neu eingefügt
+    * aktualisiert/ersetzt
+    * innerhalb der CSV dedupliziert
+    * übersprungen/fehlerhaft
+7. Falls aktuell kein eindeutiger Datenbank-Constraint auf Mandant + Foratable-Reservationsnummer existiert, bitte prüfen und sauber ergänzen.
+8. Tenant-Sicherheit muss erhalten bleiben: Ein Mandant darf nie Reservationen eines anderen Mandanten überschreiben.
+9. Bestehende Reports müssen danach automatisch ohne Doppelzählungen funktionieren.
+10. Tests ergänzen:
+
+* gleicher CSV-Import zweimal hintereinander erzeugt keine Duplikate
+* gleiche Res.Nr. mit geänderten Daten aktualisiert vorhandene Reservation
+* doppelte Res.Nr. innerhalb derselben CSV crasht nicht und speichert nur eine Reservation
+
+Bitte nicht nur den UI-Import fixen, sondern die Datenbank-/Upsert-Logik so gestalten, dass doppelte Reservationen grundsätzlich verhindert werden.
