@@ -322,7 +322,7 @@ export default function GaesteDetailPage() {
 
   const load = useCallback(async () => {
     if (!guestId) return;
-    if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
+    if (!isAdmin || isGuest) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins / Gast-Sessions
     setLoading(true);
     setCrmLoadError(null);
     // Beim Gastwechsel (gleiche Route, neue guestId) zuerst den alten CRM-Stand
@@ -353,7 +353,7 @@ export default function GaesteDetailPage() {
       setCrmLoadError(e instanceof Error ? e.message : 'CRM-Profil konnte nicht geladen werden.');
     }
     setLoading(false);
-  }, [tenantId, guestId, isAdmin]);
+  }, [tenantId, guestId, isAdmin, isGuest]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -412,7 +412,7 @@ export default function GaesteDetailPage() {
     [reservations, historyFilter],
   );
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   const name = profile ? guestDisplayName(profile) : 'Gast';
   const trendMeta = TREND_META[trend.direction];

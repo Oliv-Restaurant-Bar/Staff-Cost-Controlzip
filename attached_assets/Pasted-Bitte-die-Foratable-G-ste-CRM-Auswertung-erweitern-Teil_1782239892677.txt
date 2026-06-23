@@ -1,0 +1,80 @@
+Bitte die Foratable-/Gäste-CRM-Auswertung erweitern.
+
+Teil 1: Details zu zukünftigen Reservationen
+
+Auf der Seite CRM Auswertung sollen die Boxen unter „Zukünftige Reservationen“ klickbar werden:
+
+* Laufender Monat
+* Nächster Monat
+* Nächste 30 Tage
+* Nächste 60 Tage
+* Nächste 90 Tage
+* Offen / unbeantwortet
+
+Wenn ich auf eine Zahl oder Box klicke, soll darunter oder in einer Detailansicht eine Liste der passenden Reservationen erscheinen.
+
+Die Liste soll nach Datum sortiert sein:
+
+* nächste Reservation zuerst
+* danach chronologisch aufsteigend
+
+Anzeigen pro Reservation:
+
+* Datum
+* Uhrzeit
+* Gastname
+* Anzahl Personen
+* Status
+* Raum / Bereich
+* Telefonnummer oder E-Mail, falls vorhanden
+* optional Kommentar / Notiz, falls vorhanden
+
+Wichtig:
+
+* Stornierte und No-Show Reservationen sollen bei den aktiven Boxen nicht mitzählen.
+* Offene / unbeantwortete Reservationen sollen separat bleiben.
+* Die Zahlen in den Boxen müssen exakt zur Detail-Liste passen.
+* Tenant-Sicherheit beibehalten.
+* Keine PII in Tests verwenden.
+
+Teil 2: Individueller Zeitraum
+
+Auch im Bereich „Individueller Zeitraum“ sollen die Ergebnisse klickbar sein:
+
+* Aktive Reservationen
+* Personen aktiv
+* Offen / unbeantwortet
+* Personen offen
+
+Beim Klick soll ebenfalls eine passende Detail-Liste erscheinen, gefiltert nach dem gewählten Zeitraum.
+
+Teil 3: Import-Menüpunkte zusammenlegen
+
+Bitte die beiden bestehenden Menüpunkte:
+
+* Reservationen
+* Gästeexport Import
+
+zu einem einzigen Menüpunkt zusammenlegen:
+
+Neuer Menüpunkt:
+Foratable Import
+
+In diesem Menüpunkt soll es eine gemeinsame Import-Seite geben mit zwei klaren Bereichen oder Tabs:
+
+1. Reservationen importieren
+    * bestehender Reservationen-Import
+    * CSV-Upload für Foratable-Reservationen
+    * bestehende Logik nicht verschlechtern
+    * idempotenter Import bleibt erhalten
+2. Gäste importieren / CRM anreichern
+    * bestehender Gästeexport-Import
+    * CRM-Enrichment wie bisher
+
+Wichtig:
+
+* Bestehende Importlogik möglichst wiederverwenden, nicht neu bauen.
+* Bestehende Routen können intern weiterbestehen, aber in der Navigation soll nur noch Foratable Import erscheinen.
+* Falls möglich, neue Route /foratable-import.
+* Alte Links dürfen weiter funktionieren oder sauber weiterleiten.
+* Foratable Report soll ein separater Menüpunkt bleiben.

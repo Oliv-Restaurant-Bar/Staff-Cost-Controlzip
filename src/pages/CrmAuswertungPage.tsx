@@ -130,7 +130,7 @@ function SectionTitle({ icon: Icon, children }: { icon: React.FC<{ className?: s
 
 export default function CrmAuswertungPage() {
   const { tenantId } = useTenant();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isGuest } = usePermissions();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -164,7 +164,7 @@ export default function CrmAuswertungPage() {
   const rangeInvalid = rangeEmpty || rangeFrom > rangeTo;
 
   const load = useCallback(async () => {
-    if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
+    if (!isAdmin || isGuest) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins / Gast-Sessions
     setLoading(true);
     const ok = await checkReservationTablesExist();
     setTablesOk(ok);
@@ -198,7 +198,7 @@ export default function CrmAuswertungPage() {
       setCrmError(false);
     }
     setLoading(false);
-  }, [tenantId, isAdmin, todayStr]);
+  }, [tenantId, isAdmin, isGuest, todayStr]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -276,7 +276,7 @@ export default function CrmAuswertungPage() {
     setRangeLoading(false);
   }, [tenantId, rangeFrom, rangeTo, rangeInvalid]);
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">

@@ -249,7 +249,7 @@ function GuestCell({ colKey, m }: { colKey: GuestColumnKey; m: GuestListMetrics 
 
 export default function GaesteCrmPage() {
   const { tenantId } = useTenant();
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isGuest } = usePermissions();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -292,7 +292,7 @@ export default function GaesteCrmPage() {
   );
 
   const load = useCallback(async () => {
-    if (!isAdmin) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins
+    if (!isAdmin || isGuest) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins / Gast-Sessions
     setLoading(true);
     const ok = await checkReservationTablesExist();
     setTablesOk(ok);
@@ -324,7 +324,7 @@ export default function GaesteCrmPage() {
       setCrmError(false);
     }
     setLoading(false);
-  }, [tenantId, isAdmin]);
+  }, [tenantId, isAdmin, isGuest]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -444,7 +444,7 @@ export default function GaesteCrmPage() {
     }
   };
 
-  if (!isAdmin) return <Navigate to="/" replace />;
+  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   const SortHeader = ({ label, k, align = 'left' }: { label: string; k: GuestSortKey; align?: 'left' | 'right' }) => (
     <th
