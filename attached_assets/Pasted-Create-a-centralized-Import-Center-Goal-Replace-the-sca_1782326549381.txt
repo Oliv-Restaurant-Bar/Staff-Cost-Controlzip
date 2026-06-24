@@ -1,0 +1,75 @@
+Create a centralized Import Center.
+
+Goal:
+Replace the scattered import menu items with one central left navigation item called “Import”.
+
+Navigation:
+
+* Remove separate import-related menu items from the sidebar where appropriate.
+* Add one main sidebar item: “Import”.
+* Route: /import
+
+Import Center page:
+At the top, show import categories as clickable tabs/cards in columns:
+
+1. Foratable Import
+2. Gastronovi Z-Bericht
+3. Produktumsätze / Produktanalyse Import
+4. Warenrechnungen Import
+5. WES / Wareneinsatz Import
+6. Erfolgsrechnung / Kontoblätter Import
+7. Budget Import
+8. Mitarbeitende / Mirus Import
+9. Vorjahreswerte Import
+
+Each import card should show:
+
+* Import name
+* Short description
+* Status:
+    * Not started
+    * Last imported
+    * Needs attention
+* Last import timestamp
+* Last imported by user if available
+* Button: “Import öffnen”
+* Optional checklist indicator
+
+Workflow:
+Users should be able to go through the imports one by one like a checklist.
+
+Example layout:
+Import Center
+[Foratable] [Gastronovi] [Produkte] [Warenrechnungen] [WES] [Erfolgsrechnung] [Mitarbeitende]
+
+When clicking a card/tab:
+
+* Show the existing import UI for that import type inside the Import Center
+* Do not duplicate import logic
+* Reuse existing import components and routes where possible
+
+Import history:
+Use existing import history/log tables if available.
+If no central history exists for an import type, create a lightweight read-only fallback from existing metadata.
+Do not invent timestamps.
+
+Requirements:
+
+* Keep existing import functionality unchanged
+* Do not break existing routes immediately if they are used internally
+* Add redirects from old import routes to the new Import Center where appropriate
+* Respect role permissions
+* Kitchen manager should only see imports relevant to their permissions, if any
+* Admin should see all imports
+* Add tests for:
+    * Import Center renders all allowed import types
+    * last import timestamp is shown
+    * clicking an import opens the correct existing import UI
+    * old routes still work or redirect safely
+    * permissions hide unauthorized imports
+
+Important:
+This is a navigation and organization task first.
+Do not rewrite import logic.
+Do not change import parsers.
+Do not change database schema unless absolutely necessary.

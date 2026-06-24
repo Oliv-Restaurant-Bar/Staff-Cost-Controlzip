@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useTenant } from '@/contexts/TenantContext';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
@@ -45,6 +46,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync } from '@/lib/maison-store';
+import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
+import { visibleCategories } from '@/lib/import-center';
 
 const currentYear = new Date().getFullYear();
 
@@ -1857,9 +1860,18 @@ const AnnualPersonnelCostImportSection = () => {
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
 const ImportHub = () => {
-  const { isAdmin } = usePermissions();
+  const { isAdmin, isBeaulieuManager, isBeaulieuViewer } = usePermissions();
+  const { isGuest } = useGuestSession();
   const { tenant } = useTenant();
-  if (!isAdmin) return <Navigate to="/personal" replace />;
+  // Single source of truth: the page is reachable iff the role can see ≥1 import card
+  // (same visibleCategories() the grid uses). Guests get 0 cards → redirected; Beaulieu-GF
+  // gets its route cards; Beaulieu-Viewer gets Warenrechnungen only; admin gets all 9.
+  if (visibleCategories({ isAdmin, isGuest, isBeaulieuManager, isBeaulieuViewer }).length === 0) {
+    return <Navigate to="/personal" replace />;
+  }
+  // The inline import sections below the card grid are admin-only tools; non-admins
+  // (Beaulieu) see ONLY the card grid — their route cards navigate to the real pages.
+  const showAdminSections = isAdmin && !isGuest;
 
   return (
     <div className="min-h-screen bg-background">
@@ -1869,7 +1881,7 @@ const ImportHub = () => {
             <div className="flex items-center gap-3">
               <Upload className="h-5 w-5 text-muted-foreground" />
               <div>
-                <h1 className="text-base font-bold leading-tight">Import-Zentrale</h1>
+                <h1 className="text-base font-bold leading-tight">Import-Center</h1>
                 <p className="text-xs text-muted-foreground">Alle Datenimporte an einem Ort</p>
               </div>
               <span
@@ -1891,6 +1903,11 @@ const ImportHub = () => {
 
       <main className="max-w-4xl mx-auto px-4 py-6 pb-24 space-y-4">
 
+        {/* ── Import-Bereiche (Karten-Übersicht) ────────────────────────── */}
+        <ImportCenterGrid />
+
+        {showAdminSections && (
+        <>
         {/* ── 0. Datenstand ─────────────────────────────────────────────── */}
         <DatenstandCard />
 
@@ -2068,6 +2085,8 @@ const ImportHub = () => {
           >
             <BeaulieuBudgetImportSection />
           </Section>
+        )}
+        </>
         )}
 
       </main>

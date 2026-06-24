@@ -11,8 +11,8 @@
  *   Personal     → Dienstplanung · Personalkosten · Personalstamm · Datenintegrität MA
  *   Warenkosten  → Warenrechnungen · WES Analyse · Produkte
  *   Foratable    → Gäste CRM · Reservationen · CRM Auswertung
- *   Admin        → Gastronovi Z-Bericht · Einstellungen
- *   Import       → Import-Zentrale · Verkaufsdaten Upload
+ *   Admin        → Einstellungen
+ *   Import       → Import (zentrales Import-Center /import)
  *
  * Ausgeblendet (Routen existieren weiterhin, nur nicht verlinkt):
  *   /reporting   Analyse / Reporting
@@ -29,11 +29,11 @@ import {
   LayoutDashboard, Calendar, PieChart,
   DollarSign, TrendingDown,
   Package, Users,
-  Upload, Settings, Inbox,
+  Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
-  Menu, ClipboardCheck, ShieldAlert, Scale, FileText, GitMerge,
+  Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -57,6 +57,10 @@ interface NavItem {
   adminOnly?: boolean;
   /** Explizit auch für beaulieu_manager sichtbar machen, auch wenn adminOnly=true */
   beaulieuAllowed?: boolean;
+  /** Auch für beaulieu_viewer sichtbar machen (parallel zu beaulieuAllowed). */
+  beaulieuViewerAllowed?: boolean;
+  /** Für Gast-Sessions ausblenden, obwohl isAdmin für Gäste true ist. */
+  hideForGuest?: boolean;
   module?: import('@/hooks/usePermissions').AppModule;
 }
 
@@ -224,13 +228,6 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
-        path: '/foratable-import',
-        label: 'Foratable Import',
-        shortLabel: 'Foratable Imp.',
-        icon: Upload,
-        adminOnly: true,
-      },
-      {
         path: '/gaeste/auswertung',
         label: 'CRM Auswertung',
         shortLabel: 'Auswertung',
@@ -258,13 +255,6 @@ const NAV_GROUPS: NavGroup[] = [
     adminOnly: true,
     items: [
       {
-        path: '/gastronovi-import',
-        label: 'Gastronovi Z-Bericht',
-        shortLabel: 'Z-Bericht',
-        icon: FileText,
-        adminOnly: true,
-      },
-      {
         path: '/settings',
         label: 'Einstellungen',
         shortLabel: 'Settings',
@@ -280,19 +270,15 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         path: '/import',
-        label: 'Import-Zentrale',
+        label: 'Import',
         shortLabel: 'Import',
         icon: Inbox,
         adminOnly: true,
+        // Beaulieu-GF/Viewer dürfen das Import-Center öffnen (sehen dort nur ihre Route-Karten);
+        // Gäste sind ausgeschlossen (Import = Schreibaktion, Seite leitet Gäste ohnehin um).
         beaulieuAllowed: true,
-      },
-      {
-        path: '/sales-upload',
-        label: 'Verkaufsdaten Upload',
-        shortLabel: 'Upload',
-        icon: Upload,
-        adminOnly: true,
-        beaulieuAllowed: true,
+        beaulieuViewerAllowed: true,
+        hideForGuest: true,
       },
     ],
   },
@@ -402,7 +388,7 @@ const StichtagPicker = () => {
 export const AppSidebar = () => {
   const location = useLocation();
   const { user, signOut } = useAuth();
-  const { role, isAdmin, isManager, isBeaulieuManager, allowedDepartment, canAccessModule } = usePermissions();
+  const { role, isAdmin, isManager, isBeaulieuManager, isBeaulieuViewer, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
 
   const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
@@ -424,9 +410,11 @@ export const AppSidebar = () => {
   const guestLabel = guestH > 0 ? `${guestH}h ${guestM}min` : `${guestMinutesLeft} Min.`;
 
   function isItemVisible(item: NavItem): boolean {
-    // adminOnly items: sichtbar für admin/guest, oder für beaulieu_manager wenn beaulieuAllowed=true
+    // Gast-Sessions: explizit markierte Items (z.B. Import-Center) ausblenden, obwohl isAdmin(Gast)=true
+    if (item.hideForGuest && isGuest) return false;
+    // adminOnly items: sichtbar für admin/guest, oder für beaulieu_manager/-viewer wenn erlaubt
     if (item.adminOnly && !isAdmin && !isGuest) {
-      if (!(isBeaulieuManager && item.beaulieuAllowed)) return false;
+      if (!(isBeaulieuManager && item.beaulieuAllowed) && !(isBeaulieuViewer && item.beaulieuViewerAllowed)) return false;
     }
     // module-based items: canAccessModule (beaulieu_manager korrekt abgedeckt)
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
@@ -626,7 +614,7 @@ const PINNED_PATHS = ['/', '/tages-controlling', '/personal', '/personal-fix'];
 export const AppBottomNav = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { isAdmin, isBeaulieuManager, canAccessModule } = usePermissions();
+  const { isAdmin, isBeaulieuManager, isBeaulieuViewer, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
 
   const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
@@ -640,8 +628,9 @@ export const AppBottomNav = () => {
   useEffect(() => { setOpen(false); }, [location.pathname]);
 
   function isItemVisible(item: NavItem): boolean {
+    if (item.hideForGuest && isGuest) return false;
     if (item.adminOnly && !isAdmin && !isGuest) {
-      if (!(isBeaulieuManager && item.beaulieuAllowed)) return false;
+      if (!(isBeaulieuManager && item.beaulieuAllowed) && !(isBeaulieuViewer && item.beaulieuViewerAllowed)) return false;
     }
     if (item.module && !canAccessModule(item.module) && !isGuest) return false;
     return true;
