@@ -32,6 +32,7 @@ import {
 import { fetchGuestCrmProfilesByIds } from '@/lib/guest-crm-profile-db';
 import type { GuestCrmProfile } from '@/lib/guest-crm-profile';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
+import { checkCrmActivitiesTableExist } from '@/lib/crm-activities-db';
 import {
   guestListMetrics, countSegments, returnRiskRatio, isAtReturnRisk,
   SEGMENT_LABEL, SEGMENT_ORDER,
@@ -55,8 +56,9 @@ import {
 } from '@/lib/guest-top-flop';
 import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
 import { SmartSegmentBadges } from '@/components/crm/SmartSegmentBadges';
+import { SegmentActionBar } from '@/components/crm/SegmentActionBar';
 import {
-  guestSmartSegments, hasSmartSegment, filterBySmartSegment, smartSegmentExportTable,
+  guestSmartSegments, hasSmartSegment, smartSegmentExportTable,
   SMART_SEGMENT_FILTER_OPTIONS, SMART_SEGMENT_LABEL,
   type SmartSegmentFilter,
 } from '@/lib/guest-smart-segments';
@@ -261,6 +263,7 @@ export default function GaesteCrmPage() {
 
   const [loading, setLoading] = useState(true);
   const [tablesOk, setTablesOk] = useState<boolean | null>(null);
+  const [crmActionsOk, setCrmActionsOk] = useState(true);
   const [profiles, setProfiles] = useState<Awaited<ReturnType<typeof fetchGuestProfiles>>>([]);
   const [visitAggs, setVisitAggs] = useState<Map<string, CompletedVisitAgg>>(new Map());
   const [noShowCounts, setNoShowCounts] = useState<Map<string, number>>(new Map());
@@ -272,6 +275,9 @@ export default function GaesteCrmPage() {
   // seiten-lokal gehalten, damit die reine `applyGuestFilters`-Logik (ohne
   // `today`) unverändert/getestet bleibt.
   const [smartSegment, setSmartSegment] = useState<SmartSegmentFilter>('alle');
+  // Zeilenauswahl für Segment-Aktionen (nur sichtbar, wenn ein Smart-Segment
+  // aktiv ist). Leere Auswahl ⇒ Aktionen betreffen das ganze gefilterte Segment.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<GuestSortKey>('visits');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -305,8 +311,12 @@ export default function GaesteCrmPage() {
   const load = useCallback(async () => {
     if (!isAdmin || isGuest) { setLoading(false); return; }   // Datenschutz: keine Gäste-Reads für Nicht-Admins / Gast-Sessions
     setLoading(true);
-    const ok = await checkReservationTablesExist();
+    const [ok, actionsOk] = await Promise.all([
+      checkReservationTablesExist(),
+      checkCrmActivitiesTableExist(),
+    ]);
     setTablesOk(ok);
+    setCrmActionsOk(actionsOk);
     if (ok) {
       const [ps, aggs, noShows] = await Promise.all([
         fetchGuestProfiles(tenantId),
@@ -417,6 +427,56 @@ export default function GaesteCrmPage() {
   // Die tatsächlich angezeigten Zeilen: im Top/Flop-Modus die Rangliste (eigene
   // Reihenfolge, Sortierung deaktiviert), sonst die gefilterte+sortierte Liste.
   const displayRows = isTopFlop ? topFlopRows.map(r => r.metric) : sorted;
+
+  // ── Auswahl & Segment-Aktionen (nur bei aktivem Smart-Segment) ─────────────
+  const selectionEnabled = smartSegment !== 'alle' && !isTopFlop;
+  const displayIds = useMemo(() => displayRows.map(m => m.id), [displayRows]);
+  // Nur Auswahl-IDs berücksichtigen, die aktuell sichtbar sind (z. B. nach
+  // einem Such-/Filterwechsel): die Aktionen sollen nie unsichtbare Gäste treffen.
+  const selectedInView = useMemo(
+    () => displayIds.filter(id => selectedIds.has(id)),
+    [displayIds, selectedIds],
+  );
+  const hasSelection = selectedInView.length > 0;
+  // Ziel der Aktionen: explizite Auswahl, sonst das ganze gefilterte Segment.
+  const actionTargetIds = hasSelection ? selectedInView : displayIds;
+  const allVisibleSelected = displayIds.length > 0 && selectedInView.length === displayIds.length;
+
+  // Auswahl leeren, sobald das Smart-Segment wechselt oder der Auswahlmodus endet.
+  useEffect(() => { setSelectedIds(new Set()); }, [smartSegment, isTopFlop]);
+
+  const toggleSelectOne = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds(prev => {
+      const allSel = displayIds.length > 0 && displayIds.every(id => prev.has(id));
+      return allSel ? new Set() : new Set(displayIds);
+    });
+  }, [displayIds]);
+
+  // Nach einer erfolgreichen Schreibaktion: Auswahl leeren UND neu laden, damit
+  // sich ändernde Kennzahlen (z. B. „zuletzt kontaktiert") aktualisieren.
+  const handleActionDone = useCallback(() => {
+    setSelectedIds(new Set());
+    void load();
+  }, [load]);
+
+  const handleSegmentExportCsv = useCallback(() => {
+    if (smartSegment === 'alle') return;
+    // Gleicher Geltungsbereich wie die schreibenden Aktionen: explizite Auswahl,
+    // sonst die aktuell ANGEZEIGTEN Zeilen (Smart-Segment + Suche + Filter),
+    // nicht das ungefilterte Gesamtsegment.
+    const rows = hasSelection
+      ? displayRows.filter(m => selectedIds.has(m.id))
+      : displayRows;
+    downloadCsv(smartSegmentExportTable(smartSegment, rows));
+  }, [smartSegment, hasSelection, displayRows, selectedIds]);
 
   const filtersActive =
     hasActiveFilters(filters) || query.trim().length > 0 || smartSegment !== 'alle';
@@ -827,18 +887,6 @@ export default function GaesteCrmPage() {
               </div>
             </PopoverContent>
           </Popover>
-          {smartSegment !== 'alle' && (
-            <button
-              onClick={() => downloadCsv(
-                smartSegmentExportTable(smartSegment, filterBySmartSegment(allMetrics, smartSegment, today)),
-              )}
-              className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/15"
-              title={`Alle Gäste im Smart-Segment „${SMART_SEGMENT_LABEL[smartSegment]}" als CSV exportieren`}
-            >
-              <FileDown className="h-4 w-4" />
-              {SMART_SEGMENT_LABEL[smartSegment]}-CSV
-            </button>
-          )}
           <button
             onClick={() => downloadCsv(guestListExportTable(displayRows, visibleColumns))}
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
@@ -854,6 +902,21 @@ export default function GaesteCrmPage() {
             Excel
           </button>
         </div>
+      )}
+
+      {/* Segment-Aktionen (nur bei aktivem Smart-Segment) */}
+      {tablesOk && selectionEnabled && displayRows.length > 0 && (
+        <SegmentActionBar
+          tenantId={tenantId}
+          targetIds={actionTargetIds}
+          hasSelection={hasSelection}
+          segmentKey={smartSegment}
+          segmentLabel={SMART_SEGMENT_LABEL[smartSegment]}
+          today={today}
+          actionsAvailable={crmActionsOk}
+          onExportCsv={handleSegmentExportCsv}
+          onDone={handleActionDone}
+        />
       )}
 
       {/* Tabelle */}
@@ -877,6 +940,15 @@ export default function GaesteCrmPage() {
           <table className="w-full border-collapse text-sm">
             <thead className="bg-muted/50 [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
               <tr>
+                {selectionEnabled && (
+                  <th className="w-9 px-3 py-2">
+                    <Checkbox
+                      checked={allVisibleSelected ? true : (hasSelection ? 'indeterminate' : false)}
+                      onCheckedChange={() => toggleSelectAll()}
+                      aria-label="Alle sichtbaren Gäste auswählen"
+                    />
+                  </th>
+                )}
                 {isTopFlop && (
                   <th
                     className="px-3 py-2 text-right text-[11px] font-semibold uppercase tracking-wide text-muted-foreground"
@@ -916,6 +988,15 @@ export default function GaesteCrmPage() {
                     onClick={() => navigate(`/gaeste/${m.id}`)}
                     className="cursor-pointer border-t border-border hover:bg-muted/40"
                   >
+                    {selectionEnabled && (
+                      <td className="w-9 px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedIds.has(m.id)}
+                          onCheckedChange={() => toggleSelectOne(m.id)}
+                          aria-label={`${m.name ?? 'Gast'} auswählen`}
+                        />
+                      </td>
+                    )}
                     {isTopFlop && (
                       isTopMode ? (
                         <td className="px-3 py-2 text-right tabular-nums">

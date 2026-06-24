@@ -60,6 +60,11 @@ import {
 import { SegmentBadge } from '@/components/crm/SegmentBadge';
 import { SmartSegmentBadges } from '@/components/crm/SmartSegmentBadges';
 import { guestSmartSegments } from '@/lib/guest-smart-segments';
+import { fetchGuestActivities, setFollowUpStatus } from '@/lib/crm-activities-db';
+import {
+  splitActivitiesByType, ACTIVITY_TYPE_LABEL, FOLLOW_UP_STATUS_LABEL,
+  type CrmActivity,
+} from '@/lib/crm-activities';
 import type { ReservationStatusNormalized } from '@/lib/reservation-import-parser';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -306,6 +311,12 @@ export default function GaesteDetailPage() {
   const [reservations, setReservations] = useState<GuestReservationDisplay[]>([]);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>('alle');
 
+  // CRM-Aktivitäten (Kontaktverlauf / Notizen / Folgeaufgaben). Best-effort:
+  // fehlt die Tabelle, bleibt die Liste leer und der Tab zeigt einen Hinweis.
+  const [activities, setActivities] = useState<CrmActivity[]>([]);
+  const [activitiesError, setActivitiesError] = useState(false);
+  const [activityBusyId, setActivityBusyId] = useState<string | null>(null);
+
   // Manuelles CRM-Profil (guest_crm_profiles): `crmSaved` = zuletzt gespeicherter
   // Stand, `crmForm` = aktueller Formularstand. Differenz = ungespeicherte Änderung.
   const [crmSaved, setCrmSaved] = useState<GuestCrmProfile>(EMPTY_CRM_PROFILE);
@@ -339,6 +350,17 @@ export default function GaesteDetailPage() {
     ]);
     setProfile(p);
     setReservations(recs);
+
+    // CRM-Aktivitäten best-effort laden (Kontaktverlauf/Notizen/Folgeaufgaben).
+    // Ein Fehler darf die übrige Akte nicht blockieren → Hinweis im Tab.
+    try {
+      const acts = await fetchGuestActivities(tenantId, guestId);
+      setActivities(acts);
+      setActivitiesError(false);
+    } catch {
+      setActivities([]);
+      setActivitiesError(true);
+    }
 
     // CRM-Profil separat laden: ein echter Lesefehler darf NICHT als „leeres Profil"
     // interpretiert werden — sonst würde ein anschliessendes Speichern bestehende
@@ -390,6 +412,38 @@ export default function GaesteDetailPage() {
   }, [tenantId, guestId, canEditCrm, crmForm, toast]);
 
   const handleResetCrm = useCallback(() => setCrmForm(crmSaved), [crmSaved]);
+
+  const reloadActivities = useCallback(async () => {
+    if (!guestId) return;
+    try {
+      const acts = await fetchGuestActivities(tenantId, guestId);
+      setActivities(acts);
+      setActivitiesError(false);
+    } catch {
+      setActivitiesError(true);
+    }
+  }, [tenantId, guestId]);
+
+  // Folgeaufgabe erledigt/offen umschalten (mandantengeprüft in der DB-Schicht).
+  const toggleFollowUp = useCallback(async (activity: CrmActivity) => {
+    if (!canEditCrm) return;
+    const next = activity.status === 'done' ? 'open' : 'done';
+    setActivityBusyId(activity.id);
+    try {
+      await setFollowUpStatus(tenantId, activity.id, next);
+      await reloadActivities();
+    } catch (e) {
+      toast({
+        title: 'Status konnte nicht geändert werden',
+        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+        variant: 'destructive',
+      });
+    } finally {
+      setActivityBusyId(null);
+    }
+  }, [tenantId, canEditCrm, reloadActivities, toast]);
+
+  const activitySplit = useMemo(() => splitActivitiesByType(activities), [activities]);
 
   const metrics = useMemo(() => guestDetailMetrics(reservations, today), [reservations, today]);
   const simpleStatus = simpleGuestStatus(metrics.visits);
@@ -492,6 +546,15 @@ export default function GaesteDetailPage() {
               <TabsTrigger value="crm" className="gap-1.5">
                 <Pencil className="h-4 w-4" />
                 CRM
+              </TabsTrigger>
+              <TabsTrigger value="aktivitaet" className="gap-1.5">
+                <BellRing className="h-4 w-4" />
+                Aktivität
+                {activities.length > 0 && (
+                  <span className="ml-0.5 rounded-full bg-muted px-1.5 text-[10px] font-semibold leading-4 text-muted-foreground">
+                    {activities.length}
+                  </span>
+                )}
               </TabsTrigger>
             </TabsList>
 
@@ -867,6 +930,113 @@ export default function GaesteDetailPage() {
                   Nur Administratoren können CRM-Daten bearbeiten.
                 </p>
               )}
+            </TabsContent>
+
+            <TabsContent value="aktivitaet" className="space-y-5">
+              {activitiesError && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                  Aktivitäten konnten nicht geladen werden — möglicherweise wurde die Tabelle
+                  noch nicht angelegt (Migration im SQL-Editor ausführen).
+                </div>
+              )}
+
+              {/* Folgeaufgaben */}
+              <Section icon={BellRing} title="Folgeaufgaben">
+                {activitySplit.followUps.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Keine Folgeaufgaben.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {activitySplit.followUps.map((a) => (
+                      <li
+                        key={a.id}
+                        className="flex items-start justify-between gap-3 rounded-md border border-border p-3"
+                      >
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2 text-sm">
+                            <span
+                              className={cn(
+                                'inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-semibold',
+                                a.status === 'done'
+                                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
+                              )}
+                            >
+                              {FOLLOW_UP_STATUS_LABEL[a.status ?? 'open']}
+                            </span>
+                            <span className="text-muted-foreground">Fällig {fdate(a.dueDate)}</span>
+                          </div>
+                          {a.note && (
+                            <p className="whitespace-pre-wrap break-words text-sm">{a.note}</p>
+                          )}
+                          <p className="text-[11px] text-muted-foreground">
+                            Erstellt {fdate(a.createdAt)}
+                            {a.segmentKey ? ` · Segment: ${a.segmentKey}` : ''}
+                          </p>
+                        </div>
+                        {canEditCrm && (
+                          <div className="flex shrink-0 items-center gap-2">
+                            {activityBusyId === a.id && (
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            )}
+                            <Switch
+                              checked={a.status === 'done'}
+                              onCheckedChange={() => void toggleFollowUp(a)}
+                              disabled={activityBusyId === a.id}
+                              aria-label="Folgeaufgabe als erledigt markieren"
+                            />
+                            <span className="text-xs text-muted-foreground">Erledigt</span>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+
+              {/* Kontaktverlauf */}
+              <Section icon={CalendarCheck} title="Kontaktverlauf">
+                {activitySplit.contacted.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Noch nicht kontaktiert.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {activitySplit.contacted.map((a) => (
+                      <li key={a.id} className="rounded-md border border-border p-3 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <CalendarCheck className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{fdate(a.contactedOn ?? a.createdAt)}</span>
+                          {a.segmentKey && (
+                            <span className="text-[11px] text-muted-foreground">
+                              · Segment: {a.segmentKey}
+                            </span>
+                          )}
+                        </div>
+                        {a.note && (
+                          <p className="mt-1 whitespace-pre-wrap break-words">{a.note}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+
+              {/* Notizen */}
+              <Section icon={StickyNote} title="Notizen">
+                {activitySplit.notes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Keine Notizen.</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {activitySplit.notes.map((a) => (
+                      <li key={a.id} className="rounded-md border border-border p-3 text-sm">
+                        <p className="whitespace-pre-wrap break-words">{a.note}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {fdate(a.createdAt)}
+                          {a.segmentKey ? ` · Segment: ${a.segmentKey}` : ''}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
             </TabsContent>
           </Tabs>
         </>
