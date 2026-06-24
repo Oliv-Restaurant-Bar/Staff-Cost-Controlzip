@@ -419,6 +419,7 @@ export default function CrmAuswertungPage() {
                   title={FUTURE_SEL_LABEL[futureSel]}
                   rows={futureReservationList(futureRows, boundaries, futureSel)}
                   persons={futureKpis[futureSel].persons}
+                  onSelectGuest={(id) => navigate(`/gaeste/${id}`)}
                 />
               )}
             </section>
@@ -478,6 +479,7 @@ export default function CrmAuswertungPage() {
                     title={rangeSel === 'active' ? 'Aktive Reservationen' : 'Offen / unbeantwortet'}
                     rows={rangeReservationList(rangeResult.rows, rangeResult.from, rangeResult.to, rangeSel)}
                     persons={rangeSel === 'active' ? rangeResult.active.persons : rangeResult.open.persons}
+                    onSelectGuest={(id) => navigate(`/gaeste/${id}`)}
                   />
                 )}
               </div>

@@ -174,6 +174,7 @@ export function futureReservationKpis(
 /** Reservations-Detailzeile (Aggregatfelder + Anzeigefelder für die Detailliste). */
 export interface ReservationDetailRow extends ReservationAggRow {
   id: string;
+  guestId: string | null;
   displayName: string;
   time: string | null;      // "HH:mm"
   room: string | null;

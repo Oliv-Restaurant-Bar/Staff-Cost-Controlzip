@@ -171,7 +171,7 @@ export async function fetchNoShowCountsByGuest(
 // paginiert, KEINE PII-Logs.
 
 const DETAIL_COLS =
-  'id, reservation_date, reservation_time, party_size, status_normalized, ' +
+  'id, guest_id, reservation_date, reservation_time, party_size, status_normalized, ' +
   'first_name, last_name, mobile, email, room, area, comment, note';
 
 function rowDisplayName(
@@ -205,6 +205,7 @@ async function fetchReservationDetailRows(
     for (const r of data as any[]) {
       out.push({
         id: String(r.id),
+        guestId: r.guest_id ? String(r.guest_id) : null,
         date: r.reservation_date ?? null,
         partySize: r.party_size ?? null,
         // Rohwert durchreichen — die Dashboard-Prädikate klassifizieren

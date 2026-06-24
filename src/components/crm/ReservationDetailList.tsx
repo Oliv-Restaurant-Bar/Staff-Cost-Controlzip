@@ -61,10 +61,36 @@ function noteText(r: ReservationDetailRow): string {
   return [r.comment, r.note].map(s => (s ?? '').trim()).filter(Boolean).join(' — ');
 }
 
-export function ReservationDetailList({ title, rows, persons }: {
+/** Gastname — anklickbar (→ Gästeprofil), wenn ein onSelectGuest-Handler UND eine guestId vorhanden sind. */
+function GuestName({ name, guestId, onSelect, className }: {
+  name: string;
+  guestId: string | null;
+  onSelect?: (guestId: string) => void;
+  className?: string;
+}) {
+  if (onSelect && guestId) {
+    return (
+      <button
+        type="button"
+        onClick={() => onSelect(guestId)}
+        className={cn(
+          'text-left font-medium text-primary underline-offset-2 hover:underline focus:underline focus:outline-none',
+          className,
+        )}
+        title="Zum Gästeprofil"
+      >
+        {name}
+      </button>
+    );
+  }
+  return <span className={cn('font-medium text-foreground', className)}>{name}</span>;
+}
+
+export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
   title: string;
   rows: ReservationDetailRow[];
   persons: number;
+  onSelectGuest?: (guestId: string) => void;
 }) {
   return (
     <div className="mt-3 rounded-lg border border-border bg-card">
@@ -109,7 +135,9 @@ export function ReservationDetailList({ title, rows, persons }: {
                     <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/40">
                       <td className="px-3 py-2 tabular-nums">{fdate(r.date)}</td>
                       <td className="px-3 py-2 tabular-nums">{r.time ?? '—'}</td>
-                      <td className="px-3 py-2 font-medium text-foreground">{r.displayName}</td>
+                      <td className="px-3 py-2">
+                        <GuestName name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
+                      </td>
                       <td className="px-3 py-2 text-right tabular-nums">{r.partySize ?? '—'}</td>
                       <td className="px-3 py-2">
                         <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', statusClass(r.status))}>
@@ -138,7 +166,7 @@ export function ReservationDetailList({ title, rows, persons }: {
               return (
                 <div key={r.id} className="space-y-1 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-foreground">{r.displayName}</span>
+                    <GuestName name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
                     <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', statusClass(r.status))}>
                       {statusLabel(r.status)}
                     </span>

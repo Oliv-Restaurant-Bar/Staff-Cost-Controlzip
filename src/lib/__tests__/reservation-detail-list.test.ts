@@ -29,6 +29,7 @@ function row(
 ): ReservationDetailRow {
   return {
     id: p.id,
+    guestId: p.guestId ?? null,
     date: p.date,
     partySize: p.partySize ?? null,
     status: p.status,
@@ -130,5 +131,26 @@ describe('rangeReservationList ↔ countInRange (exakte Übereinstimmung)', () =
 describe('maxFutureBoundary', () => {
   it('ist die späteste aller Zukunftsgrenzen', () => {
     expect(maxFutureBoundary(B)).toBe('2026-09-21'); // plus90
+  });
+});
+
+describe('guestId fliesst unverändert durch die Listen-Helfer (für die Profil-Navigation)', () => {
+  const WITH_GUEST: ReservationDetailRow[] = [
+    row({ id: 'a', date: '2026-06-25', status: 'confirmed', partySize: 2, time: '19:00', guestId: 'guest-1' }),
+    row({ id: 'i', date: '2026-06-29', status: 'pending', partySize: 2, time: '13:00', guestId: 'guest-2' }),
+    row({ id: 'x', date: '2026-07-02', status: 'confirmed', partySize: 2, time: '18:00', guestId: null }), // ohne Zuordnung
+  ];
+
+  it('futureReservationList behält die guestId jeder Zeile', () => {
+    const list = futureReservationList(WITH_GUEST, B, 'next90');
+    expect(list.find(r => r.id === 'a')?.guestId).toBe('guest-1');
+    expect(list.find(r => r.id === 'x')?.guestId).toBeNull();
+  });
+
+  it('rangeReservationList behält die guestId jeder Zeile', () => {
+    const active = rangeReservationList(WITH_GUEST, '2026-06-23', '2026-07-31', 'active');
+    expect(active.find(r => r.id === 'a')?.guestId).toBe('guest-1');
+    const open = rangeReservationList(WITH_GUEST, '2026-06-23', '2026-07-31', 'open');
+    expect(open.find(r => r.id === 'i')?.guestId).toBe('guest-2');
   });
 });
