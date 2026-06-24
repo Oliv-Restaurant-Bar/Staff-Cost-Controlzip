@@ -179,7 +179,7 @@ export const usePermissions = (): Permissions => {
       case 'soll_ist_analyse':
         return isAdmin || isServiceManager || isKuecheManager; // nicht für beaulieu_manager
       case 'personalstamm':
-        return isAdmin || isBeaulieuManager;
+        return isAdmin || isBeaulieuManager || isKuecheManager;
       case 'reporting':
         return isAdmin;
       case 'personal_fix':
@@ -239,8 +239,9 @@ export const usePermissions = (): Permissions => {
     canSeeFullFinancials: isAdmin,
     canEditBudgets:       isAdmin,
 
-    // Personal — Beaulieu GF darf Lohn/Stammdaten eigener Mitarbeiter pflegen
-    canEditEmployees:  isAdmin || isBeaulieuManager,
+    // Personal — Beaulieu GF darf Lohn/Stammdaten eigener Mitarbeiter pflegen;
+    // Küchen-Manager darf Küchen-Mitarbeiter anlegen/bearbeiten (ohne Lohnfelder)
+    canEditEmployees:  isAdmin || isBeaulieuManager || isKuecheManager,
     // Beaulieu GF darf Einstellungen für seinen Mandanten ändern
     canAccessSettings: isAdmin || isBeaulieuManager,
 

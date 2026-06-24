@@ -5580,6 +5580,8 @@ const SchedulePlanner = () => {
         currentWeekEnd={endOfWeek(weeksInMonth[selectedWeekIndex] || weeksInMonth[0], { weekStartsOn: 1 })}
         onExport={handleExportWithRange}
         initialFormat={exportInitialFormat}
+        activeDepartment={activeDepartment}
+        lockDepartment={!canSwitchDepartment}
       />
 
       <ImportMatchPreviewDialog

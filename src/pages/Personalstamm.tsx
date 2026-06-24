@@ -354,6 +354,11 @@ const Personalstamm = () => {
 
   /** Darf Lohnfelder sehen und bearbeiten */
   const canEditWages = isAdmin || (isBeaulieuManager && tenantId === 'beaulieu');
+  // Admin-/PII-Flächen (Löhne, AHV/IBAN, Verträge, Duplikat-Bereinigung, Onboarding)
+  // bleiben ausschliesslich Admin + GF Beaulieu vorbehalten — NICHT dem Küchen-Manager,
+  // der zwar Mitarbeiter (seiner Abteilung) anlegen/bearbeiten, aber keine vertraulichen
+  // Daten sehen darf. Entspricht exakt der bisherigen canEditEmployees-Semantik.
+  const canManageAllEmployees = isAdmin || isBeaulieuManager;
 
   // ── Daten ──────────────────────────────────────────────────────────────────
   const [employees, setEmployees]         = useState<Employee[]>([]);
@@ -563,10 +568,10 @@ const Personalstamm = () => {
 
   // ── Gefilterte Mitarbeiter ─────────────────────────────────────────────────
   const pendingEmployees = useMemo(() =>
-    canEditEmployees
+    canManageAllEmployees
       ? employees.filter(e => e.employeeStatus === 'pending_review')
       : [],
-  [employees, canEditEmployees]);
+  [employees, canManageAllEmployees]);
 
   const visibleBase = useMemo(() =>
     (allowedDepartment === 'all'
@@ -706,6 +711,11 @@ const Personalstamm = () => {
   const handleNew = () => {
     const newId = generateId(employees, tenantId);
     const blank = emptyEmployee(newId);
+    // Abteilungs-Manager (z. B. Küche) legen Mitarbeiter immer in ihrer eigenen
+    // Abteilung an, damit der neue Eintrag in ihrer gefilterten Liste sichtbar ist.
+    if (allowedDepartment === 'service' || allowedDepartment === 'küche') {
+      blank.department = allowedDepartment;
+    }
     setEditData(blank);
     setSelectedId(newId);
     setEditNotes('');
@@ -1270,7 +1280,7 @@ CREATE POLICY "Anon self-register new employee"
 
 
       {/* ── Duplikat-Warnung ─────────────────────────────────────────────────── */}
-      {canEditEmployees && (() => {
+      {canManageAllEmployees && (() => {
         // Find all employee names that appear more than once (case-insensitive)
         const nameGroups = new Map<string, Employee[]>();
         employees.forEach(emp => {
@@ -1330,7 +1340,7 @@ CREATE POLICY "Anon self-register new employee"
       })()}
 
       {/* ── Ausstehende Anmeldungen (vollbreite Kartenansicht) ──────────────── */}
-      {canEditEmployees && submissions.length > 0 && (
+      {canManageAllEmployees && submissions.length > 0 && (
         <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 overflow-y-auto" style={{ maxHeight: '320px' }}>
           <div className="max-w-7xl mx-auto px-4 py-3">
             <div className="flex items-center gap-2 mb-3">
@@ -1435,7 +1445,7 @@ CREATE POLICY "Anon self-register new employee"
           ) : (
             <>
               {/* ── Legacy: Mitarbeiter mit employee_status = pending_review ── */}
-              {canEditEmployees && pendingEmployees.length > 0 && (
+              {canManageAllEmployees && pendingEmployees.length > 0 && (
                 <div className="border-b border-amber-200">
                   <div className="px-4 py-2 bg-amber-50 sticky top-0 z-10 flex items-center gap-2">
                     <AlertTriangle className="h-3.5 w-3.5 text-amber-600" />
@@ -1854,6 +1864,7 @@ CREATE POLICY "Anon self-register new employee"
                         <Select
                           value={editData?.department}
                           onValueChange={v => setEditData(d => d ? { ...d, department: v as Department } : d)}
+                          disabled={allowedDepartment !== 'all'}
                         >
                           <SelectTrigger className="h-9 text-sm">
                             <SelectValue />
@@ -2017,7 +2028,7 @@ CREATE POLICY "Anon self-register new employee"
               </Card>
 
               {/* ── Abschnitt 2: Persönliche Daten (Admin + GF Beaulieu) ───────── */}
-              {canEditEmployees && (
+              {canManageAllEmployees && (
                 <Card>
                   <CardHeader
                     className="pb-2 pt-4 cursor-pointer select-none"
@@ -2139,7 +2150,7 @@ CREATE POLICY "Anon self-register new employee"
               )}
 
               {/* ── Abschnitt 3: Vertragliche Grundlagen (Admin + GF Beaulieu) ── */}
-              {canEditEmployees && (
+              {canManageAllEmployees && (
                 <Card>
                   <CardHeader
                     className="pb-2 pt-4 cursor-pointer select-none"
@@ -2813,7 +2824,7 @@ CREATE POLICY "Anon self-register new employee"
                 <TabsContent value="vertrag" className="space-y-4 mt-0">
 
               {/* ── Abschnitt 7: Arbeitsvertrag ───────────────────────────── */}
-              {canEditEmployees && selectedEmp && contractDraft && (
+              {canManageAllEmployees && selectedEmp && contractDraft && (
                 <Card>
                   <CardHeader className="pb-2 pt-4">
                     <CardTitle className="text-sm flex items-center justify-between">

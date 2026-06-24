@@ -9,6 +9,10 @@ import { de } from 'date-fns/locale';
 import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { getBranding, renderLogoDataUrl } from '@/lib/pl-branding';
+import { selectEmployeesForDepartment } from '@/lib/schedule-export-department';
+
+// Re-export für bestehende Importpfade; reine Logik liegt in schedule-export-department.ts.
+export { selectEmployeesForDepartment };
 
 /**
  * Normalisiert einen roh importierten Namen auf Title-Case.
@@ -308,8 +312,8 @@ export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise
   
   // Sort employees by ID to maintain consistent order from Excel file
   const sortByEmployeeId = (a: Employee, b: Employee) => parseInt(a.id) - parseInt(b.id);
-  const serviceEmployees = employees.filter(e => e.department === 'service').sort(sortByEmployeeId);
-  const kücheEmployees = employees.filter(e => e.department === 'küche').sort(sortByEmployeeId);
+  const serviceEmployees = selectEmployeesForDepartment(employees, 'service').sort(sortByEmployeeId);
+  const kücheEmployees = selectEmployeesForDepartment(employees, 'küche').sort(sortByEmployeeId);
   
 // Calculate daily stats
   const getDailyStats = (day: Date, deptEmployees: Employee[]) => {
@@ -872,8 +876,8 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
   
   // Sort employees by ID to maintain consistent order from Excel file
   const sortByEmployeeId = (a: Employee, b: Employee) => parseInt(a.id) - parseInt(b.id);
-  const serviceEmployees = employees.filter(e => e.department === 'service').sort(sortByEmployeeId);
-  const kücheEmployees = employees.filter(e => e.department === 'küche').sort(sortByEmployeeId);
+  const serviceEmployees = selectEmployeesForDepartment(employees, 'service').sort(sortByEmployeeId);
+  const kücheEmployees = selectEmployeesForDepartment(employees, 'küche').sort(sortByEmployeeId);
   
   // Build dropdown list for data validation (shift abbreviations)
   const shiftAbbreviations = absenceShifts.map(s => s.abbrev).filter(Boolean);
@@ -1561,8 +1565,8 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
 
   // Sort employees
   const sortById = (a: Employee, b: Employee) => parseInt(a.id) - parseInt(b.id);
-  const allServiceEmps = employees.filter(e => e.department === 'service').sort(sortById);
-  const allKücheEmps   = employees.filter(e => e.department === 'küche').sort(sortById);
+  const allServiceEmps = selectEmployeesForDepartment(employees, 'service').sort(sortById);
+  const allKücheEmps   = selectEmployeesForDepartment(employees, 'küche').sort(sortById);
 
   // ── Branding ─────────────────────────────────────────────────────────────
   const brandingId = restaurantName?.toLowerCase() === 'beaulieu' ? 'beaulieu' : 'oliv';

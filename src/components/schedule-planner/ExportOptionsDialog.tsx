@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -39,6 +39,10 @@ interface ExportOptionsDialogProps {
   currentWeekEnd: Date;
   onExport: (options: ExportOptions) => void;
   initialFormat?: ExportFormat;
+  /** Aktive Planungs-Abteilung — wird als Vorauswahl für den Export verwendet. */
+  activeDepartment?: ExportDepartment;
+  /** Wenn true, kann die Abteilung nicht gewechselt werden (z. B. Küchen-Manager). */
+  lockDepartment?: boolean;
 }
 
 export const ExportOptionsDialog = ({
@@ -49,6 +53,8 @@ export const ExportOptionsDialog = ({
   currentWeekEnd,
   onExport,
   initialFormat = 'excel',
+  activeDepartment = 'all',
+  lockDepartment = false,
 }: ExportOptionsDialogProps) => {
   const [selectedRange, setSelectedRange] = useState<ExportRange>('month');
   const [customStartDate, setCustomStartDate] = useState<Date | undefined>(startOfMonth(currentMonth));
@@ -56,7 +62,13 @@ export const ExportOptionsDialog = ({
   const [hoursType, setHoursType] = useState<ExportHoursType>('both');
   const [includeCosts, setIncludeCosts] = useState(true);
   const [exportFormat, setExportFormat] = useState<ExportFormat>(initialFormat);
-  const [department, setDepartment] = useState<ExportDepartment>('all');
+  const [department, setDepartment] = useState<ExportDepartment>(activeDepartment);
+
+  // Beim Öffnen die Abteilung auf die aktive Planungs-Abteilung setzen, damit
+  // der Export standardmässig genau das exportiert, was der User gerade sieht.
+  useEffect(() => {
+    if (open) setDepartment(activeDepartment);
+  }, [open, activeDepartment]);
   const [exportType, setExportType] = useState<ExportType>('aushang');
   const [showEmpHours,  setShowEmpHours]  = useState(false); // Aushang default: OFF
   const [showDayTotals, setShowDayTotals] = useState(false); // Aushang default: OFF
@@ -272,24 +284,33 @@ export const ExportOptionsDialog = ({
             <Users className="h-4 w-4" />
             Abteilung
           </Label>
-          <div className="grid grid-cols-3 gap-2">
-            {([
-              { value: 'all', label: 'Beide' },
-              { value: 'service', label: 'Service' },
-              { value: 'küche', label: 'Küche' },
-            ] as { value: ExportDepartment; label: string }[]).map(opt => (
-              <div
-                key={opt.value}
-                className={cn(
-                  "flex flex-col items-center p-2 rounded-lg border cursor-pointer transition-colors",
-                  department === opt.value ? "border-primary bg-primary/5" : "hover:bg-accent"
-                )}
-                onClick={() => setDepartment(opt.value)}
-              >
-                <span className={cn("text-sm font-medium", department === opt.value ? "text-primary" : "")}>{opt.label}</span>
-              </div>
-            ))}
-          </div>
+          {lockDepartment ? (
+            <div className="flex flex-col items-center p-2 rounded-lg border border-primary bg-primary/5">
+              <span className="text-sm font-medium text-primary">
+                {department === 'küche' ? 'Küche' : department === 'service' ? 'Service' : 'Beide'}
+              </span>
+              <span className="text-xs text-muted-foreground">Nur Ihre Abteilung</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'all', label: 'Beide' },
+                { value: 'service', label: 'Service' },
+                { value: 'küche', label: 'Küche' },
+              ] as { value: ExportDepartment; label: string }[]).map(opt => (
+                <div
+                  key={opt.value}
+                  className={cn(
+                    "flex flex-col items-center p-2 rounded-lg border cursor-pointer transition-colors",
+                    department === opt.value ? "border-primary bg-primary/5" : "hover:bg-accent"
+                  )}
+                  onClick={() => setDepartment(opt.value)}
+                >
+                  <span className={cn("text-sm font-medium", department === opt.value ? "text-primary" : "")}>{opt.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <Separator />

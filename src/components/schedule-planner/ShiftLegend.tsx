@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
 import type { ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
-import { Settings, Info, ChevronDown, ChevronRight, X, Paintbrush, Trash2, ChevronUp, ChevronDown as ChevronDownIcon, Plus } from 'lucide-react';
+import { Settings, Info, ChevronDown, ChevronRight, X, Paintbrush, Trash2, ChevronUp, ChevronDown as ChevronDownIcon, Plus, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
@@ -74,6 +74,31 @@ export const ShiftLegend = ({
     [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
     updateShifts(next);
   };
+
+  const [colorEditFor, setColorEditFor] = useState<string | null>(null);
+
+  const handleColorChange = (name: string, color: string) => {
+    // excelColor/textColor leeren → werden in updateShifts neu aus der Tailwind-Farbe abgeleitet.
+    updateShifts(shifts.map(s => (s.name === name ? { ...s, color, excelColor: '', textColor: '' } : s)));
+    setColorEditFor(null);
+  };
+
+  const renderColorPanel = (shiftName: string) => (
+    <div className="flex flex-wrap gap-1 px-1.5 pb-1 pt-0.5">
+      {SIDEBAR_COLORS.map(c => (
+        <button
+          key={c.name}
+          title={c.name}
+          onClick={e => { e.stopPropagation(); handleColorChange(shiftName, c.value); }}
+          className={cn(
+            'w-4 h-4 rounded-full border-2 transition-transform',
+            c.dot,
+            shiftMap[shiftName]?.color === c.value ? 'border-foreground scale-125' : 'border-transparent',
+          )}
+        />
+      ))}
+    </div>
+  );
 
   const [addForm, setAddForm] = useState<typeof EMPTY_FORM | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -201,7 +226,7 @@ export const ShiftLegend = ({
                       onDragEnd={hasPaintMode ? handleDragEnd : undefined}
                       onClick={() => hasPaintMode && handleShiftClick(toolValue)}
                       className={cn(
-                        "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border select-none transition-all pr-14",
+                        "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border select-none transition-all pr-[4.75rem]",
                         config.color,
                         hasPaintMode ? "cursor-pointer" : "cursor-default",
                         active && "ring-2 ring-offset-1 ring-primary shadow-sm",
@@ -222,6 +247,13 @@ export const ShiftLegend = ({
                     </div>
                     {/* Inline action buttons — visible on hover */}
                     <div className="absolute right-0.5 top-0.5 bottom-0.5 hidden group-hover:flex items-center gap-0.5">
+                      <button
+                        onClick={e => { e.stopPropagation(); setColorEditFor(colorEditFor === shiftName ? null : shiftName); }}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-border hover:bg-muted transition-colors"
+                        title="Farbe ändern"
+                      >
+                        <Palette className="h-3 w-3" />
+                      </button>
                       <button
                         onClick={e => { e.stopPropagation(); handleMoveShift(shiftName, 'up'); }}
                         disabled={isFirst || shiftIdx <= 0}
@@ -246,6 +278,7 @@ export const ShiftLegend = ({
                         <Trash2 className="h-3 w-3" />
                       </button>
                     </div>
+                    {colorEditFor === shiftName && renderColorPanel(shiftName)}
                   </div>
                 );
               })}
@@ -278,7 +311,7 @@ export const ShiftLegend = ({
                       onDragEnd={hasPaintMode ? handleDragEnd : undefined}
                       onClick={() => hasPaintMode && handleShiftClick(toolValue)}
                       className={cn(
-                        "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border select-none transition-all pr-14",
+                        "flex items-center gap-1.5 w-full px-1.5 py-1 rounded-md text-[11px] font-medium border select-none transition-all pr-[4.75rem]",
                         config.color,
                         hasPaintMode ? "cursor-pointer" : "cursor-default",
                         active && "ring-2 ring-offset-1 ring-primary shadow-sm",
@@ -296,6 +329,13 @@ export const ShiftLegend = ({
                     </div>
                     {/* Inline action buttons — visible on hover */}
                     <div className="absolute right-0.5 top-0.5 bottom-0.5 hidden group-hover:flex items-center gap-0.5">
+                      <button
+                        onClick={e => { e.stopPropagation(); setColorEditFor(colorEditFor === shiftName ? null : shiftName); }}
+                        className="h-5 w-5 flex items-center justify-center rounded text-[10px] bg-background/90 border border-border hover:bg-muted transition-colors"
+                        title="Farbe ändern"
+                      >
+                        <Palette className="h-3 w-3" />
+                      </button>
                       <button
                         onClick={e => { e.stopPropagation(); handleMoveShift(shiftName, 'up'); }}
                         disabled={isFirst || shiftIdx <= 0}
@@ -320,6 +360,7 @@ export const ShiftLegend = ({
                         <Trash2 className="h-3 w-3" />
                       </button>
                     </div>
+                    {colorEditFor === shiftName && renderColorPanel(shiftName)}
                   </div>
                 );
               })}
