@@ -16,6 +16,7 @@ type Row = Record<string, unknown>;
 /** Globaler In-Memory-Datenspeicher, pro Test neu befüllt. */
 const store: Record<string, Row[]> = {
   reservation_records: [],
+  guest_profiles: [],
 };
 
 /**
@@ -47,7 +48,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { fetchGuestReservations, fetchCompletedVisitAggregates } from '../reservation-crm-db';
+import { fetchGuestReservations, fetchCompletedVisitAggregates, fetchGuestProfiles } from '../reservation-crm-db';
 
 function resRow(over: Partial<Row>): Row {
   return {
@@ -68,8 +69,27 @@ function resRow(over: Partial<Row>): Row {
   };
 }
 
+function profRow(over: Partial<Row>): Row {
+  return {
+    id: `g-${Math.random().toString(36).slice(2)}`,
+    restaurant_id: 'oliv',
+    first_name: 'Test',
+    last_name: 'Gast',
+    email: null,
+    mobile: null,
+    first_seen_at: null,
+    last_seen_at: '2026-01-10',
+    total_reservations: 0,
+    total_persons: 0,
+    cancelled_reservations: 0,
+    completed_reservations: 0,
+    ...over,
+  };
+}
+
 beforeEach(() => {
   store.reservation_records = [];
+  store.guest_profiles = [];
 });
 
 describe('fetchGuestReservations — Mandanten-Isolation', () => {
@@ -119,5 +139,28 @@ describe('fetchCompletedVisitAggregates — Mandanten-Isolation', () => {
     ];
     const agg = await fetchCompletedVisitAggregates('oliv');
     expect(agg.size).toBe(0);
+  });
+});
+
+// Die Smart-Segmente werden rein über die von `fetchGuestProfiles` gelieferten,
+// bereits mandantengefilterten Kennzahlen berechnet (keine eigene DB-Abfrage,
+// keine Migration). Damit erbt die Smart-Segment-Funktion die Mandantentrennung
+// vollständig von dieser Quelle — der folgende Test sichert genau diese Quelle ab.
+describe('fetchGuestProfiles — Mandanten-Isolation (Datenquelle der Smart-Segmente)', () => {
+  it('liefert nur Gästeprofile des angefragten Mandanten', async () => {
+    store.guest_profiles = [
+      profRow({ id: 'g-oliv-1', restaurant_id: 'oliv' }),
+      profRow({ id: 'g-oliv-2', restaurant_id: 'oliv' }),
+      profRow({ id: 'g-bea-1', restaurant_id: 'b-beaulieu' }),
+    ];
+    const rows = await fetchGuestProfiles('oliv');
+    expect(rows.map(r => r.id).sort()).toEqual(['g-oliv-1', 'g-oliv-2']);
+    expect(rows.every(r => r.restaurant_id === 'oliv')).toBe(true);
+  });
+
+  it('liefert nichts, wenn nur ein anderer Mandant Daten hat', async () => {
+    store.guest_profiles = [profRow({ id: 'g-bea-1', restaurant_id: 'b-beaulieu' })];
+    const rows = await fetchGuestProfiles('oliv');
+    expect(rows).toEqual([]);
   });
 });

@@ -58,6 +58,8 @@ import {
   type GuestCrmProfile, type ManualBadge, type ManualBadgeKind,
 } from '@/lib/guest-crm-profile';
 import { SegmentBadge } from '@/components/crm/SegmentBadge';
+import { SmartSegmentBadges } from '@/components/crm/SmartSegmentBadges';
+import { guestSmartSegments } from '@/lib/guest-smart-segments';
 import type { ReservationStatusNormalized } from '@/lib/reservation-import-parser';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -409,6 +411,16 @@ export default function GaesteDetailPage() {
       atRisk: isAtRiskTier(lm, 'stammgast') || isAtRiskTier(lm, 'vip'),
     };
   }, [profile, metrics]);
+
+  // Smart-Segmente (mehrfach-zuordenbar, live aus den Kennzahlen + manuellem
+  // CRM-Profil) — rein darstellend, ändert das berechnete Einzel-Segment nicht.
+  const smartSegments = useMemo(() => {
+    if (!profile) return [];
+    return guestSmartSegments(
+      { ...guestListMetricsFromDetail(profile, metrics), crm: crmSaved },
+      today,
+    );
+  }, [profile, metrics, crmSaved, today]);
   const filteredReservations = useMemo(
     () => filterReservationHistory(reservations, historyFilter),
     [reservations, historyFilter],
@@ -467,6 +479,7 @@ export default function GaesteDetailPage() {
             <div className="flex flex-wrap items-center gap-1.5">
               <SegmentBadge segment={metrics.segment} />
               {manualBadges.map((b) => <ManualCrmBadge key={b.kind} badge={b} />)}
+              <SmartSegmentBadges segments={smartSegments} />
             </div>
           </div>
 

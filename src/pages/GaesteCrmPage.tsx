@@ -54,6 +54,12 @@ import {
   type ZeitraumPreset, type TopFlopRow, type ActiveVisitRow,
 } from '@/lib/guest-top-flop';
 import { SegmentBadge, SEGMENT_ICON } from '@/components/crm/SegmentBadge';
+import { SmartSegmentBadges } from '@/components/crm/SmartSegmentBadges';
+import {
+  guestSmartSegments, hasSmartSegment, filterBySmartSegment, smartSegmentExportTable,
+  SMART_SEGMENT_FILTER_OPTIONS, SMART_SEGMENT_LABEL,
+  type SmartSegmentFilter,
+} from '@/lib/guest-smart-segments';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { downloadCsv, downloadXlsx } from '@/lib/table-export';
@@ -186,7 +192,7 @@ function BoolCell({ on }: { on: boolean }) {
  * `<td>`-Wrapper inkl. Ausrichtung wird vom Aufrufer gesetzt; hier steht nur
  * der Zellinhalt.  Manuelle CRM-Felder (`m.crm`) sind defensiv optional.
  */
-function GuestCell({ colKey, m }: { colKey: GuestColumnKey; m: GuestListMetrics }) {
+function GuestCell({ colKey, m, today }: { colKey: GuestColumnKey; m: GuestListMetrics; today: string }) {
   switch (colKey) {
     case 'name':
       return (
@@ -196,6 +202,7 @@ function GuestCell({ colKey, m }: { colKey: GuestColumnKey; m: GuestListMetrics 
             <div className="text-[11px] text-muted-foreground">{m.email || m.mobile}</div>
           )}
           <CrmBadges crm={m.crm} />
+          <SmartSegmentBadges segments={guestSmartSegments(m, today)} className="mt-1" />
         </>
       );
     case 'segment':
@@ -261,6 +268,10 @@ export default function GaesteCrmPage() {
   const [crmError, setCrmError] = useState(false);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<GuestFilterState>(DEFAULT_GUEST_FILTERS);
+  // Smart-Segment-Filter (mehrfach-zuordenbar, datumsabhängig) — bewusst
+  // seiten-lokal gehalten, damit die reine `applyGuestFilters`-Logik (ohne
+  // `today`) unverändert/getestet bleibt.
+  const [smartSegment, setSmartSegment] = useState<SmartSegmentFilter>('alle');
   const [sortKey, setSortKey] = useState<GuestSortKey>('visits');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -342,10 +353,12 @@ export default function GaesteCrmPage() {
     [allMetrics],
   );
 
-  const filtered = useMemo(
-    () => searchAndFilterGuests(allMetrics, query, filters),
-    [allMetrics, query, filters],
-  );
+  const filtered = useMemo(() => {
+    const base = searchAndFilterGuests(allMetrics, query, filters);
+    return smartSegment === 'alle'
+      ? base
+      : base.filter(m => hasSmartSegment(m, today, smartSegment));
+  }, [allMetrics, query, filters, smartSegment, today]);
 
   const sorted = useMemo(
     () => sortGuests(filtered, sortKey, sortDir),
@@ -405,7 +418,8 @@ export default function GaesteCrmPage() {
   // Reihenfolge, Sortierung deaktiviert), sonst die gefilterte+sortierte Liste.
   const displayRows = isTopFlop ? topFlopRows.map(r => r.metric) : sorted;
 
-  const filtersActive = hasActiveFilters(filters) || query.trim().length > 0;
+  const filtersActive =
+    hasActiveFilters(filters) || query.trim().length > 0 || smartSegment !== 'alle';
 
   // Anzahl aktiver manueller CRM-Filter (Badge am „Weitere Filter"-Knopf).
   const activeCrmCount = useMemo(
@@ -423,6 +437,7 @@ export default function GaesteCrmPage() {
 
   const resetFilters = () => {
     setFilters(DEFAULT_GUEST_FILTERS);
+    setSmartSegment('alle');
     setQuery('');
   };
 
@@ -677,6 +692,12 @@ export default function GaesteCrmPage() {
                   options={RETURN_RISK_FILTER_OPTIONS}
                   onChange={v => setFilters(f => ({ ...f, returnRisk: v }))}
                 />
+                <FilterSelect
+                  label="Smart-Segment"
+                  value={smartSegment}
+                  options={SMART_SEGMENT_FILTER_OPTIONS}
+                  onChange={setSmartSegment}
+                />
               </div>
 
               {/* Zusatzfilter (manuelle CRM-Merkmale) gesammelt in einem Dropdown
@@ -806,6 +827,18 @@ export default function GaesteCrmPage() {
               </div>
             </PopoverContent>
           </Popover>
+          {smartSegment !== 'alle' && (
+            <button
+              onClick={() => downloadCsv(
+                smartSegmentExportTable(smartSegment, filterBySmartSegment(allMetrics, smartSegment, today)),
+              )}
+              className="inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/15"
+              title={`Alle Gäste im Smart-Segment „${SMART_SEGMENT_LABEL[smartSegment]}" als CSV exportieren`}
+            >
+              <FileDown className="h-4 w-4" />
+              {SMART_SEGMENT_LABEL[smartSegment]}-CSV
+            </button>
+          )}
           <button
             onClick={() => downloadCsv(guestListExportTable(displayRows, visibleColumns))}
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted"
@@ -913,7 +946,7 @@ export default function GaesteCrmPage() {
                           GUEST_COLUMN_BY_KEY[key].align === 'right' ? 'text-right' : 'text-left',
                         )}
                       >
-                        <GuestCell colKey={key} m={m} />
+                        <GuestCell colKey={key} m={m} today={today} />
                       </td>
                     ))}
                     <td className="px-3 py-2 text-right">
