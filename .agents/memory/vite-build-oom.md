@@ -12,9 +12,13 @@ in this container, so the build is killed before Vite prints anything.
 
 **How to apply:** When a build returns empty/-1 with no log, it's almost certainly OOM,
 not a compile error (run `npx tsc --noEmit` to confirm types are fine). Rerun with a
-raised heap:
+raised heap. As the bundle has grown, 4096 is now **also** OOM-killed silently in this
+~8 MB-chunk SPA — use 8192:
 
-    NODE_OPTIONS=--max-old-space-size=4096 npx vite build
+    NODE_OPTIONS=--max-old-space-size=8192 npx vite build
+
+(Container has ~8 GB total; 8192 succeeds with ~2 GB free. If even that is killed,
+check `free -m` first — another process may be holding memory.)
 
 A successful build prints the usual chunk-size table and benign "dynamically imported
 but also statically imported" / ">500 kB chunk" warnings — those are pre-existing, not

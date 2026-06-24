@@ -47,6 +47,25 @@ export interface ProductAggregate {
   total_qty: number;
 }
 
+/** Ein Wochentag-Eimer (Mo–So) innerhalb der Wochen-Rangliste. */
+export interface WeekdayBucket {
+  /** YYYY-MM-DD des Wochentags */
+  date: string;
+  /** 0 = Montag … 6 = Sonntag */
+  weekdayIndex: number;
+  quantity: number;
+  revenue: number;
+}
+
+/** Ein Produkt mit seinen 7 Wochentag-Eimern (Mo–So) + Wochen-Total. */
+export interface ProductWeekAggregate {
+  product_name: string;
+  /** genau 7 Einträge, Mo→So in Reihenfolge */
+  days: WeekdayBucket[];
+  total_revenue: number;
+  total_qty: number;
+}
+
 export interface BreakdownRow {
   /** stabiler React-Key */
   key: string;
@@ -188,6 +207,21 @@ export function isoWeeksInYear(isoYear: number): number {
   return isoWeekInfo(`${isoYear}-12-28`).week;
 }
 
+/**
+ * ISO-Woche um `delta` Wochen verschieben (vor/zurück) — jahresübergreifend sicher.
+ * Rechnet über den Montag der Woche (+ delta·7 Tage) und liest die ISO-Info neu,
+ * so dass KW1↔KW52/53 und Jahreswechsel korrekt rollen.
+ */
+export function shiftIsoWeek(
+  year: number,
+  week: number,
+  delta: number,
+): { year: number; week: number } {
+  const monday = isoWeekStart(year, week);
+  monday.setUTCDate(monday.getUTCDate() + delta * 7);
+  return isoWeekInfo(toISO(monday));
+}
+
 // ─── Periode → Grenzen / Label ──────────────────────────────────────────────────
 
 /** Inklusive Datumsgrenzen (YYYY-MM-DD) der Periode. */
@@ -230,6 +264,18 @@ export function periodLabel(sel: PeriodSelection): string {
   }
 }
 
+/**
+ * Kompaktes Wochen-Label für die Navigation, z. B. „KW 26 · 22.06.–28.06.2026".
+ * Das Start-Datum zeigt das Jahr nur bei jahresübergreifenden Wochen
+ * (z. B. „KW 1 · 29.12.2025–04.01.2026").
+ */
+export function weekRangeLabel(year: number, week: number): string {
+  const { from, to } = periodBounds({ kind: 'week', year, week });
+  const sameYear = from.slice(0, 4) === to.slice(0, 4);
+  const fromStr = sameYear ? formatDayShort(from) : formatDayLabel(from);
+  return `KW ${week} · ${fromStr}–${formatDayLabel(to)}`;
+}
+
 // ─── Filter & Aggregation ───────────────────────────────────────────────────────
 
 export function categoryOf(source: string | null | undefined): CategoryFilter | null {
@@ -268,6 +314,52 @@ export function aggregateProducts(rows: ProductSalesRow[]): ProductAggregate[] {
         total_qty: num(r.quantity),
       });
     }
+  }
+  return Array.from(map.values());
+}
+
+/**
+ * Pro Produkt nach Wochentag (Mo–So) der angegebenen ISO-Woche aufsummieren —
+ * für die Wochen-Rangliste mit Wochentag-Spalten. Rein, keine Sortierung.
+ *
+ * Robust gegenüber ungefilterten Eingaben: berücksichtigt ausschliesslich Zeilen,
+ * deren `sale_date` exakt auf einen der 7 Tage der ISO-Woche fällt (eine fremde
+ * Woche mit gleichem Wochentag wird NICHT fälschlich eingeordnet).
+ */
+export function aggregateProductsByWeekday(
+  rows: ProductSalesRow[],
+  year: number,
+  week: number,
+): ProductWeekAggregate[] {
+  const monday = isoWeekStart(year, week);
+  const dates: string[] = [];
+  const dateIndex = new Map<string, number>();
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(monday.getTime());
+    day.setUTCDate(monday.getUTCDate() + i);
+    const iso = toISO(day);
+    dates.push(iso);
+    dateIndex.set(iso, i);
+  }
+
+  const map = new Map<string, ProductWeekAggregate>();
+  for (const r of rows) {
+    const idx = dateIndex.get(r.sale_date);
+    if (idx === undefined) continue; // ausserhalb dieser ISO-Woche
+    let e = map.get(r.product_name);
+    if (!e) {
+      e = {
+        product_name: r.product_name,
+        days: dates.map((d, i) => ({ date: d, weekdayIndex: i, quantity: 0, revenue: 0 })),
+        total_revenue: 0,
+        total_qty: 0,
+      };
+      map.set(r.product_name, e);
+    }
+    e.days[idx].quantity += num(r.quantity);
+    e.days[idx].revenue += num(r.revenue);
+    e.total_qty += num(r.quantity);
+    e.total_revenue += num(r.revenue);
   }
   return Array.from(map.values());
 }

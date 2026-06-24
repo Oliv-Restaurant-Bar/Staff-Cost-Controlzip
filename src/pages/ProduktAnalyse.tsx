@@ -6,7 +6,9 @@
  * Anzeigeoptionen: Top 10 · Top 20 · Alle · Flop 20
  * Kategorie: Alle · Food · Beverage
  * Produkte mit Umsatz = 0 werden nie angezeigt.
- * Inline-Spaltenfilter: Suche, min/max Umsatz, min/max Anzahl, Spalten-Sortierung
+ * Inline-Spaltenfilter: Produktsuche + Spalten-Sortierung (kein min/max mehr).
+ * Woche: Navigation per Pfeilen + exakte Datumsspanne ("KW 26 · 22.06.–28.06.2026")
+ *        + Schnellwahl; die Wochen-Rangliste zeigt Wochentag-Spalten Mo–So + Total.
  * Produkte ausblenden: per Klick auf Mülleimer, mit Reset-Button
  * Klick auf eine Zeile → Produkt-Detailseite (Drill-down) mit erhaltenen Filtern.
  * Aktive Filter werden in der URL gespiegelt, damit der Zurück-Weg den Kontext herstellt.
@@ -17,7 +19,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff,
   Search, X, TrendingDown, Utensils, Wine, Layers, ArrowUpDown, ArrowUp, ArrowDown,
-  ChevronRight,
+  ChevronRight, ChevronLeft, CalendarDays,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -29,10 +31,12 @@ import {
 import { cn } from '@/lib/utils';
 import { loadProductSalesRows, type ProductSalesRow } from '@/lib/sales-db';
 import {
-  filterRows, aggregateProducts, periodLabel as periodLabelOf,
+  filterRows, aggregateProducts, aggregateProductsByWeekday, periodLabel as periodLabelOf,
   filtersToParams, filtersFromParams, isoWeekInfo, isoWeeksInYear, localISODate,
-  MONTH_NAMES, PERIOD_KIND_LABEL,
+  weekRangeLabel, shiftIsoWeek, isoWeekStart,
+  MONTH_NAMES, WEEKDAY_SHORT, PERIOD_KIND_LABEL,
   type PeriodKind, type PeriodSelection, type CategoryFilter, type Metric, type AnalysisFilters,
+  type ProductWeekAggregate, type WeekdayBucket,
 } from '@/lib/product-analytics';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
@@ -50,6 +54,12 @@ function fmtNum(v: number): string {
 function pct(part: number, total: number): string {
   if (total === 0) return '0.0 %';
   return `${((part / total) * 100).toFixed(1)} %`;
+}
+
+/** 'YYYY-MM-DD' → 'DD.MM.' für kompakte Wochentag-Header. */
+function ddmm(iso: string): string {
+  const [, m, d] = iso.split('-');
+  return `${d}.${m}.`;
 }
 
 function availableYears(rows: ProductSalesRow[]): number[] {
@@ -88,18 +98,13 @@ function RankTable({
   onRowClick?: (name: string) => void;
 }) {
   const [colSearch, setColSearch]     = useState('');
-  const [minRev,    setMinRev]        = useState('');
-  const [maxRev,    setMaxRev]        = useState('');
-  const [minQty,    setMinQty]        = useState('');
-  const [maxQty,    setMaxQty]        = useState('');
   const [colSortKey, setColSortKey]   = useState<SortKey | null>(null);
   const [colSortDir, setColSortDir]   = useState<ColSortDir>('asc');
 
-  const hasColFilter = !!(colSearch || minRev || maxRev || minQty || maxQty);
+  const hasColFilter = !!colSearch;
 
   function clearColFilters() {
-    setColSearch(''); setMinRev(''); setMaxRev('');
-    setMinQty(''); setMaxQty(''); setColSortKey(null);
+    setColSearch(''); setColSortKey(null);
   }
 
   function toggleColSort(key: SortKey) {
@@ -112,14 +117,6 @@ function RankTable({
     let result = [...rows];
     const q = colSearch.trim().toLowerCase();
     if (q) result = result.filter(r => r.product_name.toLowerCase().includes(q));
-    const minRevN = parseFloat(minRev);
-    const maxRevN = parseFloat(maxRev);
-    const minQtyN = parseFloat(minQty);
-    const maxQtyN = parseFloat(maxQty);
-    if (!isNaN(minRevN)) result = result.filter(r => r.total_revenue >= minRevN);
-    if (!isNaN(maxRevN)) result = result.filter(r => r.total_revenue <= maxRevN);
-    if (!isNaN(minQtyN)) result = result.filter(r => r.total_qty >= minQtyN);
-    if (!isNaN(maxQtyN)) result = result.filter(r => r.total_qty <= maxQtyN);
     if (colSortKey) {
       result.sort((a, b) => {
         const diff = colSortKey === 'revenue'
@@ -129,7 +126,7 @@ function RankTable({
       });
     }
     return result;
-  }, [rows, colSearch, minRev, maxRev, minQty, maxQty, colSortKey, colSortDir]);
+  }, [rows, colSearch, colSortKey, colSortDir]);
 
   function SortIcon({ colKey }: { colKey: SortKey }) {
     if (colSortKey !== colKey)
@@ -196,50 +193,14 @@ function RankTable({
               </div>
             </td>
 
-            {/* Umsatz min / max */}
-            <td className="px-2 py-1.5">
-              <div className="flex gap-1 justify-end items-center">
-                <Input
-                  value={minRev}
-                  onChange={e => setMinRev(e.target.value)}
-                  placeholder="min"
-                  type="number"
-                  className="h-6 text-xs w-[60px] text-right"
-                />
-                <span className="text-muted-foreground text-xs">–</span>
-                <Input
-                  value={maxRev}
-                  onChange={e => setMaxRev(e.target.value)}
-                  placeholder="max"
-                  type="number"
-                  className="h-6 text-xs w-[60px] text-right"
-                />
-              </div>
-            </td>
+            {/* Umsatz (kein min/max-Filter mehr) */}
+            <td className="px-2 py-1.5" />
 
             {/* % Umsatz leer */}
             <td className="px-2 py-1.5" />
 
-            {/* Anzahl min / max */}
-            <td className="px-2 py-1.5">
-              <div className="flex gap-1 justify-end items-center">
-                <Input
-                  value={minQty}
-                  onChange={e => setMinQty(e.target.value)}
-                  placeholder="min"
-                  type="number"
-                  className="h-6 text-xs w-[60px] text-right"
-                />
-                <span className="text-muted-foreground text-xs">–</span>
-                <Input
-                  value={maxQty}
-                  onChange={e => setMaxQty(e.target.value)}
-                  placeholder="max"
-                  type="number"
-                  className="h-6 text-xs w-[60px] text-right"
-                />
-              </div>
-            </td>
+            {/* Anzahl (kein min/max-Filter mehr) */}
+            <td className="px-2 py-1.5" />
 
             {/* % Anzahl leer */}
             <td className="px-2 py-1.5" />
@@ -364,6 +325,245 @@ function RankTable({
               {pct(filteredRows.reduce((s, r) => s + r.total_qty, 0), totalQty)}
             </td>
             {onHide && <td className="px-3 py-2.5" />}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+// ─── Wochen-Tabelle: kompakte Zelle (Umsatz oben, Anzahl darunter) ────────────
+
+function WeekCell({
+  revenue, qty, emphasizeQty, strong = false,
+}: {
+  revenue: number;
+  qty: number;
+  emphasizeQty: boolean;
+  strong?: boolean;
+}) {
+  if (revenue === 0 && qty === 0) {
+    return <span className="text-muted-foreground/25">–</span>;
+  }
+  return (
+    <div className="leading-tight">
+      <div
+        className={cn(
+          'tabular-nums',
+          emphasizeQty
+            ? 'text-[10px] text-muted-foreground'
+            : cn('text-xs', strong ? 'font-bold' : 'font-medium'),
+        )}
+      >
+        {fmtChf(revenue)}
+      </div>
+      <div
+        className={cn(
+          'tabular-nums',
+          emphasizeQty
+            ? cn('text-xs text-primary', strong ? 'font-bold' : 'font-semibold')
+            : 'text-[10px] text-muted-foreground',
+        )}
+      >
+        {fmtNum(qty)} Stk.
+      </div>
+    </div>
+  );
+}
+
+// ─── Wochen-Rangliste: Wochentag-Spalten Mo–So + Total ────────────────────────
+
+function WeekRankTable({
+  rows,
+  weekAgg,
+  dayDates,
+  sortBy,
+  flop = false,
+  onHide,
+  onRowClick,
+}: {
+  rows: RankRow[];
+  weekAgg: Map<string, ProductWeekAggregate>;
+  dayDates: string[]; // 7 ISO-Daten Mo→So
+  sortBy: SortKey;
+  flop?: boolean;
+  onHide?: (name: string) => void;
+  onRowClick?: (name: string) => void;
+}) {
+  const [colSearch, setColSearch] = useState('');
+  const emphasizeQty = sortBy === 'qty';
+
+  const filteredRows = useMemo(() => {
+    const q = colSearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(r => r.product_name.toLowerCase().includes(q));
+  }, [rows, colSearch]);
+
+  const zeroDays: WeekdayBucket[] = useMemo(
+    () => dayDates.map((d, i) => ({ date: d, weekdayIndex: i, quantity: 0, revenue: 0 })),
+    [dayDates],
+  );
+
+  // Spalten-Summen über die gefilterten Zeilen (Wochentag-Totale + Wochen-Total).
+  const colTotals = useMemo(() => {
+    const days = dayDates.map(() => ({ rev: 0, qty: 0 }));
+    let totRev = 0, totQty = 0;
+    for (const r of filteredRows) {
+      const agg = weekAgg.get(r.product_name);
+      if (!agg) continue;
+      agg.days.forEach((b, i) => { days[i].rev += b.revenue; days[i].qty += b.quantity; });
+      totRev += agg.total_revenue; totQty += agg.total_qty;
+    }
+    return { days, totRev, totQty };
+  }, [filteredRows, weekAgg, dayDates]);
+
+  const colCount = 2 + dayDates.length + 1 + (onHide ? 1 : 0);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm min-w-[820px]">
+        <thead>
+          <tr className="border-b bg-muted/40">
+            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-10">#</th>
+            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Produkt</th>
+            {dayDates.map((d, i) => (
+              <th key={d} className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">
+                <div>{WEEKDAY_SHORT[i]}</div>
+                <div className="text-[10px] font-normal text-muted-foreground/70">{ddmm(d)}</div>
+              </th>
+            ))}
+            <th className="px-3 py-2 text-right text-xs font-semibold border-l">
+              <div className={cn(!emphasizeQty && 'text-primary')}>Total</div>
+              <div className="text-[10px] font-normal text-muted-foreground/70">
+                {emphasizeQty ? 'Anzahl' : 'Umsatz'}
+              </div>
+            </th>
+            {onHide && <th className="px-2 py-2.5 w-8" />}
+          </tr>
+
+          {/* Inline Produktsuche (kein min/max-Filter) */}
+          <tr className="border-b bg-slate-50/60 dark:bg-muted/20">
+            <td className="px-2 py-1.5" />
+            <td className="px-2 py-1.5">
+              <div className="relative">
+                <Search className="absolute left-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={colSearch}
+                  onChange={e => setColSearch(e.target.value)}
+                  placeholder="Produkt suchen…"
+                  className="h-6 pl-5 pr-5 text-xs"
+                />
+                {colSearch && (
+                  <button
+                    onClick={() => setColSearch('')}
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            </td>
+            <td className="px-2 py-1.5" colSpan={dayDates.length + 1} />
+            {onHide && <td className="px-2 py-1.5" />}
+          </tr>
+        </thead>
+
+        <tbody>
+          {filteredRows.length === 0 ? (
+            <tr>
+              <td colSpan={colCount} className="px-4 py-6 text-center text-xs text-muted-foreground">
+                Keine Produkte entsprechen den Filterkriterien.
+              </td>
+            </tr>
+          ) : (
+            filteredRows.map((row, idx) => {
+              const rank   = idx + 1;
+              const isTop3 = !flop && rank <= 3;
+              const days   = weekAgg.get(row.product_name)?.days ?? zeroDays;
+              return (
+                <tr
+                  key={row.product_name}
+                  onClick={onRowClick ? () => onRowClick(row.product_name) : undefined}
+                  title={onRowClick ? `Details zu „${row.product_name}" anzeigen` : undefined}
+                  className={cn(
+                    'border-b last:border-0 transition-colors group',
+                    onRowClick && 'cursor-pointer',
+                    flop
+                      ? 'hover:bg-red-50/40 dark:hover:bg-red-900/10'
+                      : isTop3
+                        ? 'bg-primary/5 hover:bg-primary/10'
+                        : 'hover:bg-muted/40',
+                  )}
+                >
+                  {/* Rang */}
+                  <td className="px-3 py-2 text-center align-top">
+                    {!flop && rank === 1 && (
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-yellow-400 text-white text-xs font-black">1</span>
+                    )}
+                    {!flop && rank === 2 && (
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-700 text-xs font-black">2</span>
+                    )}
+                    {!flop && rank === 3 && (
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-600 text-white text-xs font-black">3</span>
+                    )}
+                    {(flop || rank > 3) && (
+                      <span className={cn('tabular-nums', flop ? 'text-red-400 dark:text-red-500 font-medium' : 'text-muted-foreground')}>
+                        {flop ? `–${rank}` : rank}
+                      </span>
+                    )}
+                  </td>
+                  {/* Name */}
+                  <td className={cn('px-3 py-2 align-top', isTop3 ? 'font-semibold' : 'font-medium')}>
+                    <span className="inline-flex items-center gap-1">
+                      <span className={cn(onRowClick && 'group-hover:underline')}>{row.product_name}</span>
+                      {onRowClick && (
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      )}
+                    </span>
+                  </td>
+                  {/* Wochentage Mo–So */}
+                  {days.map((b) => (
+                    <td key={b.date} className="px-2 py-2 text-right align-top">
+                      <WeekCell revenue={b.revenue} qty={b.quantity} emphasizeQty={emphasizeQty} />
+                    </td>
+                  ))}
+                  {/* Total */}
+                  <td className="px-3 py-2 text-right align-top border-l">
+                    <WeekCell revenue={row.total_revenue} qty={row.total_qty} emphasizeQty={emphasizeQty} strong />
+                  </td>
+                  {/* Ausblenden */}
+                  {onHide && (
+                    <td className="px-2 py-2 text-center align-top">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onHide(row.product_name); }}
+                        title={`"${row.product_name}" aus Rangliste entfernen`}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })
+          )}
+        </tbody>
+
+        <tfoot>
+          <tr className="border-t-2 bg-muted/50 font-semibold">
+            <td className="px-3 py-2" />
+            <td className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground align-top">
+              Total ({filteredRows.length}{filteredRows.length !== rows.length ? ` von ${rows.length}` : ''} Produkte)
+            </td>
+            {colTotals.days.map((t, i) => (
+              <td key={dayDates[i]} className="px-2 py-2 text-right align-top">
+                <WeekCell revenue={t.rev} qty={t.qty} emphasizeQty={emphasizeQty} />
+              </td>
+            ))}
+            <td className="px-3 py-2 text-right align-top border-l">
+              <WeekCell revenue={colTotals.totRev} qty={colTotals.totQty} emphasizeQty={emphasizeQty} strong />
+            </td>
+            {onHide && <td className="px-2 py-2" />}
           </tr>
         </tfoot>
       </table>
@@ -514,7 +714,47 @@ export default function ProduktAnalyse() {
   }, [isFlop, limitMode, sortBy, ranked.length]);
 
   const yearOptions = years.length ? years : [currentYear];
-  const weekCount = isoWeeksInYear(weekYear);
+
+  // ── Wochen-Navigation: exakte Datumsspanne, Schnellsprünge, Wochentag-Aggregat ─
+  const weekRange = useMemo(
+    () => (selection.kind === 'week' ? weekRangeLabel(selection.year, selection.week) : ''),
+    [selection],
+  );
+
+  // 7 ISO-Tage (Mo→So) der gewählten Woche — Spaltenköpfe der Wochen-Rangliste.
+  const weekDayDates = useMemo<string[]>(() => {
+    if (selection.kind !== 'week') return [];
+    const monday = isoWeekStart(selection.year, selection.week);
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(monday.getTime());
+      d.setUTCDate(monday.getUTCDate() + i);
+      return d.toISOString().slice(0, 10);
+    });
+  }, [selection]);
+
+  // Pro-Produkt-Wochentag-Aggregat (Mo–So) über DENSELBEN Scope wie die Rangliste.
+  const weekAgg = useMemo(() => {
+    const map = new Map<string, ProductWeekAggregate>();
+    if (selection.kind !== 'week') return map;
+    const scoped = filterRows(allRows, selection, categoryFilter);
+    for (const agg of aggregateProductsByWeekday(scoped, selection.year, selection.week)) {
+      map.set(agg.product_name, agg);
+    }
+    return map;
+  }, [allRows, selection, categoryFilter]);
+
+  const stepWeek = useCallback((delta: number) => {
+    if (selection.kind !== 'week') return;
+    const next = shiftIsoWeek(selection.year, selection.week, delta);
+    setWeekYear(next.year);
+    setWeek(next.week);
+  }, [selection]);
+
+  const goCurrentWeek = useCallback(() => {
+    const info = isoWeekInfo(localISODate());
+    setWeekYear(info.year);
+    setWeek(info.week);
+  }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -571,7 +811,7 @@ export default function ProduktAnalyse() {
             </div>
           )}
 
-          {/* Woche */}
+          {/* Woche – Navigation mit exakter Datumsspanne (kein KW-Dropdown) */}
           {periodKind === 'week' && (
             <>
               <div className="flex flex-col gap-1">
@@ -587,17 +827,42 @@ export default function ProduktAnalyse() {
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">Kalenderwoche</span>
-                <Select
-                  value={String(Math.min(week, weekCount))}
-                  onValueChange={v => setWeek(Number(v))}
-                >
-                  <SelectTrigger className="h-8 w-[110px] text-sm"><SelectValue /></SelectTrigger>
-                  <SelectContent className="max-h-[300px]">
-                    {Array.from({ length: weekCount }, (_, i) => i + 1).map(w => (
-                      <SelectItem key={w} value={String(w)}>KW {w}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => stepWeek(-1)}
+                    title="Vorherige Woche"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="h-8 px-3 min-w-[215px] inline-flex items-center justify-center gap-1.5 rounded-md border bg-muted/40 text-sm font-medium tabular-nums">
+                    <CalendarDays className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    {weekRange}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => stepWeek(1)}
+                    title="Nächste Woche"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Schnellwahl</span>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5" onClick={goCurrentWeek}>
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Heute
+                  </Button>
+                  <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={goCurrentWeek}>
+                    Diese Woche
+                  </Button>
+                </div>
               </div>
             </>
           )}
@@ -823,15 +1088,27 @@ export default function ProduktAnalyse() {
             </div>
           )}
           {!loading && !error && displayed.length > 0 && (
-            <RankTable
-              rows={displayed}
-              totalRevenue={totalRevenue}
-              totalQty={totalQty}
-              sortBy={sortBy}
-              flop={isFlop}
-              onHide={hideProduct}
-              onRowClick={openDetail}
-            />
+            selection.kind === 'week' ? (
+              <WeekRankTable
+                rows={displayed}
+                weekAgg={weekAgg}
+                dayDates={weekDayDates}
+                sortBy={sortBy}
+                flop={isFlop}
+                onHide={hideProduct}
+                onRowClick={openDetail}
+              />
+            ) : (
+              <RankTable
+                rows={displayed}
+                totalRevenue={totalRevenue}
+                totalQty={totalQty}
+                sortBy={sortBy}
+                flop={isFlop}
+                onHide={hideProduct}
+                onRowClick={openDetail}
+              />
+            )
           )}
         </CardContent>
 

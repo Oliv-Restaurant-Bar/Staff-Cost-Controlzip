@@ -5,10 +5,13 @@ import {
   buildBreakdown,
   filterRows,
   aggregateProducts,
+  aggregateProductsByWeekday,
   periodBounds,
   isoWeekInfo,
   isoWeekStart,
   isoWeeksInYear,
+  shiftIsoWeek,
+  weekRangeLabel,
   daysInMonth,
   filtersToParams,
   filtersFromParams,
@@ -334,5 +337,129 @@ describe('filtersToParams / filtersFromParams round-trip', () => {
     expect(back.period.kind).toBe('month');
     expect(back.category).toBe('all');
     expect(back.metric).toBe('revenue');
+  });
+});
+
+// ─── Wochen-Navigation: weekRangeLabel ──────────────────────────────────────────
+
+describe('weekRangeLabel', () => {
+  it('shows the exact Mon–Sun range within a single year (year only on the end date)', () => {
+    // KW 26 2026 = Mon 22.06.2026 – Sun 28.06.2026
+    expect(weekRangeLabel(2026, 26)).toBe('KW 26 · 22.06.–28.06.2026');
+  });
+
+  it('shows the start year on cross-year weeks (KW 1 spanning Dec→Jan)', () => {
+    // KW 1 2026 starts Mon 29.12.2025 and ends Sun 04.01.2026
+    expect(weekRangeLabel(2026, 1)).toBe('KW 1 · 29.12.2025–04.01.2026');
+  });
+});
+
+// ─── Wochen-Navigation: shiftIsoWeek ────────────────────────────────────────────
+
+describe('shiftIsoWeek', () => {
+  it('steps forward and backward within a year', () => {
+    expect(shiftIsoWeek(2026, 26, 1)).toEqual({ year: 2026, week: 27 });
+    expect(shiftIsoWeek(2026, 26, -1)).toEqual({ year: 2026, week: 25 });
+    expect(shiftIsoWeek(2026, 26, 0)).toEqual({ year: 2026, week: 26 });
+  });
+
+  it('rolls across the year boundary (KW1 ↔ previous year)', () => {
+    // One week before KW1 2026 is the last week of ISO-year 2025 (KW52)
+    expect(shiftIsoWeek(2026, 1, -1)).toEqual({ year: 2025, week: 52 });
+    // Forward from the last week of 2025 lands in KW1 2026
+    expect(shiftIsoWeek(2025, 52, 1)).toEqual({ year: 2026, week: 1 });
+  });
+
+  it('handles 53-week ISO years (2020 has KW53)', () => {
+    expect(isoWeeksInYear(2020)).toBe(53);
+    // Forward from KW52 2020 → KW53 2020, then → KW1 2021
+    expect(shiftIsoWeek(2020, 52, 1)).toEqual({ year: 2020, week: 53 });
+    expect(shiftIsoWeek(2020, 53, 1)).toEqual({ year: 2021, week: 1 });
+    // Backward from KW1 2021 → KW53 2020
+    expect(shiftIsoWeek(2021, 1, -1)).toEqual({ year: 2020, week: 53 });
+  });
+
+  it('multi-week jumps stay consistent with single steps', () => {
+    expect(shiftIsoWeek(2026, 10, 5)).toEqual({ year: 2026, week: 15 });
+    // KW3 2026 −5 weeks: KW2 → KW1 2026 → KW52 → KW51 → KW50 2025
+    expect(shiftIsoWeek(2026, 3, -5)).toEqual({ year: 2025, week: 50 });
+    // equivalent to stepping back one at a time
+    let cur = { year: 2026, week: 3 };
+    for (let i = 0; i < 5; i++) cur = shiftIsoWeek(cur.year, cur.week, -1);
+    expect(cur).toEqual({ year: 2025, week: 50 });
+  });
+});
+
+// ─── Wochen-Rangliste: aggregateProductsByWeekday ───────────────────────────────
+
+describe('aggregateProductsByWeekday', () => {
+  // KW 26 2026 = Mon 22.06. … Sun 28.06.2026
+  const YEAR = 2026;
+  const WEEK = 26;
+
+  it('places each sale into the correct Mon→Sun bucket and totals it', () => {
+    const rows: ProductSalesRow[] = [
+      row('Pizza', '2026-06-22', 3, 60),  // Mo
+      row('Pizza', '2026-06-24', 2, 40),  // Mi
+      row('Pizza', '2026-06-28', 5, 100), // So
+    ];
+    const [agg] = aggregateProductsByWeekday(rows, YEAR, WEEK);
+    expect(agg.product_name).toBe('Pizza');
+    expect(agg.days).toHaveLength(7);
+    // Mo (idx 0), Mi (idx 2), So (idx 6)
+    expect(agg.days[0]).toMatchObject({ weekdayIndex: 0, date: '2026-06-22', quantity: 3, revenue: 60 });
+    expect(agg.days[2]).toMatchObject({ weekdayIndex: 2, date: '2026-06-24', quantity: 2, revenue: 40 });
+    expect(agg.days[6]).toMatchObject({ weekdayIndex: 6, date: '2026-06-28', quantity: 5, revenue: 100 });
+    // empty days stay zeroed
+    expect(agg.days[1]).toMatchObject({ quantity: 0, revenue: 0 });
+    // totals = sum of all days
+    expect(agg.total_qty).toBe(10);
+    expect(agg.total_revenue).toBe(200);
+  });
+
+  it('sums multiple sales on the same weekday', () => {
+    const rows: ProductSalesRow[] = [
+      row('Cola', '2026-06-23', 1, 5),
+      row('Cola', '2026-06-23', 4, 20),
+    ];
+    const [agg] = aggregateProductsByWeekday(rows, YEAR, WEEK);
+    expect(agg.days[1]).toMatchObject({ weekdayIndex: 1, date: '2026-06-23', quantity: 5, revenue: 25 });
+    expect(agg.total_qty).toBe(5);
+    expect(agg.total_revenue).toBe(25);
+  });
+
+  it('ignores rows outside the ISO week (same weekday, different week)', () => {
+    const rows: ProductSalesRow[] = [
+      row('Pizza', '2026-06-22', 3, 60),  // Mo of KW26 (in)
+      row('Pizza', '2026-06-15', 9, 180), // Mo of KW25 (out)
+      row('Pizza', '2026-06-29', 7, 140), // Mo of KW27 (out)
+    ];
+    const [agg] = aggregateProductsByWeekday(rows, YEAR, WEEK);
+    expect(agg.days[0]).toMatchObject({ quantity: 3, revenue: 60 });
+    expect(agg.total_qty).toBe(3);
+    expect(agg.total_revenue).toBe(60);
+  });
+
+  it('keeps products separate and only emits products with in-week sales', () => {
+    const rows: ProductSalesRow[] = [
+      row('Pizza', '2026-06-22', 1, 20),
+      row('Salat', '2026-06-25', 2, 30),
+      row('Suppe', '2026-06-15', 9, 90), // outside KW26 → no aggregate
+    ];
+    const aggs = aggregateProductsByWeekday(rows, YEAR, WEEK);
+    const names = aggs.map((a) => a.product_name).sort();
+    expect(names).toEqual(['Pizza', 'Salat']);
+  });
+
+  it('returns an empty array for no in-week data', () => {
+    expect(aggregateProductsByWeekday([], YEAR, WEEK)).toEqual([]);
+    expect(aggregateProductsByWeekday([row('X', '2026-06-15', 1, 1)], YEAR, WEEK)).toEqual([]);
+  });
+
+  it('day dates align with periodBounds for the same week', () => {
+    const { from, to } = periodBounds({ kind: 'week', year: YEAR, week: WEEK });
+    const [agg] = aggregateProductsByWeekday([row('P', from, 1, 1)], YEAR, WEEK);
+    expect(agg.days[0].date).toBe(from); // Monday
+    expect(agg.days[6].date).toBe(to);   // Sunday
   });
 });
