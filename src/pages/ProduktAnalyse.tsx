@@ -1,19 +1,23 @@
 /**
  * ProduktAnalyse – Produkt-Rangliste nach Umsatz / Anzahl
  * =========================================================
- * Datenquelle: product_sales (Supabase)
- * Modi: Monatsansicht · Mehrere Monate · Jahresansicht · Kumuliert
+ * Datenquelle: product_sales (Supabase, unverändert via loadProductSalesRows)
+ * Periode: Tag · Woche · Monat · Jahr  (discriminated union in product-analytics.ts)
  * Anzeigeoptionen: Top 10 · Top 20 · Alle · Flop 20
  * Kategorie: Alle · Food · Beverage
  * Produkte mit Umsatz = 0 werden nie angezeigt.
  * Inline-Spaltenfilter: Suche, min/max Umsatz, min/max Anzahl, Spalten-Sortierung
  * Produkte ausblenden: per Klick auf Mülleimer, mit Reset-Button
+ * Klick auf eine Zeile → Produkt-Detailseite (Drill-down) mit erhaltenen Filtern.
+ * Aktive Filter werden in der URL gespiegelt, damit der Zurück-Weg den Kontext herstellt.
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   BarChart3, RefreshCw, TrendingUp, Hash, Trash2, RotateCcw, EyeOff,
   Search, X, TrendingDown, Utensils, Wine, Layers, ArrowUpDown, ArrowUp, ArrowDown,
+  ChevronRight,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -24,6 +28,12 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { loadProductSalesRows, type ProductSalesRow } from '@/lib/sales-db';
+import {
+  filterRows, aggregateProducts, periodLabel as periodLabelOf,
+  filtersToParams, filtersFromParams, isoWeekInfo, isoWeeksInYear, localISODate,
+  MONTH_NAMES, PERIOD_KIND_LABEL,
+  type PeriodKind, type PeriodSelection, type CategoryFilter, type Metric, type AnalysisFilters,
+} from '@/lib/product-analytics';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -42,16 +52,6 @@ function pct(part: number, total: number): string {
   return `${((part / total) * 100).toFixed(1)} %`;
 }
 
-const MONTH_NAMES = [
-  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
-];
-
-const MONTH_SHORT = [
-  'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
-];
-
 function availableYears(rows: ProductSalesRow[]): number[] {
   const years = new Set<number>();
   for (const r of rows) {
@@ -62,16 +62,11 @@ function availableYears(rows: ProductSalesRow[]): number[] {
 }
 
 type RankRow = { product_name: string; total_revenue: number; total_qty: number };
-type SortKey        = 'revenue' | 'qty';
-type LimitMode      = 'top10' | 'top20' | 'all' | 'flop20';
-type ModeKey        = 'month' | 'multimonth' | 'year' | 'cumulative';
-type CategoryFilter = 'all' | 'food' | 'beverage';
-type ColSortDir     = 'asc' | 'desc';
+type SortKey    = Metric;                                   // 'revenue' | 'qty'
+type LimitMode  = 'top10' | 'top20' | 'all' | 'flop20';
+type ColSortDir = 'asc' | 'desc';
 
-const SOURCE_CATEGORY: Record<string, CategoryFilter> = {
-  food_csv_export:     'food',
-  beverage_csv_export: 'beverage',
-};
+const PERIOD_KINDS: PeriodKind[] = ['day', 'week', 'month', 'year'];
 
 // ─── RankTable mit Inline-Spaltenfiltern ──────────────────────────────────────
 
@@ -82,6 +77,7 @@ function RankTable({
   sortBy,
   flop = false,
   onHide,
+  onRowClick,
 }: {
   rows: RankRow[];
   totalRevenue: number;
@@ -89,6 +85,7 @@ function RankTable({
   sortBy: SortKey;
   flop?: boolean;
   onHide?: (name: string) => void;
+  onRowClick?: (name: string) => void;
 }) {
   const [colSearch, setColSearch]     = useState('');
   const [minRev,    setMinRev]        = useState('');
@@ -278,8 +275,11 @@ function RankTable({
               return (
                 <tr
                   key={row.product_name}
+                  onClick={onRowClick ? () => onRowClick(row.product_name) : undefined}
+                  title={onRowClick ? `Details zu „${row.product_name}" anzeigen` : undefined}
                   className={cn(
                     'border-b last:border-0 transition-colors group',
+                    onRowClick && 'cursor-pointer',
                     flop
                       ? 'hover:bg-red-50/40 dark:hover:bg-red-900/10'
                       : isTop3
@@ -306,7 +306,12 @@ function RankTable({
                   </td>
                   {/* Name */}
                   <td className={cn('px-4 py-2.5', isTop3 ? 'font-semibold' : 'font-medium')}>
-                    {row.product_name}
+                    <span className="inline-flex items-center gap-1">
+                      <span className={cn(onRowClick && 'group-hover:underline')}>{row.product_name}</span>
+                      {onRowClick && (
+                        <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50 opacity-0 group-hover:opacity-100 transition-opacity" />
+                      )}
+                    </span>
                   </td>
                   {/* Umsatz */}
                   <td className={cn('px-4 py-2.5 text-right tabular-nums', sortBy === 'revenue' && !colSortKey && 'font-semibold')}>
@@ -326,7 +331,7 @@ function RankTable({
                   {onHide && (
                     <td className="px-3 py-2.5 text-center">
                       <button
-                        onClick={() => onHide(row.product_name)}
+                        onClick={(e) => { e.stopPropagation(); onHide(row.product_name); }}
                         title={`"${row.product_name}" aus Rangliste entfernen`}
                         className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                       >
@@ -373,21 +378,45 @@ export default function ProduktAnalyse() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
+  const navigate = useNavigate();
+  const [, setSearchParams] = useSearchParams();
+
   const currentYear  = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
 
-  const [mode,           setMode]           = useState<ModeKey>('month');
-  const [year,           setYear]           = useState(currentYear);
-  const [month,          setMonth]          = useState(currentMonth);
-  const [multiYear,      setMultiYear]      = useState(currentYear);
-  const [selectedMonths, setSelectedMonths] = useState<Set<number>>(new Set([currentMonth]));
-  const [yearFrom,       setYearFrom]       = useState(currentYear);
-  const [monthFrom,      setMonthFrom]      = useState(1);
-  const [yearTo,         setYearTo]         = useState(currentYear);
-  const [monthTo,        setMonthTo]        = useState(currentMonth);
-  const [sortBy,         setSortBy]         = useState<SortKey>('revenue');
-  const [limitMode,      setLimitMode]      = useState<LimitMode>('top10');
-  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
+  // Initial-Filter aus der URL lesen (einmalig, refresh-/zurück-fest)
+  const seedRef = useRef<AnalysisFilters | null>(null);
+  if (!seedRef.current) {
+    const sp = new URLSearchParams(window.location.search);
+    seedRef.current = filtersFromParams((k) => sp.get(k));
+  }
+  const seed = seedRef.current;
+  const seedWeek = isoWeekInfo(localISODate());
+
+  const [periodKind, setPeriodKind] = useState<PeriodKind>(seed.period.kind);
+  const [year,  setYear]  = useState<number>(
+    seed.period.kind === 'month' || seed.period.kind === 'year' ? seed.period.year : currentYear,
+  );
+  const [month, setMonth] = useState<number>(
+    seed.period.kind === 'month' ? seed.period.month : currentMonth,
+  );
+  const [day,   setDay]   = useState<string>(
+    seed.period.kind === 'day' ? seed.period.date : localISODate(),
+  );
+  const [weekYear, setWeekYear] = useState<number>(
+    seed.period.kind === 'week' ? seed.period.year : seedWeek.year,
+  );
+  const [week,     setWeek]     = useState<number>(
+    seed.period.kind === 'week' ? seed.period.week : seedWeek.week,
+  );
+
+  const [sortBy,         setSortBy]         = useState<SortKey>(seed.metric);
+  const [limitMode,      setLimitMode]      = useState<LimitMode>(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const l = sp.get('limit');
+    return (l === 'top10' || l === 'top20' || l === 'all' || l === 'flop20') ? l : 'top10';
+  });
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>(seed.category);
 
   // Ausgeblendete Produkte (nur diese Session)
   const [hiddenProducts, setHiddenProducts] = useState<Set<string>>(new Set());
@@ -409,86 +438,42 @@ export default function ProduktAnalyse() {
 
   const years = useMemo(() => availableYears(allRows), [allRows]);
 
-  const toggleMonth    = (m: number) => {
-    setSelectedMonths(prev => {
-      const next = new Set(prev);
-      if (next.has(m)) { if (next.size === 1) return prev; next.delete(m); }
-      else next.add(m);
-      return next;
-    });
-  };
-  const selectAllMonths  = () => setSelectedMonths(new Set([1,2,3,4,5,6,7,8,9,10,11,12]));
-  const selectOnlyMonth  = (m: number) => setSelectedMonths(new Set([m]));
+  // ── Aktuelle Periode (discriminated union) ───────────────────────────────────
+  const selection = useMemo<PeriodSelection>(() => {
+    switch (periodKind) {
+      case 'day':  return { kind: 'day',  date: day };
+      // Clamp gegen 52/53-Wochen-Jahre: nie eine ungültige KW53 in Filter/URL schreiben
+      case 'week': return { kind: 'week', year: weekYear, week: Math.min(week, isoWeeksInYear(weekYear)) };
+      case 'year': return { kind: 'year', year };
+      default:     return { kind: 'month', year, month };
+    }
+  }, [periodKind, day, weekYear, week, year, month]);
+
+  // ── Filter in die URL spiegeln (für Detail-Round-Trip / Sharing) ─────────────
+  useEffect(() => {
+    const params = filtersToParams({ period: selection, category: categoryFilter, metric: sortBy });
+    params.limit = limitMode;
+    setSearchParams(params, { replace: true });
+  }, [selection, categoryFilter, sortBy, limitMode, setSearchParams]);
 
   // ── Aggregierte Rangliste (nur Umsatz > 0, ausgeblendete Produkte raus) ──────
-
   const ranked = useMemo<RankRow[]>(() => {
-    let filtered = allRows;
-
-    // Zeitraum-Filter
-    if (mode === 'month') {
-      const prefix = `${year}-${String(month).padStart(2, '0')}`;
-      filtered = filtered.filter(r => r.sale_date.startsWith(prefix));
-    } else if (mode === 'multimonth') {
-      const yearStr = String(multiYear);
-      filtered = filtered.filter(r => {
-        if (!r.sale_date.startsWith(yearStr)) return false;
-        const m = parseInt(r.sale_date.slice(5, 7), 10);
-        return selectedMonths.has(m);
-      });
-    } else if (mode === 'year') {
-      filtered = filtered.filter(r => r.sale_date.startsWith(String(year)));
-    } else {
-      const from    = `${yearFrom}-${String(monthFrom).padStart(2, '0')}-01`;
-      const lastDay = new Date(yearTo, monthTo, 0).getDate();
-      const to      = `${yearTo}-${String(monthTo).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-      filtered = filtered.filter(r => r.sale_date >= from && r.sale_date <= to);
-    }
-
-    // Kategorie-Filter (via source-Feld)
-    if (categoryFilter !== 'all') {
-      filtered = filtered.filter(r => {
-        const cat = r.source ? (SOURCE_CATEGORY[r.source] ?? null) : null;
-        return cat === categoryFilter;
-      });
-    }
-
-    // Aggregieren (ohne ausgeblendete Produkte)
-    const map = new Map<string, RankRow>();
-    for (const r of filtered) {
-      if (hiddenProducts.has(r.product_name)) continue;
-      const existing = map.get(r.product_name);
-      if (existing) {
-        existing.total_revenue += Number(r.revenue  ?? 0);
-        existing.total_qty     += Number(r.quantity ?? 0);
-      } else {
-        map.set(r.product_name, {
-          product_name:  r.product_name,
-          total_revenue: Number(r.revenue  ?? 0),
-          total_qty:     Number(r.quantity ?? 0),
-        });
-      }
-    }
-
-    // Produkte mit Umsatz = 0 ausblenden (immer, in allen Ansichten)
-    const arr = Array.from(map.values()).filter(r => r.total_revenue > 0);
-
-    // Standard-Sortierung (absteigende Rangliste)
+    const scoped = filterRows(allRows, selection, categoryFilter);
+    const arr = aggregateProducts(scoped)
+      .filter(r => r.total_revenue > 0 && !hiddenProducts.has(r.product_name));
     arr.sort((a, b) =>
       sortBy === 'revenue'
         ? b.total_revenue - a.total_revenue
         : b.total_qty    - a.total_qty,
     );
     return arr;
-  }, [allRows, mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo, sortBy, hiddenProducts, categoryFilter]);
+  }, [allRows, selection, categoryFilter, hiddenProducts, sortBy]);
 
   // ── Angezeigte Zeilen (je nach Modus) ────────────────────────────────────────
-
   const displayed = useMemo<RankRow[]>(() => {
     if (limitMode === 'top10') return ranked.slice(0, 10);
     if (limitMode === 'top20') return ranked.slice(0, 20);
     if (limitMode === 'flop20') {
-      // Aufsteigend nach sortBy → schwächste zuerst (nur Umsatz > 0 bereits garantiert)
       const copy = [...ranked];
       copy.sort((a, b) =>
         sortBy === 'revenue'
@@ -505,22 +490,19 @@ export default function ProduktAnalyse() {
   const totalRevenue = ranked.reduce((s, r) => s + r.total_revenue, 0);
   const totalQty     = ranked.reduce((s, r) => s + r.total_qty,     0);
 
-  // ── Perioden-Label ────────────────────────────────────────────────────────────
-
-  const periodLabel = useMemo(() => {
-    if (mode === 'month') return `${MONTH_NAMES[month - 1]} ${year}`;
-    if (mode === 'year')  return String(year);
-    if (mode === 'multimonth') {
-      const sorted = Array.from(selectedMonths).sort((a, b) => a - b);
-      if (sorted.length === 12) return `Ganzes Jahr ${multiYear}`;
-      if (sorted.length === 1)  return `${MONTH_NAMES[sorted[0] - 1]} ${multiYear}`;
-      return `${sorted.map(m => MONTH_SHORT[m - 1]).join(', ')} ${multiYear}`;
-    }
-    return `${MONTH_NAMES[monthFrom - 1]} ${yearFrom} – ${MONTH_NAMES[monthTo - 1]} ${yearTo}`;
-  }, [mode, year, month, multiYear, selectedMonths, yearFrom, monthFrom, yearTo, monthTo]);
+  const periodLabel = useMemo(() => periodLabelOf(selection), [selection]);
 
   const hideProduct = (name: string) => setHiddenProducts(prev => new Set([...prev, name]));
   const resetHidden = () => setHiddenProducts(new Set());
+
+  // ── Navigation zur Detailseite (Filter erhalten) ─────────────────────────────
+  const openDetail = useCallback((name: string) => {
+    const params = new URLSearchParams(
+      filtersToParams({ period: selection, category: categoryFilter, metric: sortBy }),
+    );
+    params.set('name', name);
+    navigate(`/produkt-analyse/produkt?${params.toString()}`);
+  }, [navigate, selection, categoryFilter, sortBy]);
 
   const catLabel: Record<CategoryFilter, string> = { all: 'Alle', food: 'Food', beverage: 'Beverage' };
 
@@ -530,6 +512,9 @@ export default function ProduktAnalyse() {
     const prefix = limitMode === 'all' ? 'Alle Produkte' : `Top ${limitMode === 'top10' ? 10 : 20} Produkte`;
     return `${prefix} – sortiert nach ${sortBy === 'revenue' ? 'Umsatz' : 'Anzahl'}`;
   }, [isFlop, limitMode, sortBy, ranked.length]);
+
+  const yearOptions = years.length ? years : [currentYear];
+  const weekCount = isoWeeksInYear(weekYear);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -563,26 +548,69 @@ export default function ProduktAnalyse() {
           {/* Ansicht */}
           <div className="flex flex-col gap-1">
             <span className="text-xs text-muted-foreground font-medium">Ansicht</span>
-            <Select value={mode} onValueChange={v => setMode(v as ModeKey)}>
-              <SelectTrigger className="h-8 w-[175px] text-sm"><SelectValue /></SelectTrigger>
+            <Select value={periodKind} onValueChange={v => setPeriodKind(v as PeriodKind)}>
+              <SelectTrigger className="h-8 w-[130px] text-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="month">Einzelner Monat</SelectItem>
-                <SelectItem value="multimonth">Mehrere Monate</SelectItem>
-                <SelectItem value="year">Jahresansicht</SelectItem>
-                <SelectItem value="cumulative">Kumuliert (Bereich)</SelectItem>
+                {PERIOD_KINDS.map(k => (
+                  <SelectItem key={k} value={k}>{PERIOD_KIND_LABEL[k]}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* Einzelner Monat */}
-          {mode === 'month' && (
+          {/* Tag */}
+          {periodKind === 'day' && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground font-medium">Datum</span>
+              <Input
+                type="date"
+                value={day}
+                onChange={e => setDay(e.target.value || localISODate())}
+                className="h-8 w-[160px] text-sm"
+              />
+            </div>
+          )}
+
+          {/* Woche */}
+          {periodKind === 'week' && (
+            <>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Jahr</span>
+                <Select value={String(weekYear)} onValueChange={v => setWeekYear(Number(v))}>
+                  <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {yearOptions.map(y => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground font-medium">Kalenderwoche</span>
+                <Select
+                  value={String(Math.min(week, weekCount))}
+                  onValueChange={v => setWeek(Number(v))}
+                >
+                  <SelectTrigger className="h-8 w-[110px] text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {Array.from({ length: weekCount }, (_, i) => i + 1).map(w => (
+                      <SelectItem key={w} value={String(w)}>KW {w}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
+
+          {/* Monat */}
+          {periodKind === 'month' && (
             <>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground font-medium">Jahr</span>
                 <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
                   <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {(years.length ? years : [currentYear]).map(y => (
+                    {yearOptions.map(y => (
                       <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                     ))}
                   </SelectContent>
@@ -602,109 +630,19 @@ export default function ProduktAnalyse() {
             </>
           )}
 
-          {/* Mehrere Monate */}
-          {mode === 'multimonth' && (
-            <div className="flex flex-col gap-1.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-medium">Jahr</span>
-                <Select value={String(multiYear)} onValueChange={v => setMultiYear(Number(v))}>
-                  <SelectTrigger className="h-7 w-[80px] text-xs"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {(years.length ? years : [currentYear]).map(y => (
-                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button size="sm" variant="ghost" className="h-7 text-xs px-2 text-muted-foreground" onClick={selectAllMonths}>
-                  Alle
-                </Button>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {MONTH_SHORT.map((short, i) => {
-                  const m = i + 1;
-                  const active = selectedMonths.has(m);
-                  return (
-                    <button
-                      key={m}
-                      onClick={() => toggleMonth(m)}
-                      onDoubleClick={() => selectOnlyMonth(m)}
-                      title={`${MONTH_NAMES[i]} – Doppelklick: nur dieser Monat`}
-                      className={cn(
-                        'h-7 w-10 rounded text-xs font-medium border transition-colors',
-                        active
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-background text-muted-foreground border-border hover:bg-muted',
-                      )}
-                    >
-                      {short}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Jahresansicht */}
-          {mode === 'year' && (
+          {/* Jahr */}
+          {periodKind === 'year' && (
             <div className="flex flex-col gap-1">
               <span className="text-xs text-muted-foreground font-medium">Jahr</span>
               <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
                 <SelectTrigger className="h-8 w-[90px] text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {(years.length ? years : [currentYear]).map(y => (
+                  {yearOptions.map(y => (
                     <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-          )}
-
-          {/* Kumuliert */}
-          {mode === 'cumulative' && (
-            <>
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground font-medium">Von Monat</span>
-                <div className="flex gap-1">
-                  <Select value={String(monthFrom)} onValueChange={v => setMonthFrom(Number(v))}>
-                    <SelectTrigger className="h-8 w-[120px] text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {MONTH_NAMES.map((name, i) => (
-                        <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={String(yearFrom)} onValueChange={v => setYearFrom(Number(v))}>
-                    <SelectTrigger className="h-8 w-[80px] text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {(years.length ? years : [currentYear]).map(y => (
-                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground font-medium">Bis Monat</span>
-                <div className="flex gap-1">
-                  <Select value={String(monthTo)} onValueChange={v => setMonthTo(Number(v))}>
-                    <SelectTrigger className="h-8 w-[120px] text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {MONTH_NAMES.map((name, i) => (
-                        <SelectItem key={i + 1} value={String(i + 1)}>{name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={String(yearTo)} onValueChange={v => setYearTo(Number(v))}>
-                    <SelectTrigger className="h-8 w-[80px] text-sm"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {(years.length ? years : [currentYear]).map(y => (
-                        <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </>
           )}
 
           {/* Sortierung */}
@@ -892,14 +830,17 @@ export default function ProduktAnalyse() {
               sortBy={sortBy}
               flop={isFlop}
               onHide={hideProduct}
+              onRowClick={openDetail}
             />
           )}
         </CardContent>
 
-        {isFlop && !loading && !error && displayed.length > 0 && (
+        {!loading && !error && displayed.length > 0 && (
           <div className="px-4 py-2 text-[11px] text-muted-foreground border-t">
-            Flop-Produkte werden nach tiefstem {sortBy === 'revenue' ? 'Umsatz' : 'Verkaufsanzahl'} aufsteigend sortiert.
-            Produkte mit Umsatz = CHF 0 werden nie angezeigt.
+            {isFlop && (
+              <>Flop-Produkte werden nach tiefstem {sortBy === 'revenue' ? 'Umsatz' : 'Verkaufsanzahl'} aufsteigend sortiert. </>
+            )}
+            Klick auf eine Zeile öffnet die Produkt-Detailansicht.
             {categoryFilter !== 'all' && ` Nur Kategorie: ${catLabel[categoryFilter]}.`}
           </div>
         )}

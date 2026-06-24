@@ -50,6 +50,7 @@ import GuestAccess from "./pages/GuestAccess";
 import VerkaufsDashboard from "./pages/VerkaufsDashboard";
 import SalesUpload from "./pages/SalesUpload";
 import ProduktAnalyse from "./pages/ProduktAnalyse";
+import ProduktDetail from "./pages/ProduktDetail";
 import KategorienAnalyse from "./pages/KategorienAnalyse";
 import ProduktStamm from "./pages/ProduktStamm";
 import TagesansichtPage from "./pages/TagesansichtPage";
@@ -271,6 +272,7 @@ const AppContent = () => {
               element={<SalesUpload />}
             />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
+            <Route path="/produkt-analyse/produkt" element={<ProduktDetail />} />
             <Route path="/kategorien"        element={<KategorienAnalyse />} />
             <Route path="/produkt-stamm"
               element={<ProduktStamm />}
