@@ -21,3 +21,4 @@
 - [Admin-only pages exclude guests](guest-session-admin-gate.md) — usePermissions().isAdmin includes guest links; gate sensitive pages with isAdmin && !isGuest AND guard fetch effects (they fire before Navigate).
 - [Bulk upsert dedupe](bulk-upsert-dedupe.md) — dedupe rows by the onConflict key before .upsert(), else Postgres "ON CONFLICT DO UPDATE command cannot affect row a second time"; recompute import stats from deduped list.
 - [vite build OOM (silent kill)](vite-build-oom.md) — `npm run build` exits -1 with NO output when OOM-killed; 4096 now also too small, rerun with `NODE_OPTIONS=--max-old-space-size=8192 npx vite build`.
+- [Safe ?from= return URL + URL sync](safe-return-url-and-url-sync.md) — validate `from`/redirect params against a synthetic origin + exact allow-listed path (open-redirect); mirror view-state to useSearchParams with a string-equality guard to avoid loops.

@@ -19,7 +19,7 @@
  * werden in der App berechnet (siehe reservation-dashboard.ts).  Keine PII-Logs.
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   BarChart3, Loader2, Database, ArrowLeft, Users, UserCheck, UserX,
   UserPlus, Repeat, Star, Crown, CircleSlash, Ban, CalendarClock,
@@ -31,7 +31,7 @@ import {
   format as fmtDate, parseISO, endOfMonth, startOfMonth, addMonths, addDays,
 } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -59,11 +59,16 @@ import {
   type FutureSelectionKey, type ReservationDetailRow,
 } from '@/lib/reservation-dashboard';
 import {
-  CAMPAIGNS, summarizeCampaigns, filterCampaign,
+  CAMPAIGNS, CAMPAIGN_BY_ID, summarizeCampaigns, filterCampaign,
   buildCampaignCsv, campaignCsvFilename, campaignExportTable,
   type CampaignDef, type CampaignId,
 } from '@/lib/reservation-campaigns';
 import { downloadCsv, downloadXlsx } from '@/lib/table-export';
+import { GuestProfileLink } from '@/components/crm/GuestProfileLink';
+import {
+  parseCrmViewState, crmViewStateToParams, crmReturnUrl, buildGuestHref,
+  type CrmTab, type CrmViewState,
+} from '@/lib/crm-auswertung-url';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -163,6 +168,16 @@ export default function CrmAuswertungPage() {
   const { tenantId } = useTenant();
   const { isAdmin, isGuest } = usePermissions();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Anzeigezustand EINMALIG aus der URL lesen (refresh-fest + Rückkehr aus dem
+  // Gästeprofil stellt denselben Zustand wieder her). Spätere Änderungen laufen
+  // über die useState-Setter; der Sync-Effekt schreibt sie zurück in die URL.
+  const initialViewRef = useRef<ReturnType<typeof parseCrmViewState> | null>(null);
+  if (initialViewRef.current === null) initialViewRef.current = parseCrmViewState(searchParams);
+  const initialView = initialViewRef.current;
+
+  const [tab, setTab] = useState<CrmTab>(initialView.tab);
 
   const [loading, setLoading] = useState(true);
   const [tablesOk, setTablesOk] = useState<boolean | null>(null);
@@ -172,7 +187,7 @@ export default function CrmAuswertungPage() {
   const [crmProfiles, setCrmProfiles] = useState<Map<string, GuestCrmProfile>>(new Map());
   const [crmError, setCrmError] = useState(false);
   const [futureRows, setFutureRows] = useState<ReservationDetailRow[]>([]);
-  const [futureSel, setFutureSel] = useState<FutureSelectionKey | null>(null);
+  const [futureSel, setFutureSel] = useState<FutureSelectionKey | null>(initialView.future);
 
   const today = useMemo(() => new Date(), []);
   const todayStr = useMemo(() => fmtDate(today, 'yyyy-MM-dd'), [today]);
@@ -188,11 +203,11 @@ export default function CrmAuswertungPage() {
   }), [today, todayStr]);
 
   // ── Individueller Zeitraum ───────────────────────────────────────────────────
-  const [rangeFrom, setRangeFrom] = useState(todayStr);
-  const [rangeTo, setRangeTo] = useState(() => fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'));
+  const [rangeFrom, setRangeFrom] = useState(initialView.rangeFrom ?? todayStr);
+  const [rangeTo, setRangeTo] = useState(initialView.rangeTo ?? fmtDate(addDays(new Date(), 30), 'yyyy-MM-dd'));
   const [rangeLoading, setRangeLoading] = useState(false);
   const [rangeResult, setRangeResult] = useState<{ active: RangeCount; open: RangeCount; from: string; to: string; rows: ReservationDetailRow[] } | null>(null);
-  const [rangeSel, setRangeSel] = useState<'active' | 'open' | null>(null);
+  const [rangeSel, setRangeSel] = useState<'active' | 'open' | null>(initialView.rangeSel);
   const rangeEmpty = !rangeFrom || !rangeTo;
   const rangeInvalid = rangeEmpty || rangeFrom > rangeTo;
 
@@ -260,7 +275,11 @@ export default function CrmAuswertungPage() {
 
   // ── Kampagnen ────────────────────────────────────────────────────────────────
   const campaignSummaries = useMemo(() => summarizeCampaigns(metrics, todayStr), [metrics, todayStr]);
-  const [activeCampaign, setActiveCampaign] = useState<CampaignId | null>(null);
+  const [activeCampaign, setActiveCampaign] = useState<CampaignId | null>(
+    initialView.campaign && CAMPAIGN_BY_ID[initialView.campaign as CampaignId]
+      ? (initialView.campaign as CampaignId)
+      : null,
+  );
   const campaignDef = useMemo<CampaignDef | null>(
     () => CAMPAIGNS.find(c => c.id === activeCampaign) ?? null,
     [activeCampaign],
@@ -310,6 +329,47 @@ export default function CrmAuswertungPage() {
     });
     setRangeLoading(false);
   }, [tenantId, rangeFrom, rangeTo, rangeInvalid]);
+
+  // ── URL-Spiegelung des Anzeigezustands ──────────────────────────────────────
+  // Der individuelle Zeitraum wird nur gespiegelt, wenn eine Auswahl (active/open)
+  // aktiv ist — sonst „verschmutzt" jede Datumsänderung die URL.
+  const viewState = useMemo<CrmViewState>(() => ({
+    tab,
+    future: futureSel,
+    rangeSel,
+    rangeFrom: rangeSel ? rangeFrom : null,
+    rangeTo: rangeSel ? rangeTo : null,
+    campaign: activeCampaign,
+  }), [tab, futureSel, rangeSel, rangeFrom, rangeTo, activeCampaign]);
+
+  // Zustand → URL (replace, damit der Verlauf nicht zugemüllt wird). Der
+  // String-Vergleich verhindert eine Endlosschleife mit useSearchParams.
+  useEffect(() => {
+    const next = crmViewStateToParams(viewState);
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [viewState, searchParams, setSearchParams]);
+
+  // Beim Wiederherstellen aus der URL den individuellen Zeitraum EINMALIG
+  // automatisch auswerten, damit die gespeicherte Auswahl direkt ihre
+  // Detailliste zeigt (runRange setzt rangeSel zurück → danach wiederherstellen).
+  const rangeRestoredRef = useRef(false);
+  useEffect(() => {
+    if (rangeRestoredRef.current || loading || !tablesOk) return;
+    rangeRestoredRef.current = true;
+    const sel = initialView.rangeSel;
+    if (sel && initialView.rangeFrom && initialView.rangeTo) {
+      void runRange().then(() => setRangeSel(sel));
+    }
+  }, [loading, tablesOk, initialView, runRange]);
+
+  // Rückkehrziel + Sprung ins Gästeprofil (mit ?from=… zum Wiederherstellen).
+  const returnUrl = useMemo(() => crmReturnUrl(viewState), [viewState]);
+  const goToGuest = useCallback(
+    (guestId: string) => navigate(buildGuestHref(guestId, returnUrl)),
+    [navigate, returnUrl],
+  );
 
   if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
@@ -363,7 +423,7 @@ export default function CrmAuswertungPage() {
           Auswertung wird geladen…
         </div>
       ) : tablesOk ? (
-        <Tabs defaultValue="overview" className="space-y-4">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as CrmTab)} className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview" className="gap-1.5">
               <BarChart3 className="h-4 w-4" />
@@ -419,7 +479,7 @@ export default function CrmAuswertungPage() {
                   title={FUTURE_SEL_LABEL[futureSel]}
                   rows={futureReservationList(futureRows, boundaries, futureSel)}
                   persons={futureKpis[futureSel].persons}
-                  onSelectGuest={(id) => navigate(`/gaeste/${id}`)}
+                  onSelectGuest={goToGuest}
                 />
               )}
             </section>
@@ -479,7 +539,7 @@ export default function CrmAuswertungPage() {
                     title={rangeSel === 'active' ? 'Aktive Reservationen' : 'Offen / unbeantwortet'}
                     rows={rangeReservationList(rangeResult.rows, rangeResult.from, rangeResult.to, rangeSel)}
                     persons={rangeSel === 'active' ? rangeResult.active.persons : rangeResult.open.persons}
-                    onSelectGuest={(id) => navigate(`/gaeste/${id}`)}
+                    onSelectGuest={goToGuest}
                   />
                 )}
               </div>
@@ -546,10 +606,12 @@ export default function CrmAuswertungPage() {
                       {overdueList.map(r => (
                         <tr
                           key={r.id}
-                          onClick={() => navigate(`/gaeste/${r.id}`)}
+                          onClick={() => goToGuest(r.id)}
                           className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/40"
                         >
-                          <td className="px-3 py-2 font-medium text-foreground">{r.displayName}</td>
+                          <td className="px-3 py-2">
+                            <GuestProfileLink name={r.displayName} guestId={r.id} onSelect={goToGuest} stopPropagation />
+                          </td>
                           <td className="px-3 py-2"><SegmentBadge segment={r.segment} /></td>
                           <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(r.visits)}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{days(r.avgDaysBetweenVisits)}</td>
@@ -634,10 +696,12 @@ export default function CrmAuswertungPage() {
                         {campaignRows.map(r => (
                           <tr
                             key={r.id}
-                            onClick={() => navigate(`/gaeste/${r.id}`)}
+                            onClick={() => goToGuest(r.id)}
                             className="cursor-pointer border-b border-border last:border-0 hover:bg-muted/40"
                           >
-                            <td className="px-3 py-2 font-medium text-foreground">{r.displayName}</td>
+                            <td className="px-3 py-2">
+                              <GuestProfileLink name={r.displayName} guestId={r.id} onSelect={goToGuest} stopPropagation />
+                            </td>
                             <td className="px-3 py-2 text-muted-foreground">{r.email ?? '—'}</td>
                             <td className="px-3 py-2 tabular-nums text-muted-foreground">{r.mobile ?? '—'}</td>
                             <td className="px-3 py-2"><SegmentBadge segment={r.segment} /></td>

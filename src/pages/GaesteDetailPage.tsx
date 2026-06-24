@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { useParams, useNavigate, Navigate } from 'react-router-dom';
+import { useParams, useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -51,6 +51,7 @@ import {
   type HistoryFilter, type CrmScoreTier, type TrendDirection,
 } from '@/lib/reservation-guest-profile';
 import { downloadCsv, downloadXlsx } from '@/lib/table-export';
+import { parseFromParam } from '@/lib/crm-auswertung-url';
 import { exportSlug } from '@/lib/export-cell';
 import { fetchGuestCrmProfile, upsertGuestCrmProfile } from '@/lib/guest-crm-profile-db';
 import {
@@ -305,6 +306,12 @@ export default function GaesteDetailPage() {
   const { isGuest } = useGuestSession();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Kontextsensitives Rückkehrziel: kommt der Gast aus der CRM-Auswertung
+  // (`?from=…`), validiert `parseFromParam` das Ziel streng und der Zurück-Button
+  // führt mit demselben Zustand dorthin zurück — sonst zurück zur Gästeliste.
+  const fromUrl = useMemo(() => parseFromParam(searchParams), [searchParams]);
 
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<GuestProfile | null>(null);
@@ -499,11 +506,11 @@ export default function GaesteDetailPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
       <button
-        onClick={() => navigate('/gaeste')}
+        onClick={() => navigate(fromUrl ?? '/gaeste')}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
-        Zurück zur Gästeliste
+        {fromUrl ? 'Zurück zur CRM-Auswertung' : 'Zurück zur Gästeliste'}
       </button>
 
       {loading ? (
@@ -512,8 +519,29 @@ export default function GaesteDetailPage() {
           Gast wird geladen…
         </div>
       ) : !profile ? (
-        <div className="rounded-lg border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
-          Dieser Gast wurde nicht gefunden.
+        <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-16 text-center">
+          <p className="text-sm text-muted-foreground">
+            Zu diesem Gast wurde kein Profil gefunden. Möglicherweise wurde es
+            entfernt oder gehört zu einem anderen Betrieb.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              onClick={() => navigate('/gaeste')}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <UsersIcon className="h-4 w-4" />
+              Gästesuche öffnen
+            </button>
+            {fromUrl && (
+              <button
+                onClick={() => navigate(fromUrl)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Zurück zur CRM-Auswertung
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <>

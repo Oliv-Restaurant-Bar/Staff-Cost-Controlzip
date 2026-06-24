@@ -13,6 +13,7 @@ import { de } from 'date-fns/locale';
 import { CalendarClock, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { STATUS_LABEL, STATUS_CLASS } from '@/components/reservations/ReservationSummary';
+import { GuestProfileLink } from '@/components/crm/GuestProfileLink';
 import type { ReservationStatusNormalized } from '@/lib/reservation-import-parser';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 
@@ -59,31 +60,6 @@ function contact(r: ReservationDetailRow): string {
 
 function noteText(r: ReservationDetailRow): string {
   return [r.comment, r.note].map(s => (s ?? '').trim()).filter(Boolean).join(' — ');
-}
-
-/** Gastname — anklickbar (→ Gästeprofil), wenn ein onSelectGuest-Handler UND eine guestId vorhanden sind. */
-function GuestName({ name, guestId, onSelect, className }: {
-  name: string;
-  guestId: string | null;
-  onSelect?: (guestId: string) => void;
-  className?: string;
-}) {
-  if (onSelect && guestId) {
-    return (
-      <button
-        type="button"
-        onClick={() => onSelect(guestId)}
-        className={cn(
-          'text-left font-medium text-primary underline-offset-2 hover:underline focus:underline focus:outline-none',
-          className,
-        )}
-        title="Zum Gästeprofil"
-      >
-        {name}
-      </button>
-    );
-  }
-  return <span className={cn('font-medium text-foreground', className)}>{name}</span>;
 }
 
 export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
@@ -136,7 +112,7 @@ export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
                       <td className="px-3 py-2 tabular-nums">{fdate(r.date)}</td>
                       <td className="px-3 py-2 tabular-nums">{r.time ?? '—'}</td>
                       <td className="px-3 py-2">
-                        <GuestName name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
+                        <GuestProfileLink name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">{r.partySize ?? '—'}</td>
                       <td className="px-3 py-2">
@@ -166,7 +142,7 @@ export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
               return (
                 <div key={r.id} className="space-y-1 p-3">
                   <div className="flex items-center justify-between gap-2">
-                    <GuestName name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
+                    <GuestProfileLink name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
                     <span className={cn('rounded px-1.5 py-0.5 text-[11px] font-medium', statusClass(r.status))}>
                       {statusLabel(r.status)}
                     </span>
