@@ -58,6 +58,7 @@ import {
 import type { HarteTestResult } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { isEmployeeActiveForDate } from '@/lib/personnel-utils';
+import { getVisibleEmployeesForRole } from '@/lib/employee-visibility';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
 import { ContractDraft, defaultContractDraft } from '@/types/contract';
@@ -349,7 +350,7 @@ function emptyEmployee(id: string): Employee {
 const Personalstamm = () => {
   const { tenantId, tenantKey } = useTenant();
   const {
-    isAdmin, isManager, allowedDepartment, canEditEmployees, isBeaulieuManager,
+    role, isAdmin, isManager, allowedDepartment, canEditEmployees, isBeaulieuManager,
   } = usePermissions();
 
   /** Darf Lohnfelder sehen und bearbeiten */
@@ -573,12 +574,13 @@ const Personalstamm = () => {
       : [],
   [employees, canManageAllEmployees]);
 
+  // Rollen-Sichtbarkeit als zentrale Quelle der Wahrheit: Küchen-/Service-Manager
+  // sehen nur ihre Abteilung, Admin/Beaulieu sehen alle. (pending_review bleibt
+  // separat ausgeblendet und nur für canManageAllEmployees sichtbar.)
   const visibleBase = useMemo(() =>
-    (allowedDepartment === 'all'
-      ? employees
-      : employees.filter(e => e.department === allowedDepartment))
+    getVisibleEmployeesForRole(role, allowedDepartment, employees)
       .filter(e => e.employeeStatus !== 'pending_review'),
-  [employees, allowedDepartment]);
+  [employees, role, allowedDepartment]);
 
   // Heutiges Datum ohne Uhrzeit — stabil für den gesamten Render-Zyklus
   const today = useMemo(() => {

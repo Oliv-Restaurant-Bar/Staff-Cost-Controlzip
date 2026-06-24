@@ -69,6 +69,7 @@ import { EmployeeForm } from '@/components/EmployeeForm';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
+import { getVisibleEmployeesForRole, effectiveEmployeeDepartmentScope } from '@/lib/employee-visibility';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay, getISOWeek } from 'date-fns';
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
@@ -202,10 +203,12 @@ const SchedulePlanner = () => {
   const fetchGenRef = useRef(0);
   // hasAutoSeededBeaulieu entfernt – auto-seed dauerhaft deaktiviert
   const {
+    role,
     isAdmin,
     isServiceManager,
     isKuecheManager,
     isBeaulieuManager,
+    allowedDepartment,
     canSeeHourlyWages,
     canSeePersonnelCostTotals,
     canToggleCostView,
@@ -226,8 +229,18 @@ const SchedulePlanner = () => {
     } catch { /* ignore */ }
     return defaultEmployees;
   });
+  // Rollen-Sichtbarkeit: zentrale Quelle der Wahrheit für sichtbare Mitarbeiter.
+  // Admin/Beaulieu → alle; Küchen-/Service-Manager → nur ihre Abteilung.
+  // Wird überall verwendet, wo Mitarbeiter angezeigt, ausgewählt, gezählt oder
+  // exportiert werden (die rohe `employees`-Liste bleibt nur für Laden/Speichern).
+  const roleScopedEmployees = useMemo(
+    () => getVisibleEmployeesForRole(role, allowedDepartment, employees),
+    [role, allowedDepartment, employees],
+  );
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
-  const [activeDepartment, setActiveDepartment] = useState<ViewMode>('all');
+  const [activeDepartment, setActiveDepartment] = useState<ViewMode>(
+    () => effectiveEmployeeDepartmentScope(role, allowedDepartment),
+  );
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [empFilterOpen, setEmpFilterOpen] = useState(false);
   const [empSearchQuery, setEmpSearchQuery] = useState('');
@@ -364,8 +377,8 @@ const SchedulePlanner = () => {
     currentMonth.getMonth() + 1,
   );
   const paFixCost = useMemo(
-    () => employees.reduce((s, e) => s + (e.monthlySalaryWith13th ?? e.monthlySalary ?? 0), 0),
-    [employees],
+    () => roleScopedEmployees.reduce((s, e) => s + (e.monthlySalaryWith13th ?? e.monthlySalary ?? 0), 0),
+    [roleScopedEmployees],
   );
 
   // ── Planungshilfe: Highlight + Jump ──────────────────────────────────────
@@ -380,9 +393,9 @@ const SchedulePlanner = () => {
   // Wenn der User kein Admin ist, wird die Abteilung automatisch gesetzt
   // und kann nicht verändert werden.
   useEffect(() => {
-    if (isServiceManager) setActiveDepartment('service');
-    else if (isKuecheManager) setActiveDepartment('küche');
-  }, [isServiceManager, isKuecheManager]);
+    const scope = effectiveEmployeeDepartmentScope(role, allowedDepartment);
+    if (scope !== 'all') setActiveDepartment(scope);
+  }, [role, allowedDepartment]);
 
   // Beim Abteilungswechsel Mitarbeiter-Filter zurücksetzen
   useEffect(() => {
@@ -2077,7 +2090,7 @@ const SchedulePlanner = () => {
       const restaurantName = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
       if (options.format === 'pdf') {
         await exportScheduleToPDF({
-          employees,
+          employees: roleScopedEmployees,
           currentMonth,
           department: options.department,
           dailyBudgets,
@@ -2093,7 +2106,7 @@ const SchedulePlanner = () => {
         toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);
       } else {
         await exportScheduleTemplate({
-          employees,
+          employees: roleScopedEmployees,
           currentMonth,
           department: options.department,
           dailyBudgets,
@@ -2454,7 +2467,7 @@ const SchedulePlanner = () => {
   const activeEmployees = (() => {
     const yr  = currentMonth.getFullYear();
     const mon = currentMonth.getMonth() + 1;
-    return employees.filter(e => {
+    return roleScopedEmployees.filter(e => {
       const active = isEmployeeActiveInMonth(e, yr, mon);
       if (!active) {
         let reason = 'unbekannt';
@@ -2643,15 +2656,15 @@ const SchedulePlanner = () => {
   })();
 
   // Variable employees whose planned hours exceed the estimated hours from Personal FIX
-  const varHoursExceeded = employees
+  const varHoursExceeded = roleScopedEmployees
     .filter(e => !((e.employmentType === 'vollzeit' || e.employmentType === 'teilzeit') && (e.monthlySalary ?? 0) > 0))
     .map(e => ({ emp: e, planned: calculateEmployeeHours(e.id), estimated: varEstimatedHours[e.id] ?? 0 }))
     .filter(r => r.estimated > 0 && r.planned > r.estimated);
 
   // ── Pattern warnings (consecutive days, late streaks, short recovery, overload) ──
   const patternWarnings = useMemo<PatternWarning[]>(
-    () => detectPatternWarnings(employees, daysInMonth, scheduleData),
-    [employees, daysInMonth, scheduleData],
+    () => detectPatternWarnings(roleScopedEmployees, daysInMonth, scheduleData),
+    [roleScopedEmployees, daysInMonth, scheduleData],
   );
 
   // ── Display employees: apply "Nur mit Warnungen" filter as a post-pass ────
@@ -2869,7 +2882,7 @@ const SchedulePlanner = () => {
     // Different week → nothing to compare (all days would appear "new")
     if (existingPublishedPayload.weekStart !== format(days[0], 'yyyy-MM-dd')) return [];
 
-    let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, days[0]));
+    let targetEmps = roleScopedEmployees.filter(e => isEmployeeActiveInMonth(e, days[0]));
     if (publishDept !== 'all') targetEmps = targetEmps.filter(e => e.department === publishDept);
 
     const entries: PublishDiffEntry[] = [];
@@ -2903,7 +2916,7 @@ const SchedulePlanner = () => {
       }
     }
     return entries;
-  }, [existingPublishedPayload, employees, displayDays, scheduleData, publishDept, currentMonth]);
+  }, [existingPublishedPayload, roleScopedEmployees, displayDays, scheduleData, publishDept, currentMonth]);
 
   const publishDiffFiltered = useMemo(() =>
     diffFilter === 'all' ? publishDiffAll : publishDiffAll.filter(e => e.department === diffFilter),
@@ -3252,7 +3265,7 @@ const SchedulePlanner = () => {
       }
 
       // ── 1. Build employee list ─────────────────────────────────────────────
-      let targetEmps = employees.filter(e => isEmployeeActiveInMonth(e, weekStart));
+      let targetEmps = roleScopedEmployees.filter(e => isEmployeeActiveInMonth(e, weekStart));
       if (publishType === 'personal' && publishEmpId) {
         targetEmps = targetEmps.filter(e => e.id === publishEmpId);
       } else if (publishType === 'department' && publishDept !== 'all') {
@@ -3806,7 +3819,7 @@ const SchedulePlanner = () => {
                     )}
                   >
                     <Users className="h-3 w-3 shrink-0" />
-                    Alle ({employees.length})
+                    Alle ({roleScopedEmployees.length})
                   </button>
                   {([
                     { key: 'service', label: 'Service', dot: 'bg-blue-500' },
@@ -4642,14 +4655,14 @@ const SchedulePlanner = () => {
                       <div className="space-y-1 mb-3">
                         <StaffingStatusBar
                           targets={staffingTargets}
-                          employees={employees}
+                          employees={roleScopedEmployees}
                           scheduleData={scheduleData}
                           displayDays={displayDays}
                           department="service"
                         />
                         <StaffingStatusBar
                           targets={staffingTargets}
-                          employees={employees}
+                          employees={roleScopedEmployees}
                           scheduleData={scheduleData}
                           displayDays={displayDays}
                           department="küche"
@@ -4659,7 +4672,7 @@ const SchedulePlanner = () => {
                     {calendarView === 'week' && activeDepartment !== 'all' && (
                       <StaffingStatusBar
                         targets={staffingTargets}
-                        employees={employees}
+                        employees={roleScopedEmployees}
                         scheduleData={scheduleData}
                         displayDays={displayDays}
                         department={activeDepartment as 'service' | 'küche'}
@@ -4762,7 +4775,7 @@ const SchedulePlanner = () => {
                     </p>
                     <ActualHoursImportButton
                       onImport={handleImportMirusActualHours}
-                      employees={employees}
+                      employees={roleScopedEmployees}
                       existingTimeEntries={[]}
                     />
                   </div>
@@ -5296,7 +5309,7 @@ const SchedulePlanner = () => {
           summaries={departmentSummaries}
           varEstimatedHours={varEstimatedHours}
           actualHoursPerEmp={Object.fromEntries(
-            employees.map(emp => [
+            roleScopedEmployees.map(emp => [
               emp.id,
               Object.entries(actualHoursData)
                 .filter(([k]) => monthDateSet.has(k.slice(-10)) && k.startsWith(`${emp.id}-`))
@@ -5311,7 +5324,7 @@ const SchedulePlanner = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Users className="h-5 w-5" />
-                Mitarbeiter ({employees.length})
+                Mitarbeiter ({roleScopedEmployees.length})
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -5328,7 +5341,7 @@ const SchedulePlanner = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {employees.map((employee) => (
+                    {roleScopedEmployees.map((employee) => (
                       <tr key={employee.id} className="border-b hover:bg-muted/50">
                         <td className="py-2 px-2 font-medium">{employee.name}</td>
                         <td className="py-2 px-2">
@@ -5450,7 +5463,7 @@ const SchedulePlanner = () => {
         open={dayDetailDialogOpen}
         onOpenChange={setDayDetailDialogOpen}
         date={selectedDay}
-        employees={employees}
+        employees={roleScopedEmployees}
         scheduleData={scheduleData}
         plannedRevenue={selectedDay ? dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
         isOverride={selectedDay ? !!dailyBudgets[format(selectedDay, 'yyyy-MM-dd')]?.isOverride : false}
@@ -5466,7 +5479,7 @@ const SchedulePlanner = () => {
         open={istDayDetailDialogOpen}
         onOpenChange={setIstDayDetailDialogOpen}
         date={selectedIstDay}
-        employees={employees}
+        employees={roleScopedEmployees}
         actualHoursData={actualHoursData}
         actualRevenue={selectedIstDay ? dailyBudgets[format(selectedIstDay, 'yyyy-MM-dd')]?.actualRevenue : undefined}
         plannedRevenue={selectedIstDay ? dailyBudgets[format(selectedIstDay, 'yyyy-MM-dd')]?.plannedRevenue : undefined}
@@ -5588,7 +5601,7 @@ const SchedulePlanner = () => {
         open={importPreviewOpen}
         onOpenChange={setImportPreviewOpen}
         nameMatches={pendingImportResult?.nameMatches || []}
-        existingEmployees={employees}
+        existingEmployees={roleScopedEmployees}
         onConfirm={handleConfirmImport}
         onCancel={handleCancelImport}
       />
@@ -5597,7 +5610,7 @@ const SchedulePlanner = () => {
       <PlanningAssistant
         open={planningAssistantOpen}
         onClose={() => setPlanningAssistantOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         scheduleData={scheduleData}
         actualHoursData={actualHoursData}
         displayDays={displayDays}
@@ -5613,7 +5626,7 @@ const SchedulePlanner = () => {
       <BulkActionsDialog
         open={bulkActionsOpen}
         onClose={() => setBulkActionsOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         scheduleData={scheduleData}
         actualHoursData={actualHoursData}
         currentMonth={currentMonth}
@@ -5624,7 +5637,7 @@ const SchedulePlanner = () => {
       <TimeSlotStaffingDialog
         open={timeSlotStaffingOpen}
         onClose={() => setTimeSlotStaffingOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         actualHoursData={actualHoursData}
         scheduleData={scheduleData}
         currentMonth={currentMonth}
@@ -5634,7 +5647,7 @@ const SchedulePlanner = () => {
       <TemplateManagerDialog
         open={templateDialogOpen}
         onClose={() => setTemplateDialogOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         scheduleData={scheduleData}
         displayDays={displayDays}
         activeDepartment={'all' as TemplateDept}
@@ -5653,21 +5666,21 @@ const SchedulePlanner = () => {
       <StationMatrixDialog
         open={stationMatrixOpen}
         onClose={() => setStationMatrixOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         onEmployeeUpdated={handleStationEmployeeUpdated}
       />
 
       <AvailabilityDialog
         open={availabilityOpen}
         onClose={() => setAvailabilityOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         initialMonth={currentMonth}
       />
 
       <KüchenplanImportDialog
         open={küchenplanImportOpen}
         onClose={() => setKüchenplanImportOpen(false)}
-        employees={employees}
+        employees={roleScopedEmployees}
         scheduleData={scheduleData}
         onImport={handleKüchenplanImport}
       />
@@ -5940,7 +5953,7 @@ const SchedulePlanner = () => {
               <div className="space-y-2">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mitarbeiter</p>
                 <div className="max-h-44 overflow-y-auto rounded-lg border border-border divide-y divide-border/50">
-                  {employees.filter(e => isEmployeeActiveInMonth(e, currentMonth)).map(emp => {
+                  {roleScopedEmployees.filter(e => isEmployeeActiveInMonth(e, currentMonth)).map(emp => {
                     const name = getEmployeeDisplayName(emp);
                     const sel = publishEmpId === emp.id;
                     return (
