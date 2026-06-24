@@ -1,46 +1,43 @@
 ---
 name: Gastronovi product-sales CSV import — duplicate line-items
-description: Why a product's stored qty/revenue can diverge from Gastronovi when the export lists it on multiple lines (matchAnzahlUmsatz in gastronovi-csv-parser.ts).
+description: How matchAnzahlUmsatz handles a product listed on multiple export lines, and the inherent limit of a flat (no article-number) CSV.
 ---
 
-# Gastronovi product-sales import: duplicate-name line-items break qty + revenue
+# Gastronovi product-sales import: duplicate-name line-items
 
-When a single product appears on **more than one line** in a Gastronovi wide-format
-export (both the "Anzahl"/quantity file and the "Umsatz"/revenue file), the product-sales
-import (`matchAnzahlUmsatz` in `src/lib/gastronovi-csv-parser.ts`) corrupts that product's
-stored numbers. Symptom seen in the wild: "Pizza Prosciutto TA" stored qty 509 / rev CHF 704,
-while Gastronovi reported qty 487 / rev ~CHF 4'870.
+When a single product name appears on **more than one line** in a Gastronovi wide-format
+export (the "Anzahl"/quantity file and/or the "Umsatz"/revenue file), `matchAnzahlUmsatz`
+in `src/lib/gastronovi-csv-parser.ts` aggregates them.
 
-Two independent defects, both triggered by duplicate line-items:
+## Current behaviour (the fix — shipped)
+Both Anzahl and Umsatz lines are aggregated **per normalized product name, summing day
+values per date** (`aggregateRowsByName`), and exactly **one** record is emitted per
+`(product, date)`. `MatchResult.duplicateProducts` lists every product that was merged so
+the import preview can surface it (blue banner in `SalesUpload.tsx`).
 
-1. **Umsatz lookup is last-write-wins.** `umsatzMap` is built with
-   `Map.set(normalizeProductName(name), row)`. If the same normalized name occurs twice in the
-   Umsatz file, the **earlier line is silently discarded**. If the surviving line only carries
-   revenue for a few days, the rest of the month's revenue is lost → revenue collapses
-   (e.g. ~4'870 → a few hundred).
+**Why:** the old code had two defects, both triggered by duplicate line-items:
+1. *Umsatz lookup was last-write-wins* (`umsatzMap.set(name,row)`) → an earlier same-name
+   Umsatz line was silently discarded → month revenue collapsed.
+2. *Anzahl lines were never de-duped* → two quantity lines emitted two rows for the same
+   `(name,date)`, both reading the single surviving Umsatz value → quantity inflated and
+   that day's revenue double-counted. Tell-tale signature in `product_sales`: two rows with
+   the same `(product_name, sale_date)`, identical `revenue`, different `quantity`.
 
-2. **Anzahl rows are never de-duplicated.** The function emits one DB row per
-   (anzahl line × date) with no dedup, so two quantity lines both produce rows on the overlapping
-   days → phantom quantity. Because both duplicate anzahl lines read revenue from the *same*
-   surviving `umsatzMap` entry, the identical daily revenue is written onto **both** rows →
-   that day's revenue is double-counted. Tell-tale signature in `product_sales`: two rows with the
-   same `(product_name, sale_date)` and the **exact same `revenue`** but different `quantity`.
+**How to apply:** never reintroduce a `Map.set(name,row)` overwrite or per-line emission
+here. Summing duplicate same-name lines is the intended aggregation.
 
-**Why it only hits a few products:** most products appear once per file and import cleanly.
-Only items the export splits onto multiple lines (e.g. a take-away "TA" item that is also listed
-under another section) are affected.
+## Inherent limit — same name, different article
+The wide CSV has **no article-number column**, so two genuinely different articles that
+share a display name (e.g. a 10-CHF item and a 16-CHF item both called "Pizza Prosciutto TA")
+are indistinguishable and get **summed**. Re-importing the real June 2026 food export after
+the fix therefore yields the *summed* totals (Pizza Prosciutto TA ≈ qty 509 / rev 5222),
+**not** Gastronovi's article-level split (qty 487 / rev 4870). This is expected, not a bug —
+separating them would require article numbers the flat CSV doesn't carry.
 
-**Diagnostic recipe (read-only):** query `product_sales` for the product; if most days have
-`revenue = 0` while quantity is present, and a handful of days have duplicate `(name,date)` rows
-sharing an identical revenue value, this is the bug. `quantity_stored − Σ(duplicate-row qty)`
-will usually equal the true Gastronovi quantity.
-
-**Related, separate fact:** `aggregateProducts` (sales-db.ts) and the Produkt-Analyse ranking
-group by **exact `product_name`** — there is NO cross-name normalization at aggregation time.
-`normalizeProductName` is used ONLY for the Anzahl↔Umsatz join, never to merge ranking rows.
-So e.g. "Pizza Prosciutto TA", "Pizza Prosciutto", "Pizza Prosciutto e Funghi TA" are always
-separate ranking rows; none are folded into another.
-
-**Also note:** many legitimate "modifier" rows (steak doneness "À point"/"Bien cuit"/"Saignant",
-spice "scharf"/"mittel", "ohne Alkohol", ice-cream flavours) carry quantity but `revenue = 0` by
-design — the revenue sits on the parent article. Do not mistake those for this bug.
+## Related, separate facts
+- `aggregateProducts` (sales-db.ts) and the Produkt-Analyse ranking group by **exact
+  `product_name`** — NO cross-name normalization at aggregation time. `normalizeProductName`
+  is used ONLY for the Anzahl↔Umsatz join, never to merge ranking rows.
+- Many legitimate "modifier" rows (steak doneness, spice level, "ohne Alkohol", ice-cream
+  flavours) carry quantity but `revenue = 0` by design — the revenue sits on the parent
+  article. Do not mistake those for the old bug.

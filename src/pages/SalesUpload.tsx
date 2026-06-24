@@ -282,6 +282,23 @@ function PreviewCard({
           </div>
         )}
 
+        {/* Mehrfach im Export vorkommende Produkte (pro Tag zusammengeführt) */}
+        {result.matchResult.duplicateProducts.length > 0 && (
+          <div className="rounded border border-blue-200 dark:border-blue-800 bg-blue-50/40 dark:bg-blue-950/10 px-3 py-2 space-y-1">
+            <div className="flex items-center gap-1.5">
+              <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+              <p className="text-[11px] font-semibold text-blue-700 dark:text-blue-400">
+                {result.matchResult.duplicateProducts.length} Produkt(e) mehrfach im Export – Mengen &amp; Umsätze pro Tag zusammengeführt
+              </p>
+            </div>
+            <div className="space-y-0.5 max-h-24 overflow-y-auto">
+              {result.matchResult.duplicateProducts.slice(0, 10).map((n, i) => (
+                <p key={i} className="text-[10px] text-blue-600 dark:text-blue-500 truncate">• {n}</p>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Vorschau-Tabelle */}
         <div className="overflow-x-auto rounded border border-border/60">
           <table className="w-full text-xs">

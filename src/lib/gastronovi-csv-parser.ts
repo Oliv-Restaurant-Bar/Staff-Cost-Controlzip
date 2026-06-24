@@ -60,6 +60,7 @@ export interface MatchResult {
   skippedCount:  number;   // Summen/Struktur-Zeilen total
   warningCount:  number;   // Zeilen mit Warnungen
   unmatchedProducts: string[];  // in Anzahl aber nicht in Umsatz (oder umgekehrt)
+  duplicateProducts: string[];  // Produkte, die in Anzahl und/oder Umsatz auf mehreren Zeilen standen und zusammengeführt wurden
   dateColumnCount: number;
 }
 
@@ -280,19 +281,58 @@ export async function parseWideFile(file: File): Promise<ParseResult> {
   return { rows, dateColumns, skippedRows, warningRows, rawLineCount };
 }
 
+// ─── Mehrfachzeilen je Produkt zusammenführen ────────────────────────────────
+
+/** Eine pro Produktname zusammengeführte Zeile (mehrere Exportzeilen summiert) */
+interface AggregatedProduct {
+  /** Erste gesehene Original-Bezeichnung (für die Anzeige/Speicherung) */
+  displayName: string;
+  /** Pro Datum aufsummierte Tageswerte */
+  dayValues:   Record<string, number>;
+  /** Anzahl der zusammengeführten Exportzeilen (>1 ⇒ Duplikat) */
+  lineCount:   number;
+}
+
+/**
+ * Fasst alle Exportzeilen mit identischem (normalisiertem) Produktnamen zusammen.
+ * Tageswerte werden pro Datum **aufsummiert** – so geht weder Menge noch Umsatz
+ * verloren, wenn ein Produkt im Gastronovi-Export mehrfach auftaucht (z. B. auf
+ * mehreren Kostenstellen-/Gruppenzeilen). Dies ersetzt sowohl das frühere
+ * `Map.set`-Überschreiben (verlor Umsatz) als auch das zeilenweise Emittieren
+ * (erzeugte doppelte product_sales-Datensätze pro Produkt/Tag).
+ */
+function aggregateRowsByName(rows: ParsedWideRow[]): Map<string, AggregatedProduct> {
+  const map = new Map<string, AggregatedProduct>();
+  for (const r of rows) {
+    const key = normalizeProductName(r.productName);
+    let entry = map.get(key);
+    if (!entry) {
+      entry = { displayName: r.productName.trim(), dayValues: {}, lineCount: 0 };
+      map.set(key, entry);
+    }
+    entry.lineCount += 1;
+    for (const [dateCol, val] of Object.entries(r.dayValues)) {
+      entry.dayValues[dateCol] = (entry.dayValues[dateCol] ?? 0) + val;
+    }
+  }
+  return map;
+}
+
 // ─── Matching: Anzahl + Umsatz → Tagesdatensätze ────────────────────────────
 
 /**
  * Kombiniert zwei ParseResults (Anzahl + Umsatz) zu normierten Tagesdatensätzen.
  *
  * Normalisierungslogik:
- *   Für jedes Produkt in `anzahlResult.rows`:
- *     1. Passendes Produkt in `umsatzResult.rows` suchen (exakter Name-Match)
- *     2. Für jede erkannte Datumsspalte:
- *        - quantity = Wert aus Anzahl-Datei für diesen Tag
- *        - revenue  = Wert aus Umsatz-Datei für diesen Tag
+ *   1. Anzahl- UND Umsatzzeilen werden je (normalisiertem) Produktnamen
+ *      zusammengeführt – Mehrfachzeilen desselben Produkts werden pro Datum
+ *      aufsummiert (kein Überschreiben, keine doppelten Datensätze).
+ *   2. Für jedes zusammengeführte Produkt und jede erkannte Datumsspalte:
+ *        - quantity = aufsummierter Anzahl-Wert für diesen Tag
+ *        - revenue  = aufsummierter Umsatz-Wert für diesen Tag
  *        - Nur einfügen wenn qty > 0 ODER revenue > 0
- *     3. sale_date = ISO-Datum aus Spaltenheader + Formular-Jahr
+ *      → garantiert genau **eine** Zeile pro Produkt/Datum.
+ *   3. sale_date = ISO-Datum aus Spaltenheader + Formular-Jahr
  */
 export function matchAnzahlUmsatz(
   anzahlResult: ParseResult,
@@ -307,11 +347,9 @@ export function matchAnzahlUmsatz(
     notes?:        string;
   }
 ): MatchResult {
-  // Umsatz-Lookup: Produktname → Row
-  const umsatzMap = new Map<string, ParsedWideRow>();
-  for (const r of umsatzResult.rows) {
-    umsatzMap.set(normalizeProductName(r.productName), r);
-  }
+  // Anzahl- und Umsatzzeilen je Produktname zusammenführen (Mehrfachzeilen summieren)
+  const anzahlAgg = aggregateRowsByName(anzahlResult.rows);
+  const umsatzAgg = aggregateRowsByName(umsatzResult.rows);
 
   // Alle erkannten Datumsspalten (Union aus beiden Dateien)
   const allDateCols = [
@@ -327,15 +365,34 @@ export function matchAnzahlUmsatz(
   let skippedCount = anzahlResult.skippedRows.length + umsatzResult.skippedRows.length;
   let warningCount = anzahlResult.warningRows.length + umsatzResult.warningRows.length;
 
+  // Produkte, die auf mehreren Exportzeilen standen (Anzahl ODER Umsatz) und
+  // pro Tag zusammengeführt wurden – jedes Produkt nur einmal melden.
+  const duplicateProducts: string[] = [];
+  const seenDuplicate = new Set<string>();
+  for (const [key, anzahlEntry] of anzahlAgg) {
+    const umsatzEntry = umsatzAgg.get(key);
+    if ((anzahlEntry.lineCount > 1 || (umsatzEntry?.lineCount ?? 0) > 1) && !seenDuplicate.has(key)) {
+      duplicateProducts.push(anzahlEntry.displayName);
+      seenDuplicate.add(key);
+    }
+  }
+  for (const [key, umsatzEntry] of umsatzAgg) {
+    // Nur-in-Umsatz-Duplikate (kein Anzahl-Gegenstück) ebenfalls melden
+    if (umsatzEntry.lineCount > 1 && !anzahlAgg.has(key) && !seenDuplicate.has(key)) {
+      duplicateProducts.push(umsatzEntry.displayName);
+      seenDuplicate.add(key);
+    }
+  }
+
   const fileNames = [meta.anzahlFileName, meta.umsatzFileName]
     .filter(Boolean).join(', ');
 
-  for (const anzahlRow of anzahlResult.rows) {
-    const key       = normalizeProductName(anzahlRow.productName);
-    const umsatzRow = umsatzMap.get(key);
+  // Je zusammengeführtem Produkt genau eine Zeile pro Datum erzeugen
+  for (const [key, anzahlEntry] of anzahlAgg) {
+    const umsatzEntry = umsatzAgg.get(key);
 
-    if (!umsatzRow) {
-      unmatched.push(anzahlRow.productName);
+    if (!umsatzEntry) {
+      unmatched.push(anzahlEntry.displayName);
       // Importiere trotzdem mit revenue=0 um keinen Datenverlust zu haben
     }
 
@@ -343,14 +400,14 @@ export function matchAnzahlUmsatz(
       const isoDate = headerToIsoDate(dateCol, year);
       if (!isoDate) continue;
 
-      const qty = anzahlRow.dayValues[dateCol] ?? 0;
-      const rev = umsatzRow?.dayValues[dateCol] ?? 0;
+      const qty = anzahlEntry.dayValues[dateCol] ?? 0;
+      const rev = umsatzEntry?.dayValues[dateCol] ?? 0;
 
       // Nur einfügen wenn mind. ein Wert > 0
       if (qty === 0 && rev === 0) continue;
 
       rows.push({
-        product_name: anzahlRow.productName,
+        product_name: anzahlEntry.displayName,
         quantity:     qty,
         revenue:      rev,
         sale_date:    isoDate,
@@ -363,12 +420,10 @@ export function matchAnzahlUmsatz(
     }
   }
 
-  // Produkte in Umsatz aber nicht in Anzahl
-  for (const umsatzRow of umsatzResult.rows) {
-    const key = normalizeProductName(umsatzRow.productName);
-    const inAnzahl = anzahlResult.rows.some(r => normalizeProductName(r.productName) === key);
-    if (!inAnzahl) {
-      unmatched.push(`(nur in Umsatz) ${umsatzRow.productName}`);
+  // Produkte nur in Umsatz (kein Anzahl-Gegenstück)
+  for (const [key, umsatzEntry] of umsatzAgg) {
+    if (!anzahlAgg.has(key)) {
+      unmatched.push(`(nur in Umsatz) ${umsatzEntry.displayName}`);
     }
   }
 
@@ -377,6 +432,7 @@ export function matchAnzahlUmsatz(
     skippedCount,
     warningCount,
     unmatchedProducts: unmatched,
+    duplicateProducts,
     dateColumnCount:   allDateCols.length,
   };
 }
