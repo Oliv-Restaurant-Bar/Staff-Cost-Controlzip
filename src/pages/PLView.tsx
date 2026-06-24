@@ -55,6 +55,7 @@ import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
+import { computePriorYearDiagnostics } from '@/lib/pl-prior-year-diagnostics';
 import { computeMonthlyIstNet, computeMonthlyIstGross, computeMonthlyVjNet } from '@/lib/revenue-sync';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
@@ -2409,6 +2410,13 @@ const PLViewPage = () => {
   const records = useMemo(() => loadYear(year, tenantKey(REPORTING_STORAGE_KEY)), [year, month, refreshKey, tenantId]);
   const prevYearRecords = useMemo(() => loadYear(year - 1, tenantKey(REPORTING_STORAGE_KEY)), [year, tenantId]);
 
+  // Vorjahres-Diagnose: macht sichtbar, ob/welche Vorjahresdaten vorhanden sind
+  // (verändert KEINE Berechnungen, erfindet KEINE Werte — nur Sichtbarkeit).
+  const priorYearDiag = useMemo(
+    () => computePriorYearDiagnostics(year - 1, prevYearRecords, vjDailyData),
+    [year, prevYearRecords, vjDailyData],
+  );
+
   // Gastronovi-Tagesdaten aus localStorage laden (gecacht für alle Berechnungen)
   const dailyBudgetsData = useMemo<Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
@@ -3177,6 +3185,22 @@ const PLViewPage = () => {
 
         {/* Stichtag-Hinweisbanner */}
         <StichtagBanner />
+
+        {/* Vorjahres-Diagnose-Hinweis (nur Sichtbarkeit, keine Berechnung) */}
+        {priorYearDiag.message && (
+          <div
+            className={cn(
+              'flex items-start gap-2 rounded-md border px-3 py-2.5 text-sm',
+              priorYearDiag.status === 'none'
+                ? 'border-amber-300 bg-amber-50 text-amber-800'
+                : 'border-blue-300 bg-blue-50 text-blue-800',
+            )}
+            role="status"
+          >
+            <Info className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>{priorYearDiag.message}</span>
+          </div>
+        )}
 
         {/* KPI-Karten (Monatsansicht + Budget P&L) */}
         {(mode === 'monthly' || mode === 'budget_pl') && (
