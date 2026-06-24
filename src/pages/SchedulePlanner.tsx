@@ -70,6 +70,7 @@ import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { getVisibleEmployeesForRole, effectiveEmployeeDepartmentScope } from '@/lib/employee-visibility';
+import { computeDailyKitchenTotals, toDailyTotalsDisplay, type EmployeeDayInput, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
 import { toast } from 'sonner';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay, getISOWeek } from 'date-fns';
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
@@ -2719,6 +2720,38 @@ const SchedulePlanner = () => {
     return sum + hrs * emp.hourlyWage;
   }, 0);
 
+  // ── Kueche-Manager: per-day manager-safe header totals (Plan-PKQ) ──────────
+  // Computed ONLY for the kitchen manager; admin/service get an empty map so the
+  // ModernScheduleGrid day header behaves exactly as before for them. Uses the
+  // same kitchen-scoped basis as the week/month PKQ cards (visibleEmployees) so
+  // the per-day ratio is consistent with those totals and is NOT distorted by
+  // the "nur mit Warnungen" row filter. The CHF cost is stripped before it ever
+  // reaches the grid (toDailyTotalsDisplay) — the manager never sees wages.
+  const dailyManagerTotals = useMemo<Record<string, DailyTotalsDisplay>>(() => {
+    if (!isKuecheManager) return {};
+    const monthDays = daysInMonth.length;
+    const out: Record<string, DailyTotalsDisplay> = {};
+    for (const day of displayDays) {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const inputs: EmployeeDayInput[] = visibleEmployees.map(emp => {
+        const ds = scheduleData[`${emp.id}-${dateStr}`];
+        return {
+          employmentType: emp.employmentType,
+          monthlySalary: emp.monthlySalary,
+          hourlyWage: emp.hourlyWage,
+          dayHours: ds ? calculateDayHours(ds) : 0,
+          dayAbsenceHours: ds ? getDayAbsenceHoursForForecast(ds) : 0,
+        };
+      });
+      const revenue = dailyBudgets[dateStr]?.plannedRevenue ?? 0;
+      out[dateStr] = toDailyTotalsDisplay(
+        computeDailyKitchenTotals(inputs, revenue, laborCostThreshold, monthDays),
+      );
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isKuecheManager, visibleEmployees, displayDays, scheduleData, dailyBudgets, laborCostThreshold, daysInMonth]);
+
   // ── Ist-Personalkosten: aus tatsächlich erfassten Stunden ──────────────────
   const weeklyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
     const hrs = displayDays.reduce((h, day) => {
@@ -4763,6 +4796,8 @@ const SchedulePlanner = () => {
                         onMultiPlanCell={handleMultiPlanCell}
                         stickyHeader={stickyHeader}
                         onAdditionalCostPlanChange={handleAdditionalCostPlanChange}
+                        managerSafeTotals={isKuecheManager}
+                        dailyManagerTotals={dailyManagerTotals}
                       />
                 </>
               ) : (

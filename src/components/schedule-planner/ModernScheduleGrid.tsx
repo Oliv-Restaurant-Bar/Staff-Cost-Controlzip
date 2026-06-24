@@ -30,6 +30,7 @@ import { TimeSlot, DaySchedule } from './ScheduleGrid';
 import { PatternWarning } from '@/lib/pattern-warnings';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { cn } from '@/lib/utils';
+import { dailyTotalsVisibility, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
 import { AlertTriangle, CalendarOff, Copy, ClipboardPaste, X } from 'lucide-react';
 
 // ── Shared cell-clipboard type (also used by SchedulePlanner) ─────────────────
@@ -96,6 +97,13 @@ export interface ModernScheduleGridProps {
   onMultiPlanCell?: (empId: string, dateStr: string) => void;
   stickyHeader?: boolean;
   onAdditionalCostPlanChange?: (empId: string, date: string, v: boolean) => void;
+  // ── Kueche-Manager: per-day manager-safe header totals ────────────────────
+  // When true, the day header shows planned hours + expected revenue + a
+  // personnel-cost ratio (%) + an over-target indicator — but NEVER any CHF
+  // cost or individual wages. Only set for the kitchen manager; admin/service
+  // leave it false so the header is exactly as before.
+  managerSafeTotals?: boolean;
+  dailyManagerTotals?: Record<string, DailyTotalsDisplay>;
 }
 
 // ── Small helper: format a numeric diff as +x.x / −x.x ───────────────────────
@@ -137,9 +145,14 @@ export function ModernScheduleGrid({
   onMultiPlanCell,
   stickyHeader = true,
   onAdditionalCostPlanChange,
+  managerSafeTotals = false,
+  dailyManagerTotals,
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
+
+  // Visibility matrix for the per-day header totals (manager vs full).
+  const totalsVis = dailyTotalsVisibility(managerSafeTotals ? 'manager' : 'full');
 
   const empIds   = useMemo(() => employees.map(e => e.id), [employees]);
   const dateStrs = useMemo(() => days.map(d => format(d, 'yyyy-MM-dd')), [days]);
@@ -314,9 +327,50 @@ export function ModernScheduleGrid({
                     {format(day, 'MMM')}
                   </span>
 
-                  {/* Planned hours total for this day */}
+                  {/* Per-day totals: manager-safe block for the kitchen manager,
+                      otherwise the unchanged gross planned-hours line. */}
                   {(() => {
-                    const tot = dayTotals[format(day, 'yyyy-MM-dd')] ?? 0;
+                    const ds = format(day, 'yyyy-MM-dd');
+
+                    // ── Kueche-Manager: net hours + revenue + cost ratio ──────
+                    if (managerSafeTotals) {
+                      const t = dailyManagerTotals?.[ds];
+                      if (!t) return null;
+                      return (
+                        <div className="flex flex-col items-center gap-0.5 mt-1 leading-none">
+                          {totalsVis.showHours && t.plannedHours > 0 && (
+                            <span className="text-[8px] tabular-nums font-medium text-muted-foreground/40">
+                              {t.plannedHours.toFixed(1)}h
+                            </span>
+                          )}
+                          {totalsVis.showRevenue && t.revenue > 0 && (
+                            <span className="text-[8px] tabular-nums text-muted-foreground/55">
+                              CHF {Math.round(t.revenue).toLocaleString('de-CH')}
+                            </span>
+                          )}
+                          {totalsVis.showRatio && (
+                            t.laborCostRatio != null ? (
+                              <span className={cn(
+                                "inline-flex items-center gap-0.5 text-[9px] tabular-nums font-semibold",
+                                t.isOverTarget
+                                  ? "text-red-600 dark:text-red-400"
+                                  : "text-emerald-600 dark:text-emerald-400",
+                              )}>
+                                {totalsVis.showTargetIndicator && t.isOverTarget && (
+                                  <AlertTriangle className="h-2.5 w-2.5" />
+                                )}
+                                {Math.round(t.laborCostRatio)}%
+                              </span>
+                            ) : (
+                              <span className="text-[9px] tabular-nums text-muted-foreground/30">–</span>
+                            )
+                          )}
+                        </div>
+                      );
+                    }
+
+                    // ── Admin / service ('full' mode): unchanged hours line ───
+                    const tot = dayTotals[ds] ?? 0;
                     return tot > 0 ? (
                       <span className={cn(
                         "text-[8px] mt-1 leading-none tabular-nums font-medium",
