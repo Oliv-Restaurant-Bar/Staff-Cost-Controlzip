@@ -28,6 +28,8 @@ import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
+import { computeOvertimeAnalysis, type OvertimeHoursEntry } from '@/lib/overtime-analysis';
+import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -1897,7 +1899,7 @@ function FlexBreakdownModal({ target, onClose }: {
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
-  const { isAdmin, isBeaulieuManager, canEditEmployees } = usePermissions();
+  const { isAdmin, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
   const maisonOn = getMaisonEnabledSync(tenantKey);
@@ -1906,6 +1908,8 @@ export default function PersonalFixPage() {
   const today = new Date();
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
+  // Überstundenkosten in Total/PKQ einbeziehen (Toggle der Überstunden-Karte)
+  const [includeOvertime, setIncludeOvertime] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
@@ -2563,6 +2567,26 @@ export default function PersonalFixPage() {
     }
     return total;
   }, [fixedEmployees, selectedYear, selectedMonth, supabaseActualHours]);
+
+  // ── Überstunden-Auswertung (nur Festangestellte) ───────────────────────────
+  // Baut Ist-Stunden-Einträge des gewählten Monats aus den Supabase-Ist-Daten und
+  // delegiert die gesamte Überstunden-Logik an die pure Lib. Stündliche MA werden
+  // dort gefiltert. Abteilungsfilter 'all' (PersonalFix = admin/beaulieu_manager).
+  const overtimeAnalysis = useMemo(() => {
+    const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const entries: OvertimeHoursEntry[] = [];
+    for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      const h = entry.hours ?? 0;
+      if (h <= 0) continue;
+      // Abwesenheiten (FE/K/U/…) sind keine produktive Arbeitszeit → keine Überstunden
+      if (entry.absenceType) continue;
+      entries.push({ employeeId: cellKey.slice(0, cellKey.length - 11), date, hours: h });
+    }
+    const candidates = employees.filter(e => isEmployeeActiveInMonth(e, selectedYear, selectedMonth));
+    return computeOvertimeAnalysis({ employees: candidates, entries, departmentFilter: 'all' });
+  }, [supabaseActualHours, employees, selectedYear, selectedMonth]);
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
   // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
@@ -4688,6 +4712,20 @@ export default function PersonalFixPage() {
             sub={`${activeFixedEmployees.length} MA · Fixlohn`}
             icon={<DollarSign className="h-5 w-5" />}
             color="blue"
+          />
+        </div>
+
+        {/* ── Überstundenkosten (Festangestellte) ──────────────────────────────── */}
+        <div className="mt-4">
+          <OvertimeCostCard
+            analysis={overtimeAnalysis}
+            regularCost={pfix.active.istTotal}
+            netRevenue={effectiveRevenue}
+            includeOvertime={includeOvertime}
+            onIncludeOvertimeChange={setIncludeOvertime}
+            canSeeIndividualRates={canSeeHourlyWages}
+            canSeeTotals={canSeePersonnelCostTotals}
+            periodLabel={new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
           />
         </div>
 
