@@ -72,6 +72,15 @@ describe('IMPORT_CATEGORIES descriptors', () => {
     expect(getCategory('mitarbeitende')?.anchor).toBe('ist-stunden');
     expect(getCategory('vorjahreswerte')?.anchor).toBe('umsatz-vorjahr');
   });
+
+  it('surfaces the sales upload as "Verkaufsdaten Upload" on its existing /sales-upload route (no duplicate)', () => {
+    const sales = getCategory('produktumsaetze');
+    expect(sales?.label).toBe('Verkaufsdaten Upload');
+    expect(sales?.route).toBe('/sales-upload');
+    expect(sales?.kind).toBe('route');
+    // Exactly one card points at the sales-upload screen — renamed, not duplicated.
+    expect(IMPORT_CATEGORIES.filter((c) => c.route === '/sales-upload')).toHaveLength(1);
+  });
 });
 
 describe('visibleCategories — permission filtering mirrors real guards', () => {

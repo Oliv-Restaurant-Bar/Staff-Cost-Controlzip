@@ -1,0 +1,77 @@
+Add overtime cost analysis for fixed-salary employees in actual hours and personnel cost reporting.
+
+Goal:
+When fixed-salary employees work overtime, show the overtime as separate additional personnel cost.
+
+Definition:
+For fixed-salary employees, overtime is any actual worked time above:
+
+1. 8.4 hours per day
+    or
+2. 42 hours per week
+
+The overtime hours must be calculated from Ist-Stunden.
+
+Cost calculation:
+Overtime cost = overtime hours × employee personal hourly cost rate.
+
+Use the employee’s existing calculated hourly cost rate if available.
+Do not invent rates.
+If no hourly rate is available, show the overtime hours but mark the cost as unavailable.
+
+Reporting:
+In the personnel cost analysis, visually separate:
+
+* regular personnel costs
+* overtime additional costs from fixed-salary employees
+* total including overtime
+* total excluding overtime
+
+Add a toggle button:
+“Überstundenkosten einbeziehen”
+
+When enabled:
+Include fixed-salary overtime costs in total personnel costs and personnel cost ratio.
+
+When disabled:
+Show overtime costs separately but exclude them from totals and ratios.
+
+Display:
+For each selected period, show:
+
+* fixed-salary overtime hours
+* fixed-salary overtime cost
+* affected employees
+* daily breakdown
+* weekly breakdown
+
+Rules:
+
+* Daily overtime threshold: actual hours above 8.4 per employee per day.
+* Weekly overtime threshold: actual hours above 42 per employee per week.
+* Avoid double counting.
+* If daily overtime already contributes to weekly overtime, calculate the total overtime as the greater of daily-threshold overtime and weekly-threshold overtime for that employee/week, not both added together.
+* Only apply this to fixed-salary employees.
+* Hourly employees are already costed by actual hours and must not be counted again as overtime Zusatzkosten.
+
+Requirements:
+
+* Respect department filters.
+* Respect role permissions.
+* Admin can see cost amounts.
+* Restricted managers should only see allowed aggregate values according to the existing wage visibility rules.
+* Do not expose individual hourly rates to managers.
+* Add tests for:
+    * employee works 9.4 hours in one day
+    * employee works 43 hours in one week
+    * daily and weekly overtime overlap without double counting
+    * hourly employee is excluded
+    * missing hourly cost rate
+    * toggle includes overtime in total
+    * toggle excludes overtime from total but still displays it separately
+    * department filtering
+    * fixed employee with no overtime
+
+No database migration unless absolutely necessary.
+Do not change import logic.
+Use existing Ist-Stunden and employee cost data as source of truth.

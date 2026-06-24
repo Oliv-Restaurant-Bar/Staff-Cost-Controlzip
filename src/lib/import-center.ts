@@ -89,8 +89,8 @@ export const IMPORT_CATEGORIES: ImportCategory[] = [
   },
   {
     id: 'produktumsaetze',
-    label: 'Produktumsätze / Produktanalyse',
-    description: 'Artikel-Verkaufsdaten (Anzahl & Umsatz) aus Gastronovi-CSV importieren.',
+    label: 'Verkaufsdaten Upload',
+    description: 'Verwendet für Verkaufsdashboard, Tagesansicht, Produktanalyse, Forecast und Umsatzauswertungen.',
     kind: 'route',
     route: '/sales-upload',
     statusSource: 'product_batches',
