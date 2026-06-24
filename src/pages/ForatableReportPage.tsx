@@ -12,9 +12,9 @@
  * Aggregate, keine Einzelgast-Daten.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  BarChart2, CalendarRange, Loader2, Printer, FileDown, AlertTriangle,
+  BarChart2, CalendarRange, Loader2, Printer, FileDown, AlertTriangle, Clock,
 } from 'lucide-react';
 import { Navigate, Link } from 'react-router-dom';
 import jsPDF from 'jspdf';
@@ -33,6 +33,8 @@ import {
 import { loadForatableReport } from '@/lib/foratable-report-db';
 import { quickRange } from '@/lib/foratable-report';
 import type { ForatableReport, ReportRange, QuickRangeKind } from '@/lib/foratable-report';
+import { sortTimeSlots, topTimeSlots } from '@/lib/reservation-time-analysis';
+import type { TimeSortKey } from '@/lib/reservation-time-analysis';
 
 const QUICK_RANGES: Array<{ kind: QuickRangeKind; label: string }> = [
   { kind: 'current-month', label: 'Aktueller Monat' },
@@ -40,6 +42,8 @@ const QUICK_RANGES: Array<{ kind: QuickRangeKind; label: string }> = [
   { kind: 'current-year',  label: 'Aktuelles Jahr' },
   { kind: 'last-year',     label: 'Letztes Jahr' },
 ];
+
+const PCT = new Intl.NumberFormat('de-CH', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 1 });
 
 export default function ForatableReportPage() {
   const { tenantId, tenant } = useTenant();
@@ -55,6 +59,9 @@ export default function ForatableReportPage() {
   const [report, setReport] = useState<ForatableReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // „Beste Reservationszeiten": Sortierung (Anzahl/Personen) + Top 10 / Alle Zeiten.
+  const [timeSort, setTimeSort] = useState<TimeSortKey>('count');
+  const [showAllTimes, setShowAllTimes] = useState(false);
 
   const runReport = useCallback(async (range: ReportRange) => {
     if (!canView) return; // niemals Daten für nicht berechtigte Sessions laden
@@ -67,6 +74,7 @@ export default function ForatableReportPage() {
     try {
       const r = await loadForatableReport(tenantId, range);
       setReport(r);
+      setShowAllTimes(false); // neuer Zeitraum → wieder Top 10 zeigen
     } catch (e) {
       setReport(null);
       const msg = e instanceof Error ? e.message : String(e);
@@ -92,6 +100,16 @@ export default function ForatableReportPage() {
   };
 
   const handlePrint = () => window.print();
+
+  // Anzeige-Zeitfenster: sortiert nach aktiver Kennzahl, optional auf Top 10 begrenzt.
+  const displayedTimeSlots = useMemo(() => {
+    if (!report) return [];
+    const sorted = sortTimeSlots(report.timeAnalysis.slots, timeSort);
+    return showAllTimes ? sorted : topTimeSlots(sorted, 10);
+  }, [report, timeSort, showAllTimes]);
+  const maxTimeMetric = displayedTimeSlots.length > 0
+    ? (timeSort === 'persons' ? displayedTimeSlots[0].persons : displayedTimeSlots[0].count)
+    : 0;
 
   const handlePdf = () => {
     if (!report) return;
@@ -131,11 +149,15 @@ export default function ForatableReportPage() {
         headStyles: { fillColor: [30, 41, 59] },
       });
     }
-    if (stats.topTimes.length > 0) {
+    const pdfTimes = topTimeSlots(sortTimeSlots(report.timeAnalysis.slots, 'count'), 10);
+    if (pdfTimes.length > 0) {
       autoTable(doc, {
         startY: nextY(),
-        head: [['Zeit', 'Reservationen', 'Personen']],
-        body: stats.topTimes.map((t) => [t.time, NUM0.format(t.count), NUM0.format(t.persons)]),
+        head: [['Zeit', 'Reservationen', 'Personen', '% Res.', '% Pers.']],
+        body: pdfTimes.map((t) => [
+          t.time, NUM0.format(t.count), NUM0.format(t.persons),
+          PCT.format(t.shareCount), PCT.format(t.sharePersons),
+        ]),
         styles: { fontSize: 9 },
         headStyles: { fillColor: [30, 41, 59] },
       });
@@ -268,7 +290,116 @@ export default function ForatableReportPage() {
               stats={report.stats}
               newGuests={report.newGuests}
               returningGuests={report.returningGuests}
+              hideTopTimes
             />
+          )}
+
+          {report.stats.reservationCount > 0 && (
+            <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-primary" /> Beste Reservationszeiten
+                </h2>
+                <div className="flex items-center gap-2 print:hidden">
+                  <div className="inline-flex rounded-lg border border-border overflow-hidden text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setTimeSort('count')}
+                      aria-pressed={timeSort === 'count'}
+                      className={cn(
+                        'px-3 py-1.5 transition-colors',
+                        timeSort === 'count' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted/60',
+                      )}
+                    >
+                      Reservationen
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTimeSort('persons')}
+                      aria-pressed={timeSort === 'persons'}
+                      className={cn(
+                        'px-3 py-1.5 border-l border-border transition-colors',
+                        timeSort === 'persons' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted/60',
+                      )}
+                    >
+                      Personen
+                    </button>
+                  </div>
+                  {report.timeAnalysis.slots.length > 10 && (
+                    <Button variant="outline" size="sm" onClick={() => setShowAllTimes((s) => !s)}>
+                      {showAllTimes ? 'Top 10' : 'Alle Zeiten'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Reservationen mit Uhrzeit, ohne Stornos &amp; No-Shows
+                {` · ${NUM0.format(report.timeAnalysis.totalReservations)} Reservationen · ${NUM0.format(report.timeAnalysis.totalPersons)} Personen`}
+                {report.timeAnalysis.ignoredNoTime > 0 &&
+                  ` · ${NUM0.format(report.timeAnalysis.ignoredNoTime)} ohne Uhrzeit nicht berücksichtigt`}
+              </p>
+
+              {displayedTimeSlots.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Keine Reservationszeiten im gewählten Zeitraum.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
+                        <th className="py-2 pr-3 text-left font-medium">Zeit</th>
+                        <th className="py-2 px-3 text-right font-medium">Reservationen</th>
+                        <th className="py-2 px-3 text-right font-medium">Personen</th>
+                        <th className="py-2 px-3 text-right font-medium">% Res.</th>
+                        <th className="py-2 pl-3 text-right font-medium">% Pers.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayedTimeSlots.map((slot, i) => {
+                        const metricVal = timeSort === 'persons' ? slot.persons : slot.count;
+                        const barPct = maxTimeMetric > 0 ? (metricVal / maxTimeMetric) * 100 : 0;
+                        const strongest = i === 0;
+                        return (
+                          <tr
+                            key={slot.time}
+                            className={cn('border-b border-border/60 last:border-0', strongest && 'bg-primary/5')}
+                          >
+                            <td className="py-2 pr-3 align-top">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium tabular-nums">{slot.time}</span>
+                                {strongest && (
+                                  <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary print:hidden">
+                                    Spitze
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-1 h-1.5 w-full min-w-[80px] overflow-hidden rounded-full bg-muted print:hidden">
+                                <div
+                                  className={cn('h-full rounded-full', strongest ? 'bg-primary' : 'bg-primary/40')}
+                                  style={{ width: `${barPct}%` }}
+                                />
+                              </div>
+                            </td>
+                            <td className={cn('py-2 px-3 text-right tabular-nums', timeSort === 'count' && 'font-semibold')}>
+                              {NUM0.format(slot.count)}
+                            </td>
+                            <td className={cn('py-2 px-3 text-right tabular-nums', timeSort === 'persons' && 'font-semibold')}>
+                              {NUM0.format(slot.persons)}
+                            </td>
+                            <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">
+                              {PCT.format(slot.shareCount)}
+                            </td>
+                            <td className="py-2 pl-3 text-right tabular-nums text-muted-foreground">
+                              {PCT.format(slot.sharePersons)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           )}
         </div>
       )}

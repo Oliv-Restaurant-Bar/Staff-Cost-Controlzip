@@ -14,6 +14,8 @@ import {
 } from 'date-fns';
 import { computeReservationStats } from './reservation-import-parser';
 import type { ReservationStatsInput, ReservationPreviewStats } from './reservation-import-parser';
+import { analyzeReservationTimes } from './reservation-time-analysis';
+import type { ReservationTimeAnalysis } from './reservation-time-analysis';
 
 export interface ReportRange {
   from: string;   // yyyy-MM-dd (inklusive)
@@ -23,6 +25,8 @@ export interface ReportRange {
 export interface ForatableReport {
   range: ReportRange;
   stats: ReservationPreviewStats;
+  /** „Beste Reservationszeiten" — nach Startzeit, ohne Storno/No-Show. */
+  timeAnalysis: ReservationTimeAnalysis;
   /** Gäste mit Reservation im Zeitraum, die VORHER noch keine hatten. */
   newGuests: number;
   /** Gäste mit Reservation im Zeitraum, die schon vorher welche hatten. */
@@ -58,8 +62,9 @@ export function buildForatableReport(
   range: ReportRange,
 ): ForatableReport {
   const stats = computeReservationStats(rows);
+  const timeAnalysis = analyzeReservationTimes(rows);
   const { newGuests, returningGuests } = splitNewReturningGuests(stats.distinctGuestKeys, priorGuestKeys);
-  return { range, stats, newGuests, returningGuests };
+  return { range, stats, timeAnalysis, newGuests, returningGuests };
 }
 
 export type QuickRangeKind = 'current-month' | 'last-month' | 'current-year' | 'last-year';

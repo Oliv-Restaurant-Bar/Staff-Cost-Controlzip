@@ -83,11 +83,14 @@ interface ReservationSummaryProps {
   guestsLoading?: boolean;
   /** Optionaler zusätzlicher Hinweis (z. B. übersprungene CSV-Zeilen). */
   extraNote?: React.ReactNode;
+  /** Blendet die „Häufigste Zeiten"-Karte aus (z. B. wenn der Aufrufer eine
+   *  eigene, ausführlichere Zeitenauswertung rendert). Standard: anzeigen. */
+  hideTopTimes?: boolean;
   className?: string;
 }
 
 export function ReservationSummary({
-  stats, newGuests, returningGuests, guestsLoading = false, extraNote, className,
+  stats, newGuests, returningGuests, guestsLoading = false, extraNote, hideTopTimes = false, className,
 }: ReservationSummaryProps) {
   const guestValue = (n: number | null) =>
     guestsLoading ? '…' : n !== null ? NUM0.format(n) : '—';
@@ -143,25 +146,27 @@ export function ReservationSummary({
         </div>
 
         {/* Top-Zeiten */}
-        <div className="rounded-lg border border-border bg-card p-4">
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
-            <Clock className="h-4 w-4" /> Häufigste Zeiten
-          </h3>
-          {stats.topTimes.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Keine Zeiten erkannt.</p>
-          ) : (
-            <div className="space-y-1.5">
-              {stats.topTimes.map((t) => (
-                <div key={t.time} className="flex items-center justify-between text-sm">
-                  <span className="font-medium tabular-nums">{t.time}</span>
-                  <span className="text-muted-foreground">
-                    {NUM0.format(t.count)} Res. · {NUM0.format(t.persons)} Pers.
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {!hideTopTimes && (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+              <Clock className="h-4 w-4" /> Häufigste Zeiten
+            </h3>
+            {stats.topTimes.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Keine Zeiten erkannt.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {stats.topTimes.map((t) => (
+                  <div key={t.time} className="flex items-center justify-between text-sm">
+                    <span className="font-medium tabular-nums">{t.time}</span>
+                    <span className="text-muted-foreground">
+                      {NUM0.format(t.count)} Res. · {NUM0.format(t.persons)} Pers.
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Räume */}
         <div className="rounded-lg border border-border bg-card p-4">

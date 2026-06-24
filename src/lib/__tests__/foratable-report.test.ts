@@ -97,6 +97,20 @@ describe('buildForatableReport', () => {
     expect(report.returningGuests).toBe(1);
     expect(report.newGuests).toBe(2);
   });
+
+  it('hängt die Zeitenauswertung an und schliesst Storno/No-Show aus', () => {
+    const rows: ReservationStatsInput[] = [
+      row({ guestKey: 'g1', reservationTime: '19:00', partySize: 2, statusNormalized: 'completed' }),
+      row({ guestKey: 'g2', reservationTime: '19:00', partySize: 4, statusNormalized: 'confirmed' }),
+      row({ guestKey: 'g3', reservationTime: '19:00', partySize: 9, statusNormalized: 'cancelled' }),
+      row({ guestKey: 'g4', reservationTime: '20:00', partySize: 8, statusNormalized: 'noshow' }),
+    ];
+    const report = buildForatableReport(rows, new Set(), { from: '2026-03-01', to: '2026-03-31' });
+    expect(report.timeAnalysis.totalReservations).toBe(2); // completed + confirmed
+    expect(report.timeAnalysis.excludedByStatus).toBe(2);  // cancelled + noshow
+    expect(report.timeAnalysis.slots.find((x) => x.time === '19:00')).toMatchObject({ count: 2, persons: 6 });
+    expect(report.timeAnalysis.slots.some((x) => x.time === '20:00')).toBe(false);
+  });
 });
 
 describe('quickRange', () => {
