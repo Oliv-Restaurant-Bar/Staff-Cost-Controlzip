@@ -72,6 +72,22 @@ not a "simplified" confirmed|completed.
 **How to apply:** import logic stays untouched — this is purely the CRM read
 path + pure predicates in `reservation-dashboard.ts`.
 
+## No revenue in reservation_records → simple Gast-Status is visit-count-only
+
+`reservation_records` has **no monetary/revenue column**, so any revenue-based
+CRM tiering is impossible. The "simple Gast-Status" (`simpleGuestStatus` in
+`reservation-crm.ts`: Neu=1 / Wiederkehrend=2–3 / Regelmässig=4–9 / VIP≥10,
+null at 0) is therefore **purely visit-count based**.
+
+**Rule:** `simpleGuestStatus` is a SEPARATE field from the auto-segment — it must
+never be fed into `classifySegment`/`computeCrmScore` and they must not read it.
+**Why:** the user explicitly wanted a simple status ALONGSIDE the existing
+VIP/Stammgast/… segmentation, not a replacement; coupling them would silently
+change the established segment thresholds.
+**How to apply:** if revenue tiers are ever wanted, a monetary column (or a
+linked revenue source) must be added first — it cannot be derived from the
+current reservation data.
+
 ## At-risk / return-potential must use the count-only tier, not the live segment
 
 "Gefährdete Stammgäste/VIP" (and any future at-risk detection) must classify a

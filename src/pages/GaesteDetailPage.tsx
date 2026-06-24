@@ -18,7 +18,7 @@ import {
   Clock, CalendarRange, Repeat, Mail, Phone, MapPin, StickyNote,
   Sigma, Gauge, TrendingUp, TrendingDown, Minus, AlertTriangle,
   ShieldCheck, ShieldAlert, CalendarDays, Hash, Hourglass,
-  LayoutGrid, Pencil, Save, RotateCcw, Crown, Star, Building2,
+  LayoutGrid, Pencil, Save, RotateCcw, Crown, Star, Building2, UserCheck,
   BellRing, Lock, Cake, Languages, Utensils, Wine, Wheat,
   FileDown, FileSpreadsheet,
 } from 'lucide-react';
@@ -40,6 +40,7 @@ import { Switch } from '@/components/ui/switch';
 import { fetchGuestById, fetchGuestReservations, type GuestReservationDisplay } from '@/lib/reservation-crm-db';
 import {
   guestDetailMetrics, guestDisplayName, guestListMetricsFromDetail,
+  simpleGuestStatus, SIMPLE_STATUS_LABEL,
   type GuestProfile,
 } from '@/lib/reservation-crm';
 import { overdueByDays, isOverdue, isAtRiskTier } from '@/lib/reservation-dashboard';
@@ -389,6 +390,7 @@ export default function GaesteDetailPage() {
   const handleResetCrm = useCallback(() => setCrmForm(crmSaved), [crmSaved]);
 
   const metrics = useMemo(() => guestDetailMetrics(reservations, today), [reservations, today]);
+  const simpleStatus = simpleGuestStatus(metrics.visits);
   const preferences = useMemo(() => computeGuestPreferences(reservations), [reservations]);
   const trend = useMemo(() => computeVisitTrend(reservations, today), [reservations, today]);
   const totalPersons = useMemo(() => totalPersonsOnVisits(reservations), [reservations]);
@@ -529,6 +531,7 @@ export default function GaesteDetailPage() {
                 <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Segment</div>
                 <div className="mt-1"><SegmentBadge segment={metrics.segment} /></div>
               </div>
+              <Tile icon={UserCheck} label="Gast-Status" value={simpleStatus ? SIMPLE_STATUS_LABEL[simpleStatus] : 'Ohne Besuch'} />
               <Tile icon={CalendarCheck} label="Total Besuche" value={NUM0.format(metrics.visits)} accent="text-emerald-600 dark:text-emerald-400" />
               <Tile icon={CalendarRange} label="Reservationen total" value={NUM0.format(metrics.totalReservations)} />
               <Tile icon={CalendarRange} label="Erster Besuch" value={fdate(metrics.firstVisit)} />
@@ -545,6 +548,7 @@ export default function GaesteDetailPage() {
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Tile icon={MapPin} label="Lieblingsbereich" value={preferences.favoriteArea ?? '—'} />
               <Tile icon={CalendarDays} label="Lieblingswochentag" value={preferences.favoriteWeekday ?? '—'} />
+              <Tile icon={CalendarRange} label="Lieblingsmonat" value={preferences.favoriteMonth ?? '—'} />
               <Tile icon={Clock} label="Lieblingszeit" value={preferences.favoriteTime ?? '—'} />
               <Tile icon={Hash} label="Häufigste Gruppengrösse" value={preferences.mostCommonPartySize === null ? '—' : NUM0.format(preferences.mostCommonPartySize)} />
             </div>

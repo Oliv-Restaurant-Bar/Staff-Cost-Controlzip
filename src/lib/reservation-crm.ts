@@ -180,6 +180,42 @@ export function classifySegment(
   return baseSegmentByVisits(visits);
 }
 
+// ── Einfacher Gast-Status (separat von der Segmentierung) ─────────────────────
+//
+// Bewusst getrennt von GuestSegment/classifySegment: eine simple, rein
+// besuchszahl-basierte Einstufung, die die bestehende Segmentierung NICHT
+// ersetzt oder beeinflusst (fliesst nie in classifySegment/computeCrmScore ein).
+// Eine umsatzbasierte VIP-Erkennung ist derzeit nicht möglich — Reservationen
+// enthalten keine Umsatzdaten —, daher zählt ausschliesslich die Besuchsanzahl.
+export type SimpleGuestStatus = 'new' | 'returning' | 'regular' | 'vip';
+
+/** Schwellen (Besuche) — zentral, damit Logik, UI und Tests übereinstimmen. */
+export const SIMPLE_STATUS_VIP_MIN = 10;       // ≥ 10 Besuche ⇒ VIP
+export const SIMPLE_STATUS_REGULAR_MIN = 4;    // 4–9 Besuche ⇒ Regelmässig
+export const SIMPLE_STATUS_RETURNING_MIN = 2;  // 2–3 Besuche ⇒ Wiederkehrend
+                                               // 1 Besuch ⇒ Neu · 0 ⇒ null
+
+export const SIMPLE_STATUS_LABEL: Record<SimpleGuestStatus, string> = {
+  new:       'Neu',
+  returning: 'Wiederkehrend',
+  regular:   'Regelmässig',
+  vip:       'VIP',
+};
+
+/**
+ * Einfacher Gast-Status anhand der ABGESCHLOSSENEN Besuche:
+ *   Neu = 1 · Wiederkehrend = 2–3 · Regelmässig = 4–9 · VIP = ≥ 10.
+ * Gibt bei 0 Besuchen `null` zurück.  Vollständig getrennt von classifySegment —
+ * verändert weder das Segment noch den CRM-Score.
+ */
+export function simpleGuestStatus(visits: number): SimpleGuestStatus | null {
+  if (visits >= SIMPLE_STATUS_VIP_MIN) return 'vip';
+  if (visits >= SIMPLE_STATUS_REGULAR_MIN) return 'regular';
+  if (visits >= SIMPLE_STATUS_RETURNING_MIN) return 'returning';
+  if (visits >= 1) return 'new';
+  return null;
+}
+
 // ── Anzeige-Name ─────────────────────────────────────────────────────────────
 
 export function guestDisplayName(p: {

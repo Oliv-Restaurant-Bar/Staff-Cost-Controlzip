@@ -63,6 +63,24 @@ export function weekdayIndex(dateStr: string | null | undefined): number | null 
   return (((dayNumber % 7) + 3) % 7 + 7) % 7; // 1970-01-01 (Epoche-Tag 0) = Donnerstag → Index 3
 }
 
+/** Deutsche Monatsnamen, Index 0 = Januar … 11 = Dezember. */
+export const MONTH_LABELS = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+] as const;
+
+/**
+ * Monatsindex (0 = Januar … 11 = Dezember) eines ISO-Datums „yyyy-MM-dd".  Liest
+ * den Monat direkt aus dem String (keine Zeitzonen-Effekte). null bei
+ * ungültigem/fehlendem Datum.
+ */
+export function monthIndex(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const m = Number(dateStr.slice(5, 7));
+  if (!Number.isInteger(m) || m < 1 || m > 12) return null;
+  return m - 1;
+}
+
 /**
  * Normalisiert „Bereich" aus `area` (bevorzugt) bzw. `room` auf die typischen
  * Lokal-Bereiche.  Bekannte Schlüsselwörter werden case-insensitiv den
@@ -88,6 +106,8 @@ export interface GuestPreferences {
   favoriteArea: string | null;
   /** Häufigster Wochentag (deutsches Label) oder null. */
   favoriteWeekday: string | null;
+  /** Häufigster Monat (deutsches Label) oder null. */
+  favoriteMonth: string | null;
   /** Häufigste Uhrzeit „HH:mm" oder null. */
   favoriteTime: string | null;
   /** Häufigste Gruppengrösse oder null. */
@@ -107,6 +127,10 @@ export function computeGuestPreferences(
     const idx = weekdayIndex(r.reservationDate);
     return idx === null ? null : WEEKDAY_LABELS[idx];
   });
+  const months = completed.map(r => {
+    const idx = monthIndex(r.reservationDate);
+    return idx === null ? null : MONTH_LABELS[idx];
+  });
   const times = completed.map(r => {
     const t = r.reservationTime?.trim();
     return t ? t.slice(0, 5) : null;
@@ -117,6 +141,7 @@ export function computeGuestPreferences(
   return {
     favoriteArea: mostFrequent(areas),
     favoriteWeekday: mostFrequent(weekdays),
+    favoriteMonth: mostFrequent(months),
     favoriteTime: mostFrequent(times),
     mostCommonPartySize: mostFrequent(sizes),
   };

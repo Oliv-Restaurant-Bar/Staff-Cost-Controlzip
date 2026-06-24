@@ -8,6 +8,7 @@ import type { GuestReservationRecord } from '../reservation-crm';
 import {
   mostFrequent,
   weekdayIndex,
+  monthIndex,
   normalizeArea,
   computeGuestPreferences,
   computeVisitTrend,
@@ -20,6 +21,7 @@ import {
   computeCrmScore,
   totalPersonsOnVisits,
   WEEKDAY_LABELS,
+  MONTH_LABELS,
 } from '../reservation-guest-profile';
 
 const TODAY = '2026-06-22';
@@ -107,6 +109,7 @@ describe('computeGuestPreferences', () => {
     const p = computeGuestPreferences(recs);
     expect(p.favoriteArea).toBe('Terrasse');
     expect(p.favoriteWeekday).toBe('Montag'); // 01.01.2024 + 08.01.2024 sind Montage
+    expect(p.favoriteMonth).toBe('Januar');   // alle abgeschlossenen Besuche im Januar
     expect(p.favoriteTime).toBe('19:00');
     expect(p.mostCommonPartySize).toBe(2);
   });
@@ -116,8 +119,49 @@ describe('computeGuestPreferences', () => {
   });
   it('ist defensiv bei leeren Daten', () => {
     expect(computeGuestPreferences([])).toEqual({
-      favoriteArea: null, favoriteWeekday: null, favoriteTime: null, mostCommonPartySize: null,
+      favoriteArea: null, favoriteWeekday: null, favoriteMonth: null, favoriteTime: null, mostCommonPartySize: null,
     });
+  });
+});
+
+describe('monthIndex', () => {
+  it('liest den Monat (0 = Januar) direkt aus dem ISO-String', () => {
+    expect(monthIndex('2024-01-15')).toBe(0);
+    expect(monthIndex('2024-06-30')).toBe(5);
+    expect(monthIndex('2024-12-01')).toBe(11);
+  });
+  it('ist defensiv bei fehlendem/ungültigem Datum', () => {
+    expect(monthIndex(null)).toBeNull();
+    expect(monthIndex('')).toBeNull();
+    expect(monthIndex('2024-13-01')).toBeNull();
+    expect(monthIndex('2024-00-01')).toBeNull();
+  });
+});
+
+describe('computeGuestPreferences — Lieblingsmonat', () => {
+  it('ist null ohne abgeschlossene Besuche', () => {
+    expect(computeGuestPreferences([]).favoriteMonth).toBeNull();
+    // Nur Storno/No-Show ⇒ kein Besuch ⇒ kein Lieblingsmonat:
+    const p = computeGuestPreferences([
+      rec({ reservationDate: '2024-03-01', statusNormalized: 'cancelled' }),
+      rec({ reservationDate: '2024-03-02', statusNormalized: 'noshow' }),
+    ]);
+    expect(p.favoriteMonth).toBeNull();
+  });
+  it('entspricht bei genau einem Besuch dessen Monat', () => {
+    const p = computeGuestPreferences([rec({ reservationDate: '2024-03-15' })]);
+    expect(p.favoriteMonth).toBe('März');
+    expect(p.favoriteMonth).toBe(MONTH_LABELS[2]);
+  });
+  it('liefert bei mehreren Besuchen den häufigsten Monat (nur abgeschlossene)', () => {
+    const p = computeGuestPreferences([
+      rec({ reservationDate: '2024-07-01' }),
+      rec({ reservationDate: '2024-07-20' }),
+      rec({ reservationDate: '2024-09-05' }),
+      // Storno im November darf den Lieblingsmonat NICHT beeinflussen:
+      rec({ reservationDate: '2024-11-11', statusNormalized: 'cancelled' }),
+    ]);
+    expect(p.favoriteMonth).toBe('Juli');
   });
 });
 

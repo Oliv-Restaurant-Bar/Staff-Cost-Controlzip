@@ -6,6 +6,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifySegment,
+  simpleGuestStatus,
+  SIMPLE_STATUS_LABEL,
   averageDaysBetweenVisits,
   daysBetween,
   daysSince,
@@ -58,6 +60,34 @@ function res(
     comment: null,
   };
 }
+
+describe('simpleGuestStatus — Schwellen (separat von der Segmentierung)', () => {
+  it('ist null ohne Besuch', () => {
+    expect(simpleGuestStatus(0)).toBeNull();
+    expect(simpleGuestStatus(-1)).toBeNull();
+  });
+  it('Neu = genau 1 Besuch', () => {
+    expect(simpleGuestStatus(1)).toBe('new');
+  });
+  it('Wiederkehrend = 2–3 Besuche', () => {
+    expect(simpleGuestStatus(2)).toBe('returning');
+    expect(simpleGuestStatus(3)).toBe('returning');
+  });
+  it('Regelmässig = 4–9 Besuche', () => {
+    expect(simpleGuestStatus(4)).toBe('regular');
+    expect(simpleGuestStatus(9)).toBe('regular');
+  });
+  it('VIP = ab 10 Besuchen', () => {
+    expect(simpleGuestStatus(10)).toBe('vip');
+    expect(simpleGuestStatus(25)).toBe('vip');
+  });
+  it('hat für jeden Status ein deutsches Label', () => {
+    expect(SIMPLE_STATUS_LABEL.new).toBe('Neu');
+    expect(SIMPLE_STATUS_LABEL.returning).toBe('Wiederkehrend');
+    expect(SIMPLE_STATUS_LABEL.regular).toBe('Regelmässig');
+    expect(SIMPLE_STATUS_LABEL.vip).toBe('VIP');
+  });
+});
 
 describe('Datums-Helfer', () => {
   it('daysBetween rechnet vorzeichenbehaftet', () => {
