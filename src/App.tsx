@@ -71,6 +71,7 @@ import ForatableReportPage from "./pages/ForatableReportPage";
 import GaesteCrmPage from "./pages/GaesteCrmPage";
 import CrmAuswertungPage from "./pages/CrmAuswertungPage";
 import GaesteDetailPage from "./pages/GaesteDetailPage";
+import GaesteDuplikatePage from "./pages/GaesteDuplikatePage";
 
 const queryClient = new QueryClient();
 
@@ -237,6 +238,7 @@ const AppContent = () => {
             <Route path="/foratable-report" element={<ForatableReportPage />} />
             <Route path="/gaeste" element={<GaesteCrmPage />} />
             <Route path="/gaeste/auswertung" element={<CrmAuswertungPage />} />
+            <Route path="/gaeste/duplikate" element={<GaesteDuplikatePage />} />
             <Route path="/gaeste/:guestId" element={<GaesteDetailPage />} />
             <Route path="/produkte"
               element={<ProdukteSeite />}
