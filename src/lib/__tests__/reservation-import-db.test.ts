@@ -253,3 +253,160 @@ describe('saveReservationImport — Idempotenz', () => {
     expect(records().length).toBe(1);
   });
 });
+
+// ── Gast-Wiedererkennung (Duplikat-Vermeidung) ───────────────────────────────
+// Verifiziert, dass beim Import bestehende Gäste WIEDERVERWENDET statt
+// dupliziert werden. Matching-Priorität: Telefon → E-Mail → neu (Name matcht NICHT).
+
+const guests = () => tbl('guest_profiles');
+
+/** Seedet ein bestehendes Gästeprofil direkt in den In-Memory-Store. */
+function seedGuest(g: {
+  id: string;
+  restaurant_id: string;
+  match_key: string;
+  normalized_email?: string | null;
+  normalized_mobile?: string | null;
+  normalized_name?: string | null;
+}) {
+  guests().push({
+    normalized_email: null,
+    normalized_mobile: null,
+    normalized_name: null,
+    ...g,
+  });
+}
+
+describe('saveReservationImport — Gast-Wiedererkennung', () => {
+  it('gleiche Telefonnummer verwendet den bestehenden Gast wieder (kein neuer Gast)', async () => {
+    seedGuest({
+      id: 'g-phone',
+      restaurant_id: 'oliv',
+      match_key: 'mobile:41790000001',
+      normalized_mobile: '41790000001',
+    });
+    const csv = [
+      HEADER,
+      // andere Schreibweise derselben Nummer, ohne E-Mail
+      row({ resnr: '5001', personen: '2', datum: '05.06.2026', mobile: '0041 79 000 00 01', vorname: 'Tel', nachname: 'Gast', status: 'Bestätigt' }),
+    ].join('\n');
+
+    const r = await saveReservationImport('oliv', parseReservationsCsv('phone.csv', csv));
+    expect(r.error).toBeNull();
+    expect(r.returningGuests).toBe(1);
+    expect(r.newGuests).toBe(0);
+    expect(guests().length).toBe(1); // kein zusätzlicher Gast angelegt
+    expect(records()[0].guest_id).toBe('g-phone');
+  });
+
+  it('gleiche E-Mail (case-insensitiv) verwendet den bestehenden Gast wieder', async () => {
+    seedGuest({
+      id: 'g-mail',
+      restaurant_id: 'oliv',
+      match_key: 'email:a@example.com',
+      normalized_email: 'a@example.com',
+    });
+    const csv = [
+      HEADER,
+      // Grossschreibung muss trotzdem matchen, keine Telefonnummer
+      row({ resnr: '6001', personen: '4', datum: '06.06.2026', email: 'A@Example.COM', vorname: 'Mail', nachname: 'Gast', status: 'Abgeschlossen' }),
+    ].join('\n');
+
+    const r = await saveReservationImport('oliv', parseReservationsCsv('mail.csv', csv));
+    expect(r.error).toBeNull();
+    expect(r.returningGuests).toBe(1);
+    expect(r.newGuests).toBe(0);
+    expect(guests().length).toBe(1);
+    expect(records()[0].guest_id).toBe('g-mail');
+  });
+
+  it('Telefon hat Vorrang vor E-Mail, wenn beide auf VERSCHIEDENE Gäste zeigen', async () => {
+    seedGuest({
+      id: 'g-by-phone',
+      restaurant_id: 'oliv',
+      match_key: 'mobile:41790000050',
+      normalized_mobile: '41790000050',
+      normalized_email: 'phoneowner@example.com',
+    });
+    seedGuest({
+      id: 'g-by-mail',
+      restaurant_id: 'oliv',
+      match_key: 'email:mailowner@example.com',
+      normalized_email: 'mailowner@example.com',
+    });
+    const csv = [
+      HEADER,
+      row({ resnr: '6501', personen: '2', datum: '06.06.2026', mobile: '+41 79 000 00 50', email: 'mailowner@example.com', vorname: 'Beide', nachname: 'Gast', status: 'Bestätigt' }),
+    ].join('\n');
+
+    const r = await saveReservationImport('oliv', parseReservationsCsv('both.csv', csv));
+    expect(r.error).toBeNull();
+    expect(r.returningGuests).toBe(1);
+    expect(r.newGuests).toBe(0);
+    expect(records()[0].guest_id).toBe('g-by-phone'); // Telefon gewinnt
+    expect(guests().length).toBe(2); // kein neuer Gast
+  });
+
+  it('Mandantentrennung: ein Treffer bei einem ANDEREN Mandanten zählt nicht', async () => {
+    seedGuest({
+      id: 'g-other-tenant',
+      restaurant_id: 'beaulieu',
+      match_key: 'mobile:41790000099',
+      normalized_mobile: '41790000099',
+    });
+    const csv = [
+      HEADER,
+      row({ resnr: '7001', personen: '2', datum: '07.06.2026', mobile: '+41 79 000 00 99', vorname: 'Cross', nachname: 'Tenant', status: 'Bestätigt' }),
+    ].join('\n');
+
+    const r = await saveReservationImport('oliv', parseReservationsCsv('cross.csv', csv));
+    expect(r.error).toBeNull();
+    expect(r.returningGuests).toBe(0);
+    expect(r.newGuests).toBe(1); // neu für oliv, KEIN Match über Mandantengrenze
+    expect(guests().length).toBe(2);
+    const created = guests().find(g => g.restaurant_id === 'oliv');
+    expect(created).toBeTruthy();
+    expect(created!.id).not.toBe('g-other-tenant');
+    expect(records()[0].guest_id).toBe(created!.id);
+  });
+
+  it('ohne Telefon UND ohne E-Mail wird ein neuer Gast angelegt (Name allein matcht NICHT)', async () => {
+    // Bestehender, per E-Mail identifizierter Gast mit GLEICHEM Namen: er darf
+    // NICHT allein über den Namen wiederverwendet werden (Telefon/E-Mail fehlen).
+    seedGuest({
+      id: 'g-samename',
+      restaurant_id: 'oliv',
+      match_key: 'email:someone@example.com',
+      normalized_email: 'someone@example.com',
+      normalized_name: 'nur name',
+    });
+    const csv = [
+      HEADER,
+      row({ resnr: '8001', personen: '2', datum: '08.06.2026', vorname: 'Nur', nachname: 'Name', status: 'Bestätigt' }),
+    ].join('\n');
+
+    const r = await saveReservationImport('oliv', parseReservationsCsv('noname.csv', csv));
+    expect(r.error).toBeNull();
+    expect(r.newGuests).toBe(1);
+    expect(r.returningGuests).toBe(0);
+    expect(guests().length).toBe(2); // neuer Gast trotz Namensgleichheit
+    const created = guests().find(g => g.id !== 'g-samename');
+    expect(created).toBeTruthy();
+    expect(records()[0].guest_id).toBe(created!.id);
+  });
+
+  it('ein normaler Import mit gemischten Identitäten läuft weiterhin erfolgreich durch', async () => {
+    const csv = [
+      HEADER,
+      row({ resnr: '9101', personen: '2', zeit: '19:00', datum: '05.06.2026', email: 'neu1@example.com', vorname: 'N', nachname: 'Eins', status: 'Bestätigt' }),
+      row({ resnr: '9102', personen: '3', zeit: '20:00', datum: '06.06.2026', mobile: '+41 79 111 22 33', vorname: 'N', nachname: 'Zwei', status: 'Abgeschlossen' }),
+    ].join('\n');
+
+    const r = await saveReservationImport('oliv', parseReservationsCsv('mixed.csv', csv));
+    expect(r.error).toBeNull();
+    expect(r.reservationCount).toBe(2);
+    expect(r.inserted).toBe(2);
+    expect(r.newGuests).toBe(2);
+    expect(records().length).toBe(2);
+  });
+});

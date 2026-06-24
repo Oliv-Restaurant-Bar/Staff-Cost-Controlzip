@@ -26,6 +26,29 @@ so a later partial booking re-matches it. Do not rewrite an existing `match_key`
 **Why:** without this, guest aggregates and return-rate analytics double-count
 returning guests as new ones.
 
+## Reusing an EXISTING DB profile: phone → email only (never name)
+Two distinct concerns, do not conflate them:
+- **Within-import clustering** (`clusterGuests`, union-find over email/mobile/name)
+  merges the *same import's* rows — name is fine here.
+- **Matching against EXISTING db guests** (`resolveExisting`) reuses a stored
+  profile *before creating a new one*. This matches **only normalized phone, then
+  email** (phone first), tenant-scoped via `fetchExistingGuests`. A new guest is
+  created when neither phone nor email hits.
+
+**Rule:** `resolveExisting` must NOT match on name or `match_key`. Phone has
+priority over email (only matters when phone and email point to different stored
+guests — phone wins).
+
+**Why:** name equality is not identity (two people share "Thomas Müller"); using
+it to reuse a contact-identified profile silently merges different people. Phone
+is the most reliable identifier; email second (shared/changed more often). This
+is the explicit product spec for import dedup.
+
+**How to apply:** keep name-only de-dup working via the `(restaurant_id,
+match_key)` UNIQUE upsert (a name-only booking with no phone/email still converges
+on re-import) — that is idempotency, not a `resolveExisting` match. Don't "fix"
+the lost name-matching by re-adding a name branch to `resolveExisting`.
+
 ## RLS / PII convention for new tables
 PII tables use `authenticated`-only policies `USING (true)` + `service_role`
 grants + `REVOKE ALL ... FROM anon` — mirroring the `gn_*` RLS-fix migration.

@@ -7,7 +7,10 @@
  * Wichtige Eigenschaften:
  *  - Dedup/Upsert pro Reservation über (restaurant_id, external_reservation_id):
  *    erneuter Import derselben Res.Nr. AKTUALISIERT statt zu duplizieren.
- *  - Gast-Wiedererkennung: E-Mail → Mobile → normalisierter Name.
+ *  - Gast-Wiedererkennung gegen bestehende Profile NUR über Telefon → E-Mail
+ *    (Telefon hat Vorrang). Ein neuer Gast wird angelegt, wenn weder Telefon noch
+ *    E-Mail ein bestehendes Profil treffen; Namensgleichheit allein führt KEINE
+ *    bestehenden Profile zusammen (siehe resolveExisting).
  *  - Gast-Aggregate werden NACH dem Schreiben aus reservation_records neu
  *    berechnet (Upserts machen inkrementelle Zähler unzuverlässig), beschränkt
  *    auf die betroffenen guest_ids (gechunkte .in()-Abfragen).
@@ -214,22 +217,33 @@ async function fetchExistingGuests(
   return [...byId.values()];
 }
 
-/** Findet ein bestehendes Profil zu einer Identität: E-Mail → Mobile → Name → match_key. */
+/**
+ * Findet ein bestehendes Profil zu einer Identität — Priorität: Telefon → E-Mail.
+ *
+ * Ein neuer Gast wird angelegt, wenn WEDER die normalisierte Telefonnummer NOCH
+ * die (case-insensitive) E-Mail ein bestehendes Profil treffen. Die Telefon-
+ * nummer hat Vorrang vor der E-Mail (zuverlässigster Identifikator; E-Mails
+ * werden eher geteilt/gewechselt).
+ *
+ * Es wird BEWUSST NICHT über Name/match_key auf bestehende DB-Profile gematcht:
+ * Namensgleichheit ist kein verlässlicher Identitätsbeweis (zwei verschiedene
+ * Personen können denselben Namen tragen) und würde fremde, per Kontaktdaten
+ * identifizierte Profile fälschlich zusammenführen. Die Zusammenfassung mehrerer
+ * Zeilen DESSELBEN Imports erfolgt weiterhin in clusterGuests; die Idempotenz
+ * reiner Namens-Gäste (ohne Telefon/E-Mail) sichert der spätere Upsert über
+ * (restaurant_id, match_key). Alle Kandidaten stammen aus mandantengefilterten
+ * Reads (siehe fetchExistingGuests).
+ */
 function resolveExisting(g: DistinctGuest, existing: GuestProfileRow[]): GuestProfileRow | null {
-  if (g.normalizedEmail) {
-    const hit = existing.find(e => e.normalized_email && e.normalized_email === g.normalizedEmail);
-    if (hit) return hit;
-  }
   if (g.normalizedMobile) {
     const hit = existing.find(e => e.normalized_mobile && e.normalized_mobile === g.normalizedMobile);
     if (hit) return hit;
   }
-  if (g.normalizedName) {
-    const hit = existing.find(e => e.normalized_name && e.normalized_name === g.normalizedName);
+  if (g.normalizedEmail) {
+    const hit = existing.find(e => e.normalized_email && e.normalized_email === g.normalizedEmail);
     if (hit) return hit;
   }
-  const byKey = existing.find(e => e.match_key === g.matchKey);
-  return byKey ?? null;
+  return null;
 }
 
 // ── Tabellen-Setup prüfen ────────────────────────────────────────────────────
