@@ -404,7 +404,13 @@ export function OvertimeCostCard({
                             <OvertimeBadge hours={e.overtimeHours} />
                           )}
                         </TableCell>
-                        <UeberstundenKostenCell bal={selBal} showCost={showCostCol} />
+                        <UeberstundenKostenCell
+                          monthHours={e.overtimeHours}
+                          monthCost={e.overtimeCost}
+                          disabled={e.overtimeDisabled}
+                          bal={selBal}
+                          showCost={showCostCol}
+                        />
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {e.additionalCostHours <= 0
                             ? '—'
@@ -536,7 +542,8 @@ function EmployeeDetail({
     [dayDetailEntries, employeeId, additionalCostHours],
   );
 
-  const weekColCount = 7 + (showCostCol ? 1 : 0); // + kombinierte Spalte „Kosten / Saldo" (Kostensicht)
+  // Chevron · KW · Zeitraum · Soll · Ist · ÜS · Kosten / Saldo.
+  const weekColCount = 7;
 
   return (
     <div className="space-y-4 px-4 py-3">
@@ -557,9 +564,8 @@ function EmployeeDetail({
                   <TableHead>Zeitraum</TableHead>
                   <TableHead className="text-right">Soll</TableHead>
                   <TableHead className="text-right">Ist</TableHead>
-                  <TableHead className="text-right">Überstunden</TableHead>
-                  <TableHead className="text-right">Saldo h bis KW</TableHead>
-                  {showCostCol && <TableHead className="text-right">Kosten / Saldo</TableHead>}
+                  <TableHead className="text-right">ÜS</TableHead>
+                  <TableHead className="text-right">{showCostCol ? 'Kosten / Saldo' : 'Saldo'}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -599,11 +605,8 @@ function EmployeeDetail({
                             <OvertimeBadge hours={w.overtimeHours} />
                           )}
                         </TableCell>
-                        <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">
-                          {bal ? hrs(bal.cumulativeOvertimeHours) : '—'}
-                        </TableCell>
-                        {showCostCol && (
-                          <TableCell className="whitespace-nowrap text-right tabular-nums">
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          {showCostCol && (
                             <div>
                               {weekly.overtimeDisabled ? (
                                 <span className="text-muted-foreground">{chf(0)}</span>
@@ -613,16 +616,19 @@ function EmployeeDetail({
                                 chf(w.overtimeCost)
                               )}
                             </div>
-                            <div className="text-[11px] text-muted-foreground">
-                              Saldo{' '}
-                              {bal === null
-                                ? '—'
-                                : bal.cumulativeOvertimeCost === null
+                          )}
+                          <div className="text-[11px] text-muted-foreground">
+                            Saldo {bal ? hrs(bal.cumulativeOvertimeHours) : '—'}
+                            {showCostCol && bal && (
+                              <>
+                                {' · '}
+                                {bal.cumulativeOvertimeCost === null
                                   ? 'kein Satz'
                                   : chf(bal.cumulativeOvertimeCost)}
-                            </div>
-                          </TableCell>
-                        )}
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
                       </TableRow>
 
                       {/* Ebene 3: Tagesdetail (lazy) */}
@@ -730,7 +736,7 @@ function DayDetailTable({
             <TableHead className="text-right">Std.</TableHead>
             <TableHead className="text-right">+Std Info</TableHead>
             {showCost && <TableHead className="text-right">+CHF Info</TableHead>}
-            <TableHead>Abwesenheit</TableHead>
+            <TableHead>Abw.</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -787,29 +793,50 @@ function DayDetailTable({
 }
 
 // ── ÜS-Kosten-Zelle (Ebene 1) ────────────────────────────────────────────────
-// ÜS-Kosten-Zelle (gestapelt): oben die ausgewählte Woche (KW + Stunden + CHF),
-// darunter kleiner/grau der kumulierte Saldo bis zu dieser Woche. CHF-Beträge nur
-// bei `showCost` (canSeeIndividualRates); Stunden-Salden sind keine Lohndaten und
-// bleiben immer sichtbar.
-function UeberstundenKostenCell({ bal, showCost }: { bal: WeekCumulativeBalance | null; showCost: boolean }) {
-  if (!bal) {
-    return <TableCell className="text-right text-muted-foreground">—</TableCell>;
-  }
+// ÜS-Kosten-Zelle (gestapelt, 3 Zeilen): oben fett die Monatskosten (Monats-ÜS-
+// Stunden + CHF), darunter kleiner/grau die ausgewählte Woche (KW + Stunden + CHF)
+// und der kumulierte Saldo bis zu dieser Woche. CHF-Beträge nur bei `showCost`
+// (canSeeIndividualRates); Stunden(-Salden) sind keine Lohndaten und immer sichtbar.
+function UeberstundenKostenCell({
+  monthHours,
+  monthCost,
+  disabled,
+  bal,
+  showCost,
+}: {
+  monthHours: number;
+  monthCost: number | null;
+  disabled: boolean;
+  bal: WeekCumulativeBalance | null;
+  showCost: boolean;
+}) {
   const costStr = (c: number | null): string => (c === null ? 'kein Satz' : chf(c));
-  const saldoTitle =
-    `Saldo bis KW ${bal.isoWeek}: ${hrs(bal.cumulativeOvertimeHours)}` +
-    (showCost ? ` / ${costStr(bal.cumulativeOvertimeCost)}` : '');
+  const monthCostDisplay = disabled ? 0 : monthCost;
+  const saldoTitle = bal
+    ? `Saldo bis KW ${bal.isoWeek}: ${hrs(bal.cumulativeOvertimeHours)}` +
+      (showCost ? ` / ${costStr(bal.cumulativeOvertimeCost)}` : '')
+    : undefined;
   return (
     <TableCell className="text-right tabular-nums" title={saldoTitle}>
-      <div className="text-xs font-medium">
-        <span className="text-muted-foreground">KW {bal.isoWeek}:</span>{' '}
-        {hrs(bal.overtimeHours)}
-        {showCost && <> · {costStr(bal.overtimeCost)}</>}
+      {/* Monatskosten (Hauptwert) */}
+      <div className="text-xs font-semibold">
+        <span className="text-muted-foreground">Monat:</span>{' '}
+        {hrs(monthHours)}
+        {showCost && <> · {costStr(monthCostDisplay)}</>}
       </div>
-      <div className="text-[11px] text-muted-foreground">
-        Saldo: {hrs(bal.cumulativeOvertimeHours)}
-        {showCost && <> · {costStr(bal.cumulativeOvertimeCost)}</>}
-      </div>
+      {/* Ausgewählte Woche + kumulierter Saldo bis zu dieser Woche */}
+      {bal && (
+        <>
+          <div className="text-[11px] text-muted-foreground">
+            KW {bal.isoWeek}: {hrs(bal.overtimeHours)}
+            {showCost && <> · {costStr(bal.overtimeCost)}</>}
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            Saldo: {hrs(bal.cumulativeOvertimeHours)}
+            {showCost && <> · {costStr(bal.cumulativeOvertimeCost)}</>}
+          </div>
+        </>
+      )}
     </TableCell>
   );
 }
@@ -862,6 +889,8 @@ function EmployeeOvertimeModal({
           <dd className="text-right tabular-nums">{wl(employee.workloadPercent)}</dd>
           <dt className="text-muted-foreground">Soll Monat</dt>
           <dd className="text-right tabular-nums">{hrs(employee.monthlyTargetHours)}</dd>
+          <dt className="text-muted-foreground">Ist Monat</dt>
+          <dd className="text-right tabular-nums">{hrs(employee.productiveHours)}</dd>
           <dt className="text-muted-foreground">Überstunden Monat</dt>
           <dd className="text-right tabular-nums">{hrs(employee.overtimeHours)}</dd>
         </dl>

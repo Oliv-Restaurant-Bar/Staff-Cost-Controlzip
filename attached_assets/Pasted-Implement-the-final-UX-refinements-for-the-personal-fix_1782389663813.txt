@@ -1,0 +1,120 @@
+Implement the final UX refinements for the /personal-fix overtime section.
+
+Goal:
+Make the overtime overview more compact, clearer and manager-friendly. Do not change overtime business logic.
+
+Required UI changes:
+
+1. Make the main overtime table more compact:
+   - reduce row height
+   - reduce cell padding
+   - reduce header height
+   - use smaller secondary text
+   - avoid multi-line values where possible
+
+2. Remove these columns from the main table:
+   - Abteilung
+   - Pensum
+   - Status
+   - Total Zusatzkosten
+   - Woche / Saldo
+
+3. Add compact department filter buttons above the table:
+   - Alle
+   - Küche
+   - Service
+
+4. Rename columns:
+   - Überstunden Monat -> ÜS Monat
+   - Überstundenkosten -> ÜS Kosten
+   - Zusatzkosten stays as one single column only
+
+5. Move weekly/saldo information into the ÜS Kosten column:
+   Show compactly inside the same cell:
+   - Monatskosten
+   - current selected KW: hours and CHF
+   - Saldo bis KW: hours and CHF
+
+6. Employee name interaction:
+   Clicking the employee name opens a modal.
+   The modal allows enabling/disabling overtime cost calculation for this employee.
+
+   Modal content:
+   - Employee name
+   - Checkbox: "Überstundenkosten für diesen Mitarbeiter berechnen"
+   - Current monthly target
+   - Current monthly productive hours
+   - Current monthly overtime
+   - Save / Cancel
+
+7. Visual indicator:
+   Employees with overtime cost calculation enabled should be visually highlighted directly in the employee name cell.
+   Do not add a separate status column.
+   Example:
+   - small blue dot
+   - subtle badge
+   - slightly bold name
+
+8. Known disabled employees:
+   Mendim Lokaj and Mejdi should remain disabled if they are currently disabled.
+   Do not reset existing persisted settings.
+
+9. Expanded weekly view:
+   Keep the week drill-down but make it compact.
+   Columns:
+   - KW
+   - Zeitraum
+   - Soll
+   - Ist
+   - ÜS
+   - Kosten / Saldo
+
+10. Expanded daily view:
+   Make it compact.
+   Columns:
+   - Datum
+   - Tag
+   - Arbeitszeit
+   - Std.
+   - +Std Info
+   - +CHF Info
+   - Abw.
+
+11. Daily info costs:
+   Use the same effective hourly rate as official overtime costs.
+   Do not apply an additional 1.13 factor, because the effective rate already includes it.
+   If employee overtime is disabled, show CHF 0.00.
+   Daily values are info-only and must not affect official overtime calculations.
+
+12. Business logic:
+   Do not change:
+   - monthly overtime calculation
+   - weekly overtime calculation
+   - cumulative saldo calculation
+   - absence exclusion
+   - fixed-salary only filtering
+   - Zusatzkosten calculation
+   - permission gating
+
+13. Sorting:
+   Keep default sorting by highest ÜS Kosten first.
+
+14. Tests:
+   Add or update tests for:
+   - removed columns
+   - department filter buttons
+   - compact ÜS Kosten cell with month, KW and saldo
+   - employee modal enable/disable flow
+   - enabled visual indicator
+   - single Zusatzkosten column
+   - compact weekly rows
+   - compact daily rows
+   - daily +CHF info cost without double 1.13 factor
+   - disabled employee daily cost CHF 0.00
+
+15. Run:
+   npm run typecheck
+   npm test
+
+16. Update replit.md with a short note only.
+   Do not make replit.md much longer.
