@@ -1,0 +1,181 @@
+Build a new Personalbedarf module and integrate it into Dienstplanung and Personalkosten.
+
+Goal:
+Create a structured staffing demand system that defines the required positions, shifts and personnel units per department and day. This demand must be used to validate the Dienstplanung before and during planning.
+
+Core concepts:
+
+1. Positions and skills
+    Add position capability tracking to employees.
+
+Each employee can cover one or more positions.
+
+Examples:
+Küche Chef
+Küche Warm
+Küche Kalt
+Pizza
+Abwasch
+Service
+Chef de Service
+Bar
+Buffet
+Springer
+Reinigung
+
+In Personalstamm, add a section:
+“Kann folgende Positionen abdecken”
+
+Use checkboxes or tags.
+
+2. Staffing demand templates
+    Create a new module:
+    Personalbedarf
+
+This module defines the required staffing per department, weekday and season.
+
+Fields:
+Department
+Position
+Weekday
+Required shift time
+Required personnel units
+Priority
+Active from
+Active until
+Season or period
+Notes
+
+Example:
+Küche, Warm, Friday, 10:00 to 14:00 and 17:00 to 23:00, 2 units
+Service, Abend, Saturday, 17:00 to 23:30, 4 units
+
+3. Seasonal demand
+    The demand must be flexible by period.
+
+Examples:
+Normalbetrieb
+November
+Dezember
+Sommer
+Ferienzeit
+Eventbetrieb
+
+For November and December, allow higher required personnel units and additional positions.
+
+The active demand template should be selected automatically by date.
+
+4. Dienstplanung validation
+    When creating or editing the Dienstplan, compare planned employees against the Personalbedarf.
+
+For each day show:
+Required positions
+Planned positions
+Missing positions
+Overstaffed positions
+Wrongly assigned employees
+
+Example:
+Monday Service:
+Required: 4 Service units
+Planned: 3 Service units
+Missing: 1 Service
+
+5. Employee availability and absences
+    If an employee is on holiday, sick, accident or absent, they must not count as covering a required position.
+
+Example:
+A Service employee is planned but has Ferien.
+The system must show:
+Service position not covered.
+
+6. Workload and legal planning logic
+    Add planning warnings:
+
+100 percent employee should not be planned more than 5 days per week.
+Workload based weekly target:
+100 percent = 42 h
+80 percent = 33.6 h
+60 percent = 25.2 h
+50 percent = 21 h
+
+Warnings:
+Too many planned days
+Too many planned hours
+Employee planned while absent
+Employee planned for a position they cannot cover
+Required position not covered
+Department demand not fulfilled
+
+7. Planning dashboard
+    In Dienstplanung, add a demand coverage panel.
+
+Show per week:
+Coverage percentage
+Missing shifts
+Missing personnel units
+Overstaffed units
+Projected hours
+Projected cost
+Budget difference
+
+Use traffic lights:
+Green = fully covered and within budget
+Orange = missing coverage or slight budget issue
+Red = major understaffing or budget exceeded
+
+8. Personal cost integration
+    Connect Personalbedarf with Personalkosten.
+
+Show:
+Soll hours based on demand
+Planned hours
+Difference
+Soll cost
+Planned cost
+Difference
+Projected PKQ
+
+This must help analyze costs while planning, not only after the month is finished.
+
+9. Flexible staff demand
+    Show where flexible staff is needed.
+
+For each week:
+Department
+Position
+Missing units
+Missing days
+Suggested flexible coverage
+
+Example:
+Service needs 2 flexible evening shifts in KW 48.
+Küche needs 1 Pizza replacement on Saturday.
+
+10. Replacement suggestions
+    If a planned employee is absent or unavailable, suggest replacements based on:
+    Position capability
+    Department
+    Available days
+    Remaining weekly workload
+    Overtime risk
+    Cost impact
+11. Do not break existing Dienstplanung
+    Keep current scheduling functions working.
+    Add the new demand validation as an additional layer.
+12. Tests
+    Add tests for:
+    Employee position capabilities
+    Demand template by weekday
+    Seasonal demand selection
+    Coverage calculation
+    Absence means position not covered
+    100 percent employee planned more than 5 days warning
+    Employee planned for unsupported position warning
+    Flexible staff demand calculation
+    Cost comparison Soll vs Plan
+    Replacement suggestions
+13. Run:
+    npm run typecheck
+    npm test
+14. Update replit.md with a concise architecture note.

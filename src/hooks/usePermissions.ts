@@ -88,6 +88,8 @@ export interface Permissions {
   // ── Rolle ────────────────────────────────────────────────
   role: UserRole;
   isAdmin: boolean;
+  /** Gast-Session (Read-only-Demo). isAdmin ist für Gäste TRUE → sensible PII-Seiten mit `isAdmin && !isGuest` gaten. */
+  isGuest: boolean;
   isManager: boolean;
   isBeaulieuManager: boolean;
   /** Beaulieu-Leser: Vollzugriff auf Warenrechnungen (view + export), kein Schreiben */
@@ -217,6 +219,7 @@ export const usePermissions = (): Permissions => {
     // Rolle
     role,
     isAdmin,
+    isGuest,
     isManager,
     isBeaulieuManager,
     isBeaulieuViewer,
