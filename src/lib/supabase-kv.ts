@@ -582,3 +582,64 @@ export async function saveCellColors(
 ): Promise<void> {
   await kvSet(cellColorsKey(monthKey, tenantId), colors);
 }
+
+// ─── Überstunden-Deaktivierung pro Mitarbeiter ───────────────────────────────
+// Persistente, mandantenfähige Liste der Mitarbeiter-IDs, für die die
+// Überstundenberechnung auf /personal-fix deaktiviert ist (→ 0 Überstundenkosten).
+// Bewusst NICHT auf der employees-Tabelle gespeichert: respektiert das
+// Employees-Write-Gate (nur das Personalstamm-Formular schreibt employees) und
+// vermeidet eine DB-Migration. localStorage ist schneller Cache, KV ist Master.
+// Key format: "overtime-disabled" (Oliv) bzw. "beaulieu:overtime-disabled".
+
+const OVERTIME_DISABLED_BASE = 'overtime-disabled';
+
+function overtimeDisabledKey(tenantId: TenantId): string {
+  return tenantId === 'oliv' ? OVERTIME_DISABLED_BASE : `${tenantId}:${OVERTIME_DISABLED_BASE}`;
+}
+
+function toStringIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((x): x is string => typeof x === 'string');
+}
+
+/**
+ * Lädt die Liste der Mitarbeiter-IDs mit deaktivierter Überstundenberechnung.
+ * Cache-first (localStorage) NUR wenn nicht leer — sonst KV (Master) abfragen,
+ * damit ein staler leerer Cache keine echten KV-Daten verdeckt.
+ */
+export async function loadOvertimeDisabledIds(tenantId: TenantId = 'oliv'): Promise<string[]> {
+  const key = overtimeDisabledKey(tenantId);
+  try {
+    const cached = localStorage.getItem(key);
+    if (cached) {
+      const parsed = toStringIds(JSON.parse(cached));
+      if (parsed.length > 0) return parsed;
+    }
+  } catch { /* ignore */ }
+  const ids = toStringIds(await kvGet(key));
+  try { localStorage.setItem(key, JSON.stringify(ids)); } catch { /* ignore */ }
+  return ids;
+}
+
+/**
+ * Persistiert die Liste der Mitarbeiter-IDs mit deaktivierter
+ * Überstundenberechnung. Schreibt localStorage sofort (optimistisch) und KV
+ * (persistent); zeigt bei KV-Schreibfehler einen Toast.
+ */
+export async function saveOvertimeDisabledIds(tenantId: TenantId, ids: string[]): Promise<void> {
+  const key = overtimeDisabledKey(tenantId);
+  const clean = Array.from(new Set(toStringIds(ids)));
+  try { localStorage.setItem(key, JSON.stringify(clean)); } catch { /* ignore */ }
+  try {
+    await kvSetStrict(key, clean);
+  } catch (err) {
+    console.error(`[OVERTIME-DISABLED] KV-Schreibfehler für ${key}:`, err);
+    try {
+      const { toast } = await import('sonner');
+      toast.error(
+        'Überstunden-Einstellung konnte nicht dauerhaft gespeichert werden. Bitte Verbindung prüfen.',
+        { duration: 8000, id: 'overtime-disabled-write-failed' },
+      );
+    } catch { /* Sonner nicht verfügbar */ }
+  }
+}

@@ -3,46 +3,55 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Berechnet Überstunden NUR für festangestellte Mitarbeiter (fixer Monatslohn)
 // aus den produktiven Ist-Stunden. Überstunden werden AUSSCHLIESSLICH auf
-// Wochenbasis ermittelt:
-//   effektiveÜberstunden je (Mitarbeiter, ISO-Woche)
-//     = max(0, produktive Wochen-Ist-Stunden − Wochensoll)
-// Das Wochensoll ist pensumabhängig: 42 h × Pensum (= die vertraglichen
-// Wochenstunden `weeklyHours`; fehlt der Wert → 42 h = 100 %). Beispiele:
-//   100 % → 42.0 h, 80 % → 33.6 h, 50 % → 21.0 h.
+// MONATSBASIS ermittelt:
+//   Überstunden je Mitarbeiter
+//     = max(0, produktive Monats-Ist-Stunden − Monatssoll)
 //
-// WICHTIG (Korrektur): Tage über 8.4 h erzeugen KEINE Überstunden mehr, solange
-// die Wochensumme das Wochensoll nicht überschreitet. Beispiel: 33.07 h in einer
-// Woche → 0.00 h Überstunden, auch wenn einzelne Tage über 8.4 h liegen. Die
-// 8.4-h-Tagesgrenze dient nur noch der INFORMATIVEN Tages-Aufschlüsselung
-// ("Tage über 8.4h, nur Info") und fliesst NICHT in die Überstundenkosten ein.
+// Das Monatssoll ist pensum- und monatslängenabhängig:
+//   Monatssoll = 42 h × Anzahl Wochen im Monat × Pensum
+// Die „Anzahl Wochen im Monat" wird stetig als (Tage im Monat ÷ 7) angesetzt
+// (dokumentierte Annahme, leicht änderbar). Da 42 ÷ 7 = 6 ergibt sich bei 100 %
+// das saubere Monatssoll = 6 × Tage im Monat (30 Tage → 180 h, 31 → 186 h,
+// 28 → 168 h). Das Pensum entspricht den vertraglichen Wochenstunden
+// `weeklyHours` (bereits „42 × Pensum"; fehlt der Wert → 42 h = 100 %):
+//   100 % → ×1.0, 80 % → ×0.8, 50 % → ×0.5.
+//
+// WICHTIG: Tage über 8.4 h erzeugen KEINE Überstunden. Die 8.4-h-Tagesgrenze
+// dient nur noch der INFORMATIVEN Anzeige (Anzahl Tage über 8.4 h) und fliesst
+// NICHT in die Überstundenberechnung/-kosten ein.
+//
+// Abwesenheiten (FE/K/U/…) sind keine produktive Arbeitszeit und werden NICHT
+// gezählt — sonst würden Ferien-/Kranktage über das Monatssoll drücken und
+// falsche Überstunden erzeugen (gleiche Semantik wie Grid: produktiv =
+// hours > 0 && !absenceType).
+//
+// Manuelle Zusatzkosten-Tage (isAdditionalCost) werden ebenfalls NICHT als
+// produktive Überstunden-Stunden gezählt: sie sind im regulären Personalkosten-
+// Total (pfix.month.istTotal enthält zusatzIstCHF) bereits enthalten — eine
+// erneute Zählung als Überstunden wäre eine Doppelverrechnung. Sie werden
+// stattdessen SEPARAT pro Mitarbeiter als Zusatzkosten ausgewiesen
+// (additionalCost / additionalCostHours / additionalCostDays — reine Anzeige).
 //
 // Kosten = Überstunden × bestehendem berechnetem Stundenkostensatz
-// (getEffectiveHourlyRate). Es werden KEINE Sätze erfunden. Da nur
-// Festangestellte mit fixem Monatslohn einbezogen werden (siehe
-// isFixedSalaryEmployee), liefert getEffectiveHourlyRate praktisch immer einen
-// Satz; die null-Behandlung (Stunden ausgewiesen, Kosten "nicht verfügbar")
-// bleibt nur als defensive Absicherung erhalten.
+// (getEffectiveHourlyRate). Es werden KEINE Sätze erfunden. Stündliche/flexible
+// Mitarbeiter (minijob/aushilfe ODER ohne fixen Monatslohn) sind ausgeschlossen.
 //
-// Stündliche/flexible Mitarbeiter (minijob/aushilfe ODER ohne fixen Monatslohn)
-// sind ausgeschlossen — sie werden bereits über ihre Ist-Stunden abgerechnet und
-// dürfen nicht erneut als Überstunden-Zusatzkosten gezählt werden. Festangestellt
-// = vollzeit/teilzeit MIT monthlySalary > 0 (siehe isFixedSalaryEmployee).
+// Pro Mitarbeiter kann die Überstundenberechnung dauerhaft deaktiviert werden
+// (disabledEmployeeIds): dann sind overtimeHours = 0 und overtimeCost = 0
+// (Soll/Ist/Differenz bleiben zur Transparenz erhalten).
 //
-// KEIN React / Supabase / DOM. date-fns wird nur für die ISO-Wochen-Logik
-// genutzt (pure). Eingabedaten sind bereits mandanten-/zeitraum-gefiltert.
+// KEIN React / Supabase / DOM. Eingabedaten sind bereits mandanten-/
+// zeitraum-gefiltert (alle Einträge gehören zum selben Monat).
 // ─────────────────────────────────────────────────────────────────────────────
-import { getISOWeek, getISOWeekYear } from 'date-fns';
 import type { Employee, Department } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 
 /**
- * Tagesgrenze — NUR informativ. Tage über diesem Wert werden in der
- * Tages-Aufschlüsselung als „Tage über 8.4h, nur Info" angezeigt, erzeugen aber
- * KEINE Überstunden(-kosten). Überstunden werden ausschliesslich wöchentlich
- * gegen das pensumabhängige Wochensoll berechnet.
+ * Tagesgrenze — NUR informativ. Tage über diesem Wert werden als „Tage über
+ * 8.4h (nur Info)" gezählt, erzeugen aber KEINE Überstunden(-kosten).
  */
 export const DAILY_OVERTIME_THRESHOLD = 8.4;
-/** Wochensoll bei 100 % Pensum (Vollzeit). Pro Mitarbeiter via Pensum skaliert. */
+/** Wochensoll bei 100 % Pensum (Vollzeit). Basis für das Monatssoll. */
 export const WEEKLY_FULLTIME_TARGET = 42;
 /** @deprecated Alias für das Vollzeit-Wochensoll (100 %). Nutze WEEKLY_FULLTIME_TARGET. */
 export const WEEKLY_OVERTIME_THRESHOLD = WEEKLY_FULLTIME_TARGET;
@@ -60,6 +69,24 @@ export function weeklyTargetHours(emp: Employee): number {
   return typeof wh === 'number' && wh > 0 ? round2(wh) : WEEKLY_FULLTIME_TARGET;
 }
 
+/**
+ * Pensum in Prozent (für die Anzeige), abgeleitet aus dem Wochensoll.
+ * 42 h → 100, 33.6 h → 80, 21 h → 50. Fehlt `weeklyHours` → 100.
+ */
+export function workloadPercent(emp: Employee): number {
+  return round2((weeklyTargetHours(emp) / WEEKLY_FULLTIME_TARGET) * 100);
+}
+
+/**
+ * Monatssoll = 42 h × (Tage im Monat ÷ 7) × Pensum.
+ * Äquivalent zu weeklyTargetHours(emp) × Tage ÷ 7. `daysInMonth` ist die Anzahl
+ * Kalendertage des gewählten Monats (z.B. 30/31/28/29).
+ */
+export function monthlyTargetHours(emp: Employee, daysInMonth: number): number {
+  const days = Number.isFinite(daysInMonth) && daysInMonth > 0 ? daysInMonth : 0;
+  return round2((weeklyTargetHours(emp) * days) / 7);
+}
+
 /** Eine Ist-Stunden-Position pro Mitarbeiter und Tag. */
 export interface OvertimeHoursEntry {
   employeeId: string;
@@ -67,50 +94,19 @@ export interface OvertimeHoursEntry {
   hours: number; // tatsächlich gearbeitete Stunden an diesem Tag
   /**
    * Abwesenheitscode (FE/K/U/…). Ist er gesetzt, ist der Eintrag KEINE
-   * produktive Arbeitszeit (Ferien/Krankheit/Unfall) und wird NICHT als
-   * Überstunde gezählt — sonst würden z.B. Ferientage über die 42h/Woche
-   * drücken und falsche Überstundenkosten erzeugen. Gleiche Semantik wie das
-   * Grid: produktiv = hours > 0 && !absenceType.
+   * produktive Arbeitszeit und wird vollständig ignoriert.
    */
   absenceType?: string | null;
-}
-
-/** Tages-Detail innerhalb einer Woche (für die Tages-Aufschlüsselung). */
-export interface OvertimeDay {
-  date: string;
-  isoYear: number;
-  isoWeek: number;
-  actualHours: number;
   /**
-   * max(0, actualHours - 8.4). NUR informativ („Tage über 8.4h, nur Info") —
-   * fliesst NICHT in die Überstundenberechnung/-kosten ein.
+   * true = manueller Zusatzkosten-Tag eines Festangestellten. Diese Stunden
+   * zählen NICHT als produktive Überstunden-Stunden (sie sind bereits im
+   * regulären Personalkosten-Total enthalten), werden aber separat als
+   * Zusatzkosten pro Mitarbeiter ausgewiesen.
    */
-  dailyOvertime: number;
+  isAdditionalCost?: boolean;
 }
 
-/** Wochen-Detail (für die Wochen-Aufschlüsselung). */
-export interface OvertimeWeek {
-  isoYear: number;
-  isoWeek: number;
-  weekKey: string; // `${isoYear}-W${isoWeek}`
-  weekHours: number; // Summe produktiver Ist-Stunden in dieser Woche (Wochen-Ist)
-  /** Pensumabhängiges Wochensoll (42 h × Pensum) für diese Woche/diesen MA */
-  targetHours: number;
-  /**
-   * Summe der Tages-Überstunden (Tage über 8.4h) — NUR informativ, fliesst
-   * NICHT in effectiveOvertime/Kosten ein.
-   */
-  dailyOvertimeSum: number;
-  /** max(0, weekHours - targetHours) — die einzig massgebliche Überstundenzahl */
-  weeklyOvertime: number;
-  /** = weeklyOvertime (Tages-Überstunden werden bewusst NICHT mehr einbezogen) */
-  effectiveOvertime: number;
-  /** effectiveOvertime × Stundensatz; null wenn Satz nicht verfügbar */
-  cost: number | null;
-  days: OvertimeDay[];
-}
-
-/** Ergebnis pro festangestelltem Mitarbeiter mit Überstunden. */
+/** Ergebnis pro festangestelltem Mitarbeiter. */
 export interface EmployeeOvertimeResult {
   employeeId: string;
   name: string;
@@ -118,21 +114,44 @@ export interface EmployeeOvertimeResult {
   /** Berechneter Stundenkostensatz (null = nicht verfügbar) */
   hourlyRate: number | null;
   rateAvailable: boolean;
-  /** Summe der wöchentlich effektiven Überstunden im Zeitraum */
+  /** Pensum in Prozent (z.B. 100, 80, 50) */
+  workloadPercent: number;
+  /** Soll Monat = 42 h × Wochen im Monat × Pensum */
+  monthlyTargetHours: number;
+  /** Ist Monat produktiv (ohne Abwesenheiten und ohne Zusatzkosten-Tage) */
+  productiveHours: number;
+  /** Differenz = produktive Monats-Ist − Monatssoll (kann negativ sein) */
+  difference: number;
+  /** max(0, Differenz); 0 wenn für diesen Mitarbeiter deaktiviert */
   overtimeHours: number;
-  /** Summe der Überstundenkosten; null wenn der Satz fehlt (Stunden trotzdem da) */
+  /** overtimeHours × Satz; null wenn Satz fehlt; 0 wenn deaktiviert */
   overtimeCost: number | null;
-  weeks: OvertimeWeek[];
-  /** Nur Tage mit Tages-Überstunden (>0), sortiert nach Datum */
-  days: OvertimeDay[];
+  /** true = Überstundenberechnung für diesen Mitarbeiter deaktiviert */
+  overtimeDisabled: boolean;
+  /** Anzahl Tage über 8.4 h — NUR informativ */
+  daysOver84Count: number;
+  /** Summe der manuellen Zusatzkosten-Stunden (isAdditionalCost) */
+  additionalCostHours: number;
+  /** Anzahl Tage mit manuellen Zusatzkosten */
+  additionalCostDays: number;
+  /**
+   * Manuelle Zusatzkosten in CHF (pro Tag gerundet × Satz; null wenn Satz
+   * fehlt). REINE ANZEIGE — bereits im regulären Personalkosten-Total enthalten,
+   * NICHT erneut in die Überstunden-/Gesamtsummen einrechnen.
+   */
+  additionalCost: number | null;
 }
 
 export interface OvertimeAnalysis {
-  /** Nur festangestellte Mitarbeiter mit Überstunden (>0), sortiert nach Stunden absteigend */
+  /**
+   * Festangestellte mit produktiven Ist-Stunden ODER Zusatzkosten im Monat,
+   * sortiert nach Überstunden absteigend (dann Differenz, dann Name).
+   */
   employees: EmployeeOvertimeResult[];
   totalOvertimeHours: number;
-  /** Summe nur der verfügbaren Kosten (Mitarbeiter mit Satz) */
+  /** Summe nur der verfügbaren Überstundenkosten (deaktivierte zählen 0) */
   totalOvertimeCost: number;
+  /** Anzahl Mitarbeiter mit tatsächlichen Überstunden (> 0) */
   affectedEmployeeCount: number;
   /** true, wenn mindestens ein betroffener Mitarbeiter keinen Stundensatz hat */
   hasUnavailableRates: boolean;
@@ -141,8 +160,12 @@ export interface OvertimeAnalysis {
 export interface OvertimeAnalysisInput {
   employees: Employee[];
   entries: OvertimeHoursEntry[];
+  /** Kalendertage des gewählten Monats (für das Monatssoll) */
+  daysInMonth: number;
   /** Abteilungsfilter; 'all'/undefined = alle Abteilungen */
   departmentFilter?: Department | 'all';
+  /** Mitarbeiter-IDs mit deaktivierter Überstundenberechnung */
+  disabledEmployeeIds?: Iterable<string>;
 }
 
 /**
@@ -154,33 +177,27 @@ export interface OvertimeAnalysisInput {
  * Die zweite Bedingung ist die robuste zweite Sicherheitsschicht: stündliche,
  * flexible bzw. Aushilfs-Mitarbeiter — auch solche, die fälschlich als
  * vollzeit/teilzeit erfasst sind, aber KEINEN fixen Monatslohn haben — werden
- * von der Überstundenauswertung ausgeschlossen. Überstunden(-kosten) sind nur
- * für Festangestellte mit fixem Monatslohn definiert; Stündliche werden bereits
- * über ihre Ist-Stunden abgerechnet. Deckt sich mit `hasFixedSalary` in
- * PersonalFix.tsx (gleiche Semantik).
+ * von der Überstundenauswertung ausgeschlossen. Deckt sich mit `hasFixedSalary`
+ * in PersonalFix.tsx (gleiche Semantik).
  */
 export function isFixedSalaryEmployee(emp: Employee): boolean {
   return (emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit')
     && (emp.monthlySalary ?? 0) > 0;
 }
 
-function isoWeekInfoFor(dateStr: string): { isoYear: number; isoWeek: number } {
-  const d = new Date(dateStr + 'T00:00:00');
-  return { isoYear: getISOWeekYear(d), isoWeek: getISOWeek(d) };
-}
-
 /**
- * Berechnet die Überstundenauswertung für festangestellte Mitarbeiter.
+ * Berechnet die monatliche Überstundenauswertung für festangestellte
+ * Mitarbeiter.
  *
- * - Stündliche Mitarbeiter werden ignoriert.
+ * - Stündliche/flexible Mitarbeiter werden ignoriert.
  * - Abteilungsfilter wird respektiert.
- * - Wochen werden anhand der ISO-Woche der GELIEFERTEN Einträge gruppiert
- *   (Wochen, die über den geladenen Zeitraum hinausragen, werden mit den
- *   vorhandenen Tagen berechnet — bewusste, dokumentierte Zeitraum-Grenze).
+ * - Abwesenheiten und Zusatzkosten-Tage zählen nicht als produktive Stunden.
+ * - Pro Mitarbeiter deaktivierbar (disabledEmployeeIds) → 0 Überstunden/Kosten.
  */
 export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeAnalysis {
-  const { employees, entries, departmentFilter } = input;
+  const { employees, entries, daysInMonth, departmentFilter } = input;
   const dept = departmentFilter ?? 'all';
+  const disabled = new Set<string>(input.disabledEmployeeIds ?? []);
 
   // Nur festangestellte, ggf. abteilungsgefilterte Mitarbeiter
   const fixedById = new Map<string, Employee>();
@@ -190,86 +207,68 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
     fixedById.set(emp.id, emp);
   }
 
-  // Einträge pro Mitarbeiter → pro ISO-Woche → pro Tag aggregieren.
-  // (Mehrere Einträge pro Tag werden summiert.)
-  interface DayAcc { date: string; isoYear: number; isoWeek: number; hours: number; }
-  // employeeId → weekKey → { isoYear, isoWeek, days: Map<date, DayAcc> }
-  const perEmp = new Map<string, Map<string, { isoYear: number; isoWeek: number; days: Map<string, DayAcc> }>>();
+  // Pro Mitarbeiter: produktive Stunden je Tag + Zusatzkosten-Stunden je Tag.
+  // (Mehrere Einträge pro Tag werden summiert — für korrekte Tages-Rundung und
+  //  die 8.4-h-Tagesinfo.)
+  interface Acc {
+    productiveByDate: Map<string, number>;
+    additionalByDate: Map<string, number>;
+  }
+  const perEmp = new Map<string, Acc>();
 
   for (const e of entries) {
     if (!fixedById.has(e.employeeId)) continue;
     if (!e.date || !Number.isFinite(e.hours) || e.hours <= 0) continue;
-    if (e.absenceType) continue; // Abwesenheiten (FE/K/U/…) sind keine Überstunden
-    const { isoYear, isoWeek } = isoWeekInfoFor(e.date);
-    const weekKey = `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
+    if (e.absenceType) continue; // Abwesenheiten sind keine produktive Zeit
 
-    let weeks = perEmp.get(e.employeeId);
-    if (!weeks) { weeks = new Map(); perEmp.set(e.employeeId, weeks); }
-    let week = weeks.get(weekKey);
-    if (!week) { week = { isoYear, isoWeek, days: new Map() }; weeks.set(weekKey, week); }
-    const existing = week.days.get(e.date);
-    if (existing) existing.hours += e.hours;
-    else week.days.set(e.date, { date: e.date, isoYear, isoWeek, hours: e.hours });
+    let acc = perEmp.get(e.employeeId);
+    if (!acc) { acc = { productiveByDate: new Map(), additionalByDate: new Map() }; perEmp.set(e.employeeId, acc); }
+
+    if (e.isAdditionalCost) {
+      acc.additionalByDate.set(e.date, (acc.additionalByDate.get(e.date) ?? 0) + e.hours);
+    } else {
+      acc.productiveByDate.set(e.date, (acc.productiveByDate.get(e.date) ?? 0) + e.hours);
+    }
   }
 
   const results: EmployeeOvertimeResult[] = [];
 
-  for (const [empId, weeksMap] of perEmp) {
+  for (const [empId, acc] of perEmp) {
     const emp = fixedById.get(empId)!;
     const rate = getEffectiveHourlyRate(emp);
     const rateAvailable = rate != null;
-    const targetHours = weeklyTargetHours(emp);
 
-    const weeks: OvertimeWeek[] = [];
-    const overtimeDays: OvertimeDay[] = [];
-    let empOvertimeHours = 0;
-    let empOvertimeCost = 0;
-
-    // Wochen stabil nach weekKey sortieren
-    const sortedWeekKeys = Array.from(weeksMap.keys()).sort();
-    for (const weekKey of sortedWeekKeys) {
-      const w = weeksMap.get(weekKey)!;
-      const dayAccs = Array.from(w.days.values()).sort((a, b) => a.date.localeCompare(b.date));
-
-      let weekHours = 0;
-      let dailyOvertimeSum = 0;
-      const days: OvertimeDay[] = [];
-      for (const d of dayAccs) {
-        const actualHours = round2(d.hours);
-        const dailyOvertime = round2(Math.max(0, actualHours - DAILY_OVERTIME_THRESHOLD));
-        weekHours = round2(weekHours + actualHours);
-        dailyOvertimeSum = round2(dailyOvertimeSum + dailyOvertime);
-        const od: OvertimeDay = { date: d.date, isoYear: d.isoYear, isoWeek: d.isoWeek, actualHours, dailyOvertime };
-        days.push(od);
-        if (dailyOvertime > 0) overtimeDays.push(od);
-      }
-
-      // Überstunden ausschliesslich wöchentlich gegen das pensumabhängige
-      // Wochensoll (42 × Pensum). Tages-Überstunden (dailyOvertimeSum) sind nur
-      // informativ und fliessen bewusst NICHT mehr ein (keine Doppel-/Über-
-      // bewertung langer Einzeltage bei unterschrittenem Wochensoll).
-      const weeklyOvertime = round2(Math.max(0, weekHours - targetHours));
-      const effectiveOvertime = weeklyOvertime;
-      const cost = rateAvailable ? round2(effectiveOvertime * (rate as number)) : null;
-
-      weeks.push({
-        isoYear: w.isoYear,
-        isoWeek: w.isoWeek,
-        weekKey,
-        weekHours,
-        targetHours,
-        dailyOvertimeSum,
-        weeklyOvertime,
-        effectiveOvertime,
-        cost,
-        days,
-      });
-
-      empOvertimeHours = round2(empOvertimeHours + effectiveOvertime);
-      if (rateAvailable && cost != null) empOvertimeCost = round2(empOvertimeCost + cost);
+    // Produktive Stunden + Tages-Info (über 8.4 h)
+    let productiveHours = 0;
+    let daysOver84Count = 0;
+    for (const dayHours of acc.productiveByDate.values()) {
+      const dh = round2(dayHours);
+      productiveHours = round2(productiveHours + dh);
+      if (dh > DAILY_OVERTIME_THRESHOLD) daysOver84Count++;
     }
 
-    if (empOvertimeHours <= 0) continue; // keine Überstunden → nicht betroffen
+    // Manuelle Zusatzkosten (pro Tag gerundet × Satz)
+    let additionalCostHours = 0;
+    let additionalCostRaw = 0;
+    for (const dayHours of acc.additionalByDate.values()) {
+      const dh = round2(dayHours);
+      additionalCostHours = round2(additionalCostHours + dh);
+      if (rateAvailable) additionalCostRaw = round2(additionalCostRaw + round2(dh * (rate as number)));
+    }
+    const additionalCostDays = acc.additionalByDate.size;
+    const additionalCost = rateAvailable ? additionalCostRaw : null;
+
+    // Nur Mitarbeiter mit produktiven Stunden ODER Zusatzkosten ausweisen
+    if (productiveHours <= 0 && additionalCostHours <= 0) continue;
+
+    const target = monthlyTargetHours(emp, daysInMonth);
+    const difference = round2(productiveHours - target);
+    const overtimeDisabled = disabled.has(empId);
+    const rawOvertime = round2(Math.max(0, difference));
+    const overtimeHours = overtimeDisabled ? 0 : rawOvertime;
+    const overtimeCost = overtimeDisabled
+      ? 0
+      : (rateAvailable ? round2(overtimeHours * (rate as number)) : null);
 
     results.push({
       employeeId: empId,
@@ -277,27 +276,37 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
       department: emp.department,
       hourlyRate: rate,
       rateAvailable,
-      overtimeHours: empOvertimeHours,
-      overtimeCost: rateAvailable ? empOvertimeCost : null,
-      weeks,
-      days: overtimeDays.sort((a, b) => a.date.localeCompare(b.date)),
+      workloadPercent: workloadPercent(emp),
+      monthlyTargetHours: target,
+      productiveHours,
+      difference,
+      overtimeHours,
+      overtimeCost,
+      overtimeDisabled,
+      daysOver84Count,
+      additionalCostHours,
+      additionalCostDays,
+      additionalCost,
     });
   }
 
-  // Sortierung: meiste Überstunden zuerst, dann Name
-  results.sort((a, b) => b.overtimeHours - a.overtimeHours || a.name.localeCompare(b.name));
+  // Sortierung: meiste Überstunden zuerst, dann grösste Differenz, dann Name
+  results.sort((a, b) =>
+    b.overtimeHours - a.overtimeHours
+    || b.difference - a.difference
+    || a.name.localeCompare(b.name),
+  );
 
   const totalOvertimeHours = round2(results.reduce((s, r) => s + r.overtimeHours, 0));
-  const totalOvertimeCost = round2(
-    results.reduce((s, r) => s + (r.overtimeCost ?? 0), 0),
-  );
-  const hasUnavailableRates = results.some((r) => !r.rateAvailable);
+  const totalOvertimeCost = round2(results.reduce((s, r) => s + (r.overtimeCost ?? 0), 0));
+  const affected = results.filter((r) => r.overtimeHours > 0);
+  const hasUnavailableRates = affected.some((r) => !r.rateAvailable);
 
   return {
     employees: results,
     totalOvertimeHours,
     totalOvertimeCost,
-    affectedEmployeeCount: results.length,
+    affectedEmployeeCount: affected.length,
     hasUnavailableRates,
   };
 }

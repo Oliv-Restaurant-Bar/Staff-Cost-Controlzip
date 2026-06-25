@@ -5,341 +5,291 @@ import {
   computeOvertimeAnalysis,
   computeOvertimeTotals,
   isFixedSalaryEmployee,
+  monthlyTargetHours,
+  workloadPercent,
   weeklyTargetHours,
-  DAILY_OVERTIME_THRESHOLD,
   WEEKLY_FULLTIME_TARGET,
-  WEEKLY_OVERTIME_THRESHOLD,
+  DAILY_OVERTIME_THRESHOLD,
   type OvertimeHoursEntry,
 } from '@/lib/overtime-analysis';
 
-// ── Test-Fixtures ────────────────────────────────────────────────────────────
-// Festangestellter mit Monatslohn 7280 → L-GAV interner Stundensatz
-//   7280 * 1.13 / 182 = 45.2 CHF/h  (round2 → 45.2)
-const RATE = 45.2;
-
-function makeEmp(p: Partial<Employee> & { id: string }): Employee {
+// ── Test-Helfer ──────────────────────────────────────────────────────────────
+function emp(partial: Partial<Employee> & { id: string }): Employee {
   return {
-    name: p.id,
+    name: partial.id,
     department: 'service',
     employmentType: 'vollzeit',
-    hourlyWage: 0,
-    monthlySalary: 7280,
-    ...p,
+    isActive: true,
+    ...partial,
   } as Employee;
 }
 
-function entry(employeeId: string, date: string, hours: number): OvertimeHoursEntry {
-  return { employeeId, date, hours };
+/** Erzeugt `count` Tageseinträge ab 2026-06-01 mit `hours` pro Tag. */
+function days(
+  employeeId: string,
+  count: number,
+  hours: number,
+  opts: { absenceType?: string; isAdditionalCost?: boolean; startDay?: number } = {},
+): OvertimeHoursEntry[] {
+  const out: OvertimeHoursEntry[] = [];
+  const start = opts.startDay ?? 1;
+  for (let i = 0; i < count; i++) {
+    const day = String(start + i).padStart(2, '0');
+    out.push({
+      employeeId,
+      date: `2026-06-${day}`,
+      hours,
+      absenceType: opts.absenceType,
+      isAdditionalCost: opts.isAdditionalCost,
+    });
+  }
+  return out;
 }
 
-function absence(employeeId: string, date: string, hours: number, absenceType: string): OvertimeHoursEntry {
-  return { employeeId, date, hours, absenceType };
-}
+const JUNE_DAYS = 30; // Monatssoll 100 % = 6 × 30 = 180 h
 
-describe('overtime-analysis: Konstanten & Prädikat', () => {
-  it('Konstanten: Tagesgrenze 8.4h (nur Info) und Vollzeit-Wochensoll 42h', () => {
-    expect(DAILY_OVERTIME_THRESHOLD).toBe(8.4);
+// ── Konstanten / Hilfsfunktionen ─────────────────────────────────────────────
+describe('Konstanten und Helfer', () => {
+  it('WEEKLY_FULLTIME_TARGET = 42, DAILY_OVERTIME_THRESHOLD = 8.4', () => {
     expect(WEEKLY_FULLTIME_TARGET).toBe(42);
-    // Rückwärtskompatibler Alias
-    expect(WEEKLY_OVERTIME_THRESHOLD).toBe(42);
+    expect(DAILY_OVERTIME_THRESHOLD).toBe(8.4);
   });
 
-  it('weeklyTargetHours: 42h × Pensum (weeklyHours), Default Vollzeit 42h', () => {
-    expect(weeklyTargetHours(makeEmp({ id: '100a' }))).toBe(42); // weeklyHours undefined → 100 %
-    expect(weeklyTargetHours(makeEmp({ id: '100b', weeklyHours: 42 }))).toBe(42); // 100 %
-    expect(weeklyTargetHours(makeEmp({ id: '80', weeklyHours: 33.6 }))).toBe(33.6); // 80 %
-    expect(weeklyTargetHours(makeEmp({ id: '50', weeklyHours: 21 }))).toBe(21); // 50 %
-    expect(weeklyTargetHours(makeEmp({ id: 'zero', weeklyHours: 0 }))).toBe(42); // 0/ungültig → Vollzeit
+  it('weeklyTargetHours: 42×Pensum bzw. 42 als Default', () => {
+    expect(weeklyTargetHours(emp({ id: 'a', weeklyHours: 42 }))).toBe(42);
+    expect(weeklyTargetHours(emp({ id: 'b', weeklyHours: 33.6 }))).toBe(33.6);
+    expect(weeklyTargetHours(emp({ id: 'c', weeklyHours: 21 }))).toBe(21);
+    expect(weeklyTargetHours(emp({ id: 'd' }))).toBe(42);
   });
 
-  it('isFixedSalaryEmployee: nur vollzeit/teilzeit MIT fixem Monatslohn = fest', () => {
-    // Festangestellt: vollzeit/teilzeit mit monthlySalary > 0
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'a', employmentType: 'vollzeit' }))).toBe(true);
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'b', employmentType: 'teilzeit' }))).toBe(true);
-    // Stündlich: minijob/aushilfe immer ausgeschlossen
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'c', employmentType: 'aushilfe', monthlySalary: 0 }))).toBe(false);
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'd', employmentType: 'minijob', monthlySalary: 0 }))).toBe(false);
-    // Zweite Sicherheitsschicht: vollzeit/teilzeit OHNE fixen Monatslohn = ausgeschlossen
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'e', employmentType: 'vollzeit', monthlySalary: 0 }))).toBe(false);
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'f', employmentType: 'teilzeit', monthlySalary: undefined }))).toBe(false);
-    // Auch wenn flexibel via hourlyWage bezahlt, aber ohne fixen Monatslohn → ausgeschlossen
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'g', employmentType: 'teilzeit', hourlyWage: 30, monthlySalary: 0 }))).toBe(false);
+  it('workloadPercent: 100/80/50, Default 100', () => {
+    expect(workloadPercent(emp({ id: 'a', weeklyHours: 42 }))).toBe(100);
+    expect(workloadPercent(emp({ id: 'b', weeklyHours: 33.6 }))).toBe(80);
+    expect(workloadPercent(emp({ id: 'c', weeklyHours: 21 }))).toBe(50);
+    expect(workloadPercent(emp({ id: 'd' }))).toBe(100);
+  });
+
+  it('monthlyTargetHours = 42 × (Tage/7) × Pensum', () => {
+    const full = emp({ id: 'a', weeklyHours: 42 });
+    expect(monthlyTargetHours(full, 30)).toBe(180);
+    expect(monthlyTargetHours(full, 31)).toBe(186);
+    expect(monthlyTargetHours(full, 28)).toBe(168);
+    expect(monthlyTargetHours(emp({ id: 'b', weeklyHours: 33.6 }), 30)).toBe(144);
+    expect(monthlyTargetHours(emp({ id: 'c', weeklyHours: 21 }), 30)).toBe(90);
+    expect(monthlyTargetHours(emp({ id: 'd' }), 30)).toBe(180); // Default 100 %
+  });
+
+  it('isFixedSalaryEmployee: vollzeit/teilzeit MIT Monatslohn', () => {
+    expect(isFixedSalaryEmployee(emp({ id: 'a', employmentType: 'vollzeit', monthlySalary: 6000 }))).toBe(true);
+    expect(isFixedSalaryEmployee(emp({ id: 'b', employmentType: 'teilzeit', monthlySalary: 4000 }))).toBe(true);
+    expect(isFixedSalaryEmployee(emp({ id: 'c', employmentType: 'minijob', hourlyWage: 30 }))).toBe(false);
+    expect(isFixedSalaryEmployee(emp({ id: 'd', employmentType: 'aushilfe', hourlyWage: 28 }))).toBe(false);
+    // vollzeit OHNE Monatslohn (fälschlich erfasste Aushilfe) → ausgeschlossen
+    expect(isFixedSalaryEmployee(emp({ id: 'e', employmentType: 'vollzeit', monthlySalary: 0 }))).toBe(false);
   });
 });
 
-describe('overtime-analysis: computeOvertimeAnalysis (nur Wochensoll)', () => {
-  // 1) KERN-KORREKTUR: Tage über 8.4h erzeugen KEINE Überstunden, solange das
-  //    Wochensoll (42h) nicht überschritten wird. Beispiel KW24/2026 mit 33.07h.
-  it('33.07h-Woche mit Tagen über 8.4h ergibt 0.00h Überstunden (Wochensoll nicht überschritten)', () => {
-    const emp = makeEmp({ id: 'kw24', name: 'Anna' });
-    // Mo–Mi 2026-06-08/09/10 (gleiche ISO-Woche): 11.07 + 11 + 11 = 33.07h
+// ── Pflicht-Testfall 1: unter Monatssoll → keine Überstunden ──────────────────
+describe('unter Monatssoll → 0 Überstunden', () => {
+  it('160 h bei Soll 180 h → 0 Überstunden, Differenz −20', () => {
+    const e = emp({ id: 'A', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
     const res = computeOvertimeAnalysis({
-      employees: [emp],
-      entries: [
-        entry('kw24', '2026-06-08', 11.07),
-        entry('kw24', '2026-06-09', 11),
-        entry('kw24', '2026-06-10', 11),
-      ],
+      employees: [e],
+      entries: days('A', 16, 10), // 160 h
+      daysInMonth: JUNE_DAYS,
     });
-    // 33.07h < 42h Wochensoll → keine Überstunden, MA nicht betroffen
-    expect(res.affectedEmployeeCount).toBe(0);
-    expect(res.totalOvertimeHours).toBe(0);
-    expect(res.totalOvertimeCost).toBe(0);
-  });
-
-  // 2) Wochen-Überstunden: 43h/Woche → 1.0h (Vollzeit-Soll 42h)
-  it('zählt Wochen-Überstunden über dem Vollzeit-Soll (43h → 1.0h)', () => {
-    const emp = makeEmp({ id: 'e2' });
-    // Mo–So derselben ISO-Woche (2026-W26): 7+7+7+7+7+7+1 = 43h, jeder Tag ≤ 8.4
-    const days = ['22', '23', '24', '25', '26', '27', '28'];
-    const hrs = [7, 7, 7, 7, 7, 7, 1];
-    const entries = days.map((d, i) => entry('e2', `2026-06-${d}`, hrs[i]));
-    const res = computeOvertimeAnalysis({ employees: [emp], entries });
+    expect(res.employees).toHaveLength(1);
     const r = res.employees[0];
-    expect(r.weeks).toHaveLength(1);
-    expect(r.weeks[0].weekHours).toBe(43);
-    expect(r.weeks[0].targetHours).toBe(42);
-    expect(r.weeks[0].dailyOvertimeSum).toBe(0);
-    expect(r.weeks[0].weeklyOvertime).toBe(1);
-    expect(r.weeks[0].effectiveOvertime).toBe(1);
-    expect(r.overtimeHours).toBe(1);
-    expect(r.overtimeCost).toBe(RATE);
+    expect(r.monthlyTargetHours).toBe(180);
+    expect(r.productiveHours).toBe(160);
+    expect(r.difference).toBe(-20);
+    expect(r.overtimeHours).toBe(0);
+    expect(r.overtimeCost).toBe(0);
+    expect(r.workloadPercent).toBe(100);
+    expect(res.totalOvertimeHours).toBe(0);
+    expect(res.affectedEmployeeCount).toBe(0);
   });
+});
 
-  // 3) Regression: 100 % mit 46.64h-Woche → 4.64h Überstunden
-  it('100 % mit 46.64h-Woche → 4.64h Überstunden', () => {
-    const emp = makeEmp({ id: 'e3', name: 'Vollzeit' });
-    // Mo–Sa 2026-06-08…13 (gleiche ISO-Woche): 8+8+8+8+8+6.64 = 46.64h
-    const entries = [
-      entry('e3', '2026-06-08', 8),
-      entry('e3', '2026-06-09', 8),
-      entry('e3', '2026-06-10', 8),
-      entry('e3', '2026-06-11', 8),
-      entry('e3', '2026-06-12', 8),
-      entry('e3', '2026-06-13', 6.64),
-    ];
-    const res = computeOvertimeAnalysis({ employees: [emp], entries });
+// ── Pflicht-Testfall 2: über Monatssoll → Überstunden = Ist − Soll ────────────
+describe('über Monatssoll → Überstunden = Ist − Soll', () => {
+  it('190 h bei Soll 180 h → 10 h Überstunden, Kosten 10 × Satz', () => {
+    const e = emp({ id: 'B', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [e],
+      entries: days('B', 19, 10), // 190 h
+      daysInMonth: JUNE_DAYS,
+    });
     const r = res.employees[0];
-    expect(r.weeks).toHaveLength(1);
-    expect(r.weeks[0].weekHours).toBe(46.64);
-    expect(r.weeks[0].targetHours).toBe(42);
-    expect(r.weeks[0].weeklyOvertime).toBe(4.64);
-    expect(r.weeks[0].effectiveOvertime).toBe(4.64);
-    expect(r.overtimeHours).toBe(4.64);
-  });
-
-  // 4) Regression: 80 % (Wochensoll 33.6h) mit 35h-Woche → 1.4h Überstunden
-  it('80 % (Wochensoll 33.6h) mit 35h-Woche → 1.4h Überstunden', () => {
-    const emp = makeEmp({ id: 'e4', name: 'Teilzeit80', weeklyHours: 33.6 });
-    // Mo–Fr 2026-06-08…12: 7+7+7+7+7 = 35h, jeder Tag < 8.4
-    const entries = ['08', '09', '10', '11', '12'].map((d) => entry('e4', `2026-06-${d}`, 7));
-    const res = computeOvertimeAnalysis({ employees: [emp], entries });
-    const r = res.employees[0];
-    expect(r.weeks[0].weekHours).toBe(35);
-    expect(r.weeks[0].targetHours).toBe(33.6);
-    expect(r.weeks[0].weeklyOvertime).toBe(1.4);
-    expect(r.weeks[0].effectiveOvertime).toBe(1.4);
-    expect(r.overtimeHours).toBe(1.4);
-  });
-
-  // 5) Tages-Überstunden fliessen NICHT ein: 44h-Woche → effektiv = Wochen-ÜS (2h)
-  it('Tages-Überstunden sind nur Info: 44h-Woche → effektiv 2h (nicht 10.4h)', () => {
-    const emp = makeEmp({ id: 'e5' });
-    // 4 Tage × 11h = 44h, alle in 2026-W24 (Mo–Do 2026-06-08…11)
-    const entries = ['08', '09', '10', '11'].map((d) => entry('e5', `2026-06-${d}`, 11));
-    const res = computeOvertimeAnalysis({ employees: [emp], entries });
-    const w = res.employees[0].weeks[0];
-    expect(w.weekHours).toBe(44);
-    expect(w.targetHours).toBe(42);
-    expect(w.dailyOvertimeSum).toBe(10.4); // 4 × 2.6 — nur informativ
-    expect(w.weeklyOvertime).toBe(2); // 44 - 42
-    expect(w.effectiveOvertime).toBe(2); // = Wochen-ÜS, NICHT 10.4
-    expect(res.employees[0].overtimeHours).toBe(2);
-    expect(res.employees[0].overtimeHours).not.toBe(10.4);
-  });
-
-  // 6) Stündliche Mitarbeiter werden ausgeschlossen
-  it('schliesst stündliche Mitarbeiter (aushilfe/minijob) aus', () => {
-    const aush = makeEmp({ id: 'h1', employmentType: 'aushilfe', hourlyWage: 30, monthlySalary: 0 });
-    const mini = makeEmp({ id: 'h2', employmentType: 'minijob', hourlyWage: 25, monthlySalary: 0 });
-    const res = computeOvertimeAnalysis({
-      employees: [aush, mini],
-      // klar über dem Wochensoll, würden ohne Filter Überstunden erzeugen
-      entries: [
-        ...['08', '09', '10', '11', '12', '13'].map((d) => entry('h1', `2026-06-${d}`, 12)),
-        ...['08', '09', '10', '11', '12', '13'].map((d) => entry('h2', `2026-06-${d}`, 12)),
-      ],
-    });
-    expect(res.employees).toHaveLength(0);
-    expect(res.totalOvertimeHours).toBe(0);
-    expect(res.affectedEmployeeCount).toBe(0);
-    expect(res.totalOvertimeCost).toBe(0);
-  });
-
-  // 7) Abwesenheiten (FE/K/U) zählen NICHT als produktive Stunden → keine Überstunden
-  it('ignoriert Abwesenheitseinträge (Ferien/Krankheit) bei der Wochenberechnung', () => {
-    const emp = makeEmp({ id: 'e7', name: 'Felix' });
-    // 5 produktive Tage à 8h = 40h (< 42h Soll) + 2 Ferien-/Kranktage à 8.4h.
-    // Würden die Abwesenheiten mitzählen: 56.8h → 14.8h Wochen-ÜS (falsch).
-    const res = computeOvertimeAnalysis({
-      employees: [emp],
-      entries: [
-        entry('e7', '2026-06-22', 8),
-        entry('e7', '2026-06-23', 8),
-        entry('e7', '2026-06-24', 8),
-        entry('e7', '2026-06-25', 8),
-        entry('e7', '2026-06-26', 8),
-        absence('e7', '2026-06-27', 8.4, 'FE'),
-        absence('e7', '2026-06-28', 8.4, 'K'),
-      ],
-    });
-    expect(res.affectedEmployeeCount).toBe(0);
-    expect(res.totalOvertimeHours).toBe(0);
-  });
-
-  // 8) Festangestellten-Typ OHNE fixen Monatslohn → komplett ausgeschlossen
-  it('schliesst vollzeit/teilzeit OHNE fixen Monatslohn aus (kein Überstundeneintrag)', () => {
-    const noSalary = makeEmp({ id: 'n1', employmentType: 'vollzeit', hourlyWage: 0, monthlySalary: 0 });
-    const flexHourly = makeEmp({ id: 'n2', employmentType: 'teilzeit', hourlyWage: 32, monthlySalary: 0 });
-    const res = computeOvertimeAnalysis({
-      employees: [noSalary, flexHourly],
-      entries: [
-        ...['08', '09', '10', '11', '12', '13'].map((d) => entry('n1', `2026-06-${d}`, 12)),
-        ...['08', '09', '10', '11', '12', '13'].map((d) => entry('n2', `2026-06-${d}`, 12)),
-      ],
-    });
-    expect(res.employees).toHaveLength(0);
-    expect(res.affectedEmployeeCount).toBe(0);
-    expect(res.totalOvertimeHours).toBe(0);
-    expect(res.totalOvertimeCost).toBe(0);
-    expect(res.hasUnavailableRates).toBe(false);
-  });
-
-  // 9) Regression (Bug): flexible/stündliche MA tauchten in der Überstunden-
-  //    tabelle auf (Ibrahim, Aushilfe Service, Isabel Goi). Nur echte
-  //    Festangestellte (vollzeit/teilzeit MIT fixem Monatslohn) dürfen erscheinen.
-  it('Regression: schliesst flex/stündliche/aushilfe komplett aus, behält Festangestellte', () => {
-    const fest = makeEmp({ id: 'fix', name: 'Festangestellt', employmentType: 'vollzeit', monthlySalary: 7280 });
-    const aushilfe = makeEmp({ id: 'aush', name: 'Aushilfe Service', employmentType: 'aushilfe', hourlyWage: 28, monthlySalary: 0 });
-    const minijob = makeEmp({ id: 'mini', name: 'Ibrahim', employmentType: 'minijob', hourlyWage: 26, monthlySalary: 0 });
-    // flexibel, aber fälschlich als teilzeit erfasst und ohne fixen Monatslohn
-    const flexMisTyped = makeEmp({ id: 'flex', name: 'Isabel Goi', employmentType: 'teilzeit', hourlyWage: 30, monthlySalary: 0 });
-
-    // alle klar über dem Wochensoll (12h/Tag × 6 Tage = 72h/Woche)
-    const days = ['08', '09', '10', '11', '12', '13'];
-    const entries: OvertimeHoursEntry[] = [];
-    for (const id of ['fix', 'aush', 'mini', 'flex']) {
-      for (const d of days) entries.push(entry(id, `2026-06-${d}`, 12));
-    }
-
-    const res = computeOvertimeAnalysis({
-      employees: [fest, aushilfe, minijob, flexMisTyped],
-      entries,
-    });
-
+    expect(r.productiveHours).toBe(190);
+    expect(r.difference).toBe(10);
+    expect(r.overtimeHours).toBe(10);
+    expect(r.overtimeCost).toBe(500); // 10 × 50
+    expect(res.totalOvertimeHours).toBe(10);
+    expect(res.totalOvertimeCost).toBe(500);
     expect(res.affectedEmployeeCount).toBe(1);
-    const names = res.employees.map((r) => r.name);
-    expect(names).toEqual(['Festangestellt']);
-    expect(names).not.toContain('Aushilfe Service');
-    expect(names).not.toContain('Ibrahim');
-    expect(names).not.toContain('Isabel Goi');
   });
 
-  // 10) Abteilungsfilter
-  it('respektiert den Abteilungsfilter', () => {
-    const svc = makeEmp({ id: 's', name: 'Service-Sven', department: 'service' });
-    const kue = makeEmp({ id: 'k', name: 'Küchen-Kim', department: 'küche' });
-    // 6 Tage × 8h = 48h/Woche (> 42) je MA
-    const days = ['08', '09', '10', '11', '12', '13'];
-    const entries = [
-      ...days.map((d) => entry('s', `2026-06-${d}`, 8)),
-      ...days.map((d) => entry('k', `2026-06-${d}`, 8)),
-    ];
-
-    const all = computeOvertimeAnalysis({ employees: [svc, kue], entries, departmentFilter: 'all' });
-    expect(all.affectedEmployeeCount).toBe(2);
-
-    const onlyKueche = computeOvertimeAnalysis({ employees: [svc, kue], entries, departmentFilter: 'küche' });
-    expect(onlyKueche.affectedEmployeeCount).toBe(1);
-    expect(onlyKueche.employees[0].department).toBe('küche');
-  });
-
-  // 11) Festangestellter ohne Überstunden → nicht betroffen
-  it('listet Festangestellte ohne Überstunden nicht auf', () => {
-    const emp = makeEmp({ id: 'e11' });
-    // 5 Tage × 8h = 40h < 42h Soll
-    const entries = ['22', '23', '24', '25', '26'].map((d) => entry('e11', `2026-06-${d}`, 8));
-    const res = computeOvertimeAnalysis({ employees: [emp], entries });
-    expect(res.employees).toHaveLength(0);
-    expect(res.totalOvertimeHours).toBe(0);
-    expect(res.affectedEmployeeCount).toBe(0);
-  });
-
-  // 12) ISO-Woche über den Jahreswechsel: Mo 2025-12-29 … Sa 2026-01-03 = 2026-W01
-  it('gruppiert über den Jahreswechsel korrekt nach ISO-Woche', () => {
-    const emp = makeEmp({ id: 'x' });
-    // 6 Tage × 8h = 48h, alle in ISO-Woche 2026-W01 → 6h Überstunden
-    const dates = ['2025-12-29', '2025-12-30', '2025-12-31', '2026-01-01', '2026-01-02', '2026-01-03'];
+  it('80 % Pensum (Soll 144): 150 h → 6 h Überstunden', () => {
+    const e = emp({ id: 'P80', employmentType: 'teilzeit', monthlySalary: 4800, hourlyWage: 40, weeklyHours: 33.6 });
     const res = computeOvertimeAnalysis({
-      employees: [emp],
-      entries: dates.map((d) => entry('x', d, 8)),
+      employees: [e],
+      entries: days('P80', 15, 10), // 150 h
+      daysInMonth: JUNE_DAYS,
     });
     const r = res.employees[0];
-    expect(r.weeks).toHaveLength(1); // eine gemeinsame ISO-Woche
-    expect(r.weeks[0].weekKey).toBe('2026-W01');
-    expect(r.weeks[0].weekHours).toBe(48);
-    expect(r.weeks[0].effectiveOvertime).toBe(6);
+    expect(r.monthlyTargetHours).toBe(144);
+    expect(r.workloadPercent).toBe(80);
     expect(r.overtimeHours).toBe(6);
-  });
-
-  // 13) Mehrere Einträge am selben Tag werden summiert (Rundung)
-  it('summiert mehrere Einträge am selben Tag und rundet sauber', () => {
-    const emp = makeEmp({ id: 'm' });
-    // Mo 2026-06-08: 5 + 4.4 = 9.4h; Di–Fr je 8.4h → Woche = 43h → 1h Überstunden
-    const res = computeOvertimeAnalysis({
-      employees: [emp],
-      entries: [
-        entry('m', '2026-06-08', 5),
-        entry('m', '2026-06-08', 4.4),
-        entry('m', '2026-06-09', 8.4),
-        entry('m', '2026-06-10', 8.4),
-        entry('m', '2026-06-11', 8.4),
-        entry('m', '2026-06-12', 8.4),
-      ],
-    });
-    const r = res.employees[0];
-    expect(r.weeks[0].days[0].actualHours).toBe(9.4); // Tages-Summe
-    expect(r.weeks[0].weekHours).toBe(43);
-    expect(r.overtimeHours).toBe(1); // 43 - 42, ohne Float-Rauschen
+    expect(r.overtimeCost).toBe(240); // 6 × 40
   });
 });
 
-describe('overtime-analysis: computeOvertimeTotals (Toggle)', () => {
-  // Toggle EIN → Überstunden fliessen in Total + PKQ
-  it('bezieht Überstunden bei aktivem Toggle in Total und PKQ ein', () => {
-    const t = computeOvertimeTotals(10000, 500, 25000, true);
-    expect(t.regularCost).toBe(10000);
-    expect(t.overtimeCost).toBe(500);
-    expect(t.totalExclOvertime).toBe(10000);
-    expect(t.totalInclOvertime).toBe(10500);
-    expect(t.pkqExclOvertime).toBe(40); // 10000/25000
-    expect(t.pkqInclOvertime).toBe(42); // 10500/25000
-    expect(t.effectiveTotal).toBe(10500);
-    expect(t.effectivePkq).toBe(42);
+// ── Pflicht-Testfall 3: stündliche/flexible MA ausgeschlossen ─────────────────
+describe('stündliche/flexible Mitarbeiter ausgeschlossen', () => {
+  it('minijob + vollzeit-ohne-Monatslohn werden ignoriert, Festangestellter bleibt', () => {
+    const fixed = emp({ id: 'FIX', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const mini = emp({ id: 'MINI', employmentType: 'minijob', hourlyWage: 30 });
+    const fakeFix = emp({ id: 'FAKE', employmentType: 'vollzeit', monthlySalary: 0, hourlyWage: 35 });
+    const res = computeOvertimeAnalysis({
+      employees: [fixed, mini, fakeFix],
+      entries: [
+        ...days('FIX', 19, 10),  // 190 h
+        ...days('MINI', 25, 12), // viele Stunden, muss ignoriert werden
+        ...days('FAKE', 25, 12),
+      ],
+      daysInMonth: JUNE_DAYS,
+    });
+    expect(res.employees.map((r) => r.employeeId)).toEqual(['FIX']);
+  });
+});
+
+// ── Pflicht-Testfall 4: Abwesenheiten (FE/K/U) ausgeschlossen ─────────────────
+describe('Abwesenheiten ausgeschlossen', () => {
+  it('Ferientage drücken NICHT über das Monatssoll', () => {
+    const e = emp({ id: 'E', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [e],
+      entries: [
+        ...days('E', 17, 10),                               // 170 h produktiv
+        ...days('E', 5, 8.4, { absenceType: 'FE', startDay: 18 }), // 42 h Ferien (ignoriert)
+      ],
+      daysInMonth: JUNE_DAYS,
+    });
+    const r = res.employees[0];
+    expect(r.productiveHours).toBe(170);
+    expect(r.overtimeHours).toBe(0); // 170 < 180, Ferien zählen nicht
+  });
+});
+
+// ── Pflicht-Testfall 5: pro Mitarbeiter deaktiviert → 0 Überstundenkosten ─────
+describe('Überstunden pro Mitarbeiter deaktivierbar', () => {
+  it('deaktivierter MA: 0 Überstunden/Kosten, Differenz bleibt erhalten', () => {
+    const e = emp({ id: 'F', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [e],
+      entries: days('F', 19, 10), // 190 h → wäre 10 h ÜS
+      daysInMonth: JUNE_DAYS,
+      disabledEmployeeIds: ['F'],
+    });
+    const r = res.employees[0];
+    expect(r.overtimeDisabled).toBe(true);
+    expect(r.overtimeHours).toBe(0);
+    expect(r.overtimeCost).toBe(0);
+    expect(r.difference).toBe(10); // Transparenz: Differenz bleibt
+    expect(r.productiveHours).toBe(190);
+    expect(res.totalOvertimeCost).toBe(0);
+    expect(res.affectedEmployeeCount).toBe(0);
+  });
+});
+
+// ── Pflicht-Testfall 6: manuelle Zusatzkosten NICHT als Überstunden ───────────
+describe('manuelle Zusatzkosten (isAdditionalCost)', () => {
+  it('Zusatzkosten-Tage zählen nicht als Überstunden, werden separat ausgewiesen', () => {
+    const e = emp({ id: 'G', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [e],
+      entries: [
+        ...days('G', 17, 10),                                  // 170 h produktiv (unter Soll)
+        ...days('G', 4, 10, { isAdditionalCost: true, startDay: 18 }), // 40 h Zusatzkosten
+      ],
+      daysInMonth: JUNE_DAYS,
+    });
+    const r = res.employees[0];
+    expect(r.productiveHours).toBe(170);       // Zusatz NICHT enthalten
+    expect(r.overtimeHours).toBe(0);           // 170 < 180 → keine ÜS
+    expect(r.additionalCostHours).toBe(40);
+    expect(r.additionalCostDays).toBe(4);
+    expect(r.additionalCost).toBe(2000);       // 4 × (10 × 50)
   });
 
-  // Toggle AUS → Überstunden NICHT im Total/PKQ, aber weiterhin ausgewiesen
-  it('schliesst Überstunden bei inaktivem Toggle aus Total/PKQ aus, weist sie aber weiter aus', () => {
-    const t = computeOvertimeTotals(10000, 500, 25000, false);
-    expect(t.effectiveTotal).toBe(10000);
-    expect(t.effectivePkq).toBe(40);
-    // Überstunden bleiben sichtbar (separat ausgewiesen):
-    expect(t.overtimeCost).toBe(500);
-    expect(t.totalInclOvertime).toBe(10500);
-    expect(t.pkqInclOvertime).toBe(42);
+  it('Mitarbeiter mit NUR Zusatzkosten erscheint trotzdem in der Tabelle', () => {
+    const e = emp({ id: 'H', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [e],
+      entries: days('H', 3, 8, { isAdditionalCost: true }), // nur Zusatz, kein produktiv
+      daysInMonth: JUNE_DAYS,
+    });
+    expect(res.employees).toHaveLength(1);
+    const r = res.employees[0];
+    expect(r.productiveHours).toBe(0);
+    expect(r.additionalCostHours).toBe(24);
+    expect(r.overtimeHours).toBe(0);
+    expect(r.difference).toBe(-180);
+  });
+});
+
+// ── Tages-Info (über 8.4 h) ───────────────────────────────────────────────────
+describe('Tage über 8.4 h (nur Info)', () => {
+  it('zählt Tage über 8.4 h, erzeugt aber keine Überstunden unter Monatssoll', () => {
+    const e = emp({ id: 'I', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [e],
+      entries: [
+        ...days('I', 10, 9),  // 10 Tage à 9 h (>8.4) = 90 h
+        ...days('I', 5, 8, { startDay: 11 }), // 5 Tage à 8 h = 40 h
+      ],
+      daysInMonth: JUNE_DAYS,
+    });
+    const r = res.employees[0];
+    expect(r.productiveHours).toBe(130);
+    expect(r.daysOver84Count).toBe(10);
+    expect(r.overtimeHours).toBe(0); // 130 < 180
+  });
+});
+
+// ── Abteilungsfilter ──────────────────────────────────────────────────────────
+describe('Abteilungsfilter', () => {
+  it('filtert auf eine Abteilung', () => {
+    const kueche = emp({ id: 'K', department: 'küche', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const service = emp({ id: 'S', department: 'service', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeOvertimeAnalysis({
+      employees: [kueche, service],
+      entries: [...days('K', 19, 10), ...days('S', 19, 10)],
+      daysInMonth: JUNE_DAYS,
+      departmentFilter: 'küche',
+    });
+    expect(res.employees.map((r) => r.employeeId)).toEqual(['K']);
+  });
+});
+
+// ── computeOvertimeTotals (Toggle + PKQ) ─────────────────────────────────────
+describe('computeOvertimeTotals', () => {
+  it('inkl./exkl. Überstunden + PKQ', () => {
+    const incl = computeOvertimeTotals(10000, 500, 50000, true);
+    expect(incl.totalExclOvertime).toBe(10000);
+    expect(incl.totalInclOvertime).toBe(10500);
+    expect(incl.pkqExclOvertime).toBe(20);
+    expect(incl.pkqInclOvertime).toBe(21);
+    expect(incl.effectiveTotal).toBe(10500);
+    expect(incl.effectivePkq).toBe(21);
+
+    const excl = computeOvertimeTotals(10000, 500, 50000, false);
+    expect(excl.effectiveTotal).toBe(10000);
+    expect(excl.effectivePkq).toBe(20);
   });
 
-  it('liefert null-PKQ bei Umsatz ≤ 0', () => {
+  it('PKQ null bei Umsatz ≤ 0', () => {
     const t = computeOvertimeTotals(10000, 500, 0, true);
     expect(t.pkqExclOvertime).toBeNull();
     expect(t.pkqInclOvertime).toBeNull();

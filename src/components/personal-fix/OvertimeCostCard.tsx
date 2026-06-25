@@ -1,11 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// OvertimeCostCard — Überstundenkosten-Analyse für Festangestellte
+// OvertimeCostCard — Überstundenkosten-Analyse für Festangestellte (MONATSBASIS)
 // ─────────────────────────────────────────────────────────────────────────────
 // Eigenständige, in PersonalFix eingebettete Karte. Zeigt:
 //   - reguläre Personalkosten, zusätzliche Überstundenkosten,
 //     Total inkl./exkl. Überstunden + lokal neu berechnete PKQ
 //   - Toggle "Überstundenkosten einbeziehen" (steuert Total + PKQ)
-//   - Tages- und Wochen-Aufschlüsselung je betroffenem Mitarbeiter
+//   - Tabelle je Festangestelltem: Pensum, Soll Monat, Ist Monat produktiv,
+//     Differenz, Überstunden, Überstundenkosten + Deaktivieren-Checkbox
+//   - manuelle Zusatzkosten als Unterzeile (reine Anzeige; bereits im regulären
+//     Total enthalten, NICHT in den Überstunden)
 //
 // Berechnung kommt vollständig aus der puren Lib `overtime-analysis`. Diese
 // Komponente rendert nur. Berechtigungen (defense-in-depth):
@@ -13,20 +16,20 @@
 //   - canSeeTotals (canSeePersonnelCostTotals)  → aggregierte Kosten/PKQ
 // Überstunden-STUNDEN sind keine Lohndaten und immer sichtbar.
 // ─────────────────────────────────────────────────────────────────────────────
-import { useState } from 'react';
-import { Clock, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Fragment } from 'react';
+import { Clock, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import {
   computeOvertimeTotals,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeAnalysis,
-  type EmployeeOvertimeResult,
 } from '@/lib/overtime-analysis';
 
 interface OvertimeCostCardProps {
@@ -43,21 +46,26 @@ interface OvertimeCostCardProps {
   canSeeTotals: boolean;
   /** z.B. "Juni 2026" */
   periodLabel?: string;
+  /** Überstundenberechnung pro Mitarbeiter (de)aktivieren (vom Parent persistiert) */
+  onToggleEmployeeDisabled?: (employeeId: string, disabled: boolean) => void;
+  /** Deaktivieren-Checkbox anzeigen (vom Parent gegated) */
+  canManageDisable?: boolean;
 }
 
 const chf = (n: number): string =>
   `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const hrs = (n: number): string =>
-  `${n.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 2 })} h`;
+  `${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} h`;
 
-const pct = (n: number | null): string => (n === null ? '—' : `${n.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`);
+const signedHrs = (n: number): string =>
+  `${n > 0 ? '+' : ''}${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} h`;
 
-function fmtDate(iso: string): string {
-  // YYYY-MM-DD → DD.MM.
-  const [, m, d] = iso.split('-');
-  return `${d}.${m}.`;
-}
+const pct = (n: number | null): string =>
+  n === null ? '—' : `${n.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+
+const wl = (n: number): string =>
+  `${n.toLocaleString('de-CH', { maximumFractionDigits: 1 })} %`;
 
 export function OvertimeCostCard({
   analysis,
@@ -68,23 +76,23 @@ export function OvertimeCostCard({
   canSeeIndividualRates,
   canSeeTotals,
   periodLabel,
+  onToggleEmployeeDisabled,
+  canManageDisable = false,
 }: OvertimeCostCardProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-
-  const toggleRow = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const totals = computeOvertimeTotals(
     regularCost,
     analysis.totalOvertimeCost,
     netRevenue,
     includeOvertime,
   );
+
+  const showCostCol = canSeeIndividualRates;
+  const showDisableCol = canManageDisable && !!onToggleEmployeeDisabled;
+  // Mitarbeiter | Abteilung | Pensum | Soll | Ist | Diff | ÜS [| Kosten] [| Deakt.]
+  const baseCols = 7;
+  const colCount = baseCols + (showCostCol ? 1 : 0) + (showDisableCol ? 1 : 0);
+
+  const hasRows = analysis.employees.length > 0;
 
   return (
     <Card>
@@ -94,305 +102,225 @@ export function OvertimeCostCard({
             <CardTitle className="flex items-center gap-2 text-base">
               <Clock className="h-4 w-4 text-amber-600" />
               Überstundenkosten (Festangestellte)
+              {periodLabel && (
+                <span className="text-sm font-normal text-muted-foreground">· {periodLabel}</span>
+              )}
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Wochen-Überstunden über dem Wochensoll (42h × Pensum)
-              {periodLabel ? ` · ${periodLabel}` : ''}
+              Monats-Überstunden über dem Monatssoll (42 h × Wochen im Monat × Pensum).
+              {analysis.affectedEmployeeCount > 0 && (
+                <>
+                  {' '}
+                  {analysis.affectedEmployeeCount} Mitarbeiter betroffen ·{' '}
+                  {hrs(analysis.totalOvertimeHours)} Überstunden gesamt.
+                </>
+              )}
             </p>
           </div>
           <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <Switch
-              checked={includeOvertime}
-              onCheckedChange={onIncludeOvertimeChange}
-              aria-label="Überstundenkosten einbeziehen"
-            />
             <span className="text-muted-foreground">Überstundenkosten einbeziehen</span>
+            <Switch checked={includeOvertime} onCheckedChange={onIncludeOvertimeChange} />
           </label>
         </div>
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {analysis.affectedEmployeeCount === 0 ? (
-          <p className="rounded-md bg-muted/50 px-3 py-6 text-center text-sm text-muted-foreground">
-            Keine Überstunden im Zeitraum.
+        {/* ── Summen / PKQ (nur bei aggregierter Kostensicht) ──────────────── */}
+        {canSeeTotals && (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatTile label="Reguläre Kosten" value={chf(totals.regularCost)} />
+            <StatTile
+              label="Überstundenkosten"
+              value={chf(totals.overtimeCost)}
+              accent={totals.overtimeCost > 0 ? 'amber' : 'default'}
+            />
+            <StatTile
+              label={includeOvertime ? 'Total inkl. ÜS' : 'Total exkl. ÜS'}
+              value={chf(totals.effectiveTotal)}
+              accent="blue"
+            />
+            <StatTile
+              label={includeOvertime ? 'PKQ inkl. ÜS' : 'PKQ exkl. ÜS'}
+              value={pct(totals.effectivePkq)}
+              accent="blue"
+            />
+          </div>
+        )}
+
+        {analysis.hasUnavailableRates && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              Für mindestens einen betroffenen Mitarbeiter ist kein Stundensatz hinterlegt —
+              die Überstunden-STUNDEN sind ausgewiesen, die Kosten nicht berechenbar.
+            </span>
+          </div>
+        )}
+
+        {/* ── Mitarbeiter-Tabelle ──────────────────────────────────────────── */}
+        {!hasRows ? (
+          <p className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+            Keine festangestellten Mitarbeiter mit produktiven Ist-Stunden in diesem Monat.
           </p>
         ) : (
-          <>
-            {/* ── Aggregat-Kacheln ─────────────────────────────────────────── */}
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <SummaryTile label="Überstunden" value={hrs(analysis.totalOvertimeHours)} />
-              <SummaryTile
-                label="Betroffene Mitarbeiter"
-                value={String(analysis.affectedEmployeeCount)}
-              />
-              {canSeeTotals ? (
-                <>
-                  <SummaryTile
-                    label="Zusätzliche Kosten"
-                    value={chf(analysis.totalOvertimeCost)}
-                    accent="amber"
-                  />
-                  <SummaryTile
-                    label={includeOvertime ? 'PKQ inkl. ÜS' : 'PKQ exkl. ÜS'}
-                    value={pct(totals.effectivePkq)}
-                  />
-                </>
-              ) : (
-                <div className="col-span-2 flex items-center rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                  Kosten für Ihre Rolle nicht sichtbar.
-                </div>
-              )}
-            </div>
-
-            {/* ── Kosten-Übersicht regulär / ÜS / Total ────────────────────── */}
-            {canSeeTotals && (
-              <div className="rounded-md border">
-                <CostRow label="Reguläre Personalkosten" value={chf(totals.regularCost)} />
-                <CostRow
-                  label="+ Zusätzliche Überstundenkosten"
-                  value={chf(totals.overtimeCost)}
-                  accent="amber"
-                />
-                <CostRow
-                  label="Total inkl. Überstunden"
-                  value={chf(totals.totalInclOvertime)}
-                  sub={`PKQ ${pct(totals.pkqInclOvertime)}`}
-                  muted={!includeOvertime}
-                  emphasize={includeOvertime}
-                />
-                <CostRow
-                  label="Total exkl. Überstunden"
-                  value={chf(totals.totalExclOvertime)}
-                  sub={`PKQ ${pct(totals.pkqExclOvertime)}`}
-                  muted={includeOvertime}
-                  emphasize={!includeOvertime}
-                  last
-                />
-              </div>
-            )}
-
-            {analysis.hasUnavailableRates && (
-              <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-500">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                Für einzelne Mitarbeiter ist kein Stundensatz hinterlegt — deren Überstunden
-                werden in Stunden ausgewiesen, die Kosten sind nicht verfügbar.
-              </p>
-            )}
-
-            {/* ── Mitarbeiter-Tabelle ──────────────────────────────────────── */}
+          <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-8" />
                   <TableHead>Mitarbeiter</TableHead>
+                  <TableHead>Abteilung</TableHead>
+                  <TableHead className="text-right">Pensum</TableHead>
+                  <TableHead className="text-right">Soll Monat</TableHead>
+                  <TableHead className="text-right">Ist Monat produktiv</TableHead>
+                  <TableHead className="text-right">Differenz</TableHead>
                   <TableHead className="text-right">Überstunden</TableHead>
-                  {canSeeIndividualRates && <TableHead className="text-right">Kosten</TableHead>}
+                  {showCostCol && <TableHead className="text-right">Überstundenkosten</TableHead>}
+                  {showDisableCol && <TableHead className="text-center">Deaktivieren</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {analysis.employees.map((emp) => (
-                  <EmployeeRows
-                    key={emp.employeeId}
-                    emp={emp}
-                    expanded={expanded.has(emp.employeeId)}
-                    onToggle={() => toggleRow(emp.employeeId)}
-                    canSeeIndividualRates={canSeeIndividualRates}
-                  />
-                ))}
+                {analysis.employees.map((e) => {
+                  const hasOvertime = e.overtimeHours > 0;
+                  return (
+                    <Fragment key={e.employeeId}>
+                      <TableRow className={cn(e.overtimeDisabled && 'opacity-60')}>
+                        <TableCell className="font-medium">
+                          {e.name}
+                          {e.daysOver84Count > 0 && (
+                            <span className="ml-1 text-[11px] text-muted-foreground">
+                              · {e.daysOver84Count} Tag{e.daysOver84Count === 1 ? '' : 'e'} über{' '}
+                              {DAILY_OVERTIME_THRESHOLD}h (Info)
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="capitalize text-muted-foreground">{e.department}</TableCell>
+                        <TableCell className="text-right tabular-nums">{wl(e.workloadPercent)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{hrs(e.monthlyTargetHours)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{hrs(e.productiveHours)}</TableCell>
+                        <TableCell
+                          className={cn(
+                            'text-right tabular-nums',
+                            e.difference > 0 ? 'text-amber-600' : e.difference < 0 ? 'text-muted-foreground' : '',
+                          )}
+                        >
+                          {signedHrs(e.difference)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {e.overtimeDisabled ? (
+                            <span className="text-xs text-muted-foreground">deaktiviert</span>
+                          ) : hasOvertime ? (
+                            <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
+                              {hrs(e.overtimeHours)}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">{hrs(0)}</span>
+                          )}
+                        </TableCell>
+                        {showCostCol && (
+                          <TableCell className="text-right tabular-nums">
+                            {e.overtimeDisabled ? (
+                              <span className="text-muted-foreground">{chf(0)}</span>
+                            ) : e.overtimeCost === null ? (
+                              <span className="text-amber-600">kein Satz</span>
+                            ) : (
+                              chf(e.overtimeCost)
+                            )}
+                          </TableCell>
+                        )}
+                        {showDisableCol && (
+                          <TableCell className="text-center">
+                            <Checkbox
+                              checked={e.overtimeDisabled}
+                              onCheckedChange={(v) => onToggleEmployeeDisabled?.(e.employeeId, v === true)}
+                              aria-label={`Überstunden für ${e.name} deaktivieren`}
+                            />
+                          </TableCell>
+                        )}
+                      </TableRow>
+                      {e.additionalCostHours > 0 && (
+                        <TableRow key={`${e.employeeId}-zusatz`} className="bg-muted/30">
+                          <TableCell className="pl-6 text-xs text-muted-foreground" colSpan={4}>
+                            ↳ Zusatzkosten ({e.additionalCostDays} Tag{e.additionalCostDays === 1 ? '' : 'e'},
+                            bereits im regulären Total)
+                          </TableCell>
+                          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                            {hrs(e.additionalCostHours)}
+                          </TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
+                          {showCostCol && (
+                            <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
+                              {e.additionalCost === null ? '—' : chf(e.additionalCost)}
+                            </TableCell>
+                          )}
+                          {showDisableCol && <TableCell />}
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={6} className="text-right font-medium">
+                    Total Überstunden
+                  </TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums">
+                    {hrs(analysis.totalOvertimeHours)}
+                  </TableCell>
+                  {showCostCol && (
+                    <TableCell className="text-right font-semibold tabular-nums">
+                      {chf(analysis.totalOvertimeCost)}
+                    </TableCell>
+                  )}
+                  {showDisableCol && <TableCell />}
+                </TableRow>
+              </TableFooter>
             </Table>
-
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Kalkulatorische Auswertung auf Basis der erfassten produktiven Ist-Stunden
-              (Abwesenheiten wie Ferien/Krankheit/Unfall werden nicht mitgezählt). Überstunden
-              werden ausschliesslich wöchentlich berechnet: pro Mitarbeiter und ISO-Woche
-              Wochen-Ist − Wochensoll (42h × Pensum). Tage über {DAILY_OVERTIME_THRESHOLD}h werden
-              nur informativ angezeigt und fliessen NICHT in die Überstundenkosten ein. Wochen am
-              Monatsrand werden nur mit den geladenen Tagen berechnet. Diese Auswertung ist
-              unabhängig von manuell markierten Zusatzkosten (isAdditionalCost) — bei gleichzeitig
-              als Zusatzkosten markierten Überstundentagen kann es zu einer Überschneidung mit den
-              regulären Kosten kommen.
-            </p>
-          </>
+          </div>
         )}
+
+        {/* ── Fussnote ─────────────────────────────────────────────────────── */}
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Überstunden entstehen ausschliesslich, wenn die produktiven Ist-Stunden des Monats über
+          dem Monatssoll (42 h × Wochen im Monat × Pensum) liegen. Abwesenheiten (FE/K/U) und
+          manuelle Zusatzkosten zählen nicht als Überstunden. Tage über {DAILY_OVERTIME_THRESHOLD}h
+          sind nur informativ. Die Auswertung bezieht sich immer auf den Vollmonat (unabhängig vom
+          Stichtag). Manuelle Zusatzkosten sind bereits im regulären Personalkosten-Total enthalten.
+        </p>
       </CardContent>
     </Card>
   );
 }
 
-// ── Sub-Komponenten ──────────────────────────────────────────────────────────
-
-function SummaryTile({
+function StatTile({
   label,
   value,
-  accent,
+  accent = 'default',
 }: {
   label: string;
   value: string;
-  accent?: 'amber';
+  accent?: 'default' | 'amber' | 'blue';
 }) {
   return (
-    <div className="rounded-md border bg-card px-3 py-2">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <div
+      className={cn(
+        'rounded-lg border p-3',
+        accent === 'amber' && 'border-amber-200 bg-amber-50',
+        accent === 'blue' && 'border-blue-200 bg-blue-50',
+        accent === 'default' && 'bg-muted/30',
+      )}
+    >
+      <div className="text-xs text-muted-foreground">{label}</div>
       <div
         className={cn(
-          'mt-0.5 font-mono text-sm font-semibold tabular-nums',
-          accent === 'amber' && 'text-amber-700 dark:text-amber-500',
+          'mt-0.5 text-base font-semibold tabular-nums',
+          accent === 'amber' && 'text-amber-700',
+          accent === 'blue' && 'text-blue-700',
         )}
       >
         {value}
       </div>
     </div>
-  );
-}
-
-function CostRow({
-  label,
-  value,
-  sub,
-  accent,
-  emphasize,
-  muted,
-  last,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  accent?: 'amber';
-  emphasize?: boolean;
-  muted?: boolean;
-  last?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        'flex items-center justify-between px-3 py-2',
-        !last && 'border-b',
-        emphasize && 'bg-muted/50',
-        muted && 'opacity-60',
-      )}
-    >
-      <span className={cn('text-sm', emphasize ? 'font-semibold' : 'text-muted-foreground')}>
-        {label}
-      </span>
-      <span className="text-right">
-        <span
-          className={cn(
-            'font-mono text-sm tabular-nums',
-            emphasize && 'font-semibold',
-            accent === 'amber' && 'text-amber-700 dark:text-amber-500',
-          )}
-        >
-          {value}
-        </span>
-        {sub && <span className="ml-2 text-xs text-muted-foreground">{sub}</span>}
-      </span>
-    </div>
-  );
-}
-
-function EmployeeRows({
-  emp,
-  expanded,
-  onToggle,
-  canSeeIndividualRates,
-}: {
-  emp: EmployeeOvertimeResult;
-  expanded: boolean;
-  onToggle: () => void;
-  canSeeIndividualRates: boolean;
-}) {
-  const colSpan = canSeeIndividualRates ? 4 : 3;
-  return (
-    <>
-      <TableRow className="cursor-pointer" onClick={onToggle}>
-        <TableCell className="py-2">
-          {expanded ? (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-          )}
-        </TableCell>
-        <TableCell className="py-2">
-          <div className="font-medium">{emp.name}</div>
-          <div className="text-xs text-muted-foreground">{emp.department}</div>
-        </TableCell>
-        <TableCell className="py-2 text-right font-mono tabular-nums">
-          {hrs(emp.overtimeHours)}
-        </TableCell>
-        {canSeeIndividualRates && (
-          <TableCell className="py-2 text-right font-mono tabular-nums">
-            {emp.overtimeCost === null ? (
-              <Badge variant="outline" className="text-amber-700 dark:text-amber-500">
-                Satz fehlt
-              </Badge>
-            ) : (
-              chf(emp.overtimeCost)
-            )}
-          </TableCell>
-        )}
-      </TableRow>
-
-      {expanded && (
-        <TableRow className="bg-muted/30 hover:bg-muted/30">
-          <TableCell />
-          <TableCell colSpan={colSpan - 1} className="py-3">
-            {/* Wochen-Aufschlüsselung */}
-            <div className="mb-3">
-              <div className="mb-1 text-xs font-semibold text-muted-foreground">Wochen</div>
-              <div className="space-y-1">
-                {emp.weeks
-                  .filter((w) => w.effectiveOvertime > 0)
-                  .map((w) => (
-                    <div
-                      key={w.weekKey}
-                      className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs"
-                    >
-                      <span className="font-medium">
-                        KW {String(w.isoWeek).padStart(2, '0')}/{w.isoYear}
-                      </span>
-                      <span className="text-muted-foreground">
-                        Wochen-Ist {hrs(w.weekHours)}
-                      </span>
-                      <span className="text-muted-foreground">Soll {hrs(w.targetHours)}</span>
-                      <span className="font-medium text-amber-700 dark:text-amber-500">
-                        Überstunden {hrs(w.effectiveOvertime)}
-                      </span>
-                      {w.dailyOvertimeSum > 0 && (
-                        <span className="text-[10px] text-muted-foreground/70">
-                          (Tage über {DAILY_OVERTIME_THRESHOLD}h: {hrs(w.dailyOvertimeSum)}, nur Info)
-                        </span>
-                      )}
-                      {canSeeIndividualRates && w.cost !== null && (
-                        <span className="font-mono tabular-nums">{chf(w.cost)}</span>
-                      )}
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {/* Tages-Aufschlüsselung (nur Tage mit Tages-Überstunden) */}
-            {emp.days.length > 0 && (
-              <div>
-                <div className="mb-1 text-xs font-semibold text-muted-foreground">
-                  Tage über {DAILY_OVERTIME_THRESHOLD}h, nur Info
-                </div>
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                  {emp.days.map((d) => (
-                    <span key={d.date} className="text-muted-foreground">
-                      {fmtDate(d.date)}{' '}
-                      <span className="font-medium text-foreground">{hrs(d.actualHours)}</span>{' '}
-                      <span className="text-amber-700 dark:text-amber-500">
-                        (+{hrs(d.dailyOvertime)})
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </TableCell>
-        </TableRow>
-      )}
-    </>
   );
 }

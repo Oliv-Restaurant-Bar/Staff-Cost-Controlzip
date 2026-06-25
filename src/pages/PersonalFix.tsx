@@ -29,6 +29,7 @@ import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { computeOvertimeAnalysis, type OvertimeHoursEntry } from '@/lib/overtime-analysis';
+import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
 import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1910,6 +1911,8 @@ export default function PersonalFixPage() {
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   // Überstundenkosten in Total/PKQ einbeziehen (Toggle der Überstunden-Karte)
   const [includeOvertime, setIncludeOvertime] = useState(false);
+  // Pro Mitarbeiter dauerhaft deaktivierte Überstundenberechnung (Supabase KV, mandanten-prefixed)
+  const [overtimeDisabledIds, setOvertimeDisabledIds] = useState<Set<string>>(new Set());
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
@@ -2582,7 +2585,14 @@ export default function PersonalFixPage() {
       if (h <= 0) continue;
       // Abwesenheiten (FE/K/U/…) sind keine produktive Arbeitszeit → keine Überstunden
       if (entry.absenceType) continue;
-      entries.push({ employeeId: cellKey.slice(0, cellKey.length - 11), date, hours: h });
+      // Manuelle Zusatzkosten-Tage werden geflaggt (nicht übersprungen): die Lib zählt
+      // sie nicht als produktive Überstunden, weist sie aber separat als Zusatzkosten aus.
+      entries.push({
+        employeeId: cellKey.slice(0, cellKey.length - 11),
+        date,
+        hours: h,
+        isAdditionalCost: entry.isAdditionalCost === true,
+      });
     }
     // Nur echte Festangestellte (vollzeit/teilzeit MIT fixem Monatslohn) — keine
     // flexiblen/stündlichen MA. Zweite Sicherheitsschicht: computeOvertimeAnalysis
@@ -2590,8 +2600,40 @@ export default function PersonalFixPage() {
     const candidates = employees.filter(
       e => hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth),
     );
-    return computeOvertimeAnalysis({ employees: candidates, entries, departmentFilter: 'all' });
-  }, [supabaseActualHours, employees, selectedYear, selectedMonth]);
+    // Kalendertage des gewählten Monats (für das Monatssoll). new Date(y, m, 0) → letzter
+    // Tag des Monats m (selectedMonth ist 1-basiert).
+    const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
+    return computeOvertimeAnalysis({
+      employees: candidates,
+      entries,
+      daysInMonth,
+      departmentFilter: 'all',
+      disabledEmployeeIds: overtimeDisabledIds,
+    });
+  }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds]);
+
+  // Persistierte „Überstunden deaktiviert"-Liste pro Mandant laden
+  useEffect(() => {
+    let cancelled = false;
+    // Beim Mandantenwechsel sofort leeren, damit nicht kurz die deaktivierten IDs
+    // des vorherigen Mandanten greifen, bis der asynchrone Load aufgelöst ist.
+    setOvertimeDisabledIds(new Set());
+    loadOvertimeDisabledIds(tenantId).then(ids => {
+      if (!cancelled) setOvertimeDisabledIds(new Set(ids));
+    });
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
+  // Überstundenberechnung für einen Mitarbeiter (de)aktivieren — optimistisch lokal,
+  // Persistenz best-effort (saveOvertimeDisabledIds zeigt bei Fehler einen Toast).
+  const handleToggleOvertimeDisabled = useCallback((employeeId: string, disabled: boolean) => {
+    setOvertimeDisabledIds(prev => {
+      const next = new Set(prev);
+      if (disabled) next.add(employeeId); else next.delete(employeeId);
+      void saveOvertimeDisabledIds(tenantId, Array.from(next));
+      return next;
+    });
+  }, [tenantId]);
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
   // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
@@ -4724,13 +4766,15 @@ export default function PersonalFixPage() {
         <div className="mt-4">
           <OvertimeCostCard
             analysis={overtimeAnalysis}
-            regularCost={pfix.active.istTotal}
+            regularCost={pfix.month.istTotal}
             netRevenue={effectiveRevenue}
             includeOvertime={includeOvertime}
             onIncludeOvertimeChange={setIncludeOvertime}
             canSeeIndividualRates={canSeeHourlyWages}
             canSeeTotals={canSeePersonnelCostTotals}
             periodLabel={new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
+            onToggleEmployeeDisabled={handleToggleOvertimeDisabled}
+            canManageDisable={canSeePersonnelCostTotals}
           />
         </div>
 
