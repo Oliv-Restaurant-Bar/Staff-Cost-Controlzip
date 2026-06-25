@@ -69,10 +69,11 @@ describe('defaultPositions', () => {
       });
     }
   });
-  it('contains known seeds derived from station-config', () => {
+  it('is exactly the real planning positions in order', () => {
     const keys = defaults.map((d) => d.key);
-    expect(keys).toContain('pizzaiolo');
-    expect(keys).toContain('chef_de_rang');
+    expect(keys).toEqual([
+      'bar_buffet_springer', 'service', 'piazzolo_take_away', 'abwasch', 'kueche',
+    ]);
   });
 });
 

@@ -24,6 +24,11 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import type { Department } from '@/types/personnel';
 import type { Position } from '@/types/positions';
@@ -62,7 +67,7 @@ function emptyDraft(dept: Department, sortOrder: number): DraftState {
 
 export default function Positionen() {
   const { canAccessModule, isGuest } = usePermissions();
-  const { positions, loading, error, save, remove, seed, reload } = usePositions();
+  const { positions, loading, error, save, remove, seed, reload, applyDefaults } = usePositions();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<DraftState | null>(null);
@@ -162,6 +167,18 @@ export default function Positionen() {
     }
   };
 
+  const handleApplyDefaults = async () => {
+    setBusy(true);
+    try {
+      await applyDefaults();
+      toast.success('Standard-Positionen angewendet');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Standard-Positionen konnten nicht angewendet werden');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const move = async (dept: Department, index: number, dir: -1 | 1) => {
     const list = grouped[dept];
     const target = index + dir;
@@ -187,6 +204,30 @@ export default function Positionen() {
           <LayoutGrid className="h-5 w-5 text-violet-600" />
           <h1 className="text-lg font-semibold">Positionen</h1>
         </div>
+        {!readOnly && positions.length > 0 && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" variant="outline" className="gap-1" disabled={busy}>
+                <Sparkles className="h-4 w-4" /> Standard-Positionen anwenden
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Standard-Positionen anwenden?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Legt die Standard-Positionen an bzw. aktualisiert gleichnamige
+                  (per Slug) und deaktiviert alle übrigen Positionen. Bestehende
+                  Mitarbeiterdaten und Zuordnungen bleiben erhalten — übrige
+                  Positionen werden nur deaktiviert, nicht gelöscht.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                <AlertDialogAction onClick={handleApplyDefaults}>Anwenden</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       <p className="text-sm text-muted-foreground">

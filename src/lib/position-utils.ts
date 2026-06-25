@@ -1,8 +1,8 @@
 /**
  * position-utils — reine Logik der Positionsverwaltung (Personalbedarf-Grundlage).
  * ──────────────────────────────────────────────────────────────────────────────
- * KEINE Supabase-/DOM-Abhängigkeiten (nur `import type` aus den Modellen +
- * STATIONS_BY_DEPT aus station-config). Damit im Node-Env testbar.
+ * KEINE Supabase-/DOM-Abhängigkeiten (nur `import type` aus den Modellen).
+ * Damit im Node-Env testbar.
  *
  * Zentrale Regel: Mitarbeitende speichern einen stabilen Positions-KEY, nicht
  * den Anzeigenamen. `resolvePositionKey` toleriert Alt-Daten (Anzeigename) und
@@ -11,7 +11,6 @@
 
 import type { Department, Employee } from '@/types/personnel';
 import type { Position, PositionDraft } from '@/types/positions';
-import { STATIONS_BY_DEPT } from '@/lib/station-config';
 
 export const DEPARTMENTS: Department[] = ['service', 'küche'];
 
@@ -68,26 +67,20 @@ export function slugifyKey(name: string): string {
 }
 
 /**
- * Standard-Positionen, abgeleitet aus den bisher fix hinterlegten Stationen
- * (station-config.ts). Reihenfolge = sortOrder je Abteilung.
+ * Standard-Positionen = die echten Planungsbereiche aus dem Personalbedarf.
+ * Stabile KEYS (Slugs), nicht Anzeigenamen. Reihenfolge je Abteilung über
+ * sortOrder; sortPositions zeigt Service vor Küche. Beim Anwenden werden
+ * gleichnamige (per key) aktualisiert und alle übrigen Positionen deaktiviert
+ * (siehe applyDefaultPositions in positions-db.ts).
  */
 export function defaultPositions(): PositionDraft[] {
-  const drafts: PositionDraft[] = [];
-  for (const dept of DEPARTMENTS) {
-    const names = STATIONS_BY_DEPT[dept] ?? [];
-    names.forEach((name, idx) => {
-      drafts.push({
-        key: slugifyKey(name),
-        name,
-        department: dept,
-        color: DEPT_DEFAULT_COLOR[dept],
-        icon: DEPT_DEFAULT_ICON[dept],
-        sortOrder: idx,
-        active: true,
-      });
-    });
-  }
-  return drafts;
+  return [
+    { key: 'bar_buffet_springer', name: 'BAR Buffet/Springer', department: 'service', color: '#3b82f6', icon: 'Users',        sortOrder: 0, active: true },
+    { key: 'service',             name: 'Service',             department: 'service', color: '#22c55e', icon: 'ConciergeBell', sortOrder: 1, active: true },
+    { key: 'piazzolo_take_away',  name: 'Piazzolo Take Away',  department: 'küche',   color: '#f97316', icon: 'Pizza',        sortOrder: 0, active: true },
+    { key: 'abwasch',             name: 'Abwasch',             department: 'küche',   color: '#64748b', icon: 'Utensils',     sortOrder: 1, active: true },
+    { key: 'kueche',              name: 'Küche',               department: 'küche',   color: '#ef4444', icon: 'ChefHat',      sortOrder: 2, active: true },
+  ];
 }
 
 export function positionByKey(positions: Position[], key: string | null | undefined): Position | undefined {

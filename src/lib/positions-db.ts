@@ -175,6 +175,60 @@ export async function seedDefaultPositions(restaurantId: string): Promise<Positi
   return loadPositions(restaurantId);
 }
 
+/**
+ * Standard-Positionen verbindlich ANWENDEN (Reconcile):
+ *   1) legt die definierten Standard-Positionen an bzw. AKTUALISIERT
+ *      gleichnamige (per restaurant_id,key) — keine Duplikate;
+ *   2) DEAKTIVIERT alle übrigen Positionen des Mandanten (active=false).
+ *
+ * Übrige Positionen werden NICHT gelöscht, damit bestehende Mitarbeiter-
+ * Zuordnungen/Verweise (employee.primaryStation/secondaryStations) erhalten
+ * bleiben — kein Eingriff in Dienstplan/Kosten/Überstunden. WIRFT bei Fehlern.
+ * Liefert die danach vorhandenen Positionen.
+ */
+export async function applyDefaultPositions(restaurantId: string): Promise<Position[]> {
+  const existing = await loadPositions(restaurantId);
+  const byKey = new Map(existing.map((p) => [p.key, p]));
+  const desired = defaultPositions();
+  const desiredKeys = new Set(desired.map((d) => d.key));
+
+  // 1) Upsert der Standard-Positionen. Vorhandene id je key beibehalten →
+  //    echtes Update (kein PK-Wechsel); neue Keys erhalten eine neue id.
+  const rows = desired.map((d) => ({
+    ...draftToRow(restaurantId, { ...d, active: true }, byKey.get(d.key)?.id ?? newId()),
+    updated_at: new Date().toISOString(),
+  }));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: upErr } = await (supabase as any)
+    .from(TABLE)
+    .upsert(rows, { onConflict: 'restaurant_id,key' });
+  if (upErr) {
+    if (TABLE_MISSING.test(upErr.message ?? '')) {
+      throw new Error(
+        'Die Tabelle "positions" existiert noch nicht. Bitte die Migration ' +
+        '20260625_positions.sql im Supabase SQL-Editor ausführen.',
+      );
+    }
+    throw new Error(`Standard-Positionen konnten nicht angewendet werden: ${upErr.message ?? 'unbekannter Fehler'}`);
+  }
+
+  // 2) Alle übrigen (nicht in der Standard-Liste, noch aktiv) deaktivieren.
+  const staleIds = existing.filter((p) => !desiredKeys.has(p.key) && p.active).map((p) => p.id);
+  if (staleIds.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: deErr } = await (supabase as any)
+      .from(TABLE)
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq('restaurant_id', restaurantId)
+      .in('id', staleIds);
+    if (deErr) {
+      throw new Error(`Alte Positionen konnten nicht deaktiviert werden: ${deErr.message ?? 'unbekannter Fehler'}`);
+    }
+  }
+
+  return loadPositions(restaurantId);
+}
+
 /** Prüft, ob die positions-Tabelle erreichbar ist (für UI-Hinweise). */
 export async function checkPositionsTableExists(): Promise<boolean> {
   try {

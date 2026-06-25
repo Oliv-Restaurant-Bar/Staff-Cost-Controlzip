@@ -12,6 +12,7 @@ import {
   upsertPosition,
   deletePosition,
   seedDefaultPositions,
+  applyDefaultPositions,
 } from '@/lib/positions-db';
 
 export function usePositions() {
@@ -58,5 +59,11 @@ export function usePositions() {
     return seeded;
   }, [tenantId, reload]);
 
-  return { tenantId, positions, loading, error, reload, save, remove, seed };
+  const applyDefaults = useCallback(async () => {
+    const applied = await applyDefaultPositions(tenantId);
+    await reload();
+    return applied;
+  }, [tenantId, reload]);
+
+  return { tenantId, positions, loading, error, reload, save, remove, seed, applyDefaults };
 }
