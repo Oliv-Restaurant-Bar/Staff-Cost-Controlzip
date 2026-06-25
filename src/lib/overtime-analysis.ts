@@ -311,6 +311,322 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Wochenauswertung (ISO-Wochen innerhalb des gewählten Monats)
+// ─────────────────────────────────────────────────────────────────────────────
+// Zusätzlich zur Monatsauswertung können Überstunden je ISO-Kalenderwoche
+// INNERHALB des gewählten Monats ausgewertet werden. Jede Woche wird ANTEILIG
+// nach der Anzahl ihrer Tage im gewählten Monat berechnet:
+//   Wochensoll = 42 h × Pensum × (Tage dieser Woche im Monat ÷ 7)
+// Eine volle Woche (7 Tage im Monat) entspricht damit dem vollen pensum-
+// abhängigen Wochensoll; eine Randwoche (z.B. nur 2 Tage im Monat) erhält ein
+// anteilig reduziertes Soll. Produktive Ist-Stunden je Woche schliessen
+// Abwesenheiten (FE/K/U) und Zusatzkosten-Tage aus (gleiche Semantik wie die
+// Monatsauswertung). Überstunden je Woche = max(0, produktive Wochen-Ist −
+// Wochensoll). Die Pro-Mitarbeiter-Deaktivierung gilt auch hier (Kosten = 0,
+// Differenz bleibt sichtbar).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface YMD { y: number; m: number; d: number; }
+
+function parseYMD(s: string): YMD | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return null;
+  return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, '0');
+
+/** ISO-8601-Woche (Mo–So) eines Datums + Montag-Zeitstempel (für Sortierung). */
+function isoWeekParts(y: number, m: number, d: number): { isoYear: number; isoWeek: number; mondayMs: number } {
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const dayNum = (date.getUTCDay() + 6) % 7; // Mo=0 … So=6
+  const monday = new Date(date);
+  monday.setUTCDate(date.getUTCDate() - dayNum);
+  const thursday = new Date(date);
+  thursday.setUTCDate(date.getUTCDate() - dayNum + 3);
+  const isoYear = thursday.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(isoYear, 0, 4));
+  const ftDayNum = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - ftDayNum + 3);
+  const isoWeek = 1 + Math.round((thursday.getTime() - firstThursday.getTime()) / (7 * 86400000));
+  return { isoYear, isoWeek, mondayMs: monday.getTime() };
+}
+
+/** Beschreibung einer ISO-Woche, die (teilweise) im gewählten Monat liegt. */
+export interface MonthWeekDescriptor {
+  isoYear: number;
+  isoWeek: number;
+  /** z.B. "KW 23" */
+  weekLabel: string;
+  /** Auf den Monat beschnittener Zeitraum, z.B. "29.06.–30.06.2026" */
+  rangeLabel: string;
+  /** Anzahl Tage dieser Woche, die im gewählten Monat liegen (1..7) */
+  daysInMonth: number;
+}
+
+/**
+ * Liefert alle ISO-Wochen, die (teilweise) im gewählten Monat liegen, in
+ * chronologischer Reihenfolge — inklusive Anzahl Tage je Woche im Monat
+ * (für die anteilige Soll-Berechnung) und einem auf den Monat beschnittenen
+ * Zeitraum-Label. `month` ist 1-basiert.
+ */
+export function weeksInMonth(year: number, month: number): MonthWeekDescriptor[] {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  interface Bucket { isoYear: number; isoWeek: number; mondayMs: number; count: number; first: number; last: number; }
+  const map = new Map<string, Bucket>();
+  for (let d = 1; d <= daysInMonth; d++) {
+    const { isoYear, isoWeek, mondayMs } = isoWeekParts(year, month, d);
+    const key = `${isoYear}-${isoWeek}`;
+    let b = map.get(key);
+    if (!b) { b = { isoYear, isoWeek, mondayMs, count: 0, first: d, last: d }; map.set(key, b); }
+    b.count++;
+    b.last = d;
+  }
+  return Array.from(map.values())
+    .sort((a, b) => a.mondayMs - b.mondayMs)
+    .map((b) => ({
+      isoYear: b.isoYear,
+      isoWeek: b.isoWeek,
+      weekLabel: `KW ${b.isoWeek}`,
+      rangeLabel: `${pad2(b.first)}.${pad2(month)}.–${pad2(b.last)}.${pad2(month)}.${year}`,
+      daysInMonth: b.count,
+    }));
+}
+
+/**
+ * Anteiliges Wochensoll = 42 h × Pensum × (Tage der Woche im Monat ÷ 7).
+ * `daysInWeekWithinMonth` wird auf 0..7 begrenzt.
+ */
+export function proratedWeeklyTargetHours(emp: Employee, daysInWeekWithinMonth: number): number {
+  const d = Number.isFinite(daysInWeekWithinMonth) && daysInWeekWithinMonth > 0
+    ? Math.min(7, daysInWeekWithinMonth) : 0;
+  return round2((weeklyTargetHours(emp) * d) / 7);
+}
+
+/** Eine ausgewertete Woche eines Mitarbeiters. */
+export interface WeekOvertimeRow {
+  isoYear: number;
+  isoWeek: number;
+  weekLabel: string;
+  rangeLabel: string;
+  /** Anzahl Tage dieser Woche im gewählten Monat (1..7) */
+  daysInMonth: number;
+  /** Anteiliges Wochensoll = 42 h × Pensum × Tage/7 */
+  weeklyTargetHours: number;
+  /** Produktive Ist-Stunden dieser Woche (ohne Abwesenheiten/Zusatzkosten) */
+  productiveHours: number;
+  /** Differenz = produktive Ist − Wochensoll (kann negativ sein) */
+  difference: number;
+  /** max(0, Differenz); 0 wenn deaktiviert */
+  overtimeHours: number;
+  /** overtimeHours × Satz; null wenn Satz fehlt; 0 wenn deaktiviert */
+  overtimeCost: number | null;
+  /** Summe manueller Zusatzkosten-Stunden dieser Woche (reine Anzeige) */
+  additionalCostHours: number;
+  additionalCostDays: number;
+  /** Manuelle Zusatzkosten in CHF (reine Anzeige; null wenn Satz fehlt) */
+  additionalCost: number | null;
+  /** Anzahl Tage über 8.4 h dieser Woche — NUR informativ */
+  daysOver84Count: number;
+}
+
+/** Wochenauswertung pro festangestelltem Mitarbeiter. */
+export interface EmployeeWeeklyOvertimeResult {
+  employeeId: string;
+  name: string;
+  department: Department;
+  hourlyRate: number | null;
+  rateAvailable: boolean;
+  workloadPercent: number;
+  overtimeDisabled: boolean;
+  /** Wochen mit produktiven Stunden ODER Zusatzkosten, chronologisch */
+  weeks: WeekOvertimeRow[];
+  totalProductiveHours: number;
+  totalOvertimeHours: number;
+  /** Summe der Wochen-Überstundenkosten; null wenn Satz fehlt; 0 wenn deaktiviert */
+  totalOvertimeCost: number | null;
+  totalAdditionalCostHours: number;
+  totalAdditionalCost: number | null;
+}
+
+export interface WeeklyOvertimeAnalysis {
+  employees: EmployeeWeeklyOvertimeResult[];
+  totalOvertimeHours: number;
+  totalOvertimeCost: number;
+  affectedEmployeeCount: number;
+  hasUnavailableRates: boolean;
+  /** Alle ISO-Wochen des Monats (für Kontext/Anzeige) */
+  weeks: MonthWeekDescriptor[];
+}
+
+export interface WeeklyOvertimeInput {
+  employees: Employee[];
+  entries: OvertimeHoursEntry[];
+  /** Jahr des gewählten Monats */
+  year: number;
+  /** Monat (1-basiert) */
+  month: number;
+  departmentFilter?: Department | 'all';
+  disabledEmployeeIds?: Iterable<string>;
+}
+
+/**
+ * Berechnet die Überstunden je ISO-Woche innerhalb des gewählten Monats.
+ * Gleiche Ausschluss-Regeln wie die Monatsauswertung (stündliche MA, Abwesen-
+ * heiten, Zusatzkosten, Abteilungsfilter, Pro-Mitarbeiter-Deaktivierung), aber
+ * je Woche mit anteiligem Wochensoll. Einträge ausserhalb des gewählten Monats
+ * werden ignoriert.
+ */
+export function computeWeeklyOvertimeAnalysis(input: WeeklyOvertimeInput): WeeklyOvertimeAnalysis {
+  const { employees, entries, year, month, departmentFilter } = input;
+  const dept = departmentFilter ?? 'all';
+  const disabled = new Set<string>(input.disabledEmployeeIds ?? []);
+
+  const monthWeeks = weeksInMonth(year, month);
+  const weekByKey = new Map(monthWeeks.map((w) => [`${w.isoYear}-${w.isoWeek}`, w]));
+
+  const fixedById = new Map<string, Employee>();
+  for (const emp of employees) {
+    if (!isFixedSalaryEmployee(emp)) continue;
+    if (dept !== 'all' && emp.department !== dept) continue;
+    fixedById.set(emp.id, emp);
+  }
+
+  interface WeekAcc { productiveByDate: Map<string, number>; additionalByDate: Map<string, number>; }
+  const perEmp = new Map<string, Map<string, WeekAcc>>(); // empId → weekKey → acc
+
+  for (const e of entries) {
+    if (!fixedById.has(e.employeeId)) continue;
+    if (!e.date || !Number.isFinite(e.hours) || e.hours <= 0) continue;
+    if (e.absenceType) continue;
+    const ymd = parseYMD(e.date);
+    if (!ymd || ymd.y !== year || ymd.m !== month) continue; // nur gewählter Monat
+    const { isoYear, isoWeek } = isoWeekParts(ymd.y, ymd.m, ymd.d);
+    const key = `${isoYear}-${isoWeek}`;
+    if (!weekByKey.has(key)) continue;
+
+    let weeks = perEmp.get(e.employeeId);
+    if (!weeks) { weeks = new Map(); perEmp.set(e.employeeId, weeks); }
+    let acc = weeks.get(key);
+    if (!acc) { acc = { productiveByDate: new Map(), additionalByDate: new Map() }; weeks.set(key, acc); }
+
+    if (e.isAdditionalCost) {
+      acc.additionalByDate.set(e.date, (acc.additionalByDate.get(e.date) ?? 0) + e.hours);
+    } else {
+      acc.productiveByDate.set(e.date, (acc.productiveByDate.get(e.date) ?? 0) + e.hours);
+    }
+  }
+
+  const results: EmployeeWeeklyOvertimeResult[] = [];
+
+  for (const [empId, weeks] of perEmp) {
+    const emp = fixedById.get(empId)!;
+    const rate = getEffectiveHourlyRate(emp);
+    const rateAvailable = rate != null;
+    const overtimeDisabled = disabled.has(empId);
+
+    const weekRows: WeekOvertimeRow[] = [];
+    for (const desc of monthWeeks) {
+      const acc = weeks.get(`${desc.isoYear}-${desc.isoWeek}`);
+      if (!acc) continue;
+
+      let productiveHours = 0;
+      let daysOver84Count = 0;
+      for (const dayHours of acc.productiveByDate.values()) {
+        const dh = round2(dayHours);
+        productiveHours = round2(productiveHours + dh);
+        if (dh > DAILY_OVERTIME_THRESHOLD) daysOver84Count++;
+      }
+
+      let additionalCostHours = 0;
+      let additionalCostRaw = 0;
+      for (const dayHours of acc.additionalByDate.values()) {
+        const dh = round2(dayHours);
+        additionalCostHours = round2(additionalCostHours + dh);
+        if (rateAvailable) additionalCostRaw = round2(additionalCostRaw + round2(dh * (rate as number)));
+      }
+      const additionalCostDays = acc.additionalByDate.size;
+
+      if (productiveHours <= 0 && additionalCostHours <= 0) continue;
+
+      const target = proratedWeeklyTargetHours(emp, desc.daysInMonth);
+      const difference = round2(productiveHours - target);
+      const rawOvertime = round2(Math.max(0, difference));
+      const overtimeHours = overtimeDisabled ? 0 : rawOvertime;
+      const overtimeCost = overtimeDisabled
+        ? 0
+        : (rateAvailable ? round2(overtimeHours * (rate as number)) : null);
+
+      weekRows.push({
+        isoYear: desc.isoYear,
+        isoWeek: desc.isoWeek,
+        weekLabel: desc.weekLabel,
+        rangeLabel: desc.rangeLabel,
+        daysInMonth: desc.daysInMonth,
+        weeklyTargetHours: target,
+        productiveHours,
+        difference,
+        overtimeHours,
+        overtimeCost,
+        additionalCostHours,
+        additionalCostDays,
+        additionalCost: rateAvailable ? additionalCostRaw : null,
+        daysOver84Count,
+      });
+    }
+
+    if (weekRows.length === 0) continue;
+
+    const totalProductiveHours = round2(weekRows.reduce((s, w) => s + w.productiveHours, 0));
+    const totalOvertimeHours = round2(weekRows.reduce((s, w) => s + w.overtimeHours, 0));
+    const totalOvertimeCost = overtimeDisabled
+      ? 0
+      : (!rateAvailable && totalOvertimeHours > 0
+        ? null
+        : round2(weekRows.reduce((s, w) => s + (w.overtimeCost ?? 0), 0)));
+    const totalAdditionalCostHours = round2(weekRows.reduce((s, w) => s + w.additionalCostHours, 0));
+    const totalAdditionalCost = rateAvailable
+      ? round2(weekRows.reduce((s, w) => s + (w.additionalCost ?? 0), 0))
+      : null;
+
+    results.push({
+      employeeId: empId,
+      name: emp.name,
+      department: emp.department,
+      hourlyRate: rate,
+      rateAvailable,
+      workloadPercent: workloadPercent(emp),
+      overtimeDisabled,
+      weeks: weekRows,
+      totalProductiveHours,
+      totalOvertimeHours,
+      totalOvertimeCost,
+      totalAdditionalCostHours,
+      totalAdditionalCost,
+    });
+  }
+
+  results.sort((a, b) =>
+    b.totalOvertimeHours - a.totalOvertimeHours
+    || a.name.localeCompare(b.name),
+  );
+
+  const totalOvertimeHours = round2(results.reduce((s, r) => s + r.totalOvertimeHours, 0));
+  const totalOvertimeCost = round2(results.reduce((s, r) => s + (r.totalOvertimeCost ?? 0), 0));
+  const affected = results.filter((r) => r.totalOvertimeHours > 0);
+  const hasUnavailableRates = affected.some((r) => !r.rateAvailable);
+
+  return {
+    employees: results,
+    totalOvertimeHours,
+    totalOvertimeCost,
+    affectedEmployeeCount: affected.length,
+    hasUnavailableRates,
+    weeks: monthWeeks,
+  };
+}
+
 // ─── Totals / PKQ mit Überstunden-Toggle ─────────────────────────────────────
 
 export interface OvertimeTotals {

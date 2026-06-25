@@ -3,11 +3,14 @@ import { describe, it, expect } from 'vitest';
 import type { Employee } from '@/types/personnel';
 import {
   computeOvertimeAnalysis,
+  computeWeeklyOvertimeAnalysis,
   computeOvertimeTotals,
   isFixedSalaryEmployee,
   monthlyTargetHours,
   workloadPercent,
   weeklyTargetHours,
+  proratedWeeklyTargetHours,
+  weeksInMonth,
   WEEKLY_FULLTIME_TARGET,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeHoursEntry,
@@ -294,5 +297,231 @@ describe('computeOvertimeTotals', () => {
     expect(t.pkqExclOvertime).toBeNull();
     expect(t.pkqInclOvertime).toBeNull();
     expect(t.effectivePkq).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wochenauswertung (computeWeeklyOvertimeAnalysis)
+// ─────────────────────────────────────────────────────────────────────────────
+// Juni 2026 beginnt an einem MONTAG (01.06. = Mo). ISO-Wochen im Monat:
+//   KW23 01.–07.06. (7 Tage) · KW24 08.–14.06. (7) · KW25 15.–21.06. (7)
+//   KW26 22.–28.06. (7) · KW27 29.–30.06. (2 Tage, Randwoche)
+// Volle Woche (7 Tage) → volles pensum-abhängiges Wochensoll; Randwoche anteilig.
+
+describe('weeksInMonth (ISO-Wochen im Monat)', () => {
+  it('Juni 2026: KW23–KW27 mit korrekten Tageszahlen', () => {
+    const weeks = weeksInMonth(2026, 6);
+    expect(weeks.map((w) => w.isoWeek)).toEqual([23, 24, 25, 26, 27]);
+    expect(weeks.map((w) => w.daysInMonth)).toEqual([7, 7, 7, 7, 2]);
+    expect(weeks[0].weekLabel).toBe('KW 23');
+    expect(weeks[0].rangeLabel).toBe('01.06.–07.06.2026');
+    expect(weeks[4].weekLabel).toBe('KW 27');
+    expect(weeks[4].rangeLabel).toBe('29.06.–30.06.2026');
+  });
+
+  it('Jahreswechsel: Dezember 2025 → Randtage in KW1/2026 (isoYear 2026)', () => {
+    // Dez 2025 beginnt MO 01.12. KW49–KW52/2025 (je 7 Tage) + 29.–31.12. = KW1/2026.
+    const weeks = weeksInMonth(2025, 12);
+    expect(weeks.map((w) => `${w.isoYear}-${w.isoWeek}`)).toEqual([
+      '2025-49', '2025-50', '2025-51', '2025-52', '2026-1',
+    ]);
+    expect(weeks.map((w) => w.daysInMonth)).toEqual([7, 7, 7, 7, 3]);
+    const last = weeks[weeks.length - 1];
+    expect(last.weekLabel).toBe('KW 1');           // ISO-Woche, nicht Kalenderjahr-Woche
+    expect(last.rangeLabel).toBe('29.12.–31.12.2025');
+  });
+});
+
+describe('proratedWeeklyTargetHours', () => {
+  it('volle Woche = volles Wochensoll, Randwoche anteilig', () => {
+    const full = emp({ id: 'a', weeklyHours: 42 });
+    expect(proratedWeeklyTargetHours(full, 7)).toBe(42);
+    expect(proratedWeeklyTargetHours(full, 2)).toBe(12);          // 42 × 2/7
+    expect(proratedWeeklyTargetHours(emp({ id: 'b', weeklyHours: 33.6 }), 7)).toBe(33.6); // 80 %
+    expect(proratedWeeklyTargetHours(full, 0)).toBe(0);
+  });
+});
+
+describe('Wochenansicht: 100 % über Wochensoll → Überstunden', () => {
+  it('50 h in voller Woche (Soll 42) → 8 h Überstunden, Kosten 8 × Satz', () => {
+    const e = emp({ id: 'W1', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: days('W1', 5, 10, { startDay: 8 }), // KW24, 50 h
+      year: 2026,
+      month: 6,
+    });
+    expect(res.employees).toHaveLength(1);
+    const r = res.employees[0];
+    expect(r.weeks).toHaveLength(1);
+    const w = r.weeks[0];
+    expect(w.isoWeek).toBe(24);
+    expect(w.weeklyTargetHours).toBe(42);
+    expect(w.productiveHours).toBe(50);
+    expect(w.difference).toBe(8);
+    expect(w.overtimeHours).toBe(8);
+    expect(w.overtimeCost).toBe(400); // 8 × 50
+    expect(res.totalOvertimeHours).toBe(8);
+    expect(res.totalOvertimeCost).toBe(400);
+    expect(res.affectedEmployeeCount).toBe(1);
+  });
+});
+
+describe('Wochenansicht: 100 % unter Wochensoll → 0 Überstunden', () => {
+  it('30 h in voller Woche (Soll 42) → 0 Überstunden, Differenz −12', () => {
+    const e = emp({ id: 'W2', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: days('W2', 3, 10, { startDay: 8 }), // KW24, 30 h
+      year: 2026,
+      month: 6,
+    });
+    const w = res.employees[0].weeks[0];
+    expect(w.weeklyTargetHours).toBe(42);
+    expect(w.productiveHours).toBe(30);
+    expect(w.difference).toBe(-12);
+    expect(w.overtimeHours).toBe(0);
+    expect(w.overtimeCost).toBe(0);
+    expect(res.totalOvertimeHours).toBe(0);
+    expect(res.affectedEmployeeCount).toBe(0);
+  });
+});
+
+describe('Wochenansicht: 80 % Pensum → Soll skaliert', () => {
+  it('40 h in voller Woche (Soll 33.6) → 6.4 h Überstunden', () => {
+    const e = emp({ id: 'W80', employmentType: 'teilzeit', monthlySalary: 4800, hourlyWage: 40, weeklyHours: 33.6 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: days('W80', 5, 8, { startDay: 8 }), // KW24, 40 h
+      year: 2026,
+      month: 6,
+    });
+    const r = res.employees[0];
+    expect(r.workloadPercent).toBe(80);
+    const w = r.weeks[0];
+    expect(w.weeklyTargetHours).toBe(33.6);
+    expect(w.overtimeHours).toBe(6.4);
+    expect(w.overtimeCost).toBe(256); // 6.4 × 40
+  });
+});
+
+describe('Wochenansicht: Randwoche am Monatsrand anteilig', () => {
+  it('KW27 (2 Tage im Monat): 14 h bei Soll 12 → 2 h Überstunden', () => {
+    const e = emp({ id: 'WR', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: days('WR', 2, 7, { startDay: 29 }), // 29.+30.06. = KW27, 14 h
+      year: 2026,
+      month: 6,
+    });
+    const w = res.employees[0].weeks[0];
+    expect(w.isoWeek).toBe(27);
+    expect(w.daysInMonth).toBe(2);
+    expect(w.weeklyTargetHours).toBe(12); // 42 × 2/7
+    expect(w.productiveHours).toBe(14);
+    expect(w.overtimeHours).toBe(2);
+    expect(w.overtimeCost).toBe(100); // 2 × 50
+  });
+});
+
+describe('Wochenansicht: pro Mitarbeiter deaktiviert → 0 Kosten', () => {
+  it('deaktiviert: Stunden/Differenz bleiben, Überstunden + Kosten = 0', () => {
+    const e = emp({ id: 'WD', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: days('WD', 5, 10, { startDay: 8 }), // KW24, 50 h → wäre 8 h ÜS
+      year: 2026,
+      month: 6,
+      disabledEmployeeIds: ['WD'],
+    });
+    const r = res.employees[0];
+    expect(r.overtimeDisabled).toBe(true);
+    const w = r.weeks[0];
+    expect(w.productiveHours).toBe(50);
+    expect(w.difference).toBe(8);      // Transparenz bleibt
+    expect(w.overtimeHours).toBe(0);
+    expect(w.overtimeCost).toBe(0);
+    expect(r.totalOvertimeCost).toBe(0);
+    expect(res.totalOvertimeCost).toBe(0);
+    expect(res.affectedEmployeeCount).toBe(0);
+  });
+});
+
+describe('Wochenansicht: stündliche/flexible Mitarbeiter ausgeschlossen', () => {
+  it('minijob + vollzeit-ohne-Monatslohn ignoriert, Festangestellter bleibt', () => {
+    const fixed = emp({ id: 'WFIX', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const mini = emp({ id: 'WMINI', employmentType: 'minijob', hourlyWage: 30 });
+    const fakeFix = emp({ id: 'WFAKE', employmentType: 'vollzeit', monthlySalary: 0, hourlyWage: 35 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [fixed, mini, fakeFix],
+      entries: [
+        ...days('WFIX', 5, 10, { startDay: 8 }),
+        ...days('WMINI', 6, 12, { startDay: 8 }),
+        ...days('WFAKE', 6, 12, { startDay: 8 }),
+      ],
+      year: 2026,
+      month: 6,
+    });
+    expect(res.employees.map((r) => r.employeeId)).toEqual(['WFIX']);
+  });
+});
+
+describe('Wochenansicht: Abwesenheiten ausgeschlossen', () => {
+  it('Ferientage drücken NICHT über das Wochensoll', () => {
+    const e = emp({ id: 'WA', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: [
+        ...days('WA', 3, 10, { startDay: 8 }),                         // 30 h produktiv (KW24)
+        ...days('WA', 2, 8.4, { absenceType: 'FE', startDay: 11 }),    // 16.8 h Ferien (ignoriert)
+      ],
+      year: 2026,
+      month: 6,
+    });
+    const w = res.employees[0].weeks[0];
+    expect(w.productiveHours).toBe(30); // Ferien zählen nicht
+    expect(w.overtimeHours).toBe(0);    // 30 < 42
+  });
+});
+
+describe('Wochenansicht: manuelle Zusatzkosten separat (keine Überstunden)', () => {
+  it('Zusatzkosten-Tage zählen nicht als Überstunden, separat ausgewiesen', () => {
+    const e = emp({ id: 'WZ', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const res = computeWeeklyOvertimeAnalysis({
+      employees: [e],
+      entries: [
+        ...days('WZ', 3, 10, { startDay: 8 }),                              // 30 h produktiv (KW24)
+        ...days('WZ', 2, 10, { isAdditionalCost: true, startDay: 11 }),     // 20 h Zusatzkosten
+      ],
+      year: 2026,
+      month: 6,
+    });
+    const w = res.employees[0].weeks[0];
+    expect(w.productiveHours).toBe(30);          // Zusatz NICHT enthalten
+    expect(w.overtimeHours).toBe(0);             // 30 < 42
+    expect(w.additionalCostHours).toBe(20);
+    expect(w.additionalCostDays).toBe(2);
+    expect(w.additionalCost).toBe(1000);         // 2 × (10 × 50)
+  });
+});
+
+describe('Wochenansicht erfasst, was die Monatsansicht verfehlt', () => {
+  it('eine Woche über Soll trotz Monat unter Soll → wöchentliche Überstunden', () => {
+    const e = emp({ id: 'WX', employmentType: 'vollzeit', monthlySalary: 6000, hourlyWage: 50, weeklyHours: 42 });
+    const entries = [
+      ...days('WX', 5, 10, { startDay: 1 }),  // KW23: 50 h → 8 h ÜS
+      ...days('WX', 3, 10, { startDay: 8 }),  // KW24: 30 h → 0 h ÜS
+    ];
+    // Monatsansicht: 80 h gesamt, Monatssoll 180 → keine Überstunden
+    const monthly = computeOvertimeAnalysis({ employees: [e], entries, daysInMonth: 30 });
+    expect(monthly.employees[0].overtimeHours).toBe(0);
+    // Wochenansicht: KW23 erzeugt 8 h Überstunden
+    const weekly = computeWeeklyOvertimeAnalysis({ employees: [e], entries, year: 2026, month: 6 });
+    const r = weekly.employees[0];
+    expect(r.weeks.map((w) => w.isoWeek)).toEqual([23, 24]);
+    expect(r.weeks[0].overtimeHours).toBe(8);
+    expect(r.weeks[1].overtimeHours).toBe(0);
+    expect(r.totalOvertimeHours).toBe(8);
+    expect(weekly.totalOvertimeCost).toBe(400);
   });
 });

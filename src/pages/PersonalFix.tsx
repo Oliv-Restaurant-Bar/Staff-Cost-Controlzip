@@ -28,7 +28,7 @@ import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
-import { computeOvertimeAnalysis, type OvertimeHoursEntry } from '@/lib/overtime-analysis';
+import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry } from '@/lib/overtime-analysis';
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
 import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { Button } from '@/components/ui/button';
@@ -2575,7 +2575,7 @@ export default function PersonalFixPage() {
   // Baut Ist-Stunden-Einträge des gewählten Monats aus den Supabase-Ist-Daten und
   // delegiert die gesamte Überstunden-Logik an die pure Lib. Stündliche MA werden
   // dort gefiltert. Abteilungsfilter 'all' (PersonalFix = admin/beaulieu_manager).
-  const overtimeAnalysis = useMemo(() => {
+  const { overtimeAnalysis, weeklyOvertimeAnalysis } = useMemo(() => {
     const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     const entries: OvertimeHoursEntry[] = [];
     for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
@@ -2595,7 +2595,7 @@ export default function PersonalFixPage() {
       });
     }
     // Nur echte Festangestellte (vollzeit/teilzeit MIT fixem Monatslohn) — keine
-    // flexiblen/stündlichen MA. Zweite Sicherheitsschicht: computeOvertimeAnalysis
+    // flexiblen/stündlichen MA. Zweite Sicherheitsschicht: compute*OvertimeAnalysis
     // filtert intern erneut über isFixedSalaryEmployee.
     const candidates = employees.filter(
       e => hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth),
@@ -2603,13 +2603,23 @@ export default function PersonalFixPage() {
     // Kalendertage des gewählten Monats (für das Monatssoll). new Date(y, m, 0) → letzter
     // Tag des Monats m (selectedMonth ist 1-basiert).
     const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
-    return computeOvertimeAnalysis({
+    const monthly = computeOvertimeAnalysis({
       employees: candidates,
       entries,
       daysInMonth,
       departmentFilter: 'all',
       disabledEmployeeIds: overtimeDisabledIds,
     });
+    // Wochenauswertung (ISO-Wochen anteilig im Monat) — gleiche Einträge/Kandidaten.
+    const weekly = computeWeeklyOvertimeAnalysis({
+      employees: candidates,
+      entries,
+      year: selectedYear,
+      month: selectedMonth,
+      departmentFilter: 'all',
+      disabledEmployeeIds: overtimeDisabledIds,
+    });
+    return { overtimeAnalysis: monthly, weeklyOvertimeAnalysis: weekly };
   }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds]);
 
   // Persistierte „Überstunden deaktiviert"-Liste pro Mandant laden
@@ -4766,6 +4776,7 @@ export default function PersonalFixPage() {
         <div className="mt-4">
           <OvertimeCostCard
             analysis={overtimeAnalysis}
+            weeklyAnalysis={weeklyOvertimeAnalysis}
             regularCost={pfix.month.istTotal}
             netRevenue={effectiveRevenue}
             includeOvertime={includeOvertime}

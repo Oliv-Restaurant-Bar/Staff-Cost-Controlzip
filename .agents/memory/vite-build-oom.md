@@ -23,3 +23,17 @@ check `free -m` first — another process may be holding memory.)
 A successful build prints the usual chunk-size table and benign "dynamically imported
 but also statically imported" / ">500 kB chunk" warnings — those are pre-existing, not
 caused by your change.
+
+## Full `vitest run` (whole suite) OOMs the same silent way
+The full `npx vitest run` (all ~47 files) is ALSO OOM-killed silently — exit code -1,
+**zero output** — because vitest's default multi-fork/thread parallelism spins up many
+workers at once in this container. A single test file (`vitest run path/to/file`) runs
+fine; only the full suite dies.
+
+**How to apply:** run the full suite serially with a raised heap:
+
+    NODE_OPTIONS=--max-old-space-size=6144 npx vitest run --no-file-parallelism --pool=forks
+
+This passes (~727 tests, ~45 s). There is ONE pre-existing unrelated unhandled error:
+`libuuid.so.1: cannot open shared object file` from `node_modules/canvas` — it's an env
+issue, counts as "1 error" but does not fail tests; ignore it.
