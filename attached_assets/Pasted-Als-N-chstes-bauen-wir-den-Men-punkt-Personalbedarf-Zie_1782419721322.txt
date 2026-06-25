@@ -1,0 +1,122 @@
+Als Nächstes bauen wir den Menüpunkt "Personalbedarf".
+
+Ziel:
+Für jeden Wochentag soll definiert werden können, wie viele Mitarbeiter pro Position und Schicht benötigt werden. Diese Planung bildet künftig die verbindliche Soll-Besetzung und ist die Grundlage für Dienstplanung, Budgetkontrolle und automatische Besetzungsprüfung.
+
+Bitte einen neuen Menüpunkt "Personalbedarf" unter "Personal" erstellen.
+
+Aufbau:
+
+1. Auswahl des Zeitmodells
+Oben:
+• Standard
+• Sommer
+• Winter
+• Individuelle Saison (später)
+
+2. Auswahl des Wochentages
+Montag bis Sonntag
+
+3. Darstellung nach Abteilungen und Bereichen
+
+SERVICE
+
+Restaurant
+Service
+
+Bar/Buffet
+BAR Buffet/Springer
+
+KÜCHE
+
+Küche Produktion
+Küche
+
+Take Away
+Piazzolo Take Away
+
+Abwasch
+Abwasch
+
+4. Für jede Position soll folgendes gepflegt werden können:
+
+• Schichtbeginn
+• Schichtende
+• Anzahl benötigte Mitarbeiter
+
+Beispiel:
+
+SERVICE
+
+Restaurant
+Service
+11:30 bis 22:30
+Benötigt: 5
+
+Bar/Buffet
+BAR Buffet/Springer
+11:30 bis 23:30
+Benötigt: 2
+
+KÜCHE
+
+Küche Produktion
+Küche
+10:00 bis 23:00
+Benötigt: 6
+
+Take Away
+Piazzolo Take Away
+11:00 bis 22:00
+Benötigt: 2
+
+Abwasch
+Abwasch
+11:00 bis 14:00
+18:00 bis 23:00
+Benötigt: 2
+
+5. Mehrere Schichten pro Position ermöglichen.
+
+Beispiel Abwasch:
+
+Schicht 1
+11:00 bis 14:00
+1 Mitarbeiter
+
+Schicht 2
+18:00 bis 23:00
+1 Mitarbeiter
+
+Über "+ Schicht hinzufügen" können beliebig viele Schichten pro Position erstellt werden.
+
+6. Datenmodell
+
+Die Bedarfsvorlagen müssen vollständig getrennt von der Dienstplanung gespeichert werden.
+
+Jede Vorlage enthält mindestens:
+• Saison
+• Wochentag
+• Position (Slug)
+• Schichtbeginn
+• Schichtende
+• Anzahl Mitarbeitende
+• Reihenfolge
+
+Diese Struktur muss später problemlos erweitert werden können (Feiertage, Events, Sonderöffnungszeiten usw.), ohne erneut die Datenbankstruktur ändern zu müssen.
+
+7. Noch NICHT bauen
+
+Keine automatische Besetzungsprüfung.
+Keine Warnungen.
+Keine Ersatzvorschläge.
+Keine Budgetprüfung.
+
+Das kommt erst im nächsten Schritt.
+
+Bitte nach Abschluss prüfen:
+
+• Typecheck
+• Alle Tests
+• Neue Tests für den Personalbedarf
+• Kurze Zusammenfassung der geänderten Dateien und des Datenmodells.

@@ -34,7 +34,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags,
+  Tags, ClipboardList,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -187,6 +187,14 @@ const NAV_GROUPS: NavGroup[] = [
         icon: Tags,
         adminOnly: true,
         module: 'positionen' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
+        path: '/personalbedarf',
+        label: 'Personalbedarf',
+        shortLabel: 'Bedarf',
+        icon: ClipboardList,
+        adminOnly: true,
+        module: 'personalbedarf' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/employee-integrity',

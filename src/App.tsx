@@ -23,6 +23,7 @@ import Dashboard from "./pages/Dashboard";
 import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Personalstamm from "./pages/Personalstamm";
 import Positionen from "./pages/Positionen";
+import Personalbedarf from "./pages/Personalbedarf";
 import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
 import PLViewPage from "./pages/PLView";
@@ -197,6 +198,11 @@ const AppContent = () => {
             {/* Positionsverwaltung: nur Admin */}
             <Route path="/positionen"
               element={canAccessModule('positionen') ? <Positionen /> : <Navigate to="/personal" replace />}
+            />
+
+            {/* Personalbedarf (SOLL-Besetzung je Saison × Wochentag): nur Admin */}
+            <Route path="/personalbedarf"
+              element={canAccessModule('personalbedarf') ? <Personalbedarf /> : <Navigate to="/personal" replace />}
             />
 
             {/* Einstellungen: Admin + beaulieu_manager (nur Beaulieu-relevante Settings) */}
