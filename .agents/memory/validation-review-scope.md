@@ -17,7 +17,16 @@ proved the commit touched zero migration/CRM files).
 **How to apply:** When a validation review rejection cites files/constraints that
 are NOT in your actual commit, verify with `git show --stat --name-only <HEAD>`.
 If your commit is clean and the findings belong to unrelated prior work, do NOT
-revert that other work (destructive + wrong). Re-call `mark_task_complete` with a
-`skip_validation_reason` explaining the review is out-of-scope for your changed
-surface, after confirming your own targeted checks (typecheck + relevant tests +
-your own architect review) pass.
+revert that other work (destructive + wrong).
+
+**`skip_validation_reason` does NOT bypass the platform-managed external code
+review.** Observed (overtime day-detail task, 2026-06-25): two `mark_task_complete`
+calls — one without and one with a detailed `skip_validation_reason` — both
+returned the SAME `Validation FAILED / code_review REJECTED` about unrelated
+Gäste-CRM migrations. The managed review runs and gates regardless of the skip
+reason. Do NOT loop on identical calls (wastes turns). After confirming your own
+targeted checks pass (typecheck + relevant tests + your own architect review),
+your engineering work is already complete and committed at HEAD; surface the
+situation to the user (work done + committed, automated gate mis-scoped to prior
+branch history) instead of reverting others' work or re-calling repeatedly. The
+baseline only resets once some later validation actually passes/checkpoints.
