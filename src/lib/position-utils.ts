@@ -14,6 +14,45 @@ import type { Position, PositionDraft } from '@/types/positions';
 
 export const DEPARTMENTS: Department[] = ['service', 'küche'];
 
+/** Bereich (feinere Gruppierung) innerhalb einer Abteilung. */
+export interface PositionArea {
+  /** Stabiler Schlüssel — wird in `position.departmentGroup` gespeichert. */
+  key: string;
+  /** Anzeigename des Bereichs. */
+  name: string;
+}
+
+/**
+ * Bereiche je Abteilung — feste Gruppierung als Vorbereitung auf den späteren
+ * Personalbedarf. Mehrere Positionen je Bereich sind möglich
+ * (`Position.departmentGroup` === `PositionArea.key`); die Array-Reihenfolge ist
+ * die Anzeigereihenfolge.
+ */
+export const AREAS_BY_DEPARTMENT: Record<Department, PositionArea[]> = {
+  service: [
+    { key: 'restaurant', name: 'Restaurant' },
+    { key: 'bar_buffet', name: 'Bar/Buffet' },
+  ],
+  'küche': [
+    { key: 'kueche_produktion', name: 'Küche Produktion' },
+    { key: 'take_away', name: 'Take Away' },
+    { key: 'abwasch', name: 'Abwasch' },
+  ],
+};
+
+/** Bereiche einer Abteilung (in Anzeigereihenfolge). */
+export function areasForDepartment(dept: Department): PositionArea[] {
+  return AREAS_BY_DEPARTMENT[dept] ?? [];
+}
+
+/** Anzeigename eines Bereichs (Fallback = Key selbst; '' wenn leer). */
+export function areaLabel(dept: Department, areaKey: string | null | undefined): string {
+  const k = (areaKey ?? '').trim();
+  if (!k) return '';
+  const found = areasForDepartment(dept).find((a) => a.key === k);
+  return found ? found.name : k;
+}
+
 /** Standard-Farbe je Abteilung (für geseedete Positionen). */
 export const DEPT_DEFAULT_COLOR: Record<Department, string> = {
   service: '#3b82f6', // blue-500
@@ -75,11 +114,11 @@ export function slugifyKey(name: string): string {
  */
 export function defaultPositions(): PositionDraft[] {
   return [
-    { key: 'bar_buffet_springer', name: 'BAR Buffet/Springer', department: 'service', color: '#3b82f6', icon: 'Users',        sortOrder: 0, active: true },
-    { key: 'service',             name: 'Service',             department: 'service', color: '#22c55e', icon: 'ConciergeBell', sortOrder: 1, active: true },
-    { key: 'piazzolo_take_away',  name: 'Piazzolo Take Away',  department: 'küche',   color: '#f97316', icon: 'Pizza',        sortOrder: 0, active: true },
-    { key: 'abwasch',             name: 'Abwasch',             department: 'küche',   color: '#64748b', icon: 'Utensils',     sortOrder: 1, active: true },
-    { key: 'kueche',              name: 'Küche',               department: 'küche',   color: '#ef4444', icon: 'ChefHat',      sortOrder: 2, active: true },
+    { key: 'bar_buffet_springer', name: 'BAR Buffet/Springer', department: 'service', departmentGroup: 'bar_buffet',        color: '#3b82f6', icon: 'Users',         sortOrder: 0, active: true },
+    { key: 'service',             name: 'Service',             department: 'service', departmentGroup: 'restaurant',        color: '#22c55e', icon: 'ConciergeBell', sortOrder: 1, active: true },
+    { key: 'piazzolo_take_away',  name: 'Piazzolo Take Away',  department: 'küche',   departmentGroup: 'take_away',         color: '#f97316', icon: 'Pizza',         sortOrder: 0, active: true },
+    { key: 'abwasch',             name: 'Abwasch',             department: 'küche',   departmentGroup: 'abwasch',           color: '#64748b', icon: 'Utensils',      sortOrder: 1, active: true },
+    { key: 'kueche',              name: 'Küche',               department: 'küche',   departmentGroup: 'kueche_produktion', color: '#ef4444', icon: 'ChefHat',       sortOrder: 2, active: true },
   ];
 }
 
@@ -157,4 +196,78 @@ export function sortPositions(positions: Position[]): Position[] {
     if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
     return a.name.localeCompare(b.name, 'de');
   });
+}
+
+/** Default-Bereich je Standard-Positions-Key (Fallback für Alt-Daten ohne departmentGroup). */
+const DEFAULT_AREA_BY_KEY: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const d of defaultPositions()) {
+    if (d.departmentGroup) map[d.key] = d.departmentGroup;
+  }
+  return map;
+})();
+
+/**
+ * Ermittelt den Bereichs-Key einer Position innerhalb ihrer Abteilung:
+ *   1) gesetzter, gültiger `departmentGroup`-Key,
+ *   2) Fallback: Default-Bereich der gleichnamigen Standard-Position
+ *      (damit bereits angewendete Positionen ohne `departmentGroup` korrekt
+ *      einsortiert werden),
+ *   3) sonst `''` (= "Ohne Bereich" / Sammelgruppe).
+ */
+export function resolvePositionArea(
+  p: Pick<Position, 'key' | 'department' | 'departmentGroup'>,
+): string {
+  const known = areasForDepartment(p.department).map((a) => a.key);
+  const direct = (p.departmentGroup ?? '').trim();
+  if (direct && known.includes(direct)) return direct;
+  const fallback = DEFAULT_AREA_BY_KEY[p.key];
+  if (fallback && known.includes(fallback)) return fallback;
+  return '';
+}
+
+/** Sortierung innerhalb eines Bereichs: aktive zuerst, dann sortOrder, dann Name. */
+function sortWithinArea(positions: Position[]): Position[] {
+  return [...positions].sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return a.name.localeCompare(b.name, 'de');
+  });
+}
+
+export interface PositionAreaGroup {
+  /** null = Sammelgruppe "Ohne Bereich" (Positionen ohne gültigen Bereich). */
+  area: PositionArea | null;
+  positions: Position[];
+}
+
+/**
+ * Positionen einer Abteilung hierarchisch nach Bereich gruppieren.
+ *
+ * Alle definierten Bereiche werden (in Reihenfolge) zurückgegeben — auch leere,
+ * damit die Struktur sichtbar und erweiterbar bleibt. Positionen ohne gültigen
+ * Bereich landen in einer abschließenden Sammelgruppe (`area: null`), die nur
+ * erscheint, wenn sie Einträge enthält. Innerhalb eines Bereichs stehen aktive
+ * Positionen vor inaktiven.
+ *
+ * `includeInactive=false` (Standard) blendet inaktive Positionen vollständig aus.
+ */
+export function groupPositionsByArea(
+  positions: Position[],
+  dept: Department,
+  opts: { includeInactive?: boolean } = {},
+): PositionAreaGroup[] {
+  const inDept = positions.filter(
+    (p) => p.department === dept && (opts.includeInactive || p.active),
+  );
+  const groups: PositionAreaGroup[] = [];
+  const used = new Set<string>();
+  for (const area of areasForDepartment(dept)) {
+    const ps = sortWithinArea(inDept.filter((p) => resolvePositionArea(p) === area.key));
+    ps.forEach((p) => used.add(p.id));
+    groups.push({ area, positions: ps });
+  }
+  const rest = sortWithinArea(inDept.filter((p) => !used.has(p.id)));
+  if (rest.length > 0) groups.push({ area: null, positions: rest });
+  return groups;
 }

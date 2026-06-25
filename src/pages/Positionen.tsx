@@ -37,8 +37,9 @@ import { usePermissions } from '@/hooks/usePermissions';
 import {
   DEPARTMENTS, POSITION_COLORS, POSITION_ICONS,
   DEPT_DEFAULT_COLOR, DEPT_DEFAULT_ICON,
-  slugifyKey, positionsForDepartment,
+  slugifyKey, groupPositionsByArea, areasForDepartment,
 } from '@/lib/position-utils';
+import type { PositionAreaGroup } from '@/lib/position-utils';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { PositionIcon } from '@/components/PositionIcon';
 
@@ -47,17 +48,19 @@ interface DraftState {
   key: string;
   name: string;
   department: Department;
+  departmentGroup: string;
   color: string;
   icon: string;
   active: boolean;
   sortOrder: number;
 }
 
-function emptyDraft(dept: Department, sortOrder: number): DraftState {
+function emptyDraft(dept: Department, sortOrder: number, departmentGroup: string): DraftState {
   return {
     key: '',
     name: '',
     department: dept,
+    departmentGroup,
     color: DEPT_DEFAULT_COLOR[dept],
     icon: DEPT_DEFAULT_ICON[dept],
     active: true,
@@ -72,14 +75,39 @@ export default function Positionen() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
   const grouped = useMemo(() => {
-    const map: Record<Department, Position[]> = { service: [], 'küche': [] };
+    const map: Record<Department, PositionAreaGroup[]> = { service: [], 'küche': [] };
     for (const dept of DEPARTMENTS) {
-      map[dept] = positionsForDepartment(positions, dept);
+      map[dept] = groupPositionsByArea(positions, dept, { includeInactive: showInactive });
     }
     return map;
-  }, [positions]);
+  }, [positions, showInactive]);
+
+  const positionToDraft = (p: Position): DraftState => ({
+    id: p.id,
+    key: p.key,
+    name: p.name,
+    department: p.department,
+    departmentGroup: p.departmentGroup ?? '',
+    color: p.color ?? DEPT_DEFAULT_COLOR[p.department],
+    icon: p.icon ?? DEPT_DEFAULT_ICON[p.department],
+    active: p.active,
+    sortOrder: p.sortOrder,
+  });
+
+  const draftToSave = (d: DraftState) => ({
+    id: d.id,
+    key: d.key,
+    name: d.name,
+    department: d.department,
+    departmentGroup: d.departmentGroup.trim() || undefined,
+    color: d.color,
+    icon: d.icon,
+    sortOrder: d.sortOrder,
+    active: d.active,
+  });
 
   if (!canAccessModule('positionen')) {
     return <Navigate to="/personal" replace />;
@@ -87,23 +115,15 @@ export default function Positionen() {
 
   const readOnly = isGuest;
 
-  const openNew = (dept: Department) => {
-    const nextOrder = (grouped[dept].reduce((m, p) => Math.max(m, p.sortOrder), -1)) + 1;
-    setDraft(emptyDraft(dept, nextOrder));
+  const openNew = (dept: Department, areaKey: string) => {
+    const inDept = positions.filter((p) => p.department === dept);
+    const nextOrder = inDept.reduce((m, p) => Math.max(m, p.sortOrder), -1) + 1;
+    setDraft(emptyDraft(dept, nextOrder, areaKey));
     setDialogOpen(true);
   };
 
   const openEdit = (p: Position) => {
-    setDraft({
-      id: p.id,
-      key: p.key,
-      name: p.name,
-      department: p.department,
-      color: p.color ?? DEPT_DEFAULT_COLOR[p.department],
-      icon: p.icon ?? DEPT_DEFAULT_ICON[p.department],
-      active: p.active,
-      sortOrder: p.sortOrder,
-    });
+    setDraft(positionToDraft(p));
     setDialogOpen(true);
   };
 
@@ -123,16 +143,7 @@ export default function Positionen() {
 
     setBusy(true);
     try {
-      await save({
-        id: draft.id,
-        key,
-        name,
-        department: draft.department,
-        color: draft.color,
-        icon: draft.icon,
-        sortOrder: draft.sortOrder,
-        active: draft.active,
-      });
+      await save(draftToSave({ ...draft, key, name }));
       toast.success(draft.id ? 'Position aktualisiert' : 'Position angelegt');
       setDialogOpen(false);
       setDraft(null);
@@ -179,16 +190,15 @@ export default function Positionen() {
     }
   };
 
-  const move = async (dept: Department, index: number, dir: -1 | 1) => {
-    const list = grouped[dept];
+  const move = async (list: Position[], index: number, dir: -1 | 1) => {
     const target = index + dir;
     if (target < 0 || target >= list.length) return;
     const a = list[index];
     const b = list[target];
     try {
       await Promise.all([
-        save({ id: a.id, key: a.key, name: a.name, department: a.department, color: a.color ?? DEPT_DEFAULT_COLOR[a.department], icon: a.icon ?? DEPT_DEFAULT_ICON[a.department], sortOrder: b.sortOrder, active: a.active }),
-        save({ id: b.id, key: b.key, name: b.name, department: b.department, color: b.color ?? DEPT_DEFAULT_COLOR[b.department], icon: b.icon ?? DEPT_DEFAULT_ICON[b.department], sortOrder: a.sortOrder, active: b.active }),
+        save(draftToSave({ ...positionToDraft(a), sortOrder: b.sortOrder })),
+        save(draftToSave({ ...positionToDraft(b), sortOrder: a.sortOrder })),
       ]);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Reihenfolge konnte nicht geändert werden');
@@ -260,62 +270,81 @@ export default function Positionen() {
         </Card>
       )}
 
+      {!loading && positions.length > 0 && (
+        <label className="flex w-fit items-center gap-2 cursor-pointer select-none">
+          <Switch checked={showInactive} onCheckedChange={setShowInactive} />
+          <span className="text-sm text-muted-foreground">Inaktive Positionen anzeigen</span>
+        </label>
+      )}
+
       {!loading && positions.length > 0 && DEPARTMENTS.map(dept => (
         <Card key={dept}>
           <CardHeader className="pb-2 pt-4">
-            <CardTitle className="text-sm flex items-center justify-between">
+            <CardTitle className="text-sm">
               <Badge variant="outline" className={cn('text-xs border', DEPT_BADGE_CLASS[dept])}>
                 {DEPT_LABEL[dept]}
               </Badge>
-              {!readOnly && (
-                <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => openNew(dept)}>
-                  <Plus className="h-3.5 w-3.5" /> Position
-                </Button>
-              )}
             </CardTitle>
           </CardHeader>
-          <CardContent className="pt-0">
-            {grouped[dept].length === 0 ? (
-              <p className="text-xs text-muted-foreground italic py-2">Keine Positionen in dieser Abteilung.</p>
-            ) : (
-              <ul className="divide-y">
-                {grouped[dept].map((p, idx) => (
-                  <li key={p.id} className="flex items-center gap-3 py-2">
-                    <span
-                      className="flex items-center justify-center h-7 w-7 rounded-md shrink-0"
-                      style={{ backgroundColor: (p.color ?? DEPT_DEFAULT_COLOR[dept]) + '22', color: p.color ?? DEPT_DEFAULT_COLOR[dept] }}
-                    >
-                      <PositionIcon name={p.icon} className="h-4 w-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className={cn('text-sm font-medium truncate', !p.active && 'line-through text-muted-foreground')}>
-                          {p.name}
-                        </span>
-                        {!p.active && <Badge variant="secondary" className="text-[10px]">inaktiv</Badge>}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground font-mono">{p.key}</span>
-                    </div>
-                    {!readOnly && (
-                      <div className="flex items-center gap-0.5 shrink-0">
-                        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === 0} onClick={() => move(dept, idx, -1)} title="Nach oben">
-                          <ArrowUp className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === grouped[dept].length - 1} onClick={() => move(dept, idx, 1)} title="Nach unten">
-                          <ArrowDown className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(p)} title="Bearbeiten">
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(p)} title="Löschen">
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+          <CardContent className="pt-0 space-y-4">
+            {grouped[dept].map(group => {
+              const areaName = group.area ? group.area.name : 'Ohne Bereich';
+              return (
+                <div key={group.area?.key ?? '__none__'} className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {areaName}
+                    </h3>
+                    {!readOnly && group.area && (
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => openNew(dept, group.area!.key)}>
+                        <Plus className="h-3.5 w-3.5" /> Position
+                      </Button>
                     )}
-                  </li>
-                ))}
-              </ul>
-            )}
+                  </div>
+                  {group.positions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic py-1 pl-1">Keine Position in diesem Bereich.</p>
+                  ) : (
+                    <ul className="divide-y rounded-md border">
+                      {group.positions.map((p, idx) => (
+                        <li key={p.id} className={cn('flex items-center gap-3 py-2 px-2', !p.active && 'opacity-60')}>
+                          <span
+                            className="flex items-center justify-center h-7 w-7 rounded-md shrink-0"
+                            style={{ backgroundColor: (p.color ?? DEPT_DEFAULT_COLOR[dept]) + '22', color: p.color ?? DEPT_DEFAULT_COLOR[dept] }}
+                          >
+                            <PositionIcon name={p.icon} className="h-4 w-4" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className={cn('text-sm font-medium truncate', !p.active && 'line-through text-muted-foreground')}>
+                                {p.name}
+                              </span>
+                              {!p.active && <Badge variant="secondary" className="text-[10px]">inaktiv</Badge>}
+                            </div>
+                            <span className="text-[10px] text-muted-foreground font-mono">{p.key}</span>
+                          </div>
+                          {!readOnly && (
+                            <div className="flex items-center gap-0.5 shrink-0">
+                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === 0} onClick={() => move(group.positions, idx, -1)} title="Nach oben">
+                                <ArrowUp className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === group.positions.length - 1} onClick={() => move(group.positions, idx, 1)} title="Nach unten">
+                                <ArrowDown className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(p)} title="Bearbeiten">
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(p)} title="Löschen">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       ))}
@@ -351,13 +380,29 @@ export default function Positionen() {
                 <Label className="text-xs text-muted-foreground mb-1 block">Abteilung</Label>
                 <Select
                   value={draft.department}
-                  onValueChange={v => setDraft(d => d ? { ...d, department: v as Department } : d)}
+                  onValueChange={v => setDraft(d => d ? { ...d, department: v as Department, departmentGroup: '' } : d)}
                   disabled={!!draft.id}
                 >
                   <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {DEPARTMENTS.map(dep => (
                       <SelectItem key={dep} value={dep}>{DEPT_LABEL[dep]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label className="text-xs text-muted-foreground mb-1 block">Bereich</Label>
+                <Select
+                  value={draft.departmentGroup || '__none__'}
+                  onValueChange={v => setDraft(d => d ? { ...d, departmentGroup: v === '__none__' ? '' : v } : d)}
+                >
+                  <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Ohne Bereich</SelectItem>
+                    {areasForDepartment(draft.department).map(area => (
+                      <SelectItem key={area.key} value={area.key}>{area.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
