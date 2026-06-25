@@ -1,0 +1,67 @@
+Add a weekly view to the overtime cost section on /personal-fix.
+
+Goal:
+The overtime section currently shows the monthly evaluation. Add a second view so the user can switch between:
+1. Monatsansicht
+2. Wochenansicht
+
+Requirements:
+1. Add a segmented toggle in the overtime card:
+   "Monat" | "Woche"
+
+2. Monatsansicht stays as currently implemented:
+   monthly target = 42h * daysInMonth/7 * workload
+   monthly overtime = max(0, productive monthly Ist - monthly target)
+
+3. Wochenansicht:
+   Show overtime per ISO week within the selected month.
+   For each week:
+   weekly target = 42h * workload * daysOfThisWeekInSelectedMonth / 7
+   productive weekly Ist excludes absences FE/K/U and excludes Zusatzkosten entries.
+   weekly overtime = max(0, productive weekly Ist - weekly target)
+
+4. UI for Wochenansicht:
+   Show rows grouped by employee.
+   Columns:
+   Mitarbeiter
+   Abteilung
+   Pensum
+   Kalenderwoche
+   Zeitraum
+   Soll Woche
+   Ist Woche produktiv
+   Differenz
+   Überstunden Woche
+   Überstundenkosten
+
+5. The employee-level setting "Überstunden deaktivieren" must also apply in the weekly view:
+   If disabled, show the hours/difference but overtime cost must be CHF 0.00.
+
+6. Manual Zusatzkosten:
+   Keep them visible as separate Zusatzkosten rows.
+   They must not create overtime hours.
+   They should still be included in total costs where applicable.
+
+7. Make the UI readable:
+   Use clear labels:
+   "Soll Woche"
+   "Ist Woche produktiv"
+   "Überstunden Woche"
+   Add helper text:
+   "In der Wochenansicht wird jede Kalenderwoche anteilig für den ausgewählten Monat berechnet."
+
+8. Tests:
+   Add regression tests for weekly view:
+   100% fixed salary, week above target => overtime shown.
+   100% fixed salary, week below target => 0 overtime.
+   80% fixed salary => target scaled by workload.
+   partial week at month boundary => target prorated by days inside selected month.
+   disabled employee => overtime cost CHF 0.00.
+   flex/hourly/aushilfe employees excluded.
+   absences excluded.
+
+9. Run:
+   npm run typecheck
+   npm test
+
+10. Document the weekly view in replit.md.
