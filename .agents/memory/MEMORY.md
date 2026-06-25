@@ -25,3 +25,4 @@
 - [Safe ?from= return URL + URL sync](safe-return-url-and-url-sync.md) — validate `from`/redirect params against a synthetic origin + exact allow-listed path (open-redirect); mirror view-state to useSearchParams with a string-equality guard to avoid loops.
 - [Overloaded permission flag](overloaded-permission-flag.md) — widening a role gate (e.g. canEditEmployees) leaks every confidential surface it also gates; split into a narrower old-value gate instead of widening.
 - [Overtime excludes absences](overtime-absence-exclusion.md) — hours-over-threshold analytics must drop `absenceType` entries (productive = hours>0 && !absenceType) or leave days fabricate overtime.
+- [Validation code-review diff scope](validation-review-scope.md) — mark_task_complete review diffs whole branch since last checkpoint; can reject your small task for unrelated prior commits — verify with git show, don't revert others' work.
