@@ -914,3 +914,71 @@ export function computeDailyOvertimeInfo(
   const overtimeCost = disabled ? 0 : rate == null ? null : round2(overtimeHours * rate);
   return { overtimeHours, overtimeCost };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Abteilungsfilter + Zwischensumme für die kompakte Übersicht (REINE ANZEIGE)
+// ─────────────────────────────────────────────────────────────────────────────
+// Die Karte lädt weiterhin ALLE Abteilungen (PersonalFix wired departmentFilter
+// 'all'). Der manager-freundliche Filter „Alle/Küche/Service" filtert die bereits
+// berechneten Ergebnisse rein clientseitig — KEINE neue Überstundenlogik. Die
+// Fusszeilen-Totale werden aus der gefilterten Teilmenge neu summiert, damit die
+// Tabelle in sich stimmig bleibt (die Monats-Kacheln oben bleiben monatsweit).
+
+/** Abteilungsauswahl für die Übersichtstabelle. */
+export type DepartmentFilter = Department | 'all';
+
+/** Filter-Buttons über der Tabelle (Reihenfolge = Anzeige). */
+export const DEPARTMENT_FILTER_OPTIONS: ReadonlyArray<{ value: DepartmentFilter; label: string }> = [
+  { value: 'all', label: 'Alle' },
+  { value: 'küche', label: 'Küche' },
+  { value: 'service', label: 'Service' },
+];
+
+/** Filtert beliebige Zeilen mit `department` nach der Auswahl (`'all'` = alle). */
+export function filterEmployeesByDepartment<T extends { department: Department }>(
+  rows: T[],
+  filter: DepartmentFilter,
+): T[] {
+  if (filter === 'all') return rows;
+  return rows.filter((r) => r.department === filter);
+}
+
+/** Zwischensumme einer (ggf. gefilterten) Mitarbeiterliste für die Fusszeile. */
+export interface OvertimeSummary {
+  totalOvertimeHours: number;
+  /** Summe der verfügbaren Überstundenkosten (deaktivierte/`null` zählen 0) */
+  totalOvertimeCost: number;
+  /** Summe der verfügbaren Zusatzkosten (`null` zählt 0) */
+  totalAdditionalCost: number;
+  /** Anzahl Mitarbeiter mit tatsächlichen Überstunden (> 0) */
+  affectedEmployeeCount: number;
+}
+
+/**
+ * Summiert Überstunden/-kosten + Zusatzkosten einer Mitarbeiterliste.
+ * Spiegelt die Aggregation aus `computeOvertimeAnalysis` (overtimeCost ?? 0,
+ * additionalCost ?? 0, round2) — nur für die clientseitig gefilterte Teilmenge.
+ */
+export function summarizeOvertimeEmployees(
+  employees: Pick<
+    EmployeeOvertimeResult,
+    'overtimeHours' | 'overtimeCost' | 'additionalCost'
+  >[],
+): OvertimeSummary {
+  let hours = 0;
+  let cost = 0;
+  let additional = 0;
+  let affected = 0;
+  for (const e of employees) {
+    hours += e.overtimeHours;
+    cost += e.overtimeCost ?? 0;
+    additional += e.additionalCost ?? 0;
+    if (e.overtimeHours > 0) affected += 1;
+  }
+  return {
+    totalOvertimeHours: round2(hours),
+    totalOvertimeCost: round2(cost),
+    totalAdditionalCost: round2(additional),
+    affectedEmployeeCount: affected,
+  };
+}

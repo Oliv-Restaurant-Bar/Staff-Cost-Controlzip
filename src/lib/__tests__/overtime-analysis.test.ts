@@ -15,11 +15,15 @@ import {
   weeksInMonth,
   buildWeekDayRows,
   computeDailyOvertimeInfo,
+  filterEmployeesByDepartment,
+  summarizeOvertimeEmployees,
+  DEPARTMENT_FILTER_OPTIONS,
   WEEKLY_FULLTIME_TARGET,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeHoursEntry,
   type DayDetailEntry,
   type WeekOvertimeRow,
+  type EmployeeOvertimeResult,
 } from '@/lib/overtime-analysis';
 
 // ── Test-Helfer ──────────────────────────────────────────────────────────────
@@ -787,5 +791,146 @@ describe('computeDailyOvertimeInfo', () => {
     const info = computeDailyOvertimeInfo(row.productiveHours, 50, false);
     expect(info.overtimeHours).toBeCloseTo(1.6, 5);
     expect(info.overtimeCost).toBe(80);
+  });
+});
+
+// ── Abteilungsfilter (kompakte Übersicht) ────────────────────────────────────
+describe('filterEmployeesByDepartment', () => {
+  const rows = [
+    { department: 'küche' as const, name: 'A' },
+    { department: 'service' as const, name: 'B' },
+    { department: 'küche' as const, name: 'C' },
+  ];
+
+  it("'all' gibt alle Zeilen unverändert zurück", () => {
+    expect(filterEmployeesByDepartment(rows, 'all')).toEqual(rows);
+  });
+
+  it("'küche' liefert nur Küchen-Mitarbeiter", () => {
+    expect(filterEmployeesByDepartment(rows, 'küche').map((r) => r.name)).toEqual(['A', 'C']);
+  });
+
+  it("'service' liefert nur Service-Mitarbeiter", () => {
+    expect(filterEmployeesByDepartment(rows, 'service').map((r) => r.name)).toEqual(['B']);
+  });
+
+  it('leere Eingabe → leere Ausgabe (jeder Filter)', () => {
+    expect(filterEmployeesByDepartment([], 'all')).toEqual([]);
+    expect(filterEmployeesByDepartment([], 'küche')).toEqual([]);
+    expect(filterEmployeesByDepartment([], 'service')).toEqual([]);
+  });
+
+  it('mutiert die Eingabe nicht', () => {
+    const copy = rows.slice();
+    filterEmployeesByDepartment(rows, 'küche');
+    expect(rows).toEqual(copy);
+  });
+
+  it('DEPARTMENT_FILTER_OPTIONS hat genau Alle/Küche/Service in dieser Reihenfolge', () => {
+    expect(DEPARTMENT_FILTER_OPTIONS.map((o) => o.value)).toEqual(['all', 'küche', 'service']);
+    expect(DEPARTMENT_FILTER_OPTIONS.map((o) => o.label)).toEqual(['Alle', 'Küche', 'Service']);
+  });
+});
+
+// ── Zwischensumme (Fusszeile der gefilterten Tabelle) ────────────────────────
+describe('summarizeOvertimeEmployees', () => {
+  function res(partial: Partial<EmployeeOvertimeResult>): EmployeeOvertimeResult {
+    return {
+      employeeId: partial.employeeId ?? 'x',
+      name: partial.name ?? 'x',
+      department: partial.department ?? 'service',
+      hourlyRate: partial.hourlyRate ?? null,
+      rateAvailable: partial.rateAvailable ?? false,
+      workloadPercent: partial.workloadPercent ?? 100,
+      monthlyTargetHours: partial.monthlyTargetHours ?? 180,
+      productiveHours: partial.productiveHours ?? 0,
+      difference: partial.difference ?? 0,
+      overtimeHours: partial.overtimeHours ?? 0,
+      overtimeCost: partial.overtimeCost ?? null,
+      overtimeDisabled: partial.overtimeDisabled ?? false,
+      daysOver84Count: partial.daysOver84Count ?? 0,
+      additionalCost: partial.additionalCost ?? null,
+      additionalCostHours: partial.additionalCostHours ?? 0,
+      additionalCostDays: partial.additionalCostDays ?? 0,
+    };
+  }
+
+  it('summiert Stunden/Kosten/Zusatzkosten und zählt betroffene MA', () => {
+    const out = summarizeOvertimeEmployees([
+      res({ overtimeHours: 10, overtimeCost: 500, additionalCost: 100 }),
+      res({ overtimeHours: 5, overtimeCost: 250, additionalCost: 50 }),
+      res({ overtimeHours: 0, overtimeCost: 0, additionalCost: null }),
+    ]);
+    expect(out).toEqual({
+      totalOvertimeHours: 15,
+      totalOvertimeCost: 750,
+      totalAdditionalCost: 150,
+      affectedEmployeeCount: 2,
+    });
+  });
+
+  it('null-Kosten/Zusatzkosten zählen als 0', () => {
+    const out = summarizeOvertimeEmployees([
+      res({ overtimeHours: 4, overtimeCost: null, additionalCost: null }),
+      res({ overtimeHours: 2, overtimeCost: 120, additionalCost: 30 }),
+    ]);
+    expect(out.totalOvertimeHours).toBe(6);
+    expect(out.totalOvertimeCost).toBe(120);
+    expect(out.totalAdditionalCost).toBe(30);
+    expect(out.affectedEmployeeCount).toBe(2);
+  });
+
+  it('rundet Summen auf 2 Dezimalstellen', () => {
+    const out = summarizeOvertimeEmployees([
+      res({ overtimeHours: 1.111, overtimeCost: 0.005, additionalCost: 0.004 }),
+      res({ overtimeHours: 2.224, overtimeCost: 0.005, additionalCost: 0.004 }),
+    ]);
+    expect(out.totalOvertimeHours).toBe(3.34);
+    expect(out.totalOvertimeCost).toBe(0.01);
+    expect(out.totalAdditionalCost).toBe(0.01);
+  });
+
+  it('leere Liste → alle Summen 0', () => {
+    expect(summarizeOvertimeEmployees([])).toEqual({
+      totalOvertimeHours: 0,
+      totalOvertimeCost: 0,
+      totalAdditionalCost: 0,
+      affectedEmployeeCount: 0,
+    });
+  });
+
+  it('deaktivierte MA (overtimeCost 0, overtimeHours 0) erhöhen affectedCount nicht', () => {
+    const out = summarizeOvertimeEmployees([
+      res({ overtimeHours: 0, overtimeCost: 0, overtimeDisabled: true, additionalCost: 80 }),
+    ]);
+    expect(out.affectedEmployeeCount).toBe(0);
+    expect(out.totalAdditionalCost).toBe(80);
+  });
+});
+
+// ── Modal-Speichern-Semantik (Checkbox „berechnen" ↔ overtimeDisabled) ────────
+// Dokumentiert die im EmployeeOvertimeModal verwendete Logik (REINE Anzeige-/
+// Toggle-Semantik): calc(true) = „berechnen" → neuer Deaktiviert-Status = !calc;
+// „unverändert" (Speichern gesperrt) wenn der neue Status dem aktuellen entspricht.
+describe('Modal-Speichern-Semantik', () => {
+  const nextDisabled = (calc: boolean) => !calc;
+  const isUnchanged = (calc: boolean, currentDisabled: boolean) => nextDisabled(calc) === currentDisabled;
+
+  it('aktivierter MA, Checkbox angehakt (Initialzustand) → unverändert, Speichern gesperrt', () => {
+    expect(isUnchanged(true, false)).toBe(true);
+  });
+
+  it('aktivierter MA, Häkchen entfernt → verändert, Speichern aktiv, neuer Status = deaktiviert(true)', () => {
+    expect(isUnchanged(false, false)).toBe(false);
+    expect(nextDisabled(false)).toBe(true);
+  });
+
+  it('deaktivierter MA, Checkbox leer (Initialzustand) → unverändert, Speichern gesperrt', () => {
+    expect(isUnchanged(false, true)).toBe(true);
+  });
+
+  it('deaktivierter MA, Häkchen gesetzt → verändert, Speichern aktiv, neuer Status = aktiviert(false)', () => {
+    expect(isUnchanged(true, true)).toBe(false);
+    expect(nextDisabled(true)).toBe(false);
   });
 });

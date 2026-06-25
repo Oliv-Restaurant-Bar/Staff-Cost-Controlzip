@@ -1,0 +1,155 @@
+Redesign the overtime overview on /personal-fix to make it much more compact and manager-focused.
+
+Goal:
+Reduce horizontal space, remove unnecessary columns and move rarely-used settings into a popup.
+
+UI changes:
+
+1. Remove these columns completely:
+- Abteilung
+- Pensum
+- Status
+- Total Zusatzkosten
+
+2. Rename columns:
+Überstunden Monat
+→ ÜS Monat
+
+Überstundenkosten
+→ ÜS Kosten
+
+3. Replace the current "Woche / Saldo" column.
+
+Instead show a compact stacked layout inside the "ÜS Kosten" column:
+
+Top:
+KW25
+5.51 h
+CHF 155.99
+
+Bottom (smaller grey text):
+Saldo
+13.70 h
+CHF 387.85
+
+Do not use a separate "Woche / Saldo" column.
+
+4. Keep only one Zusatzkosten column.
+
+Display:
+CHF xxx.xx
+
+If none:
+—
+
+5. Employee name behaviour
+
+Clicking the employee name opens a modal.
+
+The modal contains:
+
+Employee name
+
+Checkbox:
+"Überstundenkosten für diesen Mitarbeiter berechnen"
+
+Information:
+Current setting
+Current workload
+Current monthly target
+Current monthly overtime
+
+Save / Cancel buttons.
+
+6. Visual indicator
+
+Employees where overtime costs are enabled should be visually highlighted.
+
+Do NOT use another Status column.
+
+Instead:
+
+- slightly bolder employee name
+or
+- small coloured dot
+or
+- subtle blue badge
+
+Employees with overtime disabled remain neutral.
+
+Currently only:
+
+- Mendim Lokaj
+- Mejdi
+
+are disabled.
+
+7. Department filter
+
+Remove the department column.
+
+Instead add compact filter buttons above the table:
+
+Alle
+Küche
+Service
+
+The filter should work instantly.
+
+Remember the selected filter.
+
+8. Compact spacing
+
+Reduce:
+
+row height
+
+vertical padding
+
+header height
+
+cell padding
+
+badge size
+
+The goal is fitting significantly more employees on screen.
+
+9. Keep all existing business logic.
+
+Do not change:
+
+monthly overtime
+
+weekly overtime
+
+daily info calculations
+
+cumulative saldo
+
+additional cost calculations
+
+permissions
+
+10. Tests
+
+Update component tests for:
+
+removed columns
+
+department filter
+
+employee modal
+
+enabled highlight
+
+single Zusatzkosten column
+
+compact ÜS Kosten layout
+
+11. Run:
+
+npm run typecheck
+
+npm test
+
+12. Update replit.md.

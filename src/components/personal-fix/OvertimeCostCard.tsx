@@ -28,10 +28,14 @@ import { Clock, AlertTriangle, ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import {
   computeOvertimeTotals,
@@ -39,13 +43,41 @@ import {
   defaultSelectedWeekKey,
   buildWeekDayRows,
   computeDailyOvertimeInfo,
+  filterEmployeesByDepartment,
+  summarizeOvertimeEmployees,
+  DEPARTMENT_FILTER_OPTIONS,
   DAILY_OVERTIME_THRESHOLD,
+  type DepartmentFilter,
   type OvertimeAnalysis,
+  type EmployeeOvertimeResult,
   type WeeklyOvertimeAnalysis,
   type EmployeeWeeklyOvertimeResult,
   type WeekCumulativeBalance,
   type DayDetailEntry,
 } from '@/lib/overtime-analysis';
+
+// Manager-Abteilungsfilter merken (reine UI-Präferenz, kein sensibler Wert).
+const DEPT_FILTER_STORAGE_KEY = 'pf-overtime-dept-filter';
+
+const readStoredDeptFilter = (): DepartmentFilter => {
+  if (typeof window === 'undefined') return 'all';
+  try {
+    const v = window.localStorage.getItem(DEPT_FILTER_STORAGE_KEY);
+    if (v === 'all' || v === 'küche' || v === 'service') return v;
+  } catch {
+    /* localStorage nicht verfügbar → Default */
+  }
+  return 'all';
+};
+
+const writeStoredDeptFilter = (v: DepartmentFilter): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(DEPT_FILTER_STORAGE_KEY, v);
+  } catch {
+    /* ignore */
+  }
+};
 
 interface OvertimeCostCardProps {
   /** Monatsauswertung (Ebene 1 + Werte je Mitarbeiter) */
@@ -93,6 +125,8 @@ const dmShort = (isoDate: string): string => `${isoDate.slice(8, 10)}.${isoDate.
 // Drill-down-Ebenen angewandt. Aufgeklappte Detailzellen behalten via `!p-0` ihr
 // randloses Layout (Descendant-Selektoren würden sonst Padding hinzufügen).
 const COMPACT_TABLE = 'text-sm [&_th]:h-9 [&_th]:px-2 [&_td]:px-2 [&_td]:py-1.5';
+// Noch kompaktere Variante für die manager-fokussierte Ebene-1-Übersicht.
+const OVERVIEW_TABLE = 'text-sm [&_th]:h-8 [&_th]:px-2 [&_td]:px-2 [&_td]:py-1';
 
 export function OvertimeCostCard({
   analysis,
@@ -113,9 +147,18 @@ export function OvertimeCostCard({
   // Pro Mitarbeiter ausgewählte "aktuelle Woche" (employeeId → "isoYear-isoWeek").
   // Leer = Default (ISO-Woche von heute im Monat). Klick auf eine Woche setzt sie.
   const [selectedWeekByEmployee, setSelectedWeekByEmployee] = useState<Map<string, string>>(new Map());
+  // Manager-Abteilungsfilter (Alle/Küche/Service), aus localStorage gemerkt.
+  const [deptFilter, setDeptFilter] = useState<DepartmentFilter>(readStoredDeptFilter);
+  // Geöffnetes Mitarbeiter-Modal (Klick auf den Namen). null = geschlossen.
+  const [modalEmployeeId, setModalEmployeeId] = useState<string | null>(null);
 
   const showCostCol = canSeeIndividualRates;
   const showStatusToggle = canManageDisable && !!onToggleEmployeeDisabled;
+
+  const changeDeptFilter = (v: DepartmentFilter) => {
+    setDeptFilter(v);
+    writeStoredDeptFilter(v);
+  };
 
   const toggleEmployee = (id: string) =>
     setExpandedEmployees((prev) => {
@@ -189,7 +232,21 @@ export function OvertimeCostCard({
   const fixlohnCost = Math.round((regularCost - totalAdditionalCost) * 100) / 100;
   const totals = computeOvertimeTotals(regularCost, analysis.totalOvertimeCost, netRevenue, includeOvertime);
 
-  const colCount = 10 + (showCostCol ? 2 : 0); // siehe Header unten (inkl. Woche/Saldo)
+  // Abteilungs-gefilterte Zeilen + Fusszeilen-Summe (rein clientseitig, KEINE
+  // Berechnungsänderung). Die Monats-Kacheln oben bleiben monatsweit.
+  const displayedEmployees = useMemo(
+    () => filterEmployeesByDepartment(analysis.employees, deptFilter),
+    [analysis.employees, deptFilter],
+  );
+  const summary = useMemo(() => summarizeOvertimeEmployees(displayedEmployees), [displayedEmployees]);
+
+  const modalEmployee = useMemo(
+    () => analysis.employees.find((e) => e.employeeId === modalEmployeeId) ?? null,
+    [analysis.employees, modalEmployeeId],
+  );
+
+  // Spalten Ebene 1: Chevron · Mitarbeiter · Soll · Ist · ÜS Monat · ÜS Kosten · Zusatzkosten.
+  const colCount = 7;
 
   return (
     <Card>
@@ -256,41 +313,56 @@ export function OvertimeCostCard({
           </div>
         )}
 
+        {/* ── Abteilungsfilter (Alle / Küche / Service) ────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {DEPARTMENT_FILTER_OPTIONS.map((opt) => (
+            <Button
+              key={opt.value}
+              type="button"
+              size="sm"
+              variant={deptFilter === opt.value ? 'default' : 'outline'}
+              className="h-7 px-3 text-xs"
+              onClick={() => changeDeptFilter(opt.value)}
+              aria-pressed={deptFilter === opt.value}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+
         {/* ── Ebene 1: Mitarbeiter-Übersicht ───────────────────────────────────── */}
-        {analysis.employees.length === 0 ? (
+        {displayedEmployees.length === 0 ? (
           <p className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
-            Keine festangestellten Mitarbeiter mit produktiven Ist-Stunden in diesem Monat.
+            {analysis.employees.length === 0
+              ? 'Keine festangestellten Mitarbeiter mit produktiven Ist-Stunden in diesem Monat.'
+              : 'Keine Mitarbeiter in dieser Abteilung.'}
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <Table className={COMPACT_TABLE}>
+            <Table className={OVERVIEW_TABLE}>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-8" />
+                  <TableHead className="w-7" />
                   <TableHead>Mitarbeiter</TableHead>
-                  <TableHead>Abteilung</TableHead>
-                  <TableHead className="text-right">Pensum</TableHead>
                   <TableHead className="text-right">Soll Monat</TableHead>
                   <TableHead className="text-right">Ist Monat</TableHead>
-                  <TableHead className="text-right">Überstunden Monat</TableHead>
-                  {showCostCol && <TableHead className="text-right">Überstundenkosten</TableHead>}
-                  <TableHead className="text-right">Woche / Saldo</TableHead>
+                  <TableHead className="text-right">ÜS Monat</TableHead>
+                  <TableHead className="text-right">ÜS Kosten</TableHead>
                   <TableHead className="text-right">Zusatzkosten</TableHead>
-                  {showCostCol && <TableHead className="text-right">Total Zusatzkosten</TableHead>}
-                  <TableHead className="text-center">Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {analysis.employees.map((e) => {
+                {displayedEmployees.map((e) => {
                   const isOpen = expandedEmployees.has(e.employeeId);
                   const weekly = weeklyByEmployee.get(e.employeeId);
                   const balances = balancesByEmployee.get(e.employeeId) ?? [];
                   const selKey = effectiveWeekKey(e.employeeId);
                   const selBal = balances.find((b) => `${b.isoYear}-${b.isoWeek}` === selKey) ?? null;
+                  const enabled = !e.overtimeDisabled;
                   return (
                     <Fragment key={e.employeeId}>
                       <TableRow
-                        className={cn('cursor-pointer hover:bg-muted/40', e.overtimeDisabled && 'opacity-60')}
+                        className={cn('cursor-pointer hover:bg-muted/40', !enabled && 'opacity-60')}
                         onClick={() => toggleEmployee(e.employeeId)}
                       >
                         <TableCell className="align-middle">
@@ -298,8 +370,23 @@ export function OvertimeCostCard({
                             className={cn('h-4 w-4 text-muted-foreground transition-transform', isOpen && 'rotate-90')}
                           />
                         </TableCell>
-                        <TableCell className="font-medium">
-                          {e.name}
+                        <TableCell>
+                          <button
+                            type="button"
+                            onClick={(ev) => { ev.stopPropagation(); setModalEmployeeId(e.employeeId); }}
+                            className="inline-flex items-center gap-1.5 text-left hover:underline"
+                            aria-label={`Einstellungen für ${e.name}`}
+                          >
+                            {enabled && (
+                              <span
+                                className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-500"
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className={cn(enabled ? 'font-semibold' : 'font-normal text-muted-foreground')}>
+                              {e.name}
+                            </span>
+                          </button>
                           {e.daysOver84Count > 0 && (
                             <span className="ml-1 text-[11px] text-muted-foreground">
                               · {e.daysOver84Count} Tag{e.daysOver84Count === 1 ? '' : 'e'} über{' '}
@@ -307,8 +394,6 @@ export function OvertimeCostCard({
                             </span>
                           )}
                         </TableCell>
-                        <TableCell className="capitalize text-muted-foreground">{e.department}</TableCell>
-                        <TableCell className="text-right tabular-nums">{wl(e.workloadPercent)}</TableCell>
                         <TableCell className="text-right tabular-nums">{hrs(e.monthlyTargetHours)}</TableCell>
                         <TableCell className="text-right tabular-nums">{hrs(e.productiveHours)}</TableCell>
                         <TableCell className="text-right">
@@ -318,57 +403,15 @@ export function OvertimeCostCard({
                             <OvertimeBadge hours={e.overtimeHours} />
                           )}
                         </TableCell>
-                        {showCostCol && (
-                          <TableCell className="text-right tabular-nums">
-                            {e.overtimeDisabled ? (
-                              <span className="text-muted-foreground">{chf(0)}</span>
-                            ) : e.overtimeCost === null ? (
-                              <span className="text-amber-600">kein Satz</span>
-                            ) : (
-                              chf(e.overtimeCost)
-                            )}
-                          </TableCell>
-                        )}
-                        <WeekSaldoCell bal={selBal} showCost={showCostCol} />
+                        <UeberstundenKostenCell bal={selBal} showCost={showCostCol} />
                         <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {e.additionalCostDays > 0
-                            ? `${e.additionalCostDays} Tag${e.additionalCostDays === 1 ? '' : 'e'}`
-                            : '—'}
-                        </TableCell>
-                        {showCostCol && (
-                          <TableCell className="text-right tabular-nums text-muted-foreground">
-                            {e.additionalCostHours <= 0
-                              ? '—'
+                          {e.additionalCostHours <= 0
+                            ? '—'
+                            : !showCostCol
+                              ? `${e.additionalCostDays} Tag${e.additionalCostDays === 1 ? '' : 'e'}`
                               : e.additionalCost === null
                                 ? 'kein Satz'
                                 : chf(e.additionalCost)}
-                          </TableCell>
-                        )}
-                        <TableCell className="text-center" onClick={(ev) => ev.stopPropagation()}>
-                          {showStatusToggle ? (
-                            <label className="inline-flex cursor-pointer items-center gap-1.5">
-                              <Checkbox
-                                checked={!e.overtimeDisabled}
-                                onCheckedChange={(v) => onToggleEmployeeDisabled?.(e.employeeId, v !== true)}
-                                aria-label={`Überstunden für ${e.name} aktivieren`}
-                              />
-                              <span className="text-xs text-muted-foreground">
-                                {e.overtimeDisabled ? 'Deaktiviert' : 'Aktiviert'}
-                              </span>
-                            </label>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                'text-xs',
-                                e.overtimeDisabled
-                                  ? 'text-muted-foreground'
-                                  : 'border-emerald-300 bg-emerald-50 text-emerald-700',
-                              )}
-                            >
-                              {e.overtimeDisabled ? 'Deaktiviert' : 'Aktiviert'}
-                            </Badge>
-                          )}
                         </TableCell>
                       </TableRow>
 
@@ -401,25 +444,18 @@ export function OvertimeCostCard({
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell colSpan={6} className="text-right font-medium">
-                    Total Überstunden
+                  <TableCell colSpan={4} className="text-right font-medium">
+                    Total
                   </TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">
-                    {hrs(analysis.totalOvertimeHours)}
+                    {hrs(summary.totalOvertimeHours)}
                   </TableCell>
-                  {showCostCol && (
-                    <TableCell className="text-right font-semibold tabular-nums">
-                      {chf(analysis.totalOvertimeCost)}
-                    </TableCell>
-                  )}
-                  <TableCell />{/* Woche / Saldo */}
-                  <TableCell />
-                  {showCostCol && (
-                    <TableCell className="text-right font-semibold tabular-nums">
-                      {chf(totalAdditionalCost)}
-                    </TableCell>
-                  )}
-                  <TableCell />
+                  <TableCell className="text-right font-semibold tabular-nums">
+                    {showCostCol ? chf(summary.totalOvertimeCost) : '—'}
+                  </TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums">
+                    {showCostCol ? chf(summary.totalAdditionalCost) : '—'}
+                  </TableCell>
                 </TableRow>
               </TableFooter>
             </Table>
@@ -434,6 +470,18 @@ export function OvertimeCostCard({
           als Überstunden. Tage über {DAILY_OVERTIME_THRESHOLD}h sind nur informativ. Manuelle
           Zusatzkosten sind bereits im regulären Personalkosten-Total enthalten.
         </p>
+
+        {modalEmployee && (
+          <EmployeeOvertimeModal
+            employee={modalEmployee}
+            canManage={showStatusToggle}
+            onSave={(disabled) => {
+              onToggleEmployeeDisabled?.(modalEmployee.employeeId, disabled);
+              setModalEmployeeId(null);
+            }}
+            onClose={() => setModalEmployeeId(null)}
+          />
+        )}
       </CardContent>
     </Card>
   );
@@ -737,10 +785,12 @@ function DayDetailTable({
   );
 }
 
-// ── Kombinierte Zelle "aktuelle Woche / verrechneter Saldo" (Ebene 1) ─────────
-// Zeile 1: Überstunden + Kosten DER ausgewählten Woche.
-// Zeile 2: kumulierter Saldo (Stunden + Kosten) von Monatsanfang bis zur Woche.
-function WeekSaldoCell({ bal, showCost }: { bal: WeekCumulativeBalance | null; showCost: boolean }) {
+// ── ÜS-Kosten-Zelle (Ebene 1) ────────────────────────────────────────────────
+// ÜS-Kosten-Zelle (gestapelt): oben die ausgewählte Woche (KW + Stunden + CHF),
+// darunter kleiner/grau der kumulierte Saldo bis zu dieser Woche. CHF-Beträge nur
+// bei `showCost` (canSeeIndividualRates); Stunden-Salden sind keine Lohndaten und
+// bleiben immer sichtbar.
+function UeberstundenKostenCell({ bal, showCost }: { bal: WeekCumulativeBalance | null; showCost: boolean }) {
   if (!bal) {
     return <TableCell className="text-right text-muted-foreground">—</TableCell>;
   }
@@ -750,16 +800,83 @@ function WeekSaldoCell({ bal, showCost }: { bal: WeekCumulativeBalance | null; s
     (showCost ? ` / ${costStr(bal.cumulativeOvertimeCost)}` : '');
   return (
     <TableCell className="text-right tabular-nums" title={saldoTitle}>
-      <div className="text-xs">
+      <div className="text-xs font-medium">
         <span className="text-muted-foreground">KW {bal.isoWeek}:</span>{' '}
         {hrs(bal.overtimeHours)}
-        {showCost && <> / {costStr(bal.overtimeCost)}</>}
+        {showCost && <> · {costStr(bal.overtimeCost)}</>}
       </div>
       <div className="text-[11px] text-muted-foreground">
         Saldo: {hrs(bal.cumulativeOvertimeHours)}
-        {showCost && <> / {costStr(bal.cumulativeOvertimeCost)}</>}
+        {showCost && <> · {costStr(bal.cumulativeOvertimeCost)}</>}
       </div>
     </TableCell>
+  );
+}
+
+// ── Mitarbeiter-Einstellungs-Modal (Klick auf den Namen) ──────────────────────
+// Zeigt Name + Infos (aktuelle Einstellung/Pensum/Soll/Überstunden) und — sofern
+// erlaubt — die Checkbox „Überstundenkosten für diesen Mitarbeiter berechnen"
+// (angehakt = NICHT deaktiviert). Speichern ruft onSave(disabled). KEINE
+// Berechnungsänderung; spiegelt nur das bestehende Deaktivieren-Flag.
+function EmployeeOvertimeModal({
+  employee,
+  canManage,
+  onSave,
+  onClose,
+}: {
+  employee: EmployeeOvertimeResult;
+  canManage: boolean;
+  onSave: (disabled: boolean) => void;
+  onClose: () => void;
+}) {
+  const [calc, setCalc] = useState(!employee.overtimeDisabled);
+  // calc(true) = "Überstundenkosten berechnen" → neuer Deaktiviert-Status = !calc.
+  // Unverändert, wenn der neue Status dem aktuellen entspricht → Speichern gesperrt.
+  const unchanged = !calc === employee.overtimeDisabled;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{employee.name}</DialogTitle>
+        </DialogHeader>
+
+        {canManage && (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3">
+            <Checkbox
+              checked={calc}
+              onCheckedChange={(v) => setCalc(v === true)}
+              aria-label="Überstundenkosten für diesen Mitarbeiter berechnen"
+              className="mt-0.5"
+            />
+            <span className="text-sm leading-snug">Überstundenkosten für diesen Mitarbeiter berechnen</span>
+          </label>
+        )}
+
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+          <dt className="text-muted-foreground">Aktuelle Einstellung</dt>
+          <dd className="text-right font-medium">
+            {employee.overtimeDisabled ? 'Deaktiviert' : 'Aktiviert'}
+          </dd>
+          <dt className="text-muted-foreground">Pensum</dt>
+          <dd className="text-right tabular-nums">{wl(employee.workloadPercent)}</dd>
+          <dt className="text-muted-foreground">Soll Monat</dt>
+          <dd className="text-right tabular-nums">{hrs(employee.monthlyTargetHours)}</dd>
+          <dt className="text-muted-foreground">Überstunden Monat</dt>
+          <dd className="text-right tabular-nums">{hrs(employee.overtimeHours)}</dd>
+        </dl>
+
+        <DialogFooter>
+          {canManage ? (
+            <>
+              <Button type="button" variant="outline" onClick={onClose}>Abbrechen</Button>
+              <Button type="button" disabled={unchanged} onClick={() => onSave(!calc)}>Speichern</Button>
+            </>
+          ) : (
+            <Button type="button" onClick={onClose}>Schließen</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
