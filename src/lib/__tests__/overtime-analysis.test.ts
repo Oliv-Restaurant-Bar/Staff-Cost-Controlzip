@@ -40,11 +40,18 @@ describe('overtime-analysis: Konstanten & Prädikat', () => {
     expect(WEEKLY_OVERTIME_THRESHOLD).toBe(42);
   });
 
-  it('isFixedSalaryEmployee: vollzeit/teilzeit = fest, minijob/aushilfe = stündlich', () => {
+  it('isFixedSalaryEmployee: nur vollzeit/teilzeit MIT fixem Monatslohn = fest', () => {
+    // Festangestellt: vollzeit/teilzeit mit monthlySalary > 0
     expect(isFixedSalaryEmployee(makeEmp({ id: 'a', employmentType: 'vollzeit' }))).toBe(true);
     expect(isFixedSalaryEmployee(makeEmp({ id: 'b', employmentType: 'teilzeit' }))).toBe(true);
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'c', employmentType: 'aushilfe' }))).toBe(false);
-    expect(isFixedSalaryEmployee(makeEmp({ id: 'd', employmentType: 'minijob' }))).toBe(false);
+    // Stündlich: minijob/aushilfe immer ausgeschlossen
+    expect(isFixedSalaryEmployee(makeEmp({ id: 'c', employmentType: 'aushilfe', monthlySalary: 0 }))).toBe(false);
+    expect(isFixedSalaryEmployee(makeEmp({ id: 'd', employmentType: 'minijob', monthlySalary: 0 }))).toBe(false);
+    // Zweite Sicherheitsschicht: vollzeit/teilzeit OHNE fixen Monatslohn = ausgeschlossen
+    expect(isFixedSalaryEmployee(makeEmp({ id: 'e', employmentType: 'vollzeit', monthlySalary: 0 }))).toBe(false);
+    expect(isFixedSalaryEmployee(makeEmp({ id: 'f', employmentType: 'teilzeit', monthlySalary: undefined }))).toBe(false);
+    // Auch wenn flexibel via hourlyWage bezahlt, aber ohne fixen Monatslohn → ausgeschlossen
+    expect(isFixedSalaryEmployee(makeEmp({ id: 'g', employmentType: 'teilzeit', hourlyWage: 30, monthlySalary: 0 }))).toBe(false);
   });
 });
 
@@ -147,23 +154,53 @@ describe('overtime-analysis: computeOvertimeAnalysis', () => {
     expect(single.totalOvertimeHours).toBe(0);
   });
 
-  // 5) Fehlender Stundensatz → Stunden ausgewiesen, Kosten nicht verfügbar
-  it('weist Überstunden ohne Satz aus, markiert Kosten als nicht verfügbar', () => {
-    const emp = makeEmp({ id: 'e5', hourlyWage: 0, monthlySalary: 0 });
+  // 5) Festangestellten-Typ OHNE fixen Monatslohn → komplett ausgeschlossen
+  //    (zweite Sicherheitsschicht: flexible/stündliche dürfen NIE als Überstunden
+  //     auftauchen, auch wenn employmentType fälschlich vollzeit/teilzeit ist)
+  it('schliesst vollzeit/teilzeit OHNE fixen Monatslohn aus (kein Überstundeneintrag)', () => {
+    const noSalary = makeEmp({ id: 'e5', employmentType: 'vollzeit', hourlyWage: 0, monthlySalary: 0 });
+    const flexHourly = makeEmp({ id: 'e5b', employmentType: 'teilzeit', hourlyWage: 32, monthlySalary: 0 });
     const res = computeOvertimeAnalysis({
-      employees: [emp],
-      entries: [entry('e5', '2026-06-22', 10)], // 1.6h Überstunden
+      employees: [noSalary, flexHourly],
+      // beide deutlich über 8.4h/Tag — würden ohne den Filter Überstunden erzeugen
+      entries: [entry('e5', '2026-06-22', 12), entry('e5b', '2026-06-22', 12)],
     });
-    const r = res.employees[0];
-    expect(r.overtimeHours).toBe(1.6);
-    expect(r.rateAvailable).toBe(false);
-    expect(r.hourlyRate).toBeNull();
-    expect(r.overtimeCost).toBeNull();
-    expect(r.weeks[0].cost).toBeNull();
-    expect(res.hasUnavailableRates).toBe(true);
-    expect(res.totalOvertimeHours).toBe(1.6);
-    expect(res.totalOvertimeCost).toBe(0); // nur verfügbare Kosten summiert
+    expect(res.employees).toHaveLength(0);
+    expect(res.affectedEmployeeCount).toBe(0);
+    expect(res.totalOvertimeHours).toBe(0);
+    expect(res.totalOvertimeCost).toBe(0);
+    expect(res.hasUnavailableRates).toBe(false);
+  });
+
+  // 5b) Regression (Bug): flexible/stündliche MA tauchten in der Überstunden-
+  //     tabelle auf (Ibrahim, Aushilfe Service, Isabel Goi). Nur echte
+  //     Festangestellte (vollzeit/teilzeit MIT fixem Monatslohn) dürfen erscheinen.
+  it('Regression: schliesst flexible/stündliche MA aus, behält Festangestellte', () => {
+    const fest = makeEmp({ id: 'fix', name: 'Festangestellt', employmentType: 'vollzeit', monthlySalary: 7280 });
+    const aushilfe = makeEmp({ id: 'aush', name: 'Aushilfe Service', employmentType: 'aushilfe', hourlyWage: 28, monthlySalary: 0 });
+    const minijob = makeEmp({ id: 'mini', name: 'Ibrahim', employmentType: 'minijob', hourlyWage: 26, monthlySalary: 0 });
+    // flexibel, aber fälschlich als teilzeit erfasst und ohne fixen Monatslohn
+    const flexMisTyped = makeEmp({ id: 'flex', name: 'Isabel Goi', employmentType: 'teilzeit', hourlyWage: 30, monthlySalary: 0 });
+
+    // alle mit klar über den Schwellen liegenden Stunden (12h/Tag × 6 Tage = 72h/Woche)
+    const days = ['22', '23', '24', '25', '26', '27'];
+    const entries: OvertimeHoursEntry[] = [];
+    for (const id of ['fix', 'aush', 'mini', 'flex']) {
+      for (const d of days) entries.push(entry(id, `2026-06-${d}`, 12));
+    }
+
+    const res = computeOvertimeAnalysis({
+      employees: [fest, aushilfe, minijob, flexMisTyped],
+      entries,
+    });
+
     expect(res.affectedEmployeeCount).toBe(1);
+    const names = res.employees.map((r) => r.name);
+    expect(names).toEqual(['Festangestellt']);
+    // die ausgeschlossenen Namen dürfen NICHT auftauchen
+    expect(names).not.toContain('Aushilfe Service');
+    expect(names).not.toContain('Ibrahim');
+    expect(names).not.toContain('Isabel Goi');
   });
 
   // 8) Abteilungsfilter

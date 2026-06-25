@@ -2584,7 +2584,12 @@ export default function PersonalFixPage() {
       if (entry.absenceType) continue;
       entries.push({ employeeId: cellKey.slice(0, cellKey.length - 11), date, hours: h });
     }
-    const candidates = employees.filter(e => isEmployeeActiveInMonth(e, selectedYear, selectedMonth));
+    // Nur echte Festangestellte (vollzeit/teilzeit MIT fixem Monatslohn) — keine
+    // flexiblen/stündlichen MA. Zweite Sicherheitsschicht: computeOvertimeAnalysis
+    // filtert intern erneut über isFixedSalaryEmployee.
+    const candidates = employees.filter(
+      e => hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth),
+    );
     return computeOvertimeAnalysis({ employees: candidates, entries, departmentFilter: 'all' });
   }, [supabaseActualHours, employees, selectedYear, selectedMonth]);
 

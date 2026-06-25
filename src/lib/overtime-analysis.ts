@@ -6,17 +6,20 @@
 //   - 8.4 h pro Tag   ODER
 //   - 42  h pro Woche (ISO-Woche)
 // Kosten = Überstunden × bestehendem berechnetem Stundenkostensatz
-// (getEffectiveHourlyRate). Es werden KEINE Sätze erfunden: fehlt der Satz,
-// werden die Überstunden ausgewiesen, die Kosten aber als "nicht verfügbar"
-// (null) markiert.
+// (getEffectiveHourlyRate). Es werden KEINE Sätze erfunden. Da nur
+// Festangestellte mit fixem Monatslohn einbezogen werden (siehe
+// isFixedSalaryEmployee), liefert getEffectiveHourlyRate praktisch immer einen
+// Satz; die null-Behandlung (Stunden ausgewiesen, Kosten "nicht verfügbar")
+// bleibt nur als defensive Absicherung erhalten.
 //
 // Doppelzählung wird vermieden: pro (Mitarbeiter, ISO-Woche) gilt
 //   effektiveÜberstunden = max( Summe Tages-Überstunden , Wochen-Überstunden )
 // — also der GRÖSSERE der beiden Werte, nicht die Summe beider.
 //
-// Stündliche Mitarbeiter (minijob/aushilfe) sind ausgeschlossen — sie werden
-// bereits über ihre Ist-Stunden abgerechnet und dürfen nicht erneut als
-// Überstunden-Zusatzkosten gezählt werden.
+// Stündliche/flexible Mitarbeiter (minijob/aushilfe ODER ohne fixen Monatslohn)
+// sind ausgeschlossen — sie werden bereits über ihre Ist-Stunden abgerechnet und
+// dürfen nicht erneut als Überstunden-Zusatzkosten gezählt werden. Festangestellt
+// = vollzeit/teilzeit MIT monthlySalary > 0 (siehe isFixedSalaryEmployee).
 //
 // KEIN React / Supabase / DOM. date-fns wird nur für die ISO-Wochen-Logik
 // genutzt (pure). Eingabedaten sind bereits mandanten-/zeitraum-gefiltert.
@@ -106,18 +109,22 @@ export interface OvertimeAnalysisInput {
 }
 
 /**
- * Ob der Mitarbeiter festangestellt ist (= Monatslohn-Anstellung, NICHT
- * stündlich abgerechnet). Diskriminator ist die Anstellungsart:
- *   vollzeit | teilzeit → festangestellt (Überstunden relevant)
- *   minijob   | aushilfe → stündlich (bereits über Ist-Stunden abgerechnet)
+ * Ob der Mitarbeiter festangestellt ist (= fixer Monatslohn, NICHT stündlich
+ * abgerechnet). Es müssen BEIDE Bedingungen erfüllt sein:
+ *   1) Anstellungsart vollzeit | teilzeit (minijob/aushilfe = stündlich), UND
+ *   2) ein hinterlegter fixer Monatslohn (monthlySalary > 0).
  *
- * Bewusst NICHT an `monthlySalary > 0` gekoppelt: ein Festangestellter ohne
- * hinterlegten Lohnsatz soll seine Überstunden-STUNDEN trotzdem ausgewiesen
- * bekommen — die Kosten werden dann als "nicht verfügbar" markiert
- * (getEffectiveHourlyRate === null).
+ * Die zweite Bedingung ist die robuste zweite Sicherheitsschicht: stündliche,
+ * flexible bzw. Aushilfs-Mitarbeiter — auch solche, die fälschlich als
+ * vollzeit/teilzeit erfasst sind, aber KEINEN fixen Monatslohn haben — werden
+ * von der Überstundenauswertung ausgeschlossen. Überstunden(-kosten) sind nur
+ * für Festangestellte mit fixem Monatslohn definiert; Stündliche werden bereits
+ * über ihre Ist-Stunden abgerechnet. Deckt sich mit `hasFixedSalary` in
+ * PersonalFix.tsx (gleiche Semantik).
  */
 export function isFixedSalaryEmployee(emp: Employee): boolean {
-  return emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit';
+  return (emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit')
+    && (emp.monthlySalary ?? 0) > 0;
 }
 
 function isoWeekInfoFor(dateStr: string): { isoYear: number; isoWeek: number } {
