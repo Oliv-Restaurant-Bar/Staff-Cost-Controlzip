@@ -66,7 +66,8 @@ export type AppModule =
   | 'personal_fix'
   | 'tagesansicht'
   | 'tages_controlling'
-  | 'warenrechnungen';
+  | 'warenrechnungen'
+  | 'positionen';
 
 /** Feingranulare Rechte für das Warenrechnungen-Modul */
 export interface WarenrechnungenPerms {
@@ -192,6 +193,8 @@ export const usePermissions = (): Permissions => {
         return isAdmin || isBeaulieuManager;
       case 'warenrechnungen':
         return isAdmin || isBeaulieuManager || isBeaulieuViewer;
+      case 'positionen':
+        return isAdmin; // Positionsstammdaten: nur Admin (inkl. Gast-Lesezugriff)
       default:
         return isAdmin;
     }

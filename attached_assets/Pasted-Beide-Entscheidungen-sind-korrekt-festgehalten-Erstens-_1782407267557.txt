@@ -1,0 +1,41 @@
+Beide Entscheidungen sind korrekt festgehalten:
+
+Erstens soll die Position pro geplanter Schicht explizit ausgewählt werden. Das heisst: Der Planer entscheidet aktiv, welche Position eine Person in dieser Schicht abdeckt. Die App prüft später, ob diese Person diese Position überhaupt abdecken kann und ob der Personalbedarf gedeckt ist.
+
+Zweitens bauen wir das Ganze phasenweise auf. Die Grundlage ist zuerst die Positionsverwaltung. Erst wenn Positionen sauber existieren, gespeichert werden und den Mitarbeitenden zugeordnet werden können, macht der eigentliche Personalbedarf Sinn.
+
+Wichtige Erkenntnis aus der Analyse:
+
+In der App gibt es bereits ein Positionskonzept. Es heisst aktuell „Stationen“. Es existieren bereits Dateien und Funktionen für Hauptstationen und Zweitstationen, zum Beispiel für Service und Küche. Auch die Planungslogik nutzt diese Informationen teilweise schon.
+
+Das Problem ist aber: Diese Stationen werden aktuell offenbar nicht sauber in der Datenbank gespeichert. Die Felder existieren zwar im TypeScript Modell, aber die Datenbankspalten und die Mapper fehlen oder speichern diese Werte nicht korrekt. Dadurch können zugewiesene Hauptstationen und Zweitstationen nach einem Reload verloren gehen.
+
+Deshalb ist Phase 1 nicht ein komplett neuer Aufbau von null, sondern ein sauberer Umbau und eine Erweiterung des bestehenden Stationen Systems.
+
+Phase 1 umfasst:
+
+1. Positionsverwaltung als Grundlage
+
+Es wird eine echte, konfigurierbare Positionsverwaltung erstellt. Dort können Positionen erstellt, bearbeitet, sortiert, aktiviert und deaktiviert werden. Jede Position erhält Name, Abteilung, Farbe, Icon und Status.
+
+Die bisherigen fix hinterlegten Stationen werden als Startwerte übernommen, damit nichts verloren geht.
+
+2. Speicherung der Mitarbeiter Positionen
+
+Die Hauptposition und die abdeckbaren Positionen pro Mitarbeiter werden korrekt in der Datenbank gespeichert. Dafür braucht es neue Datenbankfelder und die Anpassung der Mapper zwischen App und Datenbank.
+
+Wichtig: Gespeichert wird ein stabiler Positionsschlüssel und nicht nur der Anzeigename. So kann eine Position später umbenannt werden, ohne dass bestehende Zuordnungen kaputtgehen.
+
+3. Personalstamm Erweiterung
+
+Im Personalstamm bekommt jeder Mitarbeiter eine neue Sektion „Kann folgende Positionen abdecken“. Dort wird die bevorzugte Hauptposition ausgewählt und zusätzlich definiert, welche weiteren Positionen diese Person übernehmen kann.
+
+Noch nicht Teil von Phase 1:
+
+Der eigentliche Menüpunkt „Personalbedarf“ kommt später. Dort werden dann Bedarfsvorlagen pro Wochentag, Saison und Position definiert.
+
+Auch die Auswahl der Position direkt in der Dienstplanung, die Bedarfsprüfung, Ersatzvorschläge, flexible Mitarbeitende und Dashboards kommen erst in späteren Phasen.
+
+Wichtig ist: Die bestehende Dienstplanung, Kostenlogik, Überstundenlogik und die aktuelle Mitarbeiterstruktur bleiben in Phase 1 unangetastet. Küche und Service bleiben weiterhin die Hauptabteilungen. Positionen wie Pizzaiolo, Grill, Bar, Runner oder Chef de Rang werden als Positionen innerhalb dieser Abteilungen geführt.
+
+Damit entsteht eine stabile Grundlage, auf der später der Personalbedarf und die automatische Prüfung der Dienstplanung sauber aufgebaut werden können.

@@ -18,7 +18,7 @@ import { Link } from 'react-router-dom';
 import {
   Search, X, Plus, Save, Trash2, Upload, ChevronRight,
   LayoutDashboard, Users, ChefHat, Utensils, FileText,
-  AlertTriangle, CheckCircle2, Edit3, ArrowLeft, Lock,
+  AlertTriangle, CheckCircle2, Edit3, ArrowLeft, Lock, LayoutGrid,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -49,6 +49,9 @@ import {
 import { WageHistorySection } from '@/components/WageHistorySection';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
+import { usePositions } from '@/hooks/usePositions';
+import { positionsForDepartment, positionDisplayName } from '@/lib/position-utils';
+import { PositionIcon } from '@/components/PositionIcon';
 import {
   loadEmployees, upsertEmployee, deleteEmployee, activateEmployee, archiveEmployee,
   loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
@@ -349,6 +352,7 @@ function emptyEmployee(id: string): Employee {
 
 const Personalstamm = () => {
   const { tenantId, tenantKey } = useTenant();
+  const { positions } = usePositions();
   const {
     role, isAdmin, isManager, allowedDepartment, canEditEmployees, isBeaulieuManager,
   } = usePermissions();
@@ -2150,6 +2154,103 @@ CREATE POLICY "Anon self-register new employee"
                   )}
                 </Card>
               )}
+
+              {/* ── Positionen / Stationen (operativ — auch Küchen-Manager) ── */}
+              {canEditEmployees && (() => {
+                const posDept = (editMode ? editData?.department : selectedEmp?.department) as Department | undefined;
+                const deptPositions = posDept ? positionsForDepartment(positions, posDept, { activeOnly: true }) : [];
+                const primary = editMode ? editData?.primaryStation : selectedEmp?.primaryStation;
+                const secondary = (editMode ? editData?.secondaryStations : selectedEmp?.secondaryStations) ?? [];
+                return (
+                  <Card>
+                    <CardHeader className="pb-2 pt-4">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <LayoutGrid className="h-4 w-4 text-violet-600" />
+                        Kann folgende Positionen abdecken
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 pt-0">
+                      {editMode ? (
+                        deptPositions.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            Noch keine Positionen für diese Abteilung konfiguriert.{' '}
+                            <Link to="/positionen" className="underline">Positionen verwalten</Link>
+                          </p>
+                        ) : (
+                          <>
+                            <div>
+                              <Label className="text-xs text-muted-foreground mb-1 block">Hauptposition</Label>
+                              <Select
+                                value={primary ?? '__none__'}
+                                onValueChange={v => setEditData(d => {
+                                  if (!d) return d;
+                                  const key = v === '__none__' ? undefined : v;
+                                  const sec = (d.secondaryStations ?? []).filter(s => s !== key);
+                                  return { ...d, primaryStation: key, secondaryStations: sec.length ? sec : undefined };
+                                })}
+                              >
+                                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Keine" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">Keine Hauptposition</SelectItem>
+                                  {deptPositions.map(p => (
+                                    <SelectItem key={p.key} value={p.key}>{p.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground mb-1.5 block">Weitere abdeckbare Positionen</Label>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {deptPositions.filter(p => p.key !== primary).map(p => {
+                                  const checked = secondary.includes(p.key);
+                                  return (
+                                    <label key={p.key} className="flex items-center gap-2 cursor-pointer text-sm">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded"
+                                        checked={checked}
+                                        onChange={e => setEditData(d => {
+                                          if (!d) return d;
+                                          const cur = new Set(d.secondaryStations ?? []);
+                                          if (e.target.checked) cur.add(p.key); else cur.delete(p.key);
+                                          const arr = [...cur];
+                                          return { ...d, secondaryStations: arr.length ? arr : undefined };
+                                        })}
+                                      />
+                                      <span style={{ color: p.color ?? undefined }}><PositionIcon name={p.icon} className="h-3.5 w-3.5" /></span>
+                                      {p.name}
+                                    </label>
+                                  );
+                                })}
+                              </div>
+                              {deptPositions.filter(p => p.key !== primary).length === 0 && (
+                                <p className="text-xs text-muted-foreground italic">Keine weiteren Positionen verfügbar.</p>
+                              )}
+                            </div>
+                          </>
+                        )
+                      ) : (
+                        (primary || secondary.length > 0) ? (
+                          <div className="flex flex-wrap gap-1.5">
+                            {primary && (
+                              <Badge className="text-[11px] gap-1">
+                                <span className="text-[8px]">★</span>{positionDisplayName(positions, primary)}
+                              </Badge>
+                            )}
+                            {secondary.map(k => (
+                              <Badge key={k} variant="secondary" className="text-[11px]">
+                                {positionDisplayName(positions, k)}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground italic">Keine Positionen zugewiesen.</p>
+                        )
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })()}
 
               {/* ── Abschnitt 3: Vertragliche Grundlagen (Admin + GF Beaulieu) ── */}
               {canManageAllEmployees && (

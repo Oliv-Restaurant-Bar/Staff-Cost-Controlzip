@@ -141,6 +141,11 @@ const dbToEmployee = (row: any): Employee => {
   // ── Vertragliche Grundlagen ──────────────────────────────────────────────
   contractType:           row.contract_type             ?? undefined,
   positionTitle:          row.position_title            ?? undefined,
+  // ── Station / Funktion (Migration 20260625) ───────────────────────────────
+  primaryStation:         row.primary_station           ?? undefined,
+  secondaryStations:      (Array.isArray(row.secondary_stations) && row.secondary_stations.length > 0)
+                            ? (row.secondary_stations as string[])
+                            : undefined,
   contractStart:          row.contract_start            ?? undefined,
   employmentEndDate:      row.employment_end_date       ?? undefined,
   contractEnd:            row.contract_end              ?? undefined,
@@ -163,6 +168,42 @@ const dbToEmployee = (row: any): Employee => {
 };
 
 // ─── Mitarbeiter ─────────────────────────────────────────────────────────────
+
+/**
+ * Best-effort: Schreibt die Stations-/Positionsfelder (primary_station,
+ * secondary_stations) eines Mitarbeiters separat.
+ *
+ * Diese Spalten werden BEWUSST nicht in employeeToDb aufgenommen: Die Migration
+ * 20260625_positions.sql wird manuell im Supabase SQL-Editor ausgeführt. Solange
+ * sie fehlt, darf der Haupt-Upsert NICHT scheitern. Fehler über fehlende Spalten
+ * werden daher geschluckt (identisch zum Muster in crm-activities-db.ts).
+ */
+async function saveEmployeeStationsBestEffort(emp: Employee): Promise<void> {
+  // NUR explizit vorhandene Felder schreiben. Aufrufer, die diese optionalen
+  // Felder weglassen (Literal-Konstruktion ohne Stationen), dürfen bestehende
+  // Positions-Skills NICHT löschen (vgl. ali-reactivation undefined→null-Clobber).
+  // dbToEmployee setzt die Keys immer → geladene→gespeicherte MA persistieren
+  // ihre Stationen korrekt (auch explizites Leeren = key vorhanden, Wert leer).
+  const patch: Record<string, unknown> = {};
+  if ('primaryStation' in emp)    patch.primary_station    = emp.primaryStation ?? null;
+  if ('secondaryStations' in emp) patch.secondary_stations = emp.secondaryStations ?? [];
+  if (Object.keys(patch).length === 0) return;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (supabase as any)
+    .from('employees')
+    .update(patch)
+    .eq('id', emp.id);
+  if (error) {
+    // Fehlende Spalten = Migration 20260625 noch nicht ausgeführt → bewusst schlucken.
+    if (/column .* does not exist|does not exist|schema cache/i.test(error.message ?? '')) {
+      console.warn('[supabase-db] Stationsfelder übersprungen (Migration 20260625 noch nicht ausgeführt?):', error.message);
+      return;
+    }
+    // Echte Fehler propagieren → upsertEmployee gibt false zurück (kein stilles Maskieren).
+    throw new Error(`Stationsfelder konnten nicht gespeichert werden: ${error.message ?? 'unbekannter Fehler'}`);
+  }
+}
 
 /**
  * Mitarbeiter laden, optional gefiltert nach Mandant.
@@ -271,6 +312,8 @@ export async function upsertEmployee(emp: Employee, restaurantId: TenantId = 'ol
       .from('employees')
       .upsert(employeeToDb(emp), { onConflict: 'id' });
     if (error) { console.error('[supabase-db] upsertEmployee:', error); return false; }
+    // Stations-/Positionsfelder separat (best-effort) — siehe Funktion oben.
+    await saveEmployeeStationsBestEffort(emp);
     console.log(`[supabase-db] upsertEmployee OK: id=${emp.id} tenant=${restaurantId}`);
     return true;
   } catch (e) {

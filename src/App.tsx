@@ -22,6 +22,7 @@ import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
 import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Personalstamm from "./pages/Personalstamm";
+import Positionen from "./pages/Positionen";
 import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
 import PLViewPage from "./pages/PLView";
@@ -192,6 +193,11 @@ const AppContent = () => {
 
             {/* Personalstamm: Admin + beaulieu_manager (tenant-gefiltert) */}
             <Route path="/personal-stamm" element={<Personalstamm />} />
+
+            {/* Positionsverwaltung: nur Admin */}
+            <Route path="/positionen"
+              element={canAccessModule('positionen') ? <Positionen /> : <Navigate to="/personal" replace />}
+            />
 
             {/* Einstellungen: Admin + beaulieu_manager (nur Beaulieu-relevante Settings) */}
             <Route

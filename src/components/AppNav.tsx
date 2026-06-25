@@ -34,6 +34,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
+  Tags,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -178,6 +179,14 @@ const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Personal',
         icon: Users,
         module: 'personalstamm' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
+        path: '/positionen',
+        label: 'Positionen',
+        shortLabel: 'Position',
+        icon: Tags,
+        adminOnly: true,
+        module: 'positionen' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/employee-integrity',
