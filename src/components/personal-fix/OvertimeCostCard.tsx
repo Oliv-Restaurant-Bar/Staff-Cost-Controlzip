@@ -44,6 +44,7 @@ import {
   buildWeekDayRows,
   computeDailyOvertimeInfo,
   filterEmployeesByDepartment,
+  sortEmployeesByOvertimeCost,
   summarizeOvertimeEmployees,
   DEPARTMENT_FILTER_OPTIONS,
   DAILY_OVERTIME_THRESHOLD,
@@ -235,7 +236,7 @@ export function OvertimeCostCard({
   // Abteilungs-gefilterte Zeilen + Fusszeilen-Summe (rein clientseitig, KEINE
   // Berechnungsänderung). Die Monats-Kacheln oben bleiben monatsweit.
   const displayedEmployees = useMemo(
-    () => filterEmployeesByDepartment(analysis.employees, deptFilter),
+    () => sortEmployeesByOvertimeCost(filterEmployeesByDepartment(analysis.employees, deptFilter)),
     [analysis.employees, deptFilter],
   );
   const summary = useMemo(() => summarizeOvertimeEmployees(displayedEmployees), [displayedEmployees]);

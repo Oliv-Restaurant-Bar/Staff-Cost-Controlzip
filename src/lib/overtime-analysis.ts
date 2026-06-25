@@ -943,6 +943,24 @@ export function filterEmployeesByDepartment<T extends { department: Department }
   return rows.filter((r) => r.department === filter);
 }
 
+/**
+ * Sortiert die Übersichtstabelle nach höchsten ÜS-Kosten zuerst (REINE ANZEIGE,
+ * KEINE Berechnungsänderung). `overtimeCost === null` (kein Satz) zählt als 0 und
+ * landet damit hinten. Tie-Break: Überstunden-Stunden desc → Name (locale).
+ * Mutiert die Eingabe nicht (kopiert via Spread).
+ */
+export function sortEmployeesByOvertimeCost<
+  T extends { overtimeCost: number | null; overtimeHours: number; name: string },
+>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const ca = a.overtimeCost ?? 0;
+    const cb = b.overtimeCost ?? 0;
+    if (cb !== ca) return cb - ca;
+    if (b.overtimeHours !== a.overtimeHours) return b.overtimeHours - a.overtimeHours;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 /** Zwischensumme einer (ggf. gefilterten) Mitarbeiterliste für die Fusszeile. */
 export interface OvertimeSummary {
   totalOvertimeHours: number;

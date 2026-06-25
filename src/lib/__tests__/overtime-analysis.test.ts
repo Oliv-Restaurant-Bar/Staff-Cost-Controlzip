@@ -16,6 +16,7 @@ import {
   buildWeekDayRows,
   computeDailyOvertimeInfo,
   filterEmployeesByDepartment,
+  sortEmployeesByOvertimeCost,
   summarizeOvertimeEmployees,
   DEPARTMENT_FILTER_OPTIONS,
   WEEKLY_FULLTIME_TARGET,
@@ -829,6 +830,64 @@ describe('filterEmployeesByDepartment', () => {
   it('DEPARTMENT_FILTER_OPTIONS hat genau Alle/Küche/Service in dieser Reihenfolge', () => {
     expect(DEPARTMENT_FILTER_OPTIONS.map((o) => o.value)).toEqual(['all', 'küche', 'service']);
     expect(DEPARTMENT_FILTER_OPTIONS.map((o) => o.label)).toEqual(['Alle', 'Küche', 'Service']);
+  });
+});
+
+// ── Standard-Sortierung der Übersichtstabelle (höchste ÜS-Kosten zuerst) ──────
+describe('sortEmployeesByOvertimeCost', () => {
+  type Row = { name: string; overtimeCost: number | null; overtimeHours: number };
+  const row = (name: string, overtimeCost: number | null, overtimeHours = 0): Row => ({
+    name,
+    overtimeCost,
+    overtimeHours,
+  });
+
+  it('sortiert nach höchsten ÜS-Kosten zuerst', () => {
+    const out = sortEmployeesByOvertimeCost([
+      row('A', 100),
+      row('B', 500),
+      row('C', 250),
+    ]);
+    expect(out.map((r) => r.name)).toEqual(['B', 'C', 'A']);
+  });
+
+  it('null-Kosten (kein Satz) zählen als 0 und landen hinten', () => {
+    const out = sortEmployeesByOvertimeCost([
+      row('A', null, 12),
+      row('B', 300),
+      row('C', null, 4),
+    ]);
+    expect(out[0].name).toBe('B');
+    // A vor C: gleiche Kosten (0), A hat mehr Stunden (12 > 4)
+    expect(out.map((r) => r.name)).toEqual(['B', 'A', 'C']);
+  });
+
+  it('Tie-Break bei gleichen Kosten: mehr Überstunden-Stunden zuerst', () => {
+    const out = sortEmployeesByOvertimeCost([
+      row('A', 200, 5),
+      row('B', 200, 9),
+    ]);
+    expect(out.map((r) => r.name)).toEqual(['B', 'A']);
+  });
+
+  it('Tie-Break bei gleichen Kosten + Stunden: alphabetisch nach Name', () => {
+    const out = sortEmployeesByOvertimeCost([
+      row('Zoe', 200, 5),
+      row('Anna', 200, 5),
+    ]);
+    expect(out.map((r) => r.name)).toEqual(['Anna', 'Zoe']);
+  });
+
+  it('mutiert die Eingabe nicht', () => {
+    const input = [row('A', 100), row('B', 500)];
+    const copy = input.slice();
+    sortEmployeesByOvertimeCost(input);
+    expect(input).toEqual(copy);
+    expect(input[0].name).toBe('A');
+  });
+
+  it('leere Liste → leere Liste', () => {
+    expect(sortEmployeesByOvertimeCost([])).toEqual([]);
   });
 });
 
