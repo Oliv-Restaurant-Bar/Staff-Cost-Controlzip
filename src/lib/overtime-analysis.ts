@@ -652,6 +652,27 @@ export interface WeekCumulativeBalance {
   cumulativeAdditionalCostHours: number;
   /** Kumulierte Zusatzkosten bis einschliesslich dieser Woche (null wenn Satz fehlt) */
   cumulativeAdditionalCost: number | null;
+  /**
+   * Gesamte Zusatz-Personalkosten DIESER Woche = Überstundenkosten + manuelle
+   * Zusatzkosten (null wenn ein Bestandteil keinen Satz hat). REINE ANZEIGE.
+   */
+  combinedCost: number | null;
+  /**
+   * Kumulierte Zusatz-Personalkosten (Überstunden + Zusatzkosten) von Monatsanfang
+   * bis einschliesslich dieser Woche (null wenn ein Bestandteil im Präfix keinen
+   * Satz hat).
+   */
+  cumulativeCombinedCost: number | null;
+}
+
+/**
+ * Summiert zwei optionale CHF-Beträge zu den gesamten Zusatz-Personalkosten.
+ * Reine Anzeige-Hilfe (keine Berechnungsänderung): ist `null`, sobald ein
+ * Bestandteil keinen Satz hat; sonst `round2(a + b)`.
+ */
+export function sumCosts(a: number | null, b: number | null): number | null {
+  if (a === null || b === null) return null;
+  return round2(a + b);
 }
 
 /**
@@ -682,6 +703,8 @@ export function computeWeekCumulativeBalances(weeks: WeekOvertimeRow[]): WeekCum
     if (w.additionalCost === null) addCostAvailable = false;
     else cumAddCost = round2(cumAddCost + w.additionalCost);
 
+    // Gesamte Zusatz-Personalkosten = Überstunden + Zusatzkosten (reine Anzeige).
+    const combinedAvailable = costAvailable && addCostAvailable;
     out.push({
       isoYear: w.isoYear,
       isoWeek: w.isoWeek,
@@ -693,6 +716,8 @@ export function computeWeekCumulativeBalances(weeks: WeekOvertimeRow[]): WeekCum
       additionalCost: w.additionalCost,
       cumulativeAdditionalCostHours: cumAddHours,
       cumulativeAdditionalCost: addCostAvailable ? cumAddCost : null,
+      combinedCost: sumCosts(w.overtimeCost, w.additionalCost),
+      cumulativeCombinedCost: combinedAvailable ? round2(cumCost + cumAddCost) : null,
     });
   }
   return out;

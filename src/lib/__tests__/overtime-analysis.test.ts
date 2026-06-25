@@ -18,6 +18,7 @@ import {
   filterEmployeesByDepartment,
   sortEmployeesByOvertimeCost,
   summarizeOvertimeEmployees,
+  sumCosts,
   DEPARTMENT_FILTER_OPTIONS,
   WEEKLY_FULLTIME_TARGET,
   DAILY_OVERTIME_THRESHOLD,
@@ -792,6 +793,93 @@ describe('computeWeekCumulativeBalances — Zusatzkosten-Saldo (kumuliert)', () 
     ]);
     // 0.1 + 0.2 = 0.30000000000000004 → round2 → 0.3
     expect(bals.map((b) => b.cumulativeAdditionalCost)).toEqual([0.1, 0.3]);
+  });
+});
+
+describe('sumCosts (gesamte Zusatz-Personalkosten = ÜS + Zusatzkosten)', () => {
+  it('summiert zwei Beträge (round2 bereinigt Float-Rauschen)', () => {
+    expect(sumCosts(400, 100)).toBe(500);
+    expect(sumCosts(0.1, 0.2)).toBe(0.3); // 0.30000000000000004 → 0.3
+    expect(sumCosts(250, 0)).toBe(250);
+  });
+
+  it('ist null, sobald ein Bestandteil keinen Satz hat', () => {
+    expect(sumCosts(null, 100)).toBeNull();
+    expect(sumCosts(400, null)).toBeNull();
+    expect(sumCosts(null, null)).toBeNull();
+  });
+});
+
+describe('computeWeekCumulativeBalances — kombinierter Personalkosten-Saldo (ÜS + Zusatz)', () => {
+  it('bildet je Woche die kombinierten Kosten + den kumulierten Saldo', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400, additionalCostHours: 10, additionalCostDays: 1, additionalCost: 500 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100, additionalCost: 0 }),
+      wrow({ isoWeek: 25, overtimeHours: 5, overtimeCost: 250, additionalCostHours: 8, additionalCostDays: 1, additionalCost: 400 }),
+    ]);
+    // Wochenkosten = ÜS + Zusatz: 900 / 100 / 650
+    expect(bals.map((b) => b.combinedCost)).toEqual([900, 100, 650]);
+    // Kumuliert: 900 / 1000 / 1650
+    expect(bals.map((b) => b.cumulativeCombinedCost)).toEqual([900, 1000, 1650]);
+    // Reine Anzeige: ÜS- und Zusatz-Salden bleiben einzeln erhalten
+    expect(bals.map((b) => b.cumulativeOvertimeCost)).toEqual([400, 500, 750]);
+    expect(bals.map((b) => b.cumulativeAdditionalCost)).toEqual([500, 500, 900]);
+  });
+
+  it('kombinierter Saldo = ÜS-Saldo + Zusatz-Saldo je Woche', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400, additionalCostHours: 10, additionalCostDays: 1, additionalCost: 500 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100, additionalCostHours: 4, additionalCostDays: 1, additionalCost: 200 }),
+    ]);
+    for (const b of bals) {
+      expect(b.cumulativeCombinedCost).toBe(
+        (b.cumulativeOvertimeCost ?? 0) + (b.cumulativeAdditionalCost ?? 0),
+      );
+    }
+  });
+
+  it('Wochenwechsel: Saldo bis zur gewählten Woche unterscheidet sich (Default vs. später)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400, additionalCostHours: 10, additionalCostDays: 1, additionalCost: 500 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100, additionalCost: 0 }),
+      wrow({ isoWeek: 25, overtimeHours: 5, overtimeCost: 250, additionalCostHours: 8, additionalCostDays: 1, additionalCost: 400 }),
+    ]);
+    const byKey = new Map(bals.map((b) => [b.isoWeek, b]));
+    // Auswahl KW23 → 900; Auswahl KW25 → 1650 (Kosten nach der Woche zählen nicht)
+    expect(byKey.get(23)?.cumulativeCombinedCost).toBe(900);
+    expect(byKey.get(24)?.cumulativeCombinedCost).toBe(1000);
+    expect(byKey.get(25)?.cumulativeCombinedCost).toBe(1650);
+  });
+
+  it('Mitarbeiter ohne Zusatzkosten: kombiniert = nur Überstunden', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400, additionalCost: 0 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100, additionalCost: 0 }),
+    ]);
+    expect(bals.map((b) => b.combinedCost)).toEqual([400, 100]);
+    expect(bals.map((b) => b.cumulativeCombinedCost)).toEqual([400, 500]);
+  });
+
+  it('keine Zusatzkosten in einer Woche (Satz vorhanden) → CHF 0.00, nicht null', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0, additionalCost: 0 }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0, additionalCost: 0 }),
+    ]);
+    // Bei vorhandenem Satz ohne Mehrkosten ist der Saldo 0 (anzeigbar als CHF 0.00)
+    expect(bals.map((b) => b.combinedCost)).toEqual([0, 0]);
+    expect(bals.map((b) => b.cumulativeCombinedCost)).toEqual([0, 0]);
+  });
+
+  it('kombinierter Saldo wird null, sobald ein Bestandteil im Präfix keinen Satz hat', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400, additionalCostHours: 10, additionalCostDays: 1, additionalCost: 500 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: null, additionalCost: 0 }),
+      wrow({ isoWeek: 25, overtimeHours: 5, overtimeCost: 250, additionalCostHours: 8, additionalCostDays: 1, additionalCost: 400 }),
+    ]);
+    // Ab der Woche ohne ÜS-Satz ist der kombinierte Saldo null (KW23 noch 900)
+    expect(bals.map((b) => b.cumulativeCombinedCost)).toEqual([900, null, null]);
+    // Die Woche selbst: KW24 hat keinen ÜS-Satz → combinedCost null
+    expect(bals.map((b) => b.combinedCost)).toEqual([900, null, 650]);
   });
 });
 
