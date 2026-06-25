@@ -7,8 +7,8 @@
 //             meisten Überstunden. Klick öffnet die Detailansicht.
 //   Ebene 2 — Wochenübersicht des Mitarbeiters (ISO-Wochen, anteilig im Monat)
 //             + separater Zusatzkosten-Block. Klick auf eine Woche öffnet …
-//   Ebene 3 — Tagesdetail der Woche (Datum, Wochentag, Arbeitszeit, produktive
-//             Stunden, Abwesenheit, 8.4-h-Info).
+//   Ebene 3 — Tagesdetail der Woche (Datum, Tag, Arbeitszeit, Std. sowie die
+//             rein informativen Mehrstunden/-kosten über 8.4 h, Abwesenheit).
 //
 // Wochen werden erst gerendert, wenn ein Mitarbeiter aufgeklappt ist; Tage erst,
 // wenn eine Woche aufgeklappt ist (lazy). Aufgeklappte Zeilen bleiben erhalten,
@@ -38,6 +38,7 @@ import {
   computeWeekCumulativeBalances,
   defaultSelectedWeekKey,
   buildWeekDayRows,
+  computeDailyOvertimeInfo,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeAnalysis,
   type WeeklyOvertimeAnalysis,
@@ -87,6 +88,11 @@ const wl = (n: number): string =>
   `${n.toLocaleString('de-CH', { maximumFractionDigits: 1 })} %`;
 
 const dmShort = (isoDate: string): string => `${isoDate.slice(8, 10)}.${isoDate.slice(5, 7)}.`;
+
+// Kompakte Tabellen-Darstellung (kleinere Zeilenhöhe/Padding) — auf alle drei
+// Drill-down-Ebenen angewandt. Aufgeklappte Detailzellen behalten via `!p-0` ihr
+// randloses Layout (Descendant-Selektoren würden sonst Padding hinzufügen).
+const COMPACT_TABLE = 'text-sm [&_th]:h-9 [&_th]:px-2 [&_td]:px-2 [&_td]:py-1.5';
 
 export function OvertimeCostCard({
   analysis,
@@ -257,7 +263,7 @@ export function OvertimeCostCard({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <Table>
+            <Table className={COMPACT_TABLE}>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
@@ -369,7 +375,7 @@ export function OvertimeCostCard({
                       {/* Ebene 2 + 3 (lazy: nur wenn aufgeklappt) */}
                       {isOpen && (
                         <TableRow className="hover:bg-transparent">
-                          <TableCell colSpan={colCount} className="bg-muted/20 p-0">
+                          <TableCell colSpan={colCount} className="bg-muted/20 !p-0">
                             <EmployeeDetail
                               employeeId={e.employeeId}
                               weekly={weekly}
@@ -383,6 +389,8 @@ export function OvertimeCostCard({
                               expandedWeeks={expandedWeeks}
                               onToggleWeek={toggleWeek}
                               showCostCol={showCostCol}
+                              rate={e.hourlyRate}
+                              disabled={e.overtimeDisabled}
                             />
                           </TableCell>
                         </TableRow>
@@ -445,6 +453,8 @@ function EmployeeDetail({
   expandedWeeks,
   onToggleWeek,
   showCostCol,
+  rate,
+  disabled,
 }: {
   employeeId: string;
   weekly?: EmployeeWeeklyOvertimeResult;
@@ -458,6 +468,10 @@ function EmployeeDetail({
   expandedWeeks: Set<string>;
   onToggleWeek: (key: string) => void;
   showCostCol: boolean;
+  /** Effektiver Stundensatz des MA (für die Tages-Info; enthält Sozialkosten bereits) */
+  rate: number | null;
+  /** Überstunden des MA deaktiviert → Tages-Mehrkosten 0 */
+  disabled: boolean;
 }) {
   const balanceByKey = useMemo(
     () => new Map(balances.map((b) => [`${b.isoYear}-${b.isoWeek}`, b])),
@@ -473,7 +487,7 @@ function EmployeeDetail({
     [dayDetailEntries, employeeId, additionalCostHours],
   );
 
-  const weekColCount = 7 + (showCostCol ? 2 : 0); // + Saldo h (+ Saldo CHF bei Kostensicht)
+  const weekColCount = 7 + (showCostCol ? 1 : 0); // + kombinierte Spalte „Kosten / Saldo" (Kostensicht)
 
   return (
     <div className="space-y-4 px-4 py-3">
@@ -486,7 +500,7 @@ function EmployeeDetail({
           <p className="text-xs text-muted-foreground">Keine Wochendaten in diesem Monat.</p>
         ) : (
           <div className="overflow-x-auto rounded-md border bg-background">
-            <Table>
+            <Table className={COMPACT_TABLE}>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
@@ -495,9 +509,8 @@ function EmployeeDetail({
                   <TableHead className="text-right">Soll</TableHead>
                   <TableHead className="text-right">Ist</TableHead>
                   <TableHead className="text-right">Überstunden</TableHead>
-                  {showCostCol && <TableHead className="text-right">Kosten</TableHead>}
                   <TableHead className="text-right">Saldo h bis KW</TableHead>
-                  {showCostCol && <TableHead className="text-right">Saldo CHF bis KW</TableHead>}
+                  {showCostCol && <TableHead className="text-right">Kosten / Saldo</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -537,27 +550,28 @@ function EmployeeDetail({
                             <OvertimeBadge hours={w.overtimeHours} />
                           )}
                         </TableCell>
-                        {showCostCol && (
-                          <TableCell className="text-right tabular-nums">
-                            {weekly.overtimeDisabled ? (
-                              <span className="text-muted-foreground">{chf(0)}</span>
-                            ) : w.overtimeCost === null ? (
-                              <span className="text-amber-600">kein Satz</span>
-                            ) : (
-                              chf(w.overtimeCost)
-                            )}
-                          </TableCell>
-                        )}
-                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                        <TableCell className="whitespace-nowrap text-right tabular-nums text-muted-foreground">
                           {bal ? hrs(bal.cumulativeOvertimeHours) : '—'}
                         </TableCell>
                         {showCostCol && (
-                          <TableCell className="text-right tabular-nums text-muted-foreground">
-                            {bal === null
-                              ? '—'
-                              : bal.cumulativeOvertimeCost === null
-                                ? 'kein Satz'
-                                : chf(bal.cumulativeOvertimeCost)}
+                          <TableCell className="whitespace-nowrap text-right tabular-nums">
+                            <div>
+                              {weekly.overtimeDisabled ? (
+                                <span className="text-muted-foreground">{chf(0)}</span>
+                              ) : w.overtimeCost === null ? (
+                                <span className="text-amber-600">kein Satz</span>
+                              ) : (
+                                chf(w.overtimeCost)
+                              )}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              Saldo{' '}
+                              {bal === null
+                                ? '—'
+                                : bal.cumulativeOvertimeCost === null
+                                  ? 'kein Satz'
+                                  : chf(bal.cumulativeOvertimeCost)}
+                            </div>
                           </TableCell>
                         )}
                       </TableRow>
@@ -565,12 +579,15 @@ function EmployeeDetail({
                       {/* Ebene 3: Tagesdetail (lazy) */}
                       {open && (
                         <TableRow className="hover:bg-transparent">
-                          <TableCell colSpan={weekColCount} className="bg-muted/30 p-0">
+                          <TableCell colSpan={weekColCount} className="bg-muted/30 !p-0">
                             <DayDetailTable
                               employeeId={employeeId}
                               isoYear={w.isoYear}
                               isoWeek={w.isoWeek}
                               dayDetailEntries={dayDetailEntries}
+                              rate={rate}
+                              disabled={disabled}
+                              showCost={showCostCol}
                             />
                           </TableCell>
                         </TableRow>
@@ -618,20 +635,35 @@ function EmployeeDetail({
 }
 
 // ── Ebene 3: Tagesdetail einer Woche ─────────────────────────────────────────
+// REINE ANZEIGE. Die Spalten „+Std Info" (Mehrstunden Tag = max(0, produktiv − 8.4))
+// und „+CHF Info" (Mehrkosten Tag) sind rein informativ und fliessen NICHT in die
+// offizielle (monatliche) Überstundenberechnung ein. „+CHF Info" nutzt denselben
+// effektiven Satz wie die offiziellen Kosten (inkl. Sozialkosten) und ist als
+// Lohndaten nur bei Kostensicht (showCost) sichtbar; „+Std Info" ist immer sichtbar.
 function DayDetailTable({
   employeeId,
   isoYear,
   isoWeek,
   dayDetailEntries,
+  rate,
+  disabled,
+  showCost,
 }: {
   employeeId: string;
   isoYear: number;
   isoWeek: number;
   dayDetailEntries: DayDetailEntry[];
+  rate: number | null;
+  disabled: boolean;
+  showCost: boolean;
 }) {
   const rows = useMemo(
-    () => buildWeekDayRows(dayDetailEntries, employeeId, isoYear, isoWeek),
-    [dayDetailEntries, employeeId, isoYear, isoWeek],
+    () =>
+      buildWeekDayRows(dayDetailEntries, employeeId, isoYear, isoWeek).map((d) => ({
+        ...d,
+        info: computeDailyOvertimeInfo(d.productiveHours, rate, disabled),
+      })),
+    [dayDetailEntries, employeeId, isoYear, isoWeek, rate, disabled],
   );
 
   if (rows.length === 0) {
@@ -640,50 +672,65 @@ function DayDetailTable({
 
   return (
     <div className="overflow-x-auto px-2 py-2">
-      <Table>
+      <Table className={COMPACT_TABLE}>
         <TableHeader>
           <TableRow>
             <TableHead>Datum</TableHead>
-            <TableHead>Wochentag</TableHead>
+            <TableHead>Tag</TableHead>
             <TableHead>Arbeitszeit</TableHead>
-            <TableHead className="text-right">Produktive Stunden</TableHead>
+            <TableHead className="text-right">Std.</TableHead>
+            <TableHead className="text-right">+Std Info</TableHead>
+            {showCost && <TableHead className="text-right">+CHF Info</TableHead>}
             <TableHead>Abwesenheit</TableHead>
-            <TableHead className="text-center">Über {DAILY_OVERTIME_THRESHOLD}h (Info)</TableHead>
-            <TableHead>Bemerkung</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((d) => (
-            <TableRow key={d.date} className="text-sm">
-              <TableCell className="whitespace-nowrap tabular-nums">{d.dayLabel}</TableCell>
-              <TableCell className="text-muted-foreground">{d.weekday}</TableCell>
-              <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
-                {d.timeRange || '—'}
-              </TableCell>
-              <TableCell className="text-right tabular-nums">
-                {d.absenceType ? '—' : hrs(d.productiveHours)}
-              </TableCell>
-              <TableCell>
-                {d.absenceType ? (
-                  <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">
-                    {d.absenceType}
-                  </Badge>
-                ) : d.isAdditionalCost ? (
-                  <span className="text-xs text-muted-foreground">Zusatzkosten</span>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
+          {rows.map((d) => {
+            const hasDayOvertime = !d.absenceType && !d.isAdditionalCost && d.info.overtimeHours > 0;
+            return (
+              <TableRow key={d.date}>
+                <TableCell className="whitespace-nowrap tabular-nums">{d.dayLabel}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{d.weekday}</TableCell>
+                <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                  {d.timeRange || '—'}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-right tabular-nums">
+                  {d.absenceType ? '—' : hrs(d.productiveHours)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-right tabular-nums">
+                  {hasDayOvertime ? (
+                    <span className="text-amber-600">{signedHrs(d.info.overtimeHours)}</span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                {showCost && (
+                  <TableCell className="whitespace-nowrap text-right tabular-nums">
+                    {!hasDayOvertime ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : disabled ? (
+                      <span className="text-muted-foreground">{chf(0)}</span>
+                    ) : d.info.overtimeCost === null ? (
+                      <span className="text-amber-600">kein Satz</span>
+                    ) : (
+                      <span className="text-amber-600">{chf(d.info.overtimeCost)}</span>
+                    )}
+                  </TableCell>
                 )}
-              </TableCell>
-              <TableCell className="text-center">
-                {d.over84 ? (
-                  <span className="text-xs text-amber-600">ja</span>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </TableCell>
-              <TableCell className="text-muted-foreground">—</TableCell>
-            </TableRow>
-          ))}
+                <TableCell>
+                  {d.absenceType ? (
+                    <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">
+                      {d.absenceType}
+                    </Badge>
+                  ) : d.isAdditionalCost ? (
+                    <span className="text-xs text-muted-foreground">Zusatzkosten</span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

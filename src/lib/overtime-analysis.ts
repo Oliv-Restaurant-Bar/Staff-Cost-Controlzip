@@ -879,3 +879,38 @@ export function buildWeekDayRows(
       };
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tages-Info (REINE ANZEIGE — KEINE Berechnungslogik): Mehrstunden/-kosten EINES
+// Tages über der 8.4-h-Tagesschwelle. Dies fliesst NICHT in die offizielle
+// (monatliche) Überstundenberechnung ein und ist rein informativ.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Tages-Info über die 8.4-h-Tagesschwelle (rein informativ). */
+export interface DailyOvertimeInfo {
+  /** Mehrstunden des Tages = max(0, produktive Stunden − DAILY_OVERTIME_THRESHOLD) */
+  overtimeHours: number;
+  /**
+   * Mehrkosten des Tages = overtimeHours × Satz.
+   * `0` wenn die Überstunden des Mitarbeiters deaktiviert sind, `null` ohne Satz.
+   */
+  overtimeCost: number | null;
+}
+
+/**
+ * Liefert die Tages-Info (Mehrstunden/-kosten über 8.4 h) für EINEN Tag.
+ * Nutzt denselben effektiven Stundensatz wie die offiziellen Überstundenkosten
+ * (`getEffectiveHourlyRate`, der die Sozialkosten bereits enthält) — es wird KEIN
+ * zusätzlicher Faktor angewandt, damit die Tages-Info exakt zur Wochen-/Monats-
+ * berechnung passt. `disabled` (Überstunden des MA deaktiviert) → Kosten 0, die
+ * Stunden bleiben zur Transparenz sichtbar. REINE ANZEIGE.
+ */
+export function computeDailyOvertimeInfo(
+  productiveHours: number,
+  rate: number | null,
+  disabled: boolean,
+): DailyOvertimeInfo {
+  const overtimeHours = round2(Math.max(0, round2(productiveHours - DAILY_OVERTIME_THRESHOLD)));
+  const overtimeCost = disabled ? 0 : rate == null ? null : round2(overtimeHours * rate);
+  return { overtimeHours, overtimeCost };
+}

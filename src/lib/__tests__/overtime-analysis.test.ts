@@ -14,6 +14,7 @@ import {
   proratedWeeklyTargetHours,
   weeksInMonth,
   buildWeekDayRows,
+  computeDailyOvertimeInfo,
   WEEKLY_FULLTIME_TARGET,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeHoursEntry,
@@ -743,5 +744,48 @@ describe('defaultSelectedWeekKey (aktuelle Woche im Monat)', () => {
 
   it('keine Wochen → null', () => {
     expect(defaultSelectedWeekKey([], new Date(2026, 5, 10))).toBeNull();
+  });
+});
+
+// ── computeDailyOvertimeInfo (Tages-Info über 8.4 h, REINE ANZEIGE) ───────────
+describe('computeDailyOvertimeInfo', () => {
+  it('Mehrstunden + Mehrkosten korrekt (über 8.4 h)', () => {
+    // 10 h − 8.4 h = 1.6 h Mehrstunden × 50 CHF = 80 CHF
+    expect(computeDailyOvertimeInfo(10, 50, false)).toEqual({ overtimeHours: 1.6, overtimeCost: 80 });
+  });
+
+  it('genau 8.4 h → 0 Mehrstunden / 0 Kosten (Schwelle, nicht darüber)', () => {
+    expect(computeDailyOvertimeInfo(8.4, 50, false)).toEqual({ overtimeHours: 0, overtimeCost: 0 });
+  });
+
+  it('unter 8.4 h → 0 Mehrstunden / 0 Kosten', () => {
+    expect(computeDailyOvertimeInfo(6, 50, false)).toEqual({ overtimeHours: 0, overtimeCost: 0 });
+  });
+
+  it('deaktiviert → Kosten 0, Stunden bleiben sichtbar', () => {
+    expect(computeDailyOvertimeInfo(11, 40, true)).toEqual({ overtimeHours: 2.6, overtimeCost: 0 });
+  });
+
+  it('kein Satz (rate null) → Kosten null, Stunden bleiben', () => {
+    expect(computeDailyOvertimeInfo(12, null, false)).toEqual({ overtimeHours: 3.6, overtimeCost: null });
+  });
+
+  it('Satz enthält bereits die Sozialkosten (kein zusätzlicher ×1.13)', () => {
+    // 9.4 h − 8.4 h = 1 h × 56.50 CHF (interner Satz inkl. 13 %) = 56.50 CHF
+    expect(computeDailyOvertimeInfo(9.4, 56.5, false)).toEqual({ overtimeHours: 1, overtimeCost: 56.5 });
+  });
+
+  it('rundet Mehrstunden und Mehrkosten auf 2 Dezimalstellen', () => {
+    // 9.123 → 0.723 → round2 0.72; 0.72 × 33.33 = 23.9976 → round2 24.00
+    expect(computeDailyOvertimeInfo(9.123, 33.33, false)).toEqual({ overtimeHours: 0.72, overtimeCost: 24 });
+  });
+
+  it('konsistent mit buildWeekDayRows.over84 (KW 23, 2026: 10 h am 01.06.)', () => {
+    const entries: DayDetailEntry[] = [{ employeeId: 'x', date: '2026-06-01', hours: 10 }];
+    const [row] = buildWeekDayRows(entries, 'x', 2026, 23);
+    expect(row.over84).toBe(true);
+    const info = computeDailyOvertimeInfo(row.productiveHours, 50, false);
+    expect(info.overtimeHours).toBeCloseTo(1.6, 5);
+    expect(info.overtimeCost).toBe(80);
   });
 });
