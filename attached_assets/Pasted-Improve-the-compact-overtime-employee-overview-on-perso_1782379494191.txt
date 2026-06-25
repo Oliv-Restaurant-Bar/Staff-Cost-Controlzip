@@ -1,0 +1,77 @@
+Improve the compact overtime employee overview on /personal-fix.
+
+Goal:
+In the main employee row, show not only monthly overtime and monthly overtime costs, but also the current weekly overtime status and the charged balance up to the selected point.
+
+Requirements:
+
+1. Add new columns to the main employee overview:
+   - Überstunden aktuelle Woche
+   - Kosten aktuelle Woche
+   - Verrechneter Saldo bis Woche
+
+2. Define "aktuelle Woche":
+   Use the currently selected date/month context.
+   If no specific week is selected, use the current ISO week within the selected month.
+   If the user expands/clicks a week in the detail view, update the row context to that selected week.
+
+3. Verrechneter Saldo bis Woche:
+   This means cumulative overtime cost from the beginning of the selected month up to and including the selected week.
+   Formula:
+   cumulativeOvertimeCostToWeek = sum(overtimeCost of all weeks for that employee where weekStart <= selectedWeekStart)
+
+4. Also show cumulative overtime hours up to that week as helper text or tooltip:
+   "Saldo bis KW: X.XX h / CHF Y.YY"
+
+5. Keep monthly overtime and monthly cost visible.
+   The user must be able to compare:
+   - current week overtime
+   - current week cost
+   - cumulative charged balance
+   - total monthly overtime
+
+6. In the expanded weekly breakdown:
+   Add columns:
+   - Überstunden Woche
+   - Kosten Woche
+   - Saldo h bis KW
+   - Saldo CHF bis KW
+
+7. When clicking a week row:
+   - Highlight the selected week.
+   - Show the daily detail below.
+   - Update the main row's "aktuelle Woche" and "Saldo bis Woche" values.
+
+8. Business logic:
+   Do not change overtime calculation rules.
+   Fixed-salary employees only.
+   Absences FE/K/U excluded.
+   Zusatzkosten excluded from overtime hours.
+   Employee-level overtime disabled still means:
+   - overtime hours can be displayed
+   - overtime cost = CHF 0.00
+   - cumulative cost also CHF 0.00
+
+9. UI:
+   Keep it compact.
+   Avoid making the main table too wide on small screens.
+   If needed, group the new values visually under a label:
+   "Woche / Saldo"
+   Example:
+   KW 24: 3.20 h / CHF 113.85
+   Saldo: 6.80 h / CHF 241.61
+
+10. Tests:
+   Add tests for:
+   - weekly overtime shown in employee row
+   - weekly cost shown in employee row
+   - cumulative saldo up to selected week
+   - disabled employee has CHF 0 weekly and cumulative cost
+   - clicking week updates selected weekly/saldo display
+   - monthly totals remain unchanged
+
+11. Run:
+   npm run typecheck
+   npm test
+
+12. Document this enhancement in replit.md.

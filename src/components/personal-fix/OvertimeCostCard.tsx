@@ -35,11 +35,14 @@ import {
 import { cn } from '@/lib/utils';
 import {
   computeOvertimeTotals,
+  computeWeekCumulativeBalances,
+  defaultSelectedWeekKey,
   buildWeekDayRows,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeAnalysis,
   type WeeklyOvertimeAnalysis,
   type EmployeeWeeklyOvertimeResult,
+  type WeekCumulativeBalance,
   type DayDetailEntry,
 } from '@/lib/overtime-analysis';
 
@@ -101,6 +104,9 @@ export function OvertimeCostCard({
 }: OvertimeCostCardProps) {
   const [expandedEmployees, setExpandedEmployees] = useState<Set<string>>(new Set());
   const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
+  // Pro Mitarbeiter ausgewählte "aktuelle Woche" (employeeId → "isoYear-isoWeek").
+  // Leer = Default (ISO-Woche von heute im Monat). Klick auf eine Woche setzt sie.
+  const [selectedWeekByEmployee, setSelectedWeekByEmployee] = useState<Map<string, string>>(new Map());
 
   const showCostCol = canSeeIndividualRates;
   const showStatusToggle = canManageDisable && !!onToggleEmployeeDisabled;
@@ -117,6 +123,12 @@ export function OvertimeCostCard({
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
+  const selectWeek = (employeeId: string, isoYear: number, isoWeek: number) =>
+    setSelectedWeekByEmployee((prev) => {
+      const next = new Map(prev);
+      next.set(employeeId, `${isoYear}-${isoWeek}`);
+      return next;
+    });
 
   // Wochenauswertung je Mitarbeiter (für die aufgeklappte Ebene 2).
   const weeklyByEmployee = useMemo(
@@ -125,6 +137,41 @@ export function OvertimeCostCard({
     ),
     [weeklyAnalysis],
   );
+
+  // Laufende Wochen-Salden (kumulierte Überstunden + Kosten) je Mitarbeiter —
+  // reine Aggregation der bereits berechneten Wochenwerte (keine neue Logik).
+  const balancesByEmployee = useMemo(() => {
+    const m = new Map<string, WeekCumulativeBalance[]>();
+    for (const w of weeklyAnalysis.employees) {
+      m.set(w.employeeId, computeWeekCumulativeBalances(w.weeks));
+    }
+    return m;
+  }, [weeklyAnalysis]);
+
+  // Default-"aktuelle Woche" je Mitarbeiter: ISO-Woche von heute (im Monat),
+  // sonst erste/letzte Woche. Wird genutzt, solange der Nutzer keine Woche klickt.
+  const today = useMemo(() => new Date(), []);
+  const defaultWeekByEmployee = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of weeklyAnalysis.employees) {
+      const k = defaultSelectedWeekKey(w.weeks, today);
+      if (k) m.set(w.employeeId, `${k.isoYear}-${k.isoWeek}`);
+    }
+    return m;
+  }, [weeklyAnalysis, today]);
+
+  // Effektiv ausgewählte Woche eines MA: explizit geklickt > Default.
+  // Eine explizite Auswahl bleibt über Monatswechsel im State; existiert sie im
+  // aktuellen Monat nicht mehr, fällt sie auf die Default-Woche zurück (sonst
+  // zeigte die Hauptzeile „—" statt der aktuellen Woche).
+  const effectiveWeekKey = (employeeId: string): string | undefined => {
+    const sel = selectedWeekByEmployee.get(employeeId);
+    if (sel) {
+      const balances = balancesByEmployee.get(employeeId);
+      if (balances?.some((b) => `${b.isoYear}-${b.isoWeek}` === sel)) return sel;
+    }
+    return defaultWeekByEmployee.get(employeeId);
+  };
 
   // Top-Summen: Fixlohnkosten / Überstundenkosten / Zusatzkosten / Total / PKQ.
   // Zusatzkosten sind bereits in `regularCost` enthalten → Fixlohn = regulär − Zusatz
@@ -136,7 +183,7 @@ export function OvertimeCostCard({
   const fixlohnCost = Math.round((regularCost - totalAdditionalCost) * 100) / 100;
   const totals = computeOvertimeTotals(regularCost, analysis.totalOvertimeCost, netRevenue, includeOvertime);
 
-  const colCount = 9 + (showCostCol ? 2 : 0); // siehe Header unten
+  const colCount = 10 + (showCostCol ? 2 : 0); // siehe Header unten (inkl. Woche/Saldo)
 
   return (
     <Card>
@@ -221,6 +268,7 @@ export function OvertimeCostCard({
                   <TableHead className="text-right">Ist Monat</TableHead>
                   <TableHead className="text-right">Überstunden Monat</TableHead>
                   {showCostCol && <TableHead className="text-right">Überstundenkosten</TableHead>}
+                  <TableHead className="text-right">Woche / Saldo</TableHead>
                   <TableHead className="text-right">Zusatzkosten</TableHead>
                   {showCostCol && <TableHead className="text-right">Total Zusatzkosten</TableHead>}
                   <TableHead className="text-center">Status</TableHead>
@@ -230,6 +278,9 @@ export function OvertimeCostCard({
                 {analysis.employees.map((e) => {
                   const isOpen = expandedEmployees.has(e.employeeId);
                   const weekly = weeklyByEmployee.get(e.employeeId);
+                  const balances = balancesByEmployee.get(e.employeeId) ?? [];
+                  const selKey = effectiveWeekKey(e.employeeId);
+                  const selBal = balances.find((b) => `${b.isoYear}-${b.isoWeek}` === selKey) ?? null;
                   return (
                     <Fragment key={e.employeeId}>
                       <TableRow
@@ -272,6 +323,7 @@ export function OvertimeCostCard({
                             )}
                           </TableCell>
                         )}
+                        <WeekSaldoCell bal={selBal} showCost={showCostCol} />
                         <TableCell className="text-right tabular-nums text-muted-foreground">
                           {e.additionalCostDays > 0
                             ? `${e.additionalCostDays} Tag${e.additionalCostDays === 1 ? '' : 'e'}`
@@ -321,6 +373,9 @@ export function OvertimeCostCard({
                             <EmployeeDetail
                               employeeId={e.employeeId}
                               weekly={weekly}
+                              balances={balances}
+                              selectedWeekKey={selKey}
+                              onSelectWeek={selectWeek}
                               additionalCostDays={e.additionalCostDays}
                               additionalCost={e.additionalCost}
                               additionalCostHours={e.additionalCostHours}
@@ -349,6 +404,7 @@ export function OvertimeCostCard({
                       {chf(analysis.totalOvertimeCost)}
                     </TableCell>
                   )}
+                  <TableCell />{/* Woche / Saldo */}
                   <TableCell />
                   {showCostCol && (
                     <TableCell className="text-right font-semibold tabular-nums">
@@ -379,6 +435,9 @@ export function OvertimeCostCard({
 function EmployeeDetail({
   employeeId,
   weekly,
+  balances,
+  selectedWeekKey,
+  onSelectWeek,
   additionalCostDays,
   additionalCost,
   additionalCostHours,
@@ -389,6 +448,9 @@ function EmployeeDetail({
 }: {
   employeeId: string;
   weekly?: EmployeeWeeklyOvertimeResult;
+  balances: WeekCumulativeBalance[];
+  selectedWeekKey?: string;
+  onSelectWeek: (employeeId: string, isoYear: number, isoWeek: number) => void;
   additionalCostDays: number;
   additionalCost: number | null;
   additionalCostHours: number;
@@ -397,6 +459,10 @@ function EmployeeDetail({
   onToggleWeek: (key: string) => void;
   showCostCol: boolean;
 }) {
+  const balanceByKey = useMemo(
+    () => new Map(balances.map((b) => [`${b.isoYear}-${b.isoWeek}`, b])),
+    [balances],
+  );
   const additionalDays = useMemo(
     () =>
       additionalCostHours > 0
@@ -407,7 +473,7 @@ function EmployeeDetail({
     [dayDetailEntries, employeeId, additionalCostHours],
   );
 
-  const weekColCount = 6 + (showCostCol ? 1 : 0);
+  const weekColCount = 7 + (showCostCol ? 2 : 0); // + Saldo h (+ Saldo CHF bei Kostensicht)
 
   return (
     <div className="space-y-4 px-4 py-3">
@@ -430,18 +496,27 @@ function EmployeeDetail({
                   <TableHead className="text-right">Ist</TableHead>
                   <TableHead className="text-right">Überstunden</TableHead>
                   {showCostCol && <TableHead className="text-right">Kosten</TableHead>}
+                  <TableHead className="text-right">Saldo h bis KW</TableHead>
+                  {showCostCol && <TableHead className="text-right">Saldo CHF bis KW</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {weekly.weeks.map((w) => {
-                  const key = `${employeeId}::${w.isoYear}-${w.isoWeek}`;
+                  const weekKey = `${w.isoYear}-${w.isoWeek}`;
+                  const key = `${employeeId}::${weekKey}`;
                   const open = expandedWeeks.has(key);
                   const isPartial = w.daysInMonth < 7;
+                  const isSelected = selectedWeekKey === weekKey;
+                  const bal = balanceByKey.get(weekKey) ?? null;
                   return (
                     <Fragment key={key}>
                       <TableRow
-                        className={cn('cursor-pointer hover:bg-muted/40', weekly.overtimeDisabled && 'opacity-60')}
-                        onClick={() => onToggleWeek(key)}
+                        className={cn(
+                          'cursor-pointer hover:bg-muted/40',
+                          weekly.overtimeDisabled && 'opacity-60',
+                          isSelected && 'bg-primary/10 hover:bg-primary/15',
+                        )}
+                        onClick={() => { onSelectWeek(employeeId, w.isoYear, w.isoWeek); onToggleWeek(key); }}
                       >
                         <TableCell>
                           <ChevronRight
@@ -471,6 +546,18 @@ function EmployeeDetail({
                             ) : (
                               chf(w.overtimeCost)
                             )}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {bal ? hrs(bal.cumulativeOvertimeHours) : '—'}
+                        </TableCell>
+                        {showCostCol && (
+                          <TableCell className="text-right tabular-nums text-muted-foreground">
+                            {bal === null
+                              ? '—'
+                              : bal.cumulativeOvertimeCost === null
+                                ? 'kein Satz'
+                                : chf(bal.cumulativeOvertimeCost)}
                           </TableCell>
                         )}
                       </TableRow>
@@ -600,6 +687,32 @@ function DayDetailTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+// ── Kombinierte Zelle "aktuelle Woche / verrechneter Saldo" (Ebene 1) ─────────
+// Zeile 1: Überstunden + Kosten DER ausgewählten Woche.
+// Zeile 2: kumulierter Saldo (Stunden + Kosten) von Monatsanfang bis zur Woche.
+function WeekSaldoCell({ bal, showCost }: { bal: WeekCumulativeBalance | null; showCost: boolean }) {
+  if (!bal) {
+    return <TableCell className="text-right text-muted-foreground">—</TableCell>;
+  }
+  const costStr = (c: number | null): string => (c === null ? 'kein Satz' : chf(c));
+  const saldoTitle =
+    `Saldo bis KW ${bal.isoWeek}: ${hrs(bal.cumulativeOvertimeHours)}` +
+    (showCost ? ` / ${costStr(bal.cumulativeOvertimeCost)}` : '');
+  return (
+    <TableCell className="text-right tabular-nums" title={saldoTitle}>
+      <div className="text-xs">
+        <span className="text-muted-foreground">KW {bal.isoWeek}:</span>{' '}
+        {hrs(bal.overtimeHours)}
+        {showCost && <> / {costStr(bal.overtimeCost)}</>}
+      </div>
+      <div className="text-[11px] text-muted-foreground">
+        Saldo: {hrs(bal.cumulativeOvertimeHours)}
+        {showCost && <> / {costStr(bal.cumulativeOvertimeCost)}</>}
+      </div>
+    </TableCell>
   );
 }
 

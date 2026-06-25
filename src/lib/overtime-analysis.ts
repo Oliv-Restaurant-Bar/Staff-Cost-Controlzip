@@ -627,6 +627,82 @@ export function computeWeeklyOvertimeAnalysis(input: WeeklyOvertimeInput): Weekl
   };
 }
 
+// ─── Laufende Wochen-Salden (kumuliert) — REINE Aggregation/Anzeige ───────────
+// Verändert KEINE Überstundenberechnung. Liefert je Woche zusätzlich den bis
+// einschliesslich dieser Woche aufgelaufenen ("verrechneten") Saldo an
+// Überstunden-Stunden und -Kosten (Monatsanfang → Woche).
+
+/** Eine Woche samt laufendem (kumuliertem) Saldo bis einschliesslich dieser Woche. */
+export interface WeekCumulativeBalance {
+  isoYear: number;
+  isoWeek: number;
+  /** Überstunden DIESER Woche (aus WeekOvertimeRow übernommen) */
+  overtimeHours: number;
+  /** Überstundenkosten DIESER Woche (null wenn Satz fehlt; 0 wenn deaktiviert) */
+  overtimeCost: number | null;
+  /** Kumulierte Überstunden von Monatsanfang bis einschliesslich dieser Woche */
+  cumulativeOvertimeHours: number;
+  /** Kumulierte Überstundenkosten bis einschliesslich dieser Woche (null wenn Satz fehlt) */
+  cumulativeOvertimeCost: number | null;
+}
+
+/**
+ * Berechnet die laufenden Salden je Woche eines Mitarbeiters: für jede Woche die
+ * Summe der `overtimeHours`/`overtimeCost` aller Wochen mit `weekStart ≤` dieser
+ * Woche (chronologisch nach `isoYear`, dann `isoWeek`). Reine Aggregation der
+ * bereits berechneten Wochenwerte — KEINE neue Überstundenlogik. Mutiert die
+ * Eingabe nicht. Kosten-Saldo ist `null`, sobald eine Woche im Präfix keinen
+ * Satz hat (Satz ist je Mitarbeiter konsistent); deaktivierte Mitarbeiter haben
+ * je Woche 0 → Saldo 0.
+ */
+export function computeWeekCumulativeBalances(weeks: WeekOvertimeRow[]): WeekCumulativeBalance[] {
+  const sorted = [...weeks].sort((a, b) =>
+    a.isoYear !== b.isoYear ? a.isoYear - b.isoYear : a.isoWeek - b.isoWeek);
+  let cumHours = 0;
+  let cumCost = 0;
+  let costAvailable = true;
+  const out: WeekCumulativeBalance[] = [];
+  for (const w of sorted) {
+    cumHours = round2(cumHours + w.overtimeHours);
+    if (w.overtimeCost === null) costAvailable = false;
+    else cumCost = round2(cumCost + w.overtimeCost);
+    out.push({
+      isoYear: w.isoYear,
+      isoWeek: w.isoWeek,
+      overtimeHours: w.overtimeHours,
+      overtimeCost: w.overtimeCost,
+      cumulativeOvertimeHours: cumHours,
+      cumulativeOvertimeCost: costAvailable ? cumCost : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Wählt die "aktuelle Woche" für die Übersicht: die ISO-Woche, die `today`
+ * enthält, sofern sie unter `weeks` vorkommt; liegt `today` vor dem Monat → die
+ * erste Woche, danach → die letzte Woche. Gibt `null` zurück, wenn keine Wochen
+ * vorhanden sind. Reine Auswahlhilfe — keine Berechnung.
+ */
+export function defaultSelectedWeekKey(
+  weeks: Pick<WeekOvertimeRow, 'isoYear' | 'isoWeek'>[],
+  today: Date,
+): { isoYear: number; isoWeek: number } | null {
+  if (weeks.length === 0) return null;
+  const sorted = [...weeks].sort((a, b) =>
+    a.isoYear !== b.isoYear ? a.isoYear - b.isoYear : a.isoWeek - b.isoWeek);
+  const t = isoWeekParts(today.getFullYear(), today.getMonth() + 1, today.getDate());
+  const match = sorted.find((w) => w.isoYear === t.isoYear && w.isoWeek === t.isoWeek);
+  if (match) return { isoYear: match.isoYear, isoWeek: match.isoWeek };
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const tKey = t.isoYear * 100 + t.isoWeek;
+  const firstKey = first.isoYear * 100 + first.isoWeek;
+  return tKey < firstKey
+    ? { isoYear: first.isoYear, isoWeek: first.isoWeek }
+    : { isoYear: last.isoYear, isoWeek: last.isoWeek };
+}
+
 // ─── Totals / PKQ mit Überstunden-Toggle ─────────────────────────────────────
 
 export interface OvertimeTotals {

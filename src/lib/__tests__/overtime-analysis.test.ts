@@ -4,6 +4,8 @@ import type { Employee } from '@/types/personnel';
 import {
   computeOvertimeAnalysis,
   computeWeeklyOvertimeAnalysis,
+  computeWeekCumulativeBalances,
+  defaultSelectedWeekKey,
   computeOvertimeTotals,
   isFixedSalaryEmployee,
   monthlyTargetHours,
@@ -16,6 +18,7 @@ import {
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeHoursEntry,
   type DayDetailEntry,
+  type WeekOvertimeRow,
 } from '@/lib/overtime-analysis';
 
 // ── Test-Helfer ──────────────────────────────────────────────────────────────
@@ -612,5 +615,133 @@ describe('buildWeekDayRows (Tagesdetail Ebene 3)', () => {
 
   it('leere Eingabe → leeres Ergebnis', () => {
     expect(buildWeekDayRows([], 'A', KW23.isoYear, KW23.isoWeek)).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Laufende Wochen-Salden (computeWeekCumulativeBalances) — reine Aggregation
+// + Default-Wochenauswahl (defaultSelectedWeekKey) für die "aktuelle Woche"
+// ─────────────────────────────────────────────────────────────────────────────
+function wrow(p: {
+  isoYear?: number; isoWeek: number; overtimeHours: number; overtimeCost: number | null;
+}): WeekOvertimeRow {
+  const isoYear = p.isoYear ?? 2026;
+  return {
+    isoYear,
+    isoWeek: p.isoWeek,
+    weekLabel: `KW ${p.isoWeek}`,
+    rangeLabel: '',
+    daysInMonth: 7,
+    weeklyTargetHours: 42,
+    productiveHours: 0,
+    difference: 0,
+    overtimeHours: p.overtimeHours,
+    overtimeCost: p.overtimeCost,
+    additionalCostHours: 0,
+    additionalCostDays: 0,
+    additionalCost: null,
+    daysOver84Count: 0,
+  };
+}
+
+describe('computeWeekCumulativeBalances (verrechneter Saldo bis Woche)', () => {
+  it('bildet laufende Summen von Stunden + Kosten je Woche', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100 }),
+      wrow({ isoWeek: 25, overtimeHours: 5, overtimeCost: 250 }),
+    ]);
+    expect(bals.map((b) => b.cumulativeOvertimeHours)).toEqual([8, 10, 15]);
+    expect(bals.map((b) => b.cumulativeOvertimeCost)).toEqual([400, 500, 750]);
+    // Wochenwerte selbst bleiben erhalten (Ebene-2-Anzeige)
+    expect(bals.map((b) => b.overtimeHours)).toEqual([8, 2, 5]);
+  });
+
+  it('sortiert unsortierte Eingabe chronologisch (isoYear, dann isoWeek)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 25, overtimeHours: 5, overtimeCost: 250 }),
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100 }),
+    ]);
+    expect(bals.map((b) => b.isoWeek)).toEqual([23, 24, 25]);
+    expect(bals.map((b) => b.cumulativeOvertimeHours)).toEqual([8, 10, 15]);
+  });
+
+  it('ordnet Jahreswechsel korrekt (KW53/2026 vor KW1/2027)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoYear: 2027, isoWeek: 1, overtimeHours: 3, overtimeCost: 150 }),
+      wrow({ isoYear: 2026, isoWeek: 53, overtimeHours: 4, overtimeCost: 200 }),
+    ]);
+    expect(bals.map((b) => `${b.isoYear}-${b.isoWeek}`)).toEqual(['2026-53', '2027-1']);
+    expect(bals.map((b) => b.cumulativeOvertimeHours)).toEqual([4, 7]);
+    expect(bals.map((b) => b.cumulativeOvertimeCost)).toEqual([200, 350]);
+  });
+
+  it('Kosten-Saldo wird null, sobald eine Woche keinen Satz hat (Stunden laufen weiter)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: null }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: null }),
+    ]);
+    expect(bals.map((b) => b.cumulativeOvertimeHours)).toEqual([8, 10]);
+    expect(bals.map((b) => b.cumulativeOvertimeCost)).toEqual([null, null]);
+  });
+
+  it('deaktivierter Mitarbeiter: Stunden + Kosten je Woche 0 → Saldo 0', () => {
+    // Spiegelt das Lib-Verhalten: overtimeHours=0 UND overtimeCost=0 bei Deaktivierung.
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0 }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0 }),
+    ]);
+    expect(bals.map((b) => b.cumulativeOvertimeHours)).toEqual([0, 0]);
+    expect(bals.map((b) => b.cumulativeOvertimeCost)).toEqual([0, 0]);
+  });
+
+  it('Auswahl einer Woche liefert deren Saldo (Default vs. spätere Woche unterscheiden sich)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100 }),
+      wrow({ isoWeek: 25, overtimeHours: 5, overtimeCost: 250 }),
+    ]);
+    const byKey = new Map(bals.map((b) => [`${b.isoYear}-${b.isoWeek}`, b]));
+    expect(byKey.get('2026-23')?.cumulativeOvertimeCost).toBe(400);
+    expect(byKey.get('2026-25')?.cumulativeOvertimeCost).toBe(750);
+  });
+
+  it('mutiert die Eingabe nicht', () => {
+    const input = [
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100 }),
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400 }),
+    ];
+    const snapshot = input.map((w) => w.isoWeek);
+    computeWeekCumulativeBalances(input);
+    expect(input.map((w) => w.isoWeek)).toEqual(snapshot);
+  });
+
+  it('leere Eingabe → leeres Ergebnis', () => {
+    expect(computeWeekCumulativeBalances([])).toEqual([]);
+  });
+});
+
+describe('defaultSelectedWeekKey (aktuelle Woche im Monat)', () => {
+  const juneWeeks = weeksInMonth(2026, 6); // KW23..KW27
+
+  it('today innerhalb des Monats → enthaltende ISO-Woche', () => {
+    // 10.06.2026 (Mi) liegt in KW24
+    const k = defaultSelectedWeekKey(juneWeeks, new Date(2026, 5, 10));
+    expect(k).toEqual({ isoYear: 2026, isoWeek: 24 });
+  });
+
+  it('today vor dem Monat → erste Woche', () => {
+    const k = defaultSelectedWeekKey(juneWeeks, new Date(2026, 4, 1)); // 01.05.2026
+    expect(k).toEqual({ isoYear: 2026, isoWeek: 23 });
+  });
+
+  it('today nach dem Monat → letzte Woche', () => {
+    const k = defaultSelectedWeekKey(juneWeeks, new Date(2026, 6, 15)); // 15.07.2026
+    expect(k).toEqual({ isoYear: 2026, isoWeek: juneWeeks[juneWeeks.length - 1].isoWeek });
+  });
+
+  it('keine Wochen → null', () => {
+    expect(defaultSelectedWeekKey([], new Date(2026, 5, 10))).toBeNull();
   });
 });
