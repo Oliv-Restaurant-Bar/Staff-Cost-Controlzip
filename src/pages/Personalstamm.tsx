@@ -13,7 +13,7 @@
  *   - Aktiv/Inaktiv-Status (localStorage)
  */
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Search, X, Plus, Save, Trash2, Upload, ChevronRight,
@@ -27,7 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel,
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -50,7 +50,15 @@ import { WageHistorySection } from '@/components/WageHistorySection';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePositions } from '@/hooks/usePositions';
-import { positionsForDepartment, positionDisplayName } from '@/lib/position-utils';
+import {
+  positionDisplayName,
+  activeQualificationGroups,
+  isActivePositionKey,
+  setPrimaryStation,
+  toggleSecondaryStation,
+  normalizeStationsForSave,
+  inactiveStoredStationKeys,
+} from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
 import {
   loadEmployees, upsertEmployee, deleteEmployee, activateEmployee, archiveEmployee,
@@ -812,6 +820,14 @@ const Personalstamm = () => {
       console.log(`[EMPLOYEE SAVE] department: ${finalData.department} | type: ${finalData.employmentType}`);
       console.log(`[EMPLOYEE SAVE] hourlyWage: ${finalData.hourlyWage} | monthlySalary: ${finalData.monthlySalary ?? 'n/a'}`);
       console.log(`[EMPLOYEE SAVE] id_prefix_ok: ${String(finalData.id).startsWith('b-') === (tenantId === 'beaulieu')}`);
+    }
+
+    // ── Positions-Qualifikationen normalisieren (Invarianten erzwingen) ─────
+    // Hauptposition nie zusätzlich in den Zweitpositionen; Zweitpositionen
+    // dedupliziert; leere Listen → undefined. Inaktive/alte Keys bleiben erhalten.
+    {
+      const norm = normalizeStationsForSave(finalData.primaryStation, finalData.secondaryStations);
+      finalData = { ...finalData, primaryStation: norm.primaryStation, secondaryStations: norm.secondaryStations };
     }
 
     const ok = await upsertEmployee(finalData, tenantId);
@@ -2155,78 +2171,124 @@ CREATE POLICY "Anon self-register new employee"
                 </Card>
               )}
 
-              {/* ── Positionen / Stationen (operativ — auch Küchen-Manager) ── */}
+              {/* ── Positionen / Qualifikationen (operativ — auch Küchen-Manager) ── */}
               {canEditEmployees && (() => {
-                const posDept = (editMode ? editData?.department : selectedEmp?.department) as Department | undefined;
-                const deptPositions = posDept ? positionsForDepartment(positions, posDept, { activeOnly: true }) : [];
-                const primary = editMode ? editData?.primaryStation : selectedEmp?.primaryStation;
+                const primary = (editMode ? editData?.primaryStation : selectedEmp?.primaryStation) ?? undefined;
                 const secondary = (editMode ? editData?.secondaryStations : selectedEmp?.secondaryStations) ?? [];
+                // Alle AKTIVEN Positionen, hierarchisch Abteilung → Bereich → Position.
+                const groups = activeQualificationGroups(positions);
+                const hasActive = groups.length > 0;
+                // Hauptposition aktiv? (sonst Alt-/Inaktiv-Wert → nur Hinweis)
+                const primaryActive = isActivePositionKey(positions, primary);
+                // Gespeicherte, aber inaktive/unbekannte Keys (Haupt + Zweit) → nur Hinweis.
+                const inactiveKeys = inactiveStoredStationKeys({ primaryStation: primary, secondaryStations: secondary }, positions);
                 return (
                   <Card>
                     <CardHeader className="pb-2 pt-4">
                       <CardTitle className="text-sm flex items-center gap-2">
                         <LayoutGrid className="h-4 w-4 text-violet-600" />
-                        Kann folgende Positionen abdecken
+                        Positionen / Qualifikationen
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3 pt-0">
                       {editMode ? (
-                        deptPositions.length === 0 ? (
+                        !hasActive ? (
                           <p className="text-xs text-muted-foreground">
-                            Noch keine Positionen für diese Abteilung konfiguriert.{' '}
+                            Noch keine aktiven Positionen konfiguriert.{' '}
                             <Link to="/positionen" className="underline">Positionen verwalten</Link>
                           </p>
                         ) : (
                           <>
+                            {/* 1. Hauptposition — alle aktiven Positionen, hierarchisch */}
                             <div>
                               <Label className="text-xs text-muted-foreground mb-1 block">Hauptposition</Label>
                               <Select
-                                value={primary ?? '__none__'}
+                                value={primaryActive ? (primary as string) : '__none__'}
                                 onValueChange={v => setEditData(d => {
                                   if (!d) return d;
                                   const key = v === '__none__' ? undefined : v;
-                                  const sec = (d.secondaryStations ?? []).filter(s => s !== key);
+                                  // Hauptposition wird automatisch aus den Zweitpositionen entfernt.
+                                  const sec = setPrimaryStation(d.secondaryStations ?? [], key);
                                   return { ...d, primaryStation: key, secondaryStations: sec.length ? sec : undefined };
                                 })}
                               >
-                                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Keine" /></SelectTrigger>
+                                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Keine Hauptposition" /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="__none__">Keine Hauptposition</SelectItem>
-                                  {deptPositions.map(p => (
-                                    <SelectItem key={p.key} value={p.key}>{p.name}</SelectItem>
+                                  {groups.map(g => (
+                                    <SelectGroup key={g.department}>
+                                      <SelectLabel className="text-[11px] uppercase tracking-wide">{DEPT_LABELS[g.department]}</SelectLabel>
+                                      {g.areas.map(area => (
+                                        <Fragment key={`${g.department}:${area.area?.key ?? '_none'}`}>
+                                          <SelectLabel className="pl-4 text-[10px] font-normal text-muted-foreground">{area.area?.name ?? 'Ohne Bereich'}</SelectLabel>
+                                          {area.positions.map(p => (
+                                            <SelectItem key={p.key} value={p.key} className="pl-6">{p.name}</SelectItem>
+                                          ))}
+                                        </Fragment>
+                                      ))}
+                                    </SelectGroup>
                                   ))}
                                 </SelectContent>
                               </Select>
-                            </div>
-                            <div>
-                              <Label className="text-xs text-muted-foreground mb-1.5 block">Weitere abdeckbare Positionen</Label>
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                                {deptPositions.filter(p => p.key !== primary).map(p => {
-                                  const checked = secondary.includes(p.key);
-                                  return (
-                                    <label key={p.key} className="flex items-center gap-2 cursor-pointer text-sm">
-                                      <input
-                                        type="checkbox"
-                                        className="h-4 w-4 rounded"
-                                        checked={checked}
-                                        onChange={e => setEditData(d => {
-                                          if (!d) return d;
-                                          const cur = new Set(d.secondaryStations ?? []);
-                                          if (e.target.checked) cur.add(p.key); else cur.delete(p.key);
-                                          const arr = [...cur];
-                                          return { ...d, secondaryStations: arr.length ? arr : undefined };
-                                        })}
-                                      />
-                                      <span style={{ color: p.color ?? undefined }}><PositionIcon name={p.icon} className="h-3.5 w-3.5" /></span>
-                                      {p.name}
-                                    </label>
-                                  );
-                                })}
-                              </div>
-                              {deptPositions.filter(p => p.key !== primary).length === 0 && (
-                                <p className="text-xs text-muted-foreground italic">Keine weiteren Positionen verfügbar.</p>
+                              {primary && !primaryActive && (
+                                <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1">
+                                  Gespeicherte Hauptposition <span className="font-medium">{positionDisplayName(positions, primary)}</span> ist inaktiv – bitte eine aktive Position wählen.
+                                </p>
                               )}
                             </div>
+                            {/* 2. Kann zusätzlich abdecken — alle aktiven Positionen, hierarchisch */}
+                            <div>
+                              <Label className="text-xs text-muted-foreground mb-1.5 block">Kann zusätzlich abdecken</Label>
+                              <div className="space-y-2.5">
+                                {groups.map(g => (
+                                  <div key={g.department}>
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{DEPT_LABELS[g.department]}</p>
+                                    {g.areas.map(area => (
+                                      <div key={`${g.department}:${area.area?.key ?? '_none'}`} className="mt-1">
+                                        <p className="text-[10px] text-muted-foreground pl-0.5">{area.area?.name ?? 'Ohne Bereich'}</p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pl-2">
+                                          {area.positions.map(p => {
+                                            const isPrimary = p.key === primary;
+                                            const checked = !isPrimary && secondary.includes(p.key);
+                                            return (
+                                              <label key={p.key} className={`flex items-center gap-2 text-sm ${isPrimary ? 'opacity-50' : 'cursor-pointer'}`}>
+                                                <input
+                                                  type="checkbox"
+                                                  className="h-4 w-4 rounded"
+                                                  checked={checked}
+                                                  disabled={isPrimary}
+                                                  onChange={() => setEditData(d => {
+                                                    if (!d) return d;
+                                                    const arr = toggleSecondaryStation(d.secondaryStations ?? [], p.key, d.primaryStation);
+                                                    return { ...d, secondaryStations: arr.length ? arr : undefined };
+                                                  })}
+                                                />
+                                                <span style={{ color: p.color ?? undefined }}><PositionIcon name={p.icon} className="h-3.5 w-3.5" /></span>
+                                                {p.name}
+                                                {isPrimary && <span className="text-[9px] text-muted-foreground">(Hauptposition)</span>}
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            {/* 3. Alt-/Inaktiv-Werte — nur Hinweis, nicht auswählbar */}
+                            {inactiveKeys.length > 0 && (
+                              <div className="rounded-md border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/10 p-2">
+                                <p className="text-[11px] text-amber-700 dark:text-amber-500 mb-1">Gespeicherte inaktive Positionen (nicht mehr auswählbar):</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {inactiveKeys.map(k => (
+                                    <Badge key={k} variant="outline" className="text-[11px] line-through opacity-70">
+                                      {positionDisplayName(positions, k)}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </>
                         )
                       ) : (
@@ -2234,12 +2296,12 @@ CREATE POLICY "Anon self-register new employee"
                           <div className="flex flex-wrap gap-1.5">
                             {primary && (
                               <Badge className="text-[11px] gap-1">
-                                <span className="text-[8px]">★</span>{positionDisplayName(positions, primary)}
+                                <span className="text-[8px]">★</span>{positionDisplayName(positions, primary)}{!primaryActive && ' (inaktiv)'}
                               </Badge>
                             )}
                             {secondary.map(k => (
                               <Badge key={k} variant="secondary" className="text-[11px]">
-                                {positionDisplayName(positions, k)}
+                                {positionDisplayName(positions, k)}{!isActivePositionKey(positions, k) && ' (inaktiv)'}
                               </Badge>
                             ))}
                           </div>

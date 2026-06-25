@@ -17,6 +17,12 @@ import {
   areaLabel,
   resolvePositionArea,
   groupPositionsByArea,
+  activeQualificationGroups,
+  isActivePositionKey,
+  setPrimaryStation,
+  toggleSecondaryStation,
+  normalizeStationsForSave,
+  inactiveStoredStationKeys,
 } from '@/lib/position-utils';
 
 function pos(p: Partial<Position> & { key: string; name: string }): Position {
@@ -220,5 +226,156 @@ describe('filtering & sorting', () => {
   it('positionsForDepartment respects activeOnly', () => {
     expect(positionsForDepartment(positions, 'küche').map((p) => p.key)).toEqual(['k', 'k2']);
     expect(positionsForDepartment(positions, 'küche', { activeOnly: true }).map((p) => p.key)).toEqual(['k2']);
+  });
+});
+
+// ─── Mitarbeiter-Qualifikationen (Haupt-/Zweitpositionen) ─────────────────────
+
+/** Die 5 Standard-Positionen als echte `Position[]` (für die Qualifikations-Tests). */
+function standardPositions(): Position[] {
+  return defaultPositions().map((d, i) => pos({ ...d, id: `id-${d.key}-${i}` }));
+}
+
+describe('activeQualificationGroups', () => {
+  it('groups active positions by department → area, in canonical order', () => {
+    const groups = activeQualificationGroups(standardPositions());
+    expect(groups.map((g) => g.department)).toEqual(['service', 'küche']);
+
+    const service = groups.find((g) => g.department === 'service')!;
+    expect(service.areas.map((a) => a.area?.name)).toEqual(['Restaurant', 'Bar/Buffet']);
+    expect(service.areas.map((a) => a.positions.map((p) => p.name))).toEqual([
+      ['Service'],
+      ['BAR Buffet/Springer'],
+    ]);
+
+    const kueche = groups.find((g) => g.department === 'küche')!;
+    expect(kueche.areas.map((a) => a.area?.name)).toEqual(['Küche Produktion', 'Take Away', 'Abwasch']);
+    expect(kueche.areas.map((a) => a.positions.map((p) => p.name))).toEqual([
+      ['Küche'],
+      ['Piazzolo Take Away'],
+      ['Abwasch'],
+    ]);
+  });
+
+  it('omits empty areas and departments without active positions', () => {
+    const only = [pos({ key: 'service', name: 'Service', department: 'service', departmentGroup: 'restaurant' })];
+    const groups = activeQualificationGroups(only);
+    expect(groups.map((g) => g.department)).toEqual(['service']);
+    expect(groups[0].areas.map((a) => a.area?.key)).toEqual(['restaurant']);
+  });
+
+  it('excludes inactive positions entirely', () => {
+    const list = standardPositions().map((p) => (p.key === 'service' ? { ...p, active: false } : p));
+    const groups = activeQualificationGroups(list);
+    const service = groups.find((g) => g.department === 'service');
+    // Restaurant area had only the (now inactive) Service position → dropped.
+    expect(service?.areas.map((a) => a.area?.name)).toEqual(['Bar/Buffet']);
+  });
+
+  it('returns [] when nothing is active', () => {
+    const list = standardPositions().map((p) => ({ ...p, active: false }));
+    expect(activeQualificationGroups(list)).toEqual([]);
+  });
+});
+
+describe('isActivePositionKey', () => {
+  const list = standardPositions().map((p) => (p.key === 'abwasch' ? { ...p, active: false } : p));
+  it('true only for an existing active key', () => {
+    expect(isActivePositionKey(list, 'service')).toBe(true);
+  });
+  it('false for inactive, unknown, empty/nullish keys', () => {
+    expect(isActivePositionKey(list, 'abwasch')).toBe(false);
+    expect(isActivePositionKey(list, 'does_not_exist')).toBe(false);
+    expect(isActivePositionKey(list, '')).toBe(false);
+    expect(isActivePositionKey(list, '  ')).toBe(false);
+    expect(isActivePositionKey(list, null)).toBe(false);
+    expect(isActivePositionKey(list, undefined)).toBe(false);
+  });
+});
+
+describe('setPrimaryStation', () => {
+  it('removes the new primary from the secondary list', () => {
+    expect(setPrimaryStation(['service', 'kueche'], 'service')).toEqual(['kueche']);
+  });
+  it('dedupes and drops empty entries, keeps the rest', () => {
+    expect(setPrimaryStation(['kueche', 'kueche', '', '  ', 'abwasch'], 'service')).toEqual(['kueche', 'abwasch']);
+  });
+  it('clearing the primary (empty/undefined) keeps secondary intact', () => {
+    expect(setPrimaryStation(['service', 'kueche'], undefined)).toEqual(['service', 'kueche']);
+    expect(setPrimaryStation(['service', 'kueche'], '')).toEqual(['service', 'kueche']);
+  });
+  it('does not mutate the input array', () => {
+    const input = ['service', 'kueche'];
+    setPrimaryStation(input, 'service');
+    expect(input).toEqual(['service', 'kueche']);
+  });
+});
+
+describe('toggleSecondaryStation', () => {
+  it('adds a key that is not present', () => {
+    expect(toggleSecondaryStation(['kueche'], 'abwasch', 'service')).toEqual(['kueche', 'abwasch']);
+  });
+  it('removes a key that is present', () => {
+    expect(toggleSecondaryStation(['kueche', 'abwasch'], 'abwasch', 'service')).toEqual(['kueche']);
+  });
+  it('never adds the primary as a secondary', () => {
+    expect(toggleSecondaryStation(['kueche'], 'service', 'service')).toEqual(['kueche']);
+  });
+  it('ignores empty/blank keys', () => {
+    expect(toggleSecondaryStation(['kueche'], '', 'service')).toEqual(['kueche']);
+    expect(toggleSecondaryStation(['kueche'], '   ', 'service')).toEqual(['kueche']);
+  });
+  it('does not mutate the input array', () => {
+    const input = ['kueche'];
+    toggleSecondaryStation(input, 'abwasch', 'service');
+    expect(input).toEqual(['kueche']);
+  });
+});
+
+describe('normalizeStationsForSave', () => {
+  it('drops the primary from secondary and dedupes', () => {
+    expect(normalizeStationsForSave('service', ['service', 'kueche', 'kueche'])).toEqual({
+      primaryStation: 'service',
+      secondaryStations: ['kueche'],
+    });
+  });
+  it('empty lists collapse to undefined (not [])', () => {
+    expect(normalizeStationsForSave(undefined, [])).toEqual({
+      primaryStation: undefined,
+      secondaryStations: undefined,
+    });
+    expect(normalizeStationsForSave('', ['', '  '])).toEqual({
+      primaryStation: undefined,
+      secondaryStations: undefined,
+    });
+  });
+  it('preserves inactive/legacy keys (no silent deletion)', () => {
+    const list = standardPositions().map((p) => ({ ...p, active: false }));
+    // All keys inactive, but normalization is purely structural — values survive.
+    const out = normalizeStationsForSave('alt_inaktiv', ['legacy_x', 'legacy_y']);
+    expect(out).toEqual({ primaryStation: 'alt_inaktiv', secondaryStations: ['legacy_x', 'legacy_y'] });
+    expect(activeQualificationGroups(list)).toEqual([]); // sanity: they are indeed inactive
+  });
+  it('trims whitespace on the primary and secondary keys', () => {
+    expect(normalizeStationsForSave('  service  ', ['  kueche  '])).toEqual({
+      primaryStation: 'service',
+      secondaryStations: ['kueche'],
+    });
+  });
+});
+
+describe('inactiveStoredStationKeys', () => {
+  const list = standardPositions().map((p) => (p.key === 'abwasch' ? { ...p, active: false } : p));
+  it('returns stored keys that are not active (primary + secondary)', () => {
+    const emp = { primaryStation: 'abwasch', secondaryStations: ['service', 'ghost_key'] };
+    // abwasch = inactive, ghost_key = unknown → both flagged; service stays out (active).
+    expect(inactiveStoredStationKeys(emp, list)).toEqual(['abwasch', 'ghost_key']);
+  });
+  it('returns [] when everything stored is active', () => {
+    const emp = { primaryStation: 'service', secondaryStations: ['kueche'] };
+    expect(inactiveStoredStationKeys(emp, list)).toEqual([]);
+  });
+  it('returns [] when nothing is stored', () => {
+    expect(inactiveStoredStationKeys({ primaryStation: undefined, secondaryStations: undefined }, list)).toEqual([]);
   });
 });

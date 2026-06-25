@@ -271,3 +271,114 @@ export function groupPositionsByArea(
   if (rest.length > 0) groups.push({ area: null, positions: rest });
   return groups;
 }
+
+// ─── Mitarbeiter-Qualifikationen (Haupt-/Zweitpositionen) ─────────────────────
+//
+// Reine Logik für die Personalstamm-Sektion „Positionen / Qualifikationen".
+// Gespeichert werden stabile KEYS (Slugs) in `primaryStation` (Hauptposition)
+// und `secondaryStations` (zusätzlich abdeckbare Positionen). Diese Helfer
+// erzwingen die Invarianten und sind im Node-Env testbar (kein Supabase/DOM).
+
+/** Eine Abteilung mit ihren (nicht-leeren) Bereichsgruppen aktiver Positionen. */
+export interface DepartmentQualificationGroup {
+  department: Department;
+  areas: PositionAreaGroup[];
+}
+
+/**
+ * Alle AKTIVEN Positionen, hierarchisch nach Abteilung → Bereich, für die
+ * Auswahl-UIs (Hauptposition-Dropdown + „Kann zusätzlich abdecken"-Checkboxen).
+ * Leere Bereiche und Abteilungen ohne aktive Positionen werden ausgeblendet.
+ */
+export function activeQualificationGroups(positions: Position[]): DepartmentQualificationGroup[] {
+  const result: DepartmentQualificationGroup[] = [];
+  for (const dept of DEPARTMENTS) {
+    const areas = groupPositionsByArea(positions, dept, { includeInactive: false }).filter(
+      (g) => g.positions.length > 0,
+    );
+    if (areas.length > 0) result.push({ department: dept, areas });
+  }
+  return result;
+}
+
+/** Ist der Key eine AKTIVE Position? (leer/unbekannt/inaktiv → false) */
+export function isActivePositionKey(
+  positions: Position[],
+  key: string | null | undefined,
+): boolean {
+  const v = (key ?? '').trim();
+  if (!v) return false;
+  return positions.some((p) => p.key === v && p.active);
+}
+
+/**
+ * Setzt die Hauptposition: liefert die bereinigten Zweitpositionen zurück
+ * (Hauptposition wird entfernt, dedupliziert, Leereinträge raus). Verändert die
+ * Eingabe nicht.
+ */
+export function setPrimaryStation(
+  secondary: string[] | null | undefined,
+  newPrimary: string | null | undefined,
+): string[] {
+  const p = (newPrimary ?? '').trim();
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of secondary ?? []) {
+    const k = (s ?? '').trim();
+    if (!k || k === p || seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
+}
+
+/**
+ * Toggelt eine Zweitposition. Die Hauptposition kann nie als Zweitposition
+ * gesetzt werden; Duplikate werden vermieden. Verändert die Eingabe nicht.
+ */
+export function toggleSecondaryStation(
+  secondary: string[] | null | undefined,
+  key: string,
+  primary: string | null | undefined,
+): string[] {
+  const k = (key ?? '').trim();
+  const p = (primary ?? '').trim();
+  const cur = (secondary ?? []).filter((s) => !!(s ?? '').trim());
+  if (!k || k === p) return [...cur];
+  if (cur.includes(k)) return cur.filter((s) => s !== k);
+  return [...cur, k];
+}
+
+/**
+ * Normalisiert Haupt-/Zweitpositionen für das Speichern:
+ *   - Hauptposition niemals zusätzlich in den Zweitpositionen,
+ *   - Zweitpositionen dedupliziert, Leereinträge entfernt,
+ *   - leere Listen → undefined (nicht `[]`), leere Hauptposition → undefined.
+ * Inaktive/alte Keys bleiben ERHALTEN (kein stilles Löschen von Bestandsdaten).
+ */
+export function normalizeStationsForSave(
+  primary: string | null | undefined,
+  secondary: string[] | null | undefined,
+): { primaryStation?: string; secondaryStations?: string[] } {
+  const p = (primary ?? '').trim() || undefined;
+  const seen = new Set<string>();
+  const sec: string[] = [];
+  for (const s of secondary ?? []) {
+    const k = (s ?? '').trim();
+    if (!k || k === p || seen.has(k)) continue;
+    seen.add(k);
+    sec.push(k);
+  }
+  return { primaryStation: p, secondaryStations: sec.length ? sec : undefined };
+}
+
+/**
+ * Gespeicherte Positions-Keys (Haupt + Zweit), die NICHT (mehr) aktiv sind
+ * (inaktiv oder unbekannt) — nur als Hinweis anzeigen, nicht neu auswählbar.
+ */
+export function inactiveStoredStationKeys(
+  emp: Pick<Employee, 'primaryStation' | 'secondaryStations'>,
+  positions: Position[],
+): string[] {
+  return employeeCoverableKeys(emp).filter((k) => !isActivePositionKey(positions, k));
+}
