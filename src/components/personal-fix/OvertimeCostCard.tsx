@@ -411,15 +411,13 @@ export function OvertimeCostCard({
                           bal={selBal}
                           showCost={showCostCol}
                         />
-                        <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {e.additionalCostHours <= 0
-                            ? '—'
-                            : !showCostCol
-                              ? `${e.additionalCostDays} Tag${e.additionalCostDays === 1 ? '' : 'e'}`
-                              : e.additionalCost === null
-                                ? 'kein Satz'
-                                : chf(e.additionalCost)}
-                        </TableCell>
+                        <ZusatzkostenCell
+                          additionalCostHours={e.additionalCostHours}
+                          additionalCostDays={e.additionalCostDays}
+                          additionalCost={e.additionalCost}
+                          bal={selBal}
+                          showCost={showCostCol}
+                        />
                       </TableRow>
 
                       {/* Ebene 2 + 3 (lazy: nur wenn aufgeklappt) */}
@@ -836,6 +834,52 @@ function UeberstundenKostenCell({
             {showCost && <> · {costStr(bal.cumulativeOvertimeCost)}</>}
           </div>
         </>
+      )}
+    </TableCell>
+  );
+}
+
+// ── Zusatzkosten-Zelle (Ebene 1) ─────────────────────────────────────────────
+// Zeigt die MONATLICHEN Zusatzkosten (unverändert) UND den bis zur ausgewählten
+// Woche aufgelaufenen (kumulierten) Zusatzkosten-Saldo — gleicher Wochen-Cutoff
+// wie der Überstunden-Saldo. CHF nur bei `showCost` (canSeeIndividualRates); ohne
+// Kostensicht der bestehende Tage-Fallback. Bei fehlenden Zusatzkosten „—".
+// REINE ANZEIGE — verändert KEINE Berechnung.
+function ZusatzkostenCell({
+  additionalCostHours,
+  additionalCostDays,
+  additionalCost,
+  bal,
+  showCost,
+}: {
+  additionalCostHours: number;
+  additionalCostDays: number;
+  additionalCost: number | null;
+  bal: WeekCumulativeBalance | null;
+  showCost: boolean;
+}) {
+  if (additionalCostHours <= 0) {
+    return <TableCell className="text-right tabular-nums text-muted-foreground">—</TableCell>;
+  }
+  if (!showCost) {
+    return (
+      <TableCell className="text-right tabular-nums text-muted-foreground">
+        {additionalCostDays} Tag{additionalCostDays === 1 ? '' : 'e'}
+      </TableCell>
+    );
+  }
+  const costStr = (c: number | null): string => (c === null ? 'kein Satz' : chf(c));
+  return (
+    <TableCell className="text-right tabular-nums text-muted-foreground">
+      {/* Monats-Zusatzkosten (Hauptwert, unverändert) */}
+      <div className="text-xs font-semibold">
+        <span className="text-muted-foreground">Monat:</span> {costStr(additionalCost)}
+      </div>
+      {/* Kumulierter Zusatzkosten-Saldo bis zur ausgewählten Woche */}
+      {bal && (
+        <div className="text-[11px]">
+          Saldo bis KW {bal.isoWeek}: {costStr(bal.cumulativeAdditionalCost)}
+        </div>
       )}
     </TableCell>
   );

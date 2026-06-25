@@ -630,6 +630,7 @@ describe('buildWeekDayRows (Tagesdetail Ebene 3)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 function wrow(p: {
   isoYear?: number; isoWeek: number; overtimeHours: number; overtimeCost: number | null;
+  additionalCostHours?: number; additionalCostDays?: number; additionalCost?: number | null;
 }): WeekOvertimeRow {
   const isoYear = p.isoYear ?? 2026;
   return {
@@ -643,9 +644,9 @@ function wrow(p: {
     difference: 0,
     overtimeHours: p.overtimeHours,
     overtimeCost: p.overtimeCost,
-    additionalCostHours: 0,
-    additionalCostDays: 0,
-    additionalCost: null,
+    additionalCostHours: p.additionalCostHours ?? 0,
+    additionalCostDays: p.additionalCostDays ?? 0,
+    additionalCost: p.additionalCost ?? null,
     daysOver84Count: 0,
   };
 }
@@ -725,6 +726,72 @@ describe('computeWeekCumulativeBalances (verrechneter Saldo bis Woche)', () => {
 
   it('leere Eingabe → leeres Ergebnis', () => {
     expect(computeWeekCumulativeBalances([])).toEqual([]);
+  });
+});
+
+describe('computeWeekCumulativeBalances — Zusatzkosten-Saldo (kumuliert)', () => {
+  it('bildet den laufenden Zusatzkosten-Saldo je Woche (Stunden + CHF)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 10, additionalCostDays: 1, additionalCost: 500 }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 0, additionalCostDays: 0, additionalCost: 0 }),
+      wrow({ isoWeek: 25, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 8, additionalCostDays: 1, additionalCost: 400 }),
+    ]);
+    expect(bals.map((b) => b.cumulativeAdditionalCost)).toEqual([500, 500, 900]);
+    expect(bals.map((b) => b.cumulativeAdditionalCostHours)).toEqual([10, 10, 18]);
+    // Wochenwerte selbst bleiben erhalten
+    expect(bals.map((b) => b.additionalCost)).toEqual([500, 0, 400]);
+  });
+
+  it('Zusatzkosten NACH der gewählten Woche fliessen nicht in deren Saldo ein', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 0, additionalCostDays: 0, additionalCost: 0 }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 0, additionalCostDays: 0, additionalCost: 0 }),
+      wrow({ isoWeek: 25, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 6, additionalCostDays: 1, additionalCost: 300 }),
+    ]);
+    const byKey = new Map(bals.map((b) => [b.isoWeek, b]));
+    // Saldo bis KW24 = 0 (Zusatzkosten erst in KW25)
+    expect(byKey.get(24)?.cumulativeAdditionalCost).toBe(0);
+    // Saldo bis KW25 = volle 300
+    expect(byKey.get(25)?.cumulativeAdditionalCost).toBe(300);
+  });
+
+  it('Satz vorhanden, aber keine Zusatzkosten → Saldo bleibt 0 (nicht null)', () => {
+    // Bei vorhandenem Satz haben Wochen ohne Zusatztage additionalCost = 0 (nicht null).
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 8, overtimeCost: 400, additionalCost: 0 }),
+      wrow({ isoWeek: 24, overtimeHours: 2, overtimeCost: 100, additionalCost: 0 }),
+    ]);
+    expect(bals.map((b) => b.cumulativeAdditionalCost)).toEqual([0, 0]);
+    expect(bals.map((b) => b.cumulativeAdditionalCostHours)).toEqual([0, 0]);
+  });
+
+  it('Zusatzkosten-Saldo wird null, sobald eine Woche keinen Satz hat (Stunden laufen weiter)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 10, additionalCostDays: 1, additionalCost: null }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 5, additionalCostDays: 1, additionalCost: null }),
+    ]);
+    expect(bals.map((b) => b.cumulativeAdditionalCost)).toEqual([null, null]);
+    expect(bals.map((b) => b.cumulativeAdditionalCostHours)).toEqual([10, 15]);
+  });
+
+  it('der kumulierte Saldo der letzten Woche entspricht der Monatssumme der Zusatzkosten', () => {
+    const weeks = [
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 10, additionalCostDays: 1, additionalCost: 500 }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 4, additionalCostDays: 1, additionalCost: 200 }),
+      wrow({ isoWeek: 25, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 6, additionalCostDays: 1, additionalCost: 300 }),
+    ];
+    const monthTotal = weeks.reduce((s, w) => s + (w.additionalCost ?? 0), 0);
+    const bals = computeWeekCumulativeBalances(weeks);
+    expect(bals[bals.length - 1].cumulativeAdditionalCost).toBe(monthTotal); // 1000
+  });
+
+  it('rundet die kumulierten Zusatzkosten (round2, bereinigt Float-Rauschen)', () => {
+    const bals = computeWeekCumulativeBalances([
+      wrow({ isoWeek: 23, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 1, additionalCostDays: 1, additionalCost: 0.1 }),
+      wrow({ isoWeek: 24, overtimeHours: 0, overtimeCost: 0, additionalCostHours: 2, additionalCostDays: 1, additionalCost: 0.2 }),
+    ]);
+    // 0.1 + 0.2 = 0.30000000000000004 → round2 → 0.3
+    expect(bals.map((b) => b.cumulativeAdditionalCost)).toEqual([0.1, 0.3]);
   });
 });
 

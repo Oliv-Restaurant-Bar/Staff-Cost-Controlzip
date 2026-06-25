@@ -644,6 +644,14 @@ export interface WeekCumulativeBalance {
   cumulativeOvertimeHours: number;
   /** Kumulierte Überstundenkosten bis einschliesslich dieser Woche (null wenn Satz fehlt) */
   cumulativeOvertimeCost: number | null;
+  /** Manuelle Zusatzkosten-Stunden DIESER Woche (aus WeekOvertimeRow übernommen) */
+  additionalCostHours: number;
+  /** Manuelle Zusatzkosten DIESER Woche (null wenn Satz fehlt) */
+  additionalCost: number | null;
+  /** Kumulierte Zusatzkosten-Stunden von Monatsanfang bis einschliesslich dieser Woche */
+  cumulativeAdditionalCostHours: number;
+  /** Kumulierte Zusatzkosten bis einschliesslich dieser Woche (null wenn Satz fehlt) */
+  cumulativeAdditionalCost: number | null;
 }
 
 /**
@@ -661,11 +669,19 @@ export function computeWeekCumulativeBalances(weeks: WeekOvertimeRow[]): WeekCum
   let cumHours = 0;
   let cumCost = 0;
   let costAvailable = true;
+  let cumAddHours = 0;
+  let cumAddCost = 0;
+  let addCostAvailable = true;
   const out: WeekCumulativeBalance[] = [];
   for (const w of sorted) {
     cumHours = round2(cumHours + w.overtimeHours);
     if (w.overtimeCost === null) costAvailable = false;
     else cumCost = round2(cumCost + w.overtimeCost);
+
+    cumAddHours = round2(cumAddHours + w.additionalCostHours);
+    if (w.additionalCost === null) addCostAvailable = false;
+    else cumAddCost = round2(cumAddCost + w.additionalCost);
+
     out.push({
       isoYear: w.isoYear,
       isoWeek: w.isoWeek,
@@ -673,6 +689,10 @@ export function computeWeekCumulativeBalances(weeks: WeekOvertimeRow[]): WeekCum
       overtimeCost: w.overtimeCost,
       cumulativeOvertimeHours: cumHours,
       cumulativeOvertimeCost: costAvailable ? cumCost : null,
+      additionalCostHours: w.additionalCostHours,
+      additionalCost: w.additionalCost,
+      cumulativeAdditionalCostHours: cumAddHours,
+      cumulativeAdditionalCost: addCostAvailable ? cumAddCost : null,
     });
   }
   return out;
