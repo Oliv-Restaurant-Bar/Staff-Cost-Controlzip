@@ -25,7 +25,6 @@ import { cn } from '@/lib/utils';
 import {
   computeOvertimeTotals,
   DAILY_OVERTIME_THRESHOLD,
-  WEEKLY_OVERTIME_THRESHOLD,
   type OvertimeAnalysis,
   type EmployeeOvertimeResult,
 } from '@/lib/overtime-analysis';
@@ -97,7 +96,7 @@ export function OvertimeCostCard({
               Überstundenkosten (Festangestellte)
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              Überstunden über {DAILY_OVERTIME_THRESHOLD}h/Tag oder {WEEKLY_OVERTIME_THRESHOLD}h/Woche
+              Wochen-Überstunden über dem Wochensoll (42h × Pensum)
               {periodLabel ? ` · ${periodLabel}` : ''}
             </p>
           </div>
@@ -205,12 +204,14 @@ export function OvertimeCostCard({
 
             <p className="text-[11px] leading-relaxed text-muted-foreground">
               Kalkulatorische Auswertung auf Basis der erfassten produktiven Ist-Stunden
-              (Abwesenheiten wie Ferien/Krankheit/Unfall werden nicht mitgezählt). Pro Mitarbeiter
-              und ISO-Woche gilt der grössere Wert aus Tages- und Wochen-Überstunden (keine
-              Doppelzählung). Wochen am Monatsrand werden nur mit den geladenen Tagen berechnet.
-              Diese Auswertung ist unabhängig von manuell markierten Zusatzkosten
-              (isAdditionalCost) — bei gleichzeitig als Zusatzkosten markierten Überstundentagen
-              kann es zu einer Überschneidung mit den regulären Kosten kommen.
+              (Abwesenheiten wie Ferien/Krankheit/Unfall werden nicht mitgezählt). Überstunden
+              werden ausschliesslich wöchentlich berechnet: pro Mitarbeiter und ISO-Woche
+              Wochen-Ist − Wochensoll (42h × Pensum). Tage über {DAILY_OVERTIME_THRESHOLD}h werden
+              nur informativ angezeigt und fliessen NICHT in die Überstundenkosten ein. Wochen am
+              Monatsrand werden nur mit den geladenen Tagen berechnet. Diese Auswertung ist
+              unabhängig von manuell markierten Zusatzkosten (isAdditionalCost) — bei gleichzeitig
+              als Zusatzkosten markierten Überstundentagen kann es zu einer Überschneidung mit den
+              regulären Kosten kommen.
             </p>
           </>
         )}
@@ -350,13 +351,18 @@ function EmployeeRows({
                       <span className="font-medium">
                         KW {String(w.isoWeek).padStart(2, '0')}/{w.isoYear}
                       </span>
-                      <span className="text-muted-foreground">{hrs(w.weekHours)} gesamt</span>
                       <span className="text-muted-foreground">
-                        Tag-ÜS {hrs(w.dailyOvertimeSum)} · Woche-ÜS {hrs(w.weeklyOvertime)}
+                        Wochen-Ist {hrs(w.weekHours)}
                       </span>
+                      <span className="text-muted-foreground">Soll {hrs(w.targetHours)}</span>
                       <span className="font-medium text-amber-700 dark:text-amber-500">
-                        effektiv {hrs(w.effectiveOvertime)}
+                        Überstunden {hrs(w.effectiveOvertime)}
                       </span>
+                      {w.dailyOvertimeSum > 0 && (
+                        <span className="text-[10px] text-muted-foreground/70">
+                          (Tage über {DAILY_OVERTIME_THRESHOLD}h: {hrs(w.dailyOvertimeSum)}, nur Info)
+                        </span>
+                      )}
                       {canSeeIndividualRates && w.cost !== null && (
                         <span className="font-mono tabular-nums">{chf(w.cost)}</span>
                       )}
@@ -369,7 +375,7 @@ function EmployeeRows({
             {emp.days.length > 0 && (
               <div>
                 <div className="mb-1 text-xs font-semibold text-muted-foreground">
-                  Tage über {DAILY_OVERTIME_THRESHOLD}h
+                  Tage über {DAILY_OVERTIME_THRESHOLD}h, nur Info
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                   {emp.days.map((d) => (

@@ -1,0 +1,50 @@
+Rework the overtime cost section on /personal-fix.
+
+Business requirements:
+1. Overtime must only be calculated for fixed-salary employees.
+2. Flex, hourly, aushilfe and employees without fixed monthly salary must be excluded completely.
+3. Overtime must be calculated on a monthly basis, not by daily overtime.
+4. Monthly target hours must be calculated from the 42h week:
+   monthlyTarget = 42h * numberOfWeeksInSelectedMonth * workloadPercentage
+   Use the selected month date range.
+   Adjust for pensum/workload.
+5. Overtime = max(0, productiveMonthlyIstHours - monthlyTargetHours).
+6. Absences such as FE, K, U must stay excluded from productive Ist hours.
+7. Days over 8.4h may only be shown as information, never used for overtime calculation or overtime costs.
+8. Add an employee-level setting/flag to disable overtime cost calculation for selected fixed-salary employees.
+   Example: some fixed-salary employees cannot generate overtime and should show 0 overtime cost.
+9. Add this setting in the overtime card UI with clear checkboxes:
+   "Überstunden für diesen Mitarbeiter deaktivieren"
+10. The setting must persist, not only be local component state.
+
+UI requirements:
+1. Replace the current overtime overview with a clearer, more user-friendly table.
+2. Show columns:
+   Mitarbeiter
+   Abteilung
+   Pensum
+   Soll Monat
+   Ist Monat produktiv
+   Differenz
+   Überstunden
+   Überstundenkosten
+3. Use clear wording:
+   "Überstunden entstehen nur, wenn Ist Monat produktiv über Soll Monat liegt."
+4. Remove or de-emphasize Tag-ÜS from the main logic.
+5. Manual Zusatzkosten must be shown directly as an extra row after the relevant employee, e.g. after Mejdi Zusatzkosten.
+6. The manual Zusatzkosten row should be included in the total costs but not in overtime hours.
+7. Keep the include/exclude toggle for overall overtime costs if it already exists.
+
+Tests:
+1. Fixed salary employee below monthly target => 0 overtime.
+2. Fixed salary employee above monthly target => overtime equals Ist minus monthly target.
+3. Flex/hourly/aushilfe employees are excluded.
+4. Absence hours are excluded.
+5. Employee with overtime disabled => 0 overtime cost.
+6. Manual Zusatzkosten row is included in total costs but does not create overtime hours.
+
+Run:
+npm run typecheck
+npm test
+
+Document the correction in replit.md.

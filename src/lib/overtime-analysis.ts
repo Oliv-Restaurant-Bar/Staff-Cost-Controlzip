@@ -2,19 +2,26 @@
 // Überstundenauswertung für Festangestellte (pure)
 // ─────────────────────────────────────────────────────────────────────────────
 // Berechnet Überstunden NUR für festangestellte Mitarbeiter (fixer Monatslohn)
-// aus den Ist-Stunden. Überstunden = Ist-Stunden über
-//   - 8.4 h pro Tag   ODER
-//   - 42  h pro Woche (ISO-Woche)
+// aus den produktiven Ist-Stunden. Überstunden werden AUSSCHLIESSLICH auf
+// Wochenbasis ermittelt:
+//   effektiveÜberstunden je (Mitarbeiter, ISO-Woche)
+//     = max(0, produktive Wochen-Ist-Stunden − Wochensoll)
+// Das Wochensoll ist pensumabhängig: 42 h × Pensum (= die vertraglichen
+// Wochenstunden `weeklyHours`; fehlt der Wert → 42 h = 100 %). Beispiele:
+//   100 % → 42.0 h, 80 % → 33.6 h, 50 % → 21.0 h.
+//
+// WICHTIG (Korrektur): Tage über 8.4 h erzeugen KEINE Überstunden mehr, solange
+// die Wochensumme das Wochensoll nicht überschreitet. Beispiel: 33.07 h in einer
+// Woche → 0.00 h Überstunden, auch wenn einzelne Tage über 8.4 h liegen. Die
+// 8.4-h-Tagesgrenze dient nur noch der INFORMATIVEN Tages-Aufschlüsselung
+// ("Tage über 8.4h, nur Info") und fliesst NICHT in die Überstundenkosten ein.
+//
 // Kosten = Überstunden × bestehendem berechnetem Stundenkostensatz
 // (getEffectiveHourlyRate). Es werden KEINE Sätze erfunden. Da nur
 // Festangestellte mit fixem Monatslohn einbezogen werden (siehe
 // isFixedSalaryEmployee), liefert getEffectiveHourlyRate praktisch immer einen
 // Satz; die null-Behandlung (Stunden ausgewiesen, Kosten "nicht verfügbar")
 // bleibt nur als defensive Absicherung erhalten.
-//
-// Doppelzählung wird vermieden: pro (Mitarbeiter, ISO-Woche) gilt
-//   effektiveÜberstunden = max( Summe Tages-Überstunden , Wochen-Überstunden )
-// — also der GRÖSSERE der beiden Werte, nicht die Summe beider.
 //
 // Stündliche/flexible Mitarbeiter (minijob/aushilfe ODER ohne fixen Monatslohn)
 // sind ausgeschlossen — sie werden bereits über ihre Ist-Stunden abgerechnet und
@@ -28,10 +35,30 @@ import { getISOWeek, getISOWeekYear } from 'date-fns';
 import type { Employee, Department } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 
+/**
+ * Tagesgrenze — NUR informativ. Tage über diesem Wert werden in der
+ * Tages-Aufschlüsselung als „Tage über 8.4h, nur Info" angezeigt, erzeugen aber
+ * KEINE Überstunden(-kosten). Überstunden werden ausschliesslich wöchentlich
+ * gegen das pensumabhängige Wochensoll berechnet.
+ */
 export const DAILY_OVERTIME_THRESHOLD = 8.4;
-export const WEEKLY_OVERTIME_THRESHOLD = 42;
+/** Wochensoll bei 100 % Pensum (Vollzeit). Pro Mitarbeiter via Pensum skaliert. */
+export const WEEKLY_FULLTIME_TARGET = 42;
+/** @deprecated Alias für das Vollzeit-Wochensoll (100 %). Nutze WEEKLY_FULLTIME_TARGET. */
+export const WEEKLY_OVERTIME_THRESHOLD = WEEKLY_FULLTIME_TARGET;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * Pensumabhängiges Wochensoll eines Festangestellten = 42 h × Pensum.
+ * Im Datenmodell sind die vertraglichen Wochenstunden `weeklyHours` bereits
+ * das Produkt „42 × Pensum" (100 % → 42, 80 % → 33.6, 50 % → 21). Fehlt der
+ * Wert (oder ≤ 0), wird Vollzeit (42 h = 100 %) angenommen.
+ */
+export function weeklyTargetHours(emp: Employee): number {
+  const wh = emp.weeklyHours;
+  return typeof wh === 'number' && wh > 0 ? round2(wh) : WEEKLY_FULLTIME_TARGET;
+}
 
 /** Eine Ist-Stunden-Position pro Mitarbeiter und Tag. */
 export interface OvertimeHoursEntry {
@@ -54,7 +81,10 @@ export interface OvertimeDay {
   isoYear: number;
   isoWeek: number;
   actualHours: number;
-  /** max(0, actualHours - 8.4) */
+  /**
+   * max(0, actualHours - 8.4). NUR informativ („Tage über 8.4h, nur Info") —
+   * fliesst NICHT in die Überstundenberechnung/-kosten ein.
+   */
   dailyOvertime: number;
 }
 
@@ -63,10 +93,17 @@ export interface OvertimeWeek {
   isoYear: number;
   isoWeek: number;
   weekKey: string; // `${isoYear}-W${isoWeek}`
-  weekHours: number; // Summe Ist-Stunden in dieser Woche (im gelieferten Zeitraum)
-  dailyOvertimeSum: number; // Summe der Tages-Überstunden in dieser Woche
-  weeklyOvertime: number; // max(0, weekHours - 42)
-  /** max(dailyOvertimeSum, weeklyOvertime) — vermeidet Doppelzählung */
+  weekHours: number; // Summe produktiver Ist-Stunden in dieser Woche (Wochen-Ist)
+  /** Pensumabhängiges Wochensoll (42 h × Pensum) für diese Woche/diesen MA */
+  targetHours: number;
+  /**
+   * Summe der Tages-Überstunden (Tage über 8.4h) — NUR informativ, fliesst
+   * NICHT in effectiveOvertime/Kosten ein.
+   */
+  dailyOvertimeSum: number;
+  /** max(0, weekHours - targetHours) — die einzig massgebliche Überstundenzahl */
+  weeklyOvertime: number;
+  /** = weeklyOvertime (Tages-Überstunden werden bewusst NICHT mehr einbezogen) */
   effectiveOvertime: number;
   /** effectiveOvertime × Stundensatz; null wenn Satz nicht verfügbar */
   cost: number | null;
@@ -181,6 +218,7 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
     const emp = fixedById.get(empId)!;
     const rate = getEffectiveHourlyRate(emp);
     const rateAvailable = rate != null;
+    const targetHours = weeklyTargetHours(emp);
 
     const weeks: OvertimeWeek[] = [];
     const overtimeDays: OvertimeDay[] = [];
@@ -206,8 +244,12 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
         if (dailyOvertime > 0) overtimeDays.push(od);
       }
 
-      const weeklyOvertime = round2(Math.max(0, weekHours - WEEKLY_OVERTIME_THRESHOLD));
-      const effectiveOvertime = round2(Math.max(dailyOvertimeSum, weeklyOvertime));
+      // Überstunden ausschliesslich wöchentlich gegen das pensumabhängige
+      // Wochensoll (42 × Pensum). Tages-Überstunden (dailyOvertimeSum) sind nur
+      // informativ und fliessen bewusst NICHT mehr ein (keine Doppel-/Über-
+      // bewertung langer Einzeltage bei unterschrittenem Wochensoll).
+      const weeklyOvertime = round2(Math.max(0, weekHours - targetHours));
+      const effectiveOvertime = weeklyOvertime;
       const cost = rateAvailable ? round2(effectiveOvertime * (rate as number)) : null;
 
       weeks.push({
@@ -215,6 +257,7 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
         isoWeek: w.isoWeek,
         weekKey,
         weekHours,
+        targetHours,
         dailyOvertimeSum,
         weeklyOvertime,
         effectiveOvertime,
