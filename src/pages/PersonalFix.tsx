@@ -28,7 +28,7 @@ import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
-import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry } from '@/lib/overtime-analysis';
+import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry, type DayDetailEntry } from '@/lib/overtime-analysis';
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
 import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { Button } from '@/components/ui/button';
@@ -2575,20 +2575,38 @@ export default function PersonalFixPage() {
   // Baut Ist-Stunden-Einträge des gewählten Monats aus den Supabase-Ist-Daten und
   // delegiert die gesamte Überstunden-Logik an die pure Lib. Stündliche MA werden
   // dort gefiltert. Abteilungsfilter 'all' (PersonalFix = admin/beaulieu_manager).
-  const { overtimeAnalysis, weeklyOvertimeAnalysis } = useMemo(() => {
+  const { overtimeAnalysis, weeklyOvertimeAnalysis, dayDetailEntries } = useMemo(() => {
     const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     const entries: OvertimeHoursEntry[] = [];
+    // Tagesdetail (Ebene 3, reine Anzeige): enthält im Gegensatz zu `entries` AUCH
+    // Abwesenheitstage + Schichtzeiten — verändert aber KEINE Berechnung (separater Pfad).
+    const detail: DayDetailEntry[] = [];
     for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
       const date = cellKey.slice(-10);
       if (!date.startsWith(prefix)) continue;
+      const employeeId = cellKey.slice(0, cellKey.length - 11);
       const h = entry.hours ?? 0;
+      const hasContent = h > 0 || !!entry.absenceType;
+      if (hasContent) {
+        detail.push({
+          employeeId,
+          date,
+          hours: h,
+          absenceType: entry.absenceType ?? null,
+          isAdditionalCost: entry.isAdditionalCost === true,
+          start: entry.start ?? null,
+          end: entry.end ?? null,
+          start2: entry.start2 ?? null,
+          end2: entry.end2 ?? null,
+        });
+      }
       if (h <= 0) continue;
       // Abwesenheiten (FE/K/U/…) sind keine produktive Arbeitszeit → keine Überstunden
       if (entry.absenceType) continue;
       // Manuelle Zusatzkosten-Tage werden geflaggt (nicht übersprungen): die Lib zählt
       // sie nicht als produktive Überstunden, weist sie aber separat als Zusatzkosten aus.
       entries.push({
-        employeeId: cellKey.slice(0, cellKey.length - 11),
+        employeeId,
         date,
         hours: h,
         isAdditionalCost: entry.isAdditionalCost === true,
@@ -2619,7 +2637,7 @@ export default function PersonalFixPage() {
       departmentFilter: 'all',
       disabledEmployeeIds: overtimeDisabledIds,
     });
-    return { overtimeAnalysis: monthly, weeklyOvertimeAnalysis: weekly };
+    return { overtimeAnalysis: monthly, weeklyOvertimeAnalysis: weekly, dayDetailEntries: detail };
   }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds]);
 
   // Persistierte „Überstunden deaktiviert"-Liste pro Mandant laden
@@ -4777,6 +4795,7 @@ export default function PersonalFixPage() {
           <OvertimeCostCard
             analysis={overtimeAnalysis}
             weeklyAnalysis={weeklyOvertimeAnalysis}
+            dayDetailEntries={dayDetailEntries}
             regularCost={pfix.month.istTotal}
             netRevenue={effectiveRevenue}
             includeOvertime={includeOvertime}

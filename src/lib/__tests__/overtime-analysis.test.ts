@@ -11,9 +11,11 @@ import {
   weeklyTargetHours,
   proratedWeeklyTargetHours,
   weeksInMonth,
+  buildWeekDayRows,
   WEEKLY_FULLTIME_TARGET,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeHoursEntry,
+  type DayDetailEntry,
 } from '@/lib/overtime-analysis';
 
 // ── Test-Helfer ──────────────────────────────────────────────────────────────
@@ -523,5 +525,92 @@ describe('Wochenansicht erfasst, was die Monatsansicht verfehlt', () => {
     expect(r.weeks[1].overtimeHours).toBe(0);
     expect(r.totalOvertimeHours).toBe(8);
     expect(weekly.totalOvertimeCost).toBe(400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tagesdetail (buildWeekDayRows) — reine Anzeige, KEINE Berechnung
+// ─────────────────────────────────────────────────────────────────────────────
+describe('buildWeekDayRows (Tagesdetail Ebene 3)', () => {
+  // KW 23 (2026) = 01.06.–07.06.2026 (Mo–So)
+  const KW23 = { isoYear: 2026, isoWeek: 23 };
+
+  it('liefert nur die Tage der angefragten ISO-Woche des Mitarbeiters, chronologisch', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-03', hours: 8 },
+      { employeeId: 'A', date: '2026-06-01', hours: 8 },
+      { employeeId: 'A', date: '2026-06-08', hours: 8 }, // KW24 → raus
+      { employeeId: 'B', date: '2026-06-02', hours: 8 }, // anderer MA → raus
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows.map((r) => r.date)).toEqual(['2026-06-01', '2026-06-03']);
+  });
+
+  it('mappt deutsche Wochentage + Tageslabel korrekt', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-01', hours: 8 }, // Montag
+      { employeeId: 'A', date: '2026-06-07', hours: 6 }, // Sonntag
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows[0]).toMatchObject({ weekday: 'Montag', dayLabel: '01.06.' });
+    expect(rows[1]).toMatchObject({ weekday: 'Sonntag', dayLabel: '07.06.' });
+  });
+
+  it('formatiert geteilte Schichten als Arbeitszeit-Bereich', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-02', hours: 8, start: '09:00', end: '15:00', start2: '17:00', end2: '23:00' },
+      { employeeId: 'A', date: '2026-06-03', hours: 4, start: '08:00', end: '12:00' },
+      { employeeId: 'A', date: '2026-06-04', hours: 4 }, // keine Zeiten
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows[0].timeRange).toBe('09:00–15:00 / 17:00–23:00');
+    expect(rows[1].timeRange).toBe('08:00–12:00');
+    expect(rows[2].timeRange).toBe('');
+  });
+
+  it('Abwesenheitstage erscheinen mit 0 produktiven Stunden + absenceType', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-01', hours: 8 },
+      { employeeId: 'A', date: '2026-06-02', hours: 0, absenceType: 'FE' },
+      { employeeId: 'A', date: '2026-06-03', hours: 8, absenceType: 'K' }, // Abwesenheit gewinnt
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows[0]).toMatchObject({ productiveHours: 8, absenceType: null });
+    expect(rows[1]).toMatchObject({ productiveHours: 0, absenceType: 'FE' });
+    expect(rows[2]).toMatchObject({ productiveHours: 0, absenceType: 'K' });
+  });
+
+  it('Zusatzkosten-Tage sind nicht produktiv, aber als isAdditionalCost markiert', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-05', hours: 5, isAdditionalCost: true },
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows[0]).toMatchObject({ productiveHours: 0, isAdditionalCost: true, absenceType: null });
+  });
+
+  it('über 8.4h wird informativ markiert (kein Einfluss auf Berechnung)', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-01', hours: 8.4 },
+      { employeeId: 'A', date: '2026-06-02', hours: 9 },
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows[0].over84).toBe(false); // exakt 8.4 ist NICHT darüber
+    expect(rows[1].over84).toBe(true);
+  });
+
+  it('fasst mehrere produktive Einträge desselben Tages zusammen', () => {
+    const entries: DayDetailEntry[] = [
+      { employeeId: 'A', date: '2026-06-02', hours: 4, start: '08:00', end: '12:00' },
+      { employeeId: 'A', date: '2026-06-02', hours: 5, start: '14:00', end: '19:00' },
+    ];
+    const rows = buildWeekDayRows(entries, 'A', KW23.isoYear, KW23.isoWeek);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].productiveHours).toBe(9);
+    expect(rows[0].over84).toBe(true);
+    expect(rows[0].timeRange).toBe('08:00–12:00 / 14:00–19:00');
+  });
+
+  it('leere Eingabe → leeres Ergebnis', () => {
+    expect(buildWeekDayRows([], 'A', KW23.isoYear, KW23.isoWeek)).toEqual([]);
   });
 });

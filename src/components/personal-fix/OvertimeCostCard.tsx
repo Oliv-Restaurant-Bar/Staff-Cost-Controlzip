@@ -1,26 +1,30 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// OvertimeCostCard — Überstundenkosten-Analyse für Festangestellte
+// OvertimeCostCard — Überstundenkosten-Analyse für Festangestellte (Drill-down)
 // ─────────────────────────────────────────────────────────────────────────────
-// Eigenständige, in PersonalFix eingebettete Karte mit ZWEI Ansichten:
-//   • Monat  — Überstunden über dem Monatssoll (42 h × Wochen im Monat × Pensum)
-//   • Woche  — Überstunden je ISO-Kalenderwoche, anteilig nach Tagen im Monat
-//             (Wochensoll = 42 h × Pensum × Tage der Woche im Monat ÷ 7)
+// Kompakte, manager-freundliche Darstellung mit Aufklapp-Logik (Accordion):
 //
-// Beide Ansichten zeigen:
-//   - reguläre Personalkosten, zusätzliche Überstundenkosten, Total inkl./exkl.
-//     Überstunden + lokal neu berechnete PKQ (Summen nutzen die AKTIVE Ansicht)
-//   - Toggle "Überstundenkosten einbeziehen" (steuert Total + PKQ)
-//   - manuelle Zusatzkosten als Unterzeile (reine Anzeige; bereits im regulären
-//     Total enthalten, NICHT in den Überstunden)
+//   Ebene 1 — eine Zeile pro Mitarbeiter (Monatsüberblick), sortiert nach den
+//             meisten Überstunden. Klick öffnet die Detailansicht.
+//   Ebene 2 — Wochenübersicht des Mitarbeiters (ISO-Wochen, anteilig im Monat)
+//             + separater Zusatzkosten-Block. Klick auf eine Woche öffnet …
+//   Ebene 3 — Tagesdetail der Woche (Datum, Wochentag, Arbeitszeit, produktive
+//             Stunden, Abwesenheit, 8.4-h-Info).
 //
-// Berechnung kommt vollständig aus der puren Lib `overtime-analysis`. Diese
-// Komponente rendert nur. Berechtigungen (defense-in-depth):
+// Wochen werden erst gerendert, wenn ein Mitarbeiter aufgeklappt ist; Tage erst,
+// wenn eine Woche aufgeklappt ist (lazy). Aufgeklappte Zeilen bleiben erhalten,
+// solange die Seite geöffnet bleibt (lokaler State).
+//
+// Die GESAMTE Berechnung kommt unverändert aus der puren Lib `overtime-analysis`
+// (Monats- + Wochenauswertung). Diese Komponente rendert nur. Das Tagesdetail
+// ist reine Anzeige (buildWeekDayRows) und verändert KEINE Berechnung.
+//
+// Berechtigungen (defense-in-depth):
 //   - canSeeIndividualRates (canSeeHourlyWages) → individuelle Kosten/Sätze
 //   - canSeeTotals (canSeePersonnelCostTotals)  → aggregierte Kosten/PKQ
 // Überstunden-STUNDEN sind keine Lohndaten und immer sichtbar.
 // ─────────────────────────────────────────────────────────────────────────────
-import { Fragment, useState } from 'react';
-import { Clock, AlertTriangle } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
+import { Clock, AlertTriangle, ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
@@ -31,19 +35,22 @@ import {
 import { cn } from '@/lib/utils';
 import {
   computeOvertimeTotals,
+  buildWeekDayRows,
   DAILY_OVERTIME_THRESHOLD,
   type OvertimeAnalysis,
   type WeeklyOvertimeAnalysis,
+  type EmployeeWeeklyOvertimeResult,
+  type DayDetailEntry,
 } from '@/lib/overtime-analysis';
 
-type OvertimeView = 'month' | 'week';
-
 interface OvertimeCostCardProps {
-  /** Monatsauswertung (bestehende Logik) */
+  /** Monatsauswertung (Ebene 1 + Werte je Mitarbeiter) */
   analysis: OvertimeAnalysis;
-  /** Wochenauswertung (ISO-Wochen anteilig im Monat) */
+  /** Wochenauswertung (Ebene 2, ISO-Wochen anteilig im Monat) */
   weeklyAnalysis: WeeklyOvertimeAnalysis;
-  /** Reguläre Personalkosten (IST) des Zeitraums — Basis für Total/PKQ */
+  /** Tagesdaten des Monats inkl. Abwesenheiten + Zeiten (Ebene 3, reine Anzeige) */
+  dayDetailEntries: DayDetailEntry[];
+  /** Reguläre Personalkosten (IST) des Monats — Basis für Total/PKQ (inkl. Zusatzkosten) */
   regularCost: number;
   /** Netto-Umsatz des Zeitraums (für PKQ) */
   netRevenue: number;
@@ -57,7 +64,7 @@ interface OvertimeCostCardProps {
   periodLabel?: string;
   /** Überstundenberechnung pro Mitarbeiter (de)aktivieren (vom Parent persistiert) */
   onToggleEmployeeDisabled?: (employeeId: string, disabled: boolean) => void;
-  /** Deaktivieren-Checkbox anzeigen (vom Parent gegated) */
+  /** Status-Umschalter (Checkbox) anzeigen (vom Parent gegated) */
   canManageDisable?: boolean;
 }
 
@@ -76,9 +83,12 @@ const pct = (n: number | null): string =>
 const wl = (n: number): string =>
   `${n.toLocaleString('de-CH', { maximumFractionDigits: 1 })} %`;
 
+const dmShort = (isoDate: string): string => `${isoDate.slice(8, 10)}.${isoDate.slice(5, 7)}.`;
+
 export function OvertimeCostCard({
   analysis,
   weeklyAnalysis,
+  dayDetailEntries,
   regularCost,
   netRevenue,
   includeOvertime,
@@ -89,18 +99,44 @@ export function OvertimeCostCard({
   onToggleEmployeeDisabled,
   canManageDisable = false,
 }: OvertimeCostCardProps) {
-  const [view, setView] = useState<OvertimeView>('month');
+  const [expandedEmployees, setExpandedEmployees] = useState<Set<string>>(new Set());
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<string>>(new Set());
 
   const showCostCol = canSeeIndividualRates;
-  const showDisableCol = canManageDisable && !!onToggleEmployeeDisabled;
+  const showStatusToggle = canManageDisable && !!onToggleEmployeeDisabled;
 
-  // Summen / Kontextzeile nutzen immer die AKTIVE Ansicht.
-  const activeOvertimeCost = view === 'week' ? weeklyAnalysis.totalOvertimeCost : analysis.totalOvertimeCost;
-  const activeOvertimeHours = view === 'week' ? weeklyAnalysis.totalOvertimeHours : analysis.totalOvertimeHours;
-  const activeAffected = view === 'week' ? weeklyAnalysis.affectedEmployeeCount : analysis.affectedEmployeeCount;
-  const activeHasUnavailableRates = view === 'week' ? weeklyAnalysis.hasUnavailableRates : analysis.hasUnavailableRates;
+  const toggleEmployee = (id: string) =>
+    setExpandedEmployees((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const toggleWeek = (key: string) =>
+    setExpandedWeeks((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
 
-  const totals = computeOvertimeTotals(regularCost, activeOvertimeCost, netRevenue, includeOvertime);
+  // Wochenauswertung je Mitarbeiter (für die aufgeklappte Ebene 2).
+  const weeklyByEmployee = useMemo(
+    () => new Map<string, EmployeeWeeklyOvertimeResult>(
+      weeklyAnalysis.employees.map((w) => [w.employeeId, w]),
+    ),
+    [weeklyAnalysis],
+  );
+
+  // Top-Summen: Fixlohnkosten / Überstundenkosten / Zusatzkosten / Total / PKQ.
+  // Zusatzkosten sind bereits in `regularCost` enthalten → Fixlohn = regulär − Zusatz
+  // (reine Aufgliederung, keine geänderte Berechnung). Total/PKQ via computeOvertimeTotals.
+  const totalAdditionalCost = useMemo(
+    () => Math.round(analysis.employees.reduce((s, e) => s + (e.additionalCost ?? 0), 0) * 100) / 100,
+    [analysis],
+  );
+  const fixlohnCost = Math.round((regularCost - totalAdditionalCost) * 100) / 100;
+  const totals = computeOvertimeTotals(regularCost, analysis.totalOvertimeCost, netRevenue, includeOvertime);
+
+  const colCount = 9 + (showCostCol ? 2 : 0); // siehe Header unten
 
   return (
     <Card>
@@ -115,14 +151,13 @@ export function OvertimeCostCard({
               )}
             </CardTitle>
             <p className="mt-1 text-xs text-muted-foreground">
-              {view === 'week'
-                ? 'Wochen-Überstunden über dem anteiligen Wochensoll (42 h × Pensum, anteilig nach Tagen im Monat).'
-                : 'Monats-Überstunden über dem Monatssoll (42 h × Wochen im Monat × Pensum).'}
-              {activeAffected > 0 && (
+              Kompakter Überblick pro Mitarbeiter. Zeile aufklappen für Wochen, Woche aufklappen
+              für Tage.
+              {analysis.affectedEmployeeCount > 0 && (
                 <>
                   {' '}
-                  {activeAffected} Mitarbeiter betroffen ·{' '}
-                  {hrs(activeOvertimeHours)} Überstunden gesamt.
+                  {analysis.affectedEmployeeCount} Mitarbeiter betroffen ·{' '}
+                  {hrs(analysis.totalOvertimeHours)} Überstunden gesamt.
                 </>
               )}
             </p>
@@ -135,42 +170,30 @@ export function OvertimeCostCard({
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* ── Ansichts-Umschalter (Monat | Woche) ──────────────────────────── */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-md border bg-muted/40 p-0.5" role="tablist" aria-label="Ansicht">
-            <ViewButton active={view === 'month'} onClick={() => setView('month')}>Monat</ViewButton>
-            <ViewButton active={view === 'week'} onClick={() => setView('week')}>Woche</ViewButton>
-          </div>
-          {view === 'week' && (
-            <p className="text-xs text-muted-foreground">
-              In der Wochenansicht wird jede Kalenderwoche anteilig für den ausgewählten Monat berechnet.
-            </p>
-          )}
-        </div>
-
-        {/* ── Summen / PKQ (nur bei aggregierter Kostensicht) ──────────────── */}
+        {/* ── Top-Summen / PKQ (nur bei aggregierter Kostensicht) ──────────────── */}
         {canSeeTotals && (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatTile label="Reguläre Kosten" value={chf(totals.regularCost)} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            <StatTile label="Fixlohnkosten" value={chf(fixlohnCost)} />
             <StatTile
               label="Überstundenkosten"
-              value={chf(totals.overtimeCost)}
-              accent={totals.overtimeCost > 0 ? 'amber' : 'default'}
+              value={chf(analysis.totalOvertimeCost)}
+              accent={analysis.totalOvertimeCost > 0 ? 'amber' : 'default'}
             />
+            <StatTile label="Zusatzkosten" value={chf(totalAdditionalCost)} />
             <StatTile
-              label={includeOvertime ? 'Total inkl. ÜS' : 'Total exkl. ÜS'}
+              label={includeOvertime ? 'Total Personalkosten (inkl. ÜS)' : 'Total Personalkosten (exkl. ÜS)'}
               value={chf(totals.effectiveTotal)}
               accent="blue"
             />
             <StatTile
-              label={includeOvertime ? 'PKQ inkl. ÜS' : 'PKQ exkl. ÜS'}
+              label={includeOvertime ? 'PKQ (inkl. ÜS)' : 'PKQ (exkl. ÜS)'}
               value={pct(totals.effectivePkq)}
               accent="blue"
             />
           </div>
         )}
 
-        {activeHasUnavailableRates && (
+        {analysis.hasUnavailableRates && (
           <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
@@ -180,391 +203,418 @@ export function OvertimeCostCard({
           </div>
         )}
 
-        {/* ── Tabelle (je nach Ansicht) ────────────────────────────────────── */}
-        {view === 'month' ? (
-          <MonthlyTable
-            analysis={analysis}
-            showCostCol={showCostCol}
-            showDisableCol={showDisableCol}
-            onToggleEmployeeDisabled={onToggleEmployeeDisabled}
-          />
+        {/* ── Ebene 1: Mitarbeiter-Übersicht ───────────────────────────────────── */}
+        {analysis.employees.length === 0 ? (
+          <p className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+            Keine festangestellten Mitarbeiter mit produktiven Ist-Stunden in diesem Monat.
+          </p>
         ) : (
-          <WeeklyTable
-            analysis={weeklyAnalysis}
-            showCostCol={showCostCol}
-            showDisableCol={showDisableCol}
-            onToggleEmployeeDisabled={onToggleEmployeeDisabled}
-          />
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8" />
+                  <TableHead>Mitarbeiter</TableHead>
+                  <TableHead>Abteilung</TableHead>
+                  <TableHead className="text-right">Pensum</TableHead>
+                  <TableHead className="text-right">Soll Monat</TableHead>
+                  <TableHead className="text-right">Ist Monat</TableHead>
+                  <TableHead className="text-right">Überstunden Monat</TableHead>
+                  {showCostCol && <TableHead className="text-right">Überstundenkosten</TableHead>}
+                  <TableHead className="text-right">Zusatzkosten</TableHead>
+                  {showCostCol && <TableHead className="text-right">Total Zusatzkosten</TableHead>}
+                  <TableHead className="text-center">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {analysis.employees.map((e) => {
+                  const isOpen = expandedEmployees.has(e.employeeId);
+                  const weekly = weeklyByEmployee.get(e.employeeId);
+                  return (
+                    <Fragment key={e.employeeId}>
+                      <TableRow
+                        className={cn('cursor-pointer hover:bg-muted/40', e.overtimeDisabled && 'opacity-60')}
+                        onClick={() => toggleEmployee(e.employeeId)}
+                      >
+                        <TableCell className="align-middle">
+                          <ChevronRight
+                            className={cn('h-4 w-4 text-muted-foreground transition-transform', isOpen && 'rotate-90')}
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          {e.name}
+                          {e.daysOver84Count > 0 && (
+                            <span className="ml-1 text-[11px] text-muted-foreground">
+                              · {e.daysOver84Count} Tag{e.daysOver84Count === 1 ? '' : 'e'} über{' '}
+                              {DAILY_OVERTIME_THRESHOLD}h
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell className="capitalize text-muted-foreground">{e.department}</TableCell>
+                        <TableCell className="text-right tabular-nums">{wl(e.workloadPercent)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{hrs(e.monthlyTargetHours)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{hrs(e.productiveHours)}</TableCell>
+                        <TableCell className="text-right">
+                          {e.overtimeDisabled ? (
+                            <span className="text-xs text-muted-foreground">deaktiviert</span>
+                          ) : (
+                            <OvertimeBadge hours={e.overtimeHours} />
+                          )}
+                        </TableCell>
+                        {showCostCol && (
+                          <TableCell className="text-right tabular-nums">
+                            {e.overtimeDisabled ? (
+                              <span className="text-muted-foreground">{chf(0)}</span>
+                            ) : e.overtimeCost === null ? (
+                              <span className="text-amber-600">kein Satz</span>
+                            ) : (
+                              chf(e.overtimeCost)
+                            )}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {e.additionalCostDays > 0
+                            ? `${e.additionalCostDays} Tag${e.additionalCostDays === 1 ? '' : 'e'}`
+                            : '—'}
+                        </TableCell>
+                        {showCostCol && (
+                          <TableCell className="text-right tabular-nums text-muted-foreground">
+                            {e.additionalCostHours <= 0
+                              ? '—'
+                              : e.additionalCost === null
+                                ? 'kein Satz'
+                                : chf(e.additionalCost)}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-center" onClick={(ev) => ev.stopPropagation()}>
+                          {showStatusToggle ? (
+                            <label className="inline-flex cursor-pointer items-center gap-1.5">
+                              <Checkbox
+                                checked={!e.overtimeDisabled}
+                                onCheckedChange={(v) => onToggleEmployeeDisabled?.(e.employeeId, v !== true)}
+                                aria-label={`Überstunden für ${e.name} aktivieren`}
+                              />
+                              <span className="text-xs text-muted-foreground">
+                                {e.overtimeDisabled ? 'Deaktiviert' : 'Aktiviert'}
+                              </span>
+                            </label>
+                          ) : (
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                'text-xs',
+                                e.overtimeDisabled
+                                  ? 'text-muted-foreground'
+                                  : 'border-emerald-300 bg-emerald-50 text-emerald-700',
+                              )}
+                            >
+                              {e.overtimeDisabled ? 'Deaktiviert' : 'Aktiviert'}
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+
+                      {/* Ebene 2 + 3 (lazy: nur wenn aufgeklappt) */}
+                      {isOpen && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={colCount} className="bg-muted/20 p-0">
+                            <EmployeeDetail
+                              employeeId={e.employeeId}
+                              weekly={weekly}
+                              additionalCostDays={e.additionalCostDays}
+                              additionalCost={e.additionalCost}
+                              additionalCostHours={e.additionalCostHours}
+                              dayDetailEntries={dayDetailEntries}
+                              expandedWeeks={expandedWeeks}
+                              onToggleWeek={toggleWeek}
+                              showCostCol={showCostCol}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={6} className="text-right font-medium">
+                    Total Überstunden
+                  </TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums">
+                    {hrs(analysis.totalOvertimeHours)}
+                  </TableCell>
+                  {showCostCol && (
+                    <TableCell className="text-right font-semibold tabular-nums">
+                      {chf(analysis.totalOvertimeCost)}
+                    </TableCell>
+                  )}
+                  <TableCell />
+                  {showCostCol && (
+                    <TableCell className="text-right font-semibold tabular-nums">
+                      {chf(totalAdditionalCost)}
+                    </TableCell>
+                  )}
+                  <TableCell />
+                </TableRow>
+              </TableFooter>
+            </Table>
+          </div>
         )}
 
-        {/* ── Fussnote ─────────────────────────────────────────────────────── */}
+        {/* ── Fussnote ─────────────────────────────────────────────────────────── */}
         <p className="text-[11px] leading-relaxed text-muted-foreground">
-          {view === 'week' ? (
-            <>
-              In der Wochenansicht entstehen Überstunden, wenn die produktiven Ist-Stunden einer
-              Kalenderwoche über dem anteiligen Wochensoll (42 h × Pensum × Tage der Woche im Monat ÷ 7)
-              liegen. Randwochen am Monatsanfang/-ende werden anteilig berechnet.
-            </>
-          ) : (
-            <>
-              Überstunden entstehen ausschliesslich, wenn die produktiven Ist-Stunden des Monats über
-              dem Monatssoll (42 h × Wochen im Monat × Pensum) liegen. Die Auswertung bezieht sich immer
-              auf den Vollmonat (unabhängig vom Stichtag).
-            </>
-          )}
-          {' '}Abwesenheiten (FE/K/U) und manuelle Zusatzkosten zählen nicht als Überstunden. Tage über{' '}
-          {DAILY_OVERTIME_THRESHOLD}h sind nur informativ. Manuelle Zusatzkosten sind bereits im regulären
-          Personalkosten-Total enthalten.
+          Überstunden entstehen, wenn die produktiven Ist-Stunden des Monats über dem Monatssoll
+          (42 h × Wochen im Monat × Pensum) liegen; die Wochenansicht rechnet jede Kalenderwoche
+          anteilig nach Tagen im Monat. Abwesenheiten (FE/K/U) und manuelle Zusatzkosten zählen nicht
+          als Überstunden. Tage über {DAILY_OVERTIME_THRESHOLD}h sind nur informativ. Manuelle
+          Zusatzkosten sind bereits im regulären Personalkosten-Total enthalten.
         </p>
       </CardContent>
     </Card>
   );
 }
 
-// ── Monatstabelle (bestehende Ansicht) ───────────────────────────────────────
-function MonthlyTable({
-  analysis,
+// ── Ebene 2 + 3: Detailansicht eines Mitarbeiters ────────────────────────────
+function EmployeeDetail({
+  employeeId,
+  weekly,
+  additionalCostDays,
+  additionalCost,
+  additionalCostHours,
+  dayDetailEntries,
+  expandedWeeks,
+  onToggleWeek,
   showCostCol,
-  showDisableCol,
-  onToggleEmployeeDisabled,
 }: {
-  analysis: OvertimeAnalysis;
+  employeeId: string;
+  weekly?: EmployeeWeeklyOvertimeResult;
+  additionalCostDays: number;
+  additionalCost: number | null;
+  additionalCostHours: number;
+  dayDetailEntries: DayDetailEntry[];
+  expandedWeeks: Set<string>;
+  onToggleWeek: (key: string) => void;
   showCostCol: boolean;
-  showDisableCol: boolean;
-  onToggleEmployeeDisabled?: (employeeId: string, disabled: boolean) => void;
 }) {
-  if (analysis.employees.length === 0) {
-    return (
-      <p className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
-        Keine festangestellten Mitarbeiter mit produktiven Ist-Stunden in diesem Monat.
-      </p>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Mitarbeiter</TableHead>
-            <TableHead>Abteilung</TableHead>
-            <TableHead className="text-right">Pensum</TableHead>
-            <TableHead className="text-right">Soll Monat</TableHead>
-            <TableHead className="text-right">Ist Monat produktiv</TableHead>
-            <TableHead className="text-right">Differenz</TableHead>
-            <TableHead className="text-right">Überstunden</TableHead>
-            {showCostCol && <TableHead className="text-right">Überstundenkosten</TableHead>}
-            {showDisableCol && <TableHead className="text-center">Deaktivieren</TableHead>}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {analysis.employees.map((e) => {
-            const hasOvertime = e.overtimeHours > 0;
-            return (
-              <Fragment key={e.employeeId}>
-                <TableRow className={cn(e.overtimeDisabled && 'opacity-60')}>
-                  <TableCell className="font-medium">
-                    {e.name}
-                    {e.daysOver84Count > 0 && (
-                      <span className="ml-1 text-[11px] text-muted-foreground">
-                        · {e.daysOver84Count} Tag{e.daysOver84Count === 1 ? '' : 'e'} über{' '}
-                        {DAILY_OVERTIME_THRESHOLD}h (Info)
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="capitalize text-muted-foreground">{e.department}</TableCell>
-                  <TableCell className="text-right tabular-nums">{wl(e.workloadPercent)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{hrs(e.monthlyTargetHours)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{hrs(e.productiveHours)}</TableCell>
-                  <TableCell
-                    className={cn(
-                      'text-right tabular-nums',
-                      e.difference > 0 ? 'text-amber-600' : e.difference < 0 ? 'text-muted-foreground' : '',
-                    )}
-                  >
-                    {signedHrs(e.difference)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {e.overtimeDisabled ? (
-                      <span className="text-xs text-muted-foreground">deaktiviert</span>
-                    ) : hasOvertime ? (
-                      <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
-                        {hrs(e.overtimeHours)}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">{hrs(0)}</span>
-                    )}
-                  </TableCell>
-                  {showCostCol && (
-                    <TableCell className="text-right tabular-nums">
-                      {e.overtimeDisabled ? (
-                        <span className="text-muted-foreground">{chf(0)}</span>
-                      ) : e.overtimeCost === null ? (
-                        <span className="text-amber-600">kein Satz</span>
-                      ) : (
-                        chf(e.overtimeCost)
-                      )}
-                    </TableCell>
-                  )}
-                  {showDisableCol && (
-                    <TableCell className="text-center">
-                      <Checkbox
-                        checked={e.overtimeDisabled}
-                        onCheckedChange={(v) => onToggleEmployeeDisabled?.(e.employeeId, v === true)}
-                        aria-label={`Überstunden für ${e.name} deaktivieren`}
-                      />
-                    </TableCell>
-                  )}
-                </TableRow>
-                {e.additionalCostHours > 0 && (
-                  <TableRow key={`${e.employeeId}-zusatz`} className="bg-muted/30">
-                    <TableCell className="pl-6 text-xs text-muted-foreground" colSpan={4}>
-                      ↳ Zusatzkosten ({e.additionalCostDays} Tag{e.additionalCostDays === 1 ? '' : 'e'},
-                      bereits im regulären Total)
-                    </TableCell>
-                    <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                      {hrs(e.additionalCostHours)}
-                    </TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
-                    <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
-                    {showCostCol && (
-                      <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                        {e.additionalCost === null ? '—' : chf(e.additionalCost)}
-                      </TableCell>
-                    )}
-                    {showDisableCol && <TableCell />}
-                  </TableRow>
-                )}
-              </Fragment>
-            );
-          })}
-        </TableBody>
-        <TableFooter>
-          <TableRow>
-            <TableCell colSpan={6} className="text-right font-medium">
-              Total Überstunden
-            </TableCell>
-            <TableCell className="text-right font-semibold tabular-nums">
-              {hrs(analysis.totalOvertimeHours)}
-            </TableCell>
-            {showCostCol && (
-              <TableCell className="text-right font-semibold tabular-nums">
-                {chf(analysis.totalOvertimeCost)}
-              </TableCell>
-            )}
-            {showDisableCol && <TableCell />}
-          </TableRow>
-        </TableFooter>
-      </Table>
-    </div>
+  const additionalDays = useMemo(
+    () =>
+      additionalCostHours > 0
+        ? dayDetailEntries
+            .filter((d) => d.employeeId === employeeId && d.isAdditionalCost && !d.absenceType && (d.hours ?? 0) > 0)
+            .sort((a, b) => a.date.localeCompare(b.date))
+        : [],
+    [dayDetailEntries, employeeId, additionalCostHours],
   );
-}
 
-// ── Wochentabelle (ISO-Wochen, gruppiert je Mitarbeiter) ─────────────────────
-function WeeklyTable({
-  analysis,
-  showCostCol,
-  showDisableCol,
-  onToggleEmployeeDisabled,
-}: {
-  analysis: WeeklyOvertimeAnalysis;
-  showCostCol: boolean;
-  showDisableCol: boolean;
-  onToggleEmployeeDisabled?: (employeeId: string, disabled: boolean) => void;
-}) {
-  if (analysis.employees.length === 0) {
-    return (
-      <p className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
-        Keine festangestellten Mitarbeiter mit produktiven Ist-Stunden in diesem Monat.
-      </p>
-    );
-  }
+  const weekColCount = 6 + (showCostCol ? 1 : 0);
 
   return (
-    <div className="overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Mitarbeiter</TableHead>
-            <TableHead>Abteilung</TableHead>
-            <TableHead className="text-right">Pensum</TableHead>
-            <TableHead>Kalenderwoche</TableHead>
-            <TableHead>Zeitraum</TableHead>
-            <TableHead className="text-right">Soll Woche</TableHead>
-            <TableHead className="text-right">Ist Woche produktiv</TableHead>
-            <TableHead className="text-right">Differenz</TableHead>
-            <TableHead className="text-right">Überstunden Woche</TableHead>
-            {showCostCol && <TableHead className="text-right">Überstundenkosten</TableHead>}
-            {showDisableCol && <TableHead className="text-center">Deaktivieren</TableHead>}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {analysis.employees.map((e) => (
-            <Fragment key={e.employeeId}>
-              {/* Gruppen-Kopfzeile je Mitarbeiter */}
-              <TableRow className={cn('border-t-2 bg-muted/40', e.overtimeDisabled && 'opacity-60')}>
-                <TableCell className="font-semibold">{e.name}</TableCell>
-                <TableCell className="capitalize text-muted-foreground">{e.department}</TableCell>
-                <TableCell className="text-right tabular-nums">{wl(e.workloadPercent)}</TableCell>
-                <TableCell colSpan={5} className="text-right text-xs text-muted-foreground">
-                  Σ Monat (alle Wochen)
-                </TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">
-                  {e.overtimeDisabled ? (
-                    <span className="text-xs font-normal text-muted-foreground">deaktiviert</span>
-                  ) : (
-                    hrs(e.totalOvertimeHours)
-                  )}
-                </TableCell>
-                {showCostCol && (
-                  <TableCell className="text-right font-semibold tabular-nums">
-                    {e.overtimeDisabled ? (
-                      <span className="font-normal text-muted-foreground">{chf(0)}</span>
-                    ) : e.totalOvertimeCost === null ? (
-                      <span className="font-normal text-amber-600">kein Satz</span>
-                    ) : (
-                      chf(e.totalOvertimeCost)
-                    )}
-                  </TableCell>
-                )}
-                {showDisableCol && (
-                  <TableCell className="text-center">
-                    <Checkbox
-                      checked={e.overtimeDisabled}
-                      onCheckedChange={(v) => onToggleEmployeeDisabled?.(e.employeeId, v === true)}
-                      aria-label={`Überstunden für ${e.name} deaktivieren`}
-                    />
-                  </TableCell>
-                )}
-              </TableRow>
-
-              {/* Wochenzeilen */}
-              {e.weeks.map((w) => {
-                const hasOvertime = w.overtimeHours > 0;
-                const isPartial = w.daysInMonth < 7;
-                return (
-                  <Fragment key={`${e.employeeId}-${w.isoYear}-${w.isoWeek}`}>
-                    <TableRow className={cn(e.overtimeDisabled && 'opacity-60')}>
-                      <TableCell />
-                      <TableCell />
-                      <TableCell />
-                      <TableCell className="whitespace-nowrap">
-                        {w.weekLabel}
-                        {w.daysOver84Count > 0 && (
-                          <span className="ml-1 text-[11px] text-muted-foreground">
-                            · {w.daysOver84Count} Tag{w.daysOver84Count === 1 ? '' : 'e'} über{' '}
-                            {DAILY_OVERTIME_THRESHOLD}h
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {w.rangeLabel}
-                        {isPartial && (
-                          <span className="ml-1">· {w.daysInMonth}/7 Tage im Monat</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{hrs(w.weeklyTargetHours)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{hrs(w.productiveHours)}</TableCell>
-                      <TableCell
-                        className={cn(
-                          'text-right tabular-nums',
-                          w.difference > 0 ? 'text-amber-600' : w.difference < 0 ? 'text-muted-foreground' : '',
-                        )}
+    <div className="space-y-4 px-4 py-3">
+      {/* Wochenübersicht (Ebene 2) */}
+      <div>
+        <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Wochen
+        </div>
+        {!weekly || weekly.weeks.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Keine Wochendaten in diesem Monat.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-md border bg-background">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-8" />
+                  <TableHead>KW</TableHead>
+                  <TableHead>Zeitraum</TableHead>
+                  <TableHead className="text-right">Soll</TableHead>
+                  <TableHead className="text-right">Ist</TableHead>
+                  <TableHead className="text-right">Überstunden</TableHead>
+                  {showCostCol && <TableHead className="text-right">Kosten</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {weekly.weeks.map((w) => {
+                  const key = `${employeeId}::${w.isoYear}-${w.isoWeek}`;
+                  const open = expandedWeeks.has(key);
+                  const isPartial = w.daysInMonth < 7;
+                  return (
+                    <Fragment key={key}>
+                      <TableRow
+                        className={cn('cursor-pointer hover:bg-muted/40', weekly.overtimeDisabled && 'opacity-60')}
+                        onClick={() => onToggleWeek(key)}
                       >
-                        {signedHrs(w.difference)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {e.overtimeDisabled ? (
-                          <span className="text-xs text-muted-foreground">deaktiviert</span>
-                        ) : hasOvertime ? (
-                          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700">
-                            {hrs(w.overtimeHours)}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">{hrs(0)}</span>
-                        )}
-                      </TableCell>
-                      {showCostCol && (
-                        <TableCell className="text-right tabular-nums">
-                          {e.overtimeDisabled ? (
-                            <span className="text-muted-foreground">{chf(0)}</span>
-                          ) : w.overtimeCost === null ? (
-                            <span className="text-amber-600">kein Satz</span>
+                        <TableCell>
+                          <ChevronRight
+                            className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-90')}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap font-medium">{w.weekLabel}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                          {w.rangeLabel}
+                          {isPartial && <span className="ml-1">· {w.daysInMonth}/7 Tage</span>}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{hrs(w.weeklyTargetHours)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{hrs(w.productiveHours)}</TableCell>
+                        <TableCell className="text-right">
+                          {weekly.overtimeDisabled ? (
+                            <span className="text-xs text-muted-foreground">deaktiviert</span>
                           ) : (
-                            chf(w.overtimeCost)
+                            <OvertimeBadge hours={w.overtimeHours} />
                           )}
                         </TableCell>
-                      )}
-                      {showDisableCol && <TableCell />}
-                    </TableRow>
-                    {w.additionalCostHours > 0 && (
-                      <TableRow className="bg-muted/20">
-                        <TableCell colSpan={6} className="pl-10 text-xs text-muted-foreground">
-                          ↳ Zusatzkosten ({w.additionalCostDays} Tag{w.additionalCostDays === 1 ? '' : 'e'},
-                          bereits im regulären Total)
-                        </TableCell>
-                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                          {hrs(w.additionalCostHours)}
-                        </TableCell>
-                        <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
-                        <TableCell className="text-right text-xs text-muted-foreground">—</TableCell>
                         {showCostCol && (
-                          <TableCell className="text-right text-xs tabular-nums text-muted-foreground">
-                            {w.additionalCost === null ? '—' : chf(w.additionalCost)}
+                          <TableCell className="text-right tabular-nums">
+                            {weekly.overtimeDisabled ? (
+                              <span className="text-muted-foreground">{chf(0)}</span>
+                            ) : w.overtimeCost === null ? (
+                              <span className="text-amber-600">kein Satz</span>
+                            ) : (
+                              chf(w.overtimeCost)
+                            )}
                           </TableCell>
                         )}
-                        {showDisableCol && <TableCell />}
                       </TableRow>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </Fragment>
+
+                      {/* Ebene 3: Tagesdetail (lazy) */}
+                      {open && (
+                        <TableRow className="hover:bg-transparent">
+                          <TableCell colSpan={weekColCount} className="bg-muted/30 p-0">
+                            <DayDetailTable
+                              employeeId={employeeId}
+                              isoYear={w.isoYear}
+                              isoWeek={w.isoWeek}
+                              dayDetailEntries={dayDetailEntries}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+
+      {/* Zusatzkosten-Block (separat, NICHT in den Überstundenzeilen) */}
+      {additionalCostHours > 0 && (
+        <div className="rounded-md border border-dashed bg-background p-3">
+          <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Zusatzkosten
+          </div>
+          <ul className="space-y-0.5 text-sm">
+            {additionalDays.map((d) => (
+              <li key={d.date} className="flex items-center justify-between gap-4 text-muted-foreground">
+                <span>• {dmShort(d.date)} · {hrs(d.hours ?? 0)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex items-center justify-between border-t pt-2 text-sm font-medium">
+            <span>
+              Total Zusatzkosten ({additionalCostDays} Tag{additionalCostDays === 1 ? '' : 'e'})
+            </span>
+            {showCostCol && (
+              <span className="tabular-nums">
+                {additionalCost === null ? 'kein Satz' : chf(additionalCost)}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Zusatzkosten sind bereits im regulären Personalkosten-Total enthalten und zählen nicht als
+            Überstunden.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Ebene 3: Tagesdetail einer Woche ─────────────────────────────────────────
+function DayDetailTable({
+  employeeId,
+  isoYear,
+  isoWeek,
+  dayDetailEntries,
+}: {
+  employeeId: string;
+  isoYear: number;
+  isoWeek: number;
+  dayDetailEntries: DayDetailEntry[];
+}) {
+  const rows = useMemo(
+    () => buildWeekDayRows(dayDetailEntries, employeeId, isoYear, isoWeek),
+    [dayDetailEntries, employeeId, isoYear, isoWeek],
+  );
+
+  if (rows.length === 0) {
+    return <p className="px-4 py-3 text-xs text-muted-foreground">Keine Tagesdaten für diese Woche.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto px-2 py-2">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Datum</TableHead>
+            <TableHead>Wochentag</TableHead>
+            <TableHead>Arbeitszeit</TableHead>
+            <TableHead className="text-right">Produktive Stunden</TableHead>
+            <TableHead>Abwesenheit</TableHead>
+            <TableHead className="text-center">Über {DAILY_OVERTIME_THRESHOLD}h (Info)</TableHead>
+            <TableHead>Bemerkung</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((d) => (
+            <TableRow key={d.date} className="text-sm">
+              <TableCell className="whitespace-nowrap tabular-nums">{d.dayLabel}</TableCell>
+              <TableCell className="text-muted-foreground">{d.weekday}</TableCell>
+              <TableCell className="whitespace-nowrap tabular-nums text-muted-foreground">
+                {d.timeRange || '—'}
+              </TableCell>
+              <TableCell className="text-right tabular-nums">
+                {d.absenceType ? '—' : hrs(d.productiveHours)}
+              </TableCell>
+              <TableCell>
+                {d.absenceType ? (
+                  <Badge variant="outline" className="border-blue-300 bg-blue-50 text-blue-700">
+                    {d.absenceType}
+                  </Badge>
+                ) : d.isAdditionalCost ? (
+                  <span className="text-xs text-muted-foreground">Zusatzkosten</span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell className="text-center">
+                {d.over84 ? (
+                  <span className="text-xs text-amber-600">ja</span>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell className="text-muted-foreground">—</TableCell>
+            </TableRow>
           ))}
         </TableBody>
-        <TableFooter>
-          <TableRow>
-            <TableCell colSpan={8} className="text-right font-medium">
-              Total Überstunden (alle Wochen)
-            </TableCell>
-            <TableCell className="text-right font-semibold tabular-nums">
-              {hrs(analysis.totalOvertimeHours)}
-            </TableCell>
-            {showCostCol && (
-              <TableCell className="text-right font-semibold tabular-nums">
-                {chf(analysis.totalOvertimeCost)}
-              </TableCell>
-            )}
-            {showDisableCol && <TableCell />}
-          </TableRow>
-        </TableFooter>
       </Table>
     </div>
   );
 }
 
-function ViewButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+// ── Überstunden-Badge (grün 0 / orange 1–5h / rot >5h) ────────────────────────
+function OvertimeBadge({ hours }: { hours: number }) {
+  const cls =
+    hours <= 0
+      ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+      : hours <= 5
+        ? 'border-amber-300 bg-amber-50 text-amber-700'
+        : 'border-red-300 bg-red-50 text-red-700';
   return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        'rounded px-3 py-1 text-sm font-medium transition-colors',
-        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-      )}
-    >
-      {children}
-    </button>
+    <Badge variant="outline" className={cn('tabular-nums', cls)}>
+      {hrs(hours)}
+    </Badge>
   );
 }
 

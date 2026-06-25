@@ -1,0 +1,160 @@
+Redesign the overtime section on /personal-fix to be much more compact, manager-friendly and drill-down based.
+
+Goal:
+The current weekly overtime table is too wide and difficult to read. Users should first get a compact overview per employee and only see weekly/day details when they click.
+
+New layout:
+
+LEVEL 1 (default view)
+
+Show only one row per employee.
+
+Columns:
+
+Mitarbeiter
+Abteilung
+Pensum
+Soll Monat
+Ist Monat
+Überstunden Monat
+Überstundenkosten
+Zusatzkosten
+Total Zusatzkosten
+Status (Überstunden aktiviert/deaktiviert)
+
+Sort employees by highest overtime first.
+
+Do NOT show every week immediately.
+
+------------------------------------------------
+
+LEVEL 2 (expand employee)
+
+When the user clicks the employee row (or chevron):
+
+Expand directly underneath.
+
+Show a compact weekly table:
+
+KW
+Zeitraum
+Soll
+Ist
+Überstunden
+Kosten
+
+Example:
+
+KW23    01.06–07.06     42.0     45.2     +3.2     CHF 120
+KW24    08.06–14.06     42.0     39.8      0.0     CHF 0
+KW25    15.06–21.06     42.0     48.1     +6.1     CHF 230
+
+------------------------------------------------
+
+LEVEL 3 (expand week)
+
+Clicking a week opens the daily detail.
+
+Show
+
+Datum
+Wochentag
+Arbeitszeit
+Produktive Stunden
+Abwesenheit
+Über 8.4h (Info)
+Bemerkung
+
+Example
+
+09.06 Montag
+09:00-15:00 / 17:00-23:00
+12.0 h
+
+10.06 Dienstag
+09:00-14:00
+5.0 h
+
+11.06 Mittwoch
+FE
+
+etc.
+
+------------------------------------------------
+
+UI
+
+Use accordion behaviour:
+
+Employee
+    -> Week
+        -> Day
+
+Never show all details at once.
+
+Remember expanded rows while staying on the page.
+
+------------------------------------------------
+
+Badges
+
+Green:
+0 Überstunden
+
+Orange:
+1-5h
+
+Red:
+>5h
+
+------------------------------------------------
+
+Totals
+
+At the top only show:
+
+Fixlohnkosten
+Überstundenkosten
+Zusatzkosten
+Total Personalkosten
+PKQ
+
+------------------------------------------------
+
+Manual Zusatzkosten
+
+Do NOT mix them into the overtime rows.
+
+Instead:
+
+Inside the expanded employee section show
+
+Zusatzkosten
+
+• Nachtzuschlag CHF ...
+• Bonus CHF ...
+• Manuelle Korrektur CHF ...
+
+with a subtotal.
+
+------------------------------------------------
+
+Performance
+
+Only load/render week rows when an employee is expanded.
+
+Only load/render day rows when a week is expanded.
+
+------------------------------------------------
+
+Do not change any business logic.
+
+Only redesign the UI and presentation while keeping all existing calculations and tests intact.
+
+Run:
+
+npm run typecheck
+
+npm test
+
+Document the UI redesign in replit.md.

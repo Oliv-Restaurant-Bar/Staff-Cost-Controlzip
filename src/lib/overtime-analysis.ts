@@ -684,3 +684,122 @@ export function computeOvertimeTotals(
     effectivePkq: includeOvertime ? pkqInclOvertime : pkqExclOvertime,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tages-Detail (Drill-down Ebene 3) — REINE ANZEIGE, KEINE Berechnung
+// ─────────────────────────────────────────────────────────────────────────────
+// Liefert die Tageszeilen einer einzelnen ISO-Woche eines Mitarbeiters für die
+// aufklappbare Detailansicht. Dies berührt KEINE Überstundenberechnung — es ist
+// ausschliesslich eine Aufbereitung der bereits geladenen Ist-Daten zur Anzeige
+// (Datum, Wochentag, Arbeitszeit, produktive Stunden, Abwesenheit, 8.4-h-Info).
+// Im Gegensatz zu den Berechnungs-Eingaben (OvertimeHoursEntry) enthalten die
+// Detail-Einträge AUCH Abwesenheitstage (FE/K/U), damit die Tagesliste vollständig
+// ist; die produktiven Stunden bleiben aber konsistent definiert
+// (produktiv = hours > 0 && !absenceType && !isAdditionalCost).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Eine Ist-Position pro Mitarbeiter und Tag inkl. Anzeige-Zeiten (für das Tages-Detail). */
+export interface DayDetailEntry {
+  employeeId: string;
+  date: string; // YYYY-MM-DD
+  hours: number;
+  absenceType?: string | null;
+  isAdditionalCost?: boolean;
+  /** Schichtzeiten (reine Anzeige) — erste Schicht */
+  start?: string | null;
+  end?: string | null;
+  /** Schichtzeiten (reine Anzeige) — zweite Schicht (geteilter Dienst) */
+  start2?: string | null;
+  end2?: string | null;
+}
+
+/** Eine aufbereitete Tageszeile für die Detailansicht. */
+export interface DayDetailRow {
+  date: string; // YYYY-MM-DD
+  /** Tag des Monats, z.B. "09.06." */
+  dayLabel: string;
+  /** Deutscher Wochentag, z.B. "Montag" */
+  weekday: string;
+  /** Arbeitszeit-Bereiche, z.B. "09:00–15:00 / 17:00–23:00" ('' wenn keine) */
+  timeRange: string;
+  /** Produktive Stunden (0 bei Abwesenheit/Zusatzkosten) */
+  productiveHours: number;
+  /** Abwesenheitscode (FE/K/U/…) oder null */
+  absenceType: string | null;
+  /** true = manueller Zusatzkosten-Tag (nicht produktiv, separat) */
+  isAdditionalCost: boolean;
+  /** produktive Stunden > 8.4 — NUR informativ */
+  over84: boolean;
+}
+
+const WEEKDAYS_DE = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'] as const;
+
+function formatTimeRange(e: DayDetailEntry): string {
+  const parts: string[] = [];
+  if (e.start && e.end) parts.push(`${e.start}–${e.end}`);
+  if (e.start2 && e.end2) parts.push(`${e.start2}–${e.end2}`);
+  return parts.join(' / ');
+}
+
+/**
+ * Liefert die Tageszeilen EINER ISO-Woche eines Mitarbeiters, chronologisch
+ * sortiert. Mehrere Einträge desselben Tages werden zusammengefasst (Stunden
+ * summiert, Zeitbereiche verbunden). Nur die Tage, deren ISO-Woche exakt
+ * (isoYear, isoWeek) entspricht. REINE ANZEIGE — keine Berechnungslogik.
+ */
+export function buildWeekDayRows(
+  entries: DayDetailEntry[],
+  employeeId: string,
+  isoYear: number,
+  isoWeek: number,
+): DayDetailRow[] {
+  interface Acc {
+    date: string;
+    productiveHours: number;
+    absenceType: string | null;
+    isAdditionalCost: boolean;
+    ranges: string[];
+  }
+  const byDate = new Map<string, Acc>();
+
+  for (const e of entries) {
+    if (e.employeeId !== employeeId) continue;
+    const ymd = parseYMD(e.date);
+    if (!ymd) continue;
+    const parts = isoWeekParts(ymd.y, ymd.m, ymd.d);
+    if (parts.isoYear !== isoYear || parts.isoWeek !== isoWeek) continue;
+
+    let acc = byDate.get(e.date);
+    if (!acc) {
+      acc = { date: e.date, productiveHours: 0, absenceType: null, isAdditionalCost: false, ranges: [] };
+      byDate.set(e.date, acc);
+    }
+    const absence = e.absenceType ?? null;
+    if (absence) {
+      if (!acc.absenceType) acc.absenceType = absence;
+    } else if (e.isAdditionalCost) {
+      acc.isAdditionalCost = true;
+    } else if (Number.isFinite(e.hours) && e.hours > 0) {
+      acc.productiveHours = round2(acc.productiveHours + e.hours);
+    }
+    const tr = formatTimeRange(e);
+    if (tr) acc.ranges.push(tr);
+  }
+
+  return Array.from(byDate.values())
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((a) => {
+      const ymd = parseYMD(a.date)!;
+      const weekdayIdx = new Date(Date.UTC(ymd.y, ymd.m - 1, ymd.d)).getUTCDay();
+      return {
+        date: a.date,
+        dayLabel: `${pad2(ymd.d)}.${pad2(ymd.m)}.`,
+        weekday: WEEKDAYS_DE[weekdayIdx],
+        timeRange: a.ranges.join(' / '),
+        productiveHours: round2(a.productiveHours),
+        absenceType: a.absenceType,
+        isAdditionalCost: a.isAdditionalCost,
+        over84: a.productiveHours > DAILY_OVERTIME_THRESHOLD,
+      };
+    });
+}
