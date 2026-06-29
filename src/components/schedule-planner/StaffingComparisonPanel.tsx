@@ -61,12 +61,6 @@ const STATUS_META: Record<
     badge:
       'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
   },
-  yellow: {
-    dot: 'bg-amber-500',
-    text: 'text-amber-700 dark:text-amber-300',
-    badge:
-      'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
-  },
   red: {
     dot: 'bg-red-500',
     text: 'text-red-700 dark:text-red-300',
@@ -224,20 +218,16 @@ export function StaffingComparisonPanel({
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-muted/40 px-3 py-2 text-sm">
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                {result.counts.green} OK
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-                {result.counts.yellow} knapp
+                {result.counts.green} erfüllt
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
-                {result.counts.red} kritisch
+                {result.counts.red} abweichend
               </span>
               <span className="ml-auto text-muted-foreground">
                 Benötigt <span className="font-medium text-foreground tabular-nums">{result.totals.required}</span>
                 {' · '}Geplant <span className="font-medium text-foreground tabular-nums">{result.totals.planned}</span>
-                {' · '}<span className={cn('font-medium', result.totals.diff < 0 ? 'text-red-600 dark:text-red-400' : result.totals.diff > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400')}>{formatStaffingDiff(result.totals.diff)}</span>
+                {' · '}<span className={cn('font-medium', result.totals.diff === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>{formatStaffingDiff(result.totals.diff)}</span>
               </span>
             </div>
 

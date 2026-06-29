@@ -88,15 +88,15 @@ const POSITIONS: Position[] = [
 // ─── comparisonStatus (symmetrisch über |diff|) ───────────────────────────────
 
 describe('comparisonStatus', () => {
-  it('grün bei exakter Erfüllung', () => {
+  it('grün NUR bei exakter Erfüllung', () => {
     expect(comparisonStatus(2, 2)).toBe('green');
     expect(comparisonStatus(0, 0)).toBe('green');
   });
-  it('gelb bei genau 1 zu wenig oder 1 zu viel', () => {
-    expect(comparisonStatus(3, 2)).toBe('yellow'); // -1
-    expect(comparisonStatus(2, 3)).toBe('yellow'); // +1
+  it('rot bei jeder Abweichung — bereits bei 1 zu wenig oder 1 zu viel', () => {
+    expect(comparisonStatus(3, 2)).toBe('red'); // -1
+    expect(comparisonStatus(2, 3)).toBe('red'); // +1
   });
-  it('rot bei 2+ zu wenig oder 2+ zu viel', () => {
+  it('rot auch bei größeren Abweichungen', () => {
     expect(comparisonStatus(3, 1)).toBe('red'); // -2
     expect(comparisonStatus(1, 3)).toBe('red'); // +2
     expect(comparisonStatus(5, 1)).toBe('red'); // -4
@@ -106,12 +106,12 @@ describe('comparisonStatus', () => {
 // ─── formatStaffingDiff ───────────────────────────────────────────────────────
 
 describe('formatStaffingDiff', () => {
-  it('zeigt die genaue Differenz mit Vorzeichen und korrektem Plural', () => {
+  it('zeigt die genaue Differenz mit Vorzeichen, Plural und Richtung', () => {
     expect(formatStaffingDiff(0)).toBe('±0');
-    expect(formatStaffingDiff(1)).toBe('+1 Person');
-    expect(formatStaffingDiff(2)).toBe('+2 Personen');
-    expect(formatStaffingDiff(-1)).toBe('−1 Person');
-    expect(formatStaffingDiff(-2)).toBe('−2 Personen');
+    expect(formatStaffingDiff(1)).toBe('+1 Person zu viel');
+    expect(formatStaffingDiff(2)).toBe('+2 Personen zu viel');
+    expect(formatStaffingDiff(-1)).toBe('−1 Person zu wenig');
+    expect(formatStaffingDiff(-2)).toBe('−2 Personen zu wenig');
   });
 });
 
@@ -207,30 +207,30 @@ describe('computeStaffingComparison', () => {
     expect(r.groups.find((g) => g.department === 'service')).toBeTruthy();
   });
 
-  it('Szenario 2 — Unterbesetzung → gelb (−1) und rot (−2+)', () => {
+  it('Szenario 2 — Unterbesetzung → rot bereits bei −1 und auch bei −2+', () => {
     const requirements = [
       req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 2 }),
       req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 3 }),
     ];
     const planned = [
-      pe('a', 'abwasch', [{ start: '11:00', end: '22:00' }]), // -1 → gelb
+      pe('a', 'abwasch', [{ start: '11:00', end: '22:00' }]), // -1 → rot
       pe('b', 'kueche', [{ start: '09:00', end: '17:00' }]), // -2 → rot
     ];
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const abw = r.rows.find((x) => x.positionKey === 'abwasch')!;
     const kue = r.rows.find((x) => x.positionKey === 'kueche')!;
-    expect(abw).toMatchObject({ planned: 1, diff: -1, status: 'yellow' });
+    expect(abw).toMatchObject({ planned: 1, diff: -1, status: 'red' });
     expect(kue).toMatchObject({ planned: 1, diff: -2, status: 'red' });
   });
 
-  it('Szenario 3 — Überbesetzung → gelb (+1) und rot (+2)', () => {
+  it('Szenario 3 — Überbesetzung → rot bereits bei +1 und auch bei +2', () => {
     const reqs1 = [req({ positionKey: 'bar_buffet_springer', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 })];
     const over1 = [
       pe('a', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }]),
       pe('b', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }]),
     ];
     const r1 = computeStaffingComparison({ positions: POSITIONS, requirements: reqs1, plannedEmployees: over1, season: 'standard', weekday: 1 });
-    expect(r1.rows[0]).toMatchObject({ planned: 2, diff: 1, status: 'yellow' });
+    expect(r1.rows[0]).toMatchObject({ planned: 2, diff: 1, status: 'red' });
 
     const over2 = [...over1, pe('c', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }])];
     const r2 = computeStaffingComparison({ positions: POSITIONS, requirements: reqs1, plannedEmployees: over2, season: 'standard', weekday: 1 });
@@ -317,7 +317,7 @@ describe('computeStaffingComparison', () => {
     const requirements = [
       req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 2 }), // 2/2 grün
       req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 3 }), // 1/3 rot
-      req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }), // 2/1 gelb
+      req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }), // 2/1 rot (+1)
     ];
     const planned = [
       pe('a', 'service', [{ start: '11:00', end: '22:00' }]),
@@ -328,6 +328,6 @@ describe('computeStaffingComparison', () => {
     ];
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     expect(r.totals).toEqual({ required: 6, planned: 5, diff: -1 });
-    expect(r.counts).toEqual({ green: 1, yellow: 1, red: 1 });
+    expect(r.counts).toEqual({ green: 1, red: 2 });
   });
 });

@@ -9,12 +9,12 @@
  * NUR Analyse/Anzeige — verändert WEDER Dienstplan NOCH Personalbedarf und
  * erzeugt KEINE Vorschläge/Budget-Prüfung.
  *
- * ── Ampel-Logik (symmetrisch, vom Betrieb bestätigt) ──────────────────────────
+ * ── Ampel-Logik (binär, vom Betrieb bestätigt) ───────────────────────────────
  *   diff = geplant − benötigt
- *   🟢 grün  = exakt erfüllt        (|diff| === 0)
- *   🟡 gelb  = 1 zu wenig / 1 zu viel (|diff| === 1)
- *   🔴 rot   = 2+ zu wenig / 2+ zu viel (|diff| >= 2)
- * Die genaue Differenz wird zusätzlich angezeigt (z.B. „+1 Person", „−2 Personen").
+ *   🟢 grün  = exakt erfüllt   (diff === 0)
+ *   🔴 rot   = jede Abweichung (diff !== 0 → bereits bei ±1 Person)
+ * Die genaue Differenz wird zusätzlich angezeigt
+ * (z.B. „+1 Person zu viel", „−1 Person zu wenig").
  *
  * ── Zählregel „geplant" (bewusst, dokumentiert) ───────────────────────────────
  * Der Dienstplan speichert KEINE Position je Schicht. Daher zählt für eine
@@ -40,7 +40,7 @@ import {
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import { shiftsForScope, timeToMinutes } from '@/lib/staffing-requirements-utils';
 
-export type ComparisonStatus = 'green' | 'yellow' | 'red';
+export type ComparisonStatus = 'green' | 'red';
 
 /** Produktive (nicht-Abwesenheits-) Arbeitszeit eines Mitarbeiters an einem Tag. */
 export interface PlannedSlot {
@@ -103,24 +103,25 @@ export interface StaffingComparisonResult {
   /** Alle gerenderten Zeilen (für Summen/Zählung). */
   rows: ShiftComparisonRow[];
   totals: { required: number; planned: number; diff: number };
-  counts: { green: number; yellow: number; red: number };
+  counts: { green: number; red: number };
 }
 
-/** Ampel-Status aus benötigt/geplant (symmetrisch über |diff|). */
+/** Ampel-Status aus benötigt/geplant (binär: grün nur bei exakter Erfüllung). */
 export function comparisonStatus(required: number, planned: number): ComparisonStatus {
-  const diff = Math.abs(planned - required);
-  if (diff === 0) return 'green';
-  if (diff === 1) return 'yellow';
-  return 'red';
+  return planned === required ? 'green' : 'red';
 }
 
-/** Genaue Differenz als Text: 0 → „±0", sonst „+1 Person" / „−2 Personen". */
+/**
+ * Genaue Differenz als Text: 0 → „±0", sonst mit Vorzeichen, Plural und
+ * Richtung — „+1 Person zu viel" / „−2 Personen zu wenig".
+ */
 export function formatStaffingDiff(diff: number): string {
   if (diff === 0) return '±0';
   const n = Math.abs(diff);
   const unit = n === 1 ? 'Person' : 'Personen';
   const sign = diff > 0 ? '+' : '−';
-  return `${sign}${n} ${unit}`;
+  const direction = diff > 0 ? 'zu viel' : 'zu wenig';
+  return `${sign}${n} ${unit} ${direction}`;
 }
 
 /** Überschneidet sich ein produktiver Slot mit dem Zeitraum einer Bedarfs-Schicht? */
@@ -292,7 +293,7 @@ export function computeStaffingComparison(args: {
       c[r.status] += 1;
       return c;
     },
-    { green: 0, yellow: 0, red: 0 },
+    { green: 0, red: 0 },
   );
 
   return {
