@@ -1,0 +1,57 @@
+Entwickle als nächsten Schritt den Soll-Ist-Vergleich zwischen Personalbedarf und Dienstplanung.
+
+Ziel:
+Die App soll im Bereich Dienstplanung automatisch anzeigen, ob der geplante Dienstplan den hinterlegten Personalbedarf erfüllt.
+
+Ausgangslage:
+Das Modul Personalbedarf ist bereits umgesetzt und nutzt die Tabelle staffing_requirements.
+Dort ist pro Restaurant, Saison, Wochentag, Position und Schichtbeginn/-ende hinterlegt, wie viele Mitarbeitende benötigt werden.
+
+Anforderung:
+Vergleiche für den ausgewählten Dienstplan-Tag die geplanten Mitarbeitenden aus dem bestehenden Dienstplan mit dem hinterlegten Personalbedarf.
+
+Pro Personalbedarfs-Schicht soll angezeigt werden:
+
+1. Position
+2. Zeitraum
+3. Benötigte Mitarbeitende
+4. Geplante Mitarbeitende
+5. Differenz
+6. Status
+
+Statuslogik:
+
+* Grün: Bedarf exakt erfüllt oder leicht überdeckt
+* Gelb: 1 Person fehlt oder 1 Person zu viel geplant
+* Rot: 2 oder mehr Personen fehlen
+
+Wichtig:
+
+* Noch keine automatische Änderung am Dienstplan.
+* Keine automatischen Vorschläge.
+* Keine Budgetberechnung.
+* Nur Analyse und Anzeige.
+* Der bestehende Dienstplan darf nicht verändert werden.
+* Die Logik soll positionsbasiert arbeiten und die bestehende Positionsstruktur verwenden.
+* Falls für einen Tag kein Personalbedarf hinterlegt ist, soll eine neutrale Meldung erscheinen: „Für diesen Tag ist noch kein Personalbedarf definiert.“
+
+UI:
+In der Dienstplan-Ansicht soll ein neuer Bereich oder Tab „Personalbedarf-Abgleich“ erscheinen.
+Dort sollen die Ergebnisse kompakt und verständlich dargestellt werden, idealerweise mit Ampelstatus.
+
+Technisch:
+
+* Nutze die bestehende Datenstruktur von staffing_requirements.
+* Nutze die bestehenden Dienstplan-Daten.
+* Restaurant-/Tenant-Sicherheit beibehalten.
+* Keine neuen Tabellen, sofern nicht zwingend notwendig.
+* Falls helper/functions nötig sind, bitte sauber typisieren und testen.
+* Tests ergänzen für:
+    1. Bedarf erfüllt
+    2. Unterbesetzung
+    3. Überbesetzung
+    4. Kein Bedarf definiert
+    5. Mehrere Schichten am gleichen Tag
+    6. Positionen ohne aktive Mitarbeitende
+
+Bitte zuerst kurz den bestehenden Dienstplan-Code und die Datenstruktur prüfen, dann die Umsetzung planen und danach implementieren.
