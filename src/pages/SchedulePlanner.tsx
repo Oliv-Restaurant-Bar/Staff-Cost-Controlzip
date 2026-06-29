@@ -52,6 +52,7 @@ import { EmployeeHoursSummary } from '@/components/schedule-planner/EmployeeHour
 import { ShiftLegend } from '@/components/schedule-planner/ShiftLegend';
 import { CopyWeekDialog } from '@/components/schedule-planner/CopyWeekDialog';
 import { PrintScheduleDialog } from '@/components/schedule-planner/PrintScheduleDialog';
+import { StaffingComparisonPanel } from '@/components/schedule-planner/StaffingComparisonPanel';
 import { DayDetailDialog } from '@/components/schedule-planner/DayDetailDialog';
 import { IstDayDetailDialog } from '@/components/schedule-planner/IstDayDetailDialog';
 import { ShiftConfigDialog } from '@/components/schedule-planner/ShiftConfigDialog';
@@ -238,6 +239,12 @@ const SchedulePlanner = () => {
     () => getVisibleEmployeesForRole(role, allowedDepartment, employees),
     [role, allowedDepartment, employees],
   );
+  // Personalbedarf-Abgleich: respektiert die Rollen-Abteilungssicht ALLER
+  // eingeschränkten Rollen (service_manager + kueche_manager); 'all' = kein Filter.
+  const comparisonDepartments = useMemo(() => {
+    const scope = effectiveEmployeeDepartmentScope(role, allowedDepartment);
+    return scope === 'all' ? undefined : [scope];
+  }, [role, allowedDepartment]);
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>(
     () => effectiveEmployeeDepartmentScope(role, allowedDepartment),
@@ -5491,6 +5498,14 @@ const SchedulePlanner = () => {
         currentMonth={currentMonth}
         department={activeDepartment}
         cellColors={cellColors}
+      />
+
+      {/* Personalbedarf-Abgleich (SOLL-Besetzung vs. eingeplante Mitarbeitende) */}
+      <StaffingComparisonPanel
+        employees={roleScopedEmployees}
+        scheduleData={scheduleData}
+        initialDate={displayDays[0] ?? selectedDay ?? new Date()}
+        departments={comparisonDepartments}
       />
 
       {/* Day Detail Dialog (Plan view) */}

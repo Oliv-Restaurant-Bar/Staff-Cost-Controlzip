@@ -23,3 +23,10 @@ schedule or staff modules, route it through `getVisibleEmployeesForRole`, never 
 If you ever need the hard guarantee (no transient leak), fix it in `AuthContext` role bootstrap, not
 by patching individual pages. Also: when a memoized value derives from `roleScopedEmployees`, put
 `roleScopedEmployees` (not `employees`) in its dependency array, or it goes stale after role resolves.
+
+**Also scope per-department DISPLAY, not just the employee list:** a read-only panel that shows
+per-department config/targets (e.g. the Personalbedarf-Abgleich in SchedulePlanner showing staffing
+requirements per position/department) must filter the DISPLAYED departments via
+`effectiveEmployeeDepartmentScope(role, allowedDepartment)` for ALL restricted roles, mapping `'all'`→
+no filter. Scoping only one role (e.g. only `kueche_manager`) leaks the other department's targets to
+the other manager. Pass the scope as a memoized prop so it doesn't churn the consumer's `useMemo`.
