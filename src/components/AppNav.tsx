@@ -34,7 +34,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList,
+  Tags, ClipboardList, CalendarRange,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -249,6 +249,13 @@ const NAV_GROUPS: NavGroup[] = [
         label: 'CRM Auswertung',
         shortLabel: 'Auswertung',
         icon: BarChart3,
+        adminOnly: true,
+      },
+      {
+        path: '/gaeste/wochentag',
+        label: 'Reservationen nach Wochentag',
+        shortLabel: 'Wochentag',
+        icon: CalendarRange,
         adminOnly: true,
       },
       {

@@ -1,0 +1,80 @@
+Bitte im Bereich CRM / Reservationen eine neue Auswertung ergänzen:
+
+Ziel:
+Ich möchte analysieren können, welche Wochentage in bestimmten Monaten oder frei wählbaren Saisons besonders stark oder schwach sind.
+
+Neue Funktion:
+Eine Auswertung „Reservationen nach Wochentag“.
+
+Filter:
+
+1. Zeitraum frei wählbar mit Startdatum und Enddatum
+2. Zusätzlich Schnell-Auswahl:
+    * Dieser Monat
+    * Letzter Monat
+    * Oktober bis Dezember
+    * Wintersaison
+    * Sommersaison
+    * Benutzerdefiniert
+
+Wichtig:
+Die Saison-Zeiträume sollen manuell anpassbar sein. Beispiel: Wintersaison kann individuell auf Oktober bis Dezember gesetzt werden.
+
+Auswertung:
+Für den gewählten Zeitraum soll pro Wochentag angezeigt werden:
+
+* Montag
+* Dienstag
+* Mittwoch
+* Donnerstag
+* Freitag
+* Samstag
+* Sonntag
+
+Kennzahlen pro Wochentag:
+
+* Anzahl Reservationen
+* Anzahl Gäste / Personen
+* Durchschnittliche Personen pro Reservation
+* Anteil am Gesamtzeitraum in Prozent
+
+Zusätzlich soll sichtbar sein:
+
+* In welchem Monat ein bestimmter Wochentag stark oder schwach war
+* Beispiel: Montag im Oktober, Montag im November, Montag im Dezember vergleichen
+
+Darstellung:
+
+1. Tabelle „Wochentage nach Monat“
+    Spalten:
+    * Monat
+    * Montag
+    * Dienstag
+    * Mittwoch
+    * Donnerstag
+    * Freitag
+    * Samstag
+    * Sonntag
+
+In jeder Zelle:
+
+* oben Anzahl Reservationen
+* darunter kleiner Anzahl Gäste / Personen
+
+2. Zusammenfassung oben:
+    * stärkster Wochentag
+    * schwächster Wochentag
+    * bester Monat für Montag
+    * schwächster Monat für Montag
+
+Technische Vorgabe:
+Keine neue Datenbank-Tabelle und keine Migration erstellen.
+Die Auswertung soll aus den bestehenden Reservationen-Daten berechnet werden, insbesondere aus reservation_records und den bereits bestehenden CRM-/Reservationen-Strukturen.
+
+Bitte zuerst bestehende CRM-/Reservationen-Komponenten und Datenmodelle prüfen und dann die Auswertung sauber integrieren.
+Tests ergänzen für:
+
+* Monatsvergleich nach Wochentagen
+* frei gewählten Zeitraum
+* korrekte Gruppierung nach Wochentag
+* korrekte Summen Reservationen und Personen
