@@ -23,6 +23,19 @@ import {
   metricValue,
   cellAverage,
   matrixCellDisplay,
+  WEEKDAY_PLURAL,
+  weekdayOccurrenceLabel,
+  avgReservationsPerWeekdayLabel,
+  avgPersonsPerWeekdayLabel,
+  AVG_PERSONS_PER_RESERVATION_LABEL,
+  headlineLabel,
+  weekdayHeadlineValue,
+  buildWeekdayHeadlines,
+  WEEKDAY_RANK_LABEL,
+  MONTH_COMPARISON_DEFAULT_OPEN,
+  shiftMonthKey,
+  monthRange,
+  type WeekdayStat,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Test-Daten ────────────────────────────────────────────────────────────────

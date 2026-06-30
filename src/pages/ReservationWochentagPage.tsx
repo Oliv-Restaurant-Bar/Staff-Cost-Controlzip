@@ -3,19 +3,19 @@
  * ========================================================
  * Admin-only Management-Dashboard: an welchen Wochentagen wird am meisten/
  * wenigsten reserviert?  Für einen frei wählbaren Zeitraum (mit Schnell-Auswahl
- * inkl. anpassbarer Saisons) zeigt die Seite:
+ * inkl. anpassbarer Saisons + Monatsnavigation) zeigt die Seite:
  *
- *  1. Umschalter (Reservationen / Personen / Personen pro Reservation) — die
- *     Anzahl Reservationen bleibt in JEDEM Modus sichtbar.
- *  2. Vier Kennzahlen-Karten: stärkster/schwächster Wochentag (nach Modus),
- *     Ø Reservationen pro Wochentag und Ø Personen pro Reservation.
- *  3. Balkendiagramm je Wochentag (Höhe = gewählte Kennzahl) mit kleinen
- *     Kennzahlen unter jedem Balken (Reservationen, Personen, Ø Pers./Res.).
- *  4. Haupttabelle „Wochentage im Zeitraum": Vorkommen, Reservationen total,
- *     Ø Reservationen/Tag, Personen total, Ø Personen/Tag, Personen/Reservation,
- *     Anteil — die zum Modus passenden Spalten sind hervorgehoben.
- *  5. Monatsauswertung „pro Monat × Wochentag": eine Zeile je (Monat, Wochentag)
- *     mit Vorkommen, Reservationen, Personen und den Durchschnitten.
+ *  1. Umschalter (Reservationen / Personen / Personen pro Reservation).
+ *  2. Erklärbox: was die grosse Durchschnittszahl je Wochentag bedeutet.
+ *  3. Drei Kennzahlen-Karten: stärkster / schwächster Wochentag (nach Modus)
+ *     sowie der Referenz-Durchschnitt für „über/unter Durchschnitt".
+ *  4. Je Wochentag eine kompakte Karte: EINE grosse, modusabhängige Durch-
+ *     schnittszahl (Ø pro Wochentag bzw. Ø pro Reservation), darunter klein die
+ *     übrigen Werte + ein Mini-Balken + eine klare Einordnung (stärkster/
+ *     schwächster Wochentag, über/unter Durchschnitt).
+ *  5. Monatsvergleich: kompakter Block für den aktuell gewählten Monat, die
+ *     detaillierte Tabelle (alle Monate × Wochentage) liegt hinter einem Button
+ *     und ist standardmässig eingeklappt.
  *
  * Liest ausschliesslich aus der bestehenden Tabelle `reservation_records`
  * (mandantengefiltert via `fetchReservationsInRange`) — KEINE neue Migration,
@@ -29,7 +29,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   CalendarRange, Loader2, Database, ArrowLeft, TrendingUp, TrendingDown,
-  CalendarDays, Settings2, RotateCcw, Check, Users, BarChart3,
+  CalendarDays, Settings2, RotateCcw, Check, Minus, Info,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { format as fmtDate } from 'date-fns';
 import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
@@ -40,16 +41,17 @@ import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import {
-  aggregateByWeekday, buildMonthWeekdayMatrix, buildMonthWeekdayBreakdown,
-  buildWeekdaySummary, metricValue,
-  presetRange, monthLongLabel,
+  aggregateByWeekday, buildMonthWeekdayBreakdown, buildWeekdayHeadlines,
+  presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
   DEFAULT_SEASON_SETTINGS,
-  WEEKDAY_LABEL, WEEKDAY_SHORT, PRESET_LABEL, STATUS_SCOPE_LABEL,
+  WEEKDAY_LABEL, PRESET_LABEL, STATUS_SCOPE_LABEL,
   METRICS, METRIC_LABEL,
+  weekdayOccurrenceLabel, headlineLabel, AVG_PERSONS_PER_RESERVATION_LABEL,
+  WEEKDAY_RANK_LABEL, MONTH_COMPARISON_DEFAULT_OPEN,
   type PresetKey, type StatusScope, type MetricKey,
-  type SeasonSettings, type SeasonRange, type WeekdayStat,
-  type MonthWeekdayBreakdownRow,
+  type SeasonSettings, type SeasonRange,
+  type MonthWeekdayBreakdownRow, type WeekdayHeadline, type WeekdayRank,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -57,31 +59,8 @@ import {
 const NUM0 = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
 const NUM1 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-function pct(n: number): string {
-  return `${NUM1.format(n)} %`;
-}
-
 function avg(n: number | null): string {
   return n === null ? '—' : NUM1.format(n);
-}
-
-/**
- * Sekundärzeile für eine Wochentags-Bestmarke je Kennzahl.  Die Anzahl
- * Reservationen wird in JEDEM Modus mitgeführt (sie verschwindet nie).
- */
-function extremeSub(
-  e: { reservations: number; persons: number; avgPersons: number | null },
-  metric: MetricKey,
-): string {
-  switch (metric) {
-    case 'persons':
-      return `${NUM0.format(e.persons)} Personen · ${NUM0.format(e.reservations)} Res.`;
-    case 'avgPersons':
-      return `Ø ${avg(e.avgPersons)} Pers./Res. · ${NUM0.format(e.reservations)} Res.`;
-    case 'reservations':
-    default:
-      return `${NUM0.format(e.reservations)} Reservationen · ${NUM0.format(e.persons)} Pers.`;
-  }
 }
 
 const PRESETS: PresetKey[] = ['thisMonth', 'lastMonth', 'octDec', 'winter', 'summer', 'custom'];
@@ -100,6 +79,67 @@ function safeGet(key: string): string | null {
 }
 function safeSet(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
+}
+
+// Kurzform des Ø-Spaltentitels im Monatsblock je Modus.
+const SHORT_AVG_HEADER: Record<MetricKey, string> = {
+  reservations: 'Ø Res./Tag',
+  persons: 'Ø Pers./Tag',
+  avgPersons: 'Ø Pers./Res.',
+};
+
+// Stilvarianten je Einordnung (Badge, grosse Zahl, Mini-Balken).
+const RANK_STYLES: Record<WeekdayRank, { badge: string; big: string; bar: string }> = {
+  strongest: {
+    badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
+    big: 'text-emerald-600 dark:text-emerald-400',
+    bar: 'bg-emerald-500',
+  },
+  above: {
+    badge: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300',
+    big: 'text-foreground',
+    bar: 'bg-emerald-400/70',
+  },
+  average: {
+    badge: 'bg-muted text-muted-foreground',
+    big: 'text-foreground',
+    bar: 'bg-primary/50',
+  },
+  below: {
+    badge: 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300',
+    big: 'text-foreground',
+    bar: 'bg-amber-400/70',
+  },
+  weakest: {
+    badge: 'bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300',
+    big: 'text-red-600 dark:text-red-400',
+    bar: 'bg-red-500',
+  },
+  none: {
+    badge: 'bg-muted text-muted-foreground',
+    big: 'text-muted-foreground',
+    bar: 'bg-muted',
+  },
+};
+
+/**
+ * Sekundärwerte (Label + Wert) einer Wochentags-Karte je Modus.  Die grosse
+ * Zahl ist immer ein Durchschnitt; hier stehen darunter die übrigen Werte.
+ */
+function subValues(h: WeekdayHeadline, metric: MetricKey): { label: string; value: string }[] {
+  const occ = { label: weekdayOccurrenceLabel(h.weekday), value: NUM0.format(h.occurrences) };
+  const res = { label: 'Reservationen total', value: NUM0.format(h.reservations) };
+  const per = { label: 'Personen total', value: NUM0.format(h.persons) };
+  const avgP = { label: AVG_PERSONS_PER_RESERVATION_LABEL, value: avg(h.avgPersons) };
+  switch (metric) {
+    case 'persons':
+      return [per, res, occ, avgP];
+    case 'avgPersons':
+      return [res, per, occ];
+    case 'reservations':
+    default:
+      return [res, occ, per, avgP];
+  }
 }
 
 // ── Initialer Anzeigezustand aus der URL ───────────────────────────────────────
@@ -167,6 +207,45 @@ function SectionTitle({ icon: Icon, children }: { icon: React.FC<{ className?: s
   );
 }
 
+/** Kompakte Karte je Wochentag: grosse Ø-Zahl (modusabhängig) + Einordnung. */
+function WeekdayCard({ h, metric, maxValue }: {
+  h: WeekdayHeadline;
+  metric: MetricKey;
+  maxValue: number;
+}) {
+  const style = RANK_STYLES[h.rank];
+  const big = h.rank === 'none' ? '—' : avg(h.value);
+  const barPct = maxValue > 0 && h.value ? Math.max((h.value / maxValue) * 100, 2) : 0;
+  const subs = subValues(h, metric);
+
+  return (
+    <div className={cn('rounded-lg border border-border p-3', h.rank === 'none' ? 'bg-muted/20' : 'bg-card')}>
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-semibold">{WEEKDAY_LABEL[h.weekday]}</span>
+        <span className={cn('whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-medium', style.badge)}>
+          {WEEKDAY_RANK_LABEL[h.rank]}
+        </span>
+      </div>
+
+      <p className="mt-2 text-[11px] leading-tight text-muted-foreground">{headlineLabel(h.weekday, metric)}</p>
+      <p className={cn('text-2xl font-bold tabular-nums', style.big)}>{big}</p>
+
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div className={cn('h-full rounded-full transition-all', style.bar)} style={{ width: `${barPct}%` }} />
+      </div>
+
+      <dl className="mt-2.5 space-y-1 text-[11px]">
+        {subs.map((s) => (
+          <div key={s.label} className="flex items-baseline justify-between gap-2">
+            <dt className="text-muted-foreground">{s.label}</dt>
+            <dd className="tabular-nums font-medium">{s.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 // ── Komponente ────────────────────────────────────────────────────────────────
 
 export default function ReservationWochentagPage() {
@@ -190,6 +269,9 @@ export default function ReservationWochentagPage() {
   const [scope, setScope] = useState<StatusScope>(init.scope);
   const [year, setYear] = useState(init.year);
   const [metric, setMetric] = useState<MetricKey>(init.metric);
+
+  // Monatsvergleich-Detailtabelle: standardmässig eingeklappt (siehe Konstante).
+  const [showComparison, setShowComparison] = useState(MONTH_COMPARISON_DEFAULT_OPEN);
 
   // Saisons je Mandant aus localStorage (frei anpassbar).
   const [seasons, setSeasons] = useState<SeasonSettings>(DEFAULT_SEASON_SETTINGS);
@@ -233,13 +315,9 @@ export default function ReservationWochentagPage() {
     () => aggregateByWeekday(rows, from, to, scope),
     [rows, from, to, scope],
   );
-  const matrix = useMemo(
-    () => buildMonthWeekdayMatrix(rows, from, to, scope),
-    [rows, from, to, scope],
-  );
-  const summary = useMemo(
-    () => buildWeekdaySummary(agg, matrix, 1, metric),
-    [agg, matrix, metric],
+  const headlines = useMemo(
+    () => buildWeekdayHeadlines(agg, metric),
+    [agg, metric],
   );
   const breakdown = useMemo(
     () => buildMonthWeekdayBreakdown(rows, from, to, scope),
@@ -256,6 +334,22 @@ export default function ReservationWochentagPage() {
     return [...map.entries()].map(([monthKey, list]) => ({ monthKey, rows: list }));
   }, [breakdown]);
 
+  // Aktuell betrachteter Monat (Monatsnavigation) = Monat des „Von"-Datums.
+  const currentMonthKey = monthKeyOf(from) ?? todayStr.slice(0, 7);
+  const currentMonthBounds = monthRange(currentMonthKey);
+  const isSingleMonth =
+    !!currentMonthBounds.from && from === currentMonthBounds.from && to === currentMonthBounds.to;
+  const currentMonthRows = useMemo(
+    () => breakdownByMonth.find((g) => g.monthKey === currentMonthKey)?.rows ?? [],
+    [breakdownByMonth, currentMonthKey],
+  );
+
+  // Grösster Hauptwert (für die Mini-Balken-Skalierung).
+  const maxHeadline = useMemo(
+    () => Math.max(0, ...headlines.headlines.map((h) => h.value ?? 0)),
+    [headlines],
+  );
+
   // ── Aktionen ─────────────────────────────────────────────────────────────────
   const applyPreset = (key: PresetKey) => {
     setPreset(key);
@@ -263,6 +357,21 @@ export default function ReservationWochentagPage() {
     const range = presetRange(key, { today: todayStr, year, seasons });
     if (range) { setFrom(range.from); setTo(range.to); }
   };
+
+  // Monatsnavigation: setzt Von/Bis auf Anfang/Ende des Zielmonats.
+  const goToMonth = (monthKey: string) => {
+    const range = monthRange(monthKey);
+    if (!range.from) return;
+    setFrom(range.from);
+    setTo(range.to);
+    const tm = presetRange('thisMonth', { today: todayStr, year, seasons });
+    const lm = presetRange('lastMonth', { today: todayStr, year, seasons });
+    if (tm && range.from === tm.from && range.to === tm.to) setPreset('thisMonth');
+    else if (lm && range.from === lm.from && range.to === lm.to) setPreset('lastMonth');
+    else setPreset('custom');
+  };
+  const goPrevMonth = () => goToMonth(shiftMonthKey(currentMonthKey, -1));
+  const goNextMonth = () => goToMonth(shiftMonthKey(currentMonthKey, 1));
 
   const changeYear = (y: number) => {
     setYear(y);
@@ -304,13 +413,14 @@ export default function ReservationWochentagPage() {
 
   if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
-  const hasData = matrix.grandTotal.reservations > 0;
+  const hasData = agg.totalReservations > 0;
   const yearRelevant = SEASON_PRESETS.includes(preset);
 
-  // Welche Spalte ist im aktuellen Modus hervorgehoben?
-  const hlHead = (m: MetricKey) => metric === m && 'bg-primary/5 text-primary';
-  const hlCell = (m: MetricKey) => metric === m && 'bg-primary/5';
-  const totalAvgPersonsPerDay = agg.totalOccurrences > 0 ? agg.totalPersons / agg.totalOccurrences : null;
+  const strongestH = headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null;
+  const weakestH = headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null;
+  const scopeLabel = isSingleMonth
+    ? monthLongLabel(currentMonthKey)
+    : `${from} – ${to}`;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
@@ -373,8 +483,33 @@ export default function ReservationWochentagPage() {
           </div>
         </div>
 
-        {/* Zeitraum + Jahr + Status */}
+        {/* Monatsnavigation + Zeitraum + Jahr + Status */}
         <div className="flex flex-wrap items-end gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Monat</label>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={goPrevMonth}
+                className="rounded-md border border-border p-1.5 hover:bg-muted/40"
+                aria-label="Vorheriger Monat"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="min-w-[8.5rem] text-center text-sm font-medium">
+                {monthLongLabel(currentMonthKey)}
+              </span>
+              <button
+                type="button"
+                onClick={goNextMonth}
+                className="rounded-md border border-border p-1.5 hover:bg-muted/40"
+                aria-label="Nächster Monat"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Von</label>
             <input
@@ -516,9 +651,6 @@ export default function ReservationWochentagPage() {
             </button>
           ))}
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Die Anzahl Reservationen bleibt in jedem Modus sichtbar.
-        </p>
       </section>
 
       {loading ? (
@@ -532,220 +664,162 @@ export default function ReservationWochentagPage() {
         </div>
       ) : (
         <>
-          {/* ── Kennzahlen-Karten ─────────────────────────────────────────── */}
+          {/* ── Erklärbox ─────────────────────────────────────────────────── */}
+          <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+            <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <p>
+              Die grosse Zahl je Wochentag ist ein <strong>Durchschnitt</strong>,
+              der sich auf genau diesen Wochentag bezieht. Beispiel: Hat ein Monat
+              4&nbsp;Montage und es gab an Montagen total 47&nbsp;Reservationen,
+              ergibt das Ø&nbsp;11.8&nbsp;Reservationen pro Montag (47&nbsp;÷&nbsp;4).
+            </p>
+          </div>
+
+          {/* ── Kennzahlen-Karten (stärkster / schwächster / Referenz) ──────── */}
           <section>
-            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <SummaryCard
                 icon={TrendingUp}
                 label="Stärkster Wochentag"
-                value={summary.strongestWeekday ? WEEKDAY_LABEL[summary.strongestWeekday.weekday] : '—'}
-                sub={summary.strongestWeekday ? extremeSub(summary.strongestWeekday, metric) : undefined}
+                value={strongestH ? WEEKDAY_LABEL[strongestH.weekday] : '—'}
+                sub={strongestH ? `${headlineLabel(strongestH.weekday, metric)}: ${avg(strongestH.value)}` : undefined}
                 accent="text-emerald-600 dark:text-emerald-400"
               />
               <SummaryCard
                 icon={TrendingDown}
                 label="Schwächster Wochentag"
-                value={summary.weakestWeekday ? WEEKDAY_LABEL[summary.weakestWeekday.weekday] : '—'}
-                sub={summary.weakestWeekday ? extremeSub(summary.weakestWeekday, metric) : undefined}
+                value={weakestH ? WEEKDAY_LABEL[weakestH.weekday] : '—'}
+                sub={weakestH ? `${headlineLabel(weakestH.weekday, metric)}: ${avg(weakestH.value)}` : undefined}
                 accent="text-red-600 dark:text-red-400"
               />
               <SummaryCard
-                icon={CalendarDays}
-                label="Ø Reservationen pro Wochentag"
-                value={avg(agg.avgReservationsPerDay)}
-                sub={`${NUM0.format(agg.totalReservations)} Res. · ${NUM0.format(agg.totalOccurrences)} Tage`}
-              />
-              <SummaryCard
-                icon={Users}
-                label="Ø Personen pro Reservation"
-                value={avg(agg.avgPersonsPerReservation)}
-                sub={`${NUM0.format(agg.totalPersons)} Pers. · ${NUM0.format(agg.totalReservations)} Res.`}
-              />
-            </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Stärkster/schwächster Wochentag bewertet nach{' '}
-              <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>.
-            </p>
-          </section>
-
-          {/* ── Balkendiagramm je Wochentag ───────────────────────────────── */}
-          <section>
-            <SectionTitle icon={BarChart3}>
-              Wochentage im Vergleich — {METRIC_LABEL[metric]}
-            </SectionTitle>
-            <div className="rounded-lg border border-border bg-card p-4">
-              <WeekdayBarChart
-                weekdays={agg.weekdays}
-                metric={metric}
-                strongestWeekday={summary.strongestWeekday?.weekday ?? null}
+                icon={Minus}
+                label="Durchschnitt aller Wochentage"
+                value={avg(headlines.average)}
+                sub='Referenz für „über / unter Durchschnitt"'
               />
             </div>
           </section>
 
-          {/* ── Haupttabelle „Wochentage im Zeitraum" ─────────────────────── */}
+          {/* ── Kompakte Karten je Wochentag ───────────────────────────────── */}
           <section>
-            <SectionTitle icon={CalendarDays}>Wochentage im Zeitraum</SectionTitle>
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Wochentag</th>
-                    <th className="px-3 py-2 text-right">Vorkommen</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Reservationen</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Ø Res./Tag</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Personen</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Ø Pers./Tag</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('avgPersons'))}>Pers./Res.</th>
-                    <th className="px-3 py-2 text-right">Anteil</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agg.weekdays.map((w) => {
-                    const isStrong = summary.strongestWeekday?.weekday === w.weekday && w.reservations > 0;
-                    const isWeak = summary.weakestWeekday?.weekday === w.weekday && w.reservations > 0;
-                    return (
-                      <tr key={w.weekday} className="border-t border-border">
-                        <td className="px-3 py-2 font-medium">
-                          {WEEKDAY_LABEL[w.weekday]}
-                          {isStrong && <span className="ml-1.5 text-emerald-600 dark:text-emerald-400">▲</span>}
-                          {isWeak && <span className="ml-1.5 text-red-600 dark:text-red-400">▼</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(w.occurrences)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{NUM0.format(w.reservations)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{avg(w.avgReservationsPerDay)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{NUM0.format(w.persons)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{avg(w.avgPersonsPerDay)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('avgPersons'))}>{avg(w.avgPersons)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">{pct(w.sharePct)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-border bg-muted/30 font-semibold">
-                    <td className="px-3 py-2">Gesamt</td>
-                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(agg.totalOccurrences)}</td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{NUM0.format(agg.totalReservations)}</td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{avg(agg.avgReservationsPerDay)}</td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{NUM0.format(agg.totalPersons)}</td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{avg(totalAvgPersonsPerDay)}</td>
-                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('avgPersons'))}>{avg(agg.avgPersonsPerReservation)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">100,0 %</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </section>
-
-          {/* ── Monatsauswertung pro Monat × Wochentag ────────────────────── */}
-          <section>
-            <SectionTitle icon={CalendarRange}>Pro Monat &amp; Wochentag</SectionTitle>
+            <SectionTitle icon={CalendarDays}>Auswertung nach Wochentag</SectionTitle>
             <p className="mb-2 text-xs text-muted-foreground">
-              Je Monat eine Zeile pro Wochentag: wie viele dieser Wochentage der
-              Monat hat und wie viele Reservationen/Personen im Schnitt auf einen
-              davon entfallen.
+              Zeitraum: <span className="font-medium text-foreground">{scopeLabel}</span>.
+              {' '}Grosse Zahl ={' '}
+              <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>{' '}
+              als Durchschnitt pro Wochentag.
             </p>
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Monat</th>
-                    <th className="px-3 py-2 text-left">Wochentag</th>
-                    <th className="px-3 py-2 text-right">Vorkommen</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Reservationen</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Ø Res./Tag</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Personen</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Ø Pers./Tag</th>
-                    <th className={cn('px-3 py-2 text-right', hlHead('avgPersons'))}>Pers./Res.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {breakdownByMonth.map((group) =>
-                    group.rows.map((row, i) => (
-                      <tr
-                        key={`${group.monthKey}-${row.weekday}`}
-                        className={cn('border-t border-border', i === 0 && 'border-t-2 border-border')}
-                      >
-                        {i === 0 && (
-                          <td
-                            rowSpan={group.rows.length}
-                            className="whitespace-nowrap border-r border-border px-3 py-2 align-top font-medium"
-                          >
-                            {monthLongLabel(group.monthKey)}
-                          </td>
-                        )}
-                        <td className="px-3 py-2">{WEEKDAY_LABEL[row.weekday]}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(row.occurrences)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{NUM0.format(row.reservations)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{avg(row.avgReservationsPerDay)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{NUM0.format(row.persons)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{avg(row.avgPersonsPerDay)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('avgPersons'))}>{avg(row.avgPersons)}</td>
-                      </tr>
-                    )),
-                  )}
-                </tbody>
-              </table>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {headlines.headlines.map((h) => (
+                <WeekdayCard key={h.weekday} h={h} metric={metric} maxValue={maxHeadline} />
+              ))}
             </div>
+          </section>
+
+          {/* ── Monatsvergleich ────────────────────────────────────────────── */}
+          <section>
+            <SectionTitle icon={CalendarRange}>Monatsvergleich</SectionTitle>
+
+            {/* Kompakter Block: aktuell gewählter Monat */}
+            <div className="rounded-lg border border-border bg-card p-4">
+              <p className="text-sm font-medium">{monthLongLabel(currentMonthKey)}</p>
+              {currentMonthRows.length === 0 ? (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Keine Reservationen in diesem Monat.
+                </p>
+              ) : (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left">Wochentag</th>
+                        <th className="px-2 py-1.5 text-right">Tage</th>
+                        <th className="px-2 py-1.5 text-right">Reservationen</th>
+                        <th className="px-2 py-1.5 text-right">Personen</th>
+                        <th className="px-2 py-1.5 text-right">{SHORT_AVG_HEADER[metric]}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentMonthRows.map((row) => {
+                        const big =
+                          metric === 'persons' ? row.avgPersonsPerDay
+                            : metric === 'avgPersons' ? row.avgPersons
+                              : row.avgReservationsPerDay;
+                        return (
+                          <tr key={row.weekday} className="border-t border-border">
+                            <td className="px-2 py-1.5">{WEEKDAY_LABEL[row.weekday]}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{NUM0.format(row.occurrences)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(row.reservations)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(row.persons)}</td>
+                            <td className="px-2 py-1.5 text-right font-medium tabular-nums">{avg(big)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowComparison((v) => !v)}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
+                aria-expanded={showComparison}
+              >
+                {showComparison ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                {showComparison ? 'Monatsvergleich ausblenden' : 'Monatsvergleich anzeigen'}
+              </button>
+            </div>
+
+            {/* Detaillierte Tabelle (alle Monate × Wochentage) */}
+            {showComparison && (
+              <div className="mt-3 overflow-x-auto rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Monat</th>
+                      <th className="px-3 py-2 text-left">Wochentag</th>
+                      <th className="px-3 py-2 text-right">Tage</th>
+                      <th className="px-3 py-2 text-right">Reservationen</th>
+                      <th className="px-3 py-2 text-right">Ø Res./Tag</th>
+                      <th className="px-3 py-2 text-right">Personen</th>
+                      <th className="px-3 py-2 text-right">Ø Pers./Tag</th>
+                      <th className="px-3 py-2 text-right">Ø Pers./Res.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {breakdownByMonth.map((group) =>
+                      group.rows.map((row, i) => (
+                        <tr
+                          key={`${group.monthKey}-${row.weekday}`}
+                          className={cn('border-t border-border', i === 0 && 'border-t-2 border-border')}
+                        >
+                          {i === 0 && (
+                            <td
+                              rowSpan={group.rows.length}
+                              className="whitespace-nowrap border-r border-border px-3 py-2 align-top font-medium"
+                            >
+                              {monthLongLabel(group.monthKey)}
+                            </td>
+                          )}
+                          <td className="px-3 py-2">{WEEKDAY_LABEL[row.weekday]}</td>
+                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(row.occurrences)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(row.reservations)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{avg(row.avgReservationsPerDay)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(row.persons)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{avg(row.avgPersonsPerDay)}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{avg(row.avgPersons)}</td>
+                        </tr>
+                      )),
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}
-    </div>
-  );
-}
-
-// ── Balkendiagramm je Wochentag ────────────────────────────────────────────────
-//
-// Höhe = gewählte Kennzahl (Reservationen / Personen / Ø Pers./Res.).  Unter
-// jedem Balken bleiben die drei Kennzahlen klein sichtbar (Reservationen,
-// Personen, Ø Personen pro Reservation) — unabhängig vom gewählten Modus.
-
-function WeekdayBarChart({ weekdays, metric, strongestWeekday }: {
-  weekdays: WeekdayStat[];
-  metric: MetricKey;
-  strongestWeekday: number | null;
-}) {
-  const values = weekdays.map((w) => metricValue(w.reservations, w.persons, metric));
-  const maxValue = Math.max(0, ...values);
-
-  return (
-    <div>
-      {/* Balken */}
-      <div className="flex h-48 items-end gap-1.5 sm:gap-3">
-        {weekdays.map((w, i) => {
-          const v = values[i];
-          const heightPct = maxValue > 0 ? (v / maxValue) * 100 : 0;
-          const isStrong = strongestWeekday === w.weekday && v > 0;
-          const label = metric === 'avgPersons' ? avg(w.avgPersons) : NUM0.format(v);
-          return (
-            <div key={w.weekday} className="flex h-full flex-1 flex-col items-center justify-end">
-              <span className="mb-1 text-[11px] font-semibold tabular-nums text-foreground">{label}</span>
-              <div
-                className={cn(
-                  'w-full rounded-t-md transition-all',
-                  v > 0 ? (isStrong ? 'bg-primary' : 'bg-primary/60') : 'bg-muted',
-                )}
-                style={{ height: v > 0 ? `max(${heightPct}%, 4px)` : '2px' }}
-                title={`${WEEKDAY_LABEL[w.weekday]}: ${label}`}
-              />
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Beschriftung + kleine Kennzahlen */}
-      <div className="mt-2 flex gap-1.5 border-t border-border pt-2 sm:gap-3">
-        {weekdays.map((w) => (
-          <div key={w.weekday} className="flex-1 text-center">
-            <div className="text-xs font-semibold">{WEEKDAY_SHORT[w.weekday]}</div>
-            <div className="mt-0.5 space-y-px text-[10px] leading-tight tabular-nums text-muted-foreground">
-              <div>{NUM0.format(w.reservations)} Res.</div>
-              <div>{NUM0.format(w.persons)} P.</div>
-              <div>Ø {avg(w.avgPersons)}</div>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

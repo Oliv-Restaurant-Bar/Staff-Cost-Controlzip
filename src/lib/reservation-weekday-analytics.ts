@@ -620,11 +620,234 @@ export function buildWeekdaySummary(
   };
 }
 
+// ── Kompakte Hauptansicht je Wochentag (Karten) ──────────────────────────────
+//
+// Die neue Hauptauswertung zeigt je Wochentag EINE grosse Zahl — und zwar IMMER
+// einen Durchschnitt, der sich auf den jeweiligen Wochentag bezieht:
+//   - Modus „Reservationen"            → Ø Reservationen pro <Wochentag>
+//   - Modus „Personen"                 → Ø Personen pro <Wochentag>
+//   - Modus „Personen pro Reservation" → Ø Personen pro Reservation
+// So ist sofort klar: „4 Montage, 47 Reservationen → Ø 11.8 pro Montag".
+
+/** Pluralform je Wochentag (für „Anzahl Montage im Zeitraum"). */
+export const WEEKDAY_PLURAL: Record<IsoWeekday, string> = {
+  1: 'Montage',
+  2: 'Dienstage',
+  3: 'Mittwoche',
+  4: 'Donnerstage',
+  5: 'Freitage',
+  6: 'Samstage',
+  7: 'Sonntage',
+};
+
+/** „Anzahl Montage im Zeitraum" (ersetzt das technische „Vorkommen"). */
+export function weekdayOccurrenceLabel(wd: IsoWeekday): string {
+  return `Anzahl ${WEEKDAY_PLURAL[wd]} im Zeitraum`;
+}
+
+/** „Ø Reservationen pro Montag". */
+export function avgReservationsPerWeekdayLabel(wd: IsoWeekday): string {
+  return `Ø Reservationen pro ${WEEKDAY_LABEL[wd]}`;
+}
+
+/** „Ø Personen pro Montag". */
+export function avgPersonsPerWeekdayLabel(wd: IsoWeekday): string {
+  return `Ø Personen pro ${WEEKDAY_LABEL[wd]}`;
+}
+
+/** Festes Label für die Ø-Personen-pro-Reservation-Kennzahl (wochentagsunabhängig). */
+export const AVG_PERSONS_PER_RESERVATION_LABEL = 'Ø Personen pro Reservation';
+
+/** Label der grossen Hauptzahl je Modus + Wochentag. */
+export function headlineLabel(wd: IsoWeekday, metric: MetricKey): string {
+  switch (metric) {
+    case 'persons':
+      return avgPersonsPerWeekdayLabel(wd);
+    case 'avgPersons':
+      return AVG_PERSONS_PER_RESERVATION_LABEL;
+    case 'reservations':
+    default:
+      return avgReservationsPerWeekdayLabel(wd);
+  }
+}
+
+/**
+ * Wert der grossen Hauptzahl je Modus — IMMER ein Durchschnitt:
+ *  - `reservations` → Ø Reservationen pro Vorkommen dieses Wochentags
+ *  - `persons`      → Ø Personen pro Vorkommen dieses Wochentags
+ *  - `avgPersons`   → Ø Personen pro Reservation
+ * `null`, wenn nicht berechenbar (keine Vorkommen bzw. keine Reservation).
+ */
+export function weekdayHeadlineValue(stat: WeekdayStat, metric: MetricKey): number | null {
+  switch (metric) {
+    case 'persons':
+      return stat.avgPersonsPerDay;
+    case 'avgPersons':
+      return stat.avgPersons;
+    case 'reservations':
+    default:
+      return stat.avgReservationsPerDay;
+  }
+}
+
+/** Einordnung eines Wochentags relativ zum Durchschnitt der aktiven Wochentage. */
+export type WeekdayRank = 'strongest' | 'weakest' | 'above' | 'below' | 'average' | 'none';
+
+export const WEEKDAY_RANK_LABEL: Record<WeekdayRank, string> = {
+  strongest: 'stärkster Wochentag',
+  weakest: 'schwächster Wochentag',
+  above: 'über Durchschnitt',
+  below: 'unter Durchschnitt',
+  average: 'im Durchschnitt',
+  none: 'keine Reservationen',
+};
+
+export interface WeekdayHeadline {
+  weekday: IsoWeekday;
+  /** Grosse Zahl (Durchschnitt je Modus) — `null` wenn nicht berechenbar. */
+  value: number | null;
+  reservations: number;
+  persons: number;
+  occurrences: number;
+  /** Ø Personen pro Reservation. */
+  avgPersons: number | null;
+  /** Ø Reservationen pro Vorkommen dieses Wochentags. */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen dieses Wochentags. */
+  avgPersonsPerDay: number | null;
+  /** Einordnung über/unter Durchschnitt bzw. stärkster/schwächster Wochentag. */
+  rank: WeekdayRank;
+  /** true, wenn der Wochentag mindestens eine Reservation hat. */
+  isActive: boolean;
+}
+
+export interface WeekdayHeadlineSummary {
+  metric: MetricKey;
+  /** Immer alle 7 Wochentage (Mo→So). */
+  headlines: WeekdayHeadline[];
+  /** Referenz-Durchschnitt der Hauptkennzahl über alle AKTIVEN Wochentage (für über/unter). */
+  average: number | null;
+  /** Stärkster aktiver Wochentag (höchster Hauptwert) oder `null`. */
+  strongest: IsoWeekday | null;
+  /** Schwächster aktiver Wochentag (niedrigster Hauptwert) oder `null`. */
+  weakest: IsoWeekday | null;
+}
+
+/**
+ * Baut die kompakte Hauptansicht je Wochentag für die gewählte Kennzahl.
+ *
+ * Vergleichsregel (in den Tests fixiert): leere Wochentage (0 Reservationen)
+ * fliessen NICHT in Durchschnitt/Extreme ein und erhalten den Rang `none`.
+ * Stärkster/schwächster Wochentag sowie der Referenz-Durchschnitt werden NUR
+ * über aktive Wochentage gebildet; bei Gleichstand gewinnt der frühere
+ * Wochentag (Mo→So). Der stärkste Wochentag hat Vorrang vor dem schwächsten
+ * (relevant, wenn nur ein Wochentag aktiv ist).
+ */
+export function buildWeekdayHeadlines(
+  agg: WeekdayAggregate,
+  metric: MetricKey = 'reservations',
+): WeekdayHeadlineSummary {
+  let strongest: IsoWeekday | null = null;
+  let weakest: IsoWeekday | null = null;
+  let strongestVal = -Infinity;
+  let weakestVal = Infinity;
+  let sum = 0;
+  let count = 0;
+  for (const w of agg.weekdays) {
+    if (w.reservations <= 0) continue;
+    const v = weekdayHeadlineValue(w, metric) ?? 0;
+    sum += v;
+    count += 1;
+    if (v > strongestVal) {
+      strongestVal = v;
+      strongest = w.weekday;
+    }
+    if (v < weakestVal) {
+      weakestVal = v;
+      weakest = w.weekday;
+    }
+  }
+  const average = count > 0 ? sum / count : null;
+  const eps = 1e-9;
+
+  const headlines = agg.weekdays.map<WeekdayHeadline>((w) => {
+    const value = weekdayHeadlineValue(w, metric);
+    let rank: WeekdayRank;
+    if (w.reservations <= 0) {
+      rank = 'none';
+    } else if (w.weekday === strongest) {
+      rank = 'strongest';
+    } else if (w.weekday === weakest) {
+      rank = 'weakest';
+    } else if (average !== null && (value ?? 0) > average + eps) {
+      rank = 'above';
+    } else if (average !== null && (value ?? 0) < average - eps) {
+      rank = 'below';
+    } else {
+      rank = 'average';
+    }
+    return {
+      weekday: w.weekday,
+      value,
+      reservations: w.reservations,
+      persons: w.persons,
+      occurrences: w.occurrences,
+      avgPersons: w.avgPersons,
+      avgReservationsPerDay: w.avgReservationsPerDay,
+      avgPersonsPerDay: w.avgPersonsPerDay,
+      rank,
+      isActive: w.reservations > 0,
+    };
+  });
+
+  return { metric, headlines, average, strongest, weakest };
+}
+
+/**
+ * Standardzustand des Monatsvergleichs in der UI: eingeklappt.  Als Konstante
+ * exportiert, damit „standardmässig eingeklappt" testbar an EINER Stelle
+ * verankert ist und die Komponente denselben Wert als `useState`-Initialwert
+ * nutzt.
+ */
+export const MONTH_COMPARISON_DEFAULT_OPEN = false;
+
 // ── Schnell-Auswahl / Saison-Zeiträume ───────────────────────────────────────
 
 export interface DateRange {
   from: string;
   to: string;
+}
+
+// ── Monatsnavigation (Pfeile vor/zurück) ─────────────────────────────────────
+
+/**
+ * Verschiebt einen Monatsschlüssel „yyyy-MM" um `delta` Monate (auch über
+ * Jahresgrenzen, z. B. „2026-01" −1 → „2025-12").  Ungültiger Schlüssel wird
+ * unverändert zurückgegeben.
+ */
+export function shiftMonthKey(monthKey: string, delta: number): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return monthKey;
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return monthKey;
+  const zeroBased = y * 12 + (mo - 1) + Math.trunc(delta);
+  const ny = Math.floor(zeroBased / 12);
+  const nmo = ((zeroBased % 12) + 12) % 12 + 1;
+  return `${ny}-${pad2(nmo)}`;
+}
+
+/**
+ * Datumsbereich (erster bis letzter Tag) eines Monats „yyyy-MM".  Setzt Von/Bis
+ * auf Monatsanfang/-ende.  Ungültiger Schlüssel → `{ from: '', to: '' }`.
+ */
+export function monthRange(monthKey: string): DateRange {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return { from: '', to: '' };
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return { from: '', to: '' };
+  return { from: ymd(y, mo, 1), to: ymd(y, mo, lastDayOfMonth(y, mo)) };
 }
 
 /** Frei anpassbarer Saison-Zeitraum (Monat/Tag, jährlich wiederkehrend). */

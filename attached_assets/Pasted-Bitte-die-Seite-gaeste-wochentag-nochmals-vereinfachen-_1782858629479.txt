@@ -1,0 +1,89 @@
+Bitte die Seite /gaeste/wochentag nochmals vereinfachen und verständlicher machen.
+
+Problem:
+Die aktuelle Tabelle ist zu technisch. Werte wie „Ø Res./Tag 11.8“ sind unklar. Es muss sofort verständlich sein:
+Wenn Montag im gewählten Monat 4x vorkommt und total 47 Reservationen hatte, dann bedeutet das Ø 11.8 Reservationen pro Montag.
+
+Bitte umsetzen:
+
+1. Beschriftungen verständlicher machen
+Ersetze technische Spaltennamen:
+- „Vorkommen“ → „Anzahl Montage/Dienstage/etc. im Zeitraum“
+- „Ø Res./Tag“ → „Ø Reservationen pro Montag/Dienstag/etc.“
+- „Ø Pers./Tag“ → „Ø Personen pro Montag/Dienstag/etc.“
+- „Pers./Res.“ → „Ø Personen pro Reservation“
+
+In jeder Zeile soll der Text zum Wochentag passen.
+Beispiel Montag:
+- Montag kam 4x vor
+- 47 Reservationen total
+- Ø 11.8 Reservationen pro Montag
+- 203 Personen total
+- Ø 50.8 Personen pro Montag
+- Ø 4.3 Personen pro Reservation
+
+2. Kompaktere Hauptansicht
+Die Hauptauswertung soll kompakter werden:
+- Keine riesigen Tabellen mit zu vielen Spalten auf einmal.
+- Pro Wochentag eine kompakte Zeile oder Card.
+- Wichtigste Zahl gross anzeigen.
+- Zusatzwerte kleiner darunter.
+
+Je nach Modus:
+Modus „Reservationen“:
+gross: Ø Reservationen pro Wochentag
+darunter: Reservationen total, Anzahl Wochentage, Personen total, Ø Personen/Reservation
+
+Modus „Personen“:
+gross: Ø Personen pro Wochentag
+darunter: Personen total, Reservationen total, Anzahl Wochentage, Ø Personen/Reservation
+
+Modus „Personen pro Reservation“:
+gross: Ø Personen pro Reservation
+darunter: Reservationen total, Personen total, Anzahl Wochentage
+
+3. Erklärung direkt oberhalb der Auswertung
+Bitte eine kurze Infobox anzeigen:
+„Die Durchschnittswerte beziehen sich auf den jeweiligen Wochentag. Beispiel: Wenn ein Monat 4 Montage hat und Montag total 47 Reservationen hatte, ergibt das Ø 11.8 Reservationen pro Montag.“
+
+4. Monatsnavigation per Pfeile
+Ich möchte die Monate schnell wechseln können.
+Bitte oben neben dem Zeitraum eine Monatsnavigation einbauen:
+- Pfeil links = vorheriger Monat
+- aktueller Monat als Label, z. B. „Mai 2026“
+- Pfeil rechts = nächster Monat
+
+Wenn ich mit den Pfeilen wechsle:
+- Von/Bis wird automatisch auf den ganzen Monat gesetzt
+- die Auswertung aktualisiert sich direkt
+- bestehende Quick-Buttons bleiben erhalten
+
+5. Monatsvergleich kompakter
+Die Tabelle „Pro Monat & Wochentag“ soll nicht mehr so gross und schwer lesbar sein.
+
+Bitte stattdessen:
+- Einen Monatsblock anzeigen für den aktuell ausgewählten Monat
+- Innerhalb dieses Monats die 7 Wochentage kompakt zeigen
+- Optional darunter ein Button „Monatsvergleich anzeigen“
+- Erst wenn man klickt, wird die detaillierte Monatsvergleich-Tabelle eingeblendet
+
+6. Klarere Hervorhebung
+Bei jedem Wochentag soll klar sein:
+- Ist dieser Wochentag stark oder schwach?
+- Besser als Durchschnitt oder schlechter als Durchschnitt?
+
+Bitte mit einfachen Labels:
+- „über Durchschnitt“
+- „unter Durchschnitt“
+- „stärkster Wochentag“
+- „schwächster Wochentag“
+
+7. Tests
+Bitte Tests ergänzen/anpassen:
+- Monatsnavigation setzt Von/Bis korrekt auf Monatsanfang/Monatsende
+- Durchschnitt pro spezifischem Wochentag ist korrekt
+- Beschriftungen sind eindeutig
+- Monatsvergleich ist standardmässig eingeklappt
+- Modus-Switch bleibt funktional
+
+Danach bitte typecheck und alle relevanten Tests laufen lassen.
