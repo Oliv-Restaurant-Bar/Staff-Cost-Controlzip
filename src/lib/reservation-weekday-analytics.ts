@@ -116,6 +116,76 @@ export function monthLongLabel(monthKey: string): string {
   return `${MONTH_LONG[idx] ?? m[2]} ${m[1]}`;
 }
 
+// ── Wochentags-Vorkommen im Zeitraum ─────────────────────────────────────────
+
+/** Parst „yyyy-MM-dd" (optionaler Zeitanhang) als UTC-`Date` oder `null`. */
+function parseYmdToUtc(dateStr: string | null | undefined): Date | null {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if (!m) return null;
+  const y = +m[1];
+  const mo = +m[2];
+  const d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
+    return null;
+  }
+  return dt;
+}
+
+function zeroWeekdayCounts(): Record<IsoWeekday, number> {
+  return { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Zählt, wie oft jeder ISO-Wochentag (Mo=1 … So=7) im Zeitraum [from, to]
+ * (inklusive) vorkommt — z. B. „wie viele Montage liegen im Juni?".  Liefert bei
+ * ungültigem/leerem Bereich (oder from > to) alle 0.  Rein UTC-basiert (keine
+ * Zeitzonen-/DST-Verschiebung), iteriert tageweise.
+ */
+export function countWeekdayOccurrences(from: string, to: string): Record<IsoWeekday, number> {
+  const counts = zeroWeekdayCounts();
+  const start = parseYmdToUtc(from);
+  const end = parseYmdToUtc(to);
+  if (!start || !end) return counts;
+  const startT = start.getTime();
+  const endT = end.getTime();
+  if (startT > endT) return counts;
+  for (let t = startT; t <= endT; t += MS_PER_DAY) {
+    const dow = new Date(t).getUTCDay(); // 0=So … 6=Sa
+    const iso = (dow === 0 ? 7 : dow) as IsoWeekday;
+    counts[iso] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Wie `countWeekdayOccurrences`, aber begrenzt auf die Schnittmenge eines Monats
+ * („yyyy-MM") mit dem Zeitraum [from, to].  So werden bei einem Zeitraum, der
+ * mitten im Monat beginnt/endet, nur die tatsächlich enthaltenen Wochentage
+ * gezählt.  Ungültiger Monatsschlüssel → alle 0.
+ */
+export function countWeekdayOccurrencesInMonth(
+  monthKey: string,
+  from: string,
+  to: string,
+): Record<IsoWeekday, number> {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return zeroWeekdayCounts();
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return zeroWeekdayCounts();
+  const monthStart = ymd(y, mo, 1);
+  const monthEnd = ymd(y, mo, lastDayOfMonth(y, mo));
+  // Schnittmenge mit [from, to] (lexikografischer Vergleich für „yyyy-MM-dd").
+  const clampStart = monthStart > from ? monthStart : from;
+  const clampEnd = monthEnd < to ? monthEnd : to;
+  return countWeekdayOccurrences(clampStart, clampEnd);
+}
+
 // ── Status-Auswahl ───────────────────────────────────────────────────────────
 
 /**
@@ -264,6 +334,12 @@ export interface WeekdayStat {
   avgPersons: number | null;
   /** Anteil der Reservationen am Gesamtzeitraum in Prozent (0..100). */
   sharePct: number;
+  /** Anzahl Vorkommen dieses Wochentags im Zeitraum (z. B. 5 Montage). */
+  occurrences: number;
+  /** Ø Reservationen pro Vorkommen dieses Wochentags (null wenn 0 Vorkommen). */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen dieses Wochentags (null wenn 0 Vorkommen). */
+  avgPersonsPerDay: number | null;
 }
 
 export interface WeekdayAggregate {
@@ -271,6 +347,12 @@ export interface WeekdayAggregate {
   weekdays: WeekdayStat[];
   totalReservations: number;
   totalPersons: number;
+  /** Summe der Wochentags-Vorkommen = Anzahl Kalendertage im Zeitraum. */
+  totalOccurrences: number;
+  /** Ø Reservationen pro Tag im Zeitraum (totalReservations / totalOccurrences). */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Reservation im Zeitraum (totalPersons / totalReservations). */
+  avgPersonsPerReservation: number | null;
 }
 
 /**
@@ -284,6 +366,7 @@ export function aggregateByWeekday(
   scope: StatusScope = 'booked',
 ): WeekdayAggregate {
   const prepared = prepareRows(rows, from, to, statusPredicate(scope));
+  const occ = countWeekdayOccurrences(from, to);
   const res: Record<IsoWeekday, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
   const per: Record<IsoWeekday, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
   let totalReservations = 0;
@@ -300,8 +383,19 @@ export function aggregateByWeekday(
     persons: per[wd],
     avgPersons: res[wd] > 0 ? per[wd] / res[wd] : null,
     sharePct: totalReservations > 0 ? (res[wd] / totalReservations) * 100 : 0,
+    occurrences: occ[wd],
+    avgReservationsPerDay: occ[wd] > 0 ? res[wd] / occ[wd] : null,
+    avgPersonsPerDay: occ[wd] > 0 ? per[wd] / occ[wd] : null,
   }));
-  return { weekdays, totalReservations, totalPersons };
+  const totalOccurrences = ISO_WEEKDAYS.reduce((s, wd) => s + occ[wd], 0);
+  return {
+    weekdays,
+    totalReservations,
+    totalPersons,
+    totalOccurrences,
+    avgReservationsPerDay: totalOccurrences > 0 ? totalReservations / totalOccurrences : null,
+    avgPersonsPerReservation: totalReservations > 0 ? totalPersons / totalReservations : null,
+  };
 }
 
 // ── Matrix „Wochentage nach Monat" ───────────────────────────────────────────
@@ -376,6 +470,59 @@ export function buildMonthWeekdayMatrix(
 
   const months = [...byMonth.values()].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
   return { months, weekdayTotals, grandTotal };
+}
+
+// ── Monats-Wochentag-Aufschlüsselung (vereinfachte Monatsauswertung) ──────────
+
+export interface MonthWeekdayBreakdownRow {
+  monthKey: string; // "yyyy-MM"
+  weekday: IsoWeekday;
+  /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
+  occurrences: number;
+  reservations: number;
+  persons: number;
+  /** Ø Reservationen pro Vorkommen (null wenn 0 Vorkommen). */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen (null wenn 0 Vorkommen). */
+  avgPersonsPerDay: number | null;
+  /** Ø Personen pro Reservation (null wenn 0 Reservationen). */
+  avgPersons: number | null;
+}
+
+/**
+ * Flache Aufschlüsselung „pro Monat × Wochentag" als Ersatz für die grosse
+ * Matrix.  Eine Zeile je (Monat, Wochentag) mit Vorkommen, Reservationen,
+ * Personen sowie den Durchschnitten.  Es erscheinen nur Monate mit mindestens
+ * einer Reservation (wie in der Matrix) und je Monat nur Wochentage, die im
+ * Zeitraum tatsächlich vorkommen (`occurrences > 0`) — chronologisch, Mo→So.
+ */
+export function buildMonthWeekdayBreakdown(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  scope: StatusScope = 'booked',
+): MonthWeekdayBreakdownRow[] {
+  const matrix = buildMonthWeekdayMatrix(rows, from, to, scope);
+  const out: MonthWeekdayBreakdownRow[] = [];
+  for (const month of matrix.months) {
+    const occ = countWeekdayOccurrencesInMonth(month.monthKey, from, to);
+    for (const wd of ISO_WEEKDAYS) {
+      const occurrences = occ[wd];
+      if (occurrences <= 0) continue;
+      const cell = month.cells[wd];
+      out.push({
+        monthKey: month.monthKey,
+        weekday: wd,
+        occurrences,
+        reservations: cell.reservations,
+        persons: cell.persons,
+        avgReservationsPerDay: occurrences > 0 ? cell.reservations / occurrences : null,
+        avgPersonsPerDay: occurrences > 0 ? cell.persons / occurrences : null,
+        avgPersons: cell.reservations > 0 ? cell.persons / cell.reservations : null,
+      });
+    }
+  }
+  return out;
 }
 
 // ── Zusammenfassung ──────────────────────────────────────────────────────────

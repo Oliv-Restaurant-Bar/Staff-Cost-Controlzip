@@ -1,16 +1,21 @@
 /**
  * ReservationWochentagPage — Reservationen nach Wochentag
  * ========================================================
- * Admin-only Auswertung: an welchen Wochentagen wird am meisten/wenigsten
- * reserviert?  Für einen frei wählbaren Zeitraum (mit Schnell-Auswahl inkl.
- * anpassbarer Saisons) zeigt die Seite:
+ * Admin-only Management-Dashboard: an welchen Wochentagen wird am meisten/
+ * wenigsten reserviert?  Für einen frei wählbaren Zeitraum (mit Schnell-Auswahl
+ * inkl. anpassbarer Saisons) zeigt die Seite:
  *
- *  1. Zusammenfassung: stärkster/schwächster Wochentag + bester/schwächster
- *     Monat für einen wählbaren Fokus-Wochentag (Standard: Montag).
- *  2. Kennzahlen je Wochentag (Mo–So): Reservationen, Personen,
- *     Ø Personen/Reservation, Anteil % am Gesamtzeitraum.
- *  3. Matrix „Wochentage nach Monat": Zeile = Monat, Spalte = Wochentag; jede
- *     Zelle zeigt Reservationen (oben) und Personen (kleiner darunter).
+ *  1. Umschalter (Reservationen / Personen / Personen pro Reservation) — die
+ *     Anzahl Reservationen bleibt in JEDEM Modus sichtbar.
+ *  2. Vier Kennzahlen-Karten: stärkster/schwächster Wochentag (nach Modus),
+ *     Ø Reservationen pro Wochentag und Ø Personen pro Reservation.
+ *  3. Balkendiagramm je Wochentag (Höhe = gewählte Kennzahl) mit kleinen
+ *     Kennzahlen unter jedem Balken (Reservationen, Personen, Ø Pers./Res.).
+ *  4. Haupttabelle „Wochentage im Zeitraum": Vorkommen, Reservationen total,
+ *     Ø Reservationen/Tag, Personen total, Ø Personen/Tag, Personen/Reservation,
+ *     Anteil — die zum Modus passenden Spalten sind hervorgehoben.
+ *  5. Monatsauswertung „pro Monat × Wochentag": eine Zeile je (Monat, Wochentag)
+ *     mit Vorkommen, Reservationen, Personen und den Durchschnitten.
  *
  * Liest ausschliesslich aus der bestehenden Tabelle `reservation_records`
  * (mandantengefiltert via `fetchReservationsInRange`) — KEINE neue Migration,
@@ -24,7 +29,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   CalendarRange, Loader2, Database, ArrowLeft, TrendingUp, TrendingDown,
-  CalendarDays, Settings2, RotateCcw, Check, Trophy, Frown,
+  CalendarDays, Settings2, RotateCcw, Check, Users, BarChart3,
 } from 'lucide-react';
 import { format as fmtDate } from 'date-fns';
 import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
@@ -35,14 +40,16 @@ import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import {
-  aggregateByWeekday, buildMonthWeekdayMatrix, buildWeekdaySummary, matrixCellDisplay,
-  presetRange, monthLabel, monthLongLabel,
+  aggregateByWeekday, buildMonthWeekdayMatrix, buildMonthWeekdayBreakdown,
+  buildWeekdaySummary, metricValue,
+  presetRange, monthLongLabel,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
   DEFAULT_SEASON_SETTINGS,
-  ISO_WEEKDAYS, WEEKDAY_LABEL, WEEKDAY_SHORT, PRESET_LABEL, STATUS_SCOPE_LABEL,
+  WEEKDAY_LABEL, WEEKDAY_SHORT, PRESET_LABEL, STATUS_SCOPE_LABEL,
   METRICS, METRIC_LABEL,
-  type IsoWeekday, type PresetKey, type StatusScope, type MetricKey,
-  type SeasonSettings, type SeasonRange,
+  type PresetKey, type StatusScope, type MetricKey,
+  type SeasonSettings, type SeasonRange, type WeekdayStat,
+  type MonthWeekdayBreakdownRow,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -59,7 +66,7 @@ function avg(n: number | null): string {
 }
 
 /**
- * Sekundärzeile für eine Wochentags-/Monats-Bestmarke je Kennzahl.  Die Anzahl
+ * Sekundärzeile für eine Wochentags-Bestmarke je Kennzahl.  Die Anzahl
  * Reservationen wird in JEDEM Modus mitgeführt (sie verschwindet nie).
  */
 function extremeSub(
@@ -101,7 +108,6 @@ interface InitView {
   preset: PresetKey;
   from: string;
   to: string;
-  weekday: IsoWeekday;
   scope: StatusScope;
   year: number;
   metric: MetricKey;
@@ -111,12 +117,10 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
   const f = sp.get('f');
   const t = sp.get('t');
   const presetRaw = sp.get('p') as PresetKey | null;
-  const wdRaw = Number(sp.get('wd'));
   const scopeRaw = sp.get('sc') as StatusScope | null;
   const yearRaw = Number(sp.get('y'));
   const metricRaw = sp.get('m') as MetricKey | null;
 
-  const weekday: IsoWeekday = ISO_WEEKDAYS.includes(wdRaw as IsoWeekday) ? (wdRaw as IsoWeekday) : 1;
   const scope: StatusScope =
     scopeRaw === 'active' || scopeRaw === 'all' || scopeRaw === 'booked' ? scopeRaw : 'booked';
   const year = Number.isInteger(yearRaw) && yearRaw >= 2000 && yearRaw <= 2100 ? yearRaw : currentYear;
@@ -127,10 +131,10 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
   // greift der Standard „Dieser Monat".
   if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t)) {
     const preset: PresetKey = presetRaw && PRESETS.includes(presetRaw) ? presetRaw : 'custom';
-    return { preset, from: f, to: t, weekday, scope, year, metric };
+    return { preset, from: f, to: t, scope, year, metric };
   }
   const range = presetRange('thisMonth', { today: todayStr, year, seasons: DEFAULT_SEASON_SETTINGS })!;
-  return { preset: 'thisMonth', from: range.from, to: range.to, weekday, scope, year, metric };
+  return { preset: 'thisMonth', from: range.from, to: range.to, scope, year, metric };
 }
 
 // ── Kleine Bausteine ───────────────────────────────────────────────────────────
@@ -183,7 +187,6 @@ export default function ReservationWochentagPage() {
   const [preset, setPreset] = useState<PresetKey>(init.preset);
   const [from, setFrom] = useState(init.from);
   const [to, setTo] = useState(init.to);
-  const [focusWeekday, setFocusWeekday] = useState<IsoWeekday>(init.weekday);
   const [scope, setScope] = useState<StatusScope>(init.scope);
   const [year, setYear] = useState(init.year);
   const [metric, setMetric] = useState<MetricKey>(init.metric);
@@ -235,9 +238,23 @@ export default function ReservationWochentagPage() {
     [rows, from, to, scope],
   );
   const summary = useMemo(
-    () => buildWeekdaySummary(agg, matrix, focusWeekday, metric),
-    [agg, matrix, focusWeekday, metric],
+    () => buildWeekdaySummary(agg, matrix, 1, metric),
+    [agg, matrix, metric],
   );
+  const breakdown = useMemo(
+    () => buildMonthWeekdayBreakdown(rows, from, to, scope),
+    [rows, from, to, scope],
+  );
+  // Aufschlüsselung je Monat gruppieren (chronologisch, Mo→So bleibt erhalten).
+  const breakdownByMonth = useMemo(() => {
+    const map = new Map<string, MonthWeekdayBreakdownRow[]>();
+    for (const row of breakdown) {
+      const arr = map.get(row.monthKey);
+      if (arr) arr.push(row);
+      else map.set(row.monthKey, [row]);
+    }
+    return [...map.entries()].map(([monthKey, list]) => ({ monthKey, rows: list }));
+  }, [breakdown]);
 
   // ── Aktionen ─────────────────────────────────────────────────────────────────
   const applyPreset = (key: PresetKey) => {
@@ -277,25 +294,23 @@ export default function ReservationWochentagPage() {
     next.set('p', preset);
     next.set('f', from);
     next.set('t', to);
-    next.set('wd', String(focusWeekday));
     next.set('sc', scope);
     next.set('y', String(year));
     next.set('m', metric);
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
-  }, [preset, from, to, focusWeekday, scope, year, metric, searchParams, setSearchParams]);
+  }, [preset, from, to, scope, year, metric, searchParams, setSearchParams]);
 
   if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   const hasData = matrix.grandTotal.reservations > 0;
   const yearRelevant = SEASON_PRESETS.includes(preset);
-  const matrixHint =
-    metric === 'persons'
-      ? 'Je Zelle: Anzahl Personen (gross), Anzahl Reservationen (kleiner darunter).'
-      : metric === 'avgPersons'
-        ? 'Je Zelle: Ø Personen pro Reservation (gross), Reservationen + Personen (kleiner darunter).'
-        : 'Je Zelle: Anzahl Reservationen (gross), Anzahl Personen (kleiner darunter).';
+
+  // Welche Spalte ist im aktuellen Modus hervorgehoben?
+  const hlHead = (m: MetricKey) => metric === m && 'bg-primary/5 text-primary';
+  const hlCell = (m: MetricKey) => metric === m && 'bg-primary/5';
+  const totalAvgPersonsPerDay = agg.totalOccurrences > 0 ? agg.totalPersons / agg.totalOccurrences : null;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
@@ -517,13 +532,8 @@ export default function ReservationWochentagPage() {
         </div>
       ) : (
         <>
-          {/* ── Zusammenfassung ───────────────────────────────────────────── */}
+          {/* ── Kennzahlen-Karten ─────────────────────────────────────────── */}
           <section>
-            <SectionTitle icon={Trophy}>Zusammenfassung</SectionTitle>
-            <p className="mb-2 -mt-1 text-xs text-muted-foreground">
-              Stärkster/schwächster Wochentag und Monat — bewertet nach{' '}
-              <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>.
-            </p>
             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
               <SummaryCard
                 icon={TrendingUp}
@@ -540,46 +550,52 @@ export default function ReservationWochentagPage() {
                 accent="text-red-600 dark:text-red-400"
               />
               <SummaryCard
-                icon={Trophy}
-                label={`Bester Monat (${WEEKDAY_SHORT[focusWeekday]})`}
-                value={summary.bestMonthForWeekday ? monthLongLabel(summary.bestMonthForWeekday.monthKey) : '—'}
-                sub={summary.bestMonthForWeekday ? extremeSub(summary.bestMonthForWeekday, metric) : undefined}
-                accent="text-emerald-600 dark:text-emerald-400"
+                icon={CalendarDays}
+                label="Ø Reservationen pro Wochentag"
+                value={avg(agg.avgReservationsPerDay)}
+                sub={`${NUM0.format(agg.totalReservations)} Res. · ${NUM0.format(agg.totalOccurrences)} Tage`}
               />
               <SummaryCard
-                icon={Frown}
-                label={`Schwächster Monat (${WEEKDAY_SHORT[focusWeekday]})`}
-                value={summary.worstMonthForWeekday ? monthLongLabel(summary.worstMonthForWeekday.monthKey) : '—'}
-                sub={summary.worstMonthForWeekday ? extremeSub(summary.worstMonthForWeekday, metric) : undefined}
-                accent="text-red-600 dark:text-red-400"
+                icon={Users}
+                label="Ø Personen pro Reservation"
+                value={avg(agg.avgPersonsPerReservation)}
+                sub={`${NUM0.format(agg.totalPersons)} Pers. · ${NUM0.format(agg.totalReservations)} Res.`}
               />
             </div>
-            <div className="mt-2 flex items-center gap-2 text-sm">
-              <label htmlFor="focus-wd" className="text-muted-foreground">Wochentag für Monatsvergleich:</label>
-              <select
-                id="focus-wd"
-                value={focusWeekday}
-                onChange={(e) => setFocusWeekday(Number(e.target.value) as IsoWeekday)}
-                className="rounded-md border border-input bg-background px-2 py-1 text-sm"
-              >
-                {ISO_WEEKDAYS.map((wd) => (
-                  <option key={wd} value={wd}>{WEEKDAY_LABEL[wd]}</option>
-                ))}
-              </select>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Stärkster/schwächster Wochentag bewertet nach{' '}
+              <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>.
+            </p>
+          </section>
+
+          {/* ── Balkendiagramm je Wochentag ───────────────────────────────── */}
+          <section>
+            <SectionTitle icon={BarChart3}>
+              Wochentage im Vergleich — {METRIC_LABEL[metric]}
+            </SectionTitle>
+            <div className="rounded-lg border border-border bg-card p-4">
+              <WeekdayBarChart
+                weekdays={agg.weekdays}
+                metric={metric}
+                strongestWeekday={summary.strongestWeekday?.weekday ?? null}
+              />
             </div>
           </section>
 
-          {/* ── Kennzahlen je Wochentag ───────────────────────────────────── */}
+          {/* ── Haupttabelle „Wochentage im Zeitraum" ─────────────────────── */}
           <section>
-            <SectionTitle icon={CalendarDays}>Kennzahlen je Wochentag</SectionTitle>
+            <SectionTitle icon={CalendarDays}>Wochentage im Zeitraum</SectionTitle>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 text-left">Wochentag</th>
-                    <th className={cn('px-3 py-2 text-right', metric === 'reservations' && 'bg-primary/5 text-primary')}>Reservationen</th>
-                    <th className={cn('px-3 py-2 text-right', metric === 'persons' && 'bg-primary/5 text-primary')}>Personen</th>
-                    <th className={cn('px-3 py-2 text-right', metric === 'avgPersons' && 'bg-primary/5 text-primary')}>Ø Personen</th>
+                    <th className="px-3 py-2 text-right">Vorkommen</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Reservationen</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Ø Res./Tag</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Personen</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Ø Pers./Tag</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('avgPersons'))}>Pers./Res.</th>
                     <th className="px-3 py-2 text-right">Anteil</th>
                   </tr>
                 </thead>
@@ -594,9 +610,12 @@ export default function ReservationWochentagPage() {
                           {isStrong && <span className="ml-1.5 text-emerald-600 dark:text-emerald-400">▲</span>}
                           {isWeak && <span className="ml-1.5 text-red-600 dark:text-red-400">▼</span>}
                         </td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', metric === 'reservations' && 'bg-primary/5')}>{NUM0.format(w.reservations)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', metric === 'persons' && 'bg-primary/5')}>{NUM0.format(w.persons)}</td>
-                        <td className={cn('px-3 py-2 text-right tabular-nums', metric === 'avgPersons' && 'bg-primary/5')}>{avg(w.avgPersons)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(w.occurrences)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{NUM0.format(w.reservations)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{avg(w.avgReservationsPerDay)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{NUM0.format(w.persons)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{avg(w.avgPersonsPerDay)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('avgPersons'))}>{avg(w.avgPersons)}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{pct(w.sharePct)}</td>
                       </tr>
                     );
@@ -605,11 +624,12 @@ export default function ReservationWochentagPage() {
                 <tfoot>
                   <tr className="border-t-2 border-border bg-muted/30 font-semibold">
                     <td className="px-3 py-2">Gesamt</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(agg.totalReservations)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(agg.totalPersons)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      {avg(agg.totalReservations > 0 ? agg.totalPersons / agg.totalReservations : null)}
-                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(agg.totalOccurrences)}</td>
+                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{NUM0.format(agg.totalReservations)}</td>
+                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{avg(agg.avgReservationsPerDay)}</td>
+                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{NUM0.format(agg.totalPersons)}</td>
+                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{avg(totalAvgPersonsPerDay)}</td>
+                    <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('avgPersons'))}>{avg(agg.avgPersonsPerReservation)}</td>
                     <td className="px-3 py-2 text-right tabular-nums">100,0 %</td>
                   </tr>
                 </tfoot>
@@ -617,69 +637,54 @@ export default function ReservationWochentagPage() {
             </div>
           </section>
 
-          {/* ── Matrix Monat × Wochentag ──────────────────────────────────── */}
+          {/* ── Monatsauswertung pro Monat × Wochentag ────────────────────── */}
           <section>
-            <SectionTitle icon={CalendarRange}>Wochentage nach Monat</SectionTitle>
-            <p className="mb-2 text-xs text-muted-foreground">{matrixHint}</p>
+            <SectionTitle icon={CalendarRange}>Pro Monat &amp; Wochentag</SectionTitle>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Je Monat eine Zeile pro Wochentag: wie viele dieser Wochentage der
+              Monat hat und wie viele Reservationen/Personen im Schnitt auf einen
+              davon entfallen.
+            </p>
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="px-3 py-2 text-left">Monat</th>
-                    {ISO_WEEKDAYS.map((wd) => (
-                      <th
-                        key={wd}
-                        className={cn(
-                          'px-3 py-2 text-right',
-                          wd === focusWeekday && 'bg-primary/10 text-primary',
-                        )}
-                      >
-                        {WEEKDAY_SHORT[wd]}
-                      </th>
-                    ))}
-                    <th className="px-3 py-2 text-right">Total</th>
+                    <th className="px-3 py-2 text-left">Wochentag</th>
+                    <th className="px-3 py-2 text-right">Vorkommen</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Reservationen</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('reservations'))}>Ø Res./Tag</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Personen</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('persons'))}>Ø Pers./Tag</th>
+                    <th className={cn('px-3 py-2 text-right', hlHead('avgPersons'))}>Pers./Res.</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {matrix.months.map((m) => (
-                    <tr key={m.monthKey} className="border-t border-border">
-                      <td className="whitespace-nowrap px-3 py-2 font-medium">{monthLabel(m.monthKey)}</td>
-                      {ISO_WEEKDAYS.map((wd) => (
-                        <td
-                          key={wd}
-                          className={cn(
-                            'px-3 py-2 text-right tabular-nums',
-                            wd === focusWeekday && 'bg-primary/5',
-                          )}
-                        >
-                          <MatrixCell reservations={m.cells[wd].reservations} persons={m.cells[wd].persons} metric={metric} />
-                        </td>
-                      ))}
-                      <td className="px-3 py-2 text-right tabular-nums font-medium">
-                        <MatrixCell reservations={m.total.reservations} persons={m.total.persons} metric={metric} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-border bg-muted/30 font-semibold">
-                    <td className="px-3 py-2">Gesamt</td>
-                    {ISO_WEEKDAYS.map((wd) => (
-                      <td
-                        key={wd}
-                        className={cn(
-                          'px-3 py-2 text-right tabular-nums',
-                          wd === focusWeekday && 'bg-primary/10',
-                        )}
+                  {breakdownByMonth.map((group) =>
+                    group.rows.map((row, i) => (
+                      <tr
+                        key={`${group.monthKey}-${row.weekday}`}
+                        className={cn('border-t border-border', i === 0 && 'border-t-2 border-border')}
                       >
-                        <MatrixCell reservations={matrix.weekdayTotals[wd].reservations} persons={matrix.weekdayTotals[wd].persons} metric={metric} />
-                      </td>
-                    ))}
-                    <td className="px-3 py-2 text-right tabular-nums">
-                      <MatrixCell reservations={matrix.grandTotal.reservations} persons={matrix.grandTotal.persons} metric={metric} />
-                    </td>
-                  </tr>
-                </tfoot>
+                        {i === 0 && (
+                          <td
+                            rowSpan={group.rows.length}
+                            className="whitespace-nowrap border-r border-border px-3 py-2 align-top font-medium"
+                          >
+                            {monthLongLabel(group.monthKey)}
+                          </td>
+                        )}
+                        <td className="px-3 py-2">{WEEKDAY_LABEL[row.weekday]}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(row.occurrences)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{NUM0.format(row.reservations)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('reservations'))}>{avg(row.avgReservationsPerDay)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{NUM0.format(row.persons)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('persons'))}>{avg(row.avgPersonsPerDay)}</td>
+                        <td className={cn('px-3 py-2 text-right tabular-nums', hlCell('avgPersons'))}>{avg(row.avgPersons)}</td>
+                      </tr>
+                    )),
+                  )}
+                </tbody>
               </table>
             </div>
           </section>
@@ -689,38 +694,59 @@ export default function ReservationWochentagPage() {
   );
 }
 
-// ── Matrix-Zelle: gewählte Kennzahl gross, Anzahl Reservationen bleibt sichtbar ─
+// ── Balkendiagramm je Wochentag ────────────────────────────────────────────────
 //
-// Je Modus:
-//  - reservations: gross = Reservationen, klein = Personen
-//  - persons:      gross = Personen,      klein = Reservationen
-//  - avgPersons:   gross = Ø Pers./Res.,  klein = Reservationen + Personen
-//
-// Die Anzahl Reservationen ist in JEDEM Modus sichtbar (verschwindet nie).
+// Höhe = gewählte Kennzahl (Reservationen / Personen / Ø Pers./Res.).  Unter
+// jedem Balken bleiben die drei Kennzahlen klein sichtbar (Reservationen,
+// Personen, Ø Personen pro Reservation) — unabhängig vom gewählten Modus.
 
-function MatrixCell({ reservations, persons, metric }: {
-  reservations: number;
-  persons: number;
+function WeekdayBarChart({ weekdays, metric, strongestWeekday }: {
+  weekdays: WeekdayStat[];
   metric: MetricKey;
+  strongestWeekday: number | null;
 }) {
-  const d = matrixCellDisplay({ reservations, persons }, metric);
-  if (d.primary === null) return <span className="text-muted-foreground">–</span>;
-
-  const big = d.primaryIsAverage ? NUM1.format(d.primary) : NUM0.format(d.primary);
-  let small: string;
-  if (metric === 'persons') {
-    small = `${NUM0.format(d.reservations)} Res.`;
-  } else if (metric === 'avgPersons') {
-    small = `${NUM0.format(d.reservations)} Res. · ${NUM0.format(d.persons)} P.`;
-  } else {
-    small = `${NUM0.format(d.persons)} P.`;
-  }
+  const values = weekdays.map((w) => metricValue(w.reservations, w.persons, metric));
+  const maxValue = Math.max(0, ...values);
 
   return (
-    <span className="inline-flex flex-col items-end leading-tight">
-      <span>{big}</span>
-      <span className="text-[11px] text-muted-foreground">{small}</span>
-    </span>
+    <div>
+      {/* Balken */}
+      <div className="flex h-48 items-end gap-1.5 sm:gap-3">
+        {weekdays.map((w, i) => {
+          const v = values[i];
+          const heightPct = maxValue > 0 ? (v / maxValue) * 100 : 0;
+          const isStrong = strongestWeekday === w.weekday && v > 0;
+          const label = metric === 'avgPersons' ? avg(w.avgPersons) : NUM0.format(v);
+          return (
+            <div key={w.weekday} className="flex h-full flex-1 flex-col items-center justify-end">
+              <span className="mb-1 text-[11px] font-semibold tabular-nums text-foreground">{label}</span>
+              <div
+                className={cn(
+                  'w-full rounded-t-md transition-all',
+                  v > 0 ? (isStrong ? 'bg-primary' : 'bg-primary/60') : 'bg-muted',
+                )}
+                style={{ height: v > 0 ? `max(${heightPct}%, 4px)` : '2px' }}
+                title={`${WEEKDAY_LABEL[w.weekday]}: ${label}`}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Beschriftung + kleine Kennzahlen */}
+      <div className="mt-2 flex gap-1.5 border-t border-border pt-2 sm:gap-3">
+        {weekdays.map((w) => (
+          <div key={w.weekday} className="flex-1 text-center">
+            <div className="text-xs font-semibold">{WEEKDAY_SHORT[w.weekday]}</div>
+            <div className="mt-0.5 space-y-px text-[10px] leading-tight tabular-nums text-muted-foreground">
+              <div>{NUM0.format(w.reservations)} Res.</div>
+              <div>{NUM0.format(w.persons)} P.</div>
+              <div>Ø {avg(w.avgPersons)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

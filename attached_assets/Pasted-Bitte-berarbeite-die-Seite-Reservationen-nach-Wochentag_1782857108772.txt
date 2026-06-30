@@ -1,0 +1,92 @@
+Bitte überarbeite die Seite „Reservationen nach Wochentag“ visuell und fachlich.
+
+Ziel:
+Die Auswertung soll nicht wie eine grosse unübersichtliche Matrix wirken, sondern wie ein klares Management-Dashboard für Reservationen nach Wochentag.
+
+Wichtig:
+Keine neue Datenbanktabelle.
+Keine neue Migration.
+Alle Daten weiterhin aus bestehenden reservation_records / fetchReservationsInRange berechnen.
+Admin-only und tenant-scoped beibehalten.
+
+Bitte umsetzen:
+
+1. Auswertungsmodus als klare Buttons
+Oben soll es Buttons geben:
+- Reservationen
+- Personen
+- Personen pro Reservation
+
+Je nach Auswahl ändert sich der Hauptfokus der Anzeige.
+Die Anzahl Reservationen muss aber in jedem Modus weiterhin sichtbar bleiben.
+
+2. Neue Haupttabelle „Wochentage im Zeitraum“
+Für jeden Wochentag Montag bis Sonntag anzeigen:
+
+- Wochentag
+- Anzahl Vorkommen im Zeitraum
+  Beispiel: Wenn ein Monat 5 Montage hat, dann steht dort 5
+- Reservationen total
+  Beispiel: Montag total 290 Reservationen
+- Reservationen pro Wochentag im Schnitt
+  Beispiel: 290 / 5 = 58 Reservationen pro Montag
+- Personen total
+- Personen pro Wochentag im Schnitt
+- Personen pro Reservation
+  Beispiel: 1’160 Personen / 290 Reservationen = 4.0 Personen pro Reservation
+- Anteil in %
+
+Die wichtigste Spalte soll je nach Button visuell hervorgehoben werden:
+- Modus Reservationen: Reservationen total und Schnitt pro Wochentag
+- Modus Personen: Personen total und Schnitt pro Wochentag
+- Modus Personen pro Reservation: Personen pro Reservation
+
+3. Monatsauswertung vereinfachen
+Die bisherige grosse Matrix soll ersetzt oder deutlich vereinfacht werden.
+
+Ich möchte bei Monatsauswertung sehen:
+Pro Monat und pro Wochentag:
+- Anzahl Wochentage im Monat
+- Reservationen total
+- Ø Reservationen pro Wochentag
+- Personen total
+- Ø Personen pro Wochentag
+- Personen pro Reservation
+
+Beispiel für Montag im Juni:
+Montag kam 5x vor
+Total 290 Reservationen
+Ø 58 Reservationen pro Montag
+Total 1’160 Personen
+Ø 232 Personen pro Montag
+Ø 4.0 Personen pro Reservation
+
+4. Visuelle Darstellung
+Bitte zusätzlich zur Tabelle eine einfache visuelle Auswertung einbauen:
+- Balkendiagramm nach Wochentag
+- Button/Toggle bestimmt, ob Balken Reservationen, Personen oder Personen pro Reservation zeigen
+- Unter jedem Balken soll klein sichtbar bleiben:
+  Reservationen total + Personen total + Ø Personen pro Reservation
+
+5. Summary Cards oben
+Oben unter den Filtern bitte 4 Karten anzeigen:
+- Stärkster Wochentag nach gewähltem Modus
+- Schwächster Wochentag nach gewähltem Modus
+- Durchschnitt Reservationen pro Wochentag
+- Durchschnitt Personen pro Reservation
+
+6. UX
+Die Seite soll auf den ersten Blick beantworten:
+- Welcher Wochentag bringt die meisten Reservationen?
+- Welcher Wochentag bringt die meisten Personen?
+- Wie viele Reservationen hat ein durchschnittlicher Montag/Dienstag/etc.?
+- Wie viele Personen kommen im Schnitt pro Reservation?
+
+Bitte bestehende Tests anpassen oder ergänzen:
+- Berechnung Anzahl Wochentage im Zeitraum
+- Durchschnitt Reservationen pro Wochentag
+- Durchschnitt Personen pro Wochentag
+- Personen pro Reservation
+- Modus-Switch Reservationen / Personen / Personen pro Reservation
+
+Danach bitte typecheck und Tests laufen lassen.

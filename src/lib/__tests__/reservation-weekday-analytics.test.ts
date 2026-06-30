@@ -8,7 +8,10 @@ import {
   lastDayOfMonth,
   aggregateByWeekday,
   buildMonthWeekdayMatrix,
+  buildMonthWeekdayBreakdown,
   buildWeekdaySummary,
+  countWeekdayOccurrences,
+  countWeekdayOccurrencesInMonth,
   presetRange,
   seasonRange,
   parseSeasonSettings,
@@ -453,5 +456,120 @@ describe('buildWeekdaySummary — Monatsextreme je Kennzahl', () => {
     expect(s.bestMonthForWeekday).toMatchObject({ monthKey: '2025-11', persons: 10 });
     expect(s.worstMonthForWeekday).toMatchObject({ monthKey: '2025-10', persons: 4 });
     expect(s.bestMonthForWeekday!.reservations).toBe(1);
+  });
+});
+
+// ── Wochentags-Vorkommen im Zeitraum ──────────────────────────────────────────
+
+describe('countWeekdayOccurrences', () => {
+  it('zählt Wochentags-Vorkommen in einem Monat (Dez 2025: 5 Montage)', () => {
+    const occ = countWeekdayOccurrences('2025-12-01', '2025-12-31');
+    // Dez 2025: Mo 1/8/15/22/29 = 5, Di/Mi 5, Do–So 4
+    expect(occ[1]).toBe(5); // Montag
+    expect(occ[2]).toBe(5); // Dienstag
+    expect(occ[3]).toBe(5); // Mittwoch
+    expect(occ[4]).toBe(4); // Donnerstag
+    expect(occ[7]).toBe(4); // Sonntag
+    const total = (Object.values(occ) as number[]).reduce((s, n) => s + n, 0);
+    expect(total).toBe(31);
+  });
+
+  it('summiert über mehrere Monate (Okt–Dez 2025: 13 Montage, 92 Tage)', () => {
+    const occ = countWeekdayOccurrences(FULL_FROM, FULL_TO);
+    expect(occ[1]).toBe(13); // Okt 4 + Nov 4 + Dez 5
+    const total = (Object.values(occ) as number[]).reduce((s, n) => s + n, 0);
+    expect(total).toBe(92); // 31 + 30 + 31
+  });
+
+  it('Grenzen inklusive; Einzeltag liefert genau einen Wochentag', () => {
+    const occ = countWeekdayOccurrences('2025-12-25', '2025-12-25'); // Donnerstag
+    expect(occ).toEqual({ 1: 0, 2: 0, 3: 0, 4: 1, 5: 0, 6: 0, 7: 0 });
+  });
+
+  it('from > to oder ungültig → alle 0', () => {
+    expect(countWeekdayOccurrences('2025-12-31', '2025-12-01')).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 });
+    expect(countWeekdayOccurrences('kaputt', '2025-12-01')).toEqual({ 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 });
+  });
+});
+
+describe('countWeekdayOccurrencesInMonth', () => {
+  it('begrenzt auf die Schnittmenge Monat × Zeitraum', () => {
+    // Voller Oktober: 4 Montage (6/13/20/27)
+    expect(countWeekdayOccurrencesInMonth('2025-10', FULL_FROM, FULL_TO)[1]).toBe(4);
+    // Oktober ab dem 15.: nur 20 + 27 = 2 Montage
+    expect(countWeekdayOccurrencesInMonth('2025-10', '2025-10-15', '2025-10-31')[1]).toBe(2);
+  });
+
+  it('Monat ausserhalb des Zeitraums → alle 0', () => {
+    expect(countWeekdayOccurrencesInMonth('2025-09', FULL_FROM, FULL_TO)).toEqual({
+      1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0,
+    });
+  });
+
+  it('ungültiger Monatsschlüssel → alle 0', () => {
+    expect(countWeekdayOccurrencesInMonth('2025-13', FULL_FROM, FULL_TO)).toEqual({
+      1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0,
+    });
+  });
+});
+
+// ── Erweiterte Wochentags-Kennzahlen (Vorkommen + Durchschnitte) ──────────────
+
+describe('aggregateByWeekday — Vorkommen + Tagesdurchschnitte', () => {
+  it('führt Vorkommen, Ø Reservationen/Tag und Ø Personen/Tag je Wochentag', () => {
+    const agg = aggregateByWeekday(ROWS, FULL_FROM, FULL_TO, 'booked');
+    const mon = agg.weekdays.find((w) => w.weekday === 1)!;
+    // Montag: 13 Vorkommen, 5 Reservationen, 17 Personen
+    expect(mon.occurrences).toBe(13);
+    expect(mon.avgReservationsPerDay).toBeCloseTo(5 / 13, 6);
+    expect(mon.avgPersonsPerDay).toBeCloseTo(17 / 13, 6);
+    expect(mon.avgPersons).toBeCloseTo(17 / 5, 6); // Personen pro Reservation bleibt
+  });
+
+  it('Gesamt: Vorkommen, Ø Reservationen/Tag und Ø Personen/Reservation', () => {
+    const agg = aggregateByWeekday(ROWS, FULL_FROM, FULL_TO, 'booked');
+    expect(agg.totalOccurrences).toBe(92);
+    expect(agg.avgReservationsPerDay).toBeCloseTo(7 / 92, 6);
+    expect(agg.avgPersonsPerReservation).toBeCloseTo(30 / 7, 6);
+  });
+
+  it('leere Daten: Vorkommen bleiben, Ø Reservationen/Tag = 0, Ø Personen/Res = null', () => {
+    const agg = aggregateByWeekday([], FULL_FROM, FULL_TO, 'booked');
+    expect(agg.totalOccurrences).toBe(92);
+    expect(agg.avgReservationsPerDay).toBe(0); // 0/92, keine Division durch 0
+    expect(agg.avgPersonsPerReservation).toBeNull(); // keine Reservation
+    const mon = agg.weekdays.find((w) => w.weekday === 1)!;
+    expect(mon.occurrences).toBe(13);
+    expect(mon.avgReservationsPerDay).toBe(0);
+    expect(mon.avgPersonsPerDay).toBe(0);
+  });
+});
+
+// ── Monats-Wochentag-Aufschlüsselung ──────────────────────────────────────────
+
+describe('buildMonthWeekdayBreakdown', () => {
+  it('liefert eine Zeile je (Monat, Wochentag) mit Vorkommen + Durchschnitten', () => {
+    const rows = buildMonthWeekdayBreakdown(ROWS, FULL_FROM, FULL_TO, 'booked');
+    // Drei Monate, je 7 Wochentage (alle kommen im vollen Monat vor) = 21 Zeilen
+    expect(rows).toHaveLength(21);
+    expect([...new Set(rows.map((r2) => r2.monthKey))]).toEqual(['2025-10', '2025-11', '2025-12']);
+
+    const octMon = rows.find((r2) => r2.monthKey === '2025-10' && r2.weekday === 1)!;
+    expect(octMon).toMatchObject({ occurrences: 4, reservations: 3, persons: 9 });
+    expect(octMon.avgReservationsPerDay).toBeCloseTo(3 / 4, 6);
+    expect(octMon.avgPersonsPerDay).toBeCloseTo(9 / 4, 6);
+    expect(octMon.avgPersons).toBeCloseTo(9 / 3, 6);
+
+    // Wochentag ohne Reservationen erscheint trotzdem (Vorkommen > 0).
+    const octSun = rows.find((r2) => r2.monthKey === '2025-10' && r2.weekday === 7)!;
+    expect(octSun).toMatchObject({ occurrences: 4, reservations: 0, persons: 0 });
+    expect(octSun.avgReservationsPerDay).toBe(0);
+    expect(octSun.avgPersons).toBeNull();
+  });
+
+  it('zeigt nur Monate mit mindestens einer Reservation im geklemmten Zeitraum', () => {
+    // Ab 20.10.: Oktober hat keine Reservationen mehr (06./13. fallen weg).
+    const rows = buildMonthWeekdayBreakdown(ROWS, '2025-10-20', '2025-12-31', 'booked');
+    expect([...new Set(rows.map((r2) => r2.monthKey))]).toEqual(['2025-11', '2025-12']);
   });
 });
