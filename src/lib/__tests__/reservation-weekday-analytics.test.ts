@@ -15,6 +15,11 @@ import {
   serializeSeasonSettings,
   normalizeSeasonRange,
   DEFAULT_SEASON_SETTINGS,
+  METRICS,
+  METRIC_LABEL,
+  metricValue,
+  cellAverage,
+  matrixCellDisplay,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Test-Daten ────────────────────────────────────────────────────────────────
@@ -306,5 +311,147 @@ describe('parseSeasonSettings / serializeSeasonSettings', () => {
       endMonth: 12,
       endDay: 31,
     });
+  });
+});
+
+// ── Kennzahl-Umschalter (Reservationen / Personen / Ø Personen pro Reservation) ─
+
+describe('Kennzahlen-Definitionen (Toggle-Optionen)', () => {
+  it('bietet genau die drei Modi in fester Reihenfolge an', () => {
+    expect(METRICS).toEqual(['reservations', 'persons', 'avgPersons']);
+  });
+  it('hat ein deutsches Label je Modus', () => {
+    expect(METRIC_LABEL.reservations).toBe('Reservationen');
+    expect(METRIC_LABEL.persons).toBe('Personen');
+    expect(METRIC_LABEL.avgPersons).toBe('Personen pro Reservation');
+  });
+});
+
+describe('metricValue', () => {
+  it('liefert Reservationen / Personen / Ø je nach Modus', () => {
+    expect(metricValue(4, 10, 'reservations')).toBe(4);
+    expect(metricValue(4, 10, 'persons')).toBe(10);
+    expect(metricValue(4, 10, 'avgPersons')).toBeCloseTo(2.5, 6);
+  });
+  it('Ø ohne Reservationen → 0 (keine Division durch 0)', () => {
+    expect(metricValue(0, 0, 'avgPersons')).toBe(0);
+  });
+});
+
+describe('cellAverage', () => {
+  it('berechnet Ø Personen pro Reservation', () => {
+    expect(cellAverage({ reservations: 4, persons: 10 })).toBeCloseTo(2.5, 6);
+  });
+  it('null bei leerer Zelle', () => {
+    expect(cellAverage({ reservations: 0, persons: 0 })).toBeNull();
+  });
+});
+
+describe('matrixCellDisplay', () => {
+  it("Modus 'reservations': grosse Zahl = Reservationen, Personen mitgeführt", () => {
+    const d = matrixCellDisplay({ reservations: 4, persons: 10 }, 'reservations');
+    expect(d.primary).toBe(4);
+    expect(d.primaryIsAverage).toBe(false);
+    expect(d.reservations).toBe(4);
+    expect(d.persons).toBe(10);
+  });
+  it("Modus 'persons': grosse Zahl = Personen, Reservationen bleiben sichtbar", () => {
+    const d = matrixCellDisplay({ reservations: 4, persons: 10 }, 'persons');
+    expect(d.primary).toBe(10);
+    expect(d.primaryIsAverage).toBe(false);
+    expect(d.reservations).toBe(4); // verschwindet nie
+  });
+  it("Modus 'avgPersons': grosse Zahl = Ø, mit Ø-Flag, Reservationen + Personen mitgeführt", () => {
+    const d = matrixCellDisplay({ reservations: 4, persons: 10 }, 'avgPersons');
+    expect(d.primary).toBeCloseTo(2.5, 6);
+    expect(d.primaryIsAverage).toBe(true);
+    expect(d.reservations).toBe(4);
+    expect(d.persons).toBe(10);
+  });
+  it('leere Zelle → primary null in jedem Modus', () => {
+    for (const m of METRICS) {
+      expect(matrixCellDisplay({ reservations: 0, persons: 0 }, m).primary).toBeNull();
+    }
+  });
+  it('Reservationen sind in JEDEM Modus mitgeführt (verschwinden nie)', () => {
+    for (const m of METRICS) {
+      const d = matrixCellDisplay({ reservations: 7, persons: 21 }, m);
+      expect(d.reservations).toBe(7);
+    }
+  });
+});
+
+// Divergierende Daten: nach Reservationen gewinnt Mo, nach Personen/Ø gewinnt Di.
+//   Mo: 3 Reservationen, 6 Personen, Ø 2.0
+//   Di: 2 Reservationen, 10 Personen, Ø 5.0
+const DIV_ROWS: ReservationAggRow[] = [
+  r('2025-10-06', 2, 'confirmed'), // Mo
+  r('2025-10-13', 2, 'confirmed'), // Mo
+  r('2025-10-20', 2, 'confirmed'), // Mo
+  r('2025-10-07', 4, 'confirmed'), // Di
+  r('2025-10-14', 6, 'confirmed'), // Di
+];
+
+describe('buildWeekdaySummary — kennzahlabhängige Extreme', () => {
+  it("Default ohne Kennzahl rankt nach Reservationen (Rückwärtskompatibilität)", () => {
+    const agg = aggregateByWeekday(DIV_ROWS, '2025-10-01', '2025-10-31', 'booked');
+    const matrix = buildMonthWeekdayMatrix(DIV_ROWS, '2025-10-01', '2025-10-31', 'booked');
+    const s = buildWeekdaySummary(agg, matrix, 1);
+    expect(s.metric).toBe('reservations');
+    expect(s.strongestWeekday).toMatchObject({ weekday: 1, reservations: 3 });
+    expect(s.weakestWeekday).toMatchObject({ weekday: 2, reservations: 2 });
+  });
+
+  it("Modus 'persons': stärkster/schwächster Wochentag wechselt, Reservationen bleiben im Extrem", () => {
+    const agg = aggregateByWeekday(DIV_ROWS, '2025-10-01', '2025-10-31', 'booked');
+    const matrix = buildMonthWeekdayMatrix(DIV_ROWS, '2025-10-01', '2025-10-31', 'booked');
+    const s = buildWeekdaySummary(agg, matrix, 1, 'persons');
+    expect(s.metric).toBe('persons');
+    // Nach Personen gewinnt Dienstag (10) vor Montag (6).
+    expect(s.strongestWeekday).toMatchObject({ weekday: 2, persons: 10, value: 10 });
+    expect(s.weakestWeekday).toMatchObject({ weekday: 1, persons: 6, value: 6 });
+    // Reservationen sind weiterhin im Extrem enthalten (für die kleine Zeile).
+    expect(s.strongestWeekday!.reservations).toBe(2);
+    expect(s.weakestWeekday!.reservations).toBe(3);
+  });
+
+  it("Modus 'avgPersons': rankt nach Ø Personen/Reservation; value = Ø", () => {
+    const agg = aggregateByWeekday(DIV_ROWS, '2025-10-01', '2025-10-31', 'booked');
+    const matrix = buildMonthWeekdayMatrix(DIV_ROWS, '2025-10-01', '2025-10-31', 'booked');
+    const s = buildWeekdaySummary(agg, matrix, 1, 'avgPersons');
+    expect(s.metric).toBe('avgPersons');
+    expect(s.strongestWeekday!.weekday).toBe(2);
+    expect(s.strongestWeekday!.avgPersons).toBeCloseTo(5, 6);
+    expect(s.strongestWeekday!.value).toBeCloseTo(5, 6);
+    expect(s.weakestWeekday!.weekday).toBe(1);
+    expect(s.weakestWeekday!.avgPersons).toBeCloseTo(2, 6);
+  });
+});
+
+// Monatsextreme für einen Fokus-Wochentag, divergierend nach Kennzahl.
+//   Fokus Dienstag — Okt: 2 Res / 4 Pers (Ø 2) · Nov: 1 Res / 10 Pers (Ø 10)
+const MONTH_DIV_ROWS: ReservationAggRow[] = [
+  r('2025-10-07', 2, 'confirmed'), // Di Okt
+  r('2025-10-14', 2, 'confirmed'), // Di Okt
+  r('2025-11-04', 10, 'confirmed'), // Di Nov
+];
+
+describe('buildWeekdaySummary — Monatsextreme je Kennzahl', () => {
+  const FROM = '2025-10-01';
+  const TO = '2025-11-30';
+  it('nach Reservationen: bester Monat Okt, schwächster Nov', () => {
+    const agg = aggregateByWeekday(MONTH_DIV_ROWS, FROM, TO, 'booked');
+    const matrix = buildMonthWeekdayMatrix(MONTH_DIV_ROWS, FROM, TO, 'booked');
+    const s = buildWeekdaySummary(agg, matrix, 2, 'reservations');
+    expect(s.bestMonthForWeekday).toMatchObject({ monthKey: '2025-10', reservations: 2 });
+    expect(s.worstMonthForWeekday).toMatchObject({ monthKey: '2025-11', reservations: 1 });
+  });
+  it('nach Personen: bester Monat Nov, schwächster Okt; Reservationen mitgeführt', () => {
+    const agg = aggregateByWeekday(MONTH_DIV_ROWS, FROM, TO, 'booked');
+    const matrix = buildMonthWeekdayMatrix(MONTH_DIV_ROWS, FROM, TO, 'booked');
+    const s = buildWeekdaySummary(agg, matrix, 2, 'persons');
+    expect(s.bestMonthForWeekday).toMatchObject({ monthKey: '2025-11', persons: 10 });
+    expect(s.worstMonthForWeekday).toMatchObject({ monthKey: '2025-10', persons: 4 });
+    expect(s.bestMonthForWeekday!.reservations).toBe(1);
   });
 });

@@ -144,6 +144,82 @@ export function statusPredicate(scope: StatusScope): (status: string) => boolean
   }
 }
 
+// ── Auswertungs-Kennzahl (Umschalter) ────────────────────────────────────────
+
+/**
+ * Nach welcher Kennzahl die Matrix/Zusammenfassung primär ausgewertet wird:
+ *  - `reservations`  : Anzahl Reservationen
+ *  - `persons`       : Anzahl Personen
+ *  - `avgPersons`    : Ø Personen pro Reservation
+ *
+ * Die Anzahl Reservationen bleibt in JEDEM Modus sichtbar (als kleine Sekundär-
+ * zahl), damit sie nie ganz verschwindet.
+ */
+export type MetricKey = 'reservations' | 'persons' | 'avgPersons';
+
+export const METRIC_LABEL: Record<MetricKey, string> = {
+  reservations: 'Reservationen',
+  persons: 'Personen',
+  avgPersons: 'Personen pro Reservation',
+};
+
+export const METRICS: MetricKey[] = ['reservations', 'persons', 'avgPersons'];
+
+/** Ø Personen pro Reservation einer Zelle (null wenn keine Reservation). */
+export function cellAverage(cell: Cell): number | null {
+  return cell.reservations > 0 ? cell.persons / cell.reservations : null;
+}
+
+/**
+ * Vergleichswert einer Reservations-/Personen-Zelle für die gewählte Kennzahl.
+ * Für `avgPersons` ohne Reservationen → 0 (die Aufrufer überspringen leere Eimer
+ * ohnehin, daher fliesst dieser Fall nie in eine Rangbildung ein).
+ */
+export function metricValue(reservations: number, persons: number, metric: MetricKey): number {
+  switch (metric) {
+    case 'persons':
+      return persons;
+    case 'avgPersons':
+      return reservations > 0 ? persons / reservations : 0;
+    case 'reservations':
+    default:
+      return reservations;
+  }
+}
+
+/** Wie eine Matrix-Zelle je Kennzahl darzustellen ist (reine Werte, ohne Format). */
+export interface CellDisplay {
+  /** Grosse Zahl der Zelle (null = leere Zelle, nichts zu zeigen). */
+  primary: number | null;
+  /** true → die grosse Zahl ist ein Ø (mit Nachkommastelle anzeigen). */
+  primaryIsAverage: boolean;
+  /** Anzahl Reservationen — wird IN JEDEM Modus mitgeführt (verschwindet nie). */
+  reservations: number;
+  /** Anzahl Personen. */
+  persons: number;
+}
+
+/**
+ * Liefert die Anzeigewerte einer Matrix-Zelle für die gewählte Kennzahl.  Die
+ * grosse Zahl wechselt je Modus; die Anzahl Reservationen (und Personen) bleibt
+ * IMMER erhalten, damit die Reservationen nie ganz verschwinden.
+ */
+export function matrixCellDisplay(cell: Cell, metric: MetricKey): CellDisplay {
+  const base = { reservations: cell.reservations, persons: cell.persons };
+  if (cell.reservations === 0) {
+    return { primary: null, primaryIsAverage: false, ...base };
+  }
+  switch (metric) {
+    case 'persons':
+      return { primary: cell.persons, primaryIsAverage: false, ...base };
+    case 'avgPersons':
+      return { primary: cell.persons / cell.reservations, primaryIsAverage: true, ...base };
+    case 'reservations':
+    default:
+      return { primary: cell.reservations, primaryIsAverage: false, ...base };
+  }
+}
+
 // ── Interne Filterung ────────────────────────────────────────────────────────
 
 interface PreparedRow {
@@ -308,48 +384,67 @@ export interface WeekdayExtreme {
   weekday: IsoWeekday;
   reservations: number;
   persons: number;
+  /** Ø Personen pro Reservation (null wenn keine Reservation). */
+  avgPersons: number | null;
+  /** Wert der gewählten Kennzahl, nach dem rangiert wurde. */
+  value: number;
 }
 
 export interface MonthExtreme {
   monthKey: string;
   reservations: number;
   persons: number;
+  /** Ø Personen pro Reservation (null wenn keine Reservation). */
+  avgPersons: number | null;
+  /** Wert der gewählten Kennzahl, nach dem rangiert wurde. */
+  value: number;
 }
 
 export interface WeekdaySummary {
-  /** Stärkster Wochentag (meiste Reservationen). */
+  /** Kennzahl, nach der die Zusammenfassung gebildet wurde. */
+  metric: MetricKey;
+  /** Stärkster Wochentag (höchster Kennzahl-Wert). */
   strongestWeekday: WeekdayExtreme | null;
-  /** Schwächster Wochentag (wenigste Reservationen, nur Tage mit >0). */
+  /** Schwächster Wochentag (niedrigster Wert, nur Tage mit >0 Reservationen). */
   weakestWeekday: WeekdayExtreme | null;
   /** Fokus-Wochentag für den Monatsvergleich. */
   focusWeekday: IsoWeekday;
-  /** Bester Monat für den Fokus-Wochentag. */
+  /** Bester Monat für den Fokus-Wochentag (höchster Kennzahl-Wert). */
   bestMonthForWeekday: MonthExtreme | null;
   /** Schwächster Monat für den Fokus-Wochentag (nur Monate mit >0). */
   worstMonthForWeekday: MonthExtreme | null;
 }
 
 /**
- * Leitet die Kennzahlen-Zusammenfassung ab.
+ * Leitet die Kennzahlen-Zusammenfassung für die gewählte `metric` ab
+ * (`reservations` | `persons` | `avgPersons`).
  *
  * Vergleichsregel (bewusst, in den Tests fixiert): leere Eimer werden ignoriert.
  * Stärkster/schwächster Wochentag werden NUR über Wochentage mit mindestens
  * einer Reservation bestimmt; bester/schwächster Monat NUR über Monate, in denen
- * der Fokus-Wochentag mindestens eine Reservation hat.  Bei Gleichstand gewinnt
- * der frühere Wochentag bzw. der frühere Monat.
+ * der Fokus-Wochentag mindestens eine Reservation hat.  Rangiert wird nach dem
+ * `metricValue` der jeweiligen Kennzahl; bei Gleichstand gewinnt der frühere
+ * Wochentag bzw. der frühere Monat (Iterationsreihenfolge Mo→So / chronologisch).
  */
 export function buildWeekdaySummary(
   agg: WeekdayAggregate,
   matrix: MonthWeekdayMatrix,
   focusWeekday: IsoWeekday,
+  metric: MetricKey = 'reservations',
 ): WeekdaySummary {
   let strongest: WeekdayExtreme | null = null;
   let weakest: WeekdayExtreme | null = null;
   for (const w of agg.weekdays) {
     if (w.reservations <= 0) continue;
-    const e: WeekdayExtreme = { weekday: w.weekday, reservations: w.reservations, persons: w.persons };
-    if (!strongest || e.reservations > strongest.reservations) strongest = e;
-    if (!weakest || e.reservations < weakest.reservations) weakest = e;
+    const e: WeekdayExtreme = {
+      weekday: w.weekday,
+      reservations: w.reservations,
+      persons: w.persons,
+      avgPersons: w.avgPersons,
+      value: metricValue(w.reservations, w.persons, metric),
+    };
+    if (!strongest || e.value > strongest.value) strongest = e;
+    if (!weakest || e.value < weakest.value) weakest = e;
   }
 
   let best: MonthExtreme | null = null;
@@ -357,12 +452,19 @@ export function buildWeekdaySummary(
   for (const row of matrix.months) {
     const cell = row.cells[focusWeekday];
     if (cell.reservations <= 0) continue;
-    const e: MonthExtreme = { monthKey: row.monthKey, reservations: cell.reservations, persons: cell.persons };
-    if (!best || e.reservations > best.reservations) best = e;
-    if (!worst || e.reservations < worst.reservations) worst = e;
+    const e: MonthExtreme = {
+      monthKey: row.monthKey,
+      reservations: cell.reservations,
+      persons: cell.persons,
+      avgPersons: cellAverage(cell),
+      value: metricValue(cell.reservations, cell.persons, metric),
+    };
+    if (!best || e.value > best.value) best = e;
+    if (!worst || e.value < worst.value) worst = e;
   }
 
   return {
+    metric,
     strongestWeekday: strongest,
     weakestWeekday: weakest,
     focusWeekday,
