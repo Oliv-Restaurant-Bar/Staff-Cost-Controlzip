@@ -811,6 +811,371 @@ export function buildWeekdayHeadlines(
  */
 export const MONTH_COMPARISON_DEFAULT_OPEN = false;
 
+// ── Monatsvergleich-Matrix (Monate × Wochentage, kompakt + interpretiert) ─────
+//
+// Kompakte Vergleichsansicht: Zeilen = Monate des Zeitraums, Spalten = Mo→So.
+// Jede Zelle trägt EINE grosse, modusabhängige Ø-Zahl + eine kleine Sekundär-
+// zeile.  Zusätzlich wird je Zelle relativ zum SPALTEN-Durchschnitt (also diesem
+// Wochentag über alle Monate) eingeordnet (über/unter/ungefähr Durchschnitt) und
+// der beste/schwächste Wert je Wochentag markiert (Top/Tief).  So ist sofort
+// sichtbar, ob z. B. der Montag in einem Monat besser oder schlechter war als in
+// den anderen Monaten.  KEINE neue Tabelle, KEINE Migration — reine Anzeige.
+
+export type ComparisonRank = 'above' | 'below' | 'average' | 'none';
+
+export interface ComparisonCell {
+  monthKey: string; // "yyyy-MM"
+  weekday: IsoWeekday;
+  /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
+  occurrences: number;
+  reservations: number;
+  persons: number;
+  /** Grosse, modusabhängige Ø-Zahl (null = leer / nicht berechenbar). */
+  value: number | null;
+  /** Einordnung relativ zum Spalten-Durchschnitt (dieser Wochentag über alle Monate). */
+  rank: ComparisonRank;
+  /** Bester Wert dieses Wochentags über alle Monate (nur bei echter Spreizung). */
+  isTop: boolean;
+  /** Schwächster Wert dieses Wochentags über alle Monate (nur bei echter Spreizung). */
+  isLow: boolean;
+}
+
+export interface ComparisonMonthRow {
+  monthKey: string; // "yyyy-MM"
+  /** Zellen je Wochentag (Mo→So), immer alle 7. */
+  cells: Record<IsoWeekday, ComparisonCell>;
+  /** Monatszusammenfassung (für Zeilenkopf / Tooltip). */
+  totalReservations: number;
+  totalPersons: number;
+  avgPersons: number | null;
+  /** Stärkster/schwächster Wochentag DIESES Monats (nach Modus-Wert). */
+  strongestWeekday: IsoWeekday | null;
+  weakestWeekday: IsoWeekday | null;
+}
+
+export interface ComparisonColumn {
+  weekday: IsoWeekday;
+  /** Ø der Monatswerte dieses Wochentags (nur Monate mit Wert). */
+  average: number | null;
+  /** Bester Monat dieses Wochentags (höchster Wert; bei Gleichstand früher). */
+  best: { monthKey: string; value: number } | null;
+  /** Schwächster Monat dieses Wochentags (niedrigster Wert; bei Gleichstand früher). */
+  worst: { monthKey: string; value: number } | null;
+}
+
+export interface MonthComparison {
+  metric: MetricKey;
+  /** Monate chronologisch aufsteigend (nur Monate mit mindestens einer Reservation). */
+  months: ComparisonMonthRow[];
+  /** Spalten-Statistik je Wochentag (über alle Monate). */
+  columns: Record<IsoWeekday, ComparisonColumn>;
+}
+
+/**
+ * Grosse Ø-Zahl einer Vergleichszelle je Modus:
+ *  - `reservations` → Ø Reservationen pro Vorkommen dieses Wochentags (R / Vorkommen)
+ *  - `persons`      → Ø Personen pro Vorkommen dieses Wochentags (P / Vorkommen)
+ *  - `avgPersons`   → Ø Personen pro Reservation (P / R)
+ * `null`, wenn nicht berechenbar (keine Vorkommen bzw. keine Reservation).
+ */
+export function comparisonCellValue(
+  reservations: number,
+  persons: number,
+  occurrences: number,
+  metric: MetricKey,
+): number | null {
+  switch (metric) {
+    case 'persons':
+      return occurrences > 0 ? persons / occurrences : null;
+    case 'avgPersons':
+      return reservations > 0 ? persons / reservations : null;
+    case 'reservations':
+    default:
+      return occurrences > 0 ? reservations / occurrences : null;
+  }
+}
+
+/**
+ * Kleine Sekundärzeile einer Vergleichszelle je Modus:
+ *  - `reservations` → „205 Res. / 5 Fr." (Reservationen total / Anzahl Wochentage)
+ *  - `persons`      → „808 Pers. / 5 Fr." (Personen total / Anzahl Wochentage)
+ *  - `avgPersons`   → „808 Pers. / 205 Res." (Personen total / Reservationen total)
+ * Leerer String, wenn nichts anzuzeigen ist (keine Vorkommen bzw. keine Reservation).
+ */
+export function comparisonCellSubLabel(cell: ComparisonCell, metric: MetricKey): string {
+  switch (metric) {
+    case 'persons':
+      return cell.occurrences > 0
+        ? `${cell.persons} Pers. / ${cell.occurrences} ${WEEKDAY_SHORT[cell.weekday]}.`
+        : '';
+    case 'avgPersons':
+      return cell.reservations > 0
+        ? `${cell.persons} Pers. / ${cell.reservations} Res.`
+        : '';
+    case 'reservations':
+    default:
+      return cell.occurrences > 0
+        ? `${cell.reservations} Res. / ${cell.occurrences} ${WEEKDAY_SHORT[cell.weekday]}.`
+        : '';
+  }
+}
+
+const COMPARISON_EPS = 1e-9;
+
+/**
+ * Baut die kompakte Vergleichsmatrix (Monate × Wochentage) für die gewählte
+ * Kennzahl.  Pro Monat eine Zeile mit allen 7 Wochentagen, je Wochentag eine
+ * Spalten-Statistik (Ø + bester/schwächster Monat), je Zelle eine Einordnung
+ * relativ zum Spalten-Durchschnitt sowie Top/Tief-Markierung.
+ *
+ * Vergleichsregel (in den Tests fixiert):
+ *  - Eine Zelle „zählt" (für Spalten-Ø/Extreme/Top/Tief), wenn ihr Wert ≠ null
+ *    ist (Reservationen/Personen: Vorkommen > 0; Ø Personen/Res.: Reservationen > 0).
+ *  - Bei Gleichstand gewinnt der frühere Monat (chronologisch) für `best`/`worst`
+ *    (diese Objekte sind einwertig und speisen die Insight-Sätze).
+ *  - Top/Tief werden nur gesetzt, wenn die Spalte ≥ 2 Werte UND eine echte
+ *    Spreizung (best > worst) hat — sonst bliebe jede Zelle gleichzeitig Top/Tief.
+ *  - Bei Gleichstand AM Extremwert werden bewusst ALLE betroffenen Monatszellen
+ *    markiert (Heatmap-Logik: jede beste/schwächste Zelle einer Spalte wird
+ *    hervorgehoben), auch wenn `best`/`worst` nur den früheren Monat nennen.
+ */
+export function buildMonthComparison(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  scope: StatusScope = 'booked',
+  metric: MetricKey = 'reservations',
+): MonthComparison {
+  const matrix = buildMonthWeekdayMatrix(rows, from, to, scope);
+
+  // 1) Monatszeilen mit Roh-Zellen (rank/Top/Tief folgen in Schritt 3).
+  const months: ComparisonMonthRow[] = matrix.months.map((m) => {
+    const occ = countWeekdayOccurrencesInMonth(m.monthKey, from, to);
+    const cells = {} as Record<IsoWeekday, ComparisonCell>;
+    let strongest: IsoWeekday | null = null;
+    let weakest: IsoWeekday | null = null;
+    let strongestVal = -Infinity;
+    let weakestVal = Infinity;
+    for (const wd of ISO_WEEKDAYS) {
+      const c = m.cells[wd];
+      const value = comparisonCellValue(c.reservations, c.persons, occ[wd], metric);
+      cells[wd] = {
+        monthKey: m.monthKey,
+        weekday: wd,
+        occurrences: occ[wd],
+        reservations: c.reservations,
+        persons: c.persons,
+        value,
+        rank: 'none',
+        isTop: false,
+        isLow: false,
+      };
+      if (value !== null) {
+        if (value > strongestVal + COMPARISON_EPS) { strongestVal = value; strongest = wd; }
+        if (value < weakestVal - COMPARISON_EPS) { weakestVal = value; weakest = wd; }
+      }
+    }
+    return {
+      monthKey: m.monthKey,
+      cells,
+      totalReservations: m.total.reservations,
+      totalPersons: m.total.persons,
+      avgPersons: m.total.reservations > 0 ? m.total.persons / m.total.reservations : null,
+      strongestWeekday: strongest,
+      weakestWeekday: weakest,
+    };
+  });
+
+  // 2) Spalten-Statistik je Wochentag (Ø, bester/schwächster Monat).
+  const columns = {} as Record<IsoWeekday, ComparisonColumn>;
+  for (const wd of ISO_WEEKDAYS) {
+    const valued = months
+      .map((m) => m.cells[wd])
+      .filter((c): c is ComparisonCell & { value: number } => c.value !== null);
+    if (valued.length === 0) {
+      columns[wd] = { weekday: wd, average: null, best: null, worst: null };
+      continue;
+    }
+    let sum = 0;
+    let best = valued[0];
+    let worst = valued[0];
+    for (const c of valued) {
+      sum += c.value;
+      if (c.value > best.value + COMPARISON_EPS) best = c; // bei Gleichstand bleibt der frühere
+      if (c.value < worst.value - COMPARISON_EPS) worst = c;
+    }
+    columns[wd] = {
+      weekday: wd,
+      average: sum / valued.length,
+      best: { monthKey: best.monthKey, value: best.value },
+      worst: { monthKey: worst.monthKey, value: worst.value },
+    };
+  }
+
+  // 3) Rang (relativ zum Spalten-Ø) + Top/Tief je Zelle setzen.
+  for (const m of months) {
+    for (const wd of ISO_WEEKDAYS) {
+      const cell = m.cells[wd];
+      const col = columns[wd];
+      if (cell.value === null || col.average === null) {
+        cell.rank = 'none';
+        continue;
+      }
+      if (cell.value > col.average + COMPARISON_EPS) cell.rank = 'above';
+      else if (cell.value < col.average - COMPARISON_EPS) cell.rank = 'below';
+      else cell.rank = 'average';
+
+      if (col.best && col.worst && col.best.value - col.worst.value > COMPARISON_EPS) {
+        // Heatmap-Logik: ALLE am Extremwert liegenden Zellen markieren (bei
+        // Gleichstand also ggf. mehrere Monate), während best/worst nur den
+        // früheren Monat für die Insight-Sätze festhalten.
+        if (Math.abs(cell.value - col.best.value) <= COMPARISON_EPS) cell.isTop = true;
+        if (Math.abs(cell.value - col.worst.value) <= COMPARISON_EPS) cell.isLow = true;
+      }
+    }
+  }
+
+  return { metric, months, columns };
+}
+
+// ── Insights (lesbare Interpretation über dem Monatsvergleich) ────────────────
+
+/** Einstellige Nachkommazahl, z. B. 34 → „34.0" (de-CH Dezimaltrennzeichen „."). */
+function fmt1(n: number): string {
+  return n.toFixed(1);
+}
+
+/** Einheit der Hauptkennzahl im Insight-Satz, z. B. „Reservationen pro Samstag". */
+export function headlineUnit(wd: IsoWeekday, metric: MetricKey): string {
+  switch (metric) {
+    case 'persons':
+      return `Personen pro ${WEEKDAY_LABEL[wd]}`;
+    case 'avgPersons':
+      return 'Personen pro Reservation';
+    case 'reservations':
+    default:
+      return `Reservationen pro ${WEEKDAY_LABEL[wd]}`;
+  }
+}
+
+/** Deutsche Aufzählung: ["a"]→"a"; ["a","b"]→"a und b"; ["a","b","c"]→"a, b und c". */
+function germanList(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  return `${items.slice(0, -1).join(', ')} und ${items[items.length - 1]}`;
+}
+
+/**
+ * Insight „X liegt/liegen in (fast) allen Monaten über dem Durchschnitt".
+ * Referenz ist der Perioden-Durchschnitt der Hauptkennzahl (`headlines.average`).
+ * Ein Wochentag qualifiziert sich, wenn er in ALLEN seiner Monate (≥ 2) über der
+ * Referenz liegt („allen") oder in allen bis auf einen (≥ 3 Monate, „fast allen").
+ * `null`, wenn kein Wochentag qualifiziert.
+ */
+function consistencyInsight(comparison: MonthComparison, reference: number | null): string | null {
+  if (reference === null) return null;
+  const qualifying: { weekday: IsoWeekday; all: boolean }[] = [];
+  for (const wd of ISO_WEEKDAYS) {
+    const valued = comparison.months
+      .map((m) => m.cells[wd])
+      .filter((c): c is ComparisonCell & { value: number } => c.value !== null);
+    const active = valued.length;
+    if (active < 2) continue;
+    const above = valued.filter((c) => c.value > reference + COMPARISON_EPS).length;
+    if (above === active) qualifying.push({ weekday: wd, all: true });
+    else if (active >= 3 && above === active - 1) qualifying.push({ weekday: wd, all: false });
+  }
+  if (qualifying.length === 0) return null;
+  const list = qualifying.slice(0, 3);
+  const allTrue = list.every((q) => q.all);
+  const names = list.map((q) => WEEKDAY_LABEL[q.weekday]);
+  const verb = list.length === 1 ? 'liegt' : 'liegen';
+  const phrase = allTrue ? 'allen' : 'fast allen';
+  return `${germanList(names)} ${verb} in ${phrase} Monaten über dem Durchschnitt.`;
+}
+
+/**
+ * Baut 3–5 kurze, modusabhängige Insight-Sätze über dem Monatsvergleich:
+ *  1. Stärkster Wochentag im Zeitraum (aus `headlines`).
+ *  2. Schwächster Wochentag im Zeitraum (nur falls ≠ stärkster).
+ *  3. Bester Monat für den Fokus-Wochentag (nur bei ≥ 2 Monaten mit Werten).
+ *  4. Schlechtester Monat für den Fokus-Wochentag (nur bei ≥ 2 Monaten + Spreizung).
+ *  5. Wochentage, die in (fast) allen Monaten über dem Durchschnitt liegen.
+ *
+ * Die Sätze wechseln je Modus (Reservationen / Personen / Personen pro Reservation),
+ * weil sowohl `headlines` als auch `comparison` modusabhängig gebildet werden.
+ */
+export function buildMonthComparisonInsights(
+  headlines: WeekdayHeadlineSummary,
+  comparison: MonthComparison,
+  focusWeekday: IsoWeekday,
+  metric: MetricKey = 'reservations',
+): string[] {
+  const out: string[] = [];
+
+  if (headlines.strongest !== null) {
+    const h = headlines.headlines.find((x) => x.weekday === headlines.strongest);
+    if (h && h.value !== null) {
+      out.push(
+        `Stärkster Wochentag im Zeitraum: ${WEEKDAY_LABEL[headlines.strongest]} mit Ø ${fmt1(h.value)} ${headlineUnit(headlines.strongest, metric)}.`,
+      );
+    }
+  }
+
+  if (headlines.weakest !== null && headlines.weakest !== headlines.strongest) {
+    const h = headlines.headlines.find((x) => x.weekday === headlines.weakest);
+    if (h && h.value !== null) {
+      out.push(
+        `Schwächster Wochentag im Zeitraum: ${WEEKDAY_LABEL[headlines.weakest]} mit Ø ${fmt1(h.value)} ${headlineUnit(headlines.weakest, metric)}.`,
+      );
+    }
+  }
+
+  const col = comparison.columns[focusWeekday];
+  const valuedMonths = comparison.months.filter((m) => m.cells[focusWeekday].value !== null).length;
+  if (col.best && col.worst && valuedMonths >= 2 && col.best.monthKey !== col.worst.monthKey) {
+    out.push(
+      `Bester ${WEEKDAY_LABEL[focusWeekday]} war im ${monthLongLabel(col.best.monthKey)} mit Ø ${fmt1(col.best.value)} ${headlineUnit(focusWeekday, metric)}.`,
+    );
+    out.push(
+      `Schlechtester ${WEEKDAY_LABEL[focusWeekday]} war im ${monthLongLabel(col.worst.monthKey)} mit Ø ${fmt1(col.worst.value)} ${headlineUnit(focusWeekday, metric)}.`,
+    );
+  }
+
+  const consistency = consistencyInsight(comparison, headlines.average);
+  if (consistency) out.push(consistency);
+
+  // Fallback: 3–5 Sätze garantieren, solange überhaupt Daten vorhanden sind.
+  // Einzelne Monate oder gleichförmige Werte liefern sonst < 3 Insights. Die
+  // Zusatzsätze sind rein deskriptiv und wechseln ebenfalls mit dem Modus.
+  if (comparison.months.length > 0) {
+    if (out.length < 3) {
+      // Fokus-Wochentag-Schnitt; hat der Fokus keine Werte, auf den stärksten
+      // Wochentag ausweichen, damit immer ein aussagekräftiger Satz entsteht.
+      const fbWd = valuedMonths > 0 && col.average !== null ? focusWeekday : headlines.strongest;
+      const fbCol = fbWd !== null ? comparison.columns[fbWd] : null;
+      const fbCount = fbWd !== null
+        ? comparison.months.filter((m) => m.cells[fbWd].value !== null).length
+        : 0;
+      if (fbWd !== null && fbCol && fbCol.average !== null && fbCount > 0) {
+        const line = `Ø ${WEEKDAY_LABEL[fbWd]} im Zeitraum: ${fmt1(fbCol.average)} ${headlineUnit(fbWd, metric)} über ${fbCount} ${fbCount === 1 ? 'Monat' : 'Monate'}.`;
+        if (!out.includes(line)) out.push(line);
+      }
+    }
+    if (out.length < 3) {
+      const n = comparison.months.length;
+      const first = monthLongLabel(comparison.months[0].monthKey);
+      const last = monthLongLabel(comparison.months[n - 1].monthKey);
+      const line = n === 1
+        ? `Verglichen wird 1 Monat (${first}).`
+        : `Verglichen werden ${n} Monate (${first} – ${last}).`;
+      if (!out.includes(line)) out.push(line);
+    }
+  }
+
+  return out.slice(0, 5);
+}
+
 // ── Schnell-Auswahl / Saison-Zeiträume ───────────────────────────────────────
 
 export interface DateRange {

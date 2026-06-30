@@ -35,7 +35,13 @@ import {
   MONTH_COMPARISON_DEFAULT_OPEN,
   shiftMonthKey,
   monthRange,
+  buildMonthComparison,
+  buildMonthComparisonInsights,
+  comparisonCellValue,
+  comparisonCellSubLabel,
+  headlineUnit,
   type WeekdayStat,
+  type ComparisonCell,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Test-Daten ────────────────────────────────────────────────────────────────
@@ -584,5 +590,250 @@ describe('buildMonthWeekdayBreakdown', () => {
     // Ab 20.10.: Oktober hat keine Reservationen mehr (06./13. fallen weg).
     const rows = buildMonthWeekdayBreakdown(ROWS, '2025-10-20', '2025-12-31', 'booked');
     expect([...new Set(rows.map((r2) => r2.monthKey))]).toEqual(['2025-11', '2025-12']);
+  });
+});
+
+// ── Labels / Konstanten (Wochentags-Texte) ────────────────────────────────────
+
+describe('Wochentags-Labels und Konstanten', () => {
+  it('WEEKDAY_PLURAL + weekdayOccurrenceLabel', () => {
+    expect(WEEKDAY_PLURAL[1]).toBe('Montage');
+    expect(WEEKDAY_PLURAL[6]).toBe('Samstage');
+    expect(weekdayOccurrenceLabel(1)).toBe('Anzahl Montage im Zeitraum');
+    expect(weekdayOccurrenceLabel(6)).toBe('Anzahl Samstage im Zeitraum');
+  });
+
+  it('Durchschnitts-Labels je Wochentag', () => {
+    expect(avgReservationsPerWeekdayLabel(1)).toBe('Ø Reservationen pro Montag');
+    expect(avgPersonsPerWeekdayLabel(6)).toBe('Ø Personen pro Samstag');
+    expect(AVG_PERSONS_PER_RESERVATION_LABEL).toBe('Ø Personen pro Reservation');
+  });
+
+  it('headlineLabel wechselt je Modus', () => {
+    expect(headlineLabel(1, 'reservations')).toBe('Ø Reservationen pro Montag');
+    expect(headlineLabel(1, 'persons')).toBe('Ø Personen pro Montag');
+    expect(headlineLabel(1, 'avgPersons')).toBe('Ø Personen pro Reservation');
+  });
+
+  it('WEEKDAY_RANK_LABEL deckt alle Ränge ab', () => {
+    expect(WEEKDAY_RANK_LABEL.strongest).toBe('stärkster Wochentag');
+    expect(WEEKDAY_RANK_LABEL.weakest).toBe('schwächster Wochentag');
+    expect(WEEKDAY_RANK_LABEL.above).toBe('über Durchschnitt');
+    expect(WEEKDAY_RANK_LABEL.below).toBe('unter Durchschnitt');
+  });
+
+  it('MONTH_COMPARISON_DEFAULT_OPEN ist standardmässig eingeklappt', () => {
+    expect(MONTH_COMPARISON_DEFAULT_OPEN).toBe(false);
+  });
+});
+
+describe('shiftMonthKey / monthRange', () => {
+  it('shiftMonthKey rollt über Jahresgrenzen', () => {
+    expect(shiftMonthKey('2025-01', -1)).toBe('2024-12');
+    expect(shiftMonthKey('2025-12', 1)).toBe('2026-01');
+    expect(shiftMonthKey('2025-06', 0)).toBe('2025-06');
+    expect(shiftMonthKey('kaputt', 1)).toBe('kaputt');
+  });
+
+  it('monthRange liefert Monatsanfang/-ende (Schaltjahr berücksichtigt)', () => {
+    expect(monthRange('2025-02')).toEqual({ from: '2025-02-01', to: '2025-02-28' });
+    expect(monthRange('2024-02')).toEqual({ from: '2024-02-01', to: '2024-02-29' });
+    expect(monthRange('2025-13')).toEqual({ from: '', to: '' });
+  });
+});
+
+// ── Wochentags-Headlines (Hauptwert je Modus) ─────────────────────────────────
+
+describe('weekdayHeadlineValue / buildWeekdayHeadlines', () => {
+  it('weekdayHeadlineValue liefert den Modus-Durchschnitt', () => {
+    const stat: WeekdayStat = {
+      weekday: 1,
+      reservations: 5,
+      persons: 17,
+      avgPersons: 17 / 5,
+      sharePct: 50,
+      occurrences: 13,
+      avgReservationsPerDay: 5 / 13,
+      avgPersonsPerDay: 17 / 13,
+    };
+    expect(weekdayHeadlineValue(stat, 'reservations')).toBeCloseTo(5 / 13, 6);
+    expect(weekdayHeadlineValue(stat, 'persons')).toBeCloseTo(17 / 13, 6);
+    expect(weekdayHeadlineValue(stat, 'avgPersons')).toBeCloseTo(17 / 5, 6);
+  });
+
+  it('buildWeekdayHeadlines bestimmt stärksten/schwächsten aktiven Wochentag', () => {
+    const agg = aggregateByWeekday(ROWS, FULL_FROM, FULL_TO, 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    expect(head.metric).toBe('reservations');
+    expect(head.headlines).toHaveLength(7);
+    // Aktiv (booked): Mo 5, Di 1, Do 1 → stärkster Mo, schwächster Di (früher als Do).
+    expect(head.strongest).toBe(1);
+    expect(head.weakest).toBe(2);
+    expect(head.average).toBeCloseTo((5 / 13 + 1 / 13 + 1 / 13) / 3, 6);
+  });
+});
+
+// ── Monatsvergleich: Zellwert + Sekundärzeile + Einheit ───────────────────────
+
+describe('comparisonCellValue', () => {
+  it('reservations = Reservationen pro Vorkommen', () => {
+    expect(comparisonCellValue(8, 16, 4, 'reservations')).toBeCloseTo(2, 6);
+    expect(comparisonCellValue(8, 16, 0, 'reservations')).toBeNull(); // keine Vorkommen
+  });
+  it('persons = Personen pro Vorkommen', () => {
+    expect(comparisonCellValue(4, 24, 4, 'persons')).toBeCloseTo(6, 6);
+    expect(comparisonCellValue(4, 24, 0, 'persons')).toBeNull();
+  });
+  it('avgPersons = Personen pro Reservation', () => {
+    expect(comparisonCellValue(5, 40, 5, 'avgPersons')).toBeCloseTo(8, 6);
+    expect(comparisonCellValue(0, 0, 5, 'avgPersons')).toBeNull(); // keine Reservation
+  });
+});
+
+describe('comparisonCellSubLabel', () => {
+  const cell = (over: Partial<ComparisonCell>): ComparisonCell => ({
+    monthKey: '2025-10', weekday: 5, occurrences: 5, reservations: 205, persons: 808,
+    value: 41, rank: 'above', isTop: false, isLow: false, ...over,
+  });
+  it('reservations → „205 Res. / 5 Fr."', () => {
+    expect(comparisonCellSubLabel(cell({}), 'reservations')).toBe('205 Res. / 5 Fr.');
+  });
+  it('persons → „808 Pers. / 5 Fr."', () => {
+    expect(comparisonCellSubLabel(cell({}), 'persons')).toBe('808 Pers. / 5 Fr.');
+  });
+  it('avgPersons → „808 Pers. / 205 Res."', () => {
+    expect(comparisonCellSubLabel(cell({}), 'avgPersons')).toBe('808 Pers. / 205 Res.');
+  });
+  it('leer, wenn nichts anzuzeigen ist', () => {
+    expect(comparisonCellSubLabel(cell({ occurrences: 0 }), 'reservations')).toBe('');
+    expect(comparisonCellSubLabel(cell({ reservations: 0 }), 'avgPersons')).toBe('');
+  });
+});
+
+describe('headlineUnit', () => {
+  it('wechselt je Modus', () => {
+    expect(headlineUnit(6, 'reservations')).toBe('Reservationen pro Samstag');
+    expect(headlineUnit(6, 'persons')).toBe('Personen pro Samstag');
+    expect(headlineUnit(6, 'avgPersons')).toBe('Personen pro Reservation');
+  });
+});
+
+// ── Monatsvergleich-Matrix + Insights ─────────────────────────────────────────
+
+// Alle Reservationen je Monat auf EINEN passenden Wochentag gelegt; die Zell-
+// werte ergeben sich aus den KALENDER-Vorkommen (nicht aus der Datenverteilung).
+const repeat = (date: string, count: number, party: number): ReservationAggRow[] =>
+  Array.from({ length: count }, () => r(date, party, 'confirmed'));
+
+// Montag je Monat: Okt 8 Res/16 Pers (Ø 2.0/4.0/2.0), Nov 4/24 (1.0/6.0/6.0),
+// Dez 5/40 (1.0/8.0/8.0). → Reservationen: bester Okt; Personen/Ø Pers.: bester Dez.
+const COMP_ROWS: ReservationAggRow[] = [
+  ...repeat('2025-10-06', 8, 2), // Mo, Okt (4 Montage)
+  ...repeat('2025-11-03', 4, 6), // Mo, Nov (4 Montage)
+  ...repeat('2025-12-01', 5, 8), // Mo, Dez (5 Montage)
+];
+
+describe('buildMonthComparison', () => {
+  it('baut eine Zeile je Monat mit allen 7 Wochentagen', () => {
+    const cmp = buildMonthComparison(COMP_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    expect(cmp.metric).toBe('reservations');
+    expect(cmp.months.map((m) => m.monthKey)).toEqual(['2025-10', '2025-11', '2025-12']);
+    for (const m of cmp.months) {
+      expect(Object.keys(m.cells)).toHaveLength(7);
+    }
+  });
+
+  it('Montag-Zellwerte + Spalten-Ø/Top/Tief (Modus Reservationen)', () => {
+    const cmp = buildMonthComparison(COMP_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const oct = cmp.months.find((m) => m.monthKey === '2025-10')!.cells[1];
+    const nov = cmp.months.find((m) => m.monthKey === '2025-11')!.cells[1];
+    const dec = cmp.months.find((m) => m.monthKey === '2025-12')!.cells[1];
+    expect(oct.value).toBeCloseTo(2, 6); // 8 / 4
+    expect(nov.value).toBeCloseTo(1, 6); // 4 / 4
+    expect(dec.value).toBeCloseTo(1, 6); // 5 / 5
+
+    const col = cmp.columns[1];
+    expect(col.average).toBeCloseTo((2 + 1 + 1) / 3, 6);
+    expect(col.best).toMatchObject({ monthKey: '2025-10' });
+    expect(col.worst).toMatchObject({ monthKey: '2025-11' }); // Gleichstand → früher
+
+    expect(oct.rank).toBe('above');
+    expect(oct.isTop).toBe(true);
+    expect(nov.rank).toBe('below');
+    expect(nov.isLow).toBe(true);
+  });
+
+  it('Modus-Wechsel kehrt bester/schwächster Monat um (Personen)', () => {
+    const cmp = buildMonthComparison(COMP_ROWS, FULL_FROM, FULL_TO, 'booked', 'persons');
+    const col = cmp.columns[1];
+    expect(col.best).toMatchObject({ monthKey: '2025-12' }); // 8.0 Pers./Montag
+    expect(col.worst).toMatchObject({ monthKey: '2025-10' }); // 4.0 Pers./Montag
+  });
+
+  it('Gleichstand am Extremwert markiert ALLE betroffenen Zellen (Heatmap-Logik)', () => {
+    // Nov 1.0 und Dez 1.0 liegen beide am Tief → beide isLow; best/worst nennen
+    // aber nur den jeweils früheren Monat.
+    const cmp = buildMonthComparison(COMP_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const nov = cmp.months.find((m) => m.monthKey === '2025-11')!.cells[1];
+    const dec = cmp.months.find((m) => m.monthKey === '2025-12')!.cells[1];
+    expect(nov.isLow).toBe(true);
+    expect(dec.isLow).toBe(true); // gleicher Tiefwert → ebenfalls markiert
+    expect(cmp.columns[1].worst).toMatchObject({ monthKey: '2025-11' }); // früherer Monat
+  });
+
+  it('leere Daten → keine Monate, leere Spalten', () => {
+    const cmp = buildMonthComparison([], FULL_FROM, FULL_TO, 'booked', 'reservations');
+    expect(cmp.months).toHaveLength(0);
+    expect(cmp.columns[1]).toEqual({ weekday: 1, average: null, best: null, worst: null });
+  });
+});
+
+describe('buildMonthComparisonInsights', () => {
+  it('nennt stärksten Wochentag + besten/schlechtesten Fokus-Monat (Reservationen)', () => {
+    const agg = aggregateByWeekday(COMP_ROWS, FULL_FROM, FULL_TO, 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    const cmp = buildMonthComparison(COMP_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const ins = buildMonthComparisonInsights(head, cmp, 1, 'reservations');
+    expect(ins.length).toBeGreaterThanOrEqual(3);
+    expect(ins.length).toBeLessThanOrEqual(5);
+    expect(ins[0]).toContain('Stärkster Wochentag im Zeitraum: Montag');
+    expect(ins).toContain('Bester Montag war im Oktober 2025 mit Ø 2.0 Reservationen pro Montag.');
+    expect(ins).toContain('Schlechtester Montag war im November 2025 mit Ø 1.0 Reservationen pro Montag.');
+  });
+
+  it('Insights wechseln mit dem Modus (Personen: bester Montag im Dezember)', () => {
+    const agg = aggregateByWeekday(COMP_ROWS, FULL_FROM, FULL_TO, 'booked');
+    const head = buildWeekdayHeadlines(agg, 'persons');
+    const cmp = buildMonthComparison(COMP_ROWS, FULL_FROM, FULL_TO, 'booked', 'persons');
+    const ins = buildMonthComparisonInsights(head, cmp, 1, 'persons');
+    expect(ins).toContain('Bester Montag war im Dezember 2025 mit Ø 8.0 Personen pro Montag.');
+    expect(ins).toContain('Schlechtester Montag war im Oktober 2025 mit Ø 4.0 Personen pro Montag.');
+  });
+
+  it('Fallback: garantiert ≥ 3 Sätze auch bei einem einzigen Monat', () => {
+    // Nur ein Monat mit Montags-Daten → wenig „natürliche" Insights; die
+    // deskriptiven Fallback-Sätze füllen bis auf mindestens 3 auf.
+    const ONE_MONTH: ReservationAggRow[] = [...repeat('2025-10-06', 8, 2)];
+    const agg = aggregateByWeekday(ONE_MONTH, '2025-10-01', '2025-10-31', 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    const cmp = buildMonthComparison(ONE_MONTH, '2025-10-01', '2025-10-31', 'booked', 'reservations');
+    const ins = buildMonthComparisonInsights(head, cmp, 1, 'reservations');
+    expect(ins.length).toBeGreaterThanOrEqual(3);
+    expect(ins.length).toBeLessThanOrEqual(5);
+    expect(ins.some((s) => s.includes('Verglichen wird 1 Monat'))).toBe(true);
+  });
+
+  it('Konsistenz-Insight: Wochentage über dem Durchschnitt in allen Monaten', () => {
+    // Mo Ø1.0, Fr Ø3.0, Sa Ø4.0 je Monat → Referenz-Ø 8/3; Fr & Sa immer darüber.
+    const CONSISTENCY_ROWS: ReservationAggRow[] = [
+      ...repeat('2025-10-06', 4, 2), ...repeat('2025-10-03', 15, 2), ...repeat('2025-10-04', 16, 2),
+      ...repeat('2025-11-03', 4, 2), ...repeat('2025-11-07', 12, 2), ...repeat('2025-11-01', 20, 2),
+      ...repeat('2025-12-01', 5, 2), ...repeat('2025-12-05', 12, 2), ...repeat('2025-12-06', 16, 2),
+    ];
+    const agg = aggregateByWeekday(CONSISTENCY_ROWS, FULL_FROM, FULL_TO, 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    const cmp = buildMonthComparison(CONSISTENCY_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const ins = buildMonthComparisonInsights(head, cmp, 5, 'reservations');
+    expect(ins).toContain('Freitag und Samstag liegen in allen Monaten über dem Durchschnitt.');
   });
 });

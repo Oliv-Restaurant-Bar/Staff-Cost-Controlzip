@@ -41,17 +41,19 @@ import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import {
-  aggregateByWeekday, buildMonthWeekdayBreakdown, buildWeekdayHeadlines,
+  aggregateByWeekday, buildWeekdayHeadlines, buildMonthComparison,
+  buildMonthComparisonInsights, comparisonCellSubLabel,
   presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
   DEFAULT_SEASON_SETTINGS,
-  WEEKDAY_LABEL, PRESET_LABEL, STATUS_SCOPE_LABEL,
+  WEEKDAY_LABEL, WEEKDAY_SHORT, ISO_WEEKDAYS, PRESET_LABEL, STATUS_SCOPE_LABEL,
   METRICS, METRIC_LABEL,
   weekdayOccurrenceLabel, headlineLabel, AVG_PERSONS_PER_RESERVATION_LABEL,
   WEEKDAY_RANK_LABEL, MONTH_COMPARISON_DEFAULT_OPEN,
-  type PresetKey, type StatusScope, type MetricKey,
+  type PresetKey, type StatusScope, type MetricKey, type IsoWeekday,
   type SeasonSettings, type SeasonRange,
-  type MonthWeekdayBreakdownRow, type WeekdayHeadline, type WeekdayRank,
+  type WeekdayHeadline, type WeekdayRank,
+  type ComparisonRank, type ComparisonMonthRow, type ComparisonCell,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -81,11 +83,12 @@ function safeSet(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
 }
 
-// Kurzform des Ø-Spaltentitels im Monatsblock je Modus.
-const SHORT_AVG_HEADER: Record<MetricKey, string> = {
-  reservations: 'Ø Res./Tag',
-  persons: 'Ø Pers./Tag',
-  avgPersons: 'Ø Pers./Res.',
+// Subtile Hintergrund-Einfärbung einer Vergleichszelle je Einordnung.
+const CMP_CELL_BG: Record<ComparisonRank, string> = {
+  above: 'bg-emerald-50 dark:bg-emerald-950/20',
+  below: 'bg-amber-50 dark:bg-amber-950/20',
+  average: '',
+  none: '',
 };
 
 // Stilvarianten je Einordnung (Badge, grosse Zahl, Mini-Balken).
@@ -270,8 +273,10 @@ export default function ReservationWochentagPage() {
   const [year, setYear] = useState(init.year);
   const [metric, setMetric] = useState<MetricKey>(init.metric);
 
-  // Monatsvergleich-Detailtabelle: standardmässig eingeklappt (siehe Konstante).
+  // Monatsvergleich-Matrix: standardmässig eingeklappt (siehe Konstante).
   const [showComparison, setShowComparison] = useState(MONTH_COMPARISON_DEFAULT_OPEN);
+  // Fokus-Wochentag für den Spalten-Vergleich (Mini-Balken je Monat). Default Mo.
+  const [focusWeekday, setFocusWeekday] = useState<IsoWeekday>(1);
 
   // Saisons je Mandant aus localStorage (frei anpassbar).
   const [seasons, setSeasons] = useState<SeasonSettings>(DEFAULT_SEASON_SETTINGS);
@@ -319,30 +324,30 @@ export default function ReservationWochentagPage() {
     () => buildWeekdayHeadlines(agg, metric),
     [agg, metric],
   );
-  const breakdown = useMemo(
-    () => buildMonthWeekdayBreakdown(rows, from, to, scope),
-    [rows, from, to, scope],
+  // Kompakte Vergleichsmatrix (Monate × Wochentage) für die gewählte Kennzahl.
+  const comparison = useMemo(
+    () => buildMonthComparison(rows, from, to, scope, metric),
+    [rows, from, to, scope, metric],
   );
-  // Aufschlüsselung je Monat gruppieren (chronologisch, Mo→So bleibt erhalten).
-  const breakdownByMonth = useMemo(() => {
-    const map = new Map<string, MonthWeekdayBreakdownRow[]>();
-    for (const row of breakdown) {
-      const arr = map.get(row.monthKey);
-      if (arr) arr.push(row);
-      else map.set(row.monthKey, [row]);
-    }
-    return [...map.entries()].map(([monthKey, list]) => ({ monthKey, rows: list }));
-  }, [breakdown]);
+  // 3–5 kurze, modusabhängige Insights über der Matrix.
+  const insights = useMemo(
+    () => buildMonthComparisonInsights(headlines, comparison, focusWeekday, metric),
+    [headlines, comparison, focusWeekday, metric],
+  );
 
   // Aktuell betrachteter Monat (Monatsnavigation) = Monat des „Von"-Datums.
   const currentMonthKey = monthKeyOf(from) ?? todayStr.slice(0, 7);
   const currentMonthBounds = monthRange(currentMonthKey);
   const isSingleMonth =
     !!currentMonthBounds.from && from === currentMonthBounds.from && to === currentMonthBounds.to;
-  const currentMonthRows = useMemo(
-    () => breakdownByMonth.find((g) => g.monthKey === currentMonthKey)?.rows ?? [],
-    [breakdownByMonth, currentMonthKey],
-  );
+
+  // Fokus-Wochentag: Spalten-Statistik + Mini-Balken-Werte je Monat.
+  const focusCol = comparison.columns[focusWeekday];
+  const focusValues = comparison.months.map((m) => ({
+    monthKey: m.monthKey,
+    value: m.cells[focusWeekday].value,
+  }));
+  const focusMax = Math.max(0, ...focusValues.map((f) => f.value ?? 0));
 
   // Grösster Hauptwert (für die Mini-Balken-Skalierung).
   const maxHeadline = useMemo(
@@ -720,106 +725,212 @@ export default function ReservationWochentagPage() {
           {/* ── Monatsvergleich ────────────────────────────────────────────── */}
           <section>
             <SectionTitle icon={CalendarRange}>Monatsvergleich</SectionTitle>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Monate im Vergleich — grosse Zahl ={' '}
+              <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>{' '}
+              als Durchschnitt pro Wochentag.
+            </p>
 
-            {/* Kompakter Block: aktuell gewählter Monat */}
-            <div className="rounded-lg border border-border bg-card p-4">
-              <p className="text-sm font-medium">{monthLongLabel(currentMonthKey)}</p>
-              {currentMonthRows.length === 0 ? (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Keine Reservationen in diesem Monat.
-                </p>
-              ) : (
-                <div className="mt-2 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-xs uppercase tracking-wide text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => setShowComparison((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
+              aria-expanded={showComparison}
+            >
+              {showComparison ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {showComparison ? 'Monatsvergleich ausblenden' : 'Monatsvergleich anzeigen'}
+            </button>
+
+            {showComparison && (comparison.months.length === 0 ? (
+              <div className="mt-3 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">
+                Keine Reservationen im gewählten Zeitraum.
+              </div>
+            ) : (
+              <div className="mt-3 space-y-4">
+                {/* Insights über der Matrix */}
+                {insights.length > 0 && (
+                  <ul className="space-y-1 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+                    {insights.map((s, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span aria-hidden className="text-blue-400">•</span>
+                        <span>{s}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* Kompakte Matrix: Monate (Zeilen) × Wochentage (Spalten) */}
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full border-collapse text-sm">
+                    <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                       <tr>
-                        <th className="px-2 py-1.5 text-left">Wochentag</th>
-                        <th className="px-2 py-1.5 text-right">Tage</th>
-                        <th className="px-2 py-1.5 text-right">Reservationen</th>
-                        <th className="px-2 py-1.5 text-right">Personen</th>
-                        <th className="px-2 py-1.5 text-right">{SHORT_AVG_HEADER[metric]}</th>
+                        <th className="px-3 py-2 text-left">Monat</th>
+                        {ISO_WEEKDAYS.map((wd) => (
+                          <th key={wd} className="px-2 py-2 text-center">{WEEKDAY_SHORT[wd]}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {currentMonthRows.map((row) => {
-                        const big =
-                          metric === 'persons' ? row.avgPersonsPerDay
-                            : metric === 'avgPersons' ? row.avgPersons
-                              : row.avgReservationsPerDay;
-                        return (
-                          <tr key={row.weekday} className="border-t border-border">
-                            <td className="px-2 py-1.5">{WEEKDAY_LABEL[row.weekday]}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">{NUM0.format(row.occurrences)}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(row.reservations)}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(row.persons)}</td>
-                            <td className="px-2 py-1.5 text-right font-medium tabular-nums">{avg(big)}</td>
-                          </tr>
-                        );
-                      })}
+                      {comparison.months.map((m) => (
+                        <tr key={m.monthKey} className="border-t border-border align-top">
+                          <th
+                            scope="row"
+                            title={monthTooltip(m)}
+                            className="whitespace-nowrap border-r border-border px-3 py-2 text-left font-medium"
+                          >
+                            {monthLongLabel(m.monthKey)}
+                            <span className="mt-0.5 block text-[10px] font-normal tabular-nums text-muted-foreground">
+                              {NUM0.format(m.totalReservations)} Res. · {NUM0.format(m.totalPersons)} Pers.
+                            </span>
+                          </th>
+                          {ISO_WEEKDAYS.map((wd) => (
+                            <ComparisonMatrixCell key={wd} cell={m.cells[wd]} metric={metric} />
+                          ))}
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              )}
+                <p className="text-[11px] text-muted-foreground">
+                  Farbe = über (grün) / unter (gelb) dem Schnitt dieses Wochentags über alle Monate.
+                  {' '}<span className="font-medium text-emerald-600 dark:text-emerald-400">Top</span>{' / '}
+                  <span className="font-medium text-red-600 dark:text-red-400">Tief</span>{' '}
+                  = bester / schwächster Monat je Wochentag.
+                </p>
 
-              <button
-                type="button"
-                onClick={() => setShowComparison((v) => !v)}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
-                aria-expanded={showComparison}
-              >
-                {showComparison ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                {showComparison ? 'Monatsvergleich ausblenden' : 'Monatsvergleich anzeigen'}
-              </button>
-            </div>
+                {/* Wochentag-Fokus: ein Wochentag über alle Monate verglichen */}
+                <div className="rounded-lg border border-border bg-card p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">Wochentag vergleichen:</span>
+                    {ISO_WEEKDAYS.map((wd) => (
+                      <button
+                        key={wd}
+                        type="button"
+                        onClick={() => setFocusWeekday(wd)}
+                        aria-pressed={focusWeekday === wd}
+                        className={cn(
+                          'rounded-md border px-2.5 py-1 text-sm transition-colors',
+                          focusWeekday === wd
+                            ? 'border-primary bg-primary/10 font-medium text-primary'
+                            : 'border-border hover:border-primary/60 hover:bg-muted/40',
+                        )}
+                      >
+                        {WEEKDAY_SHORT[wd]}
+                      </button>
+                    ))}
+                  </div>
 
-            {/* Detaillierte Tabelle (alle Monate × Wochentage) */}
-            {showComparison && (
-              <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Monat</th>
-                      <th className="px-3 py-2 text-left">Wochentag</th>
-                      <th className="px-3 py-2 text-right">Tage</th>
-                      <th className="px-3 py-2 text-right">Reservationen</th>
-                      <th className="px-3 py-2 text-right">Ø Res./Tag</th>
-                      <th className="px-3 py-2 text-right">Personen</th>
-                      <th className="px-3 py-2 text-right">Ø Pers./Tag</th>
-                      <th className="px-3 py-2 text-right">Ø Pers./Res.</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {breakdownByMonth.map((group) =>
-                      group.rows.map((row, i) => (
-                        <tr
-                          key={`${group.monthKey}-${row.weekday}`}
-                          className={cn('border-t border-border', i === 0 && 'border-t-2 border-border')}
-                        >
-                          {i === 0 && (
-                            <td
-                              rowSpan={group.rows.length}
-                              className="whitespace-nowrap border-r border-border px-3 py-2 align-top font-medium"
-                            >
-                              {monthLongLabel(group.monthKey)}
-                            </td>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {headlineLabel(focusWeekday, metric)} — Vergleich über die Monate.
+                  </p>
+
+                  <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                    <FocusStat
+                      label="Bester Monat"
+                      accent="text-emerald-600 dark:text-emerald-400"
+                      month={focusCol.best ? monthLongLabel(focusCol.best.monthKey) : null}
+                      value={focusCol.best ? NUM1.format(focusCol.best.value) : null}
+                    />
+                    <FocusStat
+                      label="Schwächster Monat"
+                      accent="text-red-600 dark:text-red-400"
+                      month={focusCol.worst ? monthLongLabel(focusCol.worst.monthKey) : null}
+                      value={focusCol.worst ? NUM1.format(focusCol.worst.value) : null}
+                    />
+                    <FocusStat
+                      label="Ø über alle Monate"
+                      accent="text-foreground"
+                      month={null}
+                      value={focusCol.average !== null ? NUM1.format(focusCol.average) : null}
+                    />
+                  </div>
+
+                  {/* Mini-Balken je Monat für den Fokus-Wochentag */}
+                  <div className="mt-3 space-y-1.5">
+                    {focusValues.map((f) => (
+                      <div key={f.monthKey} className="flex items-center gap-2">
+                        <span className="w-28 flex-shrink-0 truncate text-xs text-muted-foreground">
+                          {monthLongLabel(f.monthKey)}
+                        </span>
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                          {f.value !== null && focusMax > 0 && (
+                            <div
+                              className="h-full rounded-full bg-primary/60"
+                              style={{ width: `${Math.max(2, (f.value / focusMax) * 100)}%` }}
+                            />
                           )}
-                          <td className="px-3 py-2">{WEEKDAY_LABEL[row.weekday]}</td>
-                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{NUM0.format(row.occurrences)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(row.reservations)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{avg(row.avgReservationsPerDay)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{NUM0.format(row.persons)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{avg(row.avgPersonsPerDay)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{avg(row.avgPersons)}</td>
-                        </tr>
-                      )),
-                    )}
-                  </tbody>
-                </table>
+                        </div>
+                        <span className="w-12 flex-shrink-0 text-right text-xs font-medium tabular-nums">
+                          {f.value !== null ? NUM1.format(f.value) : '–'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
-            )}
+            ))}
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Monatsvergleich-Bausteine ──────────────────────────────────────────────────
+
+/** Tooltip-Text für den Zeilenkopf eines Monats (Totale + stärkster/schwächster). */
+function monthTooltip(m: ComparisonMonthRow): string {
+  const parts = [
+    `${NUM0.format(m.totalReservations)} Reservationen`,
+    `${NUM0.format(m.totalPersons)} Personen`,
+    `Ø ${avg(m.avgPersons)} Pers./Res.`,
+  ];
+  if (m.strongestWeekday) parts.push(`Stärkster: ${WEEKDAY_LABEL[m.strongestWeekday]}`);
+  if (m.weakestWeekday) parts.push(`Schwächster: ${WEEKDAY_LABEL[m.weakestWeekday]}`);
+  return parts.join(' · ');
+}
+
+/** Eine Matrix-Zelle: grosse Ø-Zahl + Sekundärzeile + Farbe/Top/Tief je Einordnung. */
+function ComparisonMatrixCell({ cell, metric }: { cell: ComparisonCell; metric: MetricKey }) {
+  if (cell.value === null) {
+    return <td className="border-l border-border px-2 py-2 text-center text-muted-foreground">–</td>;
+  }
+  return (
+    <td className={cn('border-l border-border px-2 py-2 text-center align-top', CMP_CELL_BG[cell.rank])}>
+      <div className="flex items-center justify-center gap-1">
+        <span className="text-base font-semibold tabular-nums">{NUM1.format(cell.value)}</span>
+        {cell.isTop && (
+          <span className="rounded bg-emerald-100 px-1 text-[9px] font-semibold uppercase text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
+            Top
+          </span>
+        )}
+        {cell.isLow && (
+          <span className="rounded bg-red-100 px-1 text-[9px] font-semibold uppercase text-red-700 dark:bg-red-950/50 dark:text-red-300">
+            Tief
+          </span>
+        )}
+      </div>
+      <div className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+        {comparisonCellSubLabel(cell, metric)}
+      </div>
+    </td>
+  );
+}
+
+/** Kleine Kennzahl-Kachel im Wochentag-Fokus (Bester/Schwächster Monat, Ø). */
+function FocusStat({ label, month, value, accent }: {
+  label: string;
+  month: string | null;
+  value: string | null;
+  accent?: string;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-background p-2">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={cn('mt-0.5 text-lg font-bold tabular-nums', accent)}>
+        {value !== null ? `Ø ${value}` : '–'}
+      </p>
+      {month && <p className="text-[11px] text-muted-foreground">{month}</p>}
     </div>
   );
 }

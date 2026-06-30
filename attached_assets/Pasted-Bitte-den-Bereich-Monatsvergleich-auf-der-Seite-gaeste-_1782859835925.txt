@@ -1,0 +1,126 @@
+Bitte den Bereich „Monatsvergleich“ auf der Seite /gaeste/wochentag komplett überarbeiten.
+
+Ziel:
+Der Monatsvergleich soll kompakt, lesefreundlich und interpretierbar sein. Ich möchte innerhalb der gewählten Zeitperiode schnell sehen:
+- welcher Wochentag in welchem Monat stark war
+- ob Montag/Dienstag/etc. im Vergleich zu den anderen Monaten besser oder schlechter war
+- welche Monate pro Wochentag auffällig sind
+- wo Reservationen, Personen und Personen pro Reservation besonders gut oder schlecht sind
+
+Wichtig:
+Keine neue Datenbanktabelle.
+Keine neue Migration.
+Weiterhin bestehende reservation_records / fetchReservationsInRange verwenden.
+Admin-only und tenant-scoped beibehalten.
+
+Bitte umsetzen:
+
+1. Alte Monatsvergleich-Tabelle ersetzen
+Die aktuelle lange Tabelle mit Monat + Wochentag untereinander ist nicht lesefreundlich.
+Bitte ersetzen durch eine kompakte Vergleichsansicht.
+
+2. Neue Ansicht: „Monate im Vergleich“
+Struktur:
+- Zeilen = Monate der gewählten Zeitperiode
+- Spalten = Montag bis Sonntag
+- Jede Zelle zeigt kompakt den Wert für diesen Wochentag im jeweiligen Monat
+
+Je nach aktivem Modus:
+Modus „Reservationen“:
+- gross: Ø Reservationen pro Wochentag
+- klein darunter: Reservationen total / Anzahl Wochentage
+Beispiel:
+41.0
+205 Res. / 5 Fr.
+
+Modus „Personen“:
+- gross: Ø Personen pro Wochentag
+- klein darunter: Personen total / Anzahl Wochentage
+Beispiel:
+161.6
+808 Pers. / 5 Fr.
+
+Modus „Personen pro Reservation“:
+- gross: Ø Personen pro Reservation
+- klein darunter: Personen total / Reservationen total
+Beispiel:
+3.9
+808 Pers. / 205 Res.
+
+3. Lesbare Interpretation direkt über der Vergleichsansicht
+Bitte oberhalb des Monatsvergleichs automatisch 3 bis 5 kurze Insights anzeigen, z. B.:
+
+- „Stärkster Wochentag im Zeitraum: Samstag mit Ø 34.0 Reservationen pro Samstag.“
+- „Schwächster Wochentag im Zeitraum: Montag mit Ø 11.8 Reservationen pro Montag.“
+- „Bester Montag war im November 2025 mit Ø 28.0 Reservationen pro Montag.“
+- „Schlechtester Montag war im Oktober 2025 mit Ø 18.3 Reservationen pro Montag.“
+- „Freitag und Samstag liegen in fast allen Monaten über dem Durchschnitt.“
+
+Die Insights sollen sich je nach aktivem Modus ändern:
+- Reservationen
+- Personen
+- Personen pro Reservation
+
+4. Farbliche/visuelle Bewertung
+Jede Zelle soll visuell zeigen, ob sie stark oder schwach ist:
+- über Durchschnitt = positiv markieren
+- ungefähr Durchschnitt = neutral
+- unter Durchschnitt = schwach markieren
+- bester Wert pro Wochentag über alle Monate = kleines Label „Top“
+- schlechtester Wert pro Wochentag über alle Monate = kleines Label „Tief“
+
+Wichtig:
+Nicht zu bunt, eher dezente Badge/Highlight-Logik.
+
+5. Wochentag-fokussierter Vergleich
+Bitte zusätzlich eine kleine Auswahl einbauen:
+„Wochentag vergleichen:“ Montag, Dienstag, Mittwoch, Donnerstag, Freitag, Samstag, Sonntag
+
+Wenn ich z. B. Montag auswähle, soll darunter kompakt erscheinen:
+- bester Montag im Zeitraum
+- schwächster Montag im Zeitraum
+- Durchschnitt Montag über alle Monate
+- kleine Liste/Balken: Oktober, November, Dezember usw. mit dem jeweiligen Ø-Wert
+
+Beispiel:
+Montag:
+Okt 2025: Ø 18.3 Res./Montag
+Nov 2025: Ø 28.0 Res./Montag
+Dez 2025: Ø 33.3 Res./Montag
+
+So sehe ich sofort, ob Montag in einem Monat schlecht oder gut war.
+
+6. Monatliche Zusammenfassung
+Pro Monat soll am Zeilenanfang oder als kleiner Monats-Tooltip sichtbar sein:
+- Total Reservationen im Monat
+- Total Personen im Monat
+- Ø Personen pro Reservation
+- stärkster Wochentag dieses Monats
+- schwächster Wochentag dieses Monats
+
+7. Kompaktheit
+Die Ansicht soll auf einem normalen Laptop ohne viel Scrollen verständlich sein.
+Bitte:
+- keine unnötig grosse Zeilenhöhe
+- keine langen Texte in Tabellenzellen
+- klare Abkürzungen wie Res., Pers., Ø
+- Erklärung nur einmal oben, nicht in jeder Zelle
+
+8. Standardzustand
+Der Monatsvergleich soll standardmässig eingeklappt sein.
+Button:
+- „Monatsvergleich anzeigen“
+- „Monatsvergleich ausblenden“
+
+Wenn geöffnet, soll zuerst die neue kompakte Matrix angezeigt werden, nicht die alte lange Tabelle.
+
+9. Tests
+Bitte Tests ergänzen/anpassen:
+- Monatsvergleich berechnet pro Monat und Wochentag den Ø-Wert korrekt
+- bester/schwächster Monat pro Wochentag wird korrekt erkannt
+- Insights ändern sich je nach Modus
+- Wochentag-Fokus zeigt richtige Werte
+- Monatsvergleich ist standardmässig eingeklappt
+- keine neue DB/Migration
+
+Danach bitte typecheck und relevante Tests laufen lassen.
