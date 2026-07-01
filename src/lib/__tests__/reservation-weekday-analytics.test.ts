@@ -40,6 +40,12 @@ import {
   comparisonCellValue,
   comparisonCellSubLabel,
   headlineUnit,
+  buildMonthWeekdayDetail,
+  detailCellValue,
+  buildDetailFormula,
+  buildDetailComparison,
+  buildDetailInsights,
+  formatIsoDateDe,
   type WeekdayStat,
   type ComparisonCell,
 } from '@/lib/reservation-weekday-analytics';
@@ -835,5 +841,192 @@ describe('buildMonthComparisonInsights', () => {
     const cmp = buildMonthComparison(CONSISTENCY_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
     const ins = buildMonthComparisonInsights(head, cmp, 5, 'reservations');
     expect(ins).toContain('Freitag und Samstag liegen in allen Monaten über dem Durchschnitt.');
+  });
+});
+
+// ── Detail-Popup (Monatsvergleich-Zelle) ──────────────────────────────────────
+// Mondays im Oktober 2025 (2025-10-01 = Mi): 06., 13., 20., 27. (4×).
+// Mondays im November 2025 (2025-11-01 = Sa): 03., 10., 17., 24. (4×).
+const DETAIL_ROWS: ReservationAggRow[] = [
+  // Mo 2025-10-06: 2 Res. (3 + 5 Pers. = 8)
+  r('2025-10-06', 3, 'confirmed'),
+  r('2025-10-06', 5, 'completed'),
+  // Mo 2025-10-13: 3 Res. (2 + 4 + 6 Pers. = 12)
+  r('2025-10-13', 2, 'confirmed'),
+  r('2025-10-13', 4, 'confirmed'),
+  r('2025-10-13', 6, 'confirmed'),
+  // Mo 2025-10-20: 1 Res. (4 Pers.)
+  r('2025-10-20', 4, 'confirmed'),
+  // Mo 2025-10-20: 1 storniert → unter 'booked' ausgeschlossen
+  r('2025-10-20', 9, 'cancelled'),
+  // Mo 2025-10-27: keine Reservation → 0-Tag
+  // Di 2025-10-07: anderer Wochentag → nicht im Montags-Detail
+  r('2025-10-07', 7, 'confirmed'),
+  // Mo 2025-11-03: anderer Monat (1 Res.)
+  r('2025-11-03', 8, 'confirmed'),
+];
+
+describe('formatIsoDateDe', () => {
+  it('wandelt yyyy-MM-dd in dd.MM.yyyy', () => {
+    expect(formatIsoDateDe('2025-10-06')).toBe('06.10.2025');
+    expect(formatIsoDateDe('2025-01-01')).toBe('01.01.2025');
+  });
+  it('lässt ungültige Eingaben unverändert', () => {
+    expect(formatIsoDateDe('foo')).toBe('foo');
+    expect(formatIsoDateDe('2025-10')).toBe('2025-10');
+  });
+});
+
+describe('buildMonthWeekdayDetail', () => {
+  it('enumeriert ALLE Montage im Oktober inkl. 0-Tag (days.length === occurrences)', () => {
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+    expect(d.occurrences).toBe(4);
+    expect(d.days.map((x) => x.date)).toEqual([
+      '2025-10-06', '2025-10-13', '2025-10-20', '2025-10-27',
+    ]);
+    expect(d.days.length).toBe(d.occurrences);
+  });
+
+  it('summiert Reservationen/Personen korrekt (storniert + Fremdtag/-monat ausgeschlossen)', () => {
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+    expect(d.reservations).toBe(6);
+    expect(d.persons).toBe(24);
+    expect(d.avgReservationsPerDay).toBeCloseTo(1.5, 6);
+    expect(d.avgPersonsPerDay).toBeCloseTo(6.0, 6);
+    expect(d.avgPersonsPerReservation).toBeCloseTo(4.0, 6);
+  });
+
+  it('liefert pro Tag Reservationen/Personen/Ø + null-Ø für den 0-Tag', () => {
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+    expect(d.days[0]).toEqual({ date: '2025-10-06', reservations: 2, persons: 8, avgPersonsPerReservation: 4 });
+    expect(d.days[1]).toEqual({ date: '2025-10-13', reservations: 3, persons: 12, avgPersonsPerReservation: 4 });
+    expect(d.days[2]).toEqual({ date: '2025-10-20', reservations: 1, persons: 4, avgPersonsPerReservation: 4 });
+    expect(d.days[3]).toEqual({ date: '2025-10-27', reservations: 0, persons: 0, avgPersonsPerReservation: null });
+  });
+
+  it("Scope 'all' zählt den stornierten Montag mit", () => {
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'all');
+    expect(d.reservations).toBe(7);
+    expect(d.persons).toBe(33);
+    expect(d.days[2]).toEqual({ date: '2025-10-20', reservations: 2, persons: 13, avgPersonsPerReservation: 6.5 });
+  });
+
+  it('Detail-Summen entsprechen exakt der Matrix-Zelle', () => {
+    const cmp = buildMonthComparison(DETAIL_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const oct = cmp.months.find((m) => m.monthKey === '2025-10')!;
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+    expect(detailCellValue(d, 'reservations')).toBeCloseTo(oct.cells[1].value!, 6);
+  });
+
+  it('ungültiger Monatsschlüssel → leeres Detail', () => {
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-13', 1, 'booked');
+    expect(d.occurrences).toBe(0);
+    expect(d.days).toEqual([]);
+    expect(d.avgReservationsPerDay).toBeNull();
+  });
+});
+
+describe('detailCellValue', () => {
+  it('spiegelt comparisonCellValue je Modus', () => {
+    const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+    expect(detailCellValue(d, 'reservations')).toBeCloseTo(1.5, 6);
+    expect(detailCellValue(d, 'persons')).toBeCloseTo(6.0, 6);
+    expect(detailCellValue(d, 'avgPersons')).toBeCloseTo(4.0, 6);
+  });
+});
+
+describe('buildDetailFormula', () => {
+  const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+
+  it('Reservationen: Vorkommen ÷ Vorkommen', () => {
+    const f = buildDetailFormula(d, 'reservations');
+    expect(f.lines[0]).toBe('Montag kam im Oktober 2025 4× vor.');
+    expect(f.lines[1]).toBe('Total Reservationen an Montagen: 6');
+    expect(f.lines[2]).toBe('Rechnung: 6 Reservationen ÷ 4 Montage = Ø 1.5 Reservationen pro Montag');
+    expect(f.result).toBeCloseTo(1.5, 6);
+    expect(f.resultLabel).toBe('Ø 1.5 Reservationen pro Montag');
+  });
+
+  it('Personen: Personen ÷ Vorkommen', () => {
+    const f = buildDetailFormula(d, 'persons');
+    expect(f.lines[1]).toBe('Total Personen an Montagen: 24');
+    expect(f.lines[2]).toBe('Rechnung: 24 Personen ÷ 4 Montage = Ø 6.0 Personen pro Montag');
+    expect(f.result).toBeCloseTo(6.0, 6);
+  });
+
+  it('Ø Personen/Reservation: Personen ÷ Reservationen', () => {
+    const f = buildDetailFormula(d, 'avgPersons');
+    expect(f.lines[0]).toBe('Total Personen an Montagen: 24');
+    expect(f.lines[1]).toBe('Total Reservationen an Montagen: 6');
+    expect(f.lines[2]).toBe('Rechnung: 24 Personen ÷ 6 Reservationen = Ø 4.0 Personen pro Reservation');
+    expect(f.resultLabel).toBe('Ø 4.0 Personen pro Reservation');
+  });
+});
+
+describe('buildDetailComparison', () => {
+  const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+
+  it('über dem Spalten-Durchschnitt', () => {
+    const c = buildDetailComparison(d, 'reservations', 0.875);
+    expect(c.cellValue).toBeCloseTo(1.5, 6);
+    expect(c.columnAverage).toBe(0.875);
+    expect(c.difference).toBeCloseTo(0.625, 6);
+    expect(c.direction).toBe('above');
+  });
+
+  it('unter dem Spalten-Durchschnitt', () => {
+    const c = buildDetailComparison(d, 'reservations', 2.0);
+    expect(c.difference).toBeCloseTo(-0.5, 6);
+    expect(c.direction).toBe('below');
+  });
+
+  it('gleich (innerhalb Epsilon)', () => {
+    const c = buildDetailComparison(d, 'reservations', 1.5);
+    expect(c.direction).toBe('equal');
+  });
+
+  it('kein Spalten-Ø → keine Richtung', () => {
+    const c = buildDetailComparison(d, 'reservations', null);
+    expect(c.difference).toBeNull();
+    expect(c.direction).toBeNull();
+  });
+
+  it('Spalten-Ø aus buildMonthComparison passt zur Detail-Zelle (Integration)', () => {
+    // Oktober Mo = 1.5, November Mo = 0.25 → Spalten-Ø = 0.875.
+    const cmp = buildMonthComparison(DETAIL_ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const c = buildDetailComparison(d, 'reservations', cmp.columns[1].average);
+    expect(c.columnAverage).toBeCloseTo(0.875, 6);
+    expect(c.direction).toBe('above');
+  });
+});
+
+describe('buildDetailInsights', () => {
+  const d = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 1, 'booked');
+
+  it('nennt Über-Durchschnitt, stärksten Tag und Ø-Personen-Einordnung', () => {
+    const ins = buildDetailInsights(d, 'reservations', 0.875);
+    expect(ins.length).toBeGreaterThanOrEqual(2);
+    expect(ins.length).toBeLessThanOrEqual(3);
+    expect(ins).toContain('Dieser Montag liegt über dem Durchschnitt aller Montage im Zeitraum.');
+    expect(ins).toContain('Der stärkste Montag in diesem Monat war der 13.10.2025 mit 3 Reservationen.');
+    expect(ins).toContain('Ø Personen pro Reservation liegt bei 4.0 und ist damit eher mittel.');
+  });
+
+  it('meldet Unter-Durchschnitt', () => {
+    const ins = buildDetailInsights(d, 'reservations', 2.0);
+    expect(ins).toContain('Dieser Montag liegt unter dem Durchschnitt aller Montage im Zeitraum.');
+  });
+
+  it('stärkster Tag folgt dem Modus (Personen)', () => {
+    const ins = buildDetailInsights(d, 'persons', 6.0);
+    expect(ins).toContain('Der stärkste Montag in diesem Monat war der 13.10.2025 mit 12 Personen.');
+  });
+
+  it('Fallback-Satz für eine Zelle ohne Reservationen', () => {
+    // Sonntag im Oktober: DETAIL_ROWS hat keine Sonntags-Reservationen.
+    const empty = buildMonthWeekdayDetail(DETAIL_ROWS, FULL_FROM, FULL_TO, '2025-10', 7, 'booked');
+    const ins = buildDetailInsights(empty, 'reservations', null);
+    expect(ins.length).toBeGreaterThanOrEqual(1);
+    expect(ins.some((s) => s.includes('keine Reservationen'))).toBe(true);
   });
 });

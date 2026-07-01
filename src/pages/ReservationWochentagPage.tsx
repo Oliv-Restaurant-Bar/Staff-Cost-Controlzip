@@ -40,9 +40,10 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
+import { MonthWeekdayDetailDialog } from '@/components/crm/MonthWeekdayDetailDialog';
 import {
   aggregateByWeekday, buildWeekdayHeadlines, buildMonthComparison,
-  buildMonthComparisonInsights, comparisonCellSubLabel,
+  buildMonthComparisonInsights, comparisonCellSubLabel, buildMonthWeekdayDetail,
   presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
   DEFAULT_SEASON_SETTINGS,
@@ -277,6 +278,8 @@ export default function ReservationWochentagPage() {
   const [showComparison, setShowComparison] = useState(MONTH_COMPARISON_DEFAULT_OPEN);
   // Fokus-Wochentag für den Spalten-Vergleich (Mini-Balken je Monat). Default Mo.
   const [focusWeekday, setFocusWeekday] = useState<IsoWeekday>(1);
+  // Detail-Popup: geklickte Vergleichszelle (Monat × Wochentag) oder null.
+  const [detailCell, setDetailCell] = useState<{ monthKey: string; weekday: IsoWeekday } | null>(null);
 
   // Saisons je Mandant aus localStorage (frei anpassbar).
   const [seasons, setSeasons] = useState<SeasonSettings>(DEFAULT_SEASON_SETTINGS);
@@ -348,6 +351,18 @@ export default function ReservationWochentagPage() {
     value: m.cells[focusWeekday].value,
   }));
   const focusMax = Math.max(0, ...focusValues.map((f) => f.value ?? 0));
+
+  // Detail-Popup: Aufschlüsselung + Spalten-Ø der geklickten Zelle.
+  const detail = useMemo(
+    () =>
+      detailCell
+        ? buildMonthWeekdayDetail(rows, from, to, detailCell.monthKey, detailCell.weekday, scope)
+        : null,
+    [detailCell, rows, from, to, scope],
+  );
+  const detailColumnAverage = detailCell ? comparison.columns[detailCell.weekday].average : null;
+  const openDetail = (cell: ComparisonCell) =>
+    setDetailCell({ monthKey: cell.monthKey, weekday: cell.weekday });
 
   // Grösster Hauptwert (für die Mini-Balken-Skalierung).
   const maxHeadline = useMemo(
@@ -784,7 +799,7 @@ export default function ReservationWochentagPage() {
                             </span>
                           </th>
                           {ISO_WEEKDAYS.map((wd) => (
-                            <ComparisonMatrixCell key={wd} cell={m.cells[wd]} metric={metric} />
+                            <ComparisonMatrixCell key={wd} cell={m.cells[wd]} metric={metric} onSelect={openDetail} />
                           ))}
                         </tr>
                       ))}
@@ -872,6 +887,14 @@ export default function ReservationWochentagPage() {
           </section>
         </>
       )}
+
+      <MonthWeekdayDetailDialog
+        open={detailCell !== null}
+        onOpenChange={(o) => { if (!o) setDetailCell(null); }}
+        detail={detail}
+        metric={metric}
+        columnAverage={detailColumnAverage}
+      />
     </div>
   );
 }
@@ -891,12 +914,32 @@ function monthTooltip(m: ComparisonMonthRow): string {
 }
 
 /** Eine Matrix-Zelle: grosse Ø-Zahl + Sekundärzeile + Farbe/Top/Tief je Einordnung. */
-function ComparisonMatrixCell({ cell, metric }: { cell: ComparisonCell; metric: MetricKey }) {
+function ComparisonMatrixCell({ cell, metric, onSelect }: {
+  cell: ComparisonCell;
+  metric: MetricKey;
+  onSelect: (cell: ComparisonCell) => void;
+}) {
   if (cell.value === null) {
     return <td className="border-l border-border px-2 py-2 text-center text-muted-foreground">–</td>;
   }
   return (
-    <td className={cn('border-l border-border px-2 py-2 text-center align-top', CMP_CELL_BG[cell.rank])}>
+    <td
+      className={cn(
+        'border-l border-border px-2 py-2 text-center align-top cursor-pointer transition-colors hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60',
+        CMP_CELL_BG[cell.rank],
+      )}
+      role="button"
+      tabIndex={0}
+      title="Details anzeigen"
+      aria-label={`Details anzeigen: ${WEEKDAY_LABEL[cell.weekday]} im ${monthLongLabel(cell.monthKey)}`}
+      onClick={() => onSelect(cell)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(cell);
+        }
+      }}
+    >
       <div className="flex items-center justify-center gap-1">
         <span className="text-base font-semibold tabular-nums">{NUM1.format(cell.value)}</span>
         {cell.isTop && (

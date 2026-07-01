@@ -1176,6 +1176,326 @@ export function buildMonthComparisonInsights(
   return out.slice(0, 5);
 }
 
+// ── Detail einer Vergleichszelle (Monat × Wochentag) für das Popup ───────────
+//
+// Für das Detail-Popup im Monatsvergleich: erklärt, wie sich die grosse Zahl
+// einer Zelle (z. B. „Montag im Oktober 2025") zusammensetzt. Enumeriert ALLE
+// konkreten Kalendertage dieses Wochentags im Monat (auf den Zeitraum geklemmt) —
+// auch Tage OHNE Reservationen —, damit `days.length === occurrences` gilt und die
+// Summen exakt zu den Formel-Nennern (und zur Matrix-Zelle) passen. Reine
+// Anzeige — KEINE neue Tabelle, KEINE Migration, KEINE Schreiboperation.
+
+/** „yyyy-MM-dd" → „dd.MM.yyyy" (ungültig → unverändert). */
+export function formatIsoDateDe(dateStr: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return dateStr;
+  return `${m[3]}.${m[2]}.${m[1]}`;
+}
+
+/** Dativ-Plural eines Wochentags („an Montagen", „an Dienstagen"). */
+function weekdayPluralDative(wd: IsoWeekday): string {
+  return `${WEEKDAY_PLURAL[wd]}n`;
+}
+
+export interface WeekdayDayDetail {
+  /** Konkretes Datum „yyyy-MM-dd". */
+  date: string;
+  reservations: number;
+  persons: number;
+  /** Ø Personen pro Reservation an diesem Tag (null wenn keine Reservation). */
+  avgPersonsPerReservation: number | null;
+}
+
+export interface MonthWeekdayDetail {
+  monthKey: string; // "yyyy-MM"
+  weekday: IsoWeekday;
+  /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
+  occurrences: number;
+  reservations: number;
+  persons: number;
+  /** Ø Reservationen pro Vorkommen (reservations / occurrences); null wenn 0 Vorkommen. */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen (persons / occurrences); null wenn 0 Vorkommen. */
+  avgPersonsPerDay: number | null;
+  /** Ø Personen pro Reservation (persons / reservations); null wenn keine Reservation. */
+  avgPersonsPerReservation: number | null;
+  /** Ein Eintrag je Kalendertag dieses Wochentags (aufsteigend), length === occurrences. */
+  days: WeekdayDayDetail[];
+}
+
+/**
+ * Baut die Detail-Aufschlüsselung einer Vergleichszelle (ein Wochentag in einem
+ * Monat). Enumeriert alle konkreten Kalendertage dieses Wochentags im Monat
+ * (auf [from, to] geklemmt) und summiert je Tag Reservationen/Personen nach dem
+ * Status-Prädikat des Scopes. Die Summen entsprechen exakt der Matrix-Zelle.
+ */
+export function buildMonthWeekdayDetail(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  monthKey: string,
+  weekday: IsoWeekday,
+  scope: StatusScope = 'booked',
+): MonthWeekdayDetail {
+  const empty: MonthWeekdayDetail = {
+    monthKey,
+    weekday,
+    occurrences: 0,
+    reservations: 0,
+    persons: 0,
+    avgReservationsPerDay: null,
+    avgPersonsPerDay: null,
+    avgPersonsPerReservation: null,
+    days: [],
+  };
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return empty;
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return empty;
+
+  const monthStart = ymd(y, mo, 1);
+  const monthEnd = ymd(y, mo, lastDayOfMonth(y, mo));
+  const clampStart = monthStart > from ? monthStart : from;
+  const clampEnd = monthEnd < to ? monthEnd : to;
+
+  // 1) Alle konkreten Kalendertage dieses Wochentags im Monat∩Zeitraum.
+  const dayMap = new Map<string, { reservations: number; persons: number }>();
+  const start = parseYmdToUtc(clampStart);
+  const end = parseYmdToUtc(clampEnd);
+  if (start && end && start.getTime() <= end.getTime()) {
+    for (let t = start.getTime(); t <= end.getTime(); t += MS_PER_DAY) {
+      const dt = new Date(t);
+      const dow = dt.getUTCDay(); // 0=So … 6=Sa
+      const iso = (dow === 0 ? 7 : dow) as IsoWeekday;
+      if (iso !== weekday) continue;
+      dayMap.set(ymd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate()), {
+        reservations: 0,
+        persons: 0,
+      });
+    }
+  }
+
+  // 2) Reservationen/Personen je Tag summieren (Status-Prädikat beachten).
+  const include = statusPredicate(scope);
+  for (const row of rows) {
+    if (!row.date) continue;
+    const d = row.date.slice(0, 10);
+    const bucket = dayMap.get(d); // nur Tage dieses Wochentags/Monats/Zeitraums
+    if (!bucket) continue;
+    if (!include(row.status)) continue;
+    bucket.reservations += 1;
+    bucket.persons += row.partySize ?? 0;
+  }
+
+  const days: WeekdayDayDetail[] = [...dayMap.keys()].sort().map((date) => {
+    const b = dayMap.get(date)!;
+    return {
+      date,
+      reservations: b.reservations,
+      persons: b.persons,
+      avgPersonsPerReservation: b.reservations > 0 ? b.persons / b.reservations : null,
+    };
+  });
+
+  const occurrences = days.length;
+  const reservations = days.reduce((s, d) => s + d.reservations, 0);
+  const persons = days.reduce((s, d) => s + d.persons, 0);
+
+  return {
+    monthKey,
+    weekday,
+    occurrences,
+    reservations,
+    persons,
+    avgReservationsPerDay: occurrences > 0 ? reservations / occurrences : null,
+    avgPersonsPerDay: occurrences > 0 ? persons / occurrences : null,
+    avgPersonsPerReservation: reservations > 0 ? persons / reservations : null,
+    days,
+  };
+}
+
+/** Grosse Ø-Zahl dieser Detail-Zelle je Modus (= Wert der Matrix-Zelle). */
+export function detailCellValue(detail: MonthWeekdayDetail, metric: MetricKey): number | null {
+  return comparisonCellValue(detail.reservations, detail.persons, detail.occurrences, metric);
+}
+
+export interface DetailFormula {
+  /** Bereits formatierte Zeilen der Kennzahl-Zusammensetzung. */
+  lines: string[];
+  /** Ergebniswert (Ø) je Modus; null wenn nicht berechenbar. */
+  result: number | null;
+  /** Ergebniszeile, z. B. „Ø 18.3 Reservationen pro Montag". */
+  resultLabel: string;
+}
+
+/**
+ * Baut die textuelle Kennzahl-Zusammensetzung (Formel mit Zahlen) je Modus.
+ * de-CH: Dezimaltrennzeichen „.", einstellige Nachkommastelle.
+ */
+export function buildDetailFormula(detail: MonthWeekdayDetail, metric: MetricKey): DetailFormula {
+  const wd = detail.weekday;
+  const wdLabel = WEEKDAY_LABEL[wd];
+  const plural = WEEKDAY_PLURAL[wd];
+  const dative = weekdayPluralDative(wd);
+  const month = monthLongLabel(detail.monthKey);
+  const occLine = `${wdLabel} kam im ${month} ${detail.occurrences}× vor.`;
+
+  switch (metric) {
+    case 'persons': {
+      const result = detail.avgPersonsPerDay;
+      const resultLabel =
+        result !== null ? `Ø ${fmt1(result)} Personen pro ${wdLabel}` : `Ø Personen pro ${wdLabel}`;
+      const calc =
+        result !== null
+          ? `Rechnung: ${detail.persons} Personen ÷ ${detail.occurrences} ${plural} = ${resultLabel}`
+          : 'Rechnung: keine Vorkommen im Zeitraum.';
+      return { lines: [occLine, `Total Personen an ${dative}: ${detail.persons}`, calc], result, resultLabel };
+    }
+    case 'avgPersons': {
+      const result = detail.avgPersonsPerReservation;
+      const resultLabel =
+        result !== null ? `Ø ${fmt1(result)} Personen pro Reservation` : AVG_PERSONS_PER_RESERVATION_LABEL;
+      const calc =
+        result !== null
+          ? `Rechnung: ${detail.persons} Personen ÷ ${detail.reservations} Reservationen = ${resultLabel}`
+          : 'Rechnung: keine Reservationen vorhanden.';
+      return {
+        lines: [
+          `Total Personen an ${dative}: ${detail.persons}`,
+          `Total Reservationen an ${dative}: ${detail.reservations}`,
+          calc,
+        ],
+        result,
+        resultLabel,
+      };
+    }
+    case 'reservations':
+    default: {
+      const result = detail.avgReservationsPerDay;
+      const resultLabel =
+        result !== null
+          ? `Ø ${fmt1(result)} Reservationen pro ${wdLabel}`
+          : `Ø Reservationen pro ${wdLabel}`;
+      const calc =
+        result !== null
+          ? `Rechnung: ${detail.reservations} Reservationen ÷ ${detail.occurrences} ${plural} = ${resultLabel}`
+          : 'Rechnung: keine Vorkommen im Zeitraum.';
+      return { lines: [occLine, `Total Reservationen an ${dative}: ${detail.reservations}`, calc], result, resultLabel };
+    }
+  }
+}
+
+export type DetailDirection = 'above' | 'below' | 'equal';
+
+export interface DetailComparison {
+  /** Wert dieser Zelle (Ø je Modus) — entspricht der grossen Matrix-Zahl. */
+  cellValue: number | null;
+  /** Ø dieses Wochentags über alle Monate im Zeitraum (Spalten-Ø). */
+  columnAverage: number | null;
+  /** cellValue − columnAverage (null wenn eines fehlt). */
+  difference: number | null;
+  /** Einordnung relativ zum Spalten-Ø (null wenn nicht vergleichbar). */
+  direction: DetailDirection | null;
+}
+
+/**
+ * Vergleicht die Detail-Zelle mit dem Durchschnitt dieses Wochentags über alle
+ * Monate (`columnAverage` = `MonthComparison.columns[weekday].average`).
+ */
+export function buildDetailComparison(
+  detail: MonthWeekdayDetail,
+  metric: MetricKey,
+  columnAverage: number | null,
+): DetailComparison {
+  const cellValue = detailCellValue(detail, metric);
+  if (cellValue === null || columnAverage === null) {
+    return { cellValue, columnAverage, difference: null, direction: null };
+  }
+  const difference = cellValue - columnAverage;
+  let direction: DetailDirection;
+  if (difference > COMPARISON_EPS) direction = 'above';
+  else if (difference < -COMPARISON_EPS) direction = 'below';
+  else direction = 'equal';
+  return { cellValue, columnAverage, difference, direction };
+}
+
+/** Stärkster konkreter Tag der Detail-Zelle nach Modus-Kennzahl (null wenn keiner). */
+function strongestDetailDay(detail: MonthWeekdayDetail, metric: MetricKey): WeekdayDayDetail | null {
+  let best: WeekdayDayDetail | null = null;
+  let bestVal = -Infinity;
+  for (const d of detail.days) {
+    if (d.reservations <= 0) continue; // ohne Reservationen kein „stärkster" Tag
+    const v =
+      metric === 'persons'
+        ? d.persons
+        : metric === 'avgPersons'
+          ? d.avgPersonsPerReservation ?? 0
+          : d.reservations;
+    if (v > bestVal + COMPARISON_EPS) {
+      bestVal = v;
+      best = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * 2–3 kurze, automatische Hinweise für das Detail-Popup:
+ *  1. Vergleich zum Spalten-Ø (über/unter/gleich dem Schnitt aller <Wochentage>).
+ *  2. Stärkster konkreter Tag dieses Monats (nach Modus-Kennzahl).
+ *  3. Ø Personen pro Reservation qualitativ (niedrig/mittel/hoch).
+ * Fällt auf einen deskriptiven Satz zurück, falls die Zelle keine Reservationen hat.
+ */
+export function buildDetailInsights(
+  detail: MonthWeekdayDetail,
+  metric: MetricKey,
+  columnAverage: number | null,
+): string[] {
+  const wd = detail.weekday;
+  const wdLabel = WEEKDAY_LABEL[wd];
+  const plural = WEEKDAY_PLURAL[wd];
+  const out: string[] = [];
+
+  // 1) Vergleich zum Spalten-Durchschnitt (dieser Wochentag über alle Monate).
+  const cmp = buildDetailComparison(detail, metric, columnAverage);
+  if (cmp.direction === 'above') {
+    out.push(`Dieser ${wdLabel} liegt über dem Durchschnitt aller ${plural} im Zeitraum.`);
+  } else if (cmp.direction === 'below') {
+    out.push(`Dieser ${wdLabel} liegt unter dem Durchschnitt aller ${plural} im Zeitraum.`);
+  } else if (cmp.direction === 'equal') {
+    out.push(`Dieser ${wdLabel} entspricht dem Durchschnitt aller ${plural} im Zeitraum.`);
+  }
+
+  // 2) Stärkster konkreter Tag dieses Monats.
+  const best = strongestDetailDay(detail, metric);
+  if (best) {
+    const suffix =
+      metric === 'persons'
+        ? `mit ${best.persons} Personen`
+        : metric === 'avgPersons'
+          ? `mit Ø ${fmt1(best.avgPersonsPerReservation ?? 0)} Personen pro Reservation`
+          : `mit ${best.reservations} Reservationen`;
+    out.push(`Der stärkste ${wdLabel} in diesem Monat war der ${formatIsoDateDe(best.date)} ${suffix}.`);
+  }
+
+  // 3) Ø Personen pro Reservation qualitativ einordnen.
+  if (detail.avgPersonsPerReservation !== null) {
+    const app = detail.avgPersonsPerReservation;
+    const bucket = app < 2 ? 'niedrig' : app <= 4 ? 'mittel' : 'hoch';
+    out.push(`Ø Personen pro Reservation liegt bei ${fmt1(app)} und ist damit eher ${bucket}.`);
+  }
+
+  // Fallback: mindestens eine Aussage, wenn die Zelle keine Reservationen hat.
+  if (out.length === 0) {
+    out.push(
+      `${wdLabel} kam im ${monthLongLabel(detail.monthKey)} ${detail.occurrences}× vor, hatte aber keine Reservationen.`,
+    );
+  }
+
+  return out.slice(0, 3);
+}
+
 // ── Schnell-Auswahl / Saison-Zeiträume ───────────────────────────────────────
 
 export interface DateRange {
