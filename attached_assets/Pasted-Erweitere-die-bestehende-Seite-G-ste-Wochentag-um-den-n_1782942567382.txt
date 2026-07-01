@@ -1,0 +1,251 @@
+Erweitere die bestehende Seite "Gäste → Wochentag" um den nächsten Schritt: frei definierbare Saisonvergleiche.
+
+Wichtig:
+Baue auf der bestehenden Wochentagsanalyse auf.
+Keine bestehende Monats- oder Schulferienlogik entfernen.
+Keine Berechnungslogik duplizieren.
+Die bestehenden Komponenten, Helper, Tabellen, Heatmap und das Detail-Popup wiederverwenden.
+
+ZIEL
+
+Der Benutzer soll eigene Zeiträume definieren können, z. B.:
+
+Wintersaison
+Sommerferien
+Terrassensaison
+Weihnachtsgeschäft
+Oktober bis Dezember
+November bis Januar
+
+Danach sollen diese Saisons tabellarisch miteinander verglichen werden können.
+
+=========================
+1. Neuer Modus "Saisonen"
+=========================
+
+Ergänze auf der Seite "Gäste → Wochentag" einen neuen Quick-Button:
+
+Saisonen
+
+Neben den bestehenden Modi:
+
+Monat
+Schulferien BE
+
+Wenn "Saisonen" aktiv ist, soll ein Bereich zur Saison-Auswahl erscheinen.
+
+=========================
+2. Saison-Auswahl
+=========================
+
+Der Benutzer kann mehrere Saisons gleichzeitig auswählen.
+
+Beispiel:
+
+☑ Wintersaison
+☑ Sommerferien
+☑ Weihnachtsgeschäft
+
+Die Auswahl soll die bestehende Auswertung aktualisieren.
+
+=========================
+3. Saison-Definitionen
+=========================
+
+Für den ersten Schritt bitte keine neue Datenbank-Migration erstellen.
+
+Nutze vorerst eine lokale, feste Konfiguration im Code, damit wir die Auswertung testen können.
+
+Beispiel-Saisons:
+
+Wintersaison 2026
+01.10.2026 bis 31.12.2026
+
+Frühlingssaison 2026
+01.03.2026 bis 31.05.2026
+
+Terrassensaison 2026
+01.05.2026 bis 30.09.2026
+
+Sommerferien 2026
+01.07.2026 bis 15.08.2026
+
+Weihnachtsgeschäft 2026
+15.11.2026 bis 31.12.2026
+
+Wichtig:
+Die Architektur trotzdem so vorbereiten, dass diese Definitionen später aus der Datenbank geladen werden können.
+
+=========================
+4. Saisonvergleich-Tabelle
+=========================
+
+Unterhalb der bestehenden Kacheln eine Vergleichstabelle anzeigen.
+
+Spalten:
+
+Saison
+Montag
+Dienstag
+Mittwoch
+Donnerstag
+Freitag
+Samstag
+Sonntag
+Reservationen total
+Personen total
+Ø Personen pro Reservation
+
+Die Wochentagsspalten zeigen immer die aktuell gewählte Kennzahl:
+
+Wenn "Reservationen" aktiv ist:
+Ø Reservationen pro Wochentag
+
+Wenn "Personen" aktiv ist:
+Ø Personen pro Wochentag
+
+Wenn "Personen pro Reservation" aktiv ist:
+Ø Personen pro Reservation am jeweiligen Wochentag
+
+=========================
+5. Heatmap
+=========================
+
+Die Wochentagszellen der Saisonvergleich-Tabelle erhalten dieselbe 5-stufige Heatmap wie die bestehende Vergleichstabelle.
+
+Bewertung immer relativ zum Durchschnitt der jeweiligen Saison-Zeile.
+
+=========================
+6. Klick auf Tabellenzelle
+=========================
+
+Jede Zelle in der Saisonvergleich-Tabelle muss anklickbar sein.
+
+Beispiel:
+
+Wintersaison 2026 × Montag
+
+öffnet das bestehende Detail-Popup.
+
+Das Popup muss zeigen:
+
+Saisonname
+Wochentag
+Zeitraum der Saison
+Reservationen total
+Personen total
+Anzahl dieses Wochentags im Zeitraum
+Ø Wert gemäss aktivem Kennzahlenmodus
+Zusammensetzung der Kennzahl
+
+Keine neue Popup-Komponente bauen.
+Das bestehende Detail-Popup wiederverwenden oder sauber erweitern.
+
+=========================
+7. Leere Saisons
+=========================
+
+Wenn eine Saison keine Reservationen enthält, trotzdem anzeigen.
+
+Werte:
+
+0 Reservationen
+0 Personen
+Ø 0.0
+
+Hinweistext:
+
+"Für diese Saison sind noch keine Reservationen vorhanden."
+
+=========================
+8. Saison-Ranking
+=========================
+
+Unterhalb der Saisonvergleich-Tabelle zusätzlich eine kleine Ranking-Auswertung anzeigen:
+
+Für jeden Wochentag:
+
+Stärkste Saison
+Schwächste Saison
+
+Beispiel:
+
+Montag
+Stärkste Saison: Wintersaison 2026
+Schwächste Saison: Sommerferien 2026
+
+Dienstag
+Stärkste Saison: Weihnachtsgeschäft 2026
+Schwächste Saison: Terrassensaison 2026
+
+Das Ranking soll auf der aktuell gewählten Kennzahl basieren.
+
+=========================
+9. Automatische Interpretation
+=========================
+
+Unterhalb des Rankings kurze Hinweise anzeigen.
+
+Beispiele:
+
+"Die Wintersaison 2026 erzielt den stärksten Freitag."
+
+"Die Sommerferien 2026 zeigen den schwächsten Montag."
+
+"Der Donnerstag ist über mehrere Saisons konstant stark."
+
+"Die größte Abweichung zwischen den Saisons besteht am Sonntag."
+
+Die Hinweise müssen aus den echten berechneten Daten entstehen, nicht hart codiert sein.
+
+=========================
+10. URL-State
+=========================
+
+Der neue Modus muss refresh-sicher sein.
+
+Beispiel:
+
+mode=saison
+
+Die ausgewählten Saisons sollen ebenfalls über die URL wiederherstellbar sein.
+
+Beispiel:
+
+mode=saison&seasons=winter-2026,summer-2026
+
+=========================
+11. Technische Anforderungen
+=========================
+
+Keine neue Datenbanktabelle.
+Keine Migration.
+Keine Änderung an Reservationstabellen.
+Keine doppelten Berechnungen.
+Bestehende Helper erweitern.
+Bestehende Aggregationslogik wiederverwenden.
+TypeScript strict.
+Performance beachten.
+Bestehende Tests dürfen nicht brechen.
+
+=========================
+12. Tests
+=========================
+
+Neue Tests ergänzen für:
+
+Saisondefinitionen
+Saisonvergleich mit mehreren Saisons
+Leere Saison
+Überlappende Saisondefinitionen
+Heatmap pro Saisonzeile
+Ranking stärkste/schwächste Saison je Wochentag
+URL-State mit mode=saison
+Klickdaten für Detail-Popup
+
+Am Ende ausführen:
+
+npm run typecheck
+npm test
+
+replit.md aktualisieren mit kurzer Beschreibung der neuen Saisonvergleich-Funktion.

@@ -1,0 +1,254 @@
+Erweitere die Seite "Gäste → Wochentag" um einen neuen Analysemodus "Saisonvergleich".
+
+ZIEL
+
+Neben "Monat" und "Schulferien BE" soll der Benutzer eigene Saisons definieren und anschließend dieselben Wochentagsauswertungen erhalten.
+
+Die Architektur muss vollständig generisch aufgebaut werden, damit zukünftig beliebig viele Saisons möglich sind.
+
+=========================
+1. Neuer Analysemodus
+=========================
+
+Neuen Schnellfilter hinzufügen:
+
+Monat
+Schulferien BE
+Saisonen
+
+Beim Wechsel auf "Saisonen" erscheint eine Saison-Auswahl.
+
+=========================
+2. Saisonverwaltung
+=========================
+
+Oberhalb der Auswertung einen Button anzeigen:
+
+"Saisonen verwalten"
+
+Beim Klick öffnet sich ein Dialog.
+
+Der Benutzer kann beliebig viele Saisons anlegen.
+
+Pro Saison:
+
+• Name
+• Startdatum
+• Enddatum
+• Farbe (optional)
+• Aktiv / Inaktiv
+
+Beispiele:
+
+Wintersaison
+01.10.2026
+31.12.2026
+
+Frühlingssaison
+01.03.2026
+31.05.2026
+
+Sommerferien
+01.07.2026
+15.08.2026
+
+Weihnachtsgeschäft
+15.11.2026
+31.12.2026
+
+Terrassensaison
+01.05.2026
+30.09.2026
+
+=========================
+3. Auswertung
+=========================
+
+Nach Auswahl einer Saison soll die Seite exakt dieselben Komponenten verwenden wie heute.
+
+Headline Cards
+
+Wochentagskarten
+
+Detail Popup
+
+Vergleichstabelle
+
+Interpretation
+
+Heatmap
+
+Es darf keine doppelte Logik entstehen.
+
+Die bestehenden Berechnungen müssen wiederverwendet werden.
+
+=========================
+4. Vergleich mehrerer Saisons
+=========================
+
+Mehrfachauswahl ermöglichen.
+
+Beispiel:
+
+☑ Wintersaison
+
+☑ Sommerferien
+
+☑ Weihnachtsgeschäft
+
+Darunter erscheint eine Vergleichstabelle.
+
+Spalten:
+
+Saison
+
+Montag
+
+Dienstag
+
+Mittwoch
+
+Donnerstag
+
+Freitag
+
+Samstag
+
+Sonntag
+
+Reservationen total
+
+Personen total
+
+Ø Personen pro Reservation
+
+Alle Heatmaps bleiben erhalten.
+
+=========================
+5. Saison-Ranking
+=========================
+
+Unterhalb der Vergleichstabelle zusätzlich:
+
+Stärkster Montag
+
+Stärkster Dienstag
+
+...
+
+Stärkster Sonntag
+
+Beispiel:
+
+Montag
+
+1. Wintersaison
+Ø 9.8
+
+2. Weihnachten
+Ø 8.6
+
+3. Sommerferien
+Ø 5.4
+
+Dasselbe für alle Wochentage.
+
+=========================
+6. Diagramm
+=========================
+
+Unterhalb der Tabellen zusätzlich ein Diagramm.
+
+X-Achse:
+
+Montag bis Sonntag
+
+Y-Achse:
+
+gewählte Kennzahl
+
+Jede Saison erhält eine eigene Linie.
+
+Dadurch erkennt man sofort Unterschiede zwischen den Saisons.
+
+=========================
+7. Empfehlungen
+=========================
+
+Automatisch Hinweise erzeugen.
+
+Beispiele:
+
+"Die Wintersaison erzielt den stärksten Freitag."
+
+"Die Sommerferien zeigen den schwächsten Montag."
+
+"Der Donnerstag ist in allen Saisons konstant stark."
+
+"Die größte Abweichung besteht am Sonntag."
+
+Die Hinweise ausschließlich aus den vorhandenen Daten berechnen.
+
+=========================
+8. Detail Popup
+=========================
+
+Alle Tabellenzellen und Diagrammpunkte bleiben anklickbar.
+
+Das bereits vorhandene Detail-Popup wird wiederverwendet.
+
+Keine neue Popup-Logik erstellen.
+
+=========================
+9. Architektur
+=========================
+
+Keine neue Berechnungslogik duplizieren.
+
+Bestehende Helper erweitern.
+
+Gemeinsame Aggregationsfunktionen verwenden.
+
+Saubere TypeScript-Typen.
+
+Keine Performance-Verschlechterung.
+
+=========================
+10. Datenbank
+=========================
+
+Für die Saisondefinitionen eine kleine Konfiguration anlegen (Mandantenfähig).
+
+Nur diese Konfiguration wird gespeichert.
+
+Die Reservierungsdaten bleiben unverändert und werden weiterhin ausschließlich aus den bestehenden Reservationen berechnet.
+
+Keine Änderungen an den Reservationstabellen.
+
+=========================
+11. Qualität
+=========================
+
+TypeScript strict.
+
+Bestehende Tests müssen weiterhin erfolgreich sein.
+
+Neue Tests für:
+
+• Saisonberechnung
+
+• Saisonvergleich
+
+• Mehrfachvergleich
+
+• Heatmap
+
+• Ranking
+
+• Empfehlungen
+
+• Leere Saison
+
+• Überlappende Saisondefinitionen
+
+replit.md aktualisieren.

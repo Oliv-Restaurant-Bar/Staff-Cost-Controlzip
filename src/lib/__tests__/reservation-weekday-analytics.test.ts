@@ -72,6 +72,14 @@ import {
   BERN_HOLIDAY_LABEL,
   BERN_HOLIDAY_SELECTION_LABEL,
   HOLIDAY_EVEN_RATIO,
+  seasonsToComparisonPeriods,
+  buildSeasonWeekdayRanking,
+  buildSeasonChartSeries,
+  buildSeasonRecommendations,
+  validateSeasonDefinition,
+  findOverlappingSeasons,
+  isValidIsoDate,
+  type SeasonDefinition,
   type WeekdayStat,
   type ComparisonCell,
 } from '@/lib/reservation-weekday-analytics';
@@ -1642,5 +1650,179 @@ describe('buildRangeWeekdayDetail', () => {
     expect(d.reservations).toBe(7); // nur 2026-01-05
     expect(d.occurrences).toBe(4); // 4 Montage im Januar 2026
     expect(d.monthKey).toBe('2026-01');
+  });
+});
+
+// ── Saisonvergleich (frei definierte, fixe Datumsbereiche) ─────────────────────
+// Je Saison eine vollständige ISO-Woche mit festen Werten je Wochentag, damit
+// jede Zelle genau EIN Kalendervorkommen hat und die Werte exakt sind.
+const SEASON_DEFS: SeasonDefinition[] = [
+  { id: 'fr', name: 'Frühling', from: '2026-01-05', to: '2026-01-11', color: '#22c55e', active: true },
+  { id: 'so', name: 'Sommer', from: '2026-01-12', to: '2026-01-18', color: '#ef4444', active: true },
+];
+const SEASON_ROWS: ReservationAggRow[] = [
+  // Frühling: Mo10 Di10 Mi10 Do10 Fr10 Sa20 So5
+  ...repeat('2026-01-05', 10, 2),
+  ...repeat('2026-01-06', 10, 2),
+  ...repeat('2026-01-07', 10, 2),
+  ...repeat('2026-01-08', 10, 2),
+  ...repeat('2026-01-09', 10, 2),
+  ...repeat('2026-01-10', 20, 2),
+  ...repeat('2026-01-11', 5, 2),
+  // Sommer: Mo8 Di8 Mi8 Do8 Fr8 Sa25 So6
+  ...repeat('2026-01-12', 8, 3),
+  ...repeat('2026-01-13', 8, 3),
+  ...repeat('2026-01-14', 8, 3),
+  ...repeat('2026-01-15', 8, 3),
+  ...repeat('2026-01-16', 8, 3),
+  ...repeat('2026-01-17', 25, 3),
+  ...repeat('2026-01-18', 6, 3),
+];
+const seasonComparison = () =>
+  buildWeekdayComparison(
+    SEASON_ROWS,
+    seasonsToComparisonPeriods(SEASON_DEFS),
+    'booked',
+    'reservations',
+  );
+
+describe('seasonsToComparisonPeriods', () => {
+  it('wandelt Saisons in ComparisonPeriods (key = Saison-ID), sortiert nach from', () => {
+    const p = seasonsToComparisonPeriods(SEASON_DEFS);
+    expect(p.map((x) => x.key)).toEqual(['fr', 'so']);
+    expect(p.map((x) => x.label)).toEqual(['Frühling', 'Sommer']);
+    expect(p[0]).toMatchObject({ from: '2026-01-05', to: '2026-01-11' });
+  });
+  it('verwirft ungültige Bereiche (kein Datum / from > to)', () => {
+    const p = seasonsToComparisonPeriods([
+      { id: 'bad1', name: 'Ungültig', from: '2026-13-01', to: '2026-01-05', active: true },
+      { id: 'bad2', name: 'Verdreht', from: '2026-03-31', to: '2026-03-01', active: true },
+      SEASON_DEFS[0],
+    ]);
+    expect(p.map((x) => x.key)).toEqual(['fr']);
+  });
+  it('sortiert bei gleichem from stabil nach Name', () => {
+    const p = seasonsToComparisonPeriods([
+      { id: 'b', name: 'Beta', from: '2026-05-01', to: '2026-05-31', active: true },
+      { id: 'a', name: 'Alpha', from: '2026-05-01', to: '2026-05-31', active: true },
+    ]);
+    expect(p.map((x) => x.label)).toEqual(['Alpha', 'Beta']);
+  });
+});
+
+describe('buildSeasonWeekdayRanking', () => {
+  it('erzeugt je Wochentag (Mo→So) eine absteigende Rangliste', () => {
+    const rank = buildSeasonWeekdayRanking(seasonComparison());
+    expect(rank).toHaveLength(7);
+    expect(rank.map((r2) => r2.weekday)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+  it('Samstag: Sommer (25) vor Frühling (20)', () => {
+    const sat = buildSeasonWeekdayRanking(seasonComparison()).find((r2) => r2.weekday === 6)!;
+    expect(sat.entries.map((e) => e.seasonKey)).toEqual(['so', 'fr']);
+    expect(sat.entries.map((e) => e.value)).toEqual([25, 20]);
+  });
+  it('Montag: Frühling (10) vor Sommer (8)', () => {
+    const mon = buildSeasonWeekdayRanking(seasonComparison()).find((r2) => r2.weekday === 1)!;
+    expect(mon.entries.map((e) => e.seasonKey)).toEqual(['fr', 'so']);
+    expect(mon.entries.map((e) => e.value)).toEqual([10, 8]);
+  });
+});
+
+describe('buildSeasonChartSeries', () => {
+  it('liefert 7 Punkte (Mo→So, Kurzlabels) und je Saison eine Serie', () => {
+    const chart = buildSeasonChartSeries(seasonComparison());
+    expect(chart.points).toHaveLength(7);
+    expect(chart.points.map((p) => p.label)).toEqual(['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']);
+    expect(chart.points.map((p) => p.weekday)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(chart.series.map((s) => s.key)).toEqual(['fr', 'so']);
+  });
+  it('Punktwerte sind je Saison-ID indexiert', () => {
+    const sat = buildSeasonChartSeries(seasonComparison()).points.find((p) => p.weekday === 6)!;
+    expect(sat.values.fr).toBe(20);
+    expect(sat.values.so).toBe(25);
+  });
+});
+
+describe('buildSeasonRecommendations', () => {
+  it('nennt stärksten und schwächsten Wochentag mit zugehöriger Saison', () => {
+    const recs = buildSeasonRecommendations(seasonComparison());
+    expect(recs.some((t) => t.includes('Sommer') && t.includes('stärksten') && t.includes('Samstag'))).toBe(true);
+    expect(recs.some((t) => t.includes('Frühling') && t.includes('schwächsten') && t.includes('Sonntag'))).toBe(true);
+  });
+  it('nennt konstantesten Wochentag und grösste Abweichung', () => {
+    const recs = buildSeasonRecommendations(seasonComparison());
+    expect(recs.some((t) => t.includes('Sonntag') && t.includes('konstantesten'))).toBe(true);
+    expect(recs.some((t) => t.includes('Montag') && t.includes('grösste Abweichung'))).toBe(true);
+  });
+  it('gibt [] bei weniger als 2 Saisons zurück', () => {
+    const one = buildWeekdayComparison(
+      SEASON_ROWS,
+      seasonsToComparisonPeriods([SEASON_DEFS[0]]),
+      'booked',
+      'reservations',
+    );
+    expect(buildSeasonRecommendations(one)).toEqual([]);
+  });
+});
+
+describe('Saison-Heatmap & leere Saison', () => {
+  it('Vergleichszeilen tragen zeilenrelative Heatmap-Stufen', () => {
+    const cmp = seasonComparison();
+    expect(cmp.rows[0].period.key).toBe('fr');
+    expect(cmp.rows[0].cells[6].heat).toBe('veryStrong'); // Sa 20 ≫ Zeilen-Ø
+    expect(cmp.rows[0].cells[7].heat).toBe('veryWeak');    // So 5 ≪ Zeilen-Ø
+  });
+  it('leere Saison: vorkommende Wochentage = 0 (nicht null), landen zuletzt im Ranking', () => {
+    const cmp = buildWeekdayComparison(
+      SEASON_ROWS,
+      seasonsToComparisonPeriods([
+        SEASON_DEFS[0],
+        { id: 'leer', name: 'Leer', from: '2026-02-02', to: '2026-02-08', active: true },
+      ]),
+      'booked',
+      'reservations',
+    );
+    const mon = buildSeasonWeekdayRanking(cmp).find((r2) => r2.weekday === 1)!;
+    expect(mon.entries.map((e) => e.seasonKey)).toEqual(['fr', 'leer']);
+    expect(mon.entries.map((e) => e.value)).toEqual([10, 0]);
+  });
+});
+
+describe('validateSeasonDefinition & isValidIsoDate', () => {
+  it('akzeptiert eine gültige Definition', () => {
+    expect(validateSeasonDefinition({ name: 'Herbst', from: '2026-09-01', to: '2026-11-30' }).valid).toBe(true);
+  });
+  it('meldet fehlenden Namen und ungültige Daten', () => {
+    const res = validateSeasonDefinition({ name: '   ', from: '2026-13-01', to: 'foo' });
+    expect(res.valid).toBe(false);
+    expect(res.errors.length).toBeGreaterThanOrEqual(3);
+  });
+  it('meldet Enddatum vor Startdatum', () => {
+    const res = validateSeasonDefinition({ name: 'A', from: '2026-02-01', to: '2026-01-01' });
+    expect(res.valid).toBe(false);
+    expect(res.errors).toContain('Das Enddatum darf nicht vor dem Startdatum liegen.');
+  });
+  it('isValidIsoDate erkennt echte Kalenderdaten und weist Unsinn ab', () => {
+    expect(isValidIsoDate('2026-02-28')).toBe(true);
+    expect(isValidIsoDate('2026-02-31')).toBe(false);
+    expect(isValidIsoDate('2026-2-3')).toBe(false);
+    expect(isValidIsoDate('foo')).toBe(false);
+  });
+});
+
+describe('findOverlappingSeasons', () => {
+  it('findet überlappende Paare inkl. Randberührung und ignoriert getrennte', () => {
+    const a: SeasonDefinition = { id: 'a', name: 'A', from: '2026-01-01', to: '2026-01-10', active: true };
+    const b: SeasonDefinition = { id: 'b', name: 'B', from: '2026-01-10', to: '2026-01-20', active: true };
+    const c: SeasonDefinition = { id: 'c', name: 'C', from: '2026-02-01', to: '2026-02-05', active: true };
+    expect(findOverlappingSeasons([a, b, c])).toEqual([{ a: 'a', b: 'b' }]);
+  });
+  it('keine Überlappung bei getrennten Bereichen', () => {
+    expect(
+      findOverlappingSeasons([
+        { id: 'x', name: 'X', from: '2026-01-01', to: '2026-01-05', active: true },
+        { id: 'y', name: 'Y', from: '2026-03-01', to: '2026-03-05', active: true },
+      ]),
+    ).toEqual([]);
   });
 });

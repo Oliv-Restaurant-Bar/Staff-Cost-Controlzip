@@ -26,6 +26,7 @@
 - [Overloaded permission flag](overloaded-permission-flag.md) — widening a role gate (e.g. canEditEmployees) leaks every confidential surface it also gates; split into a narrower old-value gate instead of widening.
 - [Overtime excludes absences](overtime-absence-exclusion.md) — hours-over-threshold analytics must drop `absenceType` entries (productive = hours>0 && !absenceType) or leave days fabricate overtime.
 - [Validation code-review diff scope](validation-review-scope.md) — mark_task_complete review diffs whole branch since last checkpoint; can reject your small task for unrelated prior commits — verify with git show, don't revert others' work.
+- [recharts Line onClick has no payload](recharts-line-onclick-payload.md) — clickable chart points need a custom dot/activeDot render-prop (has `payload`); Line/activeDot onClick can't carry the point's data.
 - [Scope-diff save & orphans](scope-diff-save-orphans.md) — RLS-safe save = load→update→insert→delete per tenant+scope (no PK upsert); re-submit hidden rows verbatim & don't rewrite caller sort_order or orphans mutate.
 - [Tenant-safe upsert under RLS](tenant-safe-upsert-rls.md) — authenticated-wide RLS isolates tenants only in TS; scope UPDATE by id AND restaurant_id, treat 0-rows as failure.
 - [Employee skill columns persistence](employee-skill-columns-persistence.md) — station keys written separately from employeeToDb w/ presence guard (`'field' in emp`), never `?? null` (clobber class).

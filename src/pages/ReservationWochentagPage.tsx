@@ -30,7 +30,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   CalendarRange, Loader2, Database, ArrowLeft, TrendingUp, TrendingDown,
   CalendarDays, Settings2, RotateCcw, Check, Minus, Info, Lightbulb,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, GraduationCap,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, GraduationCap, Layers,
 } from 'lucide-react';
 import { format as fmtDate } from 'date-fns';
 import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
@@ -41,6 +41,9 @@ import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import { MonthWeekdayDetailDialog } from '@/components/crm/MonthWeekdayDetailDialog';
+import { SeasonManagerDialog } from '@/components/crm/SeasonManagerDialog';
+import { SeasonComparisonSection } from '@/components/crm/SeasonComparisonSection';
+import { useSeasonDefinitions } from '@/hooks/useSeasonDefinitions';
 import {
   aggregateByWeekday, buildWeekdayHeadlines, buildMonthComparison,
   buildMonthComparisonInsights, comparisonCellSubLabel, buildMonthWeekdayDetail,
@@ -56,6 +59,8 @@ import {
   aggregateHolidayWeekday, buildHolidayMonthComparison, buildHolidayPeriodSummary,
   bernHolidayPeriods, holidayBounds, holidayPeriodForMonth, isBernHolidaySelection,
   BERN_HOLIDAY_KINDS, BERN_HOLIDAY_SELECTION_LABEL,
+  periodBounds, seasonsToComparisonPeriods, buildSeasonWeekdayRanking,
+  buildSeasonChartSeries, buildSeasonRecommendations, type SeasonDefinition,
   type PresetKey, type StatusScope, type MetricKey, type IsoWeekday,
   type SeasonSettings, type SeasonRange,
   type WeekdayHeadline, type WeekdayRank,
@@ -165,6 +170,8 @@ interface InitView {
   metric: MetricKey;
   holidayMode: boolean;
   ferienart: BernHolidaySelection;
+  seasonMode: boolean;
+  selectedSeasonIds: string[];
 }
 
 function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): InitView {
@@ -183,6 +190,30 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
   const metric: MetricKey =
     metricRaw && METRICS.includes(metricRaw) ? metricRaw : 'reservations';
   const ferienart: BernHolidaySelection = isBernHolidaySelection(holRaw) ? holRaw : 'all';
+  const selRaw = sp.get('sel');
+  const selectedSeasonIds = selRaw
+    ? selRaw.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+
+  // Saison-Modus: frei definierte, datumsfixe Saisons. Datumsgrenzen aus der URL
+  // (Superset) haben Vorrang; sonst „heute" als Platzhalter, bis die Saisons
+  // geladen sind (ein Effekt setzt danach den umschliessenden Bereich).
+  if (modeRaw === 'saison') {
+    const validFrom = f && /^\d{4}-\d{2}-\d{2}$/.test(f) ? f : todayStr;
+    const validTo = t && /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : todayStr;
+    return {
+      preset: 'custom',
+      from: validFrom,
+      to: validTo,
+      scope,
+      year,
+      metric,
+      holidayMode: false,
+      ferienart,
+      seasonMode: true,
+      selectedSeasonIds,
+    };
+  }
 
   // Schulferien-Modus: Datumsgrenzen ergeben sich aus der Ferien-Auswahl (der
   // umschliessende Datumsbereich für EINEN Superset-Fetch), refresh-fest.
@@ -197,6 +228,8 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
       metric,
       holidayMode: true,
       ferienart,
+      seasonMode: false,
+      selectedSeasonIds: [],
     };
   }
 
@@ -204,7 +237,10 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
   // greift der Standard „Dieser Monat".
   if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t)) {
     const preset: PresetKey = presetRaw && PRESETS.includes(presetRaw) ? presetRaw : 'custom';
-    return { preset, from: f, to: t, scope, year, metric, holidayMode: false, ferienart };
+    return {
+      preset, from: f, to: t, scope, year, metric,
+      holidayMode: false, ferienart, seasonMode: false, selectedSeasonIds: [],
+    };
   }
   const range = presetRange('thisMonth', { today: todayStr, year, seasons: DEFAULT_SEASON_SETTINGS })!;
   return {
@@ -216,6 +252,8 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
     metric,
     holidayMode: false,
     ferienart,
+    seasonMode: false,
+    selectedSeasonIds: [],
   };
 }
 
@@ -315,6 +353,16 @@ export default function ReservationWochentagPage() {
   // dann der umschliessende Datumsbereich der gewählten Ferien-Auswahl.
   const [holidayMode, setHolidayMode] = useState(init.holidayMode);
   const [ferienart, setFerienart] = useState<BernHolidaySelection>(init.ferienart);
+  // Saisonvergleich-Modus: frei definierte, datumsfixe Saisons; `from`/`to` sind
+  // dann der umschliessende Bereich aller ausgewählten Saisons (Superset-Fetch).
+  const [seasonMode, setSeasonMode] = useState(init.seasonMode);
+  const [selectedSeasonIds, setSelectedSeasonIds] = useState<string[]>(init.selectedSeasonIds);
+  const [seasonMgrOpen, setSeasonMgrOpen] = useState(false);
+  const {
+    seasons: seasonDefs,
+    saveError: seasonSaveError,
+    save: saveSeasonDefs,
+  } = useSeasonDefinitions();
 
   // Monatsvergleich-Matrix: standardmässig eingeklappt (siehe Konstante).
   const [showComparison, setShowComparison] = useState(MONTH_COMPARISON_DEFAULT_OPEN);
@@ -370,11 +418,40 @@ export default function ReservationWochentagPage() {
     [holidayMode, year, ferienart],
   );
 
+  // ── Saisonvergleich ────────────────────────────────────────────────────────
+  // Ausgewählte, aktive, datumsgültige Saisons. Nur im Saison-Modus relevant;
+  // treiben Aggregation, Wochentags-Perioden, Rangliste, Diagramm, Empfehlungen.
+  const seasonSelected = useMemo(
+    () => seasonDefs.filter((d) => d.active && selectedSeasonIds.includes(d.id)),
+    [seasonDefs, selectedSeasonIds],
+  );
+  const seasonPeriods = useMemo(
+    () => seasonsToComparisonPeriods(seasonSelected),
+    [seasonSelected],
+  );
+  const seasonColorMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const d of seasonSelected) if (d.color) m[d.id] = d.color;
+    return m;
+  }, [seasonSelected]);
+
+  // Saison-Modus: Datumsgrenzen = umschliessender Bereich aller gewählten Saisons
+  // (EIN Superset-Fetch). Reagiert auch auf spätes Laden/Ändern der Saisons.
+  useEffect(() => {
+    if (!seasonMode) return;
+    const bounds = periodBounds(seasonSelected);
+    if (!bounds) return;
+    if (bounds.from !== from) setFrom(bounds.from);
+    if (bounds.to !== to) setTo(bounds.to);
+  }, [seasonMode, seasonSelected, from, to]);
+
   const agg = useMemo(
-    () => (holidayMode
-      ? aggregateHolidayWeekday(rows, holidayPeriods, scope)
-      : aggregateByWeekday(rows, from, to, scope)),
-    [holidayMode, holidayPeriods, rows, from, to, scope],
+    () => (seasonMode
+      ? aggregateHolidayWeekday(rows, seasonSelected, scope)
+      : holidayMode
+        ? aggregateHolidayWeekday(rows, holidayPeriods, scope)
+        : aggregateByWeekday(rows, from, to, scope)),
+    [seasonMode, seasonSelected, holidayMode, holidayPeriods, rows, from, to, scope],
   );
   const headlines = useMemo(
     () => buildWeekdayHeadlines(agg, metric),
@@ -383,10 +460,12 @@ export default function ReservationWochentagPage() {
   // Kompakte Vergleichsmatrix (Monate × Wochentage) für die gewählte Kennzahl.
   // Im Ferien-Modus zählen NUR Reservationen innerhalb der Ferien-Perioden.
   const comparison = useMemo(
-    () => (holidayMode
-      ? buildHolidayMonthComparison(rows, holidayPeriods, scope, metric)
-      : buildMonthComparison(rows, from, to, scope, metric)),
-    [holidayMode, holidayPeriods, rows, from, to, scope, metric],
+    () => (seasonMode
+      ? buildHolidayMonthComparison(rows, seasonSelected, scope, metric)
+      : holidayMode
+        ? buildHolidayMonthComparison(rows, holidayPeriods, scope, metric)
+        : buildMonthComparison(rows, from, to, scope, metric)),
+    [seasonMode, seasonSelected, holidayMode, holidayPeriods, rows, from, to, scope, metric],
   );
   // Perioden-Zusammenfassung (nur Ferien-Modus): je Ferienperiode Kennzahlen,
   // stärkster/schwächster Wochentag, Zukunft-Flag + kurze Interpretation.
@@ -446,6 +525,7 @@ export default function ReservationWochentagPage() {
   // geklemmt); Ferien-Modus → ein Zeitraum je Ferienperiode. Generisch: neue
   // Saisons liefern einfach eine andere Perioden-Liste.
   const weekdayComparisonPeriods = useMemo<ComparisonPeriod[]>(() => {
+    if (seasonMode) return seasonPeriods;
     if (holidayMode) {
       return holidayPeriods.map((p) => ({
         key: `${p.kind}-${p.year}`,
@@ -476,11 +556,29 @@ export default function ReservationWochentagPage() {
       const pTo = r.to && r.to < to ? r.to : to;
       return { key: mk, label: monthLongLabel(mk), from: pFrom, to: pTo };
     });
-  }, [holidayMode, holidayPeriods, startMonthKey, endMonthKey, from, to]);
+  }, [seasonMode, seasonPeriods, holidayMode, holidayPeriods, startMonthKey, endMonthKey, from, to]);
 
   const weekdayComparison = useMemo(
     () => buildWeekdayComparison(rows, weekdayComparisonPeriods, scope, metric),
     [rows, weekdayComparisonPeriods, scope, metric],
+  );
+
+  // Saison-Ansichten (nur Saison-Modus): Rangliste je Wochentag, Diagramm-Serien
+  // (eine Linie je Saison) und automatische Empfehlungen. Alle rein abgeleitet
+  // aus `weekdayComparison`; leer/neutral ausserhalb des Saison-Modus.
+  const seasonRanking = useMemo(
+    () => (seasonMode ? buildSeasonWeekdayRanking(weekdayComparison) : []),
+    [seasonMode, weekdayComparison],
+  );
+  const seasonChart = useMemo(
+    () => (seasonMode
+      ? buildSeasonChartSeries(weekdayComparison)
+      : { points: [], series: [] }),
+    [seasonMode, weekdayComparison],
+  );
+  const seasonRecommendations = useMemo(
+    () => (seasonMode ? buildSeasonRecommendations(weekdayComparison, seasonRanking) : []),
+    [seasonMode, weekdayComparison, seasonRanking],
   );
 
   // Detail-Popup des Wochentagsvergleichs: Aufschlüsselung + Spalten-Ø (über alle
@@ -509,6 +607,7 @@ export default function ReservationWochentagPage() {
   // ── Aktionen ─────────────────────────────────────────────────────────────────
   const applyPreset = (key: PresetKey) => {
     setHolidayMode(false); // eine Schnell-Auswahl verlässt den Ferien-Modus
+    setSeasonMode(false);  // … und den Saison-Modus
     setPreset(key);
     if (key === 'custom') return; // Datumsfelder bleiben frei wählbar
     const range = presetRange(key, { today: todayStr, year, seasons });
@@ -519,6 +618,7 @@ export default function ReservationWochentagPage() {
   // aktuell gewählten Ferien-Auswahl (Superset-Fetch); Präzision übernimmt die
   // ferien-genaue Aggregation.
   const enterHolidayMode = () => {
+    setSeasonMode(false);
     setHolidayMode(true);
     setPreset('custom');
     const bounds = holidayBounds(bernHolidayPeriods(year, ferienart));
@@ -528,6 +628,33 @@ export default function ReservationWochentagPage() {
     setFerienart(sel);
     const bounds = holidayBounds(bernHolidayPeriods(year, sel));
     if (bounds) { setFrom(bounds.from); setTo(bounds.to); }
+  };
+
+  // Saisonvergleich aktivieren: verlässt Ferien-/Preset-Modus. Ohne bestehende
+  // Auswahl werden alle aktiven Saisons vorausgewählt; der Superset-Effekt setzt
+  // danach die Datumsgrenzen.
+  const enterSeasonMode = () => {
+    setHolidayMode(false);
+    setSeasonMode(true);
+    setPreset('custom');
+    setSelectedSeasonIds((prev) =>
+      prev.length > 0 ? prev : seasonDefs.filter((d) => d.active).map((d) => d.id),
+    );
+  };
+  const toggleSeasonSelected = (id: string) =>
+    setSelectedSeasonIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    );
+  // Nach dem Speichern der Saison-Definitionen: Auswahl auf noch existierende,
+  // aktive Saisons eingrenzen; fällt sie leer, alle aktiven vorauswählen.
+  const handleSaveSeasonDefs = async (next: SeasonDefinition[]) => {
+    await saveSeasonDefs(next);
+    const activeIds = next.filter((d) => d.active).map((d) => d.id);
+    const valid = new Set(activeIds);
+    setSelectedSeasonIds((prev) => {
+      const kept = prev.filter((id) => valid.has(id));
+      return kept.length > 0 ? kept : activeIds;
+    });
   };
 
   // Monatsnavigation: setzt Von/Bis auf Anfang/Ende des Zielmonats.
@@ -593,7 +720,10 @@ export default function ReservationWochentagPage() {
   // ── URL-Spiegelung ───────────────────────────────────────────────────────────
   useEffect(() => {
     const next = new URLSearchParams();
-    if (holidayMode) {
+    if (seasonMode) {
+      next.set('mode', 'saison');
+      if (selectedSeasonIds.length > 0) next.set('sel', selectedSeasonIds.join(','));
+    } else if (holidayMode) {
       next.set('mode', 'ferienBE');
       next.set('hol', ferienart);
     } else {
@@ -607,7 +737,7 @@ export default function ReservationWochentagPage() {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
-  }, [holidayMode, ferienart, preset, from, to, scope, year, metric, searchParams, setSearchParams]);
+  }, [seasonMode, selectedSeasonIds, holidayMode, ferienart, preset, from, to, scope, year, metric, searchParams, setSearchParams]);
 
   if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
@@ -616,11 +746,17 @@ export default function ReservationWochentagPage() {
 
   const strongestH = headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null;
   const weakestH = headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null;
-  const scopeLabel = holidayMode
-    ? `${BERN_HOLIDAY_SELECTION_LABEL[ferienart]} ${year}`
-    : isSingleMonth
-      ? monthLongLabel(currentMonthKey)
-      : `${from} – ${to}`;
+  const scopeLabel = seasonMode
+    ? (seasonSelected.length === 1
+        ? seasonSelected[0].name
+        : seasonSelected.length > 1
+          ? `${seasonSelected.length} Saisons`
+          : 'Keine Saison ausgewählt')
+    : holidayMode
+      ? `${BERN_HOLIDAY_SELECTION_LABEL[ferienart]} ${year}`
+      : isSingleMonth
+        ? monthLongLabel(currentMonthKey)
+        : `${from} – ${to}`;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
@@ -669,10 +805,10 @@ export default function ReservationWochentagPage() {
                 key={key}
                 type="button"
                 onClick={() => applyPreset(key)}
-                aria-pressed={!holidayMode && preset === key}
+                aria-pressed={!holidayMode && !seasonMode && preset === key}
                 className={cn(
                   'rounded-md border px-3 py-1.5 text-sm transition-colors',
-                  !holidayMode && preset === key
+                  !holidayMode && !seasonMode && preset === key
                     ? 'border-primary bg-primary/10 font-medium text-primary'
                     : 'border-border hover:border-primary/60 hover:bg-muted/40',
                 )}
@@ -694,12 +830,65 @@ export default function ReservationWochentagPage() {
               <GraduationCap className="h-4 w-4" />
               Schulferien BE
             </button>
+            <button
+              type="button"
+              onClick={enterSeasonMode}
+              aria-pressed={seasonMode}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors',
+                seasonMode
+                  ? 'border-primary bg-primary/10 font-medium text-primary'
+                  : 'border-border hover:border-primary/60 hover:bg-muted/40',
+              )}
+            >
+              <Layers className="h-4 w-4" />
+              Saisonvergleich
+            </button>
           </div>
         </div>
 
         {/* Monatsnavigation + Zeitraum + Jahr + Status */}
         <div className="flex flex-wrap items-end gap-4">
-          {holidayMode ? (
+          {seasonMode ? (
+            <div className="flex-1">
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                Saisons auswählen
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                {seasonDefs.filter((d) => d.active).length === 0 ? (
+                  <span className="text-sm text-muted-foreground">
+                    Noch keine Saison definiert — mit „Saisons verwalten" anlegen.
+                  </span>
+                ) : (
+                  seasonDefs
+                    .filter((d) => d.active)
+                    .map((d) => {
+                      const on = selectedSeasonIds.includes(d.id);
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => toggleSeasonSelected(d.id)}
+                          aria-pressed={on}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm transition-colors',
+                            on
+                              ? 'border-primary bg-primary/10 font-medium text-primary'
+                              : 'border-border hover:border-primary/60 hover:bg-muted/40',
+                          )}
+                        >
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: d.color ?? '#2563eb' }}
+                          />
+                          {d.name}
+                        </button>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          ) : holidayMode ? (
             <div>
               <label className="mb-1 block text-xs font-medium text-muted-foreground">Ferienart</label>
               <select
@@ -761,6 +950,7 @@ export default function ReservationWochentagPage() {
             </>
           )}
 
+          {!seasonMode && (
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">
               Jahr {yearRelevant ? '' : '(für Saison-Auswahl)'}
@@ -785,6 +975,7 @@ export default function ReservationWochentagPage() {
               </button>
             </div>
           </div>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">Status</label>
@@ -806,7 +997,7 @@ export default function ReservationWochentagPage() {
             </div>
           </div>
 
-          {!holidayMode && (
+          {!holidayMode && !seasonMode && (
             <button
               type="button"
               onClick={editorOpen ? () => setEditorOpen(false) : openEditor}
@@ -814,6 +1005,16 @@ export default function ReservationWochentagPage() {
             >
               <Settings2 className="h-4 w-4" />
               Saisons anpassen
+            </button>
+          )}
+          {seasonMode && (
+            <button
+              type="button"
+              onClick={() => setSeasonMgrOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
+            >
+              <Settings2 className="h-4 w-4" />
+              Saisons verwalten
             </button>
           )}
         </div>
@@ -825,7 +1026,7 @@ export default function ReservationWochentagPage() {
         )}
 
         {/* Saison-Editor */}
-        {editorOpen && !holidayMode && (
+        {editorOpen && !holidayMode && !seasonMode && (
           <div className="rounded-md border border-dashed border-border bg-muted/30 p-3 space-y-3">
             <p className="text-xs text-muted-foreground">
               Saison-Zeiträume sind frei anpassbar (werden pro Mandant gespeichert).
@@ -900,12 +1101,20 @@ export default function ReservationWochentagPage() {
           )}
 
           {!hasData ? (
+            seasonMode ? (
+              <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+                {seasonSelected.length === 0
+                  ? 'Bitte mindestens eine Saison auswählen (oder mit „Saisons verwalten" eine anlegen).'
+                  : 'Keine Reservationen in den gewählten Saisons.'}
+              </div>
+            ) : (
             // Im Ferien-Modus übernehmen die Perioden-Karten die Leer-/Zukunft-
             // Meldung; nur im normalen Modus die generische Leer-Meldung zeigen.
             !holidayMode && (
               <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
                 Keine Reservationen im gewählten Zeitraum.
               </div>
+            )
             )
           ) : (
           <>
@@ -969,6 +1178,21 @@ export default function ReservationWochentagPage() {
               metric={metric}
               scopeLabel={scopeLabel}
               onSelect={openWcDetail}
+            />
+          )}
+
+          {/* ── Saisonvergleich: Diagramm + Rangliste + Empfehlungen (≥ 2) ─── */}
+          {seasonMode && seasonSelected.length >= 2 && (
+            <SeasonComparisonSection
+              ranking={seasonRanking}
+              chart={seasonChart}
+              recommendations={seasonRecommendations}
+              metric={metric}
+              colorMap={seasonColorMap}
+              onSelect={(key, wd) => {
+                const idx = weekdayComparison.rows.findIndex((r) => r.period.key === key);
+                if (idx >= 0) openWcDetail(idx, wd);
+              }}
             />
           )}
 
@@ -1046,7 +1270,8 @@ export default function ReservationWochentagPage() {
             </div>
           </section>
 
-          {/* ── Monatsvergleich ────────────────────────────────────────────── */}
+          {/* ── Monatsvergleich (nicht im Saison-Modus) ────────────────────── */}
+          {!seasonMode && (
           <section>
             <SectionTitle icon={CalendarRange}>Monatsvergleich</SectionTitle>
             <p className="mb-2 text-xs text-muted-foreground">
@@ -1194,6 +1419,7 @@ export default function ReservationWochentagPage() {
               </div>
             ))}
           </section>
+          )}
           </>
           )}
         </>
@@ -1213,8 +1439,16 @@ export default function ReservationWochentagPage() {
         detail={wcDetailData}
         metric={metric}
         columnAverage={wcDetailColumnAverage}
-        columnAverageLabel={holidayMode ? 'über alle Ferienperioden' : 'über alle Monate'}
-        singleColumnLabel={holidayMode ? 'nur eine Ferienperiode' : 'nur ein Monat im Zeitraum'}
+        columnAverageLabel={seasonMode ? 'über alle Saisons' : holidayMode ? 'über alle Ferienperioden' : 'über alle Monate'}
+        singleColumnLabel={seasonMode ? 'nur eine Saison' : holidayMode ? 'nur eine Ferienperiode' : 'nur ein Monat im Zeitraum'}
+      />
+
+      <SeasonManagerDialog
+        open={seasonMgrOpen}
+        onOpenChange={setSeasonMgrOpen}
+        seasons={seasonDefs}
+        onSave={handleSaveSeasonDefs}
+        saveError={seasonSaveError}
       />
     </div>
   );

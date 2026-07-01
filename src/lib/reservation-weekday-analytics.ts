@@ -2029,8 +2029,15 @@ export function bernHolidayPeriods(
     .sort((a, b) => a.from.localeCompare(b.from));
 }
 
+/** Minimaler Datumsbereich (from/to inklusiv, „yyyy-MM-dd"). Basis für alle
+ *  perioden-basierten Helfer (Ferien UND frei definierte Saisons). */
+export interface DateSpan {
+  from: string;
+  to: string;
+}
+
 /** Umschliessender Datumsbereich aller Perioden (für EINEN Superset-Fetch). */
-export function holidayBounds(periods: BernHolidayPeriod[]): DateRange | null {
+export function holidayBounds(periods: readonly DateSpan[]): DateRange | null {
   if (periods.length === 0) return null;
   let from = periods[0].from;
   let to = periods[0].to;
@@ -2040,6 +2047,10 @@ export function holidayBounds(periods: BernHolidayPeriod[]): DateRange | null {
   }
   return { from, to };
 }
+
+/** Generischer Alias von `holidayBounds` für frei definierte Saisons (identische
+ *  Logik — nur ein sprechender Name für den Saison-Superset-Fetch). */
+export const periodBounds = holidayBounds;
 
 /** Die Ferienperiode, die einen Monat „yyyy-MM" überschneidet (oder `null`). */
 export function holidayPeriodForMonth(
@@ -2064,7 +2075,7 @@ export function holidayPeriodForMonth(
  */
 export function aggregateHolidayWeekday(
   rows: ReservationAggRow[],
-  periods: BernHolidayPeriod[],
+  periods: readonly DateSpan[],
   scope: StatusScope = 'booked',
 ): WeekdayAggregate {
   const res = zeroWeekdayCounts();
@@ -2111,7 +2122,7 @@ export function aggregateHolidayWeekday(
  */
 export function buildHolidayMonthComparison(
   rows: ReservationAggRow[],
-  periods: BernHolidayPeriod[],
+  periods: readonly DateSpan[],
   scope: StatusScope = 'booked',
   metric: MetricKey = 'reservations',
 ): MonthComparison {
@@ -2451,4 +2462,241 @@ export function buildWeekdayComparison(
   }
 
   return { metric, rows: compRows, weekdayAverages };
+}
+
+// ── Saisonvergleich (frei definierte, datumsfixe Saisons) ─────────────────────
+//
+// Eine „Saison" ist ein FREI benannter, datumsfixer Zeitraum (z. B. „Herbst
+// 2026" = 01.10.2026–31.12.2026) — NICHT die jährlich wiederkehrenden Winter/
+// Sommer-Presets (`SeasonRange`/`SeasonSettings`). Mehrere Saisons lassen sich
+// als generische `ComparisonPeriod[]` in DENSELBEN Wochentagsvergleich
+// (`buildWeekdayComparison`) einspeisen — keine zweite Rechen-Pipeline. Diese
+// Helfer ergänzen nur: Validierung, Perioden-Umwandlung, Rangliste je Wochentag,
+// Diagramm-Serien und automatische Empfehlungen. Alles rein (kein Supabase/DOM).
+
+/** Eine frei definierte, datumsfixe Saison (pro Mandant gespeichert). */
+export interface SeasonDefinition {
+  /** Stabiler Schlüssel (crypto.randomUUID) — React-Key + Auswahl-/Detail-Bezug. */
+  id: string;
+  /** Anzeigename, z. B. „Herbst 2026". */
+  name: string;
+  /** Beginn „yyyy-MM-dd" (inklusiv). */
+  from: string;
+  /** Ende „yyyy-MM-dd" (inklusiv). */
+  to: string;
+  /** Optionale Farbe (Hex, z. B. „#2563eb") für Diagramm/Badge. */
+  color?: string;
+  /** Nur aktive Saisons erscheinen in Auswahl/Vergleich. */
+  active: boolean;
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** true, wenn `s` ein echtes Kalenderdatum „yyyy-MM-dd" ist (kein 2026-02-31). */
+export function isValidIsoDate(s: string): boolean {
+  if (typeof s !== 'string' || !ISO_DATE_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/** Ergebnis der Saison-Eingabeprüfung (deutsche Meldungen für die UI). */
+export interface SeasonValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/** Prüft Name (nicht leer), gültige Daten und `from <= to`. */
+export function validateSeasonDefinition(
+  draft: { name: string; from: string; to: string },
+): SeasonValidationResult {
+  const errors: string[] = [];
+  if (!draft.name || !draft.name.trim()) errors.push('Name ist erforderlich.');
+  const fromOk = isValidIsoDate(draft.from);
+  const toOk = isValidIsoDate(draft.to);
+  if (!fromOk) errors.push('Startdatum ist ungültig.');
+  if (!toOk) errors.push('Enddatum ist ungültig.');
+  if (fromOk && toOk && draft.from > draft.to) {
+    errors.push('Das Enddatum darf nicht vor dem Startdatum liegen.');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+/** Ein überlappendes Saison-Paar (nur IDs; reine Warnung, nicht blockierend). */
+export interface SeasonOverlap {
+  a: string;
+  b: string;
+}
+
+/**
+ * Findet Paare sich überschneidender Saisons (nur gültige Datumsbereiche).
+ * Rein informativ — Überschneidungen sind erlaubt (der Vergleich klemmt jede
+ * Saison ohnehin auf ihren eigenen Bereich). Inklusive Berührung an den Rändern.
+ */
+export function findOverlappingSeasons(defs: readonly SeasonDefinition[]): SeasonOverlap[] {
+  const valid = defs.filter(
+    (d) => isValidIsoDate(d.from) && isValidIsoDate(d.to) && d.from <= d.to,
+  );
+  const out: SeasonOverlap[] = [];
+  for (let i = 0; i < valid.length; i++) {
+    for (let j = i + 1; j < valid.length; j++) {
+      const a = valid[i];
+      const b = valid[j];
+      if (a.from <= b.to && b.from <= a.to) out.push({ a: a.id, b: b.id });
+    }
+  }
+  return out;
+}
+
+/**
+ * Wandelt (bereits ausgewählte, i. d. R. aktive) Saisons in generische
+ * `ComparisonPeriod[]` um: nur gültige Bereiche, chronologisch nach `from`
+ * (Tie-Break Name) sortiert — damit die Vergleichszeilen stabil geordnet sind.
+ * key = Saison-ID (Detail-/React-Bezug), label = Saison-Name.
+ */
+export function seasonsToComparisonPeriods(
+  defs: readonly SeasonDefinition[],
+): ComparisonPeriod[] {
+  return defs
+    .filter((d) => isValidIsoDate(d.from) && isValidIsoDate(d.to) && d.from <= d.to)
+    .slice()
+    .sort((a, b) => a.from.localeCompare(b.from) || a.name.localeCompare(b.name))
+    .map((d) => ({ key: d.id, label: d.name, from: d.from, to: d.to }));
+}
+
+/** Ein Ranglisten-Eintrag (eine Saison an einem Wochentag). */
+export interface SeasonRankingEntry {
+  seasonKey: string;
+  label: string;
+  value: number;
+}
+
+/** Rangliste der Saisons für EINEN Wochentag (absteigend nach Kennzahl). */
+export interface SeasonWeekdayRanking {
+  weekday: IsoWeekday;
+  /** Nur Saisons mit Wert (≠ null), absteigend; Tie-Break: Name (a→z). */
+  entries: SeasonRankingEntry[];
+}
+
+/**
+ * Baut je Wochentag (Mo→So) die nach Kennzahl absteigende Saison-Rangliste aus
+ * einem bestehenden `WeekdayComparison` (keine Neuberechnung). Zellen ohne Wert
+ * werden weggelassen; bei Gleichstand entscheidet der Saison-Name (stabil).
+ */
+export function buildSeasonWeekdayRanking(
+  comparison: WeekdayComparison,
+): SeasonWeekdayRanking[] {
+  return ISO_WEEKDAYS.map((wd) => {
+    const entries: SeasonRankingEntry[] = [];
+    for (const row of comparison.rows) {
+      const v = row.cells[wd].value;
+      if (v !== null) {
+        entries.push({ seasonKey: row.period.key, label: row.period.label, value: v });
+      }
+    }
+    entries.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+    return { weekday: wd, entries };
+  });
+}
+
+/** Ein Datenpunkt (ein Wochentag) für das Saison-Liniendiagramm. */
+export interface SeasonChartPoint {
+  weekday: IsoWeekday;
+  /** Kurzlabel „Mo".."So" (X-Achse). */
+  label: string;
+  /** Kennzahlwert je Saison-ID (null → Lücke, `connectNulls=false`). */
+  values: Record<string, number | null>;
+}
+
+/** Serien-Metadaten (eine Linie je Saison). */
+export interface SeasonChartSeries {
+  key: string;
+  label: string;
+}
+
+/**
+ * Diagramm-Daten für ein Liniendiagramm (X = Mo→So, eine Linie je Saison, Y =
+ * gewählte Kennzahl) aus einem bestehenden `WeekdayComparison`. Farben liegen im
+ * UI (aus den `SeasonDefinition`s), damit dieser Helfer rein bleibt.
+ */
+export function buildSeasonChartSeries(comparison: WeekdayComparison): {
+  points: SeasonChartPoint[];
+  series: SeasonChartSeries[];
+} {
+  const series: SeasonChartSeries[] = comparison.rows.map((r) => ({
+    key: r.period.key,
+    label: r.period.label,
+  }));
+  const points: SeasonChartPoint[] = ISO_WEEKDAYS.map((wd) => {
+    const values: Record<string, number | null> = {};
+    for (const r of comparison.rows) values[r.period.key] = r.cells[wd].value;
+    return { weekday: wd, label: WEEKDAY_SHORT[wd], values };
+  });
+  return { points, series };
+}
+
+/**
+ * Automatische, deterministische Empfehlungen (deutsche Sätze) aus dem Saison-
+ * Vergleich — rein datengetrieben, KEINE Fantasiewerte:
+ *  1. Stärkster Wochentag insgesamt → welche Saison ihn hält.
+ *  2. Schwächster Wochentag insgesamt → welche Saison ihn hält.
+ *  3. Konstantester Wochentag  = niedrigster Variationskoeffizient (σ/µ) über
+ *     ≥ 2 Nicht-null-Werte.
+ *  4. Grösste Abweichung        = höchster Variationskoeffizient.
+ * Liefert `[]` bei < 2 Saisons (Vergleich braucht mindestens zwei Zeilen).
+ */
+export function buildSeasonRecommendations(
+  comparison: WeekdayComparison,
+  ranking?: SeasonWeekdayRanking[],
+): string[] {
+  const rows = comparison.rows;
+  if (rows.length < 2) return [];
+  const rank = ranking ?? buildSeasonWeekdayRanking(comparison);
+  const out: string[] = [];
+
+  // 1 + 2: global stärkste/schwächste (Wochentag, Saison)-Kombination.
+  let maxWd: IsoWeekday | null = null;
+  let maxLabel = '';
+  let maxVal = -Infinity;
+  let minWd: IsoWeekday | null = null;
+  let minLabel = '';
+  let minVal = Infinity;
+  for (const r of rank) {
+    if (r.entries.length === 0) continue;
+    const top = r.entries[0];
+    const bottom = r.entries[r.entries.length - 1];
+    if (top.value > maxVal) { maxVal = top.value; maxWd = r.weekday; maxLabel = top.label; }
+    if (bottom.value < minVal) { minVal = bottom.value; minWd = r.weekday; minLabel = bottom.label; }
+  }
+  if (maxWd !== null) {
+    out.push(`Die Saison „${maxLabel}" erzielt den stärksten ${WEEKDAY_LABEL[maxWd]}.`);
+  }
+  if (minWd !== null && !(minWd === maxWd && minLabel === maxLabel)) {
+    out.push(`Die Saison „${minLabel}" zeigt den schwächsten ${WEEKDAY_LABEL[minWd]}.`);
+  }
+
+  // 3 + 4: Variationskoeffizient je Wochentag über die Saisons (≥ 2 Werte).
+  let bestCvWd: IsoWeekday | null = null;
+  let bestCv = Infinity;
+  let worstCvWd: IsoWeekday | null = null;
+  let worstCv = -Infinity;
+  for (const wd of ISO_WEEKDAYS) {
+    const vals = rows
+      .map((r) => r.cells[wd].value)
+      .filter((v): v is number => v !== null);
+    if (vals.length < 2) continue;
+    const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+    if (mean <= 0) continue;
+    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+    const cv = Math.sqrt(variance) / mean;
+    if (cv < bestCv) { bestCv = cv; bestCvWd = wd; }
+    if (cv > worstCv) { worstCv = cv; worstCvWd = wd; }
+  }
+  if (bestCvWd !== null) {
+    out.push(`Der ${WEEKDAY_LABEL[bestCvWd]} ist über alle Saisons am konstantesten.`);
+  }
+  if (worstCvWd !== null && worstCvWd !== bestCvWd) {
+    out.push(`Die grösste Abweichung zwischen den Saisons besteht am ${WEEKDAY_LABEL[worstCvWd]}.`);
+  }
+
+  return out;
 }
