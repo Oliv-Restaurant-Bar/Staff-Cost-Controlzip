@@ -35,6 +35,9 @@ import {
   MONTH_COMPARISON_DEFAULT_OPEN,
   shiftMonthKey,
   monthRange,
+  rangeFromMonthKeys,
+  PRESET_LABEL,
+  buildPeriodInterpretation,
   buildMonthComparison,
   buildMonthComparisonInsights,
   comparisonCellValue,
@@ -1028,5 +1031,145 @@ describe('buildDetailInsights', () => {
     const ins = buildDetailInsights(empty, 'reservations', null);
     expect(ins.length).toBeGreaterThanOrEqual(1);
     expect(ins.some((s) => s.includes('keine Reservationen'))).toBe(true);
+  });
+});
+
+// ── Zeitraum-Auswahl: last3Months, rangeFromMonthKeys, PRESET_LABEL ───────────
+// Bekannte ISO-Montage über den Jahreswechsel 2025/26:
+//   2026-01-05 Mo · 2026-02-02 Mo · 2026-03-02 Mo
+const CROSS_ROWS: ReservationAggRow[] = [
+  r('2025-10-06', 4, 'confirmed'), // Mo Okt 2025
+  r('2025-11-03', 2, 'confirmed'), // Mo Nov 2025
+  r('2025-12-01', 6, 'confirmed'), // Mo Dez 2025
+  r('2026-01-05', 3, 'confirmed'), // Mo Jan 2026
+  r('2026-02-02', 5, 'confirmed'), // Mo Feb 2026
+  r('2026-03-02', 2, 'confirmed'), // Mo Mär 2026
+];
+
+describe('presetRange – Letzte 3 Monate', () => {
+  const seasons = DEFAULT_SEASON_SETTINGS;
+  it('rollierendes 3-Monats-Fenster inkl. aktuellem Monat', () => {
+    expect(presetRange('last3Months', { today: '2026-06-29', year: 2025, seasons })).toEqual({
+      from: '2026-04-01',
+      to: '2026-06-30',
+    });
+  });
+  it('überschlägt den Jahreswechsel', () => {
+    expect(presetRange('last3Months', { today: '2026-01-15', year: 2026, seasons })).toEqual({
+      from: '2025-11-01',
+      to: '2026-01-31',
+    });
+  });
+  it('PRESET_LABEL enthält die neuen/umbenannten Labels', () => {
+    expect(PRESET_LABEL.thisMonth).toBe('Aktueller Monat');
+    expect(PRESET_LABEL.last3Months).toBe('Letzte 3 Monate');
+    expect(PRESET_LABEL.custom).toBe('Individuell');
+  });
+});
+
+describe('rangeFromMonthKeys', () => {
+  it('bildet Start-/Endmonat auf Monatsanfang/-ende ab', () => {
+    expect(rangeFromMonthKeys('2025-10', '2025-12')).toEqual({ from: '2025-10-01', to: '2025-12-31' });
+  });
+  it('funktioniert über den Jahreswechsel (Okt–Mär)', () => {
+    expect(rangeFromMonthKeys('2025-10', '2026-03')).toEqual({ from: '2025-10-01', to: '2026-03-31' });
+  });
+  it('ungültige Schlüssel liefern leere Grenzen', () => {
+    expect(rangeFromMonthKeys('kaputt', '2026-03')).toEqual({ from: '', to: '2026-03-31' });
+    expect(rangeFromMonthKeys('2025-10', 'kaputt')).toEqual({ from: '2025-10-01', to: '' });
+  });
+});
+
+describe('Zeitraum-Matrix: Oktober–Dezember und Jahreswechsel', () => {
+  it('Oktober–Dezember 2025 → genau drei Monate in Reihenfolge', () => {
+    const cmp = buildMonthComparison(ROWS, '2025-10-01', '2025-12-31', 'booked', 'reservations');
+    expect(cmp.months.map((m) => m.monthKey)).toEqual(['2025-10', '2025-11', '2025-12']);
+  });
+  it('engere Startmonat/Endmonat-Wahl grenzt die Matrix ein (nur Oktober)', () => {
+    const range = rangeFromMonthKeys('2025-10', '2025-10');
+    const cmp = buildMonthComparison(ROWS, range.from, range.to, 'booked', 'reservations');
+    expect(cmp.months.map((m) => m.monthKey)).toEqual(['2025-10']);
+  });
+  it('Cross-Year Okt–Mär → sechs Monate chronologisch', () => {
+    const cmp = buildMonthComparison(CROSS_ROWS, '2025-10-01', '2026-03-31', 'booked', 'reservations');
+    expect(cmp.months.map((m) => m.monthKey)).toEqual([
+      '2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03',
+    ]);
+  });
+  it('Wintersaison-Schnellwahl liefert Okt–Mär und umfasst alle sechs Monate', () => {
+    const range = presetRange('winter', { today: '2026-06-29', year: 2025, seasons: DEFAULT_SEASON_SETTINGS })!;
+    expect(range).toEqual({ from: '2025-10-01', to: '2026-03-31' });
+    const cmp = buildMonthComparison(CROSS_ROWS, range.from, range.to, 'booked', 'reservations');
+    expect(cmp.months.map((m) => m.monthKey)).toEqual([
+      '2025-10', '2025-11', '2025-12', '2026-01', '2026-02', '2026-03',
+    ]);
+  });
+});
+
+describe('buildPeriodInterpretation', () => {
+  it('bester/schwächster Wochentag + auffällige Monate (Reservationen, Okt–Dez)', () => {
+    const agg = aggregateByWeekday(ROWS, FULL_FROM, FULL_TO, 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    const cmp = buildMonthComparison(ROWS, FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const interp = buildPeriodInterpretation(head, cmp, 'reservations');
+
+    expect(interp.hasData).toBe(true);
+    expect(interp.bestWeekday?.weekday).toBe(1); // Montag
+    expect(interp.worstWeekday?.weekday).toBe(2); // Dienstag (Gleichstand → früherer Wochentag)
+    expect(interp.notableMonths).toEqual([
+      { monthKey: '2025-10', value: 4, kind: 'best' },
+      { monthKey: '2025-11', value: 1, kind: 'weak' },
+    ]);
+    expect(interp.recommendation).toContain('Montag');
+    expect(interp.recommendation).toContain('Dienstag');
+    expect(interp.recommendation).toContain('Oktober 2025');
+  });
+
+  it('nur ein aktiver Wochentag → Konzentrations-Empfehlung, keine auffälligen Monate', () => {
+    const monOnly: ReservationAggRow[] = [
+      r('2025-10-06', 4, 'confirmed'),
+      r('2025-10-13', 2, 'confirmed'),
+    ];
+    const agg = aggregateByWeekday(monOnly, '2025-10-01', '2025-10-31', 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    const cmp = buildMonthComparison(monOnly, '2025-10-01', '2025-10-31', 'booked', 'reservations');
+    const interp = buildPeriodInterpretation(head, cmp, 'reservations');
+
+    expect(interp.hasData).toBe(true);
+    expect(interp.bestWeekday?.weekday).toBe(1);
+    expect(interp.worstWeekday?.weekday).toBe(1);
+    expect(interp.notableMonths).toEqual([]); // nur ein Monat → keine Spreizung
+    expect(interp.recommendation).toContain('Montag');
+    expect(interp.recommendation).toContain('übrigen Wochentagen');
+  });
+
+  it('keine Daten → hasData false + neutraler Hinweis', () => {
+    const agg = aggregateByWeekday([], FULL_FROM, FULL_TO, 'booked');
+    const head = buildWeekdayHeadlines(agg, 'reservations');
+    const cmp = buildMonthComparison([], FULL_FROM, FULL_TO, 'booked', 'reservations');
+    const interp = buildPeriodInterpretation(head, cmp, 'reservations');
+
+    expect(interp.hasData).toBe(false);
+    expect(interp.bestWeekday).toBeNull();
+    expect(interp.worstWeekday).toBeNull();
+    expect(interp.notableMonths).toEqual([]);
+    expect(interp.recommendation).toContain('keine auswertbaren');
+  });
+});
+
+describe('Detail-Popup bleibt korrekt für gefilterte (Cross-Year) Zeiträume', () => {
+  it('Detail einer Zelle im gefilterten Winter-Zeitraum (Januar 2026, Montag)', () => {
+    const range = presetRange('winter', { today: '2026-06-29', year: 2025, seasons: DEFAULT_SEASON_SETTINGS })!;
+    const d = buildMonthWeekdayDetail(CROSS_ROWS, range.from, range.to, '2026-01', 1, 'booked');
+    expect(d.occurrences).toBe(4); // 4 Montage im Januar 2026
+    expect(d.days.length).toBe(d.occurrences);
+    expect(d.reservations).toBe(1);
+    expect(d.persons).toBe(3);
+    expect(d.days[0]).toEqual({
+      date: '2026-01-05',
+      reservations: 1,
+      persons: 3,
+      avgPersonsPerReservation: 3,
+    });
   });
 });

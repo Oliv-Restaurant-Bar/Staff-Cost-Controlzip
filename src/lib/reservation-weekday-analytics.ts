@@ -1176,6 +1176,104 @@ export function buildMonthComparisonInsights(
   return out.slice(0, 5);
 }
 
+// ── Kurze automatische Zeitraum-Interpretation ───────────────────────────────
+//
+// Kompakte, deterministische Auswertung für den GESAMTEN gewählten Zeitraum:
+// bester/schwächster Wochentag, auffällige Monate (stärkster + schwächster
+// Monat nach Modus) und eine kurze Handlungsempfehlung.  Rein aus den bereits
+// berechneten Strukturen (`WeekdayHeadlineSummary` + `MonthComparison`) —
+// KEINE neue Datenquelle, KEINE Berechnung von Rohdaten, KEINE Migration.
+
+/** Auffälliger Monat (stärkster/schwächster nach Modus) für die Interpretation. */
+export interface NotableMonth {
+  monthKey: string;
+  /** Modusabhängiger Monatswert: Total (Reservationen/Personen) bzw. Ø Pers./Res. */
+  value: number;
+  kind: 'best' | 'weak';
+}
+
+export interface PeriodInterpretation {
+  metric: MetricKey;
+  /** Stärkster Wochentag im Zeitraum (aus den Headlines) oder null. */
+  bestWeekday: WeekdayHeadline | null;
+  /** Schwächster Wochentag im Zeitraum oder null. */
+  worstWeekday: WeekdayHeadline | null;
+  /** Auffällige Monate: stärkster + schwächster Monat nach Modus (0 oder 2 Einträge). */
+  notableMonths: NotableMonth[];
+  /** Kurze, deterministische Handlungsempfehlung (immer gesetzt). */
+  recommendation: string;
+  /** true, wenn überhaupt auswertbare Daten (aktive Wochentage) vorliegen. */
+  hasData: boolean;
+}
+
+/** Modusabhängiger Monatswert für den „auffällige Monate"-Vergleich. */
+function monthMetricValue(m: ComparisonMonthRow, metric: MetricKey): number | null {
+  if (metric === 'persons') return m.totalPersons;
+  if (metric === 'avgPersons') return m.avgPersons;
+  return m.totalReservations;
+}
+
+/**
+ * Baut die kurze Zeitraum-Interpretation.  Stärkster/schwächster Wochentag
+ * kommen aus `headlines` (peer-to-peer über aktive Wochentage); auffällige
+ * Monate aus `comparison.months` (nur wenn ≥2 Monate mit Wert UND echte
+ * Spreizung, sonst leer).  Bei Gleichstand gewinnt der frühere Monat
+ * (chronologische Reihenfolge der Monate wird beibehalten).
+ */
+export function buildPeriodInterpretation(
+  headlines: WeekdayHeadlineSummary,
+  comparison: MonthComparison,
+  metric: MetricKey,
+): PeriodInterpretation {
+  const bestWeekday =
+    headlines.strongest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null
+      : null;
+  const worstWeekday =
+    headlines.weakest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null
+      : null;
+
+  // Auffällige Monate: stärkster + schwächster Monat nach Modus.
+  const valued = comparison.months
+    .map((m) => ({ monthKey: m.monthKey, value: monthMetricValue(m, metric) }))
+    .filter((x): x is { monthKey: string; value: number } => x.value !== null);
+
+  const notableMonths: NotableMonth[] = [];
+  if (valued.length >= 2) {
+    let best = valued[0];
+    let weak = valued[0];
+    for (const x of valued) {
+      if (x.value > best.value) best = x; // strikt „>" → früherer Monat gewinnt bei Gleichstand
+      if (x.value < weak.value) weak = x; // strikt „<" → früherer Monat gewinnt bei Gleichstand
+    }
+    // Nur bei echter Spreizung (verschiedene Monate UND verschiedene Werte).
+    if (best.monthKey !== weak.monthKey && best.value !== weak.value) {
+      notableMonths.push({ monthKey: best.monthKey, value: best.value, kind: 'best' });
+      notableMonths.push({ monthKey: weak.monthKey, value: weak.value, kind: 'weak' });
+    }
+  }
+
+  const hasData = bestWeekday !== null;
+
+  let recommendation: string;
+  if (!hasData || bestWeekday === null) {
+    recommendation =
+      'Für den gewählten Zeitraum liegen keine auswertbaren Reservationen vor — bitte Zeitraum anpassen.';
+  } else if (worstWeekday === null || worstWeekday.weekday === bestWeekday.weekday) {
+    // Nur ein aktiver Wochentag im Zeitraum.
+    recommendation = `Die Nachfrage konzentriert sich auf ${WEEKDAY_LABEL[bestWeekday.weekday]}; an den übrigen Wochentagen gab es im Zeitraum keine Reservationen.`;
+  } else {
+    recommendation = `Planen Sie Personal und Aktionen schwerpunktmässig auf ${WEEKDAY_LABEL[bestWeekday.weekday]} und prüfen Sie gezielte Massnahmen, um ${WEEKDAY_LABEL[worstWeekday.weekday]} zu beleben.`;
+    const bestMonth = notableMonths.find((n) => n.kind === 'best');
+    if (bestMonth) {
+      recommendation += ` Am stärksten war ${monthLongLabel(bestMonth.monthKey)}.`;
+    }
+  }
+
+  return { metric, bestWeekday, worstWeekday, notableMonths, recommendation, hasData };
+}
+
 // ── Detail einer Vergleichszelle (Monat × Wochentag) für das Popup ───────────
 //
 // Für das Detail-Popup im Monatsvergleich: erklärt, wie sich die grosse Zahl
@@ -1535,6 +1633,18 @@ export function monthRange(monthKey: string): DateRange {
   return { from: ymd(y, mo, 1), to: ymd(y, mo, lastDayOfMonth(y, mo)) };
 }
 
+/**
+ * Datumsbereich aus einem Start- und Endmonat („yyyy-MM"): erster Tag des
+ * Startmonats bis letzter Tag des Endmonats — für die Startmonat/Endmonat-
+ * Auswahl der Zeitraumsteuerung.  Ungültige Schlüssel liefern leere Grenzen
+ * (die aufrufende Seite erkennt das über ihre Zeitraum-Validierung).  Ein
+ * Endmonat vor dem Startmonat wird NICHT getauscht — der ungültige Bereich
+ * bleibt sichtbar, damit die Warnung greift.
+ */
+export function rangeFromMonthKeys(startKey: string, endKey: string): DateRange {
+  return { from: monthRange(startKey).from, to: monthRange(endKey).to };
+}
+
 /** Frei anpassbarer Saison-Zeitraum (Monat/Tag, jährlich wiederkehrend). */
 export interface SeasonRange {
   startMonth: number; // 1..12
@@ -1554,15 +1664,23 @@ export const DEFAULT_SEASON_SETTINGS: SeasonSettings = {
   summer: { startMonth: 4, startDay: 1, endMonth: 9, endDay: 30 },
 };
 
-export type PresetKey = 'thisMonth' | 'lastMonth' | 'octDec' | 'winter' | 'summer' | 'custom';
+export type PresetKey =
+  | 'thisMonth'
+  | 'last3Months'
+  | 'lastMonth'
+  | 'octDec'
+  | 'winter'
+  | 'summer'
+  | 'custom';
 
 export const PRESET_LABEL: Record<PresetKey, string> = {
-  thisMonth: 'Dieser Monat',
+  thisMonth: 'Aktueller Monat',
+  last3Months: 'Letzte 3 Monate',
   lastMonth: 'Letzter Monat',
   octDec: 'Oktober bis Dezember',
   winter: 'Wintersaison',
   summer: 'Sommersaison',
-  custom: 'Benutzerdefiniert',
+  custom: 'Individuell',
 };
 
 /**
@@ -1597,6 +1715,16 @@ export function presetRange(
       const ty = +today.slice(0, 4);
       const tm = +today.slice(5, 7);
       return { from: ymd(ty, tm, 1), to: ymd(ty, tm, lastDayOfMonth(ty, tm)) };
+    }
+    case 'last3Months': {
+      // Rollierendes 3-Monats-Fenster INKLUSIVE des aktuellen Monats:
+      // erster Tag des Monats (heute − 2 Monate) bis letzter Tag des aktuellen
+      // Monats (z. B. heute Juli → Mai, Juni, Juli).
+      const ty = +today.slice(0, 4);
+      const tm = +today.slice(5, 7);
+      const startKey = shiftMonthKey(`${ty}-${pad2(tm)}`, -2);
+      const start = monthRange(startKey);
+      return { from: start.from, to: ymd(ty, tm, lastDayOfMonth(ty, tm)) };
     }
     case 'lastMonth': {
       let ty = +today.slice(0, 4);

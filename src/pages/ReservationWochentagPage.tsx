@@ -29,7 +29,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   CalendarRange, Loader2, Database, ArrowLeft, TrendingUp, TrendingDown,
-  CalendarDays, Settings2, RotateCcw, Check, Minus, Info,
+  CalendarDays, Settings2, RotateCcw, Check, Minus, Info, Lightbulb,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { format as fmtDate } from 'date-fns';
@@ -44,7 +44,8 @@ import { MonthWeekdayDetailDialog } from '@/components/crm/MonthWeekdayDetailDia
 import {
   aggregateByWeekday, buildWeekdayHeadlines, buildMonthComparison,
   buildMonthComparisonInsights, comparisonCellSubLabel, buildMonthWeekdayDetail,
-  presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey,
+  buildPeriodInterpretation,
+  presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey, rangeFromMonthKeys,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
   DEFAULT_SEASON_SETTINGS,
   WEEKDAY_LABEL, WEEKDAY_SHORT, ISO_WEEKDAYS, PRESET_LABEL, STATUS_SCOPE_LABEL,
@@ -66,7 +67,7 @@ function avg(n: number | null): string {
   return n === null ? '—' : NUM1.format(n);
 }
 
-const PRESETS: PresetKey[] = ['thisMonth', 'lastMonth', 'octDec', 'winter', 'summer', 'custom'];
+const PRESETS: PresetKey[] = ['thisMonth', 'last3Months', 'lastMonth', 'octDec', 'winter', 'summer', 'custom'];
 const STATUS_SCOPES: StatusScope[] = ['booked', 'active', 'all'];
 const MONTHS = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -337,9 +338,18 @@ export default function ReservationWochentagPage() {
     () => buildMonthComparisonInsights(headlines, comparison, focusWeekday, metric),
     [headlines, comparison, focusWeekday, metric],
   );
+  // Kurze automatische Zeitraum-Interpretation (bester/schwächster Wochentag,
+  // auffällige Monate, Handlungsempfehlung) — immer sichtbar über der Matrix.
+  const interpretation = useMemo(
+    () => buildPeriodInterpretation(headlines, comparison, metric),
+    [headlines, comparison, metric],
+  );
 
   // Aktuell betrachteter Monat (Monatsnavigation) = Monat des „Von"-Datums.
   const currentMonthKey = monthKeyOf(from) ?? todayStr.slice(0, 7);
+  // Start-/Endmonat für die Zeitraumsteuerung (type="month"-Eingaben).
+  const startMonthKey = monthKeyOf(from) ?? currentMonthKey;
+  const endMonthKey = monthKeyOf(to) ?? currentMonthKey;
   const currentMonthBounds = monthRange(currentMonthKey);
   const isSingleMonth =
     !!currentMonthBounds.from && from === currentMonthBounds.from && to === currentMonthBounds.to;
@@ -414,8 +424,24 @@ export default function ReservationWochentagPage() {
   const saveEditor = () => { persistSeasons(draft); setEditorOpen(false); };
   const resetEditor = () => setDraft(DEFAULT_SEASON_SETTINGS);
 
-  const editFrom = (v: string) => { setFrom(v); setPreset('custom'); };
-  const editTo = (v: string) => { setTo(v); setPreset('custom'); };
+  // Startmonat/Endmonat setzen BEIDE Grenzen auf Monatsanfang/-ende (die
+  // Auswertung ist monatsbasiert; Tag-Granularität wird bewusst gerundet). Wir
+  // schnappen bei jeder Eingabe auch die jeweils andere Grenze auf ganze Monate,
+  // damit eine z.B. per URL übergebene Nicht-Monatsgrenze nicht teilmonatig bleibt.
+  const editStartMonth = (key: string) => {
+    const r = rangeFromMonthKeys(key, endMonthKey);
+    if (!r.from) return;
+    setFrom(r.from);
+    if (r.to) setTo(r.to);
+    setPreset('custom');
+  };
+  const editEndMonth = (key: string) => {
+    const r = rangeFromMonthKeys(startMonthKey, key);
+    if (!r.to) return;
+    if (r.from) setFrom(r.from);
+    setTo(r.to);
+    setPreset('custom');
+  };
 
   // ── URL-Spiegelung ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -531,20 +557,20 @@ export default function ReservationWochentagPage() {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Von</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Startmonat</label>
             <input
-              type="date"
-              value={from}
-              onChange={(e) => editFrom(e.target.value)}
+              type="month"
+              value={startMonthKey}
+              onChange={(e) => editStartMonth(e.target.value)}
               className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Bis</label>
+            <label className="mb-1 block text-xs font-medium text-muted-foreground">Endmonat</label>
             <input
-              type="date"
-              value={to}
-              onChange={(e) => editTo(e.target.value)}
+              type="month"
+              value={endMonthKey}
+              onChange={(e) => editEndMonth(e.target.value)}
               className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
             />
           </div>
@@ -734,6 +760,80 @@ export default function ReservationWochentagPage() {
               {headlines.headlines.map((h) => (
                 <WeekdayCard key={h.weekday} h={h} metric={metric} maxValue={maxHeadline} />
               ))}
+            </div>
+          </section>
+
+          {/* ── Automatische Interpretation des Zeitraums ──────────────────── */}
+          <section>
+            <SectionTitle icon={Lightbulb}>Interpretation</SectionTitle>
+            <p className="mb-2 text-xs text-muted-foreground">
+              Kurze automatische Auswertung für den gewählten Zeitraum
+              (Kennzahl: <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>).
+            </p>
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Bester Wochentag
+                  </p>
+                  <p className="mt-0.5 font-semibold text-emerald-600 dark:text-emerald-400">
+                    {interpretation.bestWeekday ? WEEKDAY_LABEL[interpretation.bestWeekday.weekday] : '—'}
+                  </p>
+                  {interpretation.bestWeekday && (
+                    <p className="text-[11px] tabular-nums text-muted-foreground">
+                      {headlineLabel(interpretation.bestWeekday.weekday, metric)}: {avg(interpretation.bestWeekday.value)}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Schwächster Wochentag
+                  </p>
+                  <p className="mt-0.5 font-semibold text-red-600 dark:text-red-400">
+                    {interpretation.worstWeekday ? WEEKDAY_LABEL[interpretation.worstWeekday.weekday] : '—'}
+                  </p>
+                  {interpretation.worstWeekday && (
+                    <p className="text-[11px] tabular-nums text-muted-foreground">
+                      {headlineLabel(interpretation.worstWeekday.weekday, metric)}: {avg(interpretation.worstWeekday.value)}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    Auffällige Monate
+                  </p>
+                  {interpretation.notableMonths.length > 0 ? (
+                    <ul className="mt-0.5 space-y-0.5 text-sm">
+                      {interpretation.notableMonths.map((n) => (
+                        <li key={n.monthKey} className="flex flex-wrap items-baseline gap-x-1.5">
+                          <span
+                            className={cn(
+                              'text-[11px] font-medium',
+                              n.kind === 'best'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-red-600 dark:text-red-400',
+                            )}
+                          >
+                            {n.kind === 'best' ? 'Stärkster' : 'Schwächster'}
+                          </span>
+                          <span className="font-medium">{monthLongLabel(n.monthKey)}</span>
+                          <span className="tabular-nums text-muted-foreground">
+                            ({metric === 'avgPersons' ? NUM1.format(n.value) : NUM0.format(n.value)})
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-0.5 text-sm text-muted-foreground">Kein Monat sticht klar heraus.</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                <Lightbulb className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                <p>
+                  <span className="font-medium">Handlungsempfehlung:</span> {interpretation.recommendation}
+                </p>
+              </div>
             </div>
           </section>
 
