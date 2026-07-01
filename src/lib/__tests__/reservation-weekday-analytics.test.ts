@@ -49,6 +49,22 @@ import {
   buildDetailComparison,
   buildDetailInsights,
   formatIsoDateDe,
+  isoWeekdayOf,
+  isoWeeksInYear,
+  bernHolidayWeeks,
+  bernHolidayPeriod,
+  bernHolidayPeriods,
+  holidayBounds,
+  holidayPeriodForMonth,
+  aggregateHolidayWeekday,
+  buildHolidayMonthComparison,
+  buildHolidayPeriodSummary,
+  buildHolidayInterpretation,
+  isBernHolidaySelection,
+  BERN_HOLIDAY_KINDS,
+  BERN_HOLIDAY_LABEL,
+  BERN_HOLIDAY_SELECTION_LABEL,
+  HOLIDAY_EVEN_RATIO,
   type WeekdayStat,
   type ComparisonCell,
 } from '@/lib/reservation-weekday-analytics';
@@ -1171,5 +1187,261 @@ describe('Detail-Popup bleibt korrekt für gefilterte (Cross-Year) Zeiträume', 
       persons: 3,
       avgPersonsPerReservation: 3,
     });
+  });
+});
+
+// ── Schulferien Kanton Bern ───────────────────────────────────────────────────
+
+describe('isBernHolidaySelection', () => {
+  it('akzeptiert gültige Auswahlwerte', () => {
+    expect(isBernHolidaySelection('all')).toBe(true);
+    expect(isBernHolidaySelection('sport')).toBe(true);
+    expect(isBernHolidaySelection('spring')).toBe(true);
+    expect(isBernHolidaySelection('summer')).toBe(true);
+    expect(isBernHolidaySelection('autumn')).toBe(true);
+    expect(isBernHolidaySelection('winter')).toBe(true);
+  });
+  it('lehnt ungültige Werte ab', () => {
+    expect(isBernHolidaySelection('')).toBe(false);
+    expect(isBernHolidaySelection(null)).toBe(false);
+    expect(isBernHolidaySelection(undefined)).toBe(false);
+    expect(isBernHolidaySelection('herbst')).toBe(false);
+    expect(isBernHolidaySelection('ALL')).toBe(false);
+  });
+});
+
+describe('isoWeeksInYear', () => {
+  it('erkennt 52- und 53-Wochen-Jahre', () => {
+    expect(isoWeeksInYear(2025)).toBe(52);
+    expect(isoWeeksInYear(2026)).toBe(53); // Do 1.1. → 53 Wochen
+    expect(isoWeeksInYear(2027)).toBe(52);
+    expect(isoWeeksInYear(2015)).toBe(53);
+    expect(isoWeeksInYear(2020)).toBe(53); // Schaltjahr, Mi 1.1.
+  });
+});
+
+describe('bernHolidayWeeks', () => {
+  it('liefert die fixen DIN-Kalenderwochen je Ferienart', () => {
+    expect(bernHolidayWeeks(2026, 'sport')).toEqual([{ isoYear: 2026, week: 6 }]);
+    expect(bernHolidayWeeks(2026, 'spring').map((w) => w.week)).toEqual([15, 16]);
+    expect(bernHolidayWeeks(2026, 'summer').map((w) => w.week)).toEqual([28, 29, 30, 31, 32]);
+    expect(bernHolidayWeeks(2026, 'autumn').map((w) => w.week)).toEqual([39, 40, 41]);
+  });
+  it('berücksichtigt die Sommer-Ausnahme 2027 (KW 27–32)', () => {
+    expect(bernHolidayWeeks(2027, 'summer').map((w) => w.week)).toEqual([27, 28, 29, 30, 31, 32]);
+  });
+  it('Winterferien = letzte KW des Jahres + KW 1 des Folgejahres', () => {
+    expect(bernHolidayWeeks(2025, 'winter')).toEqual([
+      { isoYear: 2025, week: 52 },
+      { isoYear: 2026, week: 1 },
+    ]);
+    // 2026 ist ein 53-Wochen-Jahr → letzte KW ist 53.
+    expect(bernHolidayWeeks(2026, 'winter')).toEqual([
+      { isoYear: 2026, week: 53 },
+      { isoYear: 2027, week: 1 },
+    ]);
+  });
+});
+
+describe('bernHolidayPeriod', () => {
+  it('berechnet Mo→So-Datumsbereiche (2026) korrekt', () => {
+    expect(bernHolidayPeriod(2026, 'sport')).toMatchObject({
+      from: '2026-02-02',
+      to: '2026-02-08',
+      days: 7,
+      weeks: [6],
+    });
+    expect(bernHolidayPeriod(2026, 'spring')).toMatchObject({
+      from: '2026-04-06',
+      to: '2026-04-19',
+      days: 14,
+    });
+    expect(bernHolidayPeriod(2026, 'summer')).toMatchObject({
+      from: '2026-07-06',
+      to: '2026-08-09',
+      days: 35,
+    });
+    expect(bernHolidayPeriod(2026, 'autumn')).toMatchObject({
+      from: '2026-09-21',
+      to: '2026-10-11',
+      days: 21,
+    });
+  });
+  it('Winterferien bilden einen zusammenhängenden Block über den Jahreswechsel', () => {
+    const w = bernHolidayPeriod(2025, 'winter');
+    expect(w).toMatchObject({ from: '2025-12-22', to: '2026-01-04', days: 14 });
+    expect(w.from.slice(0, 4)).toBe('2025');
+    expect(w.to.slice(0, 4)).toBe('2026');
+  });
+  it('Sommer 2027 ist sechs Wochen lang (Ausnahme, ab KW 27)', () => {
+    expect(bernHolidayPeriod(2027, 'summer')).toMatchObject({
+      from: '2027-07-05',
+      to: '2027-08-15',
+      days: 42,
+    });
+  });
+  it('jede Periode beginnt an einem Montag und endet an einem Sonntag', () => {
+    for (const kind of BERN_HOLIDAY_KINDS) {
+      const p = bernHolidayPeriod(2026, kind);
+      expect(isoWeekdayOf(p.from)).toBe(1);
+      expect(isoWeekdayOf(p.to)).toBe(7);
+    }
+  });
+});
+
+describe('bernHolidayPeriods', () => {
+  it('liefert bei "all" alle fünf Ferienarten chronologisch', () => {
+    const ps = bernHolidayPeriods(2026, 'all');
+    expect(ps.map((p) => p.kind)).toEqual(['sport', 'spring', 'summer', 'autumn', 'winter']);
+    const froms = ps.map((p) => p.from);
+    expect([...froms].sort()).toEqual(froms); // bereits aufsteigend
+  });
+  it('liefert bei einzelner Auswahl genau eine Periode', () => {
+    const ps = bernHolidayPeriods(2026, 'autumn');
+    expect(ps).toHaveLength(1);
+    expect(ps[0].kind).toBe('autumn');
+  });
+});
+
+describe('holidayBounds', () => {
+  it('umschliesst alle Perioden einer Auswahl', () => {
+    const ps = bernHolidayPeriods(2026, 'all');
+    expect(holidayBounds(ps)).toEqual({ from: '2026-02-02', to: '2027-01-10' });
+  });
+  it('liefert null bei leerer Liste', () => {
+    expect(holidayBounds([])).toBeNull();
+  });
+});
+
+describe('holidayPeriodForMonth', () => {
+  const ps = bernHolidayPeriods(2026, 'all');
+  it('findet die den Monat überschneidende Periode', () => {
+    expect(holidayPeriodForMonth(ps, '2026-07')?.kind).toBe('summer');
+    expect(holidayPeriodForMonth(ps, '2026-08')?.kind).toBe('summer'); // Sommer spannt Jul+Aug
+    expect(holidayPeriodForMonth(ps, '2026-02')?.kind).toBe('sport');
+    expect(holidayPeriodForMonth(ps, '2026-12')?.kind).toBe('winter');
+    expect(holidayPeriodForMonth(ps, '2027-01')?.kind).toBe('winter');
+  });
+  it('liefert null für Monate ohne Ferien', () => {
+    expect(holidayPeriodForMonth(ps, '2026-03')).toBeNull();
+    expect(holidayPeriodForMonth(ps, '2026-06')).toBeNull();
+  });
+});
+
+describe('aggregateHolidayWeekday', () => {
+  const ps = bernHolidayPeriods(2026, 'all');
+  const rows: ReservationAggRow[] = [
+    r('2026-02-02', 4, 'confirmed'), // Mo, Sportferien
+    r('2026-02-07', 2, 'confirmed'), // Sa, Sportferien
+    r('2026-04-06', 3, 'confirmed'), // Mo, Frühlingsferien
+    r('2026-07-06', 5, 'confirmed'), // Mo, Sommerferien
+    r('2026-03-16', 99, 'confirmed'), // Mo, KEINE Ferien → ausgeschlossen
+  ];
+  it('summiert je Wochentag NUR Ferientage über alle Perioden', () => {
+    const agg = aggregateHolidayWeekday(rows, ps, 'booked');
+    const mon = agg.weekdays.find((w) => w.weekday === 1)!;
+    const sat = agg.weekdays.find((w) => w.weekday === 6)!;
+    expect(mon.reservations).toBe(3); // Feb2 + Apr6 + Jul6 (Mär16 ausgeschlossen)
+    expect(sat.reservations).toBe(1);
+    expect(agg.totalReservations).toBe(4);
+    expect(agg.totalPersons).toBe(4 + 2 + 3 + 5);
+    expect(agg.avgPersonsPerReservation).toBeCloseTo(14 / 4, 6);
+  });
+  it('zählt Vorkommen als Summe aller Ferientage', () => {
+    const agg = aggregateHolidayWeekday(rows, ps, 'booked');
+    // 7 + 14 + 35 + 21 + 14 = 91 Ferientage
+    expect(agg.totalOccurrences).toBe(91);
+  });
+});
+
+describe('buildHolidayMonthComparison', () => {
+  const ps = [bernHolidayPeriod(2026, 'summer')]; // 2026-07-06 .. 2026-08-09
+  const rows: ReservationAggRow[] = [
+    r('2026-07-06', 4, 'confirmed'), // Mo (Jul)
+    r('2026-07-13', 4, 'confirmed'), // Mo (Jul)
+    r('2026-08-03', 2, 'confirmed'), // Mo (Aug, im Zeitraum)
+    r('2026-08-10', 99, 'confirmed'), // Mo (Aug, NACH Zeitraum → ausgeschlossen)
+  ];
+  it('führt Monate zusammen und zählt Vorkommen ferien-genau', () => {
+    const cmp = buildHolidayMonthComparison(rows, ps, 'booked', 'reservations');
+    expect(cmp.months.map((m) => m.monthKey)).toEqual(['2026-07', '2026-08']);
+    const jul = cmp.months[0];
+    const aug = cmp.months[1];
+    // Juli: Montage im Zeitraum 06.–31.07 = 6,13,20,27 → 4 Vorkommen; 2 Reservationen
+    expect(jul.cells[1].reservations).toBe(2);
+    expect(jul.cells[1].occurrences).toBe(4);
+    expect(jul.cells[1].value).toBeCloseTo(0.5, 6);
+    // August: Montage im Zeitraum 01.–09.08 = nur 03.08 → 1 Vorkommen; 1 Reservation
+    expect(aug.cells[1].reservations).toBe(1); // 10.08 ausgeschlossen
+    expect(aug.cells[1].occurrences).toBe(1);
+    expect(aug.cells[1].value).toBeCloseTo(1, 6);
+    // Nicht-Montage bleiben leer
+    expect(jul.cells[2].reservations).toBe(0);
+  });
+});
+
+describe('buildHolidayPeriodSummary', () => {
+  it('markiert zukünftige leere Perioden und liefert den Leer-Hinweis', () => {
+    const p = bernHolidayPeriod(2030, 'sport');
+    const s = buildHolidayPeriodSummary([], p, 'booked', 'reservations', '2026-07-01');
+    expect(s.hasReservations).toBe(false);
+    expect(s.isFuture).toBe(true);
+    expect(s.interpretation).toBe('Während der Sportferien liegen keine Reservationen vor.');
+  });
+  it('erkennt einen deutlich stärkeren Wochentag', () => {
+    const rows: ReservationAggRow[] = [
+      // Herbstferien 2025: 22.09.–12.10. — Samstage 27.09, 04.10, 11.10; Montag 22.09
+      r('2025-09-27', 10, 'confirmed'),
+      r('2025-10-04', 10, 'confirmed'),
+      r('2025-10-11', 10, 'confirmed'),
+      r('2025-09-22', 2, 'confirmed'),
+    ];
+    const p = bernHolidayPeriod(2025, 'autumn');
+    const s = buildHolidayPeriodSummary(rows, p, 'booked', 'reservations', '2026-07-01');
+    expect(s.hasReservations).toBe(true);
+    expect(s.isFuture).toBe(false);
+    expect(s.strongest?.weekday).toBe(6);
+    expect(s.weakest?.weekday).toBe(1);
+    expect(s.interpretation).toBe(
+      'Während der Herbstferien ist der Samstag stärker als der Montag.',
+    );
+  });
+  it('erkennt eine gleichmässige Verteilung (Ratio ≤ HOLIDAY_EVEN_RATIO)', () => {
+    // Sportferien-Woche: jeder Wochentag genau 1× → Wert = Anzahl Reservationen.
+    const rows: ReservationAggRow[] = [
+      ...Array.from({ length: 5 }, () => r('2026-02-02', 2, 'confirmed')), // Mo → 5
+      ...Array.from({ length: 4 }, () => r('2026-02-03', 2, 'confirmed')), // Di → 4
+    ];
+    const p = bernHolidayPeriod(2026, 'sport');
+    const s = buildHolidayPeriodSummary(rows, p, 'booked', 'reservations', '2026-07-01');
+    expect(5 / 4).toBeLessThanOrEqual(HOLIDAY_EVEN_RATIO);
+    expect(s.interpretation).toBe(
+      'In den Sportferien verteilen sich die Reservationen gleichmässiger auf die Woche.',
+    );
+  });
+  it('erkennt Konzentration auf einen einzigen Wochentag', () => {
+    const rows: ReservationAggRow[] = [r('2026-02-02', 4, 'confirmed')]; // nur Montag
+    const p = bernHolidayPeriod(2026, 'sport');
+    const s = buildHolidayPeriodSummary(rows, p, 'booked', 'reservations', '2026-07-01');
+    expect(s.interpretation).toBe(
+      'Während der Sportferien konzentrieren sich die Reservationen auf Montag.',
+    );
+  });
+});
+
+describe('buildHolidayInterpretation / Labels', () => {
+  it('Labels sind vollständig', () => {
+    expect(BERN_HOLIDAY_LABEL.sport).toBe('Sportferien');
+    expect(BERN_HOLIDAY_SELECTION_LABEL.all).toBe('Alle Schulferien');
+    expect(BERN_HOLIDAY_SELECTION_LABEL.winter).toBe('Winterferien');
+  });
+  it('liefert den Leer-Hinweis ohne aktive Wochentage', () => {
+    const p = bernHolidayPeriod(2026, 'spring');
+    const empty = buildHolidayInterpretation(p, {
+      headlines: [],
+      strongest: null,
+      weakest: null,
+    } as never);
+    expect(empty).toBe('Während der Frühlingsferien liegen keine Reservationen vor.');
   });
 });

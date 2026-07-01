@@ -30,7 +30,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import {
   CalendarRange, Loader2, Database, ArrowLeft, TrendingUp, TrendingDown,
   CalendarDays, Settings2, RotateCcw, Check, Minus, Info, Lightbulb,
-  ChevronLeft, ChevronRight, ChevronDown, ChevronUp,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, GraduationCap,
 } from 'lucide-react';
 import { format as fmtDate } from 'date-fns';
 import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
@@ -51,11 +51,15 @@ import {
   WEEKDAY_LABEL, WEEKDAY_SHORT, ISO_WEEKDAYS, PRESET_LABEL, STATUS_SCOPE_LABEL,
   METRICS, METRIC_LABEL,
   weekdayOccurrenceLabel, headlineLabel, AVG_PERSONS_PER_RESERVATION_LABEL,
-  WEEKDAY_RANK_LABEL, MONTH_COMPARISON_DEFAULT_OPEN,
+  WEEKDAY_RANK_LABEL, MONTH_COMPARISON_DEFAULT_OPEN, formatIsoDateDe,
+  aggregateHolidayWeekday, buildHolidayMonthComparison, buildHolidayPeriodSummary,
+  bernHolidayPeriods, holidayBounds, holidayPeriodForMonth, isBernHolidaySelection,
+  BERN_HOLIDAY_KINDS, BERN_HOLIDAY_SELECTION_LABEL,
   type PresetKey, type StatusScope, type MetricKey, type IsoWeekday,
   type SeasonSettings, type SeasonRange,
   type WeekdayHeadline, type WeekdayRank,
   type ComparisonRank, type ComparisonMonthRow, type ComparisonCell,
+  type BernHolidaySelection, type HolidayPeriodSummary,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -156,6 +160,8 @@ interface InitView {
   scope: StatusScope;
   year: number;
   metric: MetricKey;
+  holidayMode: boolean;
+  ferienart: BernHolidaySelection;
 }
 
 function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): InitView {
@@ -165,21 +171,49 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
   const scopeRaw = sp.get('sc') as StatusScope | null;
   const yearRaw = Number(sp.get('y'));
   const metricRaw = sp.get('m') as MetricKey | null;
+  const modeRaw = sp.get('mode');
+  const holRaw = sp.get('hol');
 
   const scope: StatusScope =
     scopeRaw === 'active' || scopeRaw === 'all' || scopeRaw === 'booked' ? scopeRaw : 'booked';
   const year = Number.isInteger(yearRaw) && yearRaw >= 2000 && yearRaw <= 2100 ? yearRaw : currentYear;
   const metric: MetricKey =
     metricRaw && METRICS.includes(metricRaw) ? metricRaw : 'reservations';
+  const ferienart: BernHolidaySelection = isBernHolidaySelection(holRaw) ? holRaw : 'all';
+
+  // Schulferien-Modus: Datumsgrenzen ergeben sich aus der Ferien-Auswahl (der
+  // umschliessende Datumsbereich für EINEN Superset-Fetch), refresh-fest.
+  if (modeRaw === 'ferienBE') {
+    const bounds = holidayBounds(bernHolidayPeriods(year, ferienart));
+    return {
+      preset: 'custom',
+      from: bounds?.from ?? todayStr,
+      to: bounds?.to ?? todayStr,
+      scope,
+      year,
+      metric,
+      holidayMode: true,
+      ferienart,
+    };
+  }
 
   // Konkrete Datumsgrenzen aus der URL haben Vorrang (refresh-fest). Ohne sie
   // greift der Standard „Dieser Monat".
   if (f && t && /^\d{4}-\d{2}-\d{2}$/.test(f) && /^\d{4}-\d{2}-\d{2}$/.test(t)) {
     const preset: PresetKey = presetRaw && PRESETS.includes(presetRaw) ? presetRaw : 'custom';
-    return { preset, from: f, to: t, scope, year, metric };
+    return { preset, from: f, to: t, scope, year, metric, holidayMode: false, ferienart };
   }
   const range = presetRange('thisMonth', { today: todayStr, year, seasons: DEFAULT_SEASON_SETTINGS })!;
-  return { preset: 'thisMonth', from: range.from, to: range.to, scope, year, metric };
+  return {
+    preset: 'thisMonth',
+    from: range.from,
+    to: range.to,
+    scope,
+    year,
+    metric,
+    holidayMode: false,
+    ferienart,
+  };
 }
 
 // ── Kleine Bausteine ───────────────────────────────────────────────────────────
@@ -274,6 +308,10 @@ export default function ReservationWochentagPage() {
   const [scope, setScope] = useState<StatusScope>(init.scope);
   const [year, setYear] = useState(init.year);
   const [metric, setMetric] = useState<MetricKey>(init.metric);
+  // Schulferien-Modus (Kanton Bern): eigener Analyse-Zweig; `from`/`to` sind
+  // dann der umschliessende Datumsbereich der gewählten Ferien-Auswahl.
+  const [holidayMode, setHolidayMode] = useState(init.holidayMode);
+  const [ferienart, setFerienart] = useState<BernHolidaySelection>(init.ferienart);
 
   // Monatsvergleich-Matrix: standardmässig eingeklappt (siehe Konstante).
   const [showComparison, setShowComparison] = useState(MONTH_COMPARISON_DEFAULT_OPEN);
@@ -320,18 +358,38 @@ export default function ReservationWochentagPage() {
   }, [tenantId, isAdmin, isGuest, tablesOk, from, to, rangeInvalid]);
 
   // ── Berechnungen ─────────────────────────────────────────────────────────────
+  // Schulferien-Perioden (Kanton Bern) für Jahr + Ferienart; leer wenn kein
+  // Ferien-Modus. Treiben Aggregation, Matrix, Detail und Perioden-Zusammenfassung.
+  const holidayPeriods = useMemo(
+    () => (holidayMode ? bernHolidayPeriods(year, ferienart) : []),
+    [holidayMode, year, ferienart],
+  );
+
   const agg = useMemo(
-    () => aggregateByWeekday(rows, from, to, scope),
-    [rows, from, to, scope],
+    () => (holidayMode
+      ? aggregateHolidayWeekday(rows, holidayPeriods, scope)
+      : aggregateByWeekday(rows, from, to, scope)),
+    [holidayMode, holidayPeriods, rows, from, to, scope],
   );
   const headlines = useMemo(
     () => buildWeekdayHeadlines(agg, metric),
     [agg, metric],
   );
   // Kompakte Vergleichsmatrix (Monate × Wochentage) für die gewählte Kennzahl.
+  // Im Ferien-Modus zählen NUR Reservationen innerhalb der Ferien-Perioden.
   const comparison = useMemo(
-    () => buildMonthComparison(rows, from, to, scope, metric),
-    [rows, from, to, scope, metric],
+    () => (holidayMode
+      ? buildHolidayMonthComparison(rows, holidayPeriods, scope, metric)
+      : buildMonthComparison(rows, from, to, scope, metric)),
+    [holidayMode, holidayPeriods, rows, from, to, scope, metric],
+  );
+  // Perioden-Zusammenfassung (nur Ferien-Modus): je Ferienperiode Kennzahlen,
+  // stärkster/schwächster Wochentag, Zukunft-Flag + kurze Interpretation.
+  const periodSummaries = useMemo(
+    () => (holidayMode
+      ? holidayPeriods.map((p) => buildHolidayPeriodSummary(rows, p, scope, metric, todayStr))
+      : []),
+    [holidayMode, holidayPeriods, rows, scope, metric, todayStr],
   );
   // 3–5 kurze, modusabhängige Insights über der Matrix.
   const insights = useMemo(
@@ -362,14 +420,18 @@ export default function ReservationWochentagPage() {
   }));
   const focusMax = Math.max(0, ...focusValues.map((f) => f.value ?? 0));
 
-  // Detail-Popup: Aufschlüsselung + Spalten-Ø der geklickten Zelle.
-  const detail = useMemo(
-    () =>
-      detailCell
-        ? buildMonthWeekdayDetail(rows, from, to, detailCell.monthKey, detailCell.weekday, scope)
-        : null,
-    [detailCell, rows, from, to, scope],
-  );
+  // Detail-Popup: Aufschlüsselung + Spalten-Ø der geklickten Zelle. Im Ferien-
+  // Modus grenzen wir auf die Ferienperiode ein, die den geklickten Monat trägt,
+  // damit das Popup NUR Ferientage zeigt.
+  const detail = useMemo(() => {
+    if (!detailCell) return null;
+    if (holidayMode) {
+      const p = holidayPeriodForMonth(holidayPeriods, detailCell.monthKey);
+      if (!p) return null;
+      return buildMonthWeekdayDetail(rows, p.from, p.to, detailCell.monthKey, detailCell.weekday, scope);
+    }
+    return buildMonthWeekdayDetail(rows, from, to, detailCell.monthKey, detailCell.weekday, scope);
+  }, [detailCell, holidayMode, holidayPeriods, rows, from, to, scope]);
   const detailColumnAverage = detailCell ? comparison.columns[detailCell.weekday].average : null;
   const openDetail = (cell: ComparisonCell) =>
     setDetailCell({ monthKey: cell.monthKey, weekday: cell.weekday });
@@ -382,10 +444,26 @@ export default function ReservationWochentagPage() {
 
   // ── Aktionen ─────────────────────────────────────────────────────────────────
   const applyPreset = (key: PresetKey) => {
+    setHolidayMode(false); // eine Schnell-Auswahl verlässt den Ferien-Modus
     setPreset(key);
     if (key === 'custom') return; // Datumsfelder bleiben frei wählbar
     const range = presetRange(key, { today: todayStr, year, seasons });
     if (range) { setFrom(range.from); setTo(range.to); }
+  };
+
+  // Schulferien-Modus aktivieren: Datumsgrenzen = umschliessender Bereich der
+  // aktuell gewählten Ferien-Auswahl (Superset-Fetch); Präzision übernimmt die
+  // ferien-genaue Aggregation.
+  const enterHolidayMode = () => {
+    setHolidayMode(true);
+    setPreset('custom');
+    const bounds = holidayBounds(bernHolidayPeriods(year, ferienart));
+    if (bounds) { setFrom(bounds.from); setTo(bounds.to); }
+  };
+  const changeFerienart = (sel: BernHolidaySelection) => {
+    setFerienart(sel);
+    const bounds = holidayBounds(bernHolidayPeriods(year, sel));
+    if (bounds) { setFrom(bounds.from); setTo(bounds.to); }
   };
 
   // Monatsnavigation: setzt Von/Bis auf Anfang/Ende des Zielmonats.
@@ -405,6 +483,11 @@ export default function ReservationWochentagPage() {
 
   const changeYear = (y: number) => {
     setYear(y);
+    if (holidayMode) {
+      const bounds = holidayBounds(bernHolidayPeriods(y, ferienart));
+      if (bounds) { setFrom(bounds.from); setTo(bounds.to); }
+      return;
+    }
     if (SEASON_PRESETS.includes(preset)) {
       const range = presetRange(preset, { today: todayStr, year: y, seasons });
       if (range) { setFrom(range.from); setTo(range.to); }
@@ -446,7 +529,12 @@ export default function ReservationWochentagPage() {
   // ── URL-Spiegelung ───────────────────────────────────────────────────────────
   useEffect(() => {
     const next = new URLSearchParams();
-    next.set('p', preset);
+    if (holidayMode) {
+      next.set('mode', 'ferienBE');
+      next.set('hol', ferienart);
+    } else {
+      next.set('p', preset);
+    }
     next.set('f', from);
     next.set('t', to);
     next.set('sc', scope);
@@ -455,18 +543,20 @@ export default function ReservationWochentagPage() {
     if (next.toString() !== searchParams.toString()) {
       setSearchParams(next, { replace: true });
     }
-  }, [preset, from, to, scope, year, metric, searchParams, setSearchParams]);
+  }, [holidayMode, ferienart, preset, from, to, scope, year, metric, searchParams, setSearchParams]);
 
   if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   const hasData = agg.totalReservations > 0;
-  const yearRelevant = SEASON_PRESETS.includes(preset);
+  const yearRelevant = holidayMode || SEASON_PRESETS.includes(preset);
 
   const strongestH = headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null;
   const weakestH = headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null;
-  const scopeLabel = isSingleMonth
-    ? monthLongLabel(currentMonthKey)
-    : `${from} – ${to}`;
+  const scopeLabel = holidayMode
+    ? `${BERN_HOLIDAY_SELECTION_LABEL[ferienart]} ${year}`
+    : isSingleMonth
+      ? monthLongLabel(currentMonthKey)
+      : `${from} – ${to}`;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
@@ -515,10 +605,10 @@ export default function ReservationWochentagPage() {
                 key={key}
                 type="button"
                 onClick={() => applyPreset(key)}
-                aria-pressed={preset === key}
+                aria-pressed={!holidayMode && preset === key}
                 className={cn(
                   'rounded-md border px-3 py-1.5 text-sm transition-colors',
-                  preset === key
+                  !holidayMode && preset === key
                     ? 'border-primary bg-primary/10 font-medium text-primary'
                     : 'border-border hover:border-primary/60 hover:bg-muted/40',
                 )}
@@ -526,54 +616,86 @@ export default function ReservationWochentagPage() {
                 {PRESET_LABEL[key]}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={enterHolidayMode}
+              aria-pressed={holidayMode}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors',
+                holidayMode
+                  ? 'border-primary bg-primary/10 font-medium text-primary'
+                  : 'border-border hover:border-primary/60 hover:bg-muted/40',
+              )}
+            >
+              <GraduationCap className="h-4 w-4" />
+              Schulferien BE
+            </button>
           </div>
         </div>
 
         {/* Monatsnavigation + Zeitraum + Jahr + Status */}
         <div className="flex flex-wrap items-end gap-4">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Monat</label>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={goPrevMonth}
-                className="rounded-md border border-border p-1.5 hover:bg-muted/40"
-                aria-label="Vorheriger Monat"
+          {holidayMode ? (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">Ferienart</label>
+              <select
+                value={ferienart}
+                onChange={(e) => changeFerienart(e.target.value as BernHolidaySelection)}
+                className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
               >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <span className="min-w-[8.5rem] text-center text-sm font-medium">
-                {monthLongLabel(currentMonthKey)}
-              </span>
-              <button
-                type="button"
-                onClick={goNextMonth}
-                className="rounded-md border border-border p-1.5 hover:bg-muted/40"
-                aria-label="Nächster Monat"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
+                <option value="all">{BERN_HOLIDAY_SELECTION_LABEL.all}</option>
+                {BERN_HOLIDAY_KINDS.map((k) => (
+                  <option key={k} value={k}>{BERN_HOLIDAY_SELECTION_LABEL[k]}</option>
+                ))}
+              </select>
             </div>
-          </div>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Monat</label>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={goPrevMonth}
+                    className="rounded-md border border-border p-1.5 hover:bg-muted/40"
+                    aria-label="Vorheriger Monat"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="min-w-[8.5rem] text-center text-sm font-medium">
+                    {monthLongLabel(currentMonthKey)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={goNextMonth}
+                    className="rounded-md border border-border p-1.5 hover:bg-muted/40"
+                    aria-label="Nächster Monat"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
 
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Startmonat</label>
-            <input
-              type="month"
-              value={startMonthKey}
-              onChange={(e) => editStartMonth(e.target.value)}
-              className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted-foreground">Endmonat</label>
-            <input
-              type="month"
-              value={endMonthKey}
-              onChange={(e) => editEndMonth(e.target.value)}
-              className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-            />
-          </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Startmonat</label>
+                <input
+                  type="month"
+                  value={startMonthKey}
+                  onChange={(e) => editStartMonth(e.target.value)}
+                  className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Endmonat</label>
+                <input
+                  type="month"
+                  value={endMonthKey}
+                  onChange={(e) => editEndMonth(e.target.value)}
+                  className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                />
+              </div>
+            </>
+          )}
 
           <div>
             <label className="mb-1 block text-xs font-medium text-muted-foreground">
@@ -620,14 +742,16 @@ export default function ReservationWochentagPage() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={editorOpen ? () => setEditorOpen(false) : openEditor}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
-          >
-            <Settings2 className="h-4 w-4" />
-            Saisons anpassen
-          </button>
+          {!holidayMode && (
+            <button
+              type="button"
+              onClick={editorOpen ? () => setEditorOpen(false) : openEditor}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted/40"
+            >
+              <Settings2 className="h-4 w-4" />
+              Saisons anpassen
+            </button>
+          )}
         </div>
 
         {rangeInvalid && (
@@ -637,7 +761,7 @@ export default function ReservationWochentagPage() {
         )}
 
         {/* Saison-Editor */}
-        {editorOpen && (
+        {editorOpen && !holidayMode && (
           <div className="rounded-md border border-dashed border-border bg-muted/30 p-3 space-y-3">
             <p className="text-xs text-muted-foreground">
               Saison-Zeiträume sind frei anpassbar (werden pro Mandant gespeichert).
@@ -704,12 +828,23 @@ export default function ReservationWochentagPage() {
           <Loader2 className="h-5 w-5 animate-spin" />
           Auswertung wird geladen…
         </div>
-      ) : !hasData ? (
-        <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-          Keine Reservationen im gewählten Zeitraum.
-        </div>
       ) : (
         <>
+          {/* ── Schulferien-Perioden-Zusammenfassung (nur Ferien-Modus) ─────── */}
+          {holidayMode && (
+            <HolidaySummarySection summaries={periodSummaries} metric={metric} />
+          )}
+
+          {!hasData ? (
+            // Im Ferien-Modus übernehmen die Perioden-Karten die Leer-/Zukunft-
+            // Meldung; nur im normalen Modus die generische Leer-Meldung zeigen.
+            !holidayMode && (
+              <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+                Keine Reservationen im gewählten Zeitraum.
+              </div>
+            )
+          ) : (
+          <>
           {/* ── Erklärbox ─────────────────────────────────────────────────── */}
           <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
             <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
@@ -985,6 +1120,8 @@ export default function ReservationWochentagPage() {
               </div>
             ))}
           </section>
+          </>
+          )}
         </>
       )}
 
@@ -996,6 +1133,181 @@ export default function ReservationWochentagPage() {
         columnAverage={detailColumnAverage}
       />
     </div>
+  );
+}
+
+// ── Schulferien-Zusammenfassung ────────────────────────────────────────────────
+
+/** Exakte Zukunfts-Meldung für eine leere Ferienperiode (Anforderung). */
+const HOLIDAY_FUTURE_EMPTY =
+  'Für diese zukünftige Ferienperiode sind noch keine Reservationen vorhanden.';
+
+/** Leer-/Zukunftstext einer Ferienperiode ohne Reservationen. */
+function holidayEmptyMessage(s: HolidayPeriodSummary): string {
+  return s.isFuture ? HOLIDAY_FUTURE_EMPTY : s.interpretation;
+}
+
+/** Datumsbereich + Kalenderwochen + Ferientage einer Periode als Kurztext. */
+function holidayPeriodMeta(s: HolidayPeriodSummary): string {
+  const kw = s.period.weeks.length === 1
+    ? `KW ${s.period.weeks[0]}`
+    : `KW ${s.period.weeks[0]}–${s.period.weeks[s.period.weeks.length - 1]}`;
+  return `${formatIsoDateDe(s.period.from)} – ${formatIsoDateDe(s.period.to)} · ${kw} · ${s.period.days} Ferientage`;
+}
+
+/** Wochentag-Label + Wert (oder „–") für stärkster/schwächster Wochentag. */
+function weekdayValueLabel(h: WeekdayHeadline | null): string {
+  return h ? `${WEEKDAY_LABEL[h.weekday]} (${avg(h.value)})` : '–';
+}
+
+/** Kleine Kennzahl-Kachel innerhalb einer Ferien-Perioden-Karte. */
+function HolidayStat({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="rounded-md border border-border bg-background p-2">
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={cn('mt-0.5 text-lg font-bold tabular-nums', accent)}>{value}</p>
+    </div>
+  );
+}
+
+/** Vollständige Karte EINER Ferienperiode (Kennzahlen + WD + Interpretation). */
+function HolidayPeriodCard({ s, metric }: { s: HolidayPeriodSummary; metric: MetricKey }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-base font-semibold">{s.period.label} {s.period.year}</h3>
+        <span className="text-xs tabular-nums text-muted-foreground">{holidayPeriodMeta(s)}</span>
+      </div>
+
+      {s.hasReservations ? (
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <HolidayStat label="Reservationen" value={NUM0.format(s.totalReservations)} />
+            <HolidayStat label="Personen" value={NUM0.format(s.totalPersons)} />
+            <HolidayStat label={AVG_PERSONS_PER_RESERVATION_LABEL} value={avg(s.avgPersonsPerReservation)} />
+            <HolidayStat label="Ø Res./Ferientag" value={avg(s.avgReservationsPerDay)} />
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <HolidayStat
+              label="Stärkster Wochentag"
+              value={weekdayValueLabel(s.strongest)}
+              accent="text-emerald-600 dark:text-emerald-400"
+            />
+            <HolidayStat
+              label="Schwächster Wochentag"
+              value={weekdayValueLabel(s.weakest)}
+              accent="text-red-600 dark:text-red-400"
+            />
+          </div>
+          <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-2.5 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+            <Lightbulb className="mt-0.5 h-4 w-4 flex-shrink-0" />
+            <p>{s.interpretation}</p>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Kennzahl der Wochentags-Werte: <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span> (Ø pro Wochentag).
+          </p>
+        </>
+      ) : (
+        <div
+          className={cn(
+            'flex items-start gap-2 rounded-md border p-3 text-sm',
+            s.isFuture
+              ? 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200'
+              : 'border-border bg-muted/30 text-muted-foreground',
+          )}
+        >
+          <Info className="mt-0.5 h-4 w-4 flex-shrink-0" />
+          <p>{holidayEmptyMessage(s)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Schulferien-Zusammenfassung: bei EINER Periode eine vollständige Karte, bei
+ * MEHREREN eine Vergleichstabelle (Periode/von/bis/Ferientage/Res/Personen/Ø +
+ * stärkster/schwächster Wochentag) samt kurzer Interpretation je Periode.
+ */
+function HolidaySummarySection({ summaries, metric }: {
+  summaries: HolidayPeriodSummary[];
+  metric: MetricKey;
+}) {
+  if (summaries.length === 0) return null;
+
+  if (summaries.length === 1) {
+    return (
+      <section>
+        <SectionTitle icon={GraduationCap}>Ferien-Auswertung</SectionTitle>
+        <HolidayPeriodCard s={summaries[0]} metric={metric} />
+      </section>
+    );
+  }
+
+  return (
+    <section>
+      <SectionTitle icon={GraduationCap}>Ferienperioden im Vergleich</SectionTitle>
+      <p className="mb-2 text-xs text-muted-foreground">
+        Nur Reservationen innerhalb der Schulferien (Kanton Bern).
+        {' '}Wochentag-Werte als Kennzahl: <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>.
+      </p>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full border-collapse text-sm">
+          <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Periode</th>
+              <th className="px-2 py-2 text-left">von</th>
+              <th className="px-2 py-2 text-left">bis</th>
+              <th className="px-2 py-2 text-right">Ferientage</th>
+              <th className="px-2 py-2 text-right">Res.</th>
+              <th className="px-2 py-2 text-right">Personen</th>
+              <th className="px-2 py-2 text-right">Ø Pers./Res.</th>
+              <th className="px-2 py-2 text-left">Stärkster WD</th>
+              <th className="px-2 py-2 text-left">Schwächster WD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {summaries.map((s) => (
+              <tr key={s.period.kind} className="border-t border-border">
+                <th scope="row" className="whitespace-nowrap px-3 py-2 text-left font-medium">
+                  {s.period.label}
+                </th>
+                <td className="whitespace-nowrap px-2 py-2 tabular-nums">{formatIsoDateDe(s.period.from)}</td>
+                <td className="whitespace-nowrap px-2 py-2 tabular-nums">{formatIsoDateDe(s.period.to)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">{NUM0.format(s.period.days)}</td>
+                <td className="px-2 py-2 text-right tabular-nums">
+                  {s.hasReservations ? NUM0.format(s.totalReservations) : '–'}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums">
+                  {s.hasReservations ? NUM0.format(s.totalPersons) : '–'}
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums">
+                  {s.hasReservations ? avg(s.avgPersonsPerReservation) : '–'}
+                </td>
+                <td className="whitespace-nowrap px-2 py-2 text-emerald-700 dark:text-emerald-400">
+                  {s.hasReservations ? weekdayValueLabel(s.strongest) : '–'}
+                </td>
+                <td className="whitespace-nowrap px-2 py-2 text-red-700 dark:text-red-400">
+                  {s.hasReservations ? weekdayValueLabel(s.weakest) : '–'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Kurze automatische Interpretation je Periode (inkl. Zukunft/Leer). */}
+      <ul className="mt-3 space-y-1.5">
+        {summaries.map((s) => (
+          <li key={s.period.kind} className="flex flex-wrap items-baseline gap-x-1.5 text-sm">
+            <span className="font-medium">{s.period.label}:</span>
+            <span className={cn(!s.hasReservations && 'text-muted-foreground')}>
+              {s.hasReservations ? s.interpretation : holidayEmptyMessage(s)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

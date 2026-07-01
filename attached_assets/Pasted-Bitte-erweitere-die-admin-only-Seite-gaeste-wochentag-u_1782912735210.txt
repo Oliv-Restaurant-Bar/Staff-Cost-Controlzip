@@ -1,0 +1,79 @@
+Bitte erweitere die admin-only Seite /gaeste/wochentag um eine spezielle Auswertung "Schulferien Kanton Bern".
+
+Ziel:
+Ich möchte sehen, wie sich Reservationen während der Schulferien im Kanton Bern verhalten haben – rückwirkend für vergangene Jahre und soweit möglich auch für zukünftige Perioden.
+
+Wichtig:
+Keine neue Datenbanktabelle und keine Migration.
+Die bestehende Reservationen-Datenquelle und fetchReservationsInRange weiterverwenden.
+Die Ferienlogik als pure helper functions umsetzen und testen.
+
+Fachliche Grundlage:
+Für den deutschsprachigen Kantonsteil Bern/Stadt Bern gilt der Ferienkalender nach DIN-Kalenderwochen:
+- Februarferien/Sportferien: Woche 6
+- Frühlingsferien: Wochen 15–16
+- Sommerferien: Wochen 28–32
+- Ausnahme Sommer 2027: Wochen 27–32
+- Herbstferien: Wochen 39–41
+- Winterferien: Wochen 52 und 1 bzw. bei 53-Wochen-Jahr Wochen 53 und 1
+
+Anforderungen UI:
+1. Auf /gaeste/wochentag einen zusätzlichen Schnellfilter/Button ergänzen:
+   - "Schulferien BE"
+
+2. Wenn "Schulferien BE" aktiv ist, soll der Nutzer auswählen können:
+   - Jahr
+   - Ferienart:
+     - Alle Schulferien
+     - Sportferien
+     - Frühlingsferien
+     - Sommerferien
+     - Herbstferien
+     - Winterferien
+
+3. Die bestehende Matrix soll dann nur Reservationen aus diesen Ferienperioden berücksichtigen.
+
+4. Zusätzlich eine Ferien-Zusammenfassung anzeigen:
+   - Ferienperiode
+   - Datum von/bis
+   - Anzahl Ferientage
+   - Reservationen total
+   - Personen total
+   - Ø Personen pro Reservation
+   - stärkster Wochentag
+   - schwächster Wochentag
+
+5. Wenn mehrere Ferienperioden ausgewählt sind, z. B. "Alle Schulferien", soll eine kleine Vergleichstabelle erscheinen:
+   - Ferienart
+   - Zeitraum
+   - Reservationen
+   - Personen
+   - Ø Pers/Res
+   - stärkster Wochentag
+   - Hinweis/Interpretation
+
+6. Das bestehende Detail-Pop-up beim Klick auf einen Wochentag muss weiterhin funktionieren und nur die passenden Ferientage anzeigen.
+
+7. Bei zukünftigen Ferienperioden ohne Reservationen soll kein Fehler erscheinen, sondern ein leerer Zustand:
+   - "Für diese zukünftige Ferienperiode sind noch keine Reservationen vorhanden."
+
+8. Eine kurze automatische Interpretation ergänzen:
+   - z. B. "Während der Herbstferien ist der Samstag stärker als der Montag"
+   - oder "In den Sommerferien verteilen sich die Reservationen gleichmässiger auf die Woche"
+
+Tests:
+Bitte Tests ergänzen für:
+- Sportferien Woche 6
+- Frühlingsferien Wochen 15–16
+- Sommerferien normales Jahr Wochen 28–32
+- Sommerferien 2027 Wochen 27–32
+- Herbstferien Wochen 39–41
+- Winterferien über Jahreswechsel
+- Alle Schulferien kombiniert
+- zukünftige Ferienperiode ohne Reservationen
+- Detail-Pop-up mit Ferienfilter
+
+Danach:
+- typecheck ausführen
+- relevante Tests ausführen
+- replit.md aktualisieren

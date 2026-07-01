@@ -986,6 +986,21 @@ export function buildMonthComparison(
     };
   });
 
+  return finalizeMonthComparison(months, metric);
+}
+
+/**
+ * Schritte 2 + 3 des Monatsvergleichs (Spalten-Statistik + Rang/Top/Tief je
+ * Zelle) — aus `buildMonthComparison` herausgezogen, damit auch die Ferien-
+ * Variante (`buildHolidayMonthComparison`, mehrere Perioden) dieselbe fixierte
+ * Vergleichssemantik nutzt.  Die übergebenen Monatszeilen tragen bereits fertige
+ * Zellenwerte (`value`); diese Funktion setzt nur noch Spalten-Ø, best/worst und
+ * die Zell-Ränge/Top/Tief (mutiert die Zellen der übergebenen Zeilen).
+ */
+function finalizeMonthComparison(
+  months: ComparisonMonthRow[],
+  metric: MetricKey,
+): MonthComparison {
   // 2) Spalten-Statistik je Wochentag (Ø, bester/schwächster Monat).
   const columns = {} as Record<IsoWeekday, ComparisonColumn>;
   for (const wd of ISO_WEEKDAYS) {
@@ -1798,4 +1813,419 @@ export function serializeSeasonSettings(s: SeasonSettings): string {
     winter: normalizeSeasonRange(s.winter),
     summer: normalizeSeasonRange(s.summer),
   });
+}
+
+// ── Schulferien Kanton Bern (DIN-Kalenderwochen) ─────────────────────────────
+//
+// Reine Helfer für die Ferien-Analyse auf /gaeste/wochentag.  KEINE Datenbank,
+// KEIN DOM — nur Datums-/Aggregationslogik über die bereits geladenen Zeilen.
+// Die Ferienwochen (DIN-Kalenderwochen) sind fix hinterlegt:
+//   Sportferien      → KW 6
+//   Frühlingsferien  → KW 15–16
+//   Sommerferien     → KW 28–32 (Ausnahme 2027: KW 27–32)
+//   Herbstferien     → KW 39–41
+//   Winterferien     → letzte KW des Jahres (52 oder 53) + KW 1 des Folgejahres
+//                       (ein zusammenhängender Block über den Jahreswechsel)
+
+/** Montag (UTC) der ISO-Woche `week` im ISO-Jahr `isoYear`. */
+function isoWeekMondayUtc(isoYear: number, week: number): Date {
+  // Der 4. Januar liegt per ISO-Definition immer in KW 1.
+  const jan4 = Date.UTC(isoYear, 0, 4);
+  const jan4Dow = new Date(jan4).getUTCDay() || 7; // Mo=1 … So=7
+  const week1Monday = jan4 - (jan4Dow - 1) * MS_PER_DAY;
+  return new Date(week1Monday + (week - 1) * 7 * MS_PER_DAY);
+}
+
+/** Sonntag (UTC) der ISO-Woche `week` im ISO-Jahr `isoYear`. */
+function isoWeekSundayUtc(isoYear: number, week: number): Date {
+  return new Date(isoWeekMondayUtc(isoYear, week).getTime() + 6 * MS_PER_DAY);
+}
+
+/** ISO-Wochennummer (1..53) eines UTC-Datums. */
+function isoWeekNumberOfUtc(d: Date): number {
+  // Auf den Donnerstag derselben ISO-Woche verschieben (die ISO-Woche ist die
+  // Woche, in der ihr Donnerstag liegt).
+  const thursday = new Date(d.getTime());
+  const dow = thursday.getUTCDay() || 7;
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - dow);
+  const yearStart = Date.UTC(thursday.getUTCFullYear(), 0, 1);
+  return Math.ceil(((thursday.getTime() - yearStart) / MS_PER_DAY + 1) / 7);
+}
+
+/** Anzahl ISO-Wochen (52 oder 53) eines ISO-Jahres. */
+export function isoWeeksInYear(isoYear: number): number {
+  // Der 28. Dezember liegt immer in der letzten ISO-Woche des Jahres.
+  return isoWeekNumberOfUtc(new Date(Date.UTC(isoYear, 11, 28)));
+}
+
+/** „yyyy-MM-dd" eines UTC-Datums. */
+function utcToYmd(d: Date): string {
+  return ymd(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+}
+
+export type BernHolidayKind = 'sport' | 'spring' | 'summer' | 'autumn' | 'winter';
+export type BernHolidaySelection = 'all' | BernHolidayKind;
+
+/** Reihenfolge der Ferienarten im Jahr (für „Alle" + Auswahl-Buttons). */
+export const BERN_HOLIDAY_KINDS: BernHolidayKind[] = [
+  'sport',
+  'spring',
+  'summer',
+  'autumn',
+  'winter',
+];
+
+export const BERN_HOLIDAY_LABEL: Record<BernHolidayKind, string> = {
+  sport: 'Sportferien',
+  spring: 'Frühlingsferien',
+  summer: 'Sommerferien',
+  autumn: 'Herbstferien',
+  winter: 'Winterferien',
+};
+
+export const BERN_HOLIDAY_SELECTION_LABEL: Record<BernHolidaySelection, string> = {
+  all: 'Alle Schulferien',
+  sport: 'Sportferien',
+  spring: 'Frühlingsferien',
+  summer: 'Sommerferien',
+  autumn: 'Herbstferien',
+  winter: 'Winterferien',
+};
+
+/** Prüft, ob ein String eine gültige Ferien-Auswahl ist (für URL/State). */
+export function isBernHolidaySelection(
+  v: string | null | undefined,
+): v is BernHolidaySelection {
+  return v === 'all' || (typeof v === 'string' && (BERN_HOLIDAY_KINDS as string[]).includes(v));
+}
+
+export interface BernHolidayWeek {
+  isoYear: number;
+  week: number;
+}
+
+/**
+ * Die ISO-Wochen (mit ihrem ISO-Jahr) einer Ferienart im gewählten Jahr.  Die
+ * Wochen sind fortlaufend; die Winterferien überschreiten den Jahreswechsel
+ * (letzte KW des Jahres + KW 1 des Folgejahres).
+ */
+export function bernHolidayWeeks(year: number, kind: BernHolidayKind): BernHolidayWeek[] {
+  switch (kind) {
+    case 'sport':
+      return [{ isoYear: year, week: 6 }];
+    case 'spring':
+      return [15, 16].map((week) => ({ isoYear: year, week }));
+    case 'summer': {
+      // Ausnahme 2027: Sommerferien beginnen bereits in KW 27 (sonst KW 28).
+      const weeks = year === 2027 ? [27, 28, 29, 30, 31, 32] : [28, 29, 30, 31, 32];
+      return weeks.map((week) => ({ isoYear: year, week }));
+    }
+    case 'autumn':
+      return [39, 40, 41].map((week) => ({ isoYear: year, week }));
+    case 'winter':
+      return [
+        { isoYear: year, week: isoWeeksInYear(year) },
+        { isoYear: year + 1, week: 1 },
+      ];
+  }
+}
+
+export interface BernHolidayPeriod {
+  kind: BernHolidayKind;
+  label: string;
+  /** Bezugsjahr der Auswahl (bei Winterferien das Startjahr). */
+  year: number;
+  /** Erster Tag (Montag der ersten Woche), „yyyy-MM-dd". */
+  from: string;
+  /** Letzter Tag (Sonntag der letzten Woche), „yyyy-MM-dd". */
+  to: string;
+  /** Anzahl Kalendertage inklusive `from`..`to`. */
+  days: number;
+  /** Enthaltene ISO-Wochennummern (nur Anzeige). */
+  weeks: number[];
+}
+
+/**
+ * Zusammenhängender Ferien-Zeitraum: Montag der ersten bis Sonntag der letzten
+ * Ferienwoche.  Für die Winterferien ergibt das einen Block über den
+ * Jahreswechsel (z. B. 22.12.–04.01.).
+ */
+export function bernHolidayPeriod(year: number, kind: BernHolidayKind): BernHolidayPeriod {
+  const weeks = bernHolidayWeeks(year, kind);
+  const first = weeks[0];
+  const last = weeks[weeks.length - 1];
+  const fromDate = isoWeekMondayUtc(first.isoYear, first.week);
+  const toDate = isoWeekSundayUtc(last.isoYear, last.week);
+  const from = utcToYmd(fromDate);
+  const to = utcToYmd(toDate);
+  const days = Math.round((toDate.getTime() - fromDate.getTime()) / MS_PER_DAY) + 1;
+  return {
+    kind,
+    label: BERN_HOLIDAY_LABEL[kind],
+    year,
+    from,
+    to,
+    days,
+    weeks: weeks.map((w) => w.week),
+  };
+}
+
+/** Alle Ferien-Zeiträume einer Auswahl im Jahr, chronologisch (nach `from`). */
+export function bernHolidayPeriods(
+  year: number,
+  selection: BernHolidaySelection,
+): BernHolidayPeriod[] {
+  const kinds = selection === 'all' ? BERN_HOLIDAY_KINDS : [selection];
+  return kinds
+    .map((kind) => bernHolidayPeriod(year, kind))
+    .sort((a, b) => a.from.localeCompare(b.from));
+}
+
+/** Umschliessender Datumsbereich aller Perioden (für EINEN Superset-Fetch). */
+export function holidayBounds(periods: BernHolidayPeriod[]): DateRange | null {
+  if (periods.length === 0) return null;
+  let from = periods[0].from;
+  let to = periods[0].to;
+  for (const p of periods) {
+    if (p.from < from) from = p.from;
+    if (p.to > to) to = p.to;
+  }
+  return { from, to };
+}
+
+/** Die Ferienperiode, die einen Monat „yyyy-MM" überschneidet (oder `null`). */
+export function holidayPeriodForMonth(
+  periods: BernHolidayPeriod[],
+  monthKey: string,
+): BernHolidayPeriod | null {
+  const r = monthRange(monthKey);
+  if (!r.from) return null;
+  for (const p of periods) {
+    if (p.from <= r.to && p.to >= r.from) return p;
+  }
+  return null;
+}
+
+/**
+ * Wochentags-Kennzahlen über MEHRERE (disjunkte) Ferienperioden.  Faltet
+ * `aggregateByWeekday` je zusammenhängender Periode und summiert je Wochentag
+ * Reservationen/Personen/Vorkommen (die Perioden überschneiden sich nicht);
+ * abgeleitete Durchschnitte werden danach neu berechnet.  Liefert dieselbe
+ * `WeekdayAggregate`-Struktur wie `aggregateByWeekday`, damit dieselbe Anzeige
+ * (Kennzahlen-Karten, `buildWeekdayHeadlines`) genutzt werden kann.
+ */
+export function aggregateHolidayWeekday(
+  rows: ReservationAggRow[],
+  periods: BernHolidayPeriod[],
+  scope: StatusScope = 'booked',
+): WeekdayAggregate {
+  const res = zeroWeekdayCounts();
+  const per = zeroWeekdayCounts();
+  const occ = zeroWeekdayCounts();
+  for (const p of periods) {
+    const a = aggregateByWeekday(rows, p.from, p.to, scope);
+    for (const w of a.weekdays) {
+      res[w.weekday] += w.reservations;
+      per[w.weekday] += w.persons;
+      occ[w.weekday] += w.occurrences;
+    }
+  }
+  const totalReservations = ISO_WEEKDAYS.reduce((s, wd) => s + res[wd], 0);
+  const totalPersons = ISO_WEEKDAYS.reduce((s, wd) => s + per[wd], 0);
+  const totalOccurrences = ISO_WEEKDAYS.reduce((s, wd) => s + occ[wd], 0);
+  const weekdays = ISO_WEEKDAYS.map<WeekdayStat>((wd) => ({
+    weekday: wd,
+    reservations: res[wd],
+    persons: per[wd],
+    avgPersons: res[wd] > 0 ? per[wd] / res[wd] : null,
+    sharePct: totalReservations > 0 ? (res[wd] / totalReservations) * 100 : 0,
+    occurrences: occ[wd],
+    avgReservationsPerDay: occ[wd] > 0 ? res[wd] / occ[wd] : null,
+    avgPersonsPerDay: occ[wd] > 0 ? per[wd] / occ[wd] : null,
+  }));
+  return {
+    weekdays,
+    totalReservations,
+    totalPersons,
+    totalOccurrences,
+    avgReservationsPerDay: totalOccurrences > 0 ? totalReservations / totalOccurrences : null,
+    avgPersonsPerReservation: totalReservations > 0 ? totalPersons / totalReservations : null,
+  };
+}
+
+/**
+ * Monatsvergleich (Monate × Wochentage) über MEHRERE Ferienperioden.  Die
+ * Monatszeilen der einzelnen Perioden werden per Monatsschlüssel zusammengeführt
+ * (nicht nur aneinandergehängt — z. B. teilen Sommerferien Juli und August),
+ * und die Wochentags-Vorkommen zählen NUR die Ferientage (Summe der auf jede
+ * Periode geklemmten Monatsvorkommen).  Ergebnis ist dieselbe `MonthComparison`-
+ * Struktur wie `buildMonthComparison` → dieselbe Matrix-Anzeige + Detail-Dialog.
+ */
+export function buildHolidayMonthComparison(
+  rows: ReservationAggRow[],
+  periods: BernHolidayPeriod[],
+  scope: StatusScope = 'booked',
+  metric: MetricKey = 'reservations',
+): MonthComparison {
+  // 1) Roh-Zellen (Reservationen/Personen) je Monat×Wochentag über alle
+  //    Perioden mergen (nur Monate mit mindestens einer Reservation entstehen).
+  const cellsByMonth = new Map<string, Record<IsoWeekday, Cell>>();
+  const totalsByMonth = new Map<string, Cell>();
+  for (const p of periods) {
+    const matrix = buildMonthWeekdayMatrix(rows, p.from, p.to, scope);
+    for (const row of matrix.months) {
+      let cells = cellsByMonth.get(row.monthKey);
+      let total = totalsByMonth.get(row.monthKey);
+      if (!cells || !total) {
+        cells = emptyCellRecord();
+        total = { reservations: 0, persons: 0 };
+        cellsByMonth.set(row.monthKey, cells);
+        totalsByMonth.set(row.monthKey, total);
+      }
+      for (const wd of ISO_WEEKDAYS) {
+        cells[wd].reservations += row.cells[wd].reservations;
+        cells[wd].persons += row.cells[wd].persons;
+      }
+      total.reservations += row.total.reservations;
+      total.persons += row.total.persons;
+    }
+  }
+
+  // 2) Monatszeilen bauen; Vorkommen ferien-genau (Summe über die Perioden, je
+  //    Periode auf den Monat geklemmt → nur Ferientage zählen).
+  const monthKeys = [...cellsByMonth.keys()].sort((a, b) => a.localeCompare(b));
+  const months: ComparisonMonthRow[] = monthKeys.map((monthKey) => {
+    const occ = zeroWeekdayCounts();
+    for (const p of periods) {
+      const add = countWeekdayOccurrencesInMonth(monthKey, p.from, p.to);
+      for (const wd of ISO_WEEKDAYS) occ[wd] += add[wd];
+    }
+    const cellsSrc = cellsByMonth.get(monthKey)!;
+    const total = totalsByMonth.get(monthKey)!;
+    const cells = {} as Record<IsoWeekday, ComparisonCell>;
+    let strongest: IsoWeekday | null = null;
+    let weakest: IsoWeekday | null = null;
+    let strongestVal = -Infinity;
+    let weakestVal = Infinity;
+    for (const wd of ISO_WEEKDAYS) {
+      const c = cellsSrc[wd];
+      const value = comparisonCellValue(c.reservations, c.persons, occ[wd], metric);
+      cells[wd] = {
+        monthKey,
+        weekday: wd,
+        occurrences: occ[wd],
+        reservations: c.reservations,
+        persons: c.persons,
+        value,
+        rank: 'none',
+        isTop: false,
+        isLow: false,
+      };
+      if (value !== null) {
+        if (value > strongestVal + COMPARISON_EPS) { strongestVal = value; strongest = wd; }
+        if (value < weakestVal - COMPARISON_EPS) { weakestVal = value; weakest = wd; }
+      }
+    }
+    return {
+      monthKey,
+      cells,
+      totalReservations: total.reservations,
+      totalPersons: total.persons,
+      avgPersons: total.reservations > 0 ? total.persons / total.reservations : null,
+      strongestWeekday: strongest,
+      weakestWeekday: weakest,
+    };
+  });
+
+  return finalizeMonthComparison(months, metric);
+}
+
+export interface HolidayPeriodSummary {
+  period: BernHolidayPeriod;
+  aggregate: WeekdayAggregate;
+  headlines: WeekdayHeadlineSummary;
+  totalReservations: number;
+  totalPersons: number;
+  avgPersonsPerReservation: number | null;
+  /** Ø Reservationen pro Ferientag (totalReservations / Ferientage). */
+  avgReservationsPerDay: number | null;
+  strongest: WeekdayHeadline | null;
+  weakest: WeekdayHeadline | null;
+  hasReservations: boolean;
+  /** true, wenn die Periode vollständig in der Zukunft liegt (from > today). */
+  isFuture: boolean;
+  interpretation: string;
+}
+
+/**
+ * Zusammenfassung EINER Ferienperiode: Kennzahlen + stärkster/schwächster
+ * Wochentag + kurze automatische Interpretation.  `today` („yyyy-MM-dd") dient
+ * nur der Zukunfts-Erkennung für den Leerzustand.
+ */
+export function buildHolidayPeriodSummary(
+  rows: ReservationAggRow[],
+  period: BernHolidayPeriod,
+  scope: StatusScope,
+  metric: MetricKey,
+  today: string,
+): HolidayPeriodSummary {
+  const aggregate = aggregateByWeekday(rows, period.from, period.to, scope);
+  const headlines = buildWeekdayHeadlines(aggregate, metric);
+  const strongest =
+    headlines.strongest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null
+      : null;
+  const weakest =
+    headlines.weakest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null
+      : null;
+  return {
+    period,
+    aggregate,
+    headlines,
+    totalReservations: aggregate.totalReservations,
+    totalPersons: aggregate.totalPersons,
+    avgPersonsPerReservation: aggregate.avgPersonsPerReservation,
+    avgReservationsPerDay: aggregate.avgReservationsPerDay,
+    strongest,
+    weakest,
+    hasReservations: aggregate.totalReservations > 0,
+    isFuture: period.from > today,
+    interpretation: buildHolidayInterpretation(period, headlines),
+  };
+}
+
+/** Schwellenwert für „gleichmässig verteilt" (stärkster ≤ Faktor × schwächster). */
+export const HOLIDAY_EVEN_RATIO = 1.25;
+
+/**
+ * Kurze, deterministische Interpretation einer Ferienperiode (die Hauptzahl der
+ * Wochentage steckt bereits in `headlines`, daher metrik-unabhängig):
+ *  - keine Reservationen        → Hinweis, dass keine Reservationen vorliegen
+ *  - nur ein aktiver Wochentag  → Konzentration auf diesen Wochentag
+ *  - gleichmässig verteilt      → „… verteilen sich gleichmässiger auf die Woche"
+ *    (stärkster ≤ HOLIDAY_EVEN_RATIO × schwächster)
+ *  - sonst                      → „… ist der {stärkste} stärker als der {schwächste}"
+ */
+export function buildHolidayInterpretation(
+  period: BernHolidayPeriod,
+  headlines: WeekdayHeadlineSummary,
+): string {
+  const name = period.label;
+  const s = headlines.strongest;
+  const w = headlines.weakest;
+  if (s === null) {
+    return `Während der ${name} liegen keine Reservationen vor.`;
+  }
+  const strongestH = headlines.headlines.find((h) => h.weekday === s) ?? null;
+  const weakestH = w !== null ? headlines.headlines.find((h) => h.weekday === w) ?? null : null;
+  if (w === null || w === s || !strongestH || !weakestH) {
+    return `Während der ${name} konzentrieren sich die Reservationen auf ${WEEKDAY_LABEL[s]}.`;
+  }
+  const sv = strongestH.value ?? 0;
+  const wv = weakestH.value ?? 0;
+  if (wv > 0 && sv / wv <= HOLIDAY_EVEN_RATIO) {
+    return `In den ${name} verteilen sich die Reservationen gleichmässiger auf die Woche.`;
+  }
+  return `Während der ${name} ist der ${WEEKDAY_LABEL[s]} stärker als der ${WEEKDAY_LABEL[w]}.`;
 }
