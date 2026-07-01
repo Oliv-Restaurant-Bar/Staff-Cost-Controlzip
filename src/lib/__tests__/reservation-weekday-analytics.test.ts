@@ -44,6 +44,13 @@ import {
   comparisonCellSubLabel,
   headlineUnit,
   buildMonthWeekdayDetail,
+  buildRangeWeekdayDetail,
+  buildWeekdayComparison,
+  classifyWeekdayHeat,
+  HEAT_VERY_STRONG_RATIO,
+  HEAT_ABOVE_RATIO,
+  HEAT_BELOW_RATIO,
+  HEAT_VERY_WEAK_RATIO,
   detailCellValue,
   buildDetailFormula,
   buildDetailComparison,
@@ -1443,5 +1450,197 @@ describe('buildHolidayInterpretation / Labels', () => {
       weakest: null,
     } as never);
     expect(empty).toBe('Während der Frühlingsferien liegen keine Reservationen vor.');
+  });
+});
+
+// ── Wochentagsvergleich (generisch: Zeiträume × Wochentage, Zeilen-Heatmap) ────
+// 2026: Jan 1 = Do. ISO-Wochen: Mo 2026-01-05…So 01-11 (A), Mo 01-12…So 01-18 (B).
+// Jede Zelle: genau 1 Vorkommen je Wochentag → Zellwert (Reservationen) = Anzahl.
+const WD_CMP_ROWS: ReservationAggRow[] = [
+  // Woche A (Summe 70 → Zeilen-Ø 10): Wed 9 (0.9), Thu 11 (1.1), Sat 15 (1.5), Sun 5 (0.5).
+  ...repeat('2026-01-05', 10, 2), // Mo
+  ...repeat('2026-01-06', 10, 2), // Di
+  ...repeat('2026-01-07', 9, 2),  // Mi
+  ...repeat('2026-01-08', 11, 2), // Do
+  ...repeat('2026-01-09', 10, 2), // Fr
+  ...repeat('2026-01-10', 15, 2), // Sa
+  ...repeat('2026-01-11', 5, 2),  // So
+  // Woche B (alle gleich 20 → Zeilen-Ø 20, alle 'average'), party 3.
+  ...repeat('2026-01-12', 20, 3), // Mo
+  ...repeat('2026-01-13', 20, 3), // Di
+  ...repeat('2026-01-14', 20, 3), // Mi
+  ...repeat('2026-01-15', 20, 3), // Do
+  ...repeat('2026-01-16', 20, 3), // Fr
+  ...repeat('2026-01-17', 20, 3), // Sa
+  ...repeat('2026-01-18', 20, 3), // So
+];
+const WD_PERIODS = [
+  { key: 'A', label: 'Woche A', from: '2026-01-05', to: '2026-01-11' },
+  { key: 'B', label: 'Woche B', from: '2026-01-12', to: '2026-01-18' },
+];
+// Leere Woche (alle 7 Wochentage kommen vor, aber 0 Reservationen). Konvention
+// (wie comparisonCellValue): vorkommender Wochentag mit 0 Reservationen → Wert 0
+// (nicht null); '–'/null nur, wenn der Wochentag gar nicht im Bereich liegt.
+const WD_EMPTY_PERIOD = [{ key: 'C', label: 'Woche C', from: '2026-01-19', to: '2026-01-25' }];
+
+describe('classifyWeekdayHeat', () => {
+  it('liefert none bei fehlendem Wert oder fehlendem/0 Zeilen-Ø', () => {
+    expect(classifyWeekdayHeat(null, 10)).toBe('none');
+    expect(classifyWeekdayHeat(5, null)).toBe('none');
+    expect(classifyWeekdayHeat(5, 0)).toBe('none');
+    expect(classifyWeekdayHeat(5, -1)).toBe('none');
+  });
+  it('stuft an den Schwellen inklusiv ein', () => {
+    expect(classifyWeekdayHeat(120, 100)).toBe('veryStrong');   // 1.20
+    expect(classifyWeekdayHeat(105, 100)).toBe('aboveAverage'); // 1.05
+    expect(classifyWeekdayHeat(95, 100)).toBe('belowAverage');  // 0.95
+    expect(classifyWeekdayHeat(80, 100)).toBe('veryWeak');      // 0.80
+  });
+  it('neutral zwischen den Schwellen und bei Gleichheit/Einzelwert', () => {
+    expect(classifyWeekdayHeat(100, 100)).toBe('average');
+    expect(classifyWeekdayHeat(101, 100)).toBe('average');
+    expect(classifyWeekdayHeat(99, 100)).toBe('average');
+    expect(classifyWeekdayHeat(7, 7)).toBe('average'); // Einzelwert → r=1
+  });
+  it('exportiert symmetrische Verhältnis-Konstanten', () => {
+    expect(HEAT_VERY_STRONG_RATIO).toBe(1.2);
+    expect(HEAT_ABOVE_RATIO).toBe(1.05);
+    expect(HEAT_BELOW_RATIO).toBe(0.95);
+    expect(HEAT_VERY_WEAK_RATIO).toBe(0.8);
+  });
+});
+
+describe('buildWeekdayComparison', () => {
+  it('baut eine Zeile je Zeitraum in Reihenfolge, Metrik durchgereicht', () => {
+    const c = buildWeekdayComparison(WD_CMP_ROWS, WD_PERIODS, 'booked', 'reservations');
+    expect(c.metric).toBe('reservations');
+    expect(c.rows.map((r2) => r2.period.key)).toEqual(['A', 'B']);
+    for (const row of c.rows) expect(Object.keys(row.cells)).toHaveLength(7);
+  });
+  it('Zeilen-Ø ist gleichgewichtetes Mittel der vorhandenen Zellwerte', () => {
+    const c = buildWeekdayComparison(WD_CMP_ROWS, WD_PERIODS, 'booked', 'reservations');
+    expect(c.rows[0].rowAverage).toBeCloseTo(10, 6);
+    expect(c.rows[1].rowAverage).toBeCloseTo(20, 6);
+  });
+  it('Heatmap ist ZEILEN-relativ und deckt alle 5 Stufen ab', () => {
+    const a = buildWeekdayComparison(WD_CMP_ROWS, WD_PERIODS, 'booked', 'reservations').rows[0];
+    expect(a.cells[1].heat).toBe('average');      // Mo 10/10
+    expect(a.cells[3].heat).toBe('belowAverage'); // Mi 9/10 = 0.9
+    expect(a.cells[4].heat).toBe('aboveAverage'); // Do 11/10 = 1.1
+    expect(a.cells[6].heat).toBe('veryStrong');   // Sa 15/10 = 1.5
+    expect(a.cells[7].heat).toBe('veryWeak');     // So 5/10 = 0.5
+    expect(a.cells[6].value).toBe(15);
+    expect(a.cells[7].value).toBe(5);
+  });
+  it('alle-gleich-Zeile → jede Zelle average', () => {
+    const b = buildWeekdayComparison(WD_CMP_ROWS, WD_PERIODS, 'booked', 'reservations').rows[1];
+    for (const wd of [1, 2, 3, 4, 5, 6, 7] as const) expect(b.cells[wd].heat).toBe('average');
+  });
+  it('leere Woche → Zellen Wert 0 (Wochentag kommt vor), heat none, Summen 0, avgPersons null', () => {
+    const empty = buildWeekdayComparison(WD_CMP_ROWS, WD_EMPTY_PERIOD, 'booked', 'reservations').rows[0];
+    for (const wd of [1, 2, 3, 4, 5, 6, 7] as const) {
+      expect(empty.cells[wd].value).toBe(0);
+      expect(empty.cells[wd].heat).toBe('none');
+    }
+    expect(empty.rowAverage).toBe(0);
+    expect(empty.totalReservations).toBe(0);
+    expect(empty.totalPersons).toBe(0);
+    expect(empty.avgPersons).toBeNull();
+  });
+  it('nicht vorkommender Wochentag → Wert null und heat none', () => {
+    // Bereich Mo–Mi (2026-01-05..07): Do–So kommen NICHT vor → null/'–'.
+    const partial = buildWeekdayComparison(
+      WD_CMP_ROWS,
+      [{ key: 'P', label: 'Mo–Mi', from: '2026-01-05', to: '2026-01-07' }],
+      'booked',
+      'reservations',
+    ).rows[0];
+    expect(partial.cells[1].value).toBe(10); // Mo vorhanden
+    for (const wd of [4, 5, 6, 7] as const) {
+      expect(partial.cells[wd].value).toBeNull();
+      expect(partial.cells[wd].heat).toBe('none');
+    }
+  });
+  it('Zeilen-Summen: Reservationen/Personen total + Ø Personen pro Reservation', () => {
+    const c = buildWeekdayComparison(WD_CMP_ROWS, WD_PERIODS, 'booked', 'reservations');
+    expect(c.rows[0].totalReservations).toBe(70);
+    expect(c.rows[0].totalPersons).toBe(140); // 70 × 2
+    expect(c.rows[0].avgPersons).toBeCloseTo(2, 6);
+    expect(c.rows[1].totalReservations).toBe(140);
+    expect(c.rows[1].totalPersons).toBe(420); // 140 × 3
+    expect(c.rows[1].avgPersons).toBeCloseTo(3, 6);
+  });
+  it('weekdayAverages mittelt je Wochentag über Zeilen', () => {
+    const c = buildWeekdayComparison(WD_CMP_ROWS, WD_PERIODS, 'booked', 'reservations');
+    expect(c.weekdayAverages[1]).toBeCloseTo(15, 6); // Mo (10 + 20) / 2
+    expect(c.weekdayAverages[6]).toBeCloseTo(17.5, 6); // Sa (15 + 20) / 2
+  });
+  it('leere Perioden-Liste → keine Zeilen, weekdayAverages null', () => {
+    const c = buildWeekdayComparison(WD_CMP_ROWS, [], 'booked', 'reservations');
+    expect(c.rows).toHaveLength(0);
+    for (const wd of [1, 2, 3, 4, 5, 6, 7] as const) expect(c.weekdayAverages[wd]).toBeNull();
+  });
+  it('Mehr-Perioden-Bereich mit leerer Mittel-Periode → Null-Zeile bleibt in Reihenfolge', () => {
+    // Analog Monats-Modus: alle Perioden im Bereich werden gerendert, auch die
+    // leere Mitte (Woche C, 0 Reservationen). Reihenfolge A → C(leer) → B bleibt.
+    const periods = [
+      { key: 'A', label: 'Woche A', from: '2026-01-05', to: '2026-01-11' },
+      { key: 'C', label: 'Woche C', from: '2026-01-19', to: '2026-01-25' },
+      { key: 'B', label: 'Woche B', from: '2026-01-12', to: '2026-01-18' },
+    ];
+    const c = buildWeekdayComparison(WD_CMP_ROWS, periods, 'booked', 'reservations');
+    expect(c.rows.map((r2) => r2.period.key)).toEqual(['A', 'C', 'B']);
+    const mid = c.rows[1];
+    expect(mid.period.key).toBe('C');
+    expect(mid.totalReservations).toBe(0);
+    expect(mid.totalPersons).toBe(0);
+    expect(mid.avgPersons).toBeNull();
+    for (const wd of [1, 2, 3, 4, 5, 6, 7] as const) {
+      expect(mid.cells[wd].value).toBe(0);
+      expect(mid.cells[wd].heat).toBe('none');
+    }
+    // Nachbarzeilen behalten ihre echten Werte (leere Mitte beeinflusst sie nicht).
+    expect(c.rows[0].totalReservations).toBe(70);
+    expect(c.rows[2].totalReservations).toBe(140);
+  });
+});
+
+describe('buildRangeWeekdayDetail', () => {
+  const RANGE_ROWS: ReservationAggRow[] = [
+    ...repeat('2025-12-29', 3, 2), // Mo (Dez 2025)
+    ...repeat('2026-01-05', 7, 2), // Mo (Jan 2026)
+    ...repeat('2026-01-06', 4, 2), // Di — darf NICHT zählen (Wochentag ≠ Mo)
+  ];
+  it('summiert einen Wochentag über einen mehrere Monate umspannenden Bereich', () => {
+    const d = buildRangeWeekdayDetail(RANGE_ROWS, '2025-12-29', '2026-01-11', 1, 'booked', {
+      monthKey: 'winter-2025',
+      label: 'Weihnachtsferien 2025/26',
+    });
+    expect(d.occurrences).toBe(2); // zwei Montage im Bereich
+    expect(d.reservations).toBe(10); // 3 + 7
+    expect(d.persons).toBe(20); // 10 × 2
+    expect(d.avgPersonsPerReservation).toBeCloseTo(2, 6);
+    expect(d.days.map((x) => x.date)).toEqual(['2025-12-29', '2026-01-05']);
+    expect(d.label).toBe('Weihnachtsferien 2025/26');
+    expect(d.monthKey).toBe('winter-2025');
+  });
+  it('monthKey fällt auf den Monat von `from` zurück, label bleibt undefined', () => {
+    const d = buildRangeWeekdayDetail(RANGE_ROWS, '2026-01-05', '2026-01-11', 1, 'booked');
+    expect(d.monthKey).toBe('2026-01');
+    expect(d.label).toBeUndefined();
+    expect(d.reservations).toBe(7);
+  });
+  it('ungültiger Bereich (from > to) → leeres Ergebnis', () => {
+    const d = buildRangeWeekdayDetail(RANGE_ROWS, '2026-01-11', '2026-01-05', 1, 'booked');
+    expect(d.occurrences).toBe(0);
+    expect(d.reservations).toBe(0);
+    expect(d.days).toEqual([]);
+  });
+  it('buildMonthWeekdayDetail delegiert und klemmt auf Monat∩Zeitraum', () => {
+    // Bereich deckt Dez+Jan, aber monthKey Jan → nur Jan-Montage zählen.
+    const d = buildMonthWeekdayDetail(RANGE_ROWS, '2025-12-01', '2026-01-31', '2026-01', 1, 'booked');
+    expect(d.reservations).toBe(7); // nur 2026-01-05
+    expect(d.occurrences).toBe(4); // 4 Montage im Januar 2026
+    expect(d.monthKey).toBe('2026-01');
   });
 });

@@ -1,0 +1,118 @@
+Erweitere die Seite "Gäste → Wochentag" um eine zusätzliche Analyse "Wochentagsvergleich", die unterhalb der bestehenden Kacheln angezeigt wird.
+
+Ziel:
+Die neue Tabelle soll dem Management ermöglichen, Monate, Ferien und Saisons miteinander zu vergleichen und daraus Entscheidungen für Personalplanung, Marketing und Angebote abzuleiten.
+
+ANFORDERUNGEN
+
+1. Neue Tabelle "Wochentagsvergleich"
+
+Spalten:
+
+Zeitraum
+Montag
+Dienstag
+Mittwoch
+Donnerstag
+Freitag
+Samstag
+Sonntag
+Reservationen total
+Personen total
+Ø Personen pro Reservation
+
+Die Wochentagsspalten zeigen jeweils den aktuell ausgewählten Kennzahlenmodus an.
+
+Beispiel:
+
+Wenn "Reservationen" aktiv ist:
+→ Durchschnitt Reservationen pro Montag
+
+Wenn "Personen" aktiv ist:
+→ Durchschnitt Personen pro Montag
+
+Wenn "Personen pro Reservation" aktiv ist:
+→ Durchschnitt Personen pro Reservation am Montag.
+
+2. Zeitraum
+
+Die Tabelle reagiert vollständig auf die vorhandenen Filter.
+
+Monatsmodus:
+eine Zeile pro Monat.
+
+Ferienmodus:
+eine Zeile pro Ferienperiode.
+
+Später soll dieselbe Tabelle auch für frei definierte Saisons verwendet werden.
+
+3. Farbige Heatmap
+
+Jede Wochentagszelle erhält automatisch eine Hintergrundfarbe.
+
+Sehr stark = dunkelgrün
+Über Durchschnitt = hellgrün
+Durchschnitt = neutral
+Unter Durchschnitt = orange
+Sehr schwach = rot
+
+Die Bewertung erfolgt immer relativ zum Gesamtdurchschnitt der jeweiligen Zeile.
+
+Dadurch erkennt man Muster auf einen Blick.
+
+4. Klickfunktion
+
+Jede Zelle bleibt anklickbar.
+
+Beim Klick soll exakt das bereits vorhandene Detail-Popup geöffnet werden.
+
+Beispiel:
+
+Juli × Donnerstag
+
+öffnet sämtliche Kennzahlen dieses Donnerstags.
+
+Keine neue Logik erstellen.
+Vorhandenes Popup wiederverwenden.
+
+5. Sortierung
+
+Standard:
+
+Januar bis Dezember
+
+bzw.
+
+chronologische Ferienperioden.
+
+Später soll optional nach jedem Wochentag sortiert werden können.
+
+6. Zusammenfassung oberhalb der Tabelle
+
+Über der Tabelle einen kleinen Hinweis anzeigen:
+
+"Diese Vergleichstabelle zeigt die durchschnittliche Auslastung jedes Wochentages je Zeitraum und erleichtert den Vergleich zwischen Monaten, Ferien und zukünftigen Saisons."
+
+7. Technische Anforderungen
+
+Keine neue Datenbanktabelle.
+
+Keine Migration.
+
+Nur bestehende Daten verwenden.
+
+Bestehende Helper erweitern.
+
+Keine doppelte Berechnung.
+
+TypeScript strict.
+
+Alle bestehenden Tests müssen weiterhin erfolgreich sein.
+
+Neue Tests für die Vergleichstabelle ergänzen.
+
+replit.md aktualisieren.
+
+WICHTIG
+
+Die Tabelle soll die Grundlage für spätere Saisonvergleiche (z. B. Wintersaison, Sommersaison oder frei definierte Zeiträume) bilden. Die Architektur deshalb generisch aufbauen und nicht nur auf Monate oder Schulferien beschränken.

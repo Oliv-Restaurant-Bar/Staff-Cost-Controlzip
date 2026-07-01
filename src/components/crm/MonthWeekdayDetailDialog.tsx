@@ -77,8 +77,15 @@ export interface MonthWeekdayDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   detail: MonthWeekdayDetail | null;
   metric: MetricKey;
-  /** Ø dieses Wochentags über alle Monate (= comparison.columns[weekday].average). */
+  /** Ø dieses Wochentags über alle Zeiträume (= Spalten-Ø). */
   columnAverage: number | null;
+  /**
+   * Bezeichnung des Vergleichs-Bezugs, z. B. „über alle Monate" (Standard) oder
+   * „über alle Ferienperioden". Nur Anzeige — ändert keine Berechnung.
+   */
+  columnAverageLabel?: string;
+  /** Hinweis, wenn kein Vergleichswert existiert (nur ein Zeitraum). */
+  singleColumnLabel?: string;
 }
 
 export function MonthWeekdayDetailDialog({
@@ -87,11 +94,21 @@ export function MonthWeekdayDetailDialog({
   detail,
   metric,
   columnAverage,
+  columnAverageLabel = 'über alle Monate',
+  singleColumnLabel = 'nur ein Monat im Zeitraum',
 }: MonthWeekdayDetailDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
-        {detail && <DetailBody detail={detail} metric={metric} columnAverage={columnAverage} />}
+        {detail && (
+          <DetailBody
+            detail={detail}
+            metric={metric}
+            columnAverage={columnAverage}
+            columnAverageLabel={columnAverageLabel}
+            singleColumnLabel={singleColumnLabel}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -101,13 +118,17 @@ function DetailBody({
   detail,
   metric,
   columnAverage,
+  columnAverageLabel,
+  singleColumnLabel,
 }: {
   detail: MonthWeekdayDetail;
   metric: MetricKey;
   columnAverage: number | null;
+  columnAverageLabel: string;
+  singleColumnLabel: string;
 }) {
   const wdLabel = WEEKDAY_LABEL[detail.weekday];
-  const month = monthLongLabel(detail.monthKey);
+  const month = detail.label ?? monthLongLabel(detail.monthKey);
   const formula = buildDetailFormula(detail, metric);
   const insights = buildDetailInsights(detail, metric, columnAverage);
   const cmp = buildDetailComparison(detail, metric, columnAverage);
@@ -213,7 +234,7 @@ function DetailBody({
               <span className="font-medium tabular-nums">Ø {num1(cmp.cellValue)}</span> {unit}
             </p>
             <p className="text-muted-foreground">
-              Durchschnitt {wdLabel} über alle Monate:{' '}
+              Durchschnitt {wdLabel} {columnAverageLabel}:{' '}
               <span className="font-medium tabular-nums text-foreground">Ø {num1(cmp.columnAverage)}</span> {unit}
             </p>
             {cmp.difference !== null && cmp.direction !== null ? (
@@ -242,7 +263,7 @@ function DetailBody({
               </p>
             ) : (
               <p className="text-muted-foreground">
-                Kein Vergleichswert verfügbar (nur ein Monat im Zeitraum).
+                Kein Vergleichswert verfügbar ({singleColumnLabel}).
               </p>
             )}
           </div>

@@ -1321,6 +1321,13 @@ export interface WeekdayDayDetail {
 
 export interface MonthWeekdayDetail {
   monthKey: string; // "yyyy-MM"
+  /**
+   * Optionaler Anzeige-Titel des Zeitraums (z. B. „Sommerferien 2026").  Wenn
+   * gesetzt, nutzt das Popup diesen statt `monthLongLabel(monthKey)`.  So kann
+   * dieselbe Detail-Ansicht für Perioden verwendet werden, die mehrere Monate
+   * umspannen (Ferien/Saisons).  Für reine Monats-Details bleibt es undefined.
+   */
+  label?: string;
   weekday: IsoWeekday;
   /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
   occurrences: number;
@@ -1337,10 +1344,103 @@ export interface MonthWeekdayDetail {
 }
 
 /**
+ * Baut die Detail-Aufschlüsselung eines Wochentags über einen BELIEBIGEN
+ * Datumsbereich [from, to] (nicht auf einen Monat begrenzt).  Enumeriert alle
+ * konkreten Kalendertage dieses Wochentags im Bereich und summiert je Tag
+ * Reservationen/Personen nach dem Status-Prädikat des Scopes.  Dient sowohl dem
+ * Monats-Detail (siehe `buildMonthWeekdayDetail`, das hierher delegiert) als
+ * auch dem Perioden-Detail des Wochentagsvergleichs (Ferien/Saisons, die
+ * mehrere Monate umspannen können).
+ *
+ * `opts.monthKey` steuert nur das (abwärtskompatible) `monthKey`-Feld des
+ * Ergebnisses; fehlt es, wird der Monat des `from`-Datums genutzt.  `opts.label`
+ * setzt den optionalen Anzeige-Titel (z. B. „Sommerferien 2026").
+ */
+export function buildRangeWeekdayDetail(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  weekday: IsoWeekday,
+  scope: StatusScope = 'booked',
+  opts?: { monthKey?: string; label?: string },
+): MonthWeekdayDetail {
+  const monthKey = opts?.monthKey ?? (from.length >= 7 ? from.slice(0, 7) : from);
+  const label = opts?.label;
+  const empty: MonthWeekdayDetail = {
+    monthKey,
+    label,
+    weekday,
+    occurrences: 0,
+    reservations: 0,
+    persons: 0,
+    avgReservationsPerDay: null,
+    avgPersonsPerDay: null,
+    avgPersonsPerReservation: null,
+    days: [],
+  };
+
+  // 1) Alle konkreten Kalendertage dieses Wochentags im Bereich [from, to].
+  const dayMap = new Map<string, { reservations: number; persons: number }>();
+  const start = parseYmdToUtc(from);
+  const end = parseYmdToUtc(to);
+  if (!start || !end || start.getTime() > end.getTime()) return empty;
+  for (let t = start.getTime(); t <= end.getTime(); t += MS_PER_DAY) {
+    const dt = new Date(t);
+    const dow = dt.getUTCDay(); // 0=So … 6=Sa
+    const iso = (dow === 0 ? 7 : dow) as IsoWeekday;
+    if (iso !== weekday) continue;
+    dayMap.set(ymd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate()), {
+      reservations: 0,
+      persons: 0,
+    });
+  }
+
+  // 2) Reservationen/Personen je Tag summieren (Status-Prädikat beachten).
+  const include = statusPredicate(scope);
+  for (const row of rows) {
+    if (!row.date) continue;
+    const d = row.date.slice(0, 10);
+    const bucket = dayMap.get(d); // nur Tage dieses Wochentags im Bereich
+    if (!bucket) continue;
+    if (!include(row.status)) continue;
+    bucket.reservations += 1;
+    bucket.persons += row.partySize ?? 0;
+  }
+
+  const days: WeekdayDayDetail[] = [...dayMap.keys()].sort().map((date) => {
+    const b = dayMap.get(date)!;
+    return {
+      date,
+      reservations: b.reservations,
+      persons: b.persons,
+      avgPersonsPerReservation: b.reservations > 0 ? b.persons / b.reservations : null,
+    };
+  });
+
+  const occurrences = days.length;
+  const reservations = days.reduce((s, d) => s + d.reservations, 0);
+  const persons = days.reduce((s, d) => s + d.persons, 0);
+
+  return {
+    monthKey,
+    label,
+    weekday,
+    occurrences,
+    reservations,
+    persons,
+    avgReservationsPerDay: occurrences > 0 ? reservations / occurrences : null,
+    avgPersonsPerDay: occurrences > 0 ? persons / occurrences : null,
+    avgPersonsPerReservation: reservations > 0 ? persons / reservations : null,
+    days,
+  };
+}
+
+/**
  * Baut die Detail-Aufschlüsselung einer Vergleichszelle (ein Wochentag in einem
  * Monat). Enumeriert alle konkreten Kalendertage dieses Wochentags im Monat
  * (auf [from, to] geklemmt) und summiert je Tag Reservationen/Personen nach dem
  * Status-Prädikat des Scopes. Die Summen entsprechen exakt der Matrix-Zelle.
+ * Delegiert an `buildRangeWeekdayDetail` mit den Monat∩Zeitraum-Grenzen.
  */
 export function buildMonthWeekdayDetail(
   rows: ReservationAggRow[],
@@ -1372,60 +1472,7 @@ export function buildMonthWeekdayDetail(
   const clampStart = monthStart > from ? monthStart : from;
   const clampEnd = monthEnd < to ? monthEnd : to;
 
-  // 1) Alle konkreten Kalendertage dieses Wochentags im Monat∩Zeitraum.
-  const dayMap = new Map<string, { reservations: number; persons: number }>();
-  const start = parseYmdToUtc(clampStart);
-  const end = parseYmdToUtc(clampEnd);
-  if (start && end && start.getTime() <= end.getTime()) {
-    for (let t = start.getTime(); t <= end.getTime(); t += MS_PER_DAY) {
-      const dt = new Date(t);
-      const dow = dt.getUTCDay(); // 0=So … 6=Sa
-      const iso = (dow === 0 ? 7 : dow) as IsoWeekday;
-      if (iso !== weekday) continue;
-      dayMap.set(ymd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate()), {
-        reservations: 0,
-        persons: 0,
-      });
-    }
-  }
-
-  // 2) Reservationen/Personen je Tag summieren (Status-Prädikat beachten).
-  const include = statusPredicate(scope);
-  for (const row of rows) {
-    if (!row.date) continue;
-    const d = row.date.slice(0, 10);
-    const bucket = dayMap.get(d); // nur Tage dieses Wochentags/Monats/Zeitraums
-    if (!bucket) continue;
-    if (!include(row.status)) continue;
-    bucket.reservations += 1;
-    bucket.persons += row.partySize ?? 0;
-  }
-
-  const days: WeekdayDayDetail[] = [...dayMap.keys()].sort().map((date) => {
-    const b = dayMap.get(date)!;
-    return {
-      date,
-      reservations: b.reservations,
-      persons: b.persons,
-      avgPersonsPerReservation: b.reservations > 0 ? b.persons / b.reservations : null,
-    };
-  });
-
-  const occurrences = days.length;
-  const reservations = days.reduce((s, d) => s + d.reservations, 0);
-  const persons = days.reduce((s, d) => s + d.persons, 0);
-
-  return {
-    monthKey,
-    weekday,
-    occurrences,
-    reservations,
-    persons,
-    avgReservationsPerDay: occurrences > 0 ? reservations / occurrences : null,
-    avgPersonsPerDay: occurrences > 0 ? persons / occurrences : null,
-    avgPersonsPerReservation: reservations > 0 ? persons / reservations : null,
-    days,
-  };
+  return buildRangeWeekdayDetail(rows, clampStart, clampEnd, weekday, scope, { monthKey });
 }
 
 /** Grosse Ø-Zahl dieser Detail-Zelle je Modus (= Wert der Matrix-Zelle). */
@@ -1451,7 +1498,7 @@ export function buildDetailFormula(detail: MonthWeekdayDetail, metric: MetricKey
   const wdLabel = WEEKDAY_LABEL[wd];
   const plural = WEEKDAY_PLURAL[wd];
   const dative = weekdayPluralDative(wd);
-  const month = monthLongLabel(detail.monthKey);
+  const month = detail.label ?? monthLongLabel(detail.monthKey);
   const occLine = `${wdLabel} kam im ${month} ${detail.occurrences}× vor.`;
 
   switch (metric) {
@@ -1601,8 +1648,9 @@ export function buildDetailInsights(
 
   // Fallback: mindestens eine Aussage, wenn die Zelle keine Reservationen hat.
   if (out.length === 0) {
+    const periodLabel = detail.label ?? monthLongLabel(detail.monthKey);
     out.push(
-      `${wdLabel} kam im ${monthLongLabel(detail.monthKey)} ${detail.occurrences}× vor, hatte aber keine Reservationen.`,
+      `${wdLabel} kam im ${periodLabel} ${detail.occurrences}× vor, hatte aber keine Reservationen.`,
     );
   }
 
@@ -2228,4 +2276,179 @@ export function buildHolidayInterpretation(
     return `In den ${name} verteilen sich die Reservationen gleichmässiger auf die Woche.`;
   }
   return `Während der ${name} ist der ${WEEKDAY_LABEL[s]} stärker als der ${WEEKDAY_LABEL[w]}.`;
+}
+
+// ── Wochentagsvergleich (generisch: Zeiträume × Wochentage, ZEILEN-Heatmap) ───
+//
+// Eine generische Vergleichstabelle: je Zeile ein „Zeitraum" (Monat, Ferien-
+// periode ODER später eine frei definierte Saison), je Spalte ein Wochentag mit
+// dem Wert der gewählten Kennzahl. Die Heatmap bewertet jede Zelle RELATIV ZUM
+// Durchschnitt IHRER ZEILE (nicht der Spalte). Damit beantwortet die Tabelle
+// „welcher Wochentag ist innerhalb dieses Zeitraums stark/schwach?" — unabhängig
+// davon, wie viele Reservationen ein Zeitraum insgesamt hat.
+//
+// Bewusst getrennt vom `MonthComparison` (der spaltenrelativ rankt und im
+// Ferien-Modus je MONAT gruppiert): dieser Vergleich gruppiert je PERIODE und
+// funktioniert für beliebige Datumsbereiche. Er nutzt dieselbe kanonische
+// Aggregation (`aggregateByWeekday`) je Periode — keine zweite Rechen-Pipeline.
+
+/** Ein generischer Vergleichs-Zeitraum (Monat, Ferienperiode, Saison …). */
+export interface ComparisonPeriod {
+  /** Stabiler Schlüssel (React-Key + Detail-Zuordnung), z. B. „2026-07" oder „sommer-2026". */
+  key: string;
+  /** Anzeige-Titel, z. B. „Juli 2026" oder „Sommerferien 2026". */
+  label: string;
+  /** Bereichsbeginn „yyyy-MM-dd" (inklusiv). */
+  from: string;
+  /** Bereichsende „yyyy-MM-dd" (inklusiv). */
+  to: string;
+}
+
+/** Heatmap-Stufe einer Zelle relativ zum Zeilendurchschnitt. */
+export type WeekdayHeat =
+  | 'veryStrong'    // dunkelgrün (deutlich über Ø)
+  | 'aboveAverage'  // hellgrün (über Ø)
+  | 'average'       // neutral (um den Ø)
+  | 'belowAverage'  // orange (unter Ø)
+  | 'veryWeak'      // rot (deutlich unter Ø)
+  | 'none';         // kein Wert / kein Ø berechenbar
+
+// Verhältnis-Schwellen (Zellwert ÷ Zeilendurchschnitt). Bewusst symmetrisch um
+// 1.0 und als Konstanten exportiert (Tests + evtl. Legende).
+export const HEAT_VERY_STRONG_RATIO = 1.2;
+export const HEAT_ABOVE_RATIO = 1.05;
+export const HEAT_BELOW_RATIO = 0.95;
+export const HEAT_VERY_WEAK_RATIO = 0.8;
+
+/**
+ * Stuft einen Zellwert relativ zum Zeilendurchschnitt ein.
+ *  - `value === null`            → 'none' (kein Vorkommen/Reservation)
+ *  - `rowAverage === null` / ≤ 0 → 'none' (kein sinnvoller Bezug)
+ *  - Verhältnis r = value / rowAverage:
+ *      r ≥ 1.20 'veryStrong' · r ≥ 1.05 'aboveAverage' ·
+ *      r ≤ 0.80 'veryWeak'   · r ≤ 0.95 'belowAverage' · sonst 'average'
+ * Ist nur EIN Wochentag gesetzt, gilt rowAverage = dieser Wert → r = 1 → 'average'.
+ * Sind alle Werte gleich, ist jedes r = 1 → 'average'.
+ */
+export function classifyWeekdayHeat(value: number | null, rowAverage: number | null): WeekdayHeat {
+  if (value === null || rowAverage === null || rowAverage <= 0) return 'none';
+  const r = value / rowAverage;
+  if (r >= HEAT_VERY_STRONG_RATIO) return 'veryStrong';
+  if (r >= HEAT_ABOVE_RATIO) return 'aboveAverage';
+  if (r <= HEAT_VERY_WEAK_RATIO) return 'veryWeak';
+  if (r <= HEAT_BELOW_RATIO) return 'belowAverage';
+  return 'average';
+}
+
+/** Eine Zelle des Wochentagsvergleichs (ein Wochentag in einem Zeitraum). */
+export interface WeekdayComparisonCell {
+  weekday: IsoWeekday;
+  /** Wert der gewählten Kennzahl (Ø je Wochentag) oder null. */
+  value: number | null;
+  reservations: number;
+  persons: number;
+  occurrences: number;
+  /** Heatmap-Stufe relativ zum Zeilendurchschnitt. */
+  heat: WeekdayHeat;
+}
+
+/** Eine Zeile des Wochentagsvergleichs (ein Zeitraum × 7 Wochentage + Summen). */
+export interface WeekdayComparisonRow {
+  period: ComparisonPeriod;
+  /** Zellen je Wochentag (Mo→So). */
+  cells: Record<IsoWeekday, WeekdayComparisonCell>;
+  /** Gleichgewichteter Mittelwert der 7 NICHT-null-Zellwerte (Bezug der Heatmap). */
+  rowAverage: number | null;
+  /** Reservationen total im Zeitraum. */
+  totalReservations: number;
+  /** Personen total im Zeitraum. */
+  totalPersons: number;
+  /** Ø Personen pro Reservation im Zeitraum (persons / reservations). */
+  avgPersons: number | null;
+}
+
+export interface WeekdayComparison {
+  metric: MetricKey;
+  /** Zeilen in der übergebenen Reihenfolge (Aufrufer sortiert chronologisch). */
+  rows: WeekdayComparisonRow[];
+  /**
+   * Ø je Wochentag ÜBER ALLE Zeilen (nur Zeilen mit Wert), gleichgewichtet.
+   * Speist das wiederverwendete Detail-Popup (Spalten-Ø-Vergleich).
+   */
+  weekdayAverages: Record<IsoWeekday, number | null>;
+}
+
+/**
+ * Baut den generischen Wochentagsvergleich für eine Liste von Zeiträumen.
+ * Ruft je Zeitraum die kanonische `aggregateByWeekday` auf, bildet den Zellwert
+ * über `comparisonCellValue`, berechnet den ZEILEN-Durchschnitt (gleichgewichtet
+ * über die vorhandenen Wochentage) und stuft jede Zelle relativ dazu ein.
+ * Vollständig generisch — Saisons übergeben einfach eine andere Perioden-Liste.
+ */
+export function buildWeekdayComparison(
+  rows: ReservationAggRow[],
+  periods: ComparisonPeriod[],
+  scope: StatusScope = 'booked',
+  metric: MetricKey = 'reservations',
+): WeekdayComparison {
+  const compRows: WeekdayComparisonRow[] = periods.map((period) => {
+    const a = aggregateByWeekday(rows, period.from, period.to, scope);
+    const byWeekday = {} as Record<
+      IsoWeekday,
+      { reservations: number; persons: number; occurrences: number; value: number | null }
+    >;
+    let sum = 0;
+    let valued = 0;
+    for (const w of a.weekdays) {
+      const value = comparisonCellValue(w.reservations, w.persons, w.occurrences, metric);
+      byWeekday[w.weekday] = {
+        reservations: w.reservations,
+        persons: w.persons,
+        occurrences: w.occurrences,
+        value,
+      };
+      if (value !== null) {
+        sum += value;
+        valued += 1;
+      }
+    }
+    const rowAverage = valued > 0 ? sum / valued : null;
+    const cells = {} as Record<IsoWeekday, WeekdayComparisonCell>;
+    for (const wd of ISO_WEEKDAYS) {
+      const c = byWeekday[wd];
+      cells[wd] = {
+        weekday: wd,
+        value: c.value,
+        reservations: c.reservations,
+        persons: c.persons,
+        occurrences: c.occurrences,
+        heat: classifyWeekdayHeat(c.value, rowAverage),
+      };
+    }
+    return {
+      period,
+      cells,
+      rowAverage,
+      totalReservations: a.totalReservations,
+      totalPersons: a.totalPersons,
+      avgPersons: a.avgPersonsPerReservation,
+    };
+  });
+
+  // Spalten-Ø je Wochentag über alle Zeilen (für das wiederverwendete Popup).
+  const weekdayAverages = {} as Record<IsoWeekday, number | null>;
+  for (const wd of ISO_WEEKDAYS) {
+    let sum = 0;
+    let n = 0;
+    for (const r of compRows) {
+      const v = r.cells[wd].value;
+      if (v !== null) {
+        sum += v;
+        n += 1;
+      }
+    }
+    weekdayAverages[wd] = n > 0 ? sum / n : null;
+  }
+
+  return { metric, rows: compRows, weekdayAverages };
 }

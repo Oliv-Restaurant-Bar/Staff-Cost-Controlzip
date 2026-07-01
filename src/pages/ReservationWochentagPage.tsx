@@ -44,6 +44,7 @@ import { MonthWeekdayDetailDialog } from '@/components/crm/MonthWeekdayDetailDia
 import {
   aggregateByWeekday, buildWeekdayHeadlines, buildMonthComparison,
   buildMonthComparisonInsights, comparisonCellSubLabel, buildMonthWeekdayDetail,
+  buildRangeWeekdayDetail, buildWeekdayComparison,
   buildPeriodInterpretation,
   presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey, rangeFromMonthKeys,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
@@ -60,6 +61,8 @@ import {
   type WeekdayHeadline, type WeekdayRank,
   type ComparisonRank, type ComparisonMonthRow, type ComparisonCell,
   type BernHolidaySelection, type HolidayPeriodSummary,
+  type ComparisonPeriod, type WeekdayComparisonRow, type WeekdayComparisonCell,
+  type WeekdayHeat,
 } from '@/lib/reservation-weekday-analytics';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
@@ -319,6 +322,8 @@ export default function ReservationWochentagPage() {
   const [focusWeekday, setFocusWeekday] = useState<IsoWeekday>(1);
   // Detail-Popup: geklickte Vergleichszelle (Monat × Wochentag) oder null.
   const [detailCell, setDetailCell] = useState<{ monthKey: string; weekday: IsoWeekday } | null>(null);
+  // Detail-Popup des Wochentagsvergleichs (Zeitraum-Index × Wochentag) oder null.
+  const [wcDetail, setWcDetail] = useState<{ periodIndex: number; weekday: IsoWeekday } | null>(null);
 
   // Saisons je Mandant aus localStorage (frei anpassbar).
   const [seasons, setSeasons] = useState<SeasonSettings>(DEFAULT_SEASON_SETTINGS);
@@ -435,6 +440,65 @@ export default function ReservationWochentagPage() {
   const detailColumnAverage = detailCell ? comparison.columns[detailCell.weekday].average : null;
   const openDetail = (cell: ComparisonCell) =>
     setDetailCell({ monthKey: cell.monthKey, weekday: cell.weekday });
+
+  // ── Wochentagsvergleich (Zeilen = Zeiträume, Zeilen-relative Heatmap) ──────────
+  // Zeiträume je Modus: Monats-Modus → ein Zeitraum je Monat (auf [from,to]
+  // geklemmt); Ferien-Modus → ein Zeitraum je Ferienperiode. Generisch: neue
+  // Saisons liefern einfach eine andere Perioden-Liste.
+  const weekdayComparisonPeriods = useMemo<ComparisonPeriod[]>(() => {
+    if (holidayMode) {
+      return holidayPeriods.map((p) => ({
+        key: `${p.kind}-${p.year}`,
+        label: `${p.label} ${p.year}`,
+        from: p.from,
+        to: p.to,
+      }));
+    }
+    // Monats-Modus: EINE Zeile je Monat im Bereich [startMonthKey, endMonthKey] —
+    // auch Monate OHNE Reservationen erscheinen (Null-Zeile), damit die Tabelle
+    // lückenlos „1 Zeile/Monat" bleibt (comparison.months würde leere Monate
+    // weglassen). Jeder Monat auf [from,to] geklemmt.
+    const keys: string[] = [];
+    if (
+      /^\d{4}-\d{2}$/.test(startMonthKey) &&
+      /^\d{4}-\d{2}$/.test(endMonthKey) &&
+      startMonthKey <= endMonthKey
+    ) {
+      let k = startMonthKey;
+      for (let i = 0; i < 240 && k <= endMonthKey; i++) {
+        keys.push(k);
+        k = shiftMonthKey(k, 1);
+      }
+    }
+    return keys.map((mk) => {
+      const r = monthRange(mk);
+      const pFrom = r.from && r.from > from ? r.from : from;
+      const pTo = r.to && r.to < to ? r.to : to;
+      return { key: mk, label: monthLongLabel(mk), from: pFrom, to: pTo };
+    });
+  }, [holidayMode, holidayPeriods, startMonthKey, endMonthKey, from, to]);
+
+  const weekdayComparison = useMemo(
+    () => buildWeekdayComparison(rows, weekdayComparisonPeriods, scope, metric),
+    [rows, weekdayComparisonPeriods, scope, metric],
+  );
+
+  // Detail-Popup des Wochentagsvergleichs: Aufschlüsselung + Spalten-Ø (über alle
+  // Zeiträume) der geklickten Zelle.
+  const wcDetailData = useMemo(() => {
+    if (!wcDetail) return null;
+    const row = weekdayComparison.rows[wcDetail.periodIndex];
+    if (!row) return null;
+    return buildRangeWeekdayDetail(rows, row.period.from, row.period.to, wcDetail.weekday, scope, {
+      monthKey: row.period.key,
+      label: row.period.label,
+    });
+  }, [wcDetail, weekdayComparison.rows, rows, scope]);
+  const wcDetailColumnAverage = wcDetail
+    ? weekdayComparison.weekdayAverages[wcDetail.weekday]
+    : null;
+  const openWcDetail = (periodIndex: number, weekday: IsoWeekday) =>
+    setWcDetail({ periodIndex, weekday });
 
   // Grösster Hauptwert (für die Mini-Balken-Skalierung).
   const maxHeadline = useMemo(
@@ -898,6 +962,16 @@ export default function ReservationWochentagPage() {
             </div>
           </section>
 
+          {/* ── Wochentagsvergleich (Heatmap je Zeile/Zeitraum) ────────────── */}
+          {weekdayComparison.rows.length > 0 && (
+            <WeekdayComparisonSection
+              comparison={weekdayComparison}
+              metric={metric}
+              scopeLabel={scopeLabel}
+              onSelect={openWcDetail}
+            />
+          )}
+
           {/* ── Automatische Interpretation des Zeitraums ──────────────────── */}
           <section>
             <SectionTitle icon={Lightbulb}>Interpretation</SectionTitle>
@@ -1131,6 +1205,16 @@ export default function ReservationWochentagPage() {
         detail={detail}
         metric={metric}
         columnAverage={detailColumnAverage}
+      />
+
+      <MonthWeekdayDetailDialog
+        open={wcDetail !== null}
+        onOpenChange={(o) => { if (!o) setWcDetail(null); }}
+        detail={wcDetailData}
+        metric={metric}
+        columnAverage={wcDetailColumnAverage}
+        columnAverageLabel={holidayMode ? 'über alle Ferienperioden' : 'über alle Monate'}
+        singleColumnLabel={holidayMode ? 'nur eine Ferienperiode' : 'nur ein Monat im Zeitraum'}
       />
     </div>
   );
@@ -1435,5 +1519,129 @@ function DayInput({ value, onChange }: { value: number; onChange: (d: number) =>
       onChange={(e) => onChange(Number(e.target.value))}
       className="w-16 rounded-md border border-input bg-background px-2 py-1 text-sm tabular-nums"
     />
+  );
+}
+
+// ── Wochentagsvergleich (Heatmap-Tabelle je Zeitraum) ─────────────────────────
+
+/**
+ * Hintergrundfarbe je Heatmap-Stufe (relativ zum ZEILEN-Durchschnitt).
+ * 5 Stufen: dunkelgrün (deutlich über) · hellgrün (über) · neutral (im Schnitt) ·
+ * orange (unter) · rot (deutlich unter). `none` = kein Wert.
+ */
+const HEAT_CELL_BG: Record<WeekdayHeat, string> = {
+  veryStrong: 'bg-emerald-200 text-emerald-950 dark:bg-emerald-900/60 dark:text-emerald-50',
+  aboveAverage: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100',
+  average: 'bg-muted/40 text-foreground',
+  belowAverage: 'bg-orange-100 text-orange-900 dark:bg-orange-950/40 dark:text-orange-100',
+  veryWeak: 'bg-red-100 text-red-900 dark:bg-red-950/40 dark:text-red-100',
+  none: 'text-muted-foreground',
+};
+
+/**
+ * „Wochentagsvergleich": eine Zeile je Zeitraum (Monat / Ferienperiode / künftig
+ * Saison), Spalten Mo–So mit dem Wert der gewählten Kennzahl, dazu drei Summen-
+ * Spalten. Die Heatmap jeder Zelle bezieht sich auf den DURCHSCHNITT IHRER ZEILE
+ * (nicht der Spalte). Zellen sind klickbar und öffnen dasselbe Detail-Popup wie
+ * die Monatsvergleichs-Matrix.
+ */
+function WeekdayComparisonSection({ comparison, metric, scopeLabel, onSelect }: {
+  comparison: WeekdayComparison;
+  metric: MetricKey;
+  scopeLabel: string;
+  onSelect: (periodIndex: number, weekday: IsoWeekday) => void;
+}) {
+  return (
+    <section>
+      <SectionTitle icon={CalendarRange}>Wochentagsvergleich</SectionTitle>
+      <p className="mb-1 text-xs text-muted-foreground">
+        Jede Zeile ist ein Zeitraum, jede Wochentagsspalte zeigt die gewählte Kennzahl;
+        klicke eine farbige Zelle für die Aufschlüsselung.
+      </p>
+      <p className="mb-1 text-xs text-muted-foreground">
+        Zeitraum: <span className="font-medium text-foreground">{scopeLabel}</span>.
+        {' '}Wochentagswerte ={' '}
+        <span className="font-medium text-foreground">{METRIC_LABEL[metric]}</span>{' '}
+        als Durchschnitt pro Wochentag.
+      </p>
+      <p className="mb-2 text-xs text-muted-foreground">
+        Die Farben vergleichen jeden Wochentag mit dem Durchschnitt <strong>seiner eigenen
+        Zeile</strong> (des Zeitraums): dunkelgrün = deutlich über, hellgrün = über,
+        neutral = im Schnitt, orange = unter, rot = deutlich unter dem Zeilendurchschnitt.
+      </p>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-2 py-2 text-left font-medium">Zeitraum</th>
+              {ISO_WEEKDAYS.map((wd) => (
+                <th key={wd} className="border-l border-border px-2 py-2 text-center font-medium">
+                  {WEEKDAY_SHORT[wd]}
+                </th>
+              ))}
+              <th className="border-l border-border px-2 py-2 text-right font-medium">Reservationen&nbsp;total</th>
+              <th className="border-l border-border px-2 py-2 text-right font-medium">Personen&nbsp;total</th>
+              <th className="border-l border-border px-2 py-2 text-right font-medium">Ø&nbsp;Personen&nbsp;pro&nbsp;Reservation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {comparison.rows.map((row, periodIndex) => (
+              <tr key={row.period.key} className="border-t border-border">
+                <td className="px-2 py-2 font-medium">{row.period.label}</td>
+                {ISO_WEEKDAYS.map((wd) => (
+                  <WeekdayHeatCell
+                    key={wd}
+                    cell={row.cells[wd]}
+                    periodLabel={row.period.label}
+                    onSelect={() => onSelect(periodIndex, wd)}
+                  />
+                ))}
+                <td className="border-l border-border px-2 py-2 text-right tabular-nums">
+                  {NUM0.format(row.totalReservations)}
+                </td>
+                <td className="border-l border-border px-2 py-2 text-right tabular-nums">
+                  {NUM0.format(row.totalPersons)}
+                </td>
+                <td className="border-l border-border px-2 py-2 text-right tabular-nums">
+                  {row.avgPersons !== null ? NUM1.format(row.avgPersons) : '–'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+/** Eine klickbare Wochentagszelle mit Heatmap-Farbe (relativ zur Zeile). */
+function WeekdayHeatCell({ cell, periodLabel, onSelect }: {
+  cell: WeekdayComparisonCell;
+  periodLabel: string;
+  onSelect: () => void;
+}) {
+  if (cell.value === null) {
+    return <td className={cn('border-l border-border px-2 py-2 text-center', HEAT_CELL_BG.none)}>–</td>;
+  }
+  return (
+    <td
+      className={cn(
+        'border-l border-border px-2 py-2 text-center tabular-nums cursor-pointer transition-colors hover:brightness-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/60',
+        HEAT_CELL_BG[cell.heat],
+      )}
+      role="button"
+      tabIndex={0}
+      title="Details anzeigen"
+      aria-label={`Details anzeigen: ${WEEKDAY_LABEL[cell.weekday]} in ${periodLabel}`}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      {NUM1.format(cell.value)}
+    </td>
   );
 }
