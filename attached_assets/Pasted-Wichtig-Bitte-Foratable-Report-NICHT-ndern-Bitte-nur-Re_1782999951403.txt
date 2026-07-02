@@ -1,0 +1,104 @@
+Wichtig: Bitte Foratable Report NICHT ändern.
+
+Bitte nur "Reservationen nach Wochentag" und "Monat IST vs. Vorjahr" vereinfachen und zu einer neuen zentralen Analyse-Seite zusammenlegen.
+
+"Foratable Report" bleibt unverändert:
+- Route nicht ändern
+- Menüpunkt nicht entfernen
+- UI nicht umbauen
+- PDF/Druck/Import-Funktionen nicht anfassen
+- bestehende Forecast-/Report-Logik nicht verändern
+
+Ziel:
+Eine neue übersichtliche Seite "Reservations Analyse" erstellen oder die bestehenden Analyse-Seiten zusammenführen, aber ohne Foratable Report zu verändern.
+
+Standard-Auswertung:
+- Standard soll Personen sein
+- Oben ein globaler Umschalter:
+  - Personen
+  - Reservationen
+- Der Umschalter steuert alle Auswertungen auf dieser Analyse-Seite:
+  - Monatsvergleich IST vs. Vorjahr
+  - Wochentagsanalyse
+  - Saison-/Zeitraumauswertung
+  - Detail-Popups
+
+Navigation:
+- Im Foratable-Menü soll ein klarer Punkt erscheinen:
+  - "Reservations Analyse"
+- Die alten Analyse-Menüpunkte "Reservationen nach Wochentag" und "Monat IST vs. Vorjahr" können entfernt, versteckt oder sauber auf die neue Seite weitergeleitet werden.
+- "Foratable Report" bleibt als eigener Menüpunkt bestehen.
+
+Neue Seite:
+- Titel: "Reservations Analyse"
+- Kurztext: "Personen, Reservationen und Vorjahrvergleiche auf einen Blick."
+- Zeitraum-Auswahl
+- Schnellbuttons:
+  - Aktueller Monat
+  - Letzter Monat
+  - Aktuelles Jahr
+  - Letztes Jahr
+  - Wintersaison Okt–Dez
+  - frei wählen
+
+KPI-Kacheln:
+Je nach aktivem Umschalter anzeigen:
+- Total IST
+- Total Vorjahr
+- Differenz absolut
+- Differenz %
+- Ø pro Reservation nur optional klein anzeigen
+
+Sektionen oder Tabs:
+- Monat IST vs. Vorjahr
+- Wochentag Analyse
+- Saison / Zeitraum
+
+Monat IST vs. Vorjahr:
+- Tabelle und Chart auf Personen oder Reservationen umstellen
+- Standard Personen
+- Monate ohne Daten mit 0 anzeigen
+- Vorjahr 0 sauber behandeln: "kein Vorjahr", keine falsche Prozentzahl
+- Klick auf Monat öffnet Detail/Popup mit Tagesliste und Wochentagsverteilung, ebenfalls nach aktivem Umschalter
+
+Wochentag Analyse:
+- Montag bis Sonntag übersichtlich darstellen
+- Nach aktivem Umschalter Personen/Reservationen auswerten
+- Vergleich mit Vorjahr, falls verfügbar
+- Klick auf Wochentag öffnet Detail-Popup mit Zusammensetzung
+
+Saison / Zeitraum:
+- frei wählbarer Zeitraum
+- Preset Wintersaison Okt–Dez
+- Vergleich gegen gleichen Zeitraum Vorjahr
+- Monatsaufschlüsselung und Wochentagsaufschlüsselung anzeigen
+
+Datenbasis:
+- bestehende reservation_records und bestehende Ladefunktionen verwenden
+- keine neue Datenbank-Tabelle
+- keine Migration
+- kein Import-Flow ändern
+- Rollen-/Tenant-Scope beibehalten
+
+Tests:
+Bitte Tests ergänzen/anpassen für:
+- Standard ist Personen
+- Umschalter Personen/Reservationen wirkt auf Monatsvergleich
+- Umschalter wirkt auf Wochentagsanalyse
+- Vorjahr 0
+- leere Monate/Tage
+- Saison Okt–Dez
+- bestehende Tests dürfen nicht brechen
+
+QA:
+- TypeScript Check
+- relevante Reservationen-/CRM-Tests
+- Runtime-Check
+- visuelle Kontrolle
+- Architect-/Code-Review
+
+Dokumentation:
+- replit.md kurz aktualisieren
+- alte doppelte Einträge zu Reservationen/Wochentag/Monatsvergleich zusammenfassen oder kürzen
+
+Bitte minimal-invasiv umsetzen und am Schluss eine Commit-Message schreiben.
