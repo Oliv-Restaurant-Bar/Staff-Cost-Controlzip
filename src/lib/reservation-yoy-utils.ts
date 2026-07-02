@@ -32,9 +32,12 @@
 
 import type { ReservationAggRow } from './reservation-dashboard';
 import {
+  ISO_WEEKDAYS,
+  isoWeekdayOf,
   monthKeyOf,
   shiftMonthKey,
   statusPredicate,
+  type IsoWeekday,
   type StatusScope,
 } from './reservation-weekday-analytics';
 
@@ -349,4 +352,94 @@ export function buildYoyDayComparison(args: BuildYoyDayComparisonArgs): YoyDayCo
     strongestDays: desc.slice(0, 3),
     weakestDays: asc.slice(0, 3),
   };
+}
+
+// ── Wochentagsvergleich (Mo–So, Ist vs. Vorjahr) ─────────────────────────────
+
+/** Eine Wochentags-Zeile im Ist-vs-Vorjahr-Vergleich. */
+export interface YoyWeekdayRow {
+  weekday: IsoWeekday;
+  reservations: YoyMetric;
+  persons: YoyMetric;
+}
+
+export interface YoyWeekdayComparison {
+  /** Immer 7 Zeilen, Montag (1) bis Sonntag (7). */
+  rows: YoyWeekdayRow[];
+  /** Hat der Vorjahres-Zeitraum überhaupt Zeilen (vor Status-Filter)? */
+  hasPriorData: boolean;
+}
+
+export interface BuildYoyWeekdayComparisonArgs {
+  currentRows: readonly ReservationAggRow[];
+  priorRows: readonly ReservationAggRow[];
+  /**
+   * Ist-Monate („yyyy-MM"), auf die der Vergleich eingegrenzt wird —
+   * EIN Monat (Drilldown) oder mehrere (Saison/Zeitraum). Verglichen wird
+   * je Wochentag mit denselben Monaten des Vorjahres.
+   */
+  monthKeys: readonly string[];
+  scope: StatusScope;
+}
+
+/**
+ * Summiert Reservationen/Personen je ISO-Wochentag (Mo=1..So=7) über die
+ * angegebenen Ist-Monate und stellt sie denselben Vorjahres-Monaten gegenüber.
+ *
+ * Hinweis (bewusste Näherung, im UI dokumentiert): Die Anzahl Vorkommen eines
+ * Wochentags kann zwischen Ist- und Vorjahres-Zeitraum abweichen (z. B. 5 vs.
+ * 4 Freitage im gleichen Monat) — verglichen werden absolute Summen.
+ * `hasPriorData` gilt auf Zeitraum-Ebene (wie beim Monatsvergleich): hat der
+ * Vorjahres-Zeitraum GAR keine Zeilen, sind alle Vorjahreswerte null/neutral.
+ */
+export function buildYoyWeekdayComparison(
+  args: BuildYoyWeekdayComparisonArgs,
+): YoyWeekdayComparison {
+  const pred = statusPredicate(args.scope);
+  const currentMonths = new Set(args.monthKeys);
+  const priorMonths = new Set(args.monthKeys.map(priorYearMonthKey));
+
+  const curByWd = new Map<IsoWeekday, Bucket>();
+  const priorByWd = new Map<IsoWeekday, Bucket>();
+  let priorRawRows = 0;
+
+  const add = (
+    map: Map<IsoWeekday, Bucket>,
+    row: ReservationAggRow,
+  ): void => {
+    const wd = isoWeekdayOf(row.date);
+    if (wd === null) return;
+    let bucket = map.get(wd);
+    if (!bucket) {
+      bucket = emptyBucket();
+      map.set(wd, bucket);
+    }
+    bucket.rawRows += 1;
+    if (!pred(row.status)) return;
+    bucket.reservations += 1;
+    bucket.persons += row.partySize ?? 0;
+  };
+
+  for (const row of args.currentRows) {
+    if (!currentMonths.has(monthKeyOf(row.date))) continue;
+    add(curByWd, row);
+  }
+  for (const row of args.priorRows) {
+    if (!priorMonths.has(monthKeyOf(row.date))) continue;
+    priorRawRows += 1;
+    add(priorByWd, row);
+  }
+
+  const hasPriorData = priorRawRows > 0;
+  const rows: YoyWeekdayRow[] = ISO_WEEKDAYS.map((weekday) => {
+    const cur = curByWd.get(weekday) ?? emptyBucket();
+    const prior = priorByWd.get(weekday) ?? emptyBucket();
+    return {
+      weekday,
+      reservations: makeYoyMetric(cur.reservations, prior.reservations, hasPriorData),
+      persons: makeYoyMetric(cur.persons, prior.persons, hasPriorData),
+    };
+  });
+
+  return { rows, hasPriorData };
 }

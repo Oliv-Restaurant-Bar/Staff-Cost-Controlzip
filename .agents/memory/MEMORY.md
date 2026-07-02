@@ -30,3 +30,4 @@
 - [Scope-diff save & orphans](scope-diff-save-orphans.md) — RLS-safe save = load→update→insert→delete per tenant+scope (no PK upsert); re-submit hidden rows verbatim & don't rewrite caller sort_order or orphans mutate.
 - [Tenant-safe upsert under RLS](tenant-safe-upsert-rls.md) — authenticated-wide RLS isolates tenants only in TS; scope UPDATE by id AND restaurant_id, treat 0-rows as failure.
 - [Employee skill columns persistence](employee-skill-columns-persistence.md) — station keys written separately from employeeToDb w/ presence guard (`'field' in emp`), never `?? null` (clobber class).
+- [replit.md editing pitfalls](replit-md-editing.md) — never inline German bullets in bash-heredoc Python (quote mixups kill the string); write temp file via write tool, then splice.

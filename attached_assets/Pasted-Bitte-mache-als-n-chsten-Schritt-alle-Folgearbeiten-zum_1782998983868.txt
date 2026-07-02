@@ -1,0 +1,82 @@
+Bitte mache als nächsten Schritt alle Folgearbeiten zum Reservationen-Monatsvergleich "IST vs. Vorjahr":
+
+1. Visuelle Prüfung und UI-Feinschliff
+- Öffne /gaeste/vorjahr.
+- Prüfe Layout, Abstände, mobile/desktop Darstellung, Tabellenbreite und leere Zustände.
+- Falls nötig, kleine UI-Korrekturen minimal-invasiv umsetzen.
+- Keine Logik ändern, ausser es fällt ein echter Fehler auf.
+
+2. Monats-Drilldown erweitern
+- Beim Klick auf einen Monat soll ein Popup/Detailbereich erscheinen oder erweitert werden.
+- Das Detail soll zeigen:
+  - Monatsname und Vergleichsjahr
+  - Reservationen IST
+  - Reservationen Vorjahr
+  - Differenz absolut
+  - Differenz in %
+  - Personen IST
+  - Personen Vorjahr
+  - Tagesliste innerhalb des Monats
+  - stärkster Tag
+  - schwächster Tag
+  - Wochentagsverteilung Montag bis Sonntag
+- Monate ohne Daten weiterhin sauber mit 0 anzeigen.
+- Bei Vorjahr 0 keine falsche Prozentrechnung anzeigen, sondern "kein Vorjahr" oder neutral.
+
+3. Saisonvergleich ergänzen
+- Ergänze eine Saison-/Zeitraum-Auswertung für frei wählbare Monate.
+- Standard-Preset: Wintersaison Oktober bis Dezember.
+- Zusätzlich soll man Von-Monat und Bis-Monat wählen können.
+- Vergleich immer gegen denselben Zeitraum im Vorjahr.
+- Anzeige:
+  - Total Reservationen IST
+  - Total Reservationen Vorjahr
+  - Differenz absolut
+  - Differenz %
+  - Total Personen IST
+  - Total Personen Vorjahr
+  - Monatsaufschlüsselung innerhalb der Saison
+  - Wochentagsaufschlüsselung innerhalb der Saison
+- Keine neue Datenbank-Tabelle und keine Migration.
+- Bestehende mandantengefilterte reservation_records-Datenbasis verwenden.
+
+4. Rollen und Sicherheit
+- Bestehenden Rollen-Scope beibehalten.
+- Admin sieht alles wie bisher.
+- Keine neuen Cross-Tenant- oder Cross-Role-Leaks einbauen.
+
+5. Tests
+- Bestehende Tests nicht brechen.
+- Ergänze oder erweitere Unit-Tests für:
+  - Monats-Drilldown
+  - stärkster/schwächster Tag
+  - Wochentagsverteilung
+  - Saison Oktober bis Dezember
+  - frei gewählter Zeitraum
+  - Vorjahr 0
+  - Monate/Tage ohne Daten
+- Danach ausführen:
+  - TypeScript Check
+  - relevante Reservationen-Tests
+  - wenn möglich kompletter Testlauf
+
+6. Runtime und visuelle Kontrolle
+- App starten oder prüfen, ob sie läuft.
+- /gaeste/vorjahr visuell kontrollieren.
+- Keine Console-Fehler.
+- Falls Screenshot-Tool verfügbar ist, Screenshot machen.
+
+7. replit.md aufräumen
+- Bitte replit.md nicht weiter aufblasen.
+- Stattdessen:
+  - veraltete oder doppelte Reservationen-/CRM-Notizen zusammenfassen
+  - den neuen Stand kurz und sauber dokumentieren
+  - alte redundante Einträge entfernen oder stark kürzen
+- Ziel: replit.md soll schlanker und besser wartbar werden.
+
+Wichtig:
+- Minimal-invasiv arbeiten.
+- Keine Migration.
+- Keine neue Tabelle.
+- Keine Änderung an bestehenden Import-Flows.
+- Am Schluss bitte Commit-Message schreiben und Architect-/Code-Review ausführen.

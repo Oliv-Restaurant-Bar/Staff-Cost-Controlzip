@@ -12,6 +12,7 @@ import {
   makeYoyMetric,
   buildYoyComparison,
   buildYoyDayComparison,
+  buildYoyWeekdayComparison,
 } from '../reservation-yoy-utils';
 
 /** Kurzhelfer: eine Reservationszeile. */
@@ -309,5 +310,155 @@ describe('buildYoyDayComparison', () => {
     });
     expect(day.days[2].reservations.current).toBe(1);
     expect(day.days[2].reservations.prior).toBe(1);
+  });
+});
+
+describe('buildYoyWeekdayComparison', () => {
+  // Fixe Wochentage: 2025-10-06 = Montag, 2025-10-10 = Freitag,
+  // 2025-10-12 = Sonntag; 2024-10-07 = Montag, 2024-10-11 = Freitag.
+  it('summiert je ISO-Wochentag und paart mit dem Vorjahr', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [
+        row('2025-10-06', 2), // Mo
+        row('2025-10-10', 4), // Fr
+        row('2025-10-10', 3), // Fr (2. Reservation)
+        row('2025-10-12', 6), // So
+      ],
+      priorRows: [
+        row('2024-10-07', 2), // Mo
+        row('2024-10-11', 5), // Fr
+      ],
+      monthKeys: ['2025-10'],
+      scope: 'booked',
+    });
+    expect(wk.rows).toHaveLength(7);
+    expect(wk.hasPriorData).toBe(true);
+
+    const mo = wk.rows[0];
+    expect(mo.weekday).toBe(1);
+    expect(mo.reservations).toEqual({ current: 1, prior: 1, diff: 0, diffPct: 0, trend: 'neutral' });
+
+    const fr = wk.rows[4];
+    expect(fr.weekday).toBe(5);
+    expect(fr.reservations.current).toBe(2);
+    expect(fr.reservations.prior).toBe(1);
+    expect(fr.reservations.diff).toBe(1);
+    expect(fr.persons.current).toBe(7);
+    expect(fr.persons.prior).toBe(5);
+
+    const so = wk.rows[6];
+    expect(so.weekday).toBe(7);
+    expect(so.reservations.current).toBe(1);
+    // Vorjahr hat Daten, aber am Sonntag 0 → diff bekannt, diffPct null.
+    expect(so.reservations.prior).toBe(0);
+    expect(so.reservations.diff).toBe(1);
+    expect(so.reservations.diffPct).toBeNull();
+    expect(so.reservations.trend).toBe('up');
+  });
+
+  it('Saison Okt–Dez: summiert über mehrere Monate', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [
+        row('2025-10-06', 2), // Mo Okt
+        row('2025-11-03', 3), // Mo Nov
+        row('2025-12-01', 4), // Mo Dez
+      ],
+      priorRows: [
+        row('2024-10-07', 2), // Mo Okt VJ
+        row('2024-12-02', 2), // Mo Dez VJ
+      ],
+      monthKeys: ['2025-10', '2025-11', '2025-12'],
+      scope: 'booked',
+    });
+    const mo = wk.rows[0];
+    expect(mo.reservations.current).toBe(3);
+    expect(mo.reservations.prior).toBe(2);
+    expect(mo.persons.current).toBe(9);
+    expect(mo.persons.prior).toBe(4);
+  });
+
+  it('Zeilen ausserhalb der gewählten Monate werden ignoriert (Ist UND Vorjahr)', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [row('2025-10-06', 2), row('2025-09-01', 9)], // Sep ausserhalb
+      priorRows: [row('2024-10-07', 2), row('2024-11-04', 9)], // Nov-VJ ausserhalb
+      monthKeys: ['2025-10'],
+      scope: 'booked',
+    });
+    const mo = wk.rows[0];
+    expect(mo.reservations.current).toBe(1);
+    expect(mo.reservations.prior).toBe(1);
+    expect(mo.persons.current).toBe(2);
+    expect(mo.persons.prior).toBe(2);
+  });
+
+  it('kein Vorjahr: hasPriorData false, prior/diff/diffPct null, Trend neutral', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [row('2025-10-06', 2)],
+      priorRows: [],
+      monthKeys: ['2025-10'],
+      scope: 'booked',
+    });
+    expect(wk.hasPriorData).toBe(false);
+    const mo = wk.rows[0];
+    expect(mo.reservations.current).toBe(1);
+    expect(mo.reservations.prior).toBeNull();
+    expect(mo.reservations.diff).toBeNull();
+    expect(mo.reservations.diffPct).toBeNull();
+    expect(mo.reservations.trend).toBe('neutral');
+  });
+
+  it('hasPriorData zählt rohe Zeilen VOR dem Status-Filter', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [row('2025-10-06', 2)],
+      priorRows: [row('2024-10-07', 2, 'cancelled')], // im booked-Scope gefiltert
+      monthKeys: ['2025-10'],
+      scope: 'booked',
+    });
+    expect(wk.hasPriorData).toBe(true);
+    const mo = wk.rows[0];
+    expect(mo.reservations.prior).toBe(0); // gefiltert, aber bekannt
+    expect(mo.reservations.diff).toBe(1);
+  });
+
+  it('Status-Scope filtert Ist und Vorjahr; "all" zählt alles', () => {
+    const cur = [row('2025-10-06', 2, 'confirmed'), row('2025-10-06', 3, 'cancelled')];
+    const prior = [row('2024-10-07', 2, 'cancelled')];
+    const booked = buildYoyWeekdayComparison({
+      currentRows: cur, priorRows: prior, monthKeys: ['2025-10'], scope: 'booked',
+    });
+    expect(booked.rows[0].reservations.current).toBe(1);
+    expect(booked.rows[0].reservations.prior).toBe(0);
+    const all = buildYoyWeekdayComparison({
+      currentRows: cur, priorRows: prior, monthKeys: ['2025-10'], scope: 'all',
+    });
+    expect(all.rows[0].reservations.current).toBe(2);
+    expect(all.rows[0].reservations.prior).toBe(1);
+    expect(all.rows[0].persons.current).toBe(5);
+  });
+
+  it('leere Eingaben: 7 Zeilen, alles 0/unbekannt', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [], priorRows: [], monthKeys: ['2025-10'], scope: 'booked',
+    });
+    expect(wk.rows).toHaveLength(7);
+    expect(wk.hasPriorData).toBe(false);
+    for (const r of wk.rows) {
+      expect(r.reservations.current).toBe(0);
+      expect(r.reservations.prior).toBeNull();
+      expect(r.persons.current).toBe(0);
+    }
+  });
+
+  it('partySize null zählt als 0 Personen, aber als 1 Reservation', () => {
+    const wk = buildYoyWeekdayComparison({
+      currentRows: [row('2025-10-06', null)],
+      priorRows: [row('2024-10-07', 4)],
+      monthKeys: ['2025-10'],
+      scope: 'booked',
+    });
+    const mo = wk.rows[0];
+    expect(mo.reservations.current).toBe(1);
+    expect(mo.persons.current).toBe(0);
+    expect(mo.persons.prior).toBe(4);
   });
 });

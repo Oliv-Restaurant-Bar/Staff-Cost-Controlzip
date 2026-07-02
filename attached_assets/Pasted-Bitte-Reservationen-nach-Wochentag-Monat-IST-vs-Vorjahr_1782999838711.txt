@@ -1,0 +1,130 @@
+Bitte Reservationen nach Wochentag, Monat IST vs. Vorjahr und Foratable Forecast zu einer einzigen, einfachen Seite zusammenlegen.
+
+Ziel:
+Die bisherigen separaten Seiten/Ansichten sollen übersichtlicher werden. Statt mehreren Menüpunkten soll es eine zentrale Analyse-Seite geben:
+"Foratable Analyse" oder "Reservations Analyse".
+
+Wichtig:
+Standard-Auswertung soll nach PERSONEN sein.
+Es soll oben einen Umschalter geben:
+- Personen
+- Reservationen
+
+Dieser Umschalter muss für alle Auswertungen auf der Seite gelten:
+- Monatsvergleich IST vs. Vorjahr
+- Wochentagsanalyse
+- Forecast Foratable
+- Saison-/Zeitraumauswertung
+- Detail-Popups
+
+Wenn "Personen" aktiv ist, zeigen alle Karten, Tabellen und Charts Personenwerte.
+Wenn "Reservationen" aktiv ist, zeigen alle Karten, Tabellen und Charts Reservationswerte.
+
+Anforderungen:
+
+1. Navigation vereinfachen
+- Die Menüpunkte "Reservationen nach Wochentag", "Monat Ist vs. Vorjahr" und "Foratable Report/Forecast" sollen in einer zentralen Seite zusammengeführt werden.
+- Im Menü nur noch ein klarer Punkt, z. B. "Foratable Analyse" oder "Reservations Analyse".
+- Bestehende Routen möglichst erhalten oder sauber weiterleiten, damit nichts kaputtgeht.
+
+2. Neue zentrale Seite
+Oben:
+- Titel: "Reservations Analyse"
+- Kurztext: "Reservationen, Personen, Vorjahrvergleich und Forecast auf einen Blick."
+- Restaurant-Auswahl wie bisher, falls vorhanden
+- Zeitraum-Auswahl
+- Schnellbuttons:
+  - Aktueller Monat
+  - Letzter Monat
+  - Aktuelles Jahr
+  - Letztes Jahr
+  - Wintersaison Okt–Dez
+  - frei wählen
+
+3. Globaler Umschalter
+Direkt oben sichtbar:
+- Anzeigen als: Personen | Reservationen
+- Standard: Personen
+- Dieser Wert steuert alle Auswertungen auf der Seite.
+- Keine doppelte Logik pro Card; wenn möglich zentrale Helper/Funktion verwenden.
+
+4. KPI-Kacheln oben
+Je nach Umschalter anzeigen:
+- Total IST
+- Total Vorjahr
+- Differenz absolut
+- Differenz %
+- Forecast
+- Forecast-Abweichung vs. IST
+- Ø pro Reservation nur anzeigen, wenn sinnvoll; sonst weglassen oder kleiner darstellen.
+
+5. Tabs oder klare Sektionen
+Die Seite soll übersichtlich bleiben, z. B. mit Tabs:
+- Monat IST vs. Vorjahr
+- Wochentag Analyse
+- Forecast vs. IST
+- Saison / Zeitraum
+
+6. Monat IST vs. Vorjahr
+- Tabelle und Chart auf Personen oder Reservationen umstellen.
+- Standard Personen.
+- Monate ohne Daten mit 0 anzeigen.
+- Vorjahr 0 sauber behandeln: "kein Vorjahr", keine falsche Prozentzahl.
+- Klick auf Monat öffnet Detail/Popup mit Tagesliste und Wochentagsverteilung, ebenfalls nach aktivem Umschalter.
+
+7. Wochentag Analyse
+- Wochentage Montag bis Sonntag übersichtlich darstellen.
+- Nach aktivem Umschalter Personen/Reservationen auswerten.
+- Vergleich mit Vorjahr, falls verfügbar.
+- Klick auf Wochentag öffnet Detail-Popup mit Zusammensetzung.
+
+8. Forecast Foratable
+- Forecast in dieselbe Seite integrieren.
+- Forecast-Werte ebenfalls nach Personen oder Reservationen anzeigen.
+- Wenn Forecast aktuell nur Reservationen kann, bitte sauber prüfen und entweder Personen-Forecast ableiten oder klar dokumentieren.
+- Forecast vs. IST als einfache Grafik oder Tabelle anzeigen.
+
+9. UI vereinfachen
+- Weniger einzelne Detailkarten.
+- Keine überladene Ansicht.
+- Wichtigste Zahlen oben, Details darunter.
+- Tabellen kompakt halten.
+- Beschriftungen gastronomisch verständlich:
+  - "Personen"
+  - "Reservationen"
+  - "Vorjahr"
+  - "Differenz"
+  - "Forecast"
+- Mobile und Desktop prüfen.
+
+10. Datenbasis
+- Bestehende reservation_records und bestehende Ladefunktionen verwenden.
+- Keine neue Datenbank-Tabelle.
+- Keine Migration.
+- Keine Änderung am Import-Flow.
+- Rollen-/Tenant-Scope beibehalten.
+
+11. Tests
+Bitte Tests ergänzen/anpassen für:
+- Standard ist Personen
+- Umschalter Personen/Reservationen wirkt auf Monatsvergleich
+- Umschalter wirkt auf Wochentagsanalyse
+- Umschalter wirkt auf Forecast
+- Vorjahr 0
+- leere Monate/Tage
+- Saison Okt–Dez
+- bestehende Tests dürfen nicht brechen
+
+12. QA
+Bitte ausführen:
+- TypeScript Check
+- relevante Reservationen-/Foratable-Tests
+- Runtime-Check
+- visuelle Kontrolle der neuen zentralen Seite
+- Architect-/Code-Review
+
+13. Dokumentation
+replit.md kurz und sauber aktualisieren.
+Bitte nicht weiter aufblasen, sondern alte doppelte Einträge zu Reservationen/Wochentag/Monatsvergleich/Forecast zusammenfassen oder kürzen.
+
+Bitte minimal-invasiv umsetzen und am Schluss eine Commit-Message schreiben.

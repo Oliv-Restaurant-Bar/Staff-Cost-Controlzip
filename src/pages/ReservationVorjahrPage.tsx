@@ -35,11 +35,13 @@ import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import {
   monthLabel, monthLongLabel, rangeFromMonthKeys,
-  STATUS_SCOPE_LABEL, type StatusScope,
+  STATUS_SCOPE_LABEL, WEEKDAY_LABEL, type StatusScope,
 } from '@/lib/reservation-weekday-analytics';
 import {
   monthKeysInRange, priorYearMonthKey, buildYoyComparison, buildYoyDayComparison,
+  buildYoyWeekdayComparison,
   type YoyMetric, type YoyMonthRow, type YoyTrend, type YoyDayMetricKey,
+  type YoyWeekdayComparison,
 } from '@/lib/reservation-yoy-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -197,6 +199,9 @@ export default function ReservationVorjahrPage() {
       fetchReservationsInRange(tenantId, priorRange.from, priorRange.to),
     ]).then(([cur, prior]) => {
       if (alive) { setCurrentRows(cur); setPriorRows(prior); setLoading(false); }
+    }).catch((err) => {
+      console.error('[YoY] Laden der Reservationsdaten fehlgeschlagen:', err);
+      if (alive) { setCurrentRows([]); setPriorRows([]); setLoading(false); }
     });
     return () => { alive = false; };
   }, [tenantId, isAdmin, isGuest, tablesOk, currentRange, priorRange]);
@@ -220,6 +225,20 @@ export default function ReservationVorjahrPage() {
   const detailRow = useMemo(
     () => comparison.months.find((m) => m.monthKey === detailMonthKey) ?? null,
     [comparison, detailMonthKey],
+  );
+
+  // Wochentagsverteilung: gesamter Zeitraum (Saison) + geklickter Monat (Popup).
+  const rangeWeekdays = useMemo(
+    () => buildYoyWeekdayComparison({ currentRows, priorRows, monthKeys, scope }),
+    [currentRows, priorRows, monthKeys, scope],
+  );
+  const detailWeekdays = useMemo(
+    () => (detailMonthKey
+      ? buildYoyWeekdayComparison({
+        currentRows, priorRows, monthKeys: [detailMonthKey], scope,
+      })
+      : null),
+    [detailMonthKey, currentRows, priorRows, scope],
   );
 
   const { totals } = comparison;
@@ -421,6 +440,28 @@ export default function ReservationVorjahrPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Wochentagsverteilung im Zeitraum (Saison) */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                Wochentagsverteilung im Zeitraum
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {monthLabel(`${year}-${pad2(fromMonth)}`)}
+                  {fromMonth !== toMonth ? `–${monthLabel(`${year}-${pad2(toMonth)}`)}` : ''}
+                  {' '}vs. Vorjahr
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 p-3 pt-0">
+              <WeekdayYoyTable comparison={rangeWeekdays} />
+              <p className="text-[11px] text-muted-foreground">
+                Hinweis: Die Anzahl Vorkommen eines Wochentags kann zwischen den
+                Jahren abweichen (z.&nbsp;B. 5 statt 4 Freitage im gleichen Monat)
+                — verglichen werden absolute Summen.
+              </p>
+            </CardContent>
+          </Card>
         </>
       )}
 
@@ -448,15 +489,17 @@ export default function ReservationVorjahrPage() {
 
               {/* Monats-Zusammenfassung im Popup */}
               {detailRow ? (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   <KpiTile label="Res. Ist" value={NUM0.format(detailRow.reservations.current)} />
+                  <KpiTile label="Res. Vorjahr" value={fmtPrior(detailRow.reservations.prior)} />
                   <KpiTile
-                    label="Res. vs. VJ" value={fmtDiff(detailRow.reservations.diff)}
+                    label="Res. Differenz" value={fmtDiff(detailRow.reservations.diff)}
                     trend={detailRow.reservations.trend} sub={fmtPct(detailRow.reservations.diffPct)}
                   />
                   <KpiTile label="Pers. Ist" value={NUM0.format(detailRow.persons.current)} />
+                  <KpiTile label="Pers. Vorjahr" value={fmtPrior(detailRow.persons.prior)} />
                   <KpiTile
-                    label="Pers. vs. VJ" value={fmtDiff(detailRow.persons.diff)}
+                    label="Pers. Differenz" value={fmtDiff(detailRow.persons.diff)}
                     trend={detailRow.persons.trend} sub={fmtPct(detailRow.persons.diffPct)}
                   />
                 </div>
@@ -490,6 +533,16 @@ export default function ReservationVorjahrPage() {
                   tone="down"
                 />
               </div>
+
+              {/* Wochentagsverteilung im Monat */}
+              {detailWeekdays ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                    Wochentagsverteilung (Mo–So)
+                  </div>
+                  <WeekdayYoyTable comparison={detailWeekdays} compact />
+                </div>
+              ) : null}
 
               {/* Tages-Tabelle */}
               <div className="overflow-x-auto rounded-md border">
@@ -591,6 +644,63 @@ function MonthTableRow({ row, onClick }: { row: YoyMonthRow; onClick: () => void
       <MetricCells metric={row.reservations} />
       <MetricCells metric={row.persons} leftBorder padRight />
     </tr>
+  );
+}
+
+/** Wochentagsvergleich Mo–So (Ist vs. Vorjahr) — Zeitraum-Card UND Popup. */
+function WeekdayYoyTable({ comparison, compact }: {
+  comparison: YoyWeekdayComparison;
+  compact?: boolean;
+}) {
+  const pad = compact ? 'py-1' : 'py-1.5';
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <th className={cn('px-2 text-left font-medium', pad)}>Wochentag</th>
+            <th className={cn('px-2 text-right font-medium', pad)}>Res. Ist</th>
+            <th className={cn('px-2 text-right font-medium', pad)}>Res. VJ</th>
+            <th className={cn('px-2 text-right font-medium', pad)}>Diff.</th>
+            <th className={cn('px-2 text-right font-medium', pad)}>Diff. %</th>
+            <th className={cn('border-l px-2 text-right font-medium', pad)}>Pers. Ist</th>
+            <th className={cn('px-2 text-right font-medium', pad)}>Pers. VJ</th>
+            <th className={cn('px-2 text-right font-medium', pad)}>Diff.</th>
+          </tr>
+        </thead>
+        <tbody>
+          {comparison.rows.map((r) => {
+            const empty = r.reservations.current === 0 && (r.reservations.prior ?? 0) === 0;
+            return (
+              <tr key={r.weekday} className={cn('border-b last:border-0', empty && 'text-muted-foreground/60')}>
+                <td className={cn('px-2 font-medium', pad)}>{WEEKDAY_LABEL[r.weekday]}</td>
+                <td className={cn('px-2 text-right tabular-nums', pad)}>
+                  {NUM0.format(r.reservations.current)}
+                </td>
+                <td className={cn('px-2 text-right tabular-nums text-muted-foreground', pad)}>
+                  {fmtPrior(r.reservations.prior)}
+                </td>
+                <td className={cn('px-2 text-right tabular-nums', pad, TREND_TEXT[r.reservations.trend])}>
+                  {fmtDiff(r.reservations.diff)}
+                </td>
+                <td className={cn('px-2 text-right tabular-nums', pad, TREND_TEXT[r.reservations.trend])}>
+                  {fmtPct(r.reservations.diffPct)}
+                </td>
+                <td className={cn('border-l px-2 text-right tabular-nums', pad)}>
+                  {NUM0.format(r.persons.current)}
+                </td>
+                <td className={cn('px-2 text-right tabular-nums text-muted-foreground', pad)}>
+                  {fmtPrior(r.persons.prior)}
+                </td>
+                <td className={cn('px-2 text-right tabular-nums', pad, TREND_TEXT[r.persons.trend])}>
+                  {fmtDiff(r.persons.diff)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
