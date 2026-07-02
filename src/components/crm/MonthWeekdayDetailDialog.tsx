@@ -21,11 +21,13 @@ import {
 } from '@/components/ui/dialog';
 import {
   WEEKDAY_LABEL,
+  WEEKDAY_SHORT,
   monthLongLabel,
   formatIsoDateDe,
   buildDetailFormula,
   buildDetailInsights,
   buildDetailComparison,
+  detailDayExtremes,
   headlineUnit,
   type MonthWeekdayDetail,
   type MetricKey,
@@ -36,6 +38,16 @@ const NUM1 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 1, maximumF
 
 function num1(n: number | null): string {
   return n === null ? '—' : NUM1.format(n);
+}
+
+/** Kleine Kennzahl-Kachel der Übersicht (Label oben, Wert gross darunter). */
+function OverviewTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-base font-semibold tabular-nums">{value}</p>
+    </div>
+  );
 }
 
 /** Modusabhängiger Untertitel („Ø … pro <Wochentag>"). */
@@ -133,6 +145,32 @@ function DetailBody({
   const insights = buildDetailInsights(detail, metric, columnAverage);
   const cmp = buildDetailComparison(detail, metric, columnAverage);
   const unit = headlineUnit(detail.weekday, metric);
+  const extremes = detailDayExtremes(detail.days, metric);
+  const strongest = new Set(extremes.strongestDates);
+  const weakest = new Set(extremes.weakestDates);
+  const hasDays = detail.days.length > 0;
+
+  // Leerzustand: der Wochentag kommt im gewählten Zeitraum gar nicht vor
+  // (z. B. sehr kurzer Zeitraum) — verständliche Meldung statt leerer Tabelle.
+  if (!hasDays) {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>
+            Details: {wdLabel} im {month}
+          </DialogTitle>
+          <DialogDescription>
+            {detailSubtitle(detail, metric)}
+            {detail.rangeLabel ? ` · Zeitraum: ${detail.rangeLabel}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm text-muted-foreground">
+          Für diesen Zeitraum sind keine Daten vorhanden — {wdLabel} kommt im
+          gewählten Zeitraum nicht vor.
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -147,6 +185,17 @@ function DetailBody({
       </DialogHeader>
 
       <div className="space-y-4">
+        {/* 0) Übersicht: die 5 Kern-Kennzahlen dieser Zelle auf einen Blick */}
+        <section className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <OverviewTile label="Reservationen" value={NUM0.format(detail.reservations)} />
+          <OverviewTile label="Personen total" value={NUM0.format(detail.persons)} />
+          <OverviewTile label="Ø Pers./Reservation" value={num1(detail.avgPersonsPerReservation)} />
+          <OverviewTile
+            label="Betroffene Tage"
+            value={`${NUM0.format(detail.occurrences)} ${WEEKDAY_SHORT[detail.weekday]}.`}
+          />
+          <OverviewTile label="Ø Res. pro Tag" value={num1(detail.avgReservationsPerDay)} />
+        </section>
         {/* 1) Kennzahl-Zusammensetzung */}
         <section className="rounded-lg border border-border bg-muted/30 p-3">
           <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -178,24 +227,55 @@ function DetailBody({
               <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2 text-left">Datum</th>
+                  <th className="px-2 py-2 text-left">Tag</th>
                   <th className="px-2 py-2 text-right">Res.</th>
                   <th className="px-2 py-2 text-right">Pers.</th>
                   <th className="px-3 py-2 text-right">Ø Pers/Res</th>
                 </tr>
               </thead>
               <tbody>
-                {detail.days.map((d) => (
-                  <tr key={d.date} className="border-t border-border">
-                    <td className="whitespace-nowrap px-3 py-1.5 text-left">{formatIsoDateDe(d.date)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(d.reservations)}</td>
-                    <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(d.persons)}</td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">{num1(d.avgPersonsPerReservation)}</td>
-                  </tr>
-                ))}
+                {detail.days.map((d) => {
+                  const isStrong = strongest.has(d.date);
+                  const isWeak = weakest.has(d.date);
+                  return (
+                    <tr
+                      key={d.date}
+                      className={
+                        isStrong
+                          ? 'border-t border-border bg-emerald-50 dark:bg-emerald-950/30'
+                          : isWeak
+                            ? 'border-t border-border bg-red-50 dark:bg-red-950/30'
+                            : 'border-t border-border'
+                      }
+                    >
+                      <td className="whitespace-nowrap px-3 py-1.5 text-left">
+                        <span className="inline-flex items-center gap-1.5">
+                          {formatIsoDateDe(d.date)}
+                          {isStrong && (
+                            <span className="rounded bg-emerald-100 px-1 py-px text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300">
+                              stärkster Tag
+                            </span>
+                          )}
+                          {isWeak && (
+                            <span className="rounded bg-red-100 px-1 py-px text-[10px] font-medium text-red-700 dark:bg-red-900/60 dark:text-red-300">
+                              schwächster Tag
+                            </span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 text-left text-muted-foreground">
+                        {WEEKDAY_SHORT[detail.weekday]}
+                      </td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(d.reservations)}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(d.persons)}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">{num1(d.avgPersonsPerReservation)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
                 <tr className="border-t border-border bg-muted/40 font-medium">
-                  <td className="px-3 py-1.5 text-left">Total</td>
+                  <td className="px-3 py-1.5 text-left" colSpan={2}>Total</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(detail.reservations)}</td>
                   <td className="px-2 py-1.5 text-right tabular-nums">{NUM0.format(detail.persons)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">
@@ -205,6 +285,11 @@ function DetailBody({
               </tfoot>
             </table>
           </div>
+          {detail.reservations === 0 && (
+            <p className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              An diesen Tagen sind keine Reservationen vorhanden.
+            </p>
+          )}
         </section>
 
         {/* 3) Automatische Hinweise */}

@@ -55,6 +55,7 @@ import {
   buildDetailFormula,
   buildDetailComparison,
   buildDetailInsights,
+  detailDayExtremes,
   formatIsoDateDe,
   isoWeekdayOf,
   isoWeeksInYear,
@@ -1856,6 +1857,78 @@ describe('exampleSeasonDefinitions', () => {
     const pairs = overlaps.map((o) => [o.a, o.b].sort().join('+'));
     expect(pairs).toContain('sommerferien-2026+terrassen-2026');
     expect(pairs).toContain('weihnachten-2026+winter-2026');
+  });
+});
+
+describe('detailDayExtremes', () => {
+  const day = (date: string, reservations: number, persons: number) => ({
+    date,
+    reservations,
+    persons,
+    avgPersonsPerReservation: reservations > 0 ? persons / reservations : null,
+  });
+
+  it('markiert stärkste und schwächste Tage nach Reservationen', () => {
+    const days = [day('2026-01-05', 3, 9), day('2026-01-12', 8, 20), day('2026-01-19', 1, 2)];
+    const r = detailDayExtremes(days, 'reservations');
+    expect(r.strongestDates).toEqual(['2026-01-12']);
+    expect(r.weakestDates).toEqual(['2026-01-19']);
+  });
+
+  it('nutzt die Personen-Kennzahl im persons-Modus', () => {
+    const days = [day('2026-01-05', 3, 30), day('2026-01-12', 8, 8)];
+    const r = detailDayExtremes(days, 'persons');
+    expect(r.strongestDates).toEqual(['2026-01-05']);
+    expect(r.weakestDates).toEqual(['2026-01-12']);
+  });
+
+  it('avgPersons-Modus: Tage ohne Reservationen werden ausgeschlossen', () => {
+    const days = [day('2026-01-05', 2, 10), day('2026-01-12', 0, 0), day('2026-01-19', 4, 4)];
+    const r = detailDayExtremes(days, 'avgPersons');
+    expect(r.strongestDates).toEqual(['2026-01-05']); // Ø 5.0
+    expect(r.weakestDates).toEqual(['2026-01-19']); // Ø 1.0
+    expect(r.strongestDates).not.toContain('2026-01-12');
+    expect(r.weakestDates).not.toContain('2026-01-12');
+  });
+
+  it('keine Markierung bei weniger als 2 vergleichbaren Tagen', () => {
+    expect(detailDayExtremes([day('2026-01-05', 5, 10)], 'reservations')).toEqual({
+      strongestDates: [],
+      weakestDates: [],
+    });
+    expect(detailDayExtremes([], 'reservations')).toEqual({ strongestDates: [], weakestDates: [] });
+    // avgPersons: zwei Tage, aber nur einer mit Reservationen → < 2 vergleichbar
+    expect(
+      detailDayExtremes([day('2026-01-05', 2, 6), day('2026-01-12', 0, 0)], 'avgPersons'),
+    ).toEqual({ strongestDates: [], weakestDates: [] });
+  });
+
+  it('keine Markierung, wenn alle Werte gleich sind (inkl. alle 0)', () => {
+    expect(
+      detailDayExtremes([day('2026-01-05', 4, 8), day('2026-01-12', 4, 12)], 'reservations'),
+    ).toEqual({ strongestDates: [], weakestDates: [] });
+    expect(
+      detailDayExtremes([day('2026-01-05', 0, 0), day('2026-01-12', 0, 0)], 'reservations'),
+    ).toEqual({ strongestDates: [], weakestDates: [] });
+  });
+
+  it('Gleichstand am Maximum/Minimum markiert alle betroffenen Tage', () => {
+    const days = [
+      day('2026-01-05', 7, 14),
+      day('2026-01-12', 7, 21),
+      day('2026-01-19', 2, 4),
+      day('2026-01-26', 2, 6),
+    ];
+    const r = detailDayExtremes(days, 'reservations');
+    expect(r.strongestDates).toEqual(['2026-01-05', '2026-01-12']);
+    expect(r.weakestDates).toEqual(['2026-01-19', '2026-01-26']);
+  });
+
+  it('Tag mit 0 Reservationen kann im reservations-Modus schwächster Tag sein', () => {
+    const days = [day('2026-01-05', 5, 10), day('2026-01-12', 0, 0)];
+    const r = detailDayExtremes(days, 'reservations');
+    expect(r.strongestDates).toEqual(['2026-01-05']);
+    expect(r.weakestDates).toEqual(['2026-01-12']);
   });
 });
 

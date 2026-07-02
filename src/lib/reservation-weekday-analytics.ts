@@ -1666,6 +1666,53 @@ export function buildDetailInsights(
   return out.slice(0, 3);
 }
 
+export interface DetailDayExtremes {
+  /** Daten (yyyy-MM-dd) der stärksten Tage nach Modus-Kennzahl (Gleichstand → mehrere). */
+  strongestDates: string[];
+  /** Daten (yyyy-MM-dd) der schwächsten Tage nach Modus-Kennzahl (Gleichstand → mehrere). */
+  weakestDates: string[];
+}
+
+/**
+ * Markiert die stärksten und schwächsten konkreten Tage einer Detail-Zelle
+ * nach der aktiven Kennzahl (für die visuelle Hervorhebung in der Tagesliste
+ * des Detail-Popups).  Regeln:
+ *  - Kennzahl je Tag: reservations → Anzahl Reservationen, persons → Personen,
+ *    avgPersons → Ø Personen/Reservation (Tage OHNE Reservationen haben dort
+ *    keinen Wert und werden bei dieser Kennzahl ausgeschlossen).
+ *  - Mindestens 2 vergleichbare Tage nötig, sonst keine Markierung.
+ *  - Sind ALLE Werte gleich (inkl. alle 0), wird nichts markiert — eine
+ *    Hervorhebung wäre irreführend.
+ *  - Gleichstand am Maximum/Minimum markiert alle betroffenen Tage.
+ * Reine Funktion, keine Seiteneffekte.
+ */
+export function detailDayExtremes(days: WeekdayDayDetail[], metric: MetricKey): DetailDayExtremes {
+  const none: DetailDayExtremes = { strongestDates: [], weakestDates: [] };
+  const vals: { date: string; v: number }[] = [];
+  for (const d of days) {
+    if (metric === 'avgPersons') {
+      if (d.avgPersonsPerReservation === null) continue;
+      vals.push({ date: d.date, v: d.avgPersonsPerReservation });
+    } else if (metric === 'persons') {
+      vals.push({ date: d.date, v: d.persons });
+    } else {
+      vals.push({ date: d.date, v: d.reservations });
+    }
+  }
+  if (vals.length < 2) return none;
+  let max = -Infinity;
+  let min = Infinity;
+  for (const x of vals) {
+    if (x.v > max) max = x.v;
+    if (x.v < min) min = x.v;
+  }
+  if (max - min <= COMPARISON_EPS) return none; // alle gleich → keine Markierung
+  return {
+    strongestDates: vals.filter((x) => Math.abs(x.v - max) <= COMPARISON_EPS).map((x) => x.date),
+    weakestDates: vals.filter((x) => Math.abs(x.v - min) <= COMPARISON_EPS).map((x) => x.date),
+  };
+}
+
 // ── Schnell-Auswahl / Saison-Zeiträume ───────────────────────────────────────
 
 export interface DateRange {
