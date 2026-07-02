@@ -75,6 +75,7 @@ import GaesteCrmPage from "./pages/GaesteCrmPage";
 import CrmAuswertungPage from "./pages/CrmAuswertungPage";
 import ReservationWochentagPage from "./pages/ReservationWochentagPage";
 import ReservationVorjahrPage from "./pages/ReservationVorjahrPage";
+import ReservationAnalysePage from "./pages/ReservationAnalysePage";
 import GaesteDetailPage from "./pages/GaesteDetailPage";
 import GaesteDuplikatePage from "./pages/GaesteDuplikatePage";
 
@@ -253,6 +254,7 @@ const AppContent = () => {
             <Route path="/foratable-report" element={<ForatableReportPage />} />
             <Route path="/gaeste" element={<GaesteCrmPage />} />
             <Route path="/gaeste/auswertung" element={<CrmAuswertungPage />} />
+            <Route path="/gaeste/analyse" element={<ReservationAnalysePage />} />
             <Route path="/gaeste/wochentag" element={<ReservationWochentagPage />} />
             <Route path="/gaeste/vorjahr" element={<ReservationVorjahrPage />} />
             <Route path="/gaeste/duplikate" element={<GaesteDuplikatePage />} />

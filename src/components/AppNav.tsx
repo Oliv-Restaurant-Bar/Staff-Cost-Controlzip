@@ -34,7 +34,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList, CalendarRange,
+  Tags, ClipboardList,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -252,16 +252,9 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
-        path: '/gaeste/wochentag',
-        label: 'Reservationen nach Wochentag',
-        shortLabel: 'Wochentag',
-        icon: CalendarRange,
-        adminOnly: true,
-      },
-      {
-        path: '/gaeste/vorjahr',
-        label: 'Monat Ist vs. Vorjahr',
-        shortLabel: 'Vorjahr',
+        path: '/gaeste/analyse',
+        label: 'Reservations Analyse',
+        shortLabel: 'Analyse',
         icon: TrendingUp,
         adminOnly: true,
       },
