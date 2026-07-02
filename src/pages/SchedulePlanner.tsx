@@ -73,7 +73,7 @@ import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate,
 import { getVisibleEmployeesForRole, effectiveEmployeeDepartmentScope } from '@/lib/employee-visibility';
 import { computeDailyKitchenTotals, toDailyTotalsDisplay, type EmployeeDayInput, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
 import { toast } from 'sonner';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay, getISOWeek } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, isSameDay, getISOWeek, getISODay } from 'date-fns';
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import PlanningAssistant from '@/components/schedule-planner/PlanningAssistant';
@@ -92,6 +92,10 @@ import { detectPatternWarnings, PatternWarning } from '@/lib/pattern-warnings';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
 import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
+import { usePositions } from '@/hooks/usePositions';
+import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
+import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
+import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useQuickTimes } from '@/hooks/useQuickTimes';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
@@ -245,6 +249,10 @@ const SchedulePlanner = () => {
     const scope = effectiveEmployeeDepartmentScope(role, allowedDepartment);
     return scope === 'all' ? undefined : [scope];
   }, [role, allowedDepartment]);
+  // Personalbedarf: Saison geteilt zwischen Tages-Badges (Grid) und Abgleich-Panel.
+  const [staffingSeason, setStaffingSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
+  const { positions: staffingPositions } = usePositions();
+  const { requirements: staffingRequirements } = useStaffingRequirements();
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
   const [activeDepartment, setActiveDepartment] = useState<ViewMode>(
     () => effectiveEmployeeDepartmentScope(role, allowedDepartment),
@@ -1211,6 +1219,32 @@ const SchedulePlanner = () => {
     // No month filter — show all 7 days even when the week spans two months
     return eachDayOfInterval({ start: weekStart, end: weekEnd });
   }, [calendarView, daysInMonth, selectedDayOffset, selectedWeekIndex, weeksInMonth]);
+
+  // Personalbedarf Soll/Ist je angezeigtem Tag (kompakte Badges im Grid-Kopf).
+  // Nur Anzeige: nutzt dieselbe rollen-gescopte Sicht wie das Abgleich-Panel;
+  // Tage ohne Bedarf (oder ohne Bedarf im Rollen-Scope) erhalten KEINEN Eintrag.
+  const dayStaffingSummaries = useMemo(() => {
+    const map: Record<string, DayStaffingSummaryResult> = {};
+    if (staffingRequirements.length === 0 || staffingPositions.length === 0) return map;
+    for (const day of displayDays) {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const planned = buildPlannedEmployees(
+        roleScopedEmployees, scheduleData, staffingPositions, dateStr,
+      );
+      const summary = computeDayStaffingSummary({
+        positions: staffingPositions,
+        requirements: staffingRequirements,
+        plannedEmployees: planned,
+        season: staffingSeason,
+        weekday: getISODay(day), // ISO 1..7 (Mo..So)
+        departments: comparisonDepartments,
+      });
+      if (summary.hasRequirements && summary.departments.length > 0) {
+        map[dateStr] = summary;
+      }
+    }
+    return map;
+  }, [displayDays, roleScopedEmployees, scheduleData, staffingPositions, staffingRequirements, staffingSeason, comparisonDepartments]);
 
   // Calculate hours from a time slot
   const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
@@ -4805,6 +4839,7 @@ const SchedulePlanner = () => {
                         onAdditionalCostPlanChange={handleAdditionalCostPlanChange}
                         managerSafeTotals={isKuecheManager}
                         dailyManagerTotals={dailyManagerTotals}
+                        dayStaffingSummaries={dayStaffingSummaries}
                       />
                 </>
               ) : (
@@ -5506,6 +5541,8 @@ const SchedulePlanner = () => {
         scheduleData={scheduleData}
         initialDate={displayDays[0] ?? selectedDay ?? new Date()}
         departments={comparisonDepartments}
+        season={staffingSeason}
+        onSeasonChange={setStaffingSeason}
       />
 
       {/* Day Detail Dialog (Plan view) */}

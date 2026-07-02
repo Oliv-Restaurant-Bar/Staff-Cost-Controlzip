@@ -1,0 +1,69 @@
+Bitte erweitere die Reservationen-Auswertung um einen Monatsvergleich „Ist vs. Vorjahr“.
+
+Ziel:
+Ich möchte bei den Reservationen pro Monat sehen, wie der aktuelle Zeitraum im Vergleich zum Vorjahr abschneidet.
+
+Bitte umsetzen:
+
+1. Neue Vergleichsansicht bei Reservationen
+   - Ansicht: „Monat Ist vs. Vorjahr“
+   - Pro Monat anzeigen:
+     - Reservationen Ist
+     - Reservationen Vorjahr
+     - Differenz absolut
+     - Differenz in %
+     - Personen Ist
+     - Personen Vorjahr
+     - Differenz absolut
+     - Differenz in %
+
+2. Vergleichslogik
+   - Wenn z. B. Oktober 2025 ausgewählt ist, soll mit Oktober 2024 verglichen werden.
+   - Bei Zeitraum Oktober–Dezember 2025 soll automatisch Oktober–Dezember 2024 verglichen werden.
+   - Bestehende Filter und Tenant-Logik respektieren.
+
+3. Darstellung
+   - Tabelle mit Monaten als Zeilen.
+   - Grüne Markierung bei Wachstum.
+   - Rote Markierung bei Rückgang.
+   - Neutral bei 0 oder fehlendem Vorjahr.
+   - Zusätzlich oben kompakte KPI-Kacheln:
+     - Reservationen Ist total
+     - Reservationen Vorjahr total
+     - Wachstum Reservationen %
+     - Personen Ist total
+     - Personen Vorjahr total
+     - Wachstum Personen %
+
+4. Detail-Klick
+   - Beim Klick auf einen Monat soll ein Popup öffnen.
+   - Popup zeigt:
+     - Tagesvergleich Ist vs. Vorjahr
+     - Reservationen pro Tag
+     - Personen pro Tag
+     - stärkste Tage
+     - schwächste Tage
+     - Hinweis, wenn Vorjahr-Daten fehlen
+
+5. Keine neue Datenbank-Migration
+   - Daten aus bestehenden reservation_records / guest_profiles verwenden.
+   - Falls eine Migration zwingend wäre, zuerst stoppen und begründen.
+
+6. Tests
+   - Tests ergänzen für:
+     - Monat mit Wachstum
+     - Monat mit Rückgang
+     - fehlende Vorjahr-Daten
+     - Zeitraum über mehrere Monate
+     - Personen- und Reservationen-Vergleich getrennt
+
+7. Qualitätssicherung
+   - TypeScript prüfen
+   - Tests laufen lassen
+   - App auf Runtime-Fehler prüfen
+   - replit.md aktualisieren
+   - Commit Message schreiben
+
+Wichtig:
+Bitte nur Reservationen Monatsvergleich Ist vs. Vorjahr bearbeiten. Keine Personalbedarf- oder Dienstplan-Dateien anfassen.
+Nach Umsetzung stoppen und Ergebnis zusammenfassen.

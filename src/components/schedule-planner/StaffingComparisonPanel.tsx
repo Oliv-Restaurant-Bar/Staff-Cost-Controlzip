@@ -44,6 +44,12 @@ interface StaffingComparisonPanelProps {
   initialDate?: Date | null;
   /** Optionale Abteilungs-Beschränkung (Rollen-Scoping, z.B. Küchen-Manager). */
   departments?: Department[];
+  /**
+   * Optional kontrollierte Saison (geteilt mit den Tages-Badges im Dienstplan).
+   * Ohne diese Props verwaltet das Panel die Saison intern wie bisher.
+   */
+  season?: StaffingSeason;
+  onSeasonChange?: (season: StaffingSeason) => void;
 }
 
 const DEPARTMENT_LABEL: Record<Department, string> = {
@@ -60,6 +66,12 @@ const STATUS_META: Record<
     text: 'text-emerald-700 dark:text-emerald-300',
     badge:
       'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+  },
+  orange: {
+    dot: 'bg-amber-500',
+    text: 'text-amber-700 dark:text-amber-300',
+    badge:
+      'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
   },
   red: {
     dot: 'bg-red-500',
@@ -108,12 +120,17 @@ export function StaffingComparisonPanel({
   scheduleData,
   initialDate,
   departments,
+  season: seasonProp,
+  onSeasonChange,
 }: StaffingComparisonPanelProps) {
   const { positions, loading: posLoading } = usePositions();
   const { requirements, loading: reqLoading } = useStaffingRequirements();
 
   const [selectedDate, setSelectedDate] = useState<Date>(initialDate ?? new Date());
-  const [season, setSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
+  const [internalSeason, setInternalSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
+  // Kontrolliert (geteilt mit den Dienstplan-Badges), sonst interner State.
+  const season = seasonProp ?? internalSeason;
+  const setSeason = onSeasonChange ?? setInternalSeason;
 
   const dateStr = format(selectedDate, 'yyyy-MM-dd');
   const weekday = getISODay(selectedDate); // 1..7 (Mo..So)
@@ -221,13 +238,17 @@ export function StaffingComparisonPanel({
                 {result.counts.green} erfüllt
               </span>
               <span className="inline-flex items-center gap-1.5">
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                {result.counts.orange} zu viel
+              </span>
+              <span className="inline-flex items-center gap-1.5">
                 <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
-                {result.counts.red} abweichend
+                {result.counts.red} zu wenig
               </span>
               <span className="ml-auto text-muted-foreground">
                 Benötigt <span className="font-medium text-foreground tabular-nums">{result.totals.required}</span>
                 {' · '}Geplant <span className="font-medium text-foreground tabular-nums">{result.totals.planned}</span>
-                {' · '}<span className={cn('font-medium', result.totals.diff === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>{formatStaffingDiff(result.totals.diff)}</span>
+                {' · '}<span className={cn('font-medium', result.totals.diff === 0 ? 'text-emerald-600 dark:text-emerald-400' : result.totals.diff > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400')}>{formatStaffingDiff(result.totals.diff)}</span>
               </span>
             </div>
 

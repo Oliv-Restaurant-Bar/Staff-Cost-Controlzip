@@ -30,6 +30,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
+import { StaffingScheduleCheckCard } from '@/components/schedule-planner/StaffingScheduleCheckCard';
 import type { StaffingSeason, StaffingRequirementDraft, StaffingScope } from '@/types/staffing';
 import {
   SEASONS,
@@ -321,6 +322,16 @@ export default function Personalbedarf() {
             </Button>
           </CardContent>
         </Card>
+      )}
+
+      {/* Dienstplan-Abgleich (Ist vs. Soll, nur Anzeige) */}
+      {!loading && (
+        <StaffingScheduleCheckCard
+          positions={positions}
+          requirements={requirements}
+          season={season}
+          weekday={weekday}
+        />
       )}
 
       {/* Hierarchie: Abteilung → Bereich → Position → Schichten */}

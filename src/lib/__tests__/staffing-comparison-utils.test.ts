@@ -6,10 +6,13 @@ import type { Department, Employee, DaySchedule } from '@/types/personnel';
 import {
   comparisonStatus,
   formatStaffingDiff,
+  formatShortStaffingDiff,
   slotOverlapsShift,
   countPlanned,
+  plannedIdsForShift,
   buildPlannedEmployees,
   computeStaffingComparison,
+  computeDayStaffingSummary,
   type PlannedEmployeeDay,
 } from '@/lib/staffing-comparison-utils';
 
@@ -73,8 +76,9 @@ function pe(
   id: string,
   positionKey: string | null,
   slots: { start: string; end: string }[],
+  department: Department = 'service',
 ): PlannedEmployeeDay {
-  return { id, positionKey, slots };
+  return { id, department, positionKey, slots };
 }
 
 // Standard-Positionen (mit Default-Bereichen über DEFAULT_AREA_BY_KEY auflösbar)
@@ -85,20 +89,20 @@ const POSITIONS: Position[] = [
   pos({ key: 'abwasch', name: 'Abwasch', department: 'küche', departmentGroup: 'abwasch', sortOrder: 1 }),
 ];
 
-// ─── comparisonStatus (symmetrisch über |diff|) ───────────────────────────────
+// ─── comparisonStatus (3-stufig: zu wenig rot, zu viel orange, exakt grün) ────
 
 describe('comparisonStatus', () => {
   it('grün NUR bei exakter Erfüllung', () => {
     expect(comparisonStatus(2, 2)).toBe('green');
     expect(comparisonStatus(0, 0)).toBe('green');
   });
-  it('rot bei jeder Abweichung — bereits bei 1 zu wenig oder 1 zu viel', () => {
-    expect(comparisonStatus(3, 2)).toBe('red'); // -1
-    expect(comparisonStatus(2, 3)).toBe('red'); // +1
+  it('bereits ±1 Person löst aus: zu wenig → rot, zu viel → orange', () => {
+    expect(comparisonStatus(3, 2)).toBe('red'); // -1 → kritisch
+    expect(comparisonStatus(2, 3)).toBe('orange'); // +1 → Warnung
   });
-  it('rot auch bei größeren Abweichungen', () => {
+  it('auch bei größeren Abweichungen: Richtung bestimmt die Farbe', () => {
     expect(comparisonStatus(3, 1)).toBe('red'); // -2
-    expect(comparisonStatus(1, 3)).toBe('red'); // +2
+    expect(comparisonStatus(1, 3)).toBe('orange'); // +2
     expect(comparisonStatus(5, 1)).toBe('red'); // -4
   });
 });
@@ -223,18 +227,18 @@ describe('computeStaffingComparison', () => {
     expect(kue).toMatchObject({ planned: 1, diff: -2, status: 'red' });
   });
 
-  it('Szenario 3 — Überbesetzung → rot bereits bei +1 und auch bei +2', () => {
+  it('Szenario 3 — Überbesetzung → orange bereits bei +1 und auch bei +2', () => {
     const reqs1 = [req({ positionKey: 'bar_buffet_springer', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 })];
     const over1 = [
       pe('a', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }]),
       pe('b', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }]),
     ];
     const r1 = computeStaffingComparison({ positions: POSITIONS, requirements: reqs1, plannedEmployees: over1, season: 'standard', weekday: 1 });
-    expect(r1.rows[0]).toMatchObject({ planned: 2, diff: 1, status: 'red' });
+    expect(r1.rows[0]).toMatchObject({ planned: 2, diff: 1, status: 'orange' });
 
     const over2 = [...over1, pe('c', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }])];
     const r2 = computeStaffingComparison({ positions: POSITIONS, requirements: reqs1, plannedEmployees: over2, season: 'standard', weekday: 1 });
-    expect(r2.rows[0]).toMatchObject({ planned: 3, diff: 2, status: 'red' });
+    expect(r2.rows[0]).toMatchObject({ planned: 3, diff: 2, status: 'orange' });
   });
 
   it('Szenario 4 — kein Bedarf für den Tag → hasRequirements=false, keine Gruppen', () => {
@@ -316,8 +320,8 @@ describe('computeStaffingComparison', () => {
   it('aggregiert Summen und Ampel-Zählung über alle gerenderten Zeilen', () => {
     const requirements = [
       req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 2 }), // 2/2 grün
-      req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 3 }), // 1/3 rot
-      req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }), // 2/1 rot (+1)
+      req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 3 }), // 1/3 rot (−2)
+      req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }), // 2/1 orange (+1)
     ];
     const planned = [
       pe('a', 'service', [{ start: '11:00', end: '22:00' }]),
@@ -328,6 +332,140 @@ describe('computeStaffingComparison', () => {
     ];
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     expect(r.totals).toEqual({ required: 6, planned: 5, diff: -1 });
-    expect(r.counts).toEqual({ green: 1, red: 2 });
+    expect(r.counts).toEqual({ green: 1, orange: 1, red: 1 });
+  });
+});
+
+// ─── formatShortStaffingDiff (Badge-Kurzform) ─────────────────────────────────
+
+describe('formatShortStaffingDiff', () => {
+  it('kompakt mit Vorzeichen (U+2212) und ±0', () => {
+    expect(formatShortStaffingDiff(0)).toBe('±0');
+    expect(formatShortStaffingDiff(1)).toBe('+1');
+    expect(formatShortStaffingDiff(-1)).toBe('−1');
+    expect(formatShortStaffingDiff(-3)).toBe('−3');
+  });
+});
+
+// ─── computeDayStaffingSummary (Tages-Badge je Abteilung) ─────────────────────
+
+describe('computeDayStaffingSummary', () => {
+  const DAY_REQS = [
+    req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 2 }),
+    req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 2 }),
+  ];
+
+  it('exakt passend → grün, diff 0 (Service und Küche getrennt)', () => {
+    const planned = [
+      pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('s2', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('k1', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+      pe('k2', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+    ];
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
+    expect(r.hasRequirements).toBe(true);
+    expect(r.departments).toHaveLength(2);
+    const service = r.departments.find((d) => d.department === 'service')!;
+    const kueche = r.departments.find((d) => d.department === 'küche')!;
+    expect(service).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green', unmatchedPlanned: 0 });
+    expect(kueche).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green', unmatchedPlanned: 0 });
+  });
+
+  it('1 Person zu viel → orange (+1), andere Abteilung bleibt unberührt', () => {
+    const planned = [
+      pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('s2', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('s3', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('k1', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+      pe('k2', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+    ];
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
+    const service = r.departments.find((d) => d.department === 'service')!;
+    const kueche = r.departments.find((d) => d.department === 'küche')!;
+    expect(service).toMatchObject({ required: 2, planned: 3, diff: 1, status: 'orange' });
+    expect(kueche).toMatchObject({ diff: 0, status: 'green' });
+  });
+
+  it('1 Person zu wenig → rot (−1), Service/Küche getrennt bewertet', () => {
+    const planned = [
+      pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('s2', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('k1', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+    ];
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
+    const service = r.departments.find((d) => d.department === 'service')!;
+    const kueche = r.departments.find((d) => d.department === 'küche')!;
+    expect(service).toMatchObject({ diff: 0, status: 'green' });
+    expect(kueche).toMatchObject({ required: 2, planned: 1, diff: -1, status: 'red' });
+  });
+
+  it('Tag ohne Personalbedarf → hasRequirements=false, keine Abteilungen', () => {
+    const r = computeDayStaffingSummary({
+      positions: POSITIONS,
+      requirements: DAY_REQS, // nur weekday 1
+      plannedEmployees: [pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service')],
+      season: 'standard',
+      weekday: 3,
+    });
+    expect(r.hasRequirements).toBe(false);
+    expect(r.departments).toHaveLength(0);
+  });
+
+  it('Tag ohne Dienstplan-Einträge → Ist 0, rot mit voller Unterdeckung', () => {
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: [], season: 'standard', weekday: 1 });
+    const service = r.departments.find((d) => d.department === 'service')!;
+    expect(service).toMatchObject({ required: 2, planned: 0, diff: -2, status: 'red', unmatchedPlanned: 0 });
+  });
+
+  it('Einheiten: 1 MA mit Früh+Spät erfüllt 2 Bedarfs-Schichten derselben Position', () => {
+    const reqs = [
+      req({ positionKey: 'service', shiftStart: '10:00', shiftEnd: '14:00', requiredCount: 1 }),
+      req({ positionKey: 'service', shiftStart: '17:00', shiftEnd: '22:00', requiredCount: 1 }),
+    ];
+    const planned = [
+      pe('s1', 'service', [{ start: '10:00', end: '14:00' }, { start: '17:00', end: '22:00' }], 'service'),
+    ];
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: reqs, plannedEmployees: planned, season: 'standard', weekday: 1 });
+    const service = r.departments.find((d) => d.department === 'service')!;
+    expect(service).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green' });
+  });
+
+  it('unmatchedPlanned: produktiv geplante MA ohne passende Bedarfs-Schicht werden ausgewiesen', () => {
+    const planned = [
+      pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('s2', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      // Hauptposition fehlt → matcht keine Schicht, ist aber eingeplant:
+      pe('x1', null, [{ start: '11:00', end: '22:00' }], 'service'),
+      // Zeit ohne Überschneidung mit der Küchen-Schicht (09–17):
+      pe('k1', 'kueche', [{ start: '18:00', end: '23:00' }], 'küche'),
+      pe('k2', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+      pe('k3', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+    ];
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
+    const service = r.departments.find((d) => d.department === 'service')!;
+    const kueche = r.departments.find((d) => d.department === 'küche')!;
+    expect(service).toMatchObject({ planned: 2, status: 'green', unmatchedPlanned: 1 });
+    expect(kueche).toMatchObject({ planned: 2, status: 'green', unmatchedPlanned: 1 });
+  });
+
+  it('Abteilungsfilter (Rollen-Scoping): nur gescopte Abteilungen erscheinen', () => {
+    const planned = [
+      pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
+      pe('k1', 'kueche', [{ start: '09:00', end: '17:00' }], 'küche'),
+    ];
+    const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1, departments: ['küche'] });
+    expect(r.departments).toHaveLength(1);
+    expect(r.departments[0].department).toBe('küche');
+    // hasRequirements bezieht sich auf den TAG (vor Filter)
+    expect(r.hasRequirements).toBe(true);
+  });
+
+  it('plannedIdsForShift liefert die gematchten IDs (Basis für unmatched-Hinweis)', () => {
+    const planned = [
+      pe('a', 'service', [{ start: '11:00', end: '22:00' }]),
+      pe('b', 'service', [{ start: '06:00', end: '10:00' }]),
+      pe('c', 'kueche', [{ start: '11:00', end: '22:00' }]),
+    ];
+    expect(plannedIdsForShift(planned, 'service', '11:00', '22:00')).toEqual(['a']);
   });
 });

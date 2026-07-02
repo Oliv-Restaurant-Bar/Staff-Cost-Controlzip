@@ -31,6 +31,8 @@ import { PatternWarning } from '@/lib/pattern-warnings';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { cn } from '@/lib/utils';
 import { dailyTotalsVisibility, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
+import type { DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
+import { DayStaffingBadge } from './DayStaffingBadge';
 import { AlertTriangle, CalendarOff, Copy, ClipboardPaste, X } from 'lucide-react';
 
 // ── Shared cell-clipboard type (also used by SchedulePlanner) ─────────────────
@@ -104,6 +106,10 @@ export interface ModernScheduleGridProps {
   // leave it false so the header is exactly as before.
   managerSafeTotals?: boolean;
   dailyManagerTotals?: Record<string, DailyTotalsDisplay>;
+  // ── Personalbedarf-Abgleich: kompakte Soll/Ist-Badges im Tageskopf ─────────
+  // `${yyyy-MM-dd}` → Tages-Zusammenfassung (bereits rollen-gescopt berechnet).
+  // Nur Anzeige; Tage ohne Bedarf haben keinen Eintrag/kein Badge.
+  dayStaffingSummaries?: Record<string, DayStaffingSummaryResult>;
 }
 
 // ── Small helper: format a numeric diff as +x.x / −x.x ───────────────────────
@@ -147,6 +153,7 @@ export function ModernScheduleGrid({
   onAdditionalCostPlanChange,
   managerSafeTotals = false,
   dailyManagerTotals,
+  dayStaffingSummaries,
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
@@ -274,7 +281,7 @@ export function ModernScheduleGrid({
             </th>
 
             {/* ── Day headers ───────────────────────────────────────────── */}
-            {dayMeta.map(({ day, isWknd, isSun, isToday, weekdayIdx }, idx) => (
+            {dayMeta.map(({ day, dateStr, isWknd, isSun, isToday, weekdayIdx }, idx) => (
               <th
                 key={day.toISOString()}
                 className={cn(
@@ -382,6 +389,14 @@ export function ModernScheduleGrid({
                       </span>
                     ) : null;
                   })()}
+
+                  {/* ── Personalbedarf Soll/Ist-Badge (nur Anzeige) ──────── */}
+                  {dayStaffingSummaries?.[dateStr] && (
+                    <DayStaffingBadge
+                      summary={dayStaffingSummaries[dateStr]}
+                      dateLabel={`${WEEKDAY_SHORT[weekdayIdx]}, ${format(day, 'dd.MM.')}`}
+                    />
+                  )}
                 </div>
               </th>
             ))}

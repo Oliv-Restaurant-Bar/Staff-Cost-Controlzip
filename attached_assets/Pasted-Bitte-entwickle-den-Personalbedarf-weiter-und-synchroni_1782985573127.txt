@@ -1,0 +1,69 @@
+Bitte entwickle den Personalbedarf weiter und synchronisiere ihn besser mit dem Dienstplan.
+
+Ziel:
+Der Personalbedarf soll direkt mit dem Dienstplan abgeglichen werden, damit ich sofort sehe, ob pro Tag und Bereich zu viele oder zu wenige Personen geplant sind.
+
+Bitte umsetzen:
+
+1. Personalbedarf als Soll-Wert verwenden
+   - Pro Tag und Bereich soll der hinterlegte Personalbedarf als Soll angezeigt werden.
+   - Bereiche mindestens: Service und Küche.
+   - Falls weitere Bereiche bereits existieren, diese sauber berücksichtigen.
+
+2. Dienstplan als Ist-Wert verwenden
+   - Aus dem bestehenden Dienstplan zählen, wie viele Personen pro Tag und Bereich geplant sind.
+   - Früh-/Spät-/manuelle Schichten korrekt berücksichtigen.
+   - Nur effektiv geplante Mitarbeitende zählen, keine leeren Einträge.
+
+3. Abgleich Soll vs. Ist
+   - Pro Tag anzeigen:
+     - Soll Personalbedarf
+     - Ist geplante Personen
+     - Differenz
+   - Differenz positiv = zu viele geplant
+   - Differenz negativ = zu wenig geplant
+   - Differenz 0 = passend
+
+4. Warnlogik
+   - Bereits ab 1 Person Abweichung soll eine Warnung erscheinen.
+   - Zu wenig geplant: kritisch/rot
+   - Zu viel geplant: Warnung/orange
+   - Genau passend: grün/neutral
+   - Wichtig: In der Gastronomie kann bereits 1 Person zu viel oder zu wenig relevant sein.
+
+5. Dienstplan-Integration
+   - Im Dienstplan soll sichtbar sein, ob der Tag zum Personalbedarf passt.
+   - Am besten mit einer kompakten Tagesanzeige oder Badge:
+     - Service: Soll 5 / Ist 6 / +1
+     - Küche: Soll 3 / Ist 2 / -1
+   - Beim Klick oder Hover sollen Details sichtbar sein.
+
+6. Personalbedarf-Modul
+   - Im Personalbedarf-Modul soll ebenfalls ersichtlich sein, wie der aktuelle Dienstplan dagegen aussieht.
+   - So kann ich dort prüfen, ob die Planung zur Vorgabe passt.
+
+7. Filter und Zeiträume
+   - Bestehende Monats-/Wochenansichten respektieren.
+   - Tenant-Logik und bestehende Datenquellen nicht verändern.
+   - Keine neue Datenbank-Migration, ausser es ist absolut zwingend. Falls zwingend, zuerst stoppen und begründen.
+
+8. Tests
+   - Bestehende Tests erweitern.
+   - Neue Tests für:
+     - exakt passend
+     - 1 Person zu viel
+     - 1 Person zu wenig
+     - Service und Küche getrennt
+     - Tage ohne Personalbedarf
+     - Tage ohne Dienstplan-Einträge
+
+9. Qualitätssicherung
+   - TypeScript prüfen.
+   - Relevante Tests laufen lassen.
+   - App auf Runtime-Fehler prüfen.
+   - replit.md aktualisieren.
+   - Commit Message schreiben.
+
+Wichtig:
+Bitte nur Personalbedarf/Dienstplan-Synchronisierung bearbeiten. Keine Gäste-CRM-, Reservationen- oder Saisonvergleich-Dateien anfassen.
+Nach Umsetzung stoppen und Ergebnis zusammenfassen.

@@ -9,12 +9,15 @@
  * NUR Analyse/Anzeige — verändert WEDER Dienstplan NOCH Personalbedarf und
  * erzeugt KEINE Vorschläge/Budget-Prüfung.
  *
- * ── Ampel-Logik (binär, vom Betrieb bestätigt) ───────────────────────────────
+ * ── Ampel-Logik (3-stufig, ab ±1 Person) ─────────────────────────────────────
  *   diff = geplant − benötigt
- *   🟢 grün  = exakt erfüllt   (diff === 0)
- *   🔴 rot   = jede Abweichung (diff !== 0 → bereits bei ±1 Person)
+ *   🟢 grün   = exakt erfüllt        (diff === 0)
+ *   🟠 orange = zu viel geplant      (diff > 0 → Warnung bereits ab +1 Person)
+ *   🔴 rot    = zu wenig geplant     (diff < 0 → kritisch bereits ab −1 Person)
  * Die genaue Differenz wird zusätzlich angezeigt
  * (z.B. „+1 Person zu viel", „−1 Person zu wenig").
+ * Hinweis: Tage mit `isAdditionalCostPlan` zählen als geplant (es sind
+ * eingeplante Personen); Abwesenheiten zählen NICHT.
  *
  * ── Zählregel „geplant" (bewusst, dokumentiert) ───────────────────────────────
  * Der Dienstplan speichert KEINE Position je Schicht. Daher zählt für eine
@@ -40,7 +43,7 @@ import {
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import { shiftsForScope, timeToMinutes } from '@/lib/staffing-requirements-utils';
 
-export type ComparisonStatus = 'green' | 'red';
+export type ComparisonStatus = 'green' | 'orange' | 'red';
 
 /** Produktive (nicht-Abwesenheits-) Arbeitszeit eines Mitarbeiters an einem Tag. */
 export interface PlannedSlot {
@@ -51,6 +54,8 @@ export interface PlannedSlot {
 /** Minimal-Sicht eines eingeplanten Mitarbeiters für den Abgleich (reine Eingabe). */
 export interface PlannedEmployeeDay {
   id: string;
+  /** Abteilung des Mitarbeiters (für die Tages-/Abteilungs-Zusammenfassung). */
+  department: Department;
   /** Hauptposition als Slug (bereits via resolvePositionKey aufgelöst) oder null. */
   positionKey: string | null;
   /** Produktive Slots des Tages (Abwesenheiten bereits ausgeschlossen). */
@@ -103,12 +108,17 @@ export interface StaffingComparisonResult {
   /** Alle gerenderten Zeilen (für Summen/Zählung). */
   rows: ShiftComparisonRow[];
   totals: { required: number; planned: number; diff: number };
-  counts: { green: number; red: number };
+  counts: { green: number; orange: number; red: number };
 }
 
-/** Ampel-Status aus benötigt/geplant (binär: grün nur bei exakter Erfüllung). */
+/**
+ * Ampel-Status aus benötigt/geplant (3-stufig, ab ±1 Person):
+ * zu wenig → rot (kritisch), zu viel → orange (Warnung), exakt → grün.
+ */
 export function comparisonStatus(required: number, planned: number): ComparisonStatus {
-  return planned === required ? 'green' : 'red';
+  if (planned < required) return 'red';
+  if (planned > required) return 'orange';
+  return 'green';
 }
 
 /**
@@ -139,6 +149,22 @@ export function slotOverlapsShift(
   return Math.max(aS, bS) < Math.min(aE, bE);
 }
 
+/** IDs der eingeplanten Mitarbeitenden, die eine Bedarfs-Schicht matchen (siehe Zählregel). */
+export function plannedIdsForShift(
+  planned: PlannedEmployeeDay[],
+  positionKey: string,
+  shiftStart: string,
+  shiftEnd: string,
+): string[] {
+  return planned
+    .filter(
+      (e) =>
+        e.positionKey === positionKey &&
+        e.slots.some((s) => slotOverlapsShift(s, shiftStart, shiftEnd)),
+    )
+    .map((e) => e.id);
+}
+
 /** Anzahl eingeplanter Mitarbeitender für eine Position + Zeitraum (siehe Zählregel). */
 export function countPlanned(
   planned: PlannedEmployeeDay[],
@@ -146,11 +172,7 @@ export function countPlanned(
   shiftStart: string,
   shiftEnd: string,
 ): number {
-  return planned.filter(
-    (e) =>
-      e.positionKey === positionKey &&
-      e.slots.some((s) => slotOverlapsShift(s, shiftStart, shiftEnd)),
-  ).length;
+  return plannedIdsForShift(planned, positionKey, shiftStart, shiftEnd).length;
 }
 
 /**
@@ -182,6 +204,7 @@ export function buildPlannedEmployees(
     if (slots.length === 0) continue;
     out.push({
       id: emp.id,
+      department: emp.department,
       positionKey: resolvePositionKey(positions, emp.primaryStation) ?? null,
       slots,
     });
@@ -293,7 +316,7 @@ export function computeStaffingComparison(args: {
       c[r.status] += 1;
       return c;
     },
-    { green: 0, red: 0 },
+    { green: 0, orange: 0, red: 0 },
   );
 
   return {
@@ -304,4 +327,108 @@ export function computeStaffingComparison(args: {
     totals,
     counts,
   };
+}
+
+// ─── Tages-/Abteilungs-Zusammenfassung (kompakte Badges im Dienstplan) ────────
+
+/** Kompakte Kurzform der Differenz für Badges: „+1" / „−2" / „±0" (U+2212). */
+export function formatShortStaffingDiff(diff: number): string {
+  if (diff === 0) return '±0';
+  return diff > 0 ? `+${diff}` : `−${Math.abs(diff)}`;
+}
+
+/** Soll/Ist/Diff einer Abteilung an einem Tag (aggregiert über deren Bedarfs-Schichten). */
+export interface DepartmentDaySummary {
+  department: Department;
+  /** Σ benötigte Personen über alle Bedarfs-Schichten der Abteilung (Personen-Schichten). */
+  required: number;
+  /** Σ gematchte eingeplante Personen über dieselben Schichten (gleiche Einheit wie `required`). */
+  planned: number;
+  /** planned − required. */
+  diff: number;
+  status: ComparisonStatus;
+  /**
+   * Produktiv eingeplante Mitarbeitende dieser Abteilung, die KEINE einzige
+   * Bedarfs-Schicht des Tages matchen (fehlende/fremde Hauptposition oder keine
+   * Zeitüberschneidung). Reiner Hinweis — zählt NICHT in `planned`.
+   */
+  unmatchedPlanned: number;
+}
+
+export interface DayStaffingSummaryResult {
+  /** Gibt es für (Saison × Wochentag) überhaupt Bedarfs-Schichten (vor Abteilungsfilter)? */
+  hasRequirements: boolean;
+  /** Nur Abteilungen MIT Bedarf in diesem Geltungsbereich (Reihenfolge = DEPARTMENTS). */
+  departments: DepartmentDaySummary[];
+}
+
+/**
+ * Aggregiert den Schicht-Abgleich zu einer kompakten Tages-Zusammenfassung je
+ * Abteilung (z.B. „Service: Soll 5 / Ist 6 / +1" im Dienstplan-Tageskopf).
+ *
+ * BEWUSSTE EINHEITEN-Entscheidung: Soll UND Ist sind Personen-SCHICHTEN
+ * (Σ über die Bedarfs-Schichten; ein MA kann Früh- UND Spät-Bedarf erfüllen und
+ * zählt dann 2×) — konsistent mit dem Detail-Panel, keine Kopfzahlen-Mischung.
+ * Eingeplante MA ohne gematchte Bedarfs-Schicht erscheinen als
+ * `unmatchedPlanned`-Hinweis (kein stilles Verschwinden).
+ *
+ * Dokumentierte Näherung: Ist ein `departments`-Filter aktiv, sind Orphan-Zeilen
+ * (Bedarfe auf inaktiver/unbekannter Position) aus `comparison.rows` ausgeblendet —
+ * `matchedIds` enthält deren Matches dann nicht. Ein MA einer eingeschränkten Rolle,
+ * der NUR eine Orphan-Schicht matcht, erscheint daher als `unmatchedPlanned`.
+ * Die Admin-Sicht (ohne Filter) ist davon nicht betroffen.
+ *
+ * Orphan-Bedarfe (inaktive/unbekannte Positionen) fließen NICHT in die
+ * Abteilungs-Summen ein (keine Abteilung zuordenbar) — sie bleiben Sache des
+ * Detail-Panels.
+ */
+export function computeDayStaffingSummary(args: {
+  positions: Position[];
+  requirements: StaffingRequirement[];
+  plannedEmployees: PlannedEmployeeDay[];
+  season: StaffingSeason;
+  weekday: number;
+  departments?: Department[];
+}): DayStaffingSummaryResult {
+  const comparison = computeStaffingComparison(args);
+
+  // Alle MA-IDs, die irgendeine Bedarfs-Schicht des Tages matchen (über ALLE
+  // gerenderten Zeilen inkl. Orphans → kein falscher „ohne Bedarf"-Hinweis).
+  const matchedIds = new Set<string>();
+  for (const row of comparison.rows) {
+    for (const id of plannedIdsForShift(
+      args.plannedEmployees,
+      row.positionKey,
+      row.shiftStart,
+      row.shiftEnd,
+    )) {
+      matchedIds.add(id);
+    }
+  }
+
+  const departments: DepartmentDaySummary[] = comparison.groups.map((g) => {
+    let required = 0;
+    let planned = 0;
+    for (const area of g.areas) {
+      for (const pc of area.positions) {
+        for (const s of pc.shifts) {
+          required += s.required;
+          planned += s.planned;
+        }
+      }
+    }
+    const unmatchedPlanned = args.plannedEmployees.filter(
+      (e) => e.department === g.department && !matchedIds.has(e.id),
+    ).length;
+    return {
+      department: g.department,
+      required,
+      planned,
+      diff: planned - required,
+      status: comparisonStatus(required, planned),
+      unmatchedPlanned,
+    };
+  });
+
+  return { hasRequirements: comparison.hasRequirements, departments };
 }
