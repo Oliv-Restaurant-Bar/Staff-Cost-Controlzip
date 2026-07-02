@@ -190,6 +190,13 @@ export function SeasonComparisonSection({
               ) : (
                 <ol className="space-y-1">
                   {r.entries.map((e, idx) => {
+                    // Ab 2 Einträgen: erste = stärkste, letzte = schwächste Saison.
+                    const marker =
+                      r.entries.length >= 2 && idx === 0
+                        ? 'strong'
+                        : r.entries.length >= 2 && idx === r.entries.length - 1
+                          ? 'weak'
+                          : null;
                     const inner = (
                       <>
                         <span className="flex min-w-0 items-center gap-1.5">
@@ -201,6 +208,16 @@ export function SeasonComparisonSection({
                             style={{ backgroundColor: colorFor(e.seasonKey) }}
                           />
                           <span className="truncate">{e.label}</span>
+                          {marker === 'strong' && (
+                            <span className="flex-shrink-0 rounded bg-emerald-100 px-1 py-px text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
+                              Stärkste
+                            </span>
+                          )}
+                          {marker === 'weak' && (
+                            <span className="flex-shrink-0 rounded bg-red-100 px-1 py-px text-[10px] font-medium text-red-700 dark:bg-red-950/50 dark:text-red-400">
+                              Schwächste
+                            </span>
+                          )}
                         </span>
                         <span className="font-medium tabular-nums">{NUM1.format(e.value)}</span>
                       </>

@@ -1328,6 +1328,12 @@ export interface MonthWeekdayDetail {
    * umspannen (Ferien/Saisons).  Für reine Monats-Details bleibt es undefined.
    */
   label?: string;
+  /**
+   * Optionaler, bereits formatierter Datumsbereich des Zeitraums (z. B.
+   * „01.10.2026 – 31.12.2026").  Wenn gesetzt, zeigt das Popup ihn unter dem
+   * Titel an — so ist bei Saisons der exakte Zeitraum sichtbar.  Reine Anzeige.
+   */
+  rangeLabel?: string;
   weekday: IsoWeekday;
   /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
   occurrences: number;
@@ -1362,13 +1368,15 @@ export function buildRangeWeekdayDetail(
   to: string,
   weekday: IsoWeekday,
   scope: StatusScope = 'booked',
-  opts?: { monthKey?: string; label?: string },
+  opts?: { monthKey?: string; label?: string; rangeLabel?: string },
 ): MonthWeekdayDetail {
   const monthKey = opts?.monthKey ?? (from.length >= 7 ? from.slice(0, 7) : from);
   const label = opts?.label;
+  const rangeLabel = opts?.rangeLabel;
   const empty: MonthWeekdayDetail = {
     monthKey,
     label,
+    rangeLabel,
     weekday,
     occurrences: 0,
     reservations: 0,
@@ -1424,6 +1432,7 @@ export function buildRangeWeekdayDetail(
   return {
     monthKey,
     label,
+    rangeLabel,
     weekday,
     occurrences,
     reservations,
@@ -2545,6 +2554,23 @@ export function findOverlappingSeasons(defs: readonly SeasonDefinition[]): Seaso
     }
   }
   return out;
+}
+
+/**
+ * Die fünf Beispiel-Saisons aus der Spezifikation (feste Datumsbereiche 2026)
+ * zum Ausprobieren des Saisonvergleichs.  Stabile, sprechende IDs (Slugs statt
+ * UUIDs), damit ein erneutes Einfügen dieselben IDs ergibt und URL-Auswahlen
+ * (`seasons=`) reproduzierbar bleiben.  Rein — die Seite speichert sie über den
+ * normalen KV-Pfad, hier wird NICHTS persistiert.
+ */
+export function exampleSeasonDefinitions(): SeasonDefinition[] {
+  return [
+    { id: 'winter-2026', name: 'Wintersaison 2026', from: '2026-10-01', to: '2026-12-31', color: '#2563eb', active: true },
+    { id: 'fruehling-2026', name: 'Frühlingssaison 2026', from: '2026-03-01', to: '2026-05-31', color: '#16a34a', active: true },
+    { id: 'terrassen-2026', name: 'Terrassensaison 2026', from: '2026-05-01', to: '2026-09-30', color: '#d97706', active: true },
+    { id: 'sommerferien-2026', name: 'Sommerferien 2026', from: '2026-07-01', to: '2026-08-15', color: '#dc2626', active: true },
+    { id: 'weihnachten-2026', name: 'Weihnachtsgeschäft 2026', from: '2026-11-15', to: '2026-12-31', color: '#7c3aed', active: true },
+  ];
 }
 
 /**

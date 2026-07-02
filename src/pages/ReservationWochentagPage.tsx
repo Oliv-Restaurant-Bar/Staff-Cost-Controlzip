@@ -47,7 +47,7 @@ import { useSeasonDefinitions } from '@/hooks/useSeasonDefinitions';
 import {
   aggregateByWeekday, buildWeekdayHeadlines, buildMonthComparison,
   buildMonthComparisonInsights, comparisonCellSubLabel, buildMonthWeekdayDetail,
-  buildRangeWeekdayDetail, buildWeekdayComparison,
+  buildRangeWeekdayDetail, buildWeekdayComparison, exampleSeasonDefinitions,
   buildPeriodInterpretation,
   presetRange, monthLongLabel, monthKeyOf, monthRange, shiftMonthKey, rangeFromMonthKeys,
   parseSeasonSettings, serializeSeasonSettings, normalizeSeasonRange,
@@ -190,7 +190,8 @@ function parseInit(sp: URLSearchParams, todayStr: string, currentYear: number): 
   const metric: MetricKey =
     metricRaw && METRICS.includes(metricRaw) ? metricRaw : 'reservations';
   const ferienart: BernHolidaySelection = isBernHolidaySelection(holRaw) ? holRaw : 'all';
-  const selRaw = sp.get('sel');
+  // Gewählte Saison-IDs: „seasons" (Spezifikation); „sel" als Alt-Param toleriert.
+  const selRaw = sp.get('seasons') ?? sp.get('sel');
   const selectedSeasonIds = selRaw
     ? selRaw.split(',').map((s) => s.trim()).filter(Boolean)
     : [];
@@ -590,6 +591,7 @@ export default function ReservationWochentagPage() {
     return buildRangeWeekdayDetail(rows, row.period.from, row.period.to, wcDetail.weekday, scope, {
       monthKey: row.period.key,
       label: row.period.label,
+      rangeLabel: `${formatIsoDateDe(row.period.from)} – ${formatIsoDateDe(row.period.to)}`,
     });
   }, [wcDetail, weekdayComparison.rows, rows, scope]);
   const wcDetailColumnAverage = wcDetail
@@ -655,6 +657,11 @@ export default function ReservationWochentagPage() {
       const kept = prev.filter((id) => valid.has(id));
       return kept.length > 0 ? kept : activeIds;
     });
+  };
+  // Leerzustand: die fünf Beispiel-Saisons aus der Spezifikation einfügen
+  // (normaler Speicherpfad; wählt danach alle aktiven Saisons vor).
+  const seedExampleSeasons = () => {
+    void handleSaveSeasonDefs(exampleSeasonDefinitions());
   };
 
   // Monatsnavigation: setzt Von/Bis auf Anfang/Ende des Zielmonats.
@@ -722,7 +729,7 @@ export default function ReservationWochentagPage() {
     const next = new URLSearchParams();
     if (seasonMode) {
       next.set('mode', 'saison');
-      if (selectedSeasonIds.length > 0) next.set('sel', selectedSeasonIds.join(','));
+      if (selectedSeasonIds.length > 0) next.set('seasons', selectedSeasonIds.join(','));
     } else if (holidayMode) {
       next.set('mode', 'ferienBE');
       next.set('hol', ferienart);
@@ -856,9 +863,21 @@ export default function ReservationWochentagPage() {
               </label>
               <div className="flex flex-wrap items-center gap-2">
                 {seasonDefs.filter((d) => d.active).length === 0 ? (
-                  <span className="text-sm text-muted-foreground">
-                    Noch keine Saison definiert — mit „Saisons verwalten" anlegen.
-                  </span>
+                  <>
+                    <span className="text-sm text-muted-foreground">
+                      Noch keine Saison definiert — mit „Saisons verwalten" anlegen.
+                    </span>
+                    {seasonDefs.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={seedExampleSeasons}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:border-primary/60 hover:bg-muted/40"
+                      >
+                        <Layers className="h-3.5 w-3.5" />
+                        Beispiel-Saisons einfügen
+                      </button>
+                    )}
+                  </>
                 ) : (
                   seasonDefs
                     .filter((d) => d.active)
@@ -1178,6 +1197,7 @@ export default function ReservationWochentagPage() {
               metric={metric}
               scopeLabel={scopeLabel}
               onSelect={openWcDetail}
+              emptyRowHint={seasonMode ? 'Für diese Saison sind noch keine Reservationen vorhanden.' : undefined}
             />
           )}
 
@@ -1779,12 +1799,20 @@ const HEAT_CELL_BG: Record<WeekdayHeat, string> = {
  * (nicht der Spalte). Zellen sind klickbar und öffnen dasselbe Detail-Popup wie
  * die Monatsvergleichs-Matrix.
  */
-function WeekdayComparisonSection({ comparison, metric, scopeLabel, onSelect }: {
+function WeekdayComparisonSection({ comparison, metric, scopeLabel, onSelect, emptyRowHint }: {
   comparison: WeekdayComparison;
   metric: MetricKey;
   scopeLabel: string;
   onSelect: (periodIndex: number, weekday: IsoWeekday) => void;
+  /**
+   * Optionaler Hinweistext für Zeilen ohne Reservationen (nur Saison-Modus):
+   * die Zeile bleibt mit 0-Werten sichtbar, darunter erscheint dieser Satz.
+   */
+  emptyRowHint?: string;
 }) {
+  const emptyRows = emptyRowHint
+    ? comparison.rows.filter((r) => r.totalReservations === 0)
+    : [];
   return (
     <section>
       <SectionTitle icon={CalendarRange}>Wochentagsvergleich</SectionTitle>
@@ -1844,6 +1872,15 @@ function WeekdayComparisonSection({ comparison, metric, scopeLabel, onSelect }: 
           </tbody>
         </table>
       </div>
+      {emptyRows.length > 0 && (
+        <div className="mt-2 space-y-0.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          {emptyRows.map((r) => (
+            <p key={r.period.key}>
+              <span className="font-medium">{r.period.label}:</span> {emptyRowHint}
+            </p>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

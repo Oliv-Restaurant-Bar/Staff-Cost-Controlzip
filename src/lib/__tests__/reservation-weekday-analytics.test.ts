@@ -78,6 +78,7 @@ import {
   buildSeasonRecommendations,
   validateSeasonDefinition,
   findOverlappingSeasons,
+  exampleSeasonDefinitions,
   isValidIsoDate,
   type SeasonDefinition,
   type WeekdayStat,
@@ -1824,5 +1825,59 @@ describe('findOverlappingSeasons', () => {
         { id: 'y', name: 'Y', from: '2026-03-01', to: '2026-03-05', active: true },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('exampleSeasonDefinitions', () => {
+  it('liefert die fünf Beispiel-Saisons der Spezifikation, alle aktiv und gültig', () => {
+    const defs = exampleSeasonDefinitions();
+    expect(defs).toHaveLength(5);
+    for (const d of defs) {
+      expect(d.active).toBe(true);
+      expect(validateSeasonDefinition(d).valid).toBe(true);
+    }
+    expect(defs.map((d) => d.name)).toEqual([
+      'Wintersaison 2026',
+      'Frühlingssaison 2026',
+      'Terrassensaison 2026',
+      'Sommerferien 2026',
+      'Weihnachtsgeschäft 2026',
+    ]);
+  });
+  it('hat stabile, eindeutige Slug-IDs (erneutes Einfügen = gleiche IDs)', () => {
+    const a = exampleSeasonDefinitions();
+    const b = exampleSeasonDefinitions();
+    expect(a.map((d) => d.id)).toEqual(b.map((d) => d.id));
+    expect(new Set(a.map((d) => d.id)).size).toBe(5);
+    expect(a.map((d) => d.id)).toContain('winter-2026');
+  });
+  it('bekannte Überlappungen (z. B. Terrassensaison × Sommerferien) werden erkannt', () => {
+    const overlaps = findOverlappingSeasons(exampleSeasonDefinitions());
+    const pairs = overlaps.map((o) => [o.a, o.b].sort().join('+'));
+    expect(pairs).toContain('sommerferien-2026+terrassen-2026');
+    expect(pairs).toContain('weihnachten-2026+winter-2026');
+  });
+});
+
+describe('buildRangeWeekdayDetail rangeLabel', () => {
+  it('reicht das rangeLabel unverändert in das Detail durch', () => {
+    const d = buildRangeWeekdayDetail([], '2026-10-01', '2026-12-31', 1, 'booked', {
+      monthKey: 'winter-2026',
+      label: 'Wintersaison 2026',
+      rangeLabel: '01.10.2026 – 31.12.2026',
+    });
+    expect(d.rangeLabel).toBe('01.10.2026 – 31.12.2026');
+    expect(d.label).toBe('Wintersaison 2026');
+  });
+  it('rangeLabel bleibt auch im Leer-/Fehlerfall erhalten', () => {
+    const d = buildRangeWeekdayDetail([], '2026-12-31', '2026-01-01', 1, 'booked', {
+      rangeLabel: 'X – Y',
+    });
+    expect(d.occurrences).toBe(0);
+    expect(d.rangeLabel).toBe('X – Y');
+  });
+  it('ohne Option bleibt rangeLabel undefined', () => {
+    const d = buildRangeWeekdayDetail([], '2026-01-01', '2026-01-31', 1, 'booked');
+    expect(d.rangeLabel).toBeUndefined();
   });
 });

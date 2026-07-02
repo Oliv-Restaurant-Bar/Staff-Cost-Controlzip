@@ -140,7 +140,10 @@ function DetailBody({
         <DialogTitle>
           Details: {wdLabel} im {month}
         </DialogTitle>
-        <DialogDescription>{detailSubtitle(detail, metric)}</DialogDescription>
+        <DialogDescription>
+          {detailSubtitle(detail, metric)}
+          {detail.rangeLabel ? ` · Zeitraum: ${detail.rangeLabel}` : ''}
+        </DialogDescription>
       </DialogHeader>
 
       <div className="space-y-4">
