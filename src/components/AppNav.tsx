@@ -259,6 +259,13 @@ const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
+        path: '/gaeste/vorjahr',
+        label: 'Monat Ist vs. Vorjahr',
+        shortLabel: 'Vorjahr',
+        icon: TrendingUp,
+        adminOnly: true,
+      },
+      {
         path: '/gaeste/duplikate',
         label: 'Gäste Duplikate',
         shortLabel: 'Duplikate',

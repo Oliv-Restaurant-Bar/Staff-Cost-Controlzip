@@ -4,9 +4,9 @@ description: usePermissions().isAdmin includes read-only guest sessions; admin-o
 ---
 
 `usePermissions()` computes `isAdmin = isAdminUser || isGuest`. Read-only guest-link
-sessions (`GuestSessionContext`) therefore report `isAdmin === true`. **`isGuest` is NOT
-returned by `usePermissions()`** — read it from `useGuestSession()`
-(`@/contexts/GuestSessionContext`) in the same component.
+sessions (`GuestSessionContext`) therefore report `isAdmin === true`. `isGuest` IS
+returned by `usePermissions()` (verified 2026-07: `const { isAdmin, isGuest } =
+usePermissions()`), so destructure both from the same hook.
 
 **Rule:** Any page that WRITES/EDITS data **or reads tenant guest/reservation PII**
 must gate on `isAdmin && !isGuest`, NOT bare `isAdmin`. Do it in **two** places:
