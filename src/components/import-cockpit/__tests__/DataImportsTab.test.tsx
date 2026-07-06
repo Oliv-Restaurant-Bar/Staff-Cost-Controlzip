@@ -193,3 +193,116 @@ describe('DataImportsTab — KPI-Kacheln als Toggle-Filter', () => {
     expect(screen.getByText('Keine Datenimporte für diesen Filter.')).toBeInTheDocument();
   });
 });
+
+// ─── Monatsübersicht ──────────────────────────────────────────────────────────
+
+const TODAY = '2026-07-06';
+
+/** Quellen mit Monats-Zuordnung: Juli aktuell, Juni überfällig, Juli überfällig. */
+function monthRows(): CockpitRow[] {
+  return [
+    makeRow(
+      { id: 'zbericht', label: 'Juli Quelle', exampleFormat: 'z.csv' },
+      { status: 'current', latestDataDate: '2026-07-05' },
+    ),
+    makeRow(
+      { id: 'mirus', label: 'Juni Quelle', importType: 'manual_entry', exampleFormat: undefined },
+      { status: 'overdue', latestDataDate: '2026-06-30' },
+    ),
+    makeRow(
+      { id: 'tagesumsatz', label: 'Juli Überfällig Quelle', exampleFormat: 't.csv' },
+      { status: 'overdue', latestDataDate: '2026-07-03' },
+    ),
+  ];
+}
+
+function renderMonthTab(rows: CockpitRow[] = monthRows()) {
+  render(
+    <TooltipProvider>
+      <DataImportsTab importRows={rows} onSelect={vi.fn()} today={TODAY} />
+    </TooltipProvider>,
+  );
+}
+
+describe('DataImportsTab — Monatsübersicht', () => {
+  it('Jahresauswahl: Standard = aktuelles Jahr, Vor/Zurück wechselt das Jahr', () => {
+    renderMonthTab();
+    const yearLabel = screen.getByTestId('month-overview-year');
+    expect(yearLabel.textContent).toBe('2026');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Vorjahr' }));
+    expect(yearLabel.textContent).toBe('2025');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Nächstes Jahr' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Nächstes Jahr' }));
+    expect(yearLabel.textContent).toBe('2027');
+  });
+
+  it('zeigt die Jahreszusammenfassung mit Totalen', () => {
+    renderMonthTab();
+    const summary = screen.getByTestId('year-summary');
+    expect(summary.textContent).toContain('1 aktuell');
+    expect(summary.textContent).toContain('2 überfällig');
+    expect(summary.textContent).toContain('0 nie importiert');
+    expect(summary.textContent).toContain('0 Lücken-Tage');
+  });
+
+  it('Monatsklick filtert die Tabelle auf den Monat; erneuter Klick hebt auf', () => {
+    renderMonthTab();
+    const jun = screen.getByRole('button', { name: /^Jun 2026/ });
+
+    fireEvent.click(jun);
+    expect(jun).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Juni Quelle')).toBeInTheDocument();
+    expect(screen.queryByText('Juli Quelle')).toBeNull();
+    expect(screen.queryByText('Juli Überfällig Quelle')).toBeNull();
+
+    fireEvent.click(jun);
+    expect(jun).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByText('Juli Quelle')).toBeInTheDocument();
+  });
+
+  it('„Ganzes Jahr" hebt den Monatsfilter auf', () => {
+    renderMonthTab();
+    const ganzesJahr = screen.getByRole('button', { name: 'Ganzes Jahr' });
+    expect(ganzesJahr).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Jun 2026/ }));
+    expect(ganzesJahr).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByText('Juli Quelle')).toBeNull();
+
+    fireEvent.click(ganzesJahr);
+    expect(ganzesJahr).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Juli Quelle')).toBeInTheDocument();
+    expect(screen.getByText('Juni Quelle')).toBeInTheDocument();
+    expect(screen.getByText('Juli Überfällig Quelle')).toBeInTheDocument();
+  });
+
+  it('KPI-Kachel + Monat kombinieren (UND): Überfällig + Juli', () => {
+    renderMonthTab();
+    fireEvent.click(screen.getByRole('button', { name: /Überfällig/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Jul 2026/ }));
+
+    expect(screen.getByText('Juli Überfällig Quelle')).toBeInTheDocument();
+    expect(screen.queryByText('Juni Quelle')).toBeNull(); // überfällig, aber Juni
+    expect(screen.queryByText('Juli Quelle')).toBeNull(); // Juli, aber aktuell
+  });
+
+  it('„Filter zurücksetzen" löscht auch den Monatsfilter', () => {
+    renderMonthTab();
+    fireEvent.click(screen.getByRole('button', { name: /^Jun 2026/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Filter zurücksetzen' }));
+    expect(screen.getByText('Juli Quelle')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ganzes Jahr' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('Jahreswechsel überträgt einen aktiven Monatsfilter aufs neue Jahr', () => {
+    renderMonthTab();
+    fireEvent.click(screen.getByRole('button', { name: /^Jun 2026/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Vorjahr' }));
+    const jun2025 = screen.getByRole('button', { name: /^Jun 2025/ });
+    expect(jun2025).toHaveAttribute('aria-pressed', 'true');
+    // Juni 2025 enthält keine der Quellen → Leer-Hinweis
+    expect(screen.getByText('Keine Datenimporte für diesen Filter.')).toBeInTheDocument();
+  });
+});

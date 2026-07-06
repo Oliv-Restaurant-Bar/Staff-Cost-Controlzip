@@ -19,6 +19,13 @@ import {
   importRowMatchesFilters,
   importRowMatchesKpi,
   toggleImportKpiFilter,
+  importRowMatchesMonth,
+  toggleImportMonthFilter,
+  buildMonthOverview,
+  summarizeImportYear,
+  monthKeyOf,
+  localTodayIso,
+  MONTH_SHORT_LABELS,
   importFileFormats,
   controlRowMatchesFilters,
   taskMatchesFilters,
@@ -480,5 +487,165 @@ describe('importFileFormats', () => {
     expect(importFileFormats(byId.get('zbericht')!)).toEqual(['CSV', 'PDF']);
     expect(importFileFormats(byId.get('warenrechnungen')!)).toEqual(['PDF']);
     expect(importFileFormats(byId.get('reservationen')!)).toEqual(['CSV']);
+  });
+});
+
+// ─── Monatsübersicht (nutzt das oben deklarierte TODAY = '2026-07-06') ────────
+
+describe('monthKeyOf / localTodayIso / MONTH_SHORT_LABELS', () => {
+  it('monthKeyOf polstert einstellige Monate', () => {
+    expect(monthKeyOf(2026, 7)).toBe('2026-07');
+    expect(monthKeyOf(2026, 11)).toBe('2026-11');
+  });
+  it('localTodayIso liefert lokales yyyy-MM-dd', () => {
+    expect(localTodayIso(new Date(2026, 6, 6))).toBe('2026-07-06');
+    expect(localTodayIso(new Date(2026, 0, 1))).toBe('2026-01-01');
+  });
+  it('12 Monatslabels Jan–Dez', () => {
+    expect(MONTH_SHORT_LABELS).toHaveLength(12);
+    expect(MONTH_SHORT_LABELS[0]).toBe('Jan');
+    expect(MONTH_SHORT_LABELS[11]).toBe('Dez');
+  });
+});
+
+describe('importRowMatchesMonth', () => {
+  it('null = kein Monatsfilter (Ganzes Jahr) matcht immer', () => {
+    expect(importRowMatchesMonth(makeRow(), null, TODAY)).toBe(true);
+    expect(importRowMatchesMonth(makeRow({}, { status: 'never' }), null, TODAY)).toBe(true);
+  });
+  it('matcht über den Monat von „Ist-Daten bis"', () => {
+    const row = makeRow({}, { status: 'current', latestDataDate: '2026-07-05' });
+    expect(importRowMatchesMonth(row, '2026-07', TODAY)).toBe(true);
+    expect(importRowMatchesMonth(row, '2026-06', TODAY)).toBe(false);
+    expect(importRowMatchesMonth(row, '2025-07', TODAY)).toBe(false);
+  });
+  it('matcht über Lücken-Tage im Monat (auch wenn Ist-Daten woanders enden)', () => {
+    const row = makeRow({}, { status: 'current', latestDataDate: '2026-07-05', missingDays: ['2026-06-29', '2026-06-30'] });
+    expect(importRowMatchesMonth(row, '2026-06', TODAY)).toBe(true);
+    expect(importRowMatchesMonth(row, '2026-05', TODAY)).toBe(false);
+  });
+  it('nie importiert matcht jeden nicht-zukünftigen Monat, aber keine Zukunftsmonate', () => {
+    const row = makeRow({}, { status: 'never', latestDataDate: null });
+    expect(importRowMatchesMonth(row, '2026-01', TODAY)).toBe(true);
+    expect(importRowMatchesMonth(row, '2026-07', TODAY)).toBe(true);
+    expect(importRowMatchesMonth(row, '2025-12', TODAY)).toBe(true);
+    expect(importRowMatchesMonth(row, '2026-08', TODAY)).toBe(false);
+  });
+  it('uncheckable ohne Datum matcht keinen Monat', () => {
+    const row = makeRow({}, { status: 'uncheckable', latestDataDate: null });
+    expect(importRowMatchesMonth(row, '2026-07', TODAY)).toBe(false);
+  });
+});
+
+describe('toggleImportMonthFilter', () => {
+  it('setzt, wechselt und hebt per erneutem Klick auf', () => {
+    expect(toggleImportMonthFilter(null, '2026-07')).toBe('2026-07');
+    expect(toggleImportMonthFilter('2026-07', '2026-08')).toBe('2026-08');
+    expect(toggleImportMonthFilter('2026-07', '2026-07')).toBeNull();
+  });
+});
+
+describe('buildMonthOverview', () => {
+  const rows = [
+    makeRow({ id: 'zbericht' }, { status: 'current', latestDataDate: '2026-07-05' }),
+    makeRow({ id: 'mirus' }, { status: 'overdue', latestDataDate: '2026-06-30' }),
+    makeRow({ id: 'inventur' }, { status: 'never', latestDataDate: null }),
+    makeRow({ id: 'tagesumsatz' }, { status: 'current', latestDataDate: '2026-07-04', missingDays: ['2026-06-28', '2026-07-01', '2026-07-02'] }),
+  ];
+
+  it('liefert 12 Zellen Jan–Dez mit korrekten Keys', () => {
+    const cells = buildMonthOverview(rows, 2026, TODAY);
+    expect(cells).toHaveLength(12);
+    expect(cells[0].key).toBe('2026-01');
+    expect(cells[11].key).toBe('2026-12');
+  });
+
+  it('zählt aktuell/überfällig über den Monat von „Ist-Daten bis" und Lücken-Tage je Monat', () => {
+    const cells = buildMonthOverview(rows, 2026, TODAY);
+    const juni = cells[5];
+    const juli = cells[6];
+    expect(juni.overdue).toBe(1);
+    expect(juni.current).toBe(0);
+    expect(juni.gapDays).toBe(1);
+    expect(juli.current).toBe(2);
+    expect(juli.overdue).toBe(0);
+    expect(juli.gapDays).toBe(2);
+  });
+
+  it('„nie" zählt in jedem nicht-zukünftigen Monat, Zukunftsmonate 0', () => {
+    const cells = buildMonthOverview(rows, 2026, TODAY);
+    expect(cells[0].never).toBe(1); // Jan
+    expect(cells[6].never).toBe(1); // Jul (laufender Monat)
+    expect(cells[7].never).toBe(0); // Aug (Zukunft)
+    expect(cells[7].isFuture).toBe(true);
+    expect(cells[6].isFuture).toBe(false);
+  });
+
+  it('hasProblems bei überfällig/nie/Lücken, nicht bei rein aktuell', () => {
+    const onlyCurrent = [makeRow({}, { status: 'current', latestDataDate: '2026-07-05' })];
+    const cells = buildMonthOverview(onlyCurrent, 2026, TODAY);
+    expect(cells[6].hasProblems).toBe(false);
+    const withProblems = buildMonthOverview(rows, 2026, TODAY);
+    expect(withProblems[5].hasProblems).toBe(true); // Juni: überfällig + Lücke
+    expect(withProblems[0].hasProblems).toBe(true); // Jan: nie
+  });
+
+  it('Vorjahr: keine Zukunftsmonate, „nie" in allen 12 Monaten', () => {
+    const cells = buildMonthOverview(rows, 2025, TODAY);
+    expect(cells.every((c) => !c.isFuture)).toBe(true);
+    expect(cells.every((c) => c.never === 1)).toBe(true);
+    expect(cells.every((c) => c.current === 0 && c.overdue === 0 && c.gapDays === 0)).toBe(true);
+  });
+
+  it('Folgejahr: alles Zukunft, keine Nie-Zuordnung', () => {
+    const cells = buildMonthOverview(rows, 2027, TODAY);
+    expect(cells.every((c) => c.isFuture && c.never === 0)).toBe(true);
+  });
+});
+
+describe('summarizeImportYear', () => {
+  const rows = [
+    makeRow({ id: 'zbericht' }, { status: 'current', latestDataDate: '2026-07-05' }),
+    makeRow({ id: 'mirus' }, { status: 'overdue', latestDataDate: '2026-06-30' }),
+    makeRow({ id: 'inventur' }, { status: 'never', latestDataDate: null }),
+    makeRow({ id: 'tagesumsatz' }, { status: 'current', latestDataDate: '2026-07-04', missingDays: ['2025-12-31', '2026-07-01', '2026-07-02'] }),
+  ];
+
+  it('zählt Quellen (nicht Monats-Summen) und Lücken-Tage im Jahr', () => {
+    const s = summarizeImportYear(rows, 2026, TODAY);
+    expect(s).toEqual({ current: 2, overdue: 1, never: 1, gapDays: 2 });
+  });
+
+  it('Vorjahr: nur die dortigen Lücken-Tage; nie zählt weiter (fehlt auch dort)', () => {
+    const s = summarizeImportYear(rows, 2025, TODAY);
+    expect(s).toEqual({ current: 0, overdue: 0, never: 1, gapDays: 1 });
+  });
+
+  it('reines Zukunftsjahr: keine Nie-Zählung', () => {
+    const s = summarizeImportYear(rows, 2027, TODAY);
+    expect(s).toEqual({ current: 0, overdue: 0, never: 0, gapDays: 0 });
+  });
+});
+
+describe('importRowMatchesFilters — Monatsfilter kombiniert (UND)', () => {
+  const overdueJuni = makeRow({ id: 'mirus', tabCategory: 'personal' }, { status: 'overdue', latestDataDate: '2026-06-30' });
+  const currentJuli = makeRow({ id: 'zbericht' }, { status: 'current', latestDataDate: '2026-07-05' });
+
+  it('Monatsfilter allein', () => {
+    expect(importRowMatchesFilters(overdueJuni, { ...EMPTY_IMPORT_TAB_FILTER, month: '2026-06' }, TODAY)).toBe(true);
+    expect(importRowMatchesFilters(currentJuli, { ...EMPTY_IMPORT_TAB_FILTER, month: '2026-06' }, TODAY)).toBe(false);
+  });
+
+  it('KPI-Kachel + Monat: Überfällig UND Juni', () => {
+    const f = { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'overdue' as const, month: '2026-06' };
+    expect(importRowMatchesFilters(overdueJuni, f, TODAY)).toBe(true);
+    expect(importRowMatchesFilters(currentJuli, f, TODAY)).toBe(false);
+    // gleicher Monat, falsche Kachel
+    expect(importRowMatchesFilters(overdueJuni, { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'current' as const, month: '2026-06' }, TODAY)).toBe(false);
+  });
+
+  it('month: null (Ganzes Jahr) hebt die Monats-Einschränkung auf', () => {
+    const f = { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'overdue' as const, month: null };
+    expect(importRowMatchesFilters(overdueJuni, f, TODAY)).toBe(true);
   });
 });

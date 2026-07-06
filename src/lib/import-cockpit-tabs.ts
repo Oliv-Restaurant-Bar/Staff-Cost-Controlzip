@@ -399,13 +399,154 @@ export function toggleImportKpiFilter(
   return current === clicked ? null : clicked;
 }
 
-/** Filter des Datenimporte-Tabs (Kategorie = tabCategory; kpi = Kachel-Filter). */
+// ─── Monatsübersicht (rein, testbar) ──────────────────────────────────────────
+
+/** Monats-Schlüssel der Monatsübersicht im Format 'YYYY-MM'. */
+export type ImportMonthKey = string;
+
+/** Heutiges Datum (lokal) als 'yyyy-MM-dd' — Default für die Monatslogik. */
+export function localTodayIso(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Baut den Monats-Schlüssel 'YYYY-MM' aus Jahr + Monat (1–12). */
+export function monthKeyOf(year: number, month: number): ImportMonthKey {
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+export const MONTH_SHORT_LABELS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'] as const;
+
+/**
+ * Monats-Zuordnung einer Import-Zeile (rein aus vorhandenen Zeilendaten):
+ * eine Quelle „gehört" zu einem Monat, wenn
+ *   - ihr „Ist-Daten bis" (`result.latestDataDate`) in diesem Monat liegt, ODER
+ *   - sie Datenlücken-Tage (`result.missingDays`) in diesem Monat hat, ODER
+ *   - sie NIE importiert wurde (`status === 'never'`) — dann fehlt sie in jedem
+ *     nicht-zukünftigen Monat (Zukunftsmonate erhalten keine Nie-Zuordnung).
+ * `month === null` = kein Monatsfilter (Ganzes Jahr).
+ * Hinweis: `due_soon`-Zeilen matchen über ihr „Ist-Daten bis" den Monatsfilter,
+ * tauchen aber bewusst in keiner Zell-Zählung auf (Zellen zählen nur die vier
+ * Spec-Kennzahlen aktuell/überfällig/nie/Lücken).
+ */
+export function importRowMatchesMonth(
+  row: Pick<CockpitRow, 'result'>,
+  month: ImportMonthKey | null,
+  today: string,
+): boolean {
+  if (month === null) return true;
+  const r = row.result;
+  if (r.latestDataDate && r.latestDataDate.slice(0, 7) === month) return true;
+  if (r.missingDays.some((d) => d.slice(0, 7) === month)) return true;
+  if (r.status === 'never' && month <= today.slice(0, 7)) return true;
+  return false;
+}
+
+/** Toggle-Semantik der Monatskarten: erneuter Klick auf den aktiven Monat hebt den Filter auf. */
+export function toggleImportMonthFilter(
+  current: ImportMonthKey | null,
+  clicked: ImportMonthKey,
+): ImportMonthKey | null {
+  return current === clicked ? null : clicked;
+}
+
+/** Kennzahlen eines Monats in der Monatsübersicht. */
+export interface ImportMonthCell {
+  /** Monat 1–12. */
+  month: number;
+  key: ImportMonthKey;
+  /** Quellen mit Status „aktuell", deren Ist-Daten in diesem Monat enden. */
+  current: number;
+  /** Quellen mit Status „überfällig", deren Ist-Daten in diesem Monat enden. */
+  overdue: number;
+  /** Nie importierte Quellen (fehlen in jedem nicht-zukünftigen Monat). */
+  never: number;
+  /** Anzahl fehlender Tage (Datenlücken) in diesem Monat. */
+  gapDays: number;
+  /** Monat hat Probleme (überfällig, nie importiert oder Lücken-Tage). */
+  hasProblems: boolean;
+  /** Monat liegt komplett in der Zukunft (nach dem heutigen Monat). */
+  isFuture: boolean;
+}
+
+/** Jahres-Totale der Monatsübersicht (Quellen-Zählung, Lücken in Tagen). */
+export interface ImportYearSummary {
+  current: number;
+  overdue: number;
+  never: number;
+  gapDays: number;
+}
+
+/**
+ * Baut die 12 Monatszellen (Jan–Dez) für das gewählte Jahr. Zählt NUR, was aus
+ * den Zeilendaten ableitbar ist (kein Erfinden): aktuell/überfällig über den
+ * Monat von „Ist-Daten bis", Lücken über die Monats-Zugehörigkeit der
+ * fehlenden Tage, „nie" in jedem nicht-zukünftigen Monat.
+ */
+export function buildMonthOverview(
+  rows: Array<Pick<CockpitRow, 'result'>>,
+  year: number,
+  today: string,
+): ImportMonthCell[] {
+  const todayMonth = today.slice(0, 7);
+  const neverCount = rows.filter((r) => r.result.status === 'never').length;
+  return Array.from({ length: 12 }, (_, i) => {
+    const month = i + 1;
+    const key = monthKeyOf(year, month);
+    const isFuture = key > todayMonth;
+    let current = 0;
+    let overdue = 0;
+    let gapDays = 0;
+    for (const r of rows) {
+      const res = r.result;
+      if (res.latestDataDate && res.latestDataDate.slice(0, 7) === key) {
+        if (res.status === 'current') current++;
+        else if (res.status === 'overdue') overdue++;
+      }
+      for (const d of res.missingDays) if (d.slice(0, 7) === key) gapDays++;
+    }
+    const never = isFuture ? 0 : neverCount;
+    return { month, key, current, overdue, never, gapDays, hasProblems: overdue > 0 || never > 0 || gapDays > 0, isFuture };
+  });
+}
+
+/**
+ * Jahreszusammenfassung („Ganzes Jahr"): aktuell/überfällig = Quellen, deren
+ * Ist-Daten im Jahr enden; nie = nie importierte Quellen (0 für reine
+ * Zukunftsjahre); Lücken = Summe fehlender Tage im Jahr.
+ */
+export function summarizeImportYear(
+  rows: Array<Pick<CockpitRow, 'result'>>,
+  year: number,
+  today: string,
+): ImportYearSummary {
+  const y = String(year);
+  const s: ImportYearSummary = { current: 0, overdue: 0, never: 0, gapDays: 0 };
+  const yearIsFuture = year > Number(today.slice(0, 4));
+  for (const r of rows) {
+    const res = r.result;
+    if (res.status === 'never') {
+      if (!yearIsFuture) s.never++;
+    } else if (res.latestDataDate && res.latestDataDate.slice(0, 4) === y) {
+      if (res.status === 'current') s.current++;
+      else if (res.status === 'overdue') s.overdue++;
+    }
+    for (const d of res.missingDays) if (d.slice(0, 4) === y) s.gapDays++;
+  }
+  return s;
+}
+
+/** Filter des Datenimporte-Tabs (Kategorie = tabCategory; kpi = Kachel-Filter; month = Monatsübersicht). */
 export interface ImportTabFilterState {
   category: 'all' | CockpitTabCategory;
   importType: 'all' | CockpitImportType;
   interval: 'all' | ImportInterval;
   status: 'all' | CockpitStatus;
   kpi: ImportKpiFilter | null;
+  /** Monatsfilter der Monatsübersicht ('YYYY-MM'); null = Ganzes Jahr / kein Filter. */
+  month: ImportMonthKey | null;
   search: string;
 }
 
@@ -415,16 +556,26 @@ export const EMPTY_IMPORT_TAB_FILTER: ImportTabFilterState = {
   interval: 'all',
   status: 'all',
   kpi: null,
+  month: null,
   search: '',
 };
 
-/** Prüft eine Import-Zeile gegen alle Filterachsen des Datenimporte-Tabs (UND). */
-export function importRowMatchesFilters(row: CockpitRow, f: ImportTabFilterState): boolean {
+/**
+ * Prüft eine Import-Zeile gegen alle Filterachsen des Datenimporte-Tabs (UND).
+ * `today` (yyyy-MM-dd) wird nur für den Monatsfilter gebraucht (Nie-Zuordnung);
+ * Default = heute (lokal).
+ */
+export function importRowMatchesFilters(
+  row: CockpitRow,
+  f: ImportTabFilterState,
+  today: string = localTodayIso(),
+): boolean {
   if (f.category !== 'all' && row.def.tabCategory !== f.category) return false;
   if (f.importType !== 'all' && row.def.importType !== f.importType) return false;
   if (f.interval !== 'all' && row.def.interval !== f.interval) return false;
   if (f.status !== 'all' && row.result.status !== f.status) return false;
   if (!importRowMatchesKpi(row, f.kpi)) return false;
+  if (!importRowMatchesMonth(row, f.month, today)) return false;
   return matchesCockpitSearch(row.def, f.search);
 }
 

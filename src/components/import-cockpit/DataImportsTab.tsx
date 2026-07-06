@@ -16,6 +16,8 @@ import {
   CalendarClock,
   Globe,
   XCircle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -42,10 +44,16 @@ import {
   importRowMatchesFilters,
   importFileFormats,
   toggleImportKpiFilter,
+  toggleImportMonthFilter,
+  buildMonthOverview,
+  summarizeImportYear,
+  localTodayIso,
+  MONTH_SHORT_LABELS,
   EMPTY_IMPORT_TAB_FILTER,
   IMPORT_CATEGORY_ORDER,
   TAB_CATEGORY_LABEL,
   type ImportKpiFilter,
+  type ImportMonthKey,
   type ImportTabFilterState,
 } from '@/lib/import-cockpit-tabs';
 import { KpiCard, StatusBadge, ImportTypeBadge, FileFormatBadges, formatDateTime, dataUntilOf } from './cockpit-ui';
@@ -74,10 +82,13 @@ const IMPORT_TYPE_FILTER_OPTIONS: Array<{ value: 'all' | CockpitImportType; labe
 interface Props {
   importRows: CockpitRow[];
   onSelect: (id: CockpitSourceId) => void;
+  /** Heutiges Datum 'yyyy-MM-dd' (nur für Tests überschreibbar). */
+  today?: string;
 }
 
-export function DataImportsTab({ importRows, onSelect }: Props) {
+export function DataImportsTab({ importRows, onSelect, today = localTodayIso() }: Props) {
   const [filters, setFilters] = useState<ImportTabFilterState>(EMPTY_IMPORT_TAB_FILTER);
+  const [year, setYear] = useState(() => Number(today.slice(0, 4)));
 
   const patchFilter = useCallback(
     <K extends keyof ImportTabFilterState>(key: K, value: ImportTabFilterState[K]) =>
@@ -89,18 +100,37 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
     (kpi: ImportKpiFilter) => setFilters((prev) => ({ ...prev, kpi: toggleImportKpiFilter(prev.kpi, kpi) })),
     [],
   );
+  const toggleMonth = useCallback(
+    (key: ImportMonthKey) => setFilters((prev) => ({ ...prev, month: toggleImportMonthFilter(prev.month, key) })),
+    [],
+  );
+  const clearMonth = useCallback(() => setFilters((prev) => (prev.month === null ? prev : { ...prev, month: null })), []);
+  const changeYear = useCallback(
+    (delta: number) => {
+      const nextYear = year + delta;
+      setYear(nextYear);
+      // Aktiven Monatsfilter aufs neue Jahr übertragen (gleicher Monat).
+      setFilters((prev) =>
+        prev.month === null ? prev : { ...prev, month: `${nextYear}${prev.month.slice(4)}` },
+      );
+    },
+    [year],
+  );
   const hasActiveFilters =
     filters.category !== 'all' ||
     filters.importType !== 'all' ||
     filters.interval !== 'all' ||
     filters.status !== 'all' ||
     filters.kpi !== null ||
+    filters.month !== null ||
     filters.search.trim() !== '';
 
   const kpis = useMemo(() => summarizeCockpit(importRows), [importRows]);
+  const monthCells = useMemo(() => buildMonthOverview(importRows, year, today), [importRows, year, today]);
+  const yearSummary = useMemo(() => summarizeImportYear(importRows, year, today), [importRows, year, today]);
   const filteredRows = useMemo(
-    () => importRows.filter((r) => importRowMatchesFilters(r, filters)),
-    [importRows, filters],
+    () => importRows.filter((r) => importRowMatchesFilters(r, filters, today)),
+    [importRows, filters, today],
   );
 
   const groupedRows = useMemo(() => {
@@ -159,6 +189,92 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
           active={filters.kpi === 'gaps'}
         />
       </div>
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => changeYear(-1)}
+                aria-label="Vorjahr"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="w-12 text-center text-sm font-semibold tabular-nums" data-testid="month-overview-year">
+                {year}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => changeYear(1)}
+                aria-label="Nächstes Jahr"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={filters.month === null ? 'secondary' : 'ghost'}
+                size="sm"
+                className="ml-1 h-8"
+                aria-pressed={filters.month === null}
+                onClick={clearMonth}
+              >
+                Ganzes Jahr
+              </Button>
+            </div>
+            <div className="text-xs text-muted-foreground" data-testid="year-summary">
+              Jahr {year}: <span className="font-medium text-emerald-600">{yearSummary.current} aktuell</span>
+              {' · '}
+              <span className="font-medium text-red-600">{yearSummary.overdue} überfällig</span>
+              {' · '}
+              <span className="font-medium">{yearSummary.never} nie importiert</span>
+              {' · '}
+              <span className="font-medium text-amber-600">{yearSummary.gapDays} Lücken-Tage</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-12">
+            {monthCells.map((cell) => {
+              const active = filters.month === cell.key;
+              const quiet = !cell.hasProblems && cell.current === 0;
+              return (
+                <button
+                  key={cell.key}
+                  type="button"
+                  aria-pressed={active}
+                  aria-label={`${MONTH_SHORT_LABELS[cell.month - 1]} ${year}: ${cell.current} aktuell, ${cell.overdue} überfällig, ${cell.never} nie importiert, ${cell.gapDays} Lücken-Tage`}
+                  onClick={() => toggleMonth(cell.key)}
+                  className={[
+                    'rounded-md border p-2 text-left transition-colors',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    active ? 'border-primary ring-2 ring-primary/40' : 'hover:bg-muted/60',
+                    !active && cell.hasProblems
+                      ? cell.overdue > 0 || cell.never > 0
+                        ? 'border-red-300 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20'
+                        : 'border-amber-300 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20'
+                      : '',
+                    quiet ? 'opacity-60' : '',
+                  ].join(' ')}
+                >
+                  <div className="text-xs font-semibold">{MONTH_SHORT_LABELS[cell.month - 1]}</div>
+                  {quiet ? (
+                    <div className="mt-0.5 text-xs text-muted-foreground">–</div>
+                  ) : (
+                    <div className="mt-0.5 space-y-0 text-[11px] leading-4 tabular-nums">
+                      {cell.current > 0 && <div className="text-emerald-600">{cell.current} aktuell</div>}
+                      {cell.overdue > 0 && <div className="font-medium text-red-600">{cell.overdue} überfällig</div>}
+                      {cell.never > 0 && <div className="text-muted-foreground">{cell.never} nie</div>}
+                      {cell.gapDays > 0 && <div className="text-amber-600">{cell.gapDays} Lücken</div>}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="relative">
