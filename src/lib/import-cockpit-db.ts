@@ -48,6 +48,11 @@ function dayOf(ts: string | null | undefined): string | null {
   return ts ? ts.slice(0, 10) : null;
 }
 
+/** Heutiges Datum (yyyy-MM-dd) — Obergrenze für „Ist-Daten bis" (nie Zukunft). */
+function todayIso(): string {
+  return format(new Date(), 'yyyy-MM-dd');
+}
+
 /** Fenster-Untergrenze für die Datenlücken-Prüfung (heute − Fenster − Puffer). */
 function gapCutoff(): string {
   return format(addDays(new Date(), -(GAP_WINDOW_DAYS + 5)), 'yyyy-MM-dd');
@@ -110,15 +115,19 @@ async function guestCrmSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> 
 async function zberichtSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
   const rows = await loadGnImports(ctx.tenantId);
   if (!rows.length) return EMPTY;
+  const today = todayIso();
   const periodTos = rows.map((r) => r.period_to).filter((d): d is string => !!d).sort();
   const periodFroms = rows.map((r) => r.period_from).filter((d): d is string => !!d).sort();
   const importedAts = rows.map((r) => r.imported_at).filter(Boolean).sort();
-  const latest = periodTos.at(-1) ?? null;
+  // Zukunft zählt nie als „Ist-Daten bis": spätestes Berichtsende ≤ heute.
+  const latest = periodTos.filter((d) => d.slice(0, 10) <= today).at(-1) ?? null;
+  const futureLatest = periodTos.filter((d) => d.slice(0, 10) > today).at(-1) ?? null;
   return {
     latestDataDate: latest,
     dataFrom: periodFroms[0] ?? null,
     dataUntil: latest,
     recordCount: rows.length,
+    futureDataDate: futureLatest,
     lastImport: importedAts.length
       ? { at: importedAts.at(-1) ?? null, status: 'success' }
       : null,
@@ -132,11 +141,16 @@ async function tagesumsatzSignal(ctx: CockpitFetchContext): Promise<CockpitSigna
     | Record<string, { actualRevenue?: number }>
     | null;
   if (!raw || typeof raw !== 'object') return EMPTY;
-  const days = Object.entries(raw)
+  const today = todayIso();
+  // Nur Tage mit echtem Ist-Umsatz (> 0) zählen als importiert.
+  const revenueDays = Object.entries(raw)
     .filter(([k, v]) => /^\d{4}-\d{2}-\d{2}$/.test(k) && (v?.actualRevenue ?? 0) > 0)
     .map(([k]) => k)
     .sort();
-  if (!days.length) return EMPTY;
+  // Zukunft zählt nie als „Ist-Daten bis": nur Tage ≤ heute.
+  const days = revenueDays.filter((d) => d <= today);
+  const futureLatest = revenueDays.filter((d) => d > today).at(-1) ?? null;
+  if (!days.length) return futureLatest ? { latestDataDate: null, futureDataDate: futureLatest } : EMPTY;
   const latest = days.at(-1)!;
   const cutoff = gapCutoff();
   return {
@@ -145,21 +159,37 @@ async function tagesumsatzSignal(ctx: CockpitFetchContext): Promise<CockpitSigna
     dataUntil: latest,
     recordCount: days.length,
     coveredDates: days.filter((d) => d >= cutoff),
+    futureDataDate: futureLatest,
   };
 }
 
 /** Produktverkäufe: `product_sales` (mandantenübergreifend, kein restaurant_id). */
 async function produktverkaeufeSignal(): Promise<CockpitSignal> {
-  const [maxRow, minRow] = await Promise.all([
-    supabase.from('product_sales').select('sale_date').order('sale_date', { ascending: false }).limit(1),
+  const today = todayIso();
+  const [maxRow, minRow, futureRow] = await Promise.all([
+    // Zukunft zählt nie als „Ist-Daten bis": spätestes Verkaufsdatum ≤ heute.
+    supabase
+      .from('product_sales')
+      .select('sale_date')
+      .lte('sale_date', today)
+      .order('sale_date', { ascending: false })
+      .limit(1),
     supabase.from('product_sales').select('sale_date').order('sale_date', { ascending: true }).limit(1),
+    supabase
+      .from('product_sales')
+      .select('sale_date')
+      .gt('sale_date', today)
+      .order('sale_date', { ascending: false })
+      .limit(1),
   ]);
   const latest = (maxRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null;
-  if (!latest) return EMPTY;
+  const futureLatest = (futureRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null;
+  if (!latest) return futureLatest ? { latestDataDate: null, futureDataDate: futureLatest } : EMPTY;
   return {
     latestDataDate: latest,
     dataFrom: (minRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null,
     dataUntil: latest,
+    futureDataDate: futureLatest,
   };
 }
 
@@ -178,16 +208,58 @@ function applyEmployeeIdTenant<T>(q: T, tenantId: string): T {
     : query.not('employee_id', 'like', 'b-%');
 }
 
-/** Mirus Arbeitszeiten: `actual_hours`, Tenant über employee_id-Präfix. Datenlücken werden erkannt. */
+/**
+ * Mirus Arbeitszeiten: `actual_hours`, Tenant über employee_id-Präfix.
+ *
+ * „Ist-Daten bis" (fachlich korrekt): NUR echte Ist-Arbeitszeiten zählen —
+ * `absence_type IS NULL` UND (`hours > 0` ODER `start_time` ODER `end_time`).
+ * Damit fallen Ferien/Frei/Feiertag/Krankheit (absence_type gesetzt), leere
+ * Monats-/Platzhalterzeilen (keine Stunden, keine Zeiten) und Plan-Schichten
+ * ohne Ist-Zeit heraus. Zusätzlich wird die Zukunft (> heute) NIE als
+ * vollständig gewertet; ein spätestes Zukunftsdatum wird nur als Hinweis
+ * (`futureDataDate`) zurückgegeben. Datenlücken werden über echte Ist-Tage
+ * (Fenster) erkannt.
+ */
 async function mirusSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
   const applyTenant = <T>(q: T): T => applyEmployeeIdTenant(q, ctx.tenantId);
   const cutoff = gapCutoff();
-  const [maxRow, windowRows] = await Promise.all([
-    applyTenant(supabase.from('actual_hours').select('date').order('date', { ascending: false }).limit(1)),
-    applyTenant(supabase.from('actual_hours').select('date').gte('date', cutoff)),
+  const today = todayIso();
+  const realIst = 'hours.gt.0,start_time.not.is.null,end_time.not.is.null';
+  const [latestRow, windowRows, futureRow] = await Promise.all([
+    // Spätester echter Ist-Tag ≤ heute.
+    applyTenant(
+      supabase
+        .from('actual_hours')
+        .select('date')
+        .is('absence_type', null)
+        .or(realIst)
+        .lte('date', today)
+        .order('date', { ascending: false })
+        .limit(1),
+    ),
+    // Echte Ist-Tage im Prüffenster (für Datenlücken), ebenfalls ≤ heute.
+    applyTenant(
+      supabase
+        .from('actual_hours')
+        .select('date')
+        .is('absence_type', null)
+        .or(realIst)
+        .gte('date', cutoff)
+        .lte('date', today),
+    ),
+    // Reiner Zukunftshinweis: irgendeine Zeile > heute (Plan/Ferien/Zukunft).
+    applyTenant(
+      supabase
+        .from('actual_hours')
+        .select('date')
+        .gt('date', today)
+        .order('date', { ascending: false })
+        .limit(1),
+    ),
   ]);
-  const latest = (maxRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
-  if (!latest) return EMPTY;
+  const latest = (latestRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
+  const futureLatest = (futureRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
+  if (!latest) return futureLatest ? { latestDataDate: null, futureDataDate: futureLatest } : EMPTY;
   const covered = Array.from(
     new Set(((windowRows.data as Array<{ date?: string }>) ?? []).map((r) => r.date).filter((d): d is string => !!d)),
   );
@@ -195,6 +267,7 @@ async function mirusSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
     latestDataDate: latest,
     dataUntil: latest,
     coveredDates: covered,
+    futureDataDate: futureLatest,
   };
 }
 

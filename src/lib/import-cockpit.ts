@@ -146,6 +146,13 @@ export interface CockpitSignal {
   lastImport?: { at: string | null; status: 'success' | 'failed'; by?: string | null } | null;
   /** Abgedeckte Tage (nur für detectGaps-Quellen, Fenster-begrenzt). */
   coveredDates?: string[];
+  /**
+   * Spätestes Datum ZUKÜNFTIGER Zeilen (> heute), das der DB-Aggregator für
+   * tägliche Ist-Quellen gefunden hat (z. B. Plan-/Ferien-/Zukunftszeilen in
+   * `actual_hours`). Reiner Hinweis für den Drawer — fliesst NIE in „Ist-Daten
+   * bis" oder den Status ein (Zukunft zählt nie als vollständig importiert).
+   */
+  futureDataDate?: string | null;
 }
 
 /** Ergebnis der Statusberechnung einer Quelle. */
@@ -158,6 +165,17 @@ export interface CockpitStatusResult {
   nextDue: string | null;
   /** Fehlende Tage im Prüffenster (nur detectGaps-Quellen). */
   missingDays: string[];
+  /**
+   * Letzter LÜCKENLOS verfügbarer Tag (≤ heute) — „Vollständig importiert bis".
+   * Für detectGaps-Quellen aus den abgedeckten Tagen berechnet (bricht beim
+   * ersten fehlenden Tag ab); sonst = kappte letzter Ist-Datenstand.
+   */
+  completeUntil: string | null;
+  /**
+   * Spätestes ignoriertes Zukunftsdatum (> heute), falls die Quelle solche
+   * Zeilen enthält — nur Anzeige-Hinweis (Drawer), nie statusrelevant.
+   */
+  ignoredFutureDate: string | null;
   /** true → letzter Import ist fehlgeschlagen. */
   failed: boolean;
   /** Menschenlesbare Begründung. */
@@ -540,14 +558,29 @@ export function computeSourceStatus(
       daysBehind: null,
       nextDue: null,
       missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate: null,
       failed: false,
       reason: 'Nicht automatisch prüfbar – manuelle Kontrolle',
     };
   }
 
+  const todayIso = format(now, 'yyyy-MM-dd');
   const failed = signal.lastImport?.status === 'failed';
+
+  // Zukunfts-Hinweis: nur für tägliche Ist-Quellen (detectGaps) relevant. Der
+  // DB-Aggregator liefert dafür `futureDataDate`; zusätzlich fangen wir hier
+  // defensiv ein zukünftiges Bezugsdatum ab (falls doch eines durchrutscht).
+  let ignoredFutureDate: string | null = def.detectGaps ? signal.futureDataDate ?? null : null;
+
   // Frische-Bezugsdatum: bevorzugt der Datenstand, sonst der letzte Importlauf.
-  const refRaw = signal.latestDataDate ?? (signal.lastImport?.at ? signal.lastImport.at.slice(0, 10) : null);
+  let refRaw = signal.latestDataDate ?? (signal.lastImport?.at ? signal.lastImport.at.slice(0, 10) : null);
+  // Zukunft zählt nie als „Ist-Daten bis": bei detectGaps-Quellen wird ein
+  // zukünftiges Tages-Bezugsdatum auf heute begrenzt und als ignoriert vermerkt.
+  if (def.detectGaps && refRaw && RE_DAY.test(refRaw) && refRaw > todayIso) {
+    if (!ignoredFutureDate || refRaw > ignoredFutureDate) ignoredFutureDate = refRaw;
+    refRaw = todayIso;
+  }
   const normalized = normalizeDataDate(refRaw);
 
   // 2) Letzter Import fehlgeschlagen → overdue (rot), unabhängig vom Datenstand.
@@ -558,6 +591,8 @@ export function computeSourceStatus(
       daysBehind: normalized ? differenceInCalendarDays(now, normalized) : null,
       nextDue: null,
       missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate,
       failed: true,
       reason: 'Letzter Import fehlgeschlagen',
     };
@@ -571,6 +606,8 @@ export function computeSourceStatus(
       daysBehind: null,
       nextDue: null,
       missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate,
       failed: false,
       reason: 'Noch nie importiert',
     };
@@ -580,35 +617,41 @@ export function computeSourceStatus(
   let status = statusFromDaysBehind(def.interval, daysBehind, normalized.getFullYear(), now.getFullYear());
 
   // 4) Datenlücken (nur tägliche detectGaps-Quellen) — senken höchstens auf due_soon.
+  // `refRaw` ist bereits auf ≤ heute begrenzt (Zukunft wurde oben abgefangen).
   let missingDays: string[] = [];
+  let completeUntil: string | null = refRaw;
   if (def.detectGaps && signal.coveredDates && signal.coveredDates.length > 0) {
     const to = format(normalized, 'yyyy-MM-dd');
     const from = format(addDays(normalized, -GAP_WINDOW_DAYS), 'yyyy-MM-dd');
     missingDays = findMissingDays(signal.coveredDates, from, to);
+    // „Vollständig importiert bis" = letzter lückenlos verfügbarer Tag (≤ heute).
+    completeUntil = lastGaplessDay(signal.coveredDates, todayIso) ?? completeUntil;
     if (missingDays.length > 0 && status === 'current') {
       status = 'due_soon';
     }
   }
 
   const nextDue = computeNextDue(def.interval, normalized);
-  const dateLabel = formatCockpitDate(signal.latestDataDate ?? refRaw);
+  const dateLabel = formatCockpitDate(refRaw);
   let reason: string;
   if (missingDays.length > 0) {
-    reason = `Datenlücke: ${missingDays.length} fehlende ${missingDays.length === 1 ? 'Tag' : 'Tage'} (Daten bis ${dateLabel})`;
+    reason = `Datenlücke: ${missingDays.length} fehlende ${missingDays.length === 1 ? 'Tag' : 'Tage'} (Ist-Daten bis ${dateLabel})`;
   } else if (status === 'current') {
-    reason = `Aktuell – Daten bis ${dateLabel}`;
+    reason = `Aktuell – Ist-Daten bis ${dateLabel}`;
   } else if (status === 'due_soon') {
-    reason = `Bald fällig – Daten bis ${dateLabel}`;
+    reason = `Bald fällig – Ist-Daten bis ${dateLabel}`;
   } else {
-    reason = `Überfällig – Daten nur bis ${dateLabel}`;
+    reason = `Überfällig – Ist-Daten nur bis ${dateLabel}`;
   }
 
   return {
     status,
-    latestDataDate: signal.latestDataDate ?? refRaw,
+    latestDataDate: refRaw,
     daysBehind,
     nextDue,
     missingDays,
+    completeUntil,
+    ignoredFutureDate,
     failed: false,
     reason,
   };
@@ -632,6 +675,30 @@ export function findMissingDays(covered: string[], from: string, to: string): st
     if (!set.has(iso)) missing.push(iso);
   }
   return missing;
+}
+
+/**
+ * Letzter LÜCKENLOS verfügbarer Tag: läuft vom frühesten abgedeckten Tag (≤ heute)
+ * vorwärts und stoppt beim ERSTEN fehlenden Tag. Beispiel:
+ *   [01,02,03,05] → 03 (der 04. fehlt) — 05 ist NICHT „vollständig".
+ * Zukünftige abgedeckte Tage (> today) werden ignoriert (Zukunft zählt nie als
+ * vollständig importiert). Gibt null zurück, wenn es keinen abgedeckten Tag
+ * ≤ today gibt.
+ */
+export function lastGaplessDay(covered: string[], today: string): string | null {
+  const days = Array.from(new Set(covered.filter((d) => RE_DAY.test(d) && d <= today))).sort();
+  if (days.length === 0) return null;
+  let last = days[0];
+  for (let i = 1; i < days.length; i++) {
+    const expected = format(addDays(parseISO(last), 1), 'yyyy-MM-dd');
+    if (days[i] === expected) {
+      last = days[i];
+    } else if (days[i] > expected) {
+      break; // erste Lücke → Vollständigkeit endet beim vorherigen Tag
+    }
+    // days[i] === last (Duplikat kann durch Set nicht auftreten) → ignorieren
+  }
+  return last;
 }
 
 // ─── KPIs ────────────────────────────────────────────────────────────────────────

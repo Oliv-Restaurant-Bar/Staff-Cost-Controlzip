@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeSourceStatus,
   findMissingDays,
+  lastGaplessDay,
   summarizeCockpit,
   groupChecklist,
   checklistStateFromStatus,
@@ -163,6 +164,91 @@ describe('computeSourceStatus — Datenlücken', () => {
   });
 });
 
+describe('lastGaplessDay', () => {
+  it('bricht beim ersten fehlenden Tag ab ([01,02,03,05] → 03)', () => {
+    expect(lastGaplessDay(['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-05'], '2026-07-06')).toBe('2026-07-03');
+  });
+
+  it('lückenlose Reihe → letzter Tag', () => {
+    expect(lastGaplessDay(['2026-07-04', '2026-07-05', '2026-07-06'], '2026-07-06')).toBe('2026-07-06');
+  });
+
+  it('ignoriert zukünftige Tage (> today)', () => {
+    // 07.07 und 12.12 liegen nach today (06.07) → für Vollständigkeit irrelevant.
+    expect(lastGaplessDay(['2026-07-05', '2026-07-06', '2026-07-07', '2026-12-12'], '2026-07-06')).toBe('2026-07-06');
+  });
+
+  it('nur zukünftige Tage → null', () => {
+    expect(lastGaplessDay(['2026-12-04', '2026-12-24'], '2026-07-06')).toBeNull();
+  });
+
+  it('leere Liste → null', () => {
+    expect(lastGaplessDay([], '2026-07-06')).toBeNull();
+  });
+});
+
+describe('computeSourceStatus — Zukunft & Vollständigkeit (Mirus-Fix)', () => {
+  const dailyGap = () => def({ interval: 'daily', checkable: true, detectGaps: true });
+
+  it('zukünftiges MAX-Datum wird nicht als „Ist-Daten bis" gewertet (auf heute begrenzt)', () => {
+    // Simuliert eine durchgerutschte Zukunftszeile (z. B. 24.12.2026).
+    const r = computeSourceStatus(dailyGap(), sig({ latestDataDate: '2026-12-24' }), NOW);
+    expect(r.latestDataDate).toBe('2026-07-06'); // gekappt auf heute, NIE 24.12.
+    expect(r.ignoredFutureDate).toBe('2026-12-24');
+    expect(r.status).not.toBe('overdue'); // Zukunft macht die Quelle nicht rot
+  });
+
+  it('übernimmt den Zukunftshinweis (futureDataDate) aus dem Signal in den Status', () => {
+    const covered = ['2026-07-04', '2026-07-05', '2026-07-06'];
+    const r = computeSourceStatus(
+      dailyGap(),
+      sig({ latestDataDate: '2026-07-06', coveredDates: covered, futureDataDate: '2026-12-04' }),
+      NOW,
+    );
+    expect(r.ignoredFutureDate).toBe('2026-12-04');
+    expect(r.status).toBe('current');
+    expect(r.completeUntil).toBe('2026-07-06');
+  });
+
+  it('Zukunftshinweis nur für detectGaps-Quellen (nicht für zukunftsdatierte Quellen wie Dienstplan)', () => {
+    const r = computeSourceStatus(
+      def({ interval: 'daily', checkable: true, detectGaps: false }),
+      sig({ latestDataDate: '2026-07-06', futureDataDate: '2026-12-04' }),
+      NOW,
+    );
+    expect(r.ignoredFutureDate).toBeNull();
+  });
+
+  it('fehlender Tag unterbricht die Vollständigkeit (completeUntil < letztes Datum)', () => {
+    const covered = ['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-05', '2026-07-06'];
+    const r = computeSourceStatus(dailyGap(), sig({ latestDataDate: '2026-07-06', coveredDates: covered }), NOW);
+    expect(r.completeUntil).toBe('2026-07-03'); // 04.07 fehlt → vollständig nur bis 03.07
+    expect(r.latestDataDate).toBe('2026-07-06'); // letzter gefundener Ist-Tag bleibt 06.07
+  });
+
+  it('Status wird bei Datenlücke gelb (due_soon) statt grün', () => {
+    const covered = ['2026-07-03', '2026-07-04', '2026-07-06']; // 05.07 fehlt
+    const r = computeSourceStatus(dailyGap(), sig({ latestDataDate: '2026-07-06', coveredDates: covered }), NOW);
+    expect(r.status).toBe('due_soon');
+    expect(r.missingDays).toEqual(['2026-07-05']);
+  });
+
+  it('Status wird bei Datenlücke rot (overdue), wenn der Datenstand zusätzlich alt ist', () => {
+    // Letzter Ist-Tag 30.06 (überfällig) + innere Lücke → bleibt overdue.
+    const covered = ['2026-06-27', '2026-06-28', '2026-06-30'];
+    const r = computeSourceStatus(dailyGap(), sig({ latestDataDate: '2026-06-30', coveredDates: covered }), NOW);
+    expect(r.status).toBe('overdue');
+    expect(r.missingDays).toEqual(['2026-06-29']);
+  });
+
+  it('ohne echte Ist-Daten (kein Datum) → never (Zukunftshinweis bleibt im Drawer)', () => {
+    // DB liefert nur einen Zukunftshinweis, aber keinen echten Ist-Tag.
+    const r = computeSourceStatus(dailyGap(), sig({ latestDataDate: null, futureDataDate: '2026-12-24' }), NOW);
+    expect(r.status).toBe('never');
+    expect(r.ignoredFutureDate).toBe('2026-12-24');
+  });
+});
+
 describe('findMissingDays', () => {
   it('liefert nur innere Löcher', () => {
     expect(findMissingDays(['2026-07-01', '2026-07-02', '2026-07-04'], '2026-06-01', '2026-07-04')).toEqual([
@@ -188,6 +274,8 @@ describe('summarizeCockpit', () => {
       daysBehind: null,
       nextDue: null,
       missingDays,
+      completeUntil: null,
+      ignoredFutureDate: null,
       failed: false,
       reason: '',
     },
@@ -320,6 +408,8 @@ function rowFromSource(def: CockpitSourceDef, status: CockpitStatus): CockpitRow
     nextDue: null,
     daysBehind: null,
     missingDays: [],
+    completeUntil: null,
+    ignoredFutureDate: null,
     failed: false,
   };
   return { def, signal: { latestDataDate: null }, result };

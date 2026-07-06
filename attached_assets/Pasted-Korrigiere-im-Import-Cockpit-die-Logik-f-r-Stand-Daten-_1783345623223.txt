@@ -1,0 +1,196 @@
+Korrigiere im Import-Cockpit die Logik für "Stand / Daten bis", besonders für Mirus Arbeitszeiten.
+
+Problem:
+Aktuell zeigt Mirus Arbeitszeiten ein zukünftiges Datum wie 04.12.2026 oder 24.12.2026 als "Daten bis". Das ist irreführend, weil es vermutlich aus zukünftigen Monatszeilen, leeren Tagen, Ferien-/Planzeilen oder importierten Kalenderdaten stammt. Das Cockpit soll aber anzeigen, bis zu welchem Datum echte Ist-Daten vollständig importiert wurden.
+
+Ziel:
+Die Spalte soll fachlich korrekt anzeigen:
+
+"Vollständig importiert bis"
+
+oder falls aus Platzgründen besser:
+
+"Ist-Daten bis"
+
+──────────────────────────────
+1. Spaltenbezeichnung ändern
+──────────────────────────────
+
+Die Spalte "Stand / Daten bis" umbenennen in:
+
+"Ist-Daten bis"
+
+oder:
+
+"Vollständig bis"
+
+Wichtig:
+Bei manuellen Kontrollpunkten darf weiterhin "Stand" sinnvoll sein, aber bei Datei-Importen muss klar sein, dass es um echte importierte Daten geht.
+
+──────────────────────────────
+2. Mirus Arbeitszeiten korrekt berechnen
+──────────────────────────────
+
+Für "Mirus Arbeitszeiten" darf nicht einfach MAX(datum) aus allen Datensätzen verwendet werden.
+
+Stattdessen nur Tage berücksichtigen, an denen echte Ist-Arbeitszeitdaten vorhanden sind.
+
+Als echte Ist-Daten gelten nur Datensätze mit mindestens einem der folgenden Merkmale:
+
+- actual_hours > 0
+- actual_start vorhanden
+- actual_end vorhanden
+- clock_in vorhanden
+- clock_out vorhanden
+- Arbeitszeit-Eintrag mit realer Dauer vorhanden
+- bestätigte/importierte Ist-Stunden vorhanden
+
+Nicht als "vollständig importiert" zählen:
+
+- zukünftige Tage
+- leere Monatszeilen
+- Ferien
+- Feiertag
+- Krankheit
+- Frei
+- Plan-Schichten ohne Ist-Zeit
+- Tage ohne echte Arbeitszeitdauer
+- automatisch erzeugte Platzhalter
+
+Falls die bestehenden Feldnamen anders heißen:
+Bitte die bestehenden Mirus-/Arbeitszeit-Tabellen und Utilities prüfen und die passende Ist-Zeit-Logik verwenden.
+
+──────────────────────────────
+3. Zukunftsdaten nie als aktuell werten
+──────────────────────────────
+
+Für tägliche Ist-Importe gilt:
+
+Ein "Daten bis"-Datum darf nie nach heute liegen.
+
+Wenn Quelldaten zukünftige Daten enthalten, dann:
+
+- für Statusberechnung ignorieren
+- für "Ist-Daten bis" ignorieren
+- optional im Detail-Drawer als Hinweis anzeigen:
+  "Es wurden zukünftige Zeilen gefunden, diese werden für die Vollständigkeit nicht berücksichtigt."
+
+──────────────────────────────
+4. Vollständigkeit statt Max-Datum
+──────────────────────────────
+
+Für tägliche Importe soll nicht nur das letzte vorhandene Datum angezeigt werden, sondern der letzte lückenlos verfügbare Tag.
+
+Beispiel:
+
+Daten vorhanden:
+01.07
+02.07
+03.07
+05.07
+
+Dann ist nicht 05.07 vollständig, sondern:
+
+03.07
+
+weil der 04.07 fehlt.
+
+Diese Logik soll für tägliche Datenquellen gelten, wo Tagesvollständigkeit wichtig ist:
+
+- Mirus Arbeitszeiten
+- Tagesumsatz
+- Gastronovi Z-Bericht
+- Produktverkäufe
+- Foratable Reservationen
+- Foratable Gäste / CRM, falls Tagesdaten vorhanden
+
+──────────────────────────────
+5. Detail-Drawer verbessern
+──────────────────────────────
+
+Im Detail-Drawer anzeigen:
+
+- Letzter gefundener Datensatz
+- Vollständig importiert bis
+- Fehlende Tage
+- Ignorierte Zukunftstage, falls vorhanden
+- Hinweis, welche Daten für die Vollständigkeit zählen
+
+Beispiel für Mirus:
+
+"Für Mirus zählen nur echte Ist-Arbeitszeiten mit Arbeitsdauer oder Start-/Endzeit. Ferien, freie Tage, Plan-Schichten und Zukunftszeilen werden nicht als vollständiger Import gewertet."
+
+──────────────────────────────
+6. Statuslogik anpassen
+──────────────────────────────
+
+Status "Aktuell" darf nur erscheinen, wenn die Daten lückenlos bis zum erwarteten Stichtag vorhanden sind.
+
+Für tägliche Importe:
+Erwarteter Stichtag = gestern oder heute, je nach bestehender Cockpit-Konfiguration.
+
+Wenn letzter Max-Datensatz in der Zukunft liegt, aber echte Ist-Daten nur bis 04.12.2026 oder früher gehen, zählt nur das echte vollständige Datum.
+
+Wenn keine echten Ist-Daten vorhanden sind:
+
+Status:
+"Nie importiert"
+
+oder:
+"Nicht prüfbar"
+
+je nachdem, ob Importhistorie vorhanden ist.
+
+──────────────────────────────
+7. Tests ergänzen
+──────────────────────────────
+
+Neue Tests für Import-Cockpit Utilities:
+
+- Mirus ignoriert zukünftige Tage
+- Mirus ignoriert leere Tage
+- Mirus ignoriert Ferien/Frei/Feiertag ohne Ist-Stunden
+- Mirus zählt nur echte Ist-Stunden
+- MAX-Datum in Zukunft wird nicht als "Daten bis" angezeigt
+- letzter lückenloser Tag wird korrekt berechnet
+- fehlender Tag unterbricht die Vollständigkeit
+- Status wird bei Datenlücke gelb/rot statt grün
+- Detaildaten zeigen ignorierte Zukunftstage
+
+Bestehende Tests nicht entfernen.
+
+──────────────────────────────
+8. Technische Regeln
+──────────────────────────────
+
+Keine DB-Migrationen.
+Keine SQL-Dateien ändern.
+Keine Importprozesse ändern.
+Keine Mirus-Importlogik umbauen.
+Keine Dienstplanlogik ändern.
+Keine CRM- oder Reservationen-Logik ändern.
+
+Nur:
+- Import-Cockpit Statuslogik
+- Anzeige
+- Utility-Funktionen
+- Tests
+- replit.md
+
+──────────────────────────────
+9. Qualitätssicherung
+──────────────────────────────
+
+Danach ausführen:
+
+- TypeScript Check
+- Import-Cockpit Tests
+- App Runtime Check
+- Architect Review
+
+Falls volle Testsuite wegen OOM abbricht:
+Dokumentieren, aber mindestens TypeScript + Cockpit Tests + Runtime prüfen.
+
+Zum Schluss:
+Commit-Message erstellen.
+replit.md aktualisieren.

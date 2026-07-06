@@ -134,6 +134,17 @@ function dataUntilOf(signal: CockpitSignal): string | null {
   return signal.dataUntil ?? signal.latestDataDate ?? null;
 }
 
+/**
+ * Hinweis, welche Daten je Quelle für die Vollständigkeit zählen (Drawer).
+ * Reiner Anzeigetext — keine Prozesslogik.
+ */
+const COMPLETENESS_NOTE: Partial<Record<CockpitSourceId, string>> = {
+  mirus:
+    'Für Mirus zählen nur echte Ist-Arbeitszeiten mit Arbeitsdauer oder Start-/Endzeit. Ferien, freie Tage, Plan-Schichten und Zukunftszeilen werden nicht als vollständiger Import gewertet.',
+  tagesumsatz:
+    'Es zählen nur Tage mit echtem Ist-Umsatz (> 0). Zukünftige Tage werden nicht als vollständiger Import gewertet.',
+};
+
 // ─── KPI-Kachel ────────────────────────────────────────────────────────────────────
 
 interface KpiCardProps {
@@ -448,7 +459,7 @@ export default function ImportCockpitPage() {
                           <TableHead className="hidden lg:table-cell">Was hochladen?</TableHead>
                           <TableHead className="hidden md:table-cell">Import-Art</TableHead>
                           <TableHead className="hidden xl:table-cell">Letzter Import</TableHead>
-                          <TableHead>Stand / Daten bis</TableHead>
+                          <TableHead>Ist-Daten bis</TableHead>
                           <TableHead className="hidden sm:table-cell">Intervall</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead className="hidden lg:table-cell">Nächste Fälligkeit</TableHead>
@@ -656,7 +667,13 @@ export default function ImportCockpitPage() {
                       label="Daten von"
                       value={formatCockpitDate(selectedRow.signal.dataFrom)}
                     />
-                    <DetailRow label="Stand / Daten bis" value={formatCockpitDate(dataUntilOf(selectedRow.signal))} />
+                    <DetailRow label="Ist-Daten bis" value={formatCockpitDate(dataUntilOf(selectedRow.signal))} />
+                    {selectedRow.def.detectGaps && (
+                      <DetailRow
+                        label="Vollständig importiert bis"
+                        value={formatCockpitDate(selectedRow.result.completeUntil)}
+                      />
+                    )}
                     <DetailRow
                       label="Nächste Fälligkeit"
                       value={selectedRow.result.nextDue ? formatCockpitDate(selectedRow.result.nextDue) : '—'}
@@ -686,6 +703,23 @@ export default function ImportCockpitPage() {
                         ))}
                       </div>
                     </div>
+                  )}
+
+                  {selectedRow.result.ignoredFutureDate && (
+                    <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                      <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        Zukunftszeilen bis {formatCockpitDate(selectedRow.result.ignoredFutureDate)} gefunden — diese
+                        werden für die Vollständigkeit nicht berücksichtigt.
+                      </span>
+                    </p>
+                  )}
+
+                  {COMPLETENESS_NOTE[selectedRow.def.id] && (
+                    <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {COMPLETENESS_NOTE[selectedRow.def.id]}
+                    </p>
                   )}
 
                   {selectedRow.def.tenantNeutral && (
