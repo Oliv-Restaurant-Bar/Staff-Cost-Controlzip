@@ -1,0 +1,103 @@
+Erweitere die Umsatzabstimmung um den Import und Abgleich von Adyen Received Payment Details CSV.
+
+Ziel:
+Der Benutzer soll den Adyen CSV-Export einlesen können. Die Adyen-Zahlungen werden nach Datum und Zahlungsart summiert und mit den Kreditkarten-/TWINT-Werten aus dem Z-Bericht verglichen. Bei Differenzen muss der Benutzer Werte manuell überschreiben oder korrigieren können. Jede Zahl soll kommentierbar sein. Manuell korrigierte Werte sollen visuell hervorgehoben werden.
+
+Umsetzung:
+
+1. Adyen CSV Import
+   - Importiere den Received Payment Details CSV von Adyen.
+   - Gruppiere nach Creation Date bzw. Sales-/Transaction-Datum.
+   - Summiere pro Tag:
+     - Mastercard
+     - Visa
+     - American Express
+     - TWINT POS
+     - weitere Payment Methods dynamisch
+     - Total Adyen Karten/TWINT
+   - Nur CHF-Werte berücksichtigen.
+   - Refunds oder negative Beträge korrekt abziehen, falls vorhanden.
+   - Keine Payout-Date-Logik verwenden.
+
+2. Abgleich mit Z-Bericht
+   - Pro Tag anzeigen:
+     - Karten/TWINT laut Z-Bericht
+     - Karten/TWINT laut Adyen CSV
+     - Differenz
+   - Zusätzlich Zahlungsarten einzeln vergleichen:
+     - Mastercard Z-Bericht vs. Adyen
+     - Visa Z-Bericht vs. Adyen
+     - AMEX/Kartenzahlung Z-Bericht vs. Adyen
+     - TWINT Z-Bericht vs. Adyen
+   - Differenzen farblich markieren:
+     - 0.00 = grün
+     - kleine Differenz = orange
+     - grössere Differenz = rot
+
+3. Manuelle Überschreibung / Korrektur
+   - Jede automatisch geladene Zahl soll manuell überschreibbar sein.
+   - Speichere pro überschriebenem Feld:
+     - originalValue
+     - correctedValue
+     - correctedByManualOverride = true
+     - optional comment
+     - updatedAt
+   - Die Berechnungen sollen danach mit correctedValue weiterlaufen.
+   - Originalwert soll weiterhin sichtbar bleiben, z.B. klein darunter: "Original: CHF 6'471.60".
+
+4. Kommentarfunktion
+   - Bei allen relevanten Zahlen Kommentar erlauben:
+     - Tagesumsatz
+     - Bar
+     - Karten/TWINT laut Z-Bericht
+     - Karten/TWINT laut Adyen
+     - Differenz
+     - Rechnung/Debitoren
+     - Gutscheine
+     - Trinkgeld
+     - manuelle Korrekturen
+   - Kommentar über Icon oder kleines Eingabefeld öffnen.
+   - Wenn Kommentar vorhanden ist, Icon aktiv markieren.
+
+5. Visuelle Hervorhebung
+   - Manuell überschrieben/korrigierte Werte sichtbar markieren:
+     - z.B. gelber Hintergrund oder Badge "manuell korrigiert"
+   - Kommentar vorhandene Werte ebenfalls markieren:
+     - z.B. kleines Kommentar-Icon
+   - Differenzen separat farblich markieren.
+   - In einer Tageszeile soll sofort sichtbar sein:
+     - automatisch übernommen
+     - manuell korrigiert
+     - kommentiert
+     - bestätigt
+
+6. Tagesbestätigung
+   - Ein Tag darf erst als bestätigt gelten, wenn:
+     - Z-Bericht vorhanden ist
+     - Adyen-Abgleich geprüft ist oder manuell übersteuert wurde
+     - Barbestand bestätigt wurde
+   - Bei manueller Übersteuerung muss optional ein Kommentar möglich sein.
+
+7. Import-Cockpit
+   - Ergänze Quelle:
+     - Bereich: Umsatz / Zahlungen
+     - Datenquelle: Adyen Received Payment Details
+     - Format: CSV
+     - Intervall: Täglich oder monatlich
+     - Zweck: Kontrollabgleich Karten/TWINT
+   - Der Import soll in Monatsübersicht und Status-Kacheln berücksichtigt werden.
+
+8. Tests
+   - Adyen CSV vom 01.06.2026 korrekt einlesen.
+   - Summe pro Zahlungsart korrekt berechnen.
+   - Differenz zum Z-Bericht korrekt anzeigen.
+   - Manuelle Überschreibung ersetzt Wert in Berechnung.
+   - Originalwert bleibt sichtbar.
+   - Kommentar kann gespeichert und angezeigt werden.
+   - Korrigierte Werte werden visuell markiert.
+   - Payout-Date CSV darf nicht als Sales-Date-Abgleich verwendet werden.
+
+Danach bitte ausführen:
+- tsc --noEmit
+- Umsatzabstimmung Tests
+- Import-Cockpit Tests

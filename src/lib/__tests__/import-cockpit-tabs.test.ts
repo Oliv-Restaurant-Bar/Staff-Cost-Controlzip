@@ -380,11 +380,23 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     for (const s of COCKPIT_SOURCES) expect(TAB_CATEGORY_LABEL[s.tabCategory]).toBeTruthy();
   });
 
-  it('9 Datenimporte + 7 Kontrollen = 16 Quellen', () => {
+  it('10 Datenimporte + 7 Kontrollen = 17 Quellen', () => {
     const imports = COCKPIT_SOURCES.filter((s) => s.section === 'import');
     const controls = COCKPIT_SOURCES.filter((s) => s.section === 'control');
-    expect(imports).toHaveLength(9);
+    expect(imports).toHaveLength(10);
     expect(controls).toHaveLength(7);
+  });
+
+  it('Adyen ist ein monatlicher Datei-Upload-Import mit Route zum Abgleich', () => {
+    const def = COCKPIT_SOURCES.find((s) => s.id === 'adyen');
+    expect(def).toBeTruthy();
+    expect(def!.section).toBe('import');
+    expect(def!.tabCategory).toBe('umsatz');
+    expect(def!.importType).toBe('file_upload');
+    expect(def!.interval).toBe('monthly');
+    expect(def!.detectGaps).toBeUndefined();
+    expect(def!.checkable).toBe(true);
+    expect(def!.route).toBe('/umsatzabstimmung');
   });
 
   it('Umsatzabstimmung ist ein monatlicher manueller Datenimport mit Route', () => {

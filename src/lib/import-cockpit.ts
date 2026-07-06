@@ -56,6 +56,7 @@ export type CockpitSourceId =
   | 'dienstplanung'
   | 'warenrechnungen'
   | 'umsatzabstimmung'
+  | 'adyen'
   | 'budgetkontrolle'
   | 'monatsabschluss'
   | 'inventur'
@@ -497,6 +498,25 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     checklistLabel: 'Umsatzabstimmung durchführen',
     route: '/umsatzabstimmung',
     actionLabel: 'Zur Umsatzabstimmung',
+    checkable: true,
+  },
+  {
+    id: 'adyen',
+    label: 'Adyen Zahlungen',
+    module: 'Umsatz / Controlling',
+    category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
+    importType: 'file_upload',
+    uploadLabel: 'Adyen „Received Payment Details" CSV',
+    sourceHint: 'Adyen Customer Area → Reports → Received Payment Details',
+    exampleFormat: 'received_payments_*.csv',
+    interval: 'monthly',
+    description:
+      'Kartenzahlungen/TWINT je Tag aus Adyen für den täglichen Abgleich mit dem Z-Bericht. Frische = letzter importierter Adyen-Tag.',
+    checklistLabel: 'Adyen-Zahlungen importieren',
+    route: '/umsatzabstimmung',
+    actionLabel: 'Zum Adyen-Abgleich',
     checkable: true,
   },
   {

@@ -507,6 +507,70 @@ export async function deleteGnImport(importId: string): Promise<{ error: string 
   return { error: error?.message ?? null };
 }
 
+// ── Zahlungsarten je Tag (für Adyen-Abgleich, read-only) ─────────────────────
+
+export interface GnDayPaymentRow {
+  name: string;
+  count: number;
+  amount: number;
+}
+
+/**
+ * Liefert die Z-Bericht-Zahlungsarten je Tag eines Monats (read-only).
+ * NUR Tages-Importe (period_from === period_to) — Wochen-/Monats-Importe würden
+ * einen Tag doppelt zählen. Mehrere aktive Tages-Importe desselben Tags
+ * (z. B. verschiedene Kostenstellen) werden defensiv zusammengeführt.
+ */
+export async function loadGnPaymentMethodsForMonth(
+  restaurantId: string,
+  year: number,
+  month: number, // 1-basiert
+): Promise<Record<string, GnDayPaymentRow[]>> {
+  try {
+    const mm = String(month).padStart(2, '0');
+    const lastDay = new Date(year, month, 0).getDate();
+    const from = `${year}-${mm}-01`;
+    const to = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`;
+
+    const { data: imports } = await (supabase as any)
+      .from('gn_imports')
+      .select('id, period_from, period_to')
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'active')
+      .gte('period_from', from)
+      .lte('period_from', to);
+
+    const dayByImport = new Map<string, string>();
+    for (const row of (imports ?? []) as Array<{ id: string; period_from: string | null; period_to: string | null }>) {
+      if (!row.period_from || row.period_from !== row.period_to) continue; // nur Tagesimporte
+      dayByImport.set(row.id, row.period_from);
+    }
+    if (dayByImport.size === 0) return {};
+
+    const { data: pms } = await (supabase as any)
+      .from('gn_payment_methods')
+      .select('import_id, name, count, amount')
+      .in('import_id', [...dayByImport.keys()]);
+
+    const result: Record<string, GnDayPaymentRow[]> = {};
+    for (const pm of (pms ?? []) as Array<{ import_id: string; name: string | null; count: number | null; amount: number | null }>) {
+      const day = dayByImport.get(pm.import_id);
+      if (!day || !pm.name?.trim()) continue;
+      const list = (result[day] ??= []);
+      const existing = list.find(e => e.name === pm.name!.trim());
+      if (existing) {
+        existing.count += pm.count ?? 0;
+        existing.amount = Math.round((existing.amount + (pm.amount ?? 0)) * 100) / 100;
+      } else {
+        list.push({ name: pm.name.trim(), count: pm.count ?? 0, amount: pm.amount ?? 0 });
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 // ── Tabellen-Setup prüfen ────────────────────────────────────────────────────
 
 export async function checkGnTablesExist(): Promise<boolean> {

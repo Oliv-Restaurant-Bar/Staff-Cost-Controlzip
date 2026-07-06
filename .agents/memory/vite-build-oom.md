@@ -37,3 +37,8 @@ fine; only the full suite dies.
 This passes (~727 tests, ~45 s). There is ONE pre-existing unrelated unhandled error:
 `libuuid.so.1: cannot open shared object file` from `node_modules/canvas` — it's an env
 issue, counts as "1 error" but does not fail tests; ignore it.
+
+**Caveat (2026-07):** even the serial full-suite command above is OOM-killed when the
+Vite dev server workflow is running (it holds a big chunk of container RAM). Even TWO
+test files in one invocation can die then. Options: run the suite while the workflow is
+stopped, or run affected files ONE per invocation — both work reliably.

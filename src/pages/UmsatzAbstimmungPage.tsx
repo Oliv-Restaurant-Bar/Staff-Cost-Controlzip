@@ -4,6 +4,7 @@ import { LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { UmsatzAbstimmung } from '@/components/UmsatzAbstimmung';
+import { AdyenAbgleichSection } from '@/components/umsatzabstimmung/AdyenAbgleichSection';
 import type { MonthlyFinancialRecord } from '@/types/reporting';
 import { loadYear, availableYears } from '@/lib/reporting-store';
 import { useTenant } from '@/contexts/TenantContext';
@@ -81,6 +82,7 @@ export default function UmsatzAbstimmungPage() {
           onRefresh={handleRefresh}
           gnRevenueByMonth={gnRevByMonth}
         />
+        <AdyenAbgleichSection tenantId={tenantId} year={year} />
       </main>
     </div>
   );

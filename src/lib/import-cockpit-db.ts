@@ -36,6 +36,7 @@ import {
   type CockpitSignal,
   type CockpitSourceId,
 } from './import-cockpit';
+import { adyenDaysFromBlob } from './adyen-abstimmung';
 import { format, addDays } from 'date-fns';
 
 export interface CockpitFetchContext {
@@ -382,6 +383,27 @@ function umsatzabstimmungSignal(ctx: CockpitFetchContext): CockpitSignal {
   }
 }
 
+/**
+ * Adyen-Abgleich: adyenAbstimmung_v1-Blob (localStorage, mandantengeprefixt) — read-only.
+ * Frische = letzter importierter Adyen-Tag (≤ heute). KEIN Zugriff über die
+ * Save-Schicht (adyen-abstimmung-db) — nur Direkt-Read aus localStorage.
+ */
+function adyenSignal(ctx: CockpitFetchContext): CockpitSignal {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ctx.tenantKey('adyenAbstimmung_v1')) || 'null') as unknown;
+    const days = adyenDaysFromBlob(raw, todayIso());
+    if (!days.length) return EMPTY;
+    return {
+      latestDataDate: days.at(-1)!,
+      dataFrom: days[0] ?? null,
+      dataUntil: days.at(-1)!,
+      recordCount: days.length,
+    };
+  } catch {
+    return EMPTY;
+  }
+}
+
 /** Jahresbudget: budget_v1-Blob (localStorage, mandantengeprefixt) — read-only, NIEMALS loadBudgetYear. */
 function jahresbudgetSignal(ctx: CockpitFetchContext): CockpitSignal {
   try {
@@ -428,6 +450,7 @@ export async function fetchCockpitSignals(
     { id: 'mirus', run: () => mirusSignal(ctx) },
     { id: 'dienstplanung', run: () => dienstplanungSignal(ctx) },
     { id: 'umsatzabstimmung', run: () => umsatzabstimmungSignal(ctx) },
+    { id: 'adyen', run: () => adyenSignal(ctx) },
     { id: 'monatsabschluss', run: () => monatsabschlussSignal(ctx) },
     { id: 'jahresbudget', run: () => jahresbudgetSignal(ctx) },
   ];
