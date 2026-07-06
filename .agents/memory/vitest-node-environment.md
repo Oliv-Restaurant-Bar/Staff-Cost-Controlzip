@@ -1,26 +1,29 @@
 ---
-name: vitest node environment for pure-logic tests
-description: Why pure-logic vitest files must declare the node environment, or they crash on canvas/libuuid in this container.
+name: vitest environments (node for pure logic, happy-dom for components)
+description: Why pure-logic vitest files must declare the node environment and component tests must use happy-dom — jsdom crashes on canvas/libuuid in this container.
 ---
 
-# Pure-logic vitest files must use the node environment
+# Vitest environments in this container
 
-Every pure-logic test file under `src/lib/__tests__/` starts with the docblock
-`// @vitest-environment node` on the very first line (before any comment/imports).
+- Pure-logic tests (no DOM/React): `// @vitest-environment node` on line 1.
+- React component tests: `// @vitest-environment happy-dom` on line 1.
 
-**Why:** The global vitest config sets `environment: "jsdom"` with
-`resources: "usable"`. jsdom eagerly tries to load the native `canvas` module,
-which needs `libuuid.so.1` — a system lib that is missing in the Replit
-container. The result is an `ERR_DLOPEN_FAILED` unhandled error. When this hits
-a test file it produces a confusing symptom: running the file alone reports
-`Tests no tests` (the file silently collects nothing), and the full suite shows
-that file under the failed/errored count even though the assertions are fine.
-There is a `canvas` alias to a mock in `vitest.config.ts`, but it does not fully
-prevent jsdom's native load path, so the per-file node environment is the
-reliable fix.
+**Why:** The global vitest config sets `environment: "jsdom"`. jsdom eagerly
+`require`s the native `canvas` package, which needs `libuuid.so.1` — missing in
+the Replit container → `ERR_DLOPEN_FAILED` unhandled error. Symptom is
+confusing: the file reports `no tests` / an "Unhandled Error" before any test
+runs. The `canvas` alias in `vitest.config.ts` and `vi.mock("canvas")` in
+setup.ts do NOT help, because jsdom loads canvas via plain CJS require outside
+the vite transform pipeline — aliases/mocks never intercept it.
 
-**How to apply:** Any new test that only exercises pure functions (no DOM, no
-React render) must have `// @vitest-environment node` as line 1. If a new test
-mysteriously reports `no tests` or errors with `libuuid.so.1` / canvas, this
-missing annotation is the first thing to check. Component/DOM tests that truly
-need jsdom are the exception and stay on the default environment.
+**How to apply:**
+- New pure-function test → `// @vitest-environment node` line 1.
+- New component/DOM test → `// @vitest-environment happy-dom` line 1
+  (`happy-dom` is a devDependency; works with @testing-library/react +
+  fireEvent, e.g. the Import-Cockpit DataImportsTab tests).
+- If a test mysteriously reports `no tests` or errors with `libuuid.so.1` /
+  canvas, the missing annotation is the first thing to check.
+
+**Also:** running several vitest suites in one command can be OOM-killed
+(exit -1, no output) like vite build; split the run and/or use
+`--pool=forks --maxWorkers=1` with `NODE_OPTIONS=--max-old-space-size=8192`.

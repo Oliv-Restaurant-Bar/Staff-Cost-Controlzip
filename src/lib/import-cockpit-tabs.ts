@@ -372,12 +372,40 @@ export function summarizeTasks(tasks: Array<Pick<CockpitTask, 'timeframe' | 'pri
 
 // ─── Filter (rein, testbar) ───────────────────────────────────────────────────
 
-/** Filter des Datenimporte-Tabs (Kategorie = tabCategory). */
+/**
+ * KPI-Kachel-Filter des Datenimporte-Tabs. Jede Kachel entspricht genau einer
+ * Facette aus `summarizeCockpit`: die Status-Kacheln filtern auf den Frische-
+ * Status, `never_uncheckable` bündelt „Nie / Nicht prüfbar" (wie die Kachel
+ * selbst), `gaps` filtert auf Zeilen mit inneren Datenlücken (missingDays).
+ */
+export type ImportKpiFilter = 'current' | 'due_soon' | 'overdue' | 'never_uncheckable' | 'gaps';
+
+/** Prüft eine Import-Zeile gegen einen KPI-Kachel-Filter (null = kein Filter). */
+export function importRowMatchesKpi(
+  row: Pick<CockpitRow, 'result'>,
+  kpi: ImportKpiFilter | null,
+): boolean {
+  if (kpi === null) return true;
+  if (kpi === 'gaps') return row.result.missingDays.length > 0;
+  if (kpi === 'never_uncheckable') return row.result.status === 'never' || row.result.status === 'uncheckable';
+  return row.result.status === kpi;
+}
+
+/** Toggle-Semantik der Kacheln: erneuter Klick auf die aktive Kachel hebt den Filter auf. */
+export function toggleImportKpiFilter(
+  current: ImportKpiFilter | null,
+  clicked: ImportKpiFilter,
+): ImportKpiFilter | null {
+  return current === clicked ? null : clicked;
+}
+
+/** Filter des Datenimporte-Tabs (Kategorie = tabCategory; kpi = Kachel-Filter). */
 export interface ImportTabFilterState {
   category: 'all' | CockpitTabCategory;
   importType: 'all' | CockpitImportType;
   interval: 'all' | ImportInterval;
   status: 'all' | CockpitStatus;
+  kpi: ImportKpiFilter | null;
   search: string;
 }
 
@@ -386,6 +414,7 @@ export const EMPTY_IMPORT_TAB_FILTER: ImportTabFilterState = {
   importType: 'all',
   interval: 'all',
   status: 'all',
+  kpi: null,
   search: '',
 };
 
@@ -395,7 +424,39 @@ export function importRowMatchesFilters(row: CockpitRow, f: ImportTabFilterState
   if (f.importType !== 'all' && row.def.importType !== f.importType) return false;
   if (f.interval !== 'all' && row.def.interval !== f.interval) return false;
   if (f.status !== 'all' && row.result.status !== f.status) return false;
+  if (!importRowMatchesKpi(row, f.kpi)) return false;
   return matchesCockpitSearch(row.def, f.search);
+}
+
+// ─── Dateiformate (rein, testbar) ─────────────────────────────────────────────
+
+/** Erwartetes Dateiformat eines Datei-Uploads (kompakte Badge-Anzeige). */
+export type ImportFileFormat = 'CSV' | 'Excel' | 'PDF';
+
+const FILE_FORMAT_ORDER: ImportFileFormat[] = ['CSV', 'Excel', 'PDF'];
+
+/**
+ * Leitet die erwarteten Dateiformate einer Quelle aus ihrem `exampleFormat` ab
+ * (Dateiendungen: csv → CSV, xls/xlsx → Excel, pdf → PDF). Nur für echte
+ * Datei-Uploads (`importType === 'file_upload'`) — manuelle Erfassung,
+ * Kontrollen etc. haben kein Dateiformat und liefern []. Reihenfolge stabil
+ * CSV → Excel → PDF. Es wird NIE ein Format erfunden: ohne erkennbare Endung
+ * bleibt die Liste leer.
+ */
+export function importFileFormats(
+  def: Pick<CockpitSourceDef, 'importType' | 'exampleFormat'>,
+): ImportFileFormat[] {
+  if (def.importType !== 'file_upload') return [];
+  const text = (def.exampleFormat ?? '').toLowerCase();
+  if (!text) return [];
+  const found = new Set<ImportFileFormat>();
+  for (const m of text.matchAll(/\.([a-z0-9]+)/g)) {
+    const ext = m[1];
+    if (ext === 'csv') found.add('CSV');
+    else if (ext === 'xls' || ext === 'xlsx') found.add('Excel');
+    else if (ext === 'pdf') found.add('PDF');
+  }
+  return FILE_FORMAT_ORDER.filter((f) => found.has(f));
 }
 
 /** Filter des Kontrollen-Tabs (Status = ControlStatus). */

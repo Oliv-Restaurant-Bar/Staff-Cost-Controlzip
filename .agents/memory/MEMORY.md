@@ -9,7 +9,7 @@
 - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
 - [Detail-page state reset on :id change](detail-page-state-reset.md) — `/:id` pages are reused across param changes; reset fetched-record state at top of load() AND in catch, or the previous record leaks (cross-guest PII).
 - [Admin gate excludes guests (read+write)](admin-write-gate-guest-session.md) — isAdmin = isAdminUser || isGuest; admin-only PII/write pages must gate isAdmin && !isGuest on BOTH route guard AND data-fetch effect.
-- [Vitest node environment](vitest-node-environment.md) — pure-logic test files need `// @vitest-environment node` line 1, else jsdom/canvas libuuid crash → confusing "no tests".
+- [Vitest environments](vitest-node-environment.md) — pure logic: `node` pragma; component tests: `happy-dom` (jsdom→canvas/libuuid crash); multi-suite runs OOM → split.
 - [Reservation CRM visit metrics & PII gating](reservation-crm-metrics.md) — never mix all-status first/last_seen_at with completed-only visit counts; guest PII is admin-gated in UI, not DB RLS.
 - [Reservationen Import (Foratable)](reservation-import.md) — separate from gn_* imports; union-find guest clustering; PII tables authenticated-only RLS + REVOKE anon.
 - [gn_imports data integrity](gn-import-data-integrity.md) — cost-center overlap filter only when non-empty; verify replace via .select rows-affected; batch keyed by stable id not fileName; never auto-split multi-day.

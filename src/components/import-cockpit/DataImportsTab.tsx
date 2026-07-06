@@ -14,7 +14,6 @@ import {
   AlertTriangle,
   HelpCircle,
   CalendarClock,
-  ArrowRight,
   Globe,
   XCircle,
 } from 'lucide-react';
@@ -41,12 +40,15 @@ import {
 } from '@/lib/import-cockpit';
 import {
   importRowMatchesFilters,
+  importFileFormats,
+  toggleImportKpiFilter,
   EMPTY_IMPORT_TAB_FILTER,
   IMPORT_CATEGORY_ORDER,
   TAB_CATEGORY_LABEL,
+  type ImportKpiFilter,
   type ImportTabFilterState,
 } from '@/lib/import-cockpit-tabs';
-import { KpiCard, StatusBadge, ImportTypeBadge, formatDateTime, dataUntilOf } from './cockpit-ui';
+import { KpiCard, StatusBadge, ImportTypeBadge, FileFormatBadges, formatDateTime, dataUntilOf } from './cockpit-ui';
 
 const INTERVAL_FILTER_OPTIONS: Array<{ value: 'all' | ImportInterval; label: string }> = [
   { value: 'all', label: 'Alle Intervalle' },
@@ -83,11 +85,16 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
     [],
   );
   const resetFilters = useCallback(() => setFilters(EMPTY_IMPORT_TAB_FILTER), []);
+  const toggleKpi = useCallback(
+    (kpi: ImportKpiFilter) => setFilters((prev) => ({ ...prev, kpi: toggleImportKpiFilter(prev.kpi, kpi) })),
+    [],
+  );
   const hasActiveFilters =
     filters.category !== 'all' ||
     filters.importType !== 'all' ||
     filters.interval !== 'all' ||
     filters.status !== 'all' ||
+    filters.kpi !== null ||
     filters.search.trim() !== '';
 
   const kpis = useMemo(() => summarizeCockpit(importRows), [importRows]);
@@ -116,30 +123,40 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
           value={kpis.current}
           icon={<CheckCircle2 className="h-5 w-5 text-emerald-600" />}
           accent="bg-emerald-100 dark:bg-emerald-950/40"
+          onClick={() => toggleKpi('current')}
+          active={filters.kpi === 'current'}
         />
         <KpiCard
           label="Bald fällig"
           value={kpis.dueSoon}
           icon={<Clock className="h-5 w-5 text-amber-600" />}
           accent="bg-amber-100 dark:bg-amber-950/40"
+          onClick={() => toggleKpi('due_soon')}
+          active={filters.kpi === 'due_soon'}
         />
         <KpiCard
           label="Überfällig"
           value={kpis.overdue}
           icon={<AlertTriangle className="h-5 w-5 text-red-600" />}
           accent="bg-red-100 dark:bg-red-950/40"
+          onClick={() => toggleKpi('overdue')}
+          active={filters.kpi === 'overdue'}
         />
         <KpiCard
           label="Nie / Nicht prüfbar"
           value={kpis.never + kpis.uncheckable}
           icon={<HelpCircle className="h-5 w-5 text-muted-foreground" />}
           accent="bg-muted"
+          onClick={() => toggleKpi('never_uncheckable')}
+          active={filters.kpi === 'never_uncheckable'}
         />
         <KpiCard
           label="Datenlücken"
           value={kpis.dataGaps}
           icon={<CalendarClock className="h-5 w-5 text-amber-600" />}
           accent="bg-amber-100 dark:bg-amber-950/40"
+          onClick={() => toggleKpi('gaps')}
+          active={filters.kpi === 'gaps'}
         />
       </div>
 
@@ -199,20 +216,18 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
               <TableHeader>
                 <TableRow>
                   <TableHead>Datenquelle</TableHead>
-                  <TableHead className="hidden lg:table-cell">Was hochladen?</TableHead>
                   <TableHead className="hidden md:table-cell">Import-Art</TableHead>
                   <TableHead className="hidden xl:table-cell">Letzter Import</TableHead>
                   <TableHead>Ist-Daten bis</TableHead>
                   <TableHead className="hidden sm:table-cell">Intervall</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden lg:table-cell">Nächste Fälligkeit</TableHead>
-                  <TableHead className="text-right">Aktion</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {groupedRows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
                       Keine Datenimporte für diesen Filter.
                     </TableCell>
                   </TableRow>
@@ -220,13 +235,25 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
                 {groupedRows.map((group) => (
                   <Fragment key={group.category}>
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableCell colSpan={9} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <TableCell colSpan={7} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         {TAB_CATEGORY_LABEL[group.category]}
                         <span className="ml-2 font-normal normal-case">({group.rows.length})</span>
                       </TableCell>
                     </TableRow>
                     {group.rows.map((row) => (
-                      <TableRow key={row.def.id} className="cursor-pointer" onClick={() => onSelect(row.def.id)}>
+                      <TableRow
+                        key={row.def.id}
+                        className="cursor-pointer transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => onSelect(row.def.id)}
+                        tabIndex={0}
+                        aria-label={`Details zu ${row.def.label} öffnen`}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onSelect(row.def.id);
+                          }
+                        }}
+                      >
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-1.5">
                             {row.def.label}
@@ -248,11 +275,12 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
                             )}
                           </div>
                         </TableCell>
-                        <TableCell className="hidden max-w-[16rem] text-muted-foreground lg:table-cell">
-                          <span className="line-clamp-2">{row.def.uploadLabel}</span>
-                        </TableCell>
                         <TableCell className="hidden md:table-cell">
-                          <ImportTypeBadge type={row.def.importType} />
+                          {importFileFormats(row.def).length > 0 ? (
+                            <FileFormatBadges formats={importFileFormats(row.def)} />
+                          ) : (
+                            <ImportTypeBadge type={row.def.importType} />
+                          )}
                         </TableCell>
                         <TableCell className="hidden text-muted-foreground xl:table-cell">
                           {formatDateTime(row.signal.lastImport?.at)}
@@ -266,11 +294,6 @@ export function DataImportsTab({ importRows, onSelect }: Props) {
                         </TableCell>
                         <TableCell className="hidden text-muted-foreground lg:table-cell">
                           {row.result.nextDue ? formatCockpitDate(row.result.nextDue) : '—'}
-                        </TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="sm" onClick={() => onSelect(row.def.id)}>
-                            Details <ArrowRight className="ml-1 h-3.5 w-3.5" />
-                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}

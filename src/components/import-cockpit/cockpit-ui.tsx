@@ -35,6 +35,7 @@ import {
   SECTION_LABEL,
   type ControlStatus,
   type TaskPriority,
+  type ImportFileFormat,
 } from '@/lib/import-cockpit-tabs';
 import type { CockpitSection } from '@/lib/import-cockpit';
 
@@ -74,18 +75,43 @@ export interface KpiCardProps {
   value: number;
   icon: ReactNode;
   accent: string;
+  /** Optional: macht die Kachel klickbar (Toggle-Filter). */
+  onClick?: () => void;
+  /** Optional: markiert die Kachel als aktiven Filter. */
+  active?: boolean;
 }
 
-export function KpiCard({ label, value, icon, accent }: KpiCardProps) {
+export function KpiCard({ label, value, icon, accent, onClick, active = false }: KpiCardProps) {
+  const content = (
+    <CardContent className="flex items-center gap-3 p-4">
+      <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', accent)}>{icon}</div>
+      <div className="min-w-0 text-left">
+        <div className="text-2xl font-bold leading-none tabular-nums">{value}</div>
+        <div className="mt-1 truncate text-xs text-muted-foreground">{label}</div>
+      </div>
+    </CardContent>
+  );
+
+  if (!onClick) {
+    return <Card className="border-border/70">{content}</Card>;
+  }
+
   return (
-    <Card className="border-border/70">
-      <CardContent className="flex items-center gap-3 p-4">
-        <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-lg', accent)}>{icon}</div>
-        <div className="min-w-0">
-          <div className="text-2xl font-bold leading-none tabular-nums">{value}</div>
-          <div className="mt-1 truncate text-xs text-muted-foreground">{label}</div>
-        </div>
-      </CardContent>
+    <Card
+      className={cn(
+        'border-border/70 transition-colors',
+        active ? 'border-primary ring-2 ring-primary/60 bg-primary/5' : 'hover:border-primary/40 hover:bg-muted/40',
+      )}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        title={active ? 'Filter aufheben' : `Nur „${label}" anzeigen`}
+        className="block w-full cursor-pointer rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {content}
+      </button>
     </Card>
   );
 }
@@ -157,6 +183,26 @@ export function TaskPriorityBadge({ priority }: { priority: TaskPriority }) {
     >
       <span className={cn('h-1.5 w-1.5 rounded-full', TASK_PRIORITY_DOT_CLASS[priority])} />
       {TASK_PRIORITY_LABEL[priority]}
+    </span>
+  );
+}
+
+/**
+ * Kompakte Dateiformat-Badges eines Datei-Uploads (z. B. „CSV" + „PDF").
+ * Formate kommen aus der reinen Ableitung `importFileFormats` — hier nur Anzeige.
+ */
+export function FileFormatBadges({ formats }: { formats: ImportFileFormat[] }) {
+  if (formats.length === 0) return null;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1">
+      {formats.map((f) => (
+        <span
+          key={f}
+          className="inline-flex items-center rounded-md border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground whitespace-nowrap"
+        >
+          {f}
+        </span>
+      ))}
     </span>
   );
 }

@@ -17,6 +17,9 @@ import {
   importTaskPriority,
   controlTaskPriority,
   importRowMatchesFilters,
+  importRowMatchesKpi,
+  toggleImportKpiFilter,
+  importFileFormats,
   controlRowMatchesFilters,
   taskMatchesFilters,
   EMPTY_IMPORT_TAB_FILTER,
@@ -383,5 +386,99 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
       expect(s.importance && s.importance.length > 0).toBe(true);
       expect(s.procedure && s.procedure.length > 0).toBe(true);
     }
+  });
+});
+
+// ─── KPI-Kachel-Filter (Datenimporte-Tab) ─────────────────────────────────────
+
+describe('importRowMatchesKpi / toggleImportKpiFilter', () => {
+  it('null (kein Kachel-Filter) matcht jede Zeile', () => {
+    expect(importRowMatchesKpi(makeRow({}, { status: 'overdue' }), null)).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'current' }), null)).toBe(true);
+  });
+
+  it('Status-Kacheln filtern exakt auf den Frische-Status', () => {
+    expect(importRowMatchesKpi(makeRow({}, { status: 'current' }), 'current')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'due_soon' }), 'current')).toBe(false);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'due_soon' }), 'due_soon')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'overdue' }), 'overdue')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'current' }), 'overdue')).toBe(false);
+  });
+
+  it('„Nie / Nicht prüfbar" bündelt never UND uncheckable (wie die Kachel)', () => {
+    expect(importRowMatchesKpi(makeRow({}, { status: 'never' }), 'never_uncheckable')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'uncheckable' }), 'never_uncheckable')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'current' }), 'never_uncheckable')).toBe(false);
+  });
+
+  it('„Datenlücken" filtert auf missingDays > 0 — unabhängig vom Status', () => {
+    expect(importRowMatchesKpi(makeRow({}, { status: 'current', missingDays: ['2026-07-01'] }), 'gaps')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'overdue', missingDays: ['2026-07-01'] }), 'gaps')).toBe(true);
+    expect(importRowMatchesKpi(makeRow({}, { status: 'current', missingDays: [] }), 'gaps')).toBe(false);
+  });
+
+  it('Toggle: Klick setzt, erneuter Klick auf dieselbe Kachel hebt auf, andere Kachel wechselt', () => {
+    expect(toggleImportKpiFilter(null, 'overdue')).toBe('overdue');
+    expect(toggleImportKpiFilter('overdue', 'overdue')).toBe(null);
+    expect(toggleImportKpiFilter('overdue', 'gaps')).toBe('gaps');
+  });
+
+  it('EMPTY_IMPORT_TAB_FILTER hat kpi: null; kpi wird UND-verknüpft mit den übrigen Filtern', () => {
+    expect(EMPTY_IMPORT_TAB_FILTER.kpi).toBe(null);
+    const row = makeRow({ tabCategory: 'umsatz' }, { status: 'overdue' });
+    expect(importRowMatchesFilters(row, { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'overdue' })).toBe(true);
+    expect(importRowMatchesFilters(row, { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'current' })).toBe(false);
+    // UND: Kachel passt, aber anderer Filter schliesst aus
+    expect(
+      importRowMatchesFilters(row, { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'overdue', interval: 'yearly' }),
+    ).toBe(false);
+  });
+});
+
+// ─── Dateiformate (Import-Art-Spalte) ─────────────────────────────────────────
+
+describe('importFileFormats', () => {
+  it('leitet Formate aus exampleFormat-Endungen ab (csv/xls/xlsx/pdf)', () => {
+    expect(importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: 'export.csv' }))).toEqual(['CSV']);
+    expect(importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: 'zeiten.xls / .xlsx' }))).toEqual([
+      'Excel',
+    ]);
+    expect(importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: 'rechnung_*.pdf' }))).toEqual(['PDF']);
+    expect(
+      importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: 'z-bericht_2026-07-06.csv / .pdf' })),
+    ).toEqual(['CSV', 'PDF']);
+  });
+
+  it('Reihenfolge stabil CSV → Excel → PDF (unabhängig von der Nennung)', () => {
+    expect(
+      importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: 'a.pdf / b.xlsx / c.csv' })),
+    ).toEqual(['CSV', 'Excel', 'PDF']);
+  });
+
+  it('nur Datei-Uploads haben Formate — andere Import-Arten liefern []', () => {
+    expect(importFileFormats(makeDef({ importType: 'manual_entry', exampleFormat: 'x.csv' }))).toEqual([]);
+    expect(importFileFormats(makeDef({ importType: 'control', exampleFormat: 'x.pdf' }))).toEqual([]);
+    expect(importFileFormats(makeDef({ importType: 'not_configured', exampleFormat: 'x.xlsx' }))).toEqual([]);
+  });
+
+  it('kein exampleFormat oder keine erkennbare Endung → [] (nichts erfinden)', () => {
+    expect(importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: undefined }))).toEqual([]);
+    expect(importFileFormats(makeDef({ importType: 'file_upload', exampleFormat: 'irgendein Text' }))).toEqual([]);
+  });
+
+  it('echte Quellen: jeder Datei-Upload hat mindestens ein ableitbares Format', () => {
+    const uploads = COCKPIT_SOURCES.filter((s) => s.importType === 'file_upload');
+    expect(uploads.length).toBeGreaterThan(0);
+    for (const s of uploads) {
+      expect(importFileFormats(s).length, `Quelle ${s.id} ohne ableitbares Dateiformat`).toBeGreaterThan(0);
+    }
+  });
+
+  it('echte Quellen: Stichproben (Mirus=Excel, Z-Bericht=CSV+PDF, Rechnungen=PDF)', () => {
+    const byId = new Map(COCKPIT_SOURCES.map((s) => [s.id, s]));
+    expect(importFileFormats(byId.get('mirus')!)).toEqual(['Excel']);
+    expect(importFileFormats(byId.get('zbericht')!)).toEqual(['CSV', 'PDF']);
+    expect(importFileFormats(byId.get('warenrechnungen')!)).toEqual(['PDF']);
+    expect(importFileFormats(byId.get('reservationen')!)).toEqual(['CSV']);
   });
 });
