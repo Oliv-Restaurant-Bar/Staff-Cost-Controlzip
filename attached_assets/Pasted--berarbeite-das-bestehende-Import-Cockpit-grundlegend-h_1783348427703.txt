@@ -1,0 +1,455 @@
+Überarbeite das bestehende Import-Cockpit grundlegend hinsichtlich der fachlichen Struktur.
+
+Problem:
+Aktuell werden echte Datenimporte und organisatorische Kontrollaufgaben in derselben Tabelle dargestellt. Das führt zu Verwirrung, weil z.B. "Dienstplanung Folgewochen" oder "Forecast-Kontrolle" gar keine Importe sind.
+
+Ziel:
+Das Cockpit soll klar unterscheiden zwischen:
+
+1. Datenimporten
+2. Kontrollen
+3. Aufgaben
+
+Jeder Bereich erhält seine eigene Darstellung, passende KPIs und Statuslogik.
+
+──────────────────────────────
+1. Modul umstrukturieren
+──────────────────────────────
+
+Das bestehende Import-Cockpit bleibt erhalten, wird aber in drei Tabs aufgeteilt:
+
+Tab 1
+"Datenimporte"
+
+Tab 2
+"Kontrollen"
+
+Tab 3
+"Aufgaben"
+
+Die bisherige Übersichtstabelle wird entsprechend aufgeteilt.
+
+Keine bestehende Importlogik verändern.
+
+──────────────────────────────
+2. Tab "Datenimporte"
+──────────────────────────────
+
+Hier gehören ausschließlich Prozesse hinein, bei denen Daten importiert oder erfasst werden.
+
+Beispiele:
+
+• Foratable Reservationen
+• Foratable Gäste / CRM
+• Gastronovi Z-Bericht
+• Tagesumsatz
+• Produktverkäufe
+• Mirus Arbeitszeiten
+• Warenrechnungen
+• Budget (falls Import oder Erfassung)
+
+Nicht anzeigen:
+
+Forecast
+
+Dienstplanung
+
+Personalkostenkontrolle
+
+Inventurkontrolle
+
+Monatsabschlusskontrolle
+
+Spalten:
+
+• Datenquelle
+• Kategorie
+• Was hochladen?
+• Import-Art
+• Letzter Import
+• Ist-Daten bis
+• Intervall
+• Status
+• Nächste Fälligkeit
+• Details
+
+Status:
+
+Aktuell
+
+Bald fällig
+
+Überfällig
+
+Nie importiert
+
+Nicht prüfbar
+
+──────────────────────────────
+3. Tab "Kontrollen"
+──────────────────────────────
+
+Hier gehören alle wiederkehrenden Prüfungen hinein.
+
+Beispiele:
+
+• Dienstplanung Folgewochen prüfen
+• Forecast aktualisieren
+• Personalkosten kontrollieren
+• Monatsabschluss prüfen
+• Budgetkontrolle
+• Inventur kontrollieren
+
+Neue Spalten:
+
+Kontrolle
+
+Bereich
+
+Rhythmus
+
+Letzte Durchführung
+
+Nächste Kontrolle
+
+Verantwortlich (falls vorhanden)
+
+Status
+
+Details
+
+Wichtig:
+
+Keine Spalten:
+
+"Ist-Daten bis"
+
+oder
+
+"Was hochladen?"
+
+Denn hier wird nichts importiert.
+
+Status:
+
+Erledigt
+
+Heute fällig
+
+Bald fällig
+
+Überfällig
+
+Nicht eingerichtet
+
+──────────────────────────────
+4. Tab "Aufgaben"
+──────────────────────────────
+
+Dieser Tab ist ein Arbeitsdashboard.
+
+Hier werden automatisch alle offenen Punkte aus Datenimporten und Kontrollen zusammengeführt.
+
+Gruppierung:
+
+Heute
+
+Diese Woche
+
+Diesen Monat
+
+Dieses Jahr
+
+Beispiele:
+
+🔴 Mirus Arbeitszeiten importieren
+
+🔴 Foratable Reservationen importieren
+
+🟡 Forecast aktualisieren
+
+🟡 Monatsabschluss durchführen
+
+🟢 Dienstplanung Folgewochen geprüft
+
+Jeder Eintrag zeigt:
+
+Aufgabe
+
+Kategorie
+
+Typ
+
+Priorität
+
+Fälligkeit
+
+Button:
+
+Zur passenden Seite
+
+──────────────────────────────
+5. KPI-Karten anpassen
+──────────────────────────────
+
+Tab Datenimporte:
+
+Aktuelle Importe
+
+Bald fällig
+
+Überfällig
+
+Nie importiert
+
+Nicht prüfbar
+
+Tab Kontrollen:
+
+Erledigt
+
+Heute fällig
+
+Bald fällig
+
+Überfällig
+
+Nicht eingerichtet
+
+Tab Aufgaben:
+
+Heute offen
+
+Diese Woche offen
+
+Diesen Monat offen
+
+Kritische Aufgaben
+
+──────────────────────────────
+6. Neue Kategorien
+──────────────────────────────
+
+Für Datenimporte:
+
+Reservationen
+
+Gäste CRM
+
+Umsatz
+
+Produkte
+
+Personal
+
+Warenwirtschaft
+
+Finanzen
+
+Für Kontrollen:
+
+Personal
+
+Forecast
+
+Dienstplanung
+
+Controlling
+
+Budget
+
+Inventur
+
+Monatsabschluss
+
+──────────────────────────────
+7. Filter je Tab
+──────────────────────────────
+
+Tab Datenimporte:
+
+Kategorie
+
+Import-Art
+
+Intervall
+
+Status
+
+Suche
+
+Tab Kontrollen:
+
+Bereich
+
+Rhythmus
+
+Status
+
+Suche
+
+Tab Aufgaben:
+
+Zeitraum
+
+Priorität
+
+Kategorie
+
+Status
+
+Suche
+
+Die Filter sollen tab-spezifisch sein.
+
+──────────────────────────────
+8. Detail-Drawer anpassen
+──────────────────────────────
+
+Für Datenimporte:
+
+Datei
+
+Quelle
+
+Beispieldatei
+
+Import-Art
+
+Letzter Import
+
+Ist-Daten bis
+
+Importhistorie
+
+Status
+
+Für Kontrollen:
+
+Beschreibung
+
+Warum ist diese Kontrolle wichtig?
+
+Empfohlener Ablauf
+
+Rhythmus
+
+Letzte Durchführung
+
+Nächste Durchführung
+
+Verantwortlich
+
+Status
+
+Für Aufgaben:
+
+Beschreibung
+
+Kategorie
+
+Priorität
+
+Fälligkeit
+
+Direkter Link zur passenden Seite
+
+──────────────────────────────
+9. Read-only beibehalten
+──────────────────────────────
+
+Das Cockpit bleibt vollständig read-only.
+
+Keine Upload-Funktion.
+
+Keine neuen Importprozesse.
+
+Keine Änderungen an:
+
+Importlogik
+
+Mirus
+
+CRM
+
+Reservationen
+
+Forecast
+
+Dienstplanung
+
+Budget
+
+SQL
+
+DB
+
+Migrationen
+
+──────────────────────────────
+10. Technische Umsetzung
+──────────────────────────────
+
+Vorhandene Komponenten möglichst wiederverwenden.
+
+Gemeinsame Utility-Funktionen für:
+
+Status
+
+Fälligkeit
+
+Gruppierung
+
+Filter
+
+Aufgabenaggregation
+
+Keine doppelte Logik.
+
+──────────────────────────────
+11. Tests
+──────────────────────────────
+
+Neue Tests ergänzen für:
+
+• Trennung Importe/Kontrollen
+• Aufgabenaggregation
+• KPI-Berechnung je Tab
+• Filter je Tab
+• Statusberechnung je Tab
+• Drawer-Inhalte
+• Aufgabenpriorisierung
+
+Bestehende Tests nicht entfernen.
+
+TypeScript muss sauber bleiben.
+
+──────────────────────────────
+12. Dokumentation
+──────────────────────────────
+
+replit.md aktualisieren.
+
+Dokumentieren:
+
+• neues Drei-Tab-Konzept
+• Unterschied zwischen Importen, Kontrollen und Aufgaben
+• read-only Architektur
+• keine Änderungen an Importprozessen
+
+Danach:
+
+• TypeScript prüfen
+• Cockpit-Tests ausführen
+• Runtime prüfen
+• Architect Review durchführen
+• Commit-Message erstellen
+
+Wichtig:
+Das Ziel ist ein fachlich sauberes Cockpit, das den Arbeitsalltag unterstützt:
+
+• Was muss ich importieren?
+• Was muss ich kontrollieren?
+• Was muss ich heute erledigen?
+
+Der Benutzer soll innerhalb weniger Sekunden erkennen können, welche Aufgaben anstehen und welche Daten noch fehlen.

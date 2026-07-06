@@ -86,6 +86,37 @@ export type CockpitImportType =
   | 'system' // Automatisch / Systemdaten
   | 'not_configured'; // Nicht eingerichtet
 
+/**
+ * Tab-Zuordnung im 3-Tab-Cockpit:
+ * - 'import'  → echte Datenimporte/-erfassung (Tab „Datenimporte")
+ * - 'control' → wiederkehrende organisatorische Kontrollen (Tab „Kontrollen")
+ * Der Tab „Aufgaben" führt offene Punkte aus BEIDEN Sektionen zusammen.
+ */
+export type CockpitSection = 'import' | 'control';
+
+/**
+ * Tab-spezifische Kategorie („Bereich") gemäss 3-Tab-Konzept. `personal` kommt
+ * bewusst in beiden Sektionen vor — die `section` disambiguiert. Zwei
+ * Reihenfolge-Arrays (IMPORT_CATEGORY_ORDER / CONTROL_CATEGORY_ORDER in
+ * import-cockpit-tabs.ts) steuern die Anzeige je Tab.
+ */
+export type CockpitTabCategory =
+  // Datenimporte
+  | 'reservationen'
+  | 'gaeste_crm'
+  | 'umsatz'
+  | 'produkte'
+  | 'personal'
+  | 'warenwirtschaft'
+  | 'finanzen'
+  // Kontrollen
+  | 'forecast'
+  | 'dienstplanung'
+  | 'controlling'
+  | 'budget'
+  | 'inventur'
+  | 'monatsabschluss';
+
 /** Statischer Deskriptor einer überwachten Datenquelle. */
 export interface CockpitSourceDef {
   id: CockpitSourceId;
@@ -93,8 +124,16 @@ export interface CockpitSourceDef {
   label: string;
   /** Bereich / Modul (Kontext-Spalte). */
   module: string;
-  /** Fachliche Kategorie (Filter/Gruppierung). */
+  /**
+   * @deprecated Alte Domänen-Kategorie (7 Werte) — nur noch für Rückwärts-
+   * kompatibilität & bestehende Tests. Das 3-Tab-Cockpit nutzt `section` +
+   * `tabCategory`; für neue Anzeigen NICHT mehr verwenden.
+   */
   category: CockpitCategory;
+  /** Tab-Zuordnung: 'import' = Datenimport, 'control' = wiederkehrende Kontrolle. */
+  section: CockpitSection;
+  /** Tab-spezifische Kategorie / „Bereich" (3-Tab-Konzept). */
+  tabCategory: CockpitTabCategory;
   /** Art des Imports (Filter + Anzeige). */
   importType: CockpitImportType;
   /** „Was hochladen?" — was muss hochgeladen/erfasst/geprüft werden. */
@@ -127,6 +166,12 @@ export interface CockpitSourceDef {
    * fälschlich als mandantenspezifisch gelesen wird.
    */
   tenantNeutral?: boolean;
+  /** Nur Kontrollen: Verantwortliche(r) (Drawer „Verantwortlich"). */
+  responsible?: string;
+  /** Nur Kontrollen: Warum ist diese Kontrolle wichtig? (Drawer). */
+  importance?: string;
+  /** Nur Kontrollen: Empfohlener Ablauf (Drawer). */
+  procedure?: string;
 }
 
 /** Rohes Frische-Signal einer Quelle (vom read-only DB-Aggregator gefüllt). */
@@ -240,6 +285,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Foratable Reservationen',
     module: 'Foratable / Reservationen',
     category: 'reservationen_gaeste',
+    section: 'import',
+    tabCategory: 'reservationen',
     importType: 'file_upload',
     uploadLabel: 'Foratable Reservations-CSV',
     sourceHint: 'Export aus Foratable → Reservationen',
@@ -257,6 +304,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Foratable Gäste / CRM',
     module: 'Foratable / Gäste-CRM',
     category: 'reservationen_gaeste',
+    section: 'import',
+    tabCategory: 'gaeste_crm',
     importType: 'file_upload',
     uploadLabel: 'Foratable Gäste-/Kontakt-CSV',
     sourceHint: 'Export aus Foratable → Gäste/Kontakte',
@@ -274,6 +323,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Gastronovi Z-Bericht',
     module: 'Umsatz / Gastronovi',
     category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
     importType: 'file_upload',
     uploadLabel: 'Gastronovi Z-Bericht CSV/PDF',
     sourceHint: 'Export aus Gastronovi → Z-Bericht',
@@ -290,6 +341,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Tagesumsatz',
     module: 'Umsatz / Tagesansicht',
     category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
     importType: 'manual_entry',
     uploadLabel: 'Tagesumsatz-Import oder Tagesabschluss',
     sourceHint: 'Manuelle Erfassung in der Tagesansicht oder Tagesabschluss',
@@ -306,6 +359,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Produktverkäufe',
     module: 'Produkte / Verkauf',
     category: 'produkte',
+    section: 'import',
+    tabCategory: 'produkte',
     importType: 'file_upload',
     uploadLabel: 'Gastronovi Produktverkaufs-CSV',
     sourceHint: 'Export aus Gastronovi → Produktverkauf',
@@ -324,6 +379,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Mirus Arbeitszeiten',
     module: 'Personal / Ist-Stunden',
     category: 'personal',
+    section: 'import',
+    tabCategory: 'personal',
     importType: 'file_upload',
     uploadLabel: 'Mirus Arbeitszeitblatt Excel',
     sourceHint: 'Export aus Mirus → Arbeitszeitblatt',
@@ -343,12 +400,19 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Dienstplanung Folgewochen',
     module: 'Personal / Dienstplan',
     category: 'personal',
+    section: 'control',
+    tabCategory: 'dienstplanung',
     importType: 'control',
     uploadLabel: 'Kein Upload – Dienstplan prüfen',
     sourceHint: 'Dienstplan im Planer prüfen (kein externer Export)',
     interval: 'weekly',
     description: 'Geplante Schichten. Frische = spätester geplanter Tag (wie weit reicht der Plan in die Zukunft?).',
     checklistLabel: 'Dienstplanung Folgewochen prüfen',
+    importance:
+      'Ein früh geplanter Dienstplan sichert ausreichende Besetzung, vermeidet kurzfristige Überstunden und gibt dem Team Planungssicherheit.',
+    procedure:
+      'Im Dienstplaner prüfen, wie weit die geplanten Schichten reichen, und mindestens die kommenden 2–3 Wochen vollständig planen.',
+    responsible: 'Betriebsleitung / Schichtleitung',
     route: '/schedule-planner',
     actionLabel: 'Zum Dienstplan',
     checkable: true,
@@ -358,12 +422,19 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Forecast-Kontrolle',
     module: 'Umsatz / Forecast',
     category: 'planung_kontrolle',
+    section: 'control',
+    tabCategory: 'forecast',
     importType: 'manual_entry',
     uploadLabel: 'Kein Upload – Forecast aktualisieren',
     sourceHint: 'Manuelle Pflege im Forecast-Modul',
     interval: 'weekly',
     description: 'Wöchentliche Kontrolle der Umsatz-Forecasts. Reine Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Forecast aktualisieren',
+    importance:
+      'Ein aktueller Umsatz-Forecast ist die Basis für Personal-, Waren- und Budgetentscheidungen.',
+    procedure:
+      'Forecast-Zahlen mit den aktuellen Reservationen und Ist-Umsätzen abgleichen und wöchentlich fortschreiben.',
+    responsible: 'Betriebsleitung',
     route: '/forecast',
     actionLabel: 'Zur Forecast-Seite',
     checkable: false,
@@ -373,12 +444,19 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Personalkosten-Kontrolle',
     module: 'Personal / Controlling',
     category: 'planung_kontrolle',
+    section: 'control',
+    tabCategory: 'personal',
     importType: 'control',
     uploadLabel: 'Kein Upload – Kontrolle durchführen',
     sourceHint: 'Kontrolle im Personal-Controlling',
     interval: 'weekly',
     description: 'Wöchentliche Kontrolle der Personalkosten. Reine Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Personalkosten kontrollieren',
+    importance:
+      'Frühzeitig erkannte Abweichungen bei den Personalkosten verhindern Budgetüberschreitungen.',
+    procedure:
+      'Ist-Personalkosten gegen Budget/Soll prüfen und auffällige Abweichungen im Personal-Controlling klären.',
+    responsible: 'Betriebsleitung / Controlling',
     route: '/personal-fix',
     actionLabel: 'Zum Personal-Controlling',
     checkable: false,
@@ -389,6 +467,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Warenrechnungen',
     module: 'Warenkosten / Rechnungen',
     category: 'waren_rechnungen',
+    section: 'import',
+    tabCategory: 'warenwirtschaft',
     importType: 'file_upload',
     uploadLabel: 'Lieferantenrechnungen PDF',
     sourceHint: 'PDF-Rechnungen von Lieferanten',
@@ -405,12 +485,19 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Monatsabschluss / Kosten',
     module: 'Finanzen / Erfolgsrechnung',
     category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'monatsabschluss',
     importType: 'control',
     uploadLabel: 'Monatszahlen / Kosten prüfen',
     sourceHint: 'Monatszahlen/Kosten in der Erfolgsrechnung',
     interval: 'monthly',
     description: 'Kontoblätter/Kosten je Monat (Erfolgsrechnung). Frische = spätester Monat mit erfassten Kosten.',
     checklistLabel: 'Monatsabschluss prüfen',
+    importance:
+      'Ein vollständiger Monatsabschluss stellt korrekte Kosten- und Ergebniszahlen für das Reporting sicher.',
+    procedure:
+      'Alle Kosten und Umsätze des Vormonats in der Erfolgsrechnung prüfen und den Monat abschliessen.',
+    responsible: 'Buchhaltung / Controlling',
     route: '/erfolgsrechnung',
     actionLabel: 'Zur Erfolgsrechnung',
     checkable: true,
@@ -420,12 +507,19 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Budgetkontrolle',
     module: 'Finanzen / Budget',
     category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'budget',
     importType: 'control',
     uploadLabel: 'Kein Upload – Budget prüfen',
     sourceHint: 'Soll/Ist-Abgleich im Budget-Modul',
     interval: 'monthly',
     description: 'Monatlicher Soll/Ist-Abgleich gegen das Budget. Reine Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Budgetkontrolle durchführen',
+    importance:
+      'Der regelmässige Soll/Ist-Abgleich zeigt frühzeitig, ob das Budget eingehalten wird.',
+    procedure:
+      'Ist-Zahlen im Budget-Modul mit dem hinterlegten Budget vergleichen und Abweichungen dokumentieren.',
+    responsible: 'Controlling',
     route: '/budget',
     actionLabel: 'Zum Budget',
     checkable: false,
@@ -435,6 +529,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Inventur / Warenbestand',
     module: 'Warenkosten / Inventur',
     category: 'waren_rechnungen',
+    section: 'control',
+    tabCategory: 'inventur',
     importType: 'not_configured',
     uploadLabel: 'Inventurdatei oder Bestand prüfen',
     sourceHint: 'Inventurdatei oder manuelle Bestandsprüfung',
@@ -442,6 +538,11 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     interval: 'monthly',
     description: 'Monatliche Inventur / Warenbestand. Optional; keine automatisch ableitbare Historie vorhanden.',
     checklistLabel: 'Inventur / Warenbestand prüfen',
+    importance:
+      'Eine regelmässige Inventur ist Voraussetzung für korrekte Warenkosten und WES-Kennzahlen.',
+    procedure:
+      'Warenbestand aufnehmen bzw. Inventurdatei erfassen und mit dem System abgleichen.',
+    responsible: 'Küchenleitung / Einkauf',
     route: '/wes-analyse',
     actionLabel: 'Zur WES-Analyse',
     checkable: false,
@@ -452,6 +553,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Jahresbudget',
     module: 'Finanzen / Budget',
     category: 'finanzen_budget',
+    section: 'import',
+    tabCategory: 'finanzen',
     importType: 'manual_entry',
     uploadLabel: 'Jahresbudget erfassen / prüfen',
     sourceHint: 'Jahresbudget im Budget-Modul erfassen',
@@ -467,6 +570,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     label: 'Vorjahresvergleich',
     module: 'Finanzen / Reporting',
     category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'controlling',
     importType: 'control',
     uploadLabel: 'Vorjahresdaten prüfen / importieren',
     sourceHint: 'Vorjahres-/Jahresabschlussdaten',
@@ -474,6 +579,11 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     interval: 'yearly',
     description: 'Vorjahres-/Jahresabschlussdaten für den P&L-Vergleich. Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Vorjahresvergleich aktualisieren',
+    importance:
+      'Vollständige Vorjahresdaten ermöglichen aussagekräftige Jahresvergleiche in der Erfolgsrechnung.',
+    procedure:
+      'Vorjahres-/Jahresabschlussdaten prüfen und – falls nötig – im Import-Center nachpflegen.',
+    responsible: 'Controlling',
     route: '/import',
     actionLabel: 'Zum Import-Center',
     checkable: false,
