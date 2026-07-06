@@ -3,8 +3,9 @@
  *
  * Zeigt für ein wählbares Datum (Default: nächstes Vorkommen des auf der Seite
  * gewählten Wochentags), wie der GESPEICHERTE Dienstplan die hier definierte
- * SOLL-Besetzung erfüllt: je Abteilung Soll/Ist/Differenz (3-stufige Ampel)
- * plus die einzelnen Bedarfs-Schichten.
+ * SOLL-Besetzung erfüllt: je Abteilung Soll/Ist/Differenz (2-Farben-Warnung:
+ * exakt = optimal/grün, jede Abweichung = rot) plus die einzelnen
+ * Bedarfs-Schichten und KPI-Kacheln.
  *
  * NUR Anzeige: lädt Mitarbeitende + Dienstplan read-only und ändert nichts.
  * Verglichen wird immer mit dem ISO-Wochentag des GEWÄHLTEN Datums (nicht mit
@@ -33,26 +34,18 @@ import {
   buildPlannedEmployees,
   computeStaffingComparison,
   computeDayStaffingSummary,
+  summarizeStaffingKpis,
   formatStaffingDiff,
-  type ComparisonStatus,
 } from '@/lib/staffing-comparison-utils';
+import {
+  STATUS_PILL,
+  STATUS_DOT,
+  StaffingKpiCards,
+  StaffingStatusBadge,
+  StaffingDiffCell,
+} from '@/components/schedule-planner/staffing-status-ui';
 
 const DEPT_LABEL: Record<string, string> = { service: 'Service', 'küche': 'Küche' };
-
-const STATUS_PILL: Record<ComparisonStatus, string> = {
-  green:
-    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
-  orange:
-    'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
-  red:
-    'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800',
-};
-
-const STATUS_DOT: Record<ComparisonStatus, string> = {
-  green: 'bg-emerald-500',
-  orange: 'bg-amber-500',
-  red: 'bg-red-500',
-};
 
 /** Nächstes Vorkommen des ISO-Wochentags (heute eingeschlossen). */
 export function nextDateForIsoWeekday(weekday: number, from: Date = new Date()): Date {
@@ -149,6 +142,8 @@ export function StaffingScheduleCheckCard({
     [positions, requirements, plannedEmployees, season, dateWeekday],
   );
 
+  const kpis = useMemo(() => summarizeStaffingKpis(comparison.rows), [comparison.rows]);
+
   const positionName = (key: string) => positionDisplayName(positions, key) || key;
 
   return (
@@ -204,6 +199,9 @@ export function StaffingScheduleCheckCard({
 
         {!loading && !loadError && comparison.hasRequirements && (
           <>
+            {/* KPI-Kacheln */}
+            <StaffingKpiCards kpis={kpis} />
+
             {/* Abteilungs-Zusammenfassung */}
             <div className="flex flex-wrap gap-2">
               {summary.departments.map((d) => (
@@ -229,7 +227,8 @@ export function StaffingScheduleCheckCard({
                     <th className="py-1 px-3 font-medium">Zeit</th>
                     <th className="py-1 px-3 font-medium text-center">Soll</th>
                     <th className="py-1 px-3 font-medium text-center">Ist</th>
-                    <th className="py-1 pl-3 font-medium text-right">Differenz</th>
+                    <th className="py-1 px-3 font-medium text-right">Differenz</th>
+                    <th className="py-1 pl-3 font-medium text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -239,16 +238,11 @@ export function StaffingScheduleCheckCard({
                       <td className="py-1.5 px-3 tabular-nums whitespace-nowrap">{r.shiftStart}–{r.shiftEnd}</td>
                       <td className="py-1.5 px-3 text-center tabular-nums">{r.required}</td>
                       <td className="py-1.5 px-3 text-center tabular-nums">{r.planned}</td>
+                      <td className="py-1.5 px-3 text-right">
+                        <StaffingDiffCell data={{ required: r.required, planned: r.planned, diff: r.diff }} />
+                      </td>
                       <td className="py-1.5 pl-3 text-right">
-                        <span
-                          className={cn(
-                            'inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-semibold tabular-nums whitespace-nowrap',
-                            STATUS_PILL[r.status],
-                          )}
-                        >
-                          <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_DOT[r.status])} aria-hidden />
-                          {formatStaffingDiff(r.diff)}
-                        </span>
+                        <StaffingStatusBadge status={r.status} diff={r.diff} size="xs" />
                       </td>
                     </tr>
                   ))}

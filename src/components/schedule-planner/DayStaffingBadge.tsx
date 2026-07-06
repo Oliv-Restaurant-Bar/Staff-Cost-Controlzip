@@ -3,8 +3,8 @@
  * Dienstplan-Tageskopf (z.B. „S 5/6 +1" je Abteilung), Details per Klick.
  *
  * NUR Anzeige: ändert keine Dienstplan-/Bedarfs-Daten. Farben folgen der
- * 3-stufigen Ampel aus staffing-comparison-utils (zu wenig rot, zu viel
- * orange, exakt grün).
+ * 2-Farben-Warnung aus staffing-comparison-utils (exakt = optimal/grün, jede
+ * Abweichung — über- oder unterbesetzt — rot).
  */
 
 import { Link } from 'react-router-dom';
@@ -14,9 +14,14 @@ import type { Department } from '@/types/personnel';
 import {
   formatShortStaffingDiff,
   formatStaffingDiff,
-  type ComparisonStatus,
+  statusLabel,
   type DayStaffingSummaryResult,
 } from '@/lib/staffing-comparison-utils';
+import {
+  STATUS_PILL,
+  STATUS_DOT,
+  STATUS_TEXT,
+} from '@/components/schedule-planner/staffing-status-ui';
 import {
   Popover,
   PopoverContent,
@@ -26,27 +31,6 @@ import { cn } from '@/lib/utils';
 
 const DEPT_LABEL: Record<Department, string> = { service: 'Service', küche: 'Küche' };
 const DEPT_SHORT: Record<Department, string> = { service: 'S', küche: 'K' };
-
-const STATUS_PILL: Record<ComparisonStatus, string> = {
-  green:
-    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
-  orange:
-    'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
-  red:
-    'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800',
-};
-
-const STATUS_DOT: Record<ComparisonStatus, string> = {
-  green: 'bg-emerald-500',
-  orange: 'bg-amber-500',
-  red: 'bg-red-500',
-};
-
-const STATUS_TEXT: Record<ComparisonStatus, string> = {
-  green: 'text-emerald-700 dark:text-emerald-300',
-  orange: 'text-amber-700 dark:text-amber-300',
-  red: 'text-red-700 dark:text-red-300',
-};
 
 interface DayStaffingBadgeProps {
   /** Tages-Zusammenfassung (bereits rollen-gescopt berechnet). */
@@ -97,7 +81,7 @@ export function DayStaffingBadge({ summary, dateLabel }: DayStaffingBadgeProps) 
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium">{DEPT_LABEL[d.department]}</span>
                 <span className={cn('text-xs font-semibold', STATUS_TEXT[d.status])}>
-                  {formatStaffingDiff(d.diff)}
+                  {statusLabel(d.status)}{d.diff !== 0 ? ` · ${formatStaffingDiff(d.diff)}` : ''}
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">

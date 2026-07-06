@@ -1,0 +1,203 @@
+Erweitere das Modul "Personalbedarf-Abgleich" um eine präzisere und operativ sinnvollere Warnlogik.
+
+Ziel:
+Bereits eine Abweichung von 1 Person soll sichtbar werden. In der Gastronomie kann bereits eine einzige Person zu viel oder zu wenig erhebliche Auswirkungen auf Personalkosten oder Servicequalität haben.
+
+WICHTIG:
+Es handelt sich ausschliesslich um eine Anpassung der Anzeige- und Warnlogik.
+Keine Änderungen an der eigentlichen Berechnung des Personalbedarfs.
+
+──────────────────────────────
+1. Neue Warnlogik
+──────────────────────────────
+
+Für jede Kombination aus:
+
+• Datum
+• Bereich (Service/Küche)
+• Schicht (Mittag/Abend, falls vorhanden)
+
+berechnen:
+
+Geplant
+Benötigt
+Differenz
+
+Anzeige:
+
+Differenz = 0
+
+→ Grün
+→ "Optimal"
+
+Differenz > 0
+
+→ Rot
+→ "Überbesetzt"
+
+Bereits +1 Person muss rot dargestellt werden.
+
+Differenz < 0
+
+→ Rot
+→ "Unterbesetzt"
+
+Bereits -1 Person muss rot dargestellt werden.
+
+Die bisherige Gelb-/Toleranzlogik vollständig entfernen.
+
+──────────────────────────────
+2. Differenz klar darstellen
+──────────────────────────────
+
+Neben der Ampel zusätzlich anzeigen:
+
++1 Person
+
++2 Personen
+
+-1 Person
+
+-3 Personen
+
+Nicht nur Farben verwenden.
+
+──────────────────────────────
+3. KPI-Karten ergänzen
+──────────────────────────────
+
+Oben zusätzlich anzeigen:
+
+• Optimal besetzte Tage
+
+• Überbesetzte Tage
+
+• Unterbesetzte Tage
+
+• Summe Überstunden-Potenzial
+(falls aus vorhandenen Daten berechenbar)
+
+Keine neue Datenquelle verwenden.
+
+──────────────────────────────
+4. Tabellen verbessern
+──────────────────────────────
+
+In der Übersicht sollen zusätzlich sichtbar sein:
+
+Benötigt
+
+Geplant
+
+Differenz
+
+Status
+
+Status als Badge:
+
+Optimal
+
+Überbesetzt
+
+Unterbesetzt
+
+──────────────────────────────
+5. Tooltip
+──────────────────────────────
+
+Beim Überfahren der Differenz anzeigen:
+
+Benötigtes Personal
+
+Geplantes Personal
+
+Differenz
+
+Umsatz
+
+Berechnungsgrundlage
+
+Falls vorhanden zusätzlich:
+
+Produktivität
+
+Umsatz pro Mitarbeiter
+
+──────────────────────────────
+6. Filter
+──────────────────────────────
+
+Bestehende Filter unverändert übernehmen.
+
+Keine Änderungen an:
+
+• Zeitraum
+• Bereiche
+• Mitarbeiter
+• Forecast
+• Vergleichsmodus
+
+──────────────────────────────
+7. Keine funktionalen Änderungen
+──────────────────────────────
+
+NICHT ändern:
+
+• Berechnung Personalbedarf
+
+• Forecast-Logik
+
+• Import
+
+• Datenbank
+
+• SQL
+
+• API
+
+• bestehende Berechnungsformeln
+
+Nur Darstellung und Warnlogik.
+
+──────────────────────────────
+8. Qualität
+──────────────────────────────
+
+TypeScript ohne Fehler.
+
+Bestehende Tests weiterhin grün.
+
+Vorhandene Tests anpassen, falls sich Statusbezeichnungen geändert haben.
+
+Neue Tests ergänzen für:
+
+• Differenz = 0
+
+• Differenz = +1
+
+• Differenz = -1
+
+• Grössere Abweichungen
+
+• KPI-Zusammenfassung
+
+• Badge-Logik
+
+• Tooltip
+
+──────────────────────────────
+9. Dokumentation
+──────────────────────────────
+
+replit.md aktualisieren.
+
+Architect Review durchführen.
+
+Typecheck.
+
+Gesamte Testsuite ausführen.
+
+Commit-Message erstellen.
+
+WICHTIG:
+Diese Aufgabe darf keine Änderungen an Migrationen, Datenbanktabellen, SQL-Dateien, CRM-Modulen, Importprozessen oder anderen bereits abgeschlossenen Bereichen enthalten. Sie betrifft ausschliesslich das Personalbedarf-Abgleich-Modul und dessen Darstellung/Warnlogik.

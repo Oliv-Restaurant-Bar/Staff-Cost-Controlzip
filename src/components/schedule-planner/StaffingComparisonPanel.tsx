@@ -18,10 +18,15 @@ import {
 import {
   buildPlannedEmployees,
   computeStaffingComparison,
+  summarizeStaffingKpis,
   formatStaffingDiff,
-  type ComparisonStatus,
   type ShiftComparisonRow,
 } from '@/lib/staffing-comparison-utils';
+import {
+  StaffingKpiCards,
+  StaffingStatusBadge,
+  StaffingDiffCell,
+} from '@/components/schedule-planner/staffing-status-ui';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -57,45 +62,6 @@ const DEPARTMENT_LABEL: Record<Department, string> = {
   küche: 'Küche',
 };
 
-const STATUS_META: Record<
-  ComparisonStatus,
-  { dot: string; text: string; badge: string }
-> = {
-  green: {
-    dot: 'bg-emerald-500',
-    text: 'text-emerald-700 dark:text-emerald-300',
-    badge:
-      'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
-  },
-  orange: {
-    dot: 'bg-amber-500',
-    text: 'text-amber-700 dark:text-amber-300',
-    badge:
-      'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
-  },
-  red: {
-    dot: 'bg-red-500',
-    text: 'text-red-700 dark:text-red-300',
-    badge:
-      'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800',
-  },
-};
-
-function StatusBadge({ status, diff }: { status: ComparisonStatus; diff: number }) {
-  const meta = STATUS_META[status];
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
-        meta.badge,
-      )}
-    >
-      <span className={cn('h-2 w-2 rounded-full', meta.dot)} aria-hidden />
-      {formatStaffingDiff(diff)}
-    </span>
-  );
-}
-
 function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
   return (
     <>
@@ -106,8 +72,11 @@ function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
           </td>
           <td className="py-1.5 px-3 text-center tabular-nums text-sm">{s.required}</td>
           <td className="py-1.5 px-3 text-center tabular-nums text-sm">{s.planned}</td>
+          <td className="py-1.5 px-3 text-right text-sm">
+            <StaffingDiffCell data={{ required: s.required, planned: s.planned, diff: s.diff }} />
+          </td>
           <td className="py-1.5 pl-3 text-right">
-            <StatusBadge status={s.status} diff={s.diff} />
+            <StaffingStatusBadge status={s.status} diff={s.diff} />
           </td>
         </tr>
       ))}
@@ -152,6 +121,8 @@ export function StaffingComparisonPanel({
       }),
     [positions, requirements, plannedEmployees, season, weekday, departments],
   );
+
+  const kpis = useMemo(() => summarizeStaffingKpis(result.rows), [result.rows]);
 
   const loading = posLoading || reqLoading;
 
@@ -231,24 +202,16 @@ export function StaffingComparisonPanel({
           </p>
         ) : (
           <div className="space-y-5">
-            {/* Zusammenfassung */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-muted/40 px-3 py-2 text-sm">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
-                {result.counts.green} erfüllt
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
-                {result.counts.orange} zu viel
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
-                {result.counts.red} zu wenig
-              </span>
-              <span className="ml-auto text-muted-foreground">
+            {/* KPI-Kacheln */}
+            <StaffingKpiCards kpis={kpis} />
+
+            {/* Tages-Summe */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">Tages-Summe</span>
+              <span className="ml-auto">
                 Benötigt <span className="font-medium text-foreground tabular-nums">{result.totals.required}</span>
                 {' · '}Geplant <span className="font-medium text-foreground tabular-nums">{result.totals.planned}</span>
-                {' · '}<span className={cn('font-medium', result.totals.diff === 0 ? 'text-emerald-600 dark:text-emerald-400' : result.totals.diff > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400')}>{formatStaffingDiff(result.totals.diff)}</span>
+                {' · '}<span className={cn('font-medium', result.totals.diff === 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>{formatStaffingDiff(result.totals.diff)}</span>
               </span>
             </div>
 
@@ -286,7 +249,8 @@ export function StaffingComparisonPanel({
                               <th className="py-1 pr-3 text-left font-medium">Zeitraum</th>
                               <th className="py-1 px-3 text-center font-medium">Benötigt</th>
                               <th className="py-1 px-3 text-center font-medium">Geplant</th>
-                              <th className="py-1 pl-3 text-right font-medium">Differenz</th>
+                              <th className="py-1 px-3 text-right font-medium">Differenz</th>
+                              <th className="py-1 pl-3 text-right font-medium">Status</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -318,7 +282,8 @@ export function StaffingComparisonPanel({
                           <th className="py-1 pr-3 text-left font-medium">Zeitraum</th>
                           <th className="py-1 px-3 text-center font-medium">Benötigt</th>
                           <th className="py-1 px-3 text-center font-medium">Geplant</th>
-                          <th className="py-1 pl-3 text-right font-medium">Differenz</th>
+                          <th className="py-1 px-3 text-right font-medium">Differenz</th>
+                          <th className="py-1 pl-3 text-right font-medium">Status</th>
                         </tr>
                       </thead>
                       <tbody>

@@ -9,13 +9,14 @@
  * NUR Analyse/Anzeige — verändert WEDER Dienstplan NOCH Personalbedarf und
  * erzeugt KEINE Vorschläge/Budget-Prüfung.
  *
- * ── Ampel-Logik (3-stufig, ab ±1 Person) ─────────────────────────────────────
+ * ── Warnlogik (2 Farben, ab ±1 Person) ───────────────────────────────────────
  *   diff = geplant − benötigt
- *   🟢 grün   = exakt erfüllt        (diff === 0)
- *   🟠 orange = zu viel geplant      (diff > 0 → Warnung bereits ab +1 Person)
- *   🔴 rot    = zu wenig geplant     (diff < 0 → kritisch bereits ab −1 Person)
- * Die genaue Differenz wird zusätzlich angezeigt
- * (z.B. „+1 Person zu viel", „−1 Person zu wenig").
+ *   🟢 grün (optimal)      = exakt erfüllt    (diff === 0)
+ *   🔴 rot  (überbesetzt)  = zu viel geplant  (diff > 0 → bereits ab +1 Person)
+ *   🔴 rot  (unterbesetzt) = zu wenig geplant (diff < 0 → bereits ab −1 Person)
+ * Jede Abweichung ist rot — es gibt KEINE Gelb-/Toleranzstufe mehr. Die
+ * Richtung (über-/unterbesetzt) wird über Status-Label + Differenztext
+ * unterschieden (z.B. „Überbesetzt · +1 Person").
  * Hinweis: Tage mit `isAdditionalCostPlan` zählen als geplant (es sind
  * eingeplante Personen); Abwesenheiten zählen NICHT.
  *
@@ -43,7 +44,16 @@ import {
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import { shiftsForScope, timeToMinutes } from '@/lib/staffing-requirements-utils';
 
-export type ComparisonStatus = 'green' | 'orange' | 'red';
+/**
+ * Semantischer Status einer Bedarfs-Schicht (2-Farben-Warnlogik):
+ *   optimal      → grün  (diff === 0)
+ *   overstaffed  → rot   (diff > 0, „Überbesetzt")
+ *   understaffed → rot   (diff < 0, „Unterbesetzt")
+ */
+export type ComparisonStatus = 'optimal' | 'overstaffed' | 'understaffed';
+
+/** Farb-Ebene der Warnlogik: nur exakt (grün) vs. jede Abweichung (rot). */
+export type StatusColor = 'green' | 'red';
 
 /** Produktive (nicht-Abwesenheits-) Arbeitszeit eines Mitarbeiters an einem Tag. */
 export interface PlannedSlot {
@@ -108,17 +118,34 @@ export interface StaffingComparisonResult {
   /** Alle gerenderten Zeilen (für Summen/Zählung). */
   rows: ShiftComparisonRow[];
   totals: { required: number; planned: number; diff: number };
-  counts: { green: number; orange: number; red: number };
+  counts: { optimal: number; overstaffed: number; understaffed: number };
 }
 
 /**
- * Ampel-Status aus benötigt/geplant (3-stufig, ab ±1 Person):
- * zu wenig → rot (kritisch), zu viel → orange (Warnung), exakt → grün.
+ * Warn-Status aus benötigt/geplant (2 Farben, ab ±1 Person):
+ * zu viel → overstaffed (rot), zu wenig → understaffed (rot), exakt → optimal (grün).
  */
 export function comparisonStatus(required: number, planned: number): ComparisonStatus {
-  if (planned < required) return 'red';
-  if (planned > required) return 'orange';
-  return 'green';
+  if (planned > required) return 'overstaffed';
+  if (planned < required) return 'understaffed';
+  return 'optimal';
+}
+
+/** Farbe eines Status: nur „optimal" ist grün, jede Abweichung ist rot. */
+export function statusColor(status: ComparisonStatus): StatusColor {
+  return status === 'optimal' ? 'green' : 'red';
+}
+
+/** Anzeigebezeichnung des Status (Badge-Text). */
+export const STATUS_LABEL: Record<ComparisonStatus, string> = {
+  optimal: 'Optimal',
+  overstaffed: 'Überbesetzt',
+  understaffed: 'Unterbesetzt',
+};
+
+/** Anzeigebezeichnung des Status (Badge-/Tooltip-Text). */
+export function statusLabel(status: ComparisonStatus): string {
+  return STATUS_LABEL[status];
 }
 
 /**
@@ -132,6 +159,19 @@ export function formatStaffingDiff(diff: number): string {
   const sign = diff > 0 ? '+' : '−';
   const direction = diff > 0 ? 'zu viel' : 'zu wenig';
   return `${sign}${n} ${unit} ${direction}`;
+}
+
+/**
+ * Differenz als reine Personenangabe (ohne Richtungstext): 0 → „±0",
+ * sonst „+1 Person" / „+2 Personen" / „−3 Personen" (U+2212 als Minus).
+ * Ergänzt das Status-Label (Überbesetzt/Unterbesetzt), das die Richtung nennt.
+ */
+export function formatStaffingDiffPersons(diff: number): string {
+  if (diff === 0) return '±0';
+  const n = Math.abs(diff);
+  const unit = n === 1 ? 'Person' : 'Personen';
+  const sign = diff > 0 ? '+' : '−';
+  return `${sign}${n} ${unit}`;
 }
 
 /** Überschneidet sich ein produktiver Slot mit dem Zeitraum einer Bedarfs-Schicht? */
@@ -316,7 +356,7 @@ export function computeStaffingComparison(args: {
       c[r.status] += 1;
       return c;
     },
-    { green: 0, orange: 0, red: 0 },
+    { optimal: 0, overstaffed: 0, understaffed: 0 },
   );
 
   return {
@@ -431,4 +471,124 @@ export function computeDayStaffingSummary(args: {
   });
 
   return { hasRequirements: comparison.hasRequirements, departments };
+}
+
+// ─── KPI-Zusammenfassung (Kacheln „oben") ─────────────────────────────────────
+
+/** Dauer einer Bedarfs-Schicht in Stunden (0 bei ungültigen/Null-Zeiten). */
+export function shiftDurationHours(shiftStart: string, shiftEnd: string): number {
+  const s = timeToMinutes(shiftStart);
+  const e = timeToMinutes(shiftEnd);
+  if (Number.isNaN(s) || Number.isNaN(e) || e <= s) return 0;
+  return (e - s) / 60;
+}
+
+/**
+ * KPI-Kennzahlen über die gerenderten Bedarfs-Schichten (rein aus vorhandenen
+ * Bedarfs-/Schichtdaten — KEINE neue Datenquelle):
+ *   - Anzahl Schichten je Status (optimal / über- / unterbesetzt),
+ *   - Über-/Unterbesetzung in Personen-Schichten,
+ *   - „Überstunden-Potenzial" = fehlende Personen-STUNDEN aus Unterbesetzung
+ *     (Σ |diff| × Schichtdauer über unterbesetzte Schichten). Unterbesetzung ⇒
+ *     vorhandenes Personal muss abdecken ⇒ Überstunden-Risiko.
+ */
+export interface StaffingKpiSummary {
+  /** Anzahl Bedarfs-Schichten mit diff === 0. */
+  optimal: number;
+  /** Anzahl Bedarfs-Schichten mit diff > 0. */
+  overstaffed: number;
+  /** Anzahl Bedarfs-Schichten mit diff < 0. */
+  understaffed: number;
+  /** Σ Überbesetzung in Personen-Schichten (diff > 0). */
+  overstaffPersonShifts: number;
+  /** Σ Unterdeckung in Personen-Schichten (|diff| bei diff < 0). */
+  understaffPersonShifts: number;
+  /** Überstunden-Potenzial in Personen-Stunden (Unterbesetzung × Schichtdauer). */
+  overtimePotentialHours: number;
+}
+
+export function summarizeStaffingKpis(rows: ShiftComparisonRow[]): StaffingKpiSummary {
+  let optimal = 0;
+  let overstaffed = 0;
+  let understaffed = 0;
+  let overstaffPersonShifts = 0;
+  let understaffPersonShifts = 0;
+  let overtimePotentialHours = 0;
+  for (const r of rows) {
+    if (r.diff === 0) {
+      optimal += 1;
+    } else if (r.diff > 0) {
+      overstaffed += 1;
+      overstaffPersonShifts += r.diff;
+    } else {
+      understaffed += 1;
+      const short = -r.diff;
+      understaffPersonShifts += short;
+      overtimePotentialHours += short * shiftDurationHours(r.shiftStart, r.shiftEnd);
+    }
+  }
+  return {
+    optimal,
+    overstaffed,
+    understaffed,
+    overstaffPersonShifts,
+    understaffPersonShifts,
+    // auf 0.1 h runden — vermeidet Fließkomma-Rauschen in der Anzeige.
+    overtimePotentialHours: Math.round(overtimePotentialHours * 10) / 10,
+  };
+}
+
+// ─── Tooltip auf der Differenz ────────────────────────────────────────────────
+
+/**
+ * Datengrundlage für den Differenz-Tooltip. `required`/`planned`/`diff` stammen
+ * aus dem Abgleich; Umsatz/Produktivität sind OPTIONAL und werden nur angezeigt,
+ * wenn ein Wert übergeben wird. Dieses Modul führt bewusst KEINE Umsatzquelle
+ * (rein/Supabase-frei, keine neue Datenquelle) — die Felder bleiben ohne
+ * externen Wert leer statt erfunden zu werden.
+ */
+export interface StaffingTooltipData {
+  required: number;
+  planned: number;
+  diff: number;
+  /** Optionaler Tagesumsatz (CHF). */
+  revenue?: number | null;
+  /** Optionale Produktivität (Kennzahl). */
+  productivity?: number | null;
+  /** Optionaler Umsatz je geplantem Mitarbeiter (CHF). */
+  revenuePerEmployee?: number | null;
+  /** Optionaler Text zur Berechnungsgrundlage (Default gesetzt). */
+  basis?: string;
+}
+
+export interface StaffingTooltipLine {
+  label: string;
+  value: string;
+}
+
+export const DEFAULT_TOOLTIP_BASIS =
+  'Hauptposition mit Zeitüberschneidung; Abwesenheiten zählen nicht.';
+
+function formatChf(n: number): string {
+  return `CHF ${Math.round(n)}`;
+}
+
+/**
+ * Zeilen des Differenz-Tooltips (reine Funktion → im Node-Env testbar).
+ * Immer: Benötigt, Geplant, Differenz, Berechnungsgrundlage. Optional dazwischen:
+ * Umsatz, Produktivität, Umsatz pro Mitarbeiter (nur falls Wert vorhanden).
+ */
+export function staffingTooltipLines(d: StaffingTooltipData): StaffingTooltipLine[] {
+  const lines: StaffingTooltipLine[] = [
+    { label: 'Benötigtes Personal', value: String(d.required) },
+    { label: 'Geplantes Personal', value: String(d.planned) },
+    { label: 'Differenz', value: formatStaffingDiffPersons(d.diff) },
+  ];
+  if (d.revenue != null) lines.push({ label: 'Umsatz', value: formatChf(d.revenue) });
+  if (d.productivity != null)
+    lines.push({ label: 'Produktivität', value: String(Math.round(d.productivity)) });
+  if (d.revenuePerEmployee != null)
+    lines.push({ label: 'Umsatz pro Mitarbeiter', value: formatChf(d.revenuePerEmployee) });
+  lines.push({ label: 'Berechnungsgrundlage', value: d.basis ?? DEFAULT_TOOLTIP_BASIS });
+  return lines;
 }

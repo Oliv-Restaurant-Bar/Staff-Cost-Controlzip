@@ -5,7 +5,10 @@ import type { StaffingRequirement } from '@/types/staffing';
 import type { Department, Employee, DaySchedule } from '@/types/personnel';
 import {
   comparisonStatus,
+  statusColor,
+  statusLabel,
   formatStaffingDiff,
+  formatStaffingDiffPersons,
   formatShortStaffingDiff,
   slotOverlapsShift,
   countPlanned,
@@ -13,7 +16,10 @@ import {
   buildPlannedEmployees,
   computeStaffingComparison,
   computeDayStaffingSummary,
+  summarizeStaffingKpis,
+  staffingTooltipLines,
   type PlannedEmployeeDay,
+  type ShiftComparisonRow,
 } from '@/lib/staffing-comparison-utils';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -89,21 +95,36 @@ const POSITIONS: Position[] = [
   pos({ key: 'abwasch', name: 'Abwasch', department: 'küche', departmentGroup: 'abwasch', sortOrder: 1 }),
 ];
 
-// ─── comparisonStatus (3-stufig: zu wenig rot, zu viel orange, exakt grün) ────
+// ─── comparisonStatus (2 Farben: exakt = optimal/grün, jede Abweichung = rot) ─
 
 describe('comparisonStatus', () => {
-  it('grün NUR bei exakter Erfüllung', () => {
-    expect(comparisonStatus(2, 2)).toBe('green');
-    expect(comparisonStatus(0, 0)).toBe('green');
+  it('optimal NUR bei exakter Erfüllung', () => {
+    expect(comparisonStatus(2, 2)).toBe('optimal');
+    expect(comparisonStatus(0, 0)).toBe('optimal');
   });
-  it('bereits ±1 Person löst aus: zu wenig → rot, zu viel → orange', () => {
-    expect(comparisonStatus(3, 2)).toBe('red'); // -1 → kritisch
-    expect(comparisonStatus(2, 3)).toBe('orange'); // +1 → Warnung
+  it('bereits ±1 Person löst aus: zu wenig → understaffed, zu viel → overstaffed', () => {
+    expect(comparisonStatus(3, 2)).toBe('understaffed'); // -1
+    expect(comparisonStatus(2, 3)).toBe('overstaffed'); // +1
   });
-  it('auch bei größeren Abweichungen: Richtung bestimmt die Farbe', () => {
-    expect(comparisonStatus(3, 1)).toBe('red'); // -2
-    expect(comparisonStatus(1, 3)).toBe('orange'); // +2
-    expect(comparisonStatus(5, 1)).toBe('red'); // -4
+  it('auch bei größeren Abweichungen: Richtung bestimmt den Status', () => {
+    expect(comparisonStatus(3, 1)).toBe('understaffed'); // -2
+    expect(comparisonStatus(1, 3)).toBe('overstaffed'); // +2
+    expect(comparisonStatus(5, 1)).toBe('understaffed'); // -4
+  });
+});
+
+// ─── statusColor / statusLabel (2-Farben-Abbildung + Beschriftung) ────────────
+
+describe('statusColor / statusLabel', () => {
+  it('nur optimal ist grün, über-/unterbesetzt sind rot', () => {
+    expect(statusColor('optimal')).toBe('green');
+    expect(statusColor('overstaffed')).toBe('red');
+    expect(statusColor('understaffed')).toBe('red');
+  });
+  it('liefert die deutschen Anzeigebezeichnungen', () => {
+    expect(statusLabel('optimal')).toBe('Optimal');
+    expect(statusLabel('overstaffed')).toBe('Überbesetzt');
+    expect(statusLabel('understaffed')).toBe('Unterbesetzt');
   });
 });
 
@@ -207,7 +228,7 @@ describe('computeStaffingComparison', () => {
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     expect(r.hasRequirements).toBe(true);
     expect(r.rows).toHaveLength(1);
-    expect(r.rows[0]).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green' });
+    expect(r.rows[0]).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'optimal' });
     expect(r.groups.find((g) => g.department === 'service')).toBeTruthy();
   });
 
@@ -223,22 +244,22 @@ describe('computeStaffingComparison', () => {
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const abw = r.rows.find((x) => x.positionKey === 'abwasch')!;
     const kue = r.rows.find((x) => x.positionKey === 'kueche')!;
-    expect(abw).toMatchObject({ planned: 1, diff: -1, status: 'red' });
-    expect(kue).toMatchObject({ planned: 1, diff: -2, status: 'red' });
+    expect(abw).toMatchObject({ planned: 1, diff: -1, status: 'understaffed' });
+    expect(kue).toMatchObject({ planned: 1, diff: -2, status: 'understaffed' });
   });
 
-  it('Szenario 3 — Überbesetzung → orange bereits bei +1 und auch bei +2', () => {
+  it('Szenario 3 — Überbesetzung → overstaffed (rot) bereits bei +1 und auch bei +2', () => {
     const reqs1 = [req({ positionKey: 'bar_buffet_springer', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 })];
     const over1 = [
       pe('a', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }]),
       pe('b', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }]),
     ];
     const r1 = computeStaffingComparison({ positions: POSITIONS, requirements: reqs1, plannedEmployees: over1, season: 'standard', weekday: 1 });
-    expect(r1.rows[0]).toMatchObject({ planned: 2, diff: 1, status: 'orange' });
+    expect(r1.rows[0]).toMatchObject({ planned: 2, diff: 1, status: 'overstaffed' });
 
     const over2 = [...over1, pe('c', 'bar_buffet_springer', [{ start: '11:00', end: '22:00' }])];
     const r2 = computeStaffingComparison({ positions: POSITIONS, requirements: reqs1, plannedEmployees: over2, season: 'standard', weekday: 1 });
-    expect(r2.rows[0]).toMatchObject({ planned: 3, diff: 2, status: 'orange' });
+    expect(r2.rows[0]).toMatchObject({ planned: 3, diff: 2, status: 'overstaffed' });
   });
 
   it('Szenario 4 — kein Bedarf für den Tag → hasRequirements=false, keine Gruppen', () => {
@@ -271,8 +292,8 @@ describe('computeStaffingComparison', () => {
     expect(servicePos.shifts).toHaveLength(2);
     const früh = servicePos.shifts.find((s) => s.shiftStart === '09:00')!;
     const spät = servicePos.shifts.find((s) => s.shiftStart === '15:00')!;
-    expect(früh).toMatchObject({ required: 2, planned: 2, status: 'green' });
-    expect(spät).toMatchObject({ required: 3, planned: 1, diff: -2, status: 'red' });
+    expect(früh).toMatchObject({ required: 2, planned: 2, status: 'optimal' });
+    expect(spät).toMatchObject({ required: 3, planned: 1, diff: -2, status: 'understaffed' });
   });
 
   it('Szenario 6 — Position ohne aktive Mitarbeitende → geplant 0, rot', () => {
@@ -281,7 +302,7 @@ describe('computeStaffingComparison', () => {
     const planned = [pe('a', 'service', [{ start: '11:00', end: '22:00' }])];
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const kue = r.rows.find((x) => x.positionKey === 'kueche')!;
-    expect(kue).toMatchObject({ planned: 0, diff: -2, status: 'red' });
+    expect(kue).toMatchObject({ planned: 0, diff: -2, status: 'understaffed' });
   });
 
   // ─── Zusatz: Robustheit ─────────────────────────────────────────────────────
@@ -298,7 +319,7 @@ describe('computeStaffingComparison', () => {
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     expect(r.orphanPositions).toHaveLength(1);
     expect(r.orphanPositions[0]).toMatchObject({ positionKey: 'alt_geloescht' });
-    expect(r.orphanPositions[0].shifts[0]).toMatchObject({ planned: 1, status: 'green' });
+    expect(r.orphanPositions[0].shifts[0]).toMatchObject({ planned: 1, status: 'optimal' });
     // beide Zeilen fließen in die Summen ein
     expect(r.rows).toHaveLength(2);
   });
@@ -319,9 +340,9 @@ describe('computeStaffingComparison', () => {
 
   it('aggregiert Summen und Ampel-Zählung über alle gerenderten Zeilen', () => {
     const requirements = [
-      req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 2 }), // 2/2 grün
-      req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 3 }), // 1/3 rot (−2)
-      req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }), // 2/1 orange (+1)
+      req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 2 }), // 2/2 optimal
+      req({ positionKey: 'kueche', shiftStart: '09:00', shiftEnd: '17:00', requiredCount: 3 }), // 1/3 unterbesetzt (−2)
+      req({ positionKey: 'abwasch', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }), // 2/1 überbesetzt (+1)
     ];
     const planned = [
       pe('a', 'service', [{ start: '11:00', end: '22:00' }]),
@@ -332,7 +353,7 @@ describe('computeStaffingComparison', () => {
     ];
     const r = computeStaffingComparison({ positions: POSITIONS, requirements, plannedEmployees: planned, season: 'standard', weekday: 1 });
     expect(r.totals).toEqual({ required: 6, planned: 5, diff: -1 });
-    expect(r.counts).toEqual({ green: 1, orange: 1, red: 1 });
+    expect(r.counts).toEqual({ optimal: 1, overstaffed: 1, understaffed: 1 });
   });
 });
 
@@ -367,11 +388,11 @@ describe('computeDayStaffingSummary', () => {
     expect(r.departments).toHaveLength(2);
     const service = r.departments.find((d) => d.department === 'service')!;
     const kueche = r.departments.find((d) => d.department === 'küche')!;
-    expect(service).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green', unmatchedPlanned: 0 });
-    expect(kueche).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green', unmatchedPlanned: 0 });
+    expect(service).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'optimal', unmatchedPlanned: 0 });
+    expect(kueche).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'optimal', unmatchedPlanned: 0 });
   });
 
-  it('1 Person zu viel → orange (+1), andere Abteilung bleibt unberührt', () => {
+  it('1 Person zu viel → overstaffed (+1), andere Abteilung bleibt unberührt', () => {
     const planned = [
       pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
       pe('s2', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
@@ -382,11 +403,11 @@ describe('computeDayStaffingSummary', () => {
     const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const service = r.departments.find((d) => d.department === 'service')!;
     const kueche = r.departments.find((d) => d.department === 'küche')!;
-    expect(service).toMatchObject({ required: 2, planned: 3, diff: 1, status: 'orange' });
-    expect(kueche).toMatchObject({ diff: 0, status: 'green' });
+    expect(service).toMatchObject({ required: 2, planned: 3, diff: 1, status: 'overstaffed' });
+    expect(kueche).toMatchObject({ diff: 0, status: 'optimal' });
   });
 
-  it('1 Person zu wenig → rot (−1), Service/Küche getrennt bewertet', () => {
+  it('1 Person zu wenig → understaffed (−1), Service/Küche getrennt bewertet', () => {
     const planned = [
       pe('s1', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
       pe('s2', 'service', [{ start: '11:00', end: '22:00' }], 'service'),
@@ -395,8 +416,8 @@ describe('computeDayStaffingSummary', () => {
     const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const service = r.departments.find((d) => d.department === 'service')!;
     const kueche = r.departments.find((d) => d.department === 'küche')!;
-    expect(service).toMatchObject({ diff: 0, status: 'green' });
-    expect(kueche).toMatchObject({ required: 2, planned: 1, diff: -1, status: 'red' });
+    expect(service).toMatchObject({ diff: 0, status: 'optimal' });
+    expect(kueche).toMatchObject({ required: 2, planned: 1, diff: -1, status: 'understaffed' });
   });
 
   it('Tag ohne Personalbedarf → hasRequirements=false, keine Abteilungen', () => {
@@ -414,7 +435,7 @@ describe('computeDayStaffingSummary', () => {
   it('Tag ohne Dienstplan-Einträge → Ist 0, rot mit voller Unterdeckung', () => {
     const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: [], season: 'standard', weekday: 1 });
     const service = r.departments.find((d) => d.department === 'service')!;
-    expect(service).toMatchObject({ required: 2, planned: 0, diff: -2, status: 'red', unmatchedPlanned: 0 });
+    expect(service).toMatchObject({ required: 2, planned: 0, diff: -2, status: 'understaffed', unmatchedPlanned: 0 });
   });
 
   it('Einheiten: 1 MA mit Früh+Spät erfüllt 2 Bedarfs-Schichten derselben Position', () => {
@@ -427,7 +448,7 @@ describe('computeDayStaffingSummary', () => {
     ];
     const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: reqs, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const service = r.departments.find((d) => d.department === 'service')!;
-    expect(service).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'green' });
+    expect(service).toMatchObject({ required: 2, planned: 2, diff: 0, status: 'optimal' });
   });
 
   it('unmatchedPlanned: produktiv geplante MA ohne passende Bedarfs-Schicht werden ausgewiesen', () => {
@@ -444,8 +465,8 @@ describe('computeDayStaffingSummary', () => {
     const r = computeDayStaffingSummary({ positions: POSITIONS, requirements: DAY_REQS, plannedEmployees: planned, season: 'standard', weekday: 1 });
     const service = r.departments.find((d) => d.department === 'service')!;
     const kueche = r.departments.find((d) => d.department === 'küche')!;
-    expect(service).toMatchObject({ planned: 2, status: 'green', unmatchedPlanned: 1 });
-    expect(kueche).toMatchObject({ planned: 2, status: 'green', unmatchedPlanned: 1 });
+    expect(service).toMatchObject({ planned: 2, status: 'optimal', unmatchedPlanned: 1 });
+    expect(kueche).toMatchObject({ planned: 2, status: 'optimal', unmatchedPlanned: 1 });
   });
 
   it('Abteilungsfilter (Rollen-Scoping): nur gescopte Abteilungen erscheinen', () => {
@@ -467,5 +488,105 @@ describe('computeDayStaffingSummary', () => {
       pe('c', 'kueche', [{ start: '11:00', end: '22:00' }]),
     ];
     expect(plannedIdsForShift(planned, 'service', '11:00', '22:00')).toEqual(['a']);
+  });
+});
+
+// ─── formatStaffingDiffPersons (Personenangabe ohne Richtungstext) ────────────
+
+describe('formatStaffingDiffPersons', () => {
+  it('±0 bei exakter Erfüllung', () => {
+    expect(formatStaffingDiffPersons(0)).toBe('±0');
+  });
+  it('Überbesetzung mit Plus-Vorzeichen und Plural', () => {
+    expect(formatStaffingDiffPersons(1)).toBe('+1 Person');
+    expect(formatStaffingDiffPersons(2)).toBe('+2 Personen');
+  });
+  it('Unterbesetzung mit U+2212-Minus und Plural', () => {
+    expect(formatStaffingDiffPersons(-1)).toBe('−1 Person');
+    expect(formatStaffingDiffPersons(-3)).toBe('−3 Personen');
+  });
+});
+
+// ─── summarizeStaffingKpis (KPI-Kacheln) ──────────────────────────────────────
+
+describe('summarizeStaffingKpis', () => {
+  function kpiRow(diff: number, shiftStart = '11:00', shiftEnd = '22:00'): ShiftComparisonRow {
+    const required = 2;
+    const planned = required + diff;
+    return {
+      positionKey: 'service',
+      shiftStart,
+      shiftEnd,
+      required,
+      planned,
+      diff,
+      status: comparisonStatus(required, planned),
+    };
+  }
+
+  it('leere Liste → alles 0', () => {
+    expect(summarizeStaffingKpis([])).toEqual({
+      optimal: 0,
+      overstaffed: 0,
+      understaffed: 0,
+      overstaffPersonShifts: 0,
+      understaffPersonShifts: 0,
+      overtimePotentialHours: 0,
+    });
+  });
+
+  it('zählt Status je Schicht und summiert Personen-Schichten', () => {
+    const rows = [kpiRow(0), kpiRow(1), kpiRow(2), kpiRow(-1), kpiRow(-3)];
+    const k = summarizeStaffingKpis(rows);
+    expect(k.optimal).toBe(1);
+    expect(k.overstaffed).toBe(2);
+    expect(k.understaffed).toBe(2);
+    expect(k.overstaffPersonShifts).toBe(3); // +1 +2
+    expect(k.understaffPersonShifts).toBe(4); // 1 + 3
+  });
+
+  it('Überstunden-Potenzial = fehlende Personen × Schichtdauer (nur Unterbesetzung)', () => {
+    // −2 Personen auf einer 4h-Schicht (09:00–13:00) → 8 h; Überbesetzung zählt nicht.
+    const rows = [kpiRow(-2, '09:00', '13:00'), kpiRow(3, '11:00', '22:00')];
+    const k = summarizeStaffingKpis(rows);
+    expect(k.overtimePotentialHours).toBe(8);
+  });
+
+  it('ignoriert ungültige/leere Schichtzeiten bei den Stunden (Dauer 0)', () => {
+    const rows = [kpiRow(-1, '22:00', '11:00'), kpiRow(-2, '10:00', '10:00')];
+    const k = summarizeStaffingKpis(rows);
+    expect(k.understaffPersonShifts).toBe(3);
+    expect(k.overtimePotentialHours).toBe(0);
+  });
+});
+
+// ─── staffingTooltipLines (Differenz-Tooltip) ─────────────────────────────────
+
+describe('staffingTooltipLines', () => {
+  it('immer Benötigt/Geplant/Differenz/Berechnungsgrundlage, Umsatz nur falls vorhanden', () => {
+    const lines = staffingTooltipLines({ required: 3, planned: 2, diff: -1 });
+    expect(lines.map((l) => l.label)).toEqual([
+      'Benötigtes Personal',
+      'Geplantes Personal',
+      'Differenz',
+      'Berechnungsgrundlage',
+    ]);
+    expect(lines.find((l) => l.label === 'Differenz')!.value).toBe('−1 Person');
+  });
+
+  it('rendert Umsatz/Produktivität/Umsatz pro Mitarbeiter, wenn Werte übergeben werden', () => {
+    const lines = staffingTooltipLines({
+      required: 2,
+      planned: 3,
+      diff: 1,
+      revenue: 5400,
+      productivity: 1350,
+      revenuePerEmployee: 1800,
+    });
+    const byLabel = Object.fromEntries(lines.map((l) => [l.label, l.value]));
+    expect(byLabel['Umsatz']).toBe('CHF 5400');
+    expect(byLabel['Produktivität']).toBe('1350');
+    expect(byLabel['Umsatz pro Mitarbeiter']).toBe('CHF 1800');
+    expect(byLabel['Differenz']).toBe('+1 Person');
   });
 });
