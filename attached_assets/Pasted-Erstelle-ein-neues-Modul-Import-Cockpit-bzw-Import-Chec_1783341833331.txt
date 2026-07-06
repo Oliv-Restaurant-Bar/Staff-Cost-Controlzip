@@ -1,0 +1,299 @@
+Erstelle ein neues Modul "Import-Cockpit" bzw. "Import-Checkliste", damit jederzeit sichtbar ist, welche Daten bis wann importiert wurden und welche Importe täglich, wöchentlich, monatlich oder jährlich fällig sind.
+
+Ziel:
+Der Benutzer verliert aktuell den Überblick über die vielen Datenquellen. Das neue Modul soll zentral anzeigen:
+
+- Welche Datenquelle wurde zuletzt importiert?
+- Bis zu welchem Datum reichen die Daten?
+- Wie oft muss dieser Import erfolgen?
+- Ist der Import aktuell, überfällig oder fehlgeschlagen?
+- Was ist heute, diese Woche, diesen Monat oder dieses Jahr noch zu erledigen?
+
+──────────────────────────────
+1. Neuer Menüpunkt
+──────────────────────────────
+
+Neuen Bereich erstellen:
+
+"Import-Cockpit"
+
+oder falls passender:
+
+"System → Import-Cockpit"
+"Controlling → Importstatus"
+
+Der Menüpunkt soll für Admins sichtbar sein.
+
+Keine bestehenden Importseiten entfernen.
+
+──────────────────────────────
+2. Übersichtstabelle Datenquellen
+──────────────────────────────
+
+Eine zentrale Tabelle mit folgenden Spalten:
+
+- Datenquelle
+- Bereich / Modul
+- Letzter Import
+- Daten von
+- Daten bis
+- Intervall
+- Status
+- Nächste Fälligkeit
+- Aktion
+
+Beispiele für Datenquellen:
+
+- Foratable Reservationen
+- Foratable Gäste / Gäste-CRM
+- Gastronovi Z-Bericht
+- Tagesumsatz
+- Produktverkäufe
+- Warenrechnungen
+- Mirus Arbeitszeiten
+- Dienstplanung
+- Forecast
+- Budget
+- Inventur / Warenbestand, falls vorhanden
+
+Statuslogik:
+
+Grün:
+Import aktuell
+
+Gelb:
+Import bald fällig oder einzelne Tage fehlen
+
+Rot:
+Import überfällig oder Datenlücke kritisch
+
+Grau:
+Noch nie importiert oder nicht eingerichtet
+
+──────────────────────────────
+3. Import-Intervalle
+──────────────────────────────
+
+Für jede Datenquelle ein erwartetes Intervall definieren:
+
+Täglich:
+- Foratable Reservationen
+- Foratable Gäste / Gäste-CRM
+- Gastronovi Z-Bericht
+- Tagesumsatz
+- Produktverkäufe
+- Mirus Arbeitszeiten
+
+Wöchentlich:
+- Forecast-Kontrolle
+- Personalkosten-Kontrolle
+- Dienstplanung Folgewochen prüfen
+
+Monatlich:
+- Warenrechnungen
+- Budgetkontrolle
+- Monatsabschluss
+- Inventur / Warenbestand, falls vorhanden
+
+Jährlich:
+- Jahresbudget
+- Vorjahresvergleich / Jahresabschlussdaten
+
+Die Intervalle sollen zentral konfigurierbar sein, damit sie später leicht angepasst werden können.
+
+──────────────────────────────
+4. Checklisten-Ansicht
+──────────────────────────────
+
+Zusätzlich zur Tabelle eine Checklisten-Ansicht erstellen:
+
+Heute zu erledigen:
+
+- Z-Bericht importieren
+- Reservationen importieren
+- Gäste-CRM aktualisieren
+- Tagesumsatz importieren
+- Produktverkäufe importieren
+- Arbeitszeiten Mirus importieren
+
+Diese Woche:
+
+- Forecast aktualisieren
+- Personalkosten kontrollieren
+- Dienstplanung Folgewochen prüfen
+
+Diesen Monat:
+
+- Warenrechnungen importieren
+- Budgetkontrolle durchführen
+- Monatsabschluss prüfen
+- Inventur / Warenbestand prüfen
+
+Dieses Jahr:
+
+- Jahresbudget erfassen / prüfen
+- Vorjahresvergleich aktualisieren
+
+Jeder Punkt soll automatisch anhand des Importstatus als erledigt / offen / überfällig markiert werden.
+
+──────────────────────────────
+5. Datenqualität prüfen
+──────────────────────────────
+
+Das Import-Cockpit soll einfache Datenqualitätsprüfungen anzeigen:
+
+- Fehlende Tage im Zeitraum
+- Noch nie importiert
+- Import veraltet
+- Daten reichen nicht bis gestern/heute
+- Datei bereits importiert, falls diese Information vorhanden ist
+- Import mit Warnungen, falls Importstatus vorhanden ist
+- Import fehlgeschlagen, falls vorhanden
+
+Falls für einzelne Datenquellen noch keine Import-Historie vorhanden ist:
+Nicht blockieren.
+Stattdessen Status "nicht prüfbar" oder "keine Historie vorhanden" anzeigen.
+
+──────────────────────────────
+6. Import-Historie nutzen
+──────────────────────────────
+
+Vorhandene Tabellen, Utilities oder Import-Historien verwenden.
+
+Nicht unnötig neue Tabellen erstellen.
+
+Falls bereits import_runs oder ähnliche Import-Historie vorhanden ist:
+Diese verwenden.
+
+Falls bestimmte Module keine Historie haben:
+Aus vorhandenen Daten das maximale Datumsfeld ableiten, zum Beispiel:
+
+- Reservationen: letztes Reservationsdatum
+- Tagesumsatz: letzter Umsatz-Tag
+- Produktverkäufe: letzter Verkaufs-Tag
+- Mirus Arbeitszeiten: letzter Arbeitszeit-Tag
+- Budget: letztes Budgetjahr
+
+Wichtig:
+Keine bestehenden Importprozesse verändern.
+
+──────────────────────────────
+7. KPI-Karten oben
+──────────────────────────────
+
+Oben auf der Seite KPI-Karten anzeigen:
+
+- Aktuelle Importe
+- Bald fällig
+- Überfällig
+- Nicht prüfbar
+- Datenlücken
+
+Diese Werte aus der Tabelle ableiten.
+
+──────────────────────────────
+8. Filter und Bedienung
+──────────────────────────────
+
+Filter ermöglichen:
+
+- Alle
+- Täglich
+- Wöchentlich
+- Monatlich
+- Jährlich
+- Nur offene
+- Nur überfällige
+- Nur nicht prüfbare
+
+Zusätzlich Suche nach Datenquelle.
+
+──────────────────────────────
+9. Detail-Drawer oder Popup
+──────────────────────────────
+
+Beim Klick auf eine Datenquelle öffnet sich ein Detailbereich mit:
+
+- Beschreibung der Datenquelle
+- Erwartetes Intervall
+- Letzter erfolgreicher Import
+- Daten von / bis
+- Anzahl Datensätze, falls verfügbar
+- Fehlende Tage, falls berechenbar
+- Letzte Importläufe, falls Historie vorhanden
+- Link oder Button zur passenden Importseite, falls vorhanden
+
+Keine neuen Importfunktionen bauen.
+Nur zur bestehenden Importseite verlinken.
+
+──────────────────────────────
+10. Technische Regeln
+──────────────────────────────
+
+Keine DB-Migration erstellen, ausser es ist absolut unvermeidbar.
+
+Keine SQL-Dateien anfassen.
+
+Keine bestehenden Importfunktionen umbauen.
+
+Keine CRM-Merge-, Export- oder Profil-Logik ändern.
+
+Keine Business-Logik anderer Module verändern.
+
+Mandantenfilter und Admin-Gating beibehalten.
+
+Das Modul soll read-only sein.
+
+──────────────────────────────
+11. Tests
+──────────────────────────────
+
+Neue pure Utility-Funktionen erstellen für:
+
+- Statusberechnung
+- Fälligkeit
+- Checklisten-Gruppierung
+- KPI-Zusammenfassung
+- Fehlende-Tage-Erkennung
+- "nicht prüfbar"-Status
+
+Tests ergänzen für:
+
+- täglich aktuell
+- täglich überfällig
+- wöchentlich fällig
+- monatlich fällig
+- jährlich fällig
+- noch nie importiert
+- keine Historie vorhanden
+- Datenlücke
+- KPI-Zählung
+- Checklisten-Gruppierung
+
+Bestehende Tests dürfen nicht entfernt werden.
+
+──────────────────────────────
+12. Dokumentation und Abschluss
+──────────────────────────────
+
+replit.md aktualisieren.
+
+Dort dokumentieren:
+
+- neues Import-Cockpit
+- Zweck
+- Datenquellen
+- Intervalle
+- read-only Charakter
+- keine Importlogik verändert
+- bekannter Validation-Scope-Hinweis bleibt bestehen
+
+Danach:
+
+- TypeScript prüfen
+- Tests ausführen
+- Architect Review durchführen
+- Commit-Message erstellen
+
+Wichtig:
+Wenn das automatische Validation Review wieder alte Gäste-CRM-Migrationen beanstandet, zuerst per Git prüfen, ob diese wirklich Teil dieses Tasks sind. Falls nicht, nicht zurückbauen, sondern als bekannten Whole-Branch-Diff-Scope-Fall dokumentieren.

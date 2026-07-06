@@ -304,6 +304,15 @@ const NAV_GROUPS: NavGroup[] = [
         beaulieuViewerAllowed: true,
         hideForGuest: true,
       },
+      {
+        path: '/import-cockpit',
+        label: 'Import-Cockpit',
+        shortLabel: 'Cockpit',
+        icon: ClipboardCheck,
+        // Read-only Frische-/Fälligkeits-Übersicht — nur Admin, keine Gäste.
+        adminOnly: true,
+        hideForGuest: true,
+      },
     ],
   },
 ];

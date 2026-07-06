@@ -39,6 +39,7 @@ import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
 import OnboardingForm from "./pages/OnboardingForm";
 import ImportHub from "./pages/ImportHub";
+import ImportCockpitPage from "./pages/ImportCockpitPage";
 import PersonalFixPage from "./pages/PersonalFix";
 import DataIntegrityTest from "./pages/DataIntegrityTest";
 import ProdukteSeite from "./pages/Produkte";
@@ -117,7 +118,7 @@ const BlockedRoute = ({ path, to = '/' }: { path: string; to?: string }) => {
 
 const AppContent = () => {
   const { user, loading } = useAuth();
-  const { canAccessSettings, canAccessModule, isBeaulieuManager } = usePermissions();
+  const { canAccessSettings, canAccessModule, isBeaulieuManager, isAdmin } = usePermissions();
   const { tenantId } = useTenant();
 
   // [AUTH] Debug-Logs für beaulieu_manager beim Mount
@@ -229,6 +230,10 @@ const AppContent = () => {
             />
             <Route path="/import"
               element={<ImportHub />}
+            />
+            {/* Import-Cockpit: read-only Frische-/Fälligkeits-Übersicht — nur Admin, keine Gäste */}
+            <Route path="/import-cockpit"
+              element={isAdmin && !hasGuestSession ? <ImportCockpitPage /> : <Navigate to="/" replace />}
             />
             <Route path="/lieferanten"
               element={<SupplierDocumentsPage />}
