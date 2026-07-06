@@ -1,0 +1,108 @@
+Erweitere die Seite Tagesabschlüsse um eine Übersicht analog der bestehenden Excel-Datei "UMSATZ Oliv".
+
+Ziel:
+Die Tagesabschlüsse sollen eine Monatsübersicht wie im Excel-Sheet "Buchung" zeigen. Pro Tag werden Z-Bericht-Werte automatisch übernommen, manuelle Positionen einzeln erfasst und daraus ein Buchhaltungs-CSV analog "Tabelle2" erzeugt.
+
+Umsetzung:
+
+1. Tagesabschluss-Übersicht
+Baue eine Monats-Tabelle mit folgenden Spalten:
+- Datum
+- Umsatz
+- Netto
+- MWST
+- Bargeld / Barumsatz
+- Bestand Kasse
+- Kreditkarten / Adyen / SIX
+- TWINT
+- Rechnung / Debitoren
+- Verkaufte Gutscheine
+- Eingelöste Gutscheine
+- Barausgaben total
+- Einzahlung Bank
+- Bemerkung
+- Status
+
+2. Werte aus Z-Bericht automatisch übernehmen:
+- Tagesumsatz
+- Netto
+- MWST
+- Bar laut Kasse
+- Kreditkarten / TWINT laut Kasse
+- Rechnung / Debitoren
+- Gutscheine verkauft / eingelöst, falls vorhanden
+- Trinkgeld, falls vorhanden
+
+3. Manuelle Eingaben pro Tag ermöglichen:
+- Bestand Kasse
+- Einzahlung Bank
+- Bemerkung
+- Bestätigung Barbestand
+- Korrekturwerte mit Kommentar
+
+4. Barausgaben einzeln erfassen:
+Pro Tag soll der Benutzer mehrere Barausgaben erfassen können:
+- Datum
+- Betrag
+- Konto
+- Gegenkonto optional
+- Text / Beschreibung
+- MWST-Code optional
+- Belegnummer optional
+- Kommentar optional
+
+In der Tagesübersicht soll nur das Total dieser Barausgaben erscheinen.
+Im Buchhaltungs-CSV sollen die Barausgaben aber einzeln als separate Zeilen exportiert werden.
+
+5. Visuelle Darstellung:
+- Automatisch importierte Werte normal anzeigen
+- Manuell erfasste Werte hervorheben
+- Korrigierte Werte gelb markieren
+- Kommentare mit Icon markieren
+- Differenzen rot/orange/grün markieren
+
+6. Export für Buchhaltungssoftware vorbereiten:
+Erzeuge CSV-Zeilen analog Excel-Sheet "Tabelle2":
+- Blg
+- Datum
+- Kto
+- S/H
+- Grp
+- GKto
+- SId
+- SIdx
+- KIdx
+- BTyp
+- MTyp
+- Code
+- Netto
+- Steuer
+- FW-Betrag
+- Tx1
+- Tx2
+- PkKey
+- OpId
+- Flag
+
+Wichtig:
+- Umsatz wird gesammelt pro Tag exportiert.
+- Kreditkarten/TWINT werden pro Zahlungsart oder Sammelkonto exportiert.
+- Debitoren/Rechnung wird separat exportiert.
+- Gutscheine verkauft/eingelöst separat.
+- Barausgaben werden einzeln exportiert, nicht nur als Total.
+- Barumsatz wird aus den Tageswerten berechnet.
+
+7. Keine neue Migration erstellen, ausser zwingend nötig.
+Falls Persistenz für Tagesabschluss, Kommentare, Korrekturen und Barausgaben mit bestehenden Blob-/Settings-Strukturen möglich ist, diese verwenden.
+Falls eine Tabelle notwendig ist, zuerst begründen und minimal halten.
+
+8. Tests ergänzen:
+- Tagesübersicht entspricht der Excel-Struktur
+- Z-Bericht-Werte werden korrekt übernommen
+- Barausgaben werden einzeln erfasst
+- Barausgaben erscheinen in der Übersicht als Total
+- Barausgaben erscheinen im Buchhaltungs-CSV einzeln
+- Kommentare und manuelle Korrekturen werden gespeichert und visuell markiert
+- CSV-Export erzeugt Tabelle2-kompatible Zeilen
+
+Danach bitte tsc --noEmit und die Tagesabschlüsse-/Umsatzabstimmung-Tests ausführen.

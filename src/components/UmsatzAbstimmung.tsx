@@ -154,7 +154,7 @@ export function UmsatzAbstimmung({
       <CardHeader className="pb-2 pt-4">
         <CardTitle className="text-sm flex items-center gap-2">
           <Scale className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-          Umsatz-Abstimmung {year}
+          Monatsabstimmung Umsatz {year}
         </CardTitle>
         <p className="text-[11px] text-muted-foreground mt-0.5">
           Bruttoumsatz (exkl. Maison) und Take-Away-Umsatz (2.6 % MwSt) manuell eingeben

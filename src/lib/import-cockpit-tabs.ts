@@ -41,7 +41,7 @@ export const TAB_CATEGORY_LABEL: Record<CockpitTabCategory, string> = {
   // Datenimporte
   reservationen: 'Reservationen',
   gaeste_crm: 'Gäste / CRM',
-  umsatz: 'Umsatz',
+  umsatz: 'Umsatz / Tagesabschluss',
   produkte: 'Produkte',
   personal: 'Personal',
   warenwirtschaft: 'Warenwirtschaft',

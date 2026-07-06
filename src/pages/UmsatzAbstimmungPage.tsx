@@ -59,7 +59,7 @@ export default function UmsatzAbstimmungPage() {
               </Button>
             </Link>
             <span className="text-muted-foreground text-xs">/</span>
-            <h1 className="text-sm font-bold">Umsatzabstimmung</h1>
+            <h1 className="text-sm font-bold">Tagesabschlüsse</h1>
           </div>
           <Select value={String(year)} onValueChange={v => handleYearChange(Number(v))}>
             <SelectTrigger className="h-8 w-24 text-xs">
@@ -74,6 +74,9 @@ export default function UmsatzAbstimmungPage() {
         </div>
       </header>
       <main className="max-w-screen-xl mx-auto px-4 py-6">
+        <p className="text-xs text-muted-foreground mb-4">
+          Z-Bericht, Adyen-Abgleich, Barbestand und manuelle Korrekturen pro Tag prüfen und bestätigen.
+        </p>
         <UmsatzAbstimmung
           year={year}
           months={months}

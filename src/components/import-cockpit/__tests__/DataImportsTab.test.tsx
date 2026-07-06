@@ -307,12 +307,12 @@ describe('DataImportsTab — Monatsübersicht', () => {
   });
 });
 
-describe('DataImportsTab — Umsatzabstimmung (monatliche manuelle Quelle)', () => {
+describe('DataImportsTab — Tagesabschlüsse (monatliche manuelle Quelle)', () => {
   function umsatzabstimmungRow(): CockpitRow {
     return makeRow(
       {
         id: 'umsatzabstimmung',
-        label: 'Umsatzabstimmung',
+        label: 'Tagesabschlüsse',
         importType: 'manual_entry',
         interval: 'monthly',
         exampleFormat: undefined,
@@ -323,7 +323,7 @@ describe('DataImportsTab — Umsatzabstimmung (monatliche manuelle Quelle)', () 
 
   it('zeigt „Manuelle Eingabe" statt Dateiformat-Badges (kein Format erfinden)', () => {
     renderTab([umsatzabstimmungRow()]);
-    expect(screen.getByText('Umsatzabstimmung')).toBeInTheDocument();
+    expect(screen.getByText('Tagesabschlüsse')).toBeInTheDocument();
     expect(screen.getByText('Manuelle Eingabe')).toBeInTheDocument();
     expect(screen.queryByText('CSV')).toBeNull();
     expect(screen.queryByText('Excel')).toBeNull();
@@ -332,7 +332,7 @@ describe('DataImportsTab — Umsatzabstimmung (monatliche manuelle Quelle)', () 
 
   it('Zeilen-Klick öffnet den Drawer mit der Quellen-ID umsatzabstimmung', () => {
     const onSelect = renderTab([umsatzabstimmungRow()]);
-    fireEvent.click(screen.getByText('Umsatzabstimmung'));
+    fireEvent.click(screen.getByText('Tagesabschlüsse'));
     expect(onSelect).toHaveBeenCalledWith('umsatzabstimmung');
   });
 });

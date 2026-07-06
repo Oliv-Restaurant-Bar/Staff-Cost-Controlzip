@@ -252,6 +252,7 @@ const AppContent = () => {
             <Route path="/umsatzabstimmung"
               element={isBeaulieuManager ? <BlockedRoute path="/umsatzabstimmung" /> : <UmsatzAbstimmungPage />}
             />
+            <Route path="/tagesabschluesse" element={<Navigate to="/umsatzabstimmung" replace />} />
             <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
             <Route path="/foratable-import" element={<ForatableImportPage />} />
             <Route path="/reservationen-import" element={<Navigate to="/foratable-import" replace />} />
