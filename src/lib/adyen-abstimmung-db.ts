@@ -27,6 +27,29 @@ import {
 } from './adyen-abstimmung';
 
 /**
+ * Wird nach JEDEM erfolgreichen localStorage-Write gefeuert, damit mehrere
+ * Sections auf derselben Seite (Adyen-Abgleich + Tagesabschluss-Übersicht)
+ * ihren Blob-Stand nachziehen können — sonst überschreibt die eine Section
+ * mit ihrem Mount-Zeit-Stand die Änderungen der anderen (Datenverlust).
+ */
+export const ADYEN_ABSTIMMUNG_UPDATED_EVENT = 'adyenAbstimmungUpdated';
+
+/**
+ * Synchroner Frisch-Stand aus dem localStorage-Primärspeicher.
+ * Für Mutationen IMMER dieses Muster verwenden:
+ *   loadAdyenAbstimmungLocal → reine Mutation → saveAdyenAbstimmung
+ * — nie einen im React-State gehaltenen (potenziell veralteten) Blob mutieren
+ * und zurückschreiben.
+ */
+export function loadAdyenAbstimmungLocal(tenantId: TenantId): AdyenAbstimmungBlob {
+  try {
+    return normalizeAdyenBlob(tlsGetJson<unknown>(tenantId, ADYEN_ABSTIMMUNG_KEY));
+  } catch {
+    return normalizeAdyenBlob(null);
+  }
+}
+
+/**
  * Lädt den Abgleichs-Blob: zuerst localStorage (sofort), dann KV-Backup.
  * Ist im KV ein Stand vorhanden, gilt dieser als Wahrheit und wird lokal
  * gespiegelt. Fehler werden geschluckt — im Zweifel localStorage-Stand.
@@ -60,6 +83,13 @@ export async function saveAdyenAbstimmung(tenantId: TenantId, blob: AdyenAbstimm
     tlsSetJson(tenantId, ADYEN_ABSTIMMUNG_KEY, blob);
   } catch {
     // localStorage voll/gesperrt → KV-Backup bleibt einzige Persistenz.
+  }
+  try {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(ADYEN_ABSTIMMUNG_UPDATED_EVENT));
+    }
+  } catch {
+    // Event-Dispatch darf das Speichern nie brechen.
   }
   try {
     await kvSet(tenantKey(tenantId, ADYEN_ABSTIMMUNG_KEY), blob);

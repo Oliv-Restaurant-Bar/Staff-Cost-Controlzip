@@ -7,6 +7,9 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { GnParsedZBericht } from './gn-zbericht-parser';
+import type { GnDayClosing } from './tagesabschluss';
+
+const r2 = (v: number): number => Math.round(v * 100) / 100;
 
 // ── Typen ────────────────────────────────────────────────────────────────────
 
@@ -565,6 +568,129 @@ export async function loadGnPaymentMethodsForMonth(
         list.push({ name: pm.name.trim(), count: pm.count ?? 0, amount: pm.amount ?? 0 });
       }
     }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+// ── Tagesabschluss-Daten je Tag (für Tagesabschluss-Übersicht, read-only) ────
+
+/**
+ * Liefert die kompletten Z-Bericht-Tagesdaten eines Monats für die
+ * Tagesabschluss-Übersicht (read-only, KEIN raw_csv_json).
+ * NUR Tages-Importe (period_from === period_to); mehrere aktive Tages-Importe
+ * desselben Tags (z. B. Kostenstellen) werden defensiv SUMMIERT.
+ */
+export async function loadGnDayClosingsForMonth(
+  restaurantId: string,
+  year: number,
+  month: number, // 1-basiert
+): Promise<Record<string, GnDayClosing>> {
+  try {
+    const mm = String(month).padStart(2, '0');
+    const lastDay = new Date(year, month, 0).getDate();
+    const from = `${year}-${mm}-01`;
+    const to = `${year}-${mm}-${String(lastDay).padStart(2, '0')}`;
+
+    const { data: imports } = await (supabase as any)
+      .from('gn_imports')
+      .select('id, period_from, period_to, gross_revenue, net_revenue')
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'active')
+      .gte('period_from', from)
+      .lte('period_from', to);
+
+    const dayByImport = new Map<string, string>();
+    const result: Record<string, GnDayClosing> = {};
+    for (const row of (imports ?? []) as Array<{
+      id: string; period_from: string | null; period_to: string | null;
+      gross_revenue: number | null; net_revenue: number | null;
+    }>) {
+      if (!row.period_from || row.period_from !== row.period_to) continue; // nur Tagesimporte
+      dayByImport.set(row.id, row.period_from);
+      const day = (result[row.period_from] ??= {
+        date: row.period_from,
+        grossRevenue: null,
+        netRevenue: null,
+        tip: null,
+        taxes: [],
+        payments: [],
+        accountingLines: [],
+        paymentAccounts: [],
+      });
+      if (row.gross_revenue !== null) day.grossRevenue = r2((day.grossRevenue ?? 0) + row.gross_revenue);
+      if (row.net_revenue !== null) day.netRevenue = r2((day.netRevenue ?? 0) + row.net_revenue);
+    }
+    if (dayByImport.size === 0) return {};
+    const importIds = [...dayByImport.keys()];
+
+    const [pmRes, taxRes, revRes, accRes, payAccRes] = await Promise.all([
+      (supabase as any).from('gn_payment_methods').select('import_id, name, count, amount').in('import_id', importIds),
+      (supabase as any).from('gn_tax_summary').select('import_id, tax_rate, net_amount, tax_amount, gross_amount').in('import_id', importIds),
+      (supabase as any).from('gn_revenue_summary').select('import_id, total_gross, total_excl_tip').in('import_id', importIds),
+      (supabase as any).from('gn_accounting_lines').select('import_id, name, account, tax_rate, gross_amount').in('import_id', importIds),
+      (supabase as any).from('gn_payment_accounts').select('import_id, name, account, gross_amount').in('import_id', importIds),
+    ]);
+
+    for (const pm of (pmRes.data ?? []) as Array<{ import_id: string; name: string | null; count: number | null; amount: number | null }>) {
+      const date = dayByImport.get(pm.import_id);
+      if (!date || !pm.name?.trim()) continue;
+      const list = result[date].payments;
+      const existing = list.find(e => e.name === pm.name!.trim());
+      if (existing) {
+        existing.count += pm.count ?? 0;
+        existing.amount = r2(existing.amount + (pm.amount ?? 0));
+      } else {
+        list.push({ name: pm.name.trim(), count: pm.count ?? 0, amount: pm.amount ?? 0 });
+      }
+    }
+
+    for (const t of (taxRes.data ?? []) as Array<{ import_id: string; tax_rate: string | null; net_amount: number | null; tax_amount: number | null; gross_amount: number | null }>) {
+      const date = dayByImport.get(t.import_id);
+      if (!date || !t.tax_rate?.trim()) continue;
+      const list = result[date].taxes;
+      const rate = t.tax_rate.trim();
+      const existing = list.find(e => e.rate === rate);
+      if (existing) {
+        existing.net = r2(existing.net + (t.net_amount ?? 0));
+        existing.tax = r2(existing.tax + (t.tax_amount ?? 0));
+        existing.gross = r2(existing.gross + (t.gross_amount ?? 0));
+      } else {
+        list.push({ rate, net: t.net_amount ?? 0, tax: t.tax_amount ?? 0, gross: t.gross_amount ?? 0 });
+      }
+    }
+
+    for (const r of (revRes.data ?? []) as Array<{ import_id: string; total_gross: number | null; total_excl_tip: number | null }>) {
+      const date = dayByImport.get(r.import_id);
+      if (!date) continue;
+      if (r.total_gross !== null && r.total_excl_tip !== null) {
+        const tip = r2(r.total_gross - r.total_excl_tip);
+        if (tip > 0) result[date].tip = r2((result[date].tip ?? 0) + tip);
+      }
+    }
+
+    for (const a of (accRes.data ?? []) as Array<{ import_id: string; name: string | null; account: string | null; tax_rate: string | null; gross_amount: number | null }>) {
+      const date = dayByImport.get(a.import_id);
+      if (!date || !a.name?.trim()) continue;
+      result[date].accountingLines.push({
+        name: a.name.trim(),
+        account: a.account?.trim() || null,
+        taxRate: a.tax_rate?.trim() || null,
+        grossAmount: a.gross_amount ?? 0,
+      });
+    }
+
+    for (const p of (payAccRes.data ?? []) as Array<{ import_id: string; name: string | null; account: string | null; gross_amount: number | null }>) {
+      const date = dayByImport.get(p.import_id);
+      if (!date || !p.name?.trim()) continue;
+      result[date].paymentAccounts.push({
+        name: p.name.trim(),
+        account: p.account?.trim() || null,
+        grossAmount: p.gross_amount ?? 0,
+      });
+    }
+
     return result;
   } catch {
     return {};

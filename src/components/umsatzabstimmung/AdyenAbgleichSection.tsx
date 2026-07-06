@@ -27,7 +27,10 @@ import {
   type DayComparison,
   type DayConfirmation,
 } from '@/lib/adyen-abstimmung';
-import { loadAdyenAbstimmung, saveAdyenAbstimmung } from '@/lib/adyen-abstimmung-db';
+import {
+  ADYEN_ABSTIMMUNG_UPDATED_EVENT,
+  loadAdyenAbstimmung, loadAdyenAbstimmungLocal, saveAdyenAbstimmung,
+} from '@/lib/adyen-abstimmung-db';
 import { loadGnPaymentMethodsForMonth, type GnDayPaymentRow } from '@/lib/gn-zbericht-db';
 import { AdyenDayTable } from './AdyenDayTable';
 
@@ -70,6 +73,14 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
     return () => { alive = false; };
   }, [tenantId]);
 
+  // Blob-Stand nachziehen, wenn IRGENDEINE Section ihn speichert
+  // (TagesabschlussSection teilt sich die Bestätigungen im selben Blob).
+  useEffect(() => {
+    const onUpdated = () => setBlob(loadAdyenAbstimmungLocal(tenantId));
+    window.addEventListener(ADYEN_ABSTIMMUNG_UPDATED_EVENT, onUpdated);
+    return () => window.removeEventListener(ADYEN_ABSTIMMUNG_UPDATED_EVENT, onUpdated);
+  }, [tenantId]);
+
   // Z-Bericht-Zahlungsarten des Monats laden (read-only).
   useEffect(() => {
     let alive = true;
@@ -102,6 +113,8 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
         return;
       }
       // Frischen Stand laden → mergen → speichern (nie fremden Stand überschreiben).
+      // BEWUSST das KV-bewusste loadAdyenAbstimmung (nicht das lokale): vor dem
+      // grossen Import-Merge soll auch ein evtl. neuerer Cross-Device-Stand rein.
       const current = await loadAdyenAbstimmung(tenantId);
       const merged = mergeAdyenImport(current, parsed, file.name, new Date().toISOString());
       await persist(merged);
@@ -130,20 +143,23 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
 
   // ── Mutationen ──────────────────────────────────────────────────────────────
 
+  // Mutationen IMMER auf dem frischen Primärspeicher-Stand ausführen — NIE auf
+  // dem Mount-Zeit-State: die Tagesabschluss-Übersicht schreibt denselben Blob
+  // (gemeinsame Bestätigungen) auf derselben Seite.
   const handleOverride = useCallback((fieldKey: string, originalValue: number, corrected: number | null, comment: string) => {
-    if (readOnly || !blob) return;
-    void persist(setOverride(blob, fieldKey, originalValue, corrected, comment, new Date().toISOString()));
-  }, [readOnly, blob, persist]);
+    if (readOnly) return;
+    void persist(setOverride(loadAdyenAbstimmungLocal(tenantId), fieldKey, originalValue, corrected, comment, new Date().toISOString()));
+  }, [readOnly, tenantId, persist]);
 
   const handleComment = useCallback((fieldKey: string, text: string) => {
-    if (readOnly || !blob) return;
-    void persist(setComment(blob, fieldKey, text, new Date().toISOString()));
-  }, [readOnly, blob, persist]);
+    if (readOnly) return;
+    void persist(setComment(loadAdyenAbstimmungLocal(tenantId), fieldKey, text, new Date().toISOString()));
+  }, [readOnly, tenantId, persist]);
 
   const handleConfirm = useCallback((date: string, confirmation: DayConfirmation | null) => {
-    if (readOnly || !blob) return;
-    void persist(setDayConfirmation(blob, date, confirmation));
-  }, [readOnly, blob, persist]);
+    if (readOnly) return;
+    void persist(setDayConfirmation(loadAdyenAbstimmungLocal(tenantId), date, confirmation));
+  }, [readOnly, tenantId, persist]);
 
   // ── Tagesliste des Monats ───────────────────────────────────────────────────
 
