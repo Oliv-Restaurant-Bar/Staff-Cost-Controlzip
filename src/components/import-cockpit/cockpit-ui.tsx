@@ -66,6 +66,8 @@ export const COMPLETENESS_NOTE: Partial<Record<CockpitSourceId, string>> = {
     '„Ist-Daten bis" ist das Ende der zuletzt erfolgreich importierten Mirus-Periode aus der Import-Historie — nicht das späteste einzelne Tagesdatum. Einzelne, spätere Tageszeilen (z. B. nach dem Monatsende) gelten NICHT als vollständig importierte Periode.',
   tagesumsatz:
     'Es zählen nur Tage mit echtem Ist-Umsatz (> 0). Zukünftige Tage werden nicht als vollständiger Import gewertet.',
+  umsatzabstimmung:
+    'Diese Daten werden manuell in der Umsatzabstimmung gepflegt. Ein Monat gilt als erledigt, sobald Bruttoumsatz oder Take-Away manuell erfasst sind.',
 };
 
 // ─── KPI-Kachel ───────────────────────────────────────────────────────────────

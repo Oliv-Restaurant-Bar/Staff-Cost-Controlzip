@@ -55,6 +55,7 @@ export type CockpitSourceId =
   | 'personalkosten'
   | 'dienstplanung'
   | 'warenrechnungen'
+  | 'umsatzabstimmung'
   | 'budgetkontrolle'
   | 'monatsabschluss'
   | 'inventur'
@@ -481,6 +482,24 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     checkable: false,
   },
   {
+    id: 'umsatzabstimmung',
+    label: 'Umsatzabstimmung',
+    module: 'Umsatz / Controlling',
+    category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
+    importType: 'manual_entry',
+    uploadLabel: 'Umsatzabstimmung manuell pflegen',
+    sourceHint: 'Manuelle Erfassung in der Umsatzabstimmung',
+    interval: 'monthly',
+    description:
+      'Monatliche manuelle Abstimmung von Bruttoumsatz, Take-Away und Tagesumsätzen. Frische = letzter Monat mit gepflegten Werten.',
+    checklistLabel: 'Umsatzabstimmung durchführen',
+    route: '/umsatzabstimmung',
+    actionLabel: 'Zur Umsatzabstimmung',
+    checkable: true,
+  },
+  {
     id: 'monatsabschluss',
     label: 'Monatsabschluss / Kosten',
     module: 'Finanzen / Erfolgsrechnung',
@@ -750,6 +769,36 @@ export function deriveMirusPeriodEndFromDays(days: readonly string[], today: str
   const latestMonth = monthsBefore.reduce((a, b) => (b > a ? b : a));
   const [y, m] = latestMonth.split('-').map(Number);
   return monthBounds(y, m).to;
+}
+
+// ─── Umsatzabstimmung (manuelle Monats-Erfassung) ───────────────────────────────
+
+/** Minimale Sicht auf einen Reporting-Monatsdatensatz für die Umsatzabstimmung. */
+export interface UmsatzabstimmungMonthRecord {
+  grossRevenueManual?: number;
+  takeAwayGrossManual?: number;
+}
+
+/**
+ * Leitet aus dem Reporting-Blob (`reporting_v1`, Schlüssel 'yyyy-MM') die
+ * Monate ab, für die die Umsatzabstimmung GEPFLEGT ist. Ein Monat gilt als
+ * erledigt, sobald mindestens ein manueller Wert (> 0) erfasst wurde
+ * (Bruttoumsatz ODER Take-Away). Reine Funktion — kein Store-Aufruf, kein
+ * Schreibzugriff; Rückgabe aufsteigend sortiert.
+ */
+export function umsatzabstimmungMonthsFromBlob(
+  blob: Record<string, UmsatzabstimmungMonthRecord | null | undefined> | null | undefined,
+): string[] {
+  if (!blob || typeof blob !== 'object') return [];
+  return Object.entries(blob)
+    .filter(
+      ([k, v]) =>
+        RE_MONTH.test(k) &&
+        !!v &&
+        ((v.grossRevenueManual ?? 0) > 0 || (v.takeAwayGrossManual ?? 0) > 0),
+    )
+    .map(([k]) => k)
+    .sort();
 }
 
 /**

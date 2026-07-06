@@ -1,0 +1,52 @@
+Erweitere das Import-Cockpit um manuelle Datenerfassungen, konkret die Umsatzabstimmung.
+
+Ziel:
+Die Umsatzabstimmung soll im Import-Cockpit als wiederkehrende monatliche Aufgabe sichtbar sein, obwohl sie kein Datei-Import ist.
+
+Umsetzung:
+
+1. Füge im Datenimporte-Tab eine neue Datenquelle hinzu:
+   - Bereich: Umsatz / Controlling
+   - Datenquelle: Umsatzabstimmung
+   - Beschreibung: Monatliche manuelle Abstimmung von Bruttoumsatz, Take-Away und Tagesumsätzen
+   - Import-Art / Format: Manuelle Eingabe
+   - Intervall: Monatlich
+   - Zielseite / Link: /umsatzabstimmung
+
+2. Die Zeile soll in der Tabelle wie alle anderen Quellen erscheinen:
+   - Status aktuell / bald fällig / überfällig / nie erledigt
+   - Monats- und Jahresübersicht sollen sie mitzählen
+   - KPI-Kacheln oben sollen sie korrekt filtern
+   - Klick auf die Tabellenzeile öffnet den Detail-Drawer
+
+3. Im Detail-Drawer ergänzen:
+   - Hinweis: "Diese Daten werden manuell in der Umsatzabstimmung gepflegt."
+   - Button: "Zur Umsatzabstimmung"
+   - Anzeige: letzte Erledigung / letzter gepflegter Monat, falls bereits Daten vorhanden
+   - Anzeige: nächster fälliger Monat
+
+4. Erkennung erledigt:
+   - Prüfe, ob es bereits Daten in der Umsatzabstimmung für den jeweiligen Monat gibt.
+   - Wenn ein Monat Werte hat, gilt dieser Monat als erledigt.
+   - Wenn keine Daten vorhanden sind, gilt er als "Nie erledigt" oder "Überfällig", sobald der Monat fällig ist.
+   - Keine neue DB-Tabelle und keine Migration erstellen.
+   - Bestehende Daten/State/Helper der Umsatzabstimmung wiederverwenden.
+
+5. Wording anpassen:
+   - Import-Cockpit soll weiterhin funktionieren, aber manuelle Einträge dürfen nicht als Datei-Upload erscheinen.
+   - Für manuelle Einträge soll "Manuelle Eingabe" angezeigt werden.
+   - Keine Dateiformat-Badge wie CSV/Excel/PDF für diese Zeile.
+
+6. Tests ergänzen:
+   - Umsatzabstimmung erscheint im Import-Cockpit.
+   - Sie wird als monatliche manuelle Eingabe angezeigt.
+   - Zeilenklick öffnet den Detail-Drawer.
+   - Button führt zu /umsatzabstimmung.
+   - Monatsübersicht zählt fehlende oder erledigte Umsatzabstimmung korrekt mit.
+   - KPI-Filter funktionieren auch für diese manuelle Quelle.
+   - Sicherstellen, dass keine Migration/SQL angelegt wird.
+
+Danach bitte ausführen:
+- npm run typecheck oder tsc --noEmit
+- die Import-Cockpit Tests
+- falls vorhanden die Umsatzabstimmung Tests

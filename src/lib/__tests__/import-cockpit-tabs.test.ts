@@ -380,11 +380,26 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     for (const s of COCKPIT_SOURCES) expect(TAB_CATEGORY_LABEL[s.tabCategory]).toBeTruthy();
   });
 
-  it('8 Datenimporte + 7 Kontrollen = 15 Quellen', () => {
+  it('9 Datenimporte + 7 Kontrollen = 16 Quellen', () => {
     const imports = COCKPIT_SOURCES.filter((s) => s.section === 'import');
     const controls = COCKPIT_SOURCES.filter((s) => s.section === 'control');
-    expect(imports).toHaveLength(8);
+    expect(imports).toHaveLength(9);
     expect(controls).toHaveLength(7);
+  });
+
+  it('Umsatzabstimmung ist ein monatlicher manueller Datenimport mit Route', () => {
+    const def = COCKPIT_SOURCES.find((s) => s.id === 'umsatzabstimmung');
+    expect(def).toBeTruthy();
+    expect(def!.section).toBe('import');
+    expect(def!.tabCategory).toBe('umsatz');
+    expect(def!.importType).toBe('manual_entry');
+    expect(def!.interval).toBe('monthly');
+    expect(def!.checkable).toBe(true);
+    expect(def!.route).toBe('/umsatzabstimmung');
+    expect(def!.actionLabel).toBe('Zur Umsatzabstimmung');
+    // Manuelle Eingabe: KEIN Dateiformat erfinden → keine Format-Badges (CSV/Excel/PDF).
+    expect(def!.exampleFormat).toBeUndefined();
+    expect(importFileFormats(def!)).toEqual([]);
   });
 
   it('jede Kontrolle trägt Verantwortlich / Wichtigkeit / Ablauf', () => {
@@ -647,5 +662,43 @@ describe('importRowMatchesFilters — Monatsfilter kombiniert (UND)', () => {
   it('month: null (Ganzes Jahr) hebt die Monats-Einschränkung auf', () => {
     const f = { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'overdue' as const, month: null };
     expect(importRowMatchesFilters(overdueJuni, f, TODAY)).toBe(true);
+  });
+});
+
+// ─── Monatliche manuelle Quelle (Umsatzabstimmung) in der Monatsübersicht ──────
+
+describe('monatliche Quelle mit latestDataDate im Format yyyy-MM (Umsatzabstimmung)', () => {
+  const TODAY = '2026-07-06';
+
+  it('zählt in der Monatszelle des gepflegten Monats', () => {
+    const row = makeRow(
+      { id: 'umsatzabstimmung', importType: 'manual_entry', interval: 'monthly' },
+      { status: 'overdue', latestDataDate: '2026-05' },
+    );
+    const cells = buildMonthOverview([row], 2026, TODAY);
+    expect(cells[4].overdue).toBe(1); // Mai
+    expect(cells[5].overdue).toBe(0); // Juni leer
+    expect(summarizeImportYear([row], 2026, TODAY).overdue).toBe(1);
+  });
+
+  it('matcht den Monatsfilter des gepflegten Monats (UND mit KPI-Kachel)', () => {
+    const row = makeRow(
+      { id: 'umsatzabstimmung', importType: 'manual_entry', interval: 'monthly' },
+      { status: 'overdue', latestDataDate: '2026-05' },
+    );
+    expect(importRowMatchesMonth(row, '2026-05', TODAY)).toBe(true);
+    expect(importRowMatchesMonth(row, '2026-06', TODAY)).toBe(false);
+    const f = { ...EMPTY_IMPORT_TAB_FILTER, kpi: 'overdue' as const, month: '2026-05' };
+    expect(importRowMatchesFilters(row, f, TODAY)).toBe(true);
+  });
+
+  it('nie gepflegt → never zählt in jedem nicht-zukünftigen Monat', () => {
+    const row = makeRow(
+      { id: 'umsatzabstimmung', importType: 'manual_entry', interval: 'monthly' },
+      { status: 'never', latestDataDate: null },
+    );
+    const cells = buildMonthOverview([row], 2026, TODAY);
+    expect(cells[6].never).toBe(1); // Juli (laufender Monat)
+    expect(cells[7].never).toBe(0); // August (Zukunft)
   });
 });

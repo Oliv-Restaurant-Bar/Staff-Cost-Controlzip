@@ -306,3 +306,33 @@ describe('DataImportsTab — Monatsübersicht', () => {
     expect(screen.getByText('Keine Datenimporte für diesen Filter.')).toBeInTheDocument();
   });
 });
+
+describe('DataImportsTab — Umsatzabstimmung (monatliche manuelle Quelle)', () => {
+  function umsatzabstimmungRow(): CockpitRow {
+    return makeRow(
+      {
+        id: 'umsatzabstimmung',
+        label: 'Umsatzabstimmung',
+        importType: 'manual_entry',
+        interval: 'monthly',
+        exampleFormat: undefined,
+      },
+      { status: 'overdue', latestDataDate: '2026-05' },
+    );
+  }
+
+  it('zeigt „Manuelle Eingabe" statt Dateiformat-Badges (kein Format erfinden)', () => {
+    renderTab([umsatzabstimmungRow()]);
+    expect(screen.getByText('Umsatzabstimmung')).toBeInTheDocument();
+    expect(screen.getByText('Manuelle Eingabe')).toBeInTheDocument();
+    expect(screen.queryByText('CSV')).toBeNull();
+    expect(screen.queryByText('Excel')).toBeNull();
+    expect(screen.queryByText('PDF')).toBeNull();
+  });
+
+  it('Zeilen-Klick öffnet den Drawer mit der Quellen-ID umsatzabstimmung', () => {
+    const onSelect = renderTab([umsatzabstimmungRow()]);
+    fireEvent.click(screen.getByText('Umsatzabstimmung'));
+    expect(onSelect).toHaveBeenCalledWith('umsatzabstimmung');
+  });
+});

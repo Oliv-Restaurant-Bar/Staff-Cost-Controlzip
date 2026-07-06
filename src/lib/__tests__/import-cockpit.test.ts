@@ -11,6 +11,7 @@ import {
   checklistStateFromStatus,
   normalizeDataDate,
   formatCockpitDate,
+  umsatzabstimmungMonthsFromBlob,
   rowMatchesFilters,
   matchesCockpitSearch,
   EMPTY_COCKPIT_FILTER,
@@ -578,5 +579,49 @@ describe('rowMatchesFilters + matchesCockpitSearch', () => {
     expect(matchesCockpitSearch(source, '')).toBe(true);
     expect(matchesCockpitSearch(source, source.label.slice(0, 4).toLowerCase())).toBe(true);
     expect(matchesCockpitSearch(source, 'zzz-kein-treffer-xyz')).toBe(false);
+  });
+});
+
+// ─── Umsatzabstimmung (manuelle Monats-Erfassung, reporting_v1-Blob) ────────────
+
+describe('umsatzabstimmungMonthsFromBlob', () => {
+  it('liefert Monate mit manuellem Bruttoumsatz ODER Take-Away (> 0), sortiert', () => {
+    const months = umsatzabstimmungMonthsFromBlob({
+      '2026-05': { grossRevenueManual: 120_000 },
+      '2026-03': { takeAwayGrossManual: 4_500 },
+      '2026-04': { grossRevenueManual: 98_000, takeAwayGrossManual: 3_000 },
+    });
+    expect(months).toEqual(['2026-03', '2026-04', '2026-05']);
+  });
+
+  it('ignoriert Monate ohne manuelle Werte, 0-Werte und Nicht-Monats-Schlüssel', () => {
+    expect(
+      umsatzabstimmungMonthsFromBlob({
+        '2026-01': {}, // keine manuellen Werte → nicht gepflegt
+        '2026-02': { grossRevenueManual: 0, takeAwayGrossManual: 0 }, // 0 zählt nicht
+        '2026-06': { grossRevenueManual: 50_000 },
+        'meta': { grossRevenueManual: 999 } as never, // kein 'yyyy-MM'-Schlüssel
+        '2026-07-01': { grossRevenueManual: 1 } as never, // Tag, kein Monat
+      }),
+    ).toEqual(['2026-06']);
+  });
+
+  it('leerer/fehlender Blob → keine Monate (Status never, nie erfinden)', () => {
+    expect(umsatzabstimmungMonthsFromBlob({})).toEqual([]);
+    expect(umsatzabstimmungMonthsFromBlob(null)).toEqual([]);
+    expect(umsatzabstimmungMonthsFromBlob(undefined)).toEqual([]);
+  });
+
+  it('gepflegter Monat als latestDataDate ergibt einen monatlichen Frische-Status', () => {
+    // Signal wie im Aggregator: letzter gepflegter Monat 'yyyy-MM' (Juni), heute 06.07.2026
+    const r = computeSourceStatus(def({ interval: 'monthly' }), { latestDataDate: '2026-06' }, NOW);
+    expect(r.latestDataDate).toBe('2026-06');
+    expect(['current', 'due_soon', 'overdue']).toContain(r.status);
+    expect(r.status).not.toBe('never');
+  });
+
+  it('ohne gepflegte Monate (leeres Signal) → never', () => {
+    const r = computeSourceStatus(def({ interval: 'monthly' }), { latestDataDate: null }, NOW);
+    expect(r.status).toBe('never');
   });
 });

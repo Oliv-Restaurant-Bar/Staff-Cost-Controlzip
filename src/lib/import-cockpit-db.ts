@@ -32,6 +32,7 @@ import {
   GAP_WINDOW_DAYS,
   deriveMirusPeriodFromHistory,
   deriveMirusPeriodEndFromDays,
+  umsatzabstimmungMonthsFromBlob,
   type CockpitSignal,
   type CockpitSourceId,
 } from './import-cockpit';
@@ -356,6 +357,31 @@ function monatsabschlussSignal(ctx: CockpitFetchContext): CockpitSignal {
   }
 }
 
+/**
+ * Umsatzabstimmung: reporting_v1-Blob (localStorage, mandantengeprefixt) — read-only.
+ * Ein Monat gilt als erledigt, sobald manuelle Werte (Bruttoumsatz ODER Take-Away)
+ * erfasst sind (siehe umsatzabstimmungMonthsFromBlob). Frische = letzter gepflegter
+ * Monat. KEIN Store-Aufruf (loadYear/saveMonth), keine Migration, kein Schreibpfad.
+ */
+function umsatzabstimmungSignal(ctx: CockpitFetchContext): CockpitSignal {
+  try {
+    const rep = JSON.parse(localStorage.getItem(ctx.tenantKey('reporting_v1')) || '{}') as Record<
+      string,
+      { grossRevenueManual?: number; takeAwayGrossManual?: number }
+    >;
+    const months = umsatzabstimmungMonthsFromBlob(rep);
+    if (!months.length) return EMPTY;
+    return {
+      latestDataDate: months.at(-1)!,
+      dataFrom: months[0] ?? null,
+      dataUntil: months.at(-1)!,
+      recordCount: months.length,
+    };
+  } catch {
+    return EMPTY;
+  }
+}
+
 /** Jahresbudget: budget_v1-Blob (localStorage, mandantengeprefixt) — read-only, NIEMALS loadBudgetYear. */
 function jahresbudgetSignal(ctx: CockpitFetchContext): CockpitSignal {
   try {
@@ -401,6 +427,7 @@ export async function fetchCockpitSignals(
     { id: 'produktverkaeufe', run: () => produktverkaeufeSignal() },
     { id: 'mirus', run: () => mirusSignal(ctx) },
     { id: 'dienstplanung', run: () => dienstplanungSignal(ctx) },
+    { id: 'umsatzabstimmung', run: () => umsatzabstimmungSignal(ctx) },
     { id: 'monatsabschluss', run: () => monatsabschlussSignal(ctx) },
     { id: 'jahresbudget', run: () => jahresbudgetSignal(ctx) },
   ];
