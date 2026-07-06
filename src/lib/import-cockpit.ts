@@ -61,6 +61,31 @@ export type CockpitSourceId =
   | 'jahresbudget'
   | 'vorjahresvergleich';
 
+/**
+ * Fachliche Kategorie einer Datenquelle (Domänen-Achse für Filter/Gruppierung).
+ * Unabhängig von der `importType`-Achse (WIE die Daten hereinkommen).
+ */
+export type CockpitCategory =
+  | 'reservationen_gaeste'
+  | 'umsatz_gastronovi'
+  | 'produkte'
+  | 'personal'
+  | 'waren_rechnungen'
+  | 'finanzen_budget'
+  | 'planung_kontrolle';
+
+/**
+ * Art des Imports (WIE die Daten hereinkommen) — reine Anzeige/Filter-Achse,
+ * KEINE Prozesslogik. `not_configured` = es existiert (noch) kein eingerichteter
+ * Import-/Erfassungsweg.
+ */
+export type CockpitImportType =
+  | 'file_upload' // Datei-Upload
+  | 'manual_entry' // Manuelle Eingabe
+  | 'control' // Kontrolle
+  | 'system' // Automatisch / Systemdaten
+  | 'not_configured'; // Nicht eingerichtet
+
 /** Statischer Deskriptor einer überwachten Datenquelle. */
 export interface CockpitSourceDef {
   id: CockpitSourceId;
@@ -68,6 +93,16 @@ export interface CockpitSourceDef {
   label: string;
   /** Bereich / Modul (Kontext-Spalte). */
   module: string;
+  /** Fachliche Kategorie (Filter/Gruppierung). */
+  category: CockpitCategory;
+  /** Art des Imports (Filter + Anzeige). */
+  importType: CockpitImportType;
+  /** „Was hochladen?" — was muss hochgeladen/erfasst/geprüft werden. */
+  uploadLabel: string;
+  /** Quelle der Datei/Daten (z. B. „Export aus Foratable → Reservationen"). */
+  sourceHint?: string;
+  /** Beispiel-Dateiname oder Format (nur bei Datei-Uploads sinnvoll). */
+  exampleFormat?: string;
   /** Erwartetes Import-/Kontrollintervall. */
   interval: ImportInterval;
   /** Kurzbeschreibung (Detail-Drawer). */
@@ -76,6 +111,8 @@ export interface CockpitSourceDef {
   checklistLabel: string;
   /** Zielroute für „Aktion" / „Zur Importseite" (falls vorhanden). */
   route?: string;
+  /** Sprechendes Aktions-Label für Button/Link (z. B. „Zur Gastronovi-Importseite"). */
+  actionLabel?: string;
   /**
    * true → es gibt ein automatisch ableitbares Frische-Signal (Datenlücken/
    * Freshness werden berechnet). false → reine Kontroll-/Erinnerungsaufgabe ohne
@@ -173,42 +210,65 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     id: 'reservationen',
     label: 'Foratable Reservationen',
     module: 'Foratable / Reservationen',
+    category: 'reservationen_gaeste',
+    importType: 'file_upload',
+    uploadLabel: 'Foratable Reservations-CSV',
+    sourceHint: 'Export aus Foratable → Reservationen',
+    exampleFormat: 'reservationen_export.csv',
     interval: 'daily',
     description:
       'Reservationen aus Foratable. Frische = spätestes Reservationsdatum; letzter Lauf aus der Import-Historie.',
     checklistLabel: 'Reservationen importieren',
     route: '/foratable-import',
+    actionLabel: 'Zur Foratable-Importseite',
     checkable: true,
   },
   {
     id: 'gaeste_crm',
     label: 'Foratable Gäste / CRM',
     module: 'Foratable / Gäste-CRM',
+    category: 'reservationen_gaeste',
+    importType: 'file_upload',
+    uploadLabel: 'Foratable Gäste-/Kontakt-CSV',
+    sourceHint: 'Export aus Foratable → Gäste/Kontakte',
+    exampleFormat: 'gaeste_export.csv',
     interval: 'daily',
     description:
       'Gästeexport für die CRM-Anreicherung. Frische = spätester Gäste-Datenstand; letzter Lauf aus der Import-Historie.',
     checklistLabel: 'Gäste-CRM aktualisieren',
     route: '/gaeste-import',
+    actionLabel: 'Zur Foratable-Importseite',
     checkable: true,
   },
   {
     id: 'zbericht',
     label: 'Gastronovi Z-Bericht',
     module: 'Umsatz / Gastronovi',
+    category: 'umsatz_gastronovi',
+    importType: 'file_upload',
+    uploadLabel: 'Gastronovi Z-Bericht CSV/PDF',
+    sourceHint: 'Export aus Gastronovi → Z-Bericht',
+    exampleFormat: 'z-bericht_2026-07-06.csv / .pdf',
     interval: 'daily',
     description: 'Tages- und Perioden-Z-Berichte (Umsatz) aus Gastronovi. Frische = spätestes Berichtsende.',
     checklistLabel: 'Z-Bericht importieren',
     route: '/gastronovi-import',
+    actionLabel: 'Zur Gastronovi-Importseite',
     checkable: true,
   },
   {
     id: 'tagesumsatz',
     label: 'Tagesumsatz',
     module: 'Umsatz / Tagesansicht',
+    category: 'umsatz_gastronovi',
+    importType: 'manual_entry',
+    uploadLabel: 'Tagesumsatz-Import oder Tagesabschluss',
+    sourceHint: 'Manuelle Erfassung in der Tagesansicht oder Tagesabschluss',
     interval: 'daily',
     description: 'Erfasste Ist-Tagesumsätze. Frische = spätester Tag mit Umsatz; fehlende Tage werden erkannt.',
     checklistLabel: 'Tagesumsatz erfassen / importieren',
     route: '/tagesansicht',
+    actionLabel: 'Zur Tagesansicht',
     checkable: true,
     detectGaps: true,
   },
@@ -216,11 +276,17 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     id: 'produktverkaeufe',
     label: 'Produktverkäufe',
     module: 'Produkte / Verkauf',
+    category: 'produkte',
+    importType: 'file_upload',
+    uploadLabel: 'Gastronovi Produktverkaufs-CSV',
+    sourceHint: 'Export aus Gastronovi → Produktverkauf',
+    exampleFormat: 'produktverkauf.csv',
     interval: 'daily',
     description:
       'Artikel-/Produktverkäufe (Gastronovi CSV). Frische = spätestes Verkaufsdatum. Hinweis: Datenquelle ist mandantenübergreifend.',
     checklistLabel: 'Produktverkäufe importieren',
     route: '/sales-upload',
+    actionLabel: 'Zur Produktverkauf-Importseite',
     checkable: true,
     tenantNeutral: true,
   },
@@ -228,10 +294,16 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     id: 'mirus',
     label: 'Mirus Arbeitszeiten',
     module: 'Personal / Ist-Stunden',
+    category: 'personal',
+    importType: 'file_upload',
+    uploadLabel: 'Mirus Arbeitszeitblatt Excel',
+    sourceHint: 'Export aus Mirus → Arbeitszeitblatt',
+    exampleFormat: 'arbeitszeiten.xls / .xlsx',
     interval: 'daily',
     description: 'Ist-Arbeitszeiten aus Mirus/CSV. Frische = spätester Arbeitszeit-Tag; fehlende Tage werden erkannt.',
     checklistLabel: 'Arbeitszeiten Mirus importieren',
     route: '/import',
+    actionLabel: 'Zur Arbeitszeit-Importseite',
     checkable: true,
     detectGaps: true,
   },
@@ -240,30 +312,45 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     id: 'dienstplanung',
     label: 'Dienstplanung Folgewochen',
     module: 'Personal / Dienstplan',
+    category: 'personal',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Dienstplan prüfen',
+    sourceHint: 'Dienstplan im Planer prüfen (kein externer Export)',
     interval: 'weekly',
     description: 'Geplante Schichten. Frische = spätester geplanter Tag (wie weit reicht der Plan in die Zukunft?).',
     checklistLabel: 'Dienstplanung Folgewochen prüfen',
     route: '/schedule-planner',
+    actionLabel: 'Zum Dienstplan',
     checkable: true,
   },
   {
     id: 'forecast',
     label: 'Forecast-Kontrolle',
     module: 'Umsatz / Forecast',
+    category: 'planung_kontrolle',
+    importType: 'manual_entry',
+    uploadLabel: 'Kein Upload – Forecast aktualisieren',
+    sourceHint: 'Manuelle Pflege im Forecast-Modul',
     interval: 'weekly',
     description: 'Wöchentliche Kontrolle der Umsatz-Forecasts. Reine Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Forecast aktualisieren',
     route: '/forecast',
+    actionLabel: 'Zur Forecast-Seite',
     checkable: false,
   },
   {
     id: 'personalkosten',
     label: 'Personalkosten-Kontrolle',
     module: 'Personal / Controlling',
+    category: 'planung_kontrolle',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Kontrolle durchführen',
+    sourceHint: 'Kontrolle im Personal-Controlling',
     interval: 'weekly',
     description: 'Wöchentliche Kontrolle der Personalkosten. Reine Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Personalkosten kontrollieren',
     route: '/personal-fix',
+    actionLabel: 'Zum Personal-Controlling',
     checkable: false,
   },
   // ── Monatlich ──
@@ -271,40 +358,62 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     id: 'warenrechnungen',
     label: 'Warenrechnungen',
     module: 'Warenkosten / Rechnungen',
+    category: 'waren_rechnungen',
+    importType: 'file_upload',
+    uploadLabel: 'Lieferantenrechnungen PDF',
+    sourceHint: 'PDF-Rechnungen von Lieferanten',
+    exampleFormat: 'rechnung_*.pdf',
     interval: 'monthly',
     description: 'Lieferanten-Rechnungen / Warenkosten. Keine automatisch ableitbare Import-Historie vorhanden.',
     checklistLabel: 'Warenrechnungen importieren',
     route: '/warenrechnungen',
+    actionLabel: 'Zu den Warenrechnungen',
     checkable: false,
   },
   {
     id: 'monatsabschluss',
     label: 'Monatsabschluss / Kosten',
     module: 'Finanzen / Erfolgsrechnung',
+    category: 'finanzen_budget',
+    importType: 'control',
+    uploadLabel: 'Monatszahlen / Kosten prüfen',
+    sourceHint: 'Monatszahlen/Kosten in der Erfolgsrechnung',
     interval: 'monthly',
     description: 'Kontoblätter/Kosten je Monat (Erfolgsrechnung). Frische = spätester Monat mit erfassten Kosten.',
     checklistLabel: 'Monatsabschluss prüfen',
     route: '/erfolgsrechnung',
+    actionLabel: 'Zur Erfolgsrechnung',
     checkable: true,
   },
   {
     id: 'budgetkontrolle',
     label: 'Budgetkontrolle',
     module: 'Finanzen / Budget',
+    category: 'finanzen_budget',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Budget prüfen',
+    sourceHint: 'Soll/Ist-Abgleich im Budget-Modul',
     interval: 'monthly',
     description: 'Monatlicher Soll/Ist-Abgleich gegen das Budget. Reine Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Budgetkontrolle durchführen',
     route: '/budget',
+    actionLabel: 'Zum Budget',
     checkable: false,
   },
   {
     id: 'inventur',
     label: 'Inventur / Warenbestand',
     module: 'Warenkosten / Inventur',
+    category: 'waren_rechnungen',
+    importType: 'not_configured',
+    uploadLabel: 'Inventurdatei oder Bestand prüfen',
+    sourceHint: 'Inventurdatei oder manuelle Bestandsprüfung',
+    exampleFormat: 'inventur.csv / .xlsx',
     interval: 'monthly',
     description: 'Monatliche Inventur / Warenbestand. Optional; keine automatisch ableitbare Historie vorhanden.',
     checklistLabel: 'Inventur / Warenbestand prüfen',
     route: '/wes-analyse',
+    actionLabel: 'Zur WES-Analyse',
     checkable: false,
   },
   // ── Jährlich ──
@@ -312,20 +421,31 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     id: 'jahresbudget',
     label: 'Jahresbudget',
     module: 'Finanzen / Budget',
+    category: 'finanzen_budget',
+    importType: 'manual_entry',
+    uploadLabel: 'Jahresbudget erfassen / prüfen',
+    sourceHint: 'Jahresbudget im Budget-Modul erfassen',
     interval: 'yearly',
     description: 'Erfasstes Jahresbudget. Frische = spätestes Budgetjahr, für das Daten hinterlegt sind.',
     checklistLabel: 'Jahresbudget erfassen / prüfen',
     route: '/budget',
+    actionLabel: 'Zum Budget',
     checkable: true,
   },
   {
     id: 'vorjahresvergleich',
     label: 'Vorjahresvergleich',
     module: 'Finanzen / Reporting',
+    category: 'finanzen_budget',
+    importType: 'control',
+    uploadLabel: 'Vorjahresdaten prüfen / importieren',
+    sourceHint: 'Vorjahres-/Jahresabschlussdaten',
+    exampleFormat: 'vorjahr_*.csv',
     interval: 'yearly',
     description: 'Vorjahres-/Jahresabschlussdaten für den P&L-Vergleich. Kontrollaufgabe ohne automatisches Signal.',
     checklistLabel: 'Vorjahresvergleich aktualisieren',
     route: '/import',
+    actionLabel: 'Zum Import-Center',
     checkable: false,
   },
 ];
@@ -558,6 +678,12 @@ export interface ChecklistItem {
   label: string;
   state: ChecklistState;
   route?: string;
+  /** „Was hochladen?" / was ist zu tun (für die Checklisten-Detailzeile). */
+  uploadLabel: string;
+  /** Art des Imports (Datei-Upload / Manuelle Eingabe / Kontrolle …). */
+  importType: CockpitImportType;
+  /** Sprechendes Aktions-Label („Zur Gastronovi-Importseite" …). */
+  actionLabel?: string;
 }
 
 export interface ChecklistGroups {
@@ -592,10 +718,54 @@ export function groupChecklist(rows: CockpitRow[]): ChecklistGroups {
       label: row.def.checklistLabel,
       state: checklistStateFromStatus(row.result.status),
       route: row.def.route,
+      uploadLabel: row.def.uploadLabel,
+      importType: row.def.importType,
+      actionLabel: row.def.actionLabel,
     };
     groups[row.def.interval].push(item);
   }
   return groups;
+}
+
+// ─── Filter (rein, testbar) ──────────────────────────────────────────────────────
+
+/** Aktive Filterachsen der Übersicht. `'all'` = keine Einschränkung. */
+export interface CockpitFilterState {
+  category: 'all' | CockpitCategory;
+  importType: 'all' | CockpitImportType;
+  interval: 'all' | ImportInterval;
+  status: 'all' | CockpitStatus;
+  search: string;
+}
+
+export const EMPTY_COCKPIT_FILTER: CockpitFilterState = {
+  category: 'all',
+  importType: 'all',
+  interval: 'all',
+  status: 'all',
+  search: '',
+};
+
+/** Freitextsuche über Name, Bereich, Aufgabentext und „Was hochladen?". */
+export function matchesCockpitSearch(def: CockpitSourceDef, search: string): boolean {
+  const q = search.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    def.label.toLowerCase().includes(q) ||
+    def.module.toLowerCase().includes(q) ||
+    def.checklistLabel.toLowerCase().includes(q) ||
+    def.uploadLabel.toLowerCase().includes(q) ||
+    (def.sourceHint?.toLowerCase().includes(q) ?? false)
+  );
+}
+
+/** Prüft eine Zeile gegen ALLE aktiven Filterachsen (UND-Verknüpfung). */
+export function rowMatchesFilters(row: CockpitRow, f: CockpitFilterState): boolean {
+  if (f.category !== 'all' && row.def.category !== f.category) return false;
+  if (f.importType !== 'all' && row.def.importType !== f.importType) return false;
+  if (f.interval !== 'all' && row.def.interval !== f.interval) return false;
+  if (f.status !== 'all' && row.result.status !== f.status) return false;
+  return matchesCockpitSearch(row.def, f.search);
 }
 
 // ─── Anzeige-Konstanten & Formatter ──────────────────────────────────────────────
@@ -605,6 +775,67 @@ export const INTERVAL_LABEL: Record<ImportInterval, string> = {
   weekly: 'Wöchentlich',
   monthly: 'Monatlich',
   yearly: 'Jährlich',
+};
+
+/** Anzeigename je Kategorie. */
+export const CATEGORY_LABEL: Record<CockpitCategory, string> = {
+  reservationen_gaeste: 'Reservationen / Gäste',
+  umsatz_gastronovi: 'Umsatz / Gastronovi',
+  produkte: 'Produkte',
+  personal: 'Personal',
+  waren_rechnungen: 'Waren / Rechnungen',
+  finanzen_budget: 'Finanzen / Budget',
+  planung_kontrolle: 'Planung / Kontrolle',
+};
+
+/** Kanonische Reihenfolge der Kategorien für Gruppierung/Filter-Dropdown. */
+export const CATEGORY_ORDER: CockpitCategory[] = [
+  'reservationen_gaeste',
+  'umsatz_gastronovi',
+  'produkte',
+  'personal',
+  'waren_rechnungen',
+  'finanzen_budget',
+  'planung_kontrolle',
+];
+
+/** Anzeigename je Import-Art. */
+export const IMPORT_TYPE_LABEL: Record<CockpitImportType, string> = {
+  file_upload: 'Datei-Upload',
+  manual_entry: 'Manuelle Eingabe',
+  control: 'Kontrolle',
+  system: 'Automatisch / Systemdaten',
+  not_configured: 'Nicht eingerichtet',
+};
+
+/** Kanonische Reihenfolge der Import-Arten für das Filter-Dropdown. */
+export const IMPORT_TYPE_ORDER: CockpitImportType[] = [
+  'file_upload',
+  'manual_entry',
+  'control',
+  'system',
+  'not_configured',
+];
+
+/** Dezente Badge-Stile je Import-Art (unabhängig von den Status-Farben). */
+export const IMPORT_TYPE_BADGE_CLASS: Record<CockpitImportType, string> = {
+  file_upload:
+    'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800',
+  manual_entry:
+    'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-800',
+  control:
+    'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700',
+  system:
+    'bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-800',
+  not_configured: 'bg-muted text-muted-foreground border-border',
+};
+
+/** Erklärender Tooltip-Text je Status (nur für unklare Status gefüllt). */
+export const STATUS_HINT: Partial<Record<CockpitStatus, string>> = {
+  never:
+    'Für diese Datenquelle wurde noch kein Importlauf oder kein Datenbestand gefunden.',
+  uncheckable:
+    'Für diese Datenquelle gibt es noch keine auswertbare Import-Historie oder kein Datumsfeld zur Prüfung.',
 };
 
 /** Checklisten-Überschrift je Intervall. */

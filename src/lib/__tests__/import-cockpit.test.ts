@@ -8,12 +8,23 @@ import {
   checklistStateFromStatus,
   normalizeDataDate,
   formatCockpitDate,
+  rowMatchesFilters,
+  matchesCockpitSearch,
+  EMPTY_COCKPIT_FILTER,
+  CATEGORY_ORDER,
+  IMPORT_TYPE_ORDER,
+  CATEGORY_LABEL,
+  IMPORT_TYPE_LABEL,
+  STATUS_LABEL,
   COCKPIT_SOURCES,
   type CockpitRow,
   type CockpitSourceDef,
   type CockpitStatusResult,
   type CockpitSignal,
   type CockpitStatus,
+  type CockpitCategory,
+  type CockpitImportType,
+  type CockpitFilterState,
   type ImportInterval,
 } from '../import-cockpit';
 
@@ -270,5 +281,88 @@ describe('COCKPIT_SOURCES Deskriptoren', () => {
         expect(s.checkable).toBe(true);
       }
     }
+  });
+
+  it('jede Quelle hat gültige Kategorie, Import-Art und uploadLabel', () => {
+    const categories = new Set<CockpitCategory>(CATEGORY_ORDER);
+    const types = new Set<CockpitImportType>(IMPORT_TYPE_ORDER);
+    for (const s of COCKPIT_SOURCES) {
+      expect(categories.has(s.category)).toBe(true);
+      expect(types.has(s.importType)).toBe(true);
+      expect(s.uploadLabel.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('Datei-Upload-Quellen tragen Quelle und Beispiel-Format', () => {
+    const fileUploads = COCKPIT_SOURCES.filter((s) => s.importType === 'file_upload');
+    expect(fileUploads.length).toBeGreaterThan(0);
+    for (const s of fileUploads) {
+      expect(s.sourceHint && s.sourceHint.trim().length).toBeTruthy();
+      expect(s.exampleFormat && s.exampleFormat.trim().length).toBeTruthy();
+    }
+  });
+
+  it('Label-Maps decken alle Kategorien und Import-Arten ab', () => {
+    for (const c of CATEGORY_ORDER) expect(CATEGORY_LABEL[c].trim().length).toBeGreaterThan(0);
+    for (const t of IMPORT_TYPE_ORDER) expect(IMPORT_TYPE_LABEL[t].trim().length).toBeGreaterThan(0);
+    // Bestehende Status-Labels unverändert
+    expect(STATUS_LABEL.uncheckable).toBe('Nicht prüfbar');
+    expect(STATUS_LABEL.never).toBe('Nie importiert');
+  });
+});
+
+// ─── Filter (rein) ───────────────────────────────────────────────────────────────
+
+function rowFromSource(def: CockpitSourceDef, status: CockpitStatus): CockpitRow {
+  const result: CockpitStatusResult = {
+    status,
+    reason: '',
+    nextDue: null,
+    daysBehind: null,
+    missingDays: [],
+    failed: false,
+  };
+  return { def, signal: { latestDataDate: null }, result };
+}
+
+describe('rowMatchesFilters + matchesCockpitSearch', () => {
+  const source = COCKPIT_SOURCES[0];
+  const base = rowFromSource(source, 'current');
+
+  it('leerer Filter lässt alles durch', () => {
+    for (const s of COCKPIT_SOURCES) {
+      expect(rowMatchesFilters(rowFromSource(s, 'current'), EMPTY_COCKPIT_FILTER)).toBe(true);
+    }
+  });
+
+  it('filtert nach Kategorie', () => {
+    const f: CockpitFilterState = { ...EMPTY_COCKPIT_FILTER, category: source.category };
+    expect(rowMatchesFilters(base, f)).toBe(true);
+    const other = CATEGORY_ORDER.find((c) => c !== source.category)!;
+    expect(rowMatchesFilters(base, { ...EMPTY_COCKPIT_FILTER, category: other })).toBe(false);
+  });
+
+  it('filtert nach Import-Art', () => {
+    const f: CockpitFilterState = { ...EMPTY_COCKPIT_FILTER, importType: source.importType };
+    expect(rowMatchesFilters(base, f)).toBe(true);
+    const other = IMPORT_TYPE_ORDER.find((t) => t !== source.importType)!;
+    expect(rowMatchesFilters(base, { ...EMPTY_COCKPIT_FILTER, importType: other })).toBe(false);
+  });
+
+  it('filtert nach Intervall und Status (UND-Verknüpfung)', () => {
+    const f: CockpitFilterState = {
+      ...EMPTY_COCKPIT_FILTER,
+      interval: source.interval,
+      status: 'current',
+    };
+    expect(rowMatchesFilters(base, f)).toBe(true);
+    // Status passt nicht mehr → raus, obwohl Intervall stimmt
+    expect(rowMatchesFilters(base, { ...f, status: 'overdue' })).toBe(false);
+  });
+
+  it('Suche trifft Name, Bereich, Aufgabe und uploadLabel', () => {
+    expect(matchesCockpitSearch(source, '')).toBe(true);
+    expect(matchesCockpitSearch(source, source.label.slice(0, 4).toLowerCase())).toBe(true);
+    expect(matchesCockpitSearch(source, 'zzz-kein-treffer-xyz')).toBe(false);
   });
 });

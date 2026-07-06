@@ -11,7 +11,7 @@
  * Gäste), zusätzlich zur Route-Guard in App.tsx.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -30,6 +30,8 @@ import {
   ListChecks,
   Table2,
   XCircle,
+  UploadCloud,
+  Info,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
@@ -63,70 +65,58 @@ import {
   summarizeCockpit,
   groupChecklist,
   formatCockpitDate,
+  rowMatchesFilters,
+  EMPTY_COCKPIT_FILTER,
   INTERVAL_LABEL,
   CHECKLIST_GROUP_LABEL,
   STATUS_LABEL,
   STATUS_BADGE_CLASS,
   STATUS_DOT_CLASS,
+  STATUS_HINT,
   CHECKLIST_LABEL,
   CHECKLIST_BADGE_CLASS,
+  CATEGORY_LABEL,
+  CATEGORY_ORDER,
+  IMPORT_TYPE_LABEL,
+  IMPORT_TYPE_ORDER,
+  IMPORT_TYPE_BADGE_CLASS,
   type CockpitRow,
   type CockpitSignal,
   type CockpitSourceId,
+  type CockpitFilterState,
+  type CockpitCategory,
+  type CockpitImportType,
+  type CockpitStatus,
   type ImportInterval,
 } from '@/lib/import-cockpit';
 import { fetchCockpitSignals } from '@/lib/import-cockpit-db';
 
 // ─── Filter ──────────────────────────────────────────────────────────────────────
 
-type CockpitFilter =
-  | 'all'
-  | ImportInterval
-  | 'open'
-  | 'overdue'
-  | 'uncheckable';
-
-const FILTER_OPTIONS: Array<{ value: CockpitFilter; label: string }> = [
-  { value: 'all', label: 'Alle' },
-  { value: 'daily', label: 'Täglich' },
-  { value: 'weekly', label: 'Wöchentlich' },
-  { value: 'monthly', label: 'Monatlich' },
-  { value: 'yearly', label: 'Jährlich' },
-  { value: 'open', label: 'Nur offene' },
-  { value: 'overdue', label: 'Nur überfällige' },
-  { value: 'uncheckable', label: 'Nur nicht prüfbare' },
+/** Filter-Dropdown-Optionen (jeweils mit „Alle" als erste Option). */
+const INTERVAL_FILTER_OPTIONS: Array<{ value: 'all' | ImportInterval; label: string }> = [
+  { value: 'all', label: 'Alle Intervalle' },
+  ...(['daily', 'weekly', 'monthly', 'yearly'] as ImportInterval[]).map((i) => ({
+    value: i,
+    label: INTERVAL_LABEL[i],
+  })),
 ];
 
-function matchesFilter(row: CockpitRow, filter: CockpitFilter): boolean {
-  const s = row.result.status;
-  switch (filter) {
-    case 'all':
-      return true;
-    case 'daily':
-    case 'weekly':
-    case 'monthly':
-    case 'yearly':
-      return row.def.interval === filter;
-    case 'open':
-      return s === 'due_soon' || s === 'overdue' || s === 'never';
-    case 'overdue':
-      return s === 'overdue';
-    case 'uncheckable':
-      return s === 'uncheckable';
-    default:
-      return true;
-  }
-}
+const STATUS_FILTER_ORDER: CockpitStatus[] = ['current', 'due_soon', 'overdue', 'never', 'uncheckable'];
+const STATUS_FILTER_OPTIONS: Array<{ value: 'all' | CockpitStatus; label: string }> = [
+  { value: 'all', label: 'Alle Status' },
+  ...STATUS_FILTER_ORDER.map((s) => ({ value: s, label: STATUS_LABEL[s] })),
+];
 
-function matchesSearch(row: CockpitRow, q: string): boolean {
-  if (!q.trim()) return true;
-  const needle = q.trim().toLowerCase();
-  return (
-    row.def.label.toLowerCase().includes(needle) ||
-    row.def.module.toLowerCase().includes(needle) ||
-    row.def.checklistLabel.toLowerCase().includes(needle)
-  );
-}
+const CATEGORY_FILTER_OPTIONS: Array<{ value: 'all' | CockpitCategory; label: string }> = [
+  { value: 'all', label: 'Alle Kategorien' },
+  ...CATEGORY_ORDER.map((c) => ({ value: c, label: CATEGORY_LABEL[c] })),
+];
+
+const IMPORT_TYPE_FILTER_OPTIONS: Array<{ value: 'all' | CockpitImportType; label: string }> = [
+  { value: 'all', label: 'Alle Import-Arten' },
+  ...IMPORT_TYPE_ORDER.map((t) => ({ value: t, label: IMPORT_TYPE_LABEL[t] })),
+];
 
 // ─── Datums-Helfer (nur Anzeige) ───────────────────────────────────────────────────
 
@@ -169,8 +159,8 @@ function KpiCard({ label, value, icon, accent }: KpiCardProps) {
 
 // ─── Status-Badge ────────────────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: CockpitRow['result']['status'] }) {
-  return (
+function StatusBadge({ status }: { status: CockpitStatus }) {
+  const badge = (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium',
@@ -179,6 +169,32 @@ function StatusBadge({ status }: { status: CockpitRow['result']['status'] }) {
     >
       <span className={cn('h-1.5 w-1.5 rounded-full', STATUS_DOT_CLASS[status])} />
       {STATUS_LABEL[status]}
+    </span>
+  );
+
+  const hint = STATUS_HINT[status];
+  if (!hint) return badge;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="cursor-help">{badge}</span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs text-xs leading-snug">{hint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Kleines Import-Art-Badge (unabhängig von den Status-Farben). */
+function ImportTypeBadge({ type }: { type: CockpitImportType }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap',
+        IMPORT_TYPE_BADGE_CLASS[type],
+      )}
+    >
+      {IMPORT_TYPE_LABEL[type]}
     </span>
   );
 }
@@ -194,9 +210,21 @@ export default function ImportCockpitPage() {
   const [signals, setSignals] = useState<Record<CockpitSourceId, CockpitSignal> | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-  const [filter, setFilter] = useState<CockpitFilter>('all');
-  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<CockpitFilterState>(EMPTY_COCKPIT_FILTER);
   const [selectedId, setSelectedId] = useState<CockpitSourceId | null>(null);
+
+  const patchFilter = useCallback(
+    <K extends keyof CockpitFilterState>(key: K, value: CockpitFilterState[K]) =>
+      setFilters((prev) => ({ ...prev, [key]: value })),
+    [],
+  );
+  const resetFilters = useCallback(() => setFilters(EMPTY_COCKPIT_FILTER), []);
+  const hasActiveFilters =
+    filters.category !== 'all' ||
+    filters.importType !== 'all' ||
+    filters.interval !== 'all' ||
+    filters.status !== 'all' ||
+    filters.search.trim() !== '';
 
   const load = useCallback(async () => {
     // Fetch-Gate: Gäste/Nicht-Admins lösen NIE eine Abfrage aus.
@@ -229,8 +257,27 @@ export default function ImportCockpitPage() {
   const checklist = useMemo(() => groupChecklist(rows), [rows]);
 
   const filteredRows = useMemo(
-    () => rows.filter((r) => matchesFilter(r, filter) && matchesSearch(r, search)),
-    [rows, filter, search],
+    () => rows.filter((r) => rowMatchesFilters(r, filters)),
+    [rows, filters],
+  );
+
+  // Übersichtstabelle nach Kategorie gruppiert (stabile CATEGORY_ORDER).
+  const groupedRows = useMemo(() => {
+    const byCategory = new Map<CockpitCategory, CockpitRow[]>();
+    for (const r of filteredRows) {
+      const list = byCategory.get(r.def.category);
+      if (list) list.push(r);
+      else byCategory.set(r.def.category, [r]);
+    }
+    return CATEGORY_ORDER
+      .map((category) => ({ category, rows: byCategory.get(category) ?? [] }))
+      .filter((g) => g.rows.length > 0);
+  }, [filteredRows]);
+
+  // Sichtbare IDs, damit die Checklisten-Ansicht dieselben Filter respektiert.
+  const visibleIds = useMemo(
+    () => new Set<CockpitSourceId>(filteredRows.map((r) => r.def.id)),
+    [filteredRows],
   );
 
   const selectedRow = useMemo(
@@ -331,24 +378,61 @@ export default function ImportCockpitPage() {
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    value={filters.search}
+                    onChange={(e) => patchFilter('search', e.target.value)}
                     placeholder="Suchen…"
-                    className="h-9 w-44 pl-8"
+                    className="h-9 w-40 pl-8"
                   />
                 </div>
-                <Select value={filter} onValueChange={(v) => setFilter(v as CockpitFilter)}>
-                  <SelectTrigger className="h-9 w-44">
-                    <SelectValue />
-                  </SelectTrigger>
+                <Select
+                  value={filters.category}
+                  onValueChange={(v) => patchFilter('category', v as CockpitFilterState['category'])}
+                >
+                  <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {FILTER_OPTIONS.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        {o.label}
-                      </SelectItem>
+                    {CATEGORY_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <Select
+                  value={filters.importType}
+                  onValueChange={(v) => patchFilter('importType', v as CockpitFilterState['importType'])}
+                >
+                  <SelectTrigger className="h-9 w-44"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {IMPORT_TYPE_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.interval}
+                  onValueChange={(v) => patchFilter('interval', v as CockpitFilterState['interval'])}
+                >
+                  <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {INTERVAL_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={filters.status}
+                  onValueChange={(v) => patchFilter('status', v as CockpitFilterState['status'])}
+                >
+                  <SelectTrigger className="h-9 w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {STATUS_FILTER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" className="h-9" onClick={resetFilters}>
+                    Filter zurücksetzen
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -361,10 +445,10 @@ export default function ImportCockpitPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>Datenquelle</TableHead>
-                          <TableHead className="hidden md:table-cell">Bereich</TableHead>
-                          <TableHead className="hidden lg:table-cell">Letzter Import</TableHead>
-                          <TableHead className="hidden xl:table-cell">Daten von</TableHead>
-                          <TableHead>Daten bis</TableHead>
+                          <TableHead className="hidden lg:table-cell">Was hochladen?</TableHead>
+                          <TableHead className="hidden md:table-cell">Import-Art</TableHead>
+                          <TableHead className="hidden xl:table-cell">Letzter Import</TableHead>
+                          <TableHead>Stand / Daten bis</TableHead>
                           <TableHead className="hidden sm:table-cell">Intervall</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead className="hidden lg:table-cell">Nächste Fälligkeit</TableHead>
@@ -372,71 +456,84 @@ export default function ImportCockpitPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredRows.length === 0 && (
+                        {groupedRows.length === 0 && (
                           <TableRow>
                             <TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">
                               Keine Datenquellen für diesen Filter.
                             </TableCell>
                           </TableRow>
                         )}
-                        {filteredRows.map((row) => (
-                          <TableRow
-                            key={row.def.id}
-                            className="cursor-pointer"
-                            onClick={() => setSelectedId(row.def.id)}
-                          >
-                            <TableCell className="font-medium">
-                              <div className="flex items-center gap-1.5">
-                                {row.def.label}
-                                {row.def.tenantNeutral && (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-                                    </TooltipTrigger>
-                                    <TooltipContent>Mandantenübergreifende Datenquelle</TooltipContent>
-                                  </Tooltip>
-                                )}
-                                {row.result.failed && (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <XCircle className="h-3.5 w-3.5 text-red-500" />
-                                    </TooltipTrigger>
-                                    <TooltipContent>Letzter Import fehlgeschlagen</TooltipContent>
-                                  </Tooltip>
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell className="hidden text-muted-foreground md:table-cell">{row.def.module}</TableCell>
-                            <TableCell className="hidden text-muted-foreground lg:table-cell">
-                              {formatDateTime(row.signal.lastImport?.at)}
-                            </TableCell>
-                            <TableCell className="hidden text-muted-foreground xl:table-cell">
-                              {formatCockpitDate(row.signal.dataFrom)}
-                            </TableCell>
-                            <TableCell>{formatCockpitDate(dataUntilOf(row.signal))}</TableCell>
-                            <TableCell className="hidden sm:table-cell">
-                              <Badge variant="outline" className="font-normal">
-                                {INTERVAL_LABEL[row.def.interval]}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <StatusBadge status={row.result.status} />
-                            </TableCell>
-                            <TableCell className="hidden text-muted-foreground lg:table-cell">
-                              {row.result.nextDue ? formatCockpitDate(row.result.nextDue) : '—'}
-                            </TableCell>
-                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                              {row.def.route ? (
-                                <Button asChild variant="ghost" size="sm">
-                                  <Link to={row.def.route}>
-                                    Öffnen <ArrowRight className="ml-1 h-3.5 w-3.5" />
-                                  </Link>
-                                </Button>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">—</span>
-                              )}
-                            </TableCell>
-                          </TableRow>
+                        {groupedRows.map((group) => (
+                          <Fragment key={group.category}>
+                            <TableRow className="bg-muted/50 hover:bg-muted/50">
+                              <TableCell
+                                colSpan={9}
+                                className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                              >
+                                {CATEGORY_LABEL[group.category]}
+                                <span className="ml-2 font-normal normal-case">({group.rows.length})</span>
+                              </TableCell>
+                            </TableRow>
+                            {group.rows.map((row) => (
+                              <TableRow
+                                key={row.def.id}
+                                className="cursor-pointer"
+                                onClick={() => setSelectedId(row.def.id)}
+                              >
+                                <TableCell className="font-medium">
+                                  <div className="flex items-center gap-1.5">
+                                    {row.def.label}
+                                    {row.def.tenantNeutral && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>Mandantenübergreifende Datenquelle</TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                    {row.result.failed && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <XCircle className="h-3.5 w-3.5 text-red-500" />
+                                        </TooltipTrigger>
+                                        <TooltipContent>Letzter Import fehlgeschlagen</TooltipContent>
+                                      </Tooltip>
+                                    )}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="hidden max-w-[16rem] text-muted-foreground lg:table-cell">
+                                  <span className="line-clamp-2">{row.def.uploadLabel}</span>
+                                </TableCell>
+                                <TableCell className="hidden md:table-cell">
+                                  <ImportTypeBadge type={row.def.importType} />
+                                </TableCell>
+                                <TableCell className="hidden text-muted-foreground xl:table-cell">
+                                  {formatDateTime(row.signal.lastImport?.at)}
+                                </TableCell>
+                                <TableCell>{formatCockpitDate(dataUntilOf(row.signal))}</TableCell>
+                                <TableCell className="hidden sm:table-cell">
+                                  <Badge variant="outline" className="font-normal">
+                                    {INTERVAL_LABEL[row.def.interval]}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <StatusBadge status={row.result.status} />
+                                </TableCell>
+                                <TableCell className="hidden text-muted-foreground lg:table-cell">
+                                  {row.result.nextDue ? formatCockpitDate(row.result.nextDue) : '—'}
+                                </TableCell>
+                                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setSelectedId(row.def.id)}
+                                  >
+                                    Details <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </Fragment>
                         ))}
                       </TableBody>
                     </Table>
@@ -449,11 +546,8 @@ export default function ImportCockpitPage() {
             <TabsContent value="checklist" className="mt-0">
               <div className="grid gap-4 md:grid-cols-2">
                 {(['daily', 'weekly', 'monthly', 'yearly'] as ImportInterval[]).map((interval) => {
-                  const items = checklist[interval].filter(
-                    (i) =>
-                      // gleiche Filter-/Suchlogik wie die Tabelle (über die Zeile)
-                      matchesSearch({ def: COCKPIT_SOURCES.find((s) => s.id === i.id)! } as CockpitRow, search),
-                  );
+                  // Checkliste respektiert dieselben Filter wie die Tabelle (über visibleIds).
+                  const items = checklist[interval].filter((i) => visibleIds.has(i.id));
                   return (
                     <Card key={interval}>
                       <CardContent className="p-4">
@@ -472,12 +566,22 @@ export default function ImportCockpitPage() {
                               <button
                                 type="button"
                                 onClick={() => setSelectedId(item.id)}
-                                className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted"
+                                className="flex w-full items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted"
                               >
-                                <span className="min-w-0 truncate">{item.label}</span>
+                                <span className="min-w-0 space-y-0.5">
+                                  <span className="block truncate font-medium">{item.label}</span>
+                                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    {item.importType === 'file_upload' ? (
+                                      <UploadCloud className="h-3 w-3 shrink-0" />
+                                    ) : (
+                                      <Info className="h-3 w-3 shrink-0" />
+                                    )}
+                                    <span className="truncate">{item.uploadLabel}</span>
+                                  </span>
+                                </span>
                                 <span
                                   className={cn(
-                                    'shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium',
+                                    'mt-0.5 shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium',
                                     CHECKLIST_BADGE_CLASS[item.state],
                                   )}
                                 >
@@ -520,15 +624,39 @@ export default function ImportCockpitPage() {
                     </p>
                   )}
 
+                  {/* Was hochladen? — prominent hervorgehoben */}
+                  <div className="rounded-md border border-border bg-muted/40 p-3">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      {selectedRow.def.importType === 'file_upload' ? (
+                        <UploadCloud className="h-4 w-4" />
+                      ) : (
+                        <Info className="h-4 w-4" />
+                      )}
+                      Was hochladen?
+                    </div>
+                    <p className="text-sm text-muted-foreground">{selectedRow.def.uploadLabel}</p>
+                    <div className="mt-2">
+                      <ImportTypeBadge type={selectedRow.def.importType} />
+                    </div>
+                  </div>
+
                   <dl className="divide-y divide-border rounded-md border border-border">
+                    <DetailRow label="Kategorie" value={CATEGORY_LABEL[selectedRow.def.category]} />
                     <DetailRow label="Bereich" value={selectedRow.def.module} />
-                    <DetailRow label="Intervall" value={INTERVAL_LABEL[selectedRow.def.interval]} />
+                    <DetailRow label="Import-Art" value={IMPORT_TYPE_LABEL[selectedRow.def.importType]} />
+                    {selectedRow.def.sourceHint && (
+                      <DetailRow label="Quelle" value={selectedRow.def.sourceHint} />
+                    )}
+                    {selectedRow.def.exampleFormat && (
+                      <DetailRow label="Beispiel-Format" value={selectedRow.def.exampleFormat} />
+                    )}
+                    <DetailRow label="Empfohlener Rhythmus" value={INTERVAL_LABEL[selectedRow.def.interval]} />
                     <DetailRow label="Letzter Import" value={formatDateTime(selectedRow.signal.lastImport?.at)} />
                     <DetailRow
                       label="Daten von"
                       value={formatCockpitDate(selectedRow.signal.dataFrom)}
                     />
-                    <DetailRow label="Daten bis" value={formatCockpitDate(dataUntilOf(selectedRow.signal))} />
+                    <DetailRow label="Stand / Daten bis" value={formatCockpitDate(dataUntilOf(selectedRow.signal))} />
                     <DetailRow
                       label="Nächste Fälligkeit"
                       value={selectedRow.result.nextDue ? formatCockpitDate(selectedRow.result.nextDue) : '—'}
@@ -570,7 +698,8 @@ export default function ImportCockpitPage() {
                   {selectedRow.def.route && (
                     <Button asChild className="w-full">
                       <Link to={selectedRow.def.route}>
-                        Zur Importseite <ArrowRight className="ml-1.5 h-4 w-4" />
+                        {selectedRow.def.actionLabel ?? 'Zur Importseite'}
+                        <ArrowRight className="ml-1.5 h-4 w-4" />
                       </Link>
                     </Button>
                   )}

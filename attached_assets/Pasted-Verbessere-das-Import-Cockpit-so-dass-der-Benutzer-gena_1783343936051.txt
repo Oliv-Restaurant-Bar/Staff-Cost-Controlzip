@@ -1,0 +1,307 @@
+Verbessere das Import-Cockpit so, dass der Benutzer genau versteht, welche Datei bzw. welcher Import pro Datenquelle benötigt wird, und füge Filter nach Import-Art/Kategorie hinzu.
+
+Ziel:
+Das Import-Cockpit soll nicht nur zeigen, ob etwas aktuell oder überfällig ist, sondern auch klar erklären:
+
+- Was muss ich hochladen?
+- Woher kommt diese Datei?
+- Wie oft muss ich sie hochladen?
+- Für welches Modul wird sie gebraucht?
+- Ist es ein Tages-, Wochen-, Monats- oder Jahresimport?
+- Welche Kategorie hat der Import?
+
+──────────────────────────────
+1. Neue Spalte "Was hochladen?"
+──────────────────────────────
+
+In der Übersichtstabelle eine neue Spalte ergänzen:
+
+"Was hochladen?"
+
+Beispiele:
+
+Foratable Reservationen:
+"Foratable Reservations-CSV"
+
+Foratable Gäste / CRM:
+"Foratable Gäste-/Kontakt-CSV"
+
+Gastronovi Z-Bericht:
+"Gastronovi Z-Bericht CSV/PDF"
+
+Tagesumsatz:
+"Tagesumsatz-Import oder Tagesabschluss"
+
+Produktverkäufe:
+"Gastronovi Produktverkaufs-CSV"
+
+Mirus Arbeitszeiten:
+"Mirus Arbeitszeitblatt Excel"
+
+Dienstplanung Folgewochen:
+"Kein Upload – Dienstplan prüfen"
+
+Forecast-Kontrolle:
+"Kein Upload – Forecast aktualisieren"
+
+Personalkosten-Kontrolle:
+"Kein Upload – Kontrolle durchführen"
+
+Warenrechnungen:
+"Lieferantenrechnungen PDF"
+
+Monatsabschluss / Kosten:
+"Monatszahlen / Kosten prüfen"
+
+Budgetkontrolle:
+"Kein Upload – Budget prüfen"
+
+Inventur / Warenbestand:
+"Inventurdatei oder Bestand prüfen"
+
+Jahresbudget:
+"Jahresbudget erfassen / prüfen"
+
+Vorjahresvergleich:
+"Vorjahresdaten prüfen / importieren"
+
+──────────────────────────────
+2. Neue Spalte "Import-Art"
+──────────────────────────────
+
+Neue Spalte ergänzen:
+
+"Import-Art"
+
+Mögliche Werte:
+
+- Datei-Upload
+- Manuelle Eingabe
+- Kontrolle
+- Automatisch / Systemdaten
+- Nicht eingerichtet
+
+Beispiele:
+
+Foratable Reservationen → Datei-Upload
+Gastronovi Z-Bericht → Datei-Upload
+Mirus Arbeitszeiten → Datei-Upload
+Dienstplanung → Kontrolle
+Forecast → Manuelle Eingabe
+Budget → Manuelle Eingabe
+Monatsabschluss → Kontrolle
+Warenrechnungen → Datei-Upload
+
+──────────────────────────────
+3. Kategorie-Filter ergänzen
+──────────────────────────────
+
+Oben bei den Filtern neue Filter hinzufügen:
+
+Kategorie:
+
+- Alle
+- Reservationen / Gäste
+- Umsatz / Gastronovi
+- Produkte
+- Personal
+- Waren / Rechnungen
+- Finanzen / Budget
+- Planung / Kontrolle
+
+Import-Art:
+
+- Alle
+- Datei-Upload
+- Manuelle Eingabe
+- Kontrolle
+- Automatisch / Systemdaten
+- Nicht eingerichtet
+
+Intervall:
+
+- Alle
+- Täglich
+- Wöchentlich
+- Monatlich
+- Jährlich
+
+Status:
+
+- Alle
+- Aktuell
+- Bald fällig
+- Überfällig
+- Nie importiert
+- Nicht prüfbar
+
+──────────────────────────────
+4. Checkliste verständlicher machen
+──────────────────────────────
+
+In der Checklisten-Ansicht nicht nur den Namen anzeigen, sondern auch:
+
+- Was ist zu tun?
+- Welche Datei wird benötigt?
+- Wohin führt der Button?
+
+Beispiel:
+
+Heute zu erledigen:
+
+Z-Bericht importieren
+Datei: Gastronovi Z-Bericht CSV/PDF
+Aktion: Zur Gastronovi-Importseite
+
+Reservationen importieren
+Datei: Foratable Reservations-CSV
+Aktion: Zur Foratable-Importseite
+
+Mirus Arbeitszeiten importieren
+Datei: Mirus Arbeitszeitblatt Excel
+Aktion: Zur Arbeitszeit-Importseite
+
+Bei Punkten ohne Upload:
+
+Forecast aktualisieren
+Typ: Manuelle Eingabe
+Aktion: Zur Forecast-Seite
+
+Dienstplanung Folgewochen prüfen
+Typ: Kontrolle
+Aktion: Zum Dienstplan
+
+──────────────────────────────
+5. Detail-Drawer erweitern
+──────────────────────────────
+
+Beim Klick auf "Öffnen" soll der Detail-Drawer zusätzlich anzeigen:
+
+- Was muss hochgeladen oder geprüft werden?
+- Quelle der Datei
+- Beispiel-Dateiname oder Beispiel-Format
+- Import-Art
+- Kategorie
+- Zuständigkeit, falls vorhanden
+- Empfohlener Rhythmus
+- Link zur passenden Seite
+
+Beispiele für Quelle:
+
+Foratable Reservationen:
+"Export aus Foratable → Reservationen"
+
+Foratable Gäste / CRM:
+"Export aus Foratable → Gäste/Kontakte"
+
+Gastronovi Z-Bericht:
+"Export aus Gastronovi → Z-Bericht"
+
+Produktverkäufe:
+"Export aus Gastronovi → Produktverkauf"
+
+Mirus Arbeitszeiten:
+"Export aus Mirus → Arbeitszeitblatt"
+
+Warenrechnungen:
+"PDF-Rechnungen von Lieferanten"
+
+──────────────────────────────
+6. Bessere Beschriftungen
+──────────────────────────────
+
+Aktuelle unklare Begriffe verbessern:
+
+"Nicht prüfbar" soll mit Tooltip erklärt werden:
+"Für diese Datenquelle gibt es noch keine auswertbare Import-Historie oder kein Datumsfeld zur Prüfung."
+
+"Nie importiert" soll mit Tooltip erklärt werden:
+"Für diese Datenquelle wurde noch kein Importlauf oder kein Datenbestand gefunden."
+
+"Daten bis" soll bei manuellen Kontrollen besser heißen:
+"Stand / Daten bis"
+
+"Aktion Öffnen" soll verständlicher werden:
+"Details"
+
+──────────────────────────────
+7. Gruppierung nach Kategorie
+
+──────────────────────────────
+
+Optional, falls ohne grossen Umbau möglich:
+
+Die Tabelle nach Kategorie gruppieren oder zumindest visuell trennen:
+
+Reservationen / Gäste
+Umsatz / Gastronovi
+Produkte
+Personal
+Waren / Rechnungen
+Finanzen / Budget
+Planung / Kontrolle
+
+Wenn Gruppierung zu aufwendig ist:
+Kategorie-Spalte sichtbar machen und Filter sauber umsetzen.
+
+──────────────────────────────
+8. Keine neue Importlogik
+
+──────────────────────────────
+
+Wichtig:
+
+Keine Upload-Funktion bauen.
+
+Keine bestehenden Importprozesse ändern.
+
+Keine Datenbankänderungen.
+
+Keine SQL-Dateien.
+
+Keine CRM-Merge- oder Exportlogik anfassen.
+
+Das Cockpit bleibt read-only.
+
+Es darf nur erklären, verlinken, filtern und den Status anzeigen.
+
+──────────────────────────────
+9. Tests
+
+──────────────────────────────
+
+Bestehende Cockpit-Tests erweitern für:
+
+- Import-Art wird korrekt gesetzt
+- Kategorie wird korrekt gesetzt
+- Filter nach Kategorie
+- Filter nach Import-Art
+- Checkliste zeigt "Was hochladen?"
+- Detail-Drawer zeigt Quelle und Format
+- Status-Texte "Nicht prüfbar" und "Nie importiert" bleiben korrekt
+
+TypeScript muss sauber sein.
+
+Cockpit-Tests müssen grün sein.
+
+Wenn die komplette Testsuite wegen OOM abbricht, dokumentieren und zumindest:
+- tsc --noEmit
+- Cockpit-Tests
+- App Runtime Check
+ausführen.
+
+──────────────────────────────
+10. Dokumentation
+
+──────────────────────────────
+
+replit.md aktualisieren:
+
+- Import-Cockpit erklärt jetzt auch "Was hochladen?"
+- neue Filter Kategorie / Import-Art / Intervall / Status
+- Cockpit bleibt read-only
+- keine Importlogik verändert
+
+Architect Review durchführen.
+
+Commit-Message erstellen.
