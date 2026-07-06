@@ -1,0 +1,99 @@
+Erledige zwei Dinge in einem sauberen Schritt:
+
+1. Reservations Analyse optisch aufräumen
+2. replit.md kürzen und besser strukturieren
+
+Teil 1: Reservations Analyse UI aufräumen
+
+Ziel:
+Die Seite /gaeste/analyse soll übersichtlicher, ruhiger und professioneller wirken, ohne bestehende Funktionen zu entfernen.
+
+Anforderungen:
+
+• Bestehende Funktionen unverändert lassen:
+  - Monat Ist vs. Vorjahr
+  - Wochentag-Analyse
+  - Saison/Zeitraum
+  - Heatmap
+  - alle bestehenden Popups
+  - Personen/Reservationen-Umschalter
+  - Jahr/Von-Bis/Status/Schnellfilter
+
+• Obere Filterleiste kompakter gestalten:
+  - Jahr, Von-Monat, Bis-Monat, Status und Schnellfilter sauber gruppieren
+  - Personen/Reservationen-Umschalter gut sichtbar, aber nicht dominant
+  - auf Mobile weiterhin sauber umbrechen
+
+• KPI-Karten vereinheitlichen:
+  - gleiche Höhe
+  - einheitliche Titelgrössen
+  - klare Hauptzahl
+  - dezente Unterzeile
+  - keine überladenen Texte
+
+• Tabs optisch verbessern:
+  - aktive Tabs klarer hervorheben
+  - Tab-Beschriftungen kurz halten
+  - Heatmap sauber einfügen, ohne die Seite zu überladen
+
+• Tabellen und Heatmap ruhiger machen:
+  - konsistente Abstände
+  - gleiche Zahlenformatierung
+  - keine unnötigen Wiederholungen
+  - bessere Lesbarkeit auf kleinen Bildschirmen
+
+• Popups prüfen:
+  - keine Inhalte entfernen
+  - aber Abstände, Titel und KPI-Karten vereinheitlichen
+  - Detailtabellen lesbarer machen
+
+• Keine neue Business-Logik einführen.
+• Keine DB-Änderungen.
+• Keine bestehenden Tests entfernen.
+
+Teil 2: replit.md kürzen und reorganisieren
+
+Ziel:
+replit.md ist inzwischen zu gross und soll übersichtlicher werden, ohne wichtige Projektinformationen zu verlieren.
+
+Anforderungen:
+
+• Alte, erledigte Detailbeschreibungen stark kürzen.
+• Doppelte oder widersprüchliche Einträge entfernen.
+• Die Datei klar strukturieren, z. B.:
+
+  - Projektüberblick
+  - Aktuelle Module
+  - Datenquellen / Imports
+  - Gäste-CRM & Reservationen
+  - Personalbedarf / Dienstplanung
+  - Reporting / Controlling
+  - Architekturregeln
+  - Tests / Validierung
+  - Bekannte Review-Scope-Hinweise
+
+• Wichtig: Den bekannten Hinweis zum Validation-/Review-Scope-Problem behalten:
+  automatische Reviews bewerten teilweise den ganzen Branch seit letztem Checkpoint und können ältere Gäste-CRM-Migrationen fälschlicherweise bei neuen Aufgaben beanstanden.
+
+• Aktuelle Informationen zur Reservations Analyse beibehalten:
+  - konsolidierte Seite /gaeste/analyse
+  - alte Seiten versteckt per URL erreichbar
+  - Tabs: Monat Ist vs. Vorjahr, Wochentag-Analyse, Saison/Zeitraum, Heatmap
+  - globaler Umschalter Personen/Reservationen
+  - Filter Jahr/Von-Bis/Status/Schnellwahl
+  - Popups und Heatmap-Drilldowns
+
+• Nicht einfach alles löschen.
+• Ziel ist eine deutlich kürzere, aber weiterhin nützliche Arbeitsdokumentation.
+
+Qualitätssicherung:
+
+• TypeScript prüfen.
+• Bestehende Tests ausführen.
+• Falls nur UI/refactor geändert wurde, passende Snapshot-/Component-Tests anpassen oder ergänzen, aber keine unnötigen Tests schreiben.
+• replit.md nach der Kürzung gegenlesen auf Widersprüche.
+• Architect Review durchführen.
+• Commit-Message erstellen.
+
+Wichtig:
+Diese Aufgabe darf keine Migrationen, keine Datenbankstruktur, keine Importlogik und keine CRM-Merge-/Export-Flows verändern.

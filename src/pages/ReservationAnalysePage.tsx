@@ -131,19 +131,38 @@ function KpiTile({ label, value, trend, sub }: {
   sub?: string;
 }) {
   return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+    <Card className="h-full">
+      <CardContent className="flex h-full flex-col justify-between gap-1 p-3">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
         <div className={cn(
-          'mt-0.5 flex items-center gap-1.5 text-xl font-semibold tabular-nums',
+          'flex items-center gap-1.5 text-xl font-semibold tabular-nums',
           trend ? TREND_TEXT[trend] : 'text-foreground',
         )}>
           {trend ? <TrendIcon trend={trend} /> : null}
           {value}
         </div>
-        {sub ? <div className="mt-0.5 text-[11px] text-muted-foreground">{sub}</div> : null}
+        {/* Unterzeile immer reservieren → alle Kacheln gleich hoch. */}
+        <div className="min-h-[15px] text-[11px] text-muted-foreground">{sub ?? ''}</div>
       </CardContent>
     </Card>
+  );
+}
+
+/** Einheitliches Feld-/Sektions-Label der Filterleiste. */
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+/** Segmentierte Umschalt-Gruppe (Kennzahl, Status) — klarer aktiver Zustand. */
+function SegmentedGroup({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="inline-flex rounded-md border bg-muted/40 p-0.5">
+      {children}
+    </div>
   );
 }
 
@@ -201,7 +220,7 @@ function MonthYoyTable({ months, totals, metric, onMonthClick }: {
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b text-[11px] uppercase tracking-wide text-muted-foreground">
+          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
             <th className="px-3 py-2 text-left font-medium">Monat</th>
             <MetricHeaderCells metricLabel={ANALYSE_METRIC_LABEL[metric]} />
           </tr>
@@ -500,88 +519,98 @@ export default function ReservationAnalysePage() {
             Personen, Reservationen und Vorjahrvergleiche auf einen Blick.
           </p>
         </div>
-        {/* Globaler Kennzahl-Umschalter */}
-        <div className="ml-auto flex gap-1">
-          {ANALYSE_METRICS.map((m) => (
-            <Button
-              key={m}
-              variant={metric === m ? 'default' : 'outline'}
-              size="sm" className="h-8"
-              onClick={() => setMetric(m)}
-            >
-              {ANALYSE_METRIC_LABEL[m]}
-            </Button>
-          ))}
+        {/* Globaler Kennzahl-Umschalter — sichtbar, aber ruhig */}
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:inline">
+            Kennzahl
+          </span>
+          <SegmentedGroup>
+            {ANALYSE_METRICS.map((m) => (
+              <Button
+                key={m}
+                variant={metric === m ? 'default' : 'ghost'}
+                size="sm" className="h-7 px-3"
+                onClick={() => setMetric(m)}
+              >
+                {ANALYSE_METRIC_LABEL[m]}
+              </Button>
+            ))}
+          </SegmentedGroup>
         </div>
       </div>
 
       {/* Zeitraum + Schnellbuttons + Status-Filter */}
       <Card>
-        <CardContent className="space-y-2 p-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground">Jahr</div>
-              <Select value={String(year)} onValueChange={(v) => setRange((r) => ({ ...r, year: +v }))}>
-                <SelectTrigger className="h-8 w-[90px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {yearOptions.map((y) => (
-                    <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        <CardContent className="space-y-3 p-3">
+          <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+            {/* Zeitraum: Jahr + Von/Bis-Monat gruppiert */}
+            <div className="flex items-end gap-2">
+              <div>
+                <FieldLabel>Jahr</FieldLabel>
+                <Select value={String(year)} onValueChange={(v) => setRange((r) => ({ ...r, year: +v }))}>
+                  <SelectTrigger className="h-8 w-[88px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {yearOptions.map((y) => (
+                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <FieldLabel>Von</FieldLabel>
+                <Select value={String(fromMonth)} onValueChange={(v) => setRange((r) => ({ ...r, fromMonth: +v }))}>
+                  <SelectTrigger className="h-8 w-[128px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {MONTHS.map((m, i) => (
+                      <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <FieldLabel>Bis</FieldLabel>
+                <Select value={String(toMonth)} onValueChange={(v) => setRange((r) => ({ ...r, toMonth: +v }))}>
+                  <SelectTrigger className="h-8 w-[128px]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {MONTHS.map((m, i) => (
+                      <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-            <div>
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground">Von Monat</div>
-              <Select value={String(fromMonth)} onValueChange={(v) => setRange((r) => ({ ...r, fromMonth: +v }))}>
-                <SelectTrigger className="h-8 w-[130px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {MONTHS.map((m, i) => (
-                    <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground">Bis Monat</div>
-              <Select value={String(toMonth)} onValueChange={(v) => setRange((r) => ({ ...r, toMonth: +v }))}>
-                <SelectTrigger className="h-8 w-[130px]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {MONTHS.map((m, i) => (
-                    <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Status-Filter als segmentierte Gruppe */}
             <div className="ml-auto">
-              <div className="mb-1 text-[11px] font-medium text-muted-foreground">Status</div>
-              <div className="flex gap-1">
+              <FieldLabel>Status</FieldLabel>
+              <SegmentedGroup>
                 {STATUS_SCOPES.map((s) => (
                   <Button
                     key={s}
-                    variant={scope === s ? 'default' : 'outline'}
-                    size="sm" className="h-8"
+                    variant={scope === s ? 'default' : 'ghost'}
+                    size="sm" className="h-7 px-3"
                     onClick={() => setScope(s)}
                   >
                     {STATUS_SCOPE_LABEL[s]}
                   </Button>
                 ))}
-              </div>
+              </SegmentedGroup>
             </div>
           </div>
-          <div className="flex flex-wrap gap-1">
-            {ANALYSE_PRESETS.map((p) => (
-              <Button
-                key={p.key}
-                variant={matchesPreset(range, p.key, today) ? 'secondary' : 'outline'}
-                size="sm" className="h-7 text-xs"
-                onClick={() => setRange(presetMonthRange(p.key, today))}
-              >
-                {p.label}
-              </Button>
-            ))}
-            <span className="ml-1 self-center text-[11px] text-muted-foreground">
-              … oder oben frei wählen
-            </span>
+          {/* Schnellwahl (Presets) — frei wählbar bleibt oben */}
+          <div className="border-t pt-2.5">
+            <FieldLabel>Schnellwahl</FieldLabel>
+            <div className="flex flex-wrap gap-1">
+              {ANALYSE_PRESETS.map((p) => (
+                <Button
+                  key={p.key}
+                  variant={matchesPreset(range, p.key, today) ? 'secondary' : 'outline'}
+                  size="sm" className="h-7 text-xs"
+                  onClick={() => setRange(presetMonthRange(p.key, today))}
+                >
+                  {p.label}
+                </Button>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -647,10 +676,10 @@ export default function ReservationAnalysePage() {
 
           {/* Sektionen */}
           <Tabs defaultValue="monate">
-            <TabsList>
-              <TabsTrigger value="monate">Monat Ist vs. Vorjahr</TabsTrigger>
-              <TabsTrigger value="wochentage">Wochentag-Analyse</TabsTrigger>
-              <TabsTrigger value="saison">Saison / Zeitraum</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="monate">Monate</TabsTrigger>
+              <TabsTrigger value="wochentage">Wochentage</TabsTrigger>
+              <TabsTrigger value="saison">Saison</TabsTrigger>
               <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             </TabsList>
 
