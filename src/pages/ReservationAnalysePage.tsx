@@ -37,7 +37,8 @@ import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import {
   monthLabel, monthLongLabel, rangeFromMonthKeys,
-  STATUS_SCOPE_LABEL, WEEKDAY_LABEL, type IsoWeekday, type StatusScope,
+  STATUS_SCOPE_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, ISO_WEEKDAYS,
+  type IsoWeekday, type StatusScope,
 } from '@/lib/reservation-weekday-analytics';
 import {
   monthKeysInRange, priorYearMonthKey, buildYoyComparison,
@@ -48,7 +49,12 @@ import {
   DEFAULT_ANALYSE_METRIC, ANALYSE_METRICS, ANALYSE_METRIC_LABEL,
   ANALYSE_PRESETS, presetMonthRange, matchesPreset, pickMetric,
   avgPersonsPerReservation, buildWeekdayMonthBreakdown,
+  buildMonthWeekdayHeatmap, heatmapValueScale, classifyHeatmapLevel,
+  cellMetricValue, cellShareOfMonth, cellShareOfRange, cellVsMonthAverage,
+  buildHeatmapCellTooltip, buildWeekdayDayBreakdown,
   type AnalyseMetric, type AnalyseMonthRange, type MetricPair,
+  type HeatmapLevel, type HeatmapCell, type HeatmapMonthRow,
+  type MonthWeekdayHeatmap, type HeatmapScale, type HeatmapDayEntry,
 } from '@/lib/reservation-analyse-utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,6 +65,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -314,6 +323,7 @@ export default function ReservationAnalysePage() {
   // Detail-Popups.
   const [detailMonthKey, setDetailMonthKey] = useState<string | null>(null);
   const [detailWeekday, setDetailWeekday] = useState<IsoWeekday | null>(null);
+  const [detailCell, setDetailCell] = useState<{ monthKey: string; weekday: IsoWeekday } | null>(null);
 
   const [tablesOk, setTablesOk] = useState<boolean | null>(null);
   const [currentRows, setCurrentRows] = useState<ReservationDetailRow[]>([]);
@@ -418,6 +428,39 @@ export default function ReservationAnalysePage() {
   const detailWeekdayRow = useMemo(
     () => rangeWeekdays.rows.find((r) => r.weekday === detailWeekday) ?? null,
     [rangeWeekdays, detailWeekday],
+  );
+
+  // Heatmap Monat × Wochentag (nur Ist-Zeitraum) + relative Farbskala.
+  const heatmap = useMemo(
+    () => buildMonthWeekdayHeatmap({ rows: currentRows, monthKeys, scope }),
+    [currentRows, monthKeys, scope],
+  );
+  const heatmapScale = useMemo(
+    () => heatmapValueScale(heatmap, metric),
+    [heatmap, metric],
+  );
+
+  // Heatmap-Zellen-Popup: Monatszeile + Zelle + Tagesaufschlüsselung.
+  const detailCellMonthRow = useMemo(
+    () => (detailCell
+      ? heatmap.months.find((m) => m.monthKey === detailCell.monthKey) ?? null
+      : null),
+    [heatmap, detailCell],
+  );
+  const detailCellData = useMemo(
+    () => (detailCell && detailCellMonthRow
+      ? detailCellMonthRow.cells.find((c) => c.weekday === detailCell.weekday) ?? null
+      : null),
+    [detailCellMonthRow, detailCell],
+  );
+  const detailCellDays = useMemo(
+    () => (detailCell
+      ? buildWeekdayDayBreakdown({
+        rows: currentRows, monthKey: detailCell.monthKey,
+        weekday: detailCell.weekday, scope, metric,
+      })
+      : null),
+    [detailCell, currentRows, scope, metric],
   );
 
   const { totals } = comparison;
@@ -608,6 +651,7 @@ export default function ReservationAnalysePage() {
               <TabsTrigger value="monate">Monat Ist vs. Vorjahr</TabsTrigger>
               <TabsTrigger value="wochentage">Wochentag-Analyse</TabsTrigger>
               <TabsTrigger value="saison">Saison / Zeitraum</TabsTrigger>
+              <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             </TabsList>
 
             <TabsContent value="monate" className="mt-3">
@@ -680,6 +724,32 @@ export default function ReservationAnalysePage() {
                     compact
                   />
                   <p className="text-[11px] text-muted-foreground">{OCCURRENCE_NOTE}</p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="heatmap" className="mt-3">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">
+                    Heatmap Monat × Wochentag · {rangeLabel}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      {ANALYSE_METRIC_LABEL[metric]} — Klick auf eine Zelle öffnet die Details
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 p-3 pt-0">
+                  <HeatmapTable
+                    heatmap={heatmap}
+                    scale={heatmapScale}
+                    metric={metric}
+                    onCellClick={(monthKey, weekday) => setDetailCell({ monthKey, weekday })}
+                  />
+                  <HeatmapLegend />
+                  <p className="text-[11px] text-muted-foreground">
+                    Obere Zahl = {ANALYSE_METRIC_LABEL[metric]}, untere = Anteil am Monat.
+                    Farbskala relativ zum aktuell gewählten Zeitraum.
+                  </p>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -860,8 +930,337 @@ export default function ReservationAnalysePage() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {/* Heatmap-Zellen-Popup: ein Wochentag in einem Monat */}
+      <Dialog open={detailCell !== null} onOpenChange={(open) => { if (!open) setDetailCell(null); }}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          {detailCell && detailCellData && detailCellMonthRow && detailCellDays ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {WEEKDAY_LABEL[detailCell.weekday]} · {monthLongLabel(detailCell.monthKey)}
+                </DialogTitle>
+                <DialogDescription>
+                  Alle {WEEKDAY_LABEL[detailCell.weekday]}e im {monthLongLabel(detailCell.monthKey)} —
+                  {' '}aktive Kennzahl: {ANALYSE_METRIC_LABEL[metric]}.
+                </DialogDescription>
+              </DialogHeader>
+
+              {/* Grosse KPI-Kacheln */}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <KpiTile label="Reservationen" value={NUM0.format(detailCellData.reservations)} />
+                <KpiTile label="Personen" value={NUM0.format(detailCellData.persons)} />
+                <KpiTile
+                  label="Ø Pers./Res."
+                  value={(() => {
+                    const a = avgPersonsPerReservation(detailCellData.persons, detailCellData.reservations);
+                    return a === null ? '—' : NUM1.format(a);
+                  })()}
+                />
+                <KpiTile
+                  label="Anteil am Monat"
+                  value={(() => {
+                    const s = cellShareOfMonth(detailCellData, detailCellMonthRow, metric);
+                    return s === null ? '—' : `${PCT1.format(s)} %`;
+                  })()}
+                />
+                <KpiTile
+                  label="Anteil am Zeitraum"
+                  value={(() => {
+                    const s = cellShareOfRange(detailCellData, heatmap.grandTotal, metric);
+                    return s === null ? '—' : `${PCT1.format(s)} %`;
+                  })()}
+                />
+                <KpiTile
+                  label="vs. Ø Monat"
+                  value={(() => {
+                    const c = cellVsMonthAverage(detailCellData, detailCellMonthRow, metric);
+                    return c.diff === null ? '—' : fmtDiff1(c.diff);
+                  })()}
+                />
+              </div>
+
+              {/* Mini-Trend über alle Vorkommen dieses Wochentags */}
+              {detailCellDays.entries.length > 0 ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                    Verlauf über alle {WEEKDAY_LABEL[detailCell.weekday]}e ({ANALYSE_METRIC_LABEL[metric]})
+                  </div>
+                  <WeekdayTrend entries={detailCellDays.entries} metric={metric} />
+                </div>
+              ) : null}
+
+              {/* Tages-Liste */}
+              <HeatmapDayList
+                entries={detailCellDays.entries}
+                strongestDate={detailCellDays.strongestDate}
+                weakestDate={detailCellDays.weakestDate}
+              />
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+/** Absolute Differenz mit Vorzeichen + 1 Nachkommastelle („+3.5" / „−1.0" / „±0"). */
+function fmtDiff1(diff: number): string {
+  if (diff === 0) return '±0';
+  return diff > 0 ? `+${NUM1.format(diff)}` : `−${NUM1.format(Math.abs(diff))}`;
+}
+
+// ── Heatmap-Bausteine ────────────────────────────────────────────────────────
+
+const HEATMAP_LEVEL_CLASS: Record<HeatmapLevel, string> = {
+  empty: 'bg-muted/40 text-muted-foreground',
+  veryLow: 'bg-red-500 text-white dark:bg-red-600',
+  low: 'bg-orange-400 text-orange-950 dark:bg-orange-500 dark:text-orange-950',
+  mid: 'bg-yellow-300 text-yellow-950 dark:bg-yellow-400 dark:text-yellow-950',
+  high: 'bg-green-400 text-green-950 dark:bg-green-500 dark:text-green-950',
+  veryHigh: 'bg-green-600 text-white dark:bg-green-700',
+};
+
+const HEATMAP_LEVEL_LABEL: { level: HeatmapLevel; label: string }[] = [
+  { level: 'veryLow', label: 'Sehr schwach' },
+  { level: 'low', label: 'Schwach' },
+  { level: 'mid', label: 'Durchschnitt' },
+  { level: 'high', label: 'Gut' },
+  { level: 'veryHigh', label: 'Sehr gut' },
+];
+
+/** Farb-Legende der 5 Intensitätsstufen. */
+function HeatmapLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      {HEATMAP_LEVEL_LABEL.map(({ level, label }) => (
+        <span key={level} className="flex items-center gap-1">
+          <span className={cn('inline-block h-3 w-3 rounded-sm', HEATMAP_LEVEL_CLASS[level])} />
+          {label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Die Heatmap-Tabelle: Monate (Zeilen) × Wochentage Mo–So (Spalten). */
+function HeatmapTable({ heatmap, scale, metric, onCellClick }: {
+  heatmap: MonthWeekdayHeatmap;
+  scale: HeatmapScale;
+  metric: AnalyseMetric;
+  onCellClick: (monthKey: string, weekday: IsoWeekday) => void;
+}) {
+  const hasData = heatmap.months.some((m) => cellMetricValue(m.total, metric) > 0);
+  if (!hasData) {
+    return (
+      <div className="rounded-md border p-4 text-sm text-muted-foreground">
+        Keine Reservationen im gewählten Zeitraum.
+      </div>
+    );
+  }
+  return (
+    <TooltipProvider delayDuration={150}>
+      <div className="overflow-x-auto">
+        <table className="w-full border-separate border-spacing-1 text-sm">
+          <thead>
+            <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th className="px-1 py-1 text-left font-medium">Monat</th>
+              {ISO_WEEKDAYS.map((wd) => (
+                <th key={wd} className="px-1 py-1 text-center font-medium">
+                  {WEEKDAY_SHORT[wd]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {heatmap.months.map((m) => (
+              <tr key={m.monthKey}>
+                <td className="whitespace-nowrap px-1 py-1 text-left text-xs font-medium text-muted-foreground">
+                  {monthLabel(m.monthKey)}
+                </td>
+                {m.cells.map((cell) => (
+                  <HeatmapCellButton
+                    key={cell.weekday}
+                    cell={cell}
+                    monthRow={m}
+                    scale={scale}
+                    metric={metric}
+                    onClick={() => onCellClick(m.monthKey, cell.weekday)}
+                  />
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+/** Eine einzelne, klickbare Heatmap-Zelle mit Hover-Tooltip. */
+function HeatmapCellButton({ cell, monthRow, scale, metric, onClick }: {
+  cell: HeatmapCell;
+  monthRow: HeatmapMonthRow;
+  scale: HeatmapScale;
+  metric: AnalyseMetric;
+  onClick: () => void;
+}) {
+  const value = cellMetricValue(cell, metric);
+  const level = classifyHeatmapLevel(value, scale);
+  const share = cellShareOfMonth(cell, monthRow, metric);
+  const tip = buildHeatmapCellTooltip(cell, monthRow, metric);
+  const empty = value <= 0;
+  return (
+    <td className="p-0">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onClick}
+            className={cn(
+              'flex h-12 w-full min-w-[44px] flex-col items-center justify-center rounded-md px-1 leading-tight transition-transform hover:scale-[1.04] hover:ring-2 hover:ring-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+              HEATMAP_LEVEL_CLASS[level],
+            )}
+            title={`${WEEKDAY_LABEL[cell.weekday]} · ${monthLabel(monthRow.monthKey)}`}
+          >
+            <span className="text-sm font-semibold tabular-nums">{NUM0.format(value)}</span>
+            <span className="text-[10px] tabular-nums opacity-80">
+              {empty || share === null ? '—' : `${PCT1.format(share)} %`}
+            </span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-[220px]">
+          <div className="space-y-0.5 text-xs">
+            <div className="font-medium">
+              {WEEKDAY_LABEL[tip.weekday]} · {monthLabel(tip.monthKey)}
+            </div>
+            <div>Reservationen: {NUM0.format(tip.reservations)}</div>
+            <div>Personen: {NUM0.format(tip.persons)}</div>
+            <div>
+              Anteil am Monat: {tip.shareOfMonth === null ? '—' : `${PCT1.format(tip.shareOfMonth)} %`}
+            </div>
+            <div>
+              Ø Pers./Res.:{' '}
+              {tip.avgPersonsPerReservation === null ? '—' : NUM1.format(tip.avgPersonsPerReservation)}
+            </div>
+            <div>
+              vs. Ø Monat:{' '}
+              {tip.vsMonthAverage.diff === null ? '—' : fmtDiff1(tip.vsMonthAverage.diff)}
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </td>
+  );
+}
+
+/** Kompakter Balken-Verlauf über die Wochentag-Vorkommen (aktive Kennzahl). */
+function WeekdayTrend({ entries, metric }: {
+  entries: HeatmapDayEntry[];
+  metric: AnalyseMetric;
+}) {
+  const max = Math.max(1, ...entries.map((e) => cellMetricValue(e, metric)));
+  return (
+    <div className="flex items-end gap-1.5 rounded-md border p-2">
+      {entries.map((e) => {
+        const v = cellMetricValue(e, metric);
+        const h = Math.round((v / max) * 100);
+        return (
+          <div key={e.date} className="flex flex-1 flex-col items-center gap-1" title={`${e.date}: ${NUM0.format(v)}`}>
+            <div className="flex h-16 w-full items-end justify-center">
+              <div
+                className="w-full max-w-[28px] rounded-sm bg-primary/70"
+                style={{ height: `${Math.max(4, h)}%` }}
+              />
+            </div>
+            <span className="text-[10px] tabular-nums text-muted-foreground">{e.day}.</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Tages-Liste im Heatmap-Popup (stärkster Tag grün, schwächster rot). */
+function HeatmapDayList({ entries, strongestDate, weakestDate }: {
+  entries: HeatmapDayEntry[];
+  strongestDate: string | null;
+  weakestDate: string | null;
+}) {
+  if (entries.length === 0) {
+    return (
+      <div className="rounded-md border p-3 text-sm text-muted-foreground">
+        Keine Tage mit Reservationen für diesen Wochentag.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <th className="px-2 py-1.5 text-left font-medium">Datum</th>
+            <th className="px-2 py-1.5 text-right font-medium">Res.</th>
+            <th className="px-2 py-1.5 text-right font-medium">Pers.</th>
+            <th className="px-2 py-1.5 text-right font-medium">Ø Pers.</th>
+            <th className="px-2 py-1.5 text-left font-medium">Uhrzeiten</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => {
+            const avg = avgPersonsPerReservation(e.persons, e.reservations);
+            const isStrong = e.date === strongestDate;
+            const isWeak = e.date === weakestDate;
+            return (
+              <tr
+                key={e.date}
+                className={cn(
+                  'border-b last:border-0',
+                  isStrong && 'bg-emerald-50 dark:bg-emerald-950/20',
+                  isWeak && !isStrong && 'bg-red-50 dark:bg-red-950/20',
+                )}
+              >
+                <td className="px-2 py-1 tabular-nums">
+                  {formatDayLabel(e.date)}
+                  {isStrong ? (
+                    <span className="ml-1.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">stärkster</span>
+                  ) : isWeak ? (
+                    <span className="ml-1.5 text-[10px] font-medium text-red-600 dark:text-red-400">schwächster</span>
+                  ) : null}
+                </td>
+                <td className="px-2 py-1 text-right tabular-nums">{NUM0.format(e.reservations)}</td>
+                <td className="px-2 py-1 text-right tabular-nums">{NUM0.format(e.persons)}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
+                  {avg === null ? '—' : NUM1.format(avg)}
+                </td>
+                <td className="px-2 py-1 text-xs text-muted-foreground">
+                  {e.times.length === 0
+                    ? '—'
+                    : e.times.map((t) => `${t.hour}:00 (${NUM0.format(t.reservations)})`).join(' · ')}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** „Fr 03.10." aus „yyyy-MM-dd" (kurzer Wochentag + Tag.Monat). */
+function formatDayLabel(date: string): string {
+  const wd = isoWeekdayOfDate(date);
+  const dd = date.slice(8, 10);
+  const mm = date.slice(5, 7);
+  return `${wd ? `${WEEKDAY_SHORT[wd]} ` : ''}${dd}.${mm}.`;
+}
+
+/** ISO-Wochentag eines „yyyy-MM-dd" (nur für Anzeige-Labels). */
+function isoWeekdayOfDate(date: string): IsoWeekday | null {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(t)) return null;
+  const js = new Date(t).getUTCDay(); // 0=So..6=Sa
+  return (js === 0 ? 7 : js) as IsoWeekday;
 }
 
 /** Karte „stärkste/schwächste Tage" im Monats-Popup. */

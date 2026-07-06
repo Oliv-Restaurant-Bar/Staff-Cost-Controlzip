@@ -1,0 +1,139 @@
+Erweitere die neue Seite "Reservations Analyse" (/gaeste/analyse) um eine interaktive Heatmap "Monat × Wochentag".
+
+Ziel:
+Der Benutzer soll auf einen Blick erkennen können, welche Wochentage in welchen Monaten stark oder schwach sind.
+
+Anforderungen:
+
+• Neuer Tab "Heatmap" innerhalb der Reservations Analyse.
+
+• Die Zeilen zeigen die Monate des ausgewählten Zeitraums.
+
+• Die Spalten zeigen:
+  Montag
+  Dienstag
+  Mittwoch
+  Donnerstag
+  Freitag
+  Samstag
+  Sonntag
+
+• Jede Zelle zeigt:
+  obere Zeile: Reservationen oder Personen (je nach globalem Umschalter)
+  untere Zeile kleiner: Prozentanteil am jeweiligen Monatsvolumen
+
+• Die globale Umschaltung Personen / Reservationen muss vollständig übernommen werden.
+
+• Alle bestehenden Filter gelten ebenfalls:
+  - Jahr
+  - Von/Bis-Monat
+  - Schnellfilter
+  - Statusfilter
+
+Farblogik:
+
+Sehr schwach:
+rot
+
+Schwach:
+orange
+
+Durchschnitt:
+gelb
+
+Gut:
+hellgrün
+
+Sehr gut:
+dunkelgrün
+
+Die Farben sollen relativ zum aktuell gefilterten Zeitraum berechnet werden (nicht über alle Jahre der Datenbank).
+
+Hover:
+
+Beim Überfahren einer Zelle anzeigen:
+
+Monat
+Wochentag
+Reservationen
+Personen
+Anteil am Monat
+Ø Personen pro Reservation
+Vergleich zum Durchschnitt dieses Monats
+
+Klick auf eine Zelle:
+
+Öffnet ein Detail-Popup.
+
+Das Popup zeigt:
+
+• grosse KPI-Karten
+  - Reservationen
+  - Personen
+  - Ø Personen pro Reservation
+  - Anteil am Monat
+  - Anteil am gesamten Zeitraum
+
+• Tagesliste
+
+Jede Zeile:
+
+Datum
+
+Reservationen
+
+Personen
+
+Ø Personen
+
+Uhrzeiten-Verteilung (falls vorhanden)
+
+Stärkster Tag grün markieren.
+
+Schwächster Tag rot markieren.
+
+Zusätzlich:
+
+Oben im Popup eine kleine Trendgrafik über alle Tage des Monats für diesen Wochentag.
+
+Beispiel:
+
+Montag im Januar
+
+02.01
+09.01
+16.01
+23.01
+30.01
+
+Dadurch erkennt man sofort, ob ein einzelner Montag den Wert verzerrt oder ob der Monat konstant stark war.
+
+Wichtig:
+
+Keine bestehende Funktion verändern.
+
+Alle bisherigen Popups müssen unverändert bleiben.
+
+Vorhandene Komponenten wiederverwenden.
+
+Mandantenfilter und Admin-Gating beibehalten.
+
+TypeScript ohne Fehler.
+
+Alle bestehenden Tests müssen weiterhin grün sein.
+
+Neue Tests für:
+- Heatmap-Berechnung
+- Farbklassifizierung
+- Tooltip
+- Popup
+- Zeitraumfilter
+- Personen/Reservationen-Umschalter
+
+Zum Schluss:
+
+- replit.md aktualisieren.
+- Architect Review durchführen.
+- Typecheck.
+- Gesamte Testsuite ausführen.
+- Commit-Message erstellen.
