@@ -387,7 +387,7 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     expect(controls).toHaveLength(7);
   });
 
-  it('Adyen ist ein monatlicher Datei-Upload-Import mit Route zum Abgleich', () => {
+  it('Adyen ist ein monatlicher Datei-Upload-Import mit Route zu den Tagesabschlüssen', () => {
     const def = COCKPIT_SOURCES.find((s) => s.id === 'adyen');
     expect(def).toBeTruthy();
     expect(def!.section).toBe('import');
@@ -396,10 +396,11 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     expect(def!.interval).toBe('monthly');
     expect(def!.detectGaps).toBeUndefined();
     expect(def!.checkable).toBe(true);
-    expect(def!.route).toBe('/umsatzabstimmung');
+    expect(def!.route).toBe('/tagesabschluesse');
+    expect(def!.actionLabel).toBe('Zu den Tagesabschlüssen');
   });
 
-  it('Tagesabschlüsse (Quelle umsatzabstimmung) ist ein monatlicher manueller Datenimport mit Route', () => {
+  it('Umsatzabstimmung (Quelle umsatzabstimmung) ist ein monatlicher manueller Datenimport mit Route', () => {
     const def = COCKPIT_SOURCES.find((s) => s.id === 'umsatzabstimmung');
     expect(def).toBeTruthy();
     expect(def!.section).toBe('import');
@@ -408,8 +409,8 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     expect(def!.interval).toBe('monthly');
     expect(def!.checkable).toBe(true);
     expect(def!.route).toBe('/umsatzabstimmung');
-    expect(def!.label).toBe('Tagesabschlüsse');
-    expect(def!.actionLabel).toBe('Zu den Tagesabschlüssen');
+    expect(def!.label).toBe('Umsatzabstimmung');
+    expect(def!.actionLabel).toBe('Zur Umsatzabstimmung');
     // Manuelle Eingabe: KEIN Dateiformat erfinden → keine Format-Badges (CSV/Excel/PDF).
     expect(def!.exampleFormat).toBeUndefined();
     expect(importFileFormats(def!)).toEqual([]);

@@ -7,7 +7,7 @@
  * Struktur:
  *   Dashboard    (standalone)
  *   Verkauf      → Verkaufsdashboard · Tagesansicht · Kennzahlen Bericht · Forecast Planung
- *   Umsatz       → Tagesabschlüsse · Budget · Erfolgsrechnung · Produkteanalyse
+ *   Umsatz       → Umsatzabstimmung · Tagesabschlüsse · Budget · Erfolgsrechnung · Produkteanalyse
  *   Personal     → Dienstplanung · Personalkosten · Personalstamm · Datenintegrität MA
  *   Warenkosten  → Warenrechnungen · WES Analyse · Produkte
  *   Foratable    → Gäste CRM · Reservationen · CRM Auswertung
@@ -82,7 +82,7 @@ const DASHBOARD_ITEM: NavItem = {
   module: 'dashboard',
 };
 
-const NAV_GROUPS: NavGroup[] = [
+export const NAV_GROUPS: NavGroup[] = [
   {
     groupLabel: 'Verkauf',
     items: [
@@ -125,9 +125,16 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         path: '/umsatzabstimmung',
+        label: 'Umsatzabstimmung',
+        shortLabel: 'Abstimmung',
+        icon: Scale,
+        adminOnly: true,
+      },
+      {
+        path: '/tagesabschluesse',
         label: 'Tagesabschlüsse',
         shortLabel: 'Tagesabschl.',
-        icon: Scale,
+        icon: ClipboardCheck,
         adminOnly: true,
       },
       {

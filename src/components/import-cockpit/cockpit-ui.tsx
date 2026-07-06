@@ -67,7 +67,7 @@ export const COMPLETENESS_NOTE: Partial<Record<CockpitSourceId, string>> = {
   tagesumsatz:
     'Es zählen nur Tage mit echtem Ist-Umsatz (> 0). Zukünftige Tage werden nicht als vollständiger Import gewertet.',
   umsatzabstimmung:
-    'Diese Daten werden manuell in den Tagesabschlüssen geprüft und bestätigt. Ein Monat gilt als erledigt, sobald Bruttoumsatz oder Take-Away manuell erfasst sind.',
+    'Diese Daten werden manuell in der Umsatzabstimmung gepflegt. Ein Monat gilt als erledigt, sobald Bruttoumsatz oder Take-Away manuell erfasst sind.',
 };
 
 // ─── KPI-Kachel ───────────────────────────────────────────────────────────────

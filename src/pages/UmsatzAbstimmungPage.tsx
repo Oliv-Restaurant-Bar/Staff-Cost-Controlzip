@@ -4,8 +4,6 @@ import { LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { UmsatzAbstimmung } from '@/components/UmsatzAbstimmung';
-import { AdyenAbgleichSection } from '@/components/umsatzabstimmung/AdyenAbgleichSection';
-import { TagesabschlussSection } from '@/components/umsatzabstimmung/TagesabschlussSection';
 import type { MonthlyFinancialRecord } from '@/types/reporting';
 import { loadYear, availableYears } from '@/lib/reporting-store';
 import { useTenant } from '@/contexts/TenantContext';
@@ -60,7 +58,7 @@ export default function UmsatzAbstimmungPage() {
               </Button>
             </Link>
             <span className="text-muted-foreground text-xs">/</span>
-            <h1 className="text-sm font-bold">Tagesabschlüsse</h1>
+            <h1 className="text-sm font-bold">Umsatzabstimmung</h1>
           </div>
           <Select value={String(year)} onValueChange={v => handleYearChange(Number(v))}>
             <SelectTrigger className="h-8 w-24 text-xs">
@@ -75,9 +73,6 @@ export default function UmsatzAbstimmungPage() {
         </div>
       </header>
       <main className="max-w-screen-xl mx-auto px-4 py-6">
-        <p className="text-xs text-muted-foreground mb-4">
-          Z-Bericht, Adyen-Abgleich, Barbestand und manuelle Korrekturen pro Tag prüfen und bestätigen.
-        </p>
         <UmsatzAbstimmung
           year={year}
           months={months}
@@ -86,8 +81,6 @@ export default function UmsatzAbstimmungPage() {
           onRefresh={handleRefresh}
           gnRevenueByMonth={gnRevByMonth}
         />
-        <TagesabschlussSection tenantId={tenantId} year={year} />
-        <AdyenAbgleichSection tenantId={tenantId} year={year} />
       </main>
     </div>
   );

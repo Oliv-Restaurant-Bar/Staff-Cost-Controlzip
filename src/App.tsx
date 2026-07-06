@@ -69,6 +69,7 @@ import StaffSchedulePage from "./pages/StaffSchedulePage";
 import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
+import TagesabschluessePage from "./pages/TagesabschluessePage";
 import GastronoviZBerichtPage from "./pages/GastronoviZBerichtPage";
 import ForatableImportPage from "./pages/ForatableImportPage";
 import ForatableReportPage from "./pages/ForatableReportPage";
@@ -252,7 +253,9 @@ const AppContent = () => {
             <Route path="/umsatzabstimmung"
               element={isBeaulieuManager ? <BlockedRoute path="/umsatzabstimmung" /> : <UmsatzAbstimmungPage />}
             />
-            <Route path="/tagesabschluesse" element={<Navigate to="/umsatzabstimmung" replace />} />
+            <Route path="/tagesabschluesse"
+              element={isBeaulieuManager ? <BlockedRoute path="/tagesabschluesse" /> : <TagesabschluessePage />}
+            />
             <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
             <Route path="/foratable-import" element={<ForatableImportPage />} />
             <Route path="/reservationen-import" element={<Navigate to="/foratable-import" replace />} />

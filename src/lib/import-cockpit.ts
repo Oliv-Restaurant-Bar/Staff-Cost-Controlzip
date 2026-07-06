@@ -484,20 +484,20 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
   },
   {
     id: 'umsatzabstimmung',
-    label: 'Tagesabschlüsse',
+    label: 'Umsatzabstimmung',
     module: 'Umsatz / Tagesabschluss',
     category: 'umsatz_gastronovi',
     section: 'import',
     tabCategory: 'umsatz',
     importType: 'manual_entry',
-    uploadLabel: 'Tagesabschlüsse manuell pflegen',
-    sourceHint: 'Manuelle Prüfung und Bestätigung in den Tagesabschlüssen',
+    uploadLabel: 'Umsatzabstimmung manuell pflegen',
+    sourceHint: 'Manuelle Pflege in der monatlichen Umsatzabstimmung',
     interval: 'monthly',
     description:
       'Monatliche manuelle Abstimmung von Bruttoumsatz, Take-Away und Tagesumsätzen. Frische = letzter Monat mit gepflegten Werten.',
-    checklistLabel: 'Tagesabschlüsse durchführen',
+    checklistLabel: 'Umsatzabstimmung durchführen',
     route: '/umsatzabstimmung',
-    actionLabel: 'Zu den Tagesabschlüssen',
+    actionLabel: 'Zur Umsatzabstimmung',
     checkable: true,
   },
   {
@@ -515,8 +515,8 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     description:
       'Adyen Received Payment Details für Tagesabschluss-Abgleich Karten/TWINT. Frische = letzter importierter Adyen-Tag.',
     checklistLabel: 'Adyen-Zahlungen importieren',
-    route: '/umsatzabstimmung',
-    actionLabel: 'Zum Adyen-Abgleich',
+    route: '/tagesabschluesse',
+    actionLabel: 'Zu den Tagesabschlüssen',
     checkable: true,
   },
   {
