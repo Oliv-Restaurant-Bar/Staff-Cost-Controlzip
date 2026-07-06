@@ -26,9 +26,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { kvGet } from './supabase-kv';
 import { fetchLatestImportRuns } from './import-runs-db';
 import { loadGnImports } from './gn-zbericht-db';
+import { getImportHistoryAll, type ImportHistoryEntry } from './timesheet-store';
 import {
   COCKPIT_SOURCES,
   GAP_WINDOW_DAYS,
+  deriveMirusPeriodFromHistory,
+  deriveMirusPeriodEndFromDays,
   type CockpitSignal,
   type CockpitSourceId,
 } from './import-cockpit';
@@ -209,24 +212,32 @@ function applyEmployeeIdTenant<T>(q: T, tenantId: string): T {
 }
 
 /**
- * Mirus Arbeitszeiten: `actual_hours`, Tenant über employee_id-Präfix.
+ * Mirus Arbeitszeiten — PERIODENBASIERT, nicht MAX(date).
  *
- * „Ist-Daten bis" (fachlich korrekt): NUR echte Ist-Arbeitszeiten zählen —
- * `absence_type IS NULL` UND (`hours > 0` ODER `start_time` ODER `end_time`).
- * Damit fallen Ferien/Frei/Feiertag/Krankheit (absence_type gesetzt), leere
- * Monats-/Platzhalterzeilen (keine Stunden, keine Zeiten) und Plan-Schichten
- * ohne Ist-Zeit heraus. Zusätzlich wird die Zukunft (> heute) NIE als
- * vollständig gewertet; ein spätestes Zukunftsdatum wird nur als Hinweis
- * (`futureDataDate`) zurückgegeben. Datenlücken werden über echte Ist-Tage
- * (Fenster) erkannt.
+ * „Ist-Daten bis" ist das Ende der zuletzt erfolgreich importierten Mirus-Periode
+ * aus der Import-Historie (`timesheet_import_history`, Quelle 'mirus'), NICHT das
+ * späteste Einzeldatum in `actual_hours`. Damit setzen einzelne, verirrte
+ * Tageszeilen (z. B. ein Datensatz vom 04.07., obwohl nur bis 30.06. importiert
+ * wurde) den Stand NICHT fälschlich nach vorn.
+ *
+ * `actual_hours` liefert nur noch Drawer-Hinweise: der späteste ECHTE Ist-Tag
+ * (`absence_type IS NULL` UND (`hours > 0` ODER `start_time` ODER `end_time`))
+ * als „letzter gefundener Tagesdatensatz" (`latestRecordDate`) sowie ein
+ * spätestes Zukunftsdatum (`futureDataDate`). Beide fliessen NIE in „Ist-Daten
+ * bis" oder den Status ein.
+ *
+ * Fallback (nur wenn keine Historie): Ende des letzten Monats VOR dem laufenden
+ * Monat, der echte Ist-Tage enthält. STRIKT READ-ONLY — keine Migration/Writes.
  */
 async function mirusSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
   const applyTenant = <T>(q: T): T => applyEmployeeIdTenant(q, ctx.tenantId);
-  const cutoff = gapCutoff();
   const today = todayIso();
+  const firstOfMonth = `${today.slice(0, 7)}-01`;
   const realIst = 'hours.gt.0,start_time.not.is.null,end_time.not.is.null';
-  const [latestRow, windowRows, futureRow] = await Promise.all([
-    // Spätester echter Ist-Tag ≤ heute.
+  const [history, latestRow, futureRow, prevMonthRow] = await Promise.all([
+    // PRIMÄR: erfolgreich importierte Mirus-Perioden (tenant-gefiltert, graceful []).
+    getImportHistoryAll(ctx.tenantId, 60),
+    // Drawer-Hinweis: spätester echter Ist-Tag ≤ heute (kann NACH dem Perioden-Ende liegen).
     applyTenant(
       supabase
         .from('actual_hours')
@@ -237,16 +248,6 @@ async function mirusSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
         .order('date', { ascending: false })
         .limit(1),
     ),
-    // Echte Ist-Tage im Prüffenster (für Datenlücken), ebenfalls ≤ heute.
-    applyTenant(
-      supabase
-        .from('actual_hours')
-        .select('date')
-        .is('absence_type', null)
-        .or(realIst)
-        .gte('date', cutoff)
-        .lte('date', today),
-    ),
     // Reiner Zukunftshinweis: irgendeine Zeile > heute (Plan/Ferien/Zukunft).
     applyTenant(
       supabase
@@ -256,19 +257,69 @@ async function mirusSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
         .order('date', { ascending: false })
         .limit(1),
     ),
+    // FALLBACK: spätester echter Ist-Tag VOR dem laufenden Monat (nur ohne Historie).
+    applyTenant(
+      supabase
+        .from('actual_hours')
+        .select('date')
+        .is('absence_type', null)
+        .or(realIst)
+        .lt('date', firstOfMonth)
+        .order('date', { ascending: false })
+        .limit(1),
+    ),
   ]);
-  const latest = (latestRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
+
+  const latestRecord = (latestRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
   const futureLatest = (futureRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
-  if (!latest) return futureLatest ? { latestDataDate: null, futureDataDate: futureLatest } : EMPTY;
-  const covered = Array.from(
-    new Set(((windowRows.data as Array<{ date?: string }>) ?? []).map((r) => r.date).filter((d): d is string => !!d)),
+
+  // 1) Primär: Periode aus der Mirus-Import-Historie.
+  const period = deriveMirusPeriodFromHistory(
+    (history as ImportHistoryEntry[]).map((h) => ({
+      year: h.year,
+      month: h.month,
+      source: h.source,
+      fileName: h.file_name,
+      importedAt: h.created_at,
+      importedCount: h.imported_count,
+    })),
   );
-  return {
-    latestDataDate: latest,
-    dataUntil: latest,
-    coveredDates: covered,
-    futureDataDate: futureLatest,
-  };
+  if (period) {
+    // Teil-Import des LAUFENDEN Monats: `periodTo` (Monatsende) läge in der Zukunft.
+    // „Ist-Daten bis" darf nie ein Zukunftsdatum sein → auf heute kappen und als
+    // Zukunftshinweis ausweisen. (`computeSourceStatus` kappt nur bei detectGaps.)
+    const cappedEnd = period.periodTo > today ? today : period.periodTo;
+    const futureHint = period.periodTo > today ? period.periodTo : futureLatest;
+    return {
+      latestDataDate: cappedEnd,
+      dataFrom: period.periodFrom,
+      dataUntil: cappedEnd,
+      lastImport: { at: period.importedAt, status: 'success' },
+      fileName: period.fileName,
+      latestRecordDate: latestRecord,
+      futureDataDate: futureHint,
+    };
+  }
+
+  // 2) Fallback: Perioden-Ende aus echten Ist-Tagen vor dem laufenden Monat.
+  const prevMonthDay = (prevMonthRow.data?.[0] as { date?: string } | undefined)?.date ?? null;
+  const fallbackEnd = prevMonthDay ? deriveMirusPeriodEndFromDays([prevMonthDay], today) : null;
+  if (fallbackEnd) {
+    return {
+      latestDataDate: fallbackEnd,
+      dataFrom: `${fallbackEnd.slice(0, 7)}-01`,
+      dataUntil: fallbackEnd,
+      latestRecordDate: latestRecord,
+      futureDataDate: futureLatest,
+    };
+  }
+
+  // 3) Keine vollständig importierte Periode ableitbar → kein Datum (never);
+  //    Drawer-Hinweise (letzter gefundener Tag / Zukunft) bleiben erhalten.
+  if (latestRecord || futureLatest) {
+    return { latestDataDate: null, latestRecordDate: latestRecord, futureDataDate: futureLatest };
+  }
+  return EMPTY;
 }
 
 /** Dienstplanung: `schedule_entries`, Tenant über employee_id-Präfix. „Daten bis" = weiteste geplante Zukunft. */

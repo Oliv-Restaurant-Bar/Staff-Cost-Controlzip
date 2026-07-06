@@ -140,7 +140,7 @@ function dataUntilOf(signal: CockpitSignal): string | null {
  */
 const COMPLETENESS_NOTE: Partial<Record<CockpitSourceId, string>> = {
   mirus:
-    'Für Mirus zählen nur echte Ist-Arbeitszeiten mit Arbeitsdauer oder Start-/Endzeit. Ferien, freie Tage, Plan-Schichten und Zukunftszeilen werden nicht als vollständiger Import gewertet.',
+    '„Ist-Daten bis" ist das Ende der zuletzt erfolgreich importierten Mirus-Periode aus der Import-Historie — nicht das späteste einzelne Tagesdatum. Einzelne, spätere Tageszeilen (z. B. nach dem Monatsende) gelten NICHT als vollständig importierte Periode.',
   tagesumsatz:
     'Es zählen nur Tage mit echtem Ist-Umsatz (> 0). Zukünftige Tage werden nicht als vollständiger Import gewertet.',
 };
@@ -663,11 +663,21 @@ export default function ImportCockpitPage() {
                     )}
                     <DetailRow label="Empfohlener Rhythmus" value={INTERVAL_LABEL[selectedRow.def.interval]} />
                     <DetailRow label="Letzter Import" value={formatDateTime(selectedRow.signal.lastImport?.at)} />
+                    {selectedRow.signal.fileName && (
+                      <DetailRow label="Datei" value={selectedRow.signal.fileName} />
+                    )}
                     <DetailRow
                       label="Daten von"
                       value={formatCockpitDate(selectedRow.signal.dataFrom)}
                     />
                     <DetailRow label="Ist-Daten bis" value={formatCockpitDate(dataUntilOf(selectedRow.signal))} />
+                    {selectedRow.signal.latestRecordDate &&
+                      selectedRow.signal.latestRecordDate !== dataUntilOf(selectedRow.signal) && (
+                        <DetailRow
+                          label="Letzter gefundener Tagesdatensatz"
+                          value={formatCockpitDate(selectedRow.signal.latestRecordDate)}
+                        />
+                      )}
                     {selectedRow.def.detectGaps && (
                       <DetailRow
                         label="Vollständig importiert bis"
@@ -714,6 +724,20 @@ export default function ImportCockpitPage() {
                       </span>
                     </p>
                   )}
+
+                  {selectedRow.signal.latestRecordDate &&
+                    dataUntilOf(selectedRow.signal) &&
+                    selectedRow.signal.latestRecordDate > dataUntilOf(selectedRow.signal)! && (
+                      <p className="flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                        <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Es wurden spätere Tagesdatensätze bis{' '}
+                          {formatCockpitDate(selectedRow.signal.latestRecordDate)} gefunden, die über das Ende der
+                          zuletzt importierten Periode ({formatCockpitDate(dataUntilOf(selectedRow.signal))})
+                          hinausgehen — diese gelten NICHT als vollständig importierte Periode.
+                        </span>
+                      </p>
+                    )}
 
                   {COMPLETENESS_NOTE[selectedRow.def.id] && (
                     <p className="flex items-start gap-1.5 text-xs text-muted-foreground">

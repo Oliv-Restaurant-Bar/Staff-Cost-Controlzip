@@ -2,6 +2,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeSourceStatus,
+  deriveMirusPeriodFromHistory,
+  deriveMirusPeriodEndFromDays,
   findMissingDays,
   lastGaplessDay,
   summarizeCockpit,
@@ -246,6 +248,128 @@ describe('computeSourceStatus — Zukunft & Vollständigkeit (Mirus-Fix)', () =>
     const r = computeSourceStatus(dailyGap(), sig({ latestDataDate: null, futureDataDate: '2026-12-24' }), NOW);
     expect(r.status).toBe('never');
     expect(r.ignoredFutureDate).toBe('2026-12-24');
+  });
+});
+
+describe('deriveMirusPeriodFromHistory (Perioden-Ableitung aus Import-Historie)', () => {
+  it('nimmt den am weitesten fortgeschrittenen importierten Monat → Perioden-Ende = Monatsende', () => {
+    const p = deriveMirusPeriodFromHistory([
+      { year: 2026, month: 5, fileName: 'mai.xls', importedAt: '2026-06-02T09:00:00Z', importedCount: 30 },
+      { year: 2026, month: 6, fileName: 'juni.xls', importedAt: '2026-07-02T09:00:00Z', importedCount: 42 },
+    ]);
+    expect(p).not.toBeNull();
+    expect(p!.periodFrom).toBe('2026-06-01');
+    expect(p!.periodTo).toBe('2026-06-30');
+    expect(p!.fileName).toBe('juni.xls');
+    expect(p!.importedAt).toBe('2026-07-02T09:00:00Z');
+  });
+
+  it('ignoriert Nicht-Mirus-Quellen und leere Läufe (importedCount 0)', () => {
+    const p = deriveMirusPeriodFromHistory([
+      { year: 2026, month: 7, source: 'reservationen', importedAt: '2026-07-05T09:00:00Z', importedCount: 99 },
+      { year: 2026, month: 7, source: 'mirus', importedAt: '2026-07-05T10:00:00Z', importedCount: 0 },
+      { year: 2026, month: 6, source: 'mirus', importedAt: '2026-07-02T09:00:00Z', importedCount: 42 },
+    ]);
+    expect(p!.periodTo).toBe('2026-06-30'); // Juli-Läufe zählen nicht (fremd bzw. leer)
+  });
+
+  it('behandelt importedCount null als verwertbar (ältere Zeilen)', () => {
+    const p = deriveMirusPeriodFromHistory([
+      { year: 2026, month: 6, importedAt: '2026-07-02T09:00:00Z', importedCount: null },
+    ]);
+    expect(p!.periodTo).toBe('2026-06-30');
+  });
+
+  it('bei gleichem Monat gewinnt der jüngste Import (Tie-Break)', () => {
+    const p = deriveMirusPeriodFromHistory([
+      { year: 2026, month: 6, fileName: 'alt.xls', importedAt: '2026-07-02T09:00:00Z', importedCount: 40 },
+      { year: 2026, month: 6, fileName: 'korrektur.xls', importedAt: '2026-07-04T09:00:00Z', importedCount: 42 },
+    ]);
+    expect(p!.fileName).toBe('korrektur.xls');
+  });
+
+  it('leere/ausschliesslich unverwertbare Historie → null', () => {
+    expect(deriveMirusPeriodFromHistory([])).toBeNull();
+    expect(
+      deriveMirusPeriodFromHistory([{ year: 2026, month: 6, source: 'mirus', importedCount: 0 }]),
+    ).toBeNull();
+  });
+
+  it('Teil-Import des laufenden Monats → periodTo ist das (künftige) Monatsende; Kappen ist Aufgabe des Aggregators', () => {
+    const p = deriveMirusPeriodFromHistory([
+      { year: 2026, month: 7, source: 'mirus', importedAt: '2026-07-05T09:00:00Z', importedCount: 20 },
+    ]);
+    expect(p!.periodFrom).toBe('2026-07-01');
+    expect(p!.periodTo).toBe('2026-07-31'); // roh = Monatsende; mirusSignal kappt auf heute
+  });
+});
+
+describe('deriveMirusPeriodEndFromDays (Fallback ohne Historie)', () => {
+  it('nimmt das Monatsende des letzten Monats VOR dem laufenden Monat — verirrte Tage im Juli zählen nicht', () => {
+    const end = deriveMirusPeriodEndFromDays(
+      ['2026-06-28', '2026-06-29', '2026-06-30', '2026-07-04'],
+      '2026-07-06',
+    );
+    expect(end).toBe('2026-06-30'); // 04.07 (laufender Monat) wird ausgeschlossen
+  });
+
+  it('nur Tage im laufenden Monat → null (keine vollständige Periode)', () => {
+    expect(deriveMirusPeriodEndFromDays(['2026-07-01', '2026-07-04'], '2026-07-06')).toBeNull();
+  });
+
+  it('leere Liste → null', () => {
+    expect(deriveMirusPeriodEndFromDays([], '2026-07-06')).toBeNull();
+  });
+});
+
+describe('computeSourceStatus — Mirus periodenbasiert (detectGaps=false)', () => {
+  const mirus = () => def({ interval: 'daily', checkable: true, detectGaps: false });
+
+  it('zeigt das Perioden-Ende (30.06), NICHT den verirrten Tagesdatensatz (04.07)', () => {
+    const r = computeSourceStatus(
+      mirus(),
+      sig({
+        latestDataDate: '2026-06-30',
+        dataUntil: '2026-06-30',
+        dataFrom: '2026-06-01',
+        latestRecordDate: '2026-07-04',
+        lastImport: { at: '2026-07-02T09:00:00Z', status: 'success' },
+      }),
+      NOW,
+    );
+    expect(r.latestDataDate).toBe('2026-06-30'); // niemals 04.07
+    expect(r.status).toBe('overdue'); // 6 Tage hinter (täglich) → niemals „aktuell"
+    expect(r.status).not.toBe('current');
+  });
+
+  it('ohne ableitbare Periode (kein Datum) → never', () => {
+    const r = computeSourceStatus(mirus(), sig({ latestDataDate: null, latestRecordDate: '2026-07-04' }), NOW);
+    expect(r.status).toBe('never');
+  });
+
+  it('Teil-Import laufender Monat (vom Aggregator auf heute gekappt) → nie Zukunftsdatum', () => {
+    // mirusSignal kappt periodTo=31.07 auf heute und meldet 31.07 als Zukunftshinweis.
+    const r = computeSourceStatus(
+      mirus(),
+      sig({
+        latestDataDate: '2026-07-06',
+        dataUntil: '2026-07-06',
+        dataFrom: '2026-07-01',
+        futureDataDate: '2026-07-31',
+      }),
+      NOW,
+    );
+    expect(r.latestDataDate).toBe('2026-07-06'); // niemals 31.07
+    expect(r.status).toBe('current');
+  });
+});
+
+describe('COCKPIT_SOURCES — Mirus ist periodenbasiert', () => {
+  it('Mirus-Quelle hat detectGaps deaktiviert (keine Tages-Lückenprüfung)', () => {
+    const mirusDef = COCKPIT_SOURCES.find((s) => s.id === 'mirus');
+    expect(mirusDef).toBeDefined();
+    expect(mirusDef!.detectGaps).toBe(false);
+    expect(mirusDef!.checkable).toBe(true);
   });
 });
 

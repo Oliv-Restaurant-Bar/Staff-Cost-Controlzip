@@ -153,6 +153,17 @@ export interface CockpitSignal {
    * bis" oder den Status ein (Zukunft zählt nie als vollständig importiert).
    */
   futureDataDate?: string | null;
+  /** Dateiname des zugrunde liegenden Imports (falls aus der Historie bekannt). */
+  fileName?: string | null;
+  /**
+   * Spätester ECHTER Ist-Tagesdatensatz (≤ heute), UNABHÄNGIG von der
+   * importierten Periode. Reiner Drawer-Hinweis („Letzter gefundener
+   * Tagesdatensatz"): Für periodenbasierte Quellen wie Mirus zählt NICHT dieser
+   * MAX-Tag, sondern die importierte Periode (`latestDataDate`/`dataUntil` =
+   * Perioden-Ende). Weicht dieser Tag vom Perioden-Ende ab, deutet das auf
+   * spätere Einzel-Tageszeilen hin, die NICHT als vollständige Periode gelten.
+   */
+  latestRecordDate?: string | null;
 }
 
 /** Ergebnis der Statusberechnung einer Quelle. */
@@ -318,12 +329,13 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     sourceHint: 'Export aus Mirus → Arbeitszeitblatt',
     exampleFormat: 'arbeitszeiten.xls / .xlsx',
     interval: 'daily',
-    description: 'Ist-Arbeitszeiten aus Mirus/CSV. Frische = spätester Arbeitszeit-Tag; fehlende Tage werden erkannt.',
+    description:
+      'Ist-Arbeitszeiten aus Mirus. Frische = Ende der zuletzt erfolgreich importierten Periode (Monat) aus der Import-Historie — nicht einzelne, verirrte Tageszeilen.',
     checklistLabel: 'Arbeitszeiten Mirus importieren',
     route: '/import',
     actionLabel: 'Zur Arbeitszeit-Importseite',
     checkable: true,
-    detectGaps: true,
+    detectGaps: false,
   },
   // ── Wöchentlich ──
   {
@@ -536,6 +548,98 @@ function computeNextDue(interval: ImportInterval, normalized: Date): string {
       break;
   }
   return format(next, 'yyyy-MM-dd');
+}
+
+// ─── Mirus-Periode (Arbeitszeiten) ────────────────────────────────────────────
+
+/**
+ * Ein Eintrag der Mirus-Import-Historie (Ausschnitt aus `timesheet_import_history`).
+ * Rein für die Perioden-Ableitung — keine PII, keine DB-Kopplung.
+ */
+export interface MirusHistoryEntry {
+  year: number;
+  month: number; // 1–12
+  source?: string | null; // 'mirus' (Default beim Import)
+  fileName?: string | null;
+  importedAt?: string | null; // created_at (ISO)
+  importedCount?: number | null;
+}
+
+/** Abgeleitete Mirus-Periode für die Cockpit-Anzeige. */
+export interface MirusPeriod {
+  periodFrom: string; // yyyy-MM-01
+  periodTo: string; // yyyy-MM-<letzterTag>
+  importedAt: string | null;
+  fileName: string | null;
+}
+
+/** Erster/letzter Tag eines Monats als ISO (yyyy-MM-dd). */
+function monthBounds(year: number, month: number): { from: string; to: string } {
+  const first = new Date(year, month - 1, 1);
+  return { from: format(first, 'yyyy-MM-dd'), to: format(endOfMonth(first), 'yyyy-MM-dd') };
+}
+
+/**
+ * PRIMÄRE Quelle: leitet aus der Mirus-Import-Historie die zuletzt vollständig
+ * importierte Periode ab. „Ist-Daten bis" = LETZTER TAG des am weitesten
+ * fortgeschrittenen importierten Monats (bewusst NICHT MAX(date) über einzelne
+ * Tageszeilen!).
+ *
+ * Auswahl: höchstes (Jahr, Monat) unter den verwertbaren Läufen
+ * (`importedCount` null oder > 0); bei gleichem Monat gewinnt der jüngste
+ * `importedAt`. Damit „gewinnt" die am weitesten reichende Periode — robust
+ * gegen eine spätere Korrektur-Re-Import eines früheren Monats.
+ *
+ * Reine Funktion — keine DB-/DOM-Kopplung. Gibt null zurück, wenn keine
+ * verwertbare Historie vorliegt.
+ */
+export function deriveMirusPeriodFromHistory(entries: readonly MirusHistoryEntry[]): MirusPeriod | null {
+  const usable = entries.filter(
+    (e) =>
+      (e.source == null || e.source === 'mirus') &&
+      Number.isFinite(e.year) &&
+      Number.isFinite(e.month) &&
+      e.month >= 1 &&
+      e.month <= 12 &&
+      (e.importedCount == null || e.importedCount > 0),
+  );
+  if (usable.length === 0) return null;
+
+  const best = usable.reduce((a, b) => {
+    const aKey = a.year * 12 + a.month;
+    const bKey = b.year * 12 + b.month;
+    if (bKey > aKey) return b;
+    if (bKey < aKey) return a;
+    // gleicher Monat → jüngerer Import gewinnt
+    return (b.importedAt ?? '') > (a.importedAt ?? '') ? b : a;
+  });
+
+  const { from, to } = monthBounds(best.year, best.month);
+  return {
+    periodFrom: from,
+    periodTo: to,
+    importedAt: best.importedAt ?? null,
+    fileName: best.fileName ?? null,
+  };
+}
+
+/**
+ * FALLBACK (nur wenn keine Import-Historie vorliegt): leitet das Perioden-Ende
+ * aus vorhandenen ECHTEN Ist-Tagen ab — bewusst NICHT über MAX(date), sondern
+ * über den letzten Tag des zuletzt verfügbaren Monats, der VOR dem laufenden
+ * Monat liegt. Einzelne Tage im laufenden Monat (typische „verirrte" Zukunfts-/
+ * Teilzeilen) zählen dadurch NICHT als vollständig importierte Periode.
+ *
+ * Reine Funktion. `today` = yyyy-MM-dd. Gibt null zurück, wenn es keinen
+ * Ist-Tag in einem Monat vor dem laufenden Monat gibt.
+ */
+export function deriveMirusPeriodEndFromDays(days: readonly string[], today: string): string | null {
+  const currentMonth = today.slice(0, 7); // yyyy-MM
+  const monthsBefore = days.filter((d) => RE_DAY.test(d) && d.slice(0, 7) < currentMonth).map((d) => d.slice(0, 7));
+  if (monthsBefore.length === 0) return null;
+  const latestMonth = monthsBefore.reduce((a, b) => (b > a ? b : a));
+  const [y, m] = latestMonth.split('-').map(Number);
+  return monthBounds(y, m).to;
 }
 
 /**

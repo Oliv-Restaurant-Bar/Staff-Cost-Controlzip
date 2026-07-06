@@ -1,0 +1,186 @@
+Korrigiere die Mirus-Arbeitszeiten-Logik im Import-Cockpit erneut.
+
+Problem:
+Das Cockpit zeigt aktuell bei "Mirus Arbeitszeiten" als "Ist-Daten bis" den 04.07.2026. Das ist falsch. Der zuletzt hochgeladene Mirus-Export "Tägliche Stunden.xls" enthält die Daten bis 30.06.2026. Deshalb muss im Cockpit 30.06.2026 angezeigt werden.
+
+Ziel:
+Für Mirus Arbeitszeiten soll "Ist-Daten bis" nicht aus zufälligen einzelnen Tageszeilen, Zukunftszeilen oder später vorhandenen Detaildatensätzen berechnet werden, sondern aus der tatsächlich hochgeladenen Mirus-Importperiode.
+
+──────────────────────────────
+1. Mirus "Ist-Daten bis" neu definieren
+──────────────────────────────
+
+Für die Datenquelle "Mirus Arbeitszeiten" gilt:
+
+"Ist-Daten bis" = Enddatum der zuletzt erfolgreich hochgeladenen Mirus-Datei bzw. der zuletzt erfolgreich importierten Mirus-Periode.
+
+Beispiel:
+
+Datei:
+Tägliche Stunden.xls
+
+Importperiode:
+01.06.2026 bis 30.06.2026
+
+Dann muss angezeigt werden:
+
+Ist-Daten bis: 30.06.2026
+
+Nicht:
+04.07.2026
+24.12.2026
+31.12.2026
+oder ein anderes Datum aus einzelnen Zeilen.
+
+──────────────────────────────
+2. Priorität der Datenquellen
+──────────────────────────────
+
+Für Mirus im Import-Cockpit diese Reihenfolge verwenden:
+
+1. Falls eine Import-Historie / import_runs für Mirus vorhanden ist:
+   - latest successful Mirus import
+   - period_from
+   - period_to
+   - imported_at
+   - file_name, falls vorhanden
+
+   Dann:
+   "Letzter Import" = imported_at
+   "Ist-Daten bis" = period_to
+
+2. Falls keine Import-Historie vorhanden ist:
+   Aus vorhandenen Mirus-Daten die Importperiode ableiten, aber NICHT einfach MAX(datum).
+
+   Ableitung bevorzugt:
+   - Monat/Jahr aus dem Mirus-Export
+   - Importmonat
+   - zusammenhängender Monatsbereich
+   - letzter Tag des importierten Monats
+
+3. Nur wenn das alles nicht möglich ist:
+   Status "Nicht prüfbar" anzeigen mit Erklärung.
+
+──────────────────────────────
+3. MAX-Datum nicht mehr für Mirus verwenden
+──────────────────────────────
+
+Für Mirus Arbeitszeiten darf NICHT mehr gelten:
+
+MAX(date)
+MAX(work_date)
+MAX(day)
+letzter einzelner Datensatz
+
+Diese Werte dürfen höchstens im Detail-Drawer als technische Zusatzinformation erscheinen:
+
+"Letzter gefundener Tagesdatensatz"
+
+Aber die Hauptspalte "Ist-Daten bis" muss aus der Importperiode kommen.
+
+──────────────────────────────
+4. Detail-Drawer für Mirus erweitern
+──────────────────────────────
+
+Im Detail-Drawer für Mirus anzeigen:
+
+- Letzter Import
+- Importierte Periode von/bis
+- Datei, falls bekannt
+- Ist-Daten bis
+- Letzter gefundener Tagesdatensatz, falls abweichend
+- Hinweis:
+
+"Für Mirus wird die Vollständigkeit anhand der zuletzt erfolgreich importierten Mirus-Datei bzw. Importperiode bewertet. Einzelne spätere Tageszeilen werden nicht als vollständig importierte Periode gewertet."
+
+Wenn einzelne Tagesdaten nach dem Importperioden-Ende gefunden werden:
+
+Hinweis anzeigen:
+
+"Es wurden spätere Tagesdatensätze gefunden. Diese werden nicht als vollständiger Mirus-Import gewertet."
+
+──────────────────────────────
+5. Statuslogik für Mirus
+──────────────────────────────
+
+Status für Mirus basiert auf period_to der letzten erfolgreichen Importperiode.
+
+Beispiel heute 06.07.2026:
+
+Letzte Mirus-Periode bis 30.06.2026
+
+Dann:
+Ist-Daten bis: 30.06.2026
+
+Status je nach Fälligkeitsregel:
+- bald fällig oder überfällig, wenn Juli-Arbeitszeiten erwartet werden
+- aber niemals "aktuell" wegen einzelner Daten nach dem 30.06.
+
+──────────────────────────────
+6. Test mit Beispiel "Tägliche Stunden.xls"
+──────────────────────────────
+
+Nutze den aktuellen Fall als Testfall:
+
+Letzter erfolgreicher Mirus-Import:
+Datei: Tägliche Stunden.xls
+Periode: 01.06.2026 bis 30.06.2026
+
+Zusätzliche einzelne Datensätze:
+04.07.2026 oder spätere Tage
+
+Erwartung:
+Ist-Daten bis = 30.06.2026
+
+Nicht 04.07.2026.
+
+──────────────────────────────
+7. Tests ergänzen
+──────────────────────────────
+
+Neue Tests im Import-Cockpit:
+
+- Mirus nutzt period_to aus letzter erfolgreicher Import-Historie
+- Mirus ignoriert spätere einzelne Tagesdatensätze für "Ist-Daten bis"
+- Mirus zeigt 30.06.2026 statt 04.07.2026
+- Mirus Detail-Drawer zeigt Importperiode und abweichenden letzten Tagesdatensatz
+- Mirus Status basiert auf period_to
+- Wenn keine period_to vorhanden ist, wird "Nicht prüfbar" statt falschem Max-Datum angezeigt
+
+Bestehende Tests nicht entfernen.
+
+──────────────────────────────
+8. Technische Regeln
+──────────────────────────────
+
+Keine DB-Migrationen.
+Keine SQL-Dateien ändern.
+Keine Mirus-Importlogik ändern.
+Keine bestehenden Importprozesse umbauen.
+Keine CRM-, Dienstplan- oder Personalbedarf-Logik ändern.
+
+Nur ändern:
+
+- Import-Cockpit Utility-Logik
+- Import-Cockpit Anzeige
+- Detail-Drawer
+- Tests
+- replit.md
+
+──────────────────────────────
+9. Qualitätssicherung
+──────────────────────────────
+
+Danach ausführen:
+
+- TypeScript Check
+- Import-Cockpit Tests
+- App Runtime Check
+- Architect Review
+
+Zum Schluss:
+Commit-Message erstellen.
+replit.md aktualisieren.
+
+Wichtig:
+Das Cockpit soll bei Mirus nicht raten, sondern die letzte erfolgreich importierte Mirus-Periode anzeigen.
