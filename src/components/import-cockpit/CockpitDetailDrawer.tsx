@@ -24,6 +24,7 @@ import {
   type CockpitRow,
 } from '@/lib/import-cockpit';
 import { computeControlStatus, TAB_CATEGORY_LABEL } from '@/lib/import-cockpit-tabs';
+import { isCompletionActive, type ManualCompletion } from '@/lib/import-cockpit-checks';
 import {
   StatusBadge,
   ControlStatusBadge,
@@ -38,10 +39,13 @@ interface Props {
   row: CockpitRow | null;
   today: string;
   onClose: () => void;
+  /** Aktive manuelle Erledigung dieser Zeile (nur Kontrollen). */
+  completion?: ManualCompletion | null;
 }
 
-export function CockpitDetailDrawer({ row, today, onClose }: Props) {
+export function CockpitDetailDrawer({ row, today, onClose, completion }: Props) {
   const isControl = row?.def.section === 'control';
+  const manuallyDone = isControl && isCompletionActive(completion, today);
 
   return (
     <Sheet open={!!row} onOpenChange={(open) => !open && onClose()}>
@@ -60,7 +64,7 @@ export function CockpitDetailDrawer({ row, today, onClose }: Props) {
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Status</span>
                 {isControl ? (
-                  <ControlStatusBadge status={computeControlStatus(row.def, row.result, today)} />
+                  <ControlStatusBadge status={manuallyDone ? 'done' : computeControlStatus(row.def, row.result, today)} />
                 ) : (
                   <StatusBadge status={row.result.status} />
                 )}
@@ -117,9 +121,18 @@ export function CockpitDetailDrawer({ row, today, onClose }: Props) {
                   <>
                     {row.def.responsible && <DetailRow label="Verantwortlich" value={row.def.responsible} />}
                     <DetailRow label="Rhythmus" value={INTERVAL_LABEL[row.def.interval]} />
+                    {manuallyDone && completion && (
+                      <DetailRow label="Zuletzt erledigt (manuell)" value={formatCockpitDate(completion.completedAt)} />
+                    )}
                     <DetailRow
                       label="Nächste Fälligkeit"
-                      value={row.result.nextDue ? formatCockpitDate(row.result.nextDue) : '—'}
+                      value={
+                        manuallyDone && completion
+                          ? formatCockpitDate(completion.nextDue)
+                          : row.result.nextDue
+                            ? formatCockpitDate(row.result.nextDue)
+                            : '—'
+                      }
                     />
                   </>
                 ) : (

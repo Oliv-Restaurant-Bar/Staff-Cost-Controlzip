@@ -3,17 +3,44 @@
  * ==================================================
  * Zeigt alle wiederkehrenden organisatorischen Kontrollen (section === 'control')
  * mit abgeleitetem Kontroll-Status, KPI-Kacheln, Filtern und einer nach Bereich
- * gruppierten Tabelle. Read-only: Klick öffnet den Detail-Drawer.
+ * gruppierten Tabelle. Klick auf eine Zeile öffnet den Detail-Drawer.
+ *
+ * NEU: Kontrollen können MANUELL als „erledigt" markiert werden (Mehrfachauswahl
+ * per Checkbox + Sammelaktion mit Bestätigung). Das setzt die letzte Durchführung
+ * auf heute und berechnet die nächste Fälligkeit aus dem Rhythmus neu. Echte
+ * Datenimporte sind hiervon NICHT betroffen (eigener Tab, kein manuelles Erledigen).
  */
 
 import { Fragment, useCallback, useMemo, useState } from 'react';
-import { Search, CheckCircle2, CalendarClock, Clock, AlertTriangle, HelpCircle, ArrowRight } from 'lucide-react';
+import {
+  Search,
+  CheckCircle2,
+  CalendarClock,
+  Clock,
+  AlertTriangle,
+  HelpCircle,
+  ArrowRight,
+  CheckCheck,
+} from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { cn } from '@/lib/utils';
 import {
   formatCockpitDate,
   INTERVAL_LABEL,
@@ -53,10 +80,14 @@ const CATEGORY_FILTER_OPTIONS: Array<{ value: 'all' | CockpitTabCategory; label:
 interface Props {
   controlRows: ControlRow[];
   onSelect: (id: CockpitSourceId) => void;
+  /** Markiert die übergebenen Kontrollen als erledigt (Persistenz + Toast in der Page). */
+  onMarkDone: (ids: CockpitSourceId[]) => void;
 }
 
-export function ControlsTab({ controlRows, onSelect }: Props) {
+export function ControlsTab({ controlRows, onSelect, onMarkDone }: Props) {
   const [filters, setFilters] = useState<ControlTabFilterState>(EMPTY_CONTROL_TAB_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<CockpitSourceId>>(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const patchFilter = useCallback(
     <K extends keyof ControlTabFilterState>(key: K, value: ControlTabFilterState[K]) =>
@@ -84,6 +115,44 @@ export function ControlsTab({ controlRows, onSelect }: Props) {
       (g) => g.rows.length > 0,
     );
   }, [filteredRows]);
+
+  // ─── Auswahl (Mehrfach) ─────────────────────────────────────────────────────
+  const visibleIds = useMemo(() => filteredRows.map((r) => r.def.id), [filteredRows]);
+  const selectedCount = selectedIds.size;
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const someVisibleSelected = visibleIds.some((id) => selectedIds.has(id));
+
+  const toggleRow = useCallback((id: CockpitSourceId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const setGroupSelection = useCallback((ids: CockpitSourceId[], selected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAllVisible = useCallback(() => {
+    setGroupSelection(visibleIds, !allVisibleSelected);
+  }, [setGroupSelection, visibleIds, allVisibleSelected]);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const confirmMarkDone = useCallback(() => {
+    onMarkDone([...selectedIds]);
+    clearSelection();
+    setConfirmOpen(false);
+  }, [onMarkDone, selectedIds, clearSelection]);
 
   return (
     <div className="space-y-4">
@@ -161,12 +230,61 @@ export function ControlsTab({ controlRows, onSelect }: Props) {
         )}
       </div>
 
+      {/* Sammelaktion: Auswahl als erledigt markieren */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+        <span className="text-sm text-muted-foreground">
+          {selectedCount > 0 ? (
+            <span className="font-medium text-foreground">{selectedCount} ausgewählt</span>
+          ) : (
+            'Kontrollen auswählen, um sie als erledigt zu markieren'
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          {selectedCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={clearSelection}>
+              Auswahl aufheben
+            </Button>
+          )}
+          <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" disabled={selectedCount === 0}>
+                <CheckCheck className="mr-1.5 h-4 w-4" />
+                Als erledigt markieren
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Kontrollen als erledigt markieren?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {selectedCount === 1
+                    ? 'Die ausgewählte Kontrolle wird als heute erledigt markiert.'
+                    : `${selectedCount} Kontrollen werden als heute erledigt markiert.`}{' '}
+                  Die letzte Durchführung wird auf heute gesetzt und die nächste Fälligkeit anhand des Rhythmus neu berechnet.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                <AlertDialogAction onClick={confirmMarkDone}>Als erledigt markieren</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
+
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
+                      onCheckedChange={toggleAllVisible}
+                      aria-label="Alle sichtbaren Kontrollen auswählen"
+                      disabled={visibleIds.length === 0}
+                    />
+                  </TableHead>
                   <TableHead>Kontrolle</TableHead>
                   <TableHead className="hidden lg:table-cell">Was ist zu tun?</TableHead>
                   <TableHead className="hidden md:table-cell">Verantwortlich</TableHead>
@@ -179,46 +297,81 @@ export function ControlsTab({ controlRows, onSelect }: Props) {
               <TableBody>
                 {groupedRows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={8} className="py-10 text-center text-sm text-muted-foreground">
                       Keine Kontrollen für diesen Filter.
                     </TableCell>
                   </TableRow>
                 )}
-                {groupedRows.map((group) => (
-                  <Fragment key={group.category}>
-                    <TableRow className="bg-muted/50 hover:bg-muted/50">
-                      <TableCell colSpan={7} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        {TAB_CATEGORY_LABEL[group.category]}
-                        <span className="ml-2 font-normal normal-case">({group.rows.length})</span>
-                      </TableCell>
-                    </TableRow>
-                    {group.rows.map((row) => (
-                      <TableRow key={row.def.id} className="cursor-pointer" onClick={() => onSelect(row.def.id)}>
-                        <TableCell className="font-medium">{row.def.label}</TableCell>
-                        <TableCell className="hidden max-w-[18rem] text-muted-foreground lg:table-cell">
-                          <span className="line-clamp-2">{row.def.uploadLabel}</span>
+                {groupedRows.map((group) => {
+                  const groupIds = group.rows.map((r) => r.def.id);
+                  const groupAllSelected = groupIds.every((id) => selectedIds.has(id));
+                  const groupSomeSelected = groupIds.some((id) => selectedIds.has(id));
+                  return (
+                    <Fragment key={group.category}>
+                      <TableRow className="bg-muted/50 hover:bg-muted/50">
+                        <TableCell className="py-2">
+                          <Checkbox
+                            checked={groupAllSelected ? true : groupSomeSelected ? 'indeterminate' : false}
+                            onCheckedChange={(v) => setGroupSelection(groupIds, v === true)}
+                            aria-label={`Alle Kontrollen im Bereich ${TAB_CATEGORY_LABEL[group.category]} auswählen`}
+                          />
                         </TableCell>
-                        <TableCell className="hidden text-muted-foreground md:table-cell">
-                          {row.def.responsible ?? '—'}
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell">
-                          <Badge variant="outline" className="font-normal">{INTERVAL_LABEL[row.def.interval]}</Badge>
-                        </TableCell>
-                        <TableCell className="hidden text-muted-foreground lg:table-cell">
-                          {row.result.nextDue ? formatCockpitDate(row.result.nextDue) : '—'}
-                        </TableCell>
-                        <TableCell>
-                          <ControlStatusBadge status={row.controlStatus} />
-                        </TableCell>
-                        <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="sm" onClick={() => onSelect(row.def.id)}>
-                            Details <ArrowRight className="ml-1 h-3.5 w-3.5" />
-                          </Button>
+                        <TableCell colSpan={7} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {TAB_CATEGORY_LABEL[group.category]}
+                          <span className="ml-2 font-normal normal-case">({group.rows.length})</span>
                         </TableCell>
                       </TableRow>
-                    ))}
-                  </Fragment>
-                ))}
+                      {group.rows.map((row) => {
+                        const isSelected = selectedIds.has(row.def.id);
+                        return (
+                          <TableRow
+                            key={row.def.id}
+                            className={cn('cursor-pointer', isSelected && 'bg-primary/5 hover:bg-primary/10')}
+                            onClick={() => onSelect(row.def.id)}
+                          >
+                            <TableCell className="py-2" onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={() => toggleRow(row.def.id)}
+                                aria-label={`Kontrolle „${row.def.label}" auswählen`}
+                              />
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              <div className="flex flex-col">
+                                <span>{row.def.label}</span>
+                                {row.manuallyCompleted && row.completedAt && (
+                                  <span className="text-xs font-normal text-emerald-600 dark:text-emerald-400">
+                                    Manuell erledigt am {formatCockpitDate(row.completedAt)}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="hidden max-w-[18rem] text-muted-foreground lg:table-cell">
+                              <span className="line-clamp-2">{row.def.uploadLabel}</span>
+                            </TableCell>
+                            <TableCell className="hidden text-muted-foreground md:table-cell">
+                              {row.def.responsible ?? '—'}
+                            </TableCell>
+                            <TableCell className="hidden sm:table-cell">
+                              <Badge variant="outline" className="font-normal">{INTERVAL_LABEL[row.def.interval]}</Badge>
+                            </TableCell>
+                            <TableCell className="hidden text-muted-foreground lg:table-cell">
+                              {row.result.nextDue ? formatCockpitDate(row.result.nextDue) : '—'}
+                            </TableCell>
+                            <TableCell>
+                              <ControlStatusBadge status={row.controlStatus} />
+                            </TableCell>
+                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                              <Button variant="ghost" size="sm" onClick={() => onSelect(row.def.id)}>
+                                Details <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

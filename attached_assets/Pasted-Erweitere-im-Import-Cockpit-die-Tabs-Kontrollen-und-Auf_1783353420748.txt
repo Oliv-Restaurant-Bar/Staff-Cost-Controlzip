@@ -1,0 +1,116 @@
+Erweitere im Import-Cockpit die Tabs "Kontrollen" und "Aufgaben" um eine Mehrfachauswahl und eine Aktion "Als erledigt markieren".
+
+Ziel:
+Der Benutzer soll mehrere Kontrollen oder Aufgaben gleichzeitig auswählen und gesammelt als erledigt markieren können.
+
+Wichtig:
+Nur Kontrollen und Aufgaben dürfen manuell erledigt werden.
+Datenimporte dürfen NICHT manuell als erledigt markiert werden, weil dort der Status aus echten Importdaten kommt.
+
+Anforderungen:
+
+1. Tab "Kontrollen"
+
+- Checkbox pro Zeile ergänzen
+- Checkbox im Tabellenkopf für "alle sichtbaren auswählen"
+- Button oberhalb der Tabelle:
+  "Ausgewählte als erledigt markieren"
+
+Der Button ist nur aktiv, wenn mindestens eine Kontrolle ausgewählt ist.
+
+Beim Klick:
+- Bestätigungsdialog anzeigen:
+  "Möchtest du die ausgewählten Kontrollen als erledigt markieren?"
+- Danach Status der ausgewählten Kontrollen auf "Erledigt" setzen
+- Letzte Durchführung auf heute setzen, falls dieses Feld vorhanden oder ableitbar ist
+- Nächste Fälligkeit anhand des Rhythmus neu berechnen
+
+2. Tab "Aufgaben"
+
+- Checkbox pro offener Aufgabe ergänzen
+- Checkbox pro Gruppe optional:
+  Heute / Diese Woche / Diesen Monat / Dieses Jahr
+- Button:
+  "Ausgewählte Aufgaben erledigen"
+
+Beim Klick:
+- Bestätigungsdialog anzeigen
+- Nur Aufgaben vom Typ Kontrolle oder manuelle Aufgabe erledigen
+- Echte Datenimporte dürfen nicht manuell erledigt werden
+- Bei Import-Aufgaben stattdessen Hinweis anzeigen:
+  "Datenimporte können nur durch den passenden Import abgeschlossen werden."
+
+3. Speicherung
+
+Falls bereits eine Tabelle oder ein Mechanismus für manuell erledigte Checks existiert:
+- diesen verwenden
+
+Falls nicht vorhanden:
+- KEINE Migration erstellen
+- erstmal lokalen/Frontend-State verwenden oder vorhandene Settings/Preferences-Struktur prüfen
+- Wenn dauerhafte Speicherung ohne DB nicht möglich ist:
+  klar im Code kommentieren und im UI anzeigen:
+  "Erledigt-Markierungen gelten bis zum nächsten Neuladen, solange keine Check-Historie eingerichtet ist."
+
+Wichtig:
+Keine neue Datenbankmigration.
+Keine SQL-Dateien.
+Keine Importlogik ändern.
+Keine CRM-, Mirus-, Reservationen-, Budget- oder Dienstplanlogik ändern.
+
+4. UI
+
+- Bei ausgewählten Zeilen dezente Hervorhebung
+- Anzahl ausgewählter Einträge anzeigen:
+  "3 ausgewählt"
+- Button "Auswahl aufheben"
+- Nach erfolgreichem Markieren kleine Erfolgsmeldung anzeigen:
+  "3 Einträge als erledigt markiert"
+
+5. Statuslogik
+
+Manuell erledigte Kontrollen sollen in dieser Session als erledigt gelten.
+
+Beispiel:
+Forecast-Kontrolle war "Nicht eingerichtet" oder "Bald fällig".
+Nach "als erledigt markieren":
+Status = Erledigt
+Nächste Fälligkeit = heute + Rhythmus
+
+Bei wöchentlich:
+nächste Fälligkeit in 7 Tagen
+
+Bei monatlich:
+nächste Fälligkeit im nächsten Monat
+
+Bei jährlich:
+nächste Fälligkeit im nächsten Jahr
+
+6. Tests
+
+Tests ergänzen für:
+
+- Mehrfachauswahl Kontrollen
+- Alle sichtbaren Kontrollen auswählen
+- Ausgewählte Kontrollen als erledigt markieren
+- Nächste Fälligkeit wird neu berechnet
+- Aufgaben-Tab erlaubt Erledigen von Kontrollaufgaben
+- Aufgaben-Tab blockiert manuelles Erledigen echter Datenimporte
+- Button deaktiviert ohne Auswahl
+- Auswahl zurücksetzen
+
+7. Dokumentation
+
+replit.md aktualisieren:
+
+- Kontrollen und Aufgaben können gesammelt als erledigt markiert werden
+- Datenimporte bleiben nicht manuell erledigbar
+- falls nur Session-State: klar dokumentieren
+
+Danach:
+
+- TypeScript prüfen
+- Cockpit-Tests ausführen
+- Runtime prüfen
+- Architect Review durchführen
+- Commit-Message erstellen

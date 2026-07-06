@@ -3,18 +3,44 @@
  * =============================================
  * Aggregiert alle OFFENEN Punkte aus beiden Sektionen (Importe + Kontrollen) zu
  * einer priorisierten To-do-Liste, gruppiert nach Zeithorizont (Heute/Woche/
- * Monat/Jahr). Read-only: Klick öffnet den Detail-Drawer. Neutrale Zustände
+ * Monat/Jahr). Klick öffnet den Detail-Drawer. Neutrale Zustände
  * (aktuell/erledigt/nicht eingerichtet) erzeugen bewusst KEINE Aufgabe.
+ *
+ * NEU: Kontroll-Aufgaben können per Mehrfachauswahl manuell erledigt werden.
+ * Datenimport-Aufgaben (section === 'import') sind NICHT manuell erledigbar —
+ * werden sie mit-ausgewählt, erscheint ein Hinweis und sie bleiben offen.
  */
 
 import { useCallback, useMemo, useState } from 'react';
-import { Search, CalendarClock, CalendarDays, CalendarRange, Flame, CheckCircle2, ArrowRight } from 'lucide-react';
+import {
+  Search,
+  CalendarClock,
+  CalendarDays,
+  CalendarRange,
+  Flame,
+  CheckCircle2,
+  ArrowRight,
+  CheckCheck,
+} from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
-import type { CockpitSourceId } from '@/lib/import-cockpit';
+import { useToast } from '@/hooks/use-toast';
+import type { CockpitRow, CockpitSourceId } from '@/lib/import-cockpit';
 import {
   buildTasks,
   groupTasksByTimeframe,
@@ -30,8 +56,10 @@ import {
   type TaskTabFilterState,
   type TaskTimeframe,
 } from '@/lib/import-cockpit-tabs';
+import { partitionTasksForCompletion, type ManualCompletionMap } from '@/lib/import-cockpit-checks';
 import { KpiCard, TaskPriorityBadge, SectionBadge } from './cockpit-ui';
-import type { CockpitRow } from '@/lib/import-cockpit';
+
+const IMPORT_BLOCK_HINT = 'Datenimporte können nur durch den passenden Import abgeschlossen werden.';
 
 const SECTION_FILTER_OPTIONS: Array<{ value: TaskTabFilterState['section']; label: string }> = [
   { value: 'all', label: 'Alle Bereiche' },
@@ -60,10 +88,17 @@ interface Props {
   rows: CockpitRow[];
   today: string;
   onSelect: (id: CockpitSourceId) => void;
+  /** Aktive manuelle Erledigungen (blenden erledigte Kontroll-Aufgaben aus). */
+  completions: ManualCompletionMap;
+  /** Markiert die übergebenen Kontroll-Aufgaben als erledigt (Persistenz + Toast in der Page). */
+  onMarkDone: (ids: CockpitSourceId[]) => void;
 }
 
-export function TasksTab({ rows, today, onSelect }: Props) {
+export function TasksTab({ rows, today, onSelect, completions, onMarkDone }: Props) {
+  const { toast } = useToast();
   const [filters, setFilters] = useState<TaskTabFilterState>(EMPTY_TASK_TAB_FILTER);
+  const [selectedIds, setSelectedIds] = useState<Set<CockpitSourceId>>(() => new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const patchFilter = useCallback(
     <K extends keyof TaskTabFilterState>(key: K, value: TaskTabFilterState[K]) =>
@@ -74,10 +109,55 @@ export function TasksTab({ rows, today, onSelect }: Props) {
   const hasActiveFilters =
     filters.section !== 'all' || filters.priority !== 'all' || filters.timeframe !== 'all' || filters.search.trim() !== '';
 
-  const allTasks = useMemo(() => buildTasks(rows, today), [rows, today]);
+  const allTasks = useMemo(() => buildTasks(rows, today, completions), [rows, today, completions]);
   const kpis = useMemo(() => summarizeTasks(allTasks), [allTasks]);
   const filteredTasks = useMemo(() => allTasks.filter((t) => taskMatchesFilters(t, filters)), [allTasks, filters]);
   const grouped = useMemo(() => groupTasksByTimeframe(filteredTasks), [filteredTasks]);
+
+  // ─── Auswahl (Mehrfach) ─────────────────────────────────────────────────────
+  const selectedCount = selectedIds.size;
+
+  const toggleTask = useCallback((id: CockpitSourceId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const setManySelected = useCallback((ids: CockpitSourceId[], selected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (selected) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const confirmMarkDone = useCallback(() => {
+    const { completable, blocked } = partitionTasksForCompletion(allTasks, selectedIds);
+    if (completable.length > 0) {
+      onMarkDone(completable.map((t) => t.id));
+    }
+    if (blocked.length > 0) {
+      toast({
+        title: 'Datenimporte können nicht manuell erledigt werden',
+        description: IMPORT_BLOCK_HINT,
+      });
+    }
+    clearSelection();
+    setConfirmOpen(false);
+  }, [allTasks, selectedIds, onMarkDone, toast, clearSelection]);
+
+  const selectionSummary = useMemo(
+    () => partitionTasksForCompletion(allTasks, selectedIds),
+    [allTasks, selectedIds],
+  );
 
   return (
     <div className="space-y-4">
@@ -155,6 +235,54 @@ export function TasksTab({ rows, today, onSelect }: Props) {
         )}
       </div>
 
+      {/* Sammelaktion: ausgewählte (Kontroll-)Aufgaben erledigen */}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+        <span className="text-sm text-muted-foreground">
+          {selectedCount > 0 ? (
+            <span className="font-medium text-foreground">{selectedCount} ausgewählt</span>
+          ) : (
+            'Kontroll-Aufgaben auswählen, um sie zu erledigen'
+          )}
+          {selectionSummary.blocked.length > 0 && (
+            <span className="ml-2 text-xs text-amber-600 dark:text-amber-400">
+              ({selectionSummary.blocked.length} Datenimport{selectionSummary.blocked.length === 1 ? '' : 'e'} nicht erledigbar)
+            </span>
+          )}
+        </span>
+        <div className="flex items-center gap-2">
+          {selectedCount > 0 && (
+            <Button variant="ghost" size="sm" onClick={clearSelection}>
+              Auswahl aufheben
+            </Button>
+          )}
+          <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+            <AlertDialogTrigger asChild>
+              <Button size="sm" disabled={selectedCount === 0}>
+                <CheckCheck className="mr-1.5 h-4 w-4" />
+                Ausgewählte erledigen
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Aufgaben als erledigt markieren?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {selectionSummary.completable.length > 0
+                    ? `${selectionSummary.completable.length} Kontroll-Aufgabe${
+                        selectionSummary.completable.length === 1 ? ' wird' : 'n werden'
+                      } als heute erledigt markiert.`
+                    : 'Es ist keine manuell erledigbare Kontroll-Aufgabe ausgewählt.'}
+                  {selectionSummary.blocked.length > 0 && ` ${IMPORT_BLOCK_HINT}`}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                <AlertDialogAction onClick={confirmMarkDone}>Erledigen</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
+
       {filteredTasks.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center">
@@ -170,11 +298,21 @@ export function TasksTab({ rows, today, onSelect }: Props) {
           {TASK_TIMEFRAME_ORDER.map((timeframe) => {
             const items = grouped[timeframe];
             const Icon = TIMEFRAME_ICON[timeframe];
+            const controlIds = items.filter((t) => t.section === 'control').map((t) => t.id);
+            const groupAllSelected = controlIds.length > 0 && controlIds.every((id) => selectedIds.has(id));
+            const groupSomeSelected = controlIds.some((id) => selectedIds.has(id));
             return (
               <Card key={timeframe}>
                 <CardContent className="p-4">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+                      {controlIds.length > 0 && (
+                        <Checkbox
+                          checked={groupAllSelected ? true : groupSomeSelected ? 'indeterminate' : false}
+                          onCheckedChange={(v) => setManySelected(controlIds, v === true)}
+                          aria-label={`Alle Kontroll-Aufgaben (${TASK_TIMEFRAME_LABEL[timeframe]}) auswählen`}
+                        />
+                      )}
                       <Icon className="h-4 w-4 text-muted-foreground" />
                       {TASK_TIMEFRAME_LABEL[timeframe]}
                     </h3>
@@ -184,30 +322,50 @@ export function TasksTab({ rows, today, onSelect }: Props) {
                   </div>
                   <ul className="space-y-1.5">
                     {items.length === 0 && <li className="py-2 text-sm text-muted-foreground">Keine offenen Punkte.</li>}
-                    {items.map((task: CockpitTask) => (
-                      <li key={task.id}>
-                        <button
-                          type="button"
-                          onClick={() => onSelect(task.id)}
+                    {items.map((task: CockpitTask) => {
+                      const isSelected = selectedIds.has(task.id);
+                      const isImport = task.section === 'import';
+                      return (
+                        <li
+                          key={task.id}
                           className={cn(
-                            'flex w-full items-start justify-between gap-2 rounded-md border px-2.5 py-2 text-left text-sm transition-colors hover:bg-muted',
-                            task.priority === 'critical' ? 'border-red-200 dark:border-red-900/60' : 'border-border',
+                            'flex items-start gap-2 rounded-md border px-2.5 py-2 transition-colors',
+                            isSelected
+                              ? 'border-primary/40 bg-primary/5'
+                              : task.priority === 'critical'
+                                ? 'border-red-200 dark:border-red-900/60'
+                                : 'border-border',
                           )}
                         >
-                          <span className="min-w-0 space-y-1">
-                            <span className="block truncate font-medium">{task.label}</span>
-                            <span className="line-clamp-2 block text-xs text-muted-foreground">{task.reason}</span>
-                            <span className="mt-0.5 flex items-center gap-1.5">
-                              <SectionBadge section={task.section} />
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={isSelected}
+                            onCheckedChange={() => toggleTask(task.id)}
+                            aria-label={`Aufgabe „${task.label}" auswählen`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => onSelect(task.id)}
+                            className="flex min-w-0 flex-1 items-start justify-between gap-2 text-left text-sm"
+                          >
+                            <span className="min-w-0 space-y-1">
+                              <span className="block truncate font-medium">{task.label}</span>
+                              <span className="line-clamp-2 block text-xs text-muted-foreground">{task.reason}</span>
+                              <span className="mt-0.5 flex items-center gap-1.5">
+                                <SectionBadge section={task.section} />
+                                {isImport && (
+                                  <span className="text-[11px] text-muted-foreground">nur per Import erledigbar</span>
+                                )}
+                              </span>
                             </span>
-                          </span>
-                          <span className="flex shrink-0 flex-col items-end gap-1">
-                            <TaskPriorityBadge priority={task.priority} />
-                            <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                            <span className="flex shrink-0 flex-col items-end gap-1">
+                              <TaskPriorityBadge priority={task.priority} />
+                              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </CardContent>
               </Card>

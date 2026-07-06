@@ -37,6 +37,9 @@ import {
 } from '@/lib/import-cockpit';
 import { buildImportRows, buildControlRows } from '@/lib/import-cockpit-tabs';
 import { fetchCockpitSignals } from '@/lib/import-cockpit-db';
+import { markControlsDone, type ManualCompletionMap } from '@/lib/import-cockpit-checks';
+import { loadManualChecks, saveManualChecks } from '@/lib/import-cockpit-checks-db';
+import { useToast } from '@/hooks/use-toast';
 import { DataImportsTab } from '@/components/import-cockpit/DataImportsTab';
 import { ControlsTab } from '@/components/import-cockpit/ControlsTab';
 import { TasksTab } from '@/components/import-cockpit/TasksTab';
@@ -46,12 +49,26 @@ export default function ImportCockpitPage() {
   const { isAdmin } = usePermissions();
   const { isGuest } = useGuestSession();
   const { tenantId, tenantKey, tenant } = useTenant();
+  const { toast } = useToast();
   const allowed = isAdmin && !isGuest;
 
   const [signals, setSignals] = useState<Record<CockpitSourceId, CockpitSignal> | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [selectedId, setSelectedId] = useState<CockpitSourceId | null>(null);
+  const [manualChecks, setManualChecks] = useState<ManualCompletionMap>({});
+
+  // Manuelle Kontroll-Erledigungen (tenant-scoped) laden — best-effort, wirft nie.
+  useEffect(() => {
+    if (!allowed) return;
+    let cancelled = false;
+    loadManualChecks(tenantId).then((map) => {
+      if (!cancelled) setManualChecks(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [allowed, tenantId]);
 
   const load = useCallback(async () => {
     // Fetch-Gate: Gäste/Nicht-Admins lösen NIE eine Abfrage aus.
@@ -83,11 +100,32 @@ export default function ImportCockpitPage() {
   }, [signals]);
 
   const importRows = useMemo(() => buildImportRows(rows), [rows]);
-  const controlRows = useMemo(() => buildControlRows(rows, today), [rows, today]);
+  const controlRows = useMemo(() => buildControlRows(rows, today, manualChecks), [rows, today, manualChecks]);
 
   const selectedRow = useMemo(
     () => (selectedId ? rows.find((r) => r.def.id === selectedId) ?? null : null),
     [rows, selectedId],
+  );
+
+  // Kontrollen manuell als „heute erledigt" markieren. NUR Kontrollen (section
+  // 'control') — echte Datenimporte werden hier defensiv ignoriert. Persistiert
+  // best-effort (localStorage + KV-Backup) und bestätigt per Toast.
+  const handleMarkDone = useCallback(
+    (ids: CockpitSourceId[]) => {
+      const idSet = new Set(ids);
+      const controls = rows
+        .filter((r) => r.def.section === 'control' && idSet.has(r.def.id))
+        .map((r) => ({ id: r.def.id, interval: r.def.interval }));
+      if (controls.length === 0) return;
+      const nextMap = markControlsDone(manualChecks, controls, today);
+      setManualChecks(nextMap);
+      void saveManualChecks(tenantId, nextMap);
+      toast({
+        title: `${controls.length} ${controls.length === 1 ? 'Eintrag' : 'Einträge'} als erledigt markiert`,
+        description: 'Die nächste Fälligkeit wurde anhand des Rhythmus neu berechnet.',
+      });
+    },
+    [rows, manualChecks, today, tenantId, toast],
   );
 
   if (!allowed) return <Navigate to="/" replace />;
@@ -152,16 +190,27 @@ export default function ImportCockpitPage() {
             </TabsContent>
 
             <TabsContent value="controls" className="mt-0">
-              <ControlsTab controlRows={controlRows} onSelect={setSelectedId} />
+              <ControlsTab controlRows={controlRows} onSelect={setSelectedId} onMarkDone={handleMarkDone} />
             </TabsContent>
 
             <TabsContent value="tasks" className="mt-0">
-              <TasksTab rows={rows} today={today} onSelect={setSelectedId} />
+              <TasksTab
+                rows={rows}
+                today={today}
+                onSelect={setSelectedId}
+                completions={manualChecks}
+                onMarkDone={handleMarkDone}
+              />
             </TabsContent>
           </Tabs>
         </main>
 
-        <CockpitDetailDrawer row={selectedRow} today={today} onClose={() => setSelectedId(null)} />
+        <CockpitDetailDrawer
+          row={selectedRow}
+          today={today}
+          onClose={() => setSelectedId(null)}
+          completion={selectedId ? manualChecks[selectedId] ?? null : null}
+        />
       </div>
     </TooltipProvider>
   );

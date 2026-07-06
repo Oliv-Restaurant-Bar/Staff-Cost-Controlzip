@@ -32,6 +32,7 @@ import {
   type CockpitTabCategory,
   type ImportInterval,
 } from './import-cockpit';
+import { isCompletionActive, type ManualCompletionMap } from './import-cockpit-checks';
 
 // ─── Tab-Kategorien („Bereiche") ──────────────────────────────────────────────
 
@@ -128,18 +129,45 @@ export interface ControlRow {
   signal: CockpitSignal;
   result: CockpitStatusResult;
   controlStatus: ControlStatus;
+  /** true, wenn die Kontrolle aktuell durch eine manuelle Erledigung als erledigt gilt. */
+  manuallyCompleted?: boolean;
+  /** yyyy-MM-dd — Tag der manuellen Erledigung (nur wenn manuallyCompleted). */
+  completedAt?: string;
 }
 
-/** Filtert die Kontroll-Zeilen aus allen Cockpit-Zeilen und berechnet den Kontroll-Status. */
-export function buildControlRows(rows: CockpitRow[], today: string): ControlRow[] {
+/**
+ * Filtert die Kontroll-Zeilen aus allen Cockpit-Zeilen und berechnet den Kontroll-Status.
+ * `completions` (optional) enthält manuelle „Erledigt"-Markierungen: ist eine Erledigung
+ * an `today` noch aktiv, gilt die Kontrolle als `done`, und die nächste Fälligkeit wird
+ * aus der Erledigung übernommen. Ohne `completions` verhält sich die Funktion wie bisher.
+ */
+export function buildControlRows(
+  rows: CockpitRow[],
+  today: string,
+  completions?: ManualCompletionMap,
+): ControlRow[] {
   return rows
     .filter((r) => r.def.section === 'control')
-    .map((r) => ({
-      def: r.def,
-      signal: r.signal,
-      result: r.result,
-      controlStatus: computeControlStatus(r.def, r.result, today),
-    }));
+    .map((r) => {
+      const completion = completions?.[r.def.id];
+      if (completion && isCompletionActive(completion, today)) {
+        return {
+          def: r.def,
+          signal: r.signal,
+          result: { ...r.result, nextDue: completion.nextDue },
+          controlStatus: 'done' as ControlStatus,
+          manuallyCompleted: true,
+          completedAt: completion.completedAt,
+        };
+      }
+      return {
+        def: r.def,
+        signal: r.signal,
+        result: r.result,
+        controlStatus: computeControlStatus(r.def, r.result, today),
+        manuallyCompleted: false,
+      };
+    });
 }
 
 /** Filtert die Import-Zeilen aus allen Cockpit-Zeilen (section === 'import'). */
@@ -222,13 +250,26 @@ const PRIORITY_RANK: Record<TaskPriority, number> = { critical: 0, medium: 1 };
  * neutrale Zustände (aktuell/erledigt/nicht eingerichtet) werden übersprungen.
  * Sortierung: kritisch vor mittel, sonst stabil in Deskriptor-Reihenfolge.
  */
-export function buildTasks(rows: CockpitRow[], today: string): CockpitTask[] {
+export function buildTasks(
+  rows: CockpitRow[],
+  today: string,
+  completions?: ManualCompletionMap,
+): CockpitTask[] {
   const tasks: CockpitTask[] = [];
   for (const row of rows) {
-    const priority =
-      row.def.section === 'control'
-        ? controlTaskPriority(computeControlStatus(row.def, row.result, today))
-        : importTaskPriority(row.result.status);
+    let priority: TaskPriority | null;
+    if (row.def.section === 'control') {
+      const completion = completions?.[row.def.id];
+      // Manuell (noch aktiv) erledigte Kontrollen erzeugen KEINE offene Aufgabe.
+      const controlStatus =
+        completion && isCompletionActive(completion, today)
+          ? 'done'
+          : computeControlStatus(row.def, row.result, today);
+      priority = controlTaskPriority(controlStatus);
+    } else {
+      // Datenimporte sind NIE manuell erledigbar → Frische-Status entscheidet.
+      priority = importTaskPriority(row.result.status);
+    }
     if (!priority) continue;
     tasks.push({
       id: row.def.id,
