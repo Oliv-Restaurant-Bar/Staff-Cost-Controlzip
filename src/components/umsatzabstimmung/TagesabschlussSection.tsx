@@ -34,6 +34,7 @@ import {
   type TagesabschlussAutoField,
   type TagesabschlussBlob,
   type TagesabschlussExportSettings,
+  type TagesabschlussManualPatch,
 } from '@/lib/tagesabschluss';
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
@@ -115,9 +116,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
 
   // ── Mutationen (Blob tagesabschluss_v1) ─────────────────────────────────────
 
-  const handleSaveManual = useCallback((date: string, patch: {
-    bestandKasse?: number | null; einzahlungBank?: number | null; bemerkung?: string | null;
-  }) => {
+  const handleSaveManual = useCallback((date: string, patch: TagesabschlussManualPatch) => {
     if (readOnly || !blob) return;
     // Patch 1:1 durchreichen: upsertManualDay fasst NUR vorhandene Keys an —
     // Inline-Edits eines einzelnen Felds löschen so keine anderen Werte.
@@ -175,7 +174,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
             <CardTitle className="text-sm">Tagesabschluss-Übersicht — {MONTH_NAMES[month - 1]} {year}</CardTitle>
             <p className="text-[11px] text-muted-foreground mt-0.5">
               Z-Bericht-Werte automatisch, manuelle Eingaben/Korrekturen pro Tag, Buchhaltungs-Export analog Excel "Tabelle2".
-              Bestand Kasse, Einzahlung Bank und Bemerkung direkt in der Tabelle erfassen — Datum anklicken für das Tagesdetail.
+              Cash (Bestand Kasse) und Einzahlung Bank direkt in der Tabelle erfassen — Datum anklicken für das Tagesdetail
+              (Bemerkung, Gutscheinnummern, Korrekturen, Barausgaben).
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -245,8 +245,12 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
+              <span className="text-red-600 dark:text-red-400">negative Beträge</span>
               <span>normale Werte = automatisch aus dem Z-Bericht</span>
               <span>Adyen- und Kassen-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag bestätigt</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-300 align-middle mr-1" />offen</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />Differenz</span>
             </div>
           </>
         )}

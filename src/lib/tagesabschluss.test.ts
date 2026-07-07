@@ -344,6 +344,39 @@ describe('Mutationen', () => {
     expect(blob.days['2026-07-01']).toBeUndefined();
   });
 
+  it('upsertManualDay speichert Gutscheinnummern (trimmt, verwirft Leereinträge, leer löscht)', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', {
+      gutscheinNummernVerkauft: [' GS-101 ', 'GS-102', '  '],
+      gutscheinNummernEingeloest: ['GS-088'],
+    }, NOW);
+    expect(blob.days['2026-07-01'].gutscheinNummernVerkauft).toEqual(['GS-101', 'GS-102']);
+    expect(blob.days['2026-07-01'].gutscheinNummernEingeloest).toEqual(['GS-088']);
+
+    // Einzel-Feld-Patch (z. B. Inline-Edit) erhält die Gutscheinnummern.
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 500 }, NOW);
+    expect(blob.days['2026-07-01'].gutscheinNummernVerkauft).toEqual(['GS-101', 'GS-102']);
+
+    // Leeres Array / null löscht nur das jeweilige Feld.
+    blob = upsertManualDay(blob, '2026-07-01', { gutscheinNummernVerkauft: [] }, NOW);
+    expect(blob.days['2026-07-01'].gutscheinNummernVerkauft).toBeUndefined();
+    expect(blob.days['2026-07-01'].gutscheinNummernEingeloest).toEqual(['GS-088']);
+    expect(blob.days['2026-07-01'].bestandKasse).toBe(500);
+
+    // Nur Gutscheinnummern halten den Tag am Leben; alles weg → Tag weg.
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: null, gutscheinNummernEingeloest: null }, NOW);
+    expect(blob.days['2026-07-01']).toBeUndefined();
+  });
+
+  it('buildTagesabschlussRows reicht Gutscheinnummern an die Zeile durch (nur Tagesdetail)', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { gutscheinNummernVerkauft: ['GS-1'] }, NOW);
+    const { rows } = buildTagesabschlussRows(2026, 7, {}, blob, {});
+    expect(rows[0].gutscheinNummernVerkauft).toEqual(['GS-1']);
+    expect(rows[0].gutscheinNummernEingeloest).toBeUndefined();
+    expect(rows[1].gutscheinNummernVerkauft).toBeUndefined();
+  });
+
   it('setTagesabschlussOverride verankert das ERSTE Original; null entfernt', () => {
     let blob = emptyTagesabschlussBlob();
     blob = setTagesabschlussOverride(blob, '2026-07-01', 'umsatz', 1000, 990, undefined, NOW);

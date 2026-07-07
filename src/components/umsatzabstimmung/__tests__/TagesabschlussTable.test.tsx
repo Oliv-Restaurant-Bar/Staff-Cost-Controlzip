@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 /**
  * TagesabschlussTable.test.tsx — Komponententest der Monats-Tabelle.
- * Prüft Spaltenstruktur (Excel "UMSATZ Oliv"), visuelle Marker (manuell /
- * korrigiert / Kommentar), Barausgaben-Total und Status-Badges.
+ * Prüft die gruppierte Spaltenstruktur (Umsatz · Kartenzahlungen · Kasse ·
+ * Weitere Zahlungsarten · Ausgaben · Status), entfallene Spalten (Netto,
+ * MWST, TWINT, Adyen-Differenz, Bemerkung), visuelle Marker (manuell /
+ * korrigiert / negativ / Zeilen-Tints), Barausgaben-Total und Status-Badges.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach } from 'vitest';
 import { TagesabschlussTable } from '../TagesabschlussTable';
 import {
@@ -38,8 +40,12 @@ const closing = (date: string): GnDayClosing => ({
 function buildMonth() {
   let blob = emptyTagesabschlussBlob();
   const now = '2026-07-05T10:00:00.000Z';
-  // Manuell: Bestand Kasse + Bemerkung am 01.07.
-  blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 850, bemerkung: 'Wechselgeld aufgestockt' }, now);
+  // Manuell: Bestand Kasse + Bemerkung + Gutscheinnummern am 01.07.
+  blob = upsertManualDay(blob, '2026-07-01', {
+    bestandKasse: 850,
+    bemerkung: 'Wechselgeld aufgestockt',
+    gutscheinNummernVerkauft: ['GS-4711', 'GS-4712'],
+  }, now);
   // Korrektur: Umsatz am 02.07. mit Kommentar.
   blob = setTagesabschlussOverride(blob, '2026-07-02', 'umsatz', 1000, 1050, 'Nachtrag Bankett', now);
   // Zwei Barausgaben am 01.07. — Übersicht zeigt nur das Total.
@@ -54,19 +60,42 @@ function buildMonth() {
 }
 
 describe('TagesabschlussTable', () => {
-  it('zeigt alle Spalten analog Excel "UMSATZ Oliv"', () => {
+  it('zeigt die neuen Spalten in gruppierter Reihenfolge — entfallene Spalten fehlen', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
-    for (const h of [
-      'Datum', 'Umsatz', 'Netto', 'MWST', 'Bargeld / Barumsatz', 'Bestand Kasse',
-      'Kreditkarten / Adyen / SIX', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz',
-      'Rechnung / Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
-      'Barausgaben total', 'Einzahlung Bank', 'Bemerkung', 'Status',
-    ]) {
-      expect(screen.getByText(h)).toBeTruthy();
+
+    // Gruppenzeile.
+    const groupRow = screen.getByTestId('ta-header-groups');
+    expect(within(groupRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
+      'Umsatz', 'Kartenzahlungen', 'Kasse', 'Weitere Zahlungsarten', 'Ausgaben', 'Status',
+    ]);
+
+    // Spaltenzeile — exakte Reihenfolge (Kasse-Gruppe zusammenhängend).
+    const colRow = screen.getByTestId('ta-header-cols');
+    expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
+      'Datum', 'Umsatz',
+      'KK', 'KK Adyen',
+      'Bargeld', 'Cash', 'Einzahlung Bank',
+      'Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
+      'Barausgaben',
+      'Status',
+    ]);
+
+    // Entfallene Spalten erscheinen nirgends mehr.
+    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung']) {
+      expect(screen.queryByText(gone)).toBeNull();
     }
+
     // Alle Kalendertage des Monats (Juli = 31 Zeilen).
     expect(screen.getAllByTestId(/^ta-row-/)).toHaveLength(31);
+  });
+
+  it('KK bündelt Karten + TWINT laut Z-Bericht (TWINT ohne eigene Spalte)', () => {
+    const { rows, totals } = buildMonth();
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    // Mastercard 500 + TWINT 200 = 700.
+    expect(screen.getByTestId('ta-kk-2026-07-01').textContent).toContain('700.00');
+    expect(screen.getByTestId('ta-kk-2026-07-03').textContent).toContain('—');
   });
 
   it('zeigt Barausgaben nur als Total und markiert manuelle/korrigierte Werte', () => {
@@ -89,11 +118,42 @@ describe('TagesabschlussTable', () => {
     const corrected = row2.querySelector('.bg-amber-100');
     expect(corrected?.textContent).toContain('1’050.00');
 
-    // Bemerkung + Status-Badges.
-    expect(screen.getByText('Wechselgeld aufgestockt')).toBeTruthy();
+    // Status-Badges.
     expect(screen.getByText('Bestätigt')).toBeTruthy();   // 01.07. bestätigt
     expect(screen.getByText('Offen')).toBeTruthy();       // 02.07. Z-Bericht, unbestätigt
     expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
+  });
+
+  it('Bemerkung erscheint NICHT mehr als Spalte — nur als Icon am Datum', () => {
+    const { rows, totals } = buildMonth();
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    expect(screen.queryByText('Wechselgeld aufgestockt')).toBeNull();
+    const row1 = screen.getByTestId('ta-row-2026-07-01');
+    expect(within(row1).getByLabelText('Bemerkung vorhanden')).toBeTruthy();
+    expect(screen.queryByTestId('ta-input-bemerkung-2026-07-01')).toBeNull();
+  });
+
+  it('Gutscheinnummern werden gespeichert, aber NIE in der Übersicht gerendert', () => {
+    const { rows, totals } = buildMonth();
+    expect(rows[0].gutscheinNummernVerkauft).toEqual(['GS-4711', 'GS-4712']);
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    expect(screen.queryByText(/GS-4711/)).toBeNull();
+    expect(screen.queryByText(/GS-4712/)).toBeNull();
+  });
+
+  it('färbt Zeilen nach Zustand: bestätigt grün, offen gelb', () => {
+    const { rows, totals } = buildMonth();
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    expect(screen.getByTestId('ta-row-2026-07-01').className).toContain('bg-green-50');
+    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-amber-50');
+  });
+
+  it('markiert die heutige Zeile (data-today)', () => {
+    const t = new Date();
+    const iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    const { rows, totals } = buildTagesabschlussRows(t.getFullYear(), t.getMonth() + 1, {}, emptyTagesabschlussBlob(), {});
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    expect(screen.getByTestId(`ta-row-${iso}`).getAttribute('data-today')).toBe('true');
   });
 
   it('öffnet das Tagesdetail NUR über die Datum-Zelle', () => {
@@ -106,10 +166,13 @@ describe('TagesabschlussTable', () => {
     (screen.getByTestId('ta-row-2026-07-02') as HTMLElement).click();
     (screen.getByTestId('ta-bestand-2026-07-02') as HTMLElement).click();
     (screen.getByTestId('ta-adyen-2026-07-02') as HTMLElement).click();
+    (screen.getByTestId('ta-kk-2026-07-02') as HTMLElement).click();
     expect(onDayClick).not.toHaveBeenCalled();
 
-    // Klick auf das Datum öffnet.
-    (screen.getByTestId('ta-date-2026-07-02') as HTMLElement).click();
+    // Klick auf das Datum (als Link gestaltet) öffnet.
+    const dateBtn = screen.getByTestId('ta-date-2026-07-02') as HTMLElement;
+    expect(dateBtn.className).toContain('underline');
+    dateBtn.click();
     expect(onDayClick).toHaveBeenCalledTimes(1);
     expect(onDayClick).toHaveBeenCalledWith('2026-07-02');
   });
@@ -132,7 +195,7 @@ describe('TagesabschlussTable', () => {
       expect(onSaveManual).toHaveBeenCalledWith('2026-07-02', { einzahlungBank: 80 });
     });
 
-    it('speichert Bestand Kasse bei Enter und leert per Leereingabe (null)', () => {
+    it('speichert Cash (Bestand Kasse) bei Enter und leert per Leereingabe (null)', () => {
       const { onSaveManual } = renderEditable();
       const input = screen.getByTestId('ta-input-bestand-2026-07-01') as HTMLInputElement;
       expect(input.value).toBe('850'); // vorhandener manueller Wert
@@ -145,15 +208,6 @@ describe('TagesabschlussTable', () => {
       fireEvent.change(input, { target: { value: '' } });
       fireEvent.blur(input);
       expect(onSaveManual).toHaveBeenCalledWith('2026-07-01', { bestandKasse: null });
-    });
-
-    it('speichert die Bemerkung inline', () => {
-      const { onSaveManual } = renderEditable();
-      const input = screen.getByTestId('ta-input-bemerkung-2026-07-01') as HTMLInputElement;
-      expect(input.value).toBe('Wechselgeld aufgestockt');
-      fireEvent.change(input, { target: { value: 'Neue Notiz' } });
-      fireEvent.blur(input);
-      expect(onSaveManual).toHaveBeenCalledWith('2026-07-01', { bemerkung: 'Neue Notiz' });
     });
 
     it('verwirft Änderungen mit Escape und speichert nichts bei unverändertem Wert', () => {
@@ -197,14 +251,14 @@ describe('TagesabschlussTable', () => {
       render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
         readOnly onSaveManual={() => {}} onConfirm={() => {}} />);
       expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-input-bemerkung-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-input-einzahlung-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
       // Werte bleiben als Text sichtbar.
       expect(screen.getByTestId('ta-bestand-2026-07-01').textContent).toContain('850.00');
     });
   });
 
-  it('zeigt Adyen-Werte und farbige Adyen-Differenz je Tag', () => {
+  it('zeigt KK Adyen farbig nach Differenz-Status (Diff in Klammern, Zeile getönt)', () => {
     const adyenDay = (byMethod: Record<string, number>): AdyenStoredDay => ({
       byMethod,
       countByMethod: {},
@@ -230,21 +284,23 @@ describe('TagesabschlussTable', () => {
     const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {}, adyenBlob);
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
 
-    expect(screen.getByTestId('ta-adyen-2026-07-01').textContent).toContain('700.00');
-    const okDiff = screen.getByTestId('ta-adyen-diff-2026-07-01');
-    expect(okDiff.textContent).toContain('0.00');
-    expect(okDiff.className).toContain('text-emerald-600');
+    // Diff 0 → grün, KEIN Klammer-Diff.
+    const okCell = screen.getByTestId('ta-adyen-2026-07-01');
+    expect(okCell.textContent).toContain('700.00');
+    expect(okCell.className).toContain('text-emerald-600');
+    expect(okCell.textContent).not.toContain('(');
 
-    expect(screen.getByTestId('ta-adyen-2026-07-02').textContent).toContain('690.00');
-    const badDiff = screen.getByTestId('ta-adyen-diff-2026-07-02');
-    expect(badDiff.textContent).toContain('10.00');
-    expect(badDiff.className).toContain('text-red-600');
+    // Diff 10 → rot, Diff in Klammern, Zeile rot getönt.
+    const badCell = screen.getByTestId('ta-adyen-2026-07-02');
+    expect(badCell.textContent).toContain('690.00');
+    expect(badCell.textContent).toContain('10.00');
+    expect(badCell.className).toContain('text-red-600');
+    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-red-50');
 
-    // Tag ohne Adyen-Import: beide Zellen leer ("—").
+    // Tag ohne Adyen-Import: Zelle leer ("—").
     expect(screen.getByTestId('ta-adyen-2026-07-03').textContent).toContain('—');
-    expect(screen.getByTestId('ta-adyen-diff-2026-07-03').textContent).toContain('—');
 
-    // Totale: Adyen-Summe + Summe der Tages-Differenzen.
+    // Totale: Adyen-Summe + Summe der Tages-Differenzen (im selben Total-Feld).
     expect(screen.getByTestId('ta-total-adyen').textContent).toContain('1’390.00');
     expect(screen.getByTestId('ta-total-adyen-diff').textContent).toContain('10.00');
   });

@@ -93,7 +93,23 @@ export interface TagesabschlussManualDay {
   bestandKasse?: number;
   einzahlungBank?: number;
   bemerkung?: string;
+  /** Gutscheinnummern (verkauft) — nur im Tagesdetail sichtbar, NIE in der Übersicht. */
+  gutscheinNummernVerkauft?: string[];
+  /** Gutscheinnummern (eingelöst) — nur im Tagesdetail sichtbar, NIE in der Übersicht. */
+  gutscheinNummernEingeloest?: string[];
   updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
+}
+
+/**
+ * Patch für manuelle Tageswerte: NUR vorhandene Keys werden angefasst;
+ * `null` / leerer String / leeres Array löscht das jeweilige Feld.
+ */
+export interface TagesabschlussManualPatch {
+  bestandKasse?: number | null;
+  einzahlungBank?: number | null;
+  bemerkung?: string | null;
+  gutscheinNummernVerkauft?: string[] | null;
+  gutscheinNummernEingeloest?: string[] | null;
 }
 
 /** Rollen-Konten für den Buchhaltungs-Export (Tabelle2). */
@@ -276,6 +292,10 @@ export interface TagesabschlussRow {
   barausgabenTotal: number;
   expenseCount: number;
   bemerkung?: string;
+  /** Gutscheinnummern (verkauft) — NUR fürs Tagesdetail, nie in der Übersicht rendern. */
+  gutscheinNummernVerkauft?: string[];
+  /** Gutscheinnummern (eingelöst) — NUR fürs Tagesdetail, nie in der Übersicht rendern. */
+  gutscheinNummernEingeloest?: string[];
   /**
    * Rechnerischer Barumsatz = Umsatz − Karten − TWINT − Rechnung − eingelöste
    * Gutscheine (effektive Werte). Basis für Export und Kassen-Differenz.
@@ -449,6 +469,10 @@ export function buildTagesabschlussRows(
       barausgabenTotal,
       expenseCount: expenses.length,
       ...(manual?.bemerkung ? { bemerkung: manual.bemerkung } : {}),
+      ...(manual?.gutscheinNummernVerkauft?.length
+        ? { gutscheinNummernVerkauft: manual.gutscheinNummernVerkauft } : {}),
+      ...(manual?.gutscheinNummernEingeloest?.length
+        ? { gutscheinNummernEingeloest: manual.gutscheinNummernEingeloest } : {}),
       barumsatz,
       kassenDiff,
       kassenDiffStatus: kassenDiff !== null ? adyenDiffStatus(kassenDiff) : null,
@@ -501,16 +525,19 @@ export function buildTagesabschlussRows(
 export function upsertManualDay(
   blob: TagesabschlussBlob,
   date: string,
-  patch: {
-    bestandKasse?: number | null;
-    einzahlungBank?: number | null;
-    bemerkung?: string | null;
-  },
+  patch: TagesabschlussManualPatch,
   now: string,
 ): TagesabschlussBlob {
   const existing = blob.days[date];
   const next: TagesabschlussManualDay = { ...existing, updatedAt: now };
-  for (const [k, v] of Object.entries(patch) as Array<[keyof typeof patch, unknown]>) {
+  for (const [k, v] of Object.entries(patch) as Array<[keyof TagesabschlussManualPatch, unknown]>) {
+    if (Array.isArray(v)) {
+      // Gutscheinnummern: trimmen, Leereinträge verwerfen; leer → Feld löschen.
+      const cleaned = v.map(s => String(s).trim()).filter(s => s !== '');
+      if (cleaned.length === 0) delete (next as Record<string, unknown>)[k];
+      else (next as Record<string, unknown>)[k] = cleaned;
+      continue;
+    }
     if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
       delete (next as Record<string, unknown>)[k];
     } else {
@@ -519,7 +546,8 @@ export function upsertManualDay(
   }
   const days = { ...blob.days };
   const hasContent =
-    next.bestandKasse !== undefined || next.einzahlungBank !== undefined || next.bemerkung !== undefined;
+    next.bestandKasse !== undefined || next.einzahlungBank !== undefined || next.bemerkung !== undefined
+    || next.gutscheinNummernVerkauft !== undefined || next.gutscheinNummernEingeloest !== undefined;
   if (hasContent) days[date] = next;
   else delete days[date];
   return { ...blob, days };

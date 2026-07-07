@@ -23,6 +23,7 @@ import {
   TAGESABSCHLUSS_FIELD_LABEL,
   type CashExpense,
   type TagesabschlussAutoField,
+  type TagesabschlussManualPatch,
   type TagesabschlussRow,
 } from '@/lib/tagesabschluss';
 import { diffColorClass, fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
@@ -32,7 +33,7 @@ interface TagesabschlussDayDialogProps {
   expenses: CashExpense[];
   readOnly: boolean;
   onClose: () => void;
-  onSaveManual: (date: string, patch: { bestandKasse?: number | null; einzahlungBank?: number | null; bemerkung?: string | null }) => void;
+  onSaveManual: (date: string, patch: TagesabschlussManualPatch) => void;
   onOverride: (date: string, field: TagesabschlussAutoField, original: number, corrected: number | null, comment: string) => void;
   onConfirm: (date: string, confirmation: DayConfirmation | null) => void;
   onUpsertExpense: (expense: CashExpense) => void;
@@ -41,6 +42,12 @@ interface TagesabschlussDayDialogProps {
 
 function numToInput(v: number | null | undefined): string {
   return v === null || v === undefined ? '' : String(v);
+}
+
+/** Kommagetrennte Gutscheinnummern → Array (leer → null = Feld löschen). */
+function parseGutscheinNummern(raw: string): string[] | null {
+  const list = raw.split(/[,;\n]+/).map(s => s.trim()).filter(s => s !== '');
+  return list.length > 0 ? list : null;
 }
 
 const EMPTY_EXPENSE_FORM = {
@@ -54,6 +61,8 @@ export function TagesabschlussDayDialog({
   const [bestand, setBestand] = useState('');
   const [einzahlung, setEinzahlung] = useState('');
   const [bemerkung, setBemerkung] = useState('');
+  const [gsVerkauft, setGsVerkauft] = useState('');
+  const [gsEingeloest, setGsEingeloest] = useState('');
   const [corrections, setCorrections] = useState<Record<string, { value: string; comment: string }>>({});
   const [expenseForm, setExpenseForm] = useState(EMPTY_EXPENSE_FORM);
   const [expenseError, setExpenseError] = useState<string | null>(null);
@@ -63,6 +72,8 @@ export function TagesabschlussDayDialog({
     setBestand(numToInput(row.cells.bestandKasse.value));
     setEinzahlung(numToInput(row.cells.einzahlungBank.value));
     setBemerkung(row.bemerkung ?? '');
+    setGsVerkauft(row.gutscheinNummernVerkauft?.join(', ') ?? '');
+    setGsEingeloest(row.gutscheinNummernEingeloest?.join(', ') ?? '');
     const corr: Record<string, { value: string; comment: string }> = {};
     for (const f of TAGESABSCHLUSS_AUTO_FIELDS) {
       const cell = row.cells[f];
@@ -84,6 +95,8 @@ export function TagesabschlussDayDialog({
       bestandKasse: bestand.trim() === '' ? null : parseAmountInput(bestand),
       einzahlungBank: einzahlung.trim() === '' ? null : parseAmountInput(einzahlung),
       bemerkung: bemerkung.trim() === '' ? null : bemerkung,
+      gutscheinNummernVerkauft: parseGutscheinNummern(gsVerkauft),
+      gutscheinNummernEingeloest: parseGutscheinNummern(gsEingeloest),
     });
   };
 
@@ -155,6 +168,23 @@ export function TagesabschlussDayDialog({
               disabled={readOnly} onChange={e => setBemerkung(e.target.value)}
               data-testid="ta-input-bemerkung" />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-[11px]">Gutscheinnummern (verkauft)</Label>
+              <Input className="h-8 text-xs" placeholder="z. B. GS-101, GS-102" value={gsVerkauft}
+                disabled={readOnly} onChange={e => setGsVerkauft(e.target.value)}
+                data-testid="ta-input-gutschein-nr-verkauft" />
+            </div>
+            <div>
+              <Label className="text-[11px]">Gutscheinnummern (eingelöst)</Label>
+              <Input className="h-8 text-xs" placeholder="z. B. GS-088" value={gsEingeloest}
+                disabled={readOnly} onChange={e => setGsEingeloest(e.target.value)}
+                data-testid="ta-input-gutschein-nr-eingeloest" />
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Gutscheinnummern werden nur hier im Tagesdetail gespeichert und erscheinen nicht in der Übersicht.
+          </p>
           {!readOnly && (
             <Button size="sm" className="h-7 text-xs" onClick={handleSaveManual} data-testid="ta-save-manual">
               Manuelle Werte speichern

@@ -1,16 +1,25 @@
 /**
  * TagesabschlussTable.tsx — Monats-Tabelle der Tagesabschlüsse.
  * ===========================================================================
- * Spalten analog Excel "UMSATZ Oliv" / Sheet "Buchung". Visuelle Marker:
- * auto = normal, manuell = blau/fett, korrigiert = gelb hinterlegt,
- * Kommentar = Icon, Kassen-Differenz = grün/orange/rot (Adyen-Ampel).
- * Barausgaben erscheinen hier NUR als Tages-Total.
+ * Spalten nach realem Arbeitsablauf in 6 visuell getrennten Gruppen:
+ *   Umsatz (Datum, Umsatz) · Kartenzahlungen (KK, KK Adyen) ·
+ *   Kasse (Bargeld, Cash, Einzahlung Bank) ·
+ *   Weitere Zahlungsarten (Debitoren, Verkaufte/Eingelöste Gutscheine) ·
+ *   Ausgaben (Barausgaben) · Status.
+ * TWINT wird intern weiter verarbeitet (Barumsatz/Export), erscheint aber
+ * nicht mehr als eigene Spalte; die Adyen-Differenz steckt farbig in
+ * „KK Adyen" (Wert + Klammer-Diff + Tooltip). Bemerkung/Gutscheinnummern
+ * nur im Tagesdetail (Icon am Datum zeigt eine vorhandene Bemerkung).
+ *
+ * Visuelle Marker: auto = normal, manuell = blau/fett, korrigiert = gelb
+ * hinterlegt, negativ = rot, Kommentar = Icon. Zeilen: Zebra, hover,
+ * bestätigt = grün, Differenz = rot/orange, offen = gelb, heute = Akzent.
  *
  * Inline-Bearbeitung (nur wenn NICHT readOnly und Callbacks vorhanden):
- * Bestand Kasse, Einzahlung Bank und Bemerkung sind direkt in der Zeile
- * editierbar (persistiert bei Blur/Enter, Escape verwirft); die Bestätigungs-
- * Checkboxen (Barbestand / Tag) schreiben in den gemeinsamen Adyen-Store.
- * Das Tagesdetail öffnet sich NUR über einen Klick auf das Datum.
+ * Cash (Bestand Kasse) und Einzahlung Bank direkt in der Zeile (persistiert
+ * bei Blur/Enter, Escape verwirft); Bestätigungs-Checkboxen (Barbestand/Tag)
+ * schreiben in den gemeinsamen Adyen-Store. Das Tagesdetail öffnet sich NUR
+ * über einen Klick auf das Datum (als Link gestaltet).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -19,10 +28,11 @@ import { Checkbox } from '@/components/ui/checkbox';
 import type { DayConfirmation } from '@/lib/adyen-abstimmung';
 import {
   type DayCell,
+  type TagesabschlussManualPatch,
   type TagesabschlussRow,
   type TagesabschlussTotals,
 } from '@/lib/tagesabschluss';
-import { fmtChf, diffColorClass, parseAmountInput } from './adyen-ui';
+import { fmtChf, fmtDiffChf, diffColorClass, parseAmountInput } from './adyen-ui';
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
@@ -32,15 +42,85 @@ function dayLabel(date: string): string {
   return `${wd} ${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.`;
 }
 
-function cellClasses(cell: DayCell): string {
-  if (cell.source === 'corrected') return 'bg-amber-100 dark:bg-amber-900/30 font-medium';
-  if (cell.source === 'manual') return 'text-sky-700 dark:text-sky-400 font-medium';
+function todayIso(): string {
+  const t = new Date();
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+}
+
+// ── Spaltengruppen (visuelle Trennung) ───────────────────────────────────────
+
+/** Trennlinie am Beginn jeder Gruppe (auf Header-, Body- und Footer-Zellen). */
+const SEP = 'border-l border-border';
+
+interface ColumnGroup {
+  label: string;
+  /** Spalten (Label + Ausrichtung); erste Spalte der Gruppe erhält SEP. */
+  cols: { label: string; align: 'left' | 'right' }[];
+  /** Header-Hintergrund der Gruppe (Gruppenzeile kräftiger, Spaltenzeile dezent). */
+  head: string;
+  sub: string;
+}
+
+export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
+  {
+    label: 'Umsatz',
+    cols: [{ label: 'Datum', align: 'left' }, { label: 'Umsatz', align: 'right' }],
+    head: 'bg-muted/80', sub: 'bg-muted/40',
+  },
+  {
+    label: 'Kartenzahlungen',
+    cols: [{ label: 'KK', align: 'right' }, { label: 'KK Adyen', align: 'right' }],
+    head: 'bg-sky-100/80 dark:bg-sky-900/30', sub: 'bg-sky-50/70 dark:bg-sky-900/15',
+  },
+  {
+    label: 'Kasse',
+    cols: [
+      { label: 'Bargeld', align: 'right' },
+      { label: 'Cash', align: 'right' },
+      { label: 'Einzahlung Bank', align: 'right' },
+    ],
+    head: 'bg-emerald-100/70 dark:bg-emerald-900/30', sub: 'bg-emerald-50/60 dark:bg-emerald-900/15',
+  },
+  {
+    label: 'Weitere Zahlungsarten',
+    cols: [
+      { label: 'Debitoren', align: 'right' },
+      { label: 'Verkaufte Gutscheine', align: 'right' },
+      { label: 'Eingelöste Gutscheine', align: 'right' },
+    ],
+    head: 'bg-violet-100/70 dark:bg-violet-900/25', sub: 'bg-violet-50/60 dark:bg-violet-900/10',
+  },
+  {
+    label: 'Ausgaben',
+    cols: [{ label: 'Barausgaben', align: 'right' }],
+    head: 'bg-orange-100/70 dark:bg-orange-900/25', sub: 'bg-orange-50/60 dark:bg-orange-900/10',
+  },
+  {
+    label: 'Status',
+    cols: [{ label: 'Status', align: 'left' }],
+    head: 'bg-muted/80', sub: 'bg-muted/40',
+  },
+];
+
+// ── Zellen-Darstellung ───────────────────────────────────────────────────────
+
+/** Negative Beträge rot — hat Vorrang vor der blauen Manuell-Markierung. */
+function amountColor(value: number | null, source: DayCell['source']): string {
+  if (value !== null && value < 0) return 'text-red-600 dark:text-red-400 font-medium';
+  if (source === 'manual') return 'text-sky-700 dark:text-sky-400 font-medium';
   return '';
 }
 
-function ValueCell({ cell, title }: { cell: DayCell; title?: string }) {
+function cellBg(cell: DayCell): string {
+  return cell.source === 'corrected' ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : '';
+}
+
+function ValueCell({ cell, sep = false, title }: { cell: DayCell; sep?: boolean; title?: string }) {
   return (
-    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${cellClasses(cell)}`} title={title}>
+    <td
+      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${cellBg(cell)} ${amountColor(cell.value, cell.source)}`}
+      title={title}
+    >
       <span className="inline-flex items-center gap-1">
         {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
         {cell.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(cell.value)}
@@ -57,6 +137,21 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
     return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Offen</span>;
   }
   return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">Kein Z-Bericht</span>;
+}
+
+// ── Zeilen-Hintergrund (Zebra + Zustands-Tints) ──────────────────────────────
+
+/**
+ * Priorität: bestätigt (grün) > rote Differenz > orange Differenz >
+ * offen (gelb) > Zebra. Differenzen = Adyen- ODER Kassen-Differenz.
+ */
+function rowTint(row: TagesabschlussRow, zebra: boolean): string {
+  if (row.status === 'bestaetigt') return 'bg-green-50/70 dark:bg-green-950/20';
+  const statuses = [row.adyenDiffStatus, row.kassenDiffStatus];
+  if (statuses.includes('large')) return 'bg-red-50/70 dark:bg-red-950/20';
+  if (statuses.includes('small')) return 'bg-orange-50/70 dark:bg-orange-950/20';
+  if (row.status === 'offen') return 'bg-amber-50/60 dark:bg-amber-950/15';
+  return zebra ? 'bg-muted/20' : '';
 }
 
 // ── Inline-Editoren ───────────────────────────────────────────────────────────
@@ -111,55 +206,6 @@ function InlineAmountInput({ value, manual, onCommit, testId, ariaLabel }: {
   );
 }
 
-function InlineTextInput({ value, onCommit, testId, ariaLabel }: {
-  value: string | null;
-  onCommit: (next: string | null) => void;
-  testId: string;
-  ariaLabel: string;
-}) {
-  const [text, setText] = useState(() => value ?? '');
-  const escaped = useRef(false);
-  useEffect(() => { setText(value ?? ''); }, [value]);
-
-  const commit = () => {
-    const trimmed = text.trim();
-    if (trimmed === (value ?? '')) { setText(value ?? ''); return; }
-    onCommit(trimmed === '' ? null : trimmed);
-  };
-
-  return (
-    <input
-      type="text"
-      className={`h-6 w-full min-w-[120px] rounded border border-input bg-background px-1 text-xs ${
-        value ? 'text-sky-700 dark:text-sky-400' : ''
-      } focus:outline-none focus:ring-1 focus:ring-ring`}
-      value={text}
-      aria-label={ariaLabel}
-      onChange={e => setText(e.target.value)}
-      onBlur={() => {
-        if (escaped.current) { escaped.current = false; return; }
-        commit();
-      }}
-      onKeyDown={e => {
-        if (e.key === 'Enter') { e.currentTarget.blur(); }
-        if (e.key === 'Escape') {
-          escaped.current = true;
-          setText(value ?? '');
-          e.currentTarget.blur();
-        }
-      }}
-      data-testid={testId}
-    />
-  );
-}
-
-const HEADERS = [
-  'Datum', 'Umsatz', 'Netto', 'MWST', 'Bargeld / Barumsatz', 'Bestand Kasse',
-  'Kreditkarten / Adyen / SIX', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz',
-  'Rechnung / Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
-  'Barausgaben total', 'Einzahlung Bank', 'Bemerkung', 'Status',
-];
-
 interface TagesabschlussTableProps {
   rows: TagesabschlussRow[];
   totals: TagesabschlussTotals;
@@ -168,9 +214,7 @@ interface TagesabschlussTableProps {
   /** Gäste-Modus: keinerlei Eingaben. */
   readOnly?: boolean;
   /** Inline-Save einzelner manueller Felder (nur vorhandene Keys werden angefasst). */
-  onSaveManual?: (date: string, patch: {
-    bestandKasse?: number | null; einzahlungBank?: number | null; bemerkung?: string | null;
-  }) => void;
+  onSaveManual?: (date: string, patch: TagesabschlussManualPatch) => void;
   /** Bestätigung (gemeinsamer Adyen-Store), identische Semantik wie im Dialog. */
   onConfirm?: (date: string, confirmation: DayConfirmation | null) => void;
 }
@@ -180,48 +224,118 @@ export function TagesabschlussTable({
 }: TagesabschlussTableProps) {
   const editable = !readOnly && !!onSaveManual;
   const confirmable = !readOnly && !!onConfirm;
+  const today = todayIso();
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
       <table className="w-full text-xs">
         <thead>
-          <tr className="bg-muted/50 text-muted-foreground">
-            {HEADERS.map((h, i) => (
-              <th key={h} className={`px-2 py-1.5 font-medium whitespace-nowrap ${i === 0 || i >= 15 ? 'text-left' : 'text-right'}`}>
-                {h}
+          {/* Gruppenzeile — unterschiedliche Hintergründe je Gruppe. */}
+          <tr data-testid="ta-header-groups">
+            {TAGESABSCHLUSS_COLUMN_GROUPS.map((g, gi) => (
+              <th
+                key={g.label}
+                colSpan={g.cols.length}
+                className={`px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${g.head} ${gi > 0 ? SEP : ''}`}
+              >
+                {g.label}
               </th>
             ))}
           </tr>
+          {/* Spaltenzeile. */}
+          <tr className="text-muted-foreground" data-testid="ta-header-cols">
+            {TAGESABSCHLUSS_COLUMN_GROUPS.flatMap((g, gi) =>
+              g.cols.map((c, ci) => (
+                <th
+                  key={c.label}
+                  className={`px-2 py-1.5 font-medium whitespace-nowrap ${g.sub} ${c.align === 'left' ? 'text-left' : 'text-right'} ${gi > 0 && ci === 0 ? `${SEP} pl-3` : ''}`}
+                >
+                  {c.label}
+                </th>
+              )),
+            )}
+          </tr>
         </thead>
         <tbody>
-          {rows.map(row => {
-            const diffTitle = row.kassenDiff !== null
-              ? `Kassen-Differenz: ${fmtChf(row.kassenDiff)} (Bestand-Delta − erwartete Bewegung)`
+          {rows.map((row, idx) => {
+            const kassenTitle = row.kassenDiff !== null
+              ? `Kassen-Differenz: ${fmtDiffChf(row.kassenDiff)} (Bestand-Delta − erwartete Bewegung)`
               : undefined;
+            const adyenTitle = row.adyenDiff !== null
+              ? `Differenz KK laut Z-Bericht − laut Adyen: ${fmtDiffChf(row.adyenDiff)}`
+              : row.hasAdyen ? undefined : 'Kein Adyen-Import für diesen Tag';
             const confirmation = row.confirmation ?? null;
             const cashCounted = confirmation?.cashCounted === true;
             const confirmed = confirmation?.confirmed === true;
+            const isToday = row.date === today;
             return (
               <tr
                 key={row.date}
-                className="border-t border-border hover:bg-accent/40"
+                className={`border-t border-border hover:bg-accent/40 ${rowTint(row, idx % 2 === 1)}`}
                 data-testid={`ta-row-${row.date}`}
+                {...(isToday ? { 'data-today': 'true' } : {})}
               >
-                <td className="px-2 py-1 whitespace-nowrap font-medium">
-                  <button
-                    type="button"
-                    className="underline decoration-dotted underline-offset-2 hover:text-primary cursor-pointer"
-                    onClick={() => onDayClick(row.date)}
-                    title="Tagesdetail öffnen"
-                    data-testid={`ta-date-${row.date}`}
-                  >
-                    {dayLabel(row.date)}
-                  </button>
+                {/* ── Gruppe Umsatz: Datum (Link zum Tagesdetail) + Umsatz ── */}
+                <td className={`px-2 py-1 whitespace-nowrap font-medium ${isToday ? 'border-l-2 border-l-primary' : ''}`}>
+                  <span className="inline-flex items-center gap-1">
+                    <button
+                      type="button"
+                      className={`text-primary underline underline-offset-2 hover:text-primary/80 cursor-pointer ${isToday ? 'font-bold' : ''}`}
+                      onClick={() => onDayClick(row.date)}
+                      title="Tagesdetail öffnen"
+                      data-testid={`ta-date-${row.date}`}
+                    >
+                      {dayLabel(row.date)}
+                    </button>
+                    {row.bemerkung && (
+                      <span title={row.bemerkung} className="shrink-0">
+                        <MessageSquare className="h-3 w-3 text-muted-foreground" aria-label="Bemerkung vorhanden" />
+                      </span>
+                    )}
+                  </span>
                 </td>
                 <ValueCell cell={row.cells.umsatz} />
-                <ValueCell cell={row.cells.netto} />
-                <ValueCell cell={row.cells.mwst} />
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${cellClasses(row.cells.bar)}`}
+
+                {/* ── Gruppe Kartenzahlungen: KK (Karten inkl. TWINT laut
+                    Z-Bericht — TWINT ohne eigene Spalte) + KK Adyen ── */}
+                {(() => {
+                  const k = row.cells.karten;
+                  const t = row.cells.twint;
+                  const kk = k.value === null && t.value === null
+                    ? null
+                    : Math.round(((k.value ?? 0) + (t.value ?? 0)) * 100) / 100;
+                  const corrected = k.source === 'corrected' || t.source === 'corrected';
+                  return (
+                    <td
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${corrected ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : ''} ${kk !== null && kk < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
+                      title={kk !== null
+                        ? `Karten ${k.value === null ? '—' : fmtChf(k.value)} + TWINT ${t.value === null ? '—' : fmtChf(t.value)}`
+                        : undefined}
+                      data-testid={`ta-kk-${row.date}`}
+                    >
+                      {kk === null ? <span className="text-muted-foreground">—</span> : fmtChf(kk)}
+                    </td>
+                  );
+                })()}
+                <td
+                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
+                  title={adyenTitle}
+                  data-testid={`ta-adyen-${row.date}`}
+                >
+                  {row.adyenTotal === null
+                    ? <span className="text-muted-foreground">—</span>
+                    : (
+                      <>
+                        {fmtChf(row.adyenTotal)}
+                        {row.adyenDiff !== null && row.adyenDiffStatus !== 'ok' && (
+                          <span className="ml-1 text-[10px]">({fmtDiffChf(row.adyenDiff)})</span>
+                        )}
+                      </>
+                    )}
+                </td>
+
+                {/* ── Gruppe Kasse: Bargeld + Cash (Bestand) + Einzahlung Bank ── */}
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${cellBg(row.cells.bar)} ${amountColor(row.cells.bar.value, row.cells.bar.source)}`}
                     title={row.barumsatz !== null ? `Rechnerischer Barumsatz: ${fmtChf(row.barumsatz)}` : undefined}>
                   {row.cells.bar.value !== null
                     ? fmtChf(row.cells.bar.value)
@@ -229,8 +343,8 @@ export function TagesabschlussTable({
                       ? <span className="text-muted-foreground">({fmtChf(row.barumsatz)})</span>
                       : <span className="text-muted-foreground">—</span>}
                 </td>
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? '' : cellClasses(row.cells.bestandKasse)} ${diffColorClass(row.kassenDiffStatus)}`}
-                    title={diffTitle} data-testid={`ta-bestand-${row.date}`}>
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? '' : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)} ${diffColorClass(row.kassenDiffStatus)}`}
+                    title={kassenTitle} data-testid={`ta-bestand-${row.date}`}>
                   {editable ? (
                     <span className="inline-flex items-center gap-1">
                       <InlineAmountInput
@@ -238,10 +352,10 @@ export function TagesabschlussTable({
                         manual={row.cells.bestandKasse.source === 'manual'}
                         onCommit={v => onSaveManual!(row.date, { bestandKasse: v })}
                         testId={`ta-input-bestand-${row.date}`}
-                        ariaLabel={`Bestand Kasse ${row.date}`}
+                        ariaLabel={`Cash (Bestand Kasse) ${row.date}`}
                       />
                       {row.kassenDiff !== null && row.kassenDiffStatus !== 'ok' && (
-                        <span className="text-[10px]">({fmtChf(row.kassenDiff)})</span>
+                        <span className="text-[10px]">({fmtDiffChf(row.kassenDiff)})</span>
                       )}
                     </span>
                   ) : (
@@ -250,37 +364,13 @@ export function TagesabschlussTable({
                         ? <span className="text-muted-foreground">—</span>
                         : fmtChf(row.cells.bestandKasse.value)}
                       {row.kassenDiff !== null && row.kassenDiffStatus !== 'ok' && (
-                        <span className="ml-1 text-[10px]">({fmtChf(row.kassenDiff)})</span>
+                        <span className="ml-1 text-[10px]">({fmtDiffChf(row.kassenDiff)})</span>
                       )}
                     </>
                   )}
                 </td>
-                <ValueCell cell={row.cells.karten} />
-                <ValueCell cell={row.cells.twint} />
-                <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
-                    title={row.hasAdyen ? undefined : 'Kein Adyen-Import für diesen Tag'}
-                    data-testid={`ta-adyen-${row.date}`}>
-                  {row.adyenTotal === null
-                    ? <span className="text-muted-foreground">—</span>
-                    : fmtChf(row.adyenTotal)}
-                </td>
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${diffColorClass(row.adyenDiffStatus)}`}
-                    title={row.adyenDiff !== null ? `Karten/TWINT laut Z-Bericht − laut Adyen = ${fmtChf(row.adyenDiff)}` : undefined}
-                    data-testid={`ta-adyen-diff-${row.date}`}>
-                  {row.adyenDiff === null
-                    ? <span className="text-muted-foreground">—</span>
-                    : fmtChf(row.adyenDiff)}
-                </td>
-                <ValueCell cell={row.cells.rechnung} />
-                <ValueCell cell={row.cells.gutscheinVerkauft} />
-                <ValueCell cell={row.cells.gutscheinEingeloest} />
-                <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">
-                  {row.expenseCount > 0
-                    ? <span className="font-medium">{fmtChf(row.barausgabenTotal)} <span className="text-[10px] text-muted-foreground">({row.expenseCount})</span></span>
-                    : <span className="text-muted-foreground">—</span>}
-                </td>
                 {editable ? (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.cells.einzahlungBank.source === 'corrected' ? cellClasses(row.cells.einzahlungBank) : ''}`}>
+                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
                     <span className="inline-flex items-center gap-1">
                       {row.cells.einzahlungBank.comment && (
                         <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
@@ -297,21 +387,21 @@ export function TagesabschlussTable({
                 ) : (
                   <ValueCell cell={row.cells.einzahlungBank} />
                 )}
-                {editable ? (
-                  <td className="px-2 py-1 min-w-[130px] max-w-[200px]" title={row.bemerkung ?? undefined}>
-                    <InlineTextInput
-                      value={row.bemerkung ?? null}
-                      onCommit={v => onSaveManual!(row.date, { bemerkung: v })}
-                      testId={`ta-input-bemerkung-${row.date}`}
-                      ariaLabel={`Bemerkung ${row.date}`}
-                    />
-                  </td>
-                ) : (
-                  <td className="px-2 py-1 max-w-[160px] truncate text-muted-foreground" title={row.bemerkung ?? undefined}>
-                    {row.bemerkung ?? ''}
-                  </td>
-                )}
-                <td className="px-2 py-1 whitespace-nowrap">
+
+                {/* ── Gruppe Weitere Zahlungsarten ── */}
+                <ValueCell cell={row.cells.rechnung} sep />
+                <ValueCell cell={row.cells.gutscheinVerkauft} />
+                <ValueCell cell={row.cells.gutscheinEingeloest} />
+
+                {/* ── Gruppe Ausgaben: Barausgaben (nur Tages-Total) ── */}
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3`}>
+                  {row.expenseCount > 0
+                    ? <span className="font-medium">{fmtChf(row.barausgabenTotal)} <span className="text-[10px] text-muted-foreground">({row.expenseCount})</span></span>
+                    : <span className="text-muted-foreground">—</span>}
+                </td>
+
+                {/* ── Gruppe Status ── */}
+                <td className={`px-2 py-1 whitespace-nowrap ${SEP} pl-3`}>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={row.status} />
                     {confirmable && row.hasZbericht && (
@@ -356,28 +446,27 @@ export function TagesabschlussTable({
         <tfoot>
           <tr className="border-t-2 border-border bg-muted/40 font-semibold">
             <td className="px-2 py-1.5">Total</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.umsatz)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.netto)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.mwst)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums" title="Summe Bar laut Kasse; rechnerischer Barumsatz in Klammern">
+            <td className={`px-2 py-1.5 text-right tabular-nums ${totals.values.umsatz < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtChf(totals.values.umsatz)}</td>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.karten + totals.values.twint)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-adyen"
+                title="Summe Karten/TWINT laut Adyen; in Klammern die Summe der Tages-Differenzen (Vorzeichen können sich aufheben)">
+              {fmtChf(totals.adyenTotal)}
+              <span className="ml-1 text-[10px] text-muted-foreground" data-testid="ta-total-adyen-diff">
+                ({fmtDiffChf(totals.adyenDiff)})
+              </span>
+            </td>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} title="Summe Bar laut Kasse; rechnerischer Barumsatz in Klammern">
               {fmtChf(totals.values.bar)} <span className="text-[10px] text-muted-foreground">({fmtChf(totals.barumsatz)})</span>
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums" title="Letzter erfasster Bestand (kein Summentotal)">
               {fmtChf(totals.values.bestandKasse)}
             </td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.karten)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.twint)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-adyen">{fmtChf(totals.adyenTotal)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-adyen-diff"
-                title="Summe der Tages-Differenzen (Vorzeichen können sich aufheben)">
-              {fmtChf(totals.adyenDiff)}
-            </td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.rechnung)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.einzahlungBank)}</td>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.rechnung)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinVerkauft)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinEingeloest)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-barausgaben">{fmtChf(totals.barausgaben)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.einzahlungBank)}</td>
-            <td className="px-2 py-1.5 text-muted-foreground" colSpan={2}>
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} data-testid="ta-total-barausgaben">{fmtChf(totals.barausgaben)}</td>
+            <td className={`px-2 py-1.5 text-muted-foreground ${SEP} pl-3`}>
               {totals.daysConfirmed}/{totals.daysWithZbericht} Tage bestätigt
             </td>
           </tr>
