@@ -509,23 +509,75 @@ describe('resolveKassensaldoStart', () => {
     expect(computeMonthEndSaldo(2026, 5, byMonth['2026-5'], blob, 100)).toBe(400);
   });
 
-  it('bricht an einem Monat ganz ohne Daten ab → null (KEINE stille 0)', async () => {
-    const res = await resolveKassensaldoStart(2026, 7, emptyTagesabschlussBlob(), async () => ({}));
+  it('ohne früheren Anfangsbestand → null OHNE Loads (KEINE stille 0)', async () => {
+    const calls: string[] = [];
+    const res = await resolveKassensaldoStart(2026, 7, emptyTagesabschlussBlob(), async (y, m) => {
+      calls.push(`${y}-${m}`);
+      return {};
+    });
+    expect(res).toEqual({ startSaldo: null, anchorMonth: null });
+    // Anker-Suche ist synchron über die Blob-Schlüssel — kein einziger Load.
+    expect(calls).toEqual([]);
+  });
+
+  it('läuft lückenlos über Jahreswechsel UND Leermonate (kein Reset)', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2025-11', 100, NOW);
+    const calls: string[] = [];
+    const byMonth: Record<string, Record<string, GnDayClosing>> = {
+      '2025-11': { '2025-11-10': makeClosing('2025-11-10') }, // Bargeld Soll 300
+      // Dezember 2025 bewusst KOMPLETT leer (geschlossener Monat).
+      '2026-1': { '2026-01-05': makeClosing('2026-01-05') },  // Bargeld Soll 300
+    };
+    const res = await resolveKassensaldoStart(2026, 2, blob, async (y, m) => {
+      calls.push(`${y}-${m}`);
+      return byMonth[`${y}-${m}`] ?? {};
+    });
+    // Nov: 100+300=400 → Dez (leer): 400 → Jan: 400+300=700 → Start Februar.
+    expect(res).toEqual({ startSaldo: 700, anchorMonth: '2025-11' });
+    expect(calls).toEqual(['2025-11', '2025-12', '2026-1']);
+  });
+
+  it('Änderung eines alten Tages (z. B. Bankeinzahlung) verschiebt den Folgemonats-Start', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2026-06', 500, NOW);
+    const byMonth: Record<string, Record<string, GnDayClosing>> = {
+      '2026-6': { '2026-06-10': makeClosing('2026-06-10') }, // Bargeld Soll 300
+    };
+    const load = async (y: number, m: number) => byMonth[`${y}-${m}`] ?? {};
+    const before = await resolveKassensaldoStart(2026, 7, blob, load);
+    expect(before.startSaldo).toBe(800);
+    // Nachträgliche Bankeinzahlung am 10.06. reduziert den fortlaufenden Saldo.
+    blob = upsertManualDay(blob, '2026-06-10', { einzahlungBank: 50 }, NOW);
+    const after = await resolveKassensaldoStart(2026, 7, blob, load);
+    expect(after.startSaldo).toBe(750);
+  });
+
+  it('expliziter Anker eines späteren Monats gewinnt (jüngster Anker vor dem Zielmonat)', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2026-01', 100, NOW);
+    blob = setAnfangsbestand(blob, '2026-06', 900, NOW); // manuell korrigierter Anker
+    const res = await resolveKassensaldoStart(2026, 7, blob, async () => ({}));
+    expect(res).toEqual({ startSaldo: 900, anchorMonth: '2026-06' });
+  });
+
+  it('Monat VOR dem ältesten Anker → null (Kette läuft nur vorwärts)', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2026-06', 500, NOW);
+    const res = await resolveKassensaldoStart(2026, 3, blob, async () => ({}));
     expect(res).toEqual({ startSaldo: null, anchorMonth: null });
   });
 
-  it('läuft maximal 12 Monate zurück, dann null', async () => {
+  it('Schutzkappe: unrealistisch weit entfernter Anker → null statt Endlos-Kette', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2010-01', 500, NOW);
     const calls: string[] = [];
-    // Jeder Monat hat Daten, aber nirgends ein Anker.
-    const res = await resolveKassensaldoStart(2026, 7, emptyTagesabschlussBlob(), async (y, m) => {
+    const res = await resolveKassensaldoStart(2026, 7, blob, async (y, m) => {
       calls.push(`${y}-${m}`);
-      const mm = String(m).padStart(2, '0');
-      return { [`${y}-${mm}-01`]: makeClosing(`${y}-${mm}-01`) };
+      return {};
     });
     expect(res).toEqual({ startSaldo: null, anchorMonth: null });
     expect(calls).toHaveLength(KASSENSALDO_MAX_CHAIN_MONTHS);
-    expect(calls[0]).toBe('2026-6');
-    expect(calls[11]).toBe('2025-7');
   });
 });
 

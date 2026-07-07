@@ -1025,18 +1025,9 @@ export function tagesabschlussMonthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
 }
 
-/** Vormonat von (year, month). */
-export function prevMonthOf(year: number, month: number): { year: number; month: number } {
-  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
-}
-
-/** Hat der Blob Daten in diesem Monat (days/expenses/anfangsbestand)? */
-export function monthHasBlobData(blob: TagesabschlussBlob, monthKey: string): boolean {
-  const prefix = `${monthKey}-`;
-  if (blob.anfangsbestand[monthKey]) return true;
-  for (const date of Object.keys(blob.days)) if (date.startsWith(prefix)) return true;
-  for (const date of Object.keys(blob.expenses)) if (date.startsWith(prefix)) return true;
-  return false;
+/** Folgemonat von (year, month). */
+export function nextMonthOf(year: number, month: number): { year: number; month: number } {
+  return month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
 }
 
 /**
@@ -1055,8 +1046,12 @@ export function computeMonthEndSaldo(
   return buildTagesabschlussRows(year, month, closings, blob, {}, null, startSaldo).endSaldo;
 }
 
-/** Maximale Ketten-Länge der Vormonats-Suche (Schutz vor Endlos-Rückwärtslauf). */
-export const KASSENSALDO_MAX_CHAIN_MONTHS = 12;
+/**
+ * Sicherheitskappe der Vorwärts-Kette Anker → Zielmonat (10 Jahre). Reine
+ * Schutzgrenze gegen pathologische Distanzen — KEIN fachliches Monats-Limit:
+ * der Kassensaldo läuft über Monats- UND Jahreswechsel lückenlos weiter.
+ */
+export const KASSENSALDO_MAX_CHAIN_MONTHS = 120;
 
 export interface KassensaldoStartResolution {
   /** Kassensaldo (Soll) zu Monatsbeginn; null = kein Anker gefunden. */
@@ -1066,14 +1061,21 @@ export interface KassensaldoStartResolution {
 }
 
 /**
- * Ermittelt den Kassensaldo zu Monatsbeginn:
- * 1. Expliziter Anfangsbestand für DIESEN Monat gewinnt sofort.
- * 2. Sonst rückwärts durch die Vormonate (max. 12): beim nächsten Monat mit
- *    explizitem Anfangsbestand verankern und die Kette vorwärts durchrechnen
- *    (je Monat 1 `loadClosings`-Aufruf, identische Rechenbasis wie die
- *    Monatsansicht). Bricht die Kette an einem Monat ganz ohne Daten ab
- *    (keine Closings, keine Blob-Einträge, kein Anker) → null: der Benutzer
- *    muss einen Anfangsbestand erfassen. KEINE stille 0-Annahme.
+ * Ermittelt den Kassensaldo zu Monatsbeginn — fortlaufende Kasse über ALLE
+ * Monate und Jahre (Monats-/Jahreswechsel setzen NIE zurück):
+ * 1. Expliziter Anfangsbestand für DIESEN Monat gewinnt sofort (kein Load).
+ * 2. Sonst wird der JÜNGSTE frühere Monat mit explizitem Anfangsbestand
+ *    synchron aus den Blob-Schlüsseln bestimmt (yyyy-MM sortiert
+ *    lexikografisch = chronologisch) und die Kette von dort VORWÄRTS bis zum
+ *    Zielmonat durchgerechnet (je Monat 1 `loadClosings`-Aufruf, identische
+ *    Rechenbasis wie die Monatsansicht inkl. Overrides/Barausgaben). Monate
+ *    ganz ohne Daten laufen als 0-Beitrag einfach durch — auch geschlossene
+ *    Monate oder der Jahreswechsel unterbrechen die Kette nicht.
+ * 3. Existiert nirgends ein früherer Anfangsbestand → null: der Benutzer
+ *    muss EINMALIG einen Kassen-Anfangsbestand erfassen. KEINE stille 0.
+ * Da alles aus den Rohdaten abgeleitet ist, rechnet eine Änderung an einem
+ * alten Tag automatisch alle nachfolgenden Salden neu (keine Persistenz von
+ * Zwischenständen).
  */
 export async function resolveKassensaldoStart(
   year: number,
@@ -1085,31 +1087,25 @@ export async function resolveKassensaldoStart(
   const own = blob.anfangsbestand[ownKey];
   if (own) return { startSaldo: round2(own.value), anchorMonth: ownKey };
 
-  const chain: Array<{ year: number; month: number; closings: Record<string, GnDayClosing> }> = [];
-  let cur = prevMonthOf(year, month);
-  let anchor: { key: string; value: number } | null = null;
+  const anchorKey = Object.keys(blob.anfangsbestand)
+    .filter(k => k < ownKey)
+    .sort()
+    .pop();
+  if (!anchorKey) return { startSaldo: null, anchorMonth: null };
+
+  const [ay, am] = anchorKey.split('-').map(Number);
+  let cur = { year: ay, month: am };
+  let saldo: number | null = round2(blob.anfangsbestand[anchorKey].value);
 
   for (let i = 0; i < KASSENSALDO_MAX_CHAIN_MONTHS; i++) {
-    const key = tagesabschlussMonthKey(cur.year, cur.month);
-    const ab = blob.anfangsbestand[key];
-    const closings = await loadClosings(cur.year, cur.month);
-    if (ab) {
-      anchor = { key, value: ab.value };
-      chain.unshift({ year: cur.year, month: cur.month, closings });
-      break;
+    if (cur.year === year && cur.month === month) {
+      return { startSaldo: round2(saldo as number), anchorMonth: anchorKey };
     }
-    const hasData = Object.keys(closings).length > 0 || monthHasBlobData(blob, key);
-    if (!hasData) return { startSaldo: null, anchorMonth: null };
-    chain.unshift({ year: cur.year, month: cur.month, closings });
-    cur = prevMonthOf(cur.year, cur.month);
-  }
-
-  if (!anchor) return { startSaldo: null, anchorMonth: null };
-
-  let saldo: number | null = anchor.value;
-  for (const m of chain) {
-    saldo = computeMonthEndSaldo(m.year, m.month, m.closings, blob, saldo);
+    const closings = await loadClosings(cur.year, cur.month);
+    saldo = computeMonthEndSaldo(cur.year, cur.month, closings, blob, saldo);
     if (saldo === null) return { startSaldo: null, anchorMonth: null };
+    cur = nextMonthOf(cur.year, cur.month);
   }
-  return { startSaldo: round2(saldo), anchorMonth: anchor.key };
+  // Schutzkappe erreicht (Anker unrealistisch weit weg) — kein stiller Wert.
+  return { startSaldo: null, anchorMonth: null };
 }

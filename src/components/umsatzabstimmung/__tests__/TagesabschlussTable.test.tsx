@@ -230,11 +230,11 @@ describe('TagesabschlussTable', () => {
     expect(screen.queryByText(/GS-4712/)).toBeNull();
   });
 
-  it('färbt Zeilen nach Zustand: bestätigt grün, offen gelb', () => {
+  it('färbt Zeilen nach Zustand: bestätigt grün, offen rot', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
     expect(screen.getByTestId('ta-row-2026-07-01').className).toContain('bg-green-50');
-    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-amber-50');
+    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-red-50');
   });
 
   it('markiert die heutige Zeile (data-today)', () => {

@@ -87,6 +87,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   /** null = Auflösung läuft noch; startSaldo null = kein Anker gefunden. */
   const [saldoResolution, setSaldoResolution] = useState<KassensaldoStartResolution | null>(null);
   const [anfangsbestandText, setAnfangsbestandText] = useState('');
+  /** Anfangsbestand nachträglich bearbeiten (Banner sichtbar trotz Anker). */
+  const [editAnfangsbestand, setEditAnfangsbestand] = useState(false);
 
   // Jahr-Wechsel: Monat sinnvoll nachziehen.
   useEffect(() => {
@@ -109,6 +111,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     let alive = true;
     setLoading(true);
     setClosings({});
+    setEditAnfangsbestand(false);
+    setAnfangsbestandText('');
     loadGnDayClosingsForMonth(tenantId, year, month).then(data => {
       if (!alive) return;
       setClosings(data);
@@ -126,8 +130,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   }, [tenantId]);
 
   // Kassensaldo-Anker auflösen: expliziter Anfangsbestand dieses Monats oder
-  // Vormonats-Kette (max. 12 Monate). KEINE stille 0-Annahme — ohne Anker
-  // bleiben alle Saldi „—" und der Banner fordert einen Anfangsbestand an.
+  // Kette vom jüngsten früheren Anfangsbestand vorwärts — lückenlos über
+  // Monats- UND Jahreswechsel. KEINE stille 0-Annahme — ohne Anker bleiben
+  // alle Saldi „—" und der Banner fordert einen Anfangsbestand an.
   useEffect(() => {
     if (!blob) { setSaldoResolution(null); return; }
     let alive = true;
@@ -192,7 +197,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     void persist(setCashDiffReasons(blob, date, reasons, note, new Date().toISOString()));
   }, [readOnly, blob, persist]);
 
-  /** Kassensaldo-Anfangsbestand für DIESEN Monat erfassen (Banner). */
+  /** Kassensaldo-Anfangsbestand für DIESEN Monat erfassen/bearbeiten (Banner). */
   const handleSaveAnfangsbestand = useCallback(() => {
     if (readOnly || !blob) return;
     const parsed = parseAmountInput(anfangsbestandText);
@@ -200,7 +205,19 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     const monthKey = tagesabschlussMonthKey(year, month);
     void persist(setAnfangsbestand(blob, monthKey, parsed, new Date().toISOString()));
     setAnfangsbestandText('');
+    setEditAnfangsbestand(false);
   }, [readOnly, blob, anfangsbestandText, year, month, persist]);
+
+  /** Anfangsbestand nachträglich bearbeiten (nur Admin — Seite ist admin-gated,
+   *  Gäste sind readOnly): öffnet den Banner vorbefüllt; Speichern setzt einen
+   *  expliziten Anker für DIESEN Monat (überschreibt die Ketten-Ableitung). */
+  const handleEditAnfangsbestand = useCallback(() => {
+    if (readOnly || !blob) return;
+    const monthKey = tagesabschlussMonthKey(year, month);
+    const explicit = blob.anfangsbestand[monthKey]?.value ?? saldoResolution?.startSaldo ?? null;
+    setAnfangsbestandText(explicit === null ? '' : explicit.toFixed(2));
+    setEditAnfangsbestand(true);
+  }, [readOnly, blob, year, month, saldoResolution]);
 
   // ── Bestätigung (gemeinsamer Adyen-Store) ───────────────────────────────────
 
@@ -296,18 +313,24 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
           <p className="text-xs text-muted-foreground py-4 text-center">Lade Tagesabschlüsse…</p>
         ) : (
           <>
-            {saldoResolution !== null && saldoResolution.startSaldo === null && (
+            {saldoResolution !== null && (saldoResolution.startSaldo === null || editAnfangsbestand) && (
               <div
                 className="mb-3 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2"
                 data-testid="ta-anfangsbestand-banner"
               >
                 <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                  Kassensaldo unbekannt — Anfangsbestand für {MONTH_NAMES[month - 1]} {year} erfassen
+                  {saldoResolution.startSaldo === null
+                    ? <>Kassensaldo unbekannt — Anfangsbestand für {MONTH_NAMES[month - 1]} {year} erfassen</>
+                    : <>Kassen-Anfangsbestand für {MONTH_NAMES[month - 1]} {year} bearbeiten</>}
                 </p>
                 <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
-                  Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
-                  Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
-                  Es wird bewusst KEINE 0 angenommen.
+                  {saldoResolution.startSaldo === null
+                    ? <>Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
+                        Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
+                        Es wird bewusst KEINE 0 angenommen.</>
+                    : <>Speichern setzt einen expliziten Anfangsbestand für diesen Monat und übersteuert
+                        den aus den Vormonaten fortgeschriebenen Saldo. Alle Folgesalden werden
+                        automatisch neu berechnet.</>}
                 </p>
                 {!readOnly && (
                   <div className="flex items-center gap-2 mt-1.5">
@@ -328,6 +351,13 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                       data-testid="ta-anfangsbestand-save">
                       Anfangsbestand speichern
                     </Button>
+                    {editAnfangsbestand && (
+                      <Button size="sm" variant="ghost" className="h-7 text-xs"
+                        onClick={() => { setEditAnfangsbestand(false); setAnfangsbestandText(''); }}
+                        data-testid="ta-anfangsbestand-cancel">
+                        Abbrechen
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -342,7 +372,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               </div>
               <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-open">
                 <p className="text-[10px] text-muted-foreground">Tage offen</p>
-                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysOpen > 0 ? 'text-amber-700 dark:text-amber-400' : ''}`}>
+                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysOpen > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
                   {monthData.totals.daysOpen}
                 </p>
               </div>
@@ -359,6 +389,27 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-einzahlung">
                 <p className="text-[10px] text-muted-foreground">Total Einzahlung Bank</p>
                 <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.values.einzahlungBank)}</p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-saldo-anfang">
+                <div className="flex items-center justify-between gap-1">
+                  <p className="text-[10px] text-muted-foreground">Kassensaldo Anfang Monat</p>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                      onClick={handleEditAnfangsbestand}
+                      title="Kassen-Anfangsbestand dieses Monats bearbeiten (nur Admin)"
+                      data-testid="ta-anfangsbestand-edit"
+                    >
+                      ändern
+                    </button>
+                  )}
+                </div>
+                <p className="text-sm font-semibold tabular-nums">
+                  {saldoResolution === null || saldoResolution.startSaldo === null
+                    ? <span className="text-muted-foreground font-normal">—</span>
+                    : <>CHF {fmtChf(saldoResolution.startSaldo)}</>}
+                </p>
               </div>
               <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-saldo-ende">
                 <p className="text-[10px] text-muted-foreground">Kassensaldo Ende Monat</p>
@@ -405,9 +456,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span>Adyen- und Cash-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
               <span>Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
               <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Cash Diff = Cash Ist − Kassensaldo Soll</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag bestätigt</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-300 align-middle mr-1" />offen</span>
-              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />Differenz</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag abgeschlossen</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-50 border border-yellow-300 align-middle mr-1" />abgeschlossen mit Differenz</span>
+              <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />offen / Differenz</span>
             </div>
           </>
         )}

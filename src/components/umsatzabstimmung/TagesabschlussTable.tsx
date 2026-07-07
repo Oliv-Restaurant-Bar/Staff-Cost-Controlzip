@@ -183,7 +183,7 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
   if (status === 'bestaetigt_mit_differenz') {
     return (
       <span
-        className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300"
+        className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300"
         title="Abgeschlossen mit begründeter Kassendifferenz"
       >
         Mit Differenz
@@ -191,7 +191,7 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
     );
   }
   if (status === 'offen') {
-    return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">Offen</span>;
+    return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">Offen</span>;
   }
   return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">Kein Z-Bericht</span>;
 }
@@ -199,18 +199,17 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
 // ── Zeilen-Hintergrund (Zebra + Zustands-Tints) ──────────────────────────────
 
 /**
- * Priorität: bestätigt (grün, auch „mit Differenz") > rote Differenz >
- * orange Differenz > offen (gelb) > Zebra.
+ * Priorität: bestätigt (grün) > bestätigt mit Differenz (gelb) >
+ * rote Differenz > orange Differenz > offen (rot) > Zebra.
  * Differenzen = Adyen- ODER Cash-Differenz.
  */
 function rowTint(row: TagesabschlussRow, zebra: boolean): string {
-  if (row.status === 'bestaetigt' || row.status === 'bestaetigt_mit_differenz') {
-    return 'bg-green-50/70 dark:bg-green-950/20';
-  }
+  if (row.status === 'bestaetigt') return 'bg-green-50/70 dark:bg-green-950/20';
+  if (row.status === 'bestaetigt_mit_differenz') return 'bg-yellow-50/70 dark:bg-yellow-950/20';
   const statuses = [row.adyenDiffStatus, row.cashDiffStatus];
   if (statuses.includes('large')) return 'bg-red-50/70 dark:bg-red-950/20';
   if (statuses.includes('small')) return 'bg-orange-50/70 dark:bg-orange-950/20';
-  if (row.status === 'offen') return 'bg-amber-50/60 dark:bg-amber-950/15';
+  if (row.status === 'offen') return 'bg-red-50/50 dark:bg-red-950/15';
   return zebra ? 'bg-muted/20' : '';
 }
 
