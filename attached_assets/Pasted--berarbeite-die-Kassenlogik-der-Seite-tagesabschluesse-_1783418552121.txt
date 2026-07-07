@@ -1,0 +1,221 @@
+Überarbeite die Kassenlogik der Seite /tagesabschluesse grundlegend.
+
+Ziel:
+Der Kassensaldo soll eine fortlaufende Kasse über alle Monate und Jahre hinweg darstellen. Ein Monatswechsel darf die Berechnung niemals zurücksetzen. Die Monatsansicht dient nur der Darstellung, nicht der Berechnungsgrenze.
+
+## 1. Neue Bargeld-Berechnung
+
+Berechne den erwarteten Bargeldzufluss pro Tag ausschliesslich nach folgender Formel:
+
+Bargeld (Soll) =
+
+Umsatz
+- Kreditkarten (KK laut Z-Bericht inkl. TWINT)
+- Debitoren / Rechnung
+- Barausgaben
+- Eingelöste Gutscheine
++ Verkaufte Gutscheine
+
+Diese Formel ist fachlich verbindlich.
+
+## 2. Fortlaufender Kassensaldo
+
+Berechnung:
+
+Kassensaldo Soll heute =
+
+Kassensaldo Soll Vortag
++ Bargeld (Soll)
+- Einzahlung Bank
+
+Wichtig:
+
+- NICHT am Monatsende zurücksetzen.
+- NICHT am Jahresende zurücksetzen.
+- Immer den letzten bestätigten Kassensaldo übernehmen.
+
+Beispiel:
+
+31.05.
+Saldo = CHF 4'280
+
+↓
+
+01.06.
+Startsaldo automatisch CHF 4'280
+
+↓
+
+30.06.
+Saldo = CHF 6'910
+
+↓
+
+01.07.
+Startsaldo automatisch CHF 6'910
+
+usw.
+
+Der Kassensaldo ist somit lückenlos über alle Monate und Jahre fortlaufend.
+
+## 3. Anfangsbestand
+
+Nur falls noch nie ein Kassensaldo existiert:
+
+Einmalig:
+
+"Kassen-Anfangsbestand"
+
+Dieser Wert bildet den Startpunkt der gesamten Historie.
+
+Danach niemals mehr automatisch zurücksetzen.
+
+Der Anfangsbestand soll später bearbeitbar sein (nur Admin).
+
+## 4. Cash Ist
+
+Cash Ist = gezählter Kassenbestand.
+
+Inline editierbar.
+
+## 5. Kassendifferenz
+
+Cash Differenz =
+
+Cash Ist
+-
+Kassensaldo Soll
+
+Darstellung:
+
+Grün
+<= CHF 0.05
+
+Orange
+<= CHF 5.00
+
+Rot
+> CHF 5.00
+
+## 6. Differenzgründe
+
+Bei jeder Differenz soll eine Mehrfachauswahl möglich sein.
+
+Schnellauswahl:
+
+Barausgaben
+- Barausgabe vergessen
+- Barausgabe falsch erfasst
+
+Bank
+- Einzahlung vergessen
+- Einzahlung falscher Betrag
+- Einzahlung erfolgt am Folgetag
+
+Gutscheine
+- Gutschein falsch verbucht
+- Gutscheinnummer prüfen
+
+Debitoren
+- Rechnung falsch erfasst
+- Debitor fehlt
+
+Kartenzahlungen
+- Adyen-Abweichung
+- Zahlung nachträglich verarbeitet
+
+Kasse
+- Wechselgeld angepasst
+- Trinkgeld-Differenz
+- Rundungsdifferenz
+- Kassenfehler
+
+Sonstiges
+- Sonstige Ursache
+
+Mehrfachauswahl zulassen.
+
+## 7. Freitext
+
+Zusätzlich immer:
+
+"Eigene Notiz"
+
+anzeigen.
+
+Gründe und Kommentar gleichzeitig speichern.
+
+## 8. Statuslogik
+
+Status:
+
+Grün:
+Abgeschlossen
+
+Gelb:
+Abgeschlossen mit Differenz (begründet)
+
+Rot:
+Offen
+
+Eine Differenz gilt als begründet, sobald mindestens
+
+- ein Schnellgrund
+
+oder
+
+- ein Freitext
+
+vorhanden ist.
+
+## 9. Monatsübersicht
+
+Neue KPIs:
+
+- Kassensaldo Anfang Monat
+- Kassensaldo Ende Monat
+- Bargeld Total
+- Bankeinzahlungen Total
+- Tage mit Differenzen
+- Tage mit begründeten Differenzen
+
+## 10. Jahreswechsel
+
+Auch der Jahreswechsel darf den Kassensaldo NICHT zurücksetzen.
+
+31.12.
+↓
+
+01.01.
+
+übernimmt automatisch den letzten bestätigten Saldo.
+
+## 11. Historie
+
+Jeder bestätigte Tagesabschluss schreibt den fortlaufenden Kassensaldo fort.
+
+Wird ein älterer Tag geändert,
+
+sollen alle nachfolgenden Kassensalden automatisch neu berechnet werden, damit die gesamte Historie konsistent bleibt.
+
+## 12. Tests
+
+Ergänzen:
+
+- Bargeldformel korrekt
+- Fortlaufender Kassensaldo über mehrere Monate
+- Jahreswechsel übernimmt Saldo
+- Änderung eines alten Tages berechnet alle Folgetage neu
+- Anfangsbestand funktioniert
+- Bankeinzahlung reduziert Saldo
+- Mehrere Differenzgründe speicherbar
+- Freitext speicherbar
+- Status "Abgeschlossen mit Differenz"
+- Monats-KPIs korrekt
+
+Danach bitte ausführen:
+
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Tabellen-Komponenten Tests
+- Adyen-Abgleich Tests
