@@ -256,9 +256,7 @@ export function BuchhaltungsExportSection({
                   <tr className="border-b border-border text-muted-foreground">
                     <th className="text-left py-1 pr-2 font-medium">Bereich</th>
                     <th className="text-right py-1 px-2 font-medium">Buchungen</th>
-                    <th className="text-right py-1 px-2 font-medium">Netto</th>
-                    <th className="text-right py-1 px-2 font-medium">MwSt</th>
-                    <th className="text-right py-1 pl-2 font-medium">Betrag</th>
+                    <th className="text-right py-1 pl-2 font-medium">Betrag (brutto)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -267,8 +265,6 @@ export function BuchhaltungsExportSection({
                       data-testid={`bx-vorschau-${g.kategorie}`}>
                       <td className="py-1 pr-2">{g.label}</td>
                       <td className="py-1 px-2 text-right tabular-nums">{g.anzahl}</td>
-                      <td className="py-1 px-2 text-right tabular-nums">{fmtChf(g.netto)}</td>
-                      <td className="py-1 px-2 text-right tabular-nums">{fmtChf(g.steuer)}</td>
                       <td className="py-1 pl-2 text-right tabular-nums">{fmtChf(g.brutto)}</td>
                     </tr>
                   ))}
@@ -277,8 +273,6 @@ export function BuchhaltungsExportSection({
                   <tr className="font-semibold" data-testid="bx-vorschau-total">
                     <td className="py-1 pr-2">Gesamt Buchungszeilen: {vorschau.anzahlBuchungen}</td>
                     <td className="py-1 px-2" />
-                    <td className="py-1 px-2 text-right tabular-nums">{fmtChf(vorschau.nettoTotal)}</td>
-                    <td className="py-1 px-2 text-right tabular-nums">{fmtChf(vorschau.mwstTotal)}</td>
                     <td className="py-1 pl-2 text-right tabular-nums">{fmtChf(vorschau.bruttoTotal)}</td>
                   </tr>
                 </tfoot>

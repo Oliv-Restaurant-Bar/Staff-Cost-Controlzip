@@ -1,0 +1,102 @@
+Baue jetzt den Buchhaltungs-Export final für /tagesabschluesse.
+
+Ziel:
+Aus abgeschlossenen Tagesabschlüssen soll ein CSV analog der bisherigen Tabelle2 erzeugt werden. Der Export darf nur aus geprüften/abgeschlossenen Tagen entstehen.
+
+Vorgaben:
+
+1. Export-Voraussetzung
+- Nur abgeschlossene Tage exportieren.
+- Nicht abgeschlossene Tage blockieren den Monats-Export.
+- Tage mit begründeter Differenz dürfen exportiert werden.
+- Unbegründete Differenzen blockieren den Export.
+
+2. Keine MWST-Buchung
+- Keine Buchung auf Konto 2200 erzeugen.
+- Keine MWST auslösen.
+- Bruttoumsatz direkt auf Konto 1098 buchen.
+
+3. Kontierung
+Verwende folgende Regeln:
+
+- Umsatz brutto: Konto 1098, Haben
+- Bar / Bargeld: Konto 1000, Soll
+- KK / SIX / Mastercard / Visa / TWINT Sammel: Konto 1110, Soll
+- AMEX: Konto 1114, Soll
+- PostCard: Konto 1116, Soll
+- Lunch-Check / Just Eat: Konto 1115, Soll
+- Stripe: Konto 1118, Soll
+- Debitoren / Rechnung: Konto 1100, Soll
+- KD Tisch 5000: Konto 1104, Soll
+- Barausgaben / Barquittungen: Konto 1001 oder das pro Barausgabe erfasste Konto, Soll
+- Verkaufte Gutscheine: Konto 2003, Haben
+- Eingelöste Gutscheine: Konto 2003, Soll
+- Bankeinzahlung: Gegenbuchung gemäss bestehender Logik; falls unklar, zunächst in Vorschau ausweisen und nicht automatisch exportieren.
+
+4. Barausgaben
+- In der Übersicht bleiben Barausgaben als Total.
+- Im Export jede Barausgabe einzeln exportieren.
+- Verwende pro Barausgabe:
+  - Datum
+  - Konto
+  - Gegenkonto falls vorhanden
+  - Betrag
+  - Beschreibung
+  - Kommentar
+  - Belegnummer
+
+5. Export-Assistent
+Auf /tagesabschluesse Abschnitt "Buchhaltungs-Export" einbauen:
+- Checkliste der Voraussetzungen
+- Monatstotale als Vorschau
+- Buchungszeilen-Vorschau
+- Button "CSV exportieren"
+
+6. CSV-Format
+Erzeuge CSV nach Muster der bestehenden Tabelle2/sfbbuch-Datei.
+Wichtig:
+- Textfelder korrekt quoten, besonders bei Kommas.
+- Beträge ohne Tausenderzeichen exportieren.
+- Keine leeren Nullzeilen exportieren.
+- Nur Zeilen mit Betrag exportieren.
+
+7. Export-Historie
+Nach Export speichern:
+- Monat
+- Exportdatum
+- Benutzer
+- Version
+- Anzahl Buchungszeilen
+- Kassensaldo Ende
+- Status exportiert
+
+Wenn nach Export ein Tag wieder geöffnet oder geändert wird:
+- Monat als "Export veraltet" markieren.
+- Hinweis anzeigen: "Seit dem letzten Export wurden Tagesabschlüsse geändert. Bitte neuen Export erstellen."
+
+8. Import-Cockpit
+Kontrollaufgabe ergänzen:
+- Name: Buchhaltungs-Export
+- Bereich: Umsatz / Buchhaltung
+- Intervall: Monatlich
+- Status: offen / bereit / exportiert / veraltet
+- Link: /tagesabschluesse zum Export-Assistenten
+
+9. Tests
+Ergänzen:
+- Export blockiert bei offenen Tagen.
+- Export erlaubt abgeschlossene Tage mit begründeter Differenz.
+- MWST-Konto 2200 wird nie exportiert.
+- Umsatz wird brutto auf 1098 gebucht.
+- Barausgaben werden einzeln exportiert.
+- Textfelder mit Kommas werden korrekt quoted.
+- Export-Historie versioniert mehrere Exporte.
+- Export wird veraltet nach Wiederöffnung/Änderung.
+- Import-Cockpit zeigt Buchhaltungs-Export korrekt.
+
+Danach bitte ausführen:
+- korrekter TypeScript-Check gegen tsconfig.app.json
+- Tagesabschlüsse Tests
+- Export Tests
+- Import-Cockpit Tests
+- Architect Review

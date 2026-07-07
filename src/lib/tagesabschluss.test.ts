@@ -986,7 +986,15 @@ describe('defaultExportSettings', () => {
     expect(s.konten.kasse).toBe('1000');
     expect(s.konten.bank).toBe('1020');
     expect(s.konten.umsatzTransit).toBe('1098');
-    expect(s.kontoJeZahlungsart.twint).toBe('1119');
+    // Brutto-Modell: MC/Visa/TWINT bewusst OHNE Einzelkonto → KK-Sammel 1110.
+    expect(s.kontoJeZahlungsart.mastercard).toBeUndefined();
+    expect(s.kontoJeZahlungsart.visa).toBeUndefined();
+    expect(s.kontoJeZahlungsart.twint).toBeUndefined();
+    expect(s.kontoJeZahlungsart.amex).toBe('1114');
+    expect(s.kontoJeZahlungsart.postcard).toBe('1116');
+    expect(s.kontoJeZahlungsart.lunch_check).toBe('1115');
+    expect(s.kontoJeZahlungsart.stripe).toBe('1118');
+    expect(s.kontoJeZahlungsart.kd_tisch_5000).toBe('1104');
     expect(s.reviewed).toBe(false);
   });
 });

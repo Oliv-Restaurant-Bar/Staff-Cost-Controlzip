@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { normalizeGnPaymentName } from '@/lib/adyen-abstimmung';
 import {
+  collectUnclassifiedZahlarten,
   defaultExportSettings,
   type GnDayClosing,
   type TagesabschlussBlob,
@@ -27,14 +28,14 @@ import {
 import { buildTabelle2Rows, tabelle2ToExportTable } from '@/lib/tagesabschluss-export';
 import { downloadCsv } from '@/lib/table-export';
 
+/** Brutto-Modell: kein Umsatz-(Ertrag)-Konto, keine MWST-Codes mehr. */
 const ROLE_LABELS: Array<[keyof TagesabschlussExportSettings['konten'], string]> = [
   ['kasse', 'Kasse'],
   ['bank', 'Bank (Einzahlungen)'],
   ['debitoren', 'Debitoren / Rechnung'],
   ['gutscheine', 'Gutschein-Konto'],
   ['kartenSammel', 'Kreditkarten-Sammelkonto'],
-  ['umsatz', 'Umsatz (Ertrag)'],
-  ['umsatzTransit', 'Umsatz-Durchlaufkonto'],
+  ['umsatzTransit', 'Umsatz brutto (Haben)'],
 ];
 
 interface TagesabschlussExportDialogProps {
@@ -60,28 +61,20 @@ export function TagesabschlussExportDialog({
     if (open) setDraft(blob.exportSettings ?? defaultExportSettings(new Date().toISOString()));
   }, [open, blob.exportSettings]);
 
-  /** Alle Steuersätze und Karten-Zahlungsarten des Monats (für das Mapping-UI). */
-  const monthRates = useMemo(() => {
-    const rates = new Set<string>();
-    for (const row of rows) {
-      if (!row.hasZbericht) continue;
-      for (const t of closings[row.date]?.taxes ?? []) {
-        if (t.rate.trim() !== '') rates.add(t.rate.trim());
-      }
-    }
-    return [...rates].sort();
-  }, [rows, closings]);
-
   const paymentKeys = useMemo(() => {
     const keys = new Set<string>(Object.keys(draft.kontoJeZahlungsart));
     for (const row of rows) {
-      for (const pm of closings[row.date]?.payments ?? []) {
+      const closing = closings[row.date];
+      for (const pm of closing?.payments ?? []) {
         const norm = normalizeGnPaymentName(pm.name);
         // isKkCard = alle kartenähnlichen Zahlarten (inkl. PostCard/
         // Lunch-Check/Stripe ohne Adyen-Abwicklung) — jede davon ist im
         // Export separat kontierbar.
         if (norm.isKkCard) keys.add(norm.key);
       }
+      // Unklassifizierte Zahlarten (z. B. KD Tisch 5000) MÜSSEN kontiert
+      // werden — ohne Konto blockiert der Export.
+      for (const z of collectUnclassifiedZahlarten(closing)) keys.add(z.key);
     }
     return [...keys].sort();
   }, [rows, closings, draft.kontoJeZahlungsart]);
@@ -130,7 +123,10 @@ export function TagesabschlussExportDialog({
 
         <section className="space-y-2 border-t border-border pt-3">
           <h3 className="text-xs font-semibold">Konto je Zahlungsart</h3>
-          <p className="text-[10px] text-muted-foreground">Leer = Kreditkarten-Sammelkonto ({draft.konten.kartenSammel || '—'}).</p>
+          <p className="text-[10px] text-muted-foreground">
+            Karten: leer = Kreditkarten-Sammelkonto ({draft.konten.kartenSammel || '—'}).
+            Unklassifizierte Zahlarten (z. B. KD Tisch 5000) brauchen zwingend ein Konto.
+          </p>
           <div className="grid grid-cols-3 gap-2">
             {paymentKeys.map(key => (
               <div key={key}>
@@ -144,26 +140,6 @@ export function TagesabschlussExportDialog({
             ))}
             {paymentKeys.length === 0 && (
               <p className="text-[11px] text-muted-foreground col-span-3">Keine Kartenzahlungen im Monat gefunden.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-2 border-t border-border pt-3">
-          <h3 className="text-xs font-semibold">MWST-Codes je Steuersatz</h3>
-          <div className="grid grid-cols-3 gap-2">
-            {monthRates.map(rate => (
-              <div key={rate}>
-                <Label className="text-[11px]">{rate}</Label>
-                <Input className="h-7 text-xs" placeholder="z. B. U81"
-                  value={draft.mwstCodes[rate] ?? ''} disabled={readOnly}
-                  onChange={e => setDraft(d => ({
-                    ...d, mwstCodes: { ...d.mwstCodes, [rate]: e.target.value },
-                  }))}
-                  data-testid={`ta-exp-mwst-${rate}`} />
-              </div>
-            ))}
-            {monthRates.length === 0 && (
-              <p className="text-[11px] text-muted-foreground col-span-3">Keine Steuersätze im Monat gefunden (keine Z-Berichte).</p>
             )}
           </div>
         </section>

@@ -75,6 +75,7 @@ describe('escapeCsvCell', () => {
     expect(escapeCsvCell('Normal')).toBe('Normal');
     expect(escapeCsvCell('')).toBe('');
     expect(escapeCsvCell('a;b')).toBe('"a;b"');
+    expect(escapeCsvCell('a,b')).toBe('"a,b"'); // Komma quotet (Spec Buchhaltungs-Export §6)
     expect(escapeCsvCell('Zeile\nUmbruch')).toBe('"Zeile\nUmbruch"');
     expect(escapeCsvCell('Mit "Zitat"')).toBe('"Mit ""Zitat"""');
   });

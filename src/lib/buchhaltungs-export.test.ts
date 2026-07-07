@@ -103,7 +103,6 @@ function withClosedMonth(blob: TagesabschlussBlob, monthKey: string): Tagesabsch
 function reviewedSettings(over: Partial<TagesabschlussExportSettings> = {}): TagesabschlussExportSettings {
   return {
     ...defaultExportSettings(NOW),
-    mwstCodes: { '8.1%': 'U81' },
     reviewed: true,
     ...over,
   };
@@ -251,7 +250,7 @@ describe('buildMonatspruefung', () => {
 // ── Buchungsvorschau (§4) ────────────────────────────────────────────────────
 
 describe('summarizeBuchungsvorschau', () => {
-  it('gruppiert die Tabelle2-Zeilen nach Kategorie und summiert MwSt/Netto', () => {
+  it('gruppiert die Tabelle2-Zeilen nach Kategorie (Brutto-Modell, keine Umsatz-Gruppe)', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
     blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 200 }, NOW);
@@ -266,22 +265,39 @@ describe('summarizeBuchungsvorschau', () => {
     const byKat = Object.fromEntries(vorschau.gruppen.map(g => [g.kategorie, g]));
 
     expect(vorschau.gruppen.map(g => g.kategorie)).toEqual([...VORSCHAU_KATEGORIEN]);
-    expect(byKat['umsatz'].anzahl).toBe(1);
-    expect(byKat['umsatz'].netto).toBe(925.07);
-    expect(byKat['umsatz'].steuer).toBe(74.93);
-    expect(byKat['umsatz'].brutto).toBe(1000);
+    expect(byKat['barumsatz'].brutto).toBe(300);
     expect(byKat['kreditkarten'].anzahl).toBe(2); // Mastercard + VISA
-    expect(byKat['kreditkarten'].netto).toBe(550);
-    expect(byKat['twint'].netto).toBe(100);
-    expect(byKat['debitoren'].netto).toBe(30);
-    expect(byKat['gutschein_eingeloest'].netto).toBe(20);
-    expect(byKat['bank'].netto).toBe(200);
+    expect(byKat['kreditkarten'].brutto).toBe(550);
+    expect(byKat['twint'].brutto).toBe(100);
+    expect(byKat['debitoren'].brutto).toBe(30);
+    expect(byKat['gutschein_eingeloest'].brutto).toBe(20);
+    expect(byKat['bank'].brutto).toBe(200);
     expect(byKat['barausgabe'].anzahl).toBe(1);
-    expect(byKat['barausgabe'].netto).toBe(42.5);
+    expect(byKat['barausgabe'].brutto).toBe(42.5);
 
     expect(vorschau.anzahlBuchungen).toBe(exp.rows.length);
-    expect(vorschau.mwstTotal).toBe(74.93);
-    expect(vorschau.bruttoTotal).toBe(vorschau.nettoTotal + vorschau.mwstTotal);
+    expect(vorschau.mwstTotal).toBe(0); // Brutto-Modell: keine MWST-Buchungen
+    expect(vorschau.bruttoTotal).toBe(vorschau.nettoTotal);
+  });
+
+  it('weist unklassifizierte Zahlarten der Gruppe weitere_zahlungsarten zu', () => {
+    const closings = {
+      '2026-07-01': makeClosing('2026-07-01', {
+        payments: [
+          { name: 'Bar', count: 10, amount: 960 },
+          { name: 'KD Tisch 5000', count: 1, amount: 40 },
+        ],
+      }),
+    };
+    const blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const exp = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(exp.errors).toEqual([]);
+    const vorschau = summarizeBuchungsvorschau(exp.rows);
+    const byKat = Object.fromEntries(vorschau.gruppen.map(g => [g.kategorie, g]));
+    expect(byKat['weitere_zahlungsarten'].anzahl).toBe(1);
+    expect(byKat['weitere_zahlungsarten'].brutto).toBe(40);
+    expect(byKat['barumsatz'].brutto).toBe(960);
   });
 
   it('liefert leere Gruppen (0) für einen leeren Export', () => {

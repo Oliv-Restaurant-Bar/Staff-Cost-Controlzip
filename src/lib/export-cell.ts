@@ -56,10 +56,15 @@ export function cellToCsv(cell: ExportCell): string {
   return cell;
 }
 
-/** Quotet eine CSV-Zelle nur, wenn nötig (Trennzeichen, Anführungszeichen, Umbruch). */
+/**
+ * Quotet eine CSV-Zelle nur, wenn nötig (Trennzeichen, Anführungszeichen,
+ * Umbruch). KOMMA gehört dazu, obwohl Semikolon der Trenner ist — Beträge/
+ * Texte mit Komma dürfen beim Öffnen in Fremd-Tools keine Spalten verschieben
+ * (Spec Buchhaltungs-Export §6).
+ */
 export function escapeCsvCell(value: string): string {
   if (value === '') return '';
-  if (/[";\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+  if (/[",;\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
 }
 

@@ -6,34 +6,46 @@
  * Blg;Datum;Kto;S/H;Grp;GKto;SId;SIdx;KIdx;BTyp;MTyp;Code;Netto;Steuer;
  * FW-Betrag;Tx1;Tx2;PkKey;OpId;Flag
  *
- * Buchungsmodell (über das Umsatz-Durchlaufkonto, z. B. 1098 "DLK Umsatz"):
- *  - Umsatz GESAMMELT pro Tag: je Steuersatz eine Zeile
- *      Kto = umsatzTransit / GKto = umsatz, Netto + Steuer + MWST-Code.
- *  - Zahlungsmittel-Seite pro Tag: je Kanal eine Zeile, Kto = Kanal-Konto /
- *      GKto = umsatzTransit, Betrag brutto:
- *      Barumsatz (BERECHNET aus Tageswerten), Karten je Zahlungsart (oder
- *      Sammelkonto), TWINT, Rechnung/Debitoren, eingelöste Gutscheine.
- *  - Verkaufte Gutscheine separat: Kto = kasse / GKto = gutscheine.
- *  - Einzahlung Bank: Kto = bank / GKto = kasse.
+ * Buchungsmodell (BRUTTO, ohne MWST — Spec „Buchhaltungs-Export final"):
+ *  - KEINE MWST-Buchung: kein Konto 2200, keine Steuer-Spalte, keine
+ *    Umsatz-je-Steuersatz-Zeilen. Der Bruttoumsatz landet direkt auf dem
+ *    Umsatz-Brutto-Konto (konten.umsatzTransit, z. B. 1098) — als
+ *    HABEN-Seite (GKto) JEDER Zahlweg-Zeile; eine separate Umsatz-Sammel-
+ *    zeile ist nicht nötig (jede Zeile ist ein vollständiger Buchungssatz).
+ *  - Zahlungsmittel-Seite pro Tag, je Kanal eine Zeile (Kto = Kanal, Soll):
+ *      Barumsatz (BERECHNET, Residual) → kasse (1000),
+ *      Karten je Zahlungsart oder Sammelkonto (KK/SIX/MC/Visa/TWINT → 1110,
+ *      AMEX 1114, PostCard 1116, Lunch-Check/Just Eat 1115, Stripe 1118),
+ *      Rechnung/Debitoren → debitoren (1100),
+ *      UNKLASSIFIZIERTE Zahlarten (z. B. KD Tisch 5000 → 1104) SEPARAT —
+ *      ohne Konto-Mapping blockiert der Export (kein stiller Barumsatz-Rest),
+ *      eingelöste Gutscheine → gutscheine (2003, Soll).
+ *  - Verkaufte Gutscheine separat: Kto = kasse / GKto = gutscheine (2003 Haben).
+ *  - Einzahlung Bank (bestehende Logik): Kto = bank / GKto = kasse.
  *  - Barausgaben EINZELN (nie nur als Total): Kto = Ausgabe-Konto /
- *      GKto = Gegenkonto oder kasse, Text/Beleg/MWST-Code aus der Erfassung.
+ *      GKto = Gegenkonto oder kasse, Text/Beleg aus der Erfassung; der
+ *      MWST-Code der AUSGABE (Vorsteuer) bleibt erhalten — das MWST-Verbot
+ *      gilt der Umsatzseite.
+ *  - Balance je Tag: Σ(Zeilen mit GKto = Umsatz brutto) = Original-Umsatz.
+ *  - Es werden NIE Nullzeilen emittiert (nur Zeilen mit Betrag ≠ 0).
  *
  * Kein Export ohne vollständiges, GEPRÜFTES Konto-Mapping (`reviewed`) —
  * es werden NIE Platzhalter-Konten emittiert.
  *
  * KORREKTUREN (Overrides) UND EXPORT: Der Export verwendet durchgängig die
  * ORIGINAL-Z-Bericht-Werte (DayCell.auto) — nie die korrigierten Effektivwerte.
- * Grund: Umsatz-Zeilen (je Steuersatz) und Karten-Zeilen (je Zahlungsart)
- * stammen zwingend aus den Original-Detaildaten; eine Korrektur der SUMME
- * liesse sich nicht verteilen und würde das Durchlaufkonto aus der Balance
- * bringen. Korrekturen gelten der Übersicht/Kassenkontrolle; betroffene Tage
- * werden beim Export EXPLIZIT als Warnung gelistet (manuell nachbuchen).
+ * Grund: Karten-Zeilen (je Zahlungsart) stammen zwingend aus den Original-
+ * Detaildaten; eine Korrektur der SUMME liesse sich nicht verteilen und
+ * würde die Tages-Balance (Σ Zahlwege = Umsatz brutto) brechen. Korrekturen
+ * gelten der Übersicht/Kassenkontrolle; betroffene Tage werden beim Export
+ * EXPLIZIT als Warnung gelistet (manuell nachbuchen).
  */
 
 import { type ExportTable, buildCsvWithBom } from './export-cell';
 import {
   TAGESABSCHLUSS_AUTO_FIELDS,
   TAGESABSCHLUSS_FIELD_LABEL,
+  collectUnclassifiedZahlarten,
   type TagesabschlussRow,
   type TagesabschlussBlob,
   type TagesabschlussExportSettings,
@@ -56,11 +68,11 @@ export const TABELLE2_HEADERS = [
  * gesetzt (robust — keine Rückwärts-Klassifikation über Kontonummern/Texte).
  */
 export type Tabelle2Kategorie =
-  | 'umsatz'
   | 'barumsatz'
   | 'kreditkarten'
   | 'twint'
   | 'debitoren'
+  | 'weitere_zahlungsarten'
   | 'gutschein_verkauft'
   | 'gutschein_eingeloest'
   | 'bank'
@@ -117,8 +129,25 @@ export interface ExportValidation {
 }
 
 /**
- * Prüft, ob mit den Einstellungen exportiert werden darf. Fehlende Konten und
- * fehlende MWST-Codes werden EXPLIZIT aufgelistet — kein stiller Fallback.
+ * Rollen-Konten, die das Brutto-Modell tatsächlich bebucht — `umsatz` (altes
+ * Ertragskonto) und `mwstCodes` sind LEGACY und werden bewusst NICHT mehr
+ * validiert (keine MWST-Buchungen mehr).
+ */
+const REQUIRED_KONTO_ROLES: ReadonlyArray<[keyof TagesabschlussExportSettings['konten'], string]> = [
+  ['kasse', 'Kasse'],
+  ['bank', 'Bank'],
+  ['debitoren', 'Debitoren'],
+  ['gutscheine', 'Gutscheine'],
+  ['kartenSammel', 'Kreditkarten-Sammelkonto'],
+  ['umsatzTransit', 'Umsatz brutto'],
+];
+
+/**
+ * Prüft, ob mit den Einstellungen exportiert werden darf. Fehlende Konten
+ * werden EXPLIZIT aufgelistet — kein stiller Fallback. Unklassifizierte
+ * Zahlarten (z. B. KD Tisch 5000) brauchen zwingend ein eigenes Konto im
+ * Zahlungsarten-Mapping, sonst blockiert der Export (sie würden sonst
+ * stillschweigend im Barumsatz landen).
  */
 export function validateExportSettings(
   settings: TagesabschlussExportSettings | null,
@@ -130,28 +159,26 @@ export function validateExportSettings(
     return { ok: false, errors: ['Export-Einstellungen sind noch nicht konfiguriert.'] };
   }
 
-  const roleLabels: Record<keyof TagesabschlussExportSettings['konten'], string> = {
-    kasse: 'Kasse', bank: 'Bank', debitoren: 'Debitoren', gutscheine: 'Gutscheine',
-    kartenSammel: 'Kreditkarten-Sammelkonto', umsatz: 'Umsatz', umsatzTransit: 'Umsatz-Durchlaufkonto',
-  };
-  for (const [role, label] of Object.entries(roleLabels) as Array<[keyof typeof roleLabels, string]>) {
+  for (const [role, label] of REQUIRED_KONTO_ROLES) {
     if (!settings.konten[role] || settings.konten[role].trim() === '') {
       errors.push(`Konto fehlt: ${label}`);
     }
   }
 
-  // Jeder im Monat vorkommende Steuersatz braucht einen MWST-Code.
-  const rates = new Set<string>();
+  // Jede unklassifizierte Zahlart des Monats braucht ein eigenes Konto.
+  const unmapped = new Map<string, string>();
   for (const row of rows) {
     if (!row.hasZbericht) continue;
-    for (const t of closings[row.date]?.taxes ?? []) {
-      if (t.rate.trim() !== '') rates.add(t.rate.trim());
+    for (const z of collectUnclassifiedZahlarten(closings[row.date])) {
+      if (round2(z.amount) === 0) continue;
+      if (!settings.kontoJeZahlungsart[z.key]?.trim()) unmapped.set(z.key, z.label);
     }
   }
-  for (const rate of [...rates].sort()) {
-    if (!settings.mwstCodes[rate] || settings.mwstCodes[rate].trim() === '') {
-      errors.push(`MWST-Code fehlt für Steuersatz "${rate}"`);
-    }
+  for (const [, label] of [...unmapped.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    errors.push(
+      `Konto fehlt für Zahlungsart "${label}" — unklassifizierte Zahlarten müssen ` +
+      'im Konto-Mapping (Konto je Zahlungsart) einzeln kontiert werden.',
+    );
   }
 
   if (!settings.reviewed) {
@@ -262,37 +289,27 @@ export function buildTabelle2Rows(
     const closing = closings[row.date];
 
     if (row.hasZbericht && closing && (row.cells.umsatz.auto ?? 0) !== 0) {
-      // 1) Umsatz GESAMMELT pro Tag: je Steuersatz eine Zeile (Netto + Steuer).
-      const blg = nextBlg();
-      for (const t of closing.taxes) {
-        out.push(makeRow({
-          kategorie: 'umsatz',
-          blg, datum: date, kto: k.umsatzTransit, gkto: k.umsatz,
-          code: settings.mwstCodes[t.rate.trim()] ?? '',
-          netto: round2(t.net), steuer: round2(t.tax),
-          tx1: `Tagesumsatz ${date}`,
-        }));
-      }
-      // Ohne Steuerbericht: eine Bruttozeile ohne Code (sichtbar, kein Verlust).
-      if (closing.taxes.length === 0) {
-        out.push(makeRow({
-          kategorie: 'umsatz',
-          blg, datum: date, kto: k.umsatzTransit, gkto: k.umsatz,
-          netto: round2(row.cells.umsatz.auto ?? 0),
-          tx1: `Tagesumsatz ${date} (ohne Steuerbericht)`,
-        }));
-      }
+      // BRUTTO-Modell: KEINE Umsatz-/MWST-Zeilen — der Bruttoumsatz entsteht
+      // als Haben (GKto = Umsatz brutto) auf JEDER Zahlweg-Zeile unten.
 
-      // 2) Zahlungsmittel-Seite: Barumsatz — aus ORIGINAL-Werten berechnet,
+      // Unklassifizierte Zahlarten (z. B. KD Tisch 5000) werden SEPARAT
+      // gebucht (Mapping in der Validierung erzwungen) und deshalb hier
+      // zusätzlich vom Barumsatz-Residual abgezogen.
+      const unclassified = collectUnclassifiedZahlarten(closing)
+        .filter(z => round2(z.amount) !== 0);
+      const unclassifiedSum = round2(unclassified.reduce((s, z) => s + z.amount, 0));
+
+      // 1) Zahlungsmittel-Seite: Barumsatz — aus ORIGINAL-Werten berechnet,
       // damit die Zahlungsmittel-Seite exakt den Original-Umsatz deckt
-      // (row.barumsatz nutzt Effektivwerte und würde bei Korrekturen das
-      // Durchlaufkonto aus der Balance bringen).
+      // (row.barumsatz nutzt Effektivwerte und würde bei Korrekturen die
+      // Tages-Balance Σ Zahlwege = Umsatz brutto brechen).
       const exportBarumsatz = round2(
         (row.cells.umsatz.auto ?? 0)
         - (row.cells.karten.auto ?? 0)
         - (row.cells.twint.auto ?? 0)
         - (row.cells.rechnung.auto ?? 0)
-        - (row.cells.gutscheinEingeloest.auto ?? 0),
+        - (row.cells.gutscheinEingeloest.auto ?? 0)
+        - unclassifiedSum,
       );
       if (exportBarumsatz !== 0) {
         out.push(makeRow({
@@ -302,7 +319,7 @@ export function buildTabelle2Rows(
         }));
       }
 
-      // 3) Karten/TWINT je Zahlungsart (oder Sammelkonto). isKkCard umfasst
+      // 2) Karten/TWINT je Zahlungsart (oder Sammelkonto). isKkCard umfasst
       // auch kartenähnliche Zahlarten ohne Adyen-Abwicklung (PostCard/
       // Lunch-Check/Stripe) — sie werden hier SEPARAT gebucht und stecken
       // spiegelbildlich im karten.auto-Abzug des Barumsatzes (Balance).
@@ -325,12 +342,23 @@ export function buildTabelle2Rows(
         }));
       }
 
-      // 4) Rechnung/Debitoren separat.
+      // 3) Rechnung/Debitoren separat.
       if ((row.cells.rechnung.auto ?? 0) !== 0) {
         out.push(makeRow({
           kategorie: 'debitoren',
           blg: nextBlg(), datum: date, kto: k.debitoren, gkto: k.umsatzTransit,
           netto: round2(row.cells.rechnung.auto ?? 0), tx1: `Rechnung/Debitoren ${date}`,
+        }));
+      }
+
+      // 4) Unklassifizierte Zahlarten (z. B. KD Tisch 5000 → 1104) — je Art
+      // eine eigene Zeile; Konto ist durch die Validierung garantiert.
+      for (const z of unclassified) {
+        out.push(makeRow({
+          kategorie: 'weitere_zahlungsarten',
+          blg: nextBlg(), datum: date,
+          kto: settings.kontoJeZahlungsart[z.key].trim(), gkto: k.umsatzTransit,
+          netto: round2(z.amount), tx1: `${z.label} ${date}`,
         }));
       }
 

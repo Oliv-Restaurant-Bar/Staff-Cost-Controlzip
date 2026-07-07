@@ -214,20 +214,20 @@ export function buildMonatspruefung(month: TagesabschlussMonth): MonatspruefungI
 // ── Buchungsvorschau (§4) ────────────────────────────────────────────────────
 
 export const VORSCHAU_KATEGORIE_LABEL: Record<Tabelle2Kategorie, string> = {
-  umsatz: 'Umsatz',
+  barumsatz: 'Barumsatz (Kasse)',
   kreditkarten: 'Kreditkarten',
   twint: 'TWINT',
-  barumsatz: 'Barumsatz (Kasse)',
   debitoren: 'Debitoren',
+  weitere_zahlungsarten: 'Weitere Zahlungsarten (KD Tisch & Co.)',
   gutschein_verkauft: 'Verkaufte Gutscheine',
   gutschein_eingeloest: 'Eingelöste Gutscheine',
   barausgabe: 'Barausgaben',
   bank: 'Bankeinzahlungen',
 };
 
-/** Anzeige-Reihenfolge der Vorschau-Bereiche (Spec §4 + Barumsatz). */
+/** Anzeige-Reihenfolge der Vorschau-Bereiche (Brutto-Modell, Spec §4). */
 export const VORSCHAU_KATEGORIEN: readonly Tabelle2Kategorie[] = [
-  'umsatz', 'kreditkarten', 'twint', 'barumsatz', 'debitoren',
+  'barumsatz', 'kreditkarten', 'twint', 'debitoren', 'weitere_zahlungsarten',
   'gutschein_verkauft', 'gutschein_eingeloest', 'barausgabe', 'bank',
 ];
 
@@ -242,11 +242,11 @@ export interface VorschauGruppe {
 
 export interface Buchungsvorschau {
   gruppen: VorschauGruppe[];
-  /** Summe aller Netto-Beträge. */
+  /** Summe aller Beträge (Brutto-Modell: identisch mit bruttoTotal). */
   nettoTotal: number;
-  /** Summe aller Steuer-Beträge (MwSt). */
+  /** LEGACY: seit dem Brutto-Modell immer 0 (keine MWST-Buchungen mehr). */
   mwstTotal: number;
-  /** Netto + MwSt. */
+  /** Summe aller Buchungsbeträge (brutto). */
   bruttoTotal: number;
   /** Gesamtzahl der Buchungszeilen. */
   anzahlBuchungen: number;

@@ -64,10 +64,9 @@ const closing = (date: string): GnDayClosing => ({
   paymentAccounts: [],
 });
 
-/** Gültige, geprüfte Export-Einstellungen für den Fixture-Monat (8.1%). */
+/** Gültige, geprüfte Export-Einstellungen für den Fixture-Monat (Brutto-Modell). */
 const validSettings = () => ({
   ...defaultExportSettings(NOW),
-  mwstCodes: { '8.1%': 'U81' },
   reviewed: true,
   updatedAt: NOW,
 });

@@ -45,6 +45,15 @@ Vite dev server workflow is running (it holds a big chunk of container RAM). Eve
 test files in one invocation can die then. Options: run the suite while the workflow is
 stopped, or run affected files ONE per invocation — both work reliably.
 
+**Reliable chunked full-suite recipe (2026-07, 70 files/1557 tests):** list all test
+files into a text file, `split -l 9` into chunks, then per chunk:
+
+    NODE_OPTIONS=--max-old-space-size=4096 npx vitest run --silent=true --maxWorkers=2 <files>
+
+All 8 chunks pass even with the dev workflow running. Flag gotcha: use `--silent=true`
+— a bare `--silent` before the file list swallows the next path as the flag's value and
+silently skips that test file.
+
 ## `tsc --noEmit` itself now OOMs too (2026-07)
 `npx tsc -p tsconfig.app.json --noEmit` is ALSO OOM-killed silently (exit -1, no
 output) even with `NODE_OPTIONS=--max-old-space-size=12288` while the dev workflow

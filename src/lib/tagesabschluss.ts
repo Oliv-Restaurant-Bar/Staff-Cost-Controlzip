@@ -202,12 +202,30 @@ export interface TagesabschlussExportSettings {
     debitoren: string;      // z. B. 1100
     gutscheine: string;     // z. B. 2003
     kartenSammel: string;   // z. B. 1110
-    umsatz: string;         // z. B. 3000
-    umsatzTransit: string;  // z. B. 1098 (DLK Umsatz)
+    /**
+     * LEGACY (altes MWST-Modell) — wird seit dem Brutto-Modell NICHT mehr
+     * bebucht/validiert. Feld bleibt wegen persistierter Settings-Blobs
+     * (merge-on-save kann alte Stände zurückbringen) im Typ erhalten.
+     */
+    umsatz: string;
+    /**
+     * Umsatz-BRUTTO-Konto (z. B. 1098): Haben-Seite ALLER Zahlweg-Zeilen.
+     * Historischer Feldname „umsatzTransit" bleibt wegen persistierter
+     * Settings-Blobs — fachlich ist das seit dem Brutto-Modell das
+     * Umsatzkonto (keine MWST-/Durchlaufkonto-Buchungen mehr).
+     */
+    umsatzTransit: string;
   };
-  /** Konto je Zahlungsarten-Key (mastercard/visa/twint/…); leer → kartenSammel. */
+  /**
+   * Konto je Zahlungsarten-Key: kartenähnliche Arten (amex/postcard/…;
+   * leer → kartenSammel) UND unklassifizierte Arten (kd_tisch_5000/just_eat/…;
+   * PFLICHT — ohne Konto blockiert der Export, kein stiller Barumsatz-Rest).
+   */
   kontoJeZahlungsart: Record<string, string>;
-  /** MWST-Code je Z-Bericht-Steuersatz-Label (z. B. "8.1%" → "U81"). */
+  /**
+   * LEGACY (altes MWST-Modell) — der Export bucht keine MWST mehr (kein 2200,
+   * Brutto direkt). Feld bleibt wegen persistierter Settings-Blobs im Typ.
+   */
   mwstCodes: Record<string, string>;
   /** Erste Belegnummer (fortlaufend); leer = Blg-Spalte bleibt leer. */
   blgStart?: string;
@@ -525,6 +543,18 @@ const isRechnungKey  = (key: string): boolean => /rechnung|debitor|hotel|auf_hau
 const isGutscheinKey = (key: string): boolean => /gutschein|voucher/.test(key);
 const isTrinkgeldKey = (key: string): boolean => /trinkgeld|^tip/.test(key);
 
+/**
+ * Prädikat: Zahlart ist in KEINER Übersichts-Spalte klassifiziert (nicht
+ * kartenähnlich, nicht Bar/Rechnung/Gutschein/Trinkgeld) — z. B.
+ * „KD Tisch 5000" oder „Just Eat". Von collectWeitereZahlungsarten UND
+ * collectUnclassifiedZahlarten (Buchhaltungs-Export) gemeinsam genutzt,
+ * damit Übersicht und Export nie auseinanderlaufen.
+ */
+const isUnclassifiedZahlart = (norm: { key: string; isKkCard: boolean }): boolean =>
+  !norm.isKkCard
+  && !isBarKey(norm.key) && !isRechnungKey(norm.key)
+  && !isGutscheinKey(norm.key) && !isTrinkgeldKey(norm.key);
+
 /** Aus den Z-Bericht-Zahlungsarten die Spaltenwerte eines Tages ableiten. */
 export function deriveAutoValues(closing: GnDayClosing): Record<TagesabschlussAutoField, number | null> {
   let bar = 0;
@@ -614,16 +644,40 @@ export function collectWeitereZahlungsarten(closing: GnDayClosing | undefined): 
   for (const pm of closing.payments) {
     const norm = normalizeGnPaymentName(pm.name);
     const rareKk = RARE_KK_KEYS.has(norm.key);
-    const unclassified = !norm.isKkCard
-      && !isBarKey(norm.key) && !isRechnungKey(norm.key)
-      && !isGutscheinKey(norm.key) && !isTrinkgeldKey(norm.key);
-    if (!rareKk && !unclassified) continue;
+    if (!rareKk && !isUnclassifiedZahlart(norm)) continue;
     const prev = agg.get(norm.key);
     agg.set(norm.key, {
       key: norm.key,
       label: prev?.label ?? norm.label,
       amount: (prev?.amount ?? 0) + pm.amount,
       inKk: norm.isKkCard,
+    });
+  }
+  return [...agg.values()]
+    .map(z => ({ ...z, amount: round2(z.amount) }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+}
+
+/**
+ * Unklassifizierte Zahlarten eines Tages (z. B. „KD Tisch 5000", „Just Eat"),
+ * je Key aggregiert — für den Buchhaltungs-Export: jede dieser Arten wird
+ * dort SEPARAT kontiert (Konto je Zahlungsart, Default KD Tisch → 1104) und
+ * im Export-Barumsatz abgezogen; ohne Konto-Mapping blockiert der Export.
+ * Nutzt DASSELBE Prädikat wie deriveAutoValues/collectWeitereZahlungsarten
+ * (nie in tagesabschluss-export.ts nachbauen — sonst divergieren
+ * Übersicht und Export).
+ */
+export function collectUnclassifiedZahlarten(closing: GnDayClosing | undefined): ZahlungsartPosten[] {
+  if (!closing) return [];
+  const agg = new Map<string, ZahlungsartPosten>();
+  for (const pm of closing.payments) {
+    const norm = normalizeGnPaymentName(pm.name);
+    if (!isUnclassifiedZahlart(norm)) continue;
+    const prev = agg.get(norm.key);
+    agg.set(norm.key, {
+      key: norm.key,
+      label: prev?.label ?? norm.label,
+      amount: (prev?.amount ?? 0) + pm.amount,
     });
   }
   return [...agg.values()]
@@ -1313,21 +1367,24 @@ export function removeExpense(blob: TagesabschlussBlob, date: string, id: string
 export function defaultExportSettings(now: string): TagesabschlussExportSettings {
   return {
     konten: {
-      kasse: '1000',          // Kasse
-      bank: '1020',           // UBS Konto
-      debitoren: '1100',      // Forderungen (Debitoren)
+      kasse: '1000',          // Kasse (Bar)
+      bank: '1020',           // UBS Konto (Einzahlungen)
+      debitoren: '1100',      // Forderungen (Debitoren / Rechnung)
       gutscheine: '2003',     // Abrechnungs Kto. Gutscheine
-      kartenSammel: '1110',   // Kreditkarten (DLK)
-      umsatz: '3000',         // Ertrag A
-      umsatzTransit: '1098',  // DLK Umsatz
+      kartenSammel: '1110',   // KK/SIX/Mastercard/Visa/TWINT Sammel
+      umsatz: '3000',         // LEGACY — ungenutzt (kein MWST-Modell mehr)
+      umsatzTransit: '1098',  // Umsatz BRUTTO (Haben-Seite aller Zahlwege)
     },
+    // Mastercard/Visa/Maestro/TWINT bewusst OHNE Einzelkonto → kartenSammel 1110.
     kontoJeZahlungsart: {
-      maestro: '1111',        // KK MAESTRO
-      visa: '1112',           // KK VISA
       amex: '1114',           // KK AMEX
-      twint: '1119',          // KK TWINT
+      postcard: '1116',       // PostCard / PostFinance
+      lunch_check: '1115',    // Lunch-Check
+      just_eat: '1115',       // Just Eat (gleiches Konto wie Lunch-Check)
+      stripe: '1118',         // Stripe
+      kd_tisch_5000: '1104',  // KD Tisch 5000 (unklassifizierte Zahlart)
     },
-    mwstCodes: {},
+    mwstCodes: {},            // LEGACY — ungenutzt
     reviewed: false,
     updatedAt: now,
   };
