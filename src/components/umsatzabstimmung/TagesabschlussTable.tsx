@@ -3,9 +3,13 @@
  * ===========================================================================
  * Spalten nach realem Arbeitsablauf in 6 visuell getrennten Gruppen:
  *   Umsatz (Datum, Umsatz) · Kartenzahlungen (KK, KK Adyen) ·
- *   Kasse (Bargeld, Cash, Einzahlung Bank) ·
+ *   Kasse (Bargeld, Einzahlung Bank, Cash Soll, Cash Ist, Cash Diff) ·
  *   Weitere Zahlungsarten (Debitoren, Verkaufte/Eingelöste Gutscheine) ·
  *   Ausgaben (Barausgaben) · Status.
+ * Cash Soll = berechnet (Bargeld + verkaufte Gutscheine − eingelöste
+ * Gutscheine − Barausgaben − Einzahlung Bank), read-only mit Formel-Tooltip.
+ * Cash Ist = manuell gezählter Kassenbestand (inline editierbar, blau).
+ * Cash Diff = Ist − Soll, farbig (Ampel wie Adyen); „—" solange Ist fehlt.
  * TWINT wird intern weiter verarbeitet (Barumsatz/Export), erscheint aber
  * nicht mehr als eigene Spalte; die Adyen-Differenz steckt farbig in
  * „KK Adyen" (Wert + Klammer-Diff + Tooltip). Bemerkung/Gutscheinnummern
@@ -16,7 +20,7 @@
  * bestätigt = grün, Differenz = rot/orange, offen = gelb, heute = Akzent.
  *
  * Inline-Bearbeitung (nur wenn NICHT readOnly und Callbacks vorhanden):
- * Cash (Bestand Kasse) und Einzahlung Bank direkt in der Zeile (persistiert
+ * Cash Ist (Bestand Kasse) und Einzahlung Bank direkt in der Zeile (persistiert
  * bei Blur/Enter, Escape verwirft). Debitoren ebenfalls inline — als
  * KORREKTUR des Z-Bericht-Werts (Override, gelb; Leereingabe entfernt die
  * Korrektur). Gutschein-Zellen öffnen den kleinen Gutschein-Dialog
@@ -84,8 +88,10 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
     label: 'Kasse',
     cols: [
       { label: 'Bargeld', align: 'right' },
-      { label: 'Cash', align: 'right' },
       { label: 'Einzahlung Bank', align: 'right' },
+      { label: 'Cash Soll', align: 'right' },
+      { label: 'Cash Ist', align: 'right' },
+      { label: 'Cash Diff', align: 'right' },
     ],
     head: 'bg-emerald-100 dark:bg-emerald-900/40', sub: 'bg-emerald-50 dark:bg-emerald-900/20',
   },
@@ -177,11 +183,11 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
 
 /**
  * Priorität: bestätigt (grün) > rote Differenz > orange Differenz >
- * offen (gelb) > Zebra. Differenzen = Adyen- ODER Kassen-Differenz.
+ * offen (gelb) > Zebra. Differenzen = Adyen- ODER Cash-Differenz.
  */
 function rowTint(row: TagesabschlussRow, zebra: boolean): string {
   if (row.status === 'bestaetigt') return 'bg-green-50/70 dark:bg-green-950/20';
-  const statuses = [row.adyenDiffStatus, row.kassenDiffStatus];
+  const statuses = [row.adyenDiffStatus, row.cashDiffStatus];
   if (statuses.includes('large')) return 'bg-red-50/70 dark:bg-red-950/20';
   if (statuses.includes('small')) return 'bg-orange-50/70 dark:bg-orange-950/20';
   if (row.status === 'offen') return 'bg-amber-50/60 dark:bg-amber-950/15';
@@ -316,9 +322,6 @@ export function TagesabschlussTable({
         </thead>
         <tbody>
           {rows.map((row, idx) => {
-            const kassenTitle = row.kassenDiff !== null
-              ? `Kassen-Differenz: ${fmtDiffChf(row.kassenDiff)} (Bestand-Delta − erwartete Bewegung)`
-              : undefined;
             const adyenTitle = row.adyenDiff !== null
               ? `Differenz KK laut Z-Bericht − laut Adyen: ${fmtDiffChf(row.adyenDiff)}`
               : row.hasAdyen ? undefined : 'Kein Adyen-Import für diesen Tag';
@@ -392,7 +395,8 @@ export function TagesabschlussTable({
                     )}
                 </td>
 
-                {/* ── Gruppe Kasse: Bargeld + Cash (Bestand) + Einzahlung Bank ── */}
+                {/* ── Gruppe Kasse: Bargeld + Einzahlung Bank + Cash Soll
+                    (berechnet, read-only) + Cash Ist (manuell) + Cash Diff ── */}
                 <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${cellBg(row.cells.bar)} ${amountColor(row.cells.bar.value, row.cells.bar.source)}`}
                     title={row.barumsatz !== null ? `Rechnerischer Barumsatz: ${fmtChf(row.barumsatz)}` : undefined}>
                   {row.cells.bar.value !== null
@@ -400,32 +404,6 @@ export function TagesabschlussTable({
                     : row.barumsatz !== null
                       ? <span className="text-muted-foreground">({fmtChf(row.barumsatz)})</span>
                       : <span className="text-muted-foreground">—</span>}
-                </td>
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)} ${diffColorClass(row.kassenDiffStatus)}`}
-                    title={kassenTitle} data-testid={`ta-bestand-${row.date}`}>
-                  {editable ? (
-                    <span className="inline-flex items-center gap-1">
-                      <InlineAmountInput
-                        value={row.cells.bestandKasse.value}
-                        manual={row.cells.bestandKasse.source === 'manual'}
-                        onCommit={v => onSaveManual!(row.date, { bestandKasse: v })}
-                        testId={`ta-input-bestand-${row.date}`}
-                        ariaLabel={`Cash (Bestand Kasse) ${row.date}`}
-                      />
-                      {row.kassenDiff !== null && row.kassenDiffStatus !== 'ok' && (
-                        <span className="text-[10px]">({fmtDiffChf(row.kassenDiff)})</span>
-                      )}
-                    </span>
-                  ) : (
-                    <>
-                      {row.cells.bestandKasse.value === null
-                        ? <span className="text-muted-foreground">—</span>
-                        : fmtChf(row.cells.bestandKasse.value)}
-                      {row.kassenDiff !== null && row.kassenDiffStatus !== 'ok' && (
-                        <span className="ml-1 text-[10px]">({fmtDiffChf(row.kassenDiff)})</span>
-                      )}
-                    </>
-                  )}
                 </td>
                 {editable ? (
                   <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
@@ -445,6 +423,44 @@ export function TagesabschlussTable({
                 ) : (
                   <ValueCell cell={row.cells.einzahlungBank} />
                 )}
+                {/* Cash Soll — berechnet, read-only (Formel im Tooltip). */}
+                <td
+                  className="px-2 py-1 text-right tabular-nums whitespace-nowrap text-muted-foreground"
+                  title="Cash Soll = Bargeld + verkaufte Gutscheine − eingelöste Gutscheine − Barausgaben − Einzahlung Bank"
+                  data-testid={`ta-cash-soll-${row.date}`}
+                >
+                  {row.cashSoll === null ? '—' : fmtChf(row.cashSoll)}
+                </td>
+                {/* Cash Ist — manuell gezählter Kassenbestand (inline, blau). */}
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
+                    title="Cash Ist = manuell gezählter Kassenbestand"
+                    data-testid={`ta-bestand-${row.date}`}>
+                  {editable ? (
+                    <InlineAmountInput
+                      value={row.cells.bestandKasse.value}
+                      manual={row.cells.bestandKasse.source === 'manual'}
+                      onCommit={v => onSaveManual!(row.date, { bestandKasse: v })}
+                      testId={`ta-input-bestand-${row.date}`}
+                      ariaLabel={`Cash Ist (gezählter Kassenbestand) ${row.date}`}
+                    />
+                  ) : (
+                    row.cells.bestandKasse.value === null
+                      ? <span className="text-muted-foreground">—</span>
+                      : fmtChf(row.cells.bestandKasse.value)
+                  )}
+                </td>
+                {/* Cash Diff = Ist − Soll (Ampel); „—" solange Cash Ist fehlt. */}
+                <td
+                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium ${diffColorClass(row.cashDiffStatus)}`}
+                  title={row.cashDiff !== null
+                    ? `Cash Differenz = Cash Ist − Cash Soll: ${fmtDiffChf(row.cashDiff)}`
+                    : 'Cash Differenz erst nach Erfassung von Cash Ist'}
+                  data-testid={`ta-cash-diff-${row.date}`}
+                >
+                  {row.cashDiff === null
+                    ? <span className="text-muted-foreground font-normal">—</span>
+                    : fmtDiffChf(row.cashDiff)}
+                </td>
 
                 {/* ── Gruppe Weitere Zahlungsarten: Debitoren inline (Korrektur
                     des Z-Bericht-Werts), Gutscheine öffnen den Gutschein-Dialog ── */}
@@ -570,10 +586,19 @@ export function TagesabschlussTable({
             <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} title="Summe Bar laut Kasse; rechnerischer Barumsatz in Klammern">
               {fmtChf(totals.values.bar)} <span className="text-[10px] text-muted-foreground">({fmtChf(totals.barumsatz)})</span>
             </td>
-            <td className="px-2 py-1.5 text-right tabular-nums" title="Letzter erfasster Bestand (kein Summentotal)">
-              {fmtChf(totals.values.bestandKasse)}
-            </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.einzahlungBank)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground" data-testid="ta-total-cash-soll"
+                title="Summe Cash Soll (nur Tage mit berechenbarem Soll)">
+              {fmtChf(totals.cashSoll)}
+            </td>
+            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-cash-ist"
+                title="Summe Cash Ist (nur Tage mit gezähltem Bestand)">
+              {fmtChf(totals.cashIst)}
+            </td>
+            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-cash-diff"
+                title="Summe der Tages-Cash-Differenzen (Vorzeichen können sich aufheben)">
+              {fmtDiffChf(totals.cashDiff)}
+            </td>
             <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.rechnung)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinVerkauft)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinEingeloest)}</td>

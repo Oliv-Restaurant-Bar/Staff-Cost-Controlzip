@@ -39,7 +39,7 @@ import {
 } from '@/lib/tagesabschluss';
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
-import { fmtChf } from './adyen-ui';
+import { fmtChf, fmtDiffChf } from './adyen-ui';
 import { TagesabschlussTable } from './TagesabschlussTable';
 import { TagesabschlussDayDialog } from './TagesabschlussDayDialog';
 import { TagesabschlussExpenseDialog } from './TagesabschlussExpenseDialog';
@@ -280,6 +280,26 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 <p className="text-[10px] text-muted-foreground">Total Einzahlung Bank</p>
                 <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.values.einzahlungBank)}</p>
               </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-diff">
+                <p className="text-[10px] text-muted-foreground">Cash Differenz Monat</p>
+                <p className={`text-sm font-semibold tabular-nums ${Math.abs(monthData.totals.cashDiff) > 0.05 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                  CHF {fmtDiffChf(monthData.totals.cashDiff)}
+                </p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-diff-days">
+                <p className="text-[10px] text-muted-foreground">Tage mit Cash-Differenz</p>
+                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysWithCashDiff > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                  {monthData.totals.daysWithCashDiff}
+                </p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-soll">
+                <p className="text-[10px] text-muted-foreground">Total Cash Soll</p>
+                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.cashSoll)}</p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-ist">
+                <p className="text-[10px] text-muted-foreground">Total Cash Ist</p>
+                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.cashIst)}</p>
+              </div>
             </div>
             <TagesabschlussTable
               rows={monthData.rows}
@@ -297,7 +317,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
               <span className="text-red-600 dark:text-red-400">negative Beträge</span>
               <span>normale Werte = automatisch aus dem Z-Bericht</span>
-              <span>Adyen- und Kassen-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
+              <span>Adyen- und Cash-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
+              <span>Cash Soll = Bargeld + verkaufte Gutscheine − eingelöste Gutscheine − Barausgaben − Einzahlung Bank</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag bestätigt</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-300 align-middle mr-1" />offen</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />Differenz</span>

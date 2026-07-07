@@ -1,0 +1,125 @@
+Passe die Cash-Logik auf /tagesabschluesse an.
+
+Ziel:
+Cash soll nicht mehr als frei manuell berechneter Wert verstanden werden, sondern automatisch aus den Tagesabschluss-Werten berechnet werden. Der Benutzer kann weiterhin den effektiv gezählten Kassenbestand erfassen. Das System zeigt dann die Differenz.
+
+1. Spaltenlogik anpassen
+
+Die Tabelle soll folgende Kassen-Spalten haben:
+
+- Bargeld
+  = Barumsatz laut Z-Bericht
+
+- Einzahlung Bank
+  = manuelle Eingabe
+
+- Barausgaben
+  = Total der einzeln erfassten Barausgaben
+
+- Cash Soll
+  = automatisch berechneter erwarteter Kassenbestand
+
+- Cash Ist
+  = manuell gezählter Kassenbestand
+
+- Cash Differenz
+  = Cash Ist minus Cash Soll
+
+2. Berechnungsformel
+
+Cash Soll berechnen als:
+
+Bargeld
++ Verkaufte Gutscheine
+- Eingelöste Gutscheine
+- Barausgaben
+- Einzahlung Bank
+= Cash Soll
+
+Falls fachlich bereits eine andere bestehende Cash-Formel im Code vorhanden ist, diese prüfen und nur ersetzen, wenn sie nicht diesem Ziel entspricht.
+
+3. Cash Ist
+
+Das bisherige Feld "Cash" soll zu "Cash Ist" werden.
+
+- Cash Ist bleibt direkt in der Tabelle editierbar.
+- Cash Ist wird manuell erfasst.
+- Cash Ist wird visuell als manuelle Eingabe markiert.
+
+4. Cash Soll
+
+Cash Soll ist read-only.
+
+- Keine manuelle Eingabe möglich.
+- Wert aktualisiert sich sofort, wenn sich eine der Komponenten ändert:
+  - Bargeld
+  - Verkaufte Gutscheine
+  - Eingelöste Gutscheine
+  - Barausgaben
+  - Einzahlung Bank
+
+5. Cash Differenz
+
+Neue berechnete Spalte:
+
+Cash Differenz = Cash Ist - Cash Soll
+
+Darstellung:
+- CHF 0.00 oder Rundungsdifferenz bis 0.05 = grün
+- kleine Differenz bis 5.00 = orange
+- größere Differenz = rot
+- Wenn Cash Ist noch fehlt, "—" anzeigen
+
+6. Statuslogik erweitern
+
+Ein Tagesabschluss darf nur als sauber gelten, wenn:
+- Z-Bericht vorhanden
+- Adyen-Differenz geklärt oder grün
+- Cash Ist erfasst
+- Cash Differenz grün
+- Barbestand bestätigt
+
+Wenn Cash Ist fehlt oder Cash Differenz nicht grün ist, soll der Tag als offen/zu prüfen markiert werden.
+
+7. Monats-KPI erweitern
+
+Oben auf /tagesabschluesse ergänzen:
+- Cash Differenz Monat
+- Tage mit Cash-Differenz
+- Total Cash Soll
+- Total Cash Ist
+
+8. Visuelle Darstellung
+
+- Cash Soll als berechneter Wert optisch neutral/read-only darstellen.
+- Cash Ist als Eingabefeld darstellen.
+- Cash Differenz farblich hervorheben.
+- Tooltip oder Hilfetext bei Cash Soll:
+  "Bargeld + verkaufte Gutscheine - eingelöste Gutscheine - Barausgaben - Einzahlung Bank"
+
+9. Tagesdetail-Dialog
+
+Im Tagesdetail ebenfalls anzeigen:
+- Formelbestandteile
+- Cash Soll
+- Cash Ist
+- Cash Differenz
+- Barbestand bestätigen
+
+10. Tests
+
+Tests ergänzen/anpassen:
+- Cash Soll wird korrekt berechnet.
+- Änderung von Einzahlung Bank aktualisiert Cash Soll.
+- Änderung von Barausgaben aktualisiert Cash Soll.
+- Änderung von Gutscheinen aktualisiert Cash Soll.
+- Cash Ist bleibt manuell editierbar.
+- Cash Differenz wird korrekt berechnet und farbig markiert.
+- Tagesstatus bleibt offen, wenn Cash Ist fehlt.
+- Tagesstatus bleibt zu prüfen, wenn Cash Differenz nicht grün ist.
+- Tagesstatus wird bestätigt, wenn Cash Differenz grün und Barbestand bestätigt ist.
+
+Danach bitte ausführen:
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Tabellen-Komponenten Tests

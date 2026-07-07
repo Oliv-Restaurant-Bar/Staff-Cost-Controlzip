@@ -121,7 +121,7 @@ export function TagesabschlussDayDialog({
           <h3 className="text-xs font-semibold">Manuelle Eingaben</h3>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label className="text-[11px]">Bestand Kasse (CHF)</Label>
+              <Label className="text-[11px]">Cash Ist — gezählter Kassenbestand (CHF)</Label>
               <Input className="h-8 text-xs" inputMode="decimal" value={bestand}
                 disabled={readOnly} onChange={e => setBestand(e.target.value)}
                 data-testid="ta-input-bestand" />
@@ -161,6 +161,48 @@ export function TagesabschlussDayDialog({
               Manuelle Werte speichern
             </Button>
           )}
+        </section>
+
+        {/* Kasse / Cash: Formelbestandteile + Soll/Ist/Differenz (nur Anzeige) */}
+        <section className="space-y-1.5 border-t border-border pt-3" data-testid="ta-dialog-cash">
+          <h3 className="text-xs font-semibold">Kasse (Cash Soll / Ist)</h3>
+          <div className="text-[11px] space-y-0.5 tabular-nums">
+            {([
+              ['Bargeld (Bar laut Z-Bericht)', row.cells.bar.value ?? row.barumsatz, '+'],
+              ['Verkaufte Gutscheine', row.cells.gutscheinVerkauft.value ?? 0, '+'],
+              ['Eingelöste Gutscheine', row.cells.gutscheinEingeloest.value ?? 0, '−'],
+              ['Barausgaben', row.barausgabenTotal, '−'],
+              ['Einzahlung Bank', row.cells.einzahlungBank.value ?? 0, '−'],
+            ] as [string, number | null, string][]).map(([label, value, sign]) => (
+              <div key={label} className="flex justify-between gap-4">
+                <span className="text-muted-foreground">{sign} {label}</span>
+                <span>{value === null ? '—' : fmtChf(value)}</span>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-xs border-t border-border pt-1.5">
+            <div>
+              <p className="text-[10px] text-muted-foreground">Cash Soll (berechnet)</p>
+              <p className="tabular-nums font-medium" data-testid="ta-dialog-cash-soll">
+                {row.cashSoll === null ? '—' : fmtChf(row.cashSoll)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground">Cash Ist (gezählt)</p>
+              <p className="tabular-nums font-medium" data-testid="ta-dialog-cash-ist">
+                {row.cashIst === null ? '—' : fmtChf(row.cashIst)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground">Cash Differenz</p>
+              <p className={`tabular-nums font-medium ${diffColorClass(row.cashDiffStatus)}`} data-testid="ta-dialog-cash-diff">
+                {row.cashDiff === null ? '—' : fmtDiffChf(row.cashDiff)}
+              </p>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Cash Soll = Bargeld + verkaufte Gutscheine − eingelöste Gutscheine − Barausgaben − Einzahlung Bank.
+          </p>
         </section>
 
         {/* Adyen-Abgleich (nur Anzeige — Korrekturen im Adyen-Abgleich selbst) */}

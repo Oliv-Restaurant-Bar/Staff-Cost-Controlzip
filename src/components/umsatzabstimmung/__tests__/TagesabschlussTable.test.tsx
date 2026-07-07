@@ -3,8 +3,9 @@
  * TagesabschlussTable.test.tsx — Komponententest der Monats-Tabelle.
  * Prüft die gruppierte Spaltenstruktur (Umsatz · Kartenzahlungen · Kasse ·
  * Weitere Zahlungsarten · Ausgaben · Status), entfallene Spalten (Netto,
- * MWST, TWINT, Adyen-Differenz, Bemerkung), visuelle Marker (manuell /
- * korrigiert / negativ / Zeilen-Tints), Barausgaben-Total und Status-Badges.
+ * MWST, TWINT, Adyen-Differenz, Bemerkung), die Cash-Spalten (Soll berechnet,
+ * Ist manuell, Diff mit Ampel), visuelle Marker (manuell / korrigiert /
+ * negativ / Zeilen-Tints), Barausgaben-Total und Status-Badges.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
@@ -40,9 +41,10 @@ const closing = (date: string): GnDayClosing => ({
 function buildMonth() {
   let blob = emptyTagesabschlussBlob();
   const now = '2026-07-05T10:00:00.000Z';
-  // Manuell: Bestand Kasse + Bemerkung + Gutscheinnummern am 01.07.
+  // Manuell: Cash Ist (Bestand Kasse) + Bemerkung + Gutscheinnummern am 01.07.
+  // Cash Soll am 01.07. = 300 (Bar) − 52.50 (Barausgaben) = 247.50 → Ist exakt.
   blob = upsertManualDay(blob, '2026-07-01', {
-    bestandKasse: 850,
+    bestandKasse: 247.5,
     bemerkung: 'Wechselgeld aufgestockt',
     gutscheinNummernVerkauft: ['GS-4711', 'GS-4712'],
   }, now);
@@ -75,7 +77,7 @@ describe('TagesabschlussTable', () => {
     expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
       'Datum', 'Umsatz',
       'KK', 'KK Adyen',
-      'Bargeld', 'Cash', 'Einzahlung Bank',
+      'Bargeld', 'Einzahlung Bank', 'Cash Soll', 'Cash Ist', 'Cash Diff',
       'Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
       'Barausgaben',
       'Status',
@@ -108,9 +110,9 @@ describe('TagesabschlussTable', () => {
     expect(screen.queryByText('Briefmarken')).toBeNull();
     expect(screen.getByTestId('ta-total-barausgaben').textContent).toContain('52.50');
 
-    // Manuell erfasster Bestand (850) blau/fett — Zelle hat die manuelle Klasse.
+    // Manuell erfasstes Cash Ist (247.50) blau — Zelle hat die manuelle Klasse.
     const bestandCell = screen.getByTestId('ta-bestand-2026-07-01');
-    expect(bestandCell.textContent).toContain('850.00');
+    expect(bestandCell.textContent).toContain('247.50');
     expect(bestandCell.className).toContain('text-sky-700');
 
     // Korrigierter Umsatz (1050) gelb hinterlegt.
@@ -122,6 +124,32 @@ describe('TagesabschlussTable', () => {
     expect(screen.getByText('Bestätigt')).toBeTruthy();   // 01.07. bestätigt
     expect(screen.getByText('Offen')).toBeTruthy();       // 02.07. Z-Bericht, unbestätigt
     expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
+  });
+
+  it('Cash Soll/Ist/Diff: berechnete Spalte, Ampel und Totale', () => {
+    const { rows, totals } = buildMonth();
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+
+    // 01.07.: Soll = 300 (Bar) − 52.50 (Barausgaben) = 247.50; Ist 247.50 → Diff 0 grün.
+    const soll1 = screen.getByTestId('ta-cash-soll-2026-07-01');
+    expect(soll1.textContent).toContain('247.50');
+    expect(soll1.getAttribute('title')).toContain('Cash Soll = Bargeld + verkaufte Gutscheine');
+    const diff1 = screen.getByTestId('ta-cash-diff-2026-07-01');
+    expect(diff1.textContent).toContain('0.00');
+    expect(diff1.className).toContain('text-emerald-600');
+
+    // 02.07.: Soll vorhanden (300), aber ohne Cash Ist keine Differenz („—").
+    expect(screen.getByTestId('ta-cash-soll-2026-07-02').textContent).toContain('300.00');
+    expect(screen.getByTestId('ta-cash-diff-2026-07-02').textContent).toContain('—');
+
+    // Tag ohne Z-Bericht: kein Soll, keine Differenz.
+    expect(screen.getByTestId('ta-cash-soll-2026-07-03').textContent).toContain('—');
+    expect(screen.getByTestId('ta-cash-diff-2026-07-03').textContent).toContain('—');
+
+    // Totale: Soll 247.50 + 300 = 547.50; Ist nur 01.07.; Diff 0.
+    expect(screen.getByTestId('ta-total-cash-soll').textContent).toContain('547.50');
+    expect(screen.getByTestId('ta-total-cash-ist').textContent).toContain('247.50');
+    expect(screen.getByTestId('ta-total-cash-diff').textContent).toContain('0.00');
   });
 
   it('Bemerkung erscheint NICHT mehr als Spalte — nur als Icon am Datum', () => {
@@ -195,10 +223,10 @@ describe('TagesabschlussTable', () => {
       expect(onSaveManual).toHaveBeenCalledWith('2026-07-02', { einzahlungBank: 80 });
     });
 
-    it('speichert Cash (Bestand Kasse) bei Enter und leert per Leereingabe (null)', () => {
+    it('speichert Cash Ist (Bestand Kasse) bei Enter und leert per Leereingabe (null)', () => {
       const { onSaveManual } = renderEditable();
       const input = screen.getByTestId('ta-input-bestand-2026-07-01') as HTMLInputElement;
-      expect(input.value).toBe('850'); // vorhandener manueller Wert
+      expect(input.value).toBe('247.5'); // vorhandener manueller Wert
       fireEvent.change(input, { target: { value: '900' } });
       fireEvent.keyDown(input, { key: 'Enter' });
       fireEvent.blur(input);
@@ -260,7 +288,7 @@ describe('TagesabschlussTable', () => {
       expect(screen.queryByTestId('ta-gutschein-eingeloest-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-expenses-2026-07-01')).toBeNull();
       // Werte bleiben als Text sichtbar.
-      expect(screen.getByTestId('ta-bestand-2026-07-01').textContent).toContain('850.00');
+      expect(screen.getByTestId('ta-bestand-2026-07-01').textContent).toContain('247.50');
     });
   });
 

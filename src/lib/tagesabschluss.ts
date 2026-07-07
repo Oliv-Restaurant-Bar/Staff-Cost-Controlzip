@@ -57,7 +57,7 @@ export const TAGESABSCHLUSS_FIELD_LABEL: Record<TagesabschlussField, string> = {
   netto: 'Netto',
   mwst: 'MWST',
   bar: 'Bargeld / Barumsatz',
-  bestandKasse: 'Bestand Kasse',
+  bestandKasse: 'Cash Ist (Bestand Kasse)',
   karten: 'Kreditkarten / Adyen / SIX',
   twint: 'TWINT',
   rechnung: 'Rechnung / Debitoren',
@@ -298,16 +298,22 @@ export interface TagesabschlussRow {
   gutscheinNummernEingeloest?: string[];
   /**
    * Rechnerischer Barumsatz = Umsatz − Karten − TWINT − Rechnung − eingelöste
-   * Gutscheine (effektive Werte). Basis für Export und Kassen-Differenz.
+   * Gutscheine (effektive Werte). Basis für Export und Cash-Soll-Fallback.
    */
   barumsatz: number | null;
   /**
-   * Kassen-Differenz = (Bestand heute − Bestand Vortag)
-   *                  − (Barumsatz − Barausgaben − Einzahlung Bank).
-   * Nur wenn beide Bestände erfasst sind, sonst null.
+   * Cash Soll = Bargeld (Bar laut Z-Bericht; Fallback rechnerischer
+   * Barumsatz) + verkaufte Gutscheine − eingelöste Gutscheine
+   * − Barausgaben − Einzahlung Bank.
+   * Erwarteter Kassenbestand des Tages (KEIN Vortagsbezug);
+   * null, wenn keine Bargeld-Basis vorliegt.
    */
-  kassenDiff: number | null;
-  kassenDiffStatus: AdyenDiffStatus | null;
+  cashSoll: number | null;
+  /** Cash Ist = manuell gezählter Kassenbestand (Feld `bestandKasse`). */
+  cashIst: number | null;
+  /** Cash Differenz = Cash Ist − Cash Soll; null, solange eine Seite fehlt. */
+  cashDiff: number | null;
+  cashDiffStatus: AdyenDiffStatus | null;
   /** Adyen-Import für diesen Tag vorhanden? */
   hasAdyen: boolean;
   /**
@@ -333,12 +339,20 @@ export interface TagesabschlussTotals {
   adyenTotal: number;
   /** Summe der Tages-Differenzen Z-Bericht − Adyen (kann sich aufheben). */
   adyenDiff: number;
+  /** Summe Cash Soll (nur Tage mit berechenbarem Soll). */
+  cashSoll: number;
+  /** Summe Cash Ist (nur Tage mit gezähltem Bestand). */
+  cashIst: number;
+  /** Summe der Tages-Cash-Differenzen (Vorzeichen können sich aufheben). */
+  cashDiff: number;
   daysWithZbericht: number;
   daysConfirmed: number;
-  /** Tage mit Z-Bericht, aber noch ohne Bestätigung. */
+  /** Tage mit Z-Bericht, aber noch ohne (vollständige) Bestätigung. */
   daysOpen: number;
-  /** Tage mit nicht-grüner Adyen- ODER Kassen-Differenz. */
+  /** Tage mit nicht-grüner Adyen- ODER Cash-Differenz. */
   daysWithDiff: number;
+  /** Tage mit nicht-grüner Cash-Differenz. */
+  daysWithCashDiff: number;
 }
 
 export interface TagesabschlussMonth {
@@ -400,7 +414,6 @@ export function buildTagesabschlussRows(
   adyenBlob?: AdyenAbstimmungBlob | null,
 ): TagesabschlussMonth {
   const rows: TagesabschlussRow[] = [];
-  let prevBestand: number | null = null;
 
   for (const date of monthDates(year, month)) {
     const closing = closings[date];
@@ -433,17 +446,35 @@ export function buildTagesabschlussRows(
         )
       : null;
 
-    const bestand = cells.bestandKasse.value;
-    let kassenDiff: number | null = null;
-    if (bestand !== null && prevBestand !== null && barumsatz !== null) {
-      const erwarteteBewegung = barumsatz - barausgabenTotal - (cells.einzahlungBank.value ?? 0);
-      kassenDiff = round2(bestand - prevBestand - erwarteteBewegung);
-    }
+    // Cash Soll: erwarteter Kassenbestand NUR aus den Tageswerten (kein
+    // Vortagsbezug). Bargeld-Basis = Bar laut Z-Bericht (effektiv), Fallback
+    // rechnerischer Barumsatz. Aktualisiert sich automatisch mit jeder
+    // Komponente (Bargeld, Gutscheine, Barausgaben, Einzahlung Bank).
+    const bargeldBasis = cells.bar.value ?? barumsatz;
+    const cashSoll = bargeldBasis !== null
+      ? round2(
+          bargeldBasis
+          + (cells.gutscheinVerkauft.value ?? 0)
+          - (cells.gutscheinEingeloest.value ?? 0)
+          - barausgabenTotal
+          - (cells.einzahlungBank.value ?? 0),
+        )
+      : null;
+    const cashIst = cells.bestandKasse.value;
+    const cashDiff = cashIst !== null && cashSoll !== null ? round2(cashIst - cashSoll) : null;
+    const cashDiffStatus = cashDiff !== null ? adyenDiffStatus(cashDiff) : null;
 
     const confirmation = confirmations[date];
+    // „Bestätigt" nur, wenn der Tag wirklich sauber ist: Tagesbestätigung
+    // (impliziert geklärte Adyen-Differenzen via canConfirmDay) + Barbestand
+    // gezählt + Cash Ist erfasst + Cash-Differenz grün. Fehlt Cash Ist oder
+    // ist die Differenz nicht grün, bleibt der Tag „offen" (zu prüfen).
     const status: TagesabschlussStatus = !closing
       ? 'fehlt'
-      : confirmation?.confirmed
+      : confirmation?.confirmed === true
+          && confirmation?.cashCounted === true
+          && cashIst !== null
+          && cashDiffStatus === 'ok'
         ? 'bestaetigt'
         : 'offen';
 
@@ -474,8 +505,10 @@ export function buildTagesabschlussRows(
       ...(manual?.gutscheinNummernEingeloest?.length
         ? { gutscheinNummernEingeloest: manual.gutscheinNummernEingeloest } : {}),
       barumsatz,
-      kassenDiff,
-      kassenDiffStatus: kassenDiff !== null ? adyenDiffStatus(kassenDiff) : null,
+      cashSoll,
+      cashIst,
+      cashDiff,
+      cashDiffStatus,
       hasAdyen: !!adyenDay,
       adyenTotal,
       adyenZTotal,
@@ -484,8 +517,6 @@ export function buildTagesabschlussRows(
       status,
       ...(confirmation ? { confirmation } : {}),
     });
-
-    if (bestand !== null) prevBestand = bestand;
   }
 
   const totals: TagesabschlussTotals = {
@@ -500,16 +531,22 @@ export function buildTagesabschlussRows(
     barumsatz: round2(rows.reduce((s, r) => s + (r.barumsatz ?? 0), 0)),
     adyenTotal: round2(rows.reduce((s, r) => s + (r.adyenTotal ?? 0), 0)),
     adyenDiff: round2(rows.reduce((s, r) => s + (r.adyenDiff ?? 0), 0)),
+    cashSoll: round2(rows.reduce((s, r) => s + (r.cashSoll ?? 0), 0)),
+    cashIst: round2(rows.reduce((s, r) => s + (r.cashIst ?? 0), 0)),
+    cashDiff: round2(rows.reduce((s, r) => s + (r.cashDiff ?? 0), 0)),
     daysWithZbericht: rows.filter(r => r.hasZbericht).length,
     daysConfirmed: rows.filter(r => r.status === 'bestaetigt').length,
     daysOpen: rows.filter(r => r.status === 'offen').length,
     daysWithDiff: rows.filter(r =>
       (r.adyenDiffStatus !== null && r.adyenDiffStatus !== 'ok')
-      || (r.kassenDiffStatus !== null && r.kassenDiffStatus !== 'ok'),
+      || (r.cashDiffStatus !== null && r.cashDiffStatus !== 'ok'),
+    ).length,
+    daysWithCashDiff: rows.filter(r =>
+      r.cashDiffStatus !== null && r.cashDiffStatus !== 'ok',
     ).length,
   };
-  // Bestand Kasse ist ein STAND, keine Summe — Total wäre irreführend.
-  totals.values.bestandKasse = rows.reduce((last, r) => r.cells.bestandKasse.value ?? last, 0);
+  // Cash Ist ist im Tages-Zählmodell eine Summe der gezählten Tagesbestände
+  // (Total Cash Ist) — values.bestandKasse bleibt die generische Summe.
 
   return { rows, totals };
 }
