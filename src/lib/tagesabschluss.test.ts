@@ -23,6 +23,11 @@ import {
   type GnDayClosing,
   type TagesabschlussBlob,
 } from './tagesabschluss';
+import {
+  emptyAdyenBlob,
+  type AdyenAbstimmungBlob,
+  type AdyenStoredDay,
+} from './adyen-abstimmung';
 
 const NOW = '2026-07-06T10:00:00.000Z';
 
@@ -199,6 +204,134 @@ describe('buildTagesabschlussRows', () => {
     expect(totals.values.bestandKasse).toBe(800);
     expect(totals.values.umsatz).toBe(1000);
     expect(totals.daysWithZbericht).toBe(1);
+  });
+});
+
+describe('buildTagesabschlussRows — Adyen-Integration & KPIs', () => {
+  // Z-Bericht-Karten aus makeClosing: Mastercard 400 + VISA 150 + TWINT 100 = 650.
+  function makeAdyenDay(byMethod: Record<string, number>): AdyenStoredDay {
+    return {
+      byMethod,
+      countByMethod: {},
+      total: Object.values(byMethod).reduce((s, v) => s + v, 0),
+      transactionCount: 5,
+      fileName: 'adyen.csv',
+      importedAt: NOW,
+    };
+  }
+
+  it('ohne Adyen-Blob (5-Arg-Aufruf) bleiben alle Adyen-Felder null — rückwärtskompatibel', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {});
+    expect(rows[0].hasAdyen).toBe(false);
+    expect(rows[0].adyenTotal).toBeNull();
+    expect(rows[0].adyenZTotal).toBeNull();
+    expect(rows[0].adyenDiff).toBeNull();
+    expect(rows[0].adyenDiffStatus).toBeNull();
+    expect(totals.adyenTotal).toBe(0);
+    expect(totals.adyenDiff).toBe(0);
+  });
+
+  it('berechnet Adyen-Vergleich mit denselben effektiven Werten wie der Adyen-Abgleich', () => {
+    const closings = {
+      '2026-07-01': makeClosing('2026-07-01'),
+      '2026-07-02': makeClosing('2026-07-02'),
+      '2026-07-03': makeClosing('2026-07-03'),
+    };
+    const adyenBlob: AdyenAbstimmungBlob = {
+      ...emptyAdyenBlob(),
+      days: {
+        '2026-07-01': makeAdyenDay({ mastercard: 400, visa: 150, twint: 100 }), // exakt → ok
+        '2026-07-02': makeAdyenDay({ mastercard: 400, visa: 150, twint: 98 }),  // Diff 2 → small
+      },
+    };
+    const { rows, totals } = buildTagesabschlussRows(
+      2026, 7, closings, emptyTagesabschlussBlob(), {}, adyenBlob,
+    );
+    expect(rows[0].hasAdyen).toBe(true);
+    expect(rows[0].adyenZTotal).toBe(650);
+    expect(rows[0].adyenTotal).toBe(650);
+    expect(rows[0].adyenDiff).toBe(0);
+    expect(rows[0].adyenDiffStatus).toBe('ok');
+
+    expect(rows[1].adyenTotal).toBe(648);
+    expect(rows[1].adyenDiff).toBe(2);
+    expect(rows[1].adyenDiffStatus).toBe('small');
+
+    // Tag mit Z-Bericht, aber ohne Adyen-Import: kein Vergleich, keine Differenz.
+    expect(rows[2].hasAdyen).toBe(false);
+    expect(rows[2].adyenTotal).toBeNull();
+    expect(rows[2].adyenZTotal).toBe(650); // Z-Seite ist trotzdem berechenbar
+    expect(rows[2].adyenDiff).toBeNull();
+    expect(rows[2].adyenDiffStatus).toBeNull();
+
+    expect(totals.adyenTotal).toBe(1298);
+    expect(totals.adyenDiff).toBe(2);
+  });
+
+  it('respektiert Overrides aus dem Adyen-Abgleich (effektive Werte)', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    const adyenBlob: AdyenAbstimmungBlob = {
+      ...emptyAdyenBlob(),
+      days: { '2026-07-01': makeAdyenDay({ mastercard: 400, visa: 150, twint: 90 }) },
+      overrides: {
+        ['2026-07-01:adyen:twint']: {
+          originalValue: 90, correctedValue: 100,
+          correctedByManualOverride: true, updatedAt: NOW,
+        },
+      },
+    };
+    const { rows } = buildTagesabschlussRows(
+      2026, 7, closings, emptyTagesabschlussBlob(), {}, adyenBlob,
+    );
+    expect(rows[0].adyenTotal).toBe(650); // 640 + Override auf 100 statt 90
+    expect(rows[0].adyenDiff).toBe(0);
+    expect(rows[0].adyenDiffStatus).toBe('ok');
+  });
+
+  it('Adyen-Import ohne Z-Bericht: Total sichtbar, aber keine Differenz', () => {
+    const adyenBlob: AdyenAbstimmungBlob = {
+      ...emptyAdyenBlob(),
+      days: { '2026-07-05': makeAdyenDay({ mastercard: 200 }) },
+    };
+    const { rows } = buildTagesabschlussRows(
+      2026, 7, {}, emptyTagesabschlussBlob(), {}, adyenBlob,
+    );
+    const r = rows.find(x => x.date === '2026-07-05')!;
+    expect(r.hasAdyen).toBe(true);
+    expect(r.hasZbericht).toBe(false);
+    expect(r.adyenTotal).toBe(200);
+    expect(r.adyenZTotal).toBeNull();
+    expect(r.adyenDiff).toBeNull();
+    expect(r.adyenDiffStatus).toBeNull();
+  });
+
+  it('KPI-Zähler: daysOpen, daysConfirmed und daysWithDiff (Adyen ODER Kasse)', () => {
+    const closings = {
+      '2026-07-01': makeClosing('2026-07-01'),
+      '2026-07-02': makeClosing('2026-07-02'),
+      '2026-07-03': makeClosing('2026-07-03'),
+    };
+    let blob = emptyTagesabschlussBlob();
+    // Kassen-Diff am 03.: (700−500) − (300−0−0) = −100 → large.
+    blob = upsertManualDay(blob, '2026-07-02', { bestandKasse: 500 }, NOW);
+    blob = upsertManualDay(blob, '2026-07-03', { bestandKasse: 700 }, NOW);
+    const adyenBlob: AdyenAbstimmungBlob = {
+      ...emptyAdyenBlob(),
+      days: {
+        '2026-07-01': makeAdyenDay({ mastercard: 400, visa: 150, twint: 100 }), // ok
+        '2026-07-02': makeAdyenDay({ mastercard: 380, visa: 150, twint: 100 }), // Diff 20 → large
+      },
+    };
+    const { totals } = buildTagesabschlussRows(2026, 7, closings, blob, {
+      '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
+    }, adyenBlob);
+
+    expect(totals.daysWithZbericht).toBe(3);
+    expect(totals.daysConfirmed).toBe(1);
+    expect(totals.daysOpen).toBe(2);          // 02. + 03. offen
+    // 02. via Adyen-Diff, 03. via Kassen-Diff — je EINMAL gezählt.
+    expect(totals.daysWithDiff).toBe(2);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   setTagesabschlussOverride,
   type GnDayClosing,
 } from '@/lib/tagesabschluss';
+import { emptyAdyenBlob, type AdyenStoredDay } from '@/lib/adyen-abstimmung';
 
 afterEach(cleanup);
 
@@ -58,9 +59,9 @@ describe('TagesabschlussTable', () => {
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
     for (const h of [
       'Datum', 'Umsatz', 'Netto', 'MWST', 'Bargeld / Barumsatz', 'Bestand Kasse',
-      'Kreditkarten / Adyen / SIX', 'TWINT', 'Rechnung / Debitoren',
-      'Verkaufte Gutscheine', 'Eingelöste Gutscheine', 'Barausgaben total',
-      'Einzahlung Bank', 'Bemerkung', 'Status',
+      'Kreditkarten / Adyen / SIX', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz',
+      'Rechnung / Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
+      'Barausgaben total', 'Einzahlung Bank', 'Bemerkung', 'Status',
     ]) {
       expect(screen.getByText(h)).toBeTruthy();
     }
@@ -101,5 +102,50 @@ describe('TagesabschlussTable', () => {
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick} />);
     (screen.getByTestId('ta-row-2026-07-02') as HTMLElement).click();
     expect(onDayClick).toHaveBeenCalledWith('2026-07-02');
+  });
+
+  it('zeigt Adyen-Werte und farbige Adyen-Differenz je Tag', () => {
+    const adyenDay = (byMethod: Record<string, number>): AdyenStoredDay => ({
+      byMethod,
+      countByMethod: {},
+      total: Object.values(byMethod).reduce((s, v) => s + v, 0),
+      transactionCount: 1,
+      fileName: 'adyen.csv',
+      importedAt: '2026-07-05T10:00:00.000Z',
+    });
+    const adyenBlob = {
+      ...emptyAdyenBlob(),
+      days: {
+        // Z-Bericht: Mastercard 500 + TWINT 200 = 700.
+        '2026-07-01': adyenDay({ mastercard: 500, twint: 200 }),          // Diff 0 → grün
+        '2026-07-02': adyenDay({ mastercard: 490, twint: 200 }),          // Diff 10 → rot
+      },
+    };
+    const blob = emptyTagesabschlussBlob();
+    const closings = {
+      '2026-07-01': closing('2026-07-01'),
+      '2026-07-02': closing('2026-07-02'),
+      '2026-07-03': closing('2026-07-03'), // kein Adyen-Import
+    };
+    const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {}, adyenBlob);
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+
+    expect(screen.getByTestId('ta-adyen-2026-07-01').textContent).toContain('700.00');
+    const okDiff = screen.getByTestId('ta-adyen-diff-2026-07-01');
+    expect(okDiff.textContent).toContain('0.00');
+    expect(okDiff.className).toContain('text-emerald-600');
+
+    expect(screen.getByTestId('ta-adyen-2026-07-02').textContent).toContain('690.00');
+    const badDiff = screen.getByTestId('ta-adyen-diff-2026-07-02');
+    expect(badDiff.textContent).toContain('10.00');
+    expect(badDiff.className).toContain('text-red-600');
+
+    // Tag ohne Adyen-Import: beide Zellen leer ("—").
+    expect(screen.getByTestId('ta-adyen-2026-07-03').textContent).toContain('—');
+    expect(screen.getByTestId('ta-adyen-diff-2026-07-03').textContent).toContain('—');
+
+    // Totale: Adyen-Summe + Summe der Tages-Differenzen.
+    expect(screen.getByTestId('ta-total-adyen').textContent).toContain('1’390.00');
+    expect(screen.getByTestId('ta-total-adyen-diff').textContent).toContain('10.00');
   });
 });

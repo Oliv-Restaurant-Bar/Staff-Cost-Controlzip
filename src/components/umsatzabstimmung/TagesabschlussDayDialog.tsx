@@ -25,7 +25,7 @@ import {
   type TagesabschlussAutoField,
   type TagesabschlussRow,
 } from '@/lib/tagesabschluss';
-import { fmtChf, parseAmountInput } from './adyen-ui';
+import { diffColorClass, fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
 
 interface TagesabschlussDayDialogProps {
   row: TagesabschlussRow | null;
@@ -161,6 +161,39 @@ export function TagesabschlussDayDialog({
             </Button>
           )}
         </section>
+
+        {/* Adyen-Abgleich (nur Anzeige — Korrekturen im Adyen-Abgleich selbst) */}
+        {(row.hasAdyen || row.adyenZTotal !== null) && (
+          <section className="space-y-1.5 border-t border-border pt-3" data-testid="ta-dialog-adyen">
+            <h3 className="text-xs font-semibold">Adyen-Abgleich (Karten/TWINT)</h3>
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div>
+                <p className="text-[10px] text-muted-foreground">laut Z-Bericht</p>
+                <p className="tabular-nums font-medium">
+                  {row.adyenZTotal === null ? '—' : fmtChf(row.adyenZTotal)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted-foreground">laut Adyen</p>
+                <p className="tabular-nums font-medium" data-testid="ta-dialog-adyen-total">
+                  {row.adyenTotal === null ? '—' : fmtChf(row.adyenTotal)}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted-foreground">Differenz</p>
+                <p className={`tabular-nums font-medium ${diffColorClass(row.adyenDiffStatus)}`} data-testid="ta-dialog-adyen-diff">
+                  {row.adyenDiff === null ? '—' : fmtDiffChf(row.adyenDiff)}
+                </p>
+              </div>
+            </div>
+            {!row.hasAdyen && (
+              <p className="text-[10px] text-muted-foreground">Kein Adyen-Import für diesen Tag.</p>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              Details, Overrides und Kommentare im Adyen-Abgleich weiter unten auf dieser Seite.
+            </p>
+          </section>
+        )}
 
         {/* Bestätigung Barbestand (gemeinsamer Store mit Adyen-Abgleich) */}
         <section className="space-y-1.5 border-t border-border pt-3">

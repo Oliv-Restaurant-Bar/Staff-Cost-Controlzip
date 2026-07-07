@@ -36,6 +36,7 @@ import {
 } from '@/lib/tagesabschluss';
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
+import { fmtChf } from './adyen-ui';
 import { TagesabschlussTable } from './TagesabschlussTable';
 import { TagesabschlussDayDialog } from './TagesabschlussDayDialog';
 import { TagesabschlussExportDialog } from './TagesabschlussExportDialog';
@@ -157,8 +158,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
 
   const monthData = useMemo(() => {
     const b = blob ?? { days: {}, expenses: {}, overrides: {}, comments: {}, exportSettings: null };
-    const confirmations = (adyenBlob ?? emptyAdyenBlob()).confirmations;
-    return buildTagesabschlussRows(year, month, closings, b, confirmations);
+    const ab = adyenBlob ?? emptyAdyenBlob();
+    return buildTagesabschlussRows(year, month, closings, b, ab.confirmations, ab);
   }, [blob, adyenBlob, closings, year, month]);
 
   const openRow = openDate ? monthData.rows.find(r => r.date === openDate) ?? null : null;
@@ -202,6 +203,35 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
           <p className="text-xs text-muted-foreground py-4 text-center">Lade Tagesabschlüsse…</p>
         ) : (
           <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-3">
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-confirmed">
+                <p className="text-[10px] text-muted-foreground">Tage abgeschlossen</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {monthData.totals.daysConfirmed}
+                  <span className="text-[10px] font-normal text-muted-foreground"> / {monthData.totals.daysWithZbericht} mit Z-Bericht</span>
+                </p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-open">
+                <p className="text-[10px] text-muted-foreground">Tage offen</p>
+                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysOpen > 0 ? 'text-amber-700 dark:text-amber-400' : ''}`}>
+                  {monthData.totals.daysOpen}
+                </p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-diff">
+                <p className="text-[10px] text-muted-foreground">Tage mit Differenzen</p>
+                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysWithDiff > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                  {monthData.totals.daysWithDiff}
+                </p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-barausgaben">
+                <p className="text-[10px] text-muted-foreground">Total Barausgaben</p>
+                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.barausgaben)}</p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-einzahlung">
+                <p className="text-[10px] text-muted-foreground">Total Einzahlung Bank</p>
+                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.values.einzahlungBank)}</p>
+              </div>
+            </div>
             <TagesabschlussTable
               rows={monthData.rows}
               totals={monthData.totals}
@@ -211,7 +241,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
               <span>normale Werte = automatisch aus dem Z-Bericht</span>
-              <span>Kassen-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
+              <span>Adyen- und Kassen-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
             </div>
           </>
         )}

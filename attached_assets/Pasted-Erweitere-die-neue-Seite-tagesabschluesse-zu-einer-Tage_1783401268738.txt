@@ -1,0 +1,118 @@
+Erweitere die neue Seite /tagesabschluesse zu einer Tagesabschluss-Übersicht analog der bestehenden Excel-Datei "UMSATZ Oliv".
+
+Ziel:
+Die Seite Tagesabschlüsse soll pro Monat eine Tagesübersicht zeigen. Z-Bericht und Adyen liefern automatische Werte. Manuelle Werte wie Kassenbestand, Einzahlung Bank und Barausgaben sollen einzeln erfasst werden. In der Übersicht erscheinen Barausgaben als Total, im späteren Buchhaltungs-CSV aber einzeln.
+
+Umsetzung:
+
+1. Tagesübersicht auf /tagesabschluesse
+Baue eine Monats-Tabelle mit einer Zeile pro Tag:
+- Datum
+- Umsatz total
+- Karten total laut Z-Bericht
+- Karten/TWINT laut Adyen
+- Adyen-Differenz
+- TWINT
+- Bar laut Z-Bericht
+- Rechnung / Debitoren
+- Gutscheine verkauft
+- Gutscheine eingelöst
+- Barausgaben total
+- Einzahlung Bank
+- Kassenbestand
+- Status
+
+2. Automatische Werte aus Z-Bericht übernehmen:
+- Tagesumsatz
+- Karten total
+- TWINT
+- Bar
+- Rechnung / Debitoren
+- Gutscheine verkauft / eingelöst, falls vorhanden
+- Trinkgeld, falls vorhanden
+- MwSt / Netto, falls bereits verfügbar
+
+3. Adyen-Abgleich integrieren:
+- Bestehenden Adyen-Abgleich in die Tagesübersicht einbauen.
+- Pro Tag Karten/TWINT laut Z-Bericht vs. Adyen anzeigen.
+- Differenzen farblich markieren:
+  - grün bei 0 oder sehr kleiner Differenz
+  - orange bei kleiner Differenz
+  - rot bei größerer Differenz
+
+4. Klick auf Tageszeile:
+Öffnet Detail-Drawer oder Detailbereich für diesen Tag mit:
+- automatisch übernommenen Z-Bericht-Werten
+- Adyen-Werten
+- Differenzen
+- manuellen Eingaben
+- Barausgaben
+- Kommentaren
+- Tagesabschluss bestätigen
+
+5. Manuelle Eingaben pro Tag:
+Erlaube manuelle Eingabe von:
+- Einzahlung Bank
+- Kassenbestand
+- Bemerkung
+- Barbestand bestätigt ja/nein
+- Tagesabschluss bestätigt ja/nein
+
+6. Barausgaben einzeln erfassen:
+Pro Tag mehrere Barausgaben möglich:
+- Betrag
+- Konto
+- Gegenkonto optional
+- Beschreibung / Text
+- MwSt-Code optional
+- Belegnummer optional
+- Kommentar optional
+
+Wichtig:
+- In der Tagesübersicht nur Summe "Barausgaben total" anzeigen.
+- In den Detaildaten jede Barausgabe einzeln speichern.
+- Später im Buchhaltungs-CSV jede Barausgabe als einzelne Zeile exportieren.
+
+7. Kommentare:
+Kommentare sollen möglich sein:
+- pro Tag
+- pro manuellem Feld
+- pro korrigiertem Wert
+- pro Barausgabe
+
+Wenn Kommentar vorhanden ist, Kommentar-Icon sichtbar markieren.
+
+8. Manuelle Korrekturen:
+Bestehende Logik für manuelle Überschreibungen weiterverwenden:
+- Originalwert sichtbar behalten
+- korrigierter Wert wird für Berechnung verwendet
+- korrigierte Felder gelb oder mit Badge "manuell korrigiert" hervorheben
+
+9. Monats-KPI oben ergänzen:
+Zeige oben auf /tagesabschluesse:
+- Tage abgeschlossen
+- Tage offen
+- Tage mit Differenzen
+- Total Barausgaben
+- Total Einzahlung Bank
+
+10. Persistenz:
+Keine neue Migration erstellen, wenn die bestehenden Blob-/Settings-Strukturen reichen.
+Falls eine neue Tabelle zwingend notwendig wäre, zuerst im Code-Kommentar/Plan begründen und minimal halten.
+
+11. Tests ergänzen:
+- Tagesübersicht zeigt eine Zeile pro Tag.
+- Z-Bericht-Werte werden automatisch übernommen.
+- Adyen-Differenz wird angezeigt.
+- Tageszeile öffnet Detailbereich.
+- Barausgaben können einzeln erfasst werden.
+- Barausgaben erscheinen in der Übersicht als Total.
+- Kommentare werden gespeichert und visuell markiert.
+- Manuelle Korrekturen bleiben gelb markiert.
+- Tagesabschluss kann nur bestätigt werden, wenn Pflichtprüfungen erledigt sind.
+
+Danach bitte ausführen:
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Adyen-Abgleich Tests
+- Import-Cockpit Tests, falls Quellen/Links betroffen sind

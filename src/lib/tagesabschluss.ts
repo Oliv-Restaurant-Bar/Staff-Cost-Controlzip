@@ -16,12 +16,14 @@
  */
 
 import {
+  type AdyenAbstimmungBlob,
   type AdyenOverride,
   type AdyenComment,
   type DayConfirmation,
   type GnDayPayment,
   type AdyenDiffStatus,
   adyenDiffStatus,
+  buildDayComparison,
   normalizeGnPaymentName,
 } from './adyen-abstimmung';
 
@@ -286,6 +288,19 @@ export interface TagesabschlussRow {
    */
   kassenDiff: number | null;
   kassenDiffStatus: AdyenDiffStatus | null;
+  /** Adyen-Import für diesen Tag vorhanden? */
+  hasAdyen: boolean;
+  /**
+   * Karten/TWINT-Total laut Adyen (effektiver Wert inkl. Overrides aus dem
+   * Adyen-Abgleich — gleiche Zahlen wie in der Adyen-Abgleich-Section).
+   * null = kein Adyen-Import bzw. kein Adyen-Blob übergeben.
+   */
+  adyenTotal: number | null;
+  /** Karten/TWINT-Total laut Z-Bericht aus dem Adyen-Vergleich (effektiv). */
+  adyenZTotal: number | null;
+  /** Differenz Z-Bericht − Adyen (effektive Werte); null = nicht vergleichbar. */
+  adyenDiff: number | null;
+  adyenDiffStatus: AdyenDiffStatus | null;
   status: TagesabschlussStatus;
   confirmation?: DayConfirmation;
 }
@@ -294,8 +309,16 @@ export interface TagesabschlussTotals {
   values: Record<TagesabschlussField, number>;
   barausgaben: number;
   barumsatz: number;
+  /** Summe Karten/TWINT laut Adyen (nur Tage mit Adyen-Import). */
+  adyenTotal: number;
+  /** Summe der Tages-Differenzen Z-Bericht − Adyen (kann sich aufheben). */
+  adyenDiff: number;
   daysWithZbericht: number;
   daysConfirmed: number;
+  /** Tage mit Z-Bericht, aber noch ohne Bestätigung. */
+  daysOpen: number;
+  /** Tage mit nicht-grüner Adyen- ODER Kassen-Differenz. */
+  daysWithDiff: number;
 }
 
 export interface TagesabschlussMonth {
@@ -343,6 +366,10 @@ function buildCell(
 /**
  * Baut die Monats-Tabelle der Tagesabschlüsse.
  * `confirmations` stammen aus dem Adyen-Blob (EIN Bestätigungs-Store).
+ * `adyenBlob` (optional, rückwärtskompatibel): liefert pro Tag den
+ * Karten/TWINT-Vergleich Z-Bericht vs. Adyen (via `buildDayComparison` —
+ * exakt dieselben effektiven Werte wie in der Adyen-Abgleich-Section,
+ * inkl. dortiger Overrides). Ohne Blob bleiben die Adyen-Felder null.
  */
 export function buildTagesabschlussRows(
   year: number,
@@ -350,6 +377,7 @@ export function buildTagesabschlussRows(
   closings: Record<string, GnDayClosing>,
   blob: TagesabschlussBlob,
   confirmations: Record<string, DayConfirmation>,
+  adyenBlob?: AdyenAbstimmungBlob | null,
 ): TagesabschlussMonth {
   const rows: TagesabschlussRow[] = [];
   let prevBestand: number | null = null;
@@ -399,6 +427,21 @@ export function buildTagesabschlussRows(
         ? 'bestaetigt'
         : 'offen';
 
+    // Adyen-Vergleich (nur ANZEIGE): identische Rechenbasis wie die
+    // Adyen-Abgleich-Section — buildDayComparison mit dem Adyen-Blob.
+    const adyenDay = adyenBlob?.days[date] ?? null;
+    let adyenTotal: number | null = null;
+    let adyenZTotal: number | null = null;
+    let adyenDiff: number | null = null;
+    let adyenDiffSt: AdyenDiffStatus | null = null;
+    if (adyenBlob && (closing || adyenDay)) {
+      const cmp = buildDayComparison(date, closing ? closing.payments : null, adyenDay, adyenBlob);
+      adyenTotal = cmp.cardTotalAdyen?.value ?? null;
+      adyenZTotal = cmp.cardTotalZ?.value ?? null;
+      adyenDiff = cmp.totalDiff;
+      adyenDiffSt = cmp.totalStatus;
+    }
+
     rows.push({
       date,
       hasZbericht: !!closing,
@@ -409,6 +452,11 @@ export function buildTagesabschlussRows(
       barumsatz,
       kassenDiff,
       kassenDiffStatus: kassenDiff !== null ? adyenDiffStatus(kassenDiff) : null,
+      hasAdyen: !!adyenDay,
+      adyenTotal,
+      adyenZTotal,
+      adyenDiff,
+      adyenDiffStatus: adyenDiffSt,
       status,
       ...(confirmation ? { confirmation } : {}),
     });
@@ -426,8 +474,15 @@ export function buildTagesabschlussRows(
     ) as Record<TagesabschlussField, number>,
     barausgaben: round2(rows.reduce((s, r) => s + r.barausgabenTotal, 0)),
     barumsatz: round2(rows.reduce((s, r) => s + (r.barumsatz ?? 0), 0)),
+    adyenTotal: round2(rows.reduce((s, r) => s + (r.adyenTotal ?? 0), 0)),
+    adyenDiff: round2(rows.reduce((s, r) => s + (r.adyenDiff ?? 0), 0)),
     daysWithZbericht: rows.filter(r => r.hasZbericht).length,
     daysConfirmed: rows.filter(r => r.status === 'bestaetigt').length,
+    daysOpen: rows.filter(r => r.status === 'offen').length,
+    daysWithDiff: rows.filter(r =>
+      (r.adyenDiffStatus !== null && r.adyenDiffStatus !== 'ok')
+      || (r.kassenDiffStatus !== null && r.kassenDiffStatus !== 'ok'),
+    ).length,
   };
   // Bestand Kasse ist ein STAND, keine Summe — Total wäre irreführend.
   totals.values.bestandKasse = rows.reduce((last, r) => r.cells.bestandKasse.value ?? last, 0);

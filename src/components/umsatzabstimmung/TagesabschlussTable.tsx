@@ -52,9 +52,9 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
 
 const HEADERS = [
   'Datum', 'Umsatz', 'Netto', 'MWST', 'Bargeld / Barumsatz', 'Bestand Kasse',
-  'Kreditkarten / Adyen / SIX', 'TWINT', 'Rechnung / Debitoren',
-  'Verkaufte Gutscheine', 'Eingelöste Gutscheine', 'Barausgaben total',
-  'Einzahlung Bank', 'Bemerkung', 'Status',
+  'Kreditkarten / Adyen / SIX', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz',
+  'Rechnung / Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
+  'Barausgaben total', 'Einzahlung Bank', 'Bemerkung', 'Status',
 ];
 
 interface TagesabschlussTableProps {
@@ -70,7 +70,7 @@ export function TagesabschlussTable({ rows, totals, onDayClick }: Tagesabschluss
         <thead>
           <tr className="bg-muted/50 text-muted-foreground">
             {HEADERS.map((h, i) => (
-              <th key={h} className={`px-2 py-1.5 font-medium whitespace-nowrap ${i === 0 || i >= 13 ? 'text-left' : 'text-right'}`}>
+              <th key={h} className={`px-2 py-1.5 font-medium whitespace-nowrap ${i === 0 || i >= 15 ? 'text-left' : 'text-right'}`}>
                 {h}
               </th>
             ))}
@@ -111,6 +111,20 @@ export function TagesabschlussTable({ rows, totals, onDayClick }: Tagesabschluss
                 </td>
                 <ValueCell cell={row.cells.karten} />
                 <ValueCell cell={row.cells.twint} />
+                <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap"
+                    title={row.hasAdyen ? undefined : 'Kein Adyen-Import für diesen Tag'}
+                    data-testid={`ta-adyen-${row.date}`}>
+                  {row.adyenTotal === null
+                    ? <span className="text-muted-foreground">—</span>
+                    : fmtChf(row.adyenTotal)}
+                </td>
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${diffColorClass(row.adyenDiffStatus)}`}
+                    title={row.adyenDiff !== null ? `Karten/TWINT laut Z-Bericht − laut Adyen = ${fmtChf(row.adyenDiff)}` : undefined}
+                    data-testid={`ta-adyen-diff-${row.date}`}>
+                  {row.adyenDiff === null
+                    ? <span className="text-muted-foreground">—</span>
+                    : fmtChf(row.adyenDiff)}
+                </td>
                 <ValueCell cell={row.cells.rechnung} />
                 <ValueCell cell={row.cells.gutscheinVerkauft} />
                 <ValueCell cell={row.cells.gutscheinEingeloest} />
@@ -142,6 +156,11 @@ export function TagesabschlussTable({ rows, totals, onDayClick }: Tagesabschluss
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.karten)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.twint)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-adyen">{fmtChf(totals.adyenTotal)}</td>
+            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-adyen-diff"
+                title="Summe der Tages-Differenzen (Vorzeichen können sich aufheben)">
+              {fmtChf(totals.adyenDiff)}
+            </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.rechnung)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinVerkauft)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinEingeloest)}</td>
