@@ -517,6 +517,14 @@ export interface GnDayClosing {
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
 
+// Klassifizierungs-Prädikate für Z-Bericht-Zahlungsarten — von
+// deriveAutoValues UND collectWeitereZahlungsarten gemeinsam genutzt,
+// damit beide nie auseinanderlaufen.
+const isBarKey       = (key: string): boolean => key === 'bar' || /^bar(geld|zahlung)?$/.test(key);
+const isRechnungKey  = (key: string): boolean => /rechnung|debitor|hotel|auf_haus|kredit_kunde/.test(key);
+const isGutscheinKey = (key: string): boolean => /gutschein|voucher/.test(key);
+const isTrinkgeldKey = (key: string): boolean => /trinkgeld|^tip/.test(key);
+
 /** Aus den Z-Bericht-Zahlungsarten die Spaltenwerte eines Tages ableiten. */
 export function deriveAutoValues(closing: GnDayClosing): Record<TagesabschlussAutoField, number | null> {
   let bar = 0;
@@ -531,14 +539,19 @@ export function deriveAutoValues(closing: GnDayClosing): Record<TagesabschlussAu
   for (const pm of closing.payments) {
     const norm = normalizeGnPaymentName(pm.name);
     if (norm.key === 'twint') { twint += pm.amount; hasTwint = true; continue; }
-    if (norm.isCard) { karten += pm.amount; hasKarten = true; continue; }
-    if (norm.key === 'bar' || /^bar(geld|zahlung)?$/.test(norm.key)) { bar += pm.amount; hasBar = true; continue; }
-    if (/rechnung|debitor|hotel|auf_haus|kredit_kunde/.test(norm.key)) { rechnung += pm.amount; hasRechnung = true; continue; }
-    if (/gutschein|voucher/.test(norm.key)) { gutscheinEingeloest += pm.amount; hasGutschein = true; continue; }
-    if (/trinkgeld|^tip/.test(norm.key)) { trinkgeldPm += pm.amount; hasTip = true; continue; }
-    // Übrige Nicht-Karten-Zahlarten (z. B. Lunch-Check) zählen wir bewusst
-    // NICHT stillschweigend irgendwo hinein — sie erscheinen im Export nicht
-    // automatisch und bleiben Sache der manuellen Kontrolle.
+    // KK-Karten = alle kartenähnlichen Zahlarten (isKkCard) — inkl.
+    // PostCard/Lunch-Check/Stripe, die NICHT über Adyen laufen, aber
+    // Kartenzahlungen sind (kein Bargeld). Die Adyen-Vergleichsbasis
+    // (isCard) bleibt davon unberührt.
+    if (norm.isKkCard) { karten += pm.amount; hasKarten = true; continue; }
+    if (isBarKey(norm.key)) { bar += pm.amount; hasBar = true; continue; }
+    if (isRechnungKey(norm.key)) { rechnung += pm.amount; hasRechnung = true; continue; }
+    if (isGutscheinKey(norm.key)) { gutscheinEingeloest += pm.amount; hasGutschein = true; continue; }
+    if (isTrinkgeldKey(norm.key)) { trinkgeldPm += pm.amount; hasTip = true; continue; }
+    // Übrige unklassifizierte Zahlarten (z. B. KD Tisch 5000) zählen wir
+    // bewusst NICHT stillschweigend irgendwo hinein — sie erscheinen im
+    // Tagesdetail unter „Weitere Zahlungsarten" und bleiben Sache der
+    // manuellen Kontrolle.
   }
 
   // Verkaufte Gutscheine: aus den Buchungskonten-Zeilen des Z-Berichts.
@@ -571,6 +584,51 @@ export function deriveAutoValues(closing: GnDayClosing): Record<TagesabschlussAu
     gutscheinEingeloest: hasGutschein ? round2(gutscheinEingeloest) : null,
     trinkgeld: tip,
   };
+}
+
+// ── Weitere (selten genutzte) Zahlungsarten fürs Tagesdetail ─────────────────
+
+export interface WeitereZahlungsart {
+  key: string;
+  label: string;
+  amount: number;
+  /** Im KK-Total der Übersicht enthalten (kartenähnlich)? Sonst rein informativ. */
+  inKk: boolean;
+}
+
+/** Selten genutzte Karten-Keys — in der Übersicht NUR im KK-Total, einzeln erst im Tagesdetail. */
+const RARE_KK_KEYS = new Set(['amex', 'postcard', 'lunch_check', 'stripe']);
+
+/**
+ * Selten genutzte Zahlungsarten eines Tages für den aufklappbaren Bereich
+ * „Weitere Zahlungsarten" im Tagesdetail: American Express, PostCard,
+ * Lunch-Check, Stripe (alle im KK-Total enthalten) sowie sämtliche
+ * unklassifizierten Rest-Zahlarten (z. B. KD Tisch 5000 — in KEINER
+ * Berechnung enthalten). Mastercard/Visa/Maestro/TWINT/Bar/Rechnung/
+ * Gutschein/Trinkgeld erscheinen hier bewusst NICHT — sie stecken bereits
+ * in den Übersichts-Spalten.
+ */
+export function collectWeitereZahlungsarten(closing: GnDayClosing | undefined): WeitereZahlungsart[] {
+  if (!closing) return [];
+  const agg = new Map<string, WeitereZahlungsart>();
+  for (const pm of closing.payments) {
+    const norm = normalizeGnPaymentName(pm.name);
+    const rareKk = RARE_KK_KEYS.has(norm.key);
+    const unclassified = !norm.isKkCard
+      && !isBarKey(norm.key) && !isRechnungKey(norm.key)
+      && !isGutscheinKey(norm.key) && !isTrinkgeldKey(norm.key);
+    if (!rareKk && !unclassified) continue;
+    const prev = agg.get(norm.key);
+    agg.set(norm.key, {
+      key: norm.key,
+      label: prev?.label ?? norm.label,
+      amount: (prev?.amount ?? 0) + pm.amount,
+      inKk: norm.isKkCard,
+    });
+  }
+  return [...agg.values()]
+    .map(z => ({ ...z, amount: round2(z.amount) }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'de'));
 }
 
 // ── Zellen-/Zeilenmodell ─────────────────────────────────────────────────────
@@ -610,6 +668,12 @@ export interface TagesabschlussRow {
   gutscheinNummernVerkauft?: string[];
   /** Gutscheinnummern (eingelöst) — NUR fürs Tagesdetail, nie in der Übersicht rendern. */
   gutscheinNummernEingeloest?: string[];
+  /**
+   * Selten genutzte Zahlungsarten (Amex, PostCard, Lunch-Check, Stripe,
+   * KD Tisch 5000, …) — NUR im aufklappbaren Tagesdetail-Bereich rendern,
+   * NIE als eigene Spalte in der Übersicht.
+   */
+  weitereZahlungsarten: WeitereZahlungsart[];
   /**
    * Rechnerischer Barumsatz = Umsatz − Karten − TWINT − Rechnung − eingelöste
    * Gutscheine (effektive Werte). Basis für Export und Bargeld-Soll.
@@ -914,6 +978,7 @@ export function buildTagesabschlussRows(
         ? { gutscheinNummernVerkauft: manual.gutscheinNummernVerkauft } : {}),
       ...(manual?.gutscheinNummernEingeloest?.length
         ? { gutscheinNummernEingeloest: manual.gutscheinNummernEingeloest } : {}),
+      weitereZahlungsarten: collectWeitereZahlungsarten(closing),
       barumsatz,
       bargeldSoll,
       kassensaldoSoll,

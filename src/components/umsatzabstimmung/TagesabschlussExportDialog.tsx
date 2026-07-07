@@ -77,7 +77,10 @@ export function TagesabschlussExportDialog({
     for (const row of rows) {
       for (const pm of closings[row.date]?.payments ?? []) {
         const norm = normalizeGnPaymentName(pm.name);
-        if (norm.isCard || norm.key === 'twint') keys.add(norm.key);
+        // isKkCard = alle kartenähnlichen Zahlarten (inkl. PostCard/
+        // Lunch-Check/Stripe ohne Adyen-Abwicklung) — jede davon ist im
+        // Export separat kontierbar.
+        if (norm.isKkCard) keys.add(norm.key);
       }
     }
     return [...keys].sort();

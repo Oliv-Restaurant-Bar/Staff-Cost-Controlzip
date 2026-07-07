@@ -10,6 +10,7 @@ import {
   canCloseMonth,
   closeDay,
   closeMonth,
+  collectWeitereZahlungsarten,
   computeMonthEndSaldo,
   deriveAutoValues,
   isMonthClosed,
@@ -116,9 +117,99 @@ describe('deriveAutoValues', () => {
     expect(v.karten).toBeNull();
     expect(v.twint).toBeNull();
   });
+
+  it('zählt kartenähnliche Zahlarten (Amex/PostCard/Lunch-Check/Stripe) ins KK-Total', () => {
+    const v = deriveAutoValues(makeClosing('2026-07-01', {
+      payments: [
+        { name: 'Bar', count: 5, amount: 200 },
+        { name: 'Mastercard', count: 4, amount: 100 },
+        { name: 'American Express', count: 1, amount: 30 },
+        { name: 'PostCard', count: 1, amount: 20 },
+        { name: 'Lunch-Check', count: 1, amount: 10 },
+        { name: 'Stripe', count: 1, amount: 5 },
+        { name: 'TWINT', count: 2, amount: 50 },
+      ],
+    }));
+    expect(v.karten).toBe(165); // MC + Amex + PostCard + Lunch-Check + Stripe
+    expect(v.twint).toBe(50);
+    expect(v.bar).toBe(200);
+  });
+
+  it('lässt unklassifizierte Zahlarten (KD Tisch 5000) in KEINER Spalte mitzählen', () => {
+    const v = deriveAutoValues(makeClosing('2026-07-01', {
+      payments: [
+        { name: 'Bar', count: 5, amount: 200 },
+        { name: 'Mastercard', count: 4, amount: 100 },
+        { name: 'KD Tisch 5000', count: 1, amount: 40 },
+      ],
+    }));
+    expect(v.bar).toBe(200);
+    expect(v.karten).toBe(100);
+    expect(v.twint).toBeNull();
+    expect(v.rechnung).toBeNull();
+  });
+});
+
+describe('collectWeitereZahlungsarten', () => {
+  it('liefert nur seltene Karten + unklassifizierte Zahlarten (aggregiert, sortiert)', () => {
+    const list = collectWeitereZahlungsarten(makeClosing('2026-07-01', {
+      payments: [
+        { name: 'Bar', count: 5, amount: 200 },
+        { name: 'Mastercard', count: 4, amount: 100 },
+        { name: 'VISA', count: 2, amount: 80 },
+        { name: 'TWINT', count: 2, amount: 50 },
+        { name: 'Rechnung', count: 1, amount: 30 },
+        { name: 'Gutschein', count: 1, amount: 20 },
+        { name: 'American Express', count: 1, amount: 30 },
+        { name: 'PostCard', count: 1, amount: 20.5 },
+        { name: 'PostCard', count: 1, amount: 9.5 }, // gleiche Art doppelt → aggregiert
+        { name: 'Lunch-Check', count: 1, amount: 10 },
+        { name: 'Stripe', count: 1, amount: 5 },
+        { name: 'KD Tisch 5000', count: 1, amount: 40 },
+      ],
+    }));
+    expect(list.map(z => z.key)).toEqual(['amex', 'kd_tisch_5000', 'lunch_check', 'postcard', 'stripe']);
+    const byKey = Object.fromEntries(list.map(z => [z.key, z]));
+    expect(byKey.amex).toMatchObject({ label: 'American Express', amount: 30, inKk: true });
+    expect(byKey.postcard).toMatchObject({ label: 'PostCard', amount: 30, inKk: true });
+    expect(byKey.lunch_check).toMatchObject({ amount: 10, inKk: true });
+    expect(byKey.stripe).toMatchObject({ amount: 5, inKk: true });
+    expect(byKey.kd_tisch_5000).toMatchObject({ label: 'KD Tisch 5000', amount: 40, inKk: false });
+  });
+
+  it('ist leer ohne Z-Bericht oder ohne seltene Zahlarten', () => {
+    expect(collectWeitereZahlungsarten(undefined)).toEqual([]);
+    expect(collectWeitereZahlungsarten(makeClosing('2026-07-01'))).toEqual([]);
+  });
 });
 
 describe('buildTagesabschlussRows', () => {
+  it('befüllt weitereZahlungsarten und rechnet kartenähnliche Zahlarten aus dem Barumsatz heraus', () => {
+    const closings = {
+      '2026-07-01': makeClosing('2026-07-01', {
+        payments: [
+          { name: 'Bar', count: 10, amount: 245 },
+          { name: 'Mastercard', count: 8, amount: 500 },
+          { name: 'TWINT', count: 4, amount: 100 },
+          { name: 'Rechnung', count: 1, amount: 30 },
+          { name: 'Gutschein', count: 1, amount: 20 },
+          { name: 'PostCard', count: 1, amount: 65 },
+          { name: 'KD Tisch 5000', count: 1, amount: 40 },
+        ],
+      }),
+    };
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {}, null, 0);
+    const row = rows.find(r => r.date === '2026-07-01')!;
+    expect(row.weitereZahlungsarten.map(z => z.key)).toEqual(['kd_tisch_5000', 'postcard']);
+    // KK inkl. PostCard: 500 + 65 = 565.
+    expect(row.cells.karten.value).toBe(565);
+    // Barumsatz = 1000 − 565 − 100 − 30 − 20 = 285 (KD Tisch bleibt implizit drin).
+    expect(row.barumsatz).toBe(285);
+    expect(row.bargeldSoll).toBe(285);
+    // Tage ohne seltene Zahlarten haben eine leere Liste.
+    expect(rows.find(r => r.date === '2026-07-02')!.weitereZahlungsarten).toEqual([]);
+  });
+
   it('baut Zeilen für alle Kalendertage; ohne Z-Bericht Status "fehlt"', () => {
     const { rows } = buildTagesabschlussRows(2026, 7, {}, emptyTagesabschlussBlob(), {});
     expect(rows).toHaveLength(31);

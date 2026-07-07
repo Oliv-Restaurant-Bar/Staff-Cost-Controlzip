@@ -158,6 +158,54 @@ describe('TagesabschlussExpenseDialog', () => {
   });
 });
 
+describe('TagesabschlussDayDialog — Zahlungsarten-Sektion', () => {
+  function rowWithRarePayments() {
+    const c: GnDayClosing = {
+      ...closing('2026-07-01'),
+      payments: [
+        { name: 'Bar', amount: 300, count: 1 },
+        { name: 'Mastercard', amount: 400, count: 1 },
+        { name: 'PostCard', amount: 50, count: 1 },
+        { name: 'KD Tisch 5000', amount: 40, count: 1 },
+      ],
+    };
+    const { rows } = buildTagesabschlussRows(2026, 7, { '2026-07-01': c }, emptyTagesabschlussBlob(), {});
+    return rows.find(r => r.date === '2026-07-01')!;
+  }
+
+  function renderDay(row: ReturnType<typeof rowWithRarePayments>) {
+    render(<TagesabschlussDayDialog row={row} expenses={[]} readOnly={false} canReopen={false}
+      onClose={() => {}} onSaveManual={() => {}} onOverride={() => {}} onConfirm={() => {}}
+      onUpsertExpense={() => {}} onRemoveExpense={() => {}}
+      onCloseDay={() => {}} onReopenDay={() => {}} />);
+  }
+
+  it('„Weitere Zahlungsarten" standardmässig ZUgeklappt; Klick zeigt Liste mit KK-Kennzeichnung', () => {
+    renderDay(rowWithRarePayments());
+
+    const toggle = screen.getByTestId('ta-weitere-zahlungsarten-toggle');
+    expect(toggle.textContent).toContain('Weitere Zahlungsarten (2)');
+    expect(screen.queryByTestId('ta-weitere-zahlungsarten-list')).toBeNull();
+
+    fireEvent.click(toggle);
+    const list = screen.getByTestId('ta-weitere-zahlungsarten-list');
+    expect(screen.getByTestId('ta-weitere-zahlungsart-postcard').textContent).toContain('50.00');
+    expect(screen.getByTestId('ta-weitere-zahlungsart-kd_tisch_5000').textContent).toContain('40.00');
+    expect(list.textContent).toContain('im KK-Total enthalten');
+    expect(list.textContent).toContain('in keiner Berechnung enthalten');
+
+    // Erneuter Klick klappt wieder zu.
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId('ta-weitere-zahlungsarten-list')).toBeNull();
+  });
+
+  it('Sektion erscheint NICHT ohne seltene/unklassifizierte Zahlarten', () => {
+    const { rows } = buildTagesabschlussRows(2026, 7, { '2026-07-01': closing('2026-07-01') }, emptyTagesabschlussBlob(), {});
+    renderDay(rows.find(r => r.date === '2026-07-01')!);
+    expect(screen.queryByTestId('ta-dialog-zahlungsarten')).toBeNull();
+  });
+});
+
 describe('TagesabschlussDayDialog — Abschluss-Sektion', () => {
   const NOW = '2026-07-05T10:00:00.000Z';
 

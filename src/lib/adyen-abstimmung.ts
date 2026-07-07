@@ -150,6 +150,14 @@ export interface NormalizedGnMethod {
   label: string;
   /** Zählt zur Karten/TWINT-Summe (Vergleichsbasis gegen Adyen)? */
   isCard: boolean;
+  /**
+   * Kartenähnliche Zahlungsart fürs KK-Total der Tagesabschluss-Übersicht und
+   * den separaten Zahlungsweg im Buchhaltungs-Export. Umfasst alle isCard-
+   * Methoden PLUS Karten, die NICHT über Adyen abgewickelt werden (PostCard,
+   * Lunch-Check, Stripe) — diese dürfen NIE in die Adyen-Vergleichsbasis
+   * (isCard) einfliessen, sonst entstehen falsche Adyen-Differenzen.
+   */
+  isKkCard: boolean;
 }
 
 /**
@@ -158,16 +166,21 @@ export interface NormalizedGnMethod {
  */
 export function normalizeGnPaymentName(raw: string): NormalizedGnMethod {
   const v = raw.trim().toLowerCase();
-  if (/(mastercard|master card)/.test(v) || v === 'mc') return { key: 'mastercard', label: 'Mastercard', isCard: true };
-  if (/visa/.test(v))                                    return { key: 'visa', label: 'Visa', isCard: true };
-  if (/(amex|american express)/.test(v))                 return { key: 'amex', label: 'American Express', isCard: true };
-  if (/twint/.test(v))                                   return { key: 'twint', label: 'TWINT', isCard: true };
-  if (/maestro/.test(v))                                 return { key: 'maestro', label: 'Maestro', isCard: true };
+  if (/(mastercard|master card)/.test(v) || v === 'mc') return { key: 'mastercard', label: 'Mastercard', isCard: true, isKkCard: true };
+  if (/visa/.test(v))                                    return { key: 'visa', label: 'Visa', isCard: true, isKkCard: true };
+  if (/(amex|american express)/.test(v))                 return { key: 'amex', label: 'American Express', isCard: true, isKkCard: true };
+  if (/twint/.test(v))                                   return { key: 'twint', label: 'TWINT', isCard: true, isKkCard: true };
+  if (/maestro/.test(v))                                 return { key: 'maestro', label: 'Maestro', isCard: true, isKkCard: true };
+  // Kartenähnliche Zahlarten OHNE Adyen-Abwicklung: zählen ins KK-Total und
+  // werden im Export separat gebucht, aber NICHT gegen Adyen verglichen.
+  if (/post\s*-?\s*(finance\s*)?card|postfinance/.test(v)) return { key: 'postcard', label: 'PostCard', isCard: false, isKkCard: true };
+  if (/lunch[\s-]*check/.test(v))                          return { key: 'lunch_check', label: 'Lunch-Check', isCard: false, isKkCard: true };
+  if (/stripe/.test(v))                                    return { key: 'stripe', label: 'Stripe', isCard: false, isKkCard: true };
   if (/(kreditkarte|kartenzahlung|debitkarte|ec[- ]karte|\bkarte\b)/.test(v)) {
-    return { key: 'karte', label: raw.trim() || 'Kartenzahlung', isCard: true };
+    return { key: 'karte', label: raw.trim() || 'Kartenzahlung', isCard: true, isKkCard: true };
   }
   const key = v.replace(/[^a-z0-9äöü]+/g, '_').replace(/^_+|_+$/g, '') || 'unbekannt';
-  return { key, label: raw.trim() || 'Unbekannt', isCard: false };
+  return { key, label: raw.trim() || 'Unbekannt', isCard: false, isKkCard: false };
 }
 
 // ── Effektive Werte (Override-aware) ─────────────────────────────────────────

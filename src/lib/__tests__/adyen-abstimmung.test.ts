@@ -79,6 +79,21 @@ describe('normalizeGnPaymentName', () => {
     expect(normalizeGnPaymentName('Rechnung / Debitoren').isCard).toBe(false);
     expect(normalizeGnPaymentName('Trinkgeld').isCard).toBe(false);
   });
+
+  it('kartenähnliche Zahlarten ohne Adyen-Abwicklung: isKkCard true, isCard false', () => {
+    // KK-Total/Export JA — Adyen-Vergleichsbasis NEIN (laufen nicht über Adyen).
+    expect(normalizeGnPaymentName('PostCard')).toMatchObject({ key: 'postcard', isCard: false, isKkCard: true });
+    expect(normalizeGnPaymentName('PostFinance Card')).toMatchObject({ key: 'postcard', isKkCard: true });
+    expect(normalizeGnPaymentName('Lunch-Check')).toMatchObject({ key: 'lunch_check', isCard: false, isKkCard: true });
+    expect(normalizeGnPaymentName('Lunch Check')).toMatchObject({ key: 'lunch_check', isKkCard: true });
+    expect(normalizeGnPaymentName('Stripe')).toMatchObject({ key: 'stripe', isCard: false, isKkCard: true });
+    // Adyen-Karten sind auch KK-Karten.
+    expect(normalizeGnPaymentName('Mastercard')).toMatchObject({ isCard: true, isKkCard: true });
+    expect(normalizeGnPaymentName('AMEX')).toMatchObject({ isCard: true, isKkCard: true });
+    // Unklassifizierte bleiben komplett draussen.
+    expect(normalizeGnPaymentName('KD Tisch 5000')).toMatchObject({ key: 'kd_tisch_5000', isCard: false, isKkCard: false });
+    expect(normalizeGnPaymentName('Bar').isKkCard).toBe(false);
+  });
 });
 
 describe('mergeAdyenImport', () => {

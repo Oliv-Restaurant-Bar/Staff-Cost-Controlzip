@@ -302,11 +302,14 @@ export function buildTabelle2Rows(
         }));
       }
 
-      // 3) Karten/TWINT je Zahlungsart (oder Sammelkonto).
+      // 3) Karten/TWINT je Zahlungsart (oder Sammelkonto). isKkCard umfasst
+      // auch kartenähnliche Zahlarten ohne Adyen-Abwicklung (PostCard/
+      // Lunch-Check/Stripe) — sie werden hier SEPARAT gebucht und stecken
+      // spiegelbildlich im karten.auto-Abzug des Barumsatzes (Balance).
       const cardAmounts = new Map<string, { label: string; amount: number }>();
       for (const pm of closing.payments) {
         const norm = normalizeGnPaymentName(pm.name);
-        if (!norm.isCard) continue;
+        if (!norm.isKkCard) continue;
         const prev = cardAmounts.get(norm.key);
         cardAmounts.set(norm.key, { label: norm.label, amount: (prev?.amount ?? 0) + pm.amount });
       }

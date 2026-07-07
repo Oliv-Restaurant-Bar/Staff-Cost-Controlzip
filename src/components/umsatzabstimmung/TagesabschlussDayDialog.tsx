@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Lock, LockOpen } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Lock, LockOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -71,6 +71,8 @@ export function TagesabschlussDayDialog({
   const [corrections, setCorrections] = useState<Record<string, { value: string; comment: string }>>({});
   /** Pflicht-Grund für das Admin-Wiederöffnen eines abgeschlossenen Tages. */
   const [reopenReason, setReopenReason] = useState('');
+  /** „Weitere Zahlungsarten" — standardmässig ZUgeklappt (selten genutzt). */
+  const [weitereOffen, setWeitereOffen] = useState(false);
 
   useEffect(() => {
     if (!row) return;
@@ -80,6 +82,7 @@ export function TagesabschlussDayDialog({
     setGsVerkauft(row.gutscheinNummernVerkauft?.join(', ') ?? '');
     setGsEingeloest(row.gutscheinNummernEingeloest?.join(', ') ?? '');
     setReopenReason('');
+    setWeitereOffen(false);
     const corr: Record<string, { value: string; comment: string }> = {};
     for (const f of TAGESABSCHLUSS_AUTO_FIELDS) {
       const cell = row.cells[f];
@@ -266,6 +269,39 @@ export function TagesabschlussDayDialog({
             <p className="text-[10px] text-muted-foreground">
               Details, Overrides und Kommentare im Adyen-Abgleich weiter unten auf dieser Seite.
             </p>
+          </section>
+        )}
+
+        {/* Zahlungsarten: selten genutzte Arten aufklappbar (standardmässig zu) */}
+        {row.weitereZahlungsarten.length > 0 && (
+          <section className="space-y-1.5 border-t border-border pt-3" data-testid="ta-dialog-zahlungsarten">
+            <h3 className="text-xs font-semibold">Zahlungsarten</h3>
+            <button
+              type="button"
+              className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => setWeitereOffen(o => !o)}
+              data-testid="ta-weitere-zahlungsarten-toggle"
+            >
+              <ChevronRight className={`h-3 w-3 transition-transform ${weitereOffen ? 'rotate-90' : ''}`} />
+              Weitere Zahlungsarten ({row.weitereZahlungsarten.length})
+            </button>
+            {weitereOffen && (
+              <div className="space-y-0.5 pl-4" data-testid="ta-weitere-zahlungsarten-list">
+                {row.weitereZahlungsarten.map(z => (
+                  <div key={z.key} className="flex justify-between gap-4 text-[11px] tabular-nums">
+                    <span className="text-muted-foreground">
+                      {z.label}
+                      {z.inKk ? ' — im KK-Total enthalten' : ' — in keiner Berechnung enthalten'}
+                    </span>
+                    <span data-testid={`ta-weitere-zahlungsart-${z.key}`}>{fmtChf(z.amount)}</span>
+                  </div>
+                ))}
+                <p className="text-[10px] text-muted-foreground pt-0.5">
+                  Kartenähnliche Arten (Amex, PostCard, Lunch-Check, Stripe) stecken im KK-Total
+                  der Übersicht; der Buchhaltungs-Export bucht sie gemäss Kontierungsregeln separat.
+                </p>
+              </div>
+            )}
           </section>
         )}
 

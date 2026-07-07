@@ -185,6 +185,58 @@ describe('buildTabelle2Rows', () => {
     expect(out.rows.find(r => r.kto === '2003' && r.gkto === '1098')?.netto).toBe(20);
   });
 
+  it('bucht kartenähnliche Zahlarten (PostCard/Lunch-Check/Stripe) SEPARAT; KD Tisch bleibt im Barumsatz', () => {
+    const closings = {
+      '2026-07-01': makeClosing('2026-07-01', {
+        payments: [
+          { name: 'Bar', count: 10, amount: 245 },
+          { name: 'Mastercard', count: 8, amount: 400 },
+          { name: 'TWINT', count: 4, amount: 100 },
+          { name: 'Rechnung', count: 1, amount: 30 },
+          { name: 'Gutschein', count: 1, amount: 20 },
+          { name: 'American Express', count: 1, amount: 60 },
+          { name: 'PostCard', count: 1, amount: 50 },
+          { name: 'Lunch-Check', count: 1, amount: 35 },
+          { name: 'Stripe', count: 1, amount: 20 },
+          { name: 'KD Tisch 5000', count: 1, amount: 40 },
+        ],
+      }),
+    };
+    const blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const settings = reviewedSettings({
+      kontoJeZahlungsart: {
+        visa: '1112', twint: '1119', amex: '1114',
+        postcard: '1115', lunch_check: '1116',
+        // Stripe bewusst OHNE Mapping → Sammelkonto.
+      },
+    });
+    const out = buildTabelle2Rows(rows, closings, blob, settings);
+    expect(out.errors).toHaveLength(0);
+
+    // Jede kartenähnliche Zahlart als eigene Buchung gemäss Mapping.
+    expect(out.rows.find(r => r.tx1.startsWith('American Express'))?.kto).toBe('1114');
+    expect(out.rows.find(r => r.tx1.startsWith('PostCard'))?.netto).toBe(50);
+    expect(out.rows.find(r => r.tx1.startsWith('PostCard'))?.kto).toBe('1115');
+    expect(out.rows.find(r => r.tx1.startsWith('Lunch-Check'))?.kto).toBe('1116');
+    // Stripe ohne Mapping → Sammelkonto (kein stilles Verschlucken).
+    const stripe = out.rows.find(r => r.tx1.startsWith('Stripe'));
+    expect(stripe?.kto).toBe('1110');
+    expect(stripe?.netto).toBe(20);
+
+    // KD Tisch 5000 wird NICHT separat gebucht — bleibt implizit im Barumsatz:
+    // 1000 − karten(565) − twint(100) − rechnung(30) − gutschein(20) = 285.
+    expect(out.rows.some(r => /KD Tisch/i.test(r.tx1))).toBe(false);
+    const barRow = out.rows.find(r => r.kto === '1000' && r.gkto === '1098');
+    expect(barRow?.netto).toBe(285);
+
+    // Durchlaufkonto in Balance: Zahlungsmittel-Seite deckt den Umsatz exakt.
+    const zahlungsmittel = out.rows
+      .filter(r => r.gkto === '1098')
+      .reduce((s, r) => s + r.netto + r.steuer, 0);
+    expect(Math.round(zahlungsmittel * 100) / 100).toBe(1000);
+  });
+
   it('exportiert Barausgaben EINZELN mit Text/Beleg/Code, Einzahlung Bank separat', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
