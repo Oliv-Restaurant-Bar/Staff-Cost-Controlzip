@@ -198,6 +198,12 @@ export interface TagesabschlussExportSettings {
   /** Konto je Rolle — leere Strings = nicht konfiguriert (Export blockiert). */
   konten: {
     kasse: string;          // z. B. 1000
+    /**
+     * LEGACY — Einzahlung Bank wird seit der Korrektur NICHT mehr exportiert
+     * (sie steuert nur den Kassensaldo; Bankbuchung kommt separat aus dem
+     * Bankbeleg/Bankimport). Feld bleibt wegen persistierter Settings-Blobs
+     * im Typ/Default erhalten, wird aber weder bebucht noch validiert.
+     */
     bank: string;           // z. B. 1020
     debitoren: string;      // z. B. 1100
     gutscheine: string;     // z. B. 2003

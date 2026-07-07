@@ -271,7 +271,8 @@ describe('summarizeBuchungsvorschau', () => {
     expect(byKat['twint'].brutto).toBe(100);
     expect(byKat['debitoren'].brutto).toBe(30);
     expect(byKat['gutschein_eingeloest'].brutto).toBe(20);
-    expect(byKat['bank'].brutto).toBe(200);
+    // Einzahlung Bank (200) ist KEINE Export-Kategorie mehr — keine Gruppe.
+    expect(byKat['bank']).toBeUndefined();
     expect(byKat['barausgabe'].anzahl).toBe(1);
     expect(byKat['barausgabe'].brutto).toBe(42.5);
 

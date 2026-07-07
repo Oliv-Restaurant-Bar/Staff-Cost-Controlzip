@@ -205,7 +205,7 @@ export function buildMonatspruefung(month: TagesabschlussMonth): MonatspruefungI
     { key: 'barausgaben', label: 'Barausgaben Total', value: round2(month.totals.barausgaben) },
     { key: 'gutscheine_verkauft', label: 'Verkaufte Gutscheine', value: round2(v.gutscheinVerkauft) },
     { key: 'gutscheine_eingeloest', label: 'Eingelöste Gutscheine', value: round2(v.gutscheinEingeloest) },
-    { key: 'einzahlung_bank', label: 'Einzahlung Bank', value: round2(v.einzahlungBank) },
+    { key: 'einzahlung_bank', label: 'Einzahlung Bank (nur Kontrollwert — nicht im Export)', value: round2(v.einzahlungBank) },
     { key: 'saldo_anfang', label: 'Kassensaldo Anfang', value: month.startSaldo },
     { key: 'saldo_ende', label: 'Kassensaldo Ende', value: month.endSaldo },
   ];
@@ -222,13 +222,16 @@ export const VORSCHAU_KATEGORIE_LABEL: Record<Tabelle2Kategorie, string> = {
   gutschein_verkauft: 'Verkaufte Gutscheine',
   gutschein_eingeloest: 'Eingelöste Gutscheine',
   barausgabe: 'Barausgaben',
-  bank: 'Bankeinzahlungen',
 };
 
-/** Anzeige-Reihenfolge der Vorschau-Bereiche (Brutto-Modell, Spec §4). */
+/**
+ * Anzeige-Reihenfolge der Vorschau-Bereiche (Brutto-Modell, Spec §4).
+ * Einzahlung Bank ist KEINE Export-Kategorie mehr — sie erscheint nur als
+ * Kontrollwert in der Monatsprüfung (`buildMonatspruefung`).
+ */
 export const VORSCHAU_KATEGORIEN: readonly Tabelle2Kategorie[] = [
   'barumsatz', 'kreditkarten', 'twint', 'debitoren', 'weitere_zahlungsarten',
-  'gutschein_verkauft', 'gutschein_eingeloest', 'barausgabe', 'bank',
+  'gutschein_verkauft', 'gutschein_eingeloest', 'barausgabe',
 ];
 
 export interface VorschauGruppe {

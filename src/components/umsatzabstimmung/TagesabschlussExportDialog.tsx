@@ -28,10 +28,13 @@ import {
 import { buildTabelle2Rows, tabelle2ToExportTable } from '@/lib/tagesabschluss-export';
 import { downloadCsv } from '@/lib/table-export';
 
-/** Brutto-Modell: kein Umsatz-(Ertrag)-Konto, keine MWST-Codes mehr. */
+/**
+ * Brutto-Modell: kein Umsatz-(Ertrag)-Konto, keine MWST-Codes mehr.
+ * `bank` fehlt bewusst: Einzahlung Bank wird nicht exportiert (nur Kassensaldo),
+ * die Bankbuchung kommt separat aus dem Bankbeleg/Bankimport.
+ */
 const ROLE_LABELS: Array<[keyof TagesabschlussExportSettings['konten'], string]> = [
   ['kasse', 'Kasse'],
-  ['bank', 'Bank (Einzahlungen)'],
   ['debitoren', 'Debitoren / Rechnung'],
   ['gutscheine', 'Gutschein-Konto'],
   ['kartenSammel', 'Kreditkarten-Sammelkonto'],

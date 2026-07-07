@@ -280,14 +280,13 @@ describe('buildTabelle2Rows', () => {
     expect(out.errors.join(' ')).toMatch(/KD Tisch/);
   });
 
-  it('exportiert Barausgaben EINZELN mit Text/Beleg/Code, Einzahlung Bank separat', () => {
+  it('exportiert Barausgaben EINZELN mit Text/Beleg/Code', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     const e1: CashExpense = { id: 'e1', date: '2026-07-01', amount: 45.5, konto: '6000', text: 'Blumen', belegNr: 'B-7', mwstCode: 'V81', updatedAt: NOW };
     const e2: CashExpense = { id: 'e2', date: '2026-07-01', amount: 12, konto: '6510', gegenkonto: '1001', text: 'Porto', updatedAt: NOW };
     blob = upsertExpense(blob, e1);
     blob = upsertExpense(blob, e2);
-    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 250 }, NOW);
     blob = withClosedDays(blob, ['2026-07-01']);
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
     const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
@@ -302,9 +301,54 @@ describe('buildTabelle2Rows', () => {
 
     const exp2 = out.rows.find(r => r.tx1 === 'Porto');
     expect(exp2?.gkto).toBe('1001'); // explizites Gegenkonto
+  });
 
-    const bank = out.rows.find(r => r.kto === '1020' && r.gkto === '1000');
-    expect(bank?.netto).toBe(250);
+  it('Einzahlung Bank erzeugt KEINE Buchungszeile und erscheint nicht im CSV', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 250 }, NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(out.errors).toHaveLength(0);
+
+    // Keine Zeile auf das Bankkonto, keine Zeile mit Betrag 250, kein Text.
+    expect(out.rows.some(r => r.kto === '1020' || r.gkto === '1020')).toBe(false);
+    expect(out.rows.some(r => r.netto === 250)).toBe(false);
+    expect(out.rows.some(r => r.tx1.includes('Einzahlung Bank'))).toBe(false);
+
+    const csv = buildTabelle2Csv(out.rows, 'test.csv');
+    expect(csv).not.toMatch(/Einzahlung Bank/);
+    expect(csv).not.toMatch(/1020/);
+  });
+
+  it('Export bleibt trotz Einzahlung Bank ausgeglichen: Σ(GKto=1098) = Umsatz', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 250 }, NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(out.errors).toHaveLength(0);
+
+    const transitSum = out.rows
+      .filter(r => r.gkto === '1098')
+      .reduce((sum, r) => sum + r.netto, 0);
+    expect(Math.round(transitSum * 100) / 100).toBe(1000); // Original-Tagesumsatz
+  });
+
+  it('validateExportSettings verlangt KEIN Bank-Konto (Einzahlung Bank wird nicht exportiert)', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 250 }, NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const settings = reviewedSettings();
+    settings.konten.bank = ''; // LEGACY-Feld leer → darf NICHT blockieren
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    expect(validateExportSettings(settings, rows, closings).ok).toBe(true);
+    const out = buildTabelle2Rows(rows, closings, blob, settings);
+    expect(out.errors).toHaveLength(0);
+    expect(out.rows.length).toBeGreaterThan(0);
   });
 
   it('Barausgabe ohne Konto blockiert den Export komplett', () => {

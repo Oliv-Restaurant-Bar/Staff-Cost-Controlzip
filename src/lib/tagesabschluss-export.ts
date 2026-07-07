@@ -21,7 +21,9 @@
  *      ohne Konto-Mapping blockiert der Export (kein stiller Barumsatz-Rest),
  *      eingelöste Gutscheine → gutscheine (2003, Soll).
  *  - Verkaufte Gutscheine separat: Kto = kasse / GKto = gutscheine (2003 Haben).
- *  - Einzahlung Bank (bestehende Logik): Kto = bank / GKto = kasse.
+ *  - Einzahlung Bank wird NICHT exportiert: sie dient nur dem fortlaufenden
+ *      Kassensaldo; die echte Bankbuchung erfolgt separat über den Bankbeleg/
+ *      Bankimport (sonst Doppelbuchung).
  *  - Barausgaben EINZELN (nie nur als Total): Kto = Ausgabe-Konto /
  *      GKto = Gegenkonto oder kasse, Text/Beleg aus der Erfassung; der
  *      MWST-Code der AUSGABE (Vorsteuer) bleibt erhalten — das MWST-Verbot
@@ -75,7 +77,6 @@ export type Tabelle2Kategorie =
   | 'weitere_zahlungsarten'
   | 'gutschein_verkauft'
   | 'gutschein_eingeloest'
-  | 'bank'
   | 'barausgabe';
 
 export interface Tabelle2Row {
@@ -130,12 +131,12 @@ export interface ExportValidation {
 
 /**
  * Rollen-Konten, die das Brutto-Modell tatsächlich bebucht — `umsatz` (altes
- * Ertragskonto) und `mwstCodes` sind LEGACY und werden bewusst NICHT mehr
- * validiert (keine MWST-Buchungen mehr).
+ * Ertragskonto), `mwstCodes` und `bank` sind LEGACY und werden bewusst NICHT
+ * mehr validiert (keine MWST-Buchungen mehr; Einzahlung Bank wird nicht
+ * exportiert und darf deshalb nie als fehlendes Mapping blockieren).
  */
 const REQUIRED_KONTO_ROLES: ReadonlyArray<[keyof TagesabschlussExportSettings['konten'], string]> = [
   ['kasse', 'Kasse'],
-  ['bank', 'Bank'],
   ['debitoren', 'Debitoren'],
   ['gutscheine', 'Gutscheine'],
   ['kartenSammel', 'Kreditkarten-Sammelkonto'],
@@ -380,14 +381,10 @@ export function buildTabelle2Rows(
       }));
     }
 
-    // 6) Einzahlung Bank (manuell erfasst).
-    if ((row.cells.einzahlungBank.value ?? 0) !== 0) {
-      out.push(makeRow({
-        kategorie: 'bank',
-        blg: nextBlg(), datum: date, kto: k.bank, gkto: k.kasse,
-        netto: round2(row.cells.einzahlungBank.value ?? 0), tx1: `Einzahlung Bank ${date}`,
-      }));
-    }
+    // 6) Einzahlung Bank wird bewusst NICHT gebucht: sie steuert nur den
+    //    fortlaufenden Kassensaldo (Übersicht/Tagesdetail/KPI); die Bankbuchung
+    //    kommt separat aus dem Bankbeleg/Bankimport — ein Export hier wäre
+    //    eine Doppelbuchung.
 
     // 7) Barausgaben EINZELN — nie nur als Total.
     for (const e of blob.expenses[row.date] ?? []) {
