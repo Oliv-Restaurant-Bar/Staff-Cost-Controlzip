@@ -1,0 +1,187 @@
+Erweitere den Buchhaltungs-Export auf /tagesabschluesse um eine professionelle Buchungsvorschau.
+
+Ziel:
+Vor jedem CSV-Export soll der Benutzer die vollständigen Buchungen sehen und kontrollieren können. Der Export darf erst erfolgen, wenn Soll und Haben vollständig ausgeglichen sind.
+
+## 1. Neuer Schritt "Buchungsvorschau"
+
+Zwischen Monatsprüfung und CSV-Export einen neuen Schritt einfügen:
+
+"Buchungsvorschau"
+
+Hier werden alle Buchungszeilen angezeigt, die später in das CSV exportiert werden.
+
+## 2. Darstellung
+
+Tabellenansicht:
+
+Konto
+Bezeichnung
+Soll
+Haben
+
+Beispiel:
+
+1098 | Umsatz Restaurant | | 7'500.00
+1000 | Bargeld | 1'250.00 |
+1110 | KK SIX | 5'800.00 |
+1100 | Debitoren | 350.00 |
+2003 | Verkaufte Gutscheine | | 120.00
+2003 | Eingelöste Gutscheine | 80.00 |
+1001 | Barausgabe Blumen | 45.00 |
+1001 | Barausgabe Taxi | 38.00 |
+
+Jede Barausgabe muss einzeln erscheinen.
+
+## 3. Totale
+
+Unter der Tabelle automatisch berechnen:
+
+Soll Total
+
+Haben Total
+
+Darunter:
+
+Wenn Soll = Haben:
+
+Grüne Meldung:
+
+✓ Buchung ausgeglichen
+
+Wenn nicht:
+
+Rote Meldung:
+
+❌ Differenz CHF xx.xx
+
+CSV-Export deaktivieren solange eine Differenz besteht.
+
+## 4. Gruppierung
+
+Die Vorschau gruppieren:
+
+Umsatz
+
+Kartenzahlungen
+
+Debitoren
+
+Gutscheine
+
+Barausgaben
+
+Kontrollsumme
+
+Dadurch bleibt die Vorschau auch bei vielen Buchungen übersichtlich.
+
+## 5. Bankeinzahlungen
+
+Wichtig:
+
+Einzahlung Bank NICHT exportieren.
+
+Sie darf lediglich unterhalb der Vorschau als Kontrollinformation erscheinen:
+
+Kontrollwerte (nicht Bestandteil des Exports)
+
+- Einzahlung Bank
+- Kassensaldo Anfang
+- Kassensaldo Ende
+
+Diese Werte dienen ausschliesslich der Kassenkontrolle.
+
+## 6. Kontierungsregeln
+
+Neue Seite oder Drawer:
+
+"Buchungsregeln"
+
+Dort alle Konten anzeigen:
+
+1098 Umsatz
+
+1000 Bargeld
+
+1110 KK
+
+1114 AMEX
+
+1116 PostCard
+
+1115 Lunch-Check
+
+1118 Stripe
+
+1100 Debitoren
+
+1104 KD Tisch 5000
+
+1001 Barausgaben
+
+2003 Gutscheine
+
+Der Benutzer soll Kontonummern und Bezeichnungen ändern können.
+
+Keine Konten mehr hart im Code verwenden.
+
+Der Export verwendet ausschliesslich diese Buchungsregeln.
+
+## 7. Export
+
+Der CSV-Export verwendet exakt die Buchungsvorschau.
+
+Es darf niemals eine Buchung exportiert werden, die in der Vorschau nicht sichtbar war.
+
+## 8. Export-Historie
+
+Nach jedem Export speichern:
+
+- Monat
+- Benutzer
+- Datum
+- Uhrzeit
+- Version
+- Anzahl Buchungen
+- Soll Total
+- Haben Total
+
+Historie unterhalb anzeigen.
+
+## 9. Export veraltet
+
+Wenn nach einem Export:
+
+- ein Tagesabschluss geöffnet wird
+- Werte geändert werden
+- Buchungsregeln geändert werden
+
+Status automatisch:
+
+"Export veraltet"
+
+Meldung:
+
+"Seit dem letzten Export wurden Daten geändert. Bitte Export erneut erstellen."
+
+## 10. Tests
+
+Ergänzen:
+
+- Buchungsvorschau zeigt alle Buchungen.
+- Barausgaben einzeln.
+- Soll/Haben korrekt.
+- Export blockiert bei Differenz.
+- Kontrollwerte werden nicht exportiert.
+- Bankeinzahlung erscheint nicht im Export.
+- Änderung der Buchungsregeln beeinflusst die Vorschau.
+- Export entspricht exakt der Vorschau.
+- Export wird nach Änderungen als veraltet markiert.
+
+Danach bitte ausführen:
+
+- korrekter TypeScript-Check gegen tsconfig.app.json
+- Tagesabschlüsse Tests
+- Export Tests
+- Buchungsvorschau Tests
+- Architect Review

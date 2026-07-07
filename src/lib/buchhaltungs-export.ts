@@ -15,14 +15,20 @@
  * bewusst KEIN Zeitvergleich (`exportedAt < jüngste Mutation`), weil der
  * bei Clock-Skew zwischen Geräten UND bei merge-on-save-Nachzüglern
  * (ein später gemergter Eintrag kann ein ÄLTERES updatedAt tragen) versagt.
- * exportSettings fliessen NICHT in den Fingerprint ein (eine Mapping-Änderung
- * invalidiert keinen bereits erstellten Export).
+ * exportSettings fliessen NICHT in den Monats-Fingerprint ein; Regeländerungen
+ * werden stattdessen über einen SEPARATEN Inhalts-Fingerprint der export-
+ * relevanten Buchungsregeln erkannt (`computeSettingsFingerprint` +
+ * `BuchhaltungsExportRecord.settingsFingerprint`; Alt-Records ohne das Feld
+ * kippen NICHT rückwirkend auf „veraltet").
  */
 
 import {
   type TagesabschlussBlob,
   type TagesabschlussMonth,
+  type TagesabschlussExportSettings,
   type BuchhaltungsExportRecord,
+  DEFAULT_KONTO_BEZEICHNUNGEN,
+  defaultExportSettings,
   isMonthClosed,
 } from './tagesabschluss';
 import { type Tabelle2Row, type Tabelle2Kategorie } from './tagesabschluss-export';
@@ -80,6 +86,37 @@ export function computeMonthFingerprint(blob: TagesabschlussBlob, monthKey: stri
   if (mc) parts.push(`mc:${monthKey}:${mc.status}:${mc.updatedAt}`);
 
   parts.sort();
+  return fnv1a(parts.join('\n'));
+}
+
+/**
+ * Inhalts-Fingerprint der EXPORT-RELEVANTEN Buchungsregeln — nur Felder, die
+ * die CSV-Bytes ändern: aktive Rollen-Konten, Konto je Zahlungsart (getrimmt,
+ * leere Werte ignoriert), erste Belegnummer. Bewusst NICHT einbezogen:
+ * `updatedAt`/`reviewed` (identisches Re-Speichern invalidiert keinen Export),
+ * LEGACY-Felder (bank/umsatz/mwstCodes) und `kontoBezeichnungen`
+ * (Anzeige-only — eine Umbenennung macht eine exportierte CSV nicht falsch;
+ * bewusste Abweichung von Spec §9 „Buchungsregeln geändert").
+ * null-Settings werden wie die Default-Settings gehasht (gleiche Basis wie
+ * die Vorschau, die mit demselben Fallback rendert).
+ */
+export function computeSettingsFingerprint(
+  settings: TagesabschlussExportSettings | null,
+): string {
+  const s = settings ?? defaultExportSettings('1970-01-01T00:00:00.000Z');
+  const parts: string[] = [
+    `kasse:${s.konten.kasse.trim()}`,
+    `debitoren:${s.konten.debitoren.trim()}`,
+    `gutscheine:${s.konten.gutscheine.trim()}`,
+    `kartenSammel:${s.konten.kartenSammel.trim()}`,
+    `umsatzTransit:${s.konten.umsatzTransit.trim()}`,
+    `blgStart:${(s.blgStart ?? '').trim()}`,
+  ];
+  const zahlarten = Object.entries(s.kontoJeZahlungsart)
+    .map(([k, v]) => [k, v.trim()] as const)
+    .filter(([, v]) => v !== '')
+    .sort(([a], [b]) => a.localeCompare(b));
+  for (const [k, v] of zahlarten) parts.push(`za:${k}:${v}`);
   return fnv1a(parts.join('\n'));
 }
 
@@ -292,6 +329,223 @@ export function summarizeBuchungsvorschau(rows: readonly Tabelle2Row[]): Buchung
   };
 }
 
+// ── Soll/Haben-Buchungsvorschau (§4) ─────────────────────────────────────────
+
+/**
+ * Anzeige-Bezeichnung eines Kontos gemäss Buchungsregeln
+ * (`kontoBezeichnungen`, keyed by Kontonummer) mit Fallback auf den
+ * Default-Katalog; unbekannte Konten → «Konto NNNN». Mutiert NIE die Settings.
+ */
+export function kontoLabel(
+  settings: TagesabschlussExportSettings | null,
+  konto: string,
+): string {
+  const nr = konto.trim();
+  const custom = settings?.kontoBezeichnungen?.[nr]?.trim();
+  if (custom) return custom;
+  return DEFAULT_KONTO_BEZEICHNUNGEN[nr] ?? `Konto ${nr}`;
+}
+
+export type SollHabenGruppeKey =
+  | 'umsatz'
+  | 'kartenzahlungen'
+  | 'weitere_zahlungsarten'
+  | 'debitoren'
+  | 'gutscheine'
+  | 'barausgaben';
+
+export const SOLL_HABEN_GRUPPEN: readonly SollHabenGruppeKey[] = [
+  'umsatz', 'kartenzahlungen', 'weitere_zahlungsarten',
+  'debitoren', 'gutscheine', 'barausgaben',
+];
+
+export const SOLL_HABEN_GRUPPE_LABEL: Record<SollHabenGruppeKey, string> = {
+  umsatz: 'Umsatz',
+  kartenzahlungen: 'Kartenzahlungen',
+  weitere_zahlungsarten: 'Weitere Zahlungsarten',
+  debitoren: 'Debitoren',
+  gutscheine: 'Gutscheine',
+  barausgaben: 'Barausgaben',
+};
+
+/** Eine Zeile der Soll/Haben-Vorschau (genau EINE Seite befüllt). */
+export interface SollHabenPosition {
+  /** Stabiler Schlüssel (Aggregat bzw. Einzel-Barausgabe). */
+  key: string;
+  konto: string;
+  bezeichnung: string;
+  soll: number | null;
+  haben: number | null;
+}
+
+export interface SollHabenGruppe {
+  gruppe: SollHabenGruppeKey;
+  label: string;
+  positionen: SollHabenPosition[];
+  soll: number;
+  haben: number;
+}
+
+export interface SollHabenVorschau {
+  gruppen: SollHabenGruppe[];
+  sollTotal: number;
+  habenTotal: number;
+  /** sollTotal − habenTotal (gerundet). */
+  differenz: number;
+  /** |Differenz| < 0.005 — sonst ist der Export BLOCKIERT (§4). */
+  ausgeglichen: boolean;
+  /** Anzahl Buchungszeilen (CSV-Zeilen) — Export == Vorschau (§7). */
+  anzahlBuchungen: number;
+}
+
+/** Interne Zuordnung einer Buchungsseite zu Gruppe/Aggregat/Bezeichnung. */
+interface SeitenZuordnung {
+  gruppe: SollHabenGruppeKey;
+  /** Aggregations-Schlüssel innerhalb der Gruppe (einzigartig = keine Aggregation). */
+  agg: string;
+  bezeichnung: string;
+}
+
+/**
+ * Leitet aus den Tabelle2-Buchungszeilen die doppelseitige Soll/Haben-Vorschau
+ * ab: JEDE Zeile ist ein vollständiger Buchungssatz (Kto = Soll, GKto = Haben;
+ * negativer Betrag = Seiten getauscht, Betrag = |netto|) und erzeugt daher
+ * ZWEI Positionen. Soll-Total ≡ Haben-Total ist damit strukturell garantiert;
+ * die Differenz-Prüfung (Toleranz 0.005) ist ein defensives Gate gegen
+ * kaputte Zeilen (z. B. fehlendes Konto → Position entfällt → sichtbare
+ * Differenz + Export-Block, NIE ein stiller Teil-Export).
+ *
+ * Aggregation (Übersichtlichkeit, §4): die Haben-Seite Umsatz brutto wird zu
+ * EINER «Umsatz»-Zeile zusammengefasst; Zahlwege je Konto; Barausgaben
+ * erscheinen EINZELN (Buchungstext), nur ihre Kassen-Gegenseite ist je Konto
+ * aggregiert. Bezeichnungen kommen aus den Buchungsregeln (kontoLabel).
+ * Die Spec-Beispieltabelle ist einseitig und nachweislich NICHT balanciert —
+ * sie ist illustrativ; massgeblich ist die Buchhaltungs-Invariante
+ * Soll = Haben.
+ */
+export function buildSollHabenVorschau(
+  rows: readonly Tabelle2Row[],
+  settings: TagesabschlussExportSettings | null,
+): SollHabenVorschau {
+  const label = (konto: string): string => kontoLabel(settings, konto);
+
+  /** Zuordnung der KTO-Seite (Soll bei positivem Betrag). */
+  const ktoSeite = (r: Tabelle2Row, index: number): SeitenZuordnung => {
+    switch (r.kategorie) {
+      case 'barumsatz':
+        return { gruppe: 'umsatz', agg: `bar:${r.kto}`, bezeichnung: label(r.kto) };
+      case 'kreditkarten':
+      case 'twint':
+        return { gruppe: 'kartenzahlungen', agg: `karte:${r.kto}`, bezeichnung: label(r.kto) };
+      case 'weitere_zahlungsarten':
+        return { gruppe: 'weitere_zahlungsarten', agg: `wz:${r.kto}`, bezeichnung: label(r.kto) };
+      case 'debitoren':
+        return { gruppe: 'debitoren', agg: `deb:${r.kto}`, bezeichnung: label(r.kto) };
+      case 'gutschein_eingeloest':
+        return { gruppe: 'gutscheine', agg: `ge:${r.kto}`, bezeichnung: 'Eingelöste Gutscheine' };
+      case 'gutschein_verkauft':
+        return { gruppe: 'gutscheine', agg: `gvk:${r.kto}`, bezeichnung: `Gutscheinverkauf (${label(r.kto)})` };
+      case 'barausgabe':
+        // EINZELN (§4) — eindeutiger Schlüssel, Buchungstext als Bezeichnung.
+        return { gruppe: 'barausgaben', agg: `be:${index}`, bezeichnung: r.tx1.trim() || label(r.kto) };
+    }
+  };
+
+  /** Zuordnung der GKTO-Seite (Haben bei positivem Betrag). */
+  const gktoSeite = (r: Tabelle2Row): SeitenZuordnung => {
+    switch (r.kategorie) {
+      case 'gutschein_verkauft':
+        return { gruppe: 'gutscheine', agg: `gv:${r.gkto}`, bezeichnung: 'Verkaufte Gutscheine' };
+      case 'barausgabe':
+        return { gruppe: 'barausgaben', agg: `beg:${r.gkto}`, bezeichnung: `Gegenkonto ${label(r.gkto)}` };
+      default:
+        // Alle Zahlweg-Zeilen: Haben = Umsatz brutto → EINE aggregierte Zeile.
+        return { gruppe: 'umsatz', agg: `umsatz:${r.gkto}`, bezeichnung: label(r.gkto) };
+    }
+  };
+
+  // Aggregation je (Gruppe, Aggregat, Seite) — Einfüge-Reihenfolge bleibt stabil.
+  const map = new Map<string, {
+    zuordnung: SeitenZuordnung; konto: string; seite: 'S' | 'H'; betrag: number;
+  }>();
+  let sollSum = 0;
+  let habenSum = 0;
+
+  const add = (zuordnung: SeitenZuordnung, konto: string, seite: 'S' | 'H', betrag: number): void => {
+    if (konto.trim() === '') return; // kaputte Zeile → Seite entfällt → Differenz sichtbar
+    if (seite === 'S') sollSum += betrag; else habenSum += betrag;
+    const key = `${zuordnung.gruppe}|${zuordnung.agg}|${seite}`;
+    const prev = map.get(key);
+    if (prev) prev.betrag += betrag;
+    else map.set(key, { zuordnung, konto: konto.trim(), seite, betrag });
+  };
+
+  rows.forEach((r, index) => {
+    const betrag = Math.abs(r.netto);
+    if (betrag === 0) return;
+    const ktoIstSoll = r.netto >= 0; // negativ = Seiten getauscht
+    add(ktoSeite(r, index), r.kto, ktoIstSoll ? 'S' : 'H', betrag);
+    add(gktoSeite(r), r.gkto, ktoIstSoll ? 'H' : 'S', betrag);
+  });
+
+  const gruppen: SollHabenGruppe[] = SOLL_HABEN_GRUPPEN.map(gruppe => {
+    const eintraege = [...map.entries()].filter(([, e]) => e.zuordnung.gruppe === gruppe);
+    // Umsatz-Gruppe: Haben-Zeile(n) („Umsatz") zuerst — wie im Beleg-Layout.
+    if (gruppe === 'umsatz') {
+      eintraege.sort(([, a], [, b]) => (a.seite === b.seite ? 0 : a.seite === 'H' ? -1 : 1));
+    }
+    const positionen: SollHabenPosition[] = eintraege.map(([key, e]) => ({
+      key,
+      konto: e.konto,
+      bezeichnung: e.zuordnung.bezeichnung,
+      soll: e.seite === 'S' ? round2(e.betrag) : null,
+      haben: e.seite === 'H' ? round2(e.betrag) : null,
+    }));
+    return {
+      gruppe,
+      label: SOLL_HABEN_GRUPPE_LABEL[gruppe],
+      positionen,
+      soll: round2(positionen.reduce((s, p) => s + (p.soll ?? 0), 0)),
+      haben: round2(positionen.reduce((s, p) => s + (p.haben ?? 0), 0)),
+    };
+  }).filter(g => g.positionen.length > 0);
+
+  const sollTotal = round2(sollSum);
+  const habenTotal = round2(habenSum);
+  const differenz = round2(sollTotal - habenTotal);
+  return {
+    gruppen,
+    sollTotal,
+    habenTotal,
+    differenz,
+    ausgeglichen: Math.abs(sollTotal - habenTotal) < 0.005,
+    anzahlBuchungen: rows.length,
+  };
+}
+
+// ── Kontrollwerte (§5) — NICHT Bestandteil des Exports ───────────────────────
+
+export interface Kontrollwert {
+  key: string;
+  label: string;
+  /** CHF; null = unbekannt (z. B. Saldo ohne Anfangsbestand) → „—". */
+  value: number | null;
+}
+
+/**
+ * Kontrollwerte unterhalb der Buchungsvorschau (§5): Einzahlung Bank und die
+ * Kassensalden sind bewusst KEINE Buchungen (Bankbuchung kommt separat aus
+ * dem Bankbeleg/Bankimport; Salden sind Bestandsgrössen) — sie dienen nur der
+ * Plausibilisierung.
+ */
+export function buildKontrollwerte(month: TagesabschlussMonth): Kontrollwert[] {
+  return [
+    { key: 'einzahlung_bank', label: 'Einzahlung Bank', value: round2(month.totals.values.einzahlungBank) },
+    { key: 'saldo_anfang', label: 'Kassensaldo Anfang', value: month.startSaldo },
+    { key: 'saldo_ende', label: 'Kassensaldo Ende', value: month.endSaldo },
+  ];
+}
+
 // ── Export-Historie / Protokoll (§7/§8) ──────────────────────────────────────
 
 /** Alle Export-Protokolle eines Monats, chronologisch (älteste zuerst). */
@@ -322,7 +576,8 @@ export function nextExportVersion(blob: TagesabschlussBlob, monthKey: string): n
 /**
  * Erstellt das Protokoll eines soeben erzeugten Exports (write-once):
  * Export-ID, Version (fortlaufend je Monat), Benutzer, Zeitstempel, Anzahl
- * Buchungen, Kassensaldo Ende und Fingerprint des AKTUELLEN Datenstands.
+ * Buchungen, Kassensaldo Ende, Soll-/Haben-Total (§7) und Fingerprints des
+ * AKTUELLEN Daten- und Buchungsregeln-Stands.
  */
 export function createExportRecord(params: {
   blob: TagesabschlussBlob;
@@ -331,8 +586,10 @@ export function createExportRecord(params: {
   now: string; // ISO
   anzahlBuchungen: number;
   kassensaldoEnde: number | null;
+  sollTotal: number | null;
+  habenTotal: number | null;
 }): BuchhaltungsExportRecord {
-  const { blob, monthKey, user, now, anzahlBuchungen, kassensaldoEnde } = params;
+  const { blob, monthKey, user, now, anzahlBuchungen, kassensaldoEnde, sollTotal, habenTotal } = params;
   const version = nextExportVersion(blob, monthKey);
   const rand = Math.random().toString(36).slice(2, 8);
   return {
@@ -343,7 +600,10 @@ export function createExportRecord(params: {
     exportedBy: user,
     anzahlBuchungen,
     kassensaldoEnde,
+    sollTotal,
+    habenTotal,
     fingerprint: computeMonthFingerprint(blob, monthKey),
+    settingsFingerprint: computeSettingsFingerprint(blob.exportSettings ?? null),
     updatedAt: now,
   };
 }
@@ -370,9 +630,12 @@ export const EXPORT_STATUS_LABEL: Record<BuchhaltungsExportStatus, string> = {
 /**
  * Status des Buchhaltungs-Exports eines Monats — rein aus dem Blob ableitbar
  * (auch synchron aus localStorage für die Import-Cockpit-Kontrollaufgabe):
- *  - veraltet:   es gibt einen Export, aber der Monats-Datenstand hat sich
- *                seither geändert (Fingerprint-Mismatch, §10)
- *  - exportiert: jüngster Export entspricht dem aktuellen Datenstand
+ *  - veraltet:   es gibt einen Export, aber der Monats-Datenstand ODER die
+ *                export-relevanten Buchungsregeln haben sich seither geändert
+ *                (Fingerprint-Mismatch, §9/§10). Alt-Records OHNE
+ *                settingsFingerprint werden NICHT gegen die Regeln verglichen
+ *                (kein rückwirkendes Umkippen).
+ *  - exportiert: jüngster Export entspricht dem aktuellen Stand
  *  - bereit:     Monat definitiv abgeschlossen, noch kein Export
  *  - offen:      sonst
  */
@@ -382,9 +645,10 @@ export function deriveExportStatus(
 ): BuchhaltungsExportStatus {
   const latest = latestExportForMonth(blob, monthKey);
   if (latest) {
-    return latest.fingerprint === computeMonthFingerprint(blob, monthKey)
-      ? 'exportiert'
-      : 'veraltet';
+    const dataStale = latest.fingerprint !== computeMonthFingerprint(blob, monthKey);
+    const settingsStale = latest.settingsFingerprint !== undefined
+      && latest.settingsFingerprint !== computeSettingsFingerprint(blob.exportSettings ?? null);
+    return dataStale || settingsStale ? 'veraltet' : 'exportiert';
   }
   return isMonthClosed(blob, monthKey) ? 'bereit' : 'offen';
 }

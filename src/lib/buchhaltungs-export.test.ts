@@ -8,25 +8,30 @@ import { describe, it, expect } from 'vitest';
 import {
   addExportRecord,
   buildExportChecklist,
+  buildKontrollwerte,
   buildMonatspruefung,
+  buildSollHabenVorschau,
   computeMonthFingerprint,
+  computeSettingsFingerprint,
   createExportRecord,
   deriveExportStatus,
   exportChecklistOk,
   exportsForMonth,
+  kontoLabel,
   latestExportForMonth,
   latestRelevantExportMonth,
   nextExportVersion,
   summarizeBuchungsvorschau,
   VORSCHAU_KATEGORIEN,
 } from './buchhaltungs-export';
-import { buildTabelle2Rows } from './tagesabschluss-export';
+import { buildTabelle2Rows, type Tabelle2Row } from './tagesabschluss-export';
 import {
   buildTagesabschlussRows,
   defaultExportSettings,
   emptyTagesabschlussBlob,
   mergeTagesabschlussBlobs,
   normalizeTagesabschlussBlob,
+  setExportSettings,
   upsertExpense,
   upsertManualDay,
   type BuchhaltungsExportRecord,
@@ -318,15 +323,21 @@ describe('Export-Historie und Versionierung', () => {
     const r1 = createExportRecord({
       blob, monthKey: MONTH_KEY, user: 'a@oliv.ch', now: NOW,
       anzahlBuchungen: 12, kassensaldoEnde: 810.5,
+      sollTotal: 1000, habenTotal: 1000,
     });
     expect(r1.version).toBe(1);
     expect(r1.monat).toBe(MONTH_KEY);
     expect(r1.fingerprint).toBe(computeMonthFingerprint(blob, MONTH_KEY));
+    // Historie-Totale + Regeln-Fingerprint werden write-once festgehalten (§7/§9).
+    expect(r1.sollTotal).toBe(1000);
+    expect(r1.habenTotal).toBe(1000);
+    expect(r1.settingsFingerprint).toBe(computeSettingsFingerprint(blob.exportSettings ?? null));
     blob = addExportRecord(blob, r1);
 
     const r2 = createExportRecord({
       blob, monthKey: MONTH_KEY, user: 'b@oliv.ch', now: LATER,
       anzahlBuchungen: 13, kassensaldoEnde: 810.5,
+      sollTotal: 1042.5, habenTotal: 1042.5,
     });
     expect(r2.version).toBe(2);
     expect(r2.id).not.toBe(r1.id);
@@ -354,6 +365,7 @@ describe('deriveExportStatus', () => {
     const rec = createExportRecord({
       blob, monthKey: MONTH_KEY, user: 'a@oliv.ch', now: NOW,
       anzahlBuchungen: 12, kassensaldoEnde: 810.5,
+      sollTotal: 1000, habenTotal: 1000,
     });
     blob = addExportRecord(blob, rec);
     expect(deriveExportStatus(blob, MONTH_KEY)).toBe('exportiert');
@@ -368,6 +380,7 @@ describe('deriveExportStatus', () => {
     const r1 = createExportRecord({
       blob, monthKey: MONTH_KEY, user: 'a@oliv.ch', now: NOW,
       anzahlBuchungen: 12, kassensaldoEnde: 810.5,
+      sollTotal: 1000, habenTotal: 1000,
     });
     blob = addExportRecord(blob, r1);
     blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 50 }, LATER);
@@ -376,6 +389,7 @@ describe('deriveExportStatus', () => {
     const r2 = createExportRecord({
       blob, monthKey: MONTH_KEY, user: 'a@oliv.ch', now: LATER,
       anzahlBuchungen: 13, kassensaldoEnde: 860.5,
+      sollTotal: 1050, habenTotal: 1050,
     });
     blob = addExportRecord(blob, r2);
     expect(deriveExportStatus(blob, MONTH_KEY)).toBe('exportiert');
@@ -420,6 +434,39 @@ describe('exportProtokolle im Blob', () => {
     // Fehlendes Feld in Alt-Blobs → leeres Objekt, nie undefined.
     expect(normalizeTagesabschlussBlob({}).exportProtokolle).toEqual({});
   });
+
+  it('Load-Round-Trip erhält sollTotal/habenTotal/settingsFingerprint (Historie + veraltet-Semantik überleben Reload)', () => {
+    const record = createExportRecord({
+      blob: emptyTagesabschlussBlob(),
+      monthKey: MONTH_KEY,
+      user: 'a@oliv.ch',
+      now: NOW,
+      anzahlBuchungen: 12,
+      kassensaldoEnde: 350,
+      sollTotal: 1042.5,
+      habenTotal: 1042.5,
+    });
+    expect(record.settingsFingerprint).toBeTruthy();
+    const blob = addExportRecord(emptyTagesabschlussBlob(), record);
+    // Simulierter Persistenz-Round-Trip (localStorage/KV → JSON → normalize beim Laden).
+    const reloaded = normalizeTagesabschlussBlob(JSON.parse(JSON.stringify(blob)));
+    const r = reloaded.exportProtokolle[record.id];
+    expect(r.sollTotal).toBe(1042.5);
+    expect(r.habenTotal).toBe(1042.5);
+    expect(r.settingsFingerprint).toBe(record.settingsFingerprint);
+    // Alt-Record ohne die neuen Felder → null/undefined, kein Crash.
+    const legacy = normalizeTagesabschlussBlob({
+      exportProtokolle: {
+        alt: {
+          monat: MONTH_KEY, version: 1, exportedAt: NOW, exportedBy: 'a@oliv.ch',
+          anzahlBuchungen: 5, kassensaldoEnde: 10, fingerprint: 'f-alt', updatedAt: NOW,
+        },
+      },
+    });
+    expect(legacy.exportProtokolle['alt'].sollTotal).toBeNull();
+    expect(legacy.exportProtokolle['alt'].habenTotal).toBeNull();
+    expect(legacy.exportProtokolle['alt'].settingsFingerprint).toBeUndefined();
+  });
 });
 
 describe('latestRelevantExportMonth', () => {
@@ -442,5 +489,265 @@ describe('latestRelevantExportMonth', () => {
       id: 'e1', date: '2026-09-10', amount: 25, konto: '6000', text: 'Blumen', updatedAt: NOW,
     });
     expect(latestRelevantExportMonth(blob)).toBe('2026-09');
+  });
+});
+
+// ── Soll/Haben-Buchungsvorschau (§4) ─────────────────────────────────────────
+
+/** Minimaler Tabelle2Row-Bauhelfer für synthetische Randfälle. */
+function t2Row(over: Partial<Tabelle2Row> & Pick<Tabelle2Row, 'kategorie' | 'kto' | 'gkto' | 'netto'>): Tabelle2Row {
+  return {
+    blg: '', datum: '01.07.2026', sh: 'S', grp: '', sid: '', sidx: '', kidx: '',
+    btyp: '', mtyp: '', code: '', steuer: 0, fwBetrag: '', tx1: '', tx2: '',
+    pkKey: '', opId: '', flag: '',
+    ...over,
+  };
+}
+
+/** Standard-Fixture: 1 Tag mit Bar/MC/VISA/TWINT/Rechnung/Gutschein + 1 Barausgabe. */
+function sollHabenFixture(settings: TagesabschlussExportSettings = reviewedSettings()) {
+  const closings = { '2026-07-01': makeClosing('2026-07-01') };
+  let blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+  blob = upsertExpense(blob, {
+    id: 'e1', date: '2026-07-01', amount: 42.5, konto: '6000', text: 'Blumen', updatedAt: NOW,
+  });
+  const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+  const exp = buildTabelle2Rows(rows, closings, blob, settings);
+  return { exp, settings };
+}
+
+describe('buildSollHabenVorschau', () => {
+  it('leitet aus jeder Buchungszeile ZWEI Seiten ab — Soll-Total = Haben-Total', () => {
+    const { exp, settings } = sollHabenFixture();
+    expect(exp.errors).toEqual([]);
+    const sh = buildSollHabenVorschau(exp.rows, settings);
+
+    expect(sh.ausgeglichen).toBe(true);
+    expect(sh.differenz).toBe(0);
+    expect(sh.sollTotal).toBe(sh.habenTotal);
+    expect(sh.anzahlBuchungen).toBe(exp.rows.length);
+
+    // Jede Position hat genau EINE Seite.
+    for (const g of sh.gruppen) {
+      for (const p of g.positionen) {
+        expect(p.soll === null || p.haben === null).toBe(true);
+        expect(p.soll !== null || p.haben !== null).toBe(true);
+      }
+    }
+
+    // Umsatz-Gruppe: Haben-Zeile 1098 „Umsatz" zuerst, Bargeld-Soll danach.
+    const umsatz = sh.gruppen.find(g => g.gruppe === 'umsatz')!;
+    expect(umsatz.positionen[0].konto).toBe('1098');
+    expect(umsatz.positionen[0].bezeichnung).toBe('Umsatz');
+    expect(umsatz.positionen[0].haben).toBe(1000); // Brutto-Umsatz aggregiert
+    const bar = umsatz.positionen.find(p => p.konto === '1000')!;
+    // Barumsatz = 1000 − 550 Karten − 100 TWINT − 30 Rechnung − 20 Gutschein
+    expect(bar.soll).toBe(300);
+
+    // Kartenzahlungen: MC+VISA aggregiert auf Sammelkonto 1110, TWINT ebenso.
+    const karten = sh.gruppen.find(g => g.gruppe === 'kartenzahlungen')!;
+    const sammel = karten.positionen.find(p => p.konto === '1110')!;
+    expect(sammel.soll).toBe(650); // 400 + 150 + 100
+    expect(sammel.bezeichnung).toBe('KK SIX');
+
+    // Debitoren + eingelöste Gutscheine.
+    expect(sh.gruppen.find(g => g.gruppe === 'debitoren')!.soll).toBe(30);
+    const gutscheine = sh.gruppen.find(g => g.gruppe === 'gutscheine')!;
+    expect(gutscheine.positionen[0].bezeichnung).toBe('Eingelöste Gutscheine');
+    expect(gutscheine.positionen[0].soll).toBe(20);
+  });
+
+  it('führt Barausgaben EINZELN (Buchungstext), Kassen-Gegenseite aggregiert', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+    blob = upsertExpense(blob, {
+      id: 'e1', date: '2026-07-01', amount: 42.5, konto: '6000', text: 'Blumen', updatedAt: NOW,
+    });
+    blob = upsertExpense(blob, {
+      id: 'e2', date: '2026-07-01', amount: 10, konto: '6000', text: 'Briefmarken', updatedAt: NOW,
+    });
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const exp = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    const sh = buildSollHabenVorschau(exp.rows, reviewedSettings());
+
+    const be = sh.gruppen.find(g => g.gruppe === 'barausgaben')!;
+    const sollZeilen = be.positionen.filter(p => p.soll !== null);
+    expect(sollZeilen.map(p => p.bezeichnung).sort()).toEqual(['Blumen', 'Briefmarken']);
+    // Gegenseite (Kasse) je Konto aggregiert: EINE Haben-Zeile mit 52.50.
+    const habenZeilen = be.positionen.filter(p => p.haben !== null);
+    expect(habenZeilen).toHaveLength(1);
+    expect(habenZeilen[0].konto).toBe('1000');
+    expect(habenZeilen[0].haben).toBe(52.5);
+    expect(sh.ausgeglichen).toBe(true);
+  });
+
+  it('negativer Betrag tauscht die Seiten (|Betrag|, bleibt ausgeglichen)', () => {
+    const sh = buildSollHabenVorschau([
+      t2Row({ kategorie: 'barumsatz', kto: '1000', gkto: '1098', netto: -50, tx1: 'Barumsatz' }),
+    ], reviewedSettings());
+    const umsatz = sh.gruppen.find(g => g.gruppe === 'umsatz')!;
+    const kasse = umsatz.positionen.find(p => p.konto === '1000')!;
+    const transit = umsatz.positionen.find(p => p.konto === '1098')!;
+    expect(kasse.haben).toBe(50); // getauscht: Kasse im Haben
+    expect(kasse.soll).toBeNull();
+    expect(transit.soll).toBe(50);
+    expect(sh.ausgeglichen).toBe(true);
+  });
+
+  it('kaputte Zeile (leeres Konto) → Seite entfällt → sichtbare Differenz, nicht ausgeglichen', () => {
+    const sh = buildSollHabenVorschau([
+      t2Row({ kategorie: 'barumsatz', kto: '', gkto: '1098', netto: 100, tx1: 'Kaputt' }),
+    ], reviewedSettings());
+    expect(sh.ausgeglichen).toBe(false);
+    expect(sh.sollTotal).toBe(0);
+    expect(sh.habenTotal).toBe(100);
+    expect(sh.differenz).toBe(-100);
+  });
+
+  it('Vorschau == Export: Soll-Total = Summe aller |netto| der CSV-Zeilen (§7)', () => {
+    const { exp, settings } = sollHabenFixture();
+    const sh = buildSollHabenVorschau(exp.rows, settings);
+    const csvSumme = Math.round(exp.rows.reduce((s, r) => s + Math.abs(r.netto), 0) * 100) / 100;
+    expect(sh.sollTotal).toBe(csvSumme);
+    expect(sh.habenTotal).toBe(csvSumme);
+    expect(sh.anzahlBuchungen).toBe(exp.rows.length);
+  });
+
+  it('Regeländerung (Konto je Zahlungsart) verschiebt die Position aufs neue Konto', () => {
+    const closings = {
+      '2026-07-01': makeClosing('2026-07-01', {
+        payments: [
+          { name: 'Bar', count: 1, amount: 900 },
+          { name: 'Amex', count: 1, amount: 100 },
+        ],
+      }),
+    };
+    const blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+
+    const s1 = reviewedSettings();
+    const exp1 = buildTabelle2Rows(rows, closings, blob, s1);
+    const sh1 = buildSollHabenVorschau(exp1.rows, s1);
+    expect(sh1.gruppen.find(g => g.gruppe === 'kartenzahlungen')!.positionen[0].konto).toBe('1114');
+
+    const s2 = reviewedSettings({
+      kontoJeZahlungsart: { ...s1.kontoJeZahlungsart, amex: '1999' },
+    });
+    const exp2 = buildTabelle2Rows(rows, closings, blob, s2);
+    const sh2 = buildSollHabenVorschau(exp2.rows, s2);
+    const pos2 = sh2.gruppen.find(g => g.gruppe === 'kartenzahlungen')!.positionen[0];
+    expect(pos2.konto).toBe('1999');
+    expect(pos2.bezeichnung).toBe('Konto 1999'); // keine Bezeichnung hinterlegt
+    expect(sh2.ausgeglichen).toBe(true);
+  });
+});
+
+describe('kontoLabel', () => {
+  it('bevorzugt kontoBezeichnungen, fällt auf Default-Katalog bzw. «Konto NNNN» zurück', () => {
+    const s = reviewedSettings({ kontoBezeichnungen: { '1110': 'SIX Karten' } });
+    expect(kontoLabel(s, '1110')).toBe('SIX Karten');
+    expect(kontoLabel(s, '1098')).toBe('Umsatz');          // Default-Katalog
+    expect(kontoLabel(s, '9999')).toBe('Konto 9999');      // unbekannt
+    expect(kontoLabel(null, '1000')).toBe('Bargeld');      // null-Settings
+  });
+});
+
+// ── Kontrollwerte (§5) ───────────────────────────────────────────────────────
+
+describe('buildKontrollwerte', () => {
+  it('liefert Einzahlung Bank + Salden — und diese erscheinen NIE als Buchungsposition', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 200 }, NOW);
+    blob = { ...blob, anfangsbestand: { '2026-07': { value: 500, updatedAt: NOW } } };
+    const month = buildTagesabschlussRows(2026, 7, closings, blob, {}, undefined, 500);
+    const kw = Object.fromEntries(buildKontrollwerte(month).map(k => [k.key, k.value]));
+    expect(kw['einzahlung_bank']).toBe(200);
+    expect(kw['saldo_anfang']).toBe(500);
+    expect(kw['saldo_ende']).not.toBeNull();
+
+    // Bank-Konto (1020) taucht in KEINER Soll/Haben-Position auf.
+    const exp = buildTabelle2Rows(month.rows, closings, blob, reviewedSettings());
+    const sh = buildSollHabenVorschau(exp.rows, reviewedSettings());
+    const alleKonten = sh.gruppen.flatMap(g => g.positionen.map(p => p.konto));
+    expect(alleKonten).not.toContain('1020');
+  });
+});
+
+// ── Settings-Fingerprint (§9: „veraltet" bei Regeländerung) ──────────────────
+
+describe('computeSettingsFingerprint + deriveExportStatus', () => {
+  it('identisches Re-Speichern (nur updatedAt/reviewed) ändert den Fingerprint NICHT', () => {
+    const a = reviewedSettings();
+    const b = { ...reviewedSettings(), updatedAt: LATER, reviewed: false };
+    expect(computeSettingsFingerprint(a)).toBe(computeSettingsFingerprint(b));
+  });
+
+  it('Konto-Änderung ändert den Fingerprint; Legacy-Felder + Bezeichnungen nicht', () => {
+    const base = reviewedSettings();
+    const fp = computeSettingsFingerprint(base);
+    expect(computeSettingsFingerprint(reviewedSettings({
+      konten: { ...base.konten, kasse: '1005' },
+    }))).not.toBe(fp);
+    expect(computeSettingsFingerprint(reviewedSettings({
+      kontoJeZahlungsart: { ...base.kontoJeZahlungsart, amex: '1999' },
+    }))).not.toBe(fp);
+    expect(computeSettingsFingerprint(reviewedSettings({ blgStart: '5001' }))).not.toBe(fp);
+    // Anzeige-/Legacy-Felder sind bewusst NICHT export-relevant.
+    expect(computeSettingsFingerprint(reviewedSettings({
+      kontoBezeichnungen: { '1110': 'Umbenannt' },
+    }))).toBe(fp);
+    expect(computeSettingsFingerprint(reviewedSettings({
+      konten: { ...base.konten, bank: '1021', umsatz: '3999' },
+      mwstCodes: { '8.1': 'U81' },
+    }))).toBe(fp);
+    // null == Default-Settings (gleiche Basis wie die Vorschau).
+    expect(computeSettingsFingerprint(null))
+      .toBe(computeSettingsFingerprint(defaultExportSettings(NOW)));
+  });
+
+  it('Regeländerung nach dem Export → Status „veraltet"; Re-Save ohne Änderung nicht', () => {
+    let blob = withClosedDays(withClosedMonth(emptyTagesabschlussBlob(), MONTH_KEY), ['2026-07-01']);
+    blob = setExportSettings(blob, reviewedSettings());
+    const rec = createExportRecord({
+      blob, monthKey: MONTH_KEY, user: 'a@oliv.ch', now: NOW,
+      anzahlBuchungen: 12, kassensaldoEnde: 810.5, sollTotal: 1000, habenTotal: 1000,
+    });
+    blob = addExportRecord(blob, rec);
+    expect(deriveExportStatus(blob, MONTH_KEY)).toBe('exportiert');
+
+    // Re-Save ohne inhaltliche Änderung (nur updatedAt) → bleibt exportiert.
+    blob = setExportSettings(blob, { ...reviewedSettings(), updatedAt: LATER });
+    expect(deriveExportStatus(blob, MONTH_KEY)).toBe('exportiert');
+
+    // Export-relevante Regeländerung → veraltet (§9).
+    const geaendert = reviewedSettings();
+    blob = setExportSettings(blob, {
+      ...geaendert,
+      konten: { ...geaendert.konten, kartenSammel: '1111' },
+      updatedAt: LATER,
+    });
+    expect(deriveExportStatus(blob, MONTH_KEY)).toBe('veraltet');
+  });
+
+  it('Alt-Record OHNE settingsFingerprint kippt bei Regeländerung NICHT auf veraltet', () => {
+    let blob = withClosedDays(withClosedMonth(emptyTagesabschlussBlob(), MONTH_KEY), ['2026-07-01']);
+    blob = setExportSettings(blob, reviewedSettings());
+    const legacy: BuchhaltungsExportRecord = {
+      id: 'exp-legacy', monat: MONTH_KEY, version: 1, exportedAt: NOW, exportedBy: 'a@oliv.ch',
+      anzahlBuchungen: 10, kassensaldoEnde: 100,
+      fingerprint: computeMonthFingerprint(blob, MONTH_KEY), updatedAt: NOW,
+    };
+    blob = addExportRecord(blob, legacy);
+    expect(deriveExportStatus(blob, MONTH_KEY)).toBe('exportiert');
+
+    const geaendert = reviewedSettings();
+    blob = setExportSettings(blob, {
+      ...geaendert,
+      konten: { ...geaendert.konten, kasse: '1005' },
+      updatedAt: LATER,
+    });
+    // Datenstand unverändert, Alt-Record ohne Regeln-Fingerprint → KEIN Flip.
+    expect(deriveExportStatus(blob, MONTH_KEY)).toBe('exportiert');
   });
 });

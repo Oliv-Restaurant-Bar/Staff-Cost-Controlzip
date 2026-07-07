@@ -17,7 +17,7 @@
  * Einstellungen ändern.
  */
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   AlertTriangle, CheckCircle2, Download, FileText, Settings2, XCircle,
 } from 'lucide-react';
@@ -27,14 +27,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TENANTS, type TenantId } from '@/contexts/TenantContext';
 import {
   buildExportChecklist,
+  buildKontrollwerte,
   buildMonatspruefung,
+  buildSollHabenVorschau,
   createExportRecord,
   addExportRecord,
   deriveExportStatus,
   exportChecklistOk,
   exportsForMonth,
   nextExportVersion,
-  summarizeBuchungsvorschau,
   EXPORT_STATUS_LABEL,
   type BuchhaltungsExportStatus,
 } from '@/lib/buchhaltungs-export';
@@ -99,16 +100,19 @@ export function BuchhaltungsExportSection({
     ),
     [monthData.rows, closings, blob],
   );
-  const vorschau = useMemo(
-    () => summarizeBuchungsvorschau(tabelle2.rows),
-    [tabelle2.rows],
+  /** Soll/Haben-Vorschau (§4) — dieselben Zeilen wie das CSV (Export == Vorschau). */
+  const sollHaben = useMemo(
+    () => buildSollHabenVorschau(tabelle2.rows, blob.exportSettings ?? null),
+    [tabelle2.rows, blob.exportSettings],
   );
+  const kontrollwerte = useMemo(() => buildKontrollwerte(monthData), [monthData]);
   const historie = useMemo(
     () => [...exportsForMonth(blob, monthKey)].reverse(),
     [blob, monthKey],
   );
 
-  const exportDisabled = readOnly || !gateOk || tabelle2.errors.length > 0 || tabelle2.rows.length === 0;
+  const exportDisabled = readOnly || !gateOk || tabelle2.errors.length > 0
+    || tabelle2.rows.length === 0 || !sollHaben.ausgeglichen;
 
   /** CSV erzeugen + Export-Protokoll (write-once) auf FRISCHEM Blob anlegen. */
   const handleExportCsv = () => {
@@ -127,6 +131,8 @@ export function BuchhaltungsExportSection({
       now: new Date().toISOString(),
       anzahlBuchungen: tabelle2.rows.length,
       kassensaldoEnde: monthData.endSaldo,
+      sollTotal: sollHaben.sollTotal,
+      habenTotal: sollHaben.habenTotal,
     });
     void persist(addExportRecord(fresh, record));
     toast.success(`Buchhaltungs-Export ${version} erstellt (${tabelle2.rows.length} Buchungen).`);
@@ -183,7 +189,7 @@ export function BuchhaltungsExportSection({
           >
             <p className="flex items-center gap-1.5 text-xs font-medium text-red-800 dark:text-red-300">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              Der Monat wurde nach dem letzten Export geändert. Bitte neuen Export erstellen.
+              Seit dem letzten Export wurden Daten geändert. Bitte Export erneut erstellen.
             </p>
           </div>
         )}
@@ -236,7 +242,7 @@ export function BuchhaltungsExportSection({
             <div className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2 space-y-1"
               data-testid="bx-mapping-errors">
               <p className="flex items-center gap-1 text-[11px] font-medium text-amber-800 dark:text-amber-300">
-                <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Vorschau/Export blockiert — Konto-Mapping unvollständig:
+                <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Vorschau/Export blockiert — Buchungsregeln (Konto-Mapping) unvollständig:
               </p>
               {tabelle2.errors.map((e, i) => (
                 <p key={i} className="text-[11px] text-amber-800 dark:text-amber-300">• {e}</p>
@@ -245,7 +251,7 @@ export function BuchhaltungsExportSection({
                 <Button size="sm" variant="outline" className="h-7 text-xs mt-1"
                   onClick={onOpenMapping} data-testid="bx-open-mapping">
                   <Settings2 className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-                  Konto-Mapping öffnen
+                  Buchungsregeln öffnen
                 </Button>
               )}
             </div>
@@ -254,29 +260,90 @@ export function BuchhaltungsExportSection({
               <table className="w-full text-[11px]">
                 <thead>
                   <tr className="border-b border-border text-muted-foreground">
-                    <th className="text-left py-1 pr-2 font-medium">Bereich</th>
-                    <th className="text-right py-1 px-2 font-medium">Buchungen</th>
-                    <th className="text-right py-1 pl-2 font-medium">Betrag (brutto)</th>
+                    <th className="text-left py-1 pr-2 font-medium w-16">Konto</th>
+                    <th className="text-left py-1 px-2 font-medium">Bezeichnung</th>
+                    <th className="text-right py-1 px-2 font-medium">Soll</th>
+                    <th className="text-right py-1 pl-2 font-medium">Haben</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {vorschau.gruppen.filter(g => g.anzahl > 0).map(g => (
-                    <tr key={g.kategorie} className="border-b border-border/50"
-                      data-testid={`bx-vorschau-${g.kategorie}`}>
-                      <td className="py-1 pr-2">{g.label}</td>
-                      <td className="py-1 px-2 text-right tabular-nums">{g.anzahl}</td>
-                      <td className="py-1 pl-2 text-right tabular-nums">{fmtChf(g.brutto)}</td>
-                    </tr>
+                  {sollHaben.gruppen.map(g => (
+                    <Fragment key={g.gruppe}>
+                      <tr className="bg-muted/50"
+                        data-testid={`bx-sh-gruppe-${g.gruppe}`}>
+                        <td className="py-1 pr-2 font-semibold text-muted-foreground" colSpan={2}>{g.label}</td>
+                        <td className="py-1 px-2 text-right tabular-nums font-medium text-muted-foreground">
+                          {g.soll !== 0 ? fmtChf(g.soll) : ''}
+                        </td>
+                        <td className="py-1 pl-2 text-right tabular-nums font-medium text-muted-foreground">
+                          {g.haben !== 0 ? fmtChf(g.haben) : ''}
+                        </td>
+                      </tr>
+                      {g.positionen.map(p => (
+                        <tr key={p.key} className="border-b border-border/50"
+                          data-testid={`bx-sh-pos-${g.gruppe}-${p.key}`}>
+                          <td className="py-1 pr-2 tabular-nums">{p.konto}</td>
+                          <td className="py-1 px-2">{p.bezeichnung}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">
+                            {p.soll === null ? '' : fmtChf(p.soll)}
+                          </td>
+                          <td className="py-1 pl-2 text-right tabular-nums">
+                            {p.haben === null ? '' : fmtChf(p.haben)}
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="font-semibold" data-testid="bx-vorschau-total">
-                    <td className="py-1 pr-2">Gesamt Buchungszeilen: {vorschau.anzahlBuchungen}</td>
-                    <td className="py-1 px-2" />
-                    <td className="py-1 pl-2 text-right tabular-nums">{fmtChf(vorschau.bruttoTotal)}</td>
+                  <tr className="font-semibold border-t-2 border-border" data-testid="bx-sh-total">
+                    <td className="py-1.5 pr-2" colSpan={2}>
+                      Kontrollsumme ({sollHaben.anzahlBuchungen} Buchungen)
+                    </td>
+                    <td className="py-1.5 px-2 text-right tabular-nums" data-testid="bx-sh-soll-total">
+                      {fmtChf(sollHaben.sollTotal)}
+                    </td>
+                    <td className="py-1.5 pl-2 text-right tabular-nums" data-testid="bx-sh-haben-total">
+                      {fmtChf(sollHaben.habenTotal)}
+                    </td>
                   </tr>
                 </tfoot>
               </table>
+
+              {/* ── §4: Ausgleichs-Prüfung — Export blockiert bei Differenz ── */}
+              {sollHaben.ausgeglichen ? (
+                <p className="flex items-center gap-1.5 rounded-md bg-green-50 dark:bg-green-950/30 border border-green-300 dark:border-green-800 px-3 py-1.5 mt-2 text-[11px] font-medium text-green-800 dark:text-green-300"
+                  data-testid="bx-sh-ausgeglichen">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  Buchung ausgeglichen — Soll {fmtChf(sollHaben.sollTotal)} = Haben {fmtChf(sollHaben.habenTotal)}
+                </p>
+              ) : (
+                <p className="flex items-center gap-1.5 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-800 px-3 py-1.5 mt-2 text-[11px] font-medium text-red-800 dark:text-red-300"
+                  data-testid="bx-sh-differenz">
+                  <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  Differenz CHF {fmtChf(Math.abs(sollHaben.differenz))} — Soll und Haben sind nicht ausgeglichen, der Export ist blockiert.
+                </p>
+              )}
+
+              {/* ── §5: Kontrollwerte — NICHT Bestandteil des Exports ── */}
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 mt-2"
+                data-testid="bx-kontrollwerte">
+                <p className="text-[10px] font-semibold text-muted-foreground mb-1">
+                  Kontrollwerte — nicht Bestandteil des Exports
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {kontrollwerte.map(k => (
+                    <div key={k.key} data-testid={`bx-kontrollwert-${k.key}`}>
+                      <p className="text-[10px] text-muted-foreground">{k.label}</p>
+                      <p className="text-xs font-medium tabular-nums">
+                        {k.value === null
+                          ? <span className="text-muted-foreground font-normal">—</span>
+                          : <>CHF {fmtChf(k.value)}</>}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
               {tabelle2.warnings.length > 0 && (
                 <div className="rounded border border-orange-300 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 p-2 mt-2 space-y-0.5"
                   data-testid="bx-warnings">
@@ -299,8 +366,10 @@ export function BuchhaltungsExportSection({
               disabled={exportDisabled}
               title={gateOk
                 ? (tabelle2.errors.length > 0
-                  ? 'Konto-Mapping unvollständig — zuerst Mapping vervollständigen.'
-                  : `CSV im Tabelle2-Format erstellen (${tabelle2.rows.length} Buchungen)`)
+                  ? 'Buchungsregeln unvollständig — zuerst das Konto-Mapping vervollständigen.'
+                  : !sollHaben.ausgeglichen
+                    ? 'Export blockiert — Soll und Haben sind nicht ausgeglichen.'
+                    : `CSV im Tabelle2-Format erstellen (${tabelle2.rows.length} Buchungen)`)
                 : 'Export gesperrt — zuerst alle Checklisten-Punkte erledigen.'}
               onClick={handleExportCsv}
               data-testid="bx-export-csv">
@@ -317,7 +386,7 @@ export function BuchhaltungsExportSection({
             <Button size="sm" variant="ghost" className="h-8 text-xs"
               onClick={onOpenMapping} data-testid="bx-mapping">
               <Settings2 className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
-              Konto-Mapping
+              Buchungsregeln
             </Button>
           </div>
         )}
@@ -338,6 +407,8 @@ export function BuchhaltungsExportSection({
                     <th className="text-left py-1 px-2 font-medium">Datum / Uhrzeit</th>
                     <th className="text-left py-1 px-2 font-medium">Benutzer</th>
                     <th className="text-right py-1 px-2 font-medium">Buchungen</th>
+                    <th className="text-right py-1 px-2 font-medium">Soll</th>
+                    <th className="text-right py-1 px-2 font-medium">Haben</th>
                     <th className="text-right py-1 px-2 font-medium">Kassensaldo Ende</th>
                     <th className="text-left py-1 pl-2 font-medium">Export-ID</th>
                   </tr>
@@ -361,6 +432,12 @@ export function BuchhaltungsExportSection({
                       <td className="py-1 px-2 whitespace-nowrap">{formatClosedStamp(rec.exportedAt)}</td>
                       <td className="py-1 px-2">{rec.exportedBy}</td>
                       <td className="py-1 px-2 text-right tabular-nums">{rec.anzahlBuchungen}</td>
+                      <td className="py-1 px-2 text-right tabular-nums" data-testid={`bx-export-v${rec.version}-soll`}>
+                        {rec.sollTotal === null || rec.sollTotal === undefined ? '—' : fmtChf(rec.sollTotal)}
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums" data-testid={`bx-export-v${rec.version}-haben`}>
+                        {rec.habenTotal === null || rec.habenTotal === undefined ? '—' : fmtChf(rec.habenTotal)}
+                      </td>
                       <td className="py-1 px-2 text-right tabular-nums">
                         {rec.kassensaldoEnde === null ? '—' : fmtDiffChf(rec.kassensaldoEnde)}
                       </td>

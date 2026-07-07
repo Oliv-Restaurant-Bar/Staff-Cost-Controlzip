@@ -233,6 +233,13 @@ export interface TagesabschlussExportSettings {
    * Brutto direkt). Feld bleibt wegen persistierter Settings-Blobs im Typ.
    */
   mwstCodes: Record<string, string>;
+  /**
+   * Buchungsregeln: Anzeige-Bezeichnung je KONTONUMMER (z. B. '1098' →
+   * 'Umsatz'). Rein für die Buchungsvorschau/Anzeige — ändert NIE die
+   * CSV-Bytes und fliesst deshalb NICHT in den Settings-Fingerprint.
+   * Optional (Alt-Blobs ohne Feld → Fallback DEFAULT_KONTO_BEZEICHNUNGEN).
+   */
+  kontoBezeichnungen?: Record<string, string>;
   /** Erste Belegnummer (fortlaufend); leer = Blg-Spalte bleibt leer. */
   blgStart?: string;
   /** Benutzer hat das Mapping geprüft — Pflicht vor dem ersten Export. */
@@ -342,6 +349,21 @@ export interface BuchhaltungsExportRecord {
   anzahlBuchungen: number;
   /** Kassensaldo Ende zum Exportzeitpunkt (null = ohne Anker unbekannt). */
   kassensaldoEnde: number | null;
+  /**
+   * Soll-/Haben-Total der Buchungsvorschau zum Exportzeitpunkt.
+   * Optional: Alt-Records (vor der Soll/Haben-Vorschau) haben keins → „—".
+   * NIE rückwirkend befüllen (write-once).
+   */
+  sollTotal?: number | null;
+  habenTotal?: number | null;
+  /**
+   * Inhalts-Fingerprint der export-relevanten Buchungsregeln (Konten/
+   * Zahlungsarten-Mapping/Belegnummer) zum Exportzeitpunkt
+   * (computeSettingsFingerprint). Weicht der aktuelle Regel-Stand ab, ist
+   * der Export VERALTET. Optional: Alt-Records ohne Feld werden NICHT
+   * verglichen (kein rückwirkendes Umkippen auf „veraltet").
+   */
+  settingsFingerprint?: string;
   /**
    * Deterministischer Fingerprint des Monats-Datenstands zum Exportzeitpunkt
    * (computeMonthFingerprint). Weicht der aktuell berechnete Fingerprint ab,
@@ -484,6 +506,15 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
         kassensaldoEnde:
           typeof e.kassensaldoEnde === 'number' && Number.isFinite(e.kassensaldoEnde)
             ? e.kassensaldoEnde : null,
+        sollTotal:
+          typeof e.sollTotal === 'number' && Number.isFinite(e.sollTotal)
+            ? e.sollTotal : null,
+        habenTotal:
+          typeof e.habenTotal === 'number' && Number.isFinite(e.habenTotal)
+            ? e.habenTotal : null,
+        settingsFingerprint:
+          typeof e.settingsFingerprint === 'string' && e.settingsFingerprint !== ''
+            ? e.settingsFingerprint : undefined,
         fingerprint: typeof e.fingerprint === 'string' ? e.fingerprint : '',
         updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
       };
@@ -1391,10 +1422,30 @@ export function defaultExportSettings(now: string): TagesabschlussExportSettings
       kd_tisch_5000: '1104',  // KD Tisch 5000 (unklassifizierte Zahlart)
     },
     mwstCodes: {},            // LEGACY — ungenutzt
+    kontoBezeichnungen: { ...DEFAULT_KONTO_BEZEICHNUNGEN },
     reviewed: false,
     updatedAt: now,
   };
 }
+
+/**
+ * Standard-Bezeichnungen je Kontonummer (Kontoplan Oliv) — Fallback für
+ * Alt-Settings ohne `kontoBezeichnungen` und Vorbelegung neuer Settings.
+ * Anzeige-only: ändert nie die CSV-Bytes.
+ */
+export const DEFAULT_KONTO_BEZEICHNUNGEN: Readonly<Record<string, string>> = {
+  '1000': 'Bargeld',
+  '1001': 'Barausgaben',
+  '1098': 'Umsatz',
+  '1100': 'Debitoren',
+  '1104': 'KD Tisch 5000',
+  '1110': 'KK SIX',
+  '1114': 'KK AMEX',
+  '1115': 'Lunch-Check',
+  '1116': 'PostCard',
+  '1118': 'Stripe',
+  '2003': 'Gutscheine',
+};
 
 /** Aktualisiert die Export-Einstellungen im Blob. */
 export function setExportSettings(

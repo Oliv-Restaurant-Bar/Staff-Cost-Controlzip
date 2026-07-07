@@ -21,6 +21,7 @@ import {
   setExportSettings,
   upsertExpense,
   upsertManualDay,
+  type BuchhaltungsExportRecord,
   type GnDayClosing,
   type TagesabschlussBlob,
 } from '@/lib/tagesabschluss';
@@ -146,21 +147,38 @@ describe('BuchhaltungsExportSection — Export-Gate (§2)', () => {
   });
 });
 
-describe('BuchhaltungsExportSection — Monatsprüfung (§3) + Vorschau (§4)', () => {
-  it('zeigt alle 9 Totale und die Buchungsvorschau mit Gruppen + Gesamtzeile', () => {
+describe('BuchhaltungsExportSection — Monatsprüfung (§3) + Soll/Haben-Vorschau (§4)', () => {
+  it('zeigt alle 9 Totale und die Soll/Haben-Vorschau mit Gruppen, Totalzeile und Ausgleichs-Meldung', () => {
     renderSection(makeFixture({ closed: true }));
     expect(screen.getByTestId('bx-pruefung').querySelectorAll('[data-testid^="bx-pruefung-"]')).toHaveLength(9);
     expect(screen.getByTestId('bx-pruefung-umsatz').textContent).toContain('Umsatz Total');
-    // Barausgaben erscheinen EINZELN als 2 Buchungen in der Vorschau (§5).
-    expect(screen.getByTestId('bx-vorschau-barausgabe').textContent).toContain('2');
-    expect(screen.getByTestId('bx-vorschau-total').textContent).toContain('Gesamt Buchungszeilen:');
+
+    // Gruppenzeilen + Totalzeile mit identischem Soll-/Haben-Total.
+    expect(screen.getByTestId('bx-sh-gruppe-umsatz')).toBeTruthy();
+    expect(screen.getByTestId('bx-sh-gruppe-barausgaben')).toBeTruthy();
+    const soll = screen.getByTestId('bx-sh-soll-total').textContent;
+    const haben = screen.getByTestId('bx-sh-haben-total').textContent;
+    expect(soll).toBe(haben);
+    expect(screen.getByTestId('bx-sh-ausgeglichen').textContent).toContain('Buchung ausgeglichen');
+    expect(screen.queryByTestId('bx-sh-differenz')).toBeNull();
+
+    // Barausgaben erscheinen EINZELN (2 Soll-Positionen mit Buchungstext, §5).
+    const gruppe = screen.getByTestId('bx-sh-gruppe-barausgaben');
+    const zeilen = screen.getAllByTestId(/^bx-sh-pos-barausgaben-/);
+    expect(gruppe.textContent).toContain('Barausgaben');
+    expect(zeilen.length).toBeGreaterThanOrEqual(3); // 2 einzeln + 1 aggregierte Gegenseite
+
+    // Kontrollwerte-Block (§5): Bank/Salden NUR hier, nicht als Buchung.
+    expect(screen.getByTestId('bx-kontrollwerte')).toBeTruthy();
+    expect(screen.getByTestId('bx-kontrollwert-einzahlung_bank').textContent).toContain('Einzahlung Bank');
+
     // Keine Datei bei blosser Anzeige erzeugt.
     expect(downloadCsvMock).not.toHaveBeenCalled();
   });
 
-  it('unvollständiges Mapping blockiert die Vorschau und verlinkt in den Mapping-Dialog', () => {
+  it('unvollständiges Mapping blockiert die Vorschau und verlinkt in die Buchungsregeln', () => {
     const { onOpenMapping } = renderSection(makeFixture({ closed: true, settings: false }));
-    expect(screen.getByTestId('bx-mapping-errors').textContent).toContain('Konto-Mapping unvollständig');
+    expect(screen.getByTestId('bx-mapping-errors').textContent).toContain('Buchungsregeln (Konto-Mapping) unvollständig');
     expect((screen.getByTestId('bx-export-csv') as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByTestId('bx-open-mapping'));
     expect(onOpenMapping).toHaveBeenCalledTimes(1);
@@ -183,15 +201,17 @@ describe('BuchhaltungsExportSection — Export, Historie, Protokoll (§6–§8)'
     expect(recs[0].anzahlBuchungen).toBeGreaterThan(0);
   });
 
-  it('Historie zeigt Versionen (jüngste zuerst) mit Benutzer, Buchungen und Export-ID', () => {
+  it('Historie zeigt Versionen (jüngste zuerst) mit Benutzer, Buchungen, Soll/Haben und Export-ID', () => {
     const f = makeFixture({ closed: true });
     let blob = addExportRecord(f.blob, createExportRecord({
       blob: f.blob, monthKey: MONTH_KEY, user: 'a@oliv.ch',
       now: '2026-07-06T08:00:00.000Z', anzahlBuchungen: 9, kassensaldoEnde: 247.5,
+      sollTotal: 1042.5, habenTotal: 1042.5,
     }));
     blob = addExportRecord(blob, createExportRecord({
       blob, monthKey: MONTH_KEY, user: 'b@oliv.ch',
       now: '2026-07-07T08:00:00.000Z', anzahlBuchungen: 9, kassensaldoEnde: 247.5,
+      sollTotal: 1042.5, habenTotal: 1042.5,
     }));
     renderSection({ ...f, blob });
     const v2 = screen.getByTestId('bx-export-v2');
@@ -199,7 +219,22 @@ describe('BuchhaltungsExportSection — Export, Historie, Protokoll (§6–§8)'
     expect(v2.textContent).toContain('b@oliv.ch');
     expect(v2.textContent).toContain('aktuell');
     expect(screen.getByTestId('bx-export-v1').textContent).toContain('a@oliv.ch');
+    expect(screen.getByTestId('bx-export-v2-soll').textContent).toContain('1’042.50');
+    expect(screen.getByTestId('bx-export-v2-haben').textContent).toContain('1’042.50');
     expect(screen.getByTestId('bx-status').textContent).toBe('Exportiert');
+  });
+
+  it('Alt-Records ohne Soll/Haben-Totale zeigen «—» statt Zahlen', () => {
+    const f = makeFixture({ closed: true });
+    const legacy: BuchhaltungsExportRecord = {
+      id: 'exp-legacy', monat: MONTH_KEY, version: 1,
+      exportedAt: '2026-07-06T08:00:00.000Z', exportedBy: 'a@oliv.ch',
+      anzahlBuchungen: 9, kassensaldoEnde: 247.5,
+      fingerprint: 'alt', updatedAt: '2026-07-06T08:00:00.000Z',
+    };
+    renderSection({ ...f, blob: addExportRecord(f.blob, legacy) });
+    expect(screen.getByTestId('bx-export-v1-soll').textContent?.trim()).toBe('—');
+    expect(screen.getByTestId('bx-export-v1-haben').textContent?.trim()).toBe('—');
   });
 });
 
@@ -209,13 +244,14 @@ describe('BuchhaltungsExportSection — Export veraltet (§10) + readOnly', () =
     let blob = addExportRecord(f.blob, createExportRecord({
       blob: f.blob, monthKey: MONTH_KEY, user: 'a@oliv.ch',
       now: '2026-07-06T08:00:00.000Z', anzahlBuchungen: 9, kassensaldoEnde: 247.5,
+      sollTotal: 1042.5, habenTotal: 1042.5,
     }));
     // Nachträgliche Änderung im Monat → Fingerprint-Mismatch.
     blob = upsertExpense(blob, { id: 'e9', date: '2026-07-01', amount: 5, konto: '6002', text: 'Nachtrag', updatedAt: '2026-07-08T08:00:00.000Z' });
     renderSection({ ...f, blob });
     expect(screen.getByTestId('bx-status').textContent).toBe('Export veraltet');
     expect(screen.getByTestId('bx-veraltet-banner').textContent).toContain(
-      'Der Monat wurde nach dem letzten Export geändert. Bitte neuen Export erstellen.',
+      'Seit dem letzten Export wurden Daten geändert. Bitte Export erneut erstellen.',
     );
     expect(screen.getByTestId('bx-export-v1').textContent).toContain('veraltet');
   });

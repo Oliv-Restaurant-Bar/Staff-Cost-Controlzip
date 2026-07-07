@@ -1,13 +1,16 @@
 /**
- * TagesabschlussExportDialog.tsx — Export-Einstellungen + Tabelle2-CSV-Download.
+ * TagesabschlussExportDialog.tsx — Buchungsregeln (Konten + Bezeichnungen).
  * ==============================================================================
  * Der Export ist BLOCKIERT, bis das Konto-Mapping vollständig ist und als
  * geprüft markiert wurde (reviewed) — kein stiller Fallback auf erfundene
- * Konten. Barausgaben werden einzeln exportiert.
+ * Konten. Bezeichnungen sind je KONTONUMMER gespeichert (`kontoBezeichnungen`)
+ * und rein Anzeige (Buchungsvorschau) — sie ändern NIE die CSV-Bytes.
+ * Der CSV-Export läuft AUSSCHLIESSLICH über die Buchhaltungs-Export-Section
+ * (Export-Protokoll/Versionierung) — hier gibt es bewusst KEINEN Download.
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Download } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -20,13 +23,13 @@ import { normalizeGnPaymentName } from '@/lib/adyen-abstimmung';
 import {
   collectUnclassifiedZahlarten,
   defaultExportSettings,
+  DEFAULT_KONTO_BEZEICHNUNGEN,
   type GnDayClosing,
   type TagesabschlussBlob,
   type TagesabschlussExportSettings,
   type TagesabschlussRow,
 } from '@/lib/tagesabschluss';
-import { buildTabelle2Rows, tabelle2ToExportTable } from '@/lib/tagesabschluss-export';
-import { downloadCsv } from '@/lib/table-export';
+import { buildTabelle2Rows } from '@/lib/tagesabschluss-export';
 
 /**
  * Brutto-Modell: kein Umsatz-(Ertrag)-Konto, keine MWST-Codes mehr.
@@ -89,26 +92,39 @@ export function TagesabschlussExportDialog({
   );
 
   const handleSave = () => {
-    onSaveSettings({ ...draft, updatedAt: new Date().toISOString() });
-    toast.success('Export-Einstellungen gespeichert.');
-  };
-
-  const handleDownload = () => {
-    if (result.errors.length > 0 || result.rows.length === 0) return;
-    const mm = String(month).padStart(2, '0');
-    downloadCsv(tabelle2ToExportTable(result.rows, `tagesabschluss-tabelle2-${year}-${mm}`));
-    toast.success(`Buchungs-CSV mit ${result.rows.length} Zeilen erstellt.`);
+    // Leere Bezeichnungen nicht persistieren (Fallback = Default-Katalog).
+    const bez = Object.fromEntries(
+      Object.entries(draft.kontoBezeichnungen ?? {})
+        .map(([k, v]) => [k.trim(), v.trim()] as const)
+        .filter(([k, v]) => k !== '' && v !== ''),
+    );
+    onSaveSettings({ ...draft, kontoBezeichnungen: bez, updatedAt: new Date().toISOString() });
+    toast.success('Buchungsregeln gespeichert.');
   };
 
   const setKonto = (role: keyof TagesabschlussExportSettings['konten'], v: string) =>
     setDraft(d => ({ ...d, konten: { ...d.konten, [role]: v } }));
 
+  /** Bezeichnung je KONTONUMMER (leer = Fallback auf den Default-Katalog). */
+  const bezeichnungFor = (konto: string): string =>
+    draft.kontoBezeichnungen?.[konto.trim()] ?? '';
+
+  const setBezeichnung = (konto: string, v: string) => {
+    const nr = konto.trim();
+    if (nr === '') return;
+    setDraft(d => ({ ...d, kontoBezeichnungen: { ...(d.kontoBezeichnungen ?? {}), [nr]: v } }));
+  };
+
   return (
     <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
       <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-sm">Buchhaltungs-Export (Tabelle2) — {String(month).padStart(2, '0')}/{year}</DialogTitle>
+          <DialogTitle className="text-sm">Buchungsregeln — {String(month).padStart(2, '0')}/{year}</DialogTitle>
         </DialogHeader>
+        <p className="text-[10px] text-muted-foreground -mt-1">
+          Kontonummern steuern den CSV-Export; Bezeichnungen erscheinen nur in der
+          Buchungsvorschau (leer = Standard-Bezeichnung).
+        </p>
 
         <section className="space-y-2">
           <h3 className="text-xs font-semibold">Konten (Rollen)</h3>
@@ -116,9 +132,16 @@ export function TagesabschlussExportDialog({
             {ROLE_LABELS.map(([role, label]) => (
               <div key={role}>
                 <Label className="text-[11px]">{label}</Label>
-                <Input className="h-7 text-xs" value={draft.konten[role]} disabled={readOnly}
-                  onChange={e => setKonto(role, e.target.value)}
-                  data-testid={`ta-exp-konto-${role}`} />
+                <div className="flex gap-1.5">
+                  <Input className="h-7 text-xs w-20 shrink-0" value={draft.konten[role]} disabled={readOnly}
+                    onChange={e => setKonto(role, e.target.value)}
+                    data-testid={`ta-exp-konto-${role}`} />
+                  <Input className="h-7 text-xs" value={bezeichnungFor(draft.konten[role])}
+                    placeholder={DEFAULT_KONTO_BEZEICHNUNGEN[draft.konten[role].trim()] ?? 'Bezeichnung'}
+                    disabled={readOnly || draft.konten[role].trim() === ''}
+                    onChange={e => setBezeichnung(draft.konten[role], e.target.value)}
+                    data-testid={`ta-exp-bez-${role}`} />
+                </div>
               </div>
             ))}
           </div>
@@ -130,19 +153,27 @@ export function TagesabschlussExportDialog({
             Karten: leer = Kreditkarten-Sammelkonto ({draft.konten.kartenSammel || '—'}).
             Unklassifizierte Zahlarten (z. B. KD Tisch 5000) brauchen zwingend ein Konto.
           </p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {paymentKeys.map(key => (
               <div key={key}>
                 <Label className="text-[11px] capitalize">{key}</Label>
-                <Input className="h-7 text-xs" value={draft.kontoJeZahlungsart[key] ?? ''} disabled={readOnly}
-                  onChange={e => setDraft(d => ({
-                    ...d,
-                    kontoJeZahlungsart: { ...d.kontoJeZahlungsart, [key]: e.target.value },
-                  }))} />
+                <div className="flex gap-1.5">
+                  <Input className="h-7 text-xs w-20 shrink-0" value={draft.kontoJeZahlungsart[key] ?? ''} disabled={readOnly}
+                    onChange={e => setDraft(d => ({
+                      ...d,
+                      kontoJeZahlungsart: { ...d.kontoJeZahlungsart, [key]: e.target.value },
+                    }))}
+                    data-testid={`ta-exp-za-${key}`} />
+                  <Input className="h-7 text-xs" value={bezeichnungFor(draft.kontoJeZahlungsart[key] ?? '')}
+                    placeholder={DEFAULT_KONTO_BEZEICHNUNGEN[(draft.kontoJeZahlungsart[key] ?? '').trim()] ?? 'Bezeichnung'}
+                    disabled={readOnly || (draft.kontoJeZahlungsart[key] ?? '').trim() === ''}
+                    onChange={e => setBezeichnung(draft.kontoJeZahlungsart[key] ?? '', e.target.value)}
+                    data-testid={`ta-exp-bez-za-${key}`} />
+                </div>
               </div>
             ))}
             {paymentKeys.length === 0 && (
-              <p className="text-[11px] text-muted-foreground col-span-3">Keine Kartenzahlungen im Monat gefunden.</p>
+              <p className="text-[11px] text-muted-foreground col-span-2">Keine Kartenzahlungen im Monat gefunden.</p>
             )}
           </div>
         </section>
@@ -187,19 +218,15 @@ export function TagesabschlussExportDialog({
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+        {/* CSV-Export bewusst NUR über die Buchhaltungs-Export-Section
+            (Export-Protokoll/Versionierung) — hier kein Download-Button. */}
+        <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
           {!readOnly && (
-            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleSave}
+            <Button size="sm" className="h-8 text-xs" onClick={handleSave}
               data-testid="ta-exp-save-settings">
-              Einstellungen speichern
+              Buchungsregeln speichern
             </Button>
           )}
-          <Button size="sm" className="h-8 text-xs ml-auto"
-            disabled={result.errors.length > 0 || result.rows.length === 0}
-            onClick={handleDownload} data-testid="ta-exp-download">
-            <Download className="h-3.5 w-3.5 mr-1" />
-            CSV herunterladen ({result.rows.length} Zeilen)
-          </Button>
         </div>
       </DialogContent>
     </Dialog>
