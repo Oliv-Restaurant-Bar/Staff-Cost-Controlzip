@@ -1,0 +1,114 @@
+Erweitere die Seite /tagesabschluesse um eine bessere Darstellung der Kartenzahlungen (KK) und des Adyen-Abgleichs.
+
+Ziel:
+Die Hauptübersicht soll einfach und kompakt bleiben. Details zu den einzelnen Zahlungsarten sollen nur bei Bedarf sichtbar sein. Gleichzeitig soll jederzeit verständlich sein, weshalb KK und KK Adyen voneinander abweichen können.
+
+## 1. KK-Spalte interaktiv
+
+Die Spalte "KK" soll weiterhin nur den Gesamtbetrag anzeigen.
+
+Beim Klick auf den Betrag (oder ein kleines Pfeil-/Info-Icon) öffnet sich ein kleines Popover oder Dropdown.
+
+Dieses zeigt die Zusammensetzung:
+
+- Mastercard
+- Visa
+- TWINT
+- American Express
+- PostCard
+- Lunch-Check
+- Stripe
+- weitere Kartenzahlungen
+
+Unten:
+
+--------------------
+Total KK
+
+Der Benutzer soll den Dialog verlassen können, ohne den Tagesabschluss zu öffnen.
+
+## 2. KK Adyen ebenfalls aufklappbar
+
+Die Spalte "KK Adyen" soll ebenfalls ein Popover erhalten.
+
+Dieses zeigt:
+
+- Mastercard
+- Visa
+- TWINT
+- weitere Adyen-Zahlungsarten
+
+Keine Zahlungsarten anzeigen, die nicht über Adyen verarbeitet werden.
+
+## 3. Adyen-Vergleich verständlich machen
+
+Im Popover von "KK Adyen" oder über ein kleines Info-Icon anzeigen:
+
+"Hinweis:
+KK Adyen enthält nur Zahlungsarten, die über Adyen verarbeitet werden.
+PostCard, Lunch-Check, Stripe und weitere nicht über Adyen abgewickelte Zahlungsarten werden hier bewusst nicht berücksichtigt."
+
+## 4. Differenzen nachvollziehbar machen
+
+Wenn KK und KK Adyen unterschiedlich sind:
+
+Im Popover zusätzlich anzeigen:
+
+Nicht über Adyen:
+
+- PostCard
+- Lunch-Check
+- Stripe
+- weitere
+
+mit Beträgen.
+
+Dadurch soll sofort ersichtlich sein, weshalb die Totale unterschiedlich sind.
+
+## 5. Visuelle Darstellung
+
+Die Popover sollen kompakt sein:
+
+Zahlungsart links
+
+Betrag rechts
+
+Total unten fett.
+
+Negative Werte rot.
+
+Keine unnötigen Scrollbereiche.
+
+## 6. Tagesdetail
+
+Im Tagesdetail dieselbe Darstellung verwenden.
+
+Keinen zweiten Renderer bauen.
+
+Gemeinsame Komponente wiederverwenden.
+
+## 7. Export
+
+Keine Änderung.
+
+Die Buchhaltungsbuchungen bleiben exakt wie bisher.
+
+Diese Änderung betrifft ausschliesslich die Benutzeroberfläche.
+
+## 8. Tests
+
+Ergänzen:
+
+- KK-Popover öffnet korrekt.
+- KK Adyen-Popover öffnet korrekt.
+- Totale stimmen.
+- Hinweistext vorhanden.
+- Nicht-Adyen-Zahlungsarten werden korrekt erklärt.
+- Export unverändert.
+
+Danach bitte ausführen:
+
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Tabellen-Komponenten Tests
+- Export Tests

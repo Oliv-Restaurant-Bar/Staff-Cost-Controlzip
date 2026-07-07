@@ -631,6 +631,73 @@ export function collectWeitereZahlungsarten(closing: GnDayClosing | undefined): 
     .sort((a, b) => a.label.localeCompare(b.label, 'de'));
 }
 
+// ── KK-/Adyen-Zusammensetzung (Popover in Übersicht + Tagesdetail) ───────────
+
+/** Ein Posten einer Zahlungsarten-Aufschlüsselung (Popover/Tagesdetail). */
+export interface ZahlungsartPosten {
+  key: string;
+  label: string;
+  amount: number;
+}
+
+/** Anzeigereihenfolge der KK-Zusammensetzung; unbekannte Keys alphabetisch danach. */
+const KK_BREAKDOWN_ORDER = ['mastercard', 'visa', 'twint', 'amex', 'postcard', 'lunch_check', 'stripe'];
+
+function sortPosten(items: ZahlungsartPosten[], order: string[]): ZahlungsartPosten[] {
+  return items.sort((a, b) => {
+    const ia = order.indexOf(a.key);
+    const ib = order.indexOf(b.key);
+    if (ia !== -1 || ib !== -1) {
+      return (ia === -1 ? order.length : ia) - (ib === -1 ? order.length : ib);
+    }
+    return a.label.localeCompare(b.label, 'de');
+  });
+}
+
+/**
+ * Zusammensetzung des KK-Totals der Übersicht (Z-Bericht-Rohwerte): ALLE
+ * kartenähnlichen Zahlarten (isKkCard) inkl. TWINT, je Key aggregiert.
+ * Die Summe entspricht karten.auto + twint.auto; manuelle Korrekturen
+ * werden bewusst NICHT eingerechnet (die Anzeige ergänzt dafür einen
+ * separaten Korrektur-Posten).
+ */
+export function collectKkBreakdown(closing: GnDayClosing | undefined): ZahlungsartPosten[] {
+  if (!closing) return [];
+  const agg = new Map<string, ZahlungsartPosten>();
+  for (const pm of closing.payments) {
+    const norm = normalizeGnPaymentName(pm.name);
+    if (!norm.isKkCard) continue;
+    const prev = agg.get(norm.key);
+    agg.set(norm.key, {
+      key: norm.key,
+      label: prev?.label ?? norm.label,
+      amount: (prev?.amount ?? 0) + pm.amount,
+    });
+  }
+  return sortPosten([...agg.values()].map(z => ({ ...z, amount: round2(z.amount) })), KK_BREAKDOWN_ORDER);
+}
+
+/**
+ * Kartenähnliche Zahlarten, die NICHT über Adyen abgewickelt werden
+ * (isKkCard && !isCard — PostCard, Lunch-Check, Stripe). Erklärt im
+ * KK-Adyen-Popover, weshalb KK und KK Adyen abweichen können.
+ */
+export function collectNichtAdyenKk(closing: GnDayClosing | undefined): ZahlungsartPosten[] {
+  if (!closing) return [];
+  const agg = new Map<string, ZahlungsartPosten>();
+  for (const pm of closing.payments) {
+    const norm = normalizeGnPaymentName(pm.name);
+    if (!norm.isKkCard || norm.isCard) continue;
+    const prev = agg.get(norm.key);
+    agg.set(norm.key, {
+      key: norm.key,
+      label: prev?.label ?? norm.label,
+      amount: (prev?.amount ?? 0) + pm.amount,
+    });
+  }
+  return sortPosten([...agg.values()].map(z => ({ ...z, amount: round2(z.amount) })), KK_BREAKDOWN_ORDER);
+}
+
 // ── Zellen-/Zeilenmodell ─────────────────────────────────────────────────────
 
 export type CellSource = 'auto' | 'manual' | 'corrected' | 'missing';
@@ -674,6 +741,22 @@ export interface TagesabschlussRow {
    * NIE als eigene Spalte in der Übersicht.
    */
   weitereZahlungsarten: WeitereZahlungsart[];
+  /**
+   * Zusammensetzung des KK-Totals (alle isKkCard-Arten inkl. TWINT,
+   * Z-Bericht-Rohwerte) — fürs KK-Popover in Übersicht und Tagesdetail.
+   */
+  kkZusammensetzung: ZahlungsartPosten[];
+  /**
+   * Adyen-seitige Zahlungsarten (effektive Werte inkl. Overrides, identische
+   * Basis wie der Adyen-Abgleich) — fürs KK-Adyen-Popover. Leer ohne
+   * Adyen-Import/Blob.
+   */
+  adyenZusammensetzung: ZahlungsartPosten[];
+  /**
+   * Kartenähnliche Arten OHNE Adyen-Abwicklung (PostCard, Lunch-Check,
+   * Stripe) — erklärt im KK-Adyen-Popover die Abweichung KK vs. KK Adyen.
+   */
+  nichtAdyenKk: ZahlungsartPosten[];
   /**
    * Rechnerischer Barumsatz = Umsatz − Karten − TWINT − Rechnung − eingelöste
    * Gutscheine (effektive Werte). Basis für Export und Bargeld-Soll.
@@ -959,12 +1042,18 @@ export function buildTagesabschlussRows(
     let adyenZTotal: number | null = null;
     let adyenDiff: number | null = null;
     let adyenDiffSt: AdyenDiffStatus | null = null;
+    let adyenZusammensetzung: ZahlungsartPosten[] = [];
     if (adyenBlob && (closing || adyenDay)) {
       const cmp = buildDayComparison(date, closing ? closing.payments : null, adyenDay, adyenBlob);
       adyenTotal = cmp.cardTotalAdyen?.value ?? null;
       adyenZTotal = cmp.cardTotalZ?.value ?? null;
       adyenDiff = cmp.totalDiff;
       adyenDiffSt = cmp.totalStatus;
+      // Nur Zahlungsarten, die auf der ADYEN-Seite existieren — Arten ohne
+      // Adyen-Abwicklung erscheinen bewusst nicht in dieser Aufschlüsselung.
+      adyenZusammensetzung = cmp.rows
+        .filter(r => r.adyen !== undefined)
+        .map(r => ({ key: r.methodKey, label: r.label, amount: round2(r.adyen!.value) }));
     }
 
     rows.push({
@@ -979,6 +1068,9 @@ export function buildTagesabschlussRows(
       ...(manual?.gutscheinNummernEingeloest?.length
         ? { gutscheinNummernEingeloest: manual.gutscheinNummernEingeloest } : {}),
       weitereZahlungsarten: collectWeitereZahlungsarten(closing),
+      kkZusammensetzung: collectKkBreakdown(closing),
+      adyenZusammensetzung,
+      nichtAdyenKk: collectNichtAdyenKk(closing),
       barumsatz,
       bargeldSoll,
       kassensaldoSoll,

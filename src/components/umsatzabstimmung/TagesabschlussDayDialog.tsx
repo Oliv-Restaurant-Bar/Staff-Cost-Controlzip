@@ -31,6 +31,7 @@ import {
 import { diffColorClass, fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
 import { formatClosedStamp } from './TagesabschlussTable';
 import { TagesabschlussExpenseEditor } from './TagesabschlussExpenseEditor';
+import { ADYEN_HINWEIS, ZahlungsartenBreakdown } from './ZahlungsartenBreakdown';
 
 interface TagesabschlussDayDialogProps {
   row: TagesabschlussRow | null;
@@ -266,16 +267,49 @@ export function TagesabschlussDayDialog({
             {!row.hasAdyen && (
               <p className="text-[10px] text-muted-foreground">Kein Adyen-Import für diesen Tag.</p>
             )}
+            {/* Adyen-Zusammensetzung — GLEICHE Komponente wie das Popover
+                der Übersicht (kein zweiter Renderer). */}
+            {row.adyenTotal !== null && row.adyenZusammensetzung.length > 0 && (
+              <div className="rounded-md border border-border p-2 max-w-xs">
+                <ZahlungsartenBreakdown
+                  items={row.adyenZusammensetzung}
+                  total={row.adyenTotal}
+                  totalLabel="Total KK Adyen"
+                  hinweis={ADYEN_HINWEIS}
+                  nichtAdyen={row.nichtAdyenKk.length > 0 ? row.nichtAdyenKk : undefined}
+                  testidPrefix="ta-dialog-adyen-breakdown"
+                />
+              </div>
+            )}
             <p className="text-[10px] text-muted-foreground">
               Details, Overrides und Kommentare im Adyen-Abgleich weiter unten auf dieser Seite.
             </p>
           </section>
         )}
 
-        {/* Zahlungsarten: selten genutzte Arten aufklappbar (standardmässig zu) */}
-        {row.weitereZahlungsarten.length > 0 && (
+        {/* Zahlungsarten: KK-Zusammensetzung (gleiche Komponente wie das
+            KK-Popover der Übersicht) + selten genutzte Arten aufklappbar */}
+        {(row.kkZusammensetzung.length > 0 || row.weitereZahlungsarten.length > 0) && (
           <section className="space-y-1.5 border-t border-border pt-3" data-testid="ta-dialog-zahlungsarten">
             <h3 className="text-xs font-semibold">Zahlungsarten</h3>
+            {row.kkZusammensetzung.length > 0 && (() => {
+              const k = row.cells.karten;
+              const t = row.cells.twint;
+              const kk = k.value === null && t.value === null
+                ? null
+                : Math.round(((k.value ?? 0) + (t.value ?? 0)) * 100) / 100;
+              return kk === null ? null : (
+                <div className="rounded-md border border-border p-2 max-w-xs">
+                  <ZahlungsartenBreakdown
+                    items={row.kkZusammensetzung}
+                    total={kk}
+                    totalLabel="Total KK"
+                    testidPrefix="ta-dialog-kk-breakdown"
+                  />
+                </div>
+              );
+            })()}
+            {row.weitereZahlungsarten.length > 0 && (<>
             <button
               type="button"
               className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
@@ -302,6 +336,7 @@ export function TagesabschlussDayDialog({
                 </p>
               </div>
             )}
+            </>)}
           </section>
         )}
 

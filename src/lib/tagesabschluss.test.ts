@@ -10,6 +10,8 @@ import {
   canCloseMonth,
   closeDay,
   closeMonth,
+  collectKkBreakdown,
+  collectNichtAdyenKk,
   collectWeitereZahlungsarten,
   computeMonthEndSaldo,
   deriveAutoValues,
@@ -180,6 +182,48 @@ describe('collectWeitereZahlungsarten', () => {
   it('ist leer ohne Z-Bericht oder ohne seltene Zahlarten', () => {
     expect(collectWeitereZahlungsarten(undefined)).toEqual([]);
     expect(collectWeitereZahlungsarten(makeClosing('2026-07-01'))).toEqual([]);
+  });
+});
+
+describe('collectKkBreakdown / collectNichtAdyenKk (Popover-Zusammensetzung)', () => {
+  const payments = [
+    { name: 'Bar', count: 5, amount: 200 },
+    { name: 'Stripe', count: 1, amount: 5 },
+    { name: 'Mastercard', count: 4, amount: 100 },
+    { name: 'Mastercard', count: 1, amount: 50.5 }, // doppelt → aggregiert
+    { name: 'VISA', count: 2, amount: 80 },
+    { name: 'TWINT', count: 2, amount: 50 },
+    { name: 'American Express', count: 1, amount: 30 },
+    { name: 'PostCard', count: 1, amount: 20 },
+    { name: 'Lunch-Check', count: 1, amount: 10 },
+    { name: 'Rechnung', count: 1, amount: 30 },
+    { name: 'KD Tisch 5000', count: 1, amount: 40 },
+  ];
+
+  it('KK-Zusammensetzung: alle isKkCard-Arten inkl. TWINT, feste Reihenfolge, aggregiert', () => {
+    const list = collectKkBreakdown(makeClosing('2026-07-01', { payments }));
+    // Feste Reihenfolge: Mastercard, Visa, TWINT, Amex, PostCard, Lunch-Check, Stripe.
+    expect(list.map(z => z.key)).toEqual(['mastercard', 'visa', 'twint', 'amex', 'postcard', 'lunch_check', 'stripe']);
+    const byKey = Object.fromEntries(list.map(z => [z.key, z.amount]));
+    expect(byKey.mastercard).toBe(150.5); // aggregiert
+    expect(byKey.twint).toBe(50);
+    // Summe = karten.auto + twint.auto (KK-Spalte der Übersicht).
+    const v = deriveAutoValues(makeClosing('2026-07-01', { payments }));
+    const sum = Math.round(list.reduce((s, z) => s + z.amount, 0) * 100) / 100;
+    expect(sum).toBe(Math.round(((v.karten ?? 0) + (v.twint ?? 0)) * 100) / 100);
+    // Bar/Rechnung/unklassifizierte Arten erscheinen NICHT.
+    expect(list.find(z => z.key === 'bar' || z.key === 'kd_tisch_5000')).toBeUndefined();
+  });
+
+  it('Nicht-Adyen-KK: nur isKkCard && !isCard (PostCard/Lunch-Check/Stripe), NICHT Amex', () => {
+    const list = collectNichtAdyenKk(makeClosing('2026-07-01', { payments }));
+    expect(list.map(z => z.key)).toEqual(['postcard', 'lunch_check', 'stripe']);
+    expect(list.map(z => z.amount)).toEqual([20, 10, 5]);
+  });
+
+  it('leer ohne Z-Bericht', () => {
+    expect(collectKkBreakdown(undefined)).toEqual([]);
+    expect(collectNichtAdyenKk(undefined)).toEqual([]);
   });
 });
 

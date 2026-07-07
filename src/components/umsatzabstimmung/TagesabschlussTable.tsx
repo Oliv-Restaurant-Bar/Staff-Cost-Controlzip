@@ -40,6 +40,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Lock, MessageSquare, Plus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { DayConfirmation } from '@/lib/adyen-abstimmung';
 import {
   canCloseDay,
@@ -50,6 +51,7 @@ import {
   type TagesabschlussTotals,
 } from '@/lib/tagesabschluss';
 import { fmtChf, fmtDiffChf, diffColorClass, parseAmountInput } from './adyen-ui';
+import { ADYEN_HINWEIS, ZahlungsartenBreakdown } from './ZahlungsartenBreakdown';
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
@@ -439,12 +441,36 @@ export function TagesabschlussTable({
                   return (
                     <td
                       className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${corrected ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : ''} ${kk !== null && kk < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
-                      title={kk !== null
-                        ? `Karten ${k.value === null ? '—' : fmtChf(k.value)} + TWINT ${t.value === null ? '—' : fmtChf(t.value)}`
-                        : undefined}
                       data-testid={`ta-kk-${row.date}`}
                     >
-                      {kk === null ? <span className="text-muted-foreground">—</span> : fmtChf(kk)}
+                      {kk === null
+                        ? <span className="text-muted-foreground">—</span>
+                        : row.kkZusammensetzung.length > 0
+                          ? (
+                            /* KK-Popover: Zusammensetzung des Totals, ohne das
+                               Tagesdetail zu öffnen (Klick auf den Betrag). */
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="underline decoration-dotted underline-offset-2 hover:text-primary cursor-pointer"
+                                  title="Zusammensetzung KK anzeigen"
+                                  data-testid={`ta-kk-btn-${row.date}`}
+                                >
+                                  {fmtChf(kk)}
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent align="end" className="w-auto p-3" data-testid={`ta-kk-popover-${row.date}`}>
+                                <ZahlungsartenBreakdown
+                                  items={row.kkZusammensetzung}
+                                  total={kk}
+                                  totalLabel="Total KK"
+                                  testidPrefix={`ta-kk-breakdown-${row.date}`}
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          )
+                          : fmtChf(kk)}
                     </td>
                   );
                 })()}
@@ -456,12 +482,33 @@ export function TagesabschlussTable({
                   {row.adyenTotal === null
                     ? <span className="text-muted-foreground">—</span>
                     : (
-                      <>
-                        {fmtChf(row.adyenTotal)}
-                        {row.adyenDiff !== null && row.adyenDiffStatus !== 'ok' && (
-                          <span className="ml-1 text-[10px]">({fmtDiffChf(row.adyenDiff)})</span>
-                        )}
-                      </>
+                      /* KK-Adyen-Popover: nur über Adyen abgewickelte Arten +
+                         Erklärung, weshalb KK und KK Adyen abweichen können. */
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            className="underline decoration-dotted underline-offset-2 hover:opacity-80 cursor-pointer"
+                            title="Zusammensetzung KK Adyen anzeigen"
+                            data-testid={`ta-adyen-btn-${row.date}`}
+                          >
+                            {fmtChf(row.adyenTotal)}
+                            {row.adyenDiff !== null && row.adyenDiffStatus !== 'ok' && (
+                              <span className="ml-1 text-[10px]">({fmtDiffChf(row.adyenDiff)})</span>
+                            )}
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-auto p-3" data-testid={`ta-adyen-popover-${row.date}`}>
+                          <ZahlungsartenBreakdown
+                            items={row.adyenZusammensetzung}
+                            total={row.adyenTotal}
+                            totalLabel="Total KK Adyen"
+                            hinweis={ADYEN_HINWEIS}
+                            nichtAdyen={row.nichtAdyenKk.length > 0 ? row.nichtAdyenKk : undefined}
+                            testidPrefix={`ta-adyen-breakdown-${row.date}`}
+                          />
+                        </PopoverContent>
+                      </Popover>
                     )}
                 </td>
 

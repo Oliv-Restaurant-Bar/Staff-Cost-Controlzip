@@ -486,6 +486,103 @@ describe('TagesabschlussTable', () => {
     expect(screen.getByTestId('ta-total-adyen-diff').textContent).toContain('10.00');
   });
 
+  describe('KK-/KK-Adyen-Popover (Zusammensetzung)', () => {
+    const closingMitRaren = (date: string): GnDayClosing => ({
+      ...closing(date),
+      payments: [
+        { name: 'Bar', amount: 300, count: 1 },
+        { name: 'Mastercard', amount: 500, count: 1 },
+        { name: 'Visa', amount: 100, count: 1 },
+        { name: 'TWINT', amount: 200, count: 1 },
+        { name: 'PostFinance Card', amount: 50, count: 1 },
+        { name: 'Lunch-Check', amount: 25, count: 1 },
+      ],
+    });
+    const adyenDay = (byMethod: Record<string, number>): AdyenStoredDay => ({
+      byMethod,
+      countByMethod: {},
+      total: Object.values(byMethod).reduce((s, v) => s + v, 0),
+      transactionCount: 1,
+      fileName: 'adyen.csv',
+      importedAt: '2026-07-05T10:00:00.000Z',
+    });
+
+    function renderPopoverMonth() {
+      const adyenBlob = {
+        ...emptyAdyenBlob(),
+        days: { '2026-07-01': adyenDay({ mastercard: 500, visa: 100, twint: 200 }) },
+      };
+      const closings = { '2026-07-01': closingMitRaren('2026-07-01') };
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {}, adyenBlob);
+      const onDayClick = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick} />);
+      return { onDayClick };
+    }
+
+    it('KK-Zelle öffnet Popover mit Zusammensetzung (inkl. TWINT + PostCard/Lunch-Check) und fettem Total — ohne Tagesdetail', () => {
+      const { onDayClick } = renderPopoverMonth();
+      // KK = 500 + 100 + 200 + 50 + 25 = 875.
+      const btn = screen.getByTestId('ta-kk-btn-2026-07-01') as HTMLElement;
+      expect(btn.textContent).toContain('875.00');
+      fireEvent.click(btn);
+
+      const pop = screen.getByTestId('ta-kk-popover-2026-07-01');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-mastercard').textContent).toContain('500.00');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-visa').textContent).toContain('100.00');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-twint').textContent).toContain('200.00');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-postcard').textContent).toContain('50.00');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-lunch_check').textContent).toContain('25.00');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-total').textContent).toContain('875.00');
+      // Reihenfolge: Mastercard, Visa, TWINT, dann seltene Karten.
+      expect(pop.textContent!.indexOf('Mastercard')).toBeLessThan(pop.textContent!.indexOf('Visa'));
+      expect(pop.textContent!.indexOf('Visa')).toBeLessThan(pop.textContent!.indexOf('TWINT'));
+      // KEIN Adyen-Hinweis im KK-Popover, kein Tagesdetail geöffnet.
+      expect(within(pop).queryByTestId('ta-kk-breakdown-2026-07-01-hinweis')).toBeNull();
+      expect(onDayClick).not.toHaveBeenCalled();
+    });
+
+    it('KK-Adyen-Popover zeigt NUR Adyen-Arten, Hinweistext und die Sektion „Nicht über Adyen"', () => {
+      const { onDayClick } = renderPopoverMonth();
+      const btn = screen.getByTestId('ta-adyen-btn-2026-07-01') as HTMLElement;
+      fireEvent.click(btn);
+
+      const pop = screen.getByTestId('ta-adyen-popover-2026-07-01');
+      // Nur über Adyen abgewickelte Arten (Mastercard/Visa/TWINT), Total 800.
+      expect(within(pop).getByTestId('ta-adyen-breakdown-2026-07-01-mastercard').textContent).toContain('500.00');
+      expect(within(pop).getByTestId('ta-adyen-breakdown-2026-07-01-visa').textContent).toContain('100.00');
+      expect(within(pop).getByTestId('ta-adyen-breakdown-2026-07-01-twint').textContent).toContain('200.00');
+      expect(within(pop).getByTestId('ta-adyen-breakdown-2026-07-01-total').textContent).toContain('800.00');
+      // Hinweistext.
+      expect(within(pop).getByTestId('ta-adyen-breakdown-2026-07-01-hinweis').textContent)
+        .toContain('KK Adyen enthält nur Zahlungsarten, die über Adyen verarbeitet werden');
+      // Nicht über Adyen: PostCard + Lunch-Check mit Beträgen (Diff 875−800 = 75 → Sektion sichtbar).
+      const nicht = within(pop).getByTestId('ta-adyen-breakdown-2026-07-01-nicht-adyen');
+      expect(nicht.textContent).toContain('Nicht über Adyen');
+      expect(within(nicht).getByTestId('ta-adyen-breakdown-2026-07-01-nicht-adyen-postcard').textContent).toContain('50.00');
+      expect(within(nicht).getByTestId('ta-adyen-breakdown-2026-07-01-nicht-adyen-lunch_check').textContent).toContain('25.00');
+      expect(onDayClick).not.toHaveBeenCalled();
+    });
+
+    it('KK-Popover zeigt Posten „Korrektur (manuell)" bei Karten-Override (Total = effektiver Zellwert)', () => {
+      // Karten-Auto = 675 (MC 500 + Visa 100 + PostCard 50 + Lunch-Check 25),
+      // Override auf 700 → KK-Zelle = 700 + 200 (TWINT) = 900; Breakdown-Summe
+      // bleibt 875 (auto) → Korrektur-Posten +25.
+      let blob = emptyTagesabschlussBlob();
+      blob = setTagesabschlussOverride(blob, '2026-07-01', 'karten', 675, 700, 'Nachtrag', '2026-07-05T10:00:00.000Z');
+      const closings = { '2026-07-01': closingMitRaren('2026-07-01') };
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+
+      const btn = screen.getByTestId('ta-kk-btn-2026-07-01') as HTMLElement;
+      expect(btn.textContent).toContain('900.00');
+      fireEvent.click(btn);
+
+      const pop = screen.getByTestId('ta-kk-popover-2026-07-01');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-korrektur').textContent).toContain('25.00');
+      expect(within(pop).getByTestId('ta-kk-breakdown-2026-07-01-total').textContent).toContain('900.00');
+    });
+  });
+
   describe('Abschluss & Sperrung', () => {
     it('Abschluss-Button: aktiv nur bei erfüllten Vorbedingungen, klick meldet das Datum', () => {
       const { rows, totals } = buildMonth();

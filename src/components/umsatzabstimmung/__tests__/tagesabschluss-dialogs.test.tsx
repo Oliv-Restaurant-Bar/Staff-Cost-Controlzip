@@ -199,10 +199,16 @@ describe('TagesabschlussDayDialog — Zahlungsarten-Sektion', () => {
     expect(screen.queryByTestId('ta-weitere-zahlungsarten-list')).toBeNull();
   });
 
-  it('Sektion erscheint NICHT ohne seltene/unklassifizierte Zahlarten', () => {
+  it('ohne seltene/unklassifizierte Zahlarten: KK-Zusammensetzung sichtbar, aber KEIN „Weitere Zahlungsarten"-Toggle', () => {
     const { rows } = buildTagesabschlussRows(2026, 7, { '2026-07-01': closing('2026-07-01') }, emptyTagesabschlussBlob(), {});
     renderDay(rows.find(r => r.date === '2026-07-01')!);
-    expect(screen.queryByTestId('ta-dialog-zahlungsarten')).toBeNull();
+    // Sektion rendert die KK-Zusammensetzung (gleiche Komponente wie das
+    // KK-Popover der Übersicht) …
+    expect(screen.getByTestId('ta-dialog-zahlungsarten')).toBeTruthy();
+    expect(screen.getByTestId('ta-dialog-kk-breakdown-mastercard').textContent).toContain('500.00');
+    expect(screen.getByTestId('ta-dialog-kk-breakdown-total').textContent).toContain('500.00');
+    // … aber ohne seltene Arten keinen Aufklapp-Toggle.
+    expect(screen.queryByTestId('ta-weitere-zahlungsarten-toggle')).toBeNull();
   });
 });
 
