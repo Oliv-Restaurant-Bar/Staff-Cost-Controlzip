@@ -1,0 +1,54 @@
+Passe /tagesabschluesse so an, dass die Tagesabschluss-Tabelle direkt bearbeitbar ist.
+
+Ziel:
+Manuelle Zahlen sollen direkt in der Monatsübersicht eingetragen werden können. Das Tagesdetail-Pop-up soll sich nur öffnen, wenn man auf das Datum klickt, nicht beim Klick auf andere Tabellenzellen.
+
+Umsetzung:
+
+1. Inline-Eingaben in der Tagesübersicht
+Folgende Felder sollen direkt in der Tabelle editierbar sein:
+- Barausgaben total, falls bisher nur Totalfeld vorhanden
+- Einzahlung Bank
+- Kassenbestand
+- Bemerkung
+- Barbestand bestätigt
+- Tagesabschluss bestätigt
+
+Falls Barausgaben bereits als Einzeleinträge gedacht sind:
+- In der Tabelle darf weiterhin nur das Total angezeigt werden.
+- Beim Klick auf "Barausgaben total" oder ein kleines Bearbeiten-Icon kann später die Detailerfassung öffnen.
+- Für diesen Schritt reicht: Einzahlung Bank, Kassenbestand und Bemerkung direkt editierbar machen.
+
+2. Pop-up nur über Datum öffnen
+- Entferne Row-click auf der ganzen Tabellenzeile.
+- Nur die Datum-Zelle soll klickbar sein.
+- Klick auf Datum öffnet den Tagesdetail-Dialog.
+- Andere Zellen dürfen den Dialog nicht öffnen.
+
+3. UX
+- Editierbare Felder klar als Eingabe erkennbar machen.
+- Beim Speichern/Blur sollen Werte persistiert werden.
+- Manuell eingetragene Felder visuell markieren, z.B. leichter gelber Hintergrund oder Badge.
+- Kommentare/Icons dürfen weiter funktionieren.
+
+4. Tastaturbedienung
+- Tab soll von Eingabefeld zu Eingabefeld springen.
+- Enter soll speichern oder das Feld verlassen.
+- Escape soll Änderung verwerfen, falls bereits unterstützt.
+
+5. Berechnungen
+- Monats-KPIs sollen sich sofort aktualisieren, wenn Einzahlung Bank, Kassenbestand oder Barausgaben geändert werden.
+- Tagesstatus soll sich nach Änderungen aktualisieren.
+
+6. Tests
+- Klick auf Datum öffnet Tagesdetail-Dialog.
+- Klick auf andere Zellen öffnet keinen Dialog.
+- Einzahlung Bank kann inline geändert werden.
+- Kassenbestand kann inline geändert werden.
+- Bemerkung kann inline geändert werden.
+- Manuelle Eingaben werden visuell markiert.
+- Monats-KPIs aktualisieren sich nach Inline-Änderung.
+
+Danach bitte ausführen:
+- tsc --noEmit
+- Tagesabschlüsse Tests

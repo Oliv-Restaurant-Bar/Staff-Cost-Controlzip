@@ -470,3 +470,33 @@ describe('mergeTagesabschlussBlobs', () => {
     expect(blob.exportSettings?.konten.kasse).toBe('1000');
   });
 });
+
+describe('Inline-Edit-Semantik (Einzel-Feld-Patches)', () => {
+  it('Einzel-Feld-Patch erhält die übrigen manuellen Werte des Tages', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 500, bemerkung: 'Notiz' }, NOW);
+    // Inline-Edit: NUR Einzahlung Bank patchen.
+    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 80 }, NOW);
+    expect(blob.days['2026-07-01'].bestandKasse).toBe(500);
+    expect(blob.days['2026-07-01'].bemerkung).toBe('Notiz');
+    expect(blob.days['2026-07-01'].einzahlungBank).toBe(80);
+    // null löscht NUR das gepatchte Feld.
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: null }, NOW);
+    expect(blob.days['2026-07-01'].bestandKasse).toBeUndefined();
+    expect(blob.days['2026-07-01'].einzahlungBank).toBe(80);
+  });
+
+  it('Monats-Totale/KPIs aktualisieren sich nach einem Inline-Patch', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    const before = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    expect(before.totals.values.einzahlungBank).toBe(0);
+
+    blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 120 }, NOW);
+    const after = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    expect(after.totals.values.einzahlungBank).toBe(120);
+    const row = after.rows.find(r => r.date === '2026-07-01');
+    expect(row?.cells.einzahlungBank.value).toBe(120);
+    expect(row?.cells.einzahlungBank.source).toBe('manual');
+  });
+});

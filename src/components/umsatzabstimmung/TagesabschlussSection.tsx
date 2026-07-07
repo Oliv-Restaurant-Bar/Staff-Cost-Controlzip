@@ -23,6 +23,7 @@ import {
 } from '@/lib/adyen-abstimmung';
 import {
   buildTagesabschlussRows,
+  mergeTagesabschlussBlobs,
   removeExpense,
   setExportSettings,
   setTagesabschlussOverride,
@@ -106,7 +107,10 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const persist = useCallback(async (next: TagesabschlussBlob) => {
     setBlob(next);
     const merged = await saveTagesabschluss(tenantId, next);
-    setBlob(merged);
+    // Funktional gegen den AKTUELLEN State mergen: bei schnellen
+    // aufeinanderfolgenden Inline-Edits darf ein früherer (langsamer) Save
+    // einen neueren Edit nicht aus dem React-State verdrängen.
+    setBlob(prev => (prev ? mergeTagesabschlussBlobs(prev, merged) : merged));
   }, [tenantId]);
 
   // ── Mutationen (Blob tagesabschluss_v1) ─────────────────────────────────────
@@ -115,11 +119,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     bestandKasse?: number | null; einzahlungBank?: number | null; bemerkung?: string | null;
   }) => {
     if (readOnly || !blob) return;
-    void persist(upsertManualDay(blob, date, {
-      bestandKasse: patch.bestandKasse ?? undefined,
-      einzahlungBank: patch.einzahlungBank ?? undefined,
-      bemerkung: patch.bemerkung ?? undefined,
-    }, new Date().toISOString()));
+    // Patch 1:1 durchreichen: upsertManualDay fasst NUR vorhandene Keys an —
+    // Inline-Edits eines einzelnen Felds löschen so keine anderen Werte.
+    void persist(upsertManualDay(blob, date, patch, new Date().toISOString()));
   }, [readOnly, blob, persist]);
 
   const handleOverride = useCallback((date: string, field: TagesabschlussAutoField, original: number, corrected: number | null, comment: string) => {
@@ -173,7 +175,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
             <CardTitle className="text-sm">Tagesabschluss-Übersicht — {MONTH_NAMES[month - 1]} {year}</CardTitle>
             <p className="text-[11px] text-muted-foreground mt-0.5">
               Z-Bericht-Werte automatisch, manuelle Eingaben/Korrekturen pro Tag, Buchhaltungs-Export analog Excel "Tabelle2".
-              Zeile anklicken zum Bearbeiten.
+              Bestand Kasse, Einzahlung Bank und Bemerkung direkt in der Tabelle erfassen — Datum anklicken für das Tagesdetail.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -236,6 +238,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               rows={monthData.rows}
               totals={monthData.totals}
               onDayClick={setOpenDate}
+              readOnly={readOnly}
+              onSaveManual={handleSaveManual}
+              onConfirm={handleConfirm}
             />
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>

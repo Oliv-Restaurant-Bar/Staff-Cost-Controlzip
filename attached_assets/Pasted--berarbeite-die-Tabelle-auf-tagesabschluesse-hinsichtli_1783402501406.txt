@@ -1,0 +1,163 @@
+Überarbeite die Tabelle auf /tagesabschluesse hinsichtlich Spaltenreihenfolge, Bezeichnungen und Lesbarkeit.
+
+Ziel:
+Die Tagesabschluss-Tabelle soll sich am realen Arbeitsablauf orientieren und deutlich übersichtlicher werden. Der Benutzer arbeitet täglich mit vielen Zahlen, deshalb müssen die wichtigsten Spalten optisch gruppiert und besser lesbar sein.
+
+1. Spalten umbenennen
+
+Bitte folgende Bezeichnungen verwenden:
+
+- Umsatz (statt Umsatz total oder Umsatz inkl. MwSt.)
+  -> Zeigt den Bruttoumsatz inkl. MWST aus dem Z-Bericht.
+
+- Bargeld
+  -> statt "Bar laut Z-Bericht"
+
+- Cash
+  -> statt "Bestand Kasse"
+
+- KK
+  -> statt "Karten total laut Z-Bericht"
+
+- KK Adyen
+  -> statt "Karten/TWINT laut Adyen"
+
+Die bisherigen Spalten
+- TWINT
+- Karten/TWINT laut Adyen
+
+entfallen als eigene Spalten.
+
+TWINT soll intern weiterhin verarbeitet werden, aber in der Hauptübersicht nicht mehr als separate Spalte erscheinen.
+
+2. Neue Spaltenreihenfolge
+
+Die Tabelle soll künftig diese Reihenfolge haben:
+
+Datum
+Umsatz
+KK
+KK Adyen
+Bargeld
+Cash
+Debitoren
+Barausgaben
+Verkaufte Gutscheine
+Eingelöste Gutscheine
+Einzahlung Bank
+Status
+
+3. Gutscheine
+
+Für
+- Verkaufte Gutscheine
+- Eingelöste Gutscheine
+
+soll zusätzlich im Hintergrund gespeichert werden können:
+
+- Gutscheinnummer
+- optional mehrere Gutscheinnummern
+
+Diese Nummern müssen NICHT in der Tabellenübersicht erscheinen.
+
+Sie werden erst im Tagesdetail-Popup angezeigt und dort bearbeitet.
+
+4. Barausgaben
+
+Die Tabellenübersicht zeigt weiterhin nur:
+
+Barausgaben Total
+
+Im Tagesdetail können mehrere Barausgaben mit
+
+- Konto
+- Betrag
+- Beschreibung
+- Kommentar
+
+erfasst werden.
+
+5. Lesbarkeit deutlich verbessern
+
+Die Tabelle soll optisch gruppiert werden.
+
+Gruppe 1 (Umsatz)
+Datum | Umsatz
+
+Gruppe 2 (Kartenzahlungen)
+KK | KK Adyen
+
+Gruppe 3 (Kasse)
+Bargeld | Cash | Einzahlung Bank
+
+Gruppe 4 (weitere Zahlungsarten)
+Debitoren
+Verkaufte Gutscheine
+Eingelöste Gutscheine
+
+Gruppe 5 (Ausgaben)
+Barausgaben
+
+Gruppe 6
+Status
+
+Bitte die Gruppen visuell voneinander trennen, z.B.:
+
+- unterschiedliche Header-Hintergründe
+- dezente vertikale Trennlinien
+- etwas mehr Abstand zwischen den Gruppen
+
+6. Zahlen besser lesbar
+
+Alle Zahlen:
+
+- rechtsbündig
+- Tabular Figures (gleiche Ziffernbreite)
+- einheitliches Währungsformat
+- negative Werte rot
+- Differenzen farbig wie bisher
+
+7. Zeilen besser lesbar
+
+- Zebra-Striping
+- Hover-Effekt
+- aktuelle Zeile leicht hervorheben
+- bestätigte Tage leicht grün hinterlegen
+- offene Tage leicht gelb
+- Differenz rot/orange
+
+8. Datum hervorheben
+
+Nur die Datum-Spalte öffnet den Tagesdialog.
+
+Das Datum soll deshalb wie ein Link oder Button aussehen und klar als klickbares Element erkennbar sein.
+
+9. Keine fachliche Logik ändern
+
+Es sollen ausschliesslich
+- Reihenfolge
+- Bezeichnungen
+- Darstellung
+- UX
+
+angepasst werden.
+
+Die Berechnungen und bestehenden Datenquellen dürfen unverändert bleiben.
+
+10. Tests
+
+Vorhandene Tests anpassen:
+
+- neue Header prüfen
+- neue Reihenfolge prüfen
+- Datum öffnet Dialog
+- TWINT-Spalte nicht mehr sichtbar
+- Karten/TWINT laut Adyen nicht mehr sichtbar
+- KK Adyen sichtbar
+- Gutscheinnummer wird gespeichert, aber nicht in der Übersicht angezeigt
+
+Danach bitte ausführen:
+
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Tabellen-Komponenten Tests

@@ -5,7 +5,7 @@
  * korrigiert / Kommentar), Barausgaben-Total und Status-Badges.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach } from 'vitest';
 import { TagesabschlussTable } from '../TagesabschlussTable';
 import {
@@ -96,12 +96,112 @@ describe('TagesabschlussTable', () => {
     expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
   });
 
-  it('meldet Tages-Klicks mit dem Datum', () => {
+  it('öffnet das Tagesdetail NUR über die Datum-Zelle', () => {
     const { rows, totals } = buildMonth();
     const onDayClick = vi.fn();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick} />);
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick}
+      onSaveManual={() => {}} onConfirm={() => {}} />);
+
+    // Klick auf andere Zellen/die Zeile selbst öffnet NICHT.
     (screen.getByTestId('ta-row-2026-07-02') as HTMLElement).click();
+    (screen.getByTestId('ta-bestand-2026-07-02') as HTMLElement).click();
+    (screen.getByTestId('ta-adyen-2026-07-02') as HTMLElement).click();
+    expect(onDayClick).not.toHaveBeenCalled();
+
+    // Klick auf das Datum öffnet.
+    (screen.getByTestId('ta-date-2026-07-02') as HTMLElement).click();
+    expect(onDayClick).toHaveBeenCalledTimes(1);
     expect(onDayClick).toHaveBeenCalledWith('2026-07-02');
+  });
+
+  describe('Inline-Bearbeitung', () => {
+    function renderEditable() {
+      const { rows, totals } = buildMonth();
+      const onSaveManual = vi.fn();
+      const onConfirm = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={onSaveManual} onConfirm={onConfirm} />);
+      return { onSaveManual, onConfirm };
+    }
+
+    it('speichert Einzahlung Bank bei Blur als Einzel-Feld-Patch', () => {
+      const { onSaveManual } = renderEditable();
+      const input = screen.getByTestId('ta-input-einzahlung-2026-07-02') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '80' } });
+      fireEvent.blur(input);
+      expect(onSaveManual).toHaveBeenCalledWith('2026-07-02', { einzahlungBank: 80 });
+    });
+
+    it('speichert Bestand Kasse bei Enter und leert per Leereingabe (null)', () => {
+      const { onSaveManual } = renderEditable();
+      const input = screen.getByTestId('ta-input-bestand-2026-07-01') as HTMLInputElement;
+      expect(input.value).toBe('850'); // vorhandener manueller Wert
+      fireEvent.change(input, { target: { value: '900' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+      fireEvent.blur(input);
+      expect(onSaveManual).toHaveBeenCalledWith('2026-07-01', { bestandKasse: 900 });
+
+      onSaveManual.mockClear();
+      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.blur(input);
+      expect(onSaveManual).toHaveBeenCalledWith('2026-07-01', { bestandKasse: null });
+    });
+
+    it('speichert die Bemerkung inline', () => {
+      const { onSaveManual } = renderEditable();
+      const input = screen.getByTestId('ta-input-bemerkung-2026-07-01') as HTMLInputElement;
+      expect(input.value).toBe('Wechselgeld aufgestockt');
+      fireEvent.change(input, { target: { value: 'Neue Notiz' } });
+      fireEvent.blur(input);
+      expect(onSaveManual).toHaveBeenCalledWith('2026-07-01', { bemerkung: 'Neue Notiz' });
+    });
+
+    it('verwirft Änderungen mit Escape und speichert nichts bei unverändertem Wert', () => {
+      const { onSaveManual } = renderEditable();
+      const input = screen.getByTestId('ta-input-einzahlung-2026-07-02') as HTMLInputElement;
+      fireEvent.change(input, { target: { value: '999' } });
+      fireEvent.keyDown(input, { key: 'Escape' });
+      fireEvent.blur(input);
+      expect(onSaveManual).not.toHaveBeenCalled();
+      expect(input.value).toBe(''); // zurückgesetzt auf den Zellenwert
+
+      // Blur ohne Änderung speichert ebenfalls nicht.
+      fireEvent.blur(input);
+      expect(onSaveManual).not.toHaveBeenCalled();
+    });
+
+    it('markiert manuell erfasste Inline-Werte visuell (blau)', () => {
+      renderEditable();
+      const manuell = screen.getByTestId('ta-input-bestand-2026-07-01');
+      expect(manuell.className).toContain('text-sky-700');
+      const leer = screen.getByTestId('ta-input-bestand-2026-07-03');
+      expect(leer.className).not.toContain('text-sky-700');
+    });
+
+    it('bestätigt Tage über die Checkboxen (nur Tage mit Z-Bericht, gleiche Semantik wie Dialog)', () => {
+      const { onConfirm } = renderEditable();
+      // Nur 01.07./02.07. haben Z-Bericht → nur dort Checkboxen.
+      expect(screen.queryByTestId('ta-row-check-cash-2026-07-03')).toBeNull();
+
+      // 02.07.: unbestätigt → "Tag" erst nach Barbestand möglich.
+      const confirmBox = screen.getByTestId('ta-row-check-confirm-2026-07-02') as HTMLButtonElement;
+      expect(confirmBox.disabled).toBe(true);
+      const cashBox = screen.getByTestId('ta-row-check-cash-2026-07-02') as HTMLButtonElement;
+      fireEvent.click(cashBox);
+      expect(onConfirm).toHaveBeenCalledWith('2026-07-02',
+        expect.objectContaining({ cashCounted: true, confirmed: false }));
+    });
+
+    it('rendert im readOnly-Modus (Gast) keinerlei Eingabefelder', () => {
+      const { rows, totals } = buildMonth();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        readOnly onSaveManual={() => {}} onConfirm={() => {}} />);
+      expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-input-bemerkung-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      // Werte bleiben als Text sichtbar.
+      expect(screen.getByTestId('ta-bestand-2026-07-01').textContent).toContain('850.00');
+    });
   });
 
   it('zeigt Adyen-Werte und farbige Adyen-Differenz je Tag', () => {

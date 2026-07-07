@@ -492,11 +492,20 @@ export function buildTagesabschlussRows(
 
 // ── Mutationen (rein, immutabel) ─────────────────────────────────────────────
 
-/** Setzt/aktualisiert manuelle Tageswerte (undefined-Felder bleiben erhalten). */
+/**
+ * Setzt/entfernt manuelle Tageswerte. NUR im Patch vorhandene Keys werden
+ * angefasst — `null`/`undefined`/leerer String löscht das jeweilige Feld.
+ * Inline-Edits dürfen daher ein einzelnes Feld patchen, ohne die übrigen
+ * manuellen Werte des Tages zu verlieren.
+ */
 export function upsertManualDay(
   blob: TagesabschlussBlob,
   date: string,
-  patch: Partial<Omit<TagesabschlussManualDay, 'updatedAt'>>,
+  patch: {
+    bestandKasse?: number | null;
+    einzahlungBank?: number | null;
+    bemerkung?: string | null;
+  },
   now: string,
 ): TagesabschlussBlob {
   const existing = blob.days[date];
