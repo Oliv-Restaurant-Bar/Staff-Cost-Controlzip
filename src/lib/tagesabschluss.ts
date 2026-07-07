@@ -301,6 +301,33 @@ export interface MonthClosure {
   updatedAt: string; // ISO — merge-on-save (jüngster gewinnt)
 }
 
+/**
+ * Protokoll-Eintrag eines Buchhaltungs-Exports (write-once — wird nach dem
+ * Anlegen NIE mutiert; merge-on-save = Union je Export-ID).
+ */
+export interface BuchhaltungsExportRecord {
+  /** Eindeutige Export-ID (Protokoll §8). */
+  id: string;
+  /** Monat yyyy-MM. */
+  monat: string;
+  /** Fortlaufende Version je Monat: 1, 2, 3, … (Mehrfach-Export möglich). */
+  version: number;
+  exportedAt: string; // ISO
+  exportedBy: string; // Benutzer (E-Mail)
+  /** Anzahl exportierter Buchungszeilen. */
+  anzahlBuchungen: number;
+  /** Kassensaldo Ende zum Exportzeitpunkt (null = ohne Anker unbekannt). */
+  kassensaldoEnde: number | null;
+  /**
+   * Deterministischer Fingerprint des Monats-Datenstands zum Exportzeitpunkt
+   * (computeMonthFingerprint). Weicht der aktuell berechnete Fingerprint ab,
+   * ist der Export VERALTET (kein Zeitvergleich — robust gegen Clock-Skew
+   * und merge-on-save-Nachzügler).
+   */
+  fingerprint: string;
+  updatedAt: string; // ISO — = exportedAt (merge-on-save, jüngster gewinnt)
+}
+
 export interface TagesabschlussBlob {
   /** Manuelle Tageswerte, Key = yyyy-MM-dd. */
   days: Record<string, TagesabschlussManualDay>;
@@ -321,13 +348,15 @@ export interface TagesabschlussBlob {
   monatsabschluesse: Record<string, MonthClosure>;
   /** Export-Einstellungen (null = noch nie konfiguriert). */
   exportSettings: TagesabschlussExportSettings | null;
+  /** Buchhaltungs-Export-Protokolle (write-once), Key = Export-ID. */
+  exportProtokolle: Record<string, BuchhaltungsExportRecord>;
 }
 
 export function emptyTagesabschlussBlob(): TagesabschlussBlob {
   return {
     days: {}, expenses: {}, overrides: {}, comments: {},
     cashDiffReasons: {}, anfangsbestand: {}, abschluesse: {}, monatsabschluesse: {},
-    exportSettings: null,
+    exportSettings: null, exportProtokolle: {},
   };
 }
 
@@ -411,6 +440,31 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
       };
     }
   }
+  // Export-Protokolle: nur strukturell gültige Records übernehmen.
+  const exportProtokolle: TagesabschlussBlob['exportProtokolle'] = {};
+  if (isObj(o.exportProtokolle)) {
+    for (const [id, entry] of Object.entries(o.exportProtokolle as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const e = entry as Partial<BuchhaltungsExportRecord>;
+      if (typeof e.monat !== 'string' || e.monat === '') continue;
+      if (typeof e.version !== 'number' || !Number.isFinite(e.version)) continue;
+      exportProtokolle[id] = {
+        id,
+        monat: e.monat,
+        version: e.version,
+        exportedAt: typeof e.exportedAt === 'string' ? e.exportedAt : '',
+        exportedBy: typeof e.exportedBy === 'string' ? e.exportedBy : '',
+        anzahlBuchungen:
+          typeof e.anzahlBuchungen === 'number' && Number.isFinite(e.anzahlBuchungen)
+            ? e.anzahlBuchungen : 0,
+        kassensaldoEnde:
+          typeof e.kassensaldoEnde === 'number' && Number.isFinite(e.kassensaldoEnde)
+            ? e.kassensaldoEnde : null,
+        fingerprint: typeof e.fingerprint === 'string' ? e.fingerprint : '',
+        updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
+      };
+    }
+  }
   return {
     days:      isObj(o.days)      ? (o.days      as TagesabschlussBlob['days'])      : {},
     expenses,
@@ -422,6 +476,7 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
     monatsabschluesse,
     exportSettings:
       isObj(o.exportSettings) ? (o.exportSettings as unknown as TagesabschlussExportSettings) : null,
+    exportProtokolle,
   };
 }
 
@@ -1219,9 +1274,16 @@ export function mergeTagesabschlussBlobs(
           : remote.exportSettings)
       : local.exportSettings ?? remote.exportSettings;
 
+  // Export-Protokolle: write-once-Records → Union je Export-ID (jüngster gewinnt).
+  const exportProtokolle: TagesabschlussBlob['exportProtokolle'] = { ...remote.exportProtokolle };
+  for (const [id, rec] of Object.entries(local.exportProtokolle)) {
+    const r = exportProtokolle[id];
+    if (!r || newer(rec.updatedAt, r.updatedAt)) exportProtokolle[id] = rec;
+  }
+
   return {
     days, expenses, overrides, comments, cashDiffReasons, anfangsbestand,
-    abschluesse, monatsabschluesse, exportSettings,
+    abschluesse, monatsabschluesse, exportSettings, exportProtokolle,
   };
 }
 

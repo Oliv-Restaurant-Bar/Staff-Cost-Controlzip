@@ -50,7 +50,25 @@ export const TABELLE2_HEADERS = [
   'PkKey', 'OpId', 'Flag',
 ] as const;
 
+/**
+ * Fachliche Kategorie einer Buchungszeile — NUR für die Buchungsvorschau
+ * (Gruppierung); wird NICHT ins CSV exportiert. Strukturell beim Erzeugen
+ * gesetzt (robust — keine Rückwärts-Klassifikation über Kontonummern/Texte).
+ */
+export type Tabelle2Kategorie =
+  | 'umsatz'
+  | 'barumsatz'
+  | 'kreditkarten'
+  | 'twint'
+  | 'debitoren'
+  | 'gutschein_verkauft'
+  | 'gutschein_eingeloest'
+  | 'bank'
+  | 'barausgabe';
+
 export interface Tabelle2Row {
+  /** Vorschau-Kategorie (nicht Teil des CSV). */
+  kategorie: Tabelle2Kategorie;
   blg: string;
   datum: string; // dd.MM.yyyy
   kto: string;
@@ -81,7 +99,9 @@ export function isoToChDate(iso: string): string {
   return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
 }
 
-function makeRow(partial: Partial<Tabelle2Row> & Pick<Tabelle2Row, 'datum' | 'kto' | 'gkto' | 'netto'>): Tabelle2Row {
+function makeRow(
+  partial: Partial<Tabelle2Row> & Pick<Tabelle2Row, 'kategorie' | 'datum' | 'kto' | 'gkto' | 'netto'>,
+): Tabelle2Row {
   return {
     blg: '', sh: 'S', grp: '', sid: '', sidx: '', kidx: '', btyp: '', mtyp: '',
     code: '', steuer: 0, fwBetrag: '', tx1: '', tx2: '', pkKey: '', opId: '', flag: '',
@@ -246,6 +266,7 @@ export function buildTabelle2Rows(
       const blg = nextBlg();
       for (const t of closing.taxes) {
         out.push(makeRow({
+          kategorie: 'umsatz',
           blg, datum: date, kto: k.umsatzTransit, gkto: k.umsatz,
           code: settings.mwstCodes[t.rate.trim()] ?? '',
           netto: round2(t.net), steuer: round2(t.tax),
@@ -255,6 +276,7 @@ export function buildTabelle2Rows(
       // Ohne Steuerbericht: eine Bruttozeile ohne Code (sichtbar, kein Verlust).
       if (closing.taxes.length === 0) {
         out.push(makeRow({
+          kategorie: 'umsatz',
           blg, datum: date, kto: k.umsatzTransit, gkto: k.umsatz,
           netto: round2(row.cells.umsatz.auto ?? 0),
           tx1: `Tagesumsatz ${date} (ohne Steuerbericht)`,
@@ -274,6 +296,7 @@ export function buildTabelle2Rows(
       );
       if (exportBarumsatz !== 0) {
         out.push(makeRow({
+          kategorie: 'barumsatz',
           blg: nextBlg(), datum: date, kto: k.kasse, gkto: k.umsatzTransit,
           netto: exportBarumsatz, tx1: `Barumsatz ${date}`,
         }));
@@ -293,6 +316,7 @@ export function buildTabelle2Rows(
         if (round2(amount) === 0) continue;
         const konto = settings.kontoJeZahlungsart[key]?.trim() || k.kartenSammel;
         out.push(makeRow({
+          kategorie: key === 'twint' ? 'twint' : 'kreditkarten',
           blg: nextBlg(), datum: date, kto: konto, gkto: k.umsatzTransit,
           netto: round2(amount), tx1: `${label} ${date}`,
         }));
@@ -301,6 +325,7 @@ export function buildTabelle2Rows(
       // 4) Rechnung/Debitoren separat.
       if ((row.cells.rechnung.auto ?? 0) !== 0) {
         out.push(makeRow({
+          kategorie: 'debitoren',
           blg: nextBlg(), datum: date, kto: k.debitoren, gkto: k.umsatzTransit,
           netto: round2(row.cells.rechnung.auto ?? 0), tx1: `Rechnung/Debitoren ${date}`,
         }));
@@ -309,6 +334,7 @@ export function buildTabelle2Rows(
       // 5) Gutscheine: eingelöst (Zahlungsmittel) und verkauft (separat).
       if ((row.cells.gutscheinEingeloest.auto ?? 0) !== 0) {
         out.push(makeRow({
+          kategorie: 'gutschein_eingeloest',
           blg: nextBlg(), datum: date, kto: k.gutscheine, gkto: k.umsatzTransit,
           netto: round2(row.cells.gutscheinEingeloest.auto ?? 0), tx1: `Gutscheine eingelöst ${date}`,
         }));
@@ -317,6 +343,7 @@ export function buildTabelle2Rows(
 
     if ((row.cells.gutscheinVerkauft.auto ?? 0) !== 0) {
       out.push(makeRow({
+        kategorie: 'gutschein_verkauft',
         blg: nextBlg(), datum: date, kto: k.kasse, gkto: k.gutscheine,
         netto: round2(row.cells.gutscheinVerkauft.auto ?? 0), tx1: `Gutscheine verkauft ${date}`,
       }));
@@ -325,6 +352,7 @@ export function buildTabelle2Rows(
     // 6) Einzahlung Bank (manuell erfasst).
     if ((row.cells.einzahlungBank.value ?? 0) !== 0) {
       out.push(makeRow({
+        kategorie: 'bank',
         blg: nextBlg(), datum: date, kto: k.bank, gkto: k.kasse,
         netto: round2(row.cells.einzahlungBank.value ?? 0), tx1: `Einzahlung Bank ${date}`,
       }));
@@ -333,6 +361,7 @@ export function buildTabelle2Rows(
     // 7) Barausgaben EINZELN — nie nur als Total.
     for (const e of blob.expenses[row.date] ?? []) {
       out.push(makeRow({
+        kategorie: 'barausgabe',
         blg: e.belegNr?.trim() || nextBlg(),
         datum: isoToChDate(e.date),
         kto: e.konto.trim(),

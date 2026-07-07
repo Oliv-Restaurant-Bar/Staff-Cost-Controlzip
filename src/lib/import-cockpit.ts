@@ -26,6 +26,7 @@ import {
   differenceInCalendarDays,
   format,
 } from 'date-fns';
+import type { BuchhaltungsExportStatus } from './buchhaltungs-export';
 
 // ─── Grundtypen ────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ export type CockpitSourceId =
   | 'adyen'
   | 'budgetkontrolle'
   | 'monatsabschluss'
+  | 'buchhaltungs_export'
   | 'inventur'
   | 'jahresbudget'
   | 'vorjahresvergleich';
@@ -211,6 +213,13 @@ export interface CockpitSignal {
    * spätere Einzel-Tageszeilen hin, die NICHT als vollständige Periode gelten.
    */
   latestRecordDate?: string | null;
+  /**
+   * Harter Status-Override MIT Begründung — für Quellen, deren Zustand nicht
+   * über Frische-Schwellen abbildbar ist (z. B. Buchhaltungs-Export §11:
+   * offen/bereit/exportiert/veraltet). Gewinnt in computeSourceStatus über die
+   * Frische-Berechnung; Datums-/Anzeige-Felder des Signals bleiben erhalten.
+   */
+  statusOverride?: { status: CockpitStatus; reason: string } | null;
 }
 
 /** Ergebnis der Statusberechnung einer Quelle. */
@@ -245,6 +254,46 @@ export interface CockpitRow {
   def: CockpitSourceDef;
   signal: CockpitSignal;
   result: CockpitStatusResult;
+}
+
+// ─── Buchhaltungs-Export-Kontrollaufgabe (§11) ─────────────────────────────────
+
+/**
+ * Bildet den fachlichen Export-Status (offen/bereit/exportiert/veraltet) auf
+ * einen Cockpit-Status-Override MIT deutscher Begründung ab. Rein + zentral,
+ * damit UI, DB-Signal und Tests exakt dieselbe Abbildung verwenden:
+ *  - exportiert → current  (grün)
+ *  - bereit     → due_soon (gelb: Monat abgeschlossen, Export ausstehend)
+ *  - offen      → due_soon (gelb: Erinnerung, Monat noch in Arbeit)
+ *  - veraltet   → overdue  (rot: Monat nach dem letzten Export geändert, §10)
+ */
+export function buchhaltungsExportOverride(
+  status: BuchhaltungsExportStatus,
+  monthKey: string,
+  latestVersion: number | null,
+): { status: CockpitStatus; reason: string } {
+  switch (status) {
+    case 'exportiert':
+      return {
+        status: 'current',
+        reason: `Buchhaltungs-Export ${monthKey} aktuell (Export ${latestVersion ?? '?'}).`,
+      };
+    case 'veraltet':
+      return {
+        status: 'overdue',
+        reason: `Der Monat ${monthKey} wurde nach dem letzten Export geändert. Bitte neuen Export erstellen.`,
+      };
+    case 'bereit':
+      return {
+        status: 'due_soon',
+        reason: `Monat ${monthKey} abgeschlossen — Buchhaltungs-Export kann erstellt werden.`,
+      };
+    case 'offen':
+      return {
+        status: 'due_soon',
+        reason: `Monat ${monthKey} noch nicht abgeschlossen — Buchhaltungs-Export offen.`,
+      };
+  }
 }
 
 // ─── Schwellenwerte ─────────────────────────────────────────────────────────────
@@ -539,6 +588,31 @@ export const COCKPIT_SOURCES: CockpitSourceDef[] = [
     responsible: 'Buchhaltung / Controlling',
     route: '/erfolgsrechnung',
     actionLabel: 'Zur Erfolgsrechnung',
+    checkable: true,
+  },
+  {
+    id: 'buchhaltungs_export',
+    label: 'Buchhaltungs-Export',
+    module: 'Umsatz / Tagesabschluss',
+    category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'monatsabschluss',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Buchhaltungs-CSV erzeugen',
+    sourceHint: 'Export-Assistent auf der Tagesabschluss-Seite',
+    interval: 'monthly',
+    description:
+      'Monatlicher Buchhaltungs-Export (Tabelle2-CSV) aus den abgeschlossenen Tagesabschlüssen. ' +
+      'Status: offen (Monat nicht abgeschlossen) → bereit (abgeschlossen, Export fehlt) → ' +
+      'exportiert (aktuell) → veraltet (Monat nach dem Export geändert).',
+    checklistLabel: 'Buchhaltungs-Export erstellen',
+    importance:
+      'Die Finanzbuchhaltung erhält nur so die geprüften Monatszahlen; ein veralteter Export führt zu falschen Buchungen.',
+    procedure:
+      'Monat auf der Tagesabschluss-Seite abschliessen, Checkliste im Export-Assistenten prüfen, CSV exportieren und an die Buchhaltung übergeben.',
+    responsible: 'Buchhaltung / Administration',
+    route: '/tagesabschluesse',
+    actionLabel: 'Zum Export-Assistenten',
     checkable: true,
   },
   {
@@ -850,6 +924,23 @@ export function computeSourceStatus(
 
   const todayIso = format(now, 'yyyy-MM-dd');
   const failed = signal.lastImport?.status === 'failed';
+
+  // 1b) Harter Status-Override (z. B. Buchhaltungs-Export §11): Status + Grund
+  //     kommen fertig vom Signal, Datums-Anzeigen bleiben erhalten.
+  if (signal.statusOverride) {
+    const overrideRef = normalizeDataDate(signal.latestDataDate);
+    return {
+      status: signal.statusOverride.status,
+      latestDataDate: signal.latestDataDate,
+      daysBehind: overrideRef ? differenceInCalendarDays(now, overrideRef) : null,
+      nextDue: null,
+      missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate: null,
+      failed: false,
+      reason: signal.statusOverride.reason,
+    };
+  }
 
   // Zukunfts-Hinweis: nur für tägliche Ist-Quellen (detectGaps) relevant. Der
   // DB-Aggregator liefert dafür `futureDataDate`; zusätzlich fangen wir hier

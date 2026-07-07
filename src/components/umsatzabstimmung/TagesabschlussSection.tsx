@@ -54,6 +54,7 @@ import {
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
 import { fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
+import { BuchhaltungsExportSection } from './BuchhaltungsExportSection';
 import { TagesabschlussTable, formatClosedStamp } from './TagesabschlussTable';
 import { TagesabschlussDayDialog } from './TagesabschlussDayDialog';
 import { TagesabschlussExpenseDialog } from './TagesabschlussExpenseDialog';
@@ -346,6 +347,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   }, [readOnly, blob, isDayLocked, monthData, persist]);
 
   return (
+    <>
     <Card className="mt-6">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -700,5 +702,23 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
         />
       )}
     </Card>
+
+    {/* ── Buchhaltungs-Export-Assistent — eigener Abschnitt UNTER der Übersicht ── */}
+    {!loading && blob && adyenBlob && (
+      <BuchhaltungsExportSection
+        tenantId={tenantId}
+        year={year}
+        month={month}
+        monthKey={monthKey}
+        monthData={monthData}
+        closings={closings}
+        blob={blob}
+        readOnly={readOnly}
+        currentUser={currentUser}
+        persist={persist}
+        onOpenMapping={() => setExportOpen(true)}
+      />
+    )}
+    </>
   );
 }

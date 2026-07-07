@@ -33,10 +33,18 @@ import {
   deriveMirusPeriodFromHistory,
   deriveMirusPeriodEndFromDays,
   umsatzabstimmungMonthsFromBlob,
+  buchhaltungsExportOverride,
   type CockpitSignal,
   type CockpitSourceId,
 } from './import-cockpit';
 import { adyenDaysFromBlob } from './adyen-abstimmung';
+import {
+  deriveExportStatus,
+  exportsForMonth,
+  latestExportForMonth,
+  latestRelevantExportMonth,
+} from './buchhaltungs-export';
+import { normalizeTagesabschlussBlob } from './tagesabschluss';
 import { format, addDays } from 'date-fns';
 
 export interface CockpitFetchContext {
@@ -404,6 +412,35 @@ function adyenSignal(ctx: CockpitFetchContext): CockpitSignal {
   }
 }
 
+/**
+ * Buchhaltungs-Export (§11): tagesabschluss_v1-Blob (localStorage, mandanten-
+ * geprefixt) — read-only, KEIN Zugriff über die Save-Schicht. Bezugsmonat =
+ * jüngster Monat mit Tagesabschluss-Aktivität; Status offen/bereit/exportiert/
+ * veraltet wird über `buchhaltungsExportOverride` hart auf den Cockpit-Status
+ * abgebildet (Frische-Schwellen greifen hier bewusst nicht).
+ */
+function buchhaltungsExportSignal(ctx: CockpitFetchContext): CockpitSignal {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ctx.tenantKey('tagesabschluss_v1')) || 'null') as unknown;
+    const blob = normalizeTagesabschlussBlob(raw);
+    const monthKey = latestRelevantExportMonth(blob);
+    if (!monthKey) return EMPTY;
+    const status = deriveExportStatus(blob, monthKey);
+    const latest = latestExportForMonth(blob, monthKey);
+    return {
+      latestDataDate: monthKey,
+      dataUntil: monthKey,
+      recordCount: exportsForMonth(blob, monthKey).length,
+      lastImport: latest
+        ? { at: latest.exportedAt, status: 'success', by: latest.exportedBy }
+        : null,
+      statusOverride: buchhaltungsExportOverride(status, monthKey, latest?.version ?? null),
+    };
+  } catch {
+    return EMPTY;
+  }
+}
+
 /** Jahresbudget: budget_v1-Blob (localStorage, mandantengeprefixt) — read-only, NIEMALS loadBudgetYear. */
 function jahresbudgetSignal(ctx: CockpitFetchContext): CockpitSignal {
   try {
@@ -452,6 +489,7 @@ export async function fetchCockpitSignals(
     { id: 'umsatzabstimmung', run: () => umsatzabstimmungSignal(ctx) },
     { id: 'adyen', run: () => adyenSignal(ctx) },
     { id: 'monatsabschluss', run: () => monatsabschlussSignal(ctx) },
+    { id: 'buchhaltungs_export', run: () => buchhaltungsExportSignal(ctx) },
     { id: 'jahresbudget', run: () => jahresbudgetSignal(ctx) },
   ];
 

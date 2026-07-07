@@ -1,0 +1,246 @@
+Baue auf der Seite /tagesabschluesse einen professionellen Buchhaltungs-Export-Assistenten.
+
+Ziel:
+Aus den bestätigten Tagesabschlüssen soll automatisch ein Buchhaltungs-CSV für die Finanzbuchhaltung erstellt werden. Der Export darf ausschliesslich aus vollständig abgeschlossenen Tagesabschlüssen erzeugt werden. Vor dem Export soll eine Plausibilitätsprüfung und eine Vorschau erfolgen.
+
+## 1. Neuer Bereich
+
+Ergänze auf /tagesabschluesse einen neuen Abschnitt:
+
+"Buchhaltungs-Export"
+
+Position:
+Unterhalb der Monatsübersicht.
+
+## 2. Export-Voraussetzungen
+
+Der Export darf nur aktiviert werden wenn:
+
+✓ Anfangsbestand vorhanden
+✓ Alle Tage des Monats abgeschlossen
+✓ Keine offenen Tage
+✓ Keine unbegründeten Differenzen
+✓ Kassensaldo plausibel
+✓ Z-Berichte vollständig
+✓ Adyen-Abgleiche geprüft oder begründet
+
+Falls etwas fehlt:
+
+Export deaktivieren.
+
+Stattdessen anzeigen:
+
+"Folgende Punkte müssen vor dem Export erledigt werden"
+
+mit einer Checkliste.
+
+## 3. Monatsprüfung
+
+Vor jedem Export automatisch prüfen:
+
+- Umsatz Total
+- Kreditkarten Total
+- Debitoren Total
+- Barausgaben Total
+- Verkaufte Gutscheine
+- Eingelöste Gutscheine
+- Einzahlung Bank
+- Kassensaldo Anfang
+- Kassensaldo Ende
+
+Alle Totale anzeigen.
+
+## 4. Export-Vorschau
+
+Vor dem eigentlichen Export:
+
+Buchungsvorschau anzeigen.
+
+Bereiche:
+
+Umsatz
+
+Kreditkarten
+
+TWINT
+
+Debitoren
+
+Verkaufte Gutscheine
+
+Eingelöste Gutscheine
+
+Barausgaben
+
+Bankeinzahlungen
+
+MwSt
+
+Netto
+
+Gesamt Buchungszeilen
+
+Noch keine Datei erzeugen.
+
+## 5. Barausgaben
+
+Wichtig:
+
+In der Übersicht werden Barausgaben weiterhin als Total gezeigt.
+
+Im Export jedoch:
+
+jede Barausgabe einzeln.
+
+Mit:
+
+- Datum
+- Konto
+- Gegenkonto
+- Betrag
+- Beschreibung
+- Kommentar
+- Belegnummer
+- MWST-Code
+
+## 6. Exportformat
+
+CSV analog der bestehenden Buchhaltungsdatei (Tabelle2).
+
+Alle benötigten Spalten erzeugen:
+
+- Beleg
+- Datum
+- Konto
+- Gegenkonto
+- Soll/Haben
+- Gruppe
+- Steuercode
+- Nettobetrag
+- Steuerbetrag
+- Betrag
+- Text
+- Zahlungsart
+- Betrieb
+- Kostenstelle
+
+Die Struktur soll möglichst identisch zur bestehenden Excel-Vorlage sein.
+
+## 7. Export-Historie
+
+Nach jedem Export speichern:
+
+- Monat
+- Benutzer
+- Datum
+- Uhrzeit
+- Anzahl Buchungen
+- Kassensaldo Ende
+- Export-Version
+
+Historie unterhalb anzeigen.
+
+Mehrfacher Export desselben Monats möglich.
+
+Versionierung:
+
+Export 1
+
+Export 2
+
+Export 3
+
+...
+
+## 8. Export-Protokoll
+
+Jeder Export erhält automatisch:
+
+- Export-ID
+- Zeitstempel
+- Benutzer
+- Monat
+
+Im Protokoll anzeigen.
+
+## 9. PDF-Monatsabschluss
+
+Zusätzlich zum CSV:
+
+Button:
+
+"Monatsabschluss PDF"
+
+Das PDF soll enthalten:
+
+- Monat
+- Anfangsbestand
+- Endbestand
+- Umsatz
+- Kreditkarten
+- Debitoren
+- Barausgaben
+- Verkaufte Gutscheine
+- Eingelöste Gutscheine
+- Bankeinzahlungen
+- Cash-Differenzen
+- Adyen-Differenzen
+- Kommentare
+- Begründete Differenzen
+- Offene Punkte (falls vorhanden)
+
+Mit Firmenlogo und professionellem Layout.
+
+## 10. Export sperren
+
+Wird nach einem Export ein bestätigter Tagesabschluss wieder geöffnet oder geändert,
+
+soll der Monatsstatus automatisch wechseln zu:
+
+"Export veraltet"
+
+und deutlich anzeigen:
+
+"Der Monat wurde nach dem letzten Export geändert. Bitte neuen Export erstellen."
+
+## 11. Import-Cockpit
+
+Neue Kontrollaufgabe ergänzen:
+
+"Buchhaltungs-Export"
+
+Status:
+
+- offen
+- bereit
+- exportiert
+- veraltet
+
+Verlinkung direkt zum Export-Assistenten.
+
+## 12. Keine Migration
+
+Bestehende Datenstrukturen möglichst weiterverwenden.
+
+Nur wenn zwingend notwendig eine minimale Persistenz ergänzen und begründen.
+
+## 13. Tests
+
+Ergänzen:
+
+- Export nur bei vollständigem Monat
+- Checkliste funktioniert
+- Vorschau berechnet Totale korrekt
+- Barausgaben werden einzeln exportiert
+- Export-Historie speichert Versionen
+- Export veraltet nach Änderung
+- PDF erzeugbar
+- Kontrollaufgabe im Import-Cockpit funktioniert
+
+Danach bitte ausführen:
+
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Export Tests
+- PDF Tests
+- Import-Cockpit Tests

@@ -380,11 +380,11 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     for (const s of COCKPIT_SOURCES) expect(TAB_CATEGORY_LABEL[s.tabCategory]).toBeTruthy();
   });
 
-  it('10 Datenimporte + 7 Kontrollen = 17 Quellen', () => {
+  it('10 Datenimporte + 8 Kontrollen = 18 Quellen', () => {
     const imports = COCKPIT_SOURCES.filter((s) => s.section === 'import');
     const controls = COCKPIT_SOURCES.filter((s) => s.section === 'control');
     expect(imports).toHaveLength(10);
-    expect(controls).toHaveLength(7);
+    expect(controls).toHaveLength(8);
   });
 
   it('Adyen ist ein monatlicher Datei-Upload-Import mit Route zu den Tagesabschlüssen', () => {

@@ -44,3 +44,14 @@ missing the directive on line 1, not for an env problem.
 Vite dev server workflow is running (it holds a big chunk of container RAM). Even TWO
 test files in one invocation can die then. Options: run the suite while the workflow is
 stopped, or run affected files ONE per invocation — both work reliably.
+
+## `tsc --noEmit` itself now OOMs too (2026-07)
+`npx tsc -p tsconfig.app.json --noEmit` is ALSO OOM-killed silently (exit -1, no
+output) even with `NODE_OPTIONS=--max-old-space-size=12288` while the dev workflow
+runs. Don't burn attempts on it.
+
+**How to apply:** use the workspace LSP diagnostics as the type gate instead
+(`getLatestLspDiagnostics` in code_execution — call without args for a global check).
+It reports the same tsserver errors without spawning a second compiler process.
+Batched `vitest run` of the affected files (`--pool=forks --maxWorkers=1`) still works
+fine for ~12 files per invocation.

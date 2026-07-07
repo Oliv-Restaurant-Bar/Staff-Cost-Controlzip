@@ -12,6 +12,7 @@ import {
   normalizeDataDate,
   formatCockpitDate,
   umsatzabstimmungMonthsFromBlob,
+  buchhaltungsExportOverride,
   rowMatchesFilters,
   matchesCockpitSearch,
   EMPTY_COCKPIT_FILTER,
@@ -621,6 +622,67 @@ describe('umsatzabstimmungMonthsFromBlob', () => {
   });
 
   it('ohne gepflegte Monate (leeres Signal) → never', () => {
+    const r = computeSourceStatus(def({ interval: 'monthly' }), { latestDataDate: null }, NOW);
+    expect(r.status).toBe('never');
+  });
+});
+
+// ── Buchhaltungs-Export-Kontrollaufgabe (§11) ────────────────────────────────
+
+describe('Buchhaltungs-Export-Kontrollaufgabe', () => {
+  it('COCKPIT_SOURCES enthält die Kontrollaufgabe mit Route zum Export-Assistenten', () => {
+    const d = COCKPIT_SOURCES.find((s) => s.id === 'buchhaltungs_export');
+    expect(d).toBeTruthy();
+    expect(d!.section).toBe('control');
+    expect(d!.importType).toBe('control');
+    expect(d!.interval).toBe('monthly');
+    expect(d!.route).toBe('/tagesabschluesse');
+    expect(d!.checkable).toBe(true);
+  });
+
+  it('buchhaltungsExportOverride bildet die 4 Fachstatus auf Cockpit-Status ab', () => {
+    expect(buchhaltungsExportOverride('exportiert', '2026-06', 2)).toEqual({
+      status: 'current',
+      reason: 'Buchhaltungs-Export 2026-06 aktuell (Export 2).',
+    });
+    expect(buchhaltungsExportOverride('veraltet', '2026-06', 1).status).toBe('overdue');
+    expect(buchhaltungsExportOverride('veraltet', '2026-06', 1).reason).toContain(
+      'nach dem letzten Export geändert',
+    );
+    expect(buchhaltungsExportOverride('bereit', '2026-06', null).status).toBe('due_soon');
+    expect(buchhaltungsExportOverride('offen', '2026-06', null).status).toBe('due_soon');
+  });
+
+  it('computeSourceStatus respektiert den statusOverride (gewinnt über Frische)', () => {
+    // Monat weit in der Vergangenheit — Frische-Logik würde overdue sagen,
+    // Override "current" gewinnt trotzdem (Export ist aktuell).
+    const r = computeSourceStatus(
+      def({ interval: 'monthly' }),
+      {
+        latestDataDate: '2025-01',
+        statusOverride: { status: 'current', reason: 'Buchhaltungs-Export 2025-01 aktuell (Export 1).' },
+      },
+      NOW,
+    );
+    expect(r.status).toBe('current');
+    expect(r.reason).toBe('Buchhaltungs-Export 2025-01 aktuell (Export 1).');
+    expect(r.latestDataDate).toBe('2025-01');
+    expect(r.failed).toBe(false);
+
+    // veraltet → overdue, unabhängig vom Datum.
+    const r2 = computeSourceStatus(
+      def({ interval: 'monthly' }),
+      {
+        latestDataDate: '2026-07',
+        statusOverride: { status: 'overdue', reason: 'Der Monat 2026-07 wurde nach dem letzten Export geändert. Bitte neuen Export erstellen.' },
+      },
+      NOW,
+    );
+    expect(r2.status).toBe('overdue');
+    expect(checklistStateFromStatus(r2.status)).toBe('overdue');
+  });
+
+  it('leeres Signal ohne Override bleibt never (nie Zeitstempel erfinden)', () => {
     const r = computeSourceStatus(def({ interval: 'monthly' }), { latestDataDate: null }, NOW);
     expect(r.status).toBe('never');
   });
