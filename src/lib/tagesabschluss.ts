@@ -231,6 +231,76 @@ export interface KassensaldoAnfangsbestand {
   updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
 }
 
+// ── Abschluss-/Sperrmechanismus (Tages- + Monatsabschluss) ───────────────────
+
+/** Status eines definitiven Tagesabschlusses (Closure-Record). */
+export type DayClosureStatus =
+  | 'abgeschlossen'
+  | 'abgeschlossen_mit_differenz'
+  | 'wieder_geoeffnet';
+
+/** Audit-Eintrag der Abschluss-Historie eines Tages. */
+export interface ClosureHistoryEntry {
+  at: string; // ISO
+  by: string; // Benutzer (E-Mail)
+  action: 'abschluss' | 'wiederoeffnung';
+  /** Resultierender Status (bei `abschluss`). */
+  status?: DayClosureStatus;
+  /** Pflicht-Grund (bei `wiederoeffnung`). */
+  reason?: string;
+}
+
+/**
+ * Definitiver Tagesabschluss. WICHTIG: Records werden NIE gelöscht
+ * (merge-on-save würde gelöschte Keys von der Gegenseite wiederbeleben) —
+ * Wiederöffnen setzt `status: 'wieder_geoeffnet'` mit jüngerem updatedAt.
+ */
+export interface DayClosure {
+  status: DayClosureStatus;
+  closedAt: string; // ISO des (letzten) Abschlusses
+  closedBy: string;
+  /**
+   * Beim Abschluss FIXIERTER Kassensaldo (Soll) des Tages — Anzeige-/
+   * Audit-Anker. Die Saldo-Kette rechnet IMMER mit den berechneten Werten
+   * weiter; weicht der berechnete Saldo später vom fixierten ab
+   * (Alt-Tag-Änderung), wird der Tag zur Überprüfung markiert (needsReview).
+   * null = Saldo war beim Abschluss unbekannt (sollte canCloseDay verhindern).
+   */
+  fixedKassensaldo: number | null;
+  reopenedAt?: string;
+  reopenedBy?: string;
+  reopenReason?: string;
+  updatedAt: string; // ISO — merge-on-save (jüngster gewinnt, Historie = Union)
+  history: ClosureHistoryEntry[];
+}
+
+/** Beim Monatsabschluss eingefrorene Monats-Kennzahlen. */
+export interface MonthClosureSnapshot {
+  anfangsbestand: number | null;
+  endbestand: number | null;
+  umsatzTotal: number;
+  bargeldTotal: number;
+  barausgabenTotal: number;
+  bankeinzahlungenTotal: number;
+  cashDiffTotal: number;
+  begruendeteDifferenzen: number;
+}
+
+/**
+ * Monatsabschluss. Wiederöffnen entfernt den Status NIE per Key-Löschung
+ * (merge-Resurrection), sondern setzt `status: 'wieder_geoeffnet'`.
+ * Die Tagesabschlüsse bleiben davon unberührt.
+ */
+export interface MonthClosure {
+  status: 'abgeschlossen' | 'wieder_geoeffnet';
+  closedAt: string;
+  closedBy: string;
+  snapshot: MonthClosureSnapshot;
+  reopenedAt?: string;
+  reopenedBy?: string;
+  updatedAt: string; // ISO — merge-on-save (jüngster gewinnt)
+}
+
 export interface TagesabschlussBlob {
   /** Manuelle Tageswerte, Key = yyyy-MM-dd. */
   days: Record<string, TagesabschlussManualDay>;
@@ -245,6 +315,10 @@ export interface TagesabschlussBlob {
   cashDiffReasons: Record<string, CashDiffReasonEntry>;
   /** Kassensaldo-Anfangsbestand je Monat, Key = yyyy-MM (Anker der Saldo-Kette). */
   anfangsbestand: Record<string, KassensaldoAnfangsbestand>;
+  /** Definitive Tagesabschlüsse (Sperr-Records), Key = yyyy-MM-dd. */
+  abschluesse: Record<string, DayClosure>;
+  /** Monatsabschlüsse, Key = yyyy-MM. */
+  monatsabschluesse: Record<string, MonthClosure>;
   /** Export-Einstellungen (null = noch nie konfiguriert). */
   exportSettings: TagesabschlussExportSettings | null;
 }
@@ -252,7 +326,8 @@ export interface TagesabschlussBlob {
 export function emptyTagesabschlussBlob(): TagesabschlussBlob {
   return {
     days: {}, expenses: {}, overrides: {}, comments: {},
-    cashDiffReasons: {}, anfangsbestand: {}, exportSettings: null,
+    cashDiffReasons: {}, anfangsbestand: {}, abschluesse: {}, monatsabschluesse: {},
+    exportSettings: null,
   };
 }
 
@@ -294,6 +369,48 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
       };
     }
   }
+  // Tagesabschlüsse: nur strukturell gültige Records übernehmen.
+  const abschluesse: TagesabschlussBlob['abschluesse'] = {};
+  if (isObj(o.abschluesse)) {
+    for (const [date, entry] of Object.entries(o.abschluesse as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const e = entry as Partial<DayClosure>;
+      if (e.status !== 'abgeschlossen' && e.status !== 'abgeschlossen_mit_differenz' && e.status !== 'wieder_geoeffnet') continue;
+      abschluesse[date] = {
+        status: e.status,
+        closedAt: typeof e.closedAt === 'string' ? e.closedAt : '',
+        closedBy: typeof e.closedBy === 'string' ? e.closedBy : '',
+        fixedKassensaldo:
+          typeof e.fixedKassensaldo === 'number' && Number.isFinite(e.fixedKassensaldo)
+            ? e.fixedKassensaldo : null,
+        ...(typeof e.reopenedAt === 'string' ? { reopenedAt: e.reopenedAt } : {}),
+        ...(typeof e.reopenedBy === 'string' ? { reopenedBy: e.reopenedBy } : {}),
+        ...(typeof e.reopenReason === 'string' ? { reopenReason: e.reopenReason } : {}),
+        updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
+        history: Array.isArray(e.history)
+          ? (e.history.filter(h => !!h && typeof h === 'object') as ClosureHistoryEntry[])
+          : [],
+      };
+    }
+  }
+  const monatsabschluesse: TagesabschlussBlob['monatsabschluesse'] = {};
+  if (isObj(o.monatsabschluesse)) {
+    for (const [monthKey, entry] of Object.entries(o.monatsabschluesse as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const e = entry as Partial<MonthClosure>;
+      if (e.status !== 'abgeschlossen' && e.status !== 'wieder_geoeffnet') continue;
+      if (!e.snapshot || typeof e.snapshot !== 'object' || Array.isArray(e.snapshot)) continue;
+      monatsabschluesse[monthKey] = {
+        status: e.status,
+        closedAt: typeof e.closedAt === 'string' ? e.closedAt : '',
+        closedBy: typeof e.closedBy === 'string' ? e.closedBy : '',
+        snapshot: e.snapshot as MonthClosureSnapshot,
+        ...(typeof e.reopenedAt === 'string' ? { reopenedAt: e.reopenedAt } : {}),
+        ...(typeof e.reopenedBy === 'string' ? { reopenedBy: e.reopenedBy } : {}),
+        updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
+      };
+    }
+  }
   return {
     days:      isObj(o.days)      ? (o.days      as TagesabschlussBlob['days'])      : {},
     expenses,
@@ -301,6 +418,8 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
     comments:  isObj(o.comments)  ? (o.comments  as TagesabschlussBlob['comments'])  : {},
     cashDiffReasons,
     anfangsbestand,
+    abschluesse,
+    monatsabschluesse,
     exportSettings:
       isObj(o.exportSettings) ? (o.exportSettings as unknown as TagesabschlussExportSettings) : null,
   };
@@ -413,7 +532,16 @@ export interface DayCell {
   comment?: string;
 }
 
-export type TagesabschlussStatus = 'fehlt' | 'offen' | 'bestaetigt' | 'bestaetigt_mit_differenz';
+export type TagesabschlussStatus =
+  | 'fehlt'
+  | 'offen'
+  | 'in_bearbeitung'
+  | 'abgeschlossen'
+  | 'abgeschlossen_mit_differenz'
+  | 'wieder_geoeffnet';
+
+/** Toleranz fixierter vs. berechneter Kassensaldo (Review-Marker). */
+export const KASSENSALDO_REVIEW_TOLERANCE = 0.005;
 
 export interface TagesabschlussRow {
   date: string; // yyyy-MM-dd
@@ -472,6 +600,18 @@ export interface TagesabschlussRow {
   adyenDiffStatus: AdyenDiffStatus | null;
   status: TagesabschlussStatus;
   confirmation?: DayConfirmation;
+  /** Abschluss-Record des Tages (auch nach Wiederöffnung vorhanden — Audit). */
+  closure?: DayClosure;
+  /** Tag ist definitiv abgeschlossen → alle Wertfelder gesperrt. */
+  locked: boolean;
+  /** Beim Abschluss fixierter Kassensaldo (Anzeige-Anker bei gesperrten Tagen). */
+  fixedKassensaldo: number | null;
+  /**
+   * Der aktuell BERECHNETE Kassensaldo weicht vom beim Abschluss fixierten ab
+   * (Alt-Tag-Änderung) → „Kassensaldo aufgrund Änderung an früherem Tag
+   * überprüfen." Rein abgeleitet, kein persistiertes Flag.
+   */
+  needsReview: boolean;
 }
 
 export interface TagesabschlussTotals {
@@ -496,6 +636,18 @@ export interface TagesabschlussTotals {
   daysConfirmed: number;
   /** Tage mit Z-Bericht, aber noch ohne (vollständige) Bestätigung. */
   daysOpen: number;
+  /** Tage mit Status „In Bearbeitung". */
+  daysInBearbeitung: number;
+  /** Definitiv abgeschlossene Tage OHNE Differenz. */
+  daysAbgeschlossen: number;
+  /** Definitiv abgeschlossene Tage MIT (begründeter) Differenz. */
+  daysAbgeschlossenMitDifferenz: number;
+  /** Wieder geöffnete Tage. */
+  daysWiederGeoeffnet: number;
+  /** Abgeschlossene Tage mit Review-Marker (Saldo-Abweichung durch Alt-Tag-Änderung). */
+  daysNeedsReview: number;
+  /** Summe der Cash-Differenzen (nur Tage mit erfasster Differenz). */
+  cashDiffTotal: number;
   /** Tage mit nicht-grüner Adyen- ODER Cash-Differenz. */
   daysWithDiff: number;
   /** Tage mit nicht-grüner Cash-Differenz. */
@@ -629,9 +781,22 @@ export function buildTagesabschlussRows(
     }
     const kassensaldoSoll = saldo;
 
+    // Abschluss-Record: gesperrte Tage zeigen den beim Abschluss FIXIERTEN
+    // Saldo (Anzeige-/Audit-Anker); die Kette rechnet IMMER mit dem
+    // berechneten Wert weiter — so wird eine Alt-Tag-Änderung als Abweichung
+    // fixiert↔berechnet sichtbar (needsReview), auch über Monatsgrenzen.
+    const closure = blob.abschluesse[date];
+    const locked = !!closure && closure.status !== 'wieder_geoeffnet';
+    const fixedKassensaldo = closure?.fixedKassensaldo ?? null;
+    const needsReview = locked
+      && fixedKassensaldo !== null
+      && kassensaldoSoll !== null
+      && Math.abs(fixedKassensaldo - kassensaldoSoll) > KASSENSALDO_REVIEW_TOLERANCE;
+
     const cashIst = cells.bestandKasse.value;
-    const cashDiff = cashIst !== null && kassensaldoSoll !== null
-      ? round2(cashIst - kassensaldoSoll)
+    const saldoForDiff = locked && fixedKassensaldo !== null ? fixedKassensaldo : kassensaldoSoll;
+    const cashDiff = cashIst !== null && saldoForDiff !== null
+      ? round2(cashIst - saldoForDiff)
       : null;
     const cashDiffStatus = cashDiff !== null ? adyenDiffStatus(cashDiff) : null;
 
@@ -642,21 +807,31 @@ export function buildTagesabschlussRows(
     const cashDiffBegruendet = cashDiffReasons.length > 0 || !!cashDiffNote;
 
     const confirmation = confirmations[date];
-    // Statuslogik: „Abgeschlossen" nur, wenn der Tag wirklich sauber ist:
-    // Tagesbestätigung (impliziert geklärte/begründete Adyen-Differenzen via
-    // canConfirmDay) + Barbestand gezählt + Cash Ist erfasst + Cash-Differenz
-    // grün. Ist die Differenz NICHT grün, aber begründet (Grund oder Notiz):
-    // „Abgeschlossen mit Differenz". Unbegründete Differenzen bleiben „offen".
-    const baseClosed = confirmation?.confirmed === true
-      && confirmation?.cashCounted === true
-      && cashIst !== null;
-    const status: TagesabschlussStatus = !closing
-      ? 'fehlt'
-      : baseClosed && cashDiffStatus === 'ok'
-        ? 'bestaetigt'
-        : baseClosed && cashDiffStatus !== null && cashDiffBegruendet
-          ? 'bestaetigt_mit_differenz'
-          : 'offen';
+    // Statuslogik (Abschluss-Mechanismus):
+    // 1. Definitiver Abschluss-Record gewinnt: abgeschlossen /
+    //    abgeschlossen_mit_differenz (gesperrt) bzw. wieder_geoeffnet.
+    // 2. Ohne Z-Bericht: fehlt.
+    // 3. Sonst „in Bearbeitung", sobald irgendein Arbeitsstand existiert
+    //    (Bestätigungs-Häkchen, Cash Ist, Einzahlung Bank, Barausgaben,
+    //    Korrektur, Differenz-Begründung) — Alt-Tage mit Häkchen OHNE
+    //    Closure-Record werden bewusst NICHT auto-migriert.
+    // 4. Sonst: offen.
+    const hasProgress = confirmation?.confirmed === true
+      || confirmation?.cashCounted === true
+      || cashIst !== null
+      || cells.einzahlungBank.value !== null
+      || expenses.length > 0
+      || cashDiffBegruendet
+      || (Object.values(cells) as DayCell[]).some(c => c.source === 'corrected' || c.source === 'manual');
+    const status: TagesabschlussStatus = closure && locked
+      ? closure.status as TagesabschlussStatus
+      : closure && closure.status === 'wieder_geoeffnet'
+        ? 'wieder_geoeffnet'
+        : !closing
+          ? 'fehlt'
+          : hasProgress
+            ? 'in_bearbeitung'
+            : 'offen';
 
     // Adyen-Vergleich (nur ANZEIGE): identische Rechenbasis wie die
     // Adyen-Abgleich-Section — buildDayComparison mit dem Adyen-Blob.
@@ -700,6 +875,10 @@ export function buildTagesabschlussRows(
       adyenDiffStatus: adyenDiffSt,
       status,
       ...(confirmation ? { confirmation } : {}),
+      ...(closure ? { closure } : {}),
+      locked,
+      fixedKassensaldo,
+      needsReview,
     });
   }
 
@@ -725,9 +904,15 @@ export function buildTagesabschlussRows(
     letzteCashDiffStatus: lastDiffRow?.cashDiffStatus ?? null,
     daysWithZbericht: rows.filter(r => r.hasZbericht).length,
     daysConfirmed: rows.filter(r =>
-      r.status === 'bestaetigt' || r.status === 'bestaetigt_mit_differenz',
+      r.status === 'abgeschlossen' || r.status === 'abgeschlossen_mit_differenz',
     ).length,
     daysOpen: rows.filter(r => r.status === 'offen').length,
+    daysInBearbeitung: rows.filter(r => r.status === 'in_bearbeitung').length,
+    daysAbgeschlossen: rows.filter(r => r.status === 'abgeschlossen').length,
+    daysAbgeschlossenMitDifferenz: rows.filter(r => r.status === 'abgeschlossen_mit_differenz').length,
+    daysWiederGeoeffnet: rows.filter(r => r.status === 'wieder_geoeffnet').length,
+    daysNeedsReview: rows.filter(r => r.needsReview).length,
+    cashDiffTotal: round2(rows.reduce((s, r) => s + (r.cashDiff ?? 0), 0)),
     daysWithDiff: rows.filter(r =>
       (r.adyenDiffStatus !== null && r.adyenDiffStatus !== 'ok')
       || (r.cashDiffStatus !== null && r.cashDiffStatus !== 'ok'),
@@ -762,18 +947,19 @@ export function upsertManualDay(
 ): TagesabschlussBlob {
   const existing = blob.days[date];
   const next: TagesabschlussManualDay = { ...existing, updatedAt: now };
+  const nextRec = next as unknown as Record<string, unknown>;
   for (const [k, v] of Object.entries(patch) as Array<[keyof TagesabschlussManualPatch, unknown]>) {
     if (Array.isArray(v)) {
       // Gutscheinnummern: trimmen, Leereinträge verwerfen; leer → Feld löschen.
       const cleaned = v.map(s => String(s).trim()).filter(s => s !== '');
-      if (cleaned.length === 0) delete (next as Record<string, unknown>)[k];
-      else (next as Record<string, unknown>)[k] = cleaned;
+      if (cleaned.length === 0) delete nextRec[k];
+      else nextRec[k] = cleaned;
       continue;
     }
     if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) {
-      delete (next as Record<string, unknown>)[k];
+      delete nextRec[k];
     } else {
-      (next as Record<string, unknown>)[k] = typeof v === 'string' ? v.trim() : v;
+      nextRec[k] = typeof v === 'string' ? v.trim() : v;
     }
   }
   const days = { ...blob.days };
@@ -1008,6 +1194,24 @@ export function mergeTagesabschlussBlobs(
     if (!r || newer(entry.updatedAt, r.updatedAt)) anfangsbestand[monthKey] = entry;
   }
 
+  // Tagesabschlüsse: Skalar-Felder gewinnt der jüngere Stand, die Historie
+  // ist ein Audit-Trail und wird VEREINIGT (dedupliziert nach at+action+by,
+  // chronologisch sortiert) — winner-takes-all würde Einträge eines anderen
+  // Geräts still verwerfen.
+  const abschluesse: TagesabschlussBlob['abschluesse'] = { ...remote.abschluesse };
+  for (const [date, entry] of Object.entries(local.abschluesse)) {
+    const r = abschluesse[date];
+    if (!r) { abschluesse[date] = entry; continue; }
+    const winner = newer(entry.updatedAt, r.updatedAt) ? entry : r;
+    abschluesse[date] = { ...winner, history: mergeClosureHistories(entry.history, r.history) };
+  }
+
+  const monatsabschluesse: TagesabschlussBlob['monatsabschluesse'] = { ...remote.monatsabschluesse };
+  for (const [monthKey, entry] of Object.entries(local.monatsabschluesse)) {
+    const r = monatsabschluesse[monthKey];
+    if (!r || newer(entry.updatedAt, r.updatedAt)) monatsabschluesse[monthKey] = entry;
+  }
+
   const exportSettings =
     local.exportSettings && remote.exportSettings
       ? (newer(local.exportSettings.updatedAt, remote.exportSettings.updatedAt)
@@ -1015,7 +1219,214 @@ export function mergeTagesabschlussBlobs(
           : remote.exportSettings)
       : local.exportSettings ?? remote.exportSettings;
 
-  return { days, expenses, overrides, comments, cashDiffReasons, anfangsbestand, exportSettings };
+  return {
+    days, expenses, overrides, comments, cashDiffReasons, anfangsbestand,
+    abschluesse, monatsabschluesse, exportSettings,
+  };
+}
+
+/** Union zweier Abschluss-Historien, dedupliziert nach (at, action, by), chronologisch. */
+export function mergeClosureHistories(
+  a: readonly ClosureHistoryEntry[],
+  b: readonly ClosureHistoryEntry[],
+): ClosureHistoryEntry[] {
+  const byKey = new Map<string, ClosureHistoryEntry>();
+  for (const h of [...a, ...b]) {
+    byKey.set(`${h.at}|${h.action}|${h.by}`, h);
+  }
+  return [...byKey.values()].sort((x, y) => x.at.localeCompare(y.at));
+}
+
+// ── Tages-/Monatsabschluss (rein, immutabel) ─────────────────────────────────
+
+export interface CloseDayCheck {
+  ok: boolean;
+  /** Menschentaugliche Blocker-Liste (leer bei ok). */
+  blockers: string[];
+}
+
+/**
+ * Vorbedingungen für „Tagesabschluss abschließen":
+ * Z-Bericht + Tagesbestätigung (Adyen geprüft/begründet via canConfirmDay)
+ * + Barbestand gezählt + Cash Ist erfasst + Kassensaldo bekannt +
+ * Cash-Differenz grün ODER begründet. Bereits gesperrte Tage: nicht erneut.
+ */
+export function canCloseDay(row: TagesabschlussRow): CloseDayCheck {
+  const blockers: string[] = [];
+  if (row.locked) blockers.push('Tag ist bereits abgeschlossen.');
+  if (!row.hasZbericht) blockers.push('Kein Z-Bericht vorhanden.');
+  if (row.confirmation?.confirmed !== true) {
+    blockers.push('Tagesbestätigung fehlt (Adyen-Differenzen prüfen/begründen).');
+  }
+  if (row.confirmation?.cashCounted !== true) blockers.push('Barbestand nicht als gezählt bestätigt.');
+  if (row.cashIst === null) blockers.push('Cash Ist (gezählter Kassenbestand) fehlt.');
+  if (row.kassensaldoSoll === null) blockers.push('Kassensaldo unbekannt (Anfangsbestand fehlt).');
+  if (row.cashDiff !== null && row.cashDiffStatus !== 'ok' && !row.cashDiffBegruendet) {
+    blockers.push('Kassendifferenz weder grün noch begründet.');
+  }
+  return { ok: blockers.length === 0, blockers };
+}
+
+/**
+ * Schließt einen Tag definitiv ab: Status (mit/ohne Differenz), Benutzer,
+ * Zeitstempel, fixierter Kassensaldo, Historie-Eintrag. Wirft bei verletzten
+ * Vorbedingungen (canCloseDay) — kein stiller Teil-Abschluss.
+ */
+export function closeDay(
+  blob: TagesabschlussBlob,
+  row: TagesabschlussRow,
+  user: string,
+  now: string,
+): TagesabschlussBlob {
+  const check = canCloseDay(row);
+  if (!check.ok) {
+    throw new Error(`Tagesabschluss ${row.date} nicht möglich: ${check.blockers.join(' ')}`);
+  }
+  const status: DayClosureStatus =
+    row.cashDiffStatus === 'ok' ? 'abgeschlossen' : 'abgeschlossen_mit_differenz';
+  const prev = blob.abschluesse[row.date];
+  const entry: ClosureHistoryEntry = { at: now, by: user, action: 'abschluss', status };
+  const next: DayClosure = {
+    status,
+    closedAt: now,
+    closedBy: user,
+    fixedKassensaldo: row.kassensaldoSoll,
+    updatedAt: now,
+    history: mergeClosureHistories(prev?.history ?? [], [entry]),
+  };
+  return { ...blob, abschluesse: { ...blob.abschluesse, [row.date]: next } };
+}
+
+/**
+ * Öffnet einen abgeschlossenen Tag wieder (nur Admin — UI-seitig zu gaten).
+ * Grund ist PFLICHT. Der Record bleibt bestehen (Status-Flag statt Löschung —
+ * merge-on-save würde gelöschte Keys wiederbeleben); Historie wächst.
+ */
+export function reopenDay(
+  blob: TagesabschlussBlob,
+  date: string,
+  user: string,
+  reason: string,
+  now: string,
+): TagesabschlussBlob {
+  const prev = blob.abschluesse[date];
+  if (!prev || prev.status === 'wieder_geoeffnet') {
+    throw new Error(`Tag ${date} ist nicht abgeschlossen.`);
+  }
+  const trimmed = reason.trim();
+  if (trimmed === '') throw new Error('Wiederöffnungsgrund ist Pflicht.');
+  const entry: ClosureHistoryEntry = { at: now, by: user, action: 'wiederoeffnung', reason: trimmed };
+  const next: DayClosure = {
+    ...prev,
+    status: 'wieder_geoeffnet',
+    reopenedAt: now,
+    reopenedBy: user,
+    reopenReason: trimmed,
+    updatedAt: now,
+    history: mergeClosureHistories(prev.history, [entry]),
+  };
+  return { ...blob, abschluesse: { ...blob.abschluesse, [date]: next } };
+}
+
+/** Aktiver Monatsabschluss (wieder geöffnete zählen nicht). */
+export function isMonthClosed(blob: TagesabschlussBlob, monthKey: string): boolean {
+  return blob.monatsabschluesse[monthKey]?.status === 'abgeschlossen';
+}
+
+export interface CloseMonthCheck {
+  ok: boolean;
+  blockers: string[];
+}
+
+/**
+ * Monatsabschluss möglich, wenn JEDER Tag mit Z-Bericht definitiv
+ * abgeschlossen ist (kein offener/in Bearbeitung/wieder geöffneter Tag)
+ * und mindestens ein Tag existiert.
+ */
+export function canCloseMonth(month: TagesabschlussMonth, alreadyClosed: boolean): CloseMonthCheck {
+  const blockers: string[] = [];
+  if (alreadyClosed) blockers.push('Monat ist bereits abgeschlossen.');
+  if (month.totals.daysWithZbericht === 0) blockers.push('Keine Tagesabschlüsse (Z-Berichte) im Monat.');
+  const notClosed = month.rows.filter(r =>
+    r.hasZbericht && r.status !== 'abgeschlossen' && r.status !== 'abgeschlossen_mit_differenz',
+  ).length;
+  if (notClosed > 0) blockers.push(`${notClosed} Tag(e) noch nicht abgeschlossen.`);
+  return { ok: blockers.length === 0, blockers };
+}
+
+/** Eingefrorene Monats-Kennzahlen aus der aktuellen Monatsansicht. */
+export function buildMonthClosureSnapshot(month: TagesabschlussMonth): MonthClosureSnapshot {
+  return {
+    anfangsbestand: month.startSaldo,
+    endbestand: month.endSaldo,
+    umsatzTotal: month.totals.values.umsatz,
+    bargeldTotal: month.totals.bargeldSoll,
+    barausgabenTotal: month.totals.barausgaben,
+    bankeinzahlungenTotal: month.totals.values.einzahlungBank,
+    cashDiffTotal: month.totals.cashDiffTotal,
+    begruendeteDifferenzen: month.totals.daysBegruendet,
+  };
+}
+
+/** Schließt einen Monat ab (Snapshot wird JETZT eingefroren). */
+export function closeMonth(
+  blob: TagesabschlussBlob,
+  monthKey: string,
+  month: TagesabschlussMonth,
+  user: string,
+  now: string,
+): TagesabschlussBlob {
+  const check = canCloseMonth(month, isMonthClosed(blob, monthKey));
+  if (!check.ok) {
+    throw new Error(`Monatsabschluss ${monthKey} nicht möglich: ${check.blockers.join(' ')}`);
+  }
+  const next: MonthClosure = {
+    status: 'abgeschlossen',
+    closedAt: now,
+    closedBy: user,
+    snapshot: buildMonthClosureSnapshot(month),
+    updatedAt: now,
+  };
+  return { ...blob, monatsabschluesse: { ...blob.monatsabschluesse, [monthKey]: next } };
+}
+
+/**
+ * Öffnet einen abgeschlossenen Monat wieder (nur Admin — UI-seitig zu gaten).
+ * Status-Flag statt Key-Löschung (merge-Resurrection); die Tagesabschlüsse
+ * bleiben unberührt.
+ */
+export function reopenMonth(
+  blob: TagesabschlussBlob,
+  monthKey: string,
+  user: string,
+  now: string,
+): TagesabschlussBlob {
+  const prev = blob.monatsabschluesse[monthKey];
+  if (!prev || prev.status !== 'abgeschlossen') {
+    throw new Error(`Monat ${monthKey} ist nicht abgeschlossen.`);
+  }
+  const next: MonthClosure = {
+    ...prev,
+    status: 'wieder_geoeffnet',
+    reopenedAt: now,
+    reopenedBy: user,
+    updatedAt: now,
+  };
+  return { ...blob, monatsabschluesse: { ...blob.monatsabschluesse, [monthKey]: next } };
+}
+
+/**
+ * „Bereit für Buchhaltung": alle Tage mit Z-Bericht definitiv abgeschlossen,
+ * keine offenen/in Bearbeitung/wieder geöffneten Tage, keine unbegründeten
+ * Differenzen.
+ */
+export function readyForBuchhaltung(month: TagesabschlussMonth): boolean {
+  return month.totals.daysWithZbericht > 0
+    && month.totals.daysConfirmed === month.totals.daysWithZbericht
+    && month.totals.daysOpen === 0
+    && month.totals.daysInBearbeitung === 0
+    && month.totals.daysWiederGeoeffnet === 0
+    && month.totals.daysUnbegruendet === 0;
 }
 
 // ── Kassensaldo-Kette über Monatsgrenzen ─────────────────────────────────────

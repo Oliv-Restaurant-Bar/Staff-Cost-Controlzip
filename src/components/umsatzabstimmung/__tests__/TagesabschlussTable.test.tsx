@@ -13,7 +13,9 @@ import { afterEach } from 'vitest';
 import { TagesabschlussTable } from '../TagesabschlussTable';
 import {
   buildTagesabschlussRows,
+  closeDay,
   emptyTagesabschlussBlob,
+  reopenDay,
   setCashDiffReasons,
   upsertExpense,
   upsertManualDay,
@@ -31,9 +33,9 @@ const closing = (date: string): GnDayClosing => ({
   tip: null,
   taxes: [{ rate: '8.1%', net: 925.07, tax: 74.93, gross: 1000 }],
   payments: [
-    { name: 'Bar', amount: 300 },
-    { name: 'Mastercard', amount: 500 },
-    { name: 'TWINT', amount: 200 },
+    { name: 'Bar', amount: 300, count: 1 },
+    { name: 'Mastercard', amount: 500, count: 1 },
+    { name: 'TWINT', amount: 200, count: 1 },
   ],
   accountingLines: [],
   paymentAccounts: [],
@@ -60,7 +62,20 @@ function buildMonth() {
   const confirmations = {
     '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: now },
   };
-  return { ...buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0), blob };
+  return { ...buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0), blob, closings, confirmations };
+}
+
+/** Wie buildMonth, aber der 01.07. ist definitiv abgeschlossen (gesperrt). */
+function buildMonthWithClosedDay() {
+  const base = buildMonth();
+  const row1 = base.rows.find(r => r.date === '2026-07-01')!;
+  const blob = closeDay(base.blob, row1, 'admin@oliv.ch', '2026-07-05T12:00:00.000Z');
+  return {
+    ...buildTagesabschlussRows(2026, 7, base.closings, blob, base.confirmations, null, 0),
+    blob,
+    closings: base.closings,
+    confirmations: base.confirmations,
+  };
 }
 
 describe('TagesabschlussTable', () => {
@@ -122,9 +137,10 @@ describe('TagesabschlussTable', () => {
     const corrected = row2.querySelector('.bg-amber-100');
     expect(corrected?.textContent).toContain('1’050.00');
 
-    // Status-Badges.
-    expect(screen.getByText('Bestätigt')).toBeTruthy();   // 01.07. bestätigt
-    expect(screen.getByText('Offen')).toBeTruthy();       // 02.07. Z-Bericht, unbestätigt
+    // Status-Badges: Arbeitsstand (Bestätigung ODER Korrektur) = „In Bearbeitung".
+    // 01.07. bestätigt + 02.07. korrigiert → beide in Bearbeitung, kein „Offen".
+    expect(screen.getAllByText('In Bearbeitung').length).toBe(2);
+    expect(screen.queryByText('Offen')).toBeNull();
     expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
   });
 
@@ -230,11 +246,19 @@ describe('TagesabschlussTable', () => {
     expect(screen.queryByText(/GS-4712/)).toBeNull();
   });
 
-  it('färbt Zeilen nach Zustand: bestätigt grün, offen rot', () => {
-    const { rows, totals } = buildMonth();
+  it('färbt Zeilen nach Zustand: abgeschlossen grün, offen rot — bestätigt allein ist NICHT grün', () => {
+    const base = buildMonth();
+    // 03.07.: Z-Bericht ohne jeden Arbeitsstand → „offen" (rot).
+    const closings = { ...base.closings, '2026-07-03': closing('2026-07-03') };
+    const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, base.blob, base.confirmations, null, 0);
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    // 01.07. nur bestätigt (in Bearbeitung) → KEIN grüner Tint mehr.
+    expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
+    expect(screen.getByTestId('ta-row-2026-07-03').className).toContain('bg-red-50');
+    cleanup();
+    const closed = buildMonthWithClosedDay();
+    render(<TagesabschlussTable rows={closed.rows} totals={closed.totals} onDayClick={() => {}} />);
     expect(screen.getByTestId('ta-row-2026-07-01').className).toContain('bg-green-50');
-    expect(screen.getByTestId('ta-row-2026-07-02').className).toContain('bg-red-50');
   });
 
   it('markiert die heutige Zeile (data-today)', () => {
@@ -460,5 +484,84 @@ describe('TagesabschlussTable', () => {
     // Totale: Adyen-Summe + Summe der Tages-Differenzen (im selben Total-Feld).
     expect(screen.getByTestId('ta-total-adyen').textContent).toContain('1’390.00');
     expect(screen.getByTestId('ta-total-adyen-diff').textContent).toContain('10.00');
+  });
+
+  describe('Abschluss & Sperrung', () => {
+    it('Abschluss-Button: aktiv nur bei erfüllten Vorbedingungen, klick meldet das Datum', () => {
+      const { rows, totals } = buildMonth();
+      const onCloseDay = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={onCloseDay} />);
+
+      // 01.07.: bestätigt + Barbestand + Cash Ist + Diff grün → aktiv.
+      const btn1 = screen.getByTestId('ta-close-day-2026-07-01') as HTMLButtonElement;
+      expect(btn1.disabled).toBe(false);
+      btn1.click();
+      expect(onCloseDay).toHaveBeenCalledWith('2026-07-01');
+
+      // 02.07.: unbestätigt → deaktiviert, Blocker im title.
+      const btn2 = screen.getByTestId('ta-close-day-2026-07-02') as HTMLButtonElement;
+      expect(btn2.disabled).toBe(true);
+      expect(btn2.getAttribute('title')).toContain('Tagesbestätigung fehlt');
+      btn2.click();
+      expect(onCloseDay).toHaveBeenCalledTimes(1);
+
+      // Tage ohne Z-Bericht haben gar keinen Abschluss-Button.
+      expect(screen.queryByTestId('ta-close-day-2026-07-03')).toBeNull();
+    });
+
+    it('gesperrter Tag: Lock-Icon, Badge „Abgeschlossen", keine Edit-Flächen, kein Abschluss-Button', () => {
+      const { rows, totals } = buildMonthWithClosedDay();
+      const onCloseDay = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} onConfirm={() => {}} onCorrectRechnung={() => {}}
+        onVoucherClick={() => {}} onExpensesClick={() => {}} onCloseDay={onCloseDay} />);
+
+      // Lock-Icon am Datum + grüner Badge mit Abschluss-Info im title.
+      expect(screen.getByTestId('ta-lock-2026-07-01')).toBeTruthy();
+      const badge = screen.getByText('Abgeschlossen');
+      expect(badge.closest('span')?.getAttribute('title')).toContain('admin@oliv.ch');
+
+      // Zeile 01.07.: KEINE Inputs/Checkboxen/Buttons für Edits mehr.
+      const row1 = screen.getByTestId('ta-row-2026-07-01');
+      expect(row1.querySelectorAll('input').length).toBe(0);
+      expect(screen.queryByTestId('ta-close-day-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-expenses-2026-07-01')).toBeNull();
+
+      // Unbeteiligte Zeile 02.07. bleibt editierbar (Inline-Inputs vorhanden).
+      const row2 = screen.getByTestId('ta-row-2026-07-02');
+      expect(row2.querySelectorAll('input').length).toBeGreaterThan(0);
+    });
+
+    it('wieder geöffneter Tag: orange Badge, Edit-Flächen und Abschluss-Button wieder da', () => {
+      const closedState = buildMonthWithClosedDay();
+      const blob = reopenDay(closedState.blob, '2026-07-01', 'admin@oliv.ch', 'Beleg nachtragen', '2026-07-06T08:00:00.000Z');
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, closedState.closings, blob, closedState.confirmations, null, 0);
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={() => {}} />);
+
+      expect(screen.getByText('Wieder geöffnet')).toBeTruthy();
+      const row1 = screen.getByTestId('ta-row-2026-07-01');
+      expect(row1.className).toContain('bg-orange-50');
+      expect(row1.querySelectorAll('input').length).toBeGreaterThan(0);
+      expect(screen.getByTestId('ta-close-day-2026-07-01')).toBeTruthy();
+      expect(screen.queryByTestId('ta-lock-2026-07-01')).toBeNull();
+    });
+
+    it('needsReview: Warn-Icon am Saldo, wenn der fixierte Saldo vom neu berechneten abweicht', () => {
+      const closedState = buildMonthWithClosedDay();
+      // Anfangsbestand nachträglich geändert (0 → 100): berechneter Saldo
+      // weicht vom fixierten (247.50) ab → Überprüfungs-Marker.
+      const { rows, totals } = buildTagesabschlussRows(
+        2026, 7, closedState.closings, closedState.blob, closedState.confirmations, null, 100);
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+
+      expect(rows.find(r => r.date === '2026-07-01')?.needsReview).toBe(true);
+      expect(screen.getByTestId('ta-review-2026-07-01')).toBeTruthy();
+      // Gesperrte Zeile zeigt weiterhin den FIXIERTEN Saldo (247.50), nicht den neuen.
+      expect(screen.getByTestId('ta-saldo-2026-07-01').textContent).toContain('247.50');
+    });
   });
 });

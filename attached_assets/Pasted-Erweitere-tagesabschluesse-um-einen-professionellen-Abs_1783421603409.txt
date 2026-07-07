@@ -1,0 +1,218 @@
+Erweitere /tagesabschluesse um einen professionellen Abschluss- und Sperrmechanismus.
+
+Ziel:
+Ein Tagesabschluss soll erst nach vollständiger Prüfung definitiv abgeschlossen werden können. Nach dem Abschluss werden die Werte eingefroren und bilden die Grundlage für den nächsten Tag sowie später für den Buchhaltungs-Export.
+
+## 1. Neuer Status
+
+Ergänze folgende Status:
+
+- Offen
+- In Bearbeitung
+- Abgeschlossen
+- Abgeschlossen mit Differenz
+- Wieder geöffnet
+
+Status soll jederzeit sichtbar sein.
+
+## 2. Tagesabschluss abschließen
+
+Button:
+
+"Tagesabschluss abschließen"
+
+nur aktiv wenn:
+
+- Z-Bericht vorhanden
+- Adyen geprüft oder begründet
+- Cash Ist vorhanden
+- Kassendifferenz grün ODER begründet
+- Pflichtfelder vollständig
+
+Beim Abschließen:
+
+- Status = Abgeschlossen oder Abgeschlossen mit Differenz
+- Datum/Uhrzeit speichern
+- Benutzer speichern
+- Kassensaldo dieses Tages fixieren
+- Startsaldo des Folgetages automatisch aktualisieren
+
+## 3. Sperrmechanismus
+
+Nach dem Abschluss:
+
+folgende Werte sperren:
+
+- Umsatz
+- KK
+- KK Adyen
+- Debitoren
+- Barausgaben
+- Gutscheine
+- Einzahlung Bank
+- Cash Ist
+
+Keine Bearbeitung mehr möglich.
+
+Anzeige:
+
+Schloss-Icon
+"Abgeschlossen am xx.xx.xxxx von Benutzer"
+
+## 4. Wieder öffnen
+
+Nur Admin darf:
+
+"Tagesabschluss wieder öffnen"
+
+Beim Wiederöffnen:
+
+- Status = Wieder geöffnet
+- Grund zwingend erfassen
+- Benutzer speichern
+- Datum speichern
+
+Danach dürfen Werte wieder geändert werden.
+
+## 5. Automatische Neuberechnung
+
+Wenn ein älterer Tag nachträglich geändert wird:
+
+automatisch neu berechnen:
+
+- Bargeld Soll
+- Kassensaldo Soll
+- Cash Differenz
+
+für alle nachfolgenden Tage.
+
+Bereits abgeschlossene Folgetage:
+
+nicht automatisch ändern.
+
+Stattdessen markieren:
+
+"Kassensaldo aufgrund Änderung an früherem Tag überprüfen."
+
+Der Benutzer entscheidet anschließend bewusst, ob der jeweilige Tag erneut geöffnet und neu bestätigt wird.
+
+## 6. Monatsabschluss
+
+Wenn alle Tage abgeschlossen sind:
+
+Button:
+
+"Monat abschließen"
+
+Speichern:
+
+- Anfangsbestand
+- Endbestand
+- Umsatz Total
+- Bargeld Total
+- Barausgaben Total
+- Bankeinzahlungen Total
+- Cash Differenz Total
+- Anzahl begründete Differenzen
+
+Anzeige:
+
+"Monat abgeschlossen am ..."
+
+## 7. Wieder öffnen Monat
+
+Nur Admin.
+
+Beim Wiederöffnen:
+
+Monatsstatus entfernen.
+
+Tagesabschlüsse bleiben bestehen.
+
+## 8. Dashboard oben erweitern
+
+Neue KPI:
+
+Kasse
+
+- Anfangsbestand
+- Aktueller Kassensaldo
+- Bargeld Total
+- Bankeinzahlungen Total
+
+Abschluss
+
+- Offene Tage
+- In Bearbeitung
+- Abgeschlossen
+- Abgeschlossen mit Differenz
+
+## 9. Historie
+
+Für jeden Abschluss speichern:
+
+- Benutzer
+- Datum
+- Uhrzeit
+- Status
+- Wieder geöffnet?
+- Grund Wiederöffnung
+
+Eigener Bereich:
+
+"Abschluss-Historie"
+
+im Tagesdialog.
+
+## 10. Vorbereitung Buchhaltung
+
+Der spätere Buchhaltungs-CSV darf ausschließlich aus abgeschlossenen Tagesabschlüssen erzeugt werden.
+
+Nicht bestätigte Tage dürfen niemals exportiert werden.
+
+Monatsabschluss soll anzeigen:
+
+"Bereit für Buchhaltung"
+
+erst wenn:
+
+- alle Tage abgeschlossen
+- keine offenen Tage
+- keine unbegründeten Differenzen
+
+## 11. UX
+
+Abgeschlossene Tage:
+
+- Schloss-Icon
+- dezent grün
+- read-only
+
+Wieder geöffnete Tage:
+
+- orange markieren
+
+Offene Tage:
+
+- rot
+
+## 12. Tests
+
+Ergänzen:
+
+- Abschluss sperrt Eingaben
+- Admin kann wieder öffnen
+- Wiederöffnungsgrund Pflicht
+- Monatsabschluss funktioniert
+- Monatsabschluss nur wenn alle Tage abgeschlossen
+- KPI aktualisieren sich
+- Export nur aus abgeschlossenen Tagen
+- Historie wird gespeichert
+- Nachträgliche Änderung markiert Folgetage zur Überprüfung
+
+Danach bitte ausführen:
+
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Export Tests
+- Tabellen-Komponenten Tests

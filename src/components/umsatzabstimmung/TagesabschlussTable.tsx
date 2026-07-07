@@ -38,10 +38,11 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare, Plus } from 'lucide-react';
+import { AlertTriangle, Lock, MessageSquare, Plus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { DayConfirmation } from '@/lib/adyen-abstimmung';
 import {
+  canCloseDay,
   cashDiffReasonLabel,
   type DayCell,
   type TagesabschlussManualPatch,
@@ -176,19 +177,53 @@ function VoucherCell({ cell, label, onClick, testId }: {
   );
 }
 
-function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
-  if (status === 'bestaetigt') {
-    return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">Bestätigt</span>;
+/** dd.mm.yyyy, hh:mm aus einem ISO-Zeitstempel (lokale Zeit). */
+export function formatClosedStamp(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** Tooltip-Text „Abgeschlossen am … von …" (bzw. Wiederöffnungs-Info). */
+function closureTitle(row: TagesabschlussRow): string | undefined {
+  const c = row.closure;
+  if (!c) return undefined;
+  if (c.status === 'wieder_geoeffnet') {
+    return `Wieder geöffnet am ${c.reopenedAt ? formatClosedStamp(c.reopenedAt) : '—'} von ${c.reopenedBy ?? '—'}`
+      + (c.reopenReason ? ` — Grund: ${c.reopenReason}` : '');
   }
-  if (status === 'bestaetigt_mit_differenz') {
+  return `Abgeschlossen am ${formatClosedStamp(c.closedAt)} von ${c.closedBy}`;
+}
+
+function StatusBadge({ row }: { row: TagesabschlussRow }) {
+  const { status } = row;
+  if (status === 'abgeschlossen' || status === 'abgeschlossen_mit_differenz') {
+    const withDiff = status === 'abgeschlossen_mit_differenz';
     return (
       <span
-        className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300"
-        title="Abgeschlossen mit begründeter Kassendifferenz"
+        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium ${withDiff
+          ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300'
+          : 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300'}`}
+        title={closureTitle(row) ?? (withDiff ? 'Abgeschlossen mit begründeter Kassendifferenz' : undefined)}
       >
-        Mit Differenz
+        <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+        {withDiff ? 'Mit Differenz' : 'Abgeschlossen'}
       </span>
     );
+  }
+  if (status === 'wieder_geoeffnet') {
+    return (
+      <span
+        className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300"
+        title={closureTitle(row)}
+      >
+        Wieder geöffnet
+      </span>
+    );
+  }
+  if (status === 'in_bearbeitung') {
+    return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">In Bearbeitung</span>;
   }
   if (status === 'offen') {
     return <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300">Offen</span>;
@@ -199,13 +234,14 @@ function StatusBadge({ status }: { status: TagesabschlussRow['status'] }) {
 // ── Zeilen-Hintergrund (Zebra + Zustands-Tints) ──────────────────────────────
 
 /**
- * Priorität: bestätigt (grün) > bestätigt mit Differenz (gelb) >
- * rote Differenz > orange Differenz > offen (rot) > Zebra.
- * Differenzen = Adyen- ODER Cash-Differenz.
+ * Priorität: abgeschlossen (dezent grün) > abgeschlossen mit Differenz (gelb) >
+ * wieder geöffnet (orange) > rote Differenz > orange Differenz > offen (rot)
+ * > Zebra. Differenzen = Adyen- ODER Cash-Differenz.
  */
 function rowTint(row: TagesabschlussRow, zebra: boolean): string {
-  if (row.status === 'bestaetigt') return 'bg-green-50/70 dark:bg-green-950/20';
-  if (row.status === 'bestaetigt_mit_differenz') return 'bg-yellow-50/70 dark:bg-yellow-950/20';
+  if (row.status === 'abgeschlossen') return 'bg-green-50/70 dark:bg-green-950/20';
+  if (row.status === 'abgeschlossen_mit_differenz') return 'bg-yellow-50/70 dark:bg-yellow-950/20';
+  if (row.status === 'wieder_geoeffnet') return 'bg-orange-50/70 dark:bg-orange-950/20';
   const statuses = [row.adyenDiffStatus, row.cashDiffStatus];
   if (statuses.includes('large')) return 'bg-red-50/70 dark:bg-red-950/20';
   if (statuses.includes('small')) return 'bg-orange-50/70 dark:bg-orange-950/20';
@@ -298,18 +334,15 @@ interface TagesabschlussTableProps {
   onConfirm?: (date: string, confirmation: DayConfirmation | null) => void;
   /** Öffnet den Differenzgrund-Dialog (Mehrfachauswahl + Notiz) für den Tag. */
   onReasonsClick?: (date: string) => void;
+  /** „Tagesabschluss abschließen" — Button nur aktiv, wenn canCloseDay ok. */
+  onCloseDay?: (date: string) => void;
 }
 
 export function TagesabschlussTable({
   rows, totals, onDayClick, readOnly = false, onSaveManual,
   onCorrectRechnung, onVoucherClick, onExpensesClick, onConfirm, onReasonsClick,
+  onCloseDay,
 }: TagesabschlussTableProps) {
-  const editable = !readOnly && !!onSaveManual;
-  const correctable = !readOnly && !!onCorrectRechnung;
-  const voucherEditable = !readOnly && !!onVoucherClick;
-  const expensesEditable = !readOnly && !!onExpensesClick;
-  const confirmable = !readOnly && !!onConfirm;
-  const reasonsEditable = !readOnly && !!onReasonsClick;
   const today = todayIso();
 
   return (
@@ -351,6 +384,16 @@ export function TagesabschlussTable({
             const cashCounted = confirmation?.cashCounted === true;
             const confirmed = confirmation?.confirmed === true;
             const isToday = row.date === today;
+            // Definitiv abgeschlossene Tage sind komplett gesperrt — alle
+            // Edit-Flächen dieser Zeile rendern statisch (read-only).
+            const rowLocked = row.locked;
+            const editable = !readOnly && !!onSaveManual && !rowLocked;
+            const correctable = !readOnly && !!onCorrectRechnung && !rowLocked;
+            const voucherEditable = !readOnly && !!onVoucherClick && !rowLocked;
+            const expensesEditable = !readOnly && !!onExpensesClick && !rowLocked;
+            const confirmable = !readOnly && !!onConfirm && !rowLocked;
+            const reasonsEditable = !readOnly && !!onReasonsClick && !rowLocked;
+            const closeCheck = !rowLocked && row.hasZbericht ? canCloseDay(row) : null;
             return (
               <tr
                 key={row.date}
@@ -370,6 +413,11 @@ export function TagesabschlussTable({
                     >
                       {dayLabel(row.date)}
                     </button>
+                    {rowLocked && (
+                      <span title={closureTitle(row)} className="shrink-0" data-testid={`ta-lock-${row.date}`}>
+                        <Lock className="h-3 w-3 text-green-700 dark:text-green-400" aria-label="Tag abgeschlossen" />
+                      </span>
+                    )}
                     {row.bemerkung && (
                       <span title={row.bemerkung} className="shrink-0">
                         <MessageSquare className="h-3 w-3 text-muted-foreground" aria-label="Bemerkung vorhanden" />
@@ -445,16 +493,38 @@ export function TagesabschlussTable({
                 ) : (
                   <ValueCell cell={row.cells.einzahlungBank} />
                 )}
-                {/* Kassensaldo Soll — fortlaufend, read-only (Formel im Tooltip). */}
-                <td
-                  className="px-2 py-1 text-right tabular-nums whitespace-nowrap text-muted-foreground"
-                  title={row.kassensaldoSoll === null
+                {/* Kassensaldo Soll — fortlaufend, read-only (Formel im Tooltip).
+                    Gesperrte Tage zeigen den beim Abschluss FIXIERTEN Saldo;
+                    weicht der berechnete ab (Alt-Tag-Änderung) → Review-Marker. */}
+                {(() => {
+                  const shownSaldo = rowLocked && row.fixedKassensaldo !== null
+                    ? row.fixedKassensaldo
+                    : row.kassensaldoSoll;
+                  const saldoTitle = shownSaldo === null
                     ? 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle)'
-                    : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank'}
-                  data-testid={`ta-saldo-${row.date}`}
-                >
-                  {row.kassensaldoSoll === null ? '—' : fmtChf(row.kassensaldoSoll)}
-                </td>
+                    : rowLocked && row.fixedKassensaldo !== null
+                      ? `Beim Abschluss fixierter Kassensaldo${row.needsReview && row.kassensaldoSoll !== null ? ` — aktuell berechnet: ${fmtChf(row.kassensaldoSoll)}` : ''}`
+                      : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank';
+                  return (
+                    <td
+                      className="px-2 py-1 text-right tabular-nums whitespace-nowrap text-muted-foreground"
+                      title={saldoTitle}
+                      data-testid={`ta-saldo-${row.date}`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {row.needsReview && (
+                          <span
+                            title="Kassensaldo aufgrund Änderung an früherem Tag überprüfen."
+                            data-testid={`ta-review-${row.date}`}
+                          >
+                            <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" aria-label="Kassensaldo überprüfen" />
+                          </span>
+                        )}
+                        {shownSaldo === null ? '—' : fmtChf(shownSaldo)}
+                      </span>
+                    </td>
+                  );
+                })()}
                 {/* Cash Ist — manuell gezählter Kassenbestand (inline, blau). */}
                 <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
                     title="Cash Ist = manuell gezählter Kassenbestand"
@@ -585,7 +655,24 @@ export function TagesabschlussTable({
                 {/* ── Gruppe Status ── */}
                 <td className={`px-2 py-1 whitespace-nowrap ${SEP} pl-3`}>
                   <div className="flex items-center gap-2">
-                    <StatusBadge status={row.status} />
+                    <StatusBadge row={row} />
+                    {!readOnly && !!onCloseDay && closeCheck && (
+                      <button
+                        type="button"
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-medium ${closeCheck.ok
+                          ? 'border-green-600/50 text-green-700 dark:text-green-400 cursor-pointer hover:bg-green-50 dark:hover:bg-green-950/30'
+                          : 'border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
+                        disabled={!closeCheck.ok}
+                        onClick={closeCheck.ok ? () => onCloseDay(row.date) : undefined}
+                        title={closeCheck.ok
+                          ? 'Tagesabschluss abschließen — der Tag wird gesperrt'
+                          : `Abschluss nicht möglich: ${closeCheck.blockers.join(' ')}`}
+                        data-testid={`ta-close-day-${row.date}`}
+                      >
+                        <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                        Abschließen
+                      </button>
+                    )}
                     {confirmable && row.hasZbericht && (
                       <span className="inline-flex items-center gap-1.5">
                         <label className="flex items-center gap-1 text-[10px] text-muted-foreground" title="Barbestand gezählt und bestätigt">
@@ -660,7 +747,7 @@ export function TagesabschlussTable({
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinEingeloest)}</td>
             <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} data-testid="ta-total-barausgaben">{fmtChf(totals.barausgaben)}</td>
             <td className={`px-2 py-1.5 text-muted-foreground ${SEP} pl-3`}>
-              {totals.daysConfirmed}/{totals.daysWithZbericht} Tage bestätigt
+              {totals.daysConfirmed}/{totals.daysWithZbericht} Tage abgeschlossen
             </td>
           </tr>
         </tfoot>

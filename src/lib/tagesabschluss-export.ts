@@ -191,10 +191,27 @@ export function collectExportOverrideWarnings(rows: readonly TagesabschlussRow[]
 }
 
 /**
+ * Buchhaltungs-Export NUR aus abgeschlossenen Tagesabschlüssen: jeder Tag mit
+ * Z-Bericht muss definitiv abgeschlossen sein (status abgeschlossen /
+ * abgeschlossen_mit_differenz), sonst BLOCKIERT der Export mit klarer
+ * Fehlerliste — nie ein stiller Teil-Export nicht bestätigter Tage.
+ */
+export function collectUnclosedDayErrors(rows: readonly TagesabschlussRow[]): string[] {
+  const unclosed = rows.filter(r => r.hasZbericht && !r.locked);
+  if (unclosed.length === 0) return [];
+  const list = unclosed.map(r => isoToChDate(r.date)).join(', ');
+  return [
+    `Export nur aus abgeschlossenen Tagen möglich — ${unclosed.length} Tag(e) ` +
+    `nicht abgeschlossen: ${list}. Bitte zuerst jeden Tag definitiv abschließen.`,
+  ];
+}
+
+/**
  * Erzeugt die Tabelle2-Buchungszeilen eines Monats.
  * Liefert bei unvollständigem Mapping KEINE Zeilen, sondern Fehler.
  * Beträge stammen IMMER aus den Original-Z-Bericht-Werten (DayCell.auto) —
  * Korrekturen werden als `warnings` ausgewiesen (s. Kopfkommentar).
+ * BLOCKIERT, solange nicht alle Z-Bericht-Tage abgeschlossen sind (§10).
  */
 export function buildTabelle2Rows(
   rows: readonly TagesabschlussRow[],
@@ -205,7 +222,8 @@ export function buildTabelle2Rows(
   const monthExpenses = rows.flatMap(r => blob.expenses[r.date] ?? []);
   const validation = validateExportSettings(settings, rows, closings);
   const expenseErrors = validateExpenses(monthExpenses);
-  const errors = [...validation.errors, ...expenseErrors];
+  const closureErrors = collectUnclosedDayErrors(rows);
+  const errors = [...validation.errors, ...expenseErrors, ...closureErrors];
   const warnings = collectExportOverrideWarnings(rows);
   if (errors.length > 0 || !settings) return { rows: [], errors, warnings };
 

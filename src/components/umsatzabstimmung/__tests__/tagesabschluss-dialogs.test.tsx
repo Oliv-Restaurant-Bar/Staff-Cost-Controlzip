@@ -11,13 +11,17 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach } from 'vitest';
 import { TagesabschlussVoucherDialog } from '../TagesabschlussVoucherDialog';
 import { TagesabschlussExpenseDialog } from '../TagesabschlussExpenseDialog';
+import { TagesabschlussDayDialog } from '../TagesabschlussDayDialog';
 import {
   buildTagesabschlussRows,
+  closeDay,
   emptyTagesabschlussBlob,
+  reopenDay,
   setTagesabschlussOverride,
   upsertManualDay,
   type CashExpense,
   type GnDayClosing,
+  type TagesabschlussBlob,
 } from '@/lib/tagesabschluss';
 
 afterEach(cleanup);
@@ -29,9 +33,9 @@ const closing = (date: string): GnDayClosing => ({
   tip: null,
   taxes: [{ rate: '8.1%', net: 925.07, tax: 74.93, gross: 1000 }],
   payments: [
-    { name: 'Bar', amount: 300 },
-    { name: 'Mastercard', amount: 500 },
-    { name: 'Gutschein', amount: 60 }, // eingelöste Gutscheine laut Z-Bericht
+    { name: 'Bar', amount: 300, count: 1 },
+    { name: 'Mastercard', amount: 500, count: 1 },
+    { name: 'Gutschein', amount: 60, count: 1 }, // eingelöste Gutscheine laut Z-Bericht
   ],
   accountingLines: [],
   paymentAccounts: [],
@@ -151,5 +155,108 @@ describe('TagesabschlussExpenseDialog', () => {
       onClose={() => {}} onUpsertExpense={() => {}} onRemoveExpense={() => {}} />);
     expect(screen.queryByTestId('ta-exp-add')).toBeNull();
     expect(screen.queryByTestId('ta-expense-delete-e1')).toBeNull();
+  });
+});
+
+describe('TagesabschlussDayDialog — Abschluss-Sektion', () => {
+  const NOW = '2026-07-05T10:00:00.000Z';
+
+  /** Blob + Bestätigungen, die canCloseDay am 01.07. erfüllen:
+   *  Bargeld Soll = 1000 − 500 (KK) − 60 (eingelöste Gutscheine) = 440;
+   *  Kassensaldo Soll = 0 + 440; Cash Ist 440 → Diff 0 grün. */
+  function closableSetup() {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 440 }, NOW);
+    const confirmations = {
+      '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
+    };
+    return { blob, confirmations };
+  }
+
+  function rowFor(blob: TagesabschlussBlob, confirmations: Parameters<typeof buildTagesabschlussRows>[4]) {
+    const { rows } = buildTagesabschlussRows(2026, 7, { '2026-07-01': closing('2026-07-01') }, blob, confirmations, null, 0);
+    return rows.find(r => r.date === '2026-07-01')!;
+  }
+
+  function renderDialog(row: ReturnType<typeof rowFor>, opts?: {
+    readOnly?: boolean; canReopen?: boolean;
+    onCloseDay?: (d: string) => void; onReopenDay?: (d: string, r: string) => void;
+  }) {
+    render(<TagesabschlussDayDialog row={row} expenses={[]}
+      readOnly={opts?.readOnly ?? false} canReopen={opts?.canReopen ?? true}
+      onClose={() => {}} onSaveManual={() => {}} onOverride={() => {}} onConfirm={() => {}}
+      onUpsertExpense={() => {}} onRemoveExpense={() => {}}
+      onCloseDay={opts?.onCloseDay ?? (() => {})} onReopenDay={opts?.onReopenDay ?? (() => {})} />);
+  }
+
+  it('Abschluss-Button: aktiv bei erfüllten Vorbedingungen, sonst deaktiviert mit Blocker-Liste', () => {
+    const { blob, confirmations } = closableSetup();
+    const onCloseDay = vi.fn();
+    renderDialog(rowFor(blob, confirmations), { onCloseDay });
+
+    const btn = screen.getByTestId('ta-dialog-close-day') as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+    expect(screen.queryByTestId('ta-dialog-close-blockers')).toBeNull();
+    fireEvent.click(btn);
+    expect(onCloseDay).toHaveBeenCalledWith('2026-07-01');
+    cleanup();
+
+    // Unbestätigter Tag → deaktiviert + Blocker gelistet.
+    renderDialog(rowFor(emptyTagesabschlussBlob(), {}), { onCloseDay });
+    const btn2 = screen.getByTestId('ta-dialog-close-day') as HTMLButtonElement;
+    expect(btn2.disabled).toBe(true);
+    expect(screen.getByTestId('ta-dialog-close-blockers').textContent).toContain('Tagesbestätigung fehlt');
+    expect(onCloseDay).toHaveBeenCalledTimes(1);
+  });
+
+  it('gesperrter Tag: Locked-Info, Felder deaktiviert, Reopen NUR mit Grund und nur für Admins', () => {
+    const { blob, confirmations } = closableSetup();
+    const closedBlob = closeDay(blob, rowFor(blob, confirmations), 'admin@oliv.ch', '2026-07-05T12:00:00.000Z');
+    const lockedRow = rowFor(closedBlob, confirmations);
+    const onReopenDay = vi.fn();
+    renderDialog(lockedRow, { canReopen: true, onReopenDay });
+
+    // Locked-Info mit Wer/Wann + fixiertem Saldo; kein Abschluss-Button mehr.
+    expect(screen.getByTestId('ta-dialog-locked-info').textContent).toContain('admin@oliv.ch');
+    expect(screen.getByTestId('ta-dialog-locked-info').textContent).toContain('440.00');
+    expect(screen.queryByTestId('ta-dialog-close-day')).toBeNull();
+
+    // Manuelle Felder + Bestätigungs-Checkboxen gesperrt.
+    expect((screen.getByTestId('ta-input-bestand') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByTestId('ta-input-einzahlung') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByTestId('ta-input-bemerkung') as HTMLTextAreaElement).disabled).toBe(true);
+
+    // Reopen: Button erst nach Pflicht-Grund aktiv.
+    const reopenBtn = screen.getByTestId('ta-reopen-day') as HTMLButtonElement;
+    expect(reopenBtn.disabled).toBe(true);
+    fireEvent.change(screen.getByTestId('ta-reopen-reason'), { target: { value: 'Beleg nachtragen' } });
+    expect((screen.getByTestId('ta-reopen-day') as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByTestId('ta-reopen-day'));
+    expect(onReopenDay).toHaveBeenCalledWith('2026-07-01', 'Beleg nachtragen');
+    cleanup();
+
+    // Ohne canReopen (kein Admin) gibt es KEINE Reopen-Fläche.
+    renderDialog(lockedRow, { canReopen: false });
+    expect(screen.queryByTestId('ta-dialog-reopen')).toBeNull();
+    expect(screen.queryByTestId('ta-reopen-day')).toBeNull();
+  });
+
+  it('wieder geöffneter Tag: Info mit Grund, Felder editierbar, Historie mit beiden Einträgen', () => {
+    const { blob, confirmations } = closableSetup();
+    let b = closeDay(blob, rowFor(blob, confirmations), 'admin@oliv.ch', '2026-07-05T12:00:00.000Z');
+    b = reopenDay(b, '2026-07-01', 'admin@oliv.ch', 'Beleg nachtragen', '2026-07-06T08:00:00.000Z');
+    renderDialog(rowFor(b, confirmations));
+
+    const info = screen.getByTestId('ta-dialog-reopened-info');
+    expect(info.textContent).toContain('Beleg nachtragen');
+    expect(screen.queryByTestId('ta-dialog-locked-info')).toBeNull();
+    expect((screen.getByTestId('ta-input-bestand') as HTMLInputElement).disabled).toBe(false);
+    // Erneuter Abschluss möglich.
+    expect(screen.getByTestId('ta-dialog-close-day')).toBeTruthy();
+
+    const history = screen.getByTestId('ta-dialog-closure-history');
+    expect(history.querySelectorAll('li').length).toBe(2);
+    expect(history.textContent).toContain('abgeschlossen');
+    expect(history.textContent).toContain('wieder geöffnet');
   });
 });

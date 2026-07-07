@@ -22,10 +22,27 @@ import {
   upsertManualDay,
   type CashExpense,
   type GnDayClosing,
+  type TagesabschlussBlob,
   type TagesabschlussExportSettings,
 } from './tagesabschluss';
 
 const NOW = '2026-07-06T10:00:00.000Z';
+
+/** Markiert Tage als definitiv abgeschlossen (Export-Vorbedingung §10). */
+function withClosedDays(blob: TagesabschlussBlob, dates: string[]): TagesabschlussBlob {
+  const abschluesse = { ...blob.abschluesse };
+  for (const d of dates) {
+    abschluesse[d] = {
+      status: 'abgeschlossen',
+      closedAt: NOW,
+      closedBy: 'test@oliv.ch',
+      fixedKassensaldo: null,
+      updatedAt: NOW,
+      history: [{ at: NOW, by: 'test@oliv.ch', action: 'abschluss', status: 'abgeschlossen' }],
+    };
+  }
+  return { ...blob, abschluesse };
+}
 
 function makeClosing(date: string, over: Partial<GnDayClosing> = {}): GnDayClosing {
   return {
@@ -59,7 +76,7 @@ function reviewedSettings(over: Partial<TagesabschlussExportSettings> = {}): Tag
 
 function monthFixture() {
   const closings = { '2026-07-01': makeClosing('2026-07-01') };
-  const blob = emptyTagesabschlussBlob();
+  const blob = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
   const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
   return { closings, blob, rows };
 }
@@ -111,6 +128,29 @@ describe('validateExpenses', () => {
 });
 
 describe('buildTabelle2Rows', () => {
+  it('BLOCKIERT, solange ein Z-Bericht-Tag nicht abgeschlossen ist (§10)', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    const blob = emptyTagesabschlussBlob(); // Tag NICHT abgeschlossen
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(out.rows).toHaveLength(0);
+    expect(out.errors.join(' ')).toMatch(/nicht abgeschlossen/);
+    expect(out.errors.join(' ')).toMatch(/01\.07\.2026/);
+
+    // Wieder geöffneter Tag zählt ebenfalls als nicht abgeschlossen.
+    let reopened = withClosedDays(emptyTagesabschlussBlob(), ['2026-07-01']);
+    reopened = {
+      ...reopened,
+      abschluesse: {
+        '2026-07-01': { ...reopened.abschluesse['2026-07-01'], status: 'wieder_geoeffnet' },
+      },
+    };
+    const r2 = buildTagesabschlussRows(2026, 7, closings, reopened, {});
+    const out2 = buildTabelle2Rows(r2.rows, closings, reopened, reviewedSettings());
+    expect(out2.rows).toHaveLength(0);
+    expect(out2.errors.join(' ')).toMatch(/nicht abgeschlossen/);
+  });
+
   it('liefert bei unvollständigem Mapping Fehler und KEINE Zeilen', () => {
     const { closings, blob, rows } = monthFixture();
     const out = buildTabelle2Rows(rows, closings, blob, { ...reviewedSettings(), reviewed: false });
@@ -153,6 +193,7 @@ describe('buildTabelle2Rows', () => {
     blob = upsertExpense(blob, e1);
     blob = upsertExpense(blob, e2);
     blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 250 }, NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
     const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
     expect(out.errors).toHaveLength(0);
@@ -185,6 +226,7 @@ describe('buildTabelle2Rows', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     blob = setTagesabschlussOverride(blob, '2026-07-01', 'rechnung', 30, 50, 'Nachtrag', NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
     const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
 

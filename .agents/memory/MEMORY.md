@@ -22,6 +22,7 @@
 - [Role-based employee visibility](role-employee-visibility.md) — one chokepoint getVisibleEmployeesForRole for dept-scoping; restricted role wins; render scoping isn't a hard guarantee.
 - [Bulk upsert dedupe](bulk-upsert-dedupe.md) — dedupe rows by the onConflict key before .upsert(), else Postgres "ON CONFLICT DO UPDATE command cannot affect row a second time"; recompute import stats from deduped list.
 - [vite build OOM (silent kill)](vite-build-oom.md) — `npm run build` exits -1 with NO output when OOM-killed; 4096 now also too small, rerun with `NODE_OPTIONS=--max-old-space-size=8192 npx vite build`.
+- [Bare tsc --noEmit is vacuous](tsc-vacuous-check.md) — root tsconfig is solution-style (files:[]), plain tsc checks nothing; gate with `-p tsconfig.app.json` and filter for touched files (legacy errors exist).
 - [Safe ?from= return URL + URL sync](safe-return-url-and-url-sync.md) — validate redirect params against allow-listed paths; mirror view-state to useSearchParams with equality guard.
 - [Overloaded permission flag](overloaded-permission-flag.md) — widening a role gate (e.g. canEditEmployees) leaks every confidential surface it also gates; split into a narrower old-value gate instead of widening.
 - [Overtime excludes absences](overtime-absence-exclusion.md) — hours-over-threshold analytics must drop `absenceType` entries (productive = hours>0 && !absenceType) or leave days fabricate overtime.

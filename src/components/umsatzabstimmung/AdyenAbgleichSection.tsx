@@ -31,6 +31,7 @@ import {
   ADYEN_ABSTIMMUNG_UPDATED_EVENT,
   loadAdyenAbstimmung, loadAdyenAbstimmungLocal, saveAdyenAbstimmung,
 } from '@/lib/adyen-abstimmung-db';
+import { loadTagesabschlussLocal } from '@/lib/tagesabschluss-db';
 import { loadGnPaymentMethodsForMonth, type GnDayPaymentRow } from '@/lib/gn-zbericht-db';
 import { AdyenDayTable } from './AdyenDayTable';
 
@@ -99,6 +100,23 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
     await saveAdyenAbstimmung(tenantId, next);
   }, [tenantId]);
 
+  /**
+   * Definitiv abgeschlossene Tage (Tagesabschluss-Sperre) blockieren auch hier
+   * jede Mutation — Adyen-Overrides/-Kommentare/-Bestätigungen gehören zum
+   * gesperrten Zahlenwerk. Frisch aus localStorage gelesen (Abschluss kann
+   * soeben in der Tagesabschluss-Section passiert sein).
+   */
+  const isDayClosed = useCallback((date: string): boolean => {
+    const c = loadTagesabschlussLocal(tenantId).abschluesse[date];
+    return !!c && c.status !== 'wieder_geoeffnet';
+  }, [tenantId]);
+
+  const rejectLocked = useCallback((date: string): boolean => {
+    if (!isDayClosed(date)) return false;
+    toast.error(`Tag ${date.split('-').reverse().join('.')} ist abgeschlossen — Änderungen gesperrt (Admin: Tag im Tagesabschluss wieder öffnen).`);
+    return true;
+  }, [isDayClosed]);
+
   // ── Import ──────────────────────────────────────────────────────────────────
 
   const handleFile = useCallback(async (file: File) => {
@@ -112,16 +130,28 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
         setImportError(parsed.failureReason);
         return;
       }
+      // Abgeschlossene Tage sind gesperrt (Spec §3: auch KK Adyen) — sie werden
+      // beim Re-Import übersprungen, ihr gespeicherter Stand bleibt unverändert.
+      const skippedClosed = parsed.days.filter(d => isDayClosed(d.date)).map(d => d.date);
+      const importable = skippedClosed.length > 0
+        ? { ...parsed, days: parsed.days.filter(d => !isDayClosed(d.date)) }
+        : parsed;
       // Frischen Stand laden → mergen → speichern (nie fremden Stand überschreiben).
       // BEWUSST das KV-bewusste loadAdyenAbstimmung (nicht das lokale): vor dem
       // grossen Import-Merge soll auch ein evtl. neuerer Cross-Device-Stand rein.
       const current = await loadAdyenAbstimmung(tenantId);
-      const merged = mergeAdyenImport(current, parsed, file.name, new Date().toISOString());
+      const merged = mergeAdyenImport(current, importable, file.name, new Date().toISOString());
       await persist(merged);
 
-      const dayCount = parsed.days.length;
-      const first = parsed.days[0]?.date;
-      const last = parsed.days[dayCount - 1]?.date;
+      if (skippedClosed.length > 0) {
+        toast.warning(
+          `${skippedClosed.length} abgeschlossene(r) Tag(e) übersprungen (gesperrt): ` +
+          skippedClosed.map(d => d.split('-').reverse().join('.')).join(', '),
+        );
+      }
+      const dayCount = importable.days.length;
+      const first = importable.days[0]?.date;
+      const last = importable.days[dayCount - 1]?.date;
       toast.success(
         `Adyen-Import: ${dayCount} Tag(e) übernommen` +
         (first && last ? ` (${first} bis ${last})` : ''),
@@ -139,27 +169,28 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
       setImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [readOnly, tenantId, persist, year]);
+  }, [readOnly, tenantId, persist, year, isDayClosed]);
 
   // ── Mutationen ──────────────────────────────────────────────────────────────
 
   // Mutationen IMMER auf dem frischen Primärspeicher-Stand ausführen — NIE auf
   // dem Mount-Zeit-State: die Tagesabschluss-Übersicht schreibt denselben Blob
   // (gemeinsame Bestätigungen) auf derselben Seite.
+
   const handleOverride = useCallback((fieldKey: string, originalValue: number, corrected: number | null, comment: string) => {
-    if (readOnly) return;
+    if (readOnly || rejectLocked(fieldKey.split(':')[0])) return;
     void persist(setOverride(loadAdyenAbstimmungLocal(tenantId), fieldKey, originalValue, corrected, comment, new Date().toISOString()));
-  }, [readOnly, tenantId, persist]);
+  }, [readOnly, rejectLocked, tenantId, persist]);
 
   const handleComment = useCallback((fieldKey: string, text: string) => {
-    if (readOnly) return;
+    if (readOnly || rejectLocked(fieldKey.split(':')[0])) return;
     void persist(setComment(loadAdyenAbstimmungLocal(tenantId), fieldKey, text, new Date().toISOString()));
-  }, [readOnly, tenantId, persist]);
+  }, [readOnly, rejectLocked, tenantId, persist]);
 
   const handleConfirm = useCallback((date: string, confirmation: DayConfirmation | null) => {
-    if (readOnly) return;
+    if (readOnly || rejectLocked(date)) return;
     void persist(setDayConfirmation(loadAdyenAbstimmungLocal(tenantId), date, confirmation));
-  }, [readOnly, tenantId, persist]);
+  }, [readOnly, rejectLocked, tenantId, persist]);
 
   // ── Tagesliste des Monats ───────────────────────────────────────────────────
 

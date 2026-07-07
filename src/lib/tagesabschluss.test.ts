@@ -4,9 +4,18 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  buildMonthClosureSnapshot,
   buildTagesabschlussRows,
+  canCloseDay,
+  canCloseMonth,
+  closeDay,
+  closeMonth,
   computeMonthEndSaldo,
   deriveAutoValues,
+  isMonthClosed,
+  readyForBuchhaltung,
+  reopenDay,
+  reopenMonth,
   defaultExportSettings,
   emptyTagesabschlussBlob,
   expensesTotal,
@@ -129,15 +138,27 @@ describe('buildTagesabschlussRows', () => {
     expect(r.barumsatz).toBe(300);
   });
 
-  it('Status "bestaetigt": Bestätigung + Barbestand + Cash Ist erfasst + Cash-Differenz grün', () => {
+  it('erfüllte Vorbedingungen ⇒ "in_bearbeitung"; erst closeDay ⇒ "abgeschlossen" + gesperrt', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     // Anker 0 → Kassensaldo Soll = 0 + 300 (Bargeld Soll) = 300 → Ist 300 = grün.
     blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW);
-    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {
+    const confirmations = {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
-    }, null, 0);
-    expect(rows[0].status).toBe('bestaetigt');
+    };
+    const before = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0);
+    // Keine Auto-Bestätigung mehr: ohne expliziten Abschluss nur "in_bearbeitung".
+    expect(before.rows[0].status).toBe('in_bearbeitung');
+    expect(before.rows[0].locked).toBe(false);
+    expect(canCloseDay(before.rows[0]).ok).toBe(true);
+
+    blob = closeDay(blob, before.rows[0], 'chef@oliv.ch', NOW);
+    const after = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0);
+    expect(after.rows[0].status).toBe('abgeschlossen');
+    expect(after.rows[0].locked).toBe(true);
+    expect(after.rows[0].closure?.closedBy).toBe('chef@oliv.ch');
+    expect(after.rows[0].closure?.fixedKassensaldo).toBe(300);
+    expect(after.totals.daysConfirmed).toBe(1);
   });
 
   it('Override gewinnt und markiert Zelle als "corrected"', () => {
@@ -256,16 +277,19 @@ describe('buildTagesabschlussRows', () => {
     expect(rows[2].kassensaldoSoll).toBe(900);
   });
 
-  it('Status bleibt "offen", wenn Cash Ist fehlt — trotz Bestätigung', () => {
+  it('Cash Ist fehlt: Bestätigung zählt als Fortschritt ("in_bearbeitung"), Abschluss blockiert', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     const { rows } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
     }, null, 0);
     expect(rows[0].cashIst).toBeNull();
-    expect(rows[0].status).toBe('offen');
+    expect(rows[0].status).toBe('in_bearbeitung');
+    const check = canCloseDay(rows[0]);
+    expect(check.ok).toBe(false);
+    expect(check.blockers.join(' ')).toMatch(/Cash Ist/);
   });
 
-  it('Status bleibt "offen", wenn die Cash-Differenz nicht grün UND unbegründet ist', () => {
+  it('nicht-grüne UND unbegründete Cash-Differenz blockiert den Abschluss', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 320 }, NOW); // Soll 300 → +20 large
@@ -274,10 +298,14 @@ describe('buildTagesabschlussRows', () => {
     }, null, 0);
     expect(rows[0].cashDiffStatus).toBe('large');
     expect(rows[0].cashDiffBegruendet).toBe(false);
-    expect(rows[0].status).toBe('offen');
+    expect(rows[0].status).toBe('in_bearbeitung');
+    const check = canCloseDay(rows[0]);
+    expect(check.ok).toBe(false);
+    expect(check.blockers.join(' ')).toMatch(/weder grün noch begründet/);
+    expect(() => closeDay(blob, rows[0], 'chef@oliv.ch', NOW)).toThrow(/nicht möglich/);
   });
 
-  it('Status "bestaetigt_mit_differenz": nicht-grüne Differenz + Grund ODER Notiz', () => {
+  it('begründete nicht-grüne Differenz: closeDay ⇒ "abgeschlossen_mit_differenz"', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 320 }, NOW); // +20 large
@@ -288,10 +316,17 @@ describe('buildTagesabschlussRows', () => {
     const withReason = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0);
     expect(withReason.rows[0].cashDiffBegruendet).toBe(true);
     expect(withReason.rows[0].cashDiffReasons).toEqual(['wechselgeld_angepasst']);
-    expect(withReason.rows[0].status).toBe('bestaetigt_mit_differenz');
-    expect(withReason.totals.daysConfirmed).toBe(1); // zählt als abgeschlossen
+    expect(withReason.rows[0].status).toBe('in_bearbeitung');
     expect(withReason.totals.daysBegruendet).toBe(1);
     expect(withReason.totals.daysUnbegruendet).toBe(0);
+    expect(canCloseDay(withReason.rows[0]).ok).toBe(true);
+
+    blob = closeDay(blob, withReason.rows[0], 'chef@oliv.ch', NOW);
+    const closed = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0);
+    expect(closed.rows[0].status).toBe('abgeschlossen_mit_differenz');
+    expect(closed.rows[0].locked).toBe(true);
+    expect(closed.totals.daysConfirmed).toBe(1); // zählt als abgeschlossen
+    expect(closed.totals.daysAbgeschlossenMitDifferenz).toBe(1);
 
     // NUR eine Notiz (ohne Katalog-Grund) zählt ebenfalls als begründet.
     let blobNote = emptyTagesabschlussBlob();
@@ -299,11 +334,11 @@ describe('buildTagesabschlussRows', () => {
     blobNote = setCashDiffReasons(blobNote, '2026-07-01', [], 'Einzahlung folgt morgen', NOW);
     const withNote = buildTagesabschlussRows(2026, 7, closings, blobNote, confirmations, null, 0);
     expect(withNote.rows[0].cashDiffNote).toBe('Einzahlung folgt morgen');
-    expect(withNote.rows[0].status).toBe('bestaetigt_mit_differenz');
+    expect(canCloseDay(withNote.rows[0]).ok).toBe(true);
 
-    // Ohne Tagesbestätigung bleibt es trotz Begründung "offen".
+    // Ohne Tagesbestätigung: Fortschritt vorhanden ⇒ "in_bearbeitung", Abschluss blockiert.
     const unconfirmed = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
-    expect(unconfirmed.rows[0].status).toBe('offen');
+    expect(unconfirmed.rows[0].status === 'in_bearbeitung' || unconfirmed.rows[0].locked).toBe(true);
   });
 
   it('Totale: Bargeld Soll summiert, Kassensaldo Ende + letzte Cash-Differenz', () => {
@@ -444,15 +479,144 @@ describe('buildTagesabschlussRows — Adyen-Integration & KPIs', () => {
         '2026-07-02': makeAdyenDay({ mastercard: 380, visa: 150, twint: 100 }), // Diff 20 → large
       },
     };
-    const { totals } = buildTagesabschlussRows(2026, 7, closings, blob, {
+    const confirmations = {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
-    }, adyenBlob, 0);
+    };
+    const before = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, adyenBlob, 0);
+    // 01. abschließen (Vorbedingungen erfüllt), dann neu bauen.
+    blob = closeDay(blob, before.rows[0], 'chef@oliv.ch', NOW);
+    const { totals } = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, adyenBlob, 0);
 
     expect(totals.daysWithZbericht).toBe(3);
-    expect(totals.daysConfirmed).toBe(1);
-    expect(totals.daysOpen).toBe(2);          // 02. + 03. offen
+    expect(totals.daysConfirmed).toBe(1);     // 01. abgeschlossen
+    expect(totals.daysAbgeschlossen).toBe(1);
+    // 02. + 03. haben Cash-Ist erfasst ⇒ Fortschritt ⇒ "in_bearbeitung".
+    expect(totals.daysInBearbeitung).toBe(2);
+    expect(totals.daysOpen).toBe(0);
     // 02. via Adyen-Diff, 03. via Kassen-Diff — je EINMAL gezählt.
     expect(totals.daysWithDiff).toBe(2);
+  });
+});
+
+describe('Tages-/Monatsabschluss (closeDay/reopenDay/closeMonth)', () => {
+  const CONF = { '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW } };
+
+  function closableBlob(): TagesabschlussBlob {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW);
+    return blob;
+  }
+  const CLOSINGS = { '2026-07-01': makeClosing('2026-07-01') };
+
+  it('reopenDay: Grund ist PFLICHT, Status wieder_geoeffnet, Historie = Union', () => {
+    let blob = closableBlob();
+    const { rows } = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    blob = closeDay(blob, rows[0], 'chef@oliv.ch', NOW);
+
+    expect(() => reopenDay(blob, '2026-07-01', 'admin@oliv.ch', '   ', NOW))
+      .toThrow(/grund ist Pflicht/);
+    expect(() => reopenDay(blob, '2026-07-02', 'admin@oliv.ch', 'x', NOW))
+      .toThrow(/nicht abgeschlossen/);
+
+    const later = '2026-07-06T12:00:00.000Z';
+    blob = reopenDay(blob, '2026-07-01', 'admin@oliv.ch', 'Beleg vergessen', later);
+    const c = blob.abschluesse['2026-07-01'];
+    expect(c.status).toBe('wieder_geoeffnet');
+    expect(c.reopenedBy).toBe('admin@oliv.ch');
+    expect(c.reopenReason).toBe('Beleg vergessen');
+    // Historie wächst: Abschluss + Wiederöffnung, chronologisch.
+    expect(c.history.map(h => h.action)).toEqual(['abschluss', 'wiederoeffnung']);
+
+    // Wieder geöffnet ⇒ nicht mehr gesperrt, Status wieder_geoeffnet.
+    const after = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    expect(after.rows[0].locked).toBe(false);
+    expect(after.rows[0].status).toBe('wieder_geoeffnet');
+    expect(after.totals.daysWiederGeoeffnet).toBe(1);
+    expect(after.totals.daysConfirmed).toBe(0);
+
+    // Erneuter Abschluss möglich; Historie behält alle drei Einträge.
+    const later2 = '2026-07-06T13:00:00.000Z';
+    blob = closeDay(blob, after.rows[0], 'chef@oliv.ch', later2);
+    expect(blob.abschluesse['2026-07-01'].history).toHaveLength(3);
+    expect(blob.abschluesse['2026-07-01'].status).toBe('abgeschlossen');
+  });
+
+  it('needsReview: Alt-Tag-Änderung nach Abschluss — fixierter Saldo weicht vom berechneten ab', () => {
+    let blob = closableBlob();
+    const { rows } = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    blob = closeDay(blob, rows[0], 'chef@oliv.ch', NOW); // fixiert Saldo 300
+
+    // Nachträglich geänderter Anfangsbestand (Alt-Änderung) → berechneter Saldo 400.
+    const changed = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 100);
+    const r = changed.rows[0];
+    expect(r.fixedKassensaldo).toBe(300);
+    expect(r.kassensaldoSoll).toBe(400); // Kette rechnet IMMER mit berechnetem Wert
+    expect(r.needsReview).toBe(true);
+    expect(changed.totals.daysNeedsReview).toBe(1);
+    // Cash-Diff des gesperrten Tags bleibt am FIXIERTEN Saldo verankert.
+    expect(r.cashDiff).toBe(0);
+
+    // Ohne Änderung: kein Review-Marker.
+    const same = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    expect(same.rows[0].needsReview).toBe(false);
+  });
+
+  it('Monatsabschluss: canCloseMonth blockiert offene Tage; closeMonth friert Snapshot ein; reopenMonth', () => {
+    let blob = closableBlob();
+    const open = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    const openCheck = canCloseMonth(open, false);
+    expect(openCheck.ok).toBe(false);
+    expect(openCheck.blockers.join(' ')).toMatch(/nicht abgeschlossen/);
+    expect(() => closeMonth(blob, '2026-07', open, 'admin@oliv.ch', NOW)).toThrow(/nicht möglich/);
+
+    blob = closeDay(blob, open.rows[0], 'chef@oliv.ch', NOW);
+    const closedMonth = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    expect(canCloseMonth(closedMonth, false).ok).toBe(true);
+    expect(readyForBuchhaltung(closedMonth)).toBe(true);
+
+    blob = closeMonth(blob, '2026-07', closedMonth, 'admin@oliv.ch', NOW);
+    expect(isMonthClosed(blob, '2026-07')).toBe(true);
+    const mc = blob.monatsabschluesse['2026-07'];
+    expect(mc.closedBy).toBe('admin@oliv.ch');
+    expect(mc.snapshot).toEqual(buildMonthClosureSnapshot(closedMonth));
+    expect(mc.snapshot.umsatzTotal).toBe(1000);
+    expect(mc.snapshot.bargeldTotal).toBe(300);
+
+    // Doppelt schließen blockiert; Wiederöffnung setzt Status-Flag (kein Key-Delete).
+    expect(() => closeMonth(blob, '2026-07', closedMonth, 'admin@oliv.ch', NOW)).toThrow(/bereits/);
+    blob = reopenMonth(blob, '2026-07', 'admin@oliv.ch', NOW);
+    expect(isMonthClosed(blob, '2026-07')).toBe(false);
+    expect(blob.monatsabschluesse['2026-07'].status).toBe('wieder_geoeffnet');
+    expect(blob.monatsabschluesse['2026-07'].snapshot).toEqual(mc.snapshot);
+  });
+
+  it('readyForBuchhaltung: false bei offenen/in Bearbeitung/wieder geöffneten Tagen', () => {
+    const blob = closableBlob();
+    const month = buildTagesabschlussRows(2026, 7, CLOSINGS, blob, CONF, null, 0);
+    expect(readyForBuchhaltung(month)).toBe(false); // in_bearbeitung
+  });
+
+  it('merge: abschluesse jüngster updatedAt gewinnt, Historie = Union (keine Wiederbelebung nötig)', () => {
+    let a = closableBlob();
+    const rowsA = buildTagesabschlussRows(2026, 7, CLOSINGS, a, CONF, null, 0);
+    a = closeDay(a, rowsA.rows[0], 'chef@oliv.ch', NOW);
+
+    // Gerät B hat denselben Tag später wieder geöffnet (jüngerer updatedAt).
+    const later = '2026-07-06T12:00:00.000Z';
+    const b = reopenDay(a, '2026-07-01', 'admin@oliv.ch', 'Korrektur', later);
+
+    const merged = mergeTagesabschlussBlobs(a, b);
+    expect(merged.abschluesse['2026-07-01'].status).toBe('wieder_geoeffnet');
+    // Historie ist die UNION beider Seiten, chronologisch sortiert.
+    expect(merged.abschluesse['2026-07-01'].history.map(h => h.action))
+      .toEqual(['abschluss', 'wiederoeffnung']);
+
+    // Monatsabschluss überlebt den Merge mit leerer Gegenseite.
+    let c = closeDay(b, buildTagesabschlussRows(2026, 7, CLOSINGS, b, CONF, null, 0).rows[0], 'chef@oliv.ch', later);
+    const monthC = buildTagesabschlussRows(2026, 7, CLOSINGS, c, CONF, null, 0);
+    c = closeMonth(c, '2026-07', monthC, 'admin@oliv.ch', later);
+    const merged2 = mergeTagesabschlussBlobs(emptyTagesabschlussBlob(), c);
+    expect(merged2.monatsabschluesse['2026-07']?.status).toBe('abgeschlossen');
   });
 });
 

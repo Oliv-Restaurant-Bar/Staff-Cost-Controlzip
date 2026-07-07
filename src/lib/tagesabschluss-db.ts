@@ -54,6 +54,19 @@ export async function loadTagesabschluss(tenantId: TenantId): Promise<Tagesabsch
 }
 
 /**
+ * Synchroner localStorage-Stand (Primärspeicher) — für Sperr-Prüfungen zur
+ * Mutationszeit in anderen Sections (z. B. Adyen-Abgleich: keine Overrides
+ * für definitiv abgeschlossene Tage). Wirft nie.
+ */
+export function loadTagesabschlussLocal(tenantId: TenantId): TagesabschlussBlob {
+  try {
+    return normalizeTagesabschlussBlob(tlsGetJson<unknown>(tenantId, TAGESABSCHLUSS_KEY));
+  } catch {
+    return normalizeTagesabschlussBlob(null);
+  }
+}
+
+/**
  * Speichert den Blob: KV-Stand erneut lesen → mergen → localStorage sofort,
  * KV best-effort. KV-Fehler brechen die Aktion NICHT ab.
  */
