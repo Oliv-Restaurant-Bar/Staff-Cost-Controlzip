@@ -17,13 +17,18 @@
  *
  * Inline-Bearbeitung (nur wenn NICHT readOnly und Callbacks vorhanden):
  * Cash (Bestand Kasse) und Einzahlung Bank direkt in der Zeile (persistiert
- * bei Blur/Enter, Escape verwirft); Bestätigungs-Checkboxen (Barbestand/Tag)
- * schreiben in den gemeinsamen Adyen-Store. Das Tagesdetail öffnet sich NUR
- * über einen Klick auf das Datum (als Link gestaltet).
+ * bei Blur/Enter, Escape verwirft). Debitoren ebenfalls inline — als
+ * KORREKTUR des Z-Bericht-Werts (Override, gelb; Leereingabe entfernt die
+ * Korrektur). Gutschein-Zellen öffnen den kleinen Gutschein-Dialog
+ * (onVoucherClick), die Barausgaben-Zelle NUR den Barausgaben-Dialog
+ * (onExpensesClick) — beides öffnet NIE das Tagesdetail.
+ * Bestätigungs-Checkboxen (Barbestand/Tag) schreiben in den gemeinsamen
+ * Adyen-Store. Das Tagesdetail öffnet sich NUR über einen Klick auf das
+ * Datum (als Link gestaltet).
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Plus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import type { DayConfirmation } from '@/lib/adyen-abstimmung';
 import {
@@ -50,7 +55,10 @@ function todayIso(): string {
 // ── Spaltengruppen (visuelle Trennung) ───────────────────────────────────────
 
 /** Trennlinie am Beginn jeder Gruppe (auf Header-, Body- und Footer-Zellen). */
-const SEP = 'border-l border-border';
+const SEP = 'border-l-2 border-border';
+
+/** Fokus-Tint für Zellen mit Inline-Eingabe (aktive Eingabezelle). */
+const EDIT_CELL_FOCUS = 'focus-within:bg-sky-100/70 dark:focus-within:bg-sky-900/30';
 
 interface ColumnGroup {
   label: string;
@@ -65,12 +73,12 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
   {
     label: 'Umsatz',
     cols: [{ label: 'Datum', align: 'left' }, { label: 'Umsatz', align: 'right' }],
-    head: 'bg-muted/80', sub: 'bg-muted/40',
+    head: 'bg-muted', sub: 'bg-muted/60',
   },
   {
     label: 'Kartenzahlungen',
     cols: [{ label: 'KK', align: 'right' }, { label: 'KK Adyen', align: 'right' }],
-    head: 'bg-sky-100/80 dark:bg-sky-900/30', sub: 'bg-sky-50/70 dark:bg-sky-900/15',
+    head: 'bg-sky-100 dark:bg-sky-900/40', sub: 'bg-sky-50 dark:bg-sky-900/20',
   },
   {
     label: 'Kasse',
@@ -79,7 +87,7 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
       { label: 'Cash', align: 'right' },
       { label: 'Einzahlung Bank', align: 'right' },
     ],
-    head: 'bg-emerald-100/70 dark:bg-emerald-900/30', sub: 'bg-emerald-50/60 dark:bg-emerald-900/15',
+    head: 'bg-emerald-100 dark:bg-emerald-900/40', sub: 'bg-emerald-50 dark:bg-emerald-900/20',
   },
   {
     label: 'Weitere Zahlungsarten',
@@ -88,17 +96,17 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
       { label: 'Verkaufte Gutscheine', align: 'right' },
       { label: 'Eingelöste Gutscheine', align: 'right' },
     ],
-    head: 'bg-violet-100/70 dark:bg-violet-900/25', sub: 'bg-violet-50/60 dark:bg-violet-900/10',
+    head: 'bg-violet-100 dark:bg-violet-900/40', sub: 'bg-violet-50 dark:bg-violet-900/20',
   },
   {
     label: 'Ausgaben',
     cols: [{ label: 'Barausgaben', align: 'right' }],
-    head: 'bg-orange-100/70 dark:bg-orange-900/25', sub: 'bg-orange-50/60 dark:bg-orange-900/10',
+    head: 'bg-orange-100 dark:bg-orange-900/40', sub: 'bg-orange-50 dark:bg-orange-900/20',
   },
   {
     label: 'Status',
     cols: [{ label: 'Status', align: 'left' }],
-    head: 'bg-muted/80', sub: 'bg-muted/40',
+    head: 'bg-muted', sub: 'bg-muted/60',
   },
 ];
 
@@ -125,6 +133,32 @@ function ValueCell({ cell, sep = false, title }: { cell: DayCell; sep?: boolean;
         {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
         {cell.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(cell.value)}
       </span>
+    </td>
+  );
+}
+
+/**
+ * Klickbare Gutschein-Zelle — öffnet den kleinen Gutschein-Dialog.
+ * Zeigt NUR den Betrag (Nummern/Kommentar bleiben im Dialog/Tagesdetail).
+ */
+function VoucherCell({ cell, label, onClick, testId }: {
+  cell: DayCell;
+  label: string;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${cellBg(cell)}`}>
+      <button
+        type="button"
+        className={`inline-flex items-center gap-1 rounded px-1 -mx-1 cursor-pointer underline decoration-dotted underline-offset-2 decoration-muted-foreground/60 hover:bg-accent hover:text-accent-foreground ${amountColor(cell.value, cell.source)}`}
+        onClick={onClick}
+        title={`${label} erfassen (Betrag, Nummern, Kommentar)`}
+        data-testid={testId}
+      >
+        {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
+        {cell.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(cell.value)}
+      </button>
     </td>
   );
 }
@@ -162,9 +196,11 @@ const INLINE_INPUT_BASE =
   'h-6 w-20 rounded border border-input bg-background px-1 text-right text-xs tabular-nums ' +
   'focus:outline-none focus:ring-1 focus:ring-ring';
 
-function InlineAmountInput({ value, manual, onCommit, testId, ariaLabel }: {
+function InlineAmountInput({ value, manual, corrected = false, onCommit, testId, ariaLabel }: {
   value: number | null;
   manual: boolean;
+  /** Korrektur eines Auto-Werts (Override) — gelb statt blau markiert. */
+  corrected?: boolean;
   onCommit: (next: number | null) => void;
   testId: string;
   ariaLabel: string;
@@ -181,11 +217,19 @@ function InlineAmountInput({ value, manual, onCommit, testId, ariaLabel }: {
     onCommit(parsed);
   };
 
+  // Dezente Dauer-Markierung gespeicherter Eingaben: manuell = blau,
+  // Korrektur (Override eines Z-Bericht-Werts) = gelb.
+  const savedStyle = corrected
+    ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-400 dark:border-amber-700 font-medium'
+    : manual
+      ? 'text-sky-700 dark:text-sky-400 font-medium bg-sky-50 dark:bg-sky-900/20 border-sky-300 dark:border-sky-800'
+      : '';
+
   return (
     <input
       type="text"
       inputMode="decimal"
-      className={`${INLINE_INPUT_BASE} ${manual ? 'text-sky-700 dark:text-sky-400 font-medium' : ''}`}
+      className={`${INLINE_INPUT_BASE} ${savedStyle}`}
       value={text}
       aria-label={ariaLabel}
       onChange={e => setText(e.target.value)}
@@ -215,14 +259,28 @@ interface TagesabschlussTableProps {
   readOnly?: boolean;
   /** Inline-Save einzelner manueller Felder (nur vorhandene Keys werden angefasst). */
   onSaveManual?: (date: string, patch: TagesabschlussManualPatch) => void;
+  /**
+   * Inline-Korrektur Debitoren (Auto-Feld): corrected null = Korrektur
+   * entfernen (Z-Bericht-Wert gilt wieder). prevComment = bestehender
+   * Override-Kommentar, damit er beim erneuten Korrigieren erhalten bleibt.
+   */
+  onCorrectRechnung?: (date: string, original: number, corrected: number | null, prevComment: string | undefined) => void;
+  /** Öffnet den kleinen Gutschein-Dialog (Betrag/Nummern/Kommentar) — NICHT das Tagesdetail. */
+  onVoucherClick?: (date: string, kind: 'verkauft' | 'eingeloest') => void;
+  /** Öffnet AUSSCHLIESSLICH den Barausgaben-Dialog — NICHT das Tagesdetail. */
+  onExpensesClick?: (date: string) => void;
   /** Bestätigung (gemeinsamer Adyen-Store), identische Semantik wie im Dialog. */
   onConfirm?: (date: string, confirmation: DayConfirmation | null) => void;
 }
 
 export function TagesabschlussTable({
-  rows, totals, onDayClick, readOnly = false, onSaveManual, onConfirm,
+  rows, totals, onDayClick, readOnly = false, onSaveManual,
+  onCorrectRechnung, onVoucherClick, onExpensesClick, onConfirm,
 }: TagesabschlussTableProps) {
   const editable = !readOnly && !!onSaveManual;
+  const correctable = !readOnly && !!onCorrectRechnung;
+  const voucherEditable = !readOnly && !!onVoucherClick;
+  const expensesEditable = !readOnly && !!onExpensesClick;
   const confirmable = !readOnly && !!onConfirm;
   const today = todayIso();
 
@@ -343,7 +401,7 @@ export function TagesabschlussTable({
                       ? <span className="text-muted-foreground">({fmtChf(row.barumsatz)})</span>
                       : <span className="text-muted-foreground">—</span>}
                 </td>
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? '' : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)} ${diffColorClass(row.kassenDiffStatus)}`}
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)} ${diffColorClass(row.kassenDiffStatus)}`}
                     title={kassenTitle} data-testid={`ta-bestand-${row.date}`}>
                   {editable ? (
                     <span className="inline-flex items-center gap-1">
@@ -370,7 +428,7 @@ export function TagesabschlussTable({
                   )}
                 </td>
                 {editable ? (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
+                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
                     <span className="inline-flex items-center gap-1">
                       {row.cells.einzahlungBank.comment && (
                         <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
@@ -388,16 +446,70 @@ export function TagesabschlussTable({
                   <ValueCell cell={row.cells.einzahlungBank} />
                 )}
 
-                {/* ── Gruppe Weitere Zahlungsarten ── */}
-                <ValueCell cell={row.cells.rechnung} sep />
-                <ValueCell cell={row.cells.gutscheinVerkauft} />
-                <ValueCell cell={row.cells.gutscheinEingeloest} />
+                {/* ── Gruppe Weitere Zahlungsarten: Debitoren inline (Korrektur
+                    des Z-Bericht-Werts), Gutscheine öffnen den Gutschein-Dialog ── */}
+                {correctable ? (
+                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${EDIT_CELL_FOCUS}`}
+                      data-testid={`ta-rechnung-${row.date}`}>
+                    <span className="inline-flex items-center gap-1">
+                      {row.cells.rechnung.comment && (
+                        <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
+                      )}
+                      <InlineAmountInput
+                        value={row.cells.rechnung.value}
+                        manual={false}
+                        corrected={row.cells.rechnung.source === 'corrected'}
+                        onCommit={v => onCorrectRechnung!(
+                          row.date,
+                          row.cells.rechnung.override?.originalValue ?? row.cells.rechnung.auto ?? 0,
+                          v,
+                          row.cells.rechnung.override?.comment,
+                        )}
+                        testId={`ta-input-rechnung-${row.date}`}
+                        ariaLabel={`Debitoren ${row.date}`}
+                      />
+                    </span>
+                  </td>
+                ) : (
+                  <ValueCell cell={row.cells.rechnung} sep />
+                )}
+                {voucherEditable ? (
+                  <>
+                    <VoucherCell cell={row.cells.gutscheinVerkauft} label="Verkaufte Gutscheine"
+                      onClick={() => onVoucherClick!(row.date, 'verkauft')}
+                      testId={`ta-gutschein-verkauft-${row.date}`} />
+                    <VoucherCell cell={row.cells.gutscheinEingeloest} label="Eingelöste Gutscheine"
+                      onClick={() => onVoucherClick!(row.date, 'eingeloest')}
+                      testId={`ta-gutschein-eingeloest-${row.date}`} />
+                  </>
+                ) : (
+                  <>
+                    <ValueCell cell={row.cells.gutscheinVerkauft} />
+                    <ValueCell cell={row.cells.gutscheinEingeloest} />
+                  </>
+                )}
 
-                {/* ── Gruppe Ausgaben: Barausgaben (nur Tages-Total) ── */}
+                {/* ── Gruppe Ausgaben: Barausgaben (nur Tages-Total; Klick
+                    öffnet AUSSCHLIESSLICH den Barausgaben-Dialog) ── */}
                 <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3`}>
-                  {row.expenseCount > 0
-                    ? <span className="font-medium">{fmtChf(row.barausgabenTotal)} <span className="text-[10px] text-muted-foreground">({row.expenseCount})</span></span>
-                    : <span className="text-muted-foreground">—</span>}
+                  {expensesEditable ? (
+                    <button
+                      type="button"
+                      className="group inline-flex items-center gap-1 rounded px-1 -mx-1 cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                      onClick={() => onExpensesClick!(row.date)}
+                      title="Barausgaben erfassen (eigener Dialog)"
+                      data-testid={`ta-expenses-${row.date}`}
+                    >
+                      {row.expenseCount > 0
+                        ? <span className="font-medium tabular-nums">{fmtChf(row.barausgabenTotal)} <span className="text-[10px] text-muted-foreground">({row.expenseCount})</span></span>
+                        : <span className="text-muted-foreground">—</span>}
+                      <Plus className="h-3 w-3 shrink-0 text-muted-foreground group-hover:text-accent-foreground" aria-hidden="true" />
+                    </button>
+                  ) : (
+                    row.expenseCount > 0
+                      ? <span className="font-medium">{fmtChf(row.barausgabenTotal)} <span className="text-[10px] text-muted-foreground">({row.expenseCount})</span></span>
+                      : <span className="text-muted-foreground">—</span>
+                  )}
                 </td>
 
                 {/* ── Gruppe Status ── */}

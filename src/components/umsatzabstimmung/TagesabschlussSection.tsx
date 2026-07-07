@@ -26,6 +26,7 @@ import {
   mergeTagesabschlussBlobs,
   removeExpense,
   setExportSettings,
+  setTagesabschlussComment,
   setTagesabschlussOverride,
   upsertExpense,
   upsertManualDay,
@@ -41,7 +42,14 @@ import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
 import { fmtChf } from './adyen-ui';
 import { TagesabschlussTable } from './TagesabschlussTable';
 import { TagesabschlussDayDialog } from './TagesabschlussDayDialog';
+import { TagesabschlussExpenseDialog } from './TagesabschlussExpenseDialog';
 import { TagesabschlussExportDialog } from './TagesabschlussExportDialog';
+import {
+  TagesabschlussVoucherDialog,
+  type VoucherDialogContext,
+  type VoucherDialogPayload,
+  type VoucherKind,
+} from './TagesabschlussVoucherDialog';
 
 const MONTH_NAMES = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -66,6 +74,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [closings, setClosings] = useState<Record<string, GnDayClosing>>({});
   const [loading, setLoading] = useState(true);
   const [openDate, setOpenDate] = useState<string | null>(null);
+  const [openExpensesDate, setOpenExpensesDate] = useState<string | null>(null);
+  const [voucherCtx, setVoucherCtx] = useState<VoucherDialogContext | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
 
   // Jahr-Wechsel: Monat sinnvoll nachziehen.
@@ -128,6 +138,17 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     void persist(setTagesabschlussOverride(blob, date, field, original, corrected, comment, new Date().toISOString()));
   }, [readOnly, blob, persist]);
 
+  /**
+   * Inline-Korrektur Debitoren aus der Tabelle: Wert gleich Original (oder
+   * Leereingabe) entfernt die Korrektur; der bestehende Override-Kommentar
+   * bleibt erhalten (prevComment wird durchgereicht).
+   */
+  const handleCorrectRechnung = useCallback((date: string, original: number, corrected: number | null, prevComment: string | undefined) => {
+    if (readOnly || !blob) return;
+    const next = corrected !== null && Math.abs(corrected - original) < 0.005 ? null : corrected;
+    void persist(setTagesabschlussOverride(blob, date, 'rechnung', original, next, prevComment, new Date().toISOString()));
+  }, [readOnly, blob, persist]);
+
   const handleUpsertExpense = useCallback((expense: CashExpense) => {
     if (readOnly || !blob) return;
     void persist(upsertExpense(blob, expense));
@@ -165,6 +186,32 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
 
   const openRow = openDate ? monthData.rows.find(r => r.date === openDate) ?? null : null;
   const openExpenses = openDate ? (blob?.expenses[openDate] ?? []) : [];
+  const voucherRow = voucherCtx ? monthData.rows.find(r => r.date === voucherCtx.date) ?? null : null;
+  const dialogExpenses = openExpensesDate ? (blob?.expenses[openExpensesDate] ?? []) : [];
+
+  /**
+   * Gutschein-Dialog speichert Betrag (Override), Nummern (manuelles Feld)
+   * und Feld-Kommentar in EINEM persist auf EINEM Blob-Zwischenstand —
+   * kein Dreifach-Save, keine Race zwischen den Teil-Mutationen.
+   */
+  const handleVoucherSave = useCallback((date: string, kind: VoucherKind, payload: VoucherDialogPayload) => {
+    if (readOnly || !blob) { setVoucherCtx(null); return; }
+    const field: TagesabschlussAutoField = kind === 'eingeloest' ? 'gutscheinEingeloest' : 'gutscheinVerkauft';
+    const cell = monthData.rows.find(r => r.date === date)?.cells[field];
+    const now = new Date().toISOString();
+    const original = cell?.override?.originalValue ?? cell?.auto ?? 0;
+    // Betrag gleich Original (oder leer) → Korrektur entfernen, Z-Bericht gilt.
+    const corrected = payload.betrag !== null && Math.abs(payload.betrag - original) < 0.005 ? null : payload.betrag;
+    let next = setTagesabschlussOverride(blob, date, field, original, corrected, cell?.override?.comment, now);
+    next = upsertManualDay(next, date,
+      kind === 'eingeloest'
+        ? { gutscheinNummernEingeloest: payload.nummern }
+        : { gutscheinNummernVerkauft: payload.nummern },
+      now);
+    next = setTagesabschlussComment(next, date, field, payload.kommentar, now);
+    void persist(next);
+    setVoucherCtx(null);
+  }, [readOnly, blob, monthData, persist]);
 
   return (
     <Card className="mt-6">
@@ -174,8 +221,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
             <CardTitle className="text-sm">Tagesabschluss-Übersicht — {MONTH_NAMES[month - 1]} {year}</CardTitle>
             <p className="text-[11px] text-muted-foreground mt-0.5">
               Z-Bericht-Werte automatisch, manuelle Eingaben/Korrekturen pro Tag, Buchhaltungs-Export analog Excel "Tabelle2".
-              Cash (Bestand Kasse) und Einzahlung Bank direkt in der Tabelle erfassen — Datum anklicken für das Tagesdetail
-              (Bemerkung, Gutscheinnummern, Korrekturen, Barausgaben).
+              Cash, Einzahlung Bank und Debitoren direkt in der Tabelle erfassen; Gutschein- und Barausgaben-Zellen
+              öffnen ihren eigenen Dialog — Datum anklicken für das komplette Tagesdetail (Bemerkung, Korrekturen).
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -240,6 +287,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onDayClick={setOpenDate}
               readOnly={readOnly}
               onSaveManual={handleSaveManual}
+              onCorrectRechnung={handleCorrectRechnung}
+              onVoucherClick={(date, kind) => setVoucherCtx({ date, kind })}
+              onExpensesClick={setOpenExpensesDate}
               onConfirm={handleConfirm}
             />
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
@@ -266,6 +316,23 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
         onConfirm={handleConfirm}
         onUpsertExpense={handleUpsertExpense}
         onRemoveExpense={handleRemoveExpense}
+      />
+
+      <TagesabschlussExpenseDialog
+        date={openExpensesDate}
+        expenses={dialogExpenses}
+        readOnly={readOnly}
+        onClose={() => setOpenExpensesDate(null)}
+        onUpsertExpense={handleUpsertExpense}
+        onRemoveExpense={handleRemoveExpense}
+      />
+
+      <TagesabschlussVoucherDialog
+        ctx={voucherCtx}
+        row={voucherRow}
+        readOnly={readOnly}
+        onClose={() => setVoucherCtx(null)}
+        onSave={handleVoucherSave}
       />
 
       {blob && (

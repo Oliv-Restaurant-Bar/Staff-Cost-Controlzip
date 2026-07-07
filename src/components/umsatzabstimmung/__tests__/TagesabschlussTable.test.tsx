@@ -249,12 +249,80 @@ describe('TagesabschlussTable', () => {
     it('rendert im readOnly-Modus (Gast) keinerlei Eingabefelder', () => {
       const { rows, totals } = buildMonth();
       render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
-        readOnly onSaveManual={() => {}} onConfirm={() => {}} />);
+        readOnly onSaveManual={() => {}} onConfirm={() => {}}
+        onCorrectRechnung={() => {}} onVoucherClick={() => {}} onExpensesClick={() => {}} />);
       expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-input-einzahlung-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      // Neue Editier-Flächen ebenfalls NICHT vorhanden.
+      expect(screen.queryByTestId('ta-input-rechnung-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-gutschein-eingeloest-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-expenses-2026-07-01')).toBeNull();
       // Werte bleiben als Text sichtbar.
       expect(screen.getByTestId('ta-bestand-2026-07-01').textContent).toContain('850.00');
+    });
+  });
+
+  describe('Inline-Debitoren, Gutschein- und Barausgaben-Zellen', () => {
+    function renderFull() {
+      const { rows, totals } = buildMonth();
+      const onDayClick = vi.fn();
+      const onCorrectRechnung = vi.fn();
+      const onVoucherClick = vi.fn();
+      const onExpensesClick = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick}
+        onSaveManual={() => {}} onConfirm={() => {}}
+        onCorrectRechnung={onCorrectRechnung}
+        onVoucherClick={onVoucherClick}
+        onExpensesClick={onExpensesClick} />);
+      return { onDayClick, onCorrectRechnung, onVoucherClick, onExpensesClick };
+    }
+
+    it('Debitoren inline: Commit ruft onCorrectRechnung mit Original aus dem Z-Bericht', () => {
+      const { onCorrectRechnung } = renderFull();
+      const input = screen.getByTestId('ta-input-rechnung-2026-07-01') as HTMLInputElement;
+      expect(input.value).toBe(''); // Z-Bericht ohne Rechnung-Zahlart → auto null → leer
+      fireEvent.change(input, { target: { value: '120' } });
+      fireEvent.blur(input);
+      expect(onCorrectRechnung).toHaveBeenCalledWith('2026-07-01', 0, 120, undefined);
+    });
+
+    it('Debitoren-Korrektur: Input gelb markiert, Leereingabe entfernt (null) mit verankertem Original', () => {
+      let blob = emptyTagesabschlussBlob();
+      const now = '2026-07-05T10:00:00.000Z';
+      blob = setTagesabschlussOverride(blob, '2026-07-01', 'rechnung', 0, 50, 'Bankett auf Rechnung', now);
+      const closings = { '2026-07-01': closing('2026-07-01') };
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+      const onCorrectRechnung = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} onCorrectRechnung={onCorrectRechnung} />);
+
+      const input = screen.getByTestId('ta-input-rechnung-2026-07-01') as HTMLInputElement;
+      expect(input.value).toBe('50');
+      expect(input.className).toContain('bg-amber-50'); // Korrektur = gelb
+      fireEvent.change(input, { target: { value: '' } });
+      fireEvent.blur(input);
+      // Original (0) + bestehender Override-Kommentar werden durchgereicht.
+      expect(onCorrectRechnung).toHaveBeenCalledWith('2026-07-01', 0, null, 'Bankett auf Rechnung');
+    });
+
+    it('Gutschein-Zellen öffnen den Gutschein-Dialog — NICHT das Tagesdetail', () => {
+      const { onDayClick, onVoucherClick } = renderFull();
+      (screen.getByTestId('ta-gutschein-verkauft-2026-07-01') as HTMLElement).click();
+      expect(onVoucherClick).toHaveBeenCalledWith('2026-07-01', 'verkauft');
+      (screen.getByTestId('ta-gutschein-eingeloest-2026-07-02') as HTMLElement).click();
+      expect(onVoucherClick).toHaveBeenCalledWith('2026-07-02', 'eingeloest');
+      expect(onDayClick).not.toHaveBeenCalled();
+    });
+
+    it('Barausgaben-Zelle öffnet NUR den Barausgaben-Dialog und zeigt weiterhin das Total', () => {
+      const { onDayClick, onExpensesClick } = renderFull();
+      const btn = screen.getByTestId('ta-expenses-2026-07-01') as HTMLElement;
+      expect(btn.textContent).toContain('52.50'); // Total bleibt in der Zelle
+      btn.click();
+      expect(onExpensesClick).toHaveBeenCalledWith('2026-07-01');
+      expect(onDayClick).not.toHaveBeenCalled();
     });
   });
 

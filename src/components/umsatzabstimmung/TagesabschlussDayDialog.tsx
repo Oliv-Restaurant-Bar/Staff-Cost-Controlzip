@@ -8,7 +8,6 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -27,6 +26,7 @@ import {
   type TagesabschlussRow,
 } from '@/lib/tagesabschluss';
 import { diffColorClass, fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
+import { TagesabschlussExpenseEditor } from './TagesabschlussExpenseEditor';
 
 interface TagesabschlussDayDialogProps {
   row: TagesabschlussRow | null;
@@ -50,10 +50,6 @@ function parseGutscheinNummern(raw: string): string[] | null {
   return list.length > 0 ? list : null;
 }
 
-const EMPTY_EXPENSE_FORM = {
-  amount: '', konto: '', gegenkonto: '', text: '', mwstCode: '', belegNr: '', kommentar: '',
-};
-
 export function TagesabschlussDayDialog({
   row, expenses, readOnly, onClose,
   onSaveManual, onOverride, onConfirm, onUpsertExpense, onRemoveExpense,
@@ -64,8 +60,6 @@ export function TagesabschlussDayDialog({
   const [gsVerkauft, setGsVerkauft] = useState('');
   const [gsEingeloest, setGsEingeloest] = useState('');
   const [corrections, setCorrections] = useState<Record<string, { value: string; comment: string }>>({});
-  const [expenseForm, setExpenseForm] = useState(EMPTY_EXPENSE_FORM);
-  const [expenseError, setExpenseError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!row) return;
@@ -83,8 +77,6 @@ export function TagesabschlussDayDialog({
       };
     }
     setCorrections(corr);
-    setExpenseForm(EMPTY_EXPENSE_FORM);
-    setExpenseError(null);
   }, [row]);
 
   if (!row) return null;
@@ -111,27 +103,6 @@ export function TagesabschlussDayDialog({
     const parsed = parseAmountInput(entry.value);
     if (parsed === null) return;
     onOverride(date, field, original, parsed, entry.comment);
-  };
-
-  const handleAddExpense = () => {
-    const amount = parseAmountInput(expenseForm.amount);
-    if (amount === null || amount === 0) { setExpenseError('Betrag fehlt oder ist 0.'); return; }
-    if (expenseForm.konto.trim() === '') { setExpenseError('Konto fehlt.'); return; }
-    if (expenseForm.text.trim() === '') { setExpenseError('Text/Beschreibung fehlt.'); return; }
-    setExpenseError(null);
-    onUpsertExpense({
-      id: `exp-${date}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      date,
-      amount,
-      konto: expenseForm.konto.trim(),
-      ...(expenseForm.gegenkonto.trim() ? { gegenkonto: expenseForm.gegenkonto.trim() } : {}),
-      text: expenseForm.text.trim(),
-      ...(expenseForm.mwstCode.trim() ? { mwstCode: expenseForm.mwstCode.trim() } : {}),
-      ...(expenseForm.belegNr.trim() ? { belegNr: expenseForm.belegNr.trim() } : {}),
-      ...(expenseForm.kommentar.trim() ? { kommentar: expenseForm.kommentar.trim() } : {}),
-      updatedAt: new Date().toISOString(),
-    });
-    setExpenseForm(EMPTY_EXPENSE_FORM);
   };
 
   const confirmation = row.confirmation;
@@ -293,61 +264,16 @@ export function TagesabschlussDayDialog({
           </p>
         </section>
 
-        {/* Barausgaben */}
+        {/* Barausgaben — gemeinsamer Editor (auch im eigenständigen Barausgaben-Dialog) */}
         <section className="space-y-2 border-t border-border pt-3">
           <h3 className="text-xs font-semibold">Barausgaben ({expenses.length})</h3>
-          {expenses.length > 0 && (
-            <div className="space-y-1">
-              {expenses.map(e => (
-                <div key={e.id} className="flex items-center justify-between gap-2 rounded border border-border px-2 py-1 text-[11px]"
-                  data-testid={`ta-expense-${e.id}`}>
-                  <span className="truncate">
-                    <span className="font-medium">{fmtChf(e.amount)}</span>
-                    {' · '}{e.text}
-                    {' · Kto '}{e.konto}{e.gegenkonto ? ` / GKto ${e.gegenkonto}` : ''}
-                    {e.belegNr ? ` · Beleg ${e.belegNr}` : ''}{e.mwstCode ? ` · ${e.mwstCode}` : ''}
-                  </span>
-                  {!readOnly && (
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 shrink-0"
-                      onClick={() => onRemoveExpense(date, e.id)} aria-label="Barausgabe löschen"
-                      data-testid={`ta-expense-delete-${e.id}`}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {!readOnly && (
-            <div className="rounded border border-dashed border-border p-2 space-y-2">
-              <div className="grid grid-cols-3 gap-2">
-                <Input className="h-7 text-[11px]" inputMode="decimal" placeholder="Betrag (CHF) *"
-                  value={expenseForm.amount} onChange={e => setExpenseForm(f => ({ ...f, amount: e.target.value }))}
-                  data-testid="ta-exp-amount" />
-                <Input className="h-7 text-[11px]" placeholder="Konto *"
-                  value={expenseForm.konto} onChange={e => setExpenseForm(f => ({ ...f, konto: e.target.value }))}
-                  data-testid="ta-exp-konto" />
-                <Input className="h-7 text-[11px]" placeholder="Gegenkonto (optional)"
-                  value={expenseForm.gegenkonto} onChange={e => setExpenseForm(f => ({ ...f, gegenkonto: e.target.value }))} />
-              </div>
-              <Input className="h-7 text-[11px]" placeholder="Text / Beschreibung *"
-                value={expenseForm.text} onChange={e => setExpenseForm(f => ({ ...f, text: e.target.value }))}
-                data-testid="ta-exp-text" />
-              <div className="grid grid-cols-3 gap-2">
-                <Input className="h-7 text-[11px]" placeholder="MWST-Code (optional)"
-                  value={expenseForm.mwstCode} onChange={e => setExpenseForm(f => ({ ...f, mwstCode: e.target.value }))} />
-                <Input className="h-7 text-[11px]" placeholder="Belegnummer (optional)"
-                  value={expenseForm.belegNr} onChange={e => setExpenseForm(f => ({ ...f, belegNr: e.target.value }))} />
-                <Input className="h-7 text-[11px]" placeholder="Kommentar (optional)"
-                  value={expenseForm.kommentar} onChange={e => setExpenseForm(f => ({ ...f, kommentar: e.target.value }))} />
-              </div>
-              {expenseError && <p className="text-[11px] text-destructive">{expenseError}</p>}
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleAddExpense}
-                data-testid="ta-exp-add">
-                <Plus className="h-3 w-3 mr-1" /> Barausgabe hinzufügen
-              </Button>
-            </div>
-          )}
+          <TagesabschlussExpenseEditor
+            date={date}
+            expenses={expenses}
+            readOnly={readOnly}
+            onUpsertExpense={onUpsertExpense}
+            onRemoveExpense={onRemoveExpense}
+          />
           <p className="text-[10px] text-muted-foreground">
             In der Übersicht erscheint nur das Total — im Buchhaltungs-CSV wird jede Ausgabe einzeln exportiert.
           </p>
