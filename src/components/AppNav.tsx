@@ -244,12 +244,15 @@ export const NAV_GROUPS: NavGroup[] = [
     groupLabel: 'Foratable',
     adminOnly: true,
     items: [
+      // Gäste-PII: alle Foratable-Seiten leiten Gast-Sessions um (isAdmin && !isGuest)
+      // → Menüpunkte für Gäste komplett ausblenden (keine toten Links, kein PII-Hinweis).
       {
         path: '/gaeste',
         label: 'Gäste CRM',
         shortLabel: 'Gäste',
         icon: Contact,
         adminOnly: true,
+        hideForGuest: true,
       },
       {
         path: '/gaeste/auswertung',
@@ -257,6 +260,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Auswertung',
         icon: BarChart3,
         adminOnly: true,
+        hideForGuest: true,
       },
       {
         path: '/gaeste/analyse',
@@ -264,6 +268,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Analyse',
         icon: TrendingUp,
         adminOnly: true,
+        hideForGuest: true,
       },
       {
         path: '/gaeste/duplikate',
@@ -271,6 +276,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Duplikate',
         icon: GitMerge,
         adminOnly: true,
+        hideForGuest: true,
       },
       {
         path: '/foratable-report',
@@ -278,6 +284,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Report',
         icon: BarChart2,
         adminOnly: true,
+        hideForGuest: true,
       },
     ],
   },
