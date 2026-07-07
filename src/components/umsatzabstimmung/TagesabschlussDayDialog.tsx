@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { DayConfirmation } from '@/lib/adyen-abstimmung';
 import {
+  cashDiffReasonLabel,
   TAGESABSCHLUSS_AUTO_FIELDS,
   TAGESABSCHLUSS_FIELD_LABEL,
   type CashExpense,
@@ -163,16 +164,14 @@ export function TagesabschlussDayDialog({
           )}
         </section>
 
-        {/* Kasse / Cash: Formelbestandteile + Soll/Ist/Differenz (nur Anzeige) */}
+        {/* Kasse / Cash: Formelbestandteile + Saldo/Ist/Differenz (nur Anzeige) */}
         <section className="space-y-1.5 border-t border-border pt-3" data-testid="ta-dialog-cash">
-          <h3 className="text-xs font-semibold">Kasse (Cash Soll / Ist)</h3>
+          <h3 className="text-xs font-semibold">Kasse (Bargeld Soll / Kassensaldo)</h3>
           <div className="text-[11px] space-y-0.5 tabular-nums">
             {([
-              ['Bargeld (Bar laut Z-Bericht)', row.cells.bar.value ?? row.barumsatz, '+'],
+              ['Barumsatz (Umsatz − KK − Rechnung − eingelöste Gutscheine)', row.barumsatz, '+'],
               ['Verkaufte Gutscheine', row.cells.gutscheinVerkauft.value ?? 0, '+'],
-              ['Eingelöste Gutscheine', row.cells.gutscheinEingeloest.value ?? 0, '−'],
               ['Barausgaben', row.barausgabenTotal, '−'],
-              ['Einzahlung Bank', row.cells.einzahlungBank.value ?? 0, '−'],
             ] as [string, number | null, string][]).map(([label, value, sign]) => (
               <div key={label} className="flex justify-between gap-4">
                 <span className="text-muted-foreground">{sign} {label}</span>
@@ -180,11 +179,17 @@ export function TagesabschlussDayDialog({
               </div>
             ))}
           </div>
-          <div className="grid grid-cols-3 gap-3 text-xs border-t border-border pt-1.5">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs border-t border-border pt-1.5">
             <div>
-              <p className="text-[10px] text-muted-foreground">Cash Soll (berechnet)</p>
-              <p className="tabular-nums font-medium" data-testid="ta-dialog-cash-soll">
-                {row.cashSoll === null ? '—' : fmtChf(row.cashSoll)}
+              <p className="text-[10px] text-muted-foreground">Bargeld Soll</p>
+              <p className="tabular-nums font-medium" data-testid="ta-dialog-bargeld-soll">
+                {row.bargeldSoll === null ? '—' : fmtChf(row.bargeldSoll)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] text-muted-foreground">Kassensaldo Soll</p>
+              <p className="tabular-nums font-medium" data-testid="ta-dialog-saldo">
+                {row.kassensaldoSoll === null ? '—' : fmtChf(row.kassensaldoSoll)}
               </p>
             </div>
             <div>
@@ -200,8 +205,17 @@ export function TagesabschlussDayDialog({
               </p>
             </div>
           </div>
+          {row.cashDiffBegruendet && (
+            <p className="text-[10px] text-muted-foreground" data-testid="ta-dialog-diff-reasons">
+              Differenz begründet: {[
+                ...row.cashDiffReasons.map(cashDiffReasonLabel),
+                ...(row.cashDiffNote ? [row.cashDiffNote] : []),
+              ].join(', ')}
+            </p>
+          )}
           <p className="text-[10px] text-muted-foreground">
-            Cash Soll = Bargeld + verkaufte Gutscheine − eingelöste Gutscheine − Barausgaben − Einzahlung Bank.
+            Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine.
+            Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank; Cash Differenz = Cash Ist − Kassensaldo Soll.
           </p>
         </section>
 

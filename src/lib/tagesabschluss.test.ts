@@ -5,18 +5,24 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildTagesabschlussRows,
+  computeMonthEndSaldo,
   deriveAutoValues,
   defaultExportSettings,
   emptyTagesabschlussBlob,
   expensesTotal,
+  KASSENSALDO_MAX_CHAIN_MONTHS,
   makeTagesabschlussFieldKey,
   mergeTagesabschlussBlobs,
   monthDates,
   normalizeTagesabschlussBlob,
   removeExpense,
+  resolveKassensaldoStart,
+  setAnfangsbestand,
+  setCashDiffReasons,
   setExportSettings,
   setTagesabschlussComment,
   setTagesabschlussOverride,
+  tagesabschlussMonthKey,
   upsertExpense,
   upsertManualDay,
   type CashExpense,
@@ -126,11 +132,11 @@ describe('buildTagesabschlussRows', () => {
   it('Status "bestaetigt": Bestätigung + Barbestand + Cash Ist erfasst + Cash-Differenz grün', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
-    // Cash Soll = 300 (Bar) + 0 − 20 (EingG) − 0 − 0 = 280 → Ist 280 = grün.
-    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 280 }, NOW);
+    // Anker 0 → Kassensaldo Soll = 0 + 300 (Bargeld Soll) = 300 → Ist 300 = grün.
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW);
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
-    });
+    }, null, 0);
     expect(rows[0].status).toBe('bestaetigt');
   });
 
@@ -148,41 +154,68 @@ describe('buildTagesabschlussRows', () => {
     expect(rows[0].barumsatz).toBe(290);
   });
 
-  it('Cash Soll = Bargeld + VerkG − EingG − Barausgaben − Einzahlung Bank (kein Vortagsbezug)', () => {
+  it('Bargeld Soll = Barumsatz + VerkG − Barausgaben; ohne Anker bleiben Saldi/Diffs null', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
-    const { rows } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {});
-    // 300 + 0 − 20 − 0 − 0 = 280; ohne Cash Ist keine Differenz.
-    expect(rows[0].cashSoll).toBe(280);
-    expect(rows[0].cashIst).toBeNull();
-    expect(rows[0].cashDiff).toBeNull();
-    expect(rows[0].cashDiffStatus).toBeNull();
-    // Tag ohne Z-Bericht: kein Soll.
-    expect(rows[1].cashSoll).toBeNull();
+    const month = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {});
+    // Barumsatz 300 (EingG bereits abgezogen) + 0 VerkG − 0 Barausgaben.
+    expect(month.rows[0].bargeldSoll).toBe(300);
+    expect(month.rows[0].cashIst).toBeNull();
+    // KEIN Anker (kein 7. Arg): Kassensaldo und Cash Diff bleiben null — keine stille 0.
+    expect(month.rows[0].kassensaldoSoll).toBeNull();
+    expect(month.rows[0].cashDiff).toBeNull();
+    expect(month.rows[0].cashDiffStatus).toBeNull();
+    // Tag ohne Z-Bericht und ohne Barausgaben: kein Bargeld Soll.
+    expect(month.rows[1].bargeldSoll).toBeNull();
+    expect(month.startSaldo).toBeNull();
+    expect(month.endSaldo).toBeNull();
+    expect(month.totals.kassensaldoEnde).toBeNull();
+    expect(month.totals.letzteCashDiff).toBeNull();
   });
 
-  it('Einzahlung Bank senkt Cash Soll sofort', () => {
+  it('Einzahlung Bank senkt den Kassensaldo, NICHT das Bargeld Soll', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     blob = upsertManualDay(blob, '2026-07-01', { einzahlungBank: 80 }, NOW);
-    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
-    expect(rows[0].cashSoll).toBe(200); // 280 − 80
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(rows[0].bargeldSoll).toBe(300);
+    expect(rows[0].kassensaldoSoll).toBe(220); // 0 + 300 − 80
   });
 
-  it('Barausgaben senken Cash Soll; Übersicht zeigt das Tages-Total', () => {
+  it('Kassensaldo läuft über Tage ohne Z-Bericht weiter (Einzahlung am Ruhetag)', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
-    const exp: CashExpense = {
-      id: 'e1', date: '2026-07-01', amount: 150, konto: '6000', text: 'Blumen', updatedAt: NOW,
-    };
-    blob = upsertExpense(blob, exp);
-    const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
-    expect(rows[0].barausgabenTotal).toBe(150);
-    expect(rows[0].expenseCount).toBe(1);
-    expect(rows[0].cashSoll).toBe(130); // 280 − 150
-    expect(totals.barausgaben).toBe(150);
+    blob = upsertManualDay(blob, '2026-07-02', { einzahlungBank: 100 }, NOW);
+    const month = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 50);
+    expect(month.rows[0].kassensaldoSoll).toBe(350); // 50 + 300
+    expect(month.rows[1].bargeldSoll).toBeNull();
+    expect(month.rows[1].kassensaldoSoll).toBe(250); // 350 − 100
+    expect(month.rows[2].kassensaldoSoll).toBe(250); // unverändert
+    expect(month.endSaldo).toBe(250);
+    expect(month.totals.kassensaldoEnde).toBe(250);
+    expect(month.startSaldo).toBe(50);
   });
 
-  it('Gutschein-Änderungen aktualisieren Cash Soll (verkauft +, eingelöst −)', () => {
+  it('Barausgaben senken Bargeld Soll; ohne Z-Bericht wird das Soll negativ', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertExpense(blob, {
+      id: 'e1', date: '2026-07-01', amount: 150, konto: '6000', text: 'Blumen', updatedAt: NOW,
+    });
+    blob = upsertExpense(blob, {
+      id: 'e2', date: '2026-07-02', amount: 40, konto: '6000', text: 'Post', updatedAt: NOW,
+    });
+    const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(rows[0].barausgabenTotal).toBe(150);
+    expect(rows[0].expenseCount).toBe(1);
+    expect(rows[0].bargeldSoll).toBe(150); // 300 − 150
+    // Ruhetag mit Barausgabe: Bargeld Soll = −40, Saldo sinkt entsprechend.
+    expect(rows[1].bargeldSoll).toBe(-40);
+    expect(rows[1].kassensaldoSoll).toBe(110); // 150 − 40
+    expect(totals.barausgaben).toBe(190);
+    expect(totals.bargeldSoll).toBe(110); // 150 + (−40)
+  });
+
+  it('Gutschein-Änderungen aktualisieren Bargeld Soll (verkauft +, eingelöst −)', () => {
     const closings = {
       '2026-07-01': makeClosing('2026-07-01', {
         accountingLines: [
@@ -192,65 +225,102 @@ describe('buildTagesabschlussRows', () => {
     };
     let blob = emptyTagesabschlussBlob();
     const base = buildTagesabschlussRows(2026, 7, closings, blob, {});
-    expect(base.rows[0].cashSoll).toBe(430); // 300 + 150 − 20
-    // Korrektur eingelöste Gutscheine 20 → 50 senkt das Soll entsprechend.
+    expect(base.rows[0].bargeldSoll).toBe(450); // 300 + 150
+    // Korrektur eingelöste Gutscheine 20 → 50 senkt Barumsatz und damit das Soll.
     blob = setTagesabschlussOverride(blob, '2026-07-01', 'gutscheinEingeloest', 20, 50, '', NOW);
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
-    expect(rows[0].cashSoll).toBe(400); // 300 + 150 − 50
+    expect(rows[0].bargeldSoll).toBe(420); // 270 + 150
   });
 
-  it('Cash Ist bleibt manuell ("manual"); Cash Differenz = Ist − Soll mit Ampel', () => {
+  it('Cash Ist bleibt manuell ("manual"); Cash Differenz = Ist − Kassensaldo Soll mit Ampel', () => {
     const closings = {
       '2026-07-01': makeClosing('2026-07-01'),
       '2026-07-02': makeClosing('2026-07-02'),
       '2026-07-03': makeClosing('2026-07-03'),
     };
     let blob = emptyTagesabschlussBlob();
-    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 280 }, NOW); // exakt
-    blob = upsertManualDay(blob, '2026-07-02', { bestandKasse: 283 }, NOW); // +3
-    blob = upsertManualDay(blob, '2026-07-03', { bestandKasse: 500 }, NOW); // +220
-    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    // Saldi mit Anker 0: 300 / 600 / 900.
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW);  // exakt
+    blob = upsertManualDay(blob, '2026-07-02', { bestandKasse: 603 }, NOW);  // +3
+    blob = upsertManualDay(blob, '2026-07-03', { bestandKasse: 1120 }, NOW); // +220
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
     expect(rows[0].cells.bestandKasse.source).toBe('manual');
-    expect(rows[0].cashIst).toBe(280);
+    expect(rows[0].cashIst).toBe(300);
     expect(rows[0].cashDiff).toBe(0);
     expect(rows[0].cashDiffStatus).toBe('ok');
     expect(rows[1].cashDiff).toBe(3);
     expect(rows[1].cashDiffStatus).toBe('small');
     expect(rows[2].cashDiff).toBe(220);
     expect(rows[2].cashDiffStatus).toBe('large');
+    // Die Zählung korrigiert den Soll-Saldo NICHT — der Fehler läuft sichtbar mit.
+    expect(rows[2].kassensaldoSoll).toBe(900);
   });
 
   it('Status bleibt "offen", wenn Cash Ist fehlt — trotz Bestätigung', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     const { rows } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
-    });
+    }, null, 0);
     expect(rows[0].cashIst).toBeNull();
     expect(rows[0].status).toBe('offen');
   });
 
-  it('Status bleibt "offen" (zu prüfen), wenn die Cash-Differenz nicht grün ist', () => {
+  it('Status bleibt "offen", wenn die Cash-Differenz nicht grün UND unbegründet ist', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
-    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW); // Diff +20 → large
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 320 }, NOW); // Soll 300 → +20 large
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
-    });
+    }, null, 0);
     expect(rows[0].cashDiffStatus).toBe('large');
+    expect(rows[0].cashDiffBegruendet).toBe(false);
     expect(rows[0].status).toBe('offen');
   });
 
-  it('Totale: Cash Soll/Ist/Diff summiert; bestandKasse = Summe der gezählten Bestände', () => {
+  it('Status "bestaetigt_mit_differenz": nicht-grüne Differenz + Grund ODER Notiz', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
-    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 283 }, NOW);
-    blob = upsertManualDay(blob, '2026-07-15', { bestandKasse: 800 }, NOW); // ohne Z-Bericht: kein Soll/Diff
-    const { totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
-    expect(totals.cashSoll).toBe(280);
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 320 }, NOW); // +20 large
+    blob = setCashDiffReasons(blob, '2026-07-01', ['wechselgeld_angepasst'], undefined, NOW);
+    const confirmations = {
+      '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
+    };
+    const withReason = buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0);
+    expect(withReason.rows[0].cashDiffBegruendet).toBe(true);
+    expect(withReason.rows[0].cashDiffReasons).toEqual(['wechselgeld_angepasst']);
+    expect(withReason.rows[0].status).toBe('bestaetigt_mit_differenz');
+    expect(withReason.totals.daysConfirmed).toBe(1); // zählt als abgeschlossen
+    expect(withReason.totals.daysBegruendet).toBe(1);
+    expect(withReason.totals.daysUnbegruendet).toBe(0);
+
+    // NUR eine Notiz (ohne Katalog-Grund) zählt ebenfalls als begründet.
+    let blobNote = emptyTagesabschlussBlob();
+    blobNote = upsertManualDay(blobNote, '2026-07-01', { bestandKasse: 320 }, NOW);
+    blobNote = setCashDiffReasons(blobNote, '2026-07-01', [], 'Einzahlung folgt morgen', NOW);
+    const withNote = buildTagesabschlussRows(2026, 7, closings, blobNote, confirmations, null, 0);
+    expect(withNote.rows[0].cashDiffNote).toBe('Einzahlung folgt morgen');
+    expect(withNote.rows[0].status).toBe('bestaetigt_mit_differenz');
+
+    // Ohne Tagesbestätigung bleibt es trotz Begründung "offen".
+    const unconfirmed = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(unconfirmed.rows[0].status).toBe('offen');
+  });
+
+  it('Totale: Bargeld Soll summiert, Kassensaldo Ende + letzte Cash-Differenz', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 283 }, NOW);  // Saldo 300 → −17 large
+    blob = upsertManualDay(blob, '2026-07-15', { bestandKasse: 800 }, NOW);  // Saldo 300 → +500 large
+    const { totals } = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(totals.bargeldSoll).toBe(300);
+    expect(totals.kassensaldoEnde).toBe(300); // Saldo läuft unverändert bis Monatsende
     expect(totals.cashIst).toBe(1083); // 283 + 800
     expect(totals.values.bestandKasse).toBe(1083);
-    expect(totals.cashDiff).toBe(3); // nur Tage mit Soll UND Ist
-    expect(totals.daysWithCashDiff).toBe(1); // 01. small; 15. ohne Soll zählt nicht
+    // Aktuellster Zählstand: 15. ist die LETZTE erfasste Differenz.
+    expect(totals.letzteCashDiff).toBe(500);
+    expect(totals.letzteCashDiffStatus).toBe('large');
+    expect(totals.daysWithCashDiff).toBe(2);
+    expect(totals.daysUnbegruendet).toBe(2);
     expect(totals.values.umsatz).toBe(1000);
     expect(totals.daysWithZbericht).toBe(1);
   });
@@ -362,11 +432,11 @@ describe('buildTagesabschlussRows — Adyen-Integration & KPIs', () => {
       '2026-07-03': makeClosing('2026-07-03'),
     };
     let blob = emptyTagesabschlussBlob();
-    // Cash-Differenzen (Soll je Tag 280): 01. Ist 280 → ok (bestätigbar);
-    // 02. Ist 500 → +220 large; 03. Ist 700 → +420 large.
-    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 280 }, NOW);
-    blob = upsertManualDay(blob, '2026-07-02', { bestandKasse: 500 }, NOW);
-    blob = upsertManualDay(blob, '2026-07-03', { bestandKasse: 700 }, NOW);
+    // Kassensaldi mit Anker 0: 300 / 600 / 900. 01. Ist 300 → ok (bestätigbar);
+    // 02. Ist 820 → +220 large; 03. Ist 1320 → +420 large.
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW);
+    blob = upsertManualDay(blob, '2026-07-02', { bestandKasse: 820 }, NOW);
+    blob = upsertManualDay(blob, '2026-07-03', { bestandKasse: 1320 }, NOW);
     const adyenBlob: AdyenAbstimmungBlob = {
       ...emptyAdyenBlob(),
       days: {
@@ -376,13 +446,86 @@ describe('buildTagesabschlussRows — Adyen-Integration & KPIs', () => {
     };
     const { totals } = buildTagesabschlussRows(2026, 7, closings, blob, {
       '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: NOW },
-    }, adyenBlob);
+    }, adyenBlob, 0);
 
     expect(totals.daysWithZbericht).toBe(3);
     expect(totals.daysConfirmed).toBe(1);
     expect(totals.daysOpen).toBe(2);          // 02. + 03. offen
     // 02. via Adyen-Diff, 03. via Kassen-Diff — je EINMAL gezählt.
     expect(totals.daysWithDiff).toBe(2);
+  });
+});
+
+describe('setCashDiffReasons / setAnfangsbestand', () => {
+  it('setCashDiffReasons trimmt, dedupliziert und entfernt bei leer/leer', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setCashDiffReasons(blob, '2026-07-01', [' kassenfehler ', 'kassenfehler', ''], '  Notiz  ', NOW);
+    expect(blob.cashDiffReasons['2026-07-01'].reasons).toEqual(['kassenfehler']);
+    expect(blob.cashDiffReasons['2026-07-01'].note).toBe('Notiz');
+    // Nur Notiz leeren: Gründe bleiben, note-Feld verschwindet.
+    blob = setCashDiffReasons(blob, '2026-07-01', ['kassenfehler'], '   ', NOW);
+    expect(blob.cashDiffReasons['2026-07-01'].note).toBeUndefined();
+    // Beides leer → Eintrag weg.
+    blob = setCashDiffReasons(blob, '2026-07-01', [], '', NOW);
+    expect(blob.cashDiffReasons['2026-07-01']).toBeUndefined();
+  });
+
+  it('setAnfangsbestand rundet, setzt und entfernt (null)', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, tagesabschlussMonthKey(2026, 7), 500.005, NOW);
+    expect(blob.anfangsbestand['2026-07'].value).toBe(500.01);
+    blob = setAnfangsbestand(blob, '2026-07', null, NOW);
+    expect(blob.anfangsbestand['2026-07']).toBeUndefined();
+    blob = setAnfangsbestand(blob, '2026-07', Number.NaN, NOW);
+    expect(blob.anfangsbestand['2026-07']).toBeUndefined();
+  });
+});
+
+describe('resolveKassensaldoStart', () => {
+  it('expliziter Anfangsbestand DIESES Monats gewinnt sofort (kein Load)', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2026-07', 500, NOW);
+    const calls: string[] = [];
+    const res = await resolveKassensaldoStart(2026, 7, blob, async (y, m) => {
+      calls.push(`${y}-${m}`);
+      return {};
+    });
+    expect(res).toEqual({ startSaldo: 500, anchorMonth: '2026-07' });
+    expect(calls).toEqual([]);
+  });
+
+  it('verankert im Vormonat und rechnet die Kette vorwärts (identische Rechenbasis)', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2026-05', 100, NOW);
+    const byMonth: Record<string, Record<string, GnDayClosing>> = {
+      '2026-6': { '2026-06-10': makeClosing('2026-06-10') }, // Bargeld Soll 300
+      '2026-5': { '2026-05-05': makeClosing('2026-05-05') }, // Bargeld Soll 300
+    };
+    const res = await resolveKassensaldoStart(2026, 7, blob, async (y, m) => byMonth[`${y}-${m}`] ?? {});
+    // Mai: 100 + 300 = 400 → Juni: 400 + 300 = 700 → Start Juli.
+    expect(res.startSaldo).toBe(700);
+    expect(res.anchorMonth).toBe('2026-05');
+    // Gegenprobe: computeMonthEndSaldo einzeln.
+    expect(computeMonthEndSaldo(2026, 5, byMonth['2026-5'], blob, 100)).toBe(400);
+  });
+
+  it('bricht an einem Monat ganz ohne Daten ab → null (KEINE stille 0)', async () => {
+    const res = await resolveKassensaldoStart(2026, 7, emptyTagesabschlussBlob(), async () => ({}));
+    expect(res).toEqual({ startSaldo: null, anchorMonth: null });
+  });
+
+  it('läuft maximal 12 Monate zurück, dann null', async () => {
+    const calls: string[] = [];
+    // Jeder Monat hat Daten, aber nirgends ein Anker.
+    const res = await resolveKassensaldoStart(2026, 7, emptyTagesabschlussBlob(), async (y, m) => {
+      calls.push(`${y}-${m}`);
+      const mm = String(m).padStart(2, '0');
+      return { [`${y}-${mm}-01`]: makeClosing(`${y}-${mm}-01`) };
+    });
+    expect(res).toEqual({ startSaldo: null, anchorMonth: null });
+    expect(calls).toHaveLength(KASSENSALDO_MAX_CHAIN_MONTHS);
+    expect(calls[0]).toBe('2026-6');
+    expect(calls[11]).toBe('2025-7');
   });
 });
 
@@ -537,6 +680,24 @@ describe('mergeTagesabschlussBlobs', () => {
     expect(merged.expenses['2026-07-01'][0].amount).toBe(10);
     expect(merged.expenses['2026-07-02']).toHaveLength(1);
     expect(merged.expenses['2026-07-02'][0].id).toBe('e2');
+  });
+
+  it('cashDiffReasons und anfangsbestand mergen je Schlüssel nach updatedAt', () => {
+    const local = blobWith({
+      cashDiffReasons: { '2026-07-01': { reasons: ['kassenfehler'], updatedAt: OLD } },
+      anfangsbestand: { '2026-07': { value: 100, updatedAt: NEW } },
+    });
+    const remote = blobWith({
+      cashDiffReasons: {
+        '2026-07-01': { reasons: ['trinkgeld_differenz'], updatedAt: NEW },
+        '2026-07-02': { reasons: [], note: 'x', updatedAt: OLD },
+      },
+      anfangsbestand: { '2026-07': { value: 900, updatedAt: OLD } },
+    });
+    const merged = mergeTagesabschlussBlobs(local, remote);
+    expect(merged.cashDiffReasons['2026-07-01'].reasons).toEqual(['trinkgeld_differenz']);
+    expect(merged.cashDiffReasons['2026-07-02'].note).toBe('x');
+    expect(merged.anfangsbestand['2026-07'].value).toBe(100);
   });
 
   it('exportSettings: jüngere Version gewinnt, einseitige bleibt', () => {

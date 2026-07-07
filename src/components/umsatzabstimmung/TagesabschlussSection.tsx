@@ -25,13 +25,18 @@ import {
   buildTagesabschlussRows,
   mergeTagesabschlussBlobs,
   removeExpense,
+  resolveKassensaldoStart,
+  setAnfangsbestand,
+  setCashDiffReasons,
   setExportSettings,
   setTagesabschlussComment,
   setTagesabschlussOverride,
+  tagesabschlussMonthKey,
   upsertExpense,
   upsertManualDay,
   type CashExpense,
   type GnDayClosing,
+  type KassensaldoStartResolution,
   type TagesabschlussAutoField,
   type TagesabschlussBlob,
   type TagesabschlussExportSettings,
@@ -39,11 +44,12 @@ import {
 } from '@/lib/tagesabschluss';
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
-import { fmtChf, fmtDiffChf } from './adyen-ui';
+import { fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
 import { TagesabschlussTable } from './TagesabschlussTable';
 import { TagesabschlussDayDialog } from './TagesabschlussDayDialog';
 import { TagesabschlussExpenseDialog } from './TagesabschlussExpenseDialog';
 import { TagesabschlussExportDialog } from './TagesabschlussExportDialog';
+import { TagesabschlussReasonDialog } from './TagesabschlussReasonDialog';
 import {
   TagesabschlussVoucherDialog,
   type VoucherDialogContext,
@@ -77,6 +83,10 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [openExpensesDate, setOpenExpensesDate] = useState<string | null>(null);
   const [voucherCtx, setVoucherCtx] = useState<VoucherDialogContext | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [reasonDate, setReasonDate] = useState<string | null>(null);
+  /** null = Auflösung läuft noch; startSaldo null = kein Anker gefunden. */
+  const [saldoResolution, setSaldoResolution] = useState<KassensaldoStartResolution | null>(null);
+  const [anfangsbestandText, setAnfangsbestandText] = useState('');
 
   // Jahr-Wechsel: Monat sinnvoll nachziehen.
   useEffect(() => {
@@ -114,6 +124,18 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     window.addEventListener(ADYEN_ABSTIMMUNG_UPDATED_EVENT, onUpdated);
     return () => window.removeEventListener(ADYEN_ABSTIMMUNG_UPDATED_EVENT, onUpdated);
   }, [tenantId]);
+
+  // Kassensaldo-Anker auflösen: expliziter Anfangsbestand dieses Monats oder
+  // Vormonats-Kette (max. 12 Monate). KEINE stille 0-Annahme — ohne Anker
+  // bleiben alle Saldi „—" und der Banner fordert einen Anfangsbestand an.
+  useEffect(() => {
+    if (!blob) { setSaldoResolution(null); return; }
+    let alive = true;
+    setSaldoResolution(null);
+    resolveKassensaldoStart(year, month, blob, (y, m) => loadGnDayClosingsForMonth(tenantId, y, m))
+      .then(res => { if (alive) setSaldoResolution(res); });
+    return () => { alive = false; };
+  }, [tenantId, year, month, blob]);
 
   const persist = useCallback(async (next: TagesabschlussBlob) => {
     setBlob(next);
@@ -164,6 +186,22 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     void persist(setExportSettings(blob, settings));
   }, [readOnly, blob, persist]);
 
+  /** Differenzgründe + Notiz eines Tages speichern (beides leer = entfernen). */
+  const handleSaveReasons = useCallback((date: string, reasons: string[], note: string) => {
+    if (readOnly || !blob) return;
+    void persist(setCashDiffReasons(blob, date, reasons, note, new Date().toISOString()));
+  }, [readOnly, blob, persist]);
+
+  /** Kassensaldo-Anfangsbestand für DIESEN Monat erfassen (Banner). */
+  const handleSaveAnfangsbestand = useCallback(() => {
+    if (readOnly || !blob) return;
+    const parsed = parseAmountInput(anfangsbestandText);
+    if (parsed === null) return;
+    const monthKey = tagesabschlussMonthKey(year, month);
+    void persist(setAnfangsbestand(blob, monthKey, parsed, new Date().toISOString()));
+    setAnfangsbestandText('');
+  }, [readOnly, blob, anfangsbestandText, year, month, persist]);
+
   // ── Bestätigung (gemeinsamer Adyen-Store) ───────────────────────────────────
 
   const handleConfirm = useCallback(async (date: string, confirmation: DayConfirmation | null) => {
@@ -179,10 +217,16 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   // ── Zeilen bauen ────────────────────────────────────────────────────────────
 
   const monthData = useMemo(() => {
-    const b = blob ?? { days: {}, expenses: {}, overrides: {}, comments: {}, exportSettings: null };
+    const b = blob ?? {
+      days: {}, expenses: {}, overrides: {}, comments: {},
+      cashDiffReasons: {}, anfangsbestand: {}, exportSettings: null,
+    };
     const ab = adyenBlob ?? emptyAdyenBlob();
-    return buildTagesabschlussRows(year, month, closings, b, ab.confirmations, ab);
-  }, [blob, adyenBlob, closings, year, month]);
+    return buildTagesabschlussRows(
+      year, month, closings, b, ab.confirmations, ab,
+      saldoResolution?.startSaldo ?? null,
+    );
+  }, [blob, adyenBlob, closings, year, month, saldoResolution]);
 
   const openRow = openDate ? monthData.rows.find(r => r.date === openDate) ?? null : null;
   const openExpenses = openDate ? (blob?.expenses[openDate] ?? []) : [];
@@ -252,6 +296,42 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
           <p className="text-xs text-muted-foreground py-4 text-center">Lade Tagesabschlüsse…</p>
         ) : (
           <>
+            {saldoResolution !== null && saldoResolution.startSaldo === null && (
+              <div
+                className="mb-3 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2"
+                data-testid="ta-anfangsbestand-banner"
+              >
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                  Kassensaldo unbekannt — Anfangsbestand für {MONTH_NAMES[month - 1]} {year} erfassen
+                </p>
+                <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
+                  Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
+                  Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
+                  Es wird bewusst KEINE 0 angenommen.
+                </p>
+                {!readOnly && (
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="h-7 w-32 rounded border border-input bg-background px-2 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="z. B. 500.00"
+                      value={anfangsbestandText}
+                      onChange={e => setAnfangsbestandText(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSaveAnfangsbestand(); }}
+                      aria-label={`Anfangsbestand ${MONTH_NAMES[month - 1]} ${year}`}
+                      data-testid="ta-anfangsbestand-input"
+                    />
+                    <Button size="sm" className="h-7 text-xs"
+                      onClick={handleSaveAnfangsbestand}
+                      disabled={parseAmountInput(anfangsbestandText) === null}
+                      data-testid="ta-anfangsbestand-save">
+                      Anfangsbestand speichern
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-3">
               <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-confirmed">
                 <p className="text-[10px] text-muted-foreground">Tage abgeschlossen</p>
@@ -280,25 +360,29 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 <p className="text-[10px] text-muted-foreground">Total Einzahlung Bank</p>
                 <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.values.einzahlungBank)}</p>
               </div>
-              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-diff">
-                <p className="text-[10px] text-muted-foreground">Cash Differenz Monat</p>
-                <p className={`text-sm font-semibold tabular-nums ${Math.abs(monthData.totals.cashDiff) > 0.05 ? 'text-red-700 dark:text-red-400' : ''}`}>
-                  CHF {fmtDiffChf(monthData.totals.cashDiff)}
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-saldo-ende">
+                <p className="text-[10px] text-muted-foreground">Kassensaldo Ende Monat</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {monthData.totals.kassensaldoEnde === null
+                    ? <span className="text-muted-foreground font-normal">—</span>
+                    : <>CHF {fmtChf(monthData.totals.kassensaldoEnde)}</>}
                 </p>
               </div>
-              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-diff-days">
-                <p className="text-[10px] text-muted-foreground">Tage mit Cash-Differenz</p>
-                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysWithCashDiff > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
-                  {monthData.totals.daysWithCashDiff}
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-bargeld">
+                <p className="text-[10px] text-muted-foreground">Total Bargeld (Soll)</p>
+                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.bargeldSoll)}</p>
+              </div>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-begruendet">
+                <p className="text-[10px] text-muted-foreground">Tage mit begründeter Differenz</p>
+                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysBegruendet > 0 ? 'text-teal-700 dark:text-teal-400' : ''}`}>
+                  {monthData.totals.daysBegruendet}
                 </p>
               </div>
-              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-soll">
-                <p className="text-[10px] text-muted-foreground">Total Cash Soll</p>
-                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.cashSoll)}</p>
-              </div>
-              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-cash-ist">
-                <p className="text-[10px] text-muted-foreground">Total Cash Ist</p>
-                <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.cashIst)}</p>
+              <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-unbegruendet">
+                <p className="text-[10px] text-muted-foreground">Tage mit unbegründeter Differenz</p>
+                <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysUnbegruendet > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                  {monthData.totals.daysUnbegruendet}
+                </p>
               </div>
             </div>
             <TagesabschlussTable
@@ -311,6 +395,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onVoucherClick={(date, kind) => setVoucherCtx({ date, kind })}
               onExpensesClick={setOpenExpensesDate}
               onConfirm={handleConfirm}
+              onReasonsClick={setReasonDate}
             />
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
@@ -318,7 +403,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span className="text-red-600 dark:text-red-400">negative Beträge</span>
               <span>normale Werte = automatisch aus dem Z-Bericht</span>
               <span>Adyen- und Cash-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
-              <span>Cash Soll = Bargeld + verkaufte Gutscheine − eingelöste Gutscheine − Barausgaben − Einzahlung Bank</span>
+              <span>Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
+              <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Cash Diff = Cash Ist − Kassensaldo Soll</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag bestätigt</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-300 align-middle mr-1" />offen</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />Differenz</span>
@@ -354,6 +440,13 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
         readOnly={readOnly}
         onClose={() => setVoucherCtx(null)}
         onSave={handleVoucherSave}
+      />
+
+      <TagesabschlussReasonDialog
+        row={reasonDate ? monthData.rows.find(r => r.date === reasonDate) ?? null : null}
+        readOnly={readOnly}
+        onClose={() => setReasonDate(null)}
+        onSave={handleSaveReasons}
       />
 
       {blob && (

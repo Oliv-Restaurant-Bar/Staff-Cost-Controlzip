@@ -34,9 +34,11 @@ fine; only the full suite dies.
 
     NODE_OPTIONS=--max-old-space-size=6144 npx vitest run --no-file-parallelism --pool=forks
 
-This passes (~727 tests, ~45 s). There is ONE pre-existing unrelated unhandled error:
-`libuuid.so.1: cannot open shared object file` from `node_modules/canvas` — it's an env
-issue, counts as "1 error" but does not fail tests; ignore it.
+This passes (~1478 tests, ~85 s). The former "1 error" (`libuuid.so.1` DLOPEN from
+`node_modules/canvas`) was caused by a test file WITHOUT a `@vitest-environment`
+directive falling back to jsdom (which loads native canvas). Fixed 2026-07 by adding
+`// @vitest-environment node` — if the error reappears, look for a NEW test file
+missing the directive on line 1, not for an env problem.
 
 **Caveat (2026-07):** even the serial full-suite command above is OOM-killed when the
 Vite dev server workflow is running (it holds a big chunk of container RAM). Even TWO

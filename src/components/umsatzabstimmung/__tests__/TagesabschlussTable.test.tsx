@@ -14,6 +14,7 @@ import { TagesabschlussTable } from '../TagesabschlussTable';
 import {
   buildTagesabschlussRows,
   emptyTagesabschlussBlob,
+  setCashDiffReasons,
   upsertExpense,
   upsertManualDay,
   setTagesabschlussOverride,
@@ -42,13 +43,14 @@ function buildMonth() {
   let blob = emptyTagesabschlussBlob();
   const now = '2026-07-05T10:00:00.000Z';
   // Manuell: Cash Ist (Bestand Kasse) + Bemerkung + Gutscheinnummern am 01.07.
-  // Cash Soll am 01.07. = 300 (Bar) − 52.50 (Barausgaben) = 247.50 → Ist exakt.
+  // Anker 0: Bargeld Soll 01.07. = 300 (Barumsatz) − 52.50 (Barausgaben) = 247.50
+  // → Kassensaldo Soll 247.50 → Ist exakt (Diff 0 grün).
   blob = upsertManualDay(blob, '2026-07-01', {
     bestandKasse: 247.5,
     bemerkung: 'Wechselgeld aufgestockt',
     gutscheinNummernVerkauft: ['GS-4711', 'GS-4712'],
   }, now);
-  // Korrektur: Umsatz am 02.07. mit Kommentar.
+  // Korrektur: Umsatz am 02.07. mit Kommentar (Barumsatz 02.07. dadurch 350).
   blob = setTagesabschlussOverride(blob, '2026-07-02', 'umsatz', 1000, 1050, 'Nachtrag Bankett', now);
   // Zwei Barausgaben am 01.07. — Übersicht zeigt nur das Total.
   blob = upsertExpense(blob, { id: 'e1', date: '2026-07-01', amount: 40, konto: '6000', text: 'Blumen', updatedAt: now });
@@ -58,7 +60,7 @@ function buildMonth() {
   const confirmations = {
     '2026-07-01': { confirmed: true, cashCounted: true, confirmedAt: now },
   };
-  return { ...buildTagesabschlussRows(2026, 7, closings, blob, confirmations), blob };
+  return { ...buildTagesabschlussRows(2026, 7, closings, blob, confirmations, null, 0), blob };
 }
 
 describe('TagesabschlussTable', () => {
@@ -77,14 +79,14 @@ describe('TagesabschlussTable', () => {
     expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
       'Datum', 'Umsatz',
       'KK', 'KK Adyen',
-      'Bargeld', 'Einzahlung Bank', 'Cash Soll', 'Cash Ist', 'Cash Diff',
+      'Bargeld Soll', 'Einzahlung Bank', 'Kassensaldo Soll', 'Cash Ist', 'Cash Diff',
       'Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
       'Barausgaben',
       'Status',
     ]);
 
     // Entfallene Spalten erscheinen nirgends mehr.
-    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung']) {
+    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung', 'Bargeld', 'Cash Soll']) {
       expect(screen.queryByText(gone)).toBeNull();
     }
 
@@ -126,30 +128,89 @@ describe('TagesabschlussTable', () => {
     expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
   });
 
-  it('Cash Soll/Ist/Diff: berechnete Spalte, Ampel und Totale', () => {
+  it('Bargeld Soll / Kassensaldo Soll / Cash Diff: berechnete Spalten, Ampel und Totale', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
 
-    // 01.07.: Soll = 300 (Bar) − 52.50 (Barausgaben) = 247.50; Ist 247.50 → Diff 0 grün.
-    const soll1 = screen.getByTestId('ta-cash-soll-2026-07-01');
+    // 01.07.: Bargeld Soll = 300 (Barumsatz) − 52.50 (Barausgaben) = 247.50;
+    // Kassensaldo Soll = 0 + 247.50; Ist 247.50 → Diff 0 grün.
+    const soll1 = screen.getByTestId('ta-bargeld-soll-2026-07-01');
     expect(soll1.textContent).toContain('247.50');
-    expect(soll1.getAttribute('title')).toContain('Cash Soll = Bargeld + verkaufte Gutscheine');
+    expect(soll1.getAttribute('title')).toContain('Bargeld Soll = Umsatz − KK − Rechnung');
+    const saldo1 = screen.getByTestId('ta-saldo-2026-07-01');
+    expect(saldo1.textContent).toContain('247.50');
+    expect(saldo1.getAttribute('title')).toContain('Saldo Vortag + Bargeld Soll − Einzahlung Bank');
     const diff1 = screen.getByTestId('ta-cash-diff-2026-07-01');
     expect(diff1.textContent).toContain('0.00');
     expect(diff1.className).toContain('text-emerald-600');
 
-    // 02.07.: Soll vorhanden (300), aber ohne Cash Ist keine Differenz („—").
-    expect(screen.getByTestId('ta-cash-soll-2026-07-02').textContent).toContain('300.00');
+    // 02.07.: korrigierter Umsatz 1050 → Barumsatz 350; Saldo 247.50 + 350 = 597.50;
+    // ohne Cash Ist keine Differenz („—").
+    expect(screen.getByTestId('ta-bargeld-soll-2026-07-02').textContent).toContain('350.00');
+    expect(screen.getByTestId('ta-saldo-2026-07-02').textContent).toContain('597.50');
     expect(screen.getByTestId('ta-cash-diff-2026-07-02').textContent).toContain('—');
 
-    // Tag ohne Z-Bericht: kein Soll, keine Differenz.
-    expect(screen.getByTestId('ta-cash-soll-2026-07-03').textContent).toContain('—');
+    // Tag ohne Z-Bericht: kein Bargeld Soll, Saldo läuft weiter, keine Differenz.
+    expect(screen.getByTestId('ta-bargeld-soll-2026-07-03').textContent).toContain('—');
+    expect(screen.getByTestId('ta-saldo-2026-07-03').textContent).toContain('597.50');
     expect(screen.getByTestId('ta-cash-diff-2026-07-03').textContent).toContain('—');
 
-    // Totale: Soll 247.50 + 300 = 547.50; Ist nur 01.07.; Diff 0.
-    expect(screen.getByTestId('ta-total-cash-soll').textContent).toContain('547.50');
+    // Totale: Bargeld Soll 247.50 + 350 = 597.50; Saldo Monatsende 597.50;
+    // Ist nur 01.07.; letzte Differenz = 0 (01.07.).
+    expect(screen.getByTestId('ta-total-bargeld-soll').textContent).toContain('597.50');
+    expect(screen.getByTestId('ta-total-saldo').textContent).toContain('597.50');
     expect(screen.getByTestId('ta-total-cash-ist').textContent).toContain('247.50');
     expect(screen.getByTestId('ta-total-cash-diff').textContent).toContain('0.00');
+  });
+
+  it('ohne Anfangsbestand: Saldo/Diff zeigen „—" mit Hinweis-Tooltip', () => {
+    let blob = emptyTagesabschlussBlob();
+    const now = '2026-07-05T10:00:00.000Z';
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 500 }, now);
+    const closings = { '2026-07-01': closing('2026-07-01') };
+    const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    // Bargeld Soll ist trotzdem berechenbar; Saldo/Diff nicht (KEINE stille 0).
+    expect(screen.getByTestId('ta-bargeld-soll-2026-07-01').textContent).toContain('300.00');
+    const saldo = screen.getByTestId('ta-saldo-2026-07-01');
+    expect(saldo.textContent).toContain('—');
+    expect(saldo.getAttribute('title')).toContain('Anfangsbestand erfassen');
+    expect(screen.getByTestId('ta-cash-diff-2026-07-01').textContent).toContain('—');
+    expect(screen.getByTestId('ta-total-saldo').textContent).toContain('—');
+    expect(screen.getByTestId('ta-total-cash-diff').textContent).toContain('—');
+  });
+
+  it('nicht-grüne Differenz: „Begründen"-Button bzw. „Begründet"-Badge (Tooltip = Gründe)', () => {
+    let blob = emptyTagesabschlussBlob();
+    const now = '2026-07-05T10:00:00.000Z';
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 320 }, now); // Saldo 300 → +20 large
+    const closings = { '2026-07-01': closing('2026-07-01') };
+    const onReasonsClick = vi.fn();
+
+    // Ohne Begründung: Button „Begründen" öffnet den Grund-Dialog.
+    const a = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    const first = render(<TagesabschlussTable rows={a.rows} totals={a.totals} onDayClick={() => {}}
+      onReasonsClick={onReasonsClick} />);
+    const begruenden = screen.getByTestId('ta-diff-begruenden-2026-07-01') as HTMLElement;
+    begruenden.click();
+    expect(onReasonsClick).toHaveBeenCalledWith('2026-07-01');
+    first.unmount();
+
+    // Mit Grund + Notiz: teal Badge „Begründet", Gründe im Tooltip.
+    blob = setCashDiffReasons(blob, '2026-07-01', ['wechselgeld_angepasst'], 'Beleg folgt', now);
+    const b = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    render(<TagesabschlussTable rows={b.rows} totals={b.totals} onDayClick={() => {}}
+      onReasonsClick={onReasonsClick} />);
+    const badge = screen.getByTestId('ta-diff-begruendet-2026-07-01') as HTMLElement;
+    expect(badge.textContent).toContain('Begründet');
+    expect(badge.getAttribute('title')).toContain('Notiz: Beleg folgt');
+    expect(screen.queryByTestId('ta-diff-begruenden-2026-07-01')).toBeNull();
+
+    // readOnly (Gast): Badge bleibt sichtbar, aber ohne Klick-Ziel „Begründen".
+    cleanup();
+    render(<TagesabschlussTable rows={b.rows} totals={b.totals} onDayClick={() => {}}
+      readOnly onReasonsClick={onReasonsClick} />);
+    expect(screen.getByTestId('ta-diff-begruendet-2026-07-01')).toBeTruthy();
   });
 
   it('Bemerkung erscheint NICHT mehr als Spalte — nur als Icon am Datum', () => {

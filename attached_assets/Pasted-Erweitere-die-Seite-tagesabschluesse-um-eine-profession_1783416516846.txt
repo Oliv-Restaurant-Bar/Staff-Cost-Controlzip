@@ -1,0 +1,209 @@
+Erweitere die Seite /tagesabschluesse um eine professionelle Kassenabschluss-Logik.
+
+Ziel:
+Die Tagesabschlüsse sollen den tatsächlichen Kassenprozess im Restaurant abbilden. Der Bargeldbestand soll sich automatisch aus den Umsätzen berechnen und der Kassensaldo über mehrere Tage fortgeführt werden, bis eine Bankeinzahlung erfolgt.
+
+## 1. Neue Berechnungslogik
+
+Die bisherige Cash-Soll-Berechnung ersetzen.
+
+Neue Berechnung:
+
+Bargeld (Soll) =
+
+Umsatz
+- Kreditkarten (KK laut Z-Bericht)
+- Debitoren / Rechnung
+- Barausgaben
+- Eingelöste Gutscheine
++ Verkaufte Gutscheine
+
+= Bargeld (Soll)
+
+Dabei gilt:
+
+- Umsatz stammt aus dem Z-Bericht.
+- KK stammt aus dem Z-Bericht (inkl. TWINT, wie bisher intern berechnet).
+- Debitoren stammen aus dem Z-Bericht.
+- Barausgaben stammen aus den manuell erfassten Barausgaben.
+- Verkaufte/Eingelöste Gutscheine stammen aus manuellen Eingaben.
+
+Diese Formel ist die fachlich verbindliche Berechnung.
+
+## 2. Kassensaldo fortführen
+
+Der Kassensaldo soll nicht jeden Tag neu beginnen.
+
+Berechnung:
+
+Kassensaldo Soll heute =
+
+Kassensaldo Soll Vortag
++ Bargeld (Soll)
+- Einzahlung Bank
+
+Der erste Tag eines Monats übernimmt den Endsaldo des Vormonats.
+
+Falls kein Vormonat vorhanden ist:
+
+Benutzer soll einen Anfangsbestand definieren können.
+
+Dieser Anfangsbestand soll gespeichert werden.
+
+## 3. Cash Ist
+
+Das bisherige Feld "Cash Ist" bleibt.
+
+Dieses entspricht dem effektiv gezählten Kassenbestand.
+
+Inline editierbar.
+
+## 4. Kassendifferenz
+
+Neue Berechnung:
+
+Cash Differenz =
+
+Cash Ist
+-
+Kassensaldo Soll
+
+Darstellung:
+
+Grün:
+Differenz <= CHF 0.05
+
+Orange:
+<= CHF 5.00
+
+Rot:
+> CHF 5.00
+
+## 5. Statuslogik
+
+Ein Tag gilt nur als "Abgeschlossen", wenn:
+
+- Z-Bericht vorhanden
+- Adyen-Abgleich erledigt oder begründet
+- Cash Ist vorhanden
+- Kassendifferenz grün
+- Barbestand bestätigt
+
+Bei Differenz:
+
+Status:
+
+"Abgeschlossen mit Differenz"
+
+anstatt nur "Offen".
+
+## 6. Schnellauswahl Differenzgründe
+
+Bei jeder Kassendifferenz soll der Benutzer eine oder mehrere Ursachen auswählen können.
+
+Mehrfachauswahl erlauben.
+
+Kategorien:
+
+Barausgaben
+- Barausgabe vergessen
+- Barausgabe falsch erfasst
+
+Bank
+- Einzahlung vergessen
+- Einzahlung falscher Betrag
+- Einzahlung erfolgt am Folgetag
+
+Gutscheine
+- Gutschein falsch verbucht
+- Gutscheinnummer prüfen
+
+Debitoren
+- Rechnung falsch erfasst
+- Debitor fehlt
+
+Kartenzahlungen
+- Adyen-Abweichung
+- Zahlung nachträglich verarbeitet
+
+Kasse
+- Wechselgeld angepasst
+- Trinkgeld-Differenz
+- Rundungsdifferenz
+- Kassenfehler
+
+Sonstiges
+- Sonstige Ursache
+
+## 7. Individueller Kommentar
+
+Zusätzlich zur Schnellauswahl:
+
+Freitextfeld
+
+"Eigene Notiz"
+
+Beides gleichzeitig speichern.
+
+Nicht entweder/oder.
+
+## 8. Darstellung
+
+Wenn Differenz vorhanden:
+
+Badge:
+
+"Begründet"
+
+falls mindestens ein Grund oder Kommentar vorhanden.
+
+Tooltip:
+
+zeigt
+
+- gewählte Gründe
+- Kommentar
+
+Direkt in der Tabelle.
+
+## 9. Monatsübersicht
+
+Neue KPIs:
+
+- Kassensaldo Ende Monat
+- Total Bankeinzahlungen
+- Total Bargeld
+- Tage mit begründeter Differenz
+- Tage mit unbegründeter Differenz
+
+## 10. Persistenz
+
+Alle Gründe und Kommentare dauerhaft speichern.
+
+Keine bestehende Datenstruktur zerstören.
+
+Falls möglich bestehende Blob-/Settings-Struktur weiterverwenden.
+
+Nur bei zwingender Notwendigkeit neue Persistenz ergänzen.
+
+## 11. Tests
+
+Ergänzen:
+
+- neue Bargeldformel korrekt
+- Kassensaldo wird täglich fortgeführt
+- Bankeinzahlung reduziert Kassensaldo
+- Anfangsbestand funktioniert
+- Monatswechsel übernimmt Endsaldo
+- mehrere Differenzgründe speicherbar
+- Kommentar zusätzlich speicherbar
+- Badge "Begründet" erscheint
+- Status "Abgeschlossen mit Differenz"
+- KPI-Berechnungen korrekt
+
+Danach bitte ausführen:
+
+- tsc --noEmit
+- Tagesabschlüsse Tests
+- Tabellen-Komponenten Tests
+- Adyen-Abgleich Tests

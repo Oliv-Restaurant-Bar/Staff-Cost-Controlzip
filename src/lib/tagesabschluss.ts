@@ -72,6 +72,87 @@ export function makeTagesabschlussFieldKey(date: string, field: TagesabschlussFi
   return `${date}:${field}`;
 }
 
+// ── Differenzgrund-Katalog (feste Schnellauswahl) ────────────────────────────
+
+export interface CashDiffReasonOption {
+  /** Stabiler Key (Slug) — wird persistiert, NIE das Label (Projekt-Konvention). */
+  key: string;
+  label: string;
+}
+
+export interface CashDiffReasonCategory {
+  key: string;
+  label: string;
+  reasons: readonly CashDiffReasonOption[];
+}
+
+/**
+ * Fester Katalog der Kassendifferenz-Gründe (Mehrfachauswahl). Persistiert
+ * werden NUR die stabilen Keys — Labels dürfen sich jederzeit ändern.
+ */
+export const CASH_DIFF_REASON_CATALOG: readonly CashDiffReasonCategory[] = [
+  {
+    key: 'barausgaben', label: 'Barausgaben',
+    reasons: [
+      { key: 'barausgabe_vergessen', label: 'Barausgabe vergessen' },
+      { key: 'barausgabe_falsch_erfasst', label: 'Barausgabe falsch erfasst' },
+    ],
+  },
+  {
+    key: 'bank', label: 'Bank',
+    reasons: [
+      { key: 'einzahlung_vergessen', label: 'Einzahlung vergessen' },
+      { key: 'einzahlung_falscher_betrag', label: 'Einzahlung falscher Betrag' },
+      { key: 'einzahlung_folgetag', label: 'Einzahlung erfolgt am Folgetag' },
+    ],
+  },
+  {
+    key: 'gutscheine', label: 'Gutscheine',
+    reasons: [
+      { key: 'gutschein_falsch_verbucht', label: 'Gutschein falsch verbucht' },
+      { key: 'gutscheinnummer_pruefen', label: 'Gutscheinnummer prüfen' },
+    ],
+  },
+  {
+    key: 'debitoren', label: 'Debitoren',
+    reasons: [
+      { key: 'rechnung_falsch_erfasst', label: 'Rechnung falsch erfasst' },
+      { key: 'debitor_fehlt', label: 'Debitor fehlt' },
+    ],
+  },
+  {
+    key: 'kartenzahlungen', label: 'Kartenzahlungen',
+    reasons: [
+      { key: 'adyen_abweichung', label: 'Adyen-Abweichung' },
+      { key: 'zahlung_nachtraeglich', label: 'Zahlung nachträglich verarbeitet' },
+    ],
+  },
+  {
+    key: 'kasse', label: 'Kasse',
+    reasons: [
+      { key: 'wechselgeld_angepasst', label: 'Wechselgeld angepasst' },
+      { key: 'trinkgeld_differenz', label: 'Trinkgeld-Differenz' },
+      { key: 'rundungsdifferenz', label: 'Rundungsdifferenz' },
+      { key: 'kassenfehler', label: 'Kassenfehler' },
+    ],
+  },
+  {
+    key: 'sonstiges', label: 'Sonstiges',
+    reasons: [
+      { key: 'sonstige_ursache', label: 'Sonstige Ursache' },
+    ],
+  },
+];
+
+/** Lookup Key → Label (unbekannte Keys werden vom Aufrufer als Key angezeigt). */
+export const CASH_DIFF_REASON_LABEL: Record<string, string> = Object.fromEntries(
+  CASH_DIFF_REASON_CATALOG.flatMap(cat => cat.reasons.map(r => [r.key, r.label])),
+);
+
+export function cashDiffReasonLabel(key: string): string {
+  return CASH_DIFF_REASON_LABEL[key] ?? key;
+}
+
 // ── Blob-Datenmodell ─────────────────────────────────────────────────────────
 
 /** Einzelne Barausgabe (im CSV-Export je eine eigene Zeile). */
@@ -135,6 +216,21 @@ export interface TagesabschlussExportSettings {
   updatedAt: string; // ISO
 }
 
+/** Differenzgründe + eigene Notiz eines Tages (beides gleichzeitig möglich). */
+export interface CashDiffReasonEntry {
+  /** Stabile Grund-Keys aus CASH_DIFF_REASON_CATALOG (Mehrfachauswahl). */
+  reasons: string[];
+  /** Freitext "Eigene Notiz" — zusätzlich zur Schnellauswahl, nicht statt. */
+  note?: string;
+  updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
+}
+
+/** Benutzerdefinierter Kassensaldo-Anfangsbestand eines Monats (Anker). */
+export interface KassensaldoAnfangsbestand {
+  value: number; // CHF
+  updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
+}
+
 export interface TagesabschlussBlob {
   /** Manuelle Tageswerte, Key = yyyy-MM-dd. */
   days: Record<string, TagesabschlussManualDay>;
@@ -144,12 +240,20 @@ export interface TagesabschlussBlob {
   overrides: Record<string, AdyenOverride>;
   /** Kommentare, Key = `date:field`. */
   comments: Record<string, AdyenComment>;
+  /** Kassendifferenz-Gründe + Notiz, Key = yyyy-MM-dd (eigener Namespace,
+   *  bewusst NICHT in `days` — dort wird je Datum als Ganzes gemerged). */
+  cashDiffReasons: Record<string, CashDiffReasonEntry>;
+  /** Kassensaldo-Anfangsbestand je Monat, Key = yyyy-MM (Anker der Saldo-Kette). */
+  anfangsbestand: Record<string, KassensaldoAnfangsbestand>;
   /** Export-Einstellungen (null = noch nie konfiguriert). */
   exportSettings: TagesabschlussExportSettings | null;
 }
 
 export function emptyTagesabschlussBlob(): TagesabschlussBlob {
-  return { days: {}, expenses: {}, overrides: {}, comments: {}, exportSettings: null };
+  return {
+    days: {}, expenses: {}, overrides: {}, comments: {},
+    cashDiffReasons: {}, anfangsbestand: {}, exportSettings: null,
+  };
 }
 
 /** Defensive Normalisierung eines (evtl. beschädigten) geladenen Blobs. */
@@ -165,11 +269,38 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
       if (Array.isArray(list)) expenses[date] = list.filter(e => !!e && typeof e === 'object') as CashExpense[];
     }
   }
+  // Differenzgründe: Einträge ohne gültiges reasons-Array defensiv reparieren.
+  const cashDiffReasons: TagesabschlussBlob['cashDiffReasons'] = {};
+  if (isObj(o.cashDiffReasons)) {
+    for (const [date, entry] of Object.entries(o.cashDiffReasons as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const e = entry as Partial<CashDiffReasonEntry>;
+      cashDiffReasons[date] = {
+        reasons: Array.isArray(e.reasons) ? e.reasons.filter(r => typeof r === 'string') : [],
+        ...(typeof e.note === 'string' && e.note.trim() !== '' ? { note: e.note } : {}),
+        updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
+      };
+    }
+  }
+  const anfangsbestand: TagesabschlussBlob['anfangsbestand'] = {};
+  if (isObj(o.anfangsbestand)) {
+    for (const [monthKey, entry] of Object.entries(o.anfangsbestand as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const e = entry as Partial<KassensaldoAnfangsbestand>;
+      if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
+      anfangsbestand[monthKey] = {
+        value: e.value,
+        updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
+      };
+    }
+  }
   return {
     days:      isObj(o.days)      ? (o.days      as TagesabschlussBlob['days'])      : {},
     expenses,
     overrides: isObj(o.overrides) ? (o.overrides as TagesabschlussBlob['overrides']) : {},
     comments:  isObj(o.comments)  ? (o.comments  as TagesabschlussBlob['comments'])  : {},
+    cashDiffReasons,
+    anfangsbestand,
     exportSettings:
       isObj(o.exportSettings) ? (o.exportSettings as unknown as TagesabschlussExportSettings) : null,
   };
@@ -282,7 +413,7 @@ export interface DayCell {
   comment?: string;
 }
 
-export type TagesabschlussStatus = 'fehlt' | 'offen' | 'bestaetigt';
+export type TagesabschlussStatus = 'fehlt' | 'offen' | 'bestaetigt' | 'bestaetigt_mit_differenz';
 
 export interface TagesabschlussRow {
   date: string; // yyyy-MM-dd
@@ -298,22 +429,34 @@ export interface TagesabschlussRow {
   gutscheinNummernEingeloest?: string[];
   /**
    * Rechnerischer Barumsatz = Umsatz − Karten − TWINT − Rechnung − eingelöste
-   * Gutscheine (effektive Werte). Basis für Export und Cash-Soll-Fallback.
+   * Gutscheine (effektive Werte). Basis für Export und Bargeld-Soll.
    */
   barumsatz: number | null;
   /**
-   * Cash Soll = Bargeld (Bar laut Z-Bericht; Fallback rechnerischer
-   * Barumsatz) + verkaufte Gutscheine − eingelöste Gutscheine
-   * − Barausgaben − Einzahlung Bank.
-   * Erwarteter Kassenbestand des Tages (KEIN Vortagsbezug);
-   * null, wenn keine Bargeld-Basis vorliegt.
+   * Bargeld (Soll) des Tages — die fachlich verbindliche Formel:
+   * Umsatz − KK (Karten+TWINT) − Rechnung − Barausgaben − eingelöste
+   * Gutscheine + verkaufte Gutscheine (= Barumsatz + verkaufte Gutscheine
+   * − Barausgaben; EingG steckt genau EINMAL im Barumsatz).
+   * null, wenn weder Umsatz-Basis noch Barausgaben/Gutscheine vorliegen.
    */
-  cashSoll: number | null;
+  bargeldSoll: number | null;
+  /**
+   * Fortlaufender Kassensaldo (Soll) = Saldo Vortag + Bargeld (Soll)
+   * − Einzahlung Bank. Monatsstart = Endsaldo Vormonat bzw. gespeicherter
+   * Anfangsbestand. null, solange kein Anker (startSaldo) bekannt ist.
+   */
+  kassensaldoSoll: number | null;
   /** Cash Ist = manuell gezählter Kassenbestand (Feld `bestandKasse`). */
   cashIst: number | null;
-  /** Cash Differenz = Cash Ist − Cash Soll; null, solange eine Seite fehlt. */
+  /** Cash Differenz = Cash Ist − Kassensaldo Soll; null, solange eine Seite fehlt. */
   cashDiff: number | null;
   cashDiffStatus: AdyenDiffStatus | null;
+  /** Gewählte Differenzgrund-Keys (Schnellauswahl). */
+  cashDiffReasons: string[];
+  /** Eigene Notiz zur Differenz (Freitext, zusätzlich zur Schnellauswahl). */
+  cashDiffNote?: string;
+  /** Begründet = mindestens ein Grund ODER eine Notiz vorhanden. */
+  cashDiffBegruendet: boolean;
   /** Adyen-Import für diesen Tag vorhanden? */
   hasAdyen: boolean;
   /**
@@ -339,13 +482,17 @@ export interface TagesabschlussTotals {
   adyenTotal: number;
   /** Summe der Tages-Differenzen Z-Bericht − Adyen (kann sich aufheben). */
   adyenDiff: number;
-  /** Summe Cash Soll (nur Tage mit berechenbarem Soll). */
-  cashSoll: number;
+  /** Total Bargeld (Soll) — Summe der Tages-Bargeld-Solls. */
+  bargeldSoll: number;
+  /** Kassensaldo (Soll) am Monatsende; null ohne Anker. */
+  kassensaldoEnde: number | null;
   /** Summe Cash Ist (nur Tage mit gezähltem Bestand). */
   cashIst: number;
-  /** Summe der Tages-Cash-Differenzen (Vorzeichen können sich aufheben). */
-  cashDiff: number;
+  /** Cash-Differenz des LETZTEN Tages mit erfasstem Cash Ist (aktueller Stand). */
+  letzteCashDiff: number | null;
+  letzteCashDiffStatus: AdyenDiffStatus | null;
   daysWithZbericht: number;
+  /** Abgeschlossene Tage (inkl. „Abgeschlossen mit Differenz"). */
   daysConfirmed: number;
   /** Tage mit Z-Bericht, aber noch ohne (vollständige) Bestätigung. */
   daysOpen: number;
@@ -353,11 +500,19 @@ export interface TagesabschlussTotals {
   daysWithDiff: number;
   /** Tage mit nicht-grüner Cash-Differenz. */
   daysWithCashDiff: number;
+  /** Tage mit nicht-grüner Cash-Differenz UND Begründung (Grund oder Notiz). */
+  daysBegruendet: number;
+  /** Tage mit nicht-grüner Cash-Differenz OHNE Begründung. */
+  daysUnbegruendet: number;
 }
 
 export interface TagesabschlussMonth {
   rows: TagesabschlussRow[];
   totals: TagesabschlussTotals;
+  /** Kassensaldo (Soll) zu Monatsbeginn (Input); null = kein Anker bekannt. */
+  startSaldo: number | null;
+  /** Kassensaldo (Soll) am Monatsende; null, wenn startSaldo unbekannt. */
+  endSaldo: number | null;
 }
 
 /** Alle Kalendertage eines Monats als yyyy-MM-dd (aufsteigend). */
@@ -404,6 +559,9 @@ function buildCell(
  * Karten/TWINT-Vergleich Z-Bericht vs. Adyen (via `buildDayComparison` —
  * exakt dieselben effektiven Werte wie in der Adyen-Abgleich-Section,
  * inkl. dortiger Overrides). Ohne Blob bleiben die Adyen-Felder null.
+ * `startSaldo` (optional): Kassensaldo (Soll) zu Monatsbeginn — Endsaldo des
+ * Vormonats bzw. gespeicherter Anfangsbestand (via resolveKassensaldoStart).
+ * Ohne Anker (null/undefined) bleiben alle Saldi und Cash-Differenzen null.
  */
 export function buildTagesabschlussRows(
   year: number,
@@ -412,8 +570,13 @@ export function buildTagesabschlussRows(
   blob: TagesabschlussBlob,
   confirmations: Record<string, DayConfirmation>,
   adyenBlob?: AdyenAbstimmungBlob | null,
+  startSaldo?: number | null,
 ): TagesabschlussMonth {
   const rows: TagesabschlussRow[] = [];
+  const start = startSaldo ?? null;
+  // Fortlaufender Kassensaldo (Soll) — läuft auch an Tagen ohne Z-Bericht
+  // weiter (Barausgaben/Einzahlungen existieren unabhängig vom Z-Bericht).
+  let saldo: number | null = start;
 
   for (const date of monthDates(year, month)) {
     const closing = closings[date];
@@ -446,37 +609,54 @@ export function buildTagesabschlussRows(
         )
       : null;
 
-    // Cash Soll: erwarteter Kassenbestand NUR aus den Tageswerten (kein
-    // Vortagsbezug). Bargeld-Basis = Bar laut Z-Bericht (effektiv), Fallback
-    // rechnerischer Barumsatz. Aktualisiert sich automatisch mit jeder
-    // Komponente (Bargeld, Gutscheine, Barausgaben, Einzahlung Bank).
-    const bargeldBasis = cells.bar.value ?? barumsatz;
-    const cashSoll = bargeldBasis !== null
-      ? round2(
-          bargeldBasis
-          + (cells.gutscheinVerkauft.value ?? 0)
-          - (cells.gutscheinEingeloest.value ?? 0)
-          - barausgabenTotal
-          - (cells.einzahlungBank.value ?? 0),
-        )
-      : null;
+    // Bargeld (Soll) — verbindliche Formel: Umsatz − KK − Rechnung −
+    // Barausgaben − EingG + VerkG. Der Barumsatz enthält bereits
+    // Umsatz − Karten − TWINT − Rechnung − EingG, also:
+    // bargeldSoll = Barumsatz + verkaufte Gutscheine − Barausgaben.
+    // An Tagen ohne Z-Bericht: nur Barausgaben (negativ), sonst null.
+    const gutscheinVerkauft = cells.gutscheinVerkauft.value ?? 0;
+    const bargeldSoll = barumsatz !== null
+      ? round2(barumsatz + gutscheinVerkauft - barausgabenTotal)
+      : (barausgabenTotal > 0 ? round2(-barausgabenTotal) : null);
+
+    // Kassensaldo (Soll) fortführen: Saldo Vortag + Bargeld (Soll)
+    // − Einzahlung Bank. Beiträge fehlender Werte zählen als 0, damit der
+    // Laufsaldo an umsatzfreien Tagen (z. B. Ruhetag mit Bankeinzahlung)
+    // nicht abreisst. Ohne Anker (start === null) bleibt alles null.
+    const einzahlungBank = cells.einzahlungBank.value ?? 0;
+    if (saldo !== null) {
+      saldo = round2(saldo + (bargeldSoll ?? 0) - einzahlungBank);
+    }
+    const kassensaldoSoll = saldo;
+
     const cashIst = cells.bestandKasse.value;
-    const cashDiff = cashIst !== null && cashSoll !== null ? round2(cashIst - cashSoll) : null;
+    const cashDiff = cashIst !== null && kassensaldoSoll !== null
+      ? round2(cashIst - kassensaldoSoll)
+      : null;
     const cashDiffStatus = cashDiff !== null ? adyenDiffStatus(cashDiff) : null;
 
+    // Differenzgründe + Notiz (Schnellauswahl UND Freitext, beides zählt).
+    const reasonEntry = blob.cashDiffReasons[date];
+    const cashDiffReasons = reasonEntry?.reasons?.filter(r => r.trim() !== '') ?? [];
+    const cashDiffNote = reasonEntry?.note?.trim() || undefined;
+    const cashDiffBegruendet = cashDiffReasons.length > 0 || !!cashDiffNote;
+
     const confirmation = confirmations[date];
-    // „Bestätigt" nur, wenn der Tag wirklich sauber ist: Tagesbestätigung
-    // (impliziert geklärte Adyen-Differenzen via canConfirmDay) + Barbestand
-    // gezählt + Cash Ist erfasst + Cash-Differenz grün. Fehlt Cash Ist oder
-    // ist die Differenz nicht grün, bleibt der Tag „offen" (zu prüfen).
+    // Statuslogik: „Abgeschlossen" nur, wenn der Tag wirklich sauber ist:
+    // Tagesbestätigung (impliziert geklärte/begründete Adyen-Differenzen via
+    // canConfirmDay) + Barbestand gezählt + Cash Ist erfasst + Cash-Differenz
+    // grün. Ist die Differenz NICHT grün, aber begründet (Grund oder Notiz):
+    // „Abgeschlossen mit Differenz". Unbegründete Differenzen bleiben „offen".
+    const baseClosed = confirmation?.confirmed === true
+      && confirmation?.cashCounted === true
+      && cashIst !== null;
     const status: TagesabschlussStatus = !closing
       ? 'fehlt'
-      : confirmation?.confirmed === true
-          && confirmation?.cashCounted === true
-          && cashIst !== null
-          && cashDiffStatus === 'ok'
+      : baseClosed && cashDiffStatus === 'ok'
         ? 'bestaetigt'
-        : 'offen';
+        : baseClosed && cashDiffStatus !== null && cashDiffBegruendet
+          ? 'bestaetigt_mit_differenz'
+          : 'offen';
 
     // Adyen-Vergleich (nur ANZEIGE): identische Rechenbasis wie die
     // Adyen-Abgleich-Section — buildDayComparison mit dem Adyen-Blob.
@@ -505,10 +685,14 @@ export function buildTagesabschlussRows(
       ...(manual?.gutscheinNummernEingeloest?.length
         ? { gutscheinNummernEingeloest: manual.gutscheinNummernEingeloest } : {}),
       barumsatz,
-      cashSoll,
+      bargeldSoll,
+      kassensaldoSoll,
       cashIst,
       cashDiff,
       cashDiffStatus,
+      cashDiffReasons,
+      ...(cashDiffNote ? { cashDiffNote } : {}),
+      cashDiffBegruendet,
       hasAdyen: !!adyenDay,
       adyenTotal,
       adyenZTotal,
@@ -518,6 +702,9 @@ export function buildTagesabschlussRows(
       ...(confirmation ? { confirmation } : {}),
     });
   }
+
+  // Aktuellster Kassen-Zählstand: letzter Tag mit erfasster Cash-Differenz.
+  const lastDiffRow = [...rows].reverse().find(r => r.cashDiff !== null) ?? null;
 
   const totals: TagesabschlussTotals = {
     values: Object.fromEntries(
@@ -531,11 +718,15 @@ export function buildTagesabschlussRows(
     barumsatz: round2(rows.reduce((s, r) => s + (r.barumsatz ?? 0), 0)),
     adyenTotal: round2(rows.reduce((s, r) => s + (r.adyenTotal ?? 0), 0)),
     adyenDiff: round2(rows.reduce((s, r) => s + (r.adyenDiff ?? 0), 0)),
-    cashSoll: round2(rows.reduce((s, r) => s + (r.cashSoll ?? 0), 0)),
+    bargeldSoll: round2(rows.reduce((s, r) => s + (r.bargeldSoll ?? 0), 0)),
+    kassensaldoEnde: saldo,
     cashIst: round2(rows.reduce((s, r) => s + (r.cashIst ?? 0), 0)),
-    cashDiff: round2(rows.reduce((s, r) => s + (r.cashDiff ?? 0), 0)),
+    letzteCashDiff: lastDiffRow?.cashDiff ?? null,
+    letzteCashDiffStatus: lastDiffRow?.cashDiffStatus ?? null,
     daysWithZbericht: rows.filter(r => r.hasZbericht).length,
-    daysConfirmed: rows.filter(r => r.status === 'bestaetigt').length,
+    daysConfirmed: rows.filter(r =>
+      r.status === 'bestaetigt' || r.status === 'bestaetigt_mit_differenz',
+    ).length,
     daysOpen: rows.filter(r => r.status === 'offen').length,
     daysWithDiff: rows.filter(r =>
       (r.adyenDiffStatus !== null && r.adyenDiffStatus !== 'ok')
@@ -544,11 +735,15 @@ export function buildTagesabschlussRows(
     daysWithCashDiff: rows.filter(r =>
       r.cashDiffStatus !== null && r.cashDiffStatus !== 'ok',
     ).length,
+    daysBegruendet: rows.filter(r =>
+      r.cashDiffStatus !== null && r.cashDiffStatus !== 'ok' && r.cashDiffBegruendet,
+    ).length,
+    daysUnbegruendet: rows.filter(r =>
+      r.cashDiffStatus !== null && r.cashDiffStatus !== 'ok' && !r.cashDiffBegruendet,
+    ).length,
   };
-  // Cash Ist ist im Tages-Zählmodell eine Summe der gezählten Tagesbestände
-  // (Total Cash Ist) — values.bestandKasse bleibt die generische Summe.
 
-  return { rows, totals };
+  return { rows, totals, startSaldo: start, endSaldo: saldo };
 }
 
 // ── Mutationen (rein, immutabel) ─────────────────────────────────────────────
@@ -617,6 +812,52 @@ export function setTagesabschlussOverride(
     };
   }
   return { ...blob, overrides };
+}
+
+/**
+ * Setzt oder entfernt die Differenzgründe + Notiz eines Tages.
+ * Schnellauswahl (Keys) UND Freitext werden GEMEINSAM gespeichert —
+ * beide leer → Eintrag wird entfernt.
+ */
+export function setCashDiffReasons(
+  blob: TagesabschlussBlob,
+  date: string,
+  reasons: readonly string[],
+  note: string | undefined,
+  now: string,
+): TagesabschlussBlob {
+  const cleanedReasons = [...new Set(reasons.map(r => r.trim()).filter(r => r !== ''))];
+  const cleanedNote = (note ?? '').trim();
+  const cashDiffReasons = { ...blob.cashDiffReasons };
+  if (cleanedReasons.length === 0 && cleanedNote === '') {
+    delete cashDiffReasons[date];
+  } else {
+    cashDiffReasons[date] = {
+      reasons: cleanedReasons,
+      ...(cleanedNote !== '' ? { note: cleanedNote } : {}),
+      updatedAt: now,
+    };
+  }
+  return { ...blob, cashDiffReasons };
+}
+
+/**
+ * Setzt oder entfernt den Kassensaldo-Anfangsbestand eines Monats
+ * (`monthKey` = yyyy-MM). `value === null` entfernt den Anker.
+ */
+export function setAnfangsbestand(
+  blob: TagesabschlussBlob,
+  monthKey: string,
+  value: number | null,
+  now: string,
+): TagesabschlussBlob {
+  const anfangsbestand = { ...blob.anfangsbestand };
+  if (value === null || !Number.isFinite(value)) {
+    delete anfangsbestand[monthKey];
+  } else {
+    anfangsbestand[monthKey] = { value: round2(value), updatedAt: now };
+  }
+  return { ...blob, anfangsbestand };
 }
 
 /** Setzt oder entfernt einen Kommentar (leerer Text entfernt). */
@@ -755,6 +996,18 @@ export function mergeTagesabschlussBlobs(
     list.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt) || a.id.localeCompare(b.id));
   }
 
+  const cashDiffReasons: TagesabschlussBlob['cashDiffReasons'] = { ...remote.cashDiffReasons };
+  for (const [date, entry] of Object.entries(local.cashDiffReasons)) {
+    const r = cashDiffReasons[date];
+    if (!r || newer(entry.updatedAt, r.updatedAt)) cashDiffReasons[date] = entry;
+  }
+
+  const anfangsbestand: TagesabschlussBlob['anfangsbestand'] = { ...remote.anfangsbestand };
+  for (const [monthKey, entry] of Object.entries(local.anfangsbestand)) {
+    const r = anfangsbestand[monthKey];
+    if (!r || newer(entry.updatedAt, r.updatedAt)) anfangsbestand[monthKey] = entry;
+  }
+
   const exportSettings =
     local.exportSettings && remote.exportSettings
       ? (newer(local.exportSettings.updatedAt, remote.exportSettings.updatedAt)
@@ -762,5 +1015,101 @@ export function mergeTagesabschlussBlobs(
           : remote.exportSettings)
       : local.exportSettings ?? remote.exportSettings;
 
-  return { days, expenses, overrides, comments, exportSettings };
+  return { days, expenses, overrides, comments, cashDiffReasons, anfangsbestand, exportSettings };
+}
+
+// ── Kassensaldo-Kette über Monatsgrenzen ─────────────────────────────────────
+
+/** Monats-Schlüssel yyyy-MM (Key für `anfangsbestand`). */
+export function tagesabschlussMonthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+/** Vormonat von (year, month). */
+export function prevMonthOf(year: number, month: number): { year: number; month: number } {
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+}
+
+/** Hat der Blob Daten in diesem Monat (days/expenses/anfangsbestand)? */
+export function monthHasBlobData(blob: TagesabschlussBlob, monthKey: string): boolean {
+  const prefix = `${monthKey}-`;
+  if (blob.anfangsbestand[monthKey]) return true;
+  for (const date of Object.keys(blob.days)) if (date.startsWith(prefix)) return true;
+  for (const date of Object.keys(blob.expenses)) if (date.startsWith(prefix)) return true;
+  return false;
+}
+
+/**
+ * Endsaldo eines Monats — EXAKT dieselbe Rechenbasis wie die Monatsansicht
+ * (buildTagesabschlussRows inkl. Overrides/Barausgaben), nur ohne Adyen.
+ * null, wenn startSaldo null ist.
+ */
+export function computeMonthEndSaldo(
+  year: number,
+  month: number,
+  closings: Record<string, GnDayClosing>,
+  blob: TagesabschlussBlob,
+  startSaldo: number | null,
+): number | null {
+  if (startSaldo === null) return null;
+  return buildTagesabschlussRows(year, month, closings, blob, {}, null, startSaldo).endSaldo;
+}
+
+/** Maximale Ketten-Länge der Vormonats-Suche (Schutz vor Endlos-Rückwärtslauf). */
+export const KASSENSALDO_MAX_CHAIN_MONTHS = 12;
+
+export interface KassensaldoStartResolution {
+  /** Kassensaldo (Soll) zu Monatsbeginn; null = kein Anker gefunden. */
+  startSaldo: number | null;
+  /** Monat (yyyy-MM), dessen expliziter Anfangsbestand als Anker diente. */
+  anchorMonth: string | null;
+}
+
+/**
+ * Ermittelt den Kassensaldo zu Monatsbeginn:
+ * 1. Expliziter Anfangsbestand für DIESEN Monat gewinnt sofort.
+ * 2. Sonst rückwärts durch die Vormonate (max. 12): beim nächsten Monat mit
+ *    explizitem Anfangsbestand verankern und die Kette vorwärts durchrechnen
+ *    (je Monat 1 `loadClosings`-Aufruf, identische Rechenbasis wie die
+ *    Monatsansicht). Bricht die Kette an einem Monat ganz ohne Daten ab
+ *    (keine Closings, keine Blob-Einträge, kein Anker) → null: der Benutzer
+ *    muss einen Anfangsbestand erfassen. KEINE stille 0-Annahme.
+ */
+export async function resolveKassensaldoStart(
+  year: number,
+  month: number,
+  blob: TagesabschlussBlob,
+  loadClosings: (year: number, month: number) => Promise<Record<string, GnDayClosing>>,
+): Promise<KassensaldoStartResolution> {
+  const ownKey = tagesabschlussMonthKey(year, month);
+  const own = blob.anfangsbestand[ownKey];
+  if (own) return { startSaldo: round2(own.value), anchorMonth: ownKey };
+
+  const chain: Array<{ year: number; month: number; closings: Record<string, GnDayClosing> }> = [];
+  let cur = prevMonthOf(year, month);
+  let anchor: { key: string; value: number } | null = null;
+
+  for (let i = 0; i < KASSENSALDO_MAX_CHAIN_MONTHS; i++) {
+    const key = tagesabschlussMonthKey(cur.year, cur.month);
+    const ab = blob.anfangsbestand[key];
+    const closings = await loadClosings(cur.year, cur.month);
+    if (ab) {
+      anchor = { key, value: ab.value };
+      chain.unshift({ year: cur.year, month: cur.month, closings });
+      break;
+    }
+    const hasData = Object.keys(closings).length > 0 || monthHasBlobData(blob, key);
+    if (!hasData) return { startSaldo: null, anchorMonth: null };
+    chain.unshift({ year: cur.year, month: cur.month, closings });
+    cur = prevMonthOf(cur.year, cur.month);
+  }
+
+  if (!anchor) return { startSaldo: null, anchorMonth: null };
+
+  let saldo: number | null = anchor.value;
+  for (const m of chain) {
+    saldo = computeMonthEndSaldo(m.year, m.month, m.closings, blob, saldo);
+    if (saldo === null) return { startSaldo: null, anchorMonth: null };
+  }
+  return { startSaldo: round2(saldo), anchorMonth: anchor.key };
 }
