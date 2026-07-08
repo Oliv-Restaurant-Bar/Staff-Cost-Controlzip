@@ -25,10 +25,15 @@ import {
   cellVsMonthAverage,
   buildHeatmapCellTooltip,
   buildWeekdayDayBreakdown,
+  buildMonthDetailKpis,
+  buildMonthWeekdayComposition,
+  buildWeekdayIstVorjahrChartData,
+  monthDetailDayFlags,
   type AnalyseMetric,
 } from '../reservation-analyse-utils';
 import {
   buildYoyComparison,
+  buildYoyDayComparison,
   buildYoyWeekdayComparison,
   monthKeysInRange,
 } from '../reservation-yoy-utils';
@@ -611,5 +616,173 @@ describe('buildWeekdayDayBreakdown (Detail-Popup)', () => {
     });
     expect(bd.entries).toHaveLength(1);
     expect(bd.entries[0].persons).toBe(4);
+  });
+});
+
+// ── Monats-Detail-Popup (KPIs, Zusammensetzung, Chart, Tages-Markierung) ─────
+
+describe('buildMonthDetailKpis', () => {
+  it('liefert beide Kennzahlen plus Ø Personen/Reservation (Ist und Vorjahr)', () => {
+    // Okt 2026: 2 Res. / 8 Pers.; Okt 2025: 1 Res. / 3 Pers.
+    const comparison = buildYoyComparison({
+      currentRows: [row('2026-10-05', 4), row('2026-10-12', 4)],
+      priorRows: [row('2025-10-06', 3)],
+      monthKeys: ['2026-10'],
+      scope: 'booked',
+    });
+    const kpis = buildMonthDetailKpis(comparison.months[0]);
+    expect(kpis.reservations.current).toBe(2);
+    expect(kpis.reservations.prior).toBe(1);
+    expect(kpis.persons.current).toBe(8);
+    expect(kpis.persons.prior).toBe(3);
+    expect(kpis.avgCurrent).toBeCloseTo(4, 5);
+    expect(kpis.avgPrior).toBeCloseTo(3, 5);
+  });
+
+  it('Ø Vorjahr ist null, wenn kein Vorjahr bekannt ist', () => {
+    const comparison = buildYoyComparison({
+      currentRows: [row('2026-10-05', 4)],
+      priorRows: [],
+      monthKeys: ['2026-10'],
+      scope: 'booked',
+    });
+    const kpis = buildMonthDetailKpis(comparison.months[0]);
+    expect(kpis.reservations.prior).toBeNull();
+    expect(kpis.avgPrior).toBeNull();
+    expect(kpis.avgCurrent).toBeCloseTo(4, 5);
+  });
+
+  it('Ø Ist ist null bei 0 Reservationen (kein Div/0)', () => {
+    const comparison = buildYoyComparison({
+      currentRows: [],
+      priorRows: [row('2025-10-06', 3)],
+      monthKeys: ['2026-10'],
+      scope: 'booked',
+    });
+    const kpis = buildMonthDetailKpis(comparison.months[0]);
+    expect(kpis.avgCurrent).toBeNull();
+    expect(kpis.avgPrior).toBeCloseTo(3, 5);
+  });
+});
+
+describe('buildMonthWeekdayComposition (Anteil des Monats)', () => {
+  // Okt 2026: Mo 05. = 4 Pers. (1 Res.), Di 06. = 12 Pers. (2 Res.),
+  // Sa 10. = 4 Pers. (1 Res.); Vorjahr Okt 2025 vorhanden.
+  const weekdays = buildYoyWeekdayComparison({
+    currentRows: [
+      row('2026-10-05', 4), row('2026-10-06', 6), row('2026-10-06', 6),
+      row('2026-10-10', 4),
+    ],
+    priorRows: [row('2025-10-06', 3)],
+    monthKeys: ['2026-10'],
+    scope: 'booked',
+  });
+
+  it('Personen-Anteile: Basis ist das Ist-Monatstotal, Summe = 100 %', () => {
+    const comp = buildMonthWeekdayComposition(weekdays.rows, 'persons');
+    expect(comp).toHaveLength(7);
+    const byWd = new Map(comp.map((r) => [r.weekday, r]));
+    expect(byWd.get(1)?.sharePct).toBeCloseTo(20, 5);  // Mo: 4/20
+    expect(byWd.get(2)?.sharePct).toBeCloseTo(60, 5);  // Di: 12/20
+    expect(byWd.get(6)?.sharePct).toBeCloseTo(20, 5);  // Sa: 4/20
+    expect(byWd.get(7)?.sharePct).toBeCloseTo(0, 5);   // So: 0/20
+    const sum = comp.reduce((s, r) => s + (r.sharePct ?? 0), 0);
+    expect(sum).toBeCloseTo(100, 5);
+    // Beide Kennzahlen bleiben pro Zeile erhalten (für Umschalter/Anzeige).
+    expect(byWd.get(2)?.reservations.current).toBe(2);
+    expect(byWd.get(2)?.persons.current).toBe(12);
+  });
+
+  it('Reservationen-Anteile wechseln die Basis mit dem Umschalter', () => {
+    const comp = buildMonthWeekdayComposition(weekdays.rows, 'reservations');
+    const byWd = new Map(comp.map((r) => [r.weekday, r]));
+    expect(byWd.get(1)?.sharePct).toBeCloseTo(25, 5); // Mo: 1/4
+    expect(byWd.get(2)?.sharePct).toBeCloseTo(50, 5); // Di: 2/4
+  });
+
+  it('Monatstotal 0 → alle Anteile null (kein Div/0)', () => {
+    const empty = buildYoyWeekdayComparison({
+      currentRows: [], priorRows: [row('2025-10-06', 3)],
+      monthKeys: ['2026-10'], scope: 'booked',
+    });
+    const comp = buildMonthWeekdayComposition(empty.rows, 'persons');
+    expect(comp.every((r) => r.sharePct === null)).toBe(true);
+  });
+});
+
+describe('buildWeekdayIstVorjahrChartData (Balkendiagramm Mo–So)', () => {
+  it('liefert 7 Punkte Mo–So mit Kurz-Label, Ist und Vorjahr', () => {
+    const weekdays = buildYoyWeekdayComparison({
+      currentRows: [row('2026-10-05', 4), row('2026-10-06', 6)],
+      priorRows: [row('2025-10-06', 3)], // Mo im Vorjahr
+      monthKeys: ['2026-10'],
+      scope: 'booked',
+    });
+    const data = buildWeekdayIstVorjahrChartData(weekdays.rows, 'persons');
+    expect(data).toHaveLength(7);
+    expect(data.map((d) => d.label)).toEqual(['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']);
+    const mo = data[0];
+    expect(mo.weekday).toBe(1);
+    expect(mo.ist).toBe(4);
+    expect(mo.vorjahr).toBe(3);
+    // Umschalter wirkt: Reservationen statt Personen.
+    const dataRes = buildWeekdayIstVorjahrChartData(weekdays.rows, 'reservations');
+    expect(dataRes[0].ist).toBe(1);
+    expect(dataRes[0].vorjahr).toBe(1);
+  });
+
+  it('Vorjahr unbekannt → vorjahr = null (Balken entfällt)', () => {
+    const weekdays = buildYoyWeekdayComparison({
+      currentRows: [row('2026-10-05', 4)],
+      priorRows: [],
+      monthKeys: ['2026-10'],
+      scope: 'booked',
+    });
+    const data = buildWeekdayIstVorjahrChartData(weekdays.rows, 'persons');
+    expect(data[0].ist).toBe(4);
+    expect(data.every((d) => d.vorjahr === null)).toBe(true);
+  });
+});
+
+describe('monthDetailDayFlags (Markierung stärkster/schwächster Tag)', () => {
+  it('markiert Top- und Bottom-Tag nach Ist-Wert der aktiven Kennzahl', () => {
+    const cmp = buildYoyDayComparison({
+      currentRows: [
+        row('2026-10-05', 10), row('2026-10-12', 2), row('2026-10-20', 6),
+      ],
+      priorRows: [],
+      monthKey: '2026-10',
+      scope: 'booked',
+      metric: 'persons',
+    });
+    const flags = monthDetailDayFlags(cmp);
+    expect(flags.strongestDay).toBe(5);
+    expect(flags.weakestDay).toBe(12);
+  });
+
+  it('nur EIN aktiver Tag → nur stärkster markiert (nie derselbe doppelt)', () => {
+    const cmp = buildYoyDayComparison({
+      currentRows: [row('2026-10-05', 10)],
+      priorRows: [],
+      monthKey: '2026-10',
+      scope: 'booked',
+      metric: 'persons',
+    });
+    const flags = monthDetailDayFlags(cmp);
+    expect(flags.strongestDay).toBe(5);
+    expect(flags.weakestDay).toBeNull();
+  });
+
+  it('keine aktiven Tage → beide null', () => {
+    const cmp = buildYoyDayComparison({
+      currentRows: [],
+      priorRows: [],
+      monthKey: '2026-10',
+      scope: 'booked',
+      metric: 'persons',
+    });
+    const flags = monthDetailDayFlags(cmp);
+    expect(flags.strongestDay).toBeNull();
+    expect(flags.weakestDay).toBeNull();
   });
 });

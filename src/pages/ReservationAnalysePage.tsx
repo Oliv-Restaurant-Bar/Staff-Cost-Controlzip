@@ -36,7 +36,7 @@ import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { checkReservationTablesExist } from '@/lib/reservation-import-db';
 import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import {
-  monthLabel, monthLongLabel, rangeFromMonthKeys,
+  monthLabel, monthLongLabel, rangeFromMonthKeys, isoWeekdayOf,
   STATUS_SCOPE_LABEL, WEEKDAY_LABEL, WEEKDAY_SHORT, ISO_WEEKDAYS,
   type IsoWeekday, type StatusScope,
 } from '@/lib/reservation-weekday-analytics';
@@ -52,10 +52,17 @@ import {
   buildMonthWeekdayHeatmap, heatmapValueScale, classifyHeatmapLevel,
   cellMetricValue, cellShareOfMonth, cellShareOfRange, cellVsMonthAverage,
   buildHeatmapCellTooltip, buildWeekdayDayBreakdown,
+  buildMonthDetailKpis, buildMonthWeekdayComposition,
+  buildWeekdayIstVorjahrChartData, monthDetailDayFlags,
   type AnalyseMetric, type AnalyseMonthRange, type MetricPair,
   type HeatmapLevel, type HeatmapCell, type HeatmapMonthRow,
   type MonthWeekdayHeatmap, type HeatmapScale, type HeatmapDayEntry,
+  type WeekdayIstVorjahrChartPoint,
 } from '@/lib/reservation-analyse-utils';
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  Legend, Tooltip as RechartsTooltip,
+} from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -92,6 +99,16 @@ function fmtPct(pct: number | null): string {
 /** „—" für unbekannte Vorjahreswerte, sonst Ganzzahl. */
 function fmtPrior(n: number | null): string {
   return n === null ? '—' : NUM0.format(n);
+}
+
+/** Anteil in % („18.2 %"); „—" wenn kein Total (null). */
+function fmtShare(pct: number | null): string {
+  return pct === null ? '—' : `${PCT1.format(pct)} %`;
+}
+
+/** Ø Personen/Reservation („2.4"); „—" wenn unbekannt. */
+function fmtAvg(n: number | null): string {
+  return n === null ? '—' : NUM1.format(n);
 }
 
 const TREND_TEXT: Record<YoyTrend, string> = {
@@ -260,12 +277,16 @@ function MonthYoyTable({ months, totals, metric, onMonthClick }: {
   );
 }
 
-/** Wochentagsvergleich Mo–So (aktive Kennzahl), Zeilen klickbar. */
-function WeekdayYoyTable({ rows, metric, onWeekdayClick, compact }: {
+/**
+ * Wochentagsvergleich Mo–So (aktive Kennzahl), Zeilen klickbar. Mit
+ * `shareByWeekday` (Monats-Popup) erscheint zusätzlich „Anteil Monat".
+ */
+function WeekdayYoyTable({ rows, metric, onWeekdayClick, compact, shareByWeekday }: {
   rows: (MetricPair & { weekday: IsoWeekday })[];
   metric: AnalyseMetric;
   onWeekdayClick?: (weekday: IsoWeekday) => void;
   compact?: boolean;
+  shareByWeekday?: ReadonlyMap<IsoWeekday, number | null>;
 }) {
   const pad = compact ? 'py-1' : 'py-1.5';
   return (
@@ -278,6 +299,9 @@ function WeekdayYoyTable({ rows, metric, onWeekdayClick, compact }: {
             <th className={cn('px-2 text-right font-medium', pad)}>Vorjahr</th>
             <th className={cn('px-2 text-right font-medium', pad)}>Diff.</th>
             <th className={cn('px-2 text-right font-medium', pad)}>Diff. %</th>
+            {shareByWeekday ? (
+              <th className={cn('px-2 text-right font-medium', pad)}>Anteil Monat</th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -308,11 +332,45 @@ function WeekdayYoyTable({ rows, metric, onWeekdayClick, compact }: {
                 <td className={cn('px-2 text-right tabular-nums', pad, TREND_TEXT[v.trend])}>
                   {fmtPct(v.diffPct)}
                 </td>
+                {shareByWeekday ? (
+                  <td className={cn('px-2 text-right tabular-nums text-muted-foreground', pad)}>
+                    {fmtShare(shareByWeekday.get(r.weekday) ?? null)}
+                  </td>
+                ) : null}
               </tr>
             );
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** Balkendiagramm Mo–So: Ist vs. Vorjahr nebeneinander (aktive Kennzahl). */
+function WeekdayIstVorjahrChart({ data, metricLabel }: {
+  data: WeekdayIstVorjahrChartPoint[];
+  metricLabel: string;
+}) {
+  return (
+    <div className="h-48 w-full" data-testid="analyse-month-weekday-chart">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+          <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+          <YAxis tick={{ fontSize: 11 }} width={36} allowDecimals={false} tickLine={false} axisLine={false} />
+          <RechartsTooltip
+            formatter={(value: number, name: string) => [NUM0.format(value), name]}
+            labelFormatter={(label: string) => {
+              const wd = data.find((d) => d.label === label)?.weekday;
+              return wd ? WEEKDAY_LABEL[wd] : label;
+            }}
+            contentStyle={{ fontSize: 12 }}
+          />
+          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <Bar dataKey="ist" name={`${metricLabel} Ist`} fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} maxBarSize={26} />
+          <Bar dataKey="vorjahr" name="Vorjahr" fill="hsl(var(--muted-foreground) / 0.35)" radius={[3, 3, 0, 0]} maxBarSize={26} />
+        </BarChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -433,6 +491,32 @@ export default function ReservationAnalysePage() {
   const detailMonthRow = useMemo(
     () => comparison.months.find((m) => m.monthKey === detailMonthKey) ?? null,
     [comparison, detailMonthKey],
+  );
+  const detailMonthKpis = useMemo(
+    () => (detailMonthRow ? buildMonthDetailKpis(detailMonthRow) : null),
+    [detailMonthRow],
+  );
+  const detailMonthComposition = useMemo(
+    () => (detailMonthWeekdays
+      ? buildMonthWeekdayComposition(detailMonthWeekdays.rows, metric)
+      : null),
+    [detailMonthWeekdays, metric],
+  );
+  const detailMonthShares = useMemo(
+    () => (detailMonthComposition
+      ? new Map(detailMonthComposition.map((r) => [r.weekday, r.sharePct]))
+      : null),
+    [detailMonthComposition],
+  );
+  const detailMonthChartData = useMemo(
+    () => (detailMonthWeekdays
+      ? buildWeekdayIstVorjahrChartData(detailMonthWeekdays.rows, metric)
+      : null),
+    [detailMonthWeekdays, metric],
+  );
+  const detailMonthDayFlags = useMemo(
+    () => (dayComparison ? monthDetailDayFlags(dayComparison) : null),
+    [dayComparison],
   );
 
   // Wochentag-Popup: Zusammensetzung (Monatsaufschlüsselung dieses Wochentags).
@@ -807,18 +891,25 @@ export default function ReservationAnalysePage() {
                 </AmberNote>
               ) : null}
 
-              {detailMonthRow ? (
+              {detailMonthKpis ? (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <KpiTile label="Ist" value={NUM0.format(pickMetric(detailMonthRow, metric).current)} />
-                  <KpiTile label="Vorjahr" value={fmtPrior(pickMetric(detailMonthRow, metric).prior)} />
+                  <KpiTile label="Reservationen Ist" value={NUM0.format(detailMonthKpis.reservations.current)} />
+                  <KpiTile label="Reservationen Vorjahr" value={fmtPrior(detailMonthKpis.reservations.prior)} />
+                  <KpiTile label="Personen Ist" value={NUM0.format(detailMonthKpis.persons.current)} />
+                  <KpiTile label="Personen Vorjahr" value={fmtPrior(detailMonthKpis.persons.prior)} />
                   <KpiTile
-                    label="Differenz" value={fmtDiff(pickMetric(detailMonthRow, metric).diff)}
-                    trend={pickMetric(detailMonthRow, metric).trend}
+                    label={`Differenz ${ANALYSE_METRIC_LABEL[metric]}`}
+                    value={fmtDiff(pickMetric(detailMonthKpis, metric).diff)}
+                    trend={pickMetric(detailMonthKpis, metric).trend}
                   />
                   <KpiTile
-                    label="Differenz %" value={fmtPct(pickMetric(detailMonthRow, metric).diffPct)}
-                    trend={pickMetric(detailMonthRow, metric).trend}
+                    label="Differenz %"
+                    value={fmtPct(pickMetric(detailMonthKpis, metric).diffPct)}
+                    trend={pickMetric(detailMonthKpis, metric).trend}
+                    sub={ANALYSE_METRIC_LABEL[metric]}
                   />
+                  <KpiTile label="Ø Pers./Res. Ist" value={fmtAvg(detailMonthKpis.avgCurrent)} />
+                  <KpiTile label="Ø Pers./Res. Vorjahr" value={fmtAvg(detailMonthKpis.avgPrior)} />
                 </div>
               ) : null}
 
@@ -838,24 +929,44 @@ export default function ReservationAnalysePage() {
                 />
               </div>
 
-              {/* Wochentagsverteilung im Monat */}
-              {detailMonthWeekdays ? (
+              {/* Balkendiagramm Mo–So: Ist vs. Vorjahr */}
+              {detailMonthChartData ? (
                 <div>
                   <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-                    Wochentagsverteilung (Mo–So)
+                    Wochentage: {ANALYSE_METRIC_LABEL[metric]} Ist vs. Vorjahr
                   </div>
-                  <WeekdayYoyTable rows={detailMonthWeekdays.rows} metric={metric} compact />
+                  <WeekdayIstVorjahrChart
+                    data={detailMonthChartData}
+                    metricLabel={ANALYSE_METRIC_LABEL[metric]}
+                  />
                 </div>
               ) : null}
 
-              {/* Tages-Tabelle (aktive Kennzahl) */}
+              {/* Wochentag-Zusammensetzung im Monat (inkl. Anteil des Monats) */}
+              {detailMonthWeekdays ? (
+                <div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+                    Wochentag-Zusammensetzung (Mo–So)
+                  </div>
+                  <WeekdayYoyTable
+                    rows={detailMonthWeekdays.rows}
+                    metric={metric}
+                    compact
+                    shareByWeekday={detailMonthShares ?? undefined}
+                  />
+                </div>
+              ) : null}
+
+              {/* Tages-Tabelle: Wochentag + beide Kennzahlen; Vorjahr/Diff. der aktiven */}
               <div className="overflow-x-auto rounded-md border">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
                       <th className="px-2 py-1.5 text-left font-medium">Tag</th>
-                      <th className="px-2 py-1.5 text-right font-medium">{ANALYSE_METRIC_LABEL[metric]} Ist</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Vorjahr</th>
+                      <th className="px-2 py-1.5 text-left font-medium">WT</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Res.</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Pers.</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Vorjahr ({ANALYSE_METRIC_LABEL[metric]})</th>
                       <th className="px-2 py-1.5 text-right font-medium">Diff.</th>
                     </tr>
                   </thead>
@@ -863,15 +974,44 @@ export default function ReservationAnalysePage() {
                     {dayComparison.days.map((d) => {
                       const v = pickMetric(d, metric);
                       const empty = v.current === 0 && (v.prior ?? 0) === 0;
+                      const weekday = d.currentDate ? isoWeekdayOf(d.currentDate) : null;
+                      const isStrongest = detailMonthDayFlags?.strongestDay === d.day;
+                      const isWeakest = detailMonthDayFlags?.weakestDay === d.day;
                       return (
-                        <tr key={d.day} className={cn('border-b last:border-0', empty && 'text-muted-foreground/60')}>
-                          <td className="px-2 py-1 tabular-nums">
+                        <tr
+                          key={d.day}
+                          className={cn(
+                            'border-b last:border-0',
+                            empty && 'text-muted-foreground/60',
+                            isStrongest && 'bg-emerald-50 dark:bg-emerald-950/20',
+                            isWeakest && 'bg-red-50 dark:bg-red-950/20',
+                          )}
+                        >
+                          <td className="whitespace-nowrap px-2 py-1 tabular-nums">
                             {d.day}.
                             {d.currentDate === null ? (
                               <span className="ml-1 text-[10px] text-muted-foreground">(nur VJ)</span>
                             ) : null}
+                            {isStrongest ? (
+                              <span className="ml-1.5 rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                Stärkster
+                              </span>
+                            ) : null}
+                            {isWeakest ? (
+                              <span className="ml-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                                Schwächster
+                              </span>
+                            ) : null}
                           </td>
-                          <td className="px-2 py-1 text-right tabular-nums">{NUM0.format(v.current)}</td>
+                          <td className="px-2 py-1 text-muted-foreground">
+                            {weekday ? WEEKDAY_SHORT[weekday] : '—'}
+                          </td>
+                          <td className={cn('px-2 py-1 text-right tabular-nums', metric === 'reservations' && 'font-medium')}>
+                            {NUM0.format(d.reservations.current)}
+                          </td>
+                          <td className={cn('px-2 py-1 text-right tabular-nums', metric === 'persons' && 'font-medium')}>
+                            {NUM0.format(d.persons.current)}
+                          </td>
                           <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{fmtPrior(v.prior)}</td>
                           <td className={cn('px-2 py-1 text-right tabular-nums', TREND_TEXT[v.trend])}>
                             {fmtDiff(v.diff)}

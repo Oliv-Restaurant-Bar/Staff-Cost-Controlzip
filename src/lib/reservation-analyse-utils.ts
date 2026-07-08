@@ -29,6 +29,7 @@
 import type { ReservationAggRow } from './reservation-dashboard';
 import {
   ISO_WEEKDAYS,
+  WEEKDAY_SHORT,
   isoWeekdayOf,
   monthKeyOf,
   statusPredicate,
@@ -38,7 +39,9 @@ import {
 import {
   makeYoyMetric,
   priorYearMonthKey,
+  type YoyDayComparison,
   type YoyMetric,
+  type YoyWeekdayRow,
 } from './reservation-yoy-utils';
 
 // ── Globale Kennzahl (Umschalter) ────────────────────────────────────────────
@@ -596,4 +599,104 @@ export function buildWeekdayDayBreakdown(
   }
 
   return { entries, strongestDate, weakestDate };
+}
+
+// ── Monats-Detail-Popup (KPIs, Wochentag-Zusammensetzung, Chart, Markierung) ─
+
+/**
+ * KPI-Werte für den Kopf des Monats-Popups: beide Kennzahlen (Reservationen
+ * UND Personen) Ist/Vorjahr plus Ø Personen pro Reservation (Ist und Vorjahr).
+ * Ø Vorjahr ist null, wenn das Vorjahr unbekannt ist ODER 0 Reservationen hat.
+ */
+export interface MonthDetailKpis {
+  reservations: YoyMetric;
+  persons: YoyMetric;
+  /** Ø Personen/Reservation Ist; null bei 0 Reservationen. */
+  avgCurrent: number | null;
+  /** Ø Personen/Reservation Vorjahr; null wenn Vorjahr unbekannt oder 0. */
+  avgPrior: number | null;
+}
+
+export function buildMonthDetailKpis(row: MetricPair): MonthDetailKpis {
+  const avgPrior = row.persons.prior !== null && row.reservations.prior !== null
+    ? avgPersonsPerReservation(row.persons.prior, row.reservations.prior)
+    : null;
+  return {
+    reservations: row.reservations,
+    persons: row.persons,
+    avgCurrent: avgPersonsPerReservation(row.persons.current, row.reservations.current),
+    avgPrior,
+  };
+}
+
+/** Eine Zeile der Wochentag-Zusammensetzung im Monats-Popup. */
+export interface MonthWeekdayCompositionRow {
+  weekday: IsoWeekday;
+  reservations: YoyMetric;
+  persons: YoyMetric;
+  /**
+   * Anteil dieses Wochentags am Ist-Monatstotal der AKTIVEN Kennzahl in %
+   * (0–100); null, wenn das Monatstotal 0 ist (kein Div/0).
+   */
+  sharePct: number | null;
+}
+
+/**
+ * Wochentag-Zusammensetzung eines Monats: die 7 YoY-Wochentagszeilen plus
+ * „Anteil des Monats" der aktiven Kennzahl (Basis: Ist-Werte).
+ */
+export function buildMonthWeekdayComposition(
+  rows: readonly YoyWeekdayRow[],
+  metric: AnalyseMetric,
+): MonthWeekdayCompositionRow[] {
+  const total = rows.reduce((sum, r) => sum + pickMetric(r, metric).current, 0);
+  return rows.map((r) => ({
+    weekday: r.weekday,
+    reservations: r.reservations,
+    persons: r.persons,
+    sharePct: total > 0 ? (pickMetric(r, metric).current / total) * 100 : null,
+  }));
+}
+
+/** Ein Balkenpaar (Ist vs. Vorjahr) im Wochentags-Diagramm des Monats-Popups. */
+export interface WeekdayIstVorjahrChartPoint {
+  weekday: IsoWeekday;
+  /** Kurz-Label „Mo"…„So" für die X-Achse. */
+  label: string;
+  ist: number;
+  /** null = Vorjahr unbekannt (Balken wird nicht gezeichnet). */
+  vorjahr: number | null;
+}
+
+/** Diagramm-Daten Mo–So der aktiven Kennzahl (Ist- und Vorjahres-Balken). */
+export function buildWeekdayIstVorjahrChartData(
+  rows: readonly YoyWeekdayRow[],
+  metric: AnalyseMetric,
+): WeekdayIstVorjahrChartPoint[] {
+  return rows.map((r) => {
+    const v = pickMetric(r, metric);
+    return { weekday: r.weekday, label: WEEKDAY_SHORT[r.weekday], ist: v.current, vorjahr: v.prior };
+  });
+}
+
+/** Markierung des stärksten/schwächsten Tags in der Tagesliste. */
+export interface MonthDetailDayFlags {
+  /** Tag im Monat (1..31) mit dem höchsten Ist-Wert; null ohne aktive Tage. */
+  strongestDay: number | null;
+  /** Tag mit dem tiefsten Ist-Wert (> 0); null, wenn identisch mit dem stärksten. */
+  weakestDay: number | null;
+}
+
+/**
+ * Stärkster/schwächster Tag aus dem Tagesvergleich (Ist-Wert der Kennzahl,
+ * mit der `buildYoyDayComparison` aufgerufen wurde). Gibt es nur EINEN aktiven
+ * Tag, wird NUR der stärkste markiert (nie derselbe Tag doppelt).
+ */
+export function monthDetailDayFlags(cmp: YoyDayComparison): MonthDetailDayFlags {
+  const strongestDay = cmp.strongestDays[0]?.day ?? null;
+  const weakestCandidate = cmp.weakestDays[0]?.day ?? null;
+  const weakestDay = weakestCandidate !== null && weakestCandidate !== strongestDay
+    ? weakestCandidate
+    : null;
+  return { strongestDay, weakestDay };
 }
