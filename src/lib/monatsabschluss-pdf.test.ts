@@ -113,6 +113,25 @@ describe('buildMonatsabschlussPdfData', () => {
     expect(data.offenePunkte.length).toBeGreaterThan(0);
   });
 
+  it('überspringt tombstoned Feld-Kommentare (deleted)', () => {
+    const { blob, closings } = fixture();
+    // TWINT-Kommentar später entfernen → Tombstone bleibt im Blob.
+    const tombstoned = setTagesabschlussComment(blob, '2026-07-01', 'twint', '', '2026-07-07T10:00:00.000Z');
+    const month = buildTagesabschlussRows(2026, 7, closings, tombstoned, {}, null, 500);
+    const data = buildMonatsabschlussPdfData({
+      monthKey: MONTH_KEY,
+      restaurantName: 'Oliv',
+      month,
+      blob: tombstoned,
+      checklist: buildExportChecklist(month, tombstoned, MONTH_KEY),
+      generatedBy: 'a@b.ch',
+      generatedAt: NOW,
+    });
+    expect(data.kommentare.some(k => k.text.includes('TWINT-Terminal'))).toBe(false);
+    // Tagesbemerkung (days-Namespace) bleibt unberührt.
+    expect(data.kommentare.some(k => k.feld === 'Tag' && k.text === 'Ruhiger Tag')).toBe(true);
+  });
+
   it('zeigt „—" für Salden ohne Anker und leere Abschnitte ohne Einträge', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     const blob = emptyTagesabschlussBlob();

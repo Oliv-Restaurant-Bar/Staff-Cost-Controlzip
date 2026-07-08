@@ -771,19 +771,36 @@ describe('setCashDiffReasons / setAnfangsbestand', () => {
     // Nur Notiz leeren: Gründe bleiben, note-Feld verschwindet.
     blob = setCashDiffReasons(blob, '2026-07-01', ['kassenfehler'], '   ', NOW);
     expect(blob.cashDiffReasons['2026-07-01'].note).toBeUndefined();
-    // Beides leer → Eintrag weg.
-    blob = setCashDiffReasons(blob, '2026-07-01', [], '', NOW);
-    expect(blob.cashDiffReasons['2026-07-01']).toBeUndefined();
+    // Beides leer → Tombstone (Key bleibt für merge-on-save, Leser sehen "keine Begründung").
+    blob = setCashDiffReasons(blob, '2026-07-01', [], '', '2026-07-07T10:00:00.000Z');
+    expect(blob.cashDiffReasons['2026-07-01']).toEqual({
+      reasons: ['kassenfehler'], deleted: true, updatedAt: '2026-07-07T10:00:00.000Z',
+    });
+    // Löschen ohne Eintrag bzw. auf Tombstone ist referenzgleich (No-op).
+    expect(setCashDiffReasons(blob, '2026-07-01', [], '', NOW)).toBe(blob);
+    expect(setCashDiffReasons(blob, '2026-07-09', [], '', NOW)).toBe(blob);
+    // Neusetzen reaktiviert den Tombstone (deleted-Flag weg).
+    blob = setCashDiffReasons(blob, '2026-07-01', ['zaehlfehler'], 'neu', NOW);
+    expect(blob.cashDiffReasons['2026-07-01']).toEqual({
+      reasons: ['zaehlfehler'], note: 'neu', updatedAt: NOW,
+    });
   });
 
-  it('setAnfangsbestand rundet, setzt und entfernt (null)', () => {
+  it('setAnfangsbestand rundet, setzt und tombstoned (null)', () => {
     let blob = emptyTagesabschlussBlob();
     blob = setAnfangsbestand(blob, tagesabschlussMonthKey(2026, 7), 500.005, NOW);
     expect(blob.anfangsbestand['2026-07'].value).toBe(500.01);
-    blob = setAnfangsbestand(blob, '2026-07', null, NOW);
-    expect(blob.anfangsbestand['2026-07']).toBeUndefined();
-    blob = setAnfangsbestand(blob, '2026-07', Number.NaN, NOW);
-    expect(blob.anfangsbestand['2026-07']).toBeUndefined();
+    // Entfernen = Tombstone (Key bleibt, letzter Wert verankert).
+    blob = setAnfangsbestand(blob, '2026-07', null, '2026-07-07T10:00:00.000Z');
+    expect(blob.anfangsbestand['2026-07']).toEqual({
+      value: 500.01, deleted: true, updatedAt: '2026-07-07T10:00:00.000Z',
+    });
+    // NaN wirkt wie Entfernen; auf Tombstone/ohne Eintrag referenzgleich.
+    expect(setAnfangsbestand(blob, '2026-07', Number.NaN, NOW)).toBe(blob);
+    expect(setAnfangsbestand(blob, '2026-08', null, NOW)).toBe(blob);
+    // Neusetzen reaktiviert (deleted-Flag weg).
+    blob = setAnfangsbestand(blob, '2026-07', 750, NOW);
+    expect(blob.anfangsbestand['2026-07']).toEqual({ value: 750, updatedAt: NOW });
   });
 });
 
@@ -943,13 +960,22 @@ describe('Mutationen', () => {
     expect(setTagesabschlussOverride(blob, '2026-07-09', 'umsatz', 1, null, undefined, NOW)).toBe(blob);
   });
 
-  it('setTagesabschlussComment setzt und entfernt Kommentare', () => {
+  it('setTagesabschlussComment setzt und tombstoned Kommentare', () => {
     let blob = emptyTagesabschlussBlob();
     blob = setTagesabschlussComment(blob, '2026-07-01', 'bar', ' Kassensturz ok ', NOW);
     const key = makeTagesabschlussFieldKey('2026-07-01', 'bar');
     expect(blob.comments[key].text).toBe('Kassensturz ok');
-    blob = setTagesabschlussComment(blob, '2026-07-01', 'bar', '  ', NOW);
-    expect(blob.comments[key]).toBeUndefined();
+    // Leerer Text = Tombstone (Key bleibt für merge-on-save).
+    blob = setTagesabschlussComment(blob, '2026-07-01', 'bar', '  ', '2026-07-07T10:00:00.000Z');
+    expect(blob.comments[key]).toEqual({
+      text: 'Kassensturz ok', deleted: true, updatedAt: '2026-07-07T10:00:00.000Z',
+    });
+    // Löschen auf Tombstone/ohne Eintrag ist referenzgleich (No-op).
+    expect(setTagesabschlussComment(blob, '2026-07-01', 'bar', '', NOW)).toBe(blob);
+    expect(setTagesabschlussComment(blob, '2026-07-02', 'bar', '', NOW)).toBe(blob);
+    // Neusetzen reaktiviert (deleted-Flag weg).
+    blob = setTagesabschlussComment(blob, '2026-07-01', 'bar', 'Neu', NOW);
+    expect(blob.comments[key]).toEqual({ text: 'Neu', updatedAt: NOW });
   });
 
   it('upsertExpense aktualisiert per id und behandelt Datumswechsel', () => {
@@ -1337,5 +1363,57 @@ describe('Tombstones überleben merge-on-save (keine Wiederauferstehung aus dem 
     blob = setSaldoAnker(blob, '2026-07-02', null, LATER);
     const roundtripped = normalizeTagesabschlussBlob(JSON.parse(JSON.stringify(blob)));
     expect(roundtripped.saldoAnker['2026-07-02']).toEqual({ value: 250, deleted: true, updatedAt: LATER });
+  });
+
+  it('Kommentar-, Differenzgrund- und Anfangsbestand-Tombstones gewinnen gegen ältere Remote-Live-Stände', () => {
+    // Remote (KV): alle drei Einträge leben noch (Stand vor dem Löschen).
+    let remote = emptyTagesabschlussBlob();
+    remote = setTagesabschlussComment(remote, '2026-07-01', 'umsatz', 'Hinweis', NOW);
+    remote = setCashDiffReasons(remote, '2026-07-01', ['kassenfehler'], 'Notiz', NOW);
+    remote = setAnfangsbestand(remote, '2026-07', 500, NOW);
+    // Lokal: alle drei später entfernt (Tombstones mit jüngerem updatedAt).
+    let local = setTagesabschlussComment(remote, '2026-07-01', 'umsatz', '', LATER);
+    local = setCashDiffReasons(local, '2026-07-01', [], '', LATER);
+    local = setAnfangsbestand(local, '2026-07', null, LATER);
+    const merged = mergeTagesabschlussBlobs(local, remote);
+    const key = makeTagesabschlussFieldKey('2026-07-01', 'umsatz');
+    expect(merged.comments[key].deleted).toBe(true);
+    expect(merged.cashDiffReasons['2026-07-01'].deleted).toBe(true);
+    expect(merged.anfangsbestand['2026-07'].deleted).toBe(true);
+    // Leser: kein Zell-Kommentar, keine Begründung mehr.
+    const month = buildTagesabschlussRows(
+      2026, 7, { '2026-07-01': makeClosing('2026-07-01') }, merged, {}, null, null,
+    );
+    const row = month.rows.find(r => r.date === '2026-07-01');
+    expect(row?.cells.umsatz.comment).toBeUndefined();
+    expect(row?.cashDiffReasons).toEqual([]);
+    expect(row?.cashDiffNote).toBeUndefined();
+    expect(row?.cashDiffBegruendet).toBe(false);
+  });
+
+  it('Anfangsbestand-Tombstone ist KEIN Anker mehr (resolveKassensaldoStart), Reaktivierung gilt wieder', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setAnfangsbestand(blob, '2026-06', 500, NOW);
+    // Vor dem Löschen: Juni-Anker trägt (Leermonat = 0-Beitrag) in den Juli.
+    const before = await resolveKassensaldoStart(2026, 7, blob, async () => ({}));
+    expect(before).toEqual({ startSaldo: 500, anchorMonth: '2026-06' });
+    // Tombstone: weder eigener Monat noch Anker-Kandidat.
+    blob = setAnfangsbestand(blob, '2026-06', null, LATER);
+    expect(await resolveKassensaldoStart(2026, 7, blob, async () => ({}))).toEqual({ startSaldo: null, anchorMonth: null });
+    expect(await resolveKassensaldoStart(2026, 6, blob, async () => ({}))).toEqual({ startSaldo: null, anchorMonth: null });
+    // Reaktivierung (Neusetzen) macht den Monat wieder zum Anker.
+    blob = setAnfangsbestand(blob, '2026-06', 800, LATER);
+    expect(await resolveKassensaldoStart(2026, 7, blob, async () => ({}))).toEqual({ startSaldo: 800, anchorMonth: '2026-06' });
+  });
+
+  it('normalizeTagesabschlussBlob reicht deleted bei cashDiffReasons und anfangsbestand durch', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setCashDiffReasons(blob, '2026-07-01', ['kassenfehler'], undefined, NOW);
+    blob = setCashDiffReasons(blob, '2026-07-01', [], '', LATER);
+    blob = setAnfangsbestand(blob, '2026-07', 500, NOW);
+    blob = setAnfangsbestand(blob, '2026-07', null, LATER);
+    const rt = normalizeTagesabschlussBlob(JSON.parse(JSON.stringify(blob)));
+    expect(rt.cashDiffReasons['2026-07-01']).toEqual({ reasons: ['kassenfehler'], deleted: true, updatedAt: LATER });
+    expect(rt.anfangsbestand['2026-07']).toEqual({ value: 500, deleted: true, updatedAt: LATER });
   });
 });

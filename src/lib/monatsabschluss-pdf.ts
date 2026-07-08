@@ -151,6 +151,7 @@ export function buildMonatsabschlussPdfData(params: MonatsabschlussPdfParams): M
   const prefix = `${monthKey}-`;
   for (const [key, c] of Object.entries(blob.comments)) {
     if (!key.startsWith(prefix)) continue;
+    if (c.deleted) continue; // Tombstone = entfernter Kommentar
     const text = (c as { text?: string }).text ?? '';
     if (text.trim() === '') continue;
     const date = key.slice(0, 10);

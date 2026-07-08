@@ -284,7 +284,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const handleEditAnfangsbestand = useCallback(() => {
     if (readOnly || !blob) return;
     const monthKey = tagesabschlussMonthKey(year, month);
-    const explicit = blob.anfangsbestand[monthKey]?.value ?? saldoResolution?.startSaldo ?? null;
+    // Tombstone (deleted) = kein expliziter Anfangsbestand mehr.
+    const entry = blob.anfangsbestand[monthKey];
+    const explicit = (entry && !entry.deleted ? entry.value : null) ?? saldoResolution?.startSaldo ?? null;
     setAnfangsbestandText(explicit === null ? '' : explicit.toFixed(2));
     setEditAnfangsbestand(true);
   }, [readOnly, blob, year, month, saldoResolution]);

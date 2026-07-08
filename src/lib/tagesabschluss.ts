@@ -259,12 +259,16 @@ export interface CashDiffReasonEntry {
   reasons: string[];
   /** Freitext "Eigene Notiz" — zusätzlich zur Schnellauswahl, nicht statt. */
   note?: string;
+  /** Tombstone: Gründe entfernt — Key bleibt für merge-on-save (jüngster gewinnt). */
+  deleted?: true;
   updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
 }
 
 /** Benutzerdefinierter Kassensaldo-Anfangsbestand eines Monats (Anker). */
 export interface KassensaldoAnfangsbestand {
   value: number; // CHF
+  /** Tombstone: Anfangsbestand entfernt — Key bleibt für merge-on-save (jüngster gewinnt). */
+  deleted?: true;
   updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
 }
 
@@ -289,6 +293,15 @@ export interface KassensaldoTagesanker {
  * Erst-Original bleibt auch über Tombstones hinweg verankert.
  */
 export interface TagesabschlussOverride extends AdyenOverride {
+  deleted?: true;
+}
+
+/**
+ * Feld-Kommentar im Tagesabschluss-Blob — wie AdyenComment, plus optionaler
+ * Tombstone (gleiche Begründung wie bei TagesabschlussOverride: gelöschte
+ * Keys würden beim merge-on-save aus dem Remote-Stand wiederauferstehen).
+ */
+export interface TagesabschlussComment extends AdyenComment {
   deleted?: true;
 }
 
@@ -411,8 +424,8 @@ export interface TagesabschlussBlob {
   expenses: Record<string, CashExpense[]>;
   /** Korrektur-Overrides, Key = `date:field` (inkl. Tombstones). */
   overrides: Record<string, TagesabschlussOverride>;
-  /** Kommentare, Key = `date:field`. */
-  comments: Record<string, AdyenComment>;
+  /** Kommentare, Key = `date:field` (inkl. Tombstones). */
+  comments: Record<string, TagesabschlussComment>;
   /** Kassendifferenz-Gründe + Notiz, Key = yyyy-MM-dd (eigener Namespace,
    *  bewusst NICHT in `days` — dort wird je Datum als Ganzes gemerged). */
   cashDiffReasons: Record<string, CashDiffReasonEntry>;
@@ -461,6 +474,7 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
       cashDiffReasons[date] = {
         reasons: Array.isArray(e.reasons) ? e.reasons.filter(r => typeof r === 'string') : [],
         ...(typeof e.note === 'string' && e.note.trim() !== '' ? { note: e.note } : {}),
+        ...(e.deleted === true ? { deleted: true as const } : {}),
         updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
       };
     }
@@ -473,6 +487,7 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
       if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
       anfangsbestand[monthKey] = {
         value: e.value,
+        ...(e.deleted === true ? { deleted: true as const } : {}),
         updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
       };
     }
@@ -1048,7 +1063,8 @@ function buildCell(
 ): DayCell {
   const key = makeTagesabschlussFieldKey(date, field);
   const ov = blob.overrides[key];
-  const comment = blob.comments[key]?.text;
+  const commentEntry = blob.comments[key];
+  const comment = commentEntry && !commentEntry.deleted ? commentEntry.text : undefined;
   if (ov && ov.correctedByManualOverride && !ov.deleted) {
     return { auto, value: ov.correctedValue, source: 'corrected', override: ov, ...(comment ? { comment } : {}) };
   }
@@ -1166,7 +1182,9 @@ export function buildTagesabschlussRows(
     const cashDiffStatus = cashDiff !== null ? adyenDiffStatus(cashDiff) : null;
 
     // Differenzgründe + Notiz (Schnellauswahl UND Freitext, beides zählt).
-    const reasonEntry = blob.cashDiffReasons[date];
+    // Tombstones (deleted) zählen als "keine Begründung".
+    const rawReasonEntry = blob.cashDiffReasons[date];
+    const reasonEntry = rawReasonEntry && !rawReasonEntry.deleted ? rawReasonEntry : undefined;
     const cashDiffReasons = reasonEntry?.reasons?.filter(r => r.trim() !== '') ?? [];
     const cashDiffNote = reasonEntry?.note?.trim() || undefined;
     const cashDiffBegruendet = cashDiffReasons.length > 0 || !!cashDiffNote;
@@ -1408,8 +1426,18 @@ export function setCashDiffReasons(
   const cleanedNote = (note ?? '').trim();
   const cashDiffReasons = { ...blob.cashDiffReasons };
   if (cleanedReasons.length === 0 && cleanedNote === '') {
-    delete cashDiffReasons[date];
+    // Tombstone statt Key-Löschung (merge-on-save würde den Remote-Stand
+    // wiederbeleben); Leser behandeln `deleted` als "keine Begründung".
+    const existing = cashDiffReasons[date];
+    if (!existing || existing.deleted) return blob;
+    cashDiffReasons[date] = {
+      reasons: existing.reasons,
+      ...(existing.note !== undefined ? { note: existing.note } : {}),
+      deleted: true,
+      updatedAt: now,
+    };
   } else {
+    // Neusetzen reaktiviert einen evtl. Tombstone (kein `deleted`-Feld).
     cashDiffReasons[date] = {
       reasons: cleanedReasons,
       ...(cleanedNote !== '' ? { note: cleanedNote } : {}),
@@ -1431,8 +1459,13 @@ export function setAnfangsbestand(
 ): TagesabschlussBlob {
   const anfangsbestand = { ...blob.anfangsbestand };
   if (value === null || !Number.isFinite(value)) {
-    delete anfangsbestand[monthKey];
+    // Tombstone statt Key-Löschung (merge-on-save würde den Remote-Stand
+    // wiederbeleben); Leser behandeln `deleted` als "kein Anfangsbestand".
+    const existing = anfangsbestand[monthKey];
+    if (!existing || existing.deleted) return blob;
+    anfangsbestand[monthKey] = { value: existing.value, deleted: true, updatedAt: now };
   } else {
+    // Neusetzen reaktiviert einen evtl. Tombstone (kein `deleted`-Feld).
     anfangsbestand[monthKey] = { value: round2(value), updatedAt: now };
   }
   return { ...blob, anfangsbestand };
@@ -1477,8 +1510,16 @@ export function setTagesabschlussComment(
   const key = makeTagesabschlussFieldKey(date, field);
   const comments = { ...blob.comments };
   const trimmed = text.trim();
-  if (trimmed === '') delete comments[key];
-  else comments[key] = { text: trimmed, updatedAt: now };
+  if (trimmed === '') {
+    // Tombstone statt Key-Löschung (merge-on-save würde den Remote-Stand
+    // wiederbeleben); Leser behandeln `deleted` als "kein Kommentar".
+    const existing = comments[key];
+    if (!existing || existing.deleted) return blob;
+    comments[key] = { text: existing.text, deleted: true, updatedAt: now };
+  } else {
+    // Neusetzen reaktiviert einen evtl. Tombstone (kein `deleted`-Feld).
+    comments[key] = { text: trimmed, updatedAt: now };
+  }
   return { ...blob, comments };
 }
 
@@ -2118,13 +2159,16 @@ export async function resolveKassensaldoStart(
 ): Promise<KassensaldoStartResolution> {
   const ownKey = tagesabschlussMonthKey(year, month);
   const own = blob.anfangsbestand[ownKey];
-  if (own) return { startSaldo: round2(own.value), anchorMonth: ownKey };
+  if (own && !own.deleted) return { startSaldo: round2(own.value), anchorMonth: ownKey };
 
   // Anker-Kandidaten: Monate mit explizitem Anfangsbestand UND Monate mit
   // manuellem Kassensaldo-Tagesanker (Inline-Korrektur) — beide setzen die
   // Kette auf einen bekannten Wert und tragen sie in Folgemonate.
+  // Tombstones (deleted) sind KEINE Kandidaten.
   const anchorKey = [
-    ...Object.keys(blob.anfangsbestand),
+    ...Object.entries(blob.anfangsbestand)
+      .filter(([, entry]) => !entry.deleted)
+      .map(([k]) => k),
     ...Object.entries(blob.saldoAnker)
       .filter(([, entry]) => !entry.deleted)
       .map(([d]) => d.slice(0, 7)),
@@ -2139,8 +2183,9 @@ export async function resolveKassensaldoStart(
   // Ohne expliziten Anfangsbestand startet der Anker-Monat mit null — der
   // Tagesanker im Monat re-based die Kette (computeMonthEndSaldo rechnet
   // auch mit null-Start durch).
-  let saldo: number | null = blob.anfangsbestand[anchorKey]
-    ? round2(blob.anfangsbestand[anchorKey].value)
+  const anchorEntry = blob.anfangsbestand[anchorKey];
+  let saldo: number | null = anchorEntry && !anchorEntry.deleted
+    ? round2(anchorEntry.value)
     : null;
 
   for (let i = 0; i < KASSENSALDO_MAX_CHAIN_MONTHS; i++) {
