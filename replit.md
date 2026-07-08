@@ -22,6 +22,9 @@ Internes Reporting-Tool für Umsatz, Personalkosten, Dienstpläne und KPIs — m
 
 ## Module
 
+### Startseite & Dashboard
+- **Startseite (vereinfacht, Admin):** Route „/" = `isAdmin ? StartOverview : (canAccessModule('dashboard') ? Dashboard : /personal)` — Manager/beaulieu_manager behalten das alte Dashboard-Verhalten; das ausführliche Dashboard bleibt vollständig unter `/dashboard` (Nav-Item „Dashboard" in Gruppe Verkauf, adminOnly; `DASHBOARD_ITEM` heisst jetzt „Start"). Seite `src/pages/StartOverview.tsx` (3 Bereiche: Heute-Statuskarten Umsatzimport/Reservationen/Dienstplan/Tagesabschluss, Warnungen = NUR Status `action`, Schnellaktionen als Links; Gäste sehen keine Schreib-/PII-Aktionen). Rein `src/lib/start-overview-utils.ts` (`buildStartOverview`; Frische-Regeln 1:1 via `computeSourceStatus` aus dem Import-Cockpit — KEINE eigenen Schwellen; Dienstplan-Regel: geplant bis ≥ heute+7 = ok, < heute = action; Tagesabschluss = gestriger Tag im `adyenAbstimmung_v1`-Blob bestätigt, null = nicht eingerichtet → unknown ohne Warnung). Hook `src/hooks/useStartOverview.ts` (read-only: `fetchCockpitSignals` + Direkt-Read des Adyen-Blobs aus localStorage, NIE Save-Schicht; Zustände loading/error/ready). Tests: `start-overview-utils.test.ts` (node) + `StartOverview.test.tsx` (happy-dom, Hook gemockt).
+
 ### Reporting & Finanzen
 - **Erfolgsrechnung / P&L:** `src/pages/PLView.tsx`, `src/lib/pl-engine.ts`, `src/types/pl.ts`, `src/lib/reporting-store.ts`, `src/types/reporting.ts`. Vorjahres-Diagnose-Banner (nur Sichtbarkeit, keine Berechnung): rein `src/lib/pl-prior-year-diagnostics.ts`.
 - **Budget:** `src/pages/Budget.tsx`, `src/lib/budget-store.ts`, `src/types/budget.ts`. 2026-Seed automatisch beim ersten Laden ohne `plLineItems`.

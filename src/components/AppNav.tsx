@@ -76,8 +76,8 @@ interface NavGroup {
 // Standalone top item (kein Gruppen-Label)
 const DASHBOARD_ITEM: NavItem = {
   path: '/',
-  label: 'Dashboard',
-  shortLabel: 'Home',
+  label: 'Start',
+  shortLabel: 'Start',
   icon: LayoutDashboard,
   module: 'dashboard',
 };
@@ -86,6 +86,15 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     groupLabel: 'Verkauf',
     items: [
+      {
+        // Ausführliches Dashboard (bisherige Startseite) — Startseite '/' ist
+        // jetzt die vereinfachte Übersicht (StartOverview).
+        path: '/dashboard',
+        label: 'Dashboard',
+        shortLabel: 'Dashboard',
+        icon: BarChart3,
+        adminOnly: true,
+      },
       {
         path: '/verkauf-dashboard',
         label: 'Verkaufsdashboard',

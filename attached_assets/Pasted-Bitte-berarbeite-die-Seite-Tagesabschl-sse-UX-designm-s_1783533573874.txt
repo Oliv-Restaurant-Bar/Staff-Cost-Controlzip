@@ -1,0 +1,62 @@
+Bitte überarbeite die Seite Tagesabschlüsse UX/designmässig mit Fokus auf weniger Platzverschwendung und schnelleres Arbeiten.
+
+Ausgangsproblem:
+Aktuell nimmt der obere Bereich zu viel Höhe ein: Breadcrumb, langer Erklärungstext, grosse Monatsnavigation, Warnbox, viele Statuskarten. Dadurch sieht man die eigentliche Arbeitstabelle/Kennzahlen erst spät. Ziel ist eine kompakte Arbeitsansicht.
+
+Bitte umsetzen:
+
+1. Header stark verdichten
+- Entferne den langen erklärenden Text unter dem Titel oder verschiebe ihn in ein kleines Info-Icon/Tooltip.
+- Breadcrumb nicht prominent anzeigen oder kompakter machen.
+- Titelbereich nur:
+  - "Tagesabschlüsse"
+  - Monat/Jahr Auswahl
+  - wichtigste Aktionen rechts: "Excel-Export", "Buchhaltungs-Export", "+ Tagesabschluss"
+
+2. Monatsnavigation kompakt machen
+- Monat zurück/vor, Monat/Jahr-Auswahl und Heute-Button in eine einzige kompakte Toolbar.
+- Kein grosser separater Block nur für Navigation.
+
+3. Warnung kompakter machen
+- Die gelbe Warnbox "Kassensaldo unbekannt..." deutlich schmaler machen.
+- Nur eine kurze Zeile anzeigen:
+  "Anfangsbestand fehlt – Kassensaldo kann nicht berechnet werden"
+- Button rechts: "Erfassen"
+- Details erst per Aufklappen/Info-Icon anzeigen.
+
+4. Statuskarten reduzieren
+- Nicht 8 grosse Karten anzeigen.
+- Maximal 3 bis 4 kompakte KPI-Chips/Karten:
+  - Abgeschlossen
+  - Offen
+  - Differenzen
+  - Kassensaldo Status
+- Restliche Detailkennzahlen in einen ausklappbaren Bereich "Weitere Kennzahlen".
+
+5. Tabelle weiter nach oben bringen
+- Die Tagesabschluss-Tabelle soll ohne viel Scrollen sichtbar sein.
+- Oberhalb der Tabelle maximal ca. 180–220px Höhe verwenden.
+- Fokus auf Arbeiten: Werte sehen, inline bearbeiten, Status erkennen.
+
+6. Tabellenbereich verbessern
+- Tabellenkopf sticky, wenn möglich.
+- Primäre Spalten behalten:
+  Umsatz, Bargeld Soll, Kassensaldo Soll, KK Adyen, Barausgaben, Debitoren, V-Gutscheine, EG-Gutscheine, Status, Aktionen.
+- Inline-Eingabe weiterhin direkt möglich.
+- Aktionen kompakt als Icon/Dropdown.
+
+7. Schnellaktionen nach unten oder in Toolbar
+- Schnellaktionen nicht prominent oberhalb der Tabelle anzeigen.
+- Falls vorhanden, nach unten verschieben oder als kleines Dropdown "Aktionen" in die Toolbar packen.
+
+8. Designziel
+- Ruhiger, kompakter, weniger Text.
+- Mehr Arbeitsfläche für Tabelle.
+- Keine neuen Features und keine neuen Datenbanktabellen.
+- Nur UX/Layout verbessern.
+- Bestehende Logik und Tests möglichst beibehalten.
+- Ergänze/aktualisiere passende Tests falls Komponenten angepasst werden.
+- replit.md aktualisieren.
+
+Wichtig:
+Bitte keine Bild-/Mockup-Generierung. Direkt im bestehenden Code umsetzen.

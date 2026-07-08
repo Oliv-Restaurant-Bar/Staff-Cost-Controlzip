@@ -20,6 +20,7 @@ import { GuestBanner } from "@/components/GuestBanner";
 import { Loader2 } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
+import StartOverview from "./pages/StartOverview";
 import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Personalstamm from "./pages/Personalstamm";
 import Positionen from "./pages/Positionen";
@@ -184,7 +185,17 @@ const AppContent = () => {
           <ErrorBoundary label="Seite">
           <Routes>
             {/* Routen mit Rollenprüfung */}
+            {/* Startseite: Admins (inkl. Gast-Lesezugriff) → vereinfachte Übersicht;
+                Manager behalten ihr bisheriges Dashboard-Verhalten. */}
             <Route path="/"
+              element={isAdmin
+                ? <StartOverview />
+                : canAccessModule('dashboard')
+                  ? <Dashboard />
+                  : <Navigate to="/personal" replace />}
+            />
+            {/* Ausführliches Dashboard bleibt vollständig erhalten (Detailseite). */}
+            <Route path="/dashboard"
               element={canAccessModule('dashboard')
                 ? <Dashboard />
                 : <Navigate to="/personal" replace />}
