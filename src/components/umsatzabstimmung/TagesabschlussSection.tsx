@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, Lock, LockOpen } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Download, FileSpreadsheet, Info, Lock, LockOpen, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -116,6 +116,10 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [editAnfangsbestand, setEditAnfangsbestand] = useState(false);
   /** Voll-Ansicht (alle Spalten) — Standard ist die kompakte Ansicht. */
   const [showAllColumns, setShowAllColumns] = useState(false);
+  /** Aufklappbereich „Weitere Kennzahlen" (Detail-KPIs, standardmässig zu). */
+  const [showMoreKpis, setShowMoreKpis] = useState(false);
+  /** Kompakte Anfangsbestand-Warnung aufgeklappt (Eingabe + Details sichtbar). */
+  const [anfangsbestandOpen, setAnfangsbestandOpen] = useState(false);
 
   // Jahr-Wechsel: Monat sinnvoll nachziehen.
   useEffect(() => {
@@ -139,6 +143,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     setLoading(true);
     setClosings({});
     setEditAnfangsbestand(false);
+    setAnfangsbestandOpen(false);
     setAnfangsbestandText('');
     loadGnDayClosingsForMonth(tenantId, year, month).then(data => {
       if (!alive) return;
@@ -410,31 +415,53 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     setOverrideCtx(null);
   }, [readOnly, blob, isDayLocked, monthData, persist]);
 
+  /** „+ Tagesabschluss": Tagesdetail für heute (im angezeigten Monat), sonst
+      für den ersten offenen/in Bearbeitung befindlichen Tag öffnen. */
+  const handleAddTagesabschluss = useCallback(() => {
+    const p = (n: number) => String(n).padStart(2, '0');
+    const todayStr = `${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate())}`;
+    const target = monthData.rows.find(r => r.date === todayStr)
+      ?? monthData.rows.find(r => r.status === 'offen' || r.status === 'in_bearbeitung')
+      ?? monthData.rows[0];
+    if (target) setOpenDate(target.date);
+  }, [monthData, today]);
+
   return (
     <>
-    <Card className="mt-6">
+    <Card className="mt-2">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <CardTitle className="text-sm">Tagesabschluss-Übersicht — {MONTH_NAMES[month - 1]} {year}</CardTitle>
-            <p className="text-[11px] text-muted-foreground mt-0.5">
-              Z-Bericht-Werte automatisch, manuelle Eingaben/Korrekturen pro Tag, Buchhaltungs-Export analog Excel "Tabelle2".
-              Cash, Einzahlung Bank und Debitoren direkt in der Tabelle erfassen; Gutschein- und Barausgaben-Zellen
-              öffnen ihren eigenen Dialog — Datum anklicken für das komplette Tagesdetail (Bemerkung, Korrekturen).
-            </p>
+          <div className="flex items-center gap-1.5">
+            <CardTitle className="text-sm">Tagesabschluss-Übersicht</CardTitle>
+            <span
+              title={'Z-Bericht-Werte automatisch, manuelle Eingaben/Korrekturen pro Tag, Buchhaltungs-Export analog Excel "Tabelle2". Cash, Einzahlung Bank und Debitoren direkt in der Tabelle erfassen; Gutschein- und Barausgaben-Zellen öffnen ihren eigenen Dialog — Datum anklicken für das komplette Tagesdetail (Bemerkung, Korrekturen).'}
+              className="text-muted-foreground cursor-help"
+              data-testid="ta-section-info"
+            >
+              <Info className="h-3.5 w-3.5" aria-label="Hinweise zur Bedienung" />
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 rounded-md border border-border px-1 py-0.5">
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0"
                 onClick={() => setMonth(m => Math.max(1, m - 1))} disabled={month <= 1}
                 aria-label="Vormonat">
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
-              <span className="text-xs font-medium w-24 text-center">{MONTH_NAMES[month - 1]}</span>
-              <Button variant="ghost" size="sm" className="h-7 w-7 p-0"
+              <span className="text-xs font-medium w-24 text-center">{MONTH_NAMES[month - 1]} {year}</span>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0"
                 onClick={() => setMonth(m => Math.min(12, m + 1))} disabled={month >= 12}
                 aria-label="Folgemonat">
                 <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs"
+                onClick={() => setMonth(today.getMonth() + 1)}
+                disabled={year !== today.getFullYear() || month === today.getMonth() + 1}
+                title={year === today.getFullYear()
+                  ? 'Zum aktuellen Monat springen'
+                  : 'Heute liegt nicht im gewählten Jahr (Jahr oben rechts wechseln)'}
+                data-testid="ta-heute">
+                Heute
               </Button>
             </div>
             <Button variant="outline" size="sm" className="h-7 text-xs"
@@ -443,13 +470,23 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               title="Übersicht des Monats als Excel-Datei (.xlsx) herunterladen"
               data-testid="ta-excel-export">
               <Download className="h-3.5 w-3.5 mr-1" />
-              Excel-Export
+              Excel
             </Button>
             <Button variant="outline" size="sm" className="h-7 text-xs"
               onClick={() => setExportOpen(true)} data-testid="ta-open-export">
               <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
-              Buchhaltungs-Export
+              Buchhaltung
             </Button>
+            {!readOnly && (
+              <Button size="sm" className="h-7 text-xs"
+                onClick={handleAddTagesabschluss}
+                disabled={loading || monthData.rows.length === 0}
+                title="Tagesdetail für heute bzw. den ersten offenen Tag öffnen"
+                data-testid="ta-add-abschluss">
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                Tagesabschluss
+              </Button>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -458,161 +495,112 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
           <p className="text-xs text-muted-foreground py-4 text-center">Lade Tagesabschlüsse…</p>
         ) : (
           <>
-            {saldoResolution !== null && (saldoResolution.startSaldo === null || editAnfangsbestand) && (
-              <div
-                className="mb-3 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2"
-                data-testid="ta-anfangsbestand-banner"
-              >
-                <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
-                  {saldoResolution.startSaldo === null
-                    ? <>Kassensaldo unbekannt — Anfangsbestand für {MONTH_NAMES[month - 1]} {year} erfassen</>
-                    : <>Kassen-Anfangsbestand für {MONTH_NAMES[month - 1]} {year} bearbeiten</>}
-                </p>
-                <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
-                  {saldoResolution.startSaldo === null
-                    ? <>Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
-                        Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
-                        Es wird bewusst KEINE 0 angenommen.</>
-                    : <>Speichern setzt einen expliziten Anfangsbestand für diesen Monat und übersteuert
-                        den aus den Vormonaten fortgeschriebenen Saldo. Alle Folgesalden werden
-                        automatisch neu berechnet.</>}
-                </p>
-                {!readOnly && (
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      className="h-7 w-32 rounded border border-input bg-background px-2 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-                      placeholder="z. B. 500.00"
-                      value={anfangsbestandText}
-                      onChange={e => setAnfangsbestandText(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSaveAnfangsbestand(); }}
-                      aria-label={`Anfangsbestand ${MONTH_NAMES[month - 1]} ${year}`}
-                      data-testid="ta-anfangsbestand-input"
-                    />
-                    <Button size="sm" className="h-7 text-xs"
-                      onClick={handleSaveAnfangsbestand}
-                      disabled={parseAmountInput(anfangsbestandText) === null}
-                      data-testid="ta-anfangsbestand-save">
-                      Anfangsbestand speichern
-                    </Button>
-                    {editAnfangsbestand && (
-                      <Button size="sm" variant="ghost" className="h-7 text-xs"
-                        onClick={() => { setEditAnfangsbestand(false); setAnfangsbestandText(''); }}
-                        data-testid="ta-anfangsbestand-cancel">
-                        Abbrechen
+            {saldoResolution !== null && (saldoResolution.startSaldo === null || editAnfangsbestand) && (() => {
+              const expanded = anfangsbestandOpen || editAnfangsbestand || readOnly;
+              return (
+                <div
+                  className="mb-2 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5"
+                  data-testid="ta-anfangsbestand-banner"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium text-amber-800 dark:text-amber-300">
+                      {saldoResolution.startSaldo === null
+                        ? <>Anfangsbestand fehlt — Kassensaldo für {MONTH_NAMES[month - 1]} {year} kann nicht berechnet werden</>
+                        : <>Kassen-Anfangsbestand für {MONTH_NAMES[month - 1]} {year} bearbeiten</>}
+                    </p>
+                    {!readOnly && !expanded && (
+                      <Button size="sm" className="h-6 text-xs shrink-0"
+                        onClick={() => setAnfangsbestandOpen(true)}
+                        data-testid="ta-anfangsbestand-erfassen">
+                        Erfassen
                       </Button>
                     )}
                   </div>
-                )}
-              </div>
-            )}
-            <div className="mb-3 space-y-2">
-              {/* ── KPI-Gruppe „Abschluss" — Tages-Status & Differenzen ── */}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Abschluss</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-confirmed">
-                    <p className="text-[10px] text-muted-foreground">Tage abgeschlossen</p>
-                    <p className="text-sm font-semibold tabular-nums">
-                      {monthData.totals.daysAbgeschlossen + monthData.totals.daysAbgeschlossenMitDifferenz}
-                      <span className="text-[10px] font-normal text-muted-foreground"> / {monthData.totals.daysWithZbericht} mit Z-Bericht</span>
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-open">
-                    <p className="text-[10px] text-muted-foreground">Tage offen</p>
-                    <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysOpen > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
-                      {monthData.totals.daysOpen}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-in-bearbeitung">
-                    <p className="text-[10px] text-muted-foreground">Tage in Bearbeitung</p>
-                    <p className="text-sm font-semibold tabular-nums">{monthData.totals.daysInBearbeitung}</p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-wieder-geoeffnet">
-                    <p className="text-[10px] text-muted-foreground">Tage wieder geöffnet</p>
-                    <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysWiederGeoeffnet > 0 ? 'text-orange-700 dark:text-orange-400' : ''}`}>
-                      {monthData.totals.daysWiederGeoeffnet}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-diff">
-                    <p className="text-[10px] text-muted-foreground">Tage mit Differenzen</p>
-                    <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysWithDiff > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
-                      {monthData.totals.daysWithDiff}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-begruendet">
-                    <p className="text-[10px] text-muted-foreground">Tage mit begründeter Differenz</p>
-                    <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysBegruendet > 0 ? 'text-teal-700 dark:text-teal-400' : ''}`}>
-                      {monthData.totals.daysBegruendet}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-unbegruendet">
-                    <p className="text-[10px] text-muted-foreground">Tage mit unbegründeter Differenz</p>
-                    <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysUnbegruendet > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
-                      {monthData.totals.daysUnbegruendet}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-needs-review">
-                    <p className="text-[10px] text-muted-foreground">Tage mit Saldo-Überprüfung</p>
-                    <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysNeedsReview > 0 ? 'text-amber-700 dark:text-amber-400' : ''}`}>
-                      {monthData.totals.daysNeedsReview}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              {/* ── KPI-Gruppe „Kasse" — Saldi & Geldflüsse ── */}
-              <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Kasse</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-saldo-anfang">
-                    <div className="flex items-center justify-between gap-1">
-                      <p className="text-[10px] text-muted-foreground">Kassensaldo Anfang Monat</p>
+                  {expanded && (
+                    <>
+                      <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
+                        {saldoResolution.startSaldo === null
+                          ? <>Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
+                              Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
+                              Es wird bewusst KEINE 0 angenommen.</>
+                          : <>Speichern setzt einen expliziten Anfangsbestand für diesen Monat und übersteuert
+                              den aus den Vormonaten fortgeschriebenen Saldo. Alle Folgesalden werden
+                              automatisch neu berechnet.</>}
+                      </p>
                       {!readOnly && (
-                        <button
-                          type="button"
-                          className="text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                          onClick={handleEditAnfangsbestand}
-                          title="Kassen-Anfangsbestand dieses Monats bearbeiten (nur Admin)"
-                          data-testid="ta-anfangsbestand-edit"
-                        >
-                          ändern
-                        </button>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="h-7 w-32 rounded border border-input bg-background px-2 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                            placeholder="z. B. 500.00"
+                            value={anfangsbestandText}
+                            onChange={e => setAnfangsbestandText(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleSaveAnfangsbestand(); }}
+                            aria-label={`Anfangsbestand ${MONTH_NAMES[month - 1]} ${year}`}
+                            data-testid="ta-anfangsbestand-input"
+                          />
+                          <Button size="sm" className="h-7 text-xs"
+                            onClick={handleSaveAnfangsbestand}
+                            disabled={parseAmountInput(anfangsbestandText) === null}
+                            data-testid="ta-anfangsbestand-save">
+                            Anfangsbestand speichern
+                          </Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs"
+                            onClick={() => { setEditAnfangsbestand(false); setAnfangsbestandOpen(false); setAnfangsbestandText(''); }}
+                            data-testid="ta-anfangsbestand-cancel">
+                            Abbrechen
+                          </Button>
+                        </div>
                       )}
-                    </div>
-                    <p className="text-sm font-semibold tabular-nums">
-                      {saldoResolution === null || saldoResolution.startSaldo === null
-                        ? <span className="text-muted-foreground font-normal">—</span>
-                        : <>CHF {fmtChf(saldoResolution.startSaldo)}</>}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-saldo-ende">
-                    <p className="text-[10px] text-muted-foreground">Kassensaldo Ende Monat</p>
-                    <p className="text-sm font-semibold tabular-nums">
-                      {monthData.totals.kassensaldoEnde === null
-                        ? <span className="text-muted-foreground font-normal">—</span>
-                        : <>CHF {fmtChf(monthData.totals.kassensaldoEnde)}</>}
-                    </p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-bargeld">
-                    <p className="text-[10px] text-muted-foreground">Total Bargeld (Soll)</p>
-                    <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.bargeldSoll)}</p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-barausgaben">
-                    <p className="text-[10px] text-muted-foreground">Total Barausgaben</p>
-                    <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.barausgaben)}</p>
-                  </div>
-                  <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-einzahlung">
-                    <p className="text-[10px] text-muted-foreground">Total Einzahlung Bank</p>
-                    <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.values.einzahlungBank)}</p>
-                  </div>
+                    </>
+                  )}
                 </div>
-              </div>
-            </div>
-            <div className="flex justify-end mb-2">
+              );
+            })()}
+            {/* ── KPI-Chips (kompakt) + Aufklappbereich „Weitere Kennzahlen" ── */}
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-baseline gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs" data-testid="ta-kpi-confirmed">
+                <span className="text-muted-foreground">Abgeschlossen</span>
+                <span className="font-semibold tabular-nums">
+                  {monthData.totals.daysAbgeschlossen + monthData.totals.daysAbgeschlossenMitDifferenz}/{monthData.totals.daysWithZbericht}
+                </span>
+              </span>
+              <span className="inline-flex items-baseline gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs" data-testid="ta-kpi-open">
+                <span className="text-muted-foreground">Offen</span>
+                <span className={`font-semibold tabular-nums ${monthData.totals.daysOpen > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                  {monthData.totals.daysOpen}
+                </span>
+              </span>
+              <span className="inline-flex items-baseline gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs" data-testid="ta-kpi-diff">
+                <span className="text-muted-foreground">Differenzen</span>
+                <span className={`font-semibold tabular-nums ${monthData.totals.daysWithDiff > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                  {monthData.totals.daysWithDiff}
+                </span>
+              </span>
+              <span className="inline-flex items-baseline gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs"
+                title={'Kassensaldo (Soll) am Monatsende; „—" solange kein Anfangsbestand bekannt ist'}
+                data-testid="ta-kpi-saldo-ende">
+                <span className="text-muted-foreground">Kassensaldo Ende</span>
+                <span className="font-semibold tabular-nums">
+                  {monthData.totals.kassensaldoEnde === null
+                    ? <span className="text-muted-foreground font-normal">—</span>
+                    : <>CHF {fmtChf(monthData.totals.kassensaldoEnde)}</>}
+                </span>
+              </span>
               <button
                 type="button"
-                className="rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                onClick={() => setShowMoreKpis(v => !v)}
+                aria-expanded={showMoreKpis}
+                data-testid="ta-kpi-more-toggle"
+              >
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showMoreKpis ? 'rotate-180' : ''}`} aria-hidden="true" />
+                Weitere Kennzahlen
+              </button>
+              <button
+                type="button"
+                className="ml-auto rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer"
                 onClick={() => setShowAllColumns(v => !v)}
                 title={showAllColumns
                   ? 'Kompakte Ansicht: blendet KK, Einzahlung Bank, Cash Ist und Cash Diff aus'
@@ -622,6 +610,71 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 {showAllColumns ? 'Kompakte Ansicht' : 'Alle Spalten anzeigen'}
               </button>
             </div>
+            {showMoreKpis && (
+              <div className="mb-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2" data-testid="ta-kpi-more">
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-in-bearbeitung">
+                  <p className="text-[10px] text-muted-foreground">Tage in Bearbeitung</p>
+                  <p className="text-sm font-semibold tabular-nums">{monthData.totals.daysInBearbeitung}</p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-wieder-geoeffnet">
+                  <p className="text-[10px] text-muted-foreground">Tage wieder geöffnet</p>
+                  <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysWiederGeoeffnet > 0 ? 'text-orange-700 dark:text-orange-400' : ''}`}>
+                    {monthData.totals.daysWiederGeoeffnet}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-begruendet">
+                  <p className="text-[10px] text-muted-foreground">Tage mit begründeter Differenz</p>
+                  <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysBegruendet > 0 ? 'text-teal-700 dark:text-teal-400' : ''}`}>
+                    {monthData.totals.daysBegruendet}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-unbegruendet">
+                  <p className="text-[10px] text-muted-foreground">Tage mit unbegründeter Differenz</p>
+                  <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysUnbegruendet > 0 ? 'text-red-700 dark:text-red-400' : ''}`}>
+                    {monthData.totals.daysUnbegruendet}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-needs-review">
+                  <p className="text-[10px] text-muted-foreground">Tage mit Saldo-Überprüfung</p>
+                  <p className={`text-sm font-semibold tabular-nums ${monthData.totals.daysNeedsReview > 0 ? 'text-amber-700 dark:text-amber-400' : ''}`}>
+                    {monthData.totals.daysNeedsReview}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-saldo-anfang">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[10px] text-muted-foreground">Kassensaldo Anfang Monat</p>
+                    {!readOnly && (
+                      <button
+                        type="button"
+                        className="text-[10px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        onClick={handleEditAnfangsbestand}
+                        title="Kassen-Anfangsbestand dieses Monats bearbeiten (nur Admin)"
+                        data-testid="ta-anfangsbestand-edit"
+                      >
+                        ändern
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-sm font-semibold tabular-nums">
+                    {saldoResolution === null || saldoResolution.startSaldo === null
+                      ? <span className="text-muted-foreground font-normal">—</span>
+                      : <>CHF {fmtChf(saldoResolution.startSaldo)}</>}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-bargeld">
+                  <p className="text-[10px] text-muted-foreground">Total Bargeld (Soll)</p>
+                  <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.bargeldSoll)}</p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-barausgaben">
+                  <p className="text-[10px] text-muted-foreground">Total Barausgaben</p>
+                  <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.barausgaben)}</p>
+                </div>
+                <div className="rounded-md border border-border px-3 py-2" data-testid="ta-kpi-einzahlung">
+                  <p className="text-[10px] text-muted-foreground">Total Einzahlung Bank</p>
+                  <p className="text-sm font-semibold tabular-nums">CHF {fmtChf(monthData.totals.values.einzahlungBank)}</p>
+                </div>
+              </div>
+            )}
             <TagesabschlussTable
               rows={monthData.rows}
               totals={monthData.totals}
@@ -640,7 +693,11 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onCloseDay={handleCloseDay}
               showAllColumns={showAllColumns}
             />
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
+            <details className="mt-2 text-[10px] text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium hover:text-foreground" data-testid="ta-legend-toggle">
+                Legende &amp; Formeln
+              </summary>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-[10px] text-muted-foreground">
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
               <span className="text-red-600 dark:text-red-400">negative Beträge</span>
@@ -654,6 +711,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-orange-50 border border-orange-300 align-middle mr-1" />wieder geöffnet</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-300 align-middle mr-1" />offen / Differenz</span>
             </div>
+            </details>
 
             {/* ── Monatsabschluss — Snapshot einfrieren, Monat sperren ── */}
             <div

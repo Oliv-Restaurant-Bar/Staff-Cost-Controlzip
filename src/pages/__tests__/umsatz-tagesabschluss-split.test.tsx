@@ -64,9 +64,10 @@ describe('TagesabschluessePage (eigene Seite)', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByRole('heading', { name: 'Tagesabschlüsse' })).toBeInTheDocument();
-    expect(
-      screen.getByText(/Z-Bericht, Adyen-Abgleich, Barbestand, Barausgaben und manuelle Korrekturen/),
-    ).toBeInTheDocument();
+    // Erklärtext ist in ein Info-Tooltip (title-Attribut) verdichtet.
+    expect(screen.getByTestId('ta-page-info').getAttribute('title')).toMatch(
+      /Z-Bericht, Adyen-Abgleich, Barbestand, Barausgaben und manuelle Korrekturen/,
+    );
     expect(screen.getByTestId('tagesabschluss-section')).toBeInTheDocument();
     expect(screen.getByTestId('adyen-section')).toBeInTheDocument();
     expect(screen.queryByTestId('monatsabstimmung')).toBeNull();

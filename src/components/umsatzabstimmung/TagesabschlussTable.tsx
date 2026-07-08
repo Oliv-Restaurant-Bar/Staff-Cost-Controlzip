@@ -106,7 +106,7 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
       { key: 'datum', label: 'Datum', align: 'left' },
       { key: 'umsatz', label: 'Umsatz', align: 'right' },
     ],
-    head: 'bg-muted', sub: 'bg-muted/60',
+    head: 'bg-muted', sub: 'bg-muted',
   },
   {
     label: 'Kartenzahlungen',
@@ -114,7 +114,7 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
       { key: 'kk', label: 'KK', align: 'right', detailOnly: true },
       { key: 'kkAdyen', label: 'KK Adyen', align: 'right' },
     ],
-    head: 'bg-sky-100 dark:bg-sky-900/40', sub: 'bg-sky-50 dark:bg-sky-900/20',
+    head: 'bg-sky-100 dark:bg-sky-900', sub: 'bg-sky-50 dark:bg-sky-950',
   },
   {
     label: 'Kasse',
@@ -125,7 +125,7 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
       { key: 'cashIst', label: 'Cash Ist', align: 'right', detailOnly: true },
       { key: 'cashDiff', label: 'Cash Diff', align: 'right', detailOnly: true },
     ],
-    head: 'bg-emerald-100 dark:bg-emerald-900/40', sub: 'bg-emerald-50 dark:bg-emerald-900/20',
+    head: 'bg-emerald-100 dark:bg-emerald-900', sub: 'bg-emerald-50 dark:bg-emerald-950',
   },
   {
     label: 'Weitere Zahlungsarten',
@@ -134,17 +134,17 @@ export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
       { key: 'gutscheinVerkauft', label: 'V-Gutscheine', align: 'right' },
       { key: 'gutscheinEingeloest', label: 'EG-Gutscheine', align: 'right' },
     ],
-    head: 'bg-violet-100 dark:bg-violet-900/40', sub: 'bg-violet-50 dark:bg-violet-900/20',
+    head: 'bg-violet-100 dark:bg-violet-900', sub: 'bg-violet-50 dark:bg-violet-950',
   },
   {
     label: 'Ausgaben',
     cols: [{ key: 'barausgaben', label: 'Barausgaben', align: 'right' }],
-    head: 'bg-orange-100 dark:bg-orange-900/40', sub: 'bg-orange-50 dark:bg-orange-900/20',
+    head: 'bg-orange-100 dark:bg-orange-900', sub: 'bg-orange-50 dark:bg-orange-950',
   },
   {
     label: 'Status',
     cols: [{ key: 'status', label: 'Status', align: 'left' }],
-    head: 'bg-muted', sub: 'bg-muted/60',
+    head: 'bg-muted', sub: 'bg-muted',
   },
 ];
 
@@ -454,7 +454,7 @@ export function TagesabschlussTable({
   const showAll = showAllColumns;
 
   return (
-    <div className="overflow-x-auto rounded-md border border-border">
+    <div className="overflow-auto max-h-[70vh] rounded-md border border-border">
       <table className="w-full text-xs">
         <thead>
           {/* Gruppenzeile — unterschiedliche Hintergründe je Gruppe. */}
@@ -466,7 +466,7 @@ export function TagesabschlussTable({
                 <th
                   key={g.label}
                   colSpan={cols.length}
-                  className={`px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${g.head} ${gi > 0 ? SEP : ''}`}
+                  className={`sticky top-0 z-20 h-6 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${g.head} ${gi > 0 ? SEP : ''}`}
                 >
                   {g.label}
                 </th>
@@ -479,7 +479,7 @@ export function TagesabschlussTable({
               visibleColumns(g, showAll).map((c, ci) => (
                 <th
                   key={c.key}
-                  className={`px-2 py-1.5 font-medium whitespace-nowrap ${g.sub} ${c.align === 'left' ? 'text-left' : 'text-right'} ${gi > 0 && ci === 0 ? `${SEP} pl-3` : ''}`}
+                  className={`sticky top-6 z-10 px-2 py-1.5 font-medium whitespace-nowrap ${g.sub} ${c.align === 'left' ? 'text-left' : 'text-right'} ${gi > 0 && ci === 0 ? `${SEP} pl-3` : ''}`}
                 >
                   {c.label}
                 </th>

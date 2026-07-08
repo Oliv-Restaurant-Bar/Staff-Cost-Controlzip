@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
-import { LayoutDashboard } from 'lucide-react';
+import { Info, LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdyenAbgleichSection } from '@/components/umsatzabstimmung/AdyenAbgleichSection';
@@ -37,6 +37,13 @@ export default function TagesabschluessePage() {
             </Link>
             <span className="text-muted-foreground text-xs">/</span>
             <h1 className="text-sm font-bold">Tagesabschlüsse</h1>
+            <span
+              title="Z-Bericht, Adyen-Abgleich, Barbestand, Barausgaben und manuelle Korrekturen pro Tag prüfen und bestätigen."
+              className="text-muted-foreground cursor-help"
+              data-testid="ta-page-info"
+            >
+              <Info className="h-3.5 w-3.5" aria-label="Was diese Seite macht" />
+            </span>
           </div>
           <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
             <SelectTrigger className="h-8 w-24 text-xs">
@@ -50,10 +57,7 @@ export default function TagesabschluessePage() {
           </Select>
         </div>
       </header>
-      <main className="max-w-screen-xl mx-auto px-4 py-6">
-        <p className="text-xs text-muted-foreground mb-4">
-          Z-Bericht, Adyen-Abgleich, Barbestand, Barausgaben und manuelle Korrekturen pro Tag prüfen und bestätigen.
-        </p>
+      <main className="max-w-screen-xl mx-auto px-4 py-4">
         <TagesabschlussSection tenantId={tenantId} year={year} />
         <AdyenAbgleichSection tenantId={tenantId} year={year} />
       </main>
