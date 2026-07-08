@@ -19,6 +19,7 @@
 import {
   isoWeekdayOf,
   statusPredicate,
+  WEEKDAY_LABEL,
   type IsoWeekday,
   type StatusScope,
 } from './reservation-weekday-analytics';
@@ -163,4 +164,34 @@ export function demandContextLoadFrom(
 ): string | null {
   const dates = lookbackDates(targetDate, k);
   return dates.length > 0 ? dates[0] : null;
+}
+
+// ── Anzeige-Helfer (rein, von Voll- UND Kompakt-Darstellung geteilt) ─────────
+
+const PCT_NUM = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
+
+/** "+20 %" / "−12 %" (U+2212) / "±0 %" — gerundet auf ganze Prozent. */
+export function formatDemandPct(pct: number): string {
+  const rounded = Math.round(pct);
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '\u2212' : '±';
+  return `${sign}${PCT_NUM.format(Math.abs(rounded))} %`;
+}
+
+/** „Erwartet:" (heute/zukünftig) bzw. „Gebucht waren:" (Vergangenheit). */
+export function demandHeadlineLabel(kind: DayDemandContext['kind']): string {
+  return kind === 'past' ? 'Gebucht waren:' : 'Erwartet:';
+}
+
+/**
+ * Einordnungs-Text gegen den Wochentags-Ø, z. B. "+20 % über Ø Montag".
+ * null wenn kein Ø-Vergleich möglich ist (pct null, d. h. Ø = 0 oder fehlt).
+ */
+export function demandComparisonLabel(
+  pct: number | null,
+  weekday: IsoWeekday,
+): string | null {
+  if (pct === null) return null;
+  const rounded = Math.round(pct);
+  const relation = rounded > 0 ? 'über' : rounded < 0 ? 'unter' : 'zum';
+  return `${formatDemandPct(pct)} ${relation} Ø ${WEEKDAY_LABEL[weekday]}`;
 }

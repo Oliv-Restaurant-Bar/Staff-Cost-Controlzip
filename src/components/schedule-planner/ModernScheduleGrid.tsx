@@ -395,6 +395,7 @@ export function ModernScheduleGrid({
                     <DayStaffingBadge
                       summary={dayStaffingSummaries[dateStr]}
                       dateLabel={`${WEEKDAY_SHORT[weekdayIdx]}, ${format(day, 'dd.MM.')}`}
+                      date={dateStr}
                     />
                   )}
                 </div>

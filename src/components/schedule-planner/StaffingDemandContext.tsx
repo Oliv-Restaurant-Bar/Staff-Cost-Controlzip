@@ -12,22 +12,20 @@ import { CalendarClock, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useDayDemandContext } from '@/hooks/useDayDemandContext';
 import { WEEKDAY_LABEL } from '@/lib/reservation-weekday-analytics';
-import type { DayDemandContext as DayDemandContextData } from '@/lib/staffing-demand-context';
+import {
+  demandComparisonLabel,
+  demandHeadlineLabel,
+  type DayDemandContext as DayDemandContextData,
+} from '@/lib/staffing-demand-context';
 
 const NUM = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 });
 const AVG = new Intl.NumberFormat('de-CH', { maximumFractionDigits: 1 });
 
-/** "+20 %" / "−12 %" mit typografischem Minus (U+2212). */
-function formatPct(pct: number): string {
-  const rounded = Math.round(pct);
-  const sign = rounded > 0 ? '+' : rounded < 0 ? '\u2212' : '±';
-  return `${sign}${NUM.format(Math.abs(rounded))} %`;
-}
-
 function DemandLine({ context }: { context: DayDemandContextData }) {
   const weekdayName = WEEKDAY_LABEL[context.weekday];
-  const label = context.kind === 'past' ? 'Gebucht waren:' : 'Erwartet:';
+  const label = demandHeadlineLabel(context.kind);
   const pct = context.pctDiffPersons;
+  const comparison = demandComparisonLabel(pct, context.weekday);
   const fewData = context.occurrencesWithData > 0 && context.occurrencesWithData < 3;
 
   return (
@@ -46,13 +44,13 @@ function DemandLine({ context }: { context: DayDemandContextData }) {
             ({NUM.format(context.dayReservations)} Res.)
           </span>
         </span>
-        {pct !== null && (
+        {comparison !== null && (
           <span
             className={cn(
               'rounded-full border border-border/60 bg-background px-2 py-0.5 text-xs font-medium tabular-nums',
             )}
           >
-            {formatPct(pct)} {Math.round(pct) === 0 ? 'zum' : Math.round(pct) > 0 ? 'über' : 'unter'} Ø {weekdayName}
+            {comparison}
           </span>
         )}
       </div>
@@ -76,16 +74,65 @@ function DemandLine({ context }: { context: DayDemandContextData }) {
   );
 }
 
+/**
+ * Kompakte Ein-Zeilen-Darstellung fürs DayStaffingBadge-Popover:
+ * „Erwartet: 85 Pers. (23 Res.) · +20 % über Ø Montag". Nur aggregierte Werte.
+ */
+function CompactDemandLine({ context }: { context: DayDemandContextData }) {
+  const comparison = demandComparisonLabel(context.pctDiffPersons, context.weekday);
+  return (
+    <p
+      className="flex flex-wrap items-center gap-x-1 text-xs leading-snug"
+      data-testid="staffing-demand-compact"
+    >
+      <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+      <span>
+        {demandHeadlineLabel(context.kind)}{' '}
+        <span className="font-semibold tabular-nums">{NUM.format(context.dayPersons)} Pers.</span>{' '}
+        <span className="text-muted-foreground tabular-nums">
+          ({NUM.format(context.dayReservations)} Res.)
+        </span>
+        {comparison !== null && (
+          <span className="text-muted-foreground tabular-nums"> · {comparison}</span>
+        )}
+      </span>
+    </p>
+  );
+}
+
 interface StaffingDemandContextProps {
   /** Geprüfter Tag "yyyy-MM-dd". */
   date: string | null | undefined;
   className?: string;
+  /** Kompakte Ein-Zeilen-Variante (DayStaffingBadge-Popover). */
+  compact?: boolean;
 }
 
-export function StaffingDemandContext({ date, className }: StaffingDemandContextProps) {
+export function StaffingDemandContext({ date, className, compact = false }: StaffingDemandContextProps) {
   const state = useDayDemandContext(date);
 
   if (state.status === 'hidden' || state.status === 'unavailable') return null;
+
+  if (compact) {
+    return (
+      <div className={className}>
+        {state.status === 'loading' && (
+          <p className="text-[11px] text-muted-foreground animate-pulse" data-testid="staffing-demand-loading">
+            Reservationszahlen werden geladen …
+          </p>
+        )}
+        {state.status === 'error' && (
+          <p
+            className="text-[11px] leading-snug text-amber-700 dark:text-amber-300"
+            data-testid="staffing-demand-error"
+          >
+            Reservationsdaten konnten nicht geladen werden.
+          </p>
+        )}
+        {state.status === 'ready' && <CompactDemandLine context={state.context} />}
+      </div>
+    );
+  }
 
   return (
     <div className={className}>

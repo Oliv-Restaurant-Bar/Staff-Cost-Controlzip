@@ -28,6 +28,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+import { StaffingDemandContext } from '@/components/schedule-planner/StaffingDemandContext';
 
 const DEPT_LABEL: Record<Department, string> = { service: 'Service', küche: 'Küche' };
 const DEPT_SHORT: Record<Department, string> = { service: 'S', küche: 'K' };
@@ -37,9 +38,16 @@ interface DayStaffingBadgeProps {
   summary: DayStaffingSummaryResult;
   /** Anzeigedatum (nur für den Popover-Titel), z.B. „Mo, 06.07.". */
   dateLabel: string;
+  /**
+   * ISO-Datum "yyyy-MM-dd" für den Nachfrage-Kontext (Reservationen) im
+   * Popover. Optional; ohne Datum entfällt der Block. Der Fetch passiert erst
+   * beim Öffnen des Popovers (PopoverContent mountet lazy) und ist im Hook
+   * admin-gegated — Manager/Gäste laden und sehen nichts.
+   */
+  date?: string | null;
 }
 
-export function DayStaffingBadge({ summary, dateLabel }: DayStaffingBadgeProps) {
+export function DayStaffingBadge({ summary, dateLabel, date }: DayStaffingBadgeProps) {
   if (!summary.hasRequirements || summary.departments.length === 0) return null;
 
   return (
@@ -96,6 +104,8 @@ export function DayStaffingBadge({ summary, dateLabel }: DayStaffingBadgeProps) 
             </div>
           ))}
         </div>
+        {/* Nachfrage-Kontext (Reservationen) — admin-only, rendert sonst nichts. */}
+        <StaffingDemandContext date={date} compact className="mt-2" />
         <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
           Soll/Ist in Personen-Schichten; gezählt wird die Hauptposition mit
           Zeitüberschneidung. Details im Abgleich-Panel unter dem Dienstplan.

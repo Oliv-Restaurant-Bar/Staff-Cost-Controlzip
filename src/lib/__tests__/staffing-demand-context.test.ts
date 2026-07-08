@@ -10,6 +10,9 @@ import {
   lookbackDates,
   buildDayDemandContext,
   demandContextLoadFrom,
+  formatDemandPct,
+  demandHeadlineLabel,
+  demandComparisonLabel,
   type DemandContextRow,
 } from '../staffing-demand-context';
 
@@ -117,6 +120,28 @@ describe('buildDayDemandContext', () => {
       rows: [row(null, 4)], targetDate: MONDAY, today: MONDAY, k: 1,
     });
     expect(ctx!.dayReservations).toBe(0);
+  });
+});
+
+describe('Anzeige-Helfer (geteilt von Voll- und Kompakt-Darstellung)', () => {
+  it('formatDemandPct: +/− (U+2212)/±, gerundet auf ganze Prozent', () => {
+    expect(formatDemandPct(20.4)).toBe('+20 %');
+    expect(formatDemandPct(-12.6)).toBe('\u221213 %');
+    expect(formatDemandPct(0)).toBe('±0 %');
+    expect(formatDemandPct(0.4)).toBe('±0 %');   // rundet auf 0
+    expect(formatDemandPct(-0.4)).toBe('±0 %');
+  });
+
+  it('demandHeadlineLabel: expected → „Erwartet:", past → „Gebucht waren:"', () => {
+    expect(demandHeadlineLabel('expected')).toBe('Erwartet:');
+    expect(demandHeadlineLabel('past')).toBe('Gebucht waren:');
+  });
+
+  it('demandComparisonLabel: über/unter/zum Ø Wochentag; null bei pct null', () => {
+    expect(demandComparisonLabel(20, 1)).toBe('+20 % über Ø Montag');
+    expect(demandComparisonLabel(-12, 5)).toBe('\u221212 % unter Ø Freitag');
+    expect(demandComparisonLabel(0.2, 7)).toBe('±0 % zum Ø Sonntag');
+    expect(demandComparisonLabel(null, 1)).toBeNull();
   });
 });
 
