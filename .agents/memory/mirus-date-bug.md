@@ -17,3 +17,5 @@ Some Mirus `.xls` exports (e.g. Beaulieu tenant) have the Excel 1904 date system
 
 ## How to apply
 Never use `cellDates: true` for Mirus files. All other parsers in this project already avoid it.
+
+Same rule on the WRITE side: when generating .xlsx exports, don't hand JS Date objects to the `xlsx` lib (TZ/date-system ambiguity). Write a deterministic 1900-epoch serial yourself (`25569 + Date.UTC(y,m-1,d)/86_400_000`, cell type `n` + date number format) — TZ-independent and safe for dates ≥ 1900-03-01.

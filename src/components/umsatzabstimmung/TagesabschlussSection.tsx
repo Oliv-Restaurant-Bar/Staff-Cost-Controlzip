@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, Lock, LockOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, Lock, LockOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -56,6 +56,7 @@ import {
 import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
 import { loadGnDayClosingsForMonth } from '@/lib/gn-zbericht-db';
 import { fmtChf, fmtDiffChf, parseAmountInput } from './adyen-ui';
+import { exportTagesabschlussExcel } from '@/lib/tagesabschluss-excel-export';
 import { BuchhaltungsExportSection } from './BuchhaltungsExportSection';
 import { TagesabschlussTable, formatClosedStamp } from './TagesabschlussTable';
 import { TagesabschlussDayDialog } from './TagesabschlussDayDialog';
@@ -436,6 +437,14 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             </div>
+            <Button variant="outline" size="sm" className="h-7 text-xs"
+              onClick={() => exportTagesabschlussExcel(monthData, monthKey)}
+              disabled={loading || !monthData.rows.some(r => r.status !== 'fehlt')}
+              title="Übersicht des Monats als Excel-Datei (.xlsx) herunterladen"
+              data-testid="ta-excel-export">
+              <Download className="h-3.5 w-3.5 mr-1" />
+              Excel-Export
+            </Button>
             <Button variant="outline" size="sm" className="h-7 text-xs"
               onClick={() => setExportOpen(true)} data-testid="ta-open-export">
               <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />
