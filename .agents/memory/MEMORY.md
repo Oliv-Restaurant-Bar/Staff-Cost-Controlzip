@@ -32,3 +32,4 @@
 - [Tenant-safe upsert under RLS](tenant-safe-upsert-rls.md) — authenticated-wide RLS isolates tenants only in TS; scope UPDATE by id AND restaurant_id, treat 0-rows as failure.
 - [Employee skill columns persistence](employee-skill-columns-persistence.md) — station keys written separately from employeeToDb w/ presence guard (`'field' in emp`), never `?? null` (clobber class).
 - [replit.md editing pitfalls](replit-md-editing.md) — never inline German bullets in bash-heredoc Python (quote mixups kill the string); write temp file via write tool, then splice.
+- [Vitest full-run OOM & singleFork pollution](vitest-oom-chunking.md) — full `vitest run` OOM-killed silently beside dev server; chunk it; singleFork kills isolation → false failures, re-verify isolated.

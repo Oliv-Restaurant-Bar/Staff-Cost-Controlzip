@@ -34,13 +34,15 @@
  * Kein Export ohne vollständiges, GEPRÜFTES Konto-Mapping (`reviewed`) —
  * es werden NIE Platzhalter-Konten emittiert.
  *
- * KORREKTUREN (Overrides) UND EXPORT: Der Export verwendet durchgängig die
- * ORIGINAL-Z-Bericht-Werte (DayCell.auto) — nie die korrigierten Effektivwerte.
- * Grund: Karten-Zeilen (je Zahlungsart) stammen zwingend aus den Original-
- * Detaildaten; eine Korrektur der SUMME liesse sich nicht verteilen und
- * würde die Tages-Balance (Σ Zahlwege = Umsatz brutto) brechen. Korrekturen
- * gelten der Übersicht/Kassenkontrolle; betroffene Tage werden beim Export
- * EXPLIZIT als Warnung gelistet (manuell nachbuchen).
+ * KORREKTUREN (Overrides) UND EXPORT: Der Export verwendet die EFFEKTIVEN
+ * Werte (DayCell.value — Override > manuell > auto). Karten-/TWINT-Einzelart-
+ * Zeilen stammen weiterhin aus den Original-Zahlarten des Z-Berichts (eine
+ * Summen-Korrektur lässt sich nicht auf Einzelarten verteilen); die Differenz
+ * eines karten-/twint-Overrides wird als EIGENE Korrektur-Zeile auf das
+ * jeweilige Konto (KK-Sammel bzw. TWINT-Konto) gebucht. Das Barumsatz-Residual
+ * rechnet aus Effektivwerten — die Tages-Balance Σ Zahlwege = Umsatz brutto
+ * (effektiv) bleibt strukturell garantiert. Enthaltene Korrekturen werden als
+ * nicht-blockierende Hinweise (`warnings`) gelistet (Transparenz, kein Blocker).
  */
 
 import { type ExportTable, buildCsvWithBom } from './export-cell';
@@ -209,15 +211,16 @@ export interface Tabelle2Export {
   errors: string[];
   /**
    * Nicht-blockierende Hinweise: Korrekturen (Overrides) auf Auto-Feldern
-   * sind NICHT im Export enthalten (Export = Original-Z-Bericht) und müssen
-   * manuell nachgebucht werden.
+   * SIND im Export enthalten (Export = Effektivwerte) — die Liste dient der
+   * Transparenz (welcher Tag/welches Feld wurde manuell übersteuert).
    */
   warnings: string[];
 }
 
 /**
  * Listet alle Korrekturen (Overrides) auf export-relevanten Auto-Feldern —
- * der Export verwendet die Originale, diese Abweichungen sind manuell zu buchen.
+ * der Export verwendet die Effektivwerte; diese Liste macht die enthaltenen
+ * manuellen Übersteuerungen sichtbar (Info, kein Blocker).
  */
 export function collectExportOverrideWarnings(rows: readonly TagesabschlussRow[]): string[] {
   const warnings: string[] = [];
@@ -231,7 +234,7 @@ export function collectExportOverrideWarnings(rows: readonly TagesabschlussRow[]
       warnings.push(
         `Korrektur ${isoToChDate(row.date)} „${TAGESABSCHLUSS_FIELD_LABEL[f]}" ` +
         `(${orig.toFixed(2)} → ${corr === null ? '—' : corr.toFixed(2)}): ` +
-        'Der Export verwendet die ORIGINAL-Z-Bericht-Werte — Differenz manuell nachbuchen.',
+        'Der Export verwendet diesen manuell übersteuerten Ist-Wert.',
       );
     }
   }
@@ -257,9 +260,11 @@ export function collectUnclosedDayErrors(rows: readonly TagesabschlussRow[]): st
 /**
  * Erzeugt die Tabelle2-Buchungszeilen eines Monats.
  * Liefert bei unvollständigem Mapping KEINE Zeilen, sondern Fehler.
- * Beträge stammen IMMER aus den Original-Z-Bericht-Werten (DayCell.auto) —
- * Korrekturen werden als `warnings` ausgewiesen (s. Kopfkommentar).
- * BLOCKIERT, solange nicht alle Z-Bericht-Tage abgeschlossen sind (§10).
+ * Beträge stammen aus den EFFEKTIVEN Werten (DayCell.value, Override >
+ * manuell > auto); karten-/twint-Overrides werden als eigene Korrektur-Zeile
+ * gebucht. Enthaltene Korrekturen werden als `warnings` (Info) ausgewiesen
+ * (s. Kopfkommentar). BLOCKIERT, solange nicht alle Z-Bericht-Tage
+ * abgeschlossen sind (§10).
  */
 export function buildTabelle2Rows(
   rows: readonly TagesabschlussRow[],
@@ -289,7 +294,7 @@ export function buildTabelle2Rows(
     const date = isoToChDate(row.date);
     const closing = closings[row.date];
 
-    if (row.hasZbericht && closing && (row.cells.umsatz.auto ?? 0) !== 0) {
+    if (row.hasZbericht && closing && (row.cells.umsatz.value ?? 0) !== 0) {
       // BRUTTO-Modell: KEINE Umsatz-/MWST-Zeilen — der Bruttoumsatz entsteht
       // als Haben (GKto = Umsatz brutto) auf JEDER Zahlweg-Zeile unten.
 
@@ -300,16 +305,16 @@ export function buildTabelle2Rows(
         .filter(z => round2(z.amount) !== 0);
       const unclassifiedSum = round2(unclassified.reduce((s, z) => s + z.amount, 0));
 
-      // 1) Zahlungsmittel-Seite: Barumsatz — aus ORIGINAL-Werten berechnet,
-      // damit die Zahlungsmittel-Seite exakt den Original-Umsatz deckt
-      // (row.barumsatz nutzt Effektivwerte und würde bei Korrekturen die
-      // Tages-Balance Σ Zahlwege = Umsatz brutto brechen).
+      // 1) Zahlungsmittel-Seite: Barumsatz — Residual aus EFFEKTIVwerten
+      // (Override > manuell > auto), damit die Zahlungsmittel-Seite exakt den
+      // effektiven Tagesumsatz deckt (Balance: Σ Zahlwege = Umsatz effektiv;
+      // Karten-/TWINT-Overrides gehen unten als Korrektur-Zeile ein).
       const exportBarumsatz = round2(
-        (row.cells.umsatz.auto ?? 0)
-        - (row.cells.karten.auto ?? 0)
-        - (row.cells.twint.auto ?? 0)
-        - (row.cells.rechnung.auto ?? 0)
-        - (row.cells.gutscheinEingeloest.auto ?? 0)
+        (row.cells.umsatz.value ?? 0)
+        - (row.cells.karten.value ?? 0)
+        - (row.cells.twint.value ?? 0)
+        - (row.cells.rechnung.value ?? 0)
+        - (row.cells.gutscheinEingeloest.value ?? 0)
         - unclassifiedSum,
       );
       if (exportBarumsatz !== 0) {
@@ -331,8 +336,8 @@ export function buildTabelle2Rows(
         const prev = cardAmounts.get(norm.key);
         cardAmounts.set(norm.key, { label: norm.label, amount: (prev?.amount ?? 0) + pm.amount });
       }
-      // Korrektur-Overrides auf Karten/TWINT-SUMMEN proportional NICHT verteilen —
-      // Overrides gelten der Übersicht; Export nutzt die Original-Zahlarten.
+      // Einzelart-Zeilen stammen IMMER aus den Original-Zahlarten (eine
+      // Summen-Korrektur lässt sich nicht auf Einzelarten verteilen).
       for (const [key, { label, amount }] of [...cardAmounts.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         if (round2(amount) === 0) continue;
         const konto = settings.kontoJeZahlungsart[key]?.trim() || k.kartenSammel;
@@ -342,13 +347,33 @@ export function buildTabelle2Rows(
           netto: round2(amount), tx1: `${label} ${date}`,
         }));
       }
+      // Karten-/TWINT-Override: Differenz (effektiv − Original) als EIGENE
+      // Korrektur-Zeile — Einzelarten bleiben original, Balance bleibt exakt.
+      const kartenDelta = round2((row.cells.karten.value ?? 0) - (row.cells.karten.auto ?? 0));
+      if (kartenDelta !== 0) {
+        out.push(makeRow({
+          kategorie: 'kreditkarten',
+          blg: nextBlg(), datum: date, kto: k.kartenSammel, gkto: k.umsatzTransit,
+          netto: kartenDelta, tx1: `KK Korrektur (manuell) ${date}`,
+        }));
+      }
+      const twintDelta = round2((row.cells.twint.value ?? 0) - (row.cells.twint.auto ?? 0));
+      if (twintDelta !== 0) {
+        out.push(makeRow({
+          kategorie: 'twint',
+          blg: nextBlg(), datum: date,
+          kto: settings.kontoJeZahlungsart['twint']?.trim() || k.kartenSammel,
+          gkto: k.umsatzTransit,
+          netto: twintDelta, tx1: `TWINT Korrektur (manuell) ${date}`,
+        }));
+      }
 
-      // 3) Rechnung/Debitoren separat.
-      if ((row.cells.rechnung.auto ?? 0) !== 0) {
+      // 3) Rechnung/Debitoren separat (Effektivwert inkl. Korrektur).
+      if ((row.cells.rechnung.value ?? 0) !== 0) {
         out.push(makeRow({
           kategorie: 'debitoren',
           blg: nextBlg(), datum: date, kto: k.debitoren, gkto: k.umsatzTransit,
-          netto: round2(row.cells.rechnung.auto ?? 0), tx1: `Rechnung/Debitoren ${date}`,
+          netto: round2(row.cells.rechnung.value ?? 0), tx1: `Rechnung/Debitoren ${date}`,
         }));
       }
 
@@ -363,21 +388,22 @@ export function buildTabelle2Rows(
         }));
       }
 
-      // 5) Gutscheine: eingelöst (Zahlungsmittel) und verkauft (separat).
-      if ((row.cells.gutscheinEingeloest.auto ?? 0) !== 0) {
+      // 5) Gutscheine: eingelöst (Zahlungsmittel) und verkauft (separat) —
+      // jeweils Effektivwert (inkl. Korrektur über den Gutschein-Dialog).
+      if ((row.cells.gutscheinEingeloest.value ?? 0) !== 0) {
         out.push(makeRow({
           kategorie: 'gutschein_eingeloest',
           blg: nextBlg(), datum: date, kto: k.gutscheine, gkto: k.umsatzTransit,
-          netto: round2(row.cells.gutscheinEingeloest.auto ?? 0), tx1: `Gutscheine eingelöst ${date}`,
+          netto: round2(row.cells.gutscheinEingeloest.value ?? 0), tx1: `Gutscheine eingelöst ${date}`,
         }));
       }
     }
 
-    if ((row.cells.gutscheinVerkauft.auto ?? 0) !== 0) {
+    if ((row.cells.gutscheinVerkauft.value ?? 0) !== 0) {
       out.push(makeRow({
         kategorie: 'gutschein_verkauft',
         blg: nextBlg(), datum: date, kto: k.kasse, gkto: k.gutscheine,
-        netto: round2(row.cells.gutscheinVerkauft.auto ?? 0), tx1: `Gutscheine verkauft ${date}`,
+        netto: round2(row.cells.gutscheinVerkauft.value ?? 0), tx1: `Gutscheine verkauft ${date}`,
       }));
     }
 

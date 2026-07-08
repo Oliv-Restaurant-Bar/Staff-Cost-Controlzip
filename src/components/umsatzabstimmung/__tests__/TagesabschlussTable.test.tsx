@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach } from 'vitest';
-import { TagesabschlussTable } from '../TagesabschlussTable';
+import { TAGESABSCHLUSS_COLUMN_GROUPS, TagesabschlussTable, visibleColumns } from '../TagesabschlussTable';
 import {
   buildTagesabschlussRows,
   closeDay,
@@ -81,7 +81,7 @@ function buildMonthWithClosedDay() {
 describe('TagesabschlussTable', () => {
   it('zeigt die neuen Spalten in gruppierter Reihenfolge — entfallene Spalten fehlen', () => {
     const { rows, totals } = buildMonth();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
     // Gruppenzeile.
     const groupRow = screen.getByTestId('ta-header-groups');
@@ -95,7 +95,7 @@ describe('TagesabschlussTable', () => {
       'Datum', 'Umsatz',
       'KK', 'KK Adyen',
       'Bargeld Soll', 'Einzahlung Bank', 'Kassensaldo Soll', 'Cash Ist', 'Cash Diff',
-      'Debitoren', 'Verkaufte Gutscheine', 'Eingelöste Gutscheine',
+      'Debitoren', 'V-Gutscheine', 'EG-Gutscheine',
       'Barausgaben',
       'Status',
     ]);
@@ -111,7 +111,7 @@ describe('TagesabschlussTable', () => {
 
   it('KK bündelt Karten + TWINT laut Z-Bericht (TWINT ohne eigene Spalte)', () => {
     const { rows, totals } = buildMonth();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     // Mastercard 500 + TWINT 200 = 700.
     expect(screen.getByTestId('ta-kk-2026-07-01').textContent).toContain('700.00');
     expect(screen.getByTestId('ta-kk-2026-07-03').textContent).toContain('—');
@@ -119,7 +119,7 @@ describe('TagesabschlussTable', () => {
 
   it('zeigt Barausgaben nur als Total und markiert manuelle/korrigierte Werte', () => {
     const { rows, totals } = buildMonth();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
     // Barausgaben-Total 52.50 (40 + 12.50) — Einzelpositionen erscheinen NICHT.
     expect(screen.getAllByText(/52\.50/).length).toBeGreaterThanOrEqual(1);
@@ -146,7 +146,7 @@ describe('TagesabschlussTable', () => {
 
   it('Bargeld Soll / Kassensaldo Soll / Cash Diff: berechnete Spalten, Ampel und Totale', () => {
     const { rows, totals } = buildMonth();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
     // 01.07.: Bargeld Soll = 300 (Barumsatz) − 52.50 (Barausgaben) = 247.50;
     // Kassensaldo Soll = 0 + 247.50; Ist 247.50 → Diff 0 grün.
@@ -185,7 +185,7 @@ describe('TagesabschlussTable', () => {
     blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 500 }, now);
     const closings = { '2026-07-01': closing('2026-07-01') };
     const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     // Bargeld Soll ist trotzdem berechenbar; Saldo/Diff nicht (KEINE stille 0).
     expect(screen.getByTestId('ta-bargeld-soll-2026-07-01').textContent).toContain('300.00');
     const saldo = screen.getByTestId('ta-saldo-2026-07-01');
@@ -205,7 +205,7 @@ describe('TagesabschlussTable', () => {
 
     // Ohne Begründung: Button „Begründen" öffnet den Grund-Dialog.
     const a = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
-    const first = render(<TagesabschlussTable rows={a.rows} totals={a.totals} onDayClick={() => {}}
+    const first = render(<TagesabschlussTable showAllColumns rows={a.rows} totals={a.totals} onDayClick={() => {}}
       onReasonsClick={onReasonsClick} />);
     const begruenden = screen.getByTestId('ta-diff-begruenden-2026-07-01') as HTMLElement;
     begruenden.click();
@@ -215,7 +215,7 @@ describe('TagesabschlussTable', () => {
     // Mit Grund + Notiz: teal Badge „Begründet", Gründe im Tooltip.
     blob = setCashDiffReasons(blob, '2026-07-01', ['wechselgeld_angepasst'], 'Beleg folgt', now);
     const b = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
-    render(<TagesabschlussTable rows={b.rows} totals={b.totals} onDayClick={() => {}}
+    render(<TagesabschlussTable showAllColumns rows={b.rows} totals={b.totals} onDayClick={() => {}}
       onReasonsClick={onReasonsClick} />);
     const badge = screen.getByTestId('ta-diff-begruendet-2026-07-01') as HTMLElement;
     expect(badge.textContent).toContain('Begründet');
@@ -224,14 +224,14 @@ describe('TagesabschlussTable', () => {
 
     // readOnly (Gast): Badge bleibt sichtbar, aber ohne Klick-Ziel „Begründen".
     cleanup();
-    render(<TagesabschlussTable rows={b.rows} totals={b.totals} onDayClick={() => {}}
+    render(<TagesabschlussTable showAllColumns rows={b.rows} totals={b.totals} onDayClick={() => {}}
       readOnly onReasonsClick={onReasonsClick} />);
     expect(screen.getByTestId('ta-diff-begruendet-2026-07-01')).toBeTruthy();
   });
 
   it('Bemerkung erscheint NICHT mehr als Spalte — nur als Icon am Datum', () => {
     const { rows, totals } = buildMonth();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     expect(screen.queryByText('Wechselgeld aufgestockt')).toBeNull();
     const row1 = screen.getByTestId('ta-row-2026-07-01');
     expect(within(row1).getByLabelText('Bemerkung vorhanden')).toBeTruthy();
@@ -241,7 +241,7 @@ describe('TagesabschlussTable', () => {
   it('Gutscheinnummern werden gespeichert, aber NIE in der Übersicht gerendert', () => {
     const { rows, totals } = buildMonth();
     expect(rows[0].gutscheinNummernVerkauft).toEqual(['GS-4711', 'GS-4712']);
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     expect(screen.queryByText(/GS-4711/)).toBeNull();
     expect(screen.queryByText(/GS-4712/)).toBeNull();
   });
@@ -251,13 +251,13 @@ describe('TagesabschlussTable', () => {
     // 03.07.: Z-Bericht ohne jeden Arbeitsstand → „offen" (rot).
     const closings = { ...base.closings, '2026-07-03': closing('2026-07-03') };
     const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, base.blob, base.confirmations, null, 0);
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     // 01.07. nur bestätigt (in Bearbeitung) → KEIN grüner Tint mehr.
     expect(screen.getByTestId('ta-row-2026-07-01').className).not.toContain('bg-green-50');
     expect(screen.getByTestId('ta-row-2026-07-03').className).toContain('bg-red-50');
     cleanup();
     const closed = buildMonthWithClosedDay();
-    render(<TagesabschlussTable rows={closed.rows} totals={closed.totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={closed.rows} totals={closed.totals} onDayClick={() => {}} />);
     expect(screen.getByTestId('ta-row-2026-07-01').className).toContain('bg-green-50');
   });
 
@@ -265,14 +265,14 @@ describe('TagesabschlussTable', () => {
     const t = new Date();
     const iso = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
     const { rows, totals } = buildTagesabschlussRows(t.getFullYear(), t.getMonth() + 1, {}, emptyTagesabschlussBlob(), {});
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
     expect(screen.getByTestId(`ta-row-${iso}`).getAttribute('data-today')).toBe('true');
   });
 
   it('öffnet das Tagesdetail NUR über die Datum-Zelle', () => {
     const { rows, totals } = buildMonth();
     const onDayClick = vi.fn();
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick}
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={onDayClick}
       onSaveManual={() => {}} onConfirm={() => {}} />);
 
     // Klick auf andere Zellen/die Zeile selbst öffnet NICHT.
@@ -295,7 +295,7 @@ describe('TagesabschlussTable', () => {
       const { rows, totals } = buildMonth();
       const onSaveManual = vi.fn();
       const onConfirm = vi.fn();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={onSaveManual} onConfirm={onConfirm} />);
       return { onSaveManual, onConfirm };
     }
@@ -361,7 +361,7 @@ describe('TagesabschlussTable', () => {
 
     it('rendert im readOnly-Modus (Gast) keinerlei Eingabefelder', () => {
       const { rows, totals } = buildMonth();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         readOnly onSaveManual={() => {}} onConfirm={() => {}}
         onCorrectRechnung={() => {}} onVoucherClick={() => {}} onExpensesClick={() => {}} />);
       expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
@@ -384,7 +384,7 @@ describe('TagesabschlussTable', () => {
       const onCorrectRechnung = vi.fn();
       const onVoucherClick = vi.fn();
       const onExpensesClick = vi.fn();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={onDayClick}
         onSaveManual={() => {}} onConfirm={() => {}}
         onCorrectRechnung={onCorrectRechnung}
         onVoucherClick={onVoucherClick}
@@ -408,7 +408,7 @@ describe('TagesabschlussTable', () => {
       const closings = { '2026-07-01': closing('2026-07-01') };
       const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
       const onCorrectRechnung = vi.fn();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onCorrectRechnung={onCorrectRechnung} />);
 
       const input = screen.getByTestId('ta-input-rechnung-2026-07-01') as HTMLInputElement;
@@ -463,7 +463,7 @@ describe('TagesabschlussTable', () => {
       '2026-07-03': closing('2026-07-03'), // kein Adyen-Import
     };
     const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {}, adyenBlob);
-    render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+    render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
     // Diff 0 → grün, KEIN Klammer-Diff.
     const okCell = screen.getByTestId('ta-adyen-2026-07-01');
@@ -515,7 +515,7 @@ describe('TagesabschlussTable', () => {
       const closings = { '2026-07-01': closingMitRaren('2026-07-01') };
       const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {}, adyenBlob);
       const onDayClick = vi.fn();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={onDayClick} />);
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={onDayClick} />);
       return { onDayClick };
     }
 
@@ -571,7 +571,7 @@ describe('TagesabschlussTable', () => {
       blob = setTagesabschlussOverride(blob, '2026-07-01', 'karten', 675, 700, 'Nachtrag', '2026-07-05T10:00:00.000Z');
       const closings = { '2026-07-01': closingMitRaren('2026-07-01') };
       const { rows, totals } = buildTagesabschlussRows(2026, 7, closings, blob, {});
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
       const btn = screen.getByTestId('ta-kk-btn-2026-07-01') as HTMLElement;
       expect(btn.textContent).toContain('900.00');
@@ -587,7 +587,7 @@ describe('TagesabschlussTable', () => {
     it('Abschluss-Button: aktiv nur bei erfüllten Vorbedingungen, klick meldet das Datum', () => {
       const { rows, totals } = buildMonth();
       const onCloseDay = vi.fn();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={onCloseDay} />);
 
       // 01.07.: bestätigt + Barbestand + Cash Ist + Diff grün → aktiv.
@@ -610,7 +610,7 @@ describe('TagesabschlussTable', () => {
     it('gesperrter Tag: Lock-Icon, Badge „Abgeschlossen", keine Edit-Flächen, kein Abschluss-Button', () => {
       const { rows, totals } = buildMonthWithClosedDay();
       const onCloseDay = vi.fn();
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCorrectRechnung={() => {}}
         onVoucherClick={() => {}} onExpensesClick={() => {}} onCloseDay={onCloseDay} />);
 
@@ -636,7 +636,7 @@ describe('TagesabschlussTable', () => {
       const closedState = buildMonthWithClosedDay();
       const blob = reopenDay(closedState.blob, '2026-07-01', 'admin@oliv.ch', 'Beleg nachtragen', '2026-07-06T08:00:00.000Z');
       const { rows, totals } = buildTagesabschlussRows(2026, 7, closedState.closings, blob, closedState.confirmations, null, 0);
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} onConfirm={() => {}} onCloseDay={() => {}} />);
 
       expect(screen.getByText('Wieder geöffnet')).toBeTruthy();
@@ -653,12 +653,129 @@ describe('TagesabschlussTable', () => {
       // weicht vom fixierten (247.50) ab → Überprüfungs-Marker.
       const { rows, totals } = buildTagesabschlussRows(
         2026, 7, closedState.closings, closedState.blob, closedState.confirmations, null, 100);
-      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}} />);
+      render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
       expect(rows.find(r => r.date === '2026-07-01')?.needsReview).toBe(true);
       expect(screen.getByTestId('ta-review-2026-07-01')).toBeTruthy();
       // Gesperrte Zeile zeigt weiterhin den FIXIERTEN Saldo (247.50), nicht den neuen.
       expect(screen.getByTestId('ta-saldo-2026-07-01').textContent).toContain('247.50');
+    });
+  });
+
+  describe('Kompakte Standardansicht (ohne showAllColumns)', () => {
+    it('blendet die Detail-Spalten KK, Einzahlung Bank, Cash Ist und Cash Diff aus', () => {
+      const { rows, totals } = buildMonth();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} />);
+
+      // Kompakte Spaltenzeile — Detail-Spalten fehlen, Reihenfolge bleibt gruppiert.
+      const colRow = screen.getByTestId('ta-header-cols');
+      expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
+        'Datum', 'Umsatz',
+        'KK Adyen',
+        'Bargeld Soll', 'Kassensaldo Soll',
+        'Debitoren', 'V-Gutscheine', 'EG-Gutscheine',
+        'Barausgaben',
+        'Status',
+      ]);
+
+      // Gruppenzeile bleibt vollständig (colSpan schrumpft nur).
+      const groupRow = screen.getByTestId('ta-header-groups');
+      expect(within(groupRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
+        'Umsatz', 'Kartenzahlungen', 'Kasse', 'Weitere Zahlungsarten', 'Ausgaben', 'Status',
+      ]);
+
+      // Detail-Zellen (Body + Footer) sind nicht im DOM.
+      expect(screen.queryByTestId('ta-kk-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-input-einzahlung-2026-07-02')).toBeNull();
+      expect(screen.queryByTestId('ta-bestand-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-cash-diff-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-total-cash-ist')).toBeNull();
+      expect(screen.queryByTestId('ta-total-cash-diff')).toBeNull();
+
+      // Kompakte Spalten bleiben funktional: KK Adyen, Saldo, Totals.
+      expect(screen.getByTestId('ta-adyen-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-saldo-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-adyen')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-saldo')).toBeTruthy();
+
+      // Jede Zeile hat exakt so viele Zellen wie kompakte Spalten (10).
+      const row1 = screen.getByTestId('ta-row-2026-07-01');
+      expect(row1.querySelectorAll('td')).toHaveLength(10);
+    });
+
+    it('visibleColumns filtert detailOnly-Spalten nur in der kompakten Ansicht', () => {
+      const kasse = TAGESABSCHLUSS_COLUMN_GROUPS.find(g => g.label === 'Kasse')!;
+      expect(visibleColumns(kasse, false).map(c => c.key)).toEqual(['bargeldSoll', 'kassensaldoSoll']);
+      expect(visibleColumns(kasse, true).map(c => c.key)).toEqual(
+        ['bargeldSoll', 'einzahlungBank', 'kassensaldoSoll', 'cashIst', 'cashDiff']);
+      const karten = TAGESABSCHLUSS_COLUMN_GROUPS.find(g => g.label === 'Kartenzahlungen')!;
+      expect(visibleColumns(karten, false).map(c => c.key)).toEqual(['kkAdyen']);
+    });
+
+    it('Voll-Ansicht zeigt dieselben Daten-Zellen wieder an (Toggle-Verhalten)', () => {
+      const { rows, totals } = buildMonth();
+      const view = render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} />);
+      expect(screen.queryByTestId('ta-kk-2026-07-01')).toBeNull();
+
+      // Wie der Section-Toggle: Prop-Wechsel auf showAllColumns.
+      view.rerender(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}}
+        onSaveManual={() => {}} />);
+      expect(screen.getByTestId('ta-kk-2026-07-01').textContent).toContain('700.00');
+      expect(screen.getByTestId('ta-input-einzahlung-2026-07-02')).toBeTruthy();
+      expect(screen.getByTestId('ta-bestand-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-cash-ist')).toBeTruthy();
+    });
+  });
+
+  describe('Override-Popup-Wiring (Edit-Buttons + Effektivwert-Anzeige)', () => {
+    it('Edit-Buttons an Umsatz- und KK-Adyen-Zelle rufen onOverrideClick mit dem Feld', () => {
+      const { rows, totals } = buildMonth();
+      const onOverrideClick = vi.fn();
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onOverrideClick={onOverrideClick} />);
+
+      fireEvent.click(screen.getByTestId('ta-override-umsatz-2026-07-01'));
+      expect(onOverrideClick).toHaveBeenLastCalledWith('2026-07-01', 'umsatz');
+      fireEvent.click(screen.getByTestId('ta-override-karten-2026-07-01'));
+      expect(onOverrideClick).toHaveBeenLastCalledWith('2026-07-01', 'karten');
+      // Tage ohne Z-Bericht bekommen KEINE Edit-Buttons.
+      expect(screen.queryByTestId('ta-override-umsatz-2026-07-03')).toBeNull();
+      expect(screen.queryByTestId('ta-override-karten-2026-07-03')).toBeNull();
+    });
+
+    it('ohne Callback / readOnly / gesperrter Tag: keine Edit-Buttons', () => {
+      const base = buildMonth();
+      const view = render(<TagesabschlussTable rows={base.rows} totals={base.totals} onDayClick={() => {}} />);
+      expect(screen.queryByTestId('ta-override-umsatz-2026-07-01')).toBeNull();
+
+      view.rerender(<TagesabschlussTable rows={base.rows} totals={base.totals} onDayClick={() => {}}
+        readOnly onOverrideClick={() => {}} />);
+      expect(screen.queryByTestId('ta-override-umsatz-2026-07-01')).toBeNull();
+      cleanup();
+
+      // Definitiv abgeschlossener Tag: gesperrt — der offene 02.07. behält Buttons.
+      const closed = buildMonthWithClosedDay();
+      render(<TagesabschlussTable rows={closed.rows} totals={closed.totals} onDayClick={() => {}}
+        onOverrideClick={() => {}} />);
+      expect(screen.queryByTestId('ta-override-umsatz-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-override-karten-2026-07-01')).toBeNull();
+      expect(screen.getByTestId('ta-override-umsatz-2026-07-02')).toBeTruthy();
+    });
+
+    it('karten-Override: KK-Adyen-Zelle zeigt den EFFEKTIVEN Z-KK-Wert (karten + TWINT) amber', () => {
+      const base = buildMonth();
+      const blob = setTagesabschlussOverride(base.blob, '2026-07-01', 'karten', 500, 480, undefined, '2026-07-05T11:00:00.000Z');
+      const { rows, totals } = buildTagesabschlussRows(2026, 7, base.closings, blob, base.confirmations, null, 0);
+      render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
+        onOverrideClick={() => {}} />);
+
+      // Effektiv: karten 480 (korrigiert) + TWINT 200 = 680, gelb markiert.
+      expect(screen.getByTestId('ta-adyen-effektiv-2026-07-01').textContent).toContain('680.00');
+      expect(screen.getByTestId('ta-adyen-2026-07-01').className).toContain('bg-amber-100');
+      // Ohne Override bleibt die Standard-Anzeige (Adyen-Total bzw. „—").
+      expect(screen.queryByTestId('ta-adyen-effektiv-2026-07-02')).toBeNull();
     });
   });
 });

@@ -61,6 +61,12 @@ import { TagesabschlussExpenseDialog } from './TagesabschlussExpenseDialog';
 import { TagesabschlussExportDialog } from './TagesabschlussExportDialog';
 import { TagesabschlussReasonDialog } from './TagesabschlussReasonDialog';
 import {
+  TagesabschlussOverrideDialog,
+  type OverrideDialogContext,
+  type OverrideDialogPayload,
+  type TagesabschlussOverrideField,
+} from './TagesabschlussOverrideDialog';
+import {
   TagesabschlussVoucherDialog,
   type VoucherDialogContext,
   type VoucherDialogPayload,
@@ -97,6 +103,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [openDate, setOpenDate] = useState<string | null>(null);
   const [openExpensesDate, setOpenExpensesDate] = useState<string | null>(null);
   const [voucherCtx, setVoucherCtx] = useState<VoucherDialogContext | null>(null);
+  const [overrideCtx, setOverrideCtx] = useState<OverrideDialogContext | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [reasonDate, setReasonDate] = useState<string | null>(null);
   /** null = Auflösung läuft noch; startSaldo null = kein Anker gefunden. */
@@ -104,6 +111,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const [anfangsbestandText, setAnfangsbestandText] = useState('');
   /** Anfangsbestand nachträglich bearbeiten (Banner sichtbar trotz Anker). */
   const [editAnfangsbestand, setEditAnfangsbestand] = useState(false);
+  /** Voll-Ansicht (alle Spalten) — Standard ist die kompakte Ansicht. */
+  const [showAllColumns, setShowAllColumns] = useState(false);
 
   // Jahr-Wechsel: Monat sinnvoll nachziehen.
   useEffect(() => {
@@ -320,6 +329,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   const openRow = openDate ? monthData.rows.find(r => r.date === openDate) ?? null : null;
   const openExpenses = openDate ? (blob?.expenses[openDate] ?? []) : [];
   const voucherRow = voucherCtx ? monthData.rows.find(r => r.date === voucherCtx.date) ?? null : null;
+  const overrideRow = overrideCtx ? monthData.rows.find(r => r.date === overrideCtx.date) ?? null : null;
   const dialogExpenses = openExpensesDate ? (blob?.expenses[openExpensesDate] ?? []) : [];
 
   /**
@@ -344,6 +354,21 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     next = setTagesabschlussComment(next, date, field, payload.kommentar, now);
     void persist(next);
     setVoucherCtx(null);
+  }, [readOnly, blob, isDayLocked, monthData, persist]);
+
+  /** Override-Popup speichern („KK Adyen Ist" → `karten`, „Umsatz Ist" →
+   *  `umsatz`): Erst-Original verankert, Betrag == Original (oder leer)
+   *  entfernt die Korrektur; Override + Kommentar in EINEM persist. */
+  const handleOverrideSave = useCallback((date: string, field: TagesabschlussOverrideField, payload: OverrideDialogPayload) => {
+    if (readOnly || !blob || isDayLocked(date)) { setOverrideCtx(null); return; }
+    const cell = monthData.rows.find(r => r.date === date)?.cells[field];
+    const now = new Date().toISOString();
+    const original = cell?.override?.originalValue ?? cell?.auto ?? 0;
+    const corrected = payload.betrag !== null && Math.abs(payload.betrag - original) < 0.005 ? null : payload.betrag;
+    let next = setTagesabschlussOverride(blob, date, field, original, corrected, cell?.override?.comment, now);
+    next = setTagesabschlussComment(next, date, field, payload.kommentar, now);
+    void persist(next);
+    setOverrideCtx(null);
   }, [readOnly, blob, isDayLocked, monthData, persist]);
 
   return (
@@ -537,6 +562,19 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 </div>
               </div>
             </div>
+            <div className="flex justify-end mb-2">
+              <button
+                type="button"
+                className="rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer"
+                onClick={() => setShowAllColumns(v => !v)}
+                title={showAllColumns
+                  ? 'Kompakte Ansicht: blendet KK, Einzahlung Bank, Cash Ist und Cash Diff aus'
+                  : 'Voll-Ansicht: zeigt zusätzlich KK, Einzahlung Bank, Cash Ist und Cash Diff'}
+                data-testid="ta-columns-toggle"
+              >
+                {showAllColumns ? 'Kompakte Ansicht' : 'Alle Spalten anzeigen'}
+              </button>
+            </div>
             <TagesabschlussTable
               rows={monthData.rows}
               totals={monthData.totals}
@@ -545,10 +583,12 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               onSaveManual={handleSaveManual}
               onCorrectRechnung={handleCorrectRechnung}
               onVoucherClick={(date, kind) => setVoucherCtx({ date, kind })}
+              onOverrideClick={(date, field) => setOverrideCtx({ date, field })}
               onExpensesClick={setOpenExpensesDate}
               onConfirm={handleConfirm}
               onReasonsClick={setReasonDate}
               onCloseDay={handleCloseDay}
+              showAllColumns={showAllColumns}
             />
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-[10px] text-muted-foreground">
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-amber-100 dark:bg-amber-900/30 border border-amber-300 align-middle mr-1" />korrigiert</span>
@@ -679,6 +719,14 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
         readOnly={readOnly}
         onClose={() => setVoucherCtx(null)}
         onSave={handleVoucherSave}
+      />
+
+      <TagesabschlussOverrideDialog
+        ctx={overrideCtx}
+        row={overrideRow}
+        readOnly={readOnly || (overrideCtx ? isDayLocked(overrideCtx.date) : false)}
+        onClose={() => setOverrideCtx(null)}
+        onSave={handleOverrideSave}
       />
 
       <TagesabschlussReasonDialog

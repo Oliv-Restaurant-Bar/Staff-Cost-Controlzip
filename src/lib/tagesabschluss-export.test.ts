@@ -361,7 +361,7 @@ describe('buildTabelle2Rows', () => {
     expect(out.errors.join(' ')).toMatch(/Konto fehlt/);
   });
 
-  it('Korrekturen (Overrides) ändern den Export NICHT — Originale bleiben, Warnung wird gelistet', () => {
+  it('Korrekturen (Overrides) fliessen in den Export ein — Ist-Wert wird gebucht, Info wird gelistet', () => {
     const closings = { '2026-07-01': makeClosing('2026-07-01') };
     let blob = emptyTagesabschlussBlob();
     blob = setTagesabschlussOverride(blob, '2026-07-01', 'rechnung', 30, 50, 'Nachtrag', NOW);
@@ -369,20 +369,101 @@ describe('buildTabelle2Rows', () => {
     const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
     const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
 
-    // Export nutzt ORIGINAL-Z-Bericht-Werte: Rechnung 30, Barumsatz 300.
-    expect(out.rows.find(r => r.kto === '1100')?.netto).toBe(30);
-    expect(out.rows.find(r => r.kto === '1000' && r.gkto === '1098')?.netto).toBe(300);
+    // Export nutzt EFFEKTIVWERTE: Rechnung 50 (Ist), Barumsatz 280 (Residual).
+    expect(out.rows.find(r => r.kto === '1100')?.netto).toBe(50);
+    expect(out.rows.find(r => r.kto === '1000' && r.gkto === '1098')?.netto).toBe(280);
 
-    // Balance: Σ(GKto = 1098) = Original-Umsatz — Korrekturen brechen sie nicht.
+    // Balance: Σ(GKto = 1098) = effektiver Umsatz — Korrekturen brechen sie nicht.
     const haben = out.rows.filter(r => r.gkto === '1098').reduce((s, r) => s + r.netto, 0);
     expect(Math.round(haben * 100) / 100).toBe(1000);
 
-    // Die Korrektur wird EXPLIZIT als Warnung ausgewiesen (manuell nachbuchen).
+    // Die enthaltene Korrektur wird als Info-Hinweis ausgewiesen.
     expect(out.warnings).toHaveLength(1);
     expect(out.warnings[0]).toMatch(/01\.07\.2026/);
     expect(out.warnings[0]).toMatch(/Rechnung/);
     expect(out.warnings[0]).toMatch(/30\.00 → 50\.00/);
-    expect(out.warnings[0]).toMatch(/manuell/);
+    expect(out.warnings[0]).toMatch(/übersteuerten Ist-Wert/);
+
+    // Das Original bleibt im Override verankert (Erst-Original).
+    expect(blob.overrides['2026-07-01:rechnung'].originalValue).toBe(30);
+    expect(blob.overrides['2026-07-01:rechnung'].correctedValue).toBe(50);
+  });
+
+  it('KK-Override („KK Adyen Ist"): Einzelarten bleiben original + Delta-Zeile auf KK-Sammel 1110', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    // karten.auto = 550 (MC 400 + Visa 150) → Ist 570 (Delta +20).
+    blob = setTagesabschlussOverride(blob, '2026-07-01', 'karten', 550, 570, 'Adyen Ist', NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(out.errors).toHaveLength(0);
+
+    // Einzelart-Zeilen unverändert aus dem Original-Z-Bericht.
+    expect(out.rows.find(r => r.tx1.startsWith('Mastercard'))?.netto).toBe(400);
+    expect(out.rows.find(r => r.tx1.startsWith('Visa'))?.netto).toBe(150);
+
+    // Delta-Zeile: +20 auf KK-Sammel 1110, klar als manuelle Korrektur markiert.
+    const delta = out.rows.find(r => r.tx1.startsWith('KK Korrektur (manuell)'));
+    expect(delta?.kto).toBe('1110');
+    expect(delta?.gkto).toBe('1098');
+    expect(delta?.netto).toBe(20);
+    expect(delta?.kategorie).toBe('kreditkarten');
+
+    // Barumsatz-Residual nutzt den Ist-Wert: 1000 − 570 − 100 − 30 − 20 = 280.
+    expect(out.rows.find(r => r.kto === '1000' && r.gkto === '1098')?.netto).toBe(280);
+
+    // Balance bleibt exakt: Σ(GKto=1098) = effektiver Umsatz 1000.
+    const haben = out.rows.filter(r => r.gkto === '1098').reduce((s, r) => s + r.netto, 0);
+    expect(Math.round(haben * 100) / 100).toBe(1000);
+  });
+
+  it('TWINT-Override: Delta-Zeile auf TWINT-Konto bzw. KK-Sammel', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = setTagesabschlussOverride(blob, '2026-07-01', 'twint', 100, 90, undefined, NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(out.errors).toHaveLength(0);
+
+    const delta = out.rows.find(r => r.tx1.startsWith('TWINT Korrektur (manuell)'));
+    expect(delta?.kto).toBe('1110'); // Default-Mapping: TWINT ohne Einzelkonto → Sammel
+    expect(delta?.netto).toBe(-10);
+    expect(delta?.kategorie).toBe('twint');
+
+    // Barumsatz: 1000 − 550 − 90 − 30 − 20 = 310; Balance bleibt exakt.
+    expect(out.rows.find(r => r.kto === '1000' && r.gkto === '1098')?.netto).toBe(310);
+    const haben = out.rows.filter(r => r.gkto === '1098').reduce((s, r) => s + r.netto, 0);
+    expect(Math.round(haben * 100) / 100).toBe(1000);
+  });
+
+  it('Umsatz-Override: Residual und Balance folgen dem effektiven Umsatz', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = setTagesabschlussOverride(blob, '2026-07-01', 'umsatz', 1000, 1050, 'Nachbuchung', NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    expect(out.errors).toHaveLength(0);
+
+    // Barumsatz = 1050 − 550 − 100 − 30 − 20 = 350.
+    expect(out.rows.find(r => r.kto === '1000' && r.gkto === '1098')?.netto).toBe(350);
+    const haben = out.rows.filter(r => r.gkto === '1098').reduce((s, r) => s + r.netto, 0);
+    expect(Math.round(haben * 100) / 100).toBe(1050);
+  });
+
+  it('CSV verwendet den Ist-Wert einer Korrektur (Ende-zu-Ende)', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = setTagesabschlussOverride(blob, '2026-07-01', 'karten', 550, 570, undefined, NOW);
+    blob = withClosedDays(blob, ['2026-07-01']);
+    const { rows } = buildTagesabschlussRows(2026, 7, closings, blob, {});
+    const out = buildTabelle2Rows(rows, closings, blob, reviewedSettings());
+    const csv = buildTabelle2Csv(out.rows, 'test.csv');
+    expect(csv).toContain('KK Korrektur (manuell) 01.07.2026');
+    expect(csv).toContain('20.00'); // Delta-Betrag im CSV
+    expect(csv).toContain('280.00'); // Barumsatz-Residual aus Ist-Werten
   });
 
   it('ohne Korrekturen: keine Warnungen', () => {

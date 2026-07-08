@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach } from 'vitest';
 import { TagesabschlussVoucherDialog } from '../TagesabschlussVoucherDialog';
+import { TagesabschlussOverrideDialog } from '../TagesabschlussOverrideDialog';
 import { TagesabschlussExpenseDialog } from '../TagesabschlussExpenseDialog';
 import { TagesabschlussDayDialog } from '../TagesabschlussDayDialog';
 import {
@@ -104,6 +105,58 @@ describe('TagesabschlussVoucherDialog', () => {
     expect((screen.getByTestId('ta-voucher-betrag') as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByTestId('ta-voucher-nummern') as HTMLInputElement).disabled).toBe(true);
     expect(screen.queryByTestId('ta-voucher-save')).toBeNull();
+  });
+});
+
+describe('TagesabschlussOverrideDialog', () => {
+  it('karten: Titel „KK Adyen Ist", Original + Orientierungsblock (TWINT/Adyen), Save-Payload geparst', () => {
+    const row = buildRow();
+    const onSave = vi.fn();
+    render(<TagesabschlussOverrideDialog ctx={{ date: '2026-07-01', field: 'karten' }}
+      row={row} readOnly={false} onClose={() => {}} onSave={onSave} />);
+
+    // Popup-Label „KK Adyen Ist" (NICHT das Export-Label) + Z-Bericht-Original.
+    expect(screen.getAllByText(/KK Adyen Ist/).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('ta-override-original').textContent).toContain('500.00');
+    // Orientierungsblock: TWINT separat + Adyen-Import (ohne Import „—").
+    const ctxBlock = screen.getByTestId('ta-override-context');
+    expect(ctxBlock.textContent).toContain('TWINT');
+    expect(ctxBlock.textContent).toContain('Adyen');
+    expect(ctxBlock.textContent).toContain('—');
+
+    fireEvent.change(screen.getByTestId('ta-override-betrag'), { target: { value: '480.50' } });
+    fireEvent.change(screen.getByTestId('ta-override-kommentar'), { target: { value: 'Beleg korrigiert' } });
+    fireEvent.click(screen.getByTestId('ta-override-save'));
+    expect(onSave).toHaveBeenCalledWith('2026-07-01', 'karten', {
+      betrag: 480.5,
+      kommentar: 'Beleg korrigiert',
+    });
+  });
+
+  it('umsatz: kein Orientierungsblock; Erst-Original verankert, „korrigiert"-Badge; leeres Feld → betrag null', () => {
+    const row = buildRow(b =>
+      setTagesabschlussOverride(b, '2026-07-01', 'umsatz', 1000, 1050, undefined, '2026-07-05T10:00:00.000Z'));
+    const onSave = vi.fn();
+    render(<TagesabschlussOverrideDialog ctx={{ date: '2026-07-01', field: 'umsatz' }}
+      row={row} readOnly={false} onClose={() => {}} onSave={onSave} />);
+
+    expect(screen.queryByTestId('ta-override-context')).toBeNull();
+    // Original bleibt das ERSTE Original (1000), vorbelegt ist der Effektivwert.
+    expect(screen.getByTestId('ta-override-original').textContent!.replace(/[’']/g, '')).toContain('1000.00');
+    expect((screen.getByTestId('ta-override-betrag') as HTMLInputElement).value).toBe('1050');
+    expect(screen.getByText('korrigiert')).toBeTruthy();
+
+    fireEvent.change(screen.getByTestId('ta-override-betrag'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('ta-override-save'));
+    expect(onSave).toHaveBeenCalledWith('2026-07-01', 'umsatz', { betrag: null, kommentar: '' });
+  });
+
+  it('readOnly: Eingaben deaktiviert, kein Speichern-Button', () => {
+    render(<TagesabschlussOverrideDialog ctx={{ date: '2026-07-01', field: 'karten' }}
+      row={buildRow()} readOnly onClose={() => {}} onSave={() => {}} />);
+    expect((screen.getByTestId('ta-override-betrag') as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByTestId('ta-override-kommentar') as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.queryByTestId('ta-override-save')).toBeNull();
   });
 });
 

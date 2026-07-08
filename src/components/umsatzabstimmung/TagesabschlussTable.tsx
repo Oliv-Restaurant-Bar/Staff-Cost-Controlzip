@@ -38,7 +38,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Lock, MessageSquare, Plus } from 'lucide-react';
+import { AlertTriangle, Lock, MessageSquare, Pencil, Plus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { DayConfirmation } from '@/lib/adyen-abstimmung';
@@ -74,10 +74,19 @@ const SEP = 'border-l-2 border-border';
 /** Fokus-Tint für Zellen mit Inline-Eingabe (aktive Eingabezelle). */
 const EDIT_CELL_FOCUS = 'focus-within:bg-sky-100/70 dark:focus-within:bg-sky-900/30';
 
+export interface TagesabschlussColumn {
+  /** Stabiler Spalten-Schlüssel (Sichtbarkeits-Logik + Tests). */
+  key: string;
+  label: string;
+  align: 'left' | 'right';
+  /** Nur in der Voll-Ansicht („Alle Spalten anzeigen") sichtbar. */
+  detailOnly?: boolean;
+}
+
 interface ColumnGroup {
   label: string;
-  /** Spalten (Label + Ausrichtung); erste Spalte der Gruppe erhält SEP. */
-  cols: { label: string; align: 'left' | 'right' }[];
+  /** Spalten; erste SICHTBARE Spalte der Gruppe erhält SEP. */
+  cols: TagesabschlussColumn[];
   /** Header-Hintergrund der Gruppe (Gruppenzeile kräftiger, Spaltenzeile dezent). */
   head: string;
   sub: string;
@@ -86,45 +95,56 @@ interface ColumnGroup {
 export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
   {
     label: 'Umsatz',
-    cols: [{ label: 'Datum', align: 'left' }, { label: 'Umsatz', align: 'right' }],
+    cols: [
+      { key: 'datum', label: 'Datum', align: 'left' },
+      { key: 'umsatz', label: 'Umsatz', align: 'right' },
+    ],
     head: 'bg-muted', sub: 'bg-muted/60',
   },
   {
     label: 'Kartenzahlungen',
-    cols: [{ label: 'KK', align: 'right' }, { label: 'KK Adyen', align: 'right' }],
+    cols: [
+      { key: 'kk', label: 'KK', align: 'right', detailOnly: true },
+      { key: 'kkAdyen', label: 'KK Adyen', align: 'right' },
+    ],
     head: 'bg-sky-100 dark:bg-sky-900/40', sub: 'bg-sky-50 dark:bg-sky-900/20',
   },
   {
     label: 'Kasse',
     cols: [
-      { label: 'Bargeld Soll', align: 'right' },
-      { label: 'Einzahlung Bank', align: 'right' },
-      { label: 'Kassensaldo Soll', align: 'right' },
-      { label: 'Cash Ist', align: 'right' },
-      { label: 'Cash Diff', align: 'right' },
+      { key: 'bargeldSoll', label: 'Bargeld Soll', align: 'right' },
+      { key: 'einzahlungBank', label: 'Einzahlung Bank', align: 'right', detailOnly: true },
+      { key: 'kassensaldoSoll', label: 'Kassensaldo Soll', align: 'right' },
+      { key: 'cashIst', label: 'Cash Ist', align: 'right', detailOnly: true },
+      { key: 'cashDiff', label: 'Cash Diff', align: 'right', detailOnly: true },
     ],
     head: 'bg-emerald-100 dark:bg-emerald-900/40', sub: 'bg-emerald-50 dark:bg-emerald-900/20',
   },
   {
     label: 'Weitere Zahlungsarten',
     cols: [
-      { label: 'Debitoren', align: 'right' },
-      { label: 'Verkaufte Gutscheine', align: 'right' },
-      { label: 'Eingelöste Gutscheine', align: 'right' },
+      { key: 'debitoren', label: 'Debitoren', align: 'right' },
+      { key: 'gutscheinVerkauft', label: 'V-Gutscheine', align: 'right' },
+      { key: 'gutscheinEingeloest', label: 'EG-Gutscheine', align: 'right' },
     ],
     head: 'bg-violet-100 dark:bg-violet-900/40', sub: 'bg-violet-50 dark:bg-violet-900/20',
   },
   {
     label: 'Ausgaben',
-    cols: [{ label: 'Barausgaben', align: 'right' }],
+    cols: [{ key: 'barausgaben', label: 'Barausgaben', align: 'right' }],
     head: 'bg-orange-100 dark:bg-orange-900/40', sub: 'bg-orange-50 dark:bg-orange-900/20',
   },
   {
     label: 'Status',
-    cols: [{ label: 'Status', align: 'left' }],
+    cols: [{ key: 'status', label: 'Status', align: 'left' }],
     head: 'bg-muted', sub: 'bg-muted/60',
   },
 ];
+
+/** Sichtbare Spalten einer Gruppe (kompakt = ohne detailOnly-Spalten). */
+export function visibleColumns(group: ColumnGroup, showAll: boolean): TagesabschlussColumn[] {
+  return showAll ? group.cols : group.cols.filter(c => !c.detailOnly);
+}
 
 // ── Zellen-Darstellung ───────────────────────────────────────────────────────
 
@@ -338,14 +358,25 @@ interface TagesabschlussTableProps {
   onReasonsClick?: (date: string) => void;
   /** „Tagesabschluss abschließen" — Button nur aktiv, wenn canCloseDay ok. */
   onCloseDay?: (date: string) => void;
+  /**
+   * Voll-Ansicht: zeigt zusätzlich die Detail-Spalten (KK, Einzahlung Bank,
+   * Cash Ist, Cash Diff). Default false = kompakte Standardansicht.
+   */
+  showAllColumns?: boolean;
+  /**
+   * Öffnet das Override-Popup („KK Adyen Ist" → Feld `karten`, „Umsatz Ist"
+   * → Feld `umsatz`). Ohne Callback rendern die Zellen ohne Edit-Button.
+   */
+  onOverrideClick?: (date: string, field: 'karten' | 'umsatz') => void;
 }
 
 export function TagesabschlussTable({
   rows, totals, onDayClick, readOnly = false, onSaveManual,
   onCorrectRechnung, onVoucherClick, onExpensesClick, onConfirm, onReasonsClick,
-  onCloseDay,
+  onCloseDay, showAllColumns = false, onOverrideClick,
 }: TagesabschlussTableProps) {
   const today = todayIso();
+  const showAll = showAllColumns;
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
@@ -353,22 +384,26 @@ export function TagesabschlussTable({
         <thead>
           {/* Gruppenzeile — unterschiedliche Hintergründe je Gruppe. */}
           <tr data-testid="ta-header-groups">
-            {TAGESABSCHLUSS_COLUMN_GROUPS.map((g, gi) => (
-              <th
-                key={g.label}
-                colSpan={g.cols.length}
-                className={`px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${g.head} ${gi > 0 ? SEP : ''}`}
-              >
-                {g.label}
-              </th>
-            ))}
+            {TAGESABSCHLUSS_COLUMN_GROUPS.map((g, gi) => {
+              const cols = visibleColumns(g, showAll);
+              if (cols.length === 0) return null;
+              return (
+                <th
+                  key={g.label}
+                  colSpan={cols.length}
+                  className={`px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${g.head} ${gi > 0 ? SEP : ''}`}
+                >
+                  {g.label}
+                </th>
+              );
+            })}
           </tr>
           {/* Spaltenzeile. */}
           <tr className="text-muted-foreground" data-testid="ta-header-cols">
             {TAGESABSCHLUSS_COLUMN_GROUPS.flatMap((g, gi) =>
-              g.cols.map((c, ci) => (
+              visibleColumns(g, showAll).map((c, ci) => (
                 <th
-                  key={c.label}
+                  key={c.key}
                   className={`px-2 py-1.5 font-medium whitespace-nowrap ${g.sub} ${c.align === 'left' ? 'text-left' : 'text-right'} ${gi > 0 && ci === 0 ? `${SEP} pl-3` : ''}`}
                 >
                   {c.label}
@@ -396,6 +431,8 @@ export function TagesabschlussTable({
             const confirmable = !readOnly && !!onConfirm && !rowLocked;
             const reasonsEditable = !readOnly && !!onReasonsClick && !rowLocked;
             const closeCheck = !rowLocked && row.hasZbericht ? canCloseDay(row) : null;
+            // Override-Popup (KK Adyen Ist / Umsatz Ist) — nur mit Z-Bericht.
+            const overrideEditable = !readOnly && !!onOverrideClick && !rowLocked && row.hasZbericht;
             return (
               <tr
                 key={row.date}
@@ -427,11 +464,30 @@ export function TagesabschlussTable({
                     )}
                   </span>
                 </td>
-                <ValueCell cell={row.cells.umsatz} />
+                {/* Umsatz — Override via Popup („Umsatz Ist"), gelb bei Korrektur. */}
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${cellBg(row.cells.umsatz)} ${amountColor(row.cells.umsatz.value, row.cells.umsatz.source)}`}
+                    data-testid={`ta-umsatz-${row.date}`}>
+                  <span className="inline-flex items-center gap-1">
+                    {row.cells.umsatz.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
+                    {row.cells.umsatz.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(row.cells.umsatz.value)}
+                    {overrideEditable && (
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-primary cursor-pointer shrink-0"
+                        onClick={() => onOverrideClick!(row.date, 'umsatz')}
+                        title="Umsatz Ist erfassen (Korrektur des Z-Bericht-Werts)"
+                        data-testid={`ta-override-umsatz-${row.date}`}
+                      >
+                        <Pencil className="h-3 w-3" aria-label="Umsatz korrigieren" />
+                      </button>
+                    )}
+                  </span>
+                </td>
 
                 {/* ── Gruppe Kartenzahlungen: KK (Karten inkl. TWINT laut
-                    Z-Bericht — TWINT ohne eigene Spalte) + KK Adyen ── */}
-                {(() => {
+                    Z-Bericht — TWINT ohne eigene Spalte; nur Voll-Ansicht)
+                    + KK Adyen ── */}
+                {showAll && (() => {
                   const k = row.cells.karten;
                   const t = row.cells.twint;
                   const kk = k.value === null && t.value === null
@@ -474,43 +530,81 @@ export function TagesabschlussTable({
                     </td>
                   );
                 })()}
-                <td
-                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
-                  title={adyenTitle}
-                  data-testid={`ta-adyen-${row.date}`}
-                >
-                  {row.adyenTotal === null
-                    ? <span className="text-muted-foreground">—</span>
-                    : (
-                      /* KK-Adyen-Popover: nur über Adyen abgewickelte Arten +
-                         Erklärung, weshalb KK und KK Adyen abweichen können. */
-                      <Popover>
-                        <PopoverTrigger asChild>
+                {(() => {
+                  /* Doppelsemantik „KK Adyen": Anzeige = KK laut Adyen-Import;
+                     das Override-Popup („KK Adyen Ist") schreibt auf das
+                     Z-Bericht-Feld `karten`. Bei Override zeigt die Zelle den
+                     EFFEKTIVEN Z-KK-Wert (karten + TWINT, gelb) — der
+                     Adyen-Import bleibt unberührt. */
+                  const kOv = row.cells.karten.source === 'corrected';
+                  const effKk = row.cells.karten.value === null && row.cells.twint.value === null
+                    ? null
+                    : Math.round(((row.cells.karten.value ?? 0) + (row.cells.twint.value ?? 0)) * 100) / 100;
+                  return (
+                    <td
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${showAll ? '' : `${SEP} pl-3`} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
+                      title={kOv
+                        ? `Korrigierter KK-Wert (inkl. TWINT); KK laut Adyen: ${row.adyenTotal === null ? '—' : fmtChf(row.adyenTotal)}`
+                        : adyenTitle}
+                      data-testid={`ta-adyen-${row.date}`}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {kOv && row.cells.karten.comment && (
+                          <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
+                        )}
+                        {kOv
+                          ? <span data-testid={`ta-adyen-effektiv-${row.date}`}>
+                              {effKk === null ? '—' : fmtChf(effKk)}
+                              {row.adyenDiff !== null && (
+                                <span className="ml-1 text-[10px] text-muted-foreground">({fmtDiffChf(row.adyenDiff)})</span>
+                              )}
+                            </span>
+                          : row.adyenTotal === null
+                            ? <span className="text-muted-foreground">—</span>
+                            : (
+                              /* KK-Adyen-Popover: nur über Adyen abgewickelte Arten +
+                                 Erklärung, weshalb KK und KK Adyen abweichen können. */
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className="underline decoration-dotted underline-offset-2 hover:opacity-80 cursor-pointer"
+                                    title="Zusammensetzung KK Adyen anzeigen"
+                                    data-testid={`ta-adyen-btn-${row.date}`}
+                                  >
+                                    {fmtChf(row.adyenTotal)}
+                                    {row.adyenDiff !== null && row.adyenDiffStatus !== 'ok' && (
+                                      <span className="ml-1 text-[10px]">({fmtDiffChf(row.adyenDiff)})</span>
+                                    )}
+                                  </button>
+                                </PopoverTrigger>
+                                <PopoverContent align="end" className="w-auto p-3" data-testid={`ta-adyen-popover-${row.date}`}>
+                                  <ZahlungsartenBreakdown
+                                    items={row.adyenZusammensetzung}
+                                    total={row.adyenTotal}
+                                    totalLabel="Total KK Adyen"
+                                    hinweis={ADYEN_HINWEIS}
+                                    nichtAdyen={row.nichtAdyenKk.length > 0 ? row.nichtAdyenKk : undefined}
+                                    testidPrefix={`ta-adyen-breakdown-${row.date}`}
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                            )}
+                        {overrideEditable && (
                           <button
                             type="button"
-                            className="underline decoration-dotted underline-offset-2 hover:opacity-80 cursor-pointer"
-                            title="Zusammensetzung KK Adyen anzeigen"
-                            data-testid={`ta-adyen-btn-${row.date}`}
+                            className="text-muted-foreground hover:text-primary cursor-pointer shrink-0"
+                            onClick={() => onOverrideClick!(row.date, 'karten')}
+                            title="KK Adyen Ist erfassen (Korrektur der Kreditkarten laut Z-Bericht)"
+                            data-testid={`ta-override-karten-${row.date}`}
                           >
-                            {fmtChf(row.adyenTotal)}
-                            {row.adyenDiff !== null && row.adyenDiffStatus !== 'ok' && (
-                              <span className="ml-1 text-[10px]">({fmtDiffChf(row.adyenDiff)})</span>
-                            )}
+                            <Pencil className="h-3 w-3" aria-label="KK korrigieren" />
                           </button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-auto p-3" data-testid={`ta-adyen-popover-${row.date}`}>
-                          <ZahlungsartenBreakdown
-                            items={row.adyenZusammensetzung}
-                            total={row.adyenTotal}
-                            totalLabel="Total KK Adyen"
-                            hinweis={ADYEN_HINWEIS}
-                            nichtAdyen={row.nichtAdyenKk.length > 0 ? row.nichtAdyenKk : undefined}
-                            testidPrefix={`ta-adyen-breakdown-${row.date}`}
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    )}
-                </td>
+                        )}
+                      </span>
+                    </td>
+                  );
+                })()}
 
                 {/* ── Gruppe Kasse: Bargeld Soll (berechnet) + Einzahlung Bank
                     + Kassensaldo Soll (fortlaufend) + Cash Ist (manuell)
@@ -522,7 +616,7 @@ export function TagesabschlussTable({
                     ? <span className="text-muted-foreground">—</span>
                     : fmtChf(row.bargeldSoll)}
                 </td>
-                {editable ? (
+                {showAll && (editable ? (
                   <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
                     <span className="inline-flex items-center gap-1">
                       {row.cells.einzahlungBank.comment && (
@@ -539,7 +633,7 @@ export function TagesabschlussTable({
                   </td>
                 ) : (
                   <ValueCell cell={row.cells.einzahlungBank} />
-                )}
+                ))}
                 {/* Kassensaldo Soll — fortlaufend, read-only (Formel im Tooltip).
                     Gesperrte Tage zeigen den beim Abschluss FIXIERTEN Saldo;
                     weicht der berechnete ab (Alt-Tag-Änderung) → Review-Marker. */}
@@ -572,7 +666,9 @@ export function TagesabschlussTable({
                     </td>
                   );
                 })()}
-                {/* Cash Ist — manuell gezählter Kassenbestand (inline, blau). */}
+                {/* Cash Ist — manuell gezählter Kassenbestand (inline, blau;
+                    nur Voll-Ansicht). */}
+                {showAll && (
                 <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
                     title="Cash Ist = manuell gezählter Kassenbestand"
                     data-testid={`ta-bestand-${row.date}`}>
@@ -590,9 +686,12 @@ export function TagesabschlussTable({
                       : fmtChf(row.cells.bestandKasse.value)
                   )}
                 </td>
+                )}
                 {/* Cash Diff = Ist − Kassensaldo Soll (Ampel); „—" solange Ist
                     oder Saldo fehlt. Nicht-grüne Differenzen: Begründet-Badge
-                    (Tooltip = Gründe) bzw. „Begründen"-Button (Dialog). */}
+                    (Tooltip = Gründe) bzw. „Begründen"-Button (Dialog).
+                    Nur Voll-Ansicht. */}
+                {showAll && (
                 <td
                   className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium ${diffColorClass(row.cashDiffStatus)}`}
                   title={row.cashDiff !== null
@@ -632,6 +731,7 @@ export function TagesabschlussTable({
                     )}
                   </span>
                 </td>
+                )}
 
                 {/* ── Gruppe Weitere Zahlungsarten: Debitoren inline (Korrektur
                     des Z-Bericht-Werts), Gutscheine öffnen den Gutschein-Dialog ── */}
@@ -763,8 +863,10 @@ export function TagesabschlussTable({
           <tr className="border-t-2 border-border bg-muted/40 font-semibold">
             <td className="px-2 py-1.5">Total</td>
             <td className={`px-2 py-1.5 text-right tabular-nums ${totals.values.umsatz < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtChf(totals.values.umsatz)}</td>
-            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.karten + totals.values.twint)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-adyen"
+            {showAll && (
+              <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.karten + totals.values.twint)}</td>
+            )}
+            <td className={`px-2 py-1.5 text-right tabular-nums ${showAll ? '' : `${SEP} pl-3`}`} data-testid="ta-total-adyen"
                 title="Summe Karten/TWINT laut Adyen; in Klammern die Summe der Tages-Differenzen (Vorzeichen können sich aufheben)">
               {fmtChf(totals.adyenTotal)}
               <span className="ml-1 text-[10px] text-muted-foreground" data-testid="ta-total-adyen-diff">
@@ -775,20 +877,26 @@ export function TagesabschlussTable({
                 title="Total Bargeld Soll; Bar laut Z-Bericht in Klammern">
               {fmtChf(totals.bargeldSoll)} <span className="text-[10px] text-muted-foreground">({fmtChf(totals.values.bar)})</span>
             </td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.einzahlungBank)}</td>
+            {showAll && (
+              <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.einzahlungBank)}</td>
+            )}
             <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground" data-testid="ta-total-saldo"
                 title={'Kassensaldo (Soll) am Monatsende; „—" solange kein Anfangsbestand bekannt ist'}>
               {totals.kassensaldoEnde === null ? '—' : fmtChf(totals.kassensaldoEnde)}
             </td>
-            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-cash-ist"
-                title="Summe Cash Ist (nur Tage mit gezähltem Bestand)">
-              {fmtChf(totals.cashIst)}
-            </td>
-            <td className={`px-2 py-1.5 text-right tabular-nums ${totals.letzteCashDiff !== null ? diffColorClass(totals.letzteCashDiffStatus) : 'text-muted-foreground'}`}
-                data-testid="ta-total-cash-diff"
-                title="Cash-Differenz am letzten Tag mit gezähltem Bestand (aktueller Stand der Kasse)">
-              {totals.letzteCashDiff === null ? '—' : fmtDiffChf(totals.letzteCashDiff)}
-            </td>
+            {showAll && (
+              <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-cash-ist"
+                  title="Summe Cash Ist (nur Tage mit gezähltem Bestand)">
+                {fmtChf(totals.cashIst)}
+              </td>
+            )}
+            {showAll && (
+              <td className={`px-2 py-1.5 text-right tabular-nums ${totals.letzteCashDiff !== null ? diffColorClass(totals.letzteCashDiffStatus) : 'text-muted-foreground'}`}
+                  data-testid="ta-total-cash-diff"
+                  title="Cash-Differenz am letzten Tag mit gezähltem Bestand (aktueller Stand der Kasse)">
+                {totals.letzteCashDiff === null ? '—' : fmtDiffChf(totals.letzteCashDiff)}
+              </td>
+            )}
             <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.rechnung)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinVerkauft)}</td>
             <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinEingeloest)}</td>
