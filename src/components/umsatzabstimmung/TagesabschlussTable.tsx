@@ -29,9 +29,16 @@
  * Cash Ist (Bestand Kasse) und Einzahlung Bank direkt in der Zeile (persistiert
  * bei Blur/Enter, Escape verwirft). Debitoren ebenfalls inline — als
  * KORREKTUR des Z-Bericht-Werts (Override, gelb; Leereingabe entfernt die
- * Korrektur). Gutschein-Zellen öffnen den kleinen Gutschein-Dialog
- * (onVoucherClick), die Barausgaben-Zelle NUR den Barausgaben-Dialog
- * (onExpensesClick) — beides öffnet NIE das Tagesdetail.
+ * Korrektur). Gleiches Muster (onInlineCorrect) für KK („KK Adyen Ist" →
+ * Feld `karten`, OHNE TWINT) und die beiden Gutschein-Beträge; die
+ * Gutschein-Zellen behalten daneben einen Stift zum Gutschein-Dialog
+ * (Nummern/Kommentar). Barausgaben-Total inline NUR solange keine
+ * itemisierten Ausgaben existieren (row.inlineExpenseOnly, generische
+ * Inline-Ausgabe via onInlineExpense) — sonst Dialog-only; der Plus-Button
+ * öffnet weiterhin NUR den Barausgaben-Dialog (onExpensesClick).
+ * Kassensaldo Soll ist inline überschreibbar (onSetSaldoAnker = manueller
+ * Tages-Anker, gelb; Leereingabe entfernt den Anker — die berechnete Kette
+ * gilt wieder). Kein Inline-Edit öffnet das Tagesdetail.
  * Bestätigungs-Checkboxen (Barbestand/Tag) schreiben in den gemeinsamen
  * Adyen-Store. Das Tagesdetail öffnet sich NUR über einen Klick auf das
  * Datum (als Link gestaltet).
@@ -195,6 +202,48 @@ function VoucherCell({ cell, label, onClick, testId }: {
         {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
         {cell.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(cell.value)}
       </button>
+    </td>
+  );
+}
+
+/**
+ * Gutschein-Zelle mit Inline-Betrag (Korrektur-Semantik) + Stift zum
+ * Gutschein-Dialog (Nummern/Kommentar). Der Stift behält die bisherigen
+ * Dialog-testids (ta-gutschein-…-DATE).
+ */
+function VoucherInlineCell({ cell, label, date, onCommit, inputTestId, dialogTestId, onDialogClick }: {
+  cell: DayCell;
+  label: string;
+  date: string;
+  onCommit: (next: number | null) => void;
+  inputTestId: string;
+  dialogTestId: string;
+  onDialogClick?: () => void;
+}) {
+  return (
+    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS}`}>
+      <span className="inline-flex items-center gap-1">
+        {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
+        <InlineAmountInput
+          value={cell.value}
+          manual={false}
+          corrected={cell.source === 'corrected'}
+          onCommit={onCommit}
+          testId={inputTestId}
+          ariaLabel={`${label} ${date}`}
+        />
+        {onDialogClick && (
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-primary cursor-pointer shrink-0"
+            onClick={onDialogClick}
+            title={`${label} erfassen (Betrag, Nummern, Kommentar)`}
+            data-testid={dialogTestId}
+          >
+            <Pencil className="h-3 w-3" aria-label={`${label} Details erfassen`} />
+          </button>
+        )}
+      </span>
     </td>
   );
 }
@@ -368,12 +417,38 @@ interface TagesabschlussTableProps {
    * → Feld `umsatz`). Ohne Callback rendern die Zellen ohne Edit-Button.
    */
   onOverrideClick?: (date: string, field: 'karten' | 'umsatz') => void;
+  /**
+   * Inline-Korrektur weiterer Auto-Felder (gleiche Semantik wie
+   * onCorrectRechnung): `karten` = „KK Adyen Ist" (KK laut Z-Bericht OHNE
+   * TWINT), `gutscheinVerkauft`/`gutscheinEingeloest` = Gutschein-Beträge.
+   * corrected null oder == Original entfernt die Korrektur; prevComment
+   * erhält den bestehenden Override-Kommentar.
+   */
+  onInlineCorrect?: (
+    date: string,
+    field: 'karten' | 'gutscheinVerkauft' | 'gutscheinEingeloest',
+    original: number,
+    corrected: number | null,
+    prevComment: string | undefined,
+  ) => void;
+  /**
+   * Inline-Erfassung des Barausgaben-Tages-Totals als generische
+   * Inline-Ausgabe — nur aktiv, solange row.inlineExpenseOnly (keine
+   * itemisierten Ausgaben). null/leer entfernt die Inline-Ausgabe.
+   */
+  onInlineExpense?: (date: string, amount: number | null) => void;
+  /**
+   * Setzt/entfernt den manuellen Kassensaldo-Tagesanker (re-based die
+   * Saldo-Kette ab diesem Tag; null = Anker entfernen).
+   */
+  onSetSaldoAnker?: (date: string, value: number | null) => void;
 }
 
 export function TagesabschlussTable({
   rows, totals, onDayClick, readOnly = false, onSaveManual,
   onCorrectRechnung, onVoucherClick, onExpensesClick, onConfirm, onReasonsClick,
   onCloseDay, showAllColumns = false, onOverrideClick,
+  onInlineCorrect, onInlineExpense, onSetSaldoAnker,
 }: TagesabschlussTableProps) {
   const today = todayIso();
   const showAll = showAllColumns;
@@ -433,6 +508,14 @@ export function TagesabschlussTable({
             const closeCheck = !rowLocked && row.hasZbericht ? canCloseDay(row) : null;
             // Override-Popup (KK Adyen Ist / Umsatz Ist) — nur mit Z-Bericht.
             const overrideEditable = !readOnly && !!onOverrideClick && !rowLocked && row.hasZbericht;
+            // Inline-Korrektur weiterer Auto-Felder (KK/Gutscheine) — auch
+            // ohne Z-Bericht möglich (Original = 0).
+            const inlineCorrectable = !readOnly && !!onInlineCorrect && !rowLocked;
+            // Kassensaldo-Tagesanker inline setzen/entfernen.
+            const saldoEditable = !readOnly && !!onSetSaldoAnker && !rowLocked;
+            // Barausgaben-Total inline — nur solange keine itemisierten
+            // Ausgaben existieren (sonst Dialog-only).
+            const inlineExpenseEditable = !readOnly && !!onInlineExpense && !rowLocked && row.inlineExpenseOnly;
             return (
               <tr
                 key={row.date}
@@ -542,7 +625,7 @@ export function TagesabschlussTable({
                     : Math.round(((row.cells.karten.value ?? 0) + (row.cells.twint.value ?? 0)) * 100) / 100;
                   return (
                     <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${showAll ? '' : `${SEP} pl-3`} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${showAll ? '' : `${SEP} pl-3`} ${inlineCorrectable ? EDIT_CELL_FOCUS : ''} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
                       title={kOv
                         ? `Korrigierter KK-Wert (inkl. TWINT); KK laut Adyen: ${row.adyenTotal === null ? '—' : fmtChf(row.adyenTotal)}`
                         : adyenTitle}
@@ -590,6 +673,25 @@ export function TagesabschlussTable({
                                 </PopoverContent>
                               </Popover>
                             )}
+                        {inlineCorrectable && (
+                          /* Inline-Korrektur „KK Adyen Ist" = Feld `karten`
+                             (KK laut Z-Bericht OHNE TWINT) — gleiche Semantik
+                             wie das Override-Popup, nur ohne Kommentar. */
+                          <InlineAmountInput
+                            value={row.cells.karten.value}
+                            manual={false}
+                            corrected={kOv}
+                            onCommit={v => onInlineCorrect!(
+                              row.date,
+                              'karten',
+                              row.cells.karten.override?.originalValue ?? row.cells.karten.auto ?? 0,
+                              v,
+                              row.cells.karten.override?.comment,
+                            )}
+                            testId={`ta-input-karten-${row.date}`}
+                            ariaLabel={`KK Adyen Ist (Karten ohne TWINT) ${row.date}`}
+                          />
+                        )}
                         {overrideEditable && (
                           <button
                             type="button"
@@ -641,14 +743,19 @@ export function TagesabschlussTable({
                   const shownSaldo = rowLocked && row.fixedKassensaldo !== null
                     ? row.fixedKassensaldo
                     : row.kassensaldoSoll;
-                  const saldoTitle = shownSaldo === null
-                    ? 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle)'
-                    : rowLocked && row.fixedKassensaldo !== null
-                      ? `Beim Abschluss fixierter Kassensaldo${row.needsReview && row.kassensaldoSoll !== null ? ` — aktuell berechnet: ${fmtChf(row.kassensaldoSoll)}` : ''}`
-                      : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank';
+                  const anchored = row.saldoAnker !== null;
+                  const saldoTitle = rowLocked && row.fixedKassensaldo !== null
+                    ? `Beim Abschluss fixierter Kassensaldo${row.needsReview && row.kassensaldoSoll !== null ? ` — aktuell berechnet: ${fmtChf(row.kassensaldoSoll)}` : ''}`
+                    : anchored
+                      ? `Manuell gesetzter Kassensaldo (Tages-Anker) — berechnet wäre: ${row.saldoBerechnet === null ? '—' : fmtChf(row.saldoBerechnet)}. Leereingabe entfernt den Anker.`
+                      : shownSaldo === null
+                        ? saldoEditable
+                          ? 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle) oder hier den gezählten Saldo als Anker setzen'
+                          : 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle)'
+                        : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank';
                   return (
                     <td
-                      className="px-2 py-1 text-right tabular-nums whitespace-nowrap text-muted-foreground"
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap text-muted-foreground ${saldoEditable ? EDIT_CELL_FOCUS : ''}`}
                       title={saldoTitle}
                       data-testid={`ta-saldo-${row.date}`}
                     >
@@ -661,7 +768,18 @@ export function TagesabschlussTable({
                             <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" aria-label="Kassensaldo überprüfen" />
                           </span>
                         )}
-                        {shownSaldo === null ? '—' : fmtChf(shownSaldo)}
+                        {saldoEditable ? (
+                          <InlineAmountInput
+                            value={shownSaldo}
+                            manual={false}
+                            corrected={anchored}
+                            onCommit={v => onSetSaldoAnker!(row.date, v)}
+                            testId={`ta-input-saldo-${row.date}`}
+                            ariaLabel={`Kassensaldo Soll (manueller Tages-Anker) ${row.date}`}
+                          />
+                        ) : (
+                          shownSaldo === null ? '—' : fmtChf(shownSaldo)
+                        )}
                       </span>
                     </td>
                   );
@@ -760,7 +878,43 @@ export function TagesabschlussTable({
                 ) : (
                   <ValueCell cell={row.cells.rechnung} sep />
                 )}
-                {voucherEditable ? (
+                {inlineCorrectable ? (
+                  /* Betrag inline (Korrektur-Semantik); der Stift daneben
+                     öffnet den Gutschein-Dialog (Nummern/Kommentar) und
+                     behält die bisherigen testids. */
+                  <>
+                    <VoucherInlineCell
+                      cell={row.cells.gutscheinVerkauft}
+                      label="Verkaufte Gutscheine"
+                      date={row.date}
+                      onCommit={v => onInlineCorrect!(
+                        row.date,
+                        'gutscheinVerkauft',
+                        row.cells.gutscheinVerkauft.override?.originalValue ?? row.cells.gutscheinVerkauft.auto ?? 0,
+                        v,
+                        row.cells.gutscheinVerkauft.override?.comment,
+                      )}
+                      inputTestId={`ta-input-gutschein-verkauft-${row.date}`}
+                      dialogTestId={`ta-gutschein-verkauft-${row.date}`}
+                      onDialogClick={voucherEditable ? () => onVoucherClick!(row.date, 'verkauft') : undefined}
+                    />
+                    <VoucherInlineCell
+                      cell={row.cells.gutscheinEingeloest}
+                      label="Eingelöste Gutscheine"
+                      date={row.date}
+                      onCommit={v => onInlineCorrect!(
+                        row.date,
+                        'gutscheinEingeloest',
+                        row.cells.gutscheinEingeloest.override?.originalValue ?? row.cells.gutscheinEingeloest.auto ?? 0,
+                        v,
+                        row.cells.gutscheinEingeloest.override?.comment,
+                      )}
+                      inputTestId={`ta-input-gutschein-eingeloest-${row.date}`}
+                      dialogTestId={`ta-gutschein-eingeloest-${row.date}`}
+                      onDialogClick={voucherEditable ? () => onVoucherClick!(row.date, 'eingeloest') : undefined}
+                    />
+                  </>
+                ) : voucherEditable ? (
                   <>
                     <VoucherCell cell={row.cells.gutscheinVerkauft} label="Verkaufte Gutscheine"
                       onClick={() => onVoucherClick!(row.date, 'verkauft')}
@@ -778,8 +932,31 @@ export function TagesabschlussTable({
 
                 {/* ── Gruppe Ausgaben: Barausgaben (nur Tages-Total; Klick
                     öffnet AUSSCHLIESSLICH den Barausgaben-Dialog) ── */}
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3`}>
-                  {expensesEditable ? (
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineExpenseEditable ? EDIT_CELL_FOCUS : ''}`}>
+                  {inlineExpenseEditable ? (
+                    /* Total inline erfassen (generische Inline-Ausgabe) —
+                       Plus öffnet weiter den Dialog für itemisierte Erfassung. */
+                    <span className="inline-flex items-center gap-1">
+                      <InlineAmountInput
+                        value={row.expenseCount > 0 ? row.barausgabenTotal : null}
+                        manual={row.expenseCount > 0}
+                        onCommit={v => onInlineExpense!(row.date, v)}
+                        testId={`ta-input-expenses-${row.date}`}
+                        ariaLabel={`Barausgaben Total ${row.date}`}
+                      />
+                      {expensesEditable && (
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-primary cursor-pointer shrink-0"
+                          onClick={() => onExpensesClick!(row.date)}
+                          title="Barausgaben einzeln erfassen (eigener Dialog: Konto, Text, MWST, Beleg)"
+                          data-testid={`ta-expenses-${row.date}`}
+                        >
+                          <Plus className="h-3 w-3" aria-label="Barausgaben-Dialog öffnen" />
+                        </button>
+                      )}
+                    </span>
+                  ) : expensesEditable ? (
                     <button
                       type="button"
                       className="group inline-flex items-center gap-1 rounded px-1 -mx-1 cursor-pointer hover:bg-accent hover:text-accent-foreground"

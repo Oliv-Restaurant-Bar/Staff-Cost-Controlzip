@@ -7,6 +7,7 @@
 - [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees; FK on schedule_entries was dropped.
 - [Kawtar/Party employee migration](kawtar-party-migration.md) — Migrated to employees (IDs: kawtar, party); loadEmployees filters isActive !== false to hide archived aush_* ghosts.
 - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
+- [KV merge-on-save tombstones](kv-merge-tombstones.md) — hard-deleted keys in union-merged blobs resurrect from the remote KV; every remove path needs a tombstone (deleted+updatedAt) + reader filters.
 - [Detail-page state reset on :id change](detail-page-state-reset.md) — `/:id` pages are reused across param changes; reset fetched-record state at top of load() AND in catch, or the previous record leaks (cross-guest PII).
 - [Admin gate excludes guests (read+write)](admin-write-gate-guest-session.md) — isAdmin = isAdminUser || isGuest; admin-only PII/write pages must gate isAdmin && !isGuest on BOTH route guard AND data-fetch effect.
 - [Vitest environments](vitest-node-environment.md) — pure logic: `node` pragma; component tests: `happy-dom` (jsdom→canvas/libuuid crash); multi-suite runs OOM → split.
@@ -18,7 +19,6 @@
 - [Gastronovi product CSV duplicate lines](gastronovi-product-csv-duplicate-lines.md) — duplicate same-name lines are summed per product/date (flat CSV has no article#).
 - [Guest duplicate merge safety](guest-merge.md) — no DB tx: move reservations FIRST, recompute aggregates from records, never touch match_key, tenant-filter every op.
 - [Import-Historie logging](import-history-logging.md) — audit log (import_runs) is best-effort/never-throws, additive (don't touch core import write), no guest PII, DB-default timestamp.
-- [Admin-only pages exclude guests](guest-session-admin-gate.md) — usePermissions().isAdmin includes guest links; gate sensitive pages with isAdmin && !isGuest AND guard fetch effects (they fire before Navigate).
 - [Role-based employee visibility](role-employee-visibility.md) — one chokepoint getVisibleEmployeesForRole for dept-scoping; restricted role wins; render scoping isn't a hard guarantee.
 - [Bulk upsert dedupe](bulk-upsert-dedupe.md) — dedupe rows by the onConflict key before .upsert(), else Postgres "ON CONFLICT DO UPDATE command cannot affect row a second time"; recompute import stats from deduped list.
 - [vite build OOM (silent kill)](vite-build-oom.md) — build/full-vitest/tsc all die silently (exit -1) on OOM; raise heap for build, LSP diagnostics as type gate, tests batched serially.

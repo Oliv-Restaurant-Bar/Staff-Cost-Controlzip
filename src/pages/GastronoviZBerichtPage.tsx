@@ -27,6 +27,7 @@ import {
   saveGnImport, loadGnImports, deleteGnImport,
   checkOverlappingImports, importTypeLabel,
   fetchBatchOverlaps, saveGnZBerichtBatch,
+  loadGnDayClosingsForMonth,
 } from '@/lib/gn-zbericht-db';
 import type { GnImportRow, OverlapInfo, BatchSaveItem, BatchSaveResult } from '@/lib/gn-zbericht-db';
 import {
@@ -54,6 +55,18 @@ import type { GnAverageCheckImportGroup } from '@/lib/gn-average-check-db';
 
 import { runGnDiagnostic } from '@/lib/gn-diagnostic';
 import type { GnDiagnosticResult } from '@/lib/gn-diagnostic';
+
+import type { GnDayClosing } from '@/lib/tagesabschluss';
+import {
+  applyImportConflictResolutions,
+  detectTagesabschlussImportConflicts,
+} from '@/lib/tagesabschluss';
+import type {
+  TagesabschlussImportConflict,
+  TagesabschlussImportConflictResolution,
+} from '@/lib/tagesabschluss';
+import { loadTagesabschluss, saveTagesabschluss } from '@/lib/tagesabschluss-db';
+import { TagesabschlussImportConflictDialog } from '@/components/umsatzabstimmung/TagesabschlussImportConflictDialog';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -314,6 +327,66 @@ export default function GastronoviZBerichtPage() {
     handleFilesSelected(Array.from(e.dataTransfer.files));
   };
 
+  // ── Import-Abgleich Tagesabschluss (manuelle Korrekturen vs. Import) ───────
+
+  const [importConflicts, setImportConflicts] = useState<TagesabschlussImportConflict[] | null>(null);
+  const [conflictSaving, setConflictSaving] = useState(false);
+
+  /**
+   * Nach erfolgreichem TAGES-Import (period_from === period_to) prüfen, ob
+   * für die importierten Tage manuelle Korrekturen im Tagesabschluss
+   * existieren, die vom neuen Importwert abweichen → Abgleich-Dialog.
+   * Best-effort: der Import selbst ist zu diesem Zeitpunkt bereits gespeichert.
+   */
+  const checkTagesabschlussConflicts = useCallback(async (dayDates: string[]) => {
+    const dates = Array.from(new Set(dayDates.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))));
+    if (dates.length === 0) return;
+    try {
+      const blob = await loadTagesabschluss(tenantId);
+      if (Object.keys(blob.overrides).length === 0) return;
+      // Nur die tatsächlich importierten Tage abgleichen — Auto-Werte anderer
+      // Tage haben sich durch diesen Import nicht geändert.
+      const closings: Record<string, GnDayClosing> = {};
+      const months = Array.from(new Set(dates.map(d => d.slice(0, 7))));
+      for (const m of months) {
+        const [y, mm] = m.split('-').map(Number);
+        const monthClosings = await loadGnDayClosingsForMonth(tenantId, y, mm);
+        for (const d of dates) {
+          if (monthClosings[d]) closings[d] = monthClosings[d];
+        }
+      }
+      const conflicts = detectTagesabschlussImportConflicts(closings, blob);
+      if (conflicts.length > 0) setImportConflicts(conflicts);
+    } catch {
+      // Abgleich ist best-effort — nie den bereits erfolgreichen Import stören.
+    }
+  }, [tenantId]);
+
+  const handleConflictCancel = useCallback(() => {
+    if (!conflictSaving) setImportConflicts(null);
+  }, [conflictSaving]);
+
+  const handleConflictConfirm = useCallback(async (resolutions: TagesabschlussImportConflictResolution[]) => {
+    setConflictSaving(true);
+    try {
+      const takeN = resolutions.filter(r => r.action === 'uebernehmen').length;
+      if (takeN > 0) {
+        // Frisch laden → reine Mutation → speichern (merge-on-save):
+        // der Dialog kann länger offen stehen, andere Flächen können den
+        // Blob zwischenzeitlich verändert haben.
+        const blob = await loadTagesabschluss(tenantId);
+        const next = applyImportConflictResolutions(blob, resolutions, new Date().toISOString());
+        if (next !== blob) await saveTagesabschluss(tenantId, next);
+        toast.success(`${takeN} Korrektur${takeN === 1 ? '' : 'en'} entfernt — Importwert gilt wieder`);
+      }
+      setImportConflicts(null);
+    } catch (e) {
+      toast.error('Abgleich fehlgeschlagen: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setConflictSaving(false);
+    }
+  }, [tenantId]);
+
   // ── Bestätigen ─────────────────────────────────────────────────────────────
 
   // Manuelles Zeitraum-Update → Überschneidungen neu prüfen
@@ -326,12 +399,15 @@ export default function GastronoviZBerichtPage() {
 
   const handleConfirm = async (replacePersonDup = false) => {
     setStep('saving');
+    let importedDays: string[] = [];
     if (importType === 'zbericht' && parsed) {
       const pFrom  = parsed.periodFrom || manualPeriodFrom || undefined;
       const pTo    = parsed.periodTo   || manualPeriodTo   || undefined;
       const ids    = overlapInfo.map(o => o.id);
       const { error } = await saveGnImport(tenantId, parsed, undefined, ids, pFrom, pTo);
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
+      // Nur echte TAGES-Importe für den Tagesabschluss-Abgleich vormerken.
+      if (pFrom && pTo && pFrom === pTo) importedDays = [pFrom];
     } else if (importType === 'personen' && parsedPerson) {
       const { error } = await savePersonImport(
         tenantId, parsedPerson,
@@ -347,6 +423,7 @@ export default function GastronoviZBerichtPage() {
     setStep('done');
     setTab('history');
     loadHistory();
+    if (importedDays.length > 0) void checkTagesabschlussConflicts(importedDays);
   };
 
   // Multi-Datei-Import bestätigen: Plan berechnen, pro Datei atomar speichern.
@@ -387,6 +464,15 @@ export default function GastronoviZBerichtPage() {
 
     setStep('done');
     loadHistory();
+
+    // Tagesabschluss-Abgleich für erfolgreich importierte TAGES-Berichte.
+    const importedDays = results
+      .filter(r => r.ok && !r.skipped)
+      .map(r => byId.get(r.id))
+      .filter((f): f is NonNullable<typeof f> =>
+        !!f && !!f.periodFrom && f.periodFrom === f.periodTo)
+      .map(f => f.periodFrom as string);
+    if (importedDays.length > 0) void checkTagesabschlussConflicts(importedDays);
   };
 
   // ── Löschen ────────────────────────────────────────────────────────────────
@@ -1669,6 +1755,13 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
           )}
         </div>
       )}
+
+      <TagesabschlussImportConflictDialog
+        conflicts={importConflicts}
+        onCancel={handleConflictCancel}
+        onConfirm={resolutions => { void handleConflictConfirm(resolutions); }}
+        saving={conflictSaving}
+      />
     </div>
   );
 }

@@ -38,10 +38,12 @@ import {
   emptyTagesabschlussBlob,
   setCashDiffReasons,
   setExportSettings,
+  setSaldoAnker,
   setTagesabschlussComment,
   setTagesabschlussOverride,
   tagesabschlussMonthKey,
   upsertExpense,
+  upsertInlineExpense,
   upsertManualDay,
   type CashExpense,
   type GnDayClosing,
@@ -210,6 +212,40 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
     void persist(setTagesabschlussOverride(blob, date, 'rechnung', original, next, prevComment, new Date().toISOString()));
   }, [readOnly, blob, isDayLocked, persist]);
 
+  /**
+   * Inline-Korrektur weiterer Auto-Felder aus der Tabelle (KK „karten",
+   * Gutschein-Beträge) — identische Semantik wie Debitoren: Wert gleich
+   * Original (oder Leereingabe) entfernt die Korrektur, der bestehende
+   * Override-Kommentar bleibt erhalten.
+   */
+  const handleInlineCorrect = useCallback((
+    date: string,
+    field: 'karten' | 'gutscheinVerkauft' | 'gutscheinEingeloest',
+    original: number,
+    corrected: number | null,
+    prevComment: string | undefined,
+  ) => {
+    if (readOnly || !blob || isDayLocked(date)) return;
+    const next = corrected !== null && Math.abs(corrected - original) < 0.005 ? null : corrected;
+    void persist(setTagesabschlussOverride(blob, date, field, original, next, prevComment, new Date().toISOString()));
+  }, [readOnly, blob, isDayLocked, persist]);
+
+  /**
+   * Barausgaben-Total inline (generische Inline-Ausgabe) — nur solange keine
+   * itemisierten Ausgaben existieren (Tabelle gated via row.inlineExpenseOnly,
+   * upsertInlineExpense fasst andere Ausgaben ohnehin nie an).
+   */
+  const handleInlineExpense = useCallback((date: string, amount: number | null) => {
+    if (readOnly || !blob || isDayLocked(date)) return;
+    void persist(upsertInlineExpense(blob, date, amount, new Date().toISOString()));
+  }, [readOnly, blob, isDayLocked, persist]);
+
+  /** Manueller Kassensaldo-Tagesanker (null = Anker entfernen, Kette gilt wieder). */
+  const handleSetSaldoAnker = useCallback((date: string, value: number | null) => {
+    if (readOnly || !blob || isDayLocked(date)) return;
+    void persist(setSaldoAnker(blob, date, value, new Date().toISOString()));
+  }, [readOnly, blob, isDayLocked, persist]);
+
   const handleUpsertExpense = useCallback((expense: CashExpense) => {
     if (readOnly || !blob || isDayLocked(expense.date)) return;
     void persist(upsertExpense(blob, expense));
@@ -217,7 +253,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
 
   const handleRemoveExpense = useCallback((date: string, id: string) => {
     if (readOnly || !blob || isDayLocked(date)) return;
-    void persist(removeExpense(blob, date, id));
+    void persist(removeExpense(blob, date, id, new Date().toISOString()));
   }, [readOnly, blob, isDayLocked, persist]);
 
   const handleSaveSettings = useCallback((settings: TagesabschlussExportSettings) => {
@@ -327,10 +363,10 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
   }, [canReopen, blob, monthKey, currentUser, persist]);
 
   const openRow = openDate ? monthData.rows.find(r => r.date === openDate) ?? null : null;
-  const openExpenses = openDate ? (blob?.expenses[openDate] ?? []) : [];
+  const openExpenses = openDate ? (blob?.expenses[openDate] ?? []).filter(e => !e.deleted) : [];
   const voucherRow = voucherCtx ? monthData.rows.find(r => r.date === voucherCtx.date) ?? null : null;
   const overrideRow = overrideCtx ? monthData.rows.find(r => r.date === overrideCtx.date) ?? null : null;
-  const dialogExpenses = openExpensesDate ? (blob?.expenses[openExpensesDate] ?? []) : [];
+  const dialogExpenses = openExpensesDate ? (blob?.expenses[openExpensesDate] ?? []).filter(e => !e.deleted) : [];
 
   /**
    * Gutschein-Dialog speichert Betrag (Override), Nummern (manuelles Feld)
@@ -582,6 +618,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               readOnly={readOnly}
               onSaveManual={handleSaveManual}
               onCorrectRechnung={handleCorrectRechnung}
+              onInlineCorrect={handleInlineCorrect}
+              onInlineExpense={handleInlineExpense}
+              onSetSaldoAnker={handleSetSaldoAnker}
               onVoucherClick={(date, kind) => setVoucherCtx({ date, kind })}
               onOverrideClick={(date, field) => setOverrideCtx({ date, field })}
               onExpensesClick={setOpenExpensesDate}
@@ -598,6 +637,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span>Adyen- und Cash-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
               <span>Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
               <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Cash Diff = Cash Ist − Kassensaldo Soll</span>
+              <span>Kassensaldo Soll inline überschreiben = manueller Tages-Anker (gelb; Leereingabe entfernt ihn)</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag abgeschlossen (gesperrt)</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-50 border border-yellow-300 align-middle mr-1" />abgeschlossen mit Differenz</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-orange-50 border border-orange-300 align-middle mr-1" />wieder geöffnet</span>

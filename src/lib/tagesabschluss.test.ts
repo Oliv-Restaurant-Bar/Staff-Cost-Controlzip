@@ -4,8 +4,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  applyImportConflictResolutions,
   buildMonthClosureSnapshot,
   buildTagesabschlussRows,
+  detectTagesabschlussImportConflicts,
+  inlineExpenseId,
+  isInlineExpenseEditable,
+  INLINE_EXPENSE_DEFAULT_KONTO,
+  setSaldoAnker,
+  upsertInlineExpense,
   canCloseDay,
   canCloseMonth,
   closeDay,
@@ -929,8 +936,11 @@ describe('Mutationen', () => {
     const key = makeTagesabschlussFieldKey('2026-07-01', 'umsatz');
     expect(blob.overrides[key].originalValue).toBe(1000);
     expect(blob.overrides[key].correctedValue).toBe(980);
-    blob = setTagesabschlussOverride(blob, '2026-07-01', 'umsatz', 1000, null, undefined, NOW);
-    expect(blob.overrides[key]).toBeUndefined();
+    // null = Tombstone (Key bleibt für merge-on-save, Leser sehen "kein Override").
+    blob = setTagesabschlussOverride(blob, '2026-07-01', 'umsatz', 1000, null, undefined, '2026-07-07T10:00:00.000Z');
+    expect(blob.overrides[key]).toMatchObject({ originalValue: 1000, deleted: true, updatedAt: '2026-07-07T10:00:00.000Z' });
+    // Entfernen ohne bestehenden Override ist referenzgleich.
+    expect(setTagesabschlussOverride(blob, '2026-07-09', 'umsatz', 1, null, undefined, NOW)).toBe(blob);
   });
 
   it('setTagesabschlussComment setzt und entfernt Kommentare', () => {
@@ -952,8 +962,13 @@ describe('Mutationen', () => {
     blob = upsertExpense(blob, { ...e, date: '2026-07-02' });
     expect(blob.expenses['2026-07-01']).toBeUndefined();
     expect(blob.expenses['2026-07-02']).toHaveLength(1);
-    blob = removeExpense(blob, '2026-07-02', 'e1');
-    expect(blob.expenses['2026-07-02']).toBeUndefined();
+    // Entfernen = Tombstone (merge-on-save darf die Löschung nicht wiederbeleben).
+    blob = removeExpense(blob, '2026-07-02', 'e1', '2026-07-02T10:00:00.000Z');
+    expect(blob.expenses['2026-07-02']).toHaveLength(1);
+    expect(blob.expenses['2026-07-02'][0].deleted).toBe(true);
+    expect(blob.expenses['2026-07-02'][0].updatedAt).toBe('2026-07-02T10:00:00.000Z');
+    // Nochmaliges Entfernen ist referenzgleich (kein neues updatedAt).
+    expect(removeExpense(blob, '2026-07-02', 'e1', '2026-07-03T10:00:00.000Z')).toBe(blob);
   });
 
   it('expensesTotal ignoriert kaputte Beträge', () => {
@@ -1102,5 +1117,225 @@ describe('Inline-Edit-Semantik (Einzel-Feld-Patches)', () => {
     const row = after.rows.find(r => r.date === '2026-07-01');
     expect(row?.cells.einzahlungBank.value).toBe(120);
     expect(row?.cells.einzahlungBank.source).toBe('manual');
+  });
+});
+
+describe('setSaldoAnker (Kassensaldo-Tagesanker)', () => {
+  it('setzt, rundet und entfernt den Anker', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setSaldoAnker(blob, '2026-07-02', 1234.567, NOW);
+    expect(blob.saldoAnker['2026-07-02']).toEqual({ value: 1234.57, updatedAt: NOW });
+    // Entfernen = Tombstone (Key bleibt, Leser behandeln ihn als "kein Anker").
+    const LATER = '2026-07-07T10:00:00.000Z';
+    blob = setSaldoAnker(blob, '2026-07-02', null, LATER);
+    expect(blob.saldoAnker['2026-07-02']).toEqual({ value: 1234.57, deleted: true, updatedAt: LATER });
+    // Entfernen ohne bestehenden Anker ist referenzgleich.
+    expect(setSaldoAnker(blob, '2026-07-09', null, LATER)).toBe(blob);
+  });
+
+  it('Tombstone-Anker wirkt nicht auf die Kette und zählt nicht als Anker-Kandidat', async () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setSaldoAnker(blob, '2026-07-02', 250, NOW);
+    blob = setSaldoAnker(blob, '2026-07-02', null, '2026-07-07T10:00:00.000Z');
+    const month = buildTagesabschlussRows(2026, 7, {}, blob, {}, null, null);
+    expect(month.rows.find(r => r.date === '2026-07-02')?.saldoAnker).toBeNull();
+    expect(month.rows.find(r => r.date === '2026-07-02')?.kassensaldoSoll).toBeNull();
+    // resolveKassensaldoStart ignoriert getombstonte Anker-Monate.
+    const res = await resolveKassensaldoStart(2026, 8, blob, async () => ({}));
+    expect(res.startSaldo).toBeNull();
+    expect(res.anchorMonth).toBeNull();
+  });
+
+  it('re-based die Saldo-Kette ab dem Anker-Tag; berechneter Wert bleibt sichtbar', () => {
+    // Tag 1: bargeldSoll = 1000 − (400+150+100) − 30 − 20 = 300 → Saldo 100+300 = 400.
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    let blob = emptyTagesabschlussBlob();
+    blob = setSaldoAnker(blob, '2026-07-02', 1000, NOW);
+    const month = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 100);
+    const d1 = month.rows.find(r => r.date === '2026-07-01');
+    const d2 = month.rows.find(r => r.date === '2026-07-02');
+    const d3 = month.rows.find(r => r.date === '2026-07-03');
+    expect(d1?.kassensaldoSoll).toBe(400);
+    expect(d1?.saldoAnker).toBeNull();
+    expect(d2?.saldoAnker).toBe(1000);
+    expect(d2?.kassensaldoSoll).toBe(1000);
+    expect(d2?.saldoBerechnet).toBe(400); // vor Anker-Anwendung
+    expect(d3?.kassensaldoSoll).toBe(1000); // Kette läuft ab Anker weiter
+  });
+
+  it('startet eine bislang unbekannte Kette (startSaldo null) ab dem Anker-Tag', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setSaldoAnker(blob, '2026-07-02', 250, NOW);
+    const month = buildTagesabschlussRows(2026, 7, {}, blob, {}, null, null);
+    expect(month.rows.find(r => r.date === '2026-07-01')?.kassensaldoSoll).toBeNull();
+    expect(month.rows.find(r => r.date === '2026-07-02')?.kassensaldoSoll).toBe(250);
+    expect(month.rows.find(r => r.date === '2026-07-03')?.kassensaldoSoll).toBe(250);
+  });
+});
+
+describe('upsertInlineExpense / isInlineExpenseEditable', () => {
+  it('legt die generische Inline-Ausgabe an und aktualisiert sie', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertInlineExpense(blob, '2026-07-01', 45.678, NOW);
+    const list = blob.expenses['2026-07-01'];
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(inlineExpenseId('2026-07-01'));
+    expect(list[0].amount).toBe(45.68);
+    expect(list[0].konto).toBe(INLINE_EXPENSE_DEFAULT_KONTO);
+    // Update behält Konto/Text einer bestehenden Inline-Ausgabe.
+    blob = upsertInlineExpense(blob, '2026-07-01', 60, NOW);
+    expect(blob.expenses['2026-07-01']).toHaveLength(1);
+    expect(blob.expenses['2026-07-01'][0].amount).toBe(60);
+  });
+
+  it('entfernt die Inline-Ausgabe bei null oder <= 0 (Tombstone) und reaktiviert sie', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertInlineExpense(blob, '2026-07-01', 45, NOW);
+    blob = upsertInlineExpense(blob, '2026-07-01', null, NOW);
+    expect(blob.expenses['2026-07-01']).toHaveLength(1);
+    expect(blob.expenses['2026-07-01'][0].deleted).toBe(true);
+    // Tombstone gilt als "keine Ausgabe" → Inline-Feld bleibt editierbar.
+    expect(isInlineExpenseEditable(blob.expenses['2026-07-01'], '2026-07-01')).toBe(true);
+    // Erneutes Setzen reaktiviert den Tombstone.
+    blob = upsertInlineExpense(blob, '2026-07-01', 45, NOW);
+    expect(blob.expenses['2026-07-01']).toHaveLength(1);
+    expect(blob.expenses['2026-07-01'][0].deleted).toBeUndefined();
+    expect(blob.expenses['2026-07-01'][0].amount).toBe(45);
+    blob = upsertInlineExpense(blob, '2026-07-01', 0, NOW);
+    expect(blob.expenses['2026-07-01'][0].deleted).toBe(true);
+  });
+
+  it('isInlineExpenseEditable: nur leer oder genau die Inline-Ausgabe', () => {
+    const date = '2026-07-01';
+    expect(isInlineExpenseEditable(undefined, date)).toBe(true);
+    expect(isInlineExpenseEditable([], date)).toBe(true);
+    const inline: CashExpense = { id: inlineExpenseId(date), date, amount: 10, konto: '1001', text: 'x', updatedAt: NOW };
+    expect(isInlineExpenseEditable([inline], date)).toBe(true);
+    const other: CashExpense = { id: 'exp-1', date, amount: 20, konto: '1001', text: 'y', updatedAt: NOW };
+    expect(isInlineExpenseEditable([other], date)).toBe(false);
+    expect(isInlineExpenseEditable([inline, other], date)).toBe(false);
+  });
+});
+
+describe('Import-Abgleich (detect/apply)', () => {
+  const DATE = '2026-07-01';
+
+  function blobWithOverride(field: 'umsatz' | 'karten', corrected: number): TagesabschlussBlob {
+    // makeClosing: umsatz (auto) = 1000, karten = 400+150+100 (MC/VISA/TWINT? nein:
+    // karten = isKkCard-Summe MC+VISA+TWINT = 650) — Original hier irrelevant,
+    // verankert wird der übergebene Erstwert.
+    return setTagesabschlussOverride(emptyTagesabschlussBlob(), DATE, field, 999, corrected, undefined, NOW);
+  }
+
+  it('meldet Konflikt nur bei Abweichung Importwert ↔ manueller Wert', () => {
+    const closings = { [DATE]: makeClosing(DATE) }; // auto.umsatz = 1000
+    const conflict = detectTagesabschlussImportConflicts(closings, blobWithOverride('umsatz', 950));
+    expect(conflict).toHaveLength(1);
+    expect(conflict[0]).toMatchObject({
+      date: DATE, field: 'umsatz', manualValue: 950, originalValue: 999, importValue: 1000, dayLocked: false,
+    });
+    // Importwert == manueller Wert (±0.005) → kein Konflikt.
+    expect(detectTagesabschlussImportConflicts(closings, blobWithOverride('umsatz', 1000))).toHaveLength(0);
+    // Ohne Override → kein Konflikt.
+    expect(detectTagesabschlussImportConflicts(closings, emptyTagesabschlussBlob())).toHaveLength(0);
+  });
+
+  it('markiert Konflikte an abgeschlossenen Tagen als dayLocked', () => {
+    const closings = { [DATE]: makeClosing(DATE) };
+    let blob = blobWithOverride('umsatz', 950);
+    blob = {
+      ...blob,
+      abschluesse: {
+        [DATE]: {
+          status: 'abgeschlossen', closedAt: NOW, closedBy: 'test',
+          fixedKassensaldo: 0, updatedAt: NOW, history: [],
+        },
+      },
+    };
+    const conflicts = detectTagesabschlussImportConflicts(closings, blob);
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].dayLocked).toBe(true);
+    // Wieder geöffnete Tage gelten nicht als gesperrt.
+    blob = {
+      ...blob,
+      abschluesse: { [DATE]: { ...blob.abschluesse[DATE], status: 'wieder_geoeffnet' } },
+    };
+    expect(detectTagesabschlussImportConflicts(closings, blob)[0].dayLocked).toBe(false);
+  });
+
+  it('uebernehmen tombstoned den Override, behalten ist No-op', () => {
+    const blob = blobWithOverride('umsatz', 950);
+    const key = makeTagesabschlussFieldKey(DATE, 'umsatz');
+    const LATER = '2026-07-07T10:00:00.000Z';
+    const kept = applyImportConflictResolutions(blob, [{ date: DATE, field: 'umsatz', action: 'behalten' }], LATER);
+    expect(kept).toBe(blob); // referenzgleich = keine Änderung
+    const taken = applyImportConflictResolutions(blob, [{ date: DATE, field: 'umsatz', action: 'uebernehmen' }], LATER);
+    // Tombstone statt hartem Löschen: merge-on-save darf den Override nicht
+    // aus dem Remote-KV wiederbeleben; Erst-Original bleibt verankert.
+    expect(taken.overrides[key]).toMatchObject({ originalValue: 999, deleted: true, updatedAt: LATER });
+    // Leser behandeln den Tombstone als "kein Override" → kein Konflikt mehr.
+    const closings = { [DATE]: makeClosing(DATE) };
+    expect(detectTagesabschlussImportConflicts(closings, taken)).toHaveLength(0);
+    // Nochmaliges uebernehmen auf dem Tombstone ist referenzgleich.
+    expect(applyImportConflictResolutions(taken, [{ date: DATE, field: 'umsatz', action: 'uebernehmen' }], NOW)).toBe(taken);
+    // Feld-Kommentare bleiben unangetastet (eigener Namespace).
+    expect(taken.comments).toEqual(blob.comments);
+  });
+
+  it('uebernehmen fasst gesperrte Tage NIE an', () => {
+    let blob = blobWithOverride('umsatz', 950);
+    blob = {
+      ...blob,
+      abschluesse: {
+        [DATE]: {
+          status: 'abgeschlossen', closedAt: NOW, closedBy: 'test',
+          fixedKassensaldo: 0, updatedAt: NOW, history: [],
+        },
+      },
+    };
+    const key = makeTagesabschlussFieldKey(DATE, 'umsatz');
+    const result = applyImportConflictResolutions(blob, [{ date: DATE, field: 'umsatz', action: 'uebernehmen' }], NOW);
+    expect(result.overrides[key]).toBeDefined();
+    expect(result.overrides[key].deleted).toBeUndefined();
+    expect(result).toBe(blob);
+  });
+});
+
+describe('Tombstones überleben merge-on-save (keine Wiederauferstehung aus dem KV)', () => {
+  const LATER = '2026-07-07T10:00:00.000Z'; // NACH NOW — der Tombstone ist der jüngere Stand
+
+  it('Override-Tombstone gewinnt gegen älteren Remote-Live-Override', () => {
+    const key = makeTagesabschlussFieldKey('2026-07-01', 'umsatz');
+    // Remote (KV): Override lebt noch (Stand vor dem Löschen).
+    const remote = setTagesabschlussOverride(emptyTagesabschlussBlob(), '2026-07-01', 'umsatz', 1000, 950, undefined, NOW);
+    // Lokal: Override wurde später entfernt (Tombstone mit jüngerem updatedAt).
+    const local = setTagesabschlussOverride(remote, '2026-07-01', 'umsatz', 1000, null, undefined, LATER);
+    const merged = mergeTagesabschlussBlobs(local, remote);
+    expect(merged.overrides[key].deleted).toBe(true);
+    // buildCell behandelt den Tombstone als "kein Override" → Auto-Wert gilt.
+    const rows = buildTagesabschlussRows(2026, 7, { '2026-07-01': makeClosing('2026-07-01') }, merged, {}, null, 0);
+    expect(rows.rows.find(r => r.date === '2026-07-01')?.cells.umsatz.source).toBe('auto');
+  });
+
+  it('Saldo-Anker- und Expense-Tombstones gewinnen gegen ältere Remote-Live-Stände', () => {
+    let remote = emptyTagesabschlussBlob();
+    remote = setSaldoAnker(remote, '2026-07-02', 250, NOW);
+    remote = upsertInlineExpense(remote, '2026-07-01', 45, NOW);
+    let local = setSaldoAnker(remote, '2026-07-02', null, LATER);
+    local = upsertInlineExpense(local, '2026-07-01', null, LATER);
+    const merged = mergeTagesabschlussBlobs(local, remote);
+    expect(merged.saldoAnker['2026-07-02'].deleted).toBe(true);
+    expect(merged.expenses['2026-07-01'][0].deleted).toBe(true);
+    const month = buildTagesabschlussRows(2026, 7, {}, merged, {}, null, null);
+    expect(month.rows.find(r => r.date === '2026-07-02')?.saldoAnker).toBeNull();
+    expect(month.rows.find(r => r.date === '2026-07-01')?.barausgabenTotal).toBe(0);
+  });
+
+  it('normalizeTagesabschlussBlob reicht das deleted-Flag des Saldo-Ankers durch', () => {
+    let blob = emptyTagesabschlussBlob();
+    blob = setSaldoAnker(blob, '2026-07-02', 250, NOW);
+    blob = setSaldoAnker(blob, '2026-07-02', null, LATER);
+    const roundtripped = normalizeTagesabschlussBlob(JSON.parse(JSON.stringify(blob)));
+    expect(roundtripped.saldoAnker['2026-07-02']).toEqual({ value: 250, deleted: true, updatedAt: LATER });
   });
 });

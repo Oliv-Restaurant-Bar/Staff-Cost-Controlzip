@@ -272,7 +272,7 @@ export function buildTabelle2Rows(
   blob: TagesabschlussBlob,
   settings: TagesabschlussExportSettings | null,
 ): Tabelle2Export {
-  const monthExpenses = rows.flatMap(r => blob.expenses[r.date] ?? []);
+  const monthExpenses = rows.flatMap(r => (blob.expenses[r.date] ?? []).filter(e => !e.deleted));
   const validation = validateExportSettings(settings, rows, closings);
   const expenseErrors = validateExpenses(monthExpenses);
   const closureErrors = collectUnclosedDayErrors(rows);
@@ -412,8 +412,8 @@ export function buildTabelle2Rows(
     //    kommt separat aus dem Bankbeleg/Bankimport — ein Export hier wäre
     //    eine Doppelbuchung.
 
-    // 7) Barausgaben EINZELN — nie nur als Total.
-    for (const e of blob.expenses[row.date] ?? []) {
+    // 7) Barausgaben EINZELN — nie nur als Total (Tombstones überspringen).
+    for (const e of (blob.expenses[row.date] ?? []).filter(x => !x.deleted)) {
       out.push(makeRow({
         kategorie: 'barausgabe',
         blg: e.belegNr?.trim() || nextBlg(),

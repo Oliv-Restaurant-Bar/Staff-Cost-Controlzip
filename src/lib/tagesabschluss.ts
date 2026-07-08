@@ -166,6 +166,12 @@ export interface CashExpense {
   mwstCode?: string;
   belegNr?: string;
   kommentar?: string;
+  /**
+   * Tombstone: Ausgabe wurde gelöscht. Der Record bleibt (mit jüngerem
+   * updatedAt) erhalten, damit merge-on-save die Löschung NICHT durch den
+   * Remote-Stand wiederbelebt; alle Leser filtern `deleted`.
+   */
+  deleted?: true;
   updatedAt: string; // ISO
 }
 
@@ -260,6 +266,30 @@ export interface CashDiffReasonEntry {
 export interface KassensaldoAnfangsbestand {
   value: number; // CHF
   updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
+}
+
+/**
+ * Manueller Kassensaldo-Anker eines TAGES (Inline-Korrektur „Kassensaldo
+ * Soll"): die fortlaufende Kette rechnet ab diesem Tag mit dem Anker-Wert
+ * weiter (re-base) — auch über Monatsgrenzen. Der berechnete Wert bleibt
+ * jederzeit wiederherstellbar (Anker entfernen = Kette gilt wieder).
+ */
+export interface KassensaldoTagesanker {
+  value: number; // CHF
+  /** Tombstone: Anker entfernt — bleibt für merge-on-save erhalten (jüngster gewinnt). */
+  deleted?: true;
+  updatedAt: string; // ISO — für merge-on-save (jüngster gewinnt)
+}
+
+/**
+ * Korrektur-Override im Tagesabschluss-Blob — wie AdyenOverride, plus
+ * optionaler Tombstone: `deleted` markiert einen ENTFERNTEN Override
+ * (Auto-Wert gilt wieder), ohne den Key zu löschen — ein gelöschter Key
+ * würde beim merge-on-save sofort aus dem Remote-Stand wiederauferstehen.
+ * Erst-Original bleibt auch über Tombstones hinweg verankert.
+ */
+export interface TagesabschlussOverride extends AdyenOverride {
+  deleted?: true;
 }
 
 // ── Abschluss-/Sperrmechanismus (Tages- + Monatsabschluss) ───────────────────
@@ -379,8 +409,8 @@ export interface TagesabschlussBlob {
   days: Record<string, TagesabschlussManualDay>;
   /** Barausgaben je Tag, Key = yyyy-MM-dd. */
   expenses: Record<string, CashExpense[]>;
-  /** Korrektur-Overrides, Key = `date:field`. */
-  overrides: Record<string, AdyenOverride>;
+  /** Korrektur-Overrides, Key = `date:field` (inkl. Tombstones). */
+  overrides: Record<string, TagesabschlussOverride>;
   /** Kommentare, Key = `date:field`. */
   comments: Record<string, AdyenComment>;
   /** Kassendifferenz-Gründe + Notiz, Key = yyyy-MM-dd (eigener Namespace,
@@ -388,6 +418,8 @@ export interface TagesabschlussBlob {
   cashDiffReasons: Record<string, CashDiffReasonEntry>;
   /** Kassensaldo-Anfangsbestand je Monat, Key = yyyy-MM (Anker der Saldo-Kette). */
   anfangsbestand: Record<string, KassensaldoAnfangsbestand>;
+  /** Manuelle Kassensaldo-Tagesanker, Key = yyyy-MM-dd (re-base der Kette). */
+  saldoAnker: Record<string, KassensaldoTagesanker>;
   /** Definitive Tagesabschlüsse (Sperr-Records), Key = yyyy-MM-dd. */
   abschluesse: Record<string, DayClosure>;
   /** Monatsabschlüsse, Key = yyyy-MM. */
@@ -401,7 +433,8 @@ export interface TagesabschlussBlob {
 export function emptyTagesabschlussBlob(): TagesabschlussBlob {
   return {
     days: {}, expenses: {}, overrides: {}, comments: {},
-    cashDiffReasons: {}, anfangsbestand: {}, abschluesse: {}, monatsabschluesse: {},
+    cashDiffReasons: {}, anfangsbestand: {}, saldoAnker: {},
+    abschluesse: {}, monatsabschluesse: {},
     exportSettings: null, exportProtokolle: {},
   };
 }
@@ -440,6 +473,19 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
       if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
       anfangsbestand[monthKey] = {
         value: e.value,
+        updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
+      };
+    }
+  }
+  const saldoAnker: TagesabschlussBlob['saldoAnker'] = {};
+  if (isObj(o.saldoAnker)) {
+    for (const [date, entry] of Object.entries(o.saldoAnker as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const e = entry as Partial<KassensaldoTagesanker>;
+      if (typeof e.value !== 'number' || !Number.isFinite(e.value)) continue;
+      saldoAnker[date] = {
+        value: e.value,
+        ...(e.deleted === true ? { deleted: true as const } : {}),
         updatedAt: typeof e.updatedAt === 'string' ? e.updatedAt : '',
       };
     }
@@ -527,6 +573,7 @@ export function normalizeTagesabschlussBlob(raw: unknown): TagesabschlussBlob {
     comments:  isObj(o.comments)  ? (o.comments  as TagesabschlussBlob['comments'])  : {},
     cashDiffReasons,
     anfangsbestand,
+    saldoAnker,
     abschluesse,
     monatsabschluesse,
     exportSettings:
@@ -821,6 +868,12 @@ export interface TagesabschlussRow {
   /** Summe der einzelnen Barausgaben des Tages (Übersicht zeigt NUR das Total). */
   barausgabenTotal: number;
   expenseCount: number;
+  /**
+   * Barausgaben-Total darf INLINE erfasst werden: keine Ausgaben oder nur
+   * die generische Inline-Ausgabe. Bei itemisierten Ausgaben false —
+   * dann nur über den Barausgaben-Dialog editieren.
+   */
+  inlineExpenseOnly: boolean;
   bemerkung?: string;
   /** Gutscheinnummern (verkauft) — NUR fürs Tagesdetail, nie in der Übersicht rendern. */
   gutscheinNummernVerkauft?: string[];
@@ -867,6 +920,17 @@ export interface TagesabschlussRow {
    * Anfangsbestand. null, solange kein Anker (startSaldo) bekannt ist.
    */
   kassensaldoSoll: number | null;
+  /**
+   * Manueller Kassensaldo-Tagesanker (Inline-Korrektur): gesetzt = die Kette
+   * wurde ab diesem Tag auf diesen Wert re-based (kassensaldoSoll = Anker).
+   * null = rein berechneter Saldo.
+   */
+  saldoAnker: number | null;
+  /**
+   * Rein BERECHNETER Kettenwert dieses Tages (vor Anwendung eines
+   * Tages-Ankers) — für die Anzeige „berechnet: …" neben dem Anker.
+   */
+  saldoBerechnet: number | null;
   /** Cash Ist = manuell gezählter Kassenbestand (Feld `bestandKasse`). */
   cashIst: number | null;
   /** Cash Differenz = Cash Ist − Kassensaldo Soll; null, solange eine Seite fehlt. */
@@ -985,7 +1049,7 @@ function buildCell(
   const key = makeTagesabschlussFieldKey(date, field);
   const ov = blob.overrides[key];
   const comment = blob.comments[key]?.text;
-  if (ov && ov.correctedByManualOverride) {
+  if (ov && ov.correctedByManualOverride && !ov.deleted) {
     return { auto, value: ov.correctedValue, source: 'corrected', override: ov, ...(comment ? { comment } : {}) };
   }
   if (manual !== null && manual !== undefined) {
@@ -1040,7 +1104,7 @@ export function buildTagesabschlussRows(
     cells.bestandKasse = buildCell(date, 'bestandKasse', null, manual?.bestandKasse ?? null, blob);
     cells.einzahlungBank = buildCell(date, 'einzahlungBank', null, manual?.einzahlungBank ?? null, blob);
 
-    const expenses = blob.expenses[date] ?? [];
+    const expenses = (blob.expenses[date] ?? []).filter(e => !e.deleted);
     const barausgabenTotal = expensesTotal(expenses);
 
     const umsatz = cells.umsatz.value;
@@ -1072,6 +1136,14 @@ export function buildTagesabschlussRows(
     if (saldo !== null) {
       saldo = round2(saldo + (bargeldSoll ?? 0) - einzahlungBank);
     }
+    // Manueller Tages-Anker (Inline-Korrektur „Kassensaldo Soll"): re-based
+    // die Kette ab diesem Tag — auch wenn sie bisher null war (kein
+    // Monats-Anker). Der berechnete Wert bleibt über das Entfernen des
+    // Ankers jederzeit wiederherstellbar.
+    const ankerEntry = blob.saldoAnker[date];
+    const tagesanker = ankerEntry && !ankerEntry.deleted ? ankerEntry : undefined;
+    const saldoVorAnker = saldo;
+    if (tagesanker) saldo = round2(tagesanker.value);
     const kassensaldoSoll = saldo;
 
     // Abschluss-Record: gesperrte Tage zeigen den beim Abschluss FIXIERTEN
@@ -1115,6 +1187,7 @@ export function buildTagesabschlussRows(
       || cells.einzahlungBank.value !== null
       || expenses.length > 0
       || cashDiffBegruendet
+      || !!tagesanker
       || (Object.values(cells) as DayCell[]).some(c => c.source === 'corrected' || c.source === 'manual');
     const status: TagesabschlussStatus = closure && locked
       ? closure.status as TagesabschlussStatus
@@ -1153,6 +1226,7 @@ export function buildTagesabschlussRows(
       cells,
       barausgabenTotal,
       expenseCount: expenses.length,
+      inlineExpenseOnly: isInlineExpenseEditable(expenses, date),
       ...(manual?.bemerkung ? { bemerkung: manual.bemerkung } : {}),
       ...(manual?.gutscheinNummernVerkauft?.length
         ? { gutscheinNummernVerkauft: manual.gutscheinNummernVerkauft } : {}),
@@ -1165,6 +1239,8 @@ export function buildTagesabschlussRows(
       barumsatz,
       bargeldSoll,
       kassensaldoSoll,
+      saldoAnker: tagesanker ? round2(tagesanker.value) : null,
+      saldoBerechnet: saldoVorAnker,
       cashIst,
       cashDiff,
       cashDiffStatus,
@@ -1287,7 +1363,20 @@ export function setTagesabschlussOverride(
   const key = makeTagesabschlussFieldKey(date, field);
   const overrides = { ...blob.overrides };
   if (correctedValue === null) {
-    delete overrides[key];
+    // Tombstone statt Key-Löschung: merge-on-save (Union je Key) würde einen
+    // gelöschten Key sofort aus dem Remote-Stand wiederbeleben. Erst-Original
+    // bleibt verankert; alle Leser behandeln `deleted` als "kein Override".
+    const existing = overrides[key];
+    if (!existing) return blob;
+    if (!existing.deleted) {
+      overrides[key] = {
+        originalValue: existing.originalValue,
+        correctedValue: existing.correctedValue,
+        correctedByManualOverride: true,
+        deleted: true,
+        updatedAt: now,
+      };
+    }
   } else {
     const existing = overrides[key];
     overrides[key] = {
@@ -1349,6 +1438,34 @@ export function setAnfangsbestand(
   return { ...blob, anfangsbestand };
 }
 
+/**
+ * Setzt oder entfernt den manuellen Kassensaldo-Tagesanker (`date` =
+ * yyyy-MM-dd). Die Saldo-Kette rechnet ab diesem Tag mit dem Anker-Wert
+ * weiter (re-base, auch monatsübergreifend); `value === null` entfernt den
+ * Anker — die berechnete Kette gilt wieder. Spätere GESPERRTE Tage können
+ * dadurch bewusst einen Review-Marker erhalten (fixierter ≠ neuer Saldo).
+ */
+export function setSaldoAnker(
+  blob: TagesabschlussBlob,
+  date: string,
+  value: number | null,
+  now: string,
+): TagesabschlussBlob {
+  const saldoAnker = { ...blob.saldoAnker };
+  if (value === null || !Number.isFinite(value)) {
+    // Tombstone statt Key-Löschung (merge-on-save würde den Remote-Stand
+    // wiederbeleben); Leser behandeln `deleted` als "kein Anker".
+    const existing = saldoAnker[date];
+    if (!existing) return blob;
+    if (!existing.deleted) {
+      saldoAnker[date] = { value: existing.value, deleted: true, updatedAt: now };
+    }
+  } else {
+    saldoAnker[date] = { value: round2(value), updatedAt: now };
+  }
+  return { ...blob, saldoAnker };
+}
+
 /** Setzt oder entfernt einen Kommentar (leerer Text entfernt). */
 export function setTagesabschlussComment(
   blob: TagesabschlussBlob,
@@ -1383,15 +1500,179 @@ export function upsertExpense(blob: TagesabschlussBlob, expense: CashExpense): T
   return { ...blob, expenses };
 }
 
-/** Entfernt eine Barausgabe. */
-export function removeExpense(blob: TagesabschlussBlob, date: string, id: string): TagesabschlussBlob {
+/**
+ * Entfernt eine Barausgabe — als Tombstone (`deleted: true`, jüngeres
+ * updatedAt): merge-on-save vereinigt Ausgaben je id, ein hart gelöschter
+ * Record würde sofort aus dem Remote-Stand wiederauferstehen.
+ */
+export function removeExpense(
+  blob: TagesabschlussBlob,
+  date: string,
+  id: string,
+  now: string,
+): TagesabschlussBlob {
   const list = blob.expenses[date];
   if (!list) return blob;
-  const filtered = list.filter(e => e.id !== id);
+  const target = list.find(e => e.id === id);
+  if (!target || target.deleted) return blob;
   const expenses = { ...blob.expenses };
-  if (filtered.length > 0) expenses[date] = filtered;
-  else delete expenses[date];
+  expenses[date] = list.map(e => (e.id === id ? { ...e, deleted: true as const, updatedAt: now } : e));
   return { ...blob, expenses };
+}
+
+// ── Inline-Barausgabe (Schnellerfassung des Tages-Totals in der Tabelle) ─────
+
+/** Konto-Default der generischen Inline-Barausgabe (Kontoplan Oliv: 1001 Barausgaben). */
+export const INLINE_EXPENSE_DEFAULT_KONTO = '1001';
+
+/** ID der generischen Inline-Barausgabe eines Tages. */
+export function inlineExpenseId(date: string): string {
+  return `inline-${date}`;
+}
+
+/**
+ * Inline-Eingabe des Barausgaben-Totals nur erlaubt, solange KEINE anderen
+ * itemisierten Ausgaben existieren (leer ODER genau die generische
+ * Inline-Ausgabe) — sonst würde die Summeneingabe einzelne, je Konto
+ * exportierte Positionen still verdrängen (dann Dialog-only).
+ */
+export function isInlineExpenseEditable(
+  list: readonly CashExpense[] | undefined,
+  date: string,
+): boolean {
+  const active = (list ?? []).filter(e => !e.deleted);
+  if (active.length === 0) return true;
+  return active.length === 1 && active[0].id === inlineExpenseId(date);
+}
+
+/**
+ * Setzt die generische Inline-Barausgabe eines Tages (Betrag = Tages-Total).
+ * `amount === null` oder ≤ 0 entfernt sie. Konto-/Text-Anpassungen einer
+ * bestehenden Inline-Ausgabe (im Dialog editiert) bleiben erhalten;
+ * itemisierte andere Ausgaben werden NIE angefasst (Aufrufer gated via
+ * isInlineExpenseEditable).
+ */
+export function upsertInlineExpense(
+  blob: TagesabschlussBlob,
+  date: string,
+  amount: number | null,
+  now: string,
+): TagesabschlussBlob {
+  const id = inlineExpenseId(date);
+  if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+    return removeExpense(blob, date, id, now);
+  }
+  const existing = (blob.expenses[date] ?? []).find(e => e.id === id);
+  const next: CashExpense = existing
+    // `deleted` bewusst verwerfen: erneutes Setzen reaktiviert den Tombstone.
+    ? { ...existing, deleted: undefined, amount: round2(amount), updatedAt: now }
+    : {
+        id,
+        date,
+        amount: round2(amount),
+        konto: INLINE_EXPENSE_DEFAULT_KONTO,
+        text: 'Barausgaben (inline erfasst)',
+        updatedAt: now,
+      };
+  return upsertExpense(blob, next);
+}
+
+// ── Import-Abgleich (Z-Bericht-Import vs. manuell korrigierte Werte) ─────────
+
+/**
+ * Konflikt zwischen einem manuellen Override und einem neu importierten
+ * Z-Bericht-Wert desselben Tags/Felds. Ohne Auflösung GEWINNT der manuelle
+ * Wert weiterhin (Overrides sind unabhängig von gn_* — der Import
+ * überschreibt nie still).
+ */
+export interface TagesabschlussImportConflict {
+  date: string; // yyyy-MM-dd
+  field: TagesabschlussAutoField;
+  /** Anzeige-Label des Felds (TAGESABSCHLUSS_FIELD_LABEL). */
+  label: string;
+  /** Aktuell wirksamer manueller Wert (correctedValue des Overrides). */
+  manualValue: number;
+  /** Verankertes Erst-Original des Overrides (Wert VOR der ersten Korrektur). */
+  originalValue: number;
+  /** Neuer Auto-Wert aus dem Import. */
+  importValue: number;
+  /** Tag ist definitiv abgeschlossen — „Import übernehmen" erfordert Wiederöffnung. */
+  dayLocked: boolean;
+}
+
+/**
+ * Ermittelt alle Konflikte zwischen manuellen Overrides und den Auto-Werten
+ * der (neu importierten) Z-Berichte. Kein Konflikt, wenn der Importwert dem
+ * manuellen Wert (±0.005) entspricht oder das Feld im Import fehlt.
+ */
+export function detectTagesabschlussImportConflicts(
+  closings: Record<string, GnDayClosing>,
+  blob: TagesabschlussBlob,
+): TagesabschlussImportConflict[] {
+  const out: TagesabschlussImportConflict[] = [];
+  for (const date of Object.keys(closings).sort()) {
+    const auto = deriveAutoValues(closings[date]);
+    const closure = blob.abschluesse[date];
+    const dayLocked = !!closure && closure.status !== 'wieder_geoeffnet';
+    for (const field of TAGESABSCHLUSS_AUTO_FIELDS) {
+      const ov = blob.overrides[makeTagesabschlussFieldKey(date, field)];
+      if (!ov || !ov.correctedByManualOverride || ov.deleted) continue;
+      const importValue = auto[field];
+      if (importValue === null || !Number.isFinite(importValue)) continue;
+      if (Math.abs(round2(importValue) - round2(ov.correctedValue)) < 0.005) continue;
+      out.push({
+        date,
+        field,
+        label: TAGESABSCHLUSS_FIELD_LABEL[field],
+        manualValue: round2(ov.correctedValue),
+        originalValue: round2(ov.originalValue),
+        importValue: round2(importValue),
+        dayLocked,
+      });
+    }
+  }
+  return out;
+}
+
+export type TagesabschlussImportConflictAction = 'behalten' | 'uebernehmen';
+
+export interface TagesabschlussImportConflictResolution {
+  date: string;
+  field: TagesabschlussAutoField;
+  action: TagesabschlussImportConflictAction;
+}
+
+/**
+ * Wendet die Konflikt-Entscheidungen an: „uebernehmen" ENTFERNT den
+ * manuellen Override — als TOMBSTONE (`deleted: true`, jüngeres updatedAt),
+ * denn ein hart gelöschter Key würde beim merge-on-save sofort aus dem
+ * Remote-Stand wiederauferstehen; der importierte Auto-Wert gilt wieder.
+ * „behalten" ist ein bewusstes No-op. Gesperrte Tage werden defensiv NIE
+ * angefasst (Wiederöffnung nötig); Feld-Kommentare bleiben erhalten.
+ */
+export function applyImportConflictResolutions(
+  blob: TagesabschlussBlob,
+  resolutions: readonly TagesabschlussImportConflictResolution[],
+  now: string,
+): TagesabschlussBlob {
+  let overrides: TagesabschlussBlob['overrides'] | null = null;
+  for (const r of resolutions) {
+    if (r.action !== 'uebernehmen') continue;
+    const closure = blob.abschluesse[r.date];
+    if (closure && closure.status !== 'wieder_geoeffnet') continue;
+    const key = makeTagesabschlussFieldKey(r.date, r.field);
+    const existing = (overrides ?? blob.overrides)[key];
+    if (!existing || existing.deleted) continue;
+    overrides = overrides ?? { ...blob.overrides };
+    overrides[key] = {
+      originalValue: existing.originalValue,
+      correctedValue: existing.correctedValue,
+      correctedByManualOverride: true,
+      deleted: true,
+      updatedAt: now,
+    };
+  }
+  return overrides ? { ...blob, overrides } : blob;
 }
 
 // ── Export-Einstellungen ─────────────────────────────────────────────────────
@@ -1520,6 +1801,12 @@ export function mergeTagesabschlussBlobs(
     if (!r || newer(entry.updatedAt, r.updatedAt)) anfangsbestand[monthKey] = entry;
   }
 
+  const saldoAnker: TagesabschlussBlob['saldoAnker'] = { ...remote.saldoAnker };
+  for (const [date, entry] of Object.entries(local.saldoAnker)) {
+    const r = saldoAnker[date];
+    if (!r || newer(entry.updatedAt, r.updatedAt)) saldoAnker[date] = entry;
+  }
+
   // Tagesabschlüsse: Skalar-Felder gewinnt der jüngere Stand, die Historie
   // ist ein Audit-Trail und wird VEREINIGT (dedupliziert nach at+action+by,
   // chronologisch sortiert) — winner-takes-all würde Einträge eines anderen
@@ -1554,7 +1841,7 @@ export function mergeTagesabschlussBlobs(
 
   return {
     days, expenses, overrides, comments, cashDiffReasons, anfangsbestand,
-    abschluesse, monatsabschluesse, exportSettings, exportProtokolle,
+    saldoAnker, abschluesse, monatsabschluesse, exportSettings, exportProtokolle,
   };
 }
 
@@ -1777,7 +2064,7 @@ export function nextMonthOf(year: number, month: number): { year: number; month:
 /**
  * Endsaldo eines Monats — EXAKT dieselbe Rechenbasis wie die Monatsansicht
  * (buildTagesabschlussRows inkl. Overrides/Barausgaben), nur ohne Adyen.
- * null, wenn startSaldo null ist.
+ * null bei startSaldo null OHNE Kassensaldo-Tagesanker im Monat.
  */
 export function computeMonthEndSaldo(
   year: number,
@@ -1786,7 +2073,9 @@ export function computeMonthEndSaldo(
   blob: TagesabschlussBlob,
   startSaldo: number | null,
 ): number | null {
-  if (startSaldo === null) return null;
+  // Auch mit unbekanntem Startsaldo durchrechnen: ein manueller
+  // Kassensaldo-Tagesanker im Monat re-based die Kette und liefert einen
+  // Endsaldo — ohne Anker bleibt das Ergebnis null (nie stille 0).
   return buildTagesabschlussRows(year, month, closings, blob, {}, null, startSaldo).endSaldo;
 }
 
@@ -1831,7 +2120,15 @@ export async function resolveKassensaldoStart(
   const own = blob.anfangsbestand[ownKey];
   if (own) return { startSaldo: round2(own.value), anchorMonth: ownKey };
 
-  const anchorKey = Object.keys(blob.anfangsbestand)
+  // Anker-Kandidaten: Monate mit explizitem Anfangsbestand UND Monate mit
+  // manuellem Kassensaldo-Tagesanker (Inline-Korrektur) — beide setzen die
+  // Kette auf einen bekannten Wert und tragen sie in Folgemonate.
+  const anchorKey = [
+    ...Object.keys(blob.anfangsbestand),
+    ...Object.entries(blob.saldoAnker)
+      .filter(([, entry]) => !entry.deleted)
+      .map(([d]) => d.slice(0, 7)),
+  ]
     .filter(k => k < ownKey)
     .sort()
     .pop();
@@ -1839,7 +2136,12 @@ export async function resolveKassensaldoStart(
 
   const [ay, am] = anchorKey.split('-').map(Number);
   let cur = { year: ay, month: am };
-  let saldo: number | null = round2(blob.anfangsbestand[anchorKey].value);
+  // Ohne expliziten Anfangsbestand startet der Anker-Monat mit null — der
+  // Tagesanker im Monat re-based die Kette (computeMonthEndSaldo rechnet
+  // auch mit null-Start durch).
+  let saldo: number | null = blob.anfangsbestand[anchorKey]
+    ? round2(blob.anfangsbestand[anchorKey].value)
+    : null;
 
   for (let i = 0; i < KASSENSALDO_MAX_CHAIN_MONTHS; i++) {
     if (cur.year === year && cur.month === month) {
