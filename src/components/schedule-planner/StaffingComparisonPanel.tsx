@@ -27,6 +27,7 @@ import {
   StaffingStatusBadge,
   StaffingDiffCell,
 } from '@/components/schedule-planner/staffing-status-ui';
+import { StaffingDemandContext } from '@/components/schedule-planner/StaffingDemandContext';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -181,6 +182,8 @@ export function StaffingComparisonPanel({
       </CardHeader>
 
       <CardContent className="pt-0">
+        {/* Nachfrage-Kontext (Reservationen) — admin-only, rendert sonst nichts. */}
+        <StaffingDemandContext date={dateStr} className="mb-3" />
         {loading ? (
           <p className="text-sm text-muted-foreground py-6 text-center">Lädt …</p>
         ) : !result.hasRequirements ? (

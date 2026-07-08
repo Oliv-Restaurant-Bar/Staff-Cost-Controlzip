@@ -44,6 +44,7 @@ import {
   StaffingStatusBadge,
   StaffingDiffCell,
 } from '@/components/schedule-planner/staffing-status-ui';
+import { StaffingDemandContext } from '@/components/schedule-planner/StaffingDemandContext';
 
 const DEPT_LABEL: Record<string, string> = { service: 'Service', 'küche': 'Küche' };
 
@@ -181,6 +182,9 @@ export function StaffingScheduleCheckCard({
             </Badge>
           )}
         </div>
+
+        {/* Nachfrage-Kontext (Reservationen) — admin-only, rendert sonst nichts. */}
+        <StaffingDemandContext date={dateStr} />
 
         {loadError && (
           <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-2 text-xs flex items-start gap-2">
