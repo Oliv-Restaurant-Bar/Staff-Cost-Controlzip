@@ -54,10 +54,12 @@ import {
   buildHeatmapCellTooltip, buildWeekdayDayBreakdown,
   buildMonthDetailKpis, buildMonthWeekdayComposition,
   buildWeekdayIstVorjahrChartData, monthDetailDayFlags,
+  buildWeekdayMonthMatrix, weekdayMatrixExtremes,
   type AnalyseMetric, type AnalyseMonthRange, type MetricPair,
   type HeatmapLevel, type HeatmapCell, type HeatmapMonthRow,
   type MonthWeekdayHeatmap, type HeatmapScale, type HeatmapDayEntry,
   type WeekdayIstVorjahrChartPoint,
+  type WeekdayMonthMatrix, type WeekdayMatrixExtremes,
 } from '@/lib/reservation-analyse-utils';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -375,6 +377,98 @@ function WeekdayIstVorjahrChart({ data, metricLabel }: {
   );
 }
 
+/**
+ * Matrix Wochentag × Monat: Wochentage Mo–So als Zeilen, Ist-Monate als
+ * Spalten, hinten Total + Ø pro Monat (aktive Kennzahl). Stärkster/schwächster
+ * Wochentag (nach Total) ist markiert.
+ */
+function WeekdayMonthMatrixTable({ matrix, extremes, metric }: {
+  matrix: WeekdayMonthMatrix;
+  extremes: WeekdayMatrixExtremes;
+  metric: AnalyseMetric;
+}) {
+  const monthCount = matrix.monthKeys.length;
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <th className="px-2 py-1.5 text-left font-medium">Wochentag</th>
+            {matrix.monthKeys.map((mk) => (
+              <th key={mk} className="px-2 py-1.5 text-right font-medium">{monthLabel(mk)}</th>
+            ))}
+            <th className="border-l px-2 py-1.5 text-right font-medium">Total</th>
+            <th className="px-2 py-1.5 text-right font-medium">Ø/Monat</th>
+          </tr>
+        </thead>
+        <tbody>
+          {matrix.rows.map((r) => {
+            const isStrongest = extremes.strongestWeekday === r.weekday;
+            const isWeakest = extremes.weakestWeekday === r.weekday;
+            const empty = cellMetricValue(r.total, metric) === 0;
+            return (
+              <tr
+                key={r.weekday}
+                className={cn(
+                  'border-b last:border-0',
+                  empty && 'text-muted-foreground/60',
+                  isStrongest && 'bg-emerald-50 dark:bg-emerald-950/20',
+                  isWeakest && 'bg-red-50 dark:bg-red-950/20',
+                )}
+              >
+                <td className="whitespace-nowrap px-2 py-1.5 font-medium">
+                  {WEEKDAY_LABEL[r.weekday]}
+                  {isStrongest ? (
+                    <span className="ml-1.5 rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                      Stärkster
+                    </span>
+                  ) : null}
+                  {isWeakest ? (
+                    <span className="ml-1.5 rounded bg-red-100 px-1 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                      Schwächster
+                    </span>
+                  ) : null}
+                </td>
+                {r.values.map((v, i) => (
+                  <td key={matrix.monthKeys[i]} className="px-2 py-1.5 text-right tabular-nums">
+                    {NUM0.format(cellMetricValue(v, metric))}
+                  </td>
+                ))}
+                <td className="border-l px-2 py-1.5 text-right font-medium tabular-nums">
+                  {NUM0.format(cellMetricValue(r.total, metric))}
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                  {r.avgPerMonth
+                    ? NUM1.format(cellMetricValue(r.avgPerMonth, metric))
+                    : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="border-t bg-muted/30 font-medium">
+            <td className="px-2 py-1.5">Total</td>
+            {matrix.monthTotals.map((t, i) => (
+              <td key={matrix.monthKeys[i]} className="px-2 py-1.5 text-right tabular-nums">
+                {NUM0.format(cellMetricValue(t, metric))}
+              </td>
+            ))}
+            <td className="border-l px-2 py-1.5 text-right tabular-nums">
+              {NUM0.format(cellMetricValue(matrix.grandTotal, metric))}
+            </td>
+            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+              {monthCount > 0
+                ? NUM1.format(cellMetricValue(matrix.grandTotal, metric) / monthCount)
+                : '—'}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 const OCCURRENCE_NOTE = 'Hinweis: Die Anzahl Vorkommen eines Wochentags kann zwischen den Jahren abweichen (z. B. 5 statt 4 Freitage im gleichen Monat) — verglichen werden absolute Summen.';
 
 // ── Komponente ────────────────────────────────────────────────────────────────
@@ -541,6 +635,16 @@ export default function ReservationAnalysePage() {
   const heatmapScale = useMemo(
     () => heatmapValueScale(heatmap, metric),
     [heatmap, metric],
+  );
+
+  // Matrix Wochentag × Monat (transponierte Heatmap-Basis) + Extrem-Markierung.
+  const weekdayMatrix = useMemo(
+    () => buildWeekdayMonthMatrix(heatmap),
+    [heatmap],
+  );
+  const weekdayMatrixFlags = useMemo(
+    () => weekdayMatrixExtremes(weekdayMatrix, metric),
+    [weekdayMatrix, metric],
   );
 
   // Heatmap-Zellen-Popup: Monatszeile + Zelle + Tagesaufschlüsselung.
@@ -760,10 +864,11 @@ export default function ReservationAnalysePage() {
 
           {/* Sektionen */}
           <Tabs defaultValue="monate">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="monate">Monate</TabsTrigger>
               <TabsTrigger value="wochentage">Wochentage</TabsTrigger>
               <TabsTrigger value="saison">Saison</TabsTrigger>
+              <TabsTrigger value="matrix">Matrix</TabsTrigger>
               <TabsTrigger value="heatmap">Heatmap</TabsTrigger>
             </TabsList>
 
@@ -837,6 +942,31 @@ export default function ReservationAnalysePage() {
                     compact
                   />
                   <p className="text-[11px] text-muted-foreground">{OCCURRENCE_NOTE}</p>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="matrix" className="mt-3">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">
+                    Wochentage nach Monat · {rangeLabel}
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
+                      {ANALYSE_METRIC_LABEL[metric]} je Wochentag und Monat
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 p-3 pt-0">
+                  <WeekdayMonthMatrixTable
+                    matrix={weekdayMatrix}
+                    extremes={weekdayMatrixFlags}
+                    metric={metric}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Total = Summe über den gewählten Zeitraum, Ø/Monat = Total ÷ Anzahl Monate.
+                    Stärkster/schwächster Wochentag nach Zeitraum-Total markiert.
+                    {' '}{OCCURRENCE_NOTE}
+                  </p>
                 </CardContent>
               </Card>
             </TabsContent>

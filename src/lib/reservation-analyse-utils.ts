@@ -328,6 +328,104 @@ export function buildMonthWeekdayHeatmap(
   return { months, grandTotal: { reservations: grandRes, persons: grandPers } };
 }
 
+// ── Wochentag × Monat-Matrix (Tab „Matrix": Wochentage als Zeilen) ───────────
+
+/** Eine Zeile der Matrix: ein Wochentag über alle Ist-Monate des Zeitraums. */
+export interface WeekdayMonthMatrixRow {
+  weekday: IsoWeekday;
+  /** Rohe Zählungen je Ist-Monat — gleiche Reihenfolge wie `monthKeys`. */
+  values: MetricCounts[];
+  /** Summe über alle Monate des Zeitraums. */
+  total: MetricCounts;
+  /** Ø pro Monat (total / Anzahl Monate); null ohne Monate (kein Div/0). */
+  avgPerMonth: { reservations: number; persons: number } | null;
+}
+
+export interface WeekdayMonthMatrix {
+  /** Ist-Monate („yyyy-MM", aufsteigend) — Spalten der Matrix. */
+  monthKeys: string[];
+  /** Immer 7 Zeilen, Montag (1) bis Sonntag (7). */
+  rows: WeekdayMonthMatrixRow[];
+  /** Spaltensummen je Monat (alle Wochentage). */
+  monthTotals: MetricCounts[];
+  grandTotal: MetricCounts;
+}
+
+/**
+ * Transponiert die Monat × Wochentag-Heatmap zur Wochentag × Monat-Matrix
+ * (Wochentage als Zeilen, Monate als Spalten) inkl. Total und Ø pro Monat je
+ * Wochentag. GLEICHE Datenbasis wie die Heatmap (Ist-Zeitraum, Status-Scope) —
+ * kein zweiter Scan über die Rohzeilen, keine Abweichungen zwischen den Tabs.
+ */
+export function buildWeekdayMonthMatrix(heatmap: MonthWeekdayHeatmap): WeekdayMonthMatrix {
+  const monthKeys = heatmap.months.map((m) => m.monthKey);
+  const monthCount = monthKeys.length;
+
+  const rows: WeekdayMonthMatrixRow[] = ISO_WEEKDAYS.map((weekday) => {
+    const values: MetricCounts[] = heatmap.months.map((m) => {
+      const cell = m.cells.find((c) => c.weekday === weekday);
+      return {
+        reservations: cell?.reservations ?? 0,
+        persons: cell?.persons ?? 0,
+      };
+    });
+    const total = values.reduce(
+      (acc, v) => ({
+        reservations: acc.reservations + v.reservations,
+        persons: acc.persons + v.persons,
+      }),
+      { reservations: 0, persons: 0 },
+    );
+    const avgPerMonth = monthCount > 0
+      ? { reservations: total.reservations / monthCount, persons: total.persons / monthCount }
+      : null;
+    return { weekday, values, total, avgPerMonth };
+  });
+
+  const monthTotals: MetricCounts[] = heatmap.months.map((m) => ({
+    reservations: m.total.reservations,
+    persons: m.total.persons,
+  }));
+
+  return { monthKeys, rows, monthTotals, grandTotal: heatmap.grandTotal };
+}
+
+/** Stärkster/schwächster Wochentag der Matrix (nach Total der Kennzahl). */
+export interface WeekdayMatrixExtremes {
+  /** Wochentag mit dem höchsten Total (> 0); null wenn alles 0. */
+  strongestWeekday: IsoWeekday | null;
+  /** Wochentag mit dem tiefsten Total (> 0); null wenn identisch/alles 0. */
+  weakestWeekday: IsoWeekday | null;
+}
+
+/**
+ * Bestimmt stärksten/schwächsten Wochentag über das Zeitraum-Total der
+ * aktiven Kennzahl. Nur Wochentage mit Total > 0 zählen. Gibt es nur EINEN,
+ * wird nur der stärkste markiert; sind ALLE mit Werten gleichauf (≥2), wird
+ * NICHTS markiert (keine willkürliche Auszeichnung). Ties innerhalb von
+ * Max/Min: der frühere Wochentag (Mo vor So) gewinnt — deterministisch.
+ */
+export function weekdayMatrixExtremes(
+  matrix: WeekdayMonthMatrix,
+  metric: AnalyseMetric,
+): WeekdayMatrixExtremes {
+  const val = (r: WeekdayMonthMatrixRow) => cellMetricValue(r.total, metric);
+  const withValue = matrix.rows.filter((r) => val(r) > 0);
+  if (!withValue.length) return { strongestWeekday: null, weakestWeekday: null };
+  const values = withValue.map(val);
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  if (max === min && withValue.length > 1) {
+    return { strongestWeekday: null, weakestWeekday: null };
+  }
+  const strongest = withValue.find((r) => val(r) === max) ?? null;
+  const weakest = min < max ? (withValue.find((r) => val(r) === min) ?? null) : null;
+  return {
+    strongestWeekday: strongest ? strongest.weekday : null,
+    weakestWeekday: weakest ? weakest.weekday : null,
+  };
+}
+
 // ── Farbklassifizierung (relativ zum gefilterten Zeitraum) ────────────────────
 
 /**

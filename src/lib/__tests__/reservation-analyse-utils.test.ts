@@ -29,6 +29,8 @@ import {
   buildMonthWeekdayComposition,
   buildWeekdayIstVorjahrChartData,
   monthDetailDayFlags,
+  buildWeekdayMonthMatrix,
+  weekdayMatrixExtremes,
   type AnalyseMetric,
 } from '../reservation-analyse-utils';
 import {
@@ -784,5 +786,103 @@ describe('monthDetailDayFlags (Markierung stärkster/schwächster Tag)', () => {
     const flags = monthDetailDayFlags(cmp);
     expect(flags.strongestDay).toBeNull();
     expect(flags.weakestDay).toBeNull();
+  });
+});
+
+// ── Wochentag × Monat-Matrix (Tab „Matrix") ──────────────────────────────────
+
+describe('buildWeekdayMonthMatrix (Wochentage als Zeilen, Monate als Spalten)', () => {
+  // Okt 2026: Mo 05. = 1 Res./4 Pers., Di 06. = 2 Res./12 Pers.
+  // Nov 2026: Mo 02. = 1 Res./6 Pers.  Dez 2026: leer.
+  const heatmap = buildMonthWeekdayHeatmap({
+    rows: [
+      row('2026-10-05', 4), row('2026-10-06', 6), row('2026-10-06', 6),
+      row('2026-11-02', 6),
+    ],
+    monthKeys: ['2026-10', '2026-11', '2026-12'],
+    scope: 'booked',
+  });
+  const matrix = buildWeekdayMonthMatrix(heatmap);
+
+  it('transponiert korrekt: 7 Zeilen, Spalten in monthKeys-Reihenfolge', () => {
+    expect(matrix.monthKeys).toEqual(['2026-10', '2026-11', '2026-12']);
+    expect(matrix.rows).toHaveLength(7);
+    expect(matrix.rows.map((r) => r.weekday)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    const mo = matrix.rows[0];
+    expect(mo.values.map((v) => v.persons)).toEqual([4, 6, 0]);
+    expect(mo.values.map((v) => v.reservations)).toEqual([1, 1, 0]);
+    const di = matrix.rows[1];
+    expect(di.values.map((v) => v.persons)).toEqual([12, 0, 0]);
+  });
+
+  it('Total und Ø/Monat je Wochentag stimmen (leere Monate zählen mit)', () => {
+    const mo = matrix.rows[0];
+    expect(mo.total).toEqual({ reservations: 2, persons: 10 });
+    expect(mo.avgPerMonth?.persons).toBeCloseTo(10 / 3, 5);
+    expect(mo.avgPerMonth?.reservations).toBeCloseTo(2 / 3, 5);
+    // Wochentag ohne Daten: Total 0, Ø 0 (nicht null — Monate existieren).
+    const so = matrix.rows[6];
+    expect(so.total).toEqual({ reservations: 0, persons: 0 });
+    expect(so.avgPerMonth?.persons).toBe(0);
+  });
+
+  it('Spaltensummen + Gesamttotal entsprechen der Heatmap-Basis', () => {
+    expect(matrix.monthTotals.map((t) => t.persons)).toEqual([16, 6, 0]);
+    expect(matrix.grandTotal).toEqual({ reservations: 4, persons: 22 });
+  });
+
+  it('ohne Monate: keine Spalten, Ø null (kein Div/0)', () => {
+    const empty = buildWeekdayMonthMatrix(
+      buildMonthWeekdayHeatmap({ rows: [], monthKeys: [], scope: 'booked' }),
+    );
+    expect(empty.monthKeys).toEqual([]);
+    expect(empty.rows).toHaveLength(7);
+    expect(empty.rows.every((r) => r.avgPerMonth === null)).toBe(true);
+    expect(empty.grandTotal).toEqual({ reservations: 0, persons: 0 });
+  });
+});
+
+describe('weekdayMatrixExtremes (stärkster/schwächster Wochentag)', () => {
+  const heatmap = buildMonthWeekdayHeatmap({
+    rows: [
+      row('2026-10-05', 4), row('2026-10-06', 6), row('2026-10-06', 6),
+      row('2026-11-02', 6),
+    ],
+    monthKeys: ['2026-10', '2026-11'],
+    scope: 'booked',
+  });
+  const matrix = buildWeekdayMonthMatrix(heatmap);
+
+  it('Personen: Di (12) stärkster, Mo (10) schwächster — Nulltage zählen nicht', () => {
+    const ex = weekdayMatrixExtremes(matrix, 'persons');
+    expect(ex.strongestWeekday).toBe(2);
+    expect(ex.weakestWeekday).toBe(1);
+  });
+
+  it('Umschalter wirkt: Reservationen → Mo (2) und Di (2) gleichauf → NICHTS markiert', () => {
+    const ex = weekdayMatrixExtremes(matrix, 'reservations');
+    // Alle Wochentage mit Werten sind gleichauf — keine willkürliche Auszeichnung.
+    expect(ex.strongestWeekday).toBeNull();
+    expect(ex.weakestWeekday).toBeNull();
+  });
+
+  it('nur EIN Wochentag mit Werten → nur stärkster markiert', () => {
+    const single = buildWeekdayMonthMatrix(buildMonthWeekdayHeatmap({
+      rows: [row('2026-10-05', 4)],
+      monthKeys: ['2026-10'],
+      scope: 'booked',
+    }));
+    const ex = weekdayMatrixExtremes(single, 'persons');
+    expect(ex.strongestWeekday).toBe(1);
+    expect(ex.weakestWeekday).toBeNull();
+  });
+
+  it('alles 0 → beide null', () => {
+    const empty = buildWeekdayMonthMatrix(buildMonthWeekdayHeatmap({
+      rows: [], monthKeys: ['2026-10'], scope: 'booked',
+    }));
+    const ex = weekdayMatrixExtremes(empty, 'persons');
+    expect(ex.strongestWeekday).toBeNull();
+    expect(ex.weakestWeekday).toBeNull();
   });
 });
