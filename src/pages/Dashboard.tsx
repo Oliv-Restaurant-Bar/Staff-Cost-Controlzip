@@ -45,6 +45,7 @@ import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
+import { HeuteWichtigBanner } from '@/components/HeuteWichtigBanner';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
 import { kvGet } from '@/lib/supabase-kv';
@@ -1062,6 +1063,9 @@ const Dashboard = () => {
       </header>
 
       <main ref={dashboardMainRef} className="max-w-6xl mx-auto px-4 py-6 pb-24 space-y-2">
+
+        {/* ── Heute wichtig (nur echte Handlungsbedarfe + Schnellaktionen) ── */}
+        <HeuteWichtigBanner />
 
         {loading && (
           <div className="flex items-center justify-center py-16 text-muted-foreground text-sm">

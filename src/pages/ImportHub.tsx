@@ -47,6 +47,7 @@ import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync } from '@/lib/maison-store';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
+import { ImportGroupCards, IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
 import { visibleCategories } from '@/lib/import-center';
 
 const currentYear = new Date().getFullYear();
@@ -304,7 +305,26 @@ interface SectionProps {
 }
 
 const Section = ({ id, title, subtitle, icon, color, badge, badgeColor, children }: SectionProps) => {
-  const [open, setOpen] = useState(true);
+  // UX-Vereinfachung: Sektionen sind standardmässig ZU — die 4 Gruppen-Karten
+  // oben sind der Einstieg. Aufgeklappt wird per Klick, per URL-Hash (#id)
+  // oder per IMPORT_SECTION_OPEN_EVENT (Gruppen-Karte „Import starten").
+  const [open, setOpen] = useState(() =>
+    typeof window !== 'undefined' && window.location.hash === `#${id}`,
+  );
+  useEffect(() => {
+    const onOpenEvent = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === id) setOpen(true);
+    };
+    const onHashChange = () => {
+      if (window.location.hash === `#${id}`) setOpen(true);
+    };
+    window.addEventListener(IMPORT_SECTION_OPEN_EVENT, onOpenEvent);
+    window.addEventListener('hashchange', onHashChange);
+    return () => {
+      window.removeEventListener(IMPORT_SECTION_OPEN_EVENT, onOpenEvent);
+      window.removeEventListener('hashchange', onHashChange);
+    };
+  }, [id]);
   return (
     <Card id={id} className={cn('border-l-4 overflow-hidden', color)}>
       <CardHeader
@@ -1891,12 +1911,21 @@ const ImportHub = () => {
                 {tenant.shortName}
               </span>
             </div>
-            <Link to="/">
-              <Button variant="outline" size="sm" className="h-8">
-                <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
-                Dashboard
-              </Button>
-            </Link>
+            <div className="flex items-center gap-2">
+              {showAdminSections && (
+                <Link to="/import-cockpit">
+                  <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground">
+                    Alle Quellen &amp; Kontrollen
+                  </Button>
+                </Link>
+              )}
+              <Link to="/">
+                <Button variant="outline" size="sm" className="h-8">
+                  <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
+                  Dashboard
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -1908,6 +1937,9 @@ const ImportHub = () => {
 
         {showAdminSections && (
         <>
+        {/* ── Die 4 Importarten-Gruppen (Status + „Import starten") ─────── */}
+        <ImportGroupCards />
+
         {/* ── 0. Datenstand ─────────────────────────────────────────────── */}
         <DatenstandCard />
 

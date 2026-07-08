@@ -10,9 +10,12 @@
  *   Umsatz       → Umsatzabstimmung · Tagesabschlüsse · Budget · Erfolgsrechnung · Produkteanalyse
  *   Personal     → Dienstplanung · Personalkosten · Personalstamm · Datenintegrität MA
  *   Warenkosten  → Warenrechnungen · WES Analyse · Produkte
- *   Foratable    → Gäste CRM · Reservationen · CRM Auswertung
+ *   Foratable    → Gäste CRM (sekundär: CRM Auswertung · Reservations Analyse · Duplikate · Report)
  *   Admin        → Einstellungen
- *   Import       → Import (zentrales Import-Center /import)
+ *   Import       → Import (zentrales Import-Center /import; Cockpit nur via Header-Link/URL)
+ *
+ * Sekundäre Items (secondary: true) liegen pro Gruppe hinter einem
+ * „Mehr"-Toggle (Desktop-Sidebar + Mobile-Sheet), Standard: eingeklappt.
  *
  * Ausgeblendet (Routen existieren weiterhin, nur nicht verlinkt):
  *   /reporting   Analyse / Reporting
@@ -34,7 +37,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList, FileText,
+  Tags, ClipboardList, FileText, ChevronDown,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -62,6 +65,12 @@ interface NavItem {
   beaulieuViewerAllowed?: boolean;
   /** Für Gast-Sessions ausblenden, obwohl isAdmin für Gäste true ist. */
   hideForGuest?: boolean;
+  /**
+   * Sekundärer Menüpunkt: erscheint pro Gruppe hinter einem „Mehr"-Toggle
+   * (standardmässig eingeklappt), um die Navigation zu entlasten. Klappt
+   * automatisch auf, wenn die Route gerade aktiv ist.
+   */
+  secondary?: boolean;
   module?: import('@/hooks/usePermissions').AppModule;
 }
 
@@ -117,6 +126,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: BarChart2,
         adminOnly: true,
         beaulieuAllowed: true,
+        secondary: true,
       },
       {
         path: '/forecast',
@@ -226,6 +236,7 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Integrität',
         icon: ShieldAlert,
         adminOnly: true,
+        secondary: true,
       },
     ],
   },
@@ -278,6 +289,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: BarChart3,
         adminOnly: true,
         hideForGuest: true,
+        secondary: true,
       },
       {
         path: '/gaeste/analyse',
@@ -286,6 +298,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: TrendingUp,
         adminOnly: true,
         hideForGuest: true,
+        secondary: true,
       },
       {
         path: '/gaeste/duplikate',
@@ -294,6 +307,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: GitMerge,
         adminOnly: true,
         hideForGuest: true,
+        secondary: true,
       },
       {
         path: '/foratable-report',
@@ -302,6 +316,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: BarChart2,
         adminOnly: true,
         hideForGuest: true,
+        secondary: true,
       },
     ],
   },
@@ -335,15 +350,9 @@ export const NAV_GROUPS: NavGroup[] = [
         beaulieuViewerAllowed: true,
         hideForGuest: true,
       },
-      {
-        path: '/import-cockpit',
-        label: 'Import-Cockpit',
-        shortLabel: 'Cockpit',
-        icon: ClipboardCheck,
-        // Read-only Frische-/Fälligkeits-Übersicht — nur Admin, keine Gäste.
-        adminOnly: true,
-        hideForGuest: true,
-      },
+      // Import-Cockpit: Route + Guard bleiben bestehen, aber bewusst KEIN
+      // Nav-Eintrag mehr — erreichbar über den Header-Link im Import-Center
+      // („Alle Quellen & Kontrollen") und direkt per URL /import-cockpit.
     ],
   },
 ];
@@ -369,6 +378,139 @@ function activeNavPath(pathname: string): string | null {
   }
   return best;
 }
+
+// ─── Gruppen mit „Mehr"-Toggle (sekundäre Menüpunkte) ────────────────────────
+
+/**
+ * Teilt sichtbare Items in primär/sekundär und hält den Auf/Zu-Zustand des
+ * „Mehr"-Toggles. Klappt automatisch auf, wenn eine sekundäre Route aktiv ist.
+ */
+function useSecondarySplit(items: NavItem[], currentActivePath: string | null) {
+  const primary = items.filter(i => !i.secondary);
+  const secondary = items.filter(i => i.secondary);
+  const secondaryActive = secondary.some(i => i.path === currentActivePath);
+  const [moreOpen, setMoreOpen] = useState(secondaryActive);
+  useEffect(() => {
+    if (secondaryActive) setMoreOpen(true);
+  }, [secondaryActive]);
+  return { primary, secondary, moreOpen, toggle: () => setMoreOpen(o => !o) };
+}
+
+const NavMoreToggle = ({ open, onClick, count }: { open: boolean; onClick: () => void; count: number }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-md text-xs font-medium text-muted-foreground/70 hover:bg-muted hover:text-foreground transition-colors"
+    aria-expanded={open}
+  >
+    <ChevronDown className={cn('h-3.5 w-3.5 flex-shrink-0 transition-transform', !open && '-rotate-90')} />
+    Mehr {!open && <span className="text-muted-foreground/50">({count})</span>}
+  </button>
+);
+
+/** Desktop-Sidebar: eine Gruppe mit primären Items + „Mehr"-Toggle. */
+const SidebarNavGroup = ({
+  group,
+  items,
+  currentActivePath,
+}: {
+  group: NavGroup;
+  items: NavItem[];
+  currentActivePath: string | null;
+}) => {
+  const { primary, secondary, moreOpen, toggle } = useSecondarySplit(items, currentActivePath);
+
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const active = item.path === currentActivePath;
+    return (
+      <NavLink
+        key={item.path}
+        to={item.path}
+        className={cn(
+          'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
+          active
+            ? 'bg-primary text-primary-foreground shadow-sm'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+        )}
+      >
+        <Icon className="h-4 w-4 flex-shrink-0" />
+        {item.label}
+      </NavLink>
+    );
+  };
+
+  return (
+    <div className="mt-5">
+      <div className="mx-3 mb-2 border-t border-border/50" />
+      <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+        {group.groupLabel}
+      </p>
+      <div className="space-y-0.5">
+        {primary.map(renderItem)}
+        {secondary.length > 0 && (
+          <>
+            <NavMoreToggle open={moreOpen} onClick={toggle} count={secondary.length} />
+            {moreOpen && secondary.map(renderItem)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/** Mobile-Sheet: eine Gruppe mit primären Items + „Mehr"-Toggle. */
+const SheetNavGroup = ({
+  group,
+  items,
+  currentActivePath,
+  pathname,
+  onNavigate,
+}: {
+  group: NavGroup;
+  items: NavItem[];
+  currentActivePath: string | null;
+  pathname: string;
+  onNavigate: (path: string) => void;
+}) => {
+  const { primary, secondary, moreOpen, toggle } = useSecondarySplit(items, currentActivePath);
+
+  const renderItem = (item: NavItem) => {
+    const Icon = item.icon;
+    const active = item.path === '/' ? pathname === '/' : item.path === currentActivePath;
+    return (
+      <button
+        key={item.path}
+        onClick={() => onNavigate(item.path)}
+        className={cn(
+          'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left',
+          active ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
+        )}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        {item.label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="pt-3">
+      <div className="mx-1 mb-1.5 border-t border-border/50" />
+      <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+        {group.groupLabel}
+      </p>
+      <div className="space-y-0.5">
+        {primary.map(renderItem)}
+        {secondary.length > 0 && (
+          <>
+            <NavMoreToggle open={moreOpen} onClick={toggle} count={secondary.length} />
+            {moreOpen && secondary.map(renderItem)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
 
 // ─── Rollen-Konfiguration ─────────────────────────────────────────────────────
 
@@ -486,9 +628,6 @@ export const AppSidebar = () => {
   }
 
   const currentActivePath = activeNavPath(location.pathname);
-  function isLinkActive(path: string): boolean {
-    return path === currentActivePath;
-  }
 
   return (
     <aside className="hidden md:flex flex-col flex-shrink-0 w-[220px] min-h-screen bg-card border-r border-border sticky top-0 h-screen overflow-y-auto">
@@ -543,39 +682,17 @@ export const AppSidebar = () => {
           );
         })()}
 
-        {/* Gruppen mit Trennlinie */}
+        {/* Gruppen mit Trennlinie (sekundäre Items hinter „Mehr") */}
         {NAV_GROUPS.map((group, gi) => {
           const visibleItems = group.items.filter(isItemVisible);
           if (visibleItems.length === 0) return null;
-
           return (
-            <div key={gi} className="mt-5">
-              <div className="mx-3 mb-2 border-t border-border/50" />
-              <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
-                {group.groupLabel}
-              </p>
-              <div className="space-y-0.5">
-                {visibleItems.map(item => {
-                  const Icon = item.icon;
-                  const active = isLinkActive(item.path);
-                  return (
-                    <NavLink
-                      key={item.path}
-                      to={item.path}
-                      className={cn(
-                        'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm font-medium transition-colors',
-                        active
-                          ? 'bg-primary text-primary-foreground shadow-sm'
-                          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                      )}
-                    >
-                      <Icon className="h-4 w-4 flex-shrink-0" />
-                      {item.label}
-                    </NavLink>
-                  );
-                })}
-              </div>
-            </div>
+            <SidebarNavGroup
+              key={gi}
+              group={group}
+              items={visibleItems}
+              currentActivePath={currentActivePath}
+            />
           );
         })}
       </nav>
@@ -774,38 +891,19 @@ export const AppBottomNav = () => {
               );
             })()}
 
-            {/* Gruppen */}
+            {/* Gruppen (sekundäre Items hinter „Mehr") */}
             {NAV_GROUPS.map((group, gi) => {
               const visibleItems = group.items.filter(isItemVisible);
               if (visibleItems.length === 0) return null;
               return (
-                <div key={gi} className="pt-3">
-                  <div className="mx-1 mb-1.5 border-t border-border/50" />
-                  <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-                    {group.groupLabel}
-                  </p>
-                  <div className="space-y-0.5">
-                    {visibleItems.map(item => {
-                      const Icon = item.icon;
-                      const active = item.path === '/'
-                        ? location.pathname === '/'
-                        : item.path === currentActivePath;
-                      return (
-                        <button
-                          key={item.path}
-                          onClick={() => navigate(item.path)}
-                          className={cn(
-                            'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left',
-                            active ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted',
-                          )}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                <SheetNavGroup
+                  key={gi}
+                  group={group}
+                  items={visibleItems}
+                  currentActivePath={currentActivePath}
+                  pathname={location.pathname}
+                  onNavigate={navigate}
+                />
               );
             })}
           </div>

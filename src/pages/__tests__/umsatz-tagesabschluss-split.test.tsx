@@ -83,4 +83,14 @@ describe('Navigation — Gruppe „Umsatz"', () => {
     expect(byPath.get('/umsatzabstimmung')).toBe('Umsatzabstimmung');
     expect(byPath.get('/tagesabschluesse')).toBe('Tagesabschlüsse');
   });
+
+  it('beide Einträge sind PRIMÄR sichtbar (nicht hinter dem „Mehr"-Toggle)', async () => {
+    const { NAV_GROUPS } = await import('@/components/AppNav');
+    const umsatz = NAV_GROUPS.find((g: { groupLabel: string }) => g.groupLabel === 'Umsatz');
+    const items = umsatz!.items as Array<{ path: string; secondary?: boolean }>;
+    const abstimmung = items.find(i => i.path === '/umsatzabstimmung');
+    const tagesabschluesse = items.find(i => i.path === '/tagesabschluesse');
+    expect(abstimmung?.secondary).toBeFalsy();
+    expect(tagesabschluesse?.secondary).toBeFalsy();
+  });
 });
