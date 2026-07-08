@@ -166,6 +166,52 @@ async function extractLinesFromPage(
     .filter(l => l.text.length > 0);
 }
 
+// ─── Generische Text-Extraktion (für externe Parser, z. B. OP-Liste) ─────────
+
+/** Positionierte Zeile für externe reine Parser (x-Koordinaten je Item). */
+export interface PositionedPdfLine {
+  text: string;
+  items: { x: number; text: string }[];
+}
+
+export interface PdfTextLinesResult {
+  lines: PositionedPdfLine[];
+  pageCount: number;
+  warnings: string[];
+}
+
+/**
+ * Extrahiert ALLE Textzeilen eines PDFs mit X-Positionen der Einzel-Items
+ * (Zeilen-Rekonstruktion wie extractLinesFromPage, Seiten in Lesereihenfolge).
+ * Für Parser, die Spalten über X-Koordinaten zuordnen müssen (z. B.
+ * Fälligkeits-Buckets der Kreditoren-OP-Liste, wo leere Zellen im reinen
+ * Zeilentext unsichtbar sind).
+ */
+export async function extractPdfTextLines(buffer: ArrayBuffer): Promise<PdfTextLinesResult> {
+  const warnings: string[] = [];
+  const lines: PositionedPdfLine[] = [];
+
+  let pdfDoc: pdfjsLib.PDFDocumentProxy;
+  try {
+    pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+  } catch (e) {
+    warnings.push(`PDF konnte nicht geöffnet werden: ${String(e)}`);
+    return { lines, pageCount: 0, warnings };
+  }
+
+  const pageCount = pdfDoc.numPages;
+  for (let p = 1; p <= pageCount; p++) {
+    try {
+      const page = await pdfDoc.getPage(p);
+      const pageLines = await extractLinesFromPage(page);
+      for (const l of pageLines) lines.push({ text: l.text, items: l.items });
+    } catch (e) {
+      warnings.push(`Seite ${p} konnte nicht gelesen werden: ${String(e)}`);
+    }
+  }
+  return { lines, pageCount, warnings };
+}
+
 // ─── Sage Kontoblatt-Parser ───────────────────────────────────────────────────
 
 /**

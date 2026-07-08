@@ -34,7 +34,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList,
+  Tags, ClipboardList, FileText,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -145,6 +145,14 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Tagesabschl.',
         icon: ClipboardCheck,
         adminOnly: true,
+      },
+      {
+        path: '/op-liste',
+        label: 'OP-Liste Kreditoren',
+        shortLabel: 'OP-Liste',
+        icon: FileText,
+        adminOnly: true,
+        // beaulieuAllowed bewusst absent: beaulieu_manager sieht die OP-Liste nicht
       },
       {
         path: '/budget',

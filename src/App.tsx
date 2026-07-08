@@ -71,6 +71,7 @@ import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
 import TagesabschluessePage from "./pages/TagesabschluessePage";
+import OpListePage from "./pages/OpListe";
 import GastronoviZBerichtPage from "./pages/GastronoviZBerichtPage";
 import ForatableImportPage from "./pages/ForatableImportPage";
 import ForatableReportPage from "./pages/ForatableReportPage";
@@ -266,6 +267,9 @@ const AppContent = () => {
             />
             <Route path="/tagesabschluesse"
               element={isBeaulieuManager ? <BlockedRoute path="/tagesabschluesse" /> : <TagesabschluessePage />}
+            />
+            <Route path="/op-liste"
+              element={isBeaulieuManager ? <BlockedRoute path="/op-liste" /> : <OpListePage />}
             />
             <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
             <Route path="/foratable-import" element={<ForatableImportPage />} />

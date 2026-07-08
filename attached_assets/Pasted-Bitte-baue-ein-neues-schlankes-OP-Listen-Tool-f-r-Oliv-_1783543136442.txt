@@ -1,0 +1,176 @@
+Bitte baue ein neues schlankes OP-Listen-Tool für Oliv auf Basis von PDF-Importen.
+
+Ziel:
+Der Benutzer soll monatlich eine Kreditoren-OP-Liste als PDF hochladen können, z. B. "OP Liste Oliv 09.06.2026.pdf" oder "OP Liste Oliv 08.07.2026.pdf". Die App soll daraus die offenen Kreditoren automatisch auslesen, speichern und Veränderungen zwischen zwei Stichtagen anzeigen.
+
+Wichtig:
+- Starte mit einer einfachen, stabilen Phase 1.
+- Keine überladene Analyse.
+- Fokus auf Import, Übersicht und Monatsvergleich.
+- Keine Gastdaten/PII.
+- Keine bestehenden Module beschädigen.
+
+Datenquelle:
+PDF "Offene Posten mit Fälligkeiten Kreditoren"
+Beispiele aus den PDFs:
+- OP-Stichdatum: 09.06.2026 / 11:57
+- Lieferant
+- OP-Datum
+- OP-Nr
+- Text/Rechnungsnummer
+- Offen
+- Fälligkeits-Buckets:
+  über 29 Tage
+  seit 29 Tagen
+  seit 14 Tagen
+  in 15 Tagen
+  in 30 Tagen
+  nach 30 Tagen
+- Gesamtsaldo
+- Anzahl Posten/Rechnungen
+- Angezeigte Personenkonten
+
+Bitte den Parser so bauen, dass er diese Struktur robust aus PDF-Text erkennt.
+
+Phase 1 Funktionen:
+
+1. Neue Navigation
+- Neuer Menüpunkt unter "Import & Daten" oder "Umsatz/Finanzen":
+  "OP-Liste"
+- Route z. B. /op-liste oder /kreditoren-op
+
+2. PDF-Import
+- Upload-Komponente für PDF-Datei.
+- PDF-Text auslesen.
+- OP-Stichdatum erkennen.
+- Lieferantenblöcke erkennen.
+- Einzelposten erkennen.
+- Lieferanten-Totale erkennen.
+- Gesamt-Totale erkennen.
+- Vor dem Speichern eine Vorschau anzeigen.
+
+3. Vorschau vor Import
+Die Vorschau soll zeigen:
+- erkannter Stichtag
+- Anzahl Lieferanten
+- Anzahl offene Posten
+- Gesamtsaldo
+- Top 10 Lieferanten nach offenem Betrag
+- Warnhinweis, falls Gesamtbetrag aus Einzelposten nicht mit PDF-Gesamtsaldo übereinstimmt
+
+Buttons:
+- "Import bestätigen"
+- "Abbrechen"
+
+4. Speicherung
+Bitte falls möglich bestehende Supabase-Struktur sauber erweitern:
+- Neue Tabellen nur wenn nötig.
+- Vorschlag:
+  creditor_op_imports:
+    id
+    tenant_id
+    restaurant_id
+    snapshot_date
+    imported_at
+    source_filename
+    total_open_amount
+    total_items
+    total_invoices
+    supplier_count
+    raw_totals_json
+    created_by
+
+  creditor_op_items:
+    id
+    import_id
+    tenant_id
+    supplier_name
+    op_date
+    op_number
+    invoice_text
+    open_amount
+    overdue_29_plus
+    overdue_since_29
+    overdue_since_14
+    due_in_15
+    due_in_30
+    due_after_30
+
+- RLS tenant-safe.
+- Keine personenbezogenen Daten speichern.
+- Import darf bestehenden Import mit gleichem Stichtag nicht still überschreiben.
+- Wenn Stichtag bereits existiert: Dialog anzeigen "Import für diesen Stichtag existiert bereits" mit Optionen "Abbrechen" oder "Ersetzen".
+
+5. Übersicht
+Nach Import soll die Seite eine kompakte Übersicht zeigen:
+- Stichtag-Auswahl
+- Gesamt offen
+- Anzahl Posten
+- Anzahl Lieferanten
+- Fällige/überfällige Beträge
+- Top Lieferanten
+
+6. Vergleich zweier Stichtage
+Einfache Vergleichsansicht:
+- Auswahl "Von-Stichtag" und "Bis-Stichtag"
+- Standard: ältester und neuester Import
+- Kennzahlen:
+  - Gesamt offen vorher/nachher/Differenz
+  - Anzahl Posten vorher/nachher/Differenz
+  - Lieferanten vorher/nachher/Differenz
+  - Überfällig vorher/nachher/Differenz
+- Tabelle Lieferantenvergleich:
+  - Lieferant
+  - Betrag vorher
+  - Betrag nachher
+  - Differenz
+  - Status: Neu / Gestiegen / Gesunken / Unverändert / Erledigt
+- Sortierung standardmässig nach grösster negativer Veränderung für Liquidität, also höchste Erhöhung oben.
+
+7. Steuer-/Sozialabgaben-Gruppe
+Bitte direkt eine einfache Gruppierung einbauen:
+Lieferanten/Gläubiger mit Namen:
+- Eidgenössische Steuerverwaltung = MWST
+- Steuerverwaltung des Kantons Bern = QST
+- GastroSocial Ausgleichskasse = AHV
+- GastroSocial Pensionskasse = BVG
+
+In der Vergleichsansicht eine kleine Karte:
+"Behörden & Sozialabgaben"
+mit MWST, QST, AHV, BVG und Veränderung zwischen den Stichtagen.
+
+8. Design/UX-Vorgaben
+Sehr wichtig:
+- Das Tool soll schlicht, modern, lesefreundlich und einheitlich mit der bestehenden App wirken.
+- Keine überladene Analyse-Seite.
+- Oben kompakte Toolbar mit Import, Stichtag und Vergleich.
+- Kurze Labels, wenig Erklärungstext.
+- Detailtexte nur per Info-Icon oder aufklappbar.
+- Tabellen kompakt, aber gut lesbar.
+- Wichtige Zahlen gross, aber nicht riesig.
+- Farben sparsam einsetzen:
+  - Grün für Verbesserung/reduzierte OP
+  - Rot/Orange für Erhöhung/überfällig
+  - Neutral für unverändert
+- Einheitliche Abstände, Card-Radius, Buttons und Tabellenstil wie in der bestehenden App.
+- Mobile ist sekundär, Desktop muss sehr gut bedienbar sein.
+
+9. Tests
+Bitte Tests hinzufügen für:
+- PDF-Parser mit Beispieltext aus den vorhandenen OP-Listen
+- Erkennung OP-Stichdatum
+- Erkennung Gesamt-Saldo
+- Lieferanten-Totale
+- Vergleichslogik vorher/nachher
+- Status Neu/Gestiegen/Gesunken/Erledigt
+- Behörden-Gruppierung MWST/QST/AHV/BVG
+
+10. Dokumentation
+- replit.md aktualisieren.
+- Kurz dokumentieren:
+  - Zweck des OP-Listen-Tools
+  - Import via PDF
+  - Vergleich von Stichtagen
+  - Behörden-/Sozialabgabenkarte
+
+Bitte zuerst die bestehenden App-Strukturen, Navigation, Supabase-Migrationsmuster, Import-Cockpit-Komponenten und Design-Komponenten lesen und dann die Umsetzung passend integrieren.
