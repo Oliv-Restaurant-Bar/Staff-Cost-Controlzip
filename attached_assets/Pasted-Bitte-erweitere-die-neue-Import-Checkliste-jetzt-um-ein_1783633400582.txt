@@ -1,0 +1,155 @@
+Bitte erweitere die neue Import-Checkliste jetzt um einen intelligenten Arbeitsmodus.
+
+Ziel:
+Der Benutzer soll morgens sofort erkennen:
+"Was muss ich heute erledigen?"
+
+Bitte ergänzen:
+
+1. Priorisierung
+Offene Aufgaben automatisch sortieren:
+
+1. Überfällige Aufgaben
+2. Heute fällige Aufgaben
+3. Restliche Aufgaben
+
+2. Fälligkeit anzeigen
+
+Beispiele:
+
+Heute erledigen
+
+1 Tag überfällig
+
+3 Tage offen
+
+Monatsimport noch offen
+
+Budget noch offen
+
+3. Fortschrittsanzeige
+
+Oben eine kompakte Übersicht:
+
+Importstatus Juli 2026
+
+████████░░ 82 %
+
+18 von 22 Aufgaben erledigt
+
+4. Bereich "Heute"
+
+Ganz oben:
+
+Heute zu erledigen
+
+- Z-Bericht 09.07.
+- Reservationen 09.07.
+- Umsatz 09.07.–15.07.
+
+5. Monatsübersicht
+
+Darunter gruppiert:
+
+- Täglich
+- Zeitraum
+- Monatlich
+- Jährlich
+
+6. Monatsauswahl (sehr wichtig)
+
+Oben im Import-Cockpit soll ein Monat/Jahr ausgewählt werden können.
+
+Beispiel:
+
+Monat: Juni 2026
+
+Dann soll die komplette Import-Checkliste so berechnet werden, als wäre Juni der aktuelle Arbeitsmonat.
+
+Der Benutzer sieht sofort:
+
+- Welche Importaufgaben für Juni noch fehlen
+- Welche Aufgaben bereits erledigt wurden
+- Welche Teilimporte noch offen sind
+- Welcher Fortschritt für diesen Monat erreicht wurde
+
+Beispiele:
+
+Juni 2026
+
+✓ Z-Berichte vollständig
+
+✓ Reservationen vollständig
+
+⚠ Umsatz noch offen:
+24.06.–30.06.
+
+⚠ Mirus Stunden:
+25.06.–30.06.
+
+⚠ Erfolgsrechnung fehlt
+
+⚠ Kontoblätter fehlen
+
+→ Monat Juni kann noch nicht abgeschlossen werden.
+
+Oder:
+
+✅ Alle Importaufgaben für Juni 2026 abgeschlossen.
+Der Monat ist vollständig importiert und kann abgeschlossen werden.
+
+7. Monatsabschluss-Status
+
+Für jeden Monat soll ein Abschlussstatus berechnet werden:
+
+- Nicht begonnen
+- Teilweise importiert
+- Fast abgeschlossen
+- Vollständig abgeschlossen
+
+Ein Monat gilt nur dann als abgeschlossen, wenn alle für diesen Monat erforderlichen Importaufgaben erledigt sind.
+
+8. Fortschritt pro Monat
+
+In der Monatsauswahl soll bereits sichtbar sein:
+
+Mai 2026      ✅ 100 %
+Juni 2026     🟡 86 %
+Juli 2026     🟠 42 %
+August 2026   ⚪ Noch nicht begonnen
+
+So erkennt der Benutzer sofort, welche Monate noch unvollständig sind.
+
+9. Abschlussmeldung
+
+Wenn alle Aufgaben erledigt:
+
+✅ Alle Importaufgaben für Juli 2026 abgeschlossen.
+
+10. Design
+
+Keine grossen Karten.
+
+Keine langen Texte.
+
+Wie eine moderne Aufgabenliste.
+
+Sehr kompakt.
+
+Einheitlich mit dem Phase-3-Designsystem.
+
+Desktop first.
+
+Die Monatsauswahl soll immer sichtbar und leicht erreichbar sein.
+
+11. Architektur
+
+Die Monatslogik soll zentral aufgebaut werden.
+
+Alle Importtypen (täglich, zeitraumbasiert, monatlich, jährlich) sollen ihre offenen Aufgaben abhängig vom gewählten Monat berechnen.
+
+Später soll dieselbe Monatslogik auch für Monatsabschlüsse, Controlling und das OP-Listen-Tool wiederverwendet werden.
+
+Wichtig:
+Nicht die bestehende Importlogik ändern.
+Nur die Benutzerführung intelligenter machen.
