@@ -196,8 +196,9 @@ function buildMonthlyKPIs(
     const rawPersClean     = plPersonnelClean?.values.actual ?? null;
     const personalaufwandPL = rawPersClean != null && rawPersClean > 0 ? rawPersClean : null;
 
-    // pkIst = roher Dienstplan-/Manualeintrag (Löhne ohne Sozialkosten), identisch mit Tabellenspalte "PK Ist".
-    // Fallback auf personalaufwandPL wenn kein expliziter Wert gesetzt.
+    // pkIst = effektiver Personalaufwand gemäss Buchhaltung (FIBU-5xxx-Konten) — enthält bereits
+    // alle Arbeitgeberkosten und wird NIE zusätzlich mit dem Sozialkosten-Faktor multipliziert.
+    // Identisch mit Tabellenspalte "PK Ist". Fallback auf personalaufwandPL wenn kein expliziter Wert gesetzt.
     const pkIst = (m.personnelCostActual != null && m.personnelCostActual > 0)
       ? m.personnelCostActual
       : personalaufwandPL;
