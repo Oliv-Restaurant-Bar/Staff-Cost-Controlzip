@@ -403,3 +403,42 @@ export async function fetchMonthCoverage(
   }
   return coverage;
 }
+
+// ─── Mehr-Monats-Abdeckung (Fortschritt pro Monat, lazy) ─────────────────────
+
+export interface MonthRef {
+  year: number;
+  /** 1–12 */
+  month: number;
+}
+
+/**
+ * Abdeckung mehrerer Monate mit begrenzter Parallelität (read-only, gleiche
+ * Fetches wie `fetchMonthCoverage`). Ergebnis-Schlüssel: `yyyy-MM`.
+ * `null` = Monat konnte GAR nicht geladen werden (sichtbar machen, nie still
+ * verschlucken); Fehler einzelner Quellen stecken bereits als error-Coverage
+ * IM MonthCoverage-Objekt.
+ */
+export async function fetchCoverageForMonths(
+  ctx: ImportTasksFetchContext,
+  months: readonly MonthRef[],
+  concurrency = 3,
+): Promise<Record<string, MonthCoverage | null>> {
+  const result: Record<string, MonthCoverage | null> = {};
+  const queue = [...months];
+  const worker = async () => {
+    for (let m = queue.shift(); m; m = queue.shift()) {
+      const key = `${m.year}-${String(m.month).padStart(2, '0')}`;
+      try {
+        result[key] = await fetchMonthCoverage(ctx, m.year, m.month);
+      } catch (err) {
+        console.warn(`[import-tasks] Monats-Abdeckung ${key} fehlgeschlagen:`, err);
+        result[key] = null;
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(concurrency, months.length)) }, worker),
+  );
+  return result;
+}

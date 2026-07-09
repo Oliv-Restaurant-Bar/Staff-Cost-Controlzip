@@ -10,6 +10,12 @@
  *   - Zeitraum  (Umsatz, Verkaufsdaten, Mirus, Marketing): Rest-Zeiträume
  *   - Monatlich (Erfolgsrechnung, IST-Kosten) · Jährlich (Budget)
  *
+ * Intelligenter Arbeitsmodus (import-tasks-priority.ts, rein additiv):
+ *   - Fortschrittskarte (x von y fälligen Aufgaben, Abschluss-Status)
+ *   - „Heute zu erledigen" (nur im aktuellen Monat): überfällig → heute
+ *   - Fälligkeits-Labels an jeder offenen Aufgabe, priorisierte Sortierung
+ *   - Monatsauswahl mit Fortschritt pro Monat (lazy geladen, gecacht)
+ *
  * Konflikt-Schutz: Liegt im Zielzeitraum bereits etwas vor, erscheint VOR der
  * Navigation ein Dialog (Behalten / Ersetzen / Abbrechen). Das eigentliche
  * Ersetzen bleibt im bestehenden Import-Flow der Zielseite — hier wird NIE
@@ -23,15 +29,20 @@ import {
   CalendarRange,
   CalendarCheck,
   CalendarClock,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Download,
   ChevronDown,
+  Loader2,
+  Sun,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   AlertDialog,
@@ -46,7 +57,7 @@ import { StatusPill } from '@/components/ui/status-pill';
 import { InfoTip } from '@/components/ui/info-tip';
 import { HintBox } from '@/components/ui/hint-box';
 import { LoadingState, EmptyState } from '@/components/ui/page-states';
-import type { Tone } from '@/components/ui/tones';
+import { TONE_DOT, TONE_TEXT, type Tone } from '@/components/ui/tones';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -68,6 +79,18 @@ import {
   type MonthCoverage,
   type TaskFrequency,
 } from '@/lib/import-tasks-engine';
+import {
+  computeMonthProgress,
+  getTodayTasks,
+  prioritizeTasks,
+  summarizeTypeCompletion,
+  monthKey,
+  CLOSURE_LABEL,
+  CLOSURE_TONE,
+  type TaskDueInfo,
+  type TypeCompletionStatus,
+} from '@/lib/import-tasks-priority';
+import type { MonthProgressMap } from '@/hooks/useImportMonthProgress';
 
 // ── Status → Ton (zentrale tones.ts-Semantik) ────────────────────────────────
 
@@ -84,6 +107,18 @@ const GROUP_ICON: Record<TaskFrequency, typeof CalendarDays> = {
   monthly: CalendarCheck,
   yearly: CalendarClock,
 };
+
+const TYPE_SUMMARY_TONE: Record<TypeCompletionStatus, Tone> = {
+  done: 'good',
+  open: 'warn',
+  later: 'neutral',
+  error: 'critical',
+};
+
+const MONTH_NAMES = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
 
 /** UI-Hinweise pro Typ (nur Anzeige — keine Logik). */
 const TYPE_HINT: Partial<Record<ImportTaskType, string>> = {
@@ -108,6 +143,9 @@ export function ImportChecklistTab({
   coverage,
   loading,
   onPeriodChange,
+  monthProgress,
+  monthProgressLoading,
+  onLoadYearProgress,
 }: {
   year: number;
   /** 1–12 */
@@ -117,6 +155,11 @@ export function ImportChecklistTab({
   coverage: MonthCoverage | null;
   loading: boolean;
   onPeriodChange: (year: number, month: number) => void;
+  /** Fortschritt pro Monat (Key yyyy-MM); null = Ladefehler des Monats. */
+  monthProgress?: MonthProgressMap;
+  monthProgressLoading?: boolean;
+  /** Lazy-Loader für die Monatsauswahl (lädt fehlende Monate eines Jahres). */
+  onLoadYearProgress?: (year: number) => void;
 }) {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -129,10 +172,16 @@ export function ImportChecklistTab({
   );
   const groups = useMemo(() => groupImportTasks(tasks), [tasks]);
   const kpis = useMemo(() => summarizeImportTasks(tasks), [tasks]);
+  const progress = useMemo(
+    () => computeMonthProgress(tasks, { year, month, today }),
+    [tasks, year, month, today],
+  );
+  const typeSummary = useMemo(() => summarizeTypeCompletion(tasks, today), [tasks, today]);
+  const todayTasks = useMemo(() => getTodayTasks(tasks, today), [tasks, today]);
 
   const isCurrentMonth = useMemo(() => {
     const now = today.slice(0, 7);
-    return now === `${year}-${String(month).padStart(2, '0')}`;
+    return now === monthKey(year, month);
   }, [today, year, month]);
 
   const shiftMonth = (delta: number) => {
@@ -157,7 +206,7 @@ export function ImportChecklistTab({
 
   return (
     <div className="space-y-4" data-testid="import-checklist">
-      {/* Toolbar: Monat/Jahr + Erledigte-Umschalter */}
+      {/* Toolbar: Monatsauswahl (mit Fortschritt pro Monat) + Erledigte-Umschalter */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
           <Button
@@ -170,9 +219,15 @@ export function ImportChecklistTab({
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="min-w-[9.5rem] text-center text-sm font-semibold tabular-nums" data-testid="checklist-month-label">
-            {monthLabel(year, month)}
-          </span>
+          <MonthPicker
+            year={year}
+            month={month}
+            today={today}
+            monthProgress={monthProgress}
+            monthProgressLoading={monthProgressLoading}
+            onLoadYearProgress={onLoadYearProgress}
+            onPeriodChange={onPeriodChange}
+          />
           <Button
             variant="outline"
             size="icon"
@@ -208,7 +263,7 @@ export function ImportChecklistTab({
         </div>
       </div>
 
-      {/* Zusammenfassung */}
+      {/* Zusammenfassung (Status-Pills) */}
       {coverage && (
         <div className="flex flex-wrap items-center gap-2" data-testid="checklist-kpis">
           <StatusPill tone={kpis.open + kpis.partial > 0 ? 'warn' : 'good'}>
@@ -224,16 +279,113 @@ export function ImportChecklistTab({
       ) : !coverage ? (
         <EmptyState title="Keine Daten" description="Die Abdeckung konnte nicht geladen werden." />
       ) : (
-        FREQUENCY_ORDER.map((freq) => (
-          <ChecklistGroup
-            key={freq}
-            frequency={freq}
-            tasks={groups[freq]}
-            showDone={showDone}
-            onStartImport={startImport}
-            onFullMonthImport={freq === 'range' ? fullMonthImport : undefined}
-          />
-        ))
+        <>
+          {/* Fortschrittskarte: Importstatus des Monats */}
+          <Card data-testid="checklist-progress-card">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+                Importstatus {monthLabel(year, month)}
+                <span data-testid="checklist-closure-pill">
+                  <StatusPill tone={CLOSURE_TONE[progress.closure]} size="xs">
+                    {CLOSURE_LABEL[progress.closure]}
+                  </StatusPill>
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-0">
+              <div className="flex items-center gap-3">
+                <Progress value={progress.percent ?? 0} className="h-2 flex-1" />
+                <span className="shrink-0 text-sm font-semibold tabular-nums">
+                  {progress.percent ?? 0} %
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground" data-testid="checklist-progress-label">
+                {progress.done} von {progress.total} fälligen Aufgaben erledigt
+                {progress.laterOpen > 0 && (
+                  <> · {progress.laterOpen} noch nicht fällig</>
+                )}
+              </p>
+
+              {/* Kompakte Typ-Zusammenfassung */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1" data-testid="checklist-type-summary">
+                {typeSummary.map((s) => (
+                  <span key={s.type} className="inline-flex items-center gap-1.5 text-xs">
+                    <span className={cn('h-2 w-2 shrink-0 rounded-full', TONE_DOT[TYPE_SUMMARY_TONE[s.status]])} aria-hidden />
+                    <span className={s.status === 'done' ? 'text-muted-foreground' : undefined}>{s.label}</span>
+                    {s.detail && (
+                      <span className={cn('tabular-nums', TONE_TEXT[TYPE_SUMMARY_TONE[s.status]])}>{s.detail}</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+
+              {progress.allDone ? (
+                <div data-testid="checklist-complete-message">
+                  <HintBox tone="good">
+                    Alle Importaufgaben für {monthLabel(year, month)} abgeschlossen.
+                    {progress.monthOver && ' Der Monat ist vollständig importiert und kann abgeschlossen werden.'}
+                  </HintBox>
+                </div>
+              ) : progress.monthOver && progress.done > 0 ? (
+                <div data-testid="checklist-closure-hint">
+                  <HintBox tone="warn">
+                    {monthLabel(year, month)} kann noch nicht abgeschlossen werden —{' '}
+                    {progress.openNow} Aufgabe{progress.openNow === 1 ? '' : 'n'} offen.
+                  </HintBox>
+                </div>
+              ) : progress.percent === 100 && progress.laterOpen > 0 ? (
+                <div data-testid="checklist-due-done-message">
+                  <HintBox tone="info">
+                    Alle fälligen Aufgaben erledigt — Monats-/Jahresimporte folgen nach Periodenende.
+                  </HintBox>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          {/* „Heute zu erledigen" — nur im aktuellen Monat */}
+          {isCurrentMonth && (
+            <Card data-testid="checklist-today-card">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <Sun className="h-4 w-4 text-muted-foreground" aria-hidden />
+                  Heute zu erledigen
+                  {todayTasks.length > 0 && (
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {todayTasks.length} Aufgabe{todayTasks.length === 1 ? '' : 'n'}
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                {todayTasks.length === 0 ? (
+                  <p className="flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="checklist-today-empty">
+                    <CheckCircle2 className={cn('h-4 w-4', TONE_TEXT.good)} aria-hidden />
+                    Für heute ist alles erledigt.
+                  </p>
+                ) : (
+                  <ul className={cn('space-y-1', todayTasks.length > 8 && 'max-h-72 overflow-auto pr-1')}>
+                    {todayTasks.map((p) => (
+                      <TaskRow key={p.task.id} task={p.task} due={p.due} onStartImport={startImport} />
+                    ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {FREQUENCY_ORDER.map((freq) => (
+            <ChecklistGroup
+              key={freq}
+              frequency={freq}
+              tasks={groups[freq]}
+              today={today}
+              showDone={showDone}
+              onStartImport={startImport}
+              onFullMonthImport={freq === 'range' ? fullMonthImport : undefined}
+            />
+          ))}
+        </>
       )}
 
       {/* Konflikt-Dialog VOR der Navigation (Behalten / Ersetzen / Abbrechen) */}
@@ -294,17 +446,146 @@ export function ImportChecklistTab({
   );
 }
 
+// ── Monatsauswahl mit Fortschritt pro Monat ──────────────────────────────────
+
+function MonthPicker({
+  year,
+  month,
+  today,
+  monthProgress,
+  monthProgressLoading,
+  onLoadYearProgress,
+  onPeriodChange,
+}: {
+  year: number;
+  month: number;
+  today: string;
+  monthProgress?: MonthProgressMap;
+  monthProgressLoading?: boolean;
+  onLoadYearProgress?: (year: number) => void;
+  onPeriodChange: (year: number, month: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pickerYear, setPickerYear] = useState(year);
+  const currentKey = today.slice(0, 7);
+  const selectedKey = monthKey(year, month);
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) {
+      setPickerYear(year);
+      onLoadYearProgress?.(year);
+    }
+  };
+
+  const changePickerYear = (delta: number) => {
+    const next = pickerYear + delta;
+    setPickerYear(next);
+    onLoadYearProgress?.(next);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 min-w-[10.5rem] justify-between gap-1 px-2.5 text-sm font-semibold tabular-nums"
+          data-testid="checklist-month-label"
+        >
+          {monthLabel(year, month)}
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-2" align="start" data-testid="checklist-month-picker">
+        <div className="mb-1 flex items-center justify-between px-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => changePickerYear(-1)}
+            aria-label="Vorheriges Jahr"
+            data-testid="checklist-picker-prev-year"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-sm font-semibold tabular-nums">{pickerYear}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => changePickerYear(1)}
+            aria-label="Nächstes Jahr"
+            data-testid="checklist-picker-next-year"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+        <ul className="space-y-0.5">
+          {MONTH_NAMES.map((name, i) => {
+            const m = i + 1;
+            const key = monthKey(pickerYear, m);
+            const isFuture = key > currentKey;
+            const entry = monthProgress?.[key];
+            return (
+              <li key={key}>
+                <button
+                  type="button"
+                  className={cn(
+                    'flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent',
+                    key === selectedKey && 'bg-accent font-semibold',
+                  )}
+                  onClick={() => {
+                    setOpen(false);
+                    onPeriodChange(pickerYear, m);
+                  }}
+                  data-testid={`checklist-month-option-${key}`}
+                >
+                  <span>{name}</span>
+                  <span className="inline-flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
+                    {isFuture ? (
+                      <>Noch nicht begonnen</>
+                    ) : entry === undefined ? (
+                      monthProgressLoading ? (
+                        <Loader2 className="h-3 w-3 animate-spin" aria-label="lädt" />
+                      ) : (
+                        <>–</>
+                      )
+                    ) : entry === null ? (
+                      <span className={TONE_TEXT.critical}>Fehler</span>
+                    ) : (
+                      <>
+                        <span
+                          className={cn('h-2 w-2 rounded-full', TONE_DOT[CLOSURE_TONE[entry.closure]])}
+                          aria-hidden
+                        />
+                        {entry.percent ?? 0} %
+                      </>
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ── Gruppen-Karte (eine Frequenz) ────────────────────────────────────────────
 
 function ChecklistGroup({
   frequency,
   tasks,
+  today,
   showDone,
   onStartImport,
   onFullMonthImport,
 }: {
   frequency: TaskFrequency;
   tasks: ImportTask[];
+  today: string;
   showDone: boolean;
   onStartImport: (task: ImportTask) => void;
   onFullMonthImport?: (type: ImportTaskType) => void;
@@ -335,6 +616,7 @@ function ChecklistGroup({
             typeLabel={def.label}
             type={def.type}
             tasks={tasks.filter((t) => t.type === def.type)}
+            today={today}
             showDone={showDone}
             onStartImport={onStartImport}
             onFullMonthImport={onFullMonthImport}
@@ -351,6 +633,7 @@ function TypeSection({
   type,
   typeLabel,
   tasks,
+  today,
   showDone,
   onStartImport,
   onFullMonthImport,
@@ -358,11 +641,13 @@ function TypeSection({
   type: ImportTaskType;
   typeLabel: string;
   tasks: ImportTask[];
+  today: string;
   showDone: boolean;
   onStartImport: (task: ImportTask) => void;
   onFullMonthImport?: (type: ImportTaskType) => void;
 }) {
-  const open = tasks.filter(isOpenTask);
+  // Offene Aufgaben priorisiert: Fehler → überfällig → heute → später.
+  const open = prioritizeTasks(tasks.filter(isOpenTask), today);
   const done = tasks.filter((t) => !isOpenTask(t));
   const hint = TYPE_HINT[type];
   const allDone = open.length === 0;
@@ -390,8 +675,8 @@ function TypeSection({
 
       {open.length > 0 && (
         <ul className={cn('space-y-1', open.length > 8 && 'max-h-64 overflow-auto pr-1')}>
-          {open.map((task) => (
-            <TaskRow key={task.id} task={task} onStartImport={onStartImport} />
+          {open.map((p) => (
+            <TaskRow key={p.task.id} task={p.task} due={p.due} onStartImport={onStartImport} />
           ))}
         </ul>
       )}
@@ -429,14 +714,18 @@ function TypeSection({
 
 function TaskRow({
   task,
+  due,
   onStartImport,
 }: {
   task: ImportTask;
+  /** Fälligkeits-Info (nur für offene Aufgaben übergeben). */
+  due?: TaskDueInfo;
   onStartImport: (task: ImportTask) => void;
 }) {
   const tone: Tone = task.status !== 'done' && task.notYetDue ? 'neutral' : STATUS_TONE[task.status];
   const pillLabel =
     task.status !== 'done' && task.notYetDue ? 'Monat läuft noch' : TASK_STATUS_LABEL[task.status];
+  const dueLabel = task.status !== 'done' && task.status !== 'error' ? due?.dueLabel : null;
 
   return (
     <li
@@ -447,6 +736,16 @@ function TaskRow({
       {task.status === 'partial' && task.expectedDayCount != null && (
         <span className="text-xs tabular-nums text-muted-foreground">
           {task.coveredDayCount}/{task.expectedDayCount} Tagen
+        </span>
+      )}
+      {dueLabel && (
+        <span
+          className={cn(
+            'text-xs tabular-nums',
+            TONE_TEXT[due?.urgency === 'overdue' ? 'warn' : due?.urgency === 'today' ? 'info' : 'neutral'],
+          )}
+        >
+          {dueLabel}
         </span>
       )}
       <StatusPill tone={tone} size="xs">

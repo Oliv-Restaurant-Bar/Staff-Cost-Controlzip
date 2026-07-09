@@ -42,6 +42,7 @@ import { buildImportRows, buildControlRows } from '@/lib/import-cockpit-tabs';
 import { fetchCockpitSignals } from '@/lib/import-cockpit-db';
 import { fetchMonthCoverage } from '@/lib/import-tasks-db';
 import type { MonthCoverage } from '@/lib/import-tasks-engine';
+import { useImportMonthProgress } from '@/hooks/useImportMonthProgress';
 import { markControlsDone, type ManualCompletionMap } from '@/lib/import-cockpit-checks';
 import { loadManualChecks, saveManualChecks } from '@/lib/import-cockpit-checks-db';
 import { useToast } from '@/hooks/use-toast';
@@ -70,6 +71,15 @@ export default function ImportCockpitPage() {
   });
   const [coverage, setCoverage] = useState<MonthCoverage | null>(null);
   const [coverageLoading, setCoverageLoading] = useState(true);
+
+  // Fortschritt pro Monat für die Monatsauswahl (lazy, gecacht, tenant-scoped).
+  const {
+    map: monthProgressMap,
+    loading: monthProgressLoading,
+    seed: seedMonthProgress,
+    loadYear: loadYearProgress,
+    invalidate: invalidateMonthProgress,
+  } = useImportMonthProgress({ allowed, tenantId, tenantKey });
 
   // Manuelle Kontroll-Erledigungen (tenant-scoped) laden — best-effort, wirft nie.
   useEffect(() => {
@@ -103,10 +113,13 @@ export default function ImportCockpitPage() {
     try {
       const result = await fetchMonthCoverage({ tenantId, tenantKey }, period.year, period.month);
       setCoverage(result);
+      // Frisch geladene Coverage in den Monats-Fortschritts-Cache übernehmen
+      // (kein zweiter Fetch für den Auswahl-Monat in der Monatsauswahl).
+      seedMonthProgress(period.year, period.month, result, format(new Date(), 'yyyy-MM-dd'));
     } finally {
       setCoverageLoading(false);
     }
-  }, [allowed, tenantId, tenantKey, period.year, period.month]);
+  }, [allowed, tenantId, tenantKey, period.year, period.month, seedMonthProgress]);
 
   useEffect(() => {
     load();
@@ -117,9 +130,10 @@ export default function ImportCockpitPage() {
   }, [loadCoverage]);
 
   const refreshAll = useCallback(() => {
+    invalidateMonthProgress();
     void load();
     void loadCoverage();
-  }, [load, loadCoverage]);
+  }, [load, loadCoverage, invalidateMonthProgress]);
 
   // Statuszeilen + heutiges Datum aus Deskriptoren + Signalen (ein now pro Zyklus).
   const { rows, today } = useMemo(() => {
@@ -213,6 +227,9 @@ export default function ImportCockpitPage() {
               coverage={coverage}
               loading={coverageLoading}
               onPeriodChange={(year, month) => setPeriod({ year, month })}
+              monthProgress={monthProgressMap}
+              monthProgressLoading={monthProgressLoading}
+              onLoadYearProgress={(y) => void loadYearProgress(y, today)}
             />
           </TabsContent>
 

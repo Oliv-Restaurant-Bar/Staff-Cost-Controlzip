@@ -1,7 +1,9 @@
 // @vitest-environment happy-dom
 /**
  * UI-Tests ImportChecklistTab — Toolbar, Aufgabenliste, Erledigte-Toggle,
- * Import-Navigation und Konflikt-Dialog (Behalten/Ersetzen/Abbrechen).
+ * Import-Navigation und Konflikt-Dialog (Behalten/Ersetzen/Abbrechen) sowie
+ * intelligenter Arbeitsmodus (Fortschrittskarte, „Heute zu erledigen",
+ * Fälligkeits-Labels, Monatsauswahl mit Fortschritt).
  * Daten-Layer wird NICHT berührt: Coverage kommt als Fixture-Prop.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -10,6 +12,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ImportChecklistTab } from '../ImportChecklistTab';
 import type { MonthCoverage } from '@/lib/import-tasks-engine';
+import type { MonthProgress } from '@/lib/import-tasks-priority';
 
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -145,5 +148,164 @@ describe('ImportChecklistTab — Import-Navigation & Konflikt-Dialog', () => {
     fireEvent.click(screen.getByTestId('conflict-keep'));
     expect(navigateMock).not.toHaveBeenCalled();
     expect(screen.queryByTestId('checklist-conflict-dialog')).toBeNull();
+  });
+});
+
+// ── Intelligenter Arbeitsmodus ───────────────────────────────────────────────
+
+// Juli 2026 (aktueller Monat, heute = 09.07.): Tage 01.–08. sind importierbar.
+const JULY_DONE_DAYS = Array.from({ length: 8 }, (_, i) => `2026-07-0${i + 1}`);
+
+function julyCoverage(overrides: MonthCoverage = {}): MonthCoverage {
+  return {
+    zbericht: { coveredDays: JULY_DONE_DAYS },
+    reservationen: { coveredDays: JULY_DONE_DAYS },
+    umsatz: { coveredDays: JULY_DONE_DAYS },
+    verkaufsdaten: { coveredDays: JULY_DONE_DAYS },
+    mirus: { coveredDays: JULY_DONE_DAYS },
+    marketing: { coveredDays: JULY_DONE_DAYS },
+    erfolgsrechnung: {},
+    istkosten: {},
+    budget: { yearDone: true },
+    ...overrides,
+  };
+}
+
+describe('ImportChecklistTab — Fortschrittskarte', () => {
+  it('vollständiger, abgeschlossener Monat: 100 %, „Vollständig abgeschlossen" + Abschlussmeldung', () => {
+    renderTab();
+    const card = screen.getByTestId('checklist-progress-card');
+    expect(card.textContent).toContain('Importstatus Juni 2026');
+    expect(card.textContent).toContain('100 %');
+    expect(screen.getByTestId('checklist-closure-pill').textContent).toContain(
+      'Vollständig abgeschlossen',
+    );
+    expect(screen.getByTestId('checklist-complete-message').textContent).toContain(
+      'Alle Importaufgaben für Juni 2026 abgeschlossen.',
+    );
+  });
+
+  it('abgelaufener Monat mit offenen Aufgaben: Abschluss-Hinweis statt Abschlussmeldung', () => {
+    const days = JUNE_DAYS.filter((d) => d !== '2026-06-15');
+    renderTab({ coverage: fullCoverage({ zbericht: { coveredDays: days } }) });
+    expect(screen.queryByTestId('checklist-complete-message')).toBeNull();
+    expect(screen.getByTestId('checklist-closure-hint').textContent).toContain(
+      'Juni 2026 kann noch nicht abgeschlossen werden',
+    );
+    // Fortschrittslabel zählt nur fällige Aufgaben
+    expect(screen.getByTestId('checklist-progress-label').textContent).toMatch(
+      /\d+ von \d+ fälligen Aufgaben erledigt/,
+    );
+  });
+
+  it('laufender Monat, alles Fällige erledigt: 100 % fällig, aber KEINE Abschlussmeldung', () => {
+    renderTab({ month: 7, coverage: julyCoverage() });
+    expect(screen.queryByTestId('checklist-complete-message')).toBeNull();
+    expect(screen.getByTestId('checklist-due-done-message').textContent).toContain(
+      'Alle fälligen Aufgaben erledigt',
+    );
+    // Monats-/Jahresaufgaben tauchen als „noch nicht fällig" auf
+    expect(screen.getByTestId('checklist-progress-label').textContent).toContain(
+      'noch nicht fällig',
+    );
+  });
+
+  it('Typ-Zusammenfassung zeigt offene Bereiche mit Detail', () => {
+    const days = JUNE_DAYS.filter((d) => d < '2026-06-24');
+    renderTab({ coverage: fullCoverage({ umsatz: { coveredDays: days } }) });
+    const summary = screen.getByTestId('checklist-type-summary');
+    expect(summary.textContent).toContain('Umsatz');
+    expect(summary.textContent).toContain('24.06.–30.06.2026');
+  });
+});
+
+describe('ImportChecklistTab — „Heute zu erledigen" & Fälligkeits-Labels', () => {
+  it('erscheint nur im aktuellen Monat', () => {
+    renderTab(); // Juni (vergangen)
+    expect(screen.queryByTestId('checklist-today-card')).toBeNull();
+    cleanup();
+    renderTab({ month: 7, coverage: julyCoverage() });
+    expect(screen.getByTestId('checklist-today-card')).toBeTruthy();
+  });
+
+  it('alles erledigt → positive Leermeldung', () => {
+    renderTab({ month: 7, coverage: julyCoverage() });
+    expect(screen.getByTestId('checklist-today-empty').textContent).toContain(
+      'Für heute ist alles erledigt.',
+    );
+  });
+
+  it('heute fällige und überfällige Aufgaben stehen in der Heute-Karte mit Label', () => {
+    const days = JULY_DONE_DAYS.filter((d) => d !== '2026-07-08' && d !== '2026-07-05');
+    renderTab({ month: 7, coverage: julyCoverage({ zbericht: { coveredDays: days } }) });
+    const card = screen.getByTestId('checklist-today-card');
+    expect(screen.queryByTestId('checklist-today-empty')).toBeNull();
+    // Überfällig (05.07., 3 Tage) vor heute fällig (08.07.)
+    expect(card.textContent).toContain('3 Tage überfällig');
+    expect(card.textContent).toContain('Heute erledigen');
+    const rows = Array.from(card.querySelectorAll('[data-testid^="checklist-task-"]')).map((el) =>
+      el.getAttribute('data-testid'),
+    );
+    expect(rows.indexOf('checklist-task-zbericht:2026-07-05')).toBeLessThan(
+      rows.indexOf('checklist-task-zbericht:2026-07-08'),
+    );
+  });
+
+  it('Fälligkeits-Label steht additiv neben der „Offen"-Pill in der Gruppenliste', () => {
+    const days = JUNE_DAYS.filter((d) => d !== '2026-06-15');
+    renderTab({ coverage: fullCoverage({ zbericht: { coveredDays: days } }) });
+    const task = screen.getByTestId('checklist-task-zbericht:2026-06-15');
+    expect(task.textContent).toContain('Offen'); // bestehende Pill bleibt
+    expect(task.textContent).toContain('überfällig'); // neues Label additiv
+  });
+});
+
+describe('ImportChecklistTab — Monatsauswahl mit Fortschritt', () => {
+  const may: MonthProgress = {
+    total: 40,
+    done: 33,
+    percent: 83,
+    laterOpen: 0,
+    openNow: 7,
+    errors: 0,
+    allDone: false,
+    monthOver: true,
+    closure: 'almost',
+  };
+
+  function renderWithPicker(extra: Partial<Parameters<typeof ImportChecklistTab>[0]> = {}) {
+    return renderTab({
+      monthProgress: { '2026-05': may, '2026-04': null },
+      onLoadYearProgress: vi.fn(),
+      ...extra,
+    });
+  }
+
+  it('öffnet beim Klick aufs Monatslabel und lädt das Jahr lazy nach', () => {
+    const onLoadYearProgress = vi.fn();
+    renderWithPicker({ onLoadYearProgress });
+    fireEvent.click(screen.getByTestId('checklist-month-label'));
+    expect(screen.getByTestId('checklist-month-picker')).toBeTruthy();
+    expect(onLoadYearProgress).toHaveBeenCalledWith(2026);
+    fireEvent.click(screen.getByTestId('checklist-picker-prev-year'));
+    expect(onLoadYearProgress).toHaveBeenCalledWith(2025);
+  });
+
+  it('zeigt Fortschritt, Fehler und „Noch nicht begonnen" pro Monat', () => {
+    renderWithPicker();
+    fireEvent.click(screen.getByTestId('checklist-month-label'));
+    expect(screen.getByTestId('checklist-month-option-2026-05').textContent).toContain('83 %');
+    expect(screen.getByTestId('checklist-month-option-2026-04').textContent).toContain('Fehler');
+    // August 2026 liegt in der Zukunft (heute = Juli)
+    expect(screen.getByTestId('checklist-month-option-2026-08').textContent).toContain(
+      'Noch nicht begonnen',
+    );
+  });
+
+  it('Monats-Klick wechselt die Periode', () => {
+    const { onPeriodChange } = renderWithPicker();
+    fireEvent.click(screen.getByTestId('checklist-month-label'));
+    fireEvent.click(screen.getByTestId('checklist-month-option-2026-05'));
+    expect(onPeriodChange).toHaveBeenCalledWith(2026, 5);
   });
 });
