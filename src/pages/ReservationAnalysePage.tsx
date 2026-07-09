@@ -25,8 +25,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import {
-  ArrowLeft, BarChart3, Database, Loader2, TrendingUp, TrendingDown,
-  Minus, Info,
+  ArrowLeft, BarChart3, Database, TrendingUp, TrendingDown, Minus,
 } from 'lucide-react';
 import { useNavigate, Navigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
@@ -77,6 +76,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { PageShell } from '@/components/layout/PageShell';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
+import { InfoTip } from '@/components/ui/info-tip';
+import { HintBox } from '@/components/ui/hint-box';
+import { LoadingState, EmptyState } from '@/components/ui/page-states';
+import {
+  TABLE, TABLE_SCROLL, TH, TH_NUM, TH_STICKY, TD, TD_NUM, ROW_CLICKABLE,
+} from '@/components/ui/table-style';
+import { TONE_TEXT, type Tone } from '@/components/ui/tones';
 
 // ── Formatierung ──────────────────────────────────────────────────────────────
 
@@ -113,10 +122,17 @@ function fmtAvg(n: number | null): string {
   return n === null ? '—' : NUM1.format(n);
 }
 
+/** Trend → Design-System-Ton (Grün=gut, Rot=kritisch, Grau=neutral). */
+const TREND_TONE: Record<YoyTrend, Tone> = {
+  up: 'good',
+  down: 'critical',
+  neutral: 'neutral',
+};
+
 const TREND_TEXT: Record<YoyTrend, string> = {
-  up: 'text-emerald-600 dark:text-emerald-400',
-  down: 'text-red-600 dark:text-red-400',
-  neutral: 'text-muted-foreground',
+  up: TONE_TEXT.good,
+  down: TONE_TEXT.critical,
+  neutral: TONE_TEXT.neutral,
 };
 
 const TREND_BG: Record<YoyTrend, string> = {
@@ -143,6 +159,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 
 // ── Kleinbausteine ────────────────────────────────────────────────────────────
 
+/** KPI-Kachel = shared KpiCard; Trend färbt den Ampel-Punkt (Ton-Semantik). */
 function KpiTile({ label, value, trend, sub }: {
   label: string;
   value: string;
@@ -150,29 +167,12 @@ function KpiTile({ label, value, trend, sub }: {
   sub?: string;
 }) {
   return (
-    <Card className="h-full">
-      <CardContent className="flex h-full flex-col justify-between gap-1 p-3">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
-        <div className={cn(
-          'flex items-center gap-1.5 text-xl font-semibold tabular-nums',
-          trend ? TREND_TEXT[trend] : 'text-foreground',
-        )}>
-          {trend ? <TrendIcon trend={trend} /> : null}
-          {value}
-        </div>
-        {/* Unterzeile immer reservieren → alle Kacheln gleich hoch. */}
-        <div className="min-h-[15px] text-[11px] text-muted-foreground">{sub ?? ''}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Einheitliches Feld-/Sektions-Label der Filterleiste. */
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-      {children}
-    </div>
+    <KpiCard
+      label={label}
+      value={value}
+      sub={sub}
+      tone={trend ? TREND_TONE[trend] : 'neutral'}
+    />
   );
 }
 
@@ -186,43 +186,34 @@ function SegmentedGroup({ children }: { children: React.ReactNode }) {
 }
 
 /** Ist/VJ/Diff/Diff% Zellen der AKTIVEN Kennzahl (4 <td>). */
-function MetricCells({ metric, padRight }: { metric: YoyMetric; padRight?: boolean }) {
+function MetricCells({ metric }: { metric: YoyMetric }) {
   return (
     <>
-      <td className="px-2 py-2 text-right font-medium tabular-nums">
+      <td className={cn(TD, TD_NUM, 'font-medium')}>
         {NUM0.format(metric.current)}
       </td>
-      <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
+      <td className={cn(TD, TD_NUM, 'text-muted-foreground')}>
         {fmtPrior(metric.prior)}
       </td>
-      <td className={cn('px-2 py-2 text-right tabular-nums', TREND_TEXT[metric.trend])}>
+      <td className={cn(TD, TD_NUM, TREND_TEXT[metric.trend])}>
         {fmtDiff(metric.diff)}
       </td>
-      <td className={cn('py-2 text-right tabular-nums', padRight ? 'px-3' : 'px-2', TREND_TEXT[metric.trend])}>
+      <td className={cn(TD, TD_NUM, TREND_TEXT[metric.trend])}>
         {fmtPct(metric.diffPct)}
       </td>
     </>
   );
 }
 
-function MetricHeaderCells({ metricLabel }: { metricLabel: string }) {
+function MetricHeaderCells({ metricLabel, sticky }: { metricLabel: string; sticky?: boolean }) {
+  const th = cn(TH, TH_NUM, sticky && TH_STICKY);
   return (
     <>
-      <th className="px-2 py-2 text-right font-medium">{metricLabel} Ist</th>
-      <th className="px-2 py-2 text-right font-medium">Vorjahr</th>
-      <th className="px-2 py-2 text-right font-medium">Diff.</th>
-      <th className="px-3 py-2 text-right font-medium">Diff. %</th>
+      <th className={th}>{metricLabel} Ist</th>
+      <th className={th}>Vorjahr</th>
+      <th className={th}>Diff.</th>
+      <th className={th}>Diff. %</th>
     </>
-  );
-}
-
-/** Amber-Hinweis-Box. */
-function AmberNote({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-      <Info className="mt-0.5 h-4 w-4 shrink-0" />
-      <div>{children}</div>
-    </div>
   );
 }
 
@@ -236,12 +227,12 @@ function MonthYoyTable({ months, totals, metric, onMonthClick }: {
   onMonthClick: (monthKey: string) => void;
 }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div className={cn(TABLE_SCROLL, 'overflow-x-auto')}>
+      <table className={TABLE}>
         <thead>
-          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className="px-3 py-2 text-left font-medium">Monat</th>
-            <MetricHeaderCells metricLabel={ANALYSE_METRIC_LABEL[metric]} />
+          <tr>
+            <th className={cn(TH, TH_STICKY)}>Monat</th>
+            <MetricHeaderCells metricLabel={ANALYSE_METRIC_LABEL[metric]} sticky />
           </tr>
         </thead>
         <tbody>
@@ -250,28 +241,25 @@ function MonthYoyTable({ months, totals, metric, onMonthClick }: {
             return (
               <tr
                 key={m.monthKey}
-                className={cn(
-                  'cursor-pointer border-b transition-colors last:border-0 hover:bg-muted/50',
-                  TREND_BG[v.trend],
-                )}
+                className={cn(ROW_CLICKABLE, TREND_BG[v.trend])}
                 onClick={() => onMonthClick(m.monthKey)}
                 title="Tagesvergleich öffnen"
               >
-                <td className="px-3 py-2 font-medium">
+                <td className={cn(TD, 'font-medium')}>
                   {monthLabel(m.monthKey)}
                   {!m.hasPriorData ? (
                     <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">kein Vorjahr</span>
                   ) : null}
                 </td>
-                <MetricCells metric={v} padRight />
+                <MetricCells metric={v} />
               </tr>
             );
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t bg-muted/40 font-medium">
-            <td className="px-3 py-2">Total</td>
-            <MetricCells metric={pickMetric(totals, metric)} padRight />
+          <tr className="border-t bg-muted font-medium">
+            <td className={TD}>Total</td>
+            <MetricCells metric={pickMetric(totals, metric)} />
           </tr>
         </tfoot>
       </table>
@@ -290,19 +278,19 @@ function WeekdayYoyTable({ rows, metric, onWeekdayClick, compact, shareByWeekday
   compact?: boolean;
   shareByWeekday?: ReadonlyMap<IsoWeekday, number | null>;
 }) {
-  const pad = compact ? 'py-1' : 'py-1.5';
+  const pad = compact ? 'py-1' : undefined;
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className={TABLE}>
         <thead>
-          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className={cn('px-2 text-left font-medium', pad)}>Wochentag</th>
-            <th className={cn('px-2 text-right font-medium', pad)}>{ANALYSE_METRIC_LABEL[metric]} Ist</th>
-            <th className={cn('px-2 text-right font-medium', pad)}>Vorjahr</th>
-            <th className={cn('px-2 text-right font-medium', pad)}>Diff.</th>
-            <th className={cn('px-2 text-right font-medium', pad)}>Diff. %</th>
+          <tr className="bg-muted">
+            <th className={TH}>Wochentag</th>
+            <th className={cn(TH, TH_NUM)}>{ANALYSE_METRIC_LABEL[metric]} Ist</th>
+            <th className={cn(TH, TH_NUM)}>Vorjahr</th>
+            <th className={cn(TH, TH_NUM)}>Diff.</th>
+            <th className={cn(TH, TH_NUM)}>Diff. %</th>
             {shareByWeekday ? (
-              <th className={cn('px-2 text-right font-medium', pad)}>Anteil Monat</th>
+              <th className={cn(TH, TH_NUM)}>Anteil Monat</th>
             ) : null}
           </tr>
         </thead>
@@ -314,28 +302,27 @@ function WeekdayYoyTable({ rows, metric, onWeekdayClick, compact, shareByWeekday
               <tr
                 key={r.weekday}
                 className={cn(
-                  'border-b last:border-0',
                   empty && 'text-muted-foreground/60',
-                  onWeekdayClick && 'cursor-pointer transition-colors hover:bg-muted/50',
+                  onWeekdayClick && ROW_CLICKABLE,
                 )}
                 onClick={onWeekdayClick ? () => onWeekdayClick(r.weekday) : undefined}
                 title={onWeekdayClick ? 'Zusammensetzung öffnen' : undefined}
               >
-                <td className={cn('px-2 font-medium', pad)}>{WEEKDAY_LABEL[r.weekday]}</td>
-                <td className={cn('px-2 text-right font-medium tabular-nums', pad)}>
+                <td className={cn(TD, 'font-medium', pad)}>{WEEKDAY_LABEL[r.weekday]}</td>
+                <td className={cn(TD, TD_NUM, 'font-medium', pad)}>
                   {NUM0.format(v.current)}
                 </td>
-                <td className={cn('px-2 text-right tabular-nums text-muted-foreground', pad)}>
+                <td className={cn(TD, TD_NUM, 'text-muted-foreground', pad)}>
                   {fmtPrior(v.prior)}
                 </td>
-                <td className={cn('px-2 text-right tabular-nums', pad, TREND_TEXT[v.trend])}>
+                <td className={cn(TD, TD_NUM, pad, TREND_TEXT[v.trend])}>
                   {fmtDiff(v.diff)}
                 </td>
-                <td className={cn('px-2 text-right tabular-nums', pad, TREND_TEXT[v.trend])}>
+                <td className={cn(TD, TD_NUM, pad, TREND_TEXT[v.trend])}>
                   {fmtPct(v.diffPct)}
                 </td>
                 {shareByWeekday ? (
-                  <td className={cn('px-2 text-right tabular-nums text-muted-foreground', pad)}>
+                  <td className={cn(TD, TD_NUM, 'text-muted-foreground', pad)}>
                     {fmtShare(shareByWeekday.get(r.weekday) ?? null)}
                   </td>
                 ) : null}
@@ -389,16 +376,16 @@ function WeekdayMonthMatrixTable({ matrix, extremes, metric }: {
 }) {
   const monthCount = matrix.monthKeys.length;
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className={TABLE}>
         <thead>
-          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className="px-2 py-1.5 text-left font-medium">Wochentag</th>
+          <tr className="bg-muted">
+            <th className={TH}>Wochentag</th>
             {matrix.monthKeys.map((mk) => (
-              <th key={mk} className="px-2 py-1.5 text-right font-medium">{monthLabel(mk)}</th>
+              <th key={mk} className={cn(TH, TH_NUM)}>{monthLabel(mk)}</th>
             ))}
-            <th className="border-l px-2 py-1.5 text-right font-medium">Total</th>
-            <th className="px-2 py-1.5 text-right font-medium">Ø/Monat</th>
+            <th className={cn(TH, TH_NUM, 'border-l border-border')}>Total</th>
+            <th className={cn(TH, TH_NUM)}>Ø/Monat</th>
           </tr>
         </thead>
         <tbody>
@@ -410,13 +397,12 @@ function WeekdayMonthMatrixTable({ matrix, extremes, metric }: {
               <tr
                 key={r.weekday}
                 className={cn(
-                  'border-b last:border-0',
                   empty && 'text-muted-foreground/60',
                   isStrongest && 'bg-emerald-50 dark:bg-emerald-950/20',
                   isWeakest && 'bg-red-50 dark:bg-red-950/20',
                 )}
               >
-                <td className="whitespace-nowrap px-2 py-1.5 font-medium">
+                <td className={cn(TD, 'whitespace-nowrap font-medium')}>
                   {WEEKDAY_LABEL[r.weekday]}
                   {isStrongest ? (
                     <span className="ml-1.5 rounded bg-emerald-100 px-1 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
@@ -430,14 +416,14 @@ function WeekdayMonthMatrixTable({ matrix, extremes, metric }: {
                   ) : null}
                 </td>
                 {r.values.map((v, i) => (
-                  <td key={matrix.monthKeys[i]} className="px-2 py-1.5 text-right tabular-nums">
+                  <td key={matrix.monthKeys[i]} className={cn(TD, TD_NUM)}>
                     {NUM0.format(cellMetricValue(v, metric))}
                   </td>
                 ))}
-                <td className="border-l px-2 py-1.5 text-right font-medium tabular-nums">
+                <td className={cn(TD, TD_NUM, 'border-l border-border font-medium')}>
                   {NUM0.format(cellMetricValue(r.total, metric))}
                 </td>
-                <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+                <td className={cn(TD, TD_NUM, 'text-muted-foreground')}>
                   {r.avgPerMonth
                     ? NUM1.format(cellMetricValue(r.avgPerMonth, metric))
                     : '—'}
@@ -447,17 +433,17 @@ function WeekdayMonthMatrixTable({ matrix, extremes, metric }: {
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t bg-muted/30 font-medium">
-            <td className="px-2 py-1.5">Total</td>
+          <tr className="border-t bg-muted font-medium">
+            <td className={TD}>Total</td>
             {matrix.monthTotals.map((t, i) => (
-              <td key={matrix.monthKeys[i]} className="px-2 py-1.5 text-right tabular-nums">
+              <td key={matrix.monthKeys[i]} className={cn(TD, TD_NUM)}>
                 {NUM0.format(cellMetricValue(t, metric))}
               </td>
             ))}
-            <td className="border-l px-2 py-1.5 text-right tabular-nums">
+            <td className={cn(TD, TD_NUM, 'border-l border-border')}>
               {NUM0.format(cellMetricValue(matrix.grandTotal, metric))}
             </td>
-            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+            <td className={cn(TD, TD_NUM, 'text-muted-foreground')}>
               {monthCount > 0
                 ? NUM1.format(cellMetricValue(matrix.grandTotal, metric) / monthCount)
                 : '—'}
@@ -692,154 +678,132 @@ export default function ReservationAnalysePage() {
   if (!isAdmin || isGuest) return <Navigate to="/" replace />;
 
   return (
-    <div className="container mx-auto max-w-5xl space-y-4 p-4 pb-24 md:pb-8">
-      {/* Kopf */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/gaeste')}>
-          <ArrowLeft className="mr-1 h-4 w-4" /> Gäste CRM
-        </Button>
-        <div>
-          <h1 className="flex items-center gap-2 text-lg font-semibold">
-            <BarChart3 className="h-5 w-5 text-primary" />
-            Reservations Analyse
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            Personen, Reservationen und Vorjahrvergleiche auf einen Blick.
-          </p>
+    <PageShell
+      className="pb-24 md:pb-8"
+      header={(
+        <PageHeader
+          icon={<BarChart3 />}
+          title="Reservations Analyse"
+          info={`Personen, Reservationen und Vorjahrvergleiche auf einen Blick. Klick auf Monate, Wochentage oder Heatmap-Zellen öffnet die Details. ${OCCURRENCE_NOTE}`}
+          meta={rangeLabel}
+          actions={(
+            <Button variant="ghost" size="sm" onClick={() => navigate('/gaeste')}>
+              <ArrowLeft className="mr-1 h-4 w-4" /> Gäste CRM
+            </Button>
+          )}
+        >
+          {/* Globaler Kennzahl-Umschalter — sichtbar, aber ruhig */}
+          <div className="flex items-center gap-1.5">
+            <span className="hidden text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:inline">
+              Kennzahl
+            </span>
+            <SegmentedGroup>
+              {ANALYSE_METRICS.map((m) => (
+                <Button
+                  key={m}
+                  variant={metric === m ? 'default' : 'ghost'}
+                  size="sm" className="h-7 px-3"
+                  onClick={() => setMetric(m)}
+                >
+                  {ANALYSE_METRIC_LABEL[m]}
+                </Button>
+              ))}
+            </SegmentedGroup>
+          </div>
+        </PageHeader>
+      )}
+    >
+      {/* Toolbar: Zeitraum + Schnellwahl + Status — EINE Zeile (Desktop) */}
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+        <Select value={String(year)} onValueChange={(v) => setRange((r) => ({ ...r, year: +v }))}>
+          <SelectTrigger className="h-8 w-[84px]" aria-label="Jahr"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {yearOptions.map((y) => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={String(fromMonth)} onValueChange={(v) => setRange((r) => ({ ...r, fromMonth: +v }))}>
+          <SelectTrigger className="h-8 w-[118px]" aria-label="Von Monat"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {MONTHS.map((m, i) => (
+              <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground" aria-hidden>–</span>
+        <Select value={String(toMonth)} onValueChange={(v) => setRange((r) => ({ ...r, toMonth: +v }))}>
+          <SelectTrigger className="h-8 w-[118px]" aria-label="Bis Monat"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {MONTHS.map((m, i) => (
+              <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
+        {/* Schnellwahl (Presets) — frei wählbar bleibt daneben */}
+        <div className="flex flex-wrap gap-1">
+          {ANALYSE_PRESETS.map((p) => (
+            <Button
+              key={p.key}
+              variant={matchesPreset(range, p.key, today) ? 'secondary' : 'outline'}
+              size="sm" className="h-7 text-xs"
+              onClick={() => setRange(presetMonthRange(p.key, today))}
+            >
+              {p.label}
+            </Button>
+          ))}
         </div>
-        {/* Globaler Kennzahl-Umschalter — sichtbar, aber ruhig */}
-        <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:inline">
-            Kennzahl
+        {/* Status-Filter als segmentierte Gruppe */}
+        <div className="ml-auto flex items-center gap-1.5">
+          <span className="hidden text-[11px] font-medium uppercase tracking-wide text-muted-foreground md:inline">
+            Status
           </span>
           <SegmentedGroup>
-            {ANALYSE_METRICS.map((m) => (
+            {STATUS_SCOPES.map((s) => (
               <Button
-                key={m}
-                variant={metric === m ? 'default' : 'ghost'}
+                key={s}
+                variant={scope === s ? 'default' : 'ghost'}
                 size="sm" className="h-7 px-3"
-                onClick={() => setMetric(m)}
+                onClick={() => setScope(s)}
               >
-                {ANALYSE_METRIC_LABEL[m]}
+                {STATUS_SCOPE_LABEL[s]}
               </Button>
             ))}
           </SegmentedGroup>
         </div>
       </div>
 
-      {/* Zeitraum + Schnellbuttons + Status-Filter */}
-      <Card>
-        <CardContent className="space-y-3 p-3">
-          <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-            {/* Zeitraum: Jahr + Von/Bis-Monat gruppiert */}
-            <div className="flex items-end gap-2">
-              <div>
-                <FieldLabel>Jahr</FieldLabel>
-                <Select value={String(year)} onValueChange={(v) => setRange((r) => ({ ...r, year: +v }))}>
-                  <SelectTrigger className="h-8 w-[88px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {yearOptions.map((y) => (
-                      <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <FieldLabel>Von</FieldLabel>
-                <Select value={String(fromMonth)} onValueChange={(v) => setRange((r) => ({ ...r, fromMonth: +v }))}>
-                  <SelectTrigger className="h-8 w-[128px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {MONTHS.map((m, i) => (
-                      <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <FieldLabel>Bis</FieldLabel>
-                <Select value={String(toMonth)} onValueChange={(v) => setRange((r) => ({ ...r, toMonth: +v }))}>
-                  <SelectTrigger className="h-8 w-[128px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {MONTHS.map((m, i) => (
-                      <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            {/* Status-Filter als segmentierte Gruppe */}
-            <div className="ml-auto">
-              <FieldLabel>Status</FieldLabel>
-              <SegmentedGroup>
-                {STATUS_SCOPES.map((s) => (
-                  <Button
-                    key={s}
-                    variant={scope === s ? 'default' : 'ghost'}
-                    size="sm" className="h-7 px-3"
-                    onClick={() => setScope(s)}
-                  >
-                    {STATUS_SCOPE_LABEL[s]}
-                  </Button>
-                ))}
-              </SegmentedGroup>
-            </div>
-          </div>
-          {/* Schnellwahl (Presets) — frei wählbar bleibt oben */}
-          <div className="border-t pt-2.5">
-            <FieldLabel>Schnellwahl</FieldLabel>
-            <div className="flex flex-wrap gap-1">
-              {ANALYSE_PRESETS.map((p) => (
-                <Button
-                  key={p.key}
-                  variant={matchesPreset(range, p.key, today) ? 'secondary' : 'outline'}
-                  size="sm" className="h-7 text-xs"
-                  onClick={() => setRange(presetMonthRange(p.key, today))}
-                >
-                  {p.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
       {rangeInvalid ? (
-        <Card>
-          <CardContent className="p-4 text-sm text-muted-foreground">
-            „Von Monat" liegt nach „Bis Monat" — bitte Zeitraum korrigieren.
-          </CardContent>
-        </Card>
+        <HintBox tone="warn">
+          „Von Monat" liegt nach „Bis Monat" — bitte Zeitraum korrigieren.
+        </HintBox>
       ) : tablesOk === false ? (
-        <Card>
-          <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-            <Database className="h-4 w-4" />
-            Reservationsdaten sind noch nicht eingerichtet — bitte zuerst den
-            Foratable-Import ausführen.
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Database}
+          title="Reservationsdaten sind noch nicht eingerichtet"
+          description="Bitte zuerst den Foratable-Import ausführen."
+        />
       ) : loading ? (
-        <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
-          <Loader2 className="h-5 w-5 animate-spin" /> Lade Reservationen …
-        </div>
+        <LoadingState label="Lade Reservationen …" />
       ) : (
         <>
           {/* Hinweis bei (teilweise) fehlendem Vorjahr */}
           {totals.monthsWithPrior === 0 ? (
-            <AmberNote>
+            <HintBox tone="warn">
               Für den Vergleichszeitraum {year - 1} sind keine Vorjahresdaten
               vorhanden — Differenzen können nicht berechnet werden.
-            </AmberNote>
+            </HintBox>
           ) : priorIncomplete ? (
-            <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-              <Info className="mt-0.5 h-4 w-4 shrink-0" />
+            <HintBox tone="info">
               Vorjahresdaten sind nur für {totals.monthsWithPrior} von{' '}
               {totals.monthCount} Monaten vorhanden — die Totale vergleichen nur
               Monate mit Vorjahresdaten.
-            </div>
+            </HintBox>
           ) : null}
 
           {/* KPI-Kacheln (aktive Kennzahl) */}
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <KpiGrid>
             <KpiTile
               label={`${ANALYSE_METRIC_LABEL[metric]} Ist`}
               value={NUM0.format(activeTotals.current)}
@@ -860,7 +824,7 @@ export default function ReservationAnalysePage() {
               value={fmtPct(activeTotals.diffPct)}
               trend={activeTotals.trend}
             />
-          </div>
+          </KpiGrid>
 
           {/* Sektionen */}
           <Tabs defaultValue="monate">
@@ -875,11 +839,9 @@ export default function ReservationAnalysePage() {
             <TabsContent value="monate" className="mt-3">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">
+                  <CardTitle className="flex items-center gap-1.5 text-sm">
                     Monatsvergleich {year} vs. {year - 1}
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">
-                      Klick auf einen Monat öffnet den Tagesvergleich
-                    </span>
+                    <InfoTip text="Klick auf einen Monat öffnet den Tagesvergleich." />
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -896,20 +858,17 @@ export default function ReservationAnalysePage() {
             <TabsContent value="wochentage" className="mt-3">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">
+                  <CardTitle className="flex items-center gap-1.5 text-sm">
                     Wochentage Mo–So · {rangeLabel} vs. Vorjahr
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">
-                      Klick auf einen Wochentag zeigt die Zusammensetzung
-                    </span>
+                    <InfoTip text={`Klick auf einen Wochentag zeigt die Zusammensetzung. ${OCCURRENCE_NOTE}`} />
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 p-3 pt-0">
+                <CardContent className="p-3 pt-0">
                   <WeekdayYoyTable
                     rows={rangeWeekdays.rows}
                     metric={metric}
                     onWeekdayClick={setDetailWeekday}
                   />
-                  <p className="text-[11px] text-muted-foreground">{OCCURRENCE_NOTE}</p>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -932,16 +891,18 @@ export default function ReservationAnalysePage() {
               </Card>
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Wochentagsaufschlüsselung</CardTitle>
+                  <CardTitle className="flex items-center gap-1.5 text-sm">
+                    Wochentagsaufschlüsselung
+                    <InfoTip text={OCCURRENCE_NOTE} />
+                  </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 p-3 pt-0">
+                <CardContent className="p-3 pt-0">
                   <WeekdayYoyTable
                     rows={rangeWeekdays.rows}
                     metric={metric}
                     onWeekdayClick={setDetailWeekday}
                     compact
                   />
-                  <p className="text-[11px] text-muted-foreground">{OCCURRENCE_NOTE}</p>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -949,24 +910,19 @@ export default function ReservationAnalysePage() {
             <TabsContent value="matrix" className="mt-3">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">
+                  <CardTitle className="flex items-center gap-1.5 text-sm">
                     Wochentage nach Monat · {rangeLabel}
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">
-                      {ANALYSE_METRIC_LABEL[metric]} je Wochentag und Monat
-                    </span>
+                    <InfoTip
+                      text={`${ANALYSE_METRIC_LABEL[metric]} je Wochentag und Monat. Total = Summe über den gewählten Zeitraum, Ø/Monat = Total ÷ Anzahl Monate. Stärkster/schwächster Wochentag nach Zeitraum-Total markiert. ${OCCURRENCE_NOTE}`}
+                    />
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 p-3 pt-0">
+                <CardContent className="p-3 pt-0">
                   <WeekdayMonthMatrixTable
                     matrix={weekdayMatrix}
                     extremes={weekdayMatrixFlags}
                     metric={metric}
                   />
-                  <p className="text-[11px] text-muted-foreground">
-                    Total = Summe über den gewählten Zeitraum, Ø/Monat = Total ÷ Anzahl Monate.
-                    Stärkster/schwächster Wochentag nach Zeitraum-Total markiert.
-                    {' '}{OCCURRENCE_NOTE}
-                  </p>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -974,11 +930,11 @@ export default function ReservationAnalysePage() {
             <TabsContent value="heatmap" className="mt-3">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">
+                  <CardTitle className="flex items-center gap-1.5 text-sm">
                     Heatmap Monat × Wochentag · {rangeLabel}
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">
-                      {ANALYSE_METRIC_LABEL[metric]} — Klick auf eine Zelle öffnet die Details
-                    </span>
+                    <InfoTip
+                      text={`${ANALYSE_METRIC_LABEL[metric]} — Klick auf eine Zelle öffnet die Details. Obere Zahl = ${ANALYSE_METRIC_LABEL[metric]}, untere = Anteil am Monat. Farbskala relativ zum aktuell gewählten Zeitraum.`}
+                    />
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3 p-3 pt-0">
@@ -989,10 +945,6 @@ export default function ReservationAnalysePage() {
                     onCellClick={(monthKey, weekday) => setDetailCell({ monthKey, weekday })}
                   />
                   <HeatmapLegend />
-                  <p className="text-[11px] text-muted-foreground">
-                    Obere Zahl = {ANALYSE_METRIC_LABEL[metric]}, untere = Anteil am Monat.
-                    Farbskala relativ zum aktuell gewählten Zeitraum.
-                  </p>
                 </CardContent>
               </Card>
             </TabsContent>
@@ -1015,10 +967,10 @@ export default function ReservationAnalysePage() {
               </DialogHeader>
 
               {!dayComparison.hasPriorData ? (
-                <AmberNote>
+                <HintBox tone="warn">
                   Für {monthLongLabel(dayComparison.priorMonthKey)} sind keine
                   Vorjahresdaten vorhanden — es wird nur der Ist-Monat angezeigt.
-                </AmberNote>
+                </HintBox>
               ) : null}
 
               {detailMonthKpis ? (
@@ -1088,16 +1040,16 @@ export default function ReservationAnalysePage() {
               ) : null}
 
               {/* Tages-Tabelle: Wochentag + beide Kennzahlen; Vorjahr/Diff. der aktiven */}
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className={TABLE}>
                   <thead>
-                    <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
-                      <th className="px-2 py-1.5 text-left font-medium">Tag</th>
-                      <th className="px-2 py-1.5 text-left font-medium">WT</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Res.</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Pers.</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Vorjahr ({ANALYSE_METRIC_LABEL[metric]})</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Diff.</th>
+                    <tr className="bg-muted">
+                      <th className={TH}>Tag</th>
+                      <th className={TH}>WT</th>
+                      <th className={cn(TH, TH_NUM)}>Res.</th>
+                      <th className={cn(TH, TH_NUM)}>Pers.</th>
+                      <th className={cn(TH, TH_NUM)}>Vorjahr ({ANALYSE_METRIC_LABEL[metric]})</th>
+                      <th className={cn(TH, TH_NUM)}>Diff.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1111,13 +1063,12 @@ export default function ReservationAnalysePage() {
                         <tr
                           key={d.day}
                           className={cn(
-                            'border-b last:border-0',
                             empty && 'text-muted-foreground/60',
                             isStrongest && 'bg-emerald-50 dark:bg-emerald-950/20',
                             isWeakest && 'bg-red-50 dark:bg-red-950/20',
                           )}
                         >
-                          <td className="whitespace-nowrap px-2 py-1 tabular-nums">
+                          <td className={cn(TD, 'whitespace-nowrap py-1 tabular-nums')}>
                             {d.day}.
                             {d.currentDate === null ? (
                               <span className="ml-1 text-[10px] text-muted-foreground">(nur VJ)</span>
@@ -1133,17 +1084,17 @@ export default function ReservationAnalysePage() {
                               </span>
                             ) : null}
                           </td>
-                          <td className="px-2 py-1 text-muted-foreground">
+                          <td className={cn(TD, 'py-1 text-muted-foreground')}>
                             {weekday ? WEEKDAY_SHORT[weekday] : '—'}
                           </td>
-                          <td className={cn('px-2 py-1 text-right tabular-nums', metric === 'reservations' && 'font-medium')}>
+                          <td className={cn(TD, TD_NUM, 'py-1', metric === 'reservations' && 'font-medium')}>
                             {NUM0.format(d.reservations.current)}
                           </td>
-                          <td className={cn('px-2 py-1 text-right tabular-nums', metric === 'persons' && 'font-medium')}>
+                          <td className={cn(TD, TD_NUM, 'py-1', metric === 'persons' && 'font-medium')}>
                             {NUM0.format(d.persons.current)}
                           </td>
-                          <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{fmtPrior(v.prior)}</td>
-                          <td className={cn('px-2 py-1 text-right tabular-nums', TREND_TEXT[v.trend])}>
+                          <td className={cn(TD, TD_NUM, 'py-1 text-muted-foreground')}>{fmtPrior(v.prior)}</td>
+                          <td className={cn(TD, TD_NUM, 'py-1', TREND_TEXT[v.trend])}>
                             {fmtDiff(v.diff)}
                           </td>
                         </tr>
@@ -1187,15 +1138,15 @@ export default function ReservationAnalysePage() {
                 </div>
               ) : null}
 
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto rounded-lg border border-border">
+                <table className={TABLE}>
                   <thead>
-                    <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
-                      <th className="px-2 py-1.5 text-left font-medium">Monat</th>
-                      <th className="px-2 py-1.5 text-right font-medium">{ANALYSE_METRIC_LABEL[metric]} Ist</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Vorjahr</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Diff.</th>
-                      <th className="px-2 py-1.5 text-right font-medium">Diff. %</th>
+                    <tr className="bg-muted">
+                      <th className={TH}>Monat</th>
+                      <th className={cn(TH, TH_NUM)}>{ANALYSE_METRIC_LABEL[metric]} Ist</th>
+                      <th className={cn(TH, TH_NUM)}>Vorjahr</th>
+                      <th className={cn(TH, TH_NUM)}>Diff.</th>
+                      <th className={cn(TH, TH_NUM)}>Diff. %</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1203,19 +1154,19 @@ export default function ReservationAnalysePage() {
                       const v = pickMetric(r, metric);
                       const empty = v.current === 0 && (v.prior ?? 0) === 0;
                       return (
-                        <tr key={r.monthKey} className={cn('border-b last:border-0', empty && 'text-muted-foreground/60')}>
-                          <td className="px-2 py-1 font-medium">
+                        <tr key={r.monthKey} className={cn(empty && 'text-muted-foreground/60')}>
+                          <td className={cn(TD, 'py-1 font-medium')}>
                             {monthLabel(r.monthKey)}
                             {!r.hasPriorData ? (
                               <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">kein Vorjahr</span>
                             ) : null}
                           </td>
-                          <td className="px-2 py-1 text-right tabular-nums">{NUM0.format(v.current)}</td>
-                          <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{fmtPrior(v.prior)}</td>
-                          <td className={cn('px-2 py-1 text-right tabular-nums', TREND_TEXT[v.trend])}>
+                          <td className={cn(TD, TD_NUM, 'py-1')}>{NUM0.format(v.current)}</td>
+                          <td className={cn(TD, TD_NUM, 'py-1 text-muted-foreground')}>{fmtPrior(v.prior)}</td>
+                          <td className={cn(TD, TD_NUM, 'py-1', TREND_TEXT[v.trend])}>
                             {fmtDiff(v.diff)}
                           </td>
-                          <td className={cn('px-2 py-1 text-right tabular-nums', TREND_TEXT[v.trend])}>
+                          <td className={cn(TD, TD_NUM, 'py-1', TREND_TEXT[v.trend])}>
                             {fmtPct(v.diffPct)}
                           </td>
                         </tr>
@@ -1299,7 +1250,7 @@ export default function ReservationAnalysePage() {
           ) : null}
         </DialogContent>
       </Dialog>
-    </div>
+    </PageShell>
   );
 }
 
@@ -1494,15 +1445,15 @@ function HeatmapDayList({ entries, strongestDate, weakestDate }: {
     );
   }
   return (
-    <div className="overflow-x-auto rounded-md border">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className={TABLE}>
         <thead>
-          <tr className="border-b bg-muted/40 text-[11px] uppercase tracking-wide text-muted-foreground">
-            <th className="px-2 py-1.5 text-left font-medium">Datum</th>
-            <th className="px-2 py-1.5 text-right font-medium">Res.</th>
-            <th className="px-2 py-1.5 text-right font-medium">Pers.</th>
-            <th className="px-2 py-1.5 text-right font-medium">Ø Pers.</th>
-            <th className="px-2 py-1.5 text-left font-medium">Uhrzeiten</th>
+          <tr className="bg-muted">
+            <th className={TH}>Datum</th>
+            <th className={cn(TH, TH_NUM)}>Res.</th>
+            <th className={cn(TH, TH_NUM)}>Pers.</th>
+            <th className={cn(TH, TH_NUM)}>Ø Pers.</th>
+            <th className={TH}>Uhrzeiten</th>
           </tr>
         </thead>
         <tbody>
@@ -1514,12 +1465,11 @@ function HeatmapDayList({ entries, strongestDate, weakestDate }: {
               <tr
                 key={e.date}
                 className={cn(
-                  'border-b last:border-0',
                   isStrong && 'bg-emerald-50 dark:bg-emerald-950/20',
                   isWeak && !isStrong && 'bg-red-50 dark:bg-red-950/20',
                 )}
               >
-                <td className="px-2 py-1 tabular-nums">
+                <td className={cn(TD, 'py-1 tabular-nums')}>
                   {formatDayLabel(e.date)}
                   {isStrong ? (
                     <span className="ml-1.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">stärkster</span>
@@ -1527,12 +1477,12 @@ function HeatmapDayList({ entries, strongestDate, weakestDate }: {
                     <span className="ml-1.5 text-[10px] font-medium text-red-600 dark:text-red-400">schwächster</span>
                   ) : null}
                 </td>
-                <td className="px-2 py-1 text-right tabular-nums">{NUM0.format(e.reservations)}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{NUM0.format(e.persons)}</td>
-                <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">
+                <td className={cn(TD, TD_NUM, 'py-1')}>{NUM0.format(e.reservations)}</td>
+                <td className={cn(TD, TD_NUM, 'py-1')}>{NUM0.format(e.persons)}</td>
+                <td className={cn(TD, TD_NUM, 'py-1 text-muted-foreground')}>
                   {avg === null ? '—' : NUM1.format(avg)}
                 </td>
-                <td className="px-2 py-1 text-xs text-muted-foreground">
+                <td className={cn(TD, 'py-1 text-xs text-muted-foreground')}>
                   {e.times.length === 0
                     ? '—'
                     : e.times.map((t) => `${t.hour}:00 (${NUM0.format(t.reservations)})`).join(' · ')}
