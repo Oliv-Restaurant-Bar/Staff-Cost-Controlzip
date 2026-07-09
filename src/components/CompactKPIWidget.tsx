@@ -3,6 +3,7 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget, grossToNet } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Euro, Users, Clock, Percent, TrendingUp, TrendingDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +24,8 @@ export const CompactKPIWidget = ({
   showNetRevenue = false,
   showPlannedData = true,
 }: CompactKPIWidgetProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const dateString = format(selectedDate, 'yyyy-MM-dd');
   
   // Helper to get display revenue
@@ -52,17 +55,18 @@ export const CompactKPIWidget = ({
       dayEntries.forEach(entry => {
         const emp = employees.find(e => e.id === entry.employeeId);
         if (!emp) return;
+        const rate = rateById.get(emp.id) ?? 0;
         weekActualHours += entry.actualHours || 0;
         weekPlannedHours += entry.plannedHours || 0;
-        weekActualCost += (entry.actualHours || 0) * emp.hourlyWage;
-        weekPlannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
+        weekActualCost += (entry.actualHours || 0) * rate;
+        weekPlannedCost += (entry.plannedHours || 0) * rate;
       });
     });
     
     const pkq = weekRevenue > 0 ? (weekActualCost / weekRevenue) * 100 : 0;
     
     return { weekRevenue, weekPlannedRevenue, weekActualCost, weekPlannedCost, weekActualHours, weekPlannedHours, pkq };
-  }, [selectedDate, dailyBudgets, timeEntries, employees, showNetRevenue]);
+  }, [selectedDate, dailyBudgets, timeEntries, employees, showNetRevenue, rateById]);
 
   // Today's data
   const todayData = useMemo(() => {
@@ -74,10 +78,11 @@ export const CompactKPIWidget = ({
     dayEntries.forEach(entry => {
       const emp = employees.find(e => e.id === entry.employeeId);
       if (!emp) return;
+      const rate = rateById.get(emp.id) ?? 0;
       actualHours += entry.actualHours || 0;
       plannedHours += entry.plannedHours || 0;
-      actualCost += (entry.actualHours || 0) * emp.hourlyWage;
-      plannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
+      actualCost += (entry.actualHours || 0) * rate;
+      plannedCost += (entry.plannedHours || 0) * rate;
     });
     
     const revenue = getDisplayRevenue(budget?.actualRevenue || 0, budget?.takeawayRevenue || 0);
@@ -85,7 +90,7 @@ export const CompactKPIWidget = ({
     const pkq = revenue > 0 ? (actualCost / revenue) * 100 : 0;
     
     return { revenue, plannedRevenue, actualCost, plannedCost, actualHours, plannedHours, pkq };
-  }, [dateString, dailyBudgets, timeEntries, employees, showNetRevenue]);
+  }, [dateString, dailyBudgets, timeEntries, employees, showNetRevenue, rateById]);
 
   const getQuoteStyle = (quote: number) => {
     if (quote <= 25) return 'text-green-600 bg-green-50 dark:bg-green-950/30';

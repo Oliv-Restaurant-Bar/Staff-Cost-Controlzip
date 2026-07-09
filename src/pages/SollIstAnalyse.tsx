@@ -11,7 +11,7 @@
  *   kueche_manager  → nur Küche, keine Einzellöhne
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   format, addDays, subDays, addWeeks, subWeeks, addMonths, subMonths,
@@ -39,6 +39,9 @@ import {
   ActualHourEntry,
 } from '@/lib/supabase-db';
 import { Employee } from '@/types/personnel';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { socialCostFactorFromRates } from '@/lib/social-costs';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 
 // ─── Typen ───────────────────────────────────────────────────────────────────
 
@@ -286,6 +289,18 @@ const SollIstAnalyse = () => {
   } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
 
+  // Alle Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten).
+  const { rates: socialCostRates } = useSocialCostRates();
+  const agFactor = useMemo(() => socialCostFactorFromRates(socialCostRates), [socialCostRates]);
+  const agRate = useCallback(
+    (emp: Employee) => getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
+    [socialCostRates]
+  );
+  const agMonthly = useCallback(
+    (emp: Employee) => (emp.monthlySalaryWith13th ?? emp.monthlySalary ?? 0) * agFactor,
+    [agFactor]
+  );
+
   // ── Filter-Zustände ─────────────────────────────────────────────────────────
   const [period, setPeriod]   = useState<Period>('monat');
   const [selDate, setSelDate] = useState<Date>(today);
@@ -419,12 +434,12 @@ const SollIstAnalyse = () => {
   const hoursVarPct    = pctVariance(plannedHours, actualHours);
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
-  // Geplante Kosten: Monat → Gehalt für Festangestellte; sonst Stunden × Lohn
+  // Geplante Kosten: Monat → AG-Monatsaufwand für Festangestellte; sonst Stunden × AG-Satz
   const plannedLaborCost = useMemo(() => {
     if (period === 'monat') {
       return visibleEmployees.reduce((sum, emp) => {
         if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-          return sum + emp.monthlySalary;
+          return sum + agMonthly(emp);
         }
         const hrs = Object.entries(scheduleData)
           .filter(([key]) => {
@@ -433,10 +448,10 @@ const SollIstAnalyse = () => {
             return empId === emp.id && periodDaySet.has(date);
           })
           .reduce((s, [, day]) => s + calcDayHours(day), 0);
-        return sum + hrs * emp.hourlyWage;
+        return sum + hrs * agRate(emp);
       }, 0);
     }
-    // Tag / Woche: immer Stunden × Stundenlohn
+    // Tag / Woche: immer Stunden × AG-Stundensatz
     return visibleEmployees.reduce((sum, emp) => {
       const hrs = Object.entries(scheduleData)
         .filter(([key]) => {
@@ -445,11 +460,11 @@ const SollIstAnalyse = () => {
           return empId === emp.id && periodDaySet.has(date);
         })
         .reduce((s, [, day]) => s + calcDayHours(day), 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
-  }, [visibleEmployees, scheduleData, periodDaySet, period]);
+  }, [visibleEmployees, scheduleData, periodDaySet, period, agRate, agMonthly]);
 
-  // Ist-Kosten: immer Ist-Stunden × Stundenlohn
+  // Ist-Kosten: immer Ist-Stunden × AG-Stundensatz
   const actualLaborCost = useMemo(() => {
     if (!hasActualHours) return 0;
     return visibleEmployees.reduce((sum, emp) => {
@@ -460,9 +475,9 @@ const SollIstAnalyse = () => {
           return empId === emp.id && periodDaySet.has(date);
         })
         .reduce((s, [, e]) => s + e.hours, 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
-  }, [visibleEmployees, actualData, periodDaySet, hasActualHours]);
+  }, [visibleEmployees, actualData, periodDaySet, hasActualHours, agRate]);
 
   const costVariance    = hasActualHours ? actualLaborCost - plannedLaborCost : null;
   const costVariancePct = hasActualHours ? pctVariance(plannedLaborCost, actualLaborCost) : null;

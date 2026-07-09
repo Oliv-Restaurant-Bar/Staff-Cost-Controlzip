@@ -494,7 +494,7 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
     ? `FIX + Variabel − ${fmtCHF(totalFerienabbauCHF)} Ferienabbau`
     : 'FIX + VARIABEL kombiniert';
   const varSub = totalVarHours > 0
-    ? `${Math.round(totalVarHours * 10) / 10} h × Stundenlohn · ${nVarEmpsTotal} MA`
+    ? `${Math.round(totalVarHours * 10) / 10} h × Total AG/h · ${nVarEmpsTotal} MA`
     : `${nVarEmpsTotal} Mitarbeiter · Stunden wählen`;
 
   drawMainKpi(M,                  'Personal FIX / Monat',    fmtCHF(totalFixCost),
@@ -649,7 +649,7 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
         const remH = Math.max(0, maxVarHours - Math.round(totalVarHours));
         line1 = `Budget im grünen Bereich — noch ca. ${remH} Stunden planbar.`;
       }
-      const line2 = `Ø Stundenlohn: ${fmtCHFDec(avgHourlyWage)}/h  ·  Budget Variabel: ${fmtCHF(budgetAvailForVar)}  ·  Variable Arbeit: ${fmtCHF(totalVarArbeitCHF)} (${varModeBadge})`;
+      const line2 = `Ø Total Arbeitgeberkosten: ${fmtCHFDec(avgHourlyWage)}/h  ·  Budget Variabel: ${fmtCHF(budgetAvailForVar)}  ·  Variable Arbeit: ${fmtCHF(totalVarArbeitCHF)} (${varModeBadge})`;
 
       setFont(pdf, 'bold', 7.5, hTx);
       pdf.text(line1, M + 5, curY + 5.5);
@@ -849,14 +849,14 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
       // Dept-Subheader + Tabelle zusammenhalten (min. 28 mm)
       needsPage(28);
       drawDeptSubheader(pdf, M, curY, W, dept, rows.length,
-        `Basis ${fmtCHF(deptBase)}/Mt  ·  FIX ${fmtCHF(deptTotal)}/Mt`,
+        `Basis ${fmtCHF(deptBase)}/Mt  ·  Total AG ${fmtCHF(deptTotal)}/Mt`,
         C.sectionBlue, [239, 246, 255]);
       curY += 7;
 
       autoTable(pdf, {
         startY: curY,
         margin: { left: M, right: M },
-        head: [['Name', 'Anstellung', 'Basis/Mt', 'inkl. 13./Mt', 'FIX/Monat', 'FIX/Jahr']],
+        head: [['Name', 'Anstellung', 'Basis/Mt', 'inkl. 13./Mt', 'Total AG/Mt', 'Total AG/Jahr']],
         body: rows.map(({ emp, cost, label, yearlyCost }) => [
           emp.name + (label ? `  (${label})` : ''),
           EMP_TYPE_LABEL[emp.employmentType] ?? emp.employmentType,
@@ -946,7 +946,7 @@ export function exportPersonalFixToPDF(data: PersonalFixExportData): void {
       autoTable(pdf, {
         startY: curY,
         margin: { left: M, right: M },
-        head: [['Name', 'Anstellung', 'Stundenlohn', hH, 'Kosten/Monat']],
+        head: [['Name', 'Anstellung', 'Total AG/h', hH, 'Kosten/Monat']],
         body: rows.map(r => [
           r.emp.name,
           EMP_TYPE_LABEL[r.emp.employmentType] ?? r.emp.employmentType,
@@ -1282,7 +1282,7 @@ export function exportVarKostenvergleich(data: VarKostenvergleichData): void {
     autoTable(pdf, {
       startY: y,
       margin: { left: margin, right: margin },
-      head: [['Name', 'Anstellung', 'Stundenlohn', `${sourceLabel}-Std./Mt`, 'Kosten/Mt', 'Kosten/Jahr']],
+      head: [['Name', 'Anstellung', 'Total AG/h', `${sourceLabel}-Std./Mt`, 'Kosten/Mt', 'Kosten/Jahr']],
       body: rows.map(r => [
         r.emp.name,
         EMP_TYPE_LABEL[r.emp.employmentType] ?? r.emp.employmentType,

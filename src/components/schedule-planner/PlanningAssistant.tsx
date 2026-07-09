@@ -13,6 +13,7 @@ import {
   ArrowUpRight, Trash2, Euro, Scale, Sunrise, Moon, CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
@@ -587,6 +588,8 @@ export default function PlanningAssistant({
   onRemoveShift,
   patternWarnings = [],
 }: Props) {
+  // Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten)
+  const { rateById } = useEmployerRateMap(employees);
   const [tab, setTab]                   = useState<'einplanen' | 'reduzieren' | 'fairness'>('einplanen');
   const [statuses, setStatuses]         = useState<Record<string, HintStatus>>(loadStatuses);
   const [showIgnored, setShowIgnored]   = useState(false);
@@ -659,12 +662,12 @@ export default function PlanningAssistant({
     return alerts;
   }, [staffingTargets, employees, scheduleData, displayDays]);
 
-  // Remaining var hours
+  // Remaining var hours — Budget ist AG-basiert, also auch der Ø-Satz (Total AG/h)
   const avgVarWage = useMemo(() => {
     const varEmps = employees.filter(e => (e.hourlyWage ?? 0) > 0 && !e.monthlySalary);
     if (!varEmps.length) return 0;
-    return varEmps.reduce((s, e) => s + e.hourlyWage, 0) / varEmps.length;
-  }, [employees]);
+    return varEmps.reduce((s, e) => s + (rateById.get(e.id) ?? 0), 0) / varEmps.length;
+  }, [employees, rateById]);
 
   const remainingVarHours = useMemo(() => {
     if (availableVarBudget <= 0 || avgVarWage <= 0) return 0;
@@ -705,8 +708,8 @@ export default function PlanningAssistant({
         const br = calculateBreakDeduction(gross);
         const fNet = Math.max(0, fh - br * (fh / gross));
         const sNet = Math.max(0, sh - br * (sh / gross));
-        const fCost = fNet * emp.hourlyWage;
-        const sCost = sNet * emp.hourlyWage;
+        const fCost = fNet * (rateById.get(emp.id) ?? 0);
+        const sCost = sNet * (rateById.get(emp.id) ?? 0);
         frühTotal += fCost;
         spätTotal += sCost;
         const dept = emp.department === 'küche' ? 'küche' : 'service';

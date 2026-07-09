@@ -6,6 +6,9 @@ import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { DaySchedule } from './ScheduleGrid';
 import { cn } from '@/lib/utils';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import { socialCostFactorFromRates, type SocialCostRates } from '@/lib/social-costs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -89,14 +92,16 @@ function shiftSortKey(plan: DaySchedule | undefined): number {
   return Math.min(...starts);
 }
 
-/** Calculate daily cost for a single employee on a given day */
+/** Calculate daily cost (Total Arbeitgeberkosten, nie roher Lohn) for a single employee on a given day */
 function calcDailyCost(
   emp: Employee,
   plan: DaySchedule | undefined,
   daysInMonth: number,
+  rates: SocialCostRates,
 ): number {
   if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-    return emp.monthlySalary / daysInMonth;
+    const agFactor = socialCostFactorFromRates(rates);
+    return ((emp.monthlySalaryWith13th ?? emp.monthlySalary) * agFactor) / daysInMonth;
   }
   if (!plan) return 0;
   let hours = 0;
@@ -108,7 +113,7 @@ function calcDailyCost(
     const diff = timeToMin(plan.spät.end) - timeToMin(plan.spät.start);
     hours += Math.max(0, diff) / 60;
   }
-  return hours * (emp.hourlyWage ?? 0);
+  return hours * (getEffectiveHourlyRate(emp, rates) ?? 0);
 }
 
 const CHF = new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 });
@@ -532,6 +537,8 @@ export function MobileDayView({
   const dateStr = format(day, 'yyyy-MM-dd');
   const isWeekendDay = isWeekend(day);
   const isSun = isSunday(day);
+  // Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten), nie roher hourlyWage.
+  const { rates: socialCostRates } = useSocialCostRates();
 
   // ── Persist "show only scheduled" preference ──────────────────────────────
   const [showOnlyScheduled, setShowOnlyScheduled] = useState<boolean>(() => {
@@ -555,11 +562,11 @@ export function MobileDayView({
       const plan = scheduleData[key];
       const istEntry = actualHoursData[key];
       const sortKey = shiftSortKey(plan);
-      const dailyCost = calcDailyCost(emp, plan, daysInMonth);
+      const dailyCost = calcDailyCost(emp, plan, daysInMonth, socialCostRates);
       const isScheduled = plan && (plan.früh || plan.spät || plan.frühAbsence || plan.spätAbsence);
       return { emp, plan, istEntry, sortKey, dailyCost, isScheduled };
     });
-  }, [employees, dateStr, scheduleData, actualHoursData, daysInMonth]);
+  }, [employees, dateStr, scheduleData, actualHoursData, daysInMonth, socialCostRates]);
 
   // ── Filter & sort ─────────────────────────────────────────────────────────
   const filteredData = useMemo(() => {

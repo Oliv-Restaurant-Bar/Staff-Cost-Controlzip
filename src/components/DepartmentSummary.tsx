@@ -1,6 +1,7 @@
 import { Employee, TimeEntry, DailyBudget, grossToNet } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { cn } from '@/lib/utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Users, ChefHat, ChevronDown, FileText, FileSpreadsheet } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,8 @@ export const DepartmentSummary = ({
   showNetRevenue: propShowNetRevenue,
   showPlannedData = true,
 }: DepartmentSummaryProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById, rates } = useEmployerRateMap(employees);
   const { showNetRevenue: contextShowNetRevenue } = useRevenueDisplay();
   // Use prop if provided, otherwise use context
   const showNetRevenue = propShowNetRevenue ?? contextShowNetRevenue;
@@ -48,13 +51,15 @@ export const DepartmentSummary = ({
       const employee = deptEmployees.find((e) => e.id === entry.employeeId);
       if (!employee) return;
 
+      const rate = rateById.get(employee.id) ?? 0;
+
       employeeCount++;
       plannedHours += entry.plannedHours;
-      plannedCost += entry.plannedHours * employee.hourlyWage;
+      plannedCost += entry.plannedHours * rate;
 
       if (entry.actualHours !== undefined) {
         actualHours += entry.actualHours;
-        actualCost += entry.actualHours * employee.hourlyWage;
+        actualCost += entry.actualHours * rate;
       }
     });
 
@@ -73,14 +78,14 @@ export const DepartmentSummary = ({
 
   const handleExportPDF = () => {
     const date = typeof selectedDate === 'string' ? new Date(selectedDate) : selectedDate;
-    // KPI Export hat: (employees, timeEntries, dailyBudgets, selectedDate, customEndDate?, periodLabel?, companyName?, logoUrl?, showNetRevenue?)
-    exportKPIReportPDF(employees, timeEntries, dailyBudgets, date, undefined, undefined, undefined, undefined, showNetRevenue);
+    // KPI Export hat: (employees, timeEntries, dailyBudgets, selectedDate, rates, customEndDate?, periodLabel?, companyName?, logoUrl?, showNetRevenue?)
+    exportKPIReportPDF(employees, timeEntries, dailyBudgets, date, rates, undefined, undefined, undefined, undefined, showNetRevenue);
   };
 
   const handleExportExcel = () => {
     const date = typeof selectedDate === 'string' ? new Date(selectedDate) : selectedDate;
-    // KPI Export hat: (employees, timeEntries, dailyBudgets, selectedDate, customEndDate?, periodLabel?, showNetRevenue?)
-    exportKPIReportExcel(employees, timeEntries, dailyBudgets, date, undefined, undefined, showNetRevenue);
+    // KPI Export hat: (employees, timeEntries, dailyBudgets, selectedDate, rates, customEndDate?, periodLabel?, showNetRevenue?)
+    exportKPIReportExcel(employees, timeEntries, dailyBudgets, date, rates, undefined, undefined, showNetRevenue);
   };
 
   const DepartmentCard = ({

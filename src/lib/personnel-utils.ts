@@ -1,6 +1,8 @@
 import { Employee, TimeEntry, DailySummary, EmploymentType, MirusImportEntry, MirusDailyImportEntry } from '@/types/personnel';
 import * as XLSX from 'xlsx';
 import { format, parse, addDays, endOfMonth } from 'date-fns';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import type { SocialCostRates } from '@/lib/social-costs';
 
 /**
  * Kanonischer Anzeigename eines Mitarbeiters aus dem Personalstamm.
@@ -130,11 +132,14 @@ export const getEmploymentTypeBadgeClass = (type: EmploymentType): string => {
   return classes[type];
 };
 
+// Kostenbasis = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten):
+// Kosten IMMER über die zentralen Sätze (getEffectiveHourlyRate), nie roher hourlyWage.
 export const calculateDailySummary = (
   entries: TimeEntry[],
   employees: Employee[],
   plannedRevenue: number,
-  actualRevenue: number
+  actualRevenue: number,
+  rates: SocialCostRates
 ): DailySummary => {
   let totalPlannedHours = 0;
   let totalActualHours = 0;
@@ -145,12 +150,14 @@ export const calculateDailySummary = (
     const employee = employees.find((e) => e.id === entry.employeeId);
     if (!employee) return;
 
+    const rate = getEffectiveHourlyRate(employee, rates) ?? 0;
+
     totalPlannedHours += entry.plannedHours;
-    totalPlannedCost += entry.plannedHours * employee.hourlyWage;
+    totalPlannedCost += entry.plannedHours * rate;
 
     if (entry.actualHours !== undefined) {
       totalActualHours += entry.actualHours;
-      totalActualCost += entry.actualHours * employee.hourlyWage;
+      totalActualCost += entry.actualHours * rate;
     }
   });
 

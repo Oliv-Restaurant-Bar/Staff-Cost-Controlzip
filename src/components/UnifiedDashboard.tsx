@@ -4,6 +4,7 @@ import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget, grossToNet } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { useWeekSync } from '@/hooks/useWeekSync';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -47,6 +48,8 @@ export const UnifiedDashboard = ({
   showNetRevenue = false,
   showPlannedData = true,
 }: UnifiedDashboardProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   
   // Helper to get display revenue
@@ -143,8 +146,9 @@ export const UnifiedDashboard = ({
       
       const plannedHours = entries.reduce((sum, e) => sum + (e.plannedHours || 0), 0);
       const actualHours = entries.reduce((sum, e) => sum + (e.actualHours || 0), 0);
-      const plannedCost = plannedHours * emp.hourlyWage;
-      const actualCost = actualHours * emp.hourlyWage;
+      const rate = rateById.get(emp.id) ?? 0;
+      const plannedCost = plannedHours * rate;
+      const actualCost = actualHours * rate;
       
       const weeklyHours = emp.weeklyHours || 42;
       const expectedHours = viewMode === 'day' 
@@ -230,10 +234,11 @@ export const UnifiedDashboard = ({
         const emp = employees.find(e => e.id === entry.employeeId);
         if (!emp) return;
         
+        const rate = rateById.get(emp.id) ?? 0;
         plannedHours += entry.plannedHours || 0;
         actualHours += entry.actualHours || 0;
-        plannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
-        actualCost += (entry.actualHours || 0) * emp.hourlyWage;
+        plannedCost += (entry.plannedHours || 0) * rate;
+        actualCost += (entry.actualHours || 0) * rate;
       });
       
       const actualRevenue = getDisplayRevenue(budget?.actualRevenue || 0, budget?.takeawayRevenue || 0);
@@ -268,7 +273,7 @@ export const UnifiedDashboard = ({
       plannedQuote,
       dailyBreakdown,
     };
-  }, [employees, timeEntries, dailyBudgets, viewMode, dateRanges, showNetRevenue, monthlyTakeaway, currentMonthStart]);
+  }, [employees, timeEntries, dailyBudgets, viewMode, dateRanges, showNetRevenue, monthlyTakeaway, currentMonthStart, rateById]);
 
   const getPeriodLabel = () => {
     switch (viewMode) {

@@ -10,6 +10,8 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfM
 import { de } from 'date-fns/locale';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { exportCombinedReport } from '@/lib/pdf-export';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
+import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart, Line, Area, AreaChart } from 'recharts';
 
 type ViewMode = 'day' | 'week' | 'month';
@@ -38,6 +40,8 @@ export const CombinedSummary = ({
   dailySummary,
   onBudgetUpdate,
 }: CombinedSummaryProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById, rates } = useEmployerRateMap(employees);
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [employeesOpen, setEmployeesOpen] = useState(false);
   
@@ -97,8 +101,9 @@ export const CombinedSummary = ({
       dayEntries.forEach((entry) => {
         const employee = employees.find((e) => e.id === entry.employeeId);
         if (employee) {
-          plannedCost += entry.plannedHours * employee.hourlyWage;
-          actualCost += (entry.actualHours || 0) * employee.hourlyWage;
+          const rate = rateById.get(employee.id) ?? 0;
+          plannedCost += entry.plannedHours * rate;
+          actualCost += (entry.actualHours || 0) * rate;
         }
       });
 
@@ -122,7 +127,7 @@ export const CombinedSummary = ({
         quote: laborPct,
       };
     });
-  }, [selectedDate, dailyBudgets, timeEntries, employees]);
+  }, [selectedDate, dailyBudgets, timeEntries, employees, rateById]);
 
   // Calculate month data for charts
   const monthChartData = useMemo(() => {
@@ -147,8 +152,9 @@ export const CombinedSummary = ({
       dayEntries.forEach((entry) => {
         const employee = employees.find((e) => e.id === entry.employeeId);
         if (employee) {
-          plannedCost += entry.plannedHours * employee.hourlyWage;
-          actualCost += (entry.actualHours || 0) * employee.hourlyWage;
+          const rate = rateById.get(employee.id) ?? 0;
+          plannedCost += entry.plannedHours * rate;
+          actualCost += (entry.actualHours || 0) * rate;
         }
       });
 
@@ -172,7 +178,7 @@ export const CombinedSummary = ({
         quote: laborPct,
       };
     });
-  }, [selectedDate, dailyBudgets, timeEntries, employees]);
+  }, [selectedDate, dailyBudgets, timeEntries, employees, rateById]);
 
   // Day chart data (comparison bars) - using matching weekday from previous year
   const dayChartData = useMemo(() => {
@@ -221,7 +227,10 @@ export const CombinedSummary = ({
     <Card className="stat-card">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <CardTitle className="text-lg">Übersicht</CardTitle>
+          <CardTitle className="text-lg flex items-center gap-2">
+            Übersicht
+            <EmployerCostInfoTip rates={rates} />
+          </CardTitle>
           
           <div className="flex items-center gap-2 flex-wrap">
             {/* Export Button */}
@@ -233,7 +242,8 @@ export const CombinedSummary = ({
                 employees,
                 timeEntries,
                 dailyBudgets,
-                dailySummary as DailySummary
+                dailySummary as DailySummary,
+                rates
               )}
               className="gap-1.5"
             >
@@ -383,7 +393,7 @@ export const CombinedSummary = ({
               </div>
               
               <div className="p-4 border rounded-lg">
-                <h4 className="font-medium mb-3">Personalkosten</h4>
+                <h4 className="font-medium mb-3">Personalkosten (Total AG)</h4>
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Plan</span>
@@ -471,7 +481,7 @@ export const CombinedSummary = ({
 
             {/* Personnel Cost Chart */}
             <div>
-              <h4 className="font-medium mb-3">Personalkosten & PK-Quote</h4>
+              <h4 className="font-medium mb-3">Personalkosten (Total AG) & PK-Quote</h4>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={weekChartData}>
@@ -541,7 +551,7 @@ export const CombinedSummary = ({
 
             {/* Monthly Personnel Costs */}
             <div>
-              <h4 className="font-medium mb-3">Personalkosten & PK-Quote</h4>
+              <h4 className="font-medium mb-3">Personalkosten (Total AG) & PK-Quote</h4>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart data={monthChartData}>

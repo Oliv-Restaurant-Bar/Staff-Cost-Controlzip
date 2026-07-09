@@ -6,6 +6,8 @@ import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget, HourlyRevenue } from '@/types/personnel';
 import { formatCurrency, formatHours } from './personnel-utils';
 import { analyzeHourlyRevenue, HourlyRevenueParseResult } from './revenue-parser';
+import { getEffectiveHourlyRate } from './employee-rate';
+import type { SocialCostRates } from './social-costs';
 
 // ==================== oLÍV Brand Color Palette ====================
 const OLIV_COLORS = {
@@ -132,7 +134,8 @@ const calculateKPIData = (
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  rates: SocialCostRates
 ): KPIData => {
   const days = eachDayOfInterval({ start: startDate, end: endDate });
   
@@ -172,8 +175,10 @@ const calculateKPIData = (
       
       const pHours = entry.plannedHours || 0;
       const aHours = entry.actualHours || 0;
-      const pCost = pHours * employee.hourlyWage;
-      const aCost = aHours * employee.hourlyWage;
+      // Total Arbeitgeberkosten/h (Brutto inkl. anteil. 13. + AG-Sozialkosten)
+      const agRate = getEffectiveHourlyRate(employee, rates) ?? 0;
+      const pCost = pHours * agRate;
+      const aCost = aHours * agRate;
       
       plannedHours += pHours;
       actualHours += aHours;
@@ -719,6 +724,7 @@ export const exportKPIReportPDF = async (
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
   selectedDate: Date,
+  rates: SocialCostRates,
   customEndDate?: Date,
   periodLabel?: string,
   companyName?: string,
@@ -750,14 +756,14 @@ export const exportKPIReportPDF = async (
   const displayPeriod = periodLabel || format(selectedDate, 'MMMM yyyy', { locale: de });
   const displayPeriodWithMode = `${displayPeriod} (${revenueMode})`;
 
-  const kpi = calculateKPIData(employees, timeEntries, dailyBudgets, startDate, endDate);
+  const kpi = calculateKPIData(employees, timeEntries, dailyBudgets, startDate, endDate, rates);
   const actions = generateActionItems(kpi);
   const situation = analyzeSituation(kpi);
   
   // Calculate year-over-year comparison data
   const prevYearStart = subYears(startDate, 1);
   const prevYearEnd = subYears(endDate, 1);
-  const prevYearKpi = calculateKPIData(employees, timeEntries, dailyBudgets, prevYearStart, prevYearEnd);
+  const prevYearKpi = calculateKPIData(employees, timeEntries, dailyBudgets, prevYearStart, prevYearEnd, rates);
   
   const yoyComparison = {
     revenueChange: prevYearKpi.actualRevenue > 0 
@@ -1955,6 +1961,7 @@ export const exportKPIReportExcel = async (
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
   selectedDate: Date,
+  rates: SocialCostRates,
   customEndDate?: Date,
   periodLabel?: string,
   showNetRevenue: boolean = false
@@ -1970,7 +1977,7 @@ export const exportKPIReportExcel = async (
   const displayPeriod = periodLabel || format(selectedDate, 'MMMM yyyy', { locale: de });
   const displayPeriodWithMode = `${displayPeriod} (${revenueMode})`;
   
-  const kpi = calculateKPIData(employees, timeEntries, dailyBudgets, startDate, endDate);
+  const kpi = calculateKPIData(employees, timeEntries, dailyBudgets, startDate, endDate, rates);
   const actions = generateActionItems(kpi);
   const situation = analyzeSituation(kpi);
   
@@ -2239,7 +2246,8 @@ const calculatePeriodStats = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: DailyBudget[],
-  targetDate: Date
+  targetDate: Date,
+  rates: SocialCostRates
 ): HistoricalPeriodData => {
   const monthStart = startOfMonth(targetDate);
   const monthEnd = endOfMonth(targetDate);
@@ -2259,7 +2267,8 @@ const calculatePeriodStats = (
       if (employee) {
         const hours = entry.actualHours || 0;
         totalHours += hours;
-        totalLaborCost += hours * employee.hourlyWage * 1.22;
+        // Total Arbeitgeberkosten/h statt hardcoded 1.22-Faktor
+        totalLaborCost += hours * (getEffectiveHourlyRate(employee, rates) ?? 0);
       }
     });
 
@@ -2281,7 +2290,8 @@ export const exportDashboardPDF = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: DailyBudget[],
-  selectedDate: Date
+  selectedDate: Date,
+  rates: SocialCostRates
 ) => {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
   const ml = 14;
@@ -2289,9 +2299,9 @@ export const exportDashboardPDF = (
   const cw = 210 - ml - mr; // 182 mm content width
 
   // Calculate data for all periods
-  const currentMonth = calculatePeriodStats(employees, timeEntries, dailyBudgets, selectedDate);
-  const prevMonth = calculatePeriodStats(employees, timeEntries, dailyBudgets, subMonths(selectedDate, 1));
-  const prevYear = calculatePeriodStats(employees, timeEntries, dailyBudgets, subYears(selectedDate, 1));
+  const currentMonth = calculatePeriodStats(employees, timeEntries, dailyBudgets, selectedDate, rates);
+  const prevMonth = calculatePeriodStats(employees, timeEntries, dailyBudgets, subMonths(selectedDate, 1), rates);
+  const prevYear = calculatePeriodStats(employees, timeEntries, dailyBudgets, subYears(selectedDate, 1), rates);
 
   // Calculate department data
   const monthStart = startOfMonth(selectedDate);
@@ -2312,7 +2322,7 @@ export const exportDashboardPDF = (
         const deptName = employee.department === 'service' ? 'Service' : 'Küche';
         departments[deptName].plannedHours += entry.plannedHours;
         departments[deptName].actualHours += entry.actualHours || 0;
-        departments[deptName].laborCost += (entry.actualHours || 0) * employee.hourlyWage * 1.22;
+        departments[deptName].laborCost += (entry.actualHours || 0) * (getEffectiveHourlyRate(employee, rates) ?? 0);
       }
     });
   });

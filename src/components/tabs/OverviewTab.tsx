@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { BarChart3, ChevronDown, FileText, Receipt, ClipboardList } from 'lucide-react';
 import { BalanceExportDialog, BalanceExportOptions } from '@/components/schedule-planner/BalanceExportDialog';
 import { exportKPIReportPDF } from '@/lib/kpi-export';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { toast } from 'sonner';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { usePlanDisplay } from '@/contexts/PlanDisplayContext';
@@ -32,6 +33,7 @@ export const OverviewTab = ({ employees, timeEntries, dailyBudgets, selectedDate
   const [showExportDialog, setShowExportDialog] = useState(false);
   const { showNetRevenue, setShowNetRevenue } = useRevenueDisplay();
   const { showPlannedData, setShowPlannedData } = usePlanDisplay();
+  const { rates: socialCostRates } = useSocialCostRates();
 
   const handleExport = async (options: BalanceExportOptions) => {
     try {
@@ -40,6 +42,7 @@ export const OverviewTab = ({ employees, timeEntries, dailyBudgets, selectedDate
         timeEntries,
         dailyBudgets,
         options.startDate,
+        socialCostRates,
         options.endDate,
         options.periodLabel
       );

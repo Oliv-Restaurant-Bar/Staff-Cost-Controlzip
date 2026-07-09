@@ -6,6 +6,7 @@ import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, Calendar, Users, Euro, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 
 interface WeeklySummaryProps {
   employees: Employee[];
@@ -33,6 +34,8 @@ export const WeeklySummary = ({
   dailyBudgets, 
   selectedDate 
 }: WeeklySummaryProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const weekData = useMemo(() => {
     const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 }); // Monday
     const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 });
@@ -52,12 +55,14 @@ export const WeeklySummary = ({
         const employee = employees.find((e) => e.id === entry.employeeId);
         if (!employee) return;
 
+        const rate = rateById.get(employee.id) ?? 0;
+
         plannedHours += entry.plannedHours;
-        plannedCost += entry.plannedHours * employee.hourlyWage;
+        plannedCost += entry.plannedHours * rate;
 
         if (entry.actualHours !== undefined) {
           actualHours += entry.actualHours;
-          actualCost += entry.actualHours * employee.hourlyWage;
+          actualCost += entry.actualHours * rate;
         }
       });
 
@@ -110,7 +115,7 @@ export const WeeklySummary = ({
       revenueVariance,
       laborCostPercentage,
     };
-  }, [employees, timeEntries, dailyBudgets, selectedDate]);
+  }, [employees, timeEntries, dailyBudgets, selectedDate, rateById]);
 
   const isToday = (date: Date) => isSameDay(date, new Date());
   const isSelected = (date: Date) => isSameDay(date, selectedDate);

@@ -4,6 +4,8 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget, DailySummary } from '@/types/personnel';
 import { formatCurrency, formatHours } from './personnel-utils';
+import { getEffectiveHourlyRate } from './employee-rate';
+import type { SocialCostRates } from './social-costs';
 
 interface DayData {
   date: Date;
@@ -13,7 +15,8 @@ interface DayData {
   employees: Employee[];
 }
 
-const calculateDayStats = (dayData: DayData) => {
+// Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten), nie roher hourlyWage.
+const calculateDayStats = (dayData: DayData, rates: SocialCostRates) => {
   let plannedHours = 0;
   let actualHours = 0;
   let plannedCost = 0;
@@ -23,12 +26,13 @@ const calculateDayStats = (dayData: DayData) => {
     const employee = dayData.employees.find((e) => e.id === entry.employeeId);
     if (!employee) return;
 
+    const agRate = getEffectiveHourlyRate(employee, rates) ?? 0;
     plannedHours += entry.plannedHours;
-    plannedCost += entry.plannedHours * employee.hourlyWage;
+    plannedCost += entry.plannedHours * agRate;
 
     if (entry.actualHours !== undefined) {
       actualHours += entry.actualHours;
-      actualCost += entry.actualHours * employee.hourlyWage;
+      actualCost += entry.actualHours * agRate;
     }
   });
 
@@ -53,6 +57,7 @@ export const exportDailyReport = (
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
   summary: DailySummary,
+  rates: SocialCostRates,
   showNetRevenue: boolean = false
 ) => {
   const doc = new jsPDF();
@@ -110,15 +115,16 @@ export const exportDailyReport = (
     const employee = employees.find((e) => e.id === entry.employeeId);
     if (!employee) return ['', '', '', '', '', '', ''];
 
+    const agRate = getEffectiveHourlyRate(employee, rates) ?? 0;
     return [
       employee.name,
       employee.department === 'küche' ? 'Küche' : 'Service',
       `${entry.plannedStart} - ${entry.plannedEnd}`,
       formatHours(entry.plannedHours),
       entry.actualHours !== undefined ? formatHours(entry.actualHours) : '-',
-      formatCurrency(entry.plannedHours * employee.hourlyWage),
+      formatCurrency(entry.plannedHours * agRate),
       entry.actualHours !== undefined 
-        ? formatCurrency(entry.actualHours * employee.hourlyWage) 
+        ? formatCurrency(entry.actualHours * agRate) 
         : '-',
     ];
   });
@@ -156,6 +162,7 @@ export const exportWeeklyReport = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
+  rates: SocialCostRates,
   showNetRevenue: boolean = false
 ) => {
   const doc = new jsPDF();
@@ -196,7 +203,7 @@ export const exportWeeklyReport = (
       entries: dayEntries,
       budget,
       employees,
-    });
+    }, rates);
 
     totalPlannedHours += stats.plannedHours;
     totalActualHours += stats.actualHours;
@@ -304,7 +311,7 @@ export const exportWeeklyReport = (
     if (!employee) return;
 
     const hours = entry.actualHours || 0;
-    const cost = hours * employee.hourlyWage;
+    const cost = hours * (getEffectiveHourlyRate(employee, rates) ?? 0);
 
     departmentTotals[employee.department].hours += hours;
     departmentTotals[employee.department].cost += cost;
@@ -357,7 +364,8 @@ export const exportMonthlyReport = (
   selectedDate: Date,
   employees: Employee[],
   timeEntries: TimeEntry[],
-  dailyBudgets: Record<string, DailyBudget>
+  dailyBudgets: Record<string, DailyBudget>,
+  rates: SocialCostRates
 ) => {
   const doc = new jsPDF();
   const { startOfMonth, endOfMonth, eachDayOfInterval, getWeek } = require('date-fns');
@@ -394,7 +402,7 @@ export const exportMonthlyReport = (
       entries: dayEntries,
       budget,
       employees,
-    });
+    }, rates);
 
     totalPlannedHours += stats.plannedHours;
     totalActualHours += stats.actualHours;
@@ -533,7 +541,7 @@ export const exportMonthlyReport = (
     if (!employee) return;
 
     const hours = entry.actualHours || 0;
-    const cost = hours * employee.hourlyWage;
+    const cost = hours * (getEffectiveHourlyRate(employee, rates) ?? 0);
 
     departmentTotals[employee.department].hours += hours;
     departmentTotals[employee.department].cost += cost;
@@ -586,7 +594,8 @@ export const exportCombinedReport = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
-  dailySummary: DailySummary
+  dailySummary: DailySummary,
+  rates: SocialCostRates
 ) => {
   const doc = new jsPDF();
   const { startOfMonth, endOfMonth, eachDayOfInterval, getWeek } = require('date-fns');
@@ -676,7 +685,7 @@ export const exportCombinedReport = (
     const ds = format(day, 'yyyy-MM-dd');
     const entries = timeEntries.filter((e) => e.date === ds);
     const b = dailyBudgets[ds];
-    const stats = calculateDayStats({ date: day, dateString: ds, entries, budget: b, employees });
+    const stats = calculateDayStats({ date: day, dateString: ds, entries, budget: b, employees }, rates);
     
     weekPlannedHours += stats.plannedHours;
     weekActualHours += stats.actualHours;
@@ -733,7 +742,7 @@ export const exportCombinedReport = (
     const ds = format(day, 'yyyy-MM-dd');
     const entries = timeEntries.filter((e) => e.date === ds);
     const b = dailyBudgets[ds];
-    const stats = calculateDayStats({ date: day, dateString: ds, entries, budget: b, employees });
+    const stats = calculateDayStats({ date: day, dateString: ds, entries, budget: b, employees }, rates);
     
     monthPlannedHours += stats.plannedHours;
     monthActualHours += stats.actualHours;
@@ -824,7 +833,8 @@ export const exportLaborCostQuoteReport = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
-  thresholds: { service: number; küche: number }
+  thresholds: { service: number; küche: number },
+  rates: SocialCostRates
 ) => {
   const doc = new jsPDF();
   const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
@@ -866,7 +876,7 @@ export const exportLaborCostQuoteReport = (
       const employee = employees.find((e) => e.id === entry.employeeId);
       if (!employee) return;
       const hours = entry.actualHours || 0;
-      const cost = hours * employee.hourlyWage;
+      const cost = hours * (getEffectiveHourlyRate(employee, rates) ?? 0);
 
       if (employee.department === 'service') {
         dayServiceCost += cost;
@@ -1069,7 +1079,8 @@ export const exportLaborCostQuoteMonthlyReport = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
-  thresholds: { service: number; küche: number }
+  thresholds: { service: number; küche: number },
+  rates: SocialCostRates
 ) => {
   const doc = new jsPDF();
   const { startOfMonth, endOfMonth, eachDayOfInterval, getWeek } = require('date-fns');
@@ -1118,7 +1129,7 @@ export const exportLaborCostQuoteMonthlyReport = (
       const employee = employees.find((e) => e.id === entry.employeeId);
       if (!employee) return;
       const hours = entry.actualHours || 0;
-      const cost = hours * employee.hourlyWage;
+      const cost = hours * (getEffectiveHourlyRate(employee, rates) ?? 0);
 
       if (employee.department === 'service') {
         weeklyData[week].serviceCost += cost;

@@ -10,6 +10,8 @@ import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { getBranding, renderLogoDataUrl } from '@/lib/pl-branding';
 import { selectEmployeesForDepartment } from '@/lib/schedule-export-department';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import type { SocialCostRates } from '@/lib/social-costs';
 
 // Re-export für bestehende Importpfade; reine Logik liegt in schedule-export-department.ts.
 export { selectEmployeesForDepartment };
@@ -46,6 +48,8 @@ interface ExportOptionsV2 {
   showEmpHours?: boolean;
   /** Tagesstunden-Zeile unten anzeigen (Standard: EIN für Leitungsplan, AUS für Aushang) */
   showDayTotals?: boolean;
+  /** AG-Sozialkostensätze — Kosten = Total Arbeitgeberkosten, nie roher hourlyWage */
+  rates: SocialCostRates;
 }
 
 export interface NameMatchInfo {
@@ -291,7 +295,7 @@ function addLegendPage(
 }
 
 export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise<void> {
-  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false } = options;
+  const { employees, scheduleData, currentMonth, department = 'all', dailyBudgets = {}, showCosts = false, rates } = options;
   
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
@@ -353,9 +357,7 @@ export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise
         }
         totalHours += dayHours;
         
-        if (emp.hourlyWage) {
-          totalCosts += dayHours * emp.hourlyWage;
-        }
+        totalCosts += dayHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
     });
 
@@ -517,10 +519,8 @@ export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise
           }
         }
         
-        // Cost calculation
-        if (emp.hourlyWage) {
-          empCost += (frühHours + spätHours) * emp.hourlyWage;
-        }
+        // Cost calculation (Total Arbeitgeberkosten)
+        empCost += (frühHours + spätHours) * (getEffectiveHourlyRate(emp, rates) ?? 0);
       });
       
       // Hours and difference columns
@@ -835,6 +835,8 @@ interface TemplateExportOptions {
   actualHoursData?: Record<string, ActualHoursEntry>;
   /** Optionaler Restaurantname für Dateinamen (Mandantenfähigkeit) */
   restaurantName?: string;
+  /** AG-Sozialkostensätze — Kosten = Total Arbeitgeberkosten, nie roher hourlyWage */
+  rates: SocialCostRates;
 }
 
 const WEEKDAY_NAMES_FULL = ['SONNTAG', 'MONTAG', 'DIENSTAG', 'MITTWOCH', 'DONNERSTAG', 'FREITAG', 'SAMSTAG'];
@@ -851,6 +853,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
     includeCosts = true,
     actualHoursData = {},
     restaurantName,
+    rates,
   } = options;
   
   const year = currentMonth.getFullYear();
@@ -915,9 +918,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
         }
         
         totalHours += dayHours;
-        if (emp.hourlyWage) {
-          totalCosts += dayHours * emp.hourlyWage;
-        }
+        totalCosts += dayHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
     });
 
@@ -1177,7 +1178,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
       
       const targetHours = emp.weeklyHours ? Math.round(emp.weeklyHours * 4.33) : Math.round(42 * 4.33);
       const diff = plannedHours - targetHours;
-      const empCost = plannedHours * (emp.hourlyWage || 0);
+      const empCost = plannedHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       
       row.getCell(hoursCol).value = plannedHours;
       row.getCell(hoursCol).numFmt = '0.0';
@@ -1449,8 +1450,9 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
       });
       
       const diff = istHours - planHours;
-      const planCost = planHours * (emp.hourlyWage || 0);
-      const istCost = istHours * (emp.hourlyWage || 0);
+      const agRateForCost = getEffectiveHourlyRate(emp, rates) ?? 0;
+      const planCost = planHours * agRateForCost;
+      const istCost = istHours * agRateForCost;
       const costDiff = istCost - planCost;
       
       totalPlanHours += planHours;

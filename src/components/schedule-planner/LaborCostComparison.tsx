@@ -10,6 +10,10 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { TrendingUp, TrendingDown, BarChart3, FileDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { exportLaborCostComparisonPDF } from '@/lib/labor-cost-export';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import { EMPLOYER_COST_LABELS_SHORT } from '@/lib/social-costs';
+import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 
 interface LaborCostComparisonProps {
   employees: Employee[];
@@ -52,6 +56,18 @@ export const LaborCostComparison = ({
   // Load threshold from settings
   const laborCostThreshold = parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
 
+  // Zentrale AG-Sozialkostensätze — Kostenbasis = Total Arbeitgeberkosten
+  // (Bruttolohn + Arbeitgeber-Sozialkosten), nie roher hourlyWage.
+  const { rates: socialCostRates } = useSocialCostRates();
+  const rateById = useMemo(() => {
+    const m = new Map<string, number>();
+    employees.forEach(emp => {
+      const r = getEffectiveHourlyRate(emp, socialCostRates);
+      if (r != null && r > 0) m.set(emp.id, r);
+    });
+    return m;
+  }, [employees, socialCostRates]);
+
   // Calculate daily data for charts
   const dailyData = useMemo(() => {
     return daysInMonth.map(day => {
@@ -71,8 +87,9 @@ export const LaborCostComparison = ({
           const netHours = dayHours - breakDeduction;
           
           actualHours += netHours;
-          if (emp.hourlyWage) {
-            plannedCosts += netHours * emp.hourlyWage;
+          const rate = rateById.get(emp.id);
+          if (rate) {
+            plannedCosts += netHours * rate;
           }
         }
       });
@@ -93,7 +110,7 @@ export const LaborCostComparison = ({
         isOverBudget: laborPercentage > laborCostThreshold,
       };
     });
-  }, [daysInMonth, employees, scheduleData, dailyBudgets, laborCostThreshold]);
+  }, [daysInMonth, employees, scheduleData, dailyBudgets, laborCostThreshold, rateById]);
 
   // Calculate weekly data
   const weeklyData = useMemo(() => {
@@ -126,8 +143,9 @@ export const LaborCostComparison = ({
             const netHours = dayHours - breakDeduction;
             
             weekHours += netHours;
-            if (emp.hourlyWage) {
-              weekPlanned += netHours * emp.hourlyWage;
+            const rate = rateById.get(emp.id);
+            if (rate) {
+              weekPlanned += netHours * rate;
             }
           }
         });
@@ -145,7 +163,7 @@ export const LaborCostComparison = ({
         differenz: Math.round(weekTarget - weekPlanned),
       };
     });
-  }, [weeksInMonth, employees, scheduleData, dailyBudgets, laborCostThreshold, monthStart, monthEnd]);
+  }, [weeksInMonth, employees, scheduleData, dailyBudgets, laborCostThreshold, monthStart, monthEnd, rateById]);
 
   // Monthly summary
   const monthlySummary = useMemo(() => {
@@ -205,6 +223,7 @@ export const LaborCostComparison = ({
           <CardTitle className="flex items-center gap-2">
             <BarChart3 className="h-5 w-5 text-primary" />
             Plan vs. Ziel - {format(currentMonth, 'MMMM yyyy', { locale: de })}
+            <EmployerCostInfoTip rates={socialCostRates} />
           </CardTitle>
           <Button onClick={handleExportPDF} variant="outline" size="sm" className="gap-2">
             <FileDown className="h-4 w-4" />
@@ -216,7 +235,7 @@ export const LaborCostComparison = ({
         {/* Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="p-4 bg-muted/50 rounded-lg text-center">
-            <div className="text-sm text-muted-foreground mb-1">Geplante Kosten</div>
+            <div className="text-sm text-muted-foreground mb-1">Geplant ({EMPLOYER_COST_LABELS_SHORT.total})</div>
             <div className="text-2xl font-bold text-primary">
               CHF {formatCurrency(monthlySummary.totalPlanned)}
             </div>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Employee, TimeEntry } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { cn } from '@/lib/utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { ArrowRight, TrendingUp, TrendingDown, Minus, Pencil, Check, X, Plus, UserPlus, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -44,6 +45,8 @@ export const PlanVsActualOverview = ({
   onAddTimeEntry,
   onDeleteTimeEntry,
 }: PlanVsActualOverviewProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const [editingEntry, setEditingEntry] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<'planned' | 'actual' | null>(null);
   const [showNewEntryForm, setShowNewEntryForm] = useState(false);
@@ -209,8 +212,9 @@ export const PlanVsActualOverview = ({
       const employee = getEmployeeForEntry(entry.employeeId);
       if (!employee) return acc;
       
-      const plannedCost = (entry.plannedHours || 0) * employee.hourlyWage;
-      const actualCost = (entry.actualHours || 0) * employee.hourlyWage;
+      const rate = rateById.get(employee.id) ?? 0;
+      const plannedCost = (entry.plannedHours || 0) * rate;
+      const actualCost = (entry.actualHours || 0) * rate;
       
       return {
         plannedHours: acc.plannedHours + (entry.plannedHours || 0),
@@ -426,8 +430,9 @@ export const PlanVsActualOverview = ({
               const isEditingActual = editingEntry === entry.id && editingField === 'actual';
               const plannedHours = entry.plannedHours || 0;
               const actualHours = entry.actualHours || 0;
-              const plannedCost = plannedHours * employee.hourlyWage;
-              const actualCost = actualHours * employee.hourlyWage;
+              const rate = rateById.get(employee.id) ?? 0;
+              const plannedCost = plannedHours * rate;
+              const actualCost = actualHours * rate;
               const diff = plannedCost - actualCost;
 
               return (

@@ -4,6 +4,7 @@ import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { useWeekSync } from '@/hooks/useWeekSync';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +31,8 @@ export const PrintableKPISummary = ({
   dailyBudgets,
   selectedDate,
 }: PrintableKPISummaryProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const { weekNumber, weekRange, monthLabel } = useWeekSync('PrintableKPISummary', selectedDate);
 
   // Calculate all KPIs
@@ -50,10 +53,11 @@ export const PrintableKPISummary = ({
     dayEntries.forEach(entry => {
       const emp = employees.find(e => e.id === entry.employeeId);
       if (!emp) return;
+      const rate = rateById.get(emp.id) ?? 0;
       dayPlannedHours += entry.plannedHours || 0;
       dayActualHours += entry.actualHours || 0;
-      dayPlannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
-      dayActualCost += (entry.actualHours || 0) * emp.hourlyWage;
+      dayPlannedCost += (entry.plannedHours || 0) * rate;
+      dayActualCost += (entry.actualHours || 0) * rate;
     });
 
     // Weekly data
@@ -70,10 +74,11 @@ export const PrintableKPISummary = ({
     weekEntries.forEach(entry => {
       const emp = employees.find(e => e.id === entry.employeeId);
       if (!emp) return;
+      const rate = rateById.get(emp.id) ?? 0;
       weekPlannedHours += entry.plannedHours || 0;
       weekActualHours += entry.actualHours || 0;
-      weekPlannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
-      weekActualCost += (entry.actualHours || 0) * emp.hourlyWage;
+      weekPlannedCost += (entry.plannedHours || 0) * rate;
+      weekActualCost += (entry.actualHours || 0) * rate;
     });
 
     // Monthly data
@@ -90,10 +95,11 @@ export const PrintableKPISummary = ({
     monthEntries.forEach(entry => {
       const emp = employees.find(e => e.id === entry.employeeId);
       if (!emp) return;
+      const rate = rateById.get(emp.id) ?? 0;
       monthPlannedHours += entry.plannedHours || 0;
       monthActualHours += entry.actualHours || 0;
-      monthPlannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
-      monthActualCost += (entry.actualHours || 0) * emp.hourlyWage;
+      monthPlannedCost += (entry.plannedHours || 0) * rate;
+      monthActualCost += (entry.actualHours || 0) * rate;
     });
 
     // Department breakdown
@@ -105,8 +111,9 @@ export const PrintableKPISummary = ({
       entries.forEach(entry => {
         const emp = deptEmployees.find(e => e.id === entry.employeeId);
         if (!emp) return;
-        planned += (entry.plannedHours || 0) * emp.hourlyWage;
-        actual += (entry.actualHours || 0) * emp.hourlyWage;
+        const rate = rateById.get(emp.id) ?? 0;
+        planned += (entry.plannedHours || 0) * rate;
+        actual += (entry.actualHours || 0) * rate;
       });
       return { planned, actual };
     };
@@ -158,7 +165,7 @@ export const PrintableKPISummary = ({
       serviceCount: serviceEmployees.length,
       kücheCount: kücheEmployees.length,
     };
-  }, [employees, timeEntries, dailyBudgets, selectedDate, weekNumber, monthLabel]);
+  }, [employees, timeEntries, dailyBudgets, selectedDate, weekNumber, monthLabel, rateById]);
 
   const getQuoteStatus = (quote: number) => {
     if (quote === 0) return { color: 'text-muted-foreground', bg: 'bg-muted/30', status: 'Keine Daten' };

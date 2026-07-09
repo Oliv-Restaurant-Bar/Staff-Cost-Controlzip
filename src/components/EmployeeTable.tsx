@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Employee, TimeEntry } from '@/types/personnel';
 import { formatCurrency, formatHours, getEmploymentTypeLabel, getEmploymentTypeBadgeClass } from '@/lib/personnel-utils';
 import { cn } from '@/lib/utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Pencil, Trash2, Lock, LockOpen } from 'lucide-react';
@@ -27,6 +28,8 @@ export const EmployeeTable = ({
   onDeleteEmployee,
   selectedDate,
 }: EmployeeTableProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   // Check if salary columns should be visible (password protection and unlock status)
   const [showSalaryColumns, setShowSalaryColumns] = useState(false);
   
@@ -74,8 +77,8 @@ export const EmployeeTable = ({
             const entry = getEntryForEmployee(employee.id);
             const plannedHours = entry?.plannedHours || 0;
             const actualHours = entry?.actualHours || 0;
-            const plannedCost = calculateCost(plannedHours, employee.hourlyWage);
-            const actualCost = calculateCost(actualHours, employee.hourlyWage);
+            const plannedCost = calculateCost(plannedHours, rateById.get(employee.id) ?? 0);
+            const actualCost = calculateCost(actualHours, rateById.get(employee.id) ?? 0);
             const variance = plannedCost - actualCost;
 
             return (

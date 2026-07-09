@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { ChevronDown, TrendingUp, TrendingDown, Minus, BarChart3, Calendar, ArrowUpRight, ArrowDownRight, Equal, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportDashboardPDF } from "@/lib/kpi-export";
+import { useSocialCostRates } from "@/hooks/useSocialCostRates";
 import {
   ChartContainer,
   ChartTooltip,
@@ -95,6 +96,7 @@ export const KPIDashboard = ({
   selectedDate,
 }: KPIDashboardProps) => {
   const [isOpen, setIsOpen] = useState(false);
+  const { rates: socialCostRates } = useSocialCostRates();
 
   const monthData = useMemo(() => {
     const monthStart = startOfMonth(selectedDate);
@@ -418,7 +420,7 @@ export const KPIDashboard = ({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => exportDashboardPDF(employees, timeEntries, dailyBudgets, selectedDate)}
+                onClick={() => exportDashboardPDF(employees, timeEntries, dailyBudgets, selectedDate, socialCostRates)}
                 className="gap-2"
               >
                 <FileText className="h-4 w-4" />

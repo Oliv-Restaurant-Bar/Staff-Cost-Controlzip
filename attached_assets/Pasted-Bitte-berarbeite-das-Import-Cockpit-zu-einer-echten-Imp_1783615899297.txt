@@ -1,0 +1,197 @@
+Bitte überarbeite das Import-Cockpit zu einer echten Import-Checkliste mit offenen Aufgaben.
+
+Ziel:
+Der Benutzer soll nicht überlegen müssen, was noch fehlt. Die App soll automatisch zeigen, welche Import-Aufgaben für den gewählten Zeitraum offen sind. Sobald der passende Import hochgeladen wurde, verschwindet die Aufgabe oder der verbleibende Restzeitraum wird angezeigt.
+
+Grundprinzip:
+Jeder Importtyp hat eine Frequenz:
+- täglich
+- wöchentlich/monatlich bzw. Zeitraum-basiert
+- monatlich
+- jährlich
+
+Die Checkliste soll pro Importtyp automatisch offene Aufgaben erzeugen.
+
+Importtypen und Frequenz:
+
+1. Z-Bericht
+- täglich
+- Für jeden Kalendertag im Monat eine Aufgabe anzeigen
+- Beispiel:
+  Z-Bericht 01.07.2026
+  Z-Bericht 02.07.2026
+- Wenn genau dieser Tag importiert wurde, verschwindet diese Tagesaufgabe aus den offenen Aufgaben.
+
+2. Foratable / Reservationen
+- täglich
+- Gleich wie Z-Bericht
+- Pro Tag eine offene Aufgabe
+- Nach Import dieses Tages verschwindet die Aufgabe.
+
+3. Umsatz
+- wöchentlich oder monatlich bzw. frei zeitraumbasiert
+- Wenn z. B. 01.07.–08.07.2026 importiert wurde, soll dieser Zeitraum als erledigt gelten.
+- Danach soll automatisch der Rest angezeigt werden:
+  “Offen: Umsatz 09.07.–31.07.2026”
+- Es soll auch möglich sein, den ganzen Monat auf einmal hochzuladen.
+
+4. Verkaufsdaten
+- gleich wie Umsatz
+- Zeitraum-basiert
+- Teilimport erledigt Teilzeitraum
+- Restzeitraum bleibt offen
+- Monatsimport erledigt ganzen Monat.
+
+5. Mirus Stunden / Mitarbeitende
+- gleich wie Umsatz
+- wöchentlich oder monatlich
+- Zeitraum-basiert
+- Teilimport erledigt Teilzeitraum
+- Restzeitraum bleibt offen.
+
+6. Marketing Umsatz
+- gleich wie Umsatz
+- Zeitraum-basiert
+- Teilimport erledigt Teilzeitraum
+- Restzeitraum bleibt offen.
+
+7. Erfolgsrechnung / Kontoblätter
+- monatlich
+- Eine Aufgabe pro Monat:
+  “Erfolgsrechnung / Kontoblätter Juli 2026 importieren”
+- Nach erfolgreichem Monatsimport verschwindet die Aufgabe.
+
+8. IST-Kosten Buchhaltung
+- gleich wie Erfolgsrechnung / Kontoblätter
+- monatlich
+- Eine Aufgabe pro Monat
+- Nach Monatsimport erledigt.
+
+9. Budget
+- jährlich
+- Eine Aufgabe pro Jahr:
+  “Budget 2026 importieren”
+- Nach Jahresimport erledigt.
+
+Funktionale Anforderungen:
+
+1. Zeitraum-Auswahl
+- Oben im Import-Cockpit Monat/Jahr auswählen.
+- Die Checkliste basiert auf diesem Zeitraum.
+
+2. Offene Aufgaben
+- Standardansicht zeigt nur offene Import-Aufgaben.
+- Erledigte Aufgaben sollen ausblendbar/aufklappbar sein:
+  “Erledigte anzeigen”
+
+3. Import direkt aus Aufgabe
+- Jede Aufgabe hat Button “Importieren”.
+- Wenn der Benutzer auf eine konkrete Aufgabe klickt, muss der Importdialog bereits wissen:
+  - Importtyp
+  - erwarteter Zeitraum
+  - Tagesimport oder Zeitraumimport
+- Beispiel:
+  Klick auf “Z-Bericht 04.07.2026”
+  → Upload erwartet genau diesen Tag.
+
+4. Teilzeitraum-Logik
+Für Zeitraum-Importe wie Umsatz, Verkaufsdaten, Mirus Stunden und Marketing Umsatz:
+- Bereits importierte Zeiträume erkennen.
+- Offene Restzeiträume automatisch berechnen.
+- Beispiel:
+  Monat Juli 2026
+  Importiert: 01.07.–08.07.
+  Offen anzeigen: 09.07.–31.07.
+- Wenn später 09.07.–15.07. importiert wird:
+  Offen anzeigen: 16.07.–31.07.
+- Wenn ganzer Monat importiert wurde:
+  Aufgabe verschwindet.
+
+5. Monatsimport manuell erlauben
+Bei zeitraumbasierten Importen soll es immer eine Option geben:
+“Ganzen Monat importieren”
+Auch wenn die App wöchentliche Restaufgaben vorschlägt.
+
+6. Statuslogik
+Aufgabenstatus:
+- Offen
+- Teilweise erledigt
+- Erledigt
+- Fehler / Konflikt
+
+7. Konflikte
+Wenn ein Zeitraum bereits importiert wurde:
+- Nicht still überschreiben.
+- Dialog anzeigen:
+  “Dieser Zeitraum wurde bereits importiert.”
+  Optionen:
+  - Bestehende Daten behalten
+  - Ersetzen
+  - Abbrechen
+
+8. Design / UX
+Sehr wichtig:
+- Schlicht, modern, lesefreundlich und einheitlich mit Phase-3-Designsystem.
+- Das Import-Cockpit soll wie eine Arbeitsliste wirken, nicht wie eine technische Importverwaltung.
+- Oben kompakte Toolbar:
+  Zeitraum, Betrieb, Filter “Offen/Alle”, Button “Ganzen Monat importieren”
+- Danach klare Gruppen:
+  Täglich
+  Zeitraum-basiert
+  Monatlich
+  Jährlich
+- Jede Aufgabe als kompakte Zeile oder kleine Karte:
+  Importtyp
+  Zeitraum
+  Status
+  Letzter Import falls vorhanden
+  Aktion “Importieren”
+- Keine langen Erklärungstexte.
+- Details nur per Tooltip oder aufklappbar.
+- Erledigte Aufgaben dezent anzeigen, nicht dominant.
+- Farben sparsam:
+  Grün = erledigt
+  Orange = teilweise/offen bald fällig
+  Rot = Konflikt/Fehler
+  Grau = neutral
+
+9. Architektur
+- Keine neue überladene Speziallogik pro Seite.
+- Eine zentrale Import-Aufgaben-Engine bauen:
+  - Importtyp
+  - Frequenz
+  - erwarteter Zeitraum
+  - vorhandene Importläufe
+  - offene Restzeiträume
+  - Status
+- Diese Logik rein und testbar halten.
+- Bestehende Import-Historie und Import-Tabellen soweit möglich wiederverwenden.
+- Neue Tabellen nur wenn unbedingt nötig.
+- Bestehende Importprozesse nicht beschädigen.
+
+10. Tests
+Bitte Tests ergänzen für:
+- tägliche Aufgaben für Z-Bericht
+- tägliche Aufgaben für Foratable
+- Zeitraum-Aufgabe 01.07.–31.07.
+- Teilimport 01.07.–08.07. erzeugt Rest 09.07.–31.07.
+- mehrere Teilimporte erzeugen korrekten Rest
+- Monatsimport erledigt ganzen Monat
+- Monatsaufgabe Erfolgsrechnung erledigt nach Import
+- Jahresaufgabe Budget erledigt nach Import
+- Konflikt bei bereits importiertem Zeitraum
+- Aufgaben verschwinden aus “Offen”, wenn erledigt
+
+11. Dokumentation
+- replit.md aktualisieren
+- Kurz erklären:
+  Import-Cockpit ist jetzt eine Checkliste
+  Frequenzen je Importtyp
+  Teilzeitraum-Logik
+  tägliche vs. monatliche vs. jährliche Aufgaben
+
+Wichtig:
+Es geht nicht um neue Analysen, sondern um bessere Benutzerführung. Der Benutzer soll sofort sehen:
+Was fehlt noch?
+Was ist erledigt?
+Was muss ich als Nächstes importieren?

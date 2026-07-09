@@ -10,6 +10,10 @@ import { Euro, TrendingUp, TrendingDown, Users, Clock, Download, AlertTriangle }
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import { EMPLOYER_COST_LABELS, EMPLOYER_COST_LABELS_SHORT } from '@/lib/social-costs';
+import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 
 interface MonthlyCostSummaryProps {
   employees: Employee[];
@@ -44,6 +48,18 @@ export const MonthlyCostSummary = ({
   // Load threshold from settings
   const laborCostThreshold = parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
 
+  // Zentrale AG-Sozialkostensätze — Kostenbasis = Total Arbeitgeberkosten
+  // (Bruttolohn + Arbeitgeber-Sozialkosten), nie roher hourlyWage.
+  const { rates: socialCostRates } = useSocialCostRates();
+  const rateById = useMemo(() => {
+    const m = new Map<string, number>();
+    employees.forEach(emp => {
+      const r = getEffectiveHourlyRate(emp, socialCostRates);
+      if (r != null && r > 0) m.set(emp.id, r);
+    });
+    return m;
+  }, [employees, socialCostRates]);
+
   const serviceEmployees = employees.filter(e => e.department === 'service');
   const kitchenEmployees = employees.filter(e => e.department === 'küche');
 
@@ -66,8 +82,9 @@ export const MonthlyCostSummary = ({
           const netHours = dayHours - breakDeduction;
           
           totalHours += netHours;
-          if (emp.hourlyWage) {
-            totalCosts += netHours * emp.hourlyWage;
+          const rate = rateById.get(emp.id);
+          if (rate) {
+            totalCosts += netHours * rate;
           }
         }
       });
@@ -76,8 +93,8 @@ export const MonthlyCostSummary = ({
     return { totalHours, totalCosts };
   };
 
-  const serviceStats = useMemo(() => calculateDepartmentStats(serviceEmployees), [serviceEmployees, scheduleData, daysInMonth]);
-  const kitchenStats = useMemo(() => calculateDepartmentStats(kitchenEmployees), [kitchenEmployees, scheduleData, daysInMonth]);
+  const serviceStats = useMemo(() => calculateDepartmentStats(serviceEmployees), [serviceEmployees, scheduleData, daysInMonth, rateById]);
+  const kitchenStats = useMemo(() => calculateDepartmentStats(kitchenEmployees), [kitchenEmployees, scheduleData, daysInMonth, rateById]);
   const totalStats = {
     totalHours: serviceStats.totalHours + kitchenStats.totalHours,
     totalCosts: serviceStats.totalCosts + kitchenStats.totalCosts,
@@ -122,8 +139,9 @@ export const MonthlyCostSummary = ({
             const netHours = dayHours - breakDeduction;
             
             weekHours += netHours;
-            if (emp.hourlyWage) {
-              weekCosts += netHours * emp.hourlyWage;
+            const rate = rateById.get(emp.id);
+            if (rate) {
+              weekCosts += netHours * rate;
             }
           }
         });
@@ -142,7 +160,7 @@ export const MonthlyCostSummary = ({
         isOver: weekPercentage > laborCostThreshold,
       };
     });
-  }, [weeksInMonth, employees, scheduleData, dailyBudgets, monthStart, monthEnd, laborCostThreshold]);
+  }, [weeksInMonth, employees, scheduleData, dailyBudgets, monthStart, monthEnd, laborCostThreshold, rateById]);
 
   // Export PDF
   const exportToPDF = () => {
@@ -162,7 +180,7 @@ export const MonthlyCostSummary = ({
       head: [['Kennzahl', 'Wert']],
       body: [
         ['Gesamtstunden', `${totalStats.totalHours.toFixed(1)} h`],
-        ['Gesamtpersonalkosten', `CHF ${totalStats.totalCosts.toFixed(2)}`],
+        [EMPLOYER_COST_LABELS.total, `CHF ${totalStats.totalCosts.toFixed(2)}`],
         ['Geplanter Umsatz', `CHF ${monthlyRevenue.toFixed(2)}`],
         ['Personalkostenquote', `${laborCostPercentage.toFixed(1)}%`],
         ['Schwellenwert', `${laborCostThreshold}%`],
@@ -177,7 +195,7 @@ export const MonthlyCostSummary = ({
 
     autoTable(doc, {
       startY: finalY1 + 5,
-      head: [['Abteilung', 'Mitarbeiter', 'Stunden', 'Kosten']],
+      head: [['Abteilung', 'Mitarbeiter', 'Stunden', EMPLOYER_COST_LABELS_SHORT.total]],
       body: [
         ['Service', serviceEmployees.length.toString(), `${serviceStats.totalHours.toFixed(1)} h`, `CHF ${serviceStats.totalCosts.toFixed(2)}`],
         ['Küche', kitchenEmployees.length.toString(), `${kitchenStats.totalHours.toFixed(1)} h`, `CHF ${kitchenStats.totalCosts.toFixed(2)}`],
@@ -192,7 +210,7 @@ export const MonthlyCostSummary = ({
 
     autoTable(doc, {
       startY: finalY2 + 5,
-      head: [['KW', 'Zeitraum', 'Stunden', 'Kosten', 'Umsatz', 'Quote']],
+      head: [['KW', 'Zeitraum', 'Stunden', EMPLOYER_COST_LABELS_SHORT.total, 'Umsatz', 'Quote']],
       body: weeklyBreakdown.map(week => [
         `KW ${week.weekNumber}`,
         `${week.startDate} - ${week.endDate}`,
@@ -225,8 +243,9 @@ export const MonthlyCostSummary = ({
           const net = gross - calculateBreakDeduction(gross);
           
           dayHours += net;
-          if (emp.hourlyWage) {
-            dayCosts += net * emp.hourlyWage;
+          const rate = rateById.get(emp.id);
+          if (rate) {
+            dayCosts += net * rate;
           }
         }
       });
@@ -245,7 +264,7 @@ export const MonthlyCostSummary = ({
 
     autoTable(doc, {
       startY: 25,
-      head: [['Tag', 'Stunden', 'Kosten', 'Umsatz', 'Quote']],
+      head: [['Tag', 'Stunden', EMPLOYER_COST_LABELS_SHORT.total, 'Umsatz', 'Quote']],
       body: dailyData,
       theme: 'striped',
       styles: { fontSize: 8 },
@@ -263,6 +282,7 @@ export const MonthlyCostSummary = ({
           <CardTitle className="flex items-center gap-2">
             <Euro className="h-5 w-5 text-primary" />
             Monatliche Kostenübersicht - {format(currentMonth, 'MMMM yyyy', { locale: de })}
+            <EmployerCostInfoTip rates={socialCostRates} />
           </CardTitle>
           <Button onClick={exportToPDF} variant="outline" size="sm" className="gap-2">
             <Download className="h-4 w-4" />
@@ -299,7 +319,7 @@ export const MonthlyCostSummary = ({
                 <span className="font-medium">{serviceStats.totalHours.toFixed(1)} h</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Kosten:</span>
+                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}:</span>
                 <span className="font-medium text-blue-600">CHF {serviceStats.totalCosts.toFixed(0)}</span>
               </div>
             </div>
@@ -321,7 +341,7 @@ export const MonthlyCostSummary = ({
                 <span className="font-medium">{kitchenStats.totalHours.toFixed(1)} h</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Kosten:</span>
+                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}:</span>
                 <span className="font-medium text-orange-600">CHF {kitchenStats.totalCosts.toFixed(0)}</span>
               </div>
             </div>
@@ -344,7 +364,7 @@ export const MonthlyCostSummary = ({
                 <span className="font-medium">{totalStats.totalHours.toFixed(1)} h</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Kosten:</span>
+                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}:</span>
                 <span className={cn("font-bold", isOverBudget ? "text-red-600" : "text-green-600")}>
                   CHF {totalStats.totalCosts.toFixed(0)}
                 </span>
@@ -367,7 +387,7 @@ export const MonthlyCostSummary = ({
                 <th className="text-left py-2 px-2">KW</th>
                 <th className="text-left py-2 px-2">Zeitraum</th>
                 <th className="text-right py-2 px-2">Stunden</th>
-                <th className="text-right py-2 px-2">Kosten</th>
+                <th className="text-right py-2 px-2">{EMPLOYER_COST_LABELS_SHORT.total}</th>
                 <th className="text-right py-2 px-2">Umsatz</th>
                 <th className="text-right py-2 px-2">Quote</th>
               </tr>

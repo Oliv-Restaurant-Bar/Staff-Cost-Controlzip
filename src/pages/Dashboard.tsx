@@ -42,6 +42,9 @@ import {
 } from '@/lib/supabase-db';
 import { Employee, grossToNet } from '@/types/personnel';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import { socialCostFactorFromRates } from '@/lib/social-costs';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
@@ -239,6 +242,7 @@ const Dashboard = () => {
     stichtag, formatted: stichtagFormatted,
   } = useStichtag();
   const { showNetRevenue } = useRevenueDisplay();
+  const { rates: socialCostRates } = useSocialCostRates();
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
   const maisonOn = getMaisonEnabledSync(tenantKey);
@@ -590,12 +594,22 @@ const Dashboard = () => {
   const revenuePlannedMonthB   = toBase(revenuePlannedMonth, takeawayMonthSum);
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
+  // Alle Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten).
   const monthDateSet = new Set(monthDays);
+  const agFactor = useMemo(() => socialCostFactorFromRates(socialCostRates), [socialCostRates]);
+  const agRate = useCallback(
+    (emp: Employee) => getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
+    [socialCostRates]
+  );
+  const agMonthly = useCallback(
+    (emp: Employee) => (emp.monthlySalaryWith13th ?? emp.monthlySalary ?? 0) * agFactor,
+    [agFactor]
+  );
 
   const plannedLaborCost = useMemo(() => {
     return visibleEmployees.reduce((sum, emp) => {
       if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-        return sum + emp.monthlySalary;
+        return sum + agMonthly(emp);
       }
       const hrs = Object.entries(scheduleData)
         .filter(([key]) => {
@@ -604,10 +618,10 @@ const Dashboard = () => {
           return empId === emp.id && monthDateSet.has(date);
         })
         .reduce((s, [, day]) => s + calcDayHours(day), 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEmployees, scheduleData]);
+  }, [visibleEmployees, scheduleData, agRate, agMonthly]);
 
   const actualLaborCost = useMemo(() => {
     return visibleEmployees.reduce((sum, emp) => {
@@ -618,18 +632,18 @@ const Dashboard = () => {
           return empId === emp.id && monthDateSet.has(date);
         })
         .reduce((s, [, e]) => s + e.hours, 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEmployees, actualData]);
+  }, [visibleEmployees, actualData, agRate]);
 
-  // Personal FIX: garantierter Monatslohn inkl. 13. für Vollzeit/Teilzeit-Mitarbeiter
+  // Personal FIX: garantierter Monatslohn inkl. 13. + AG-Sozialkosten für Vollzeit/Teilzeit
   const personalFixCost = useMemo(() => {
     return visibleEmployees
       .filter(e => (e.employmentType === 'vollzeit' || e.employmentType === 'teilzeit') && (e.monthlySalary ?? 0) > 0)
-      .reduce((sum, e) => sum + (e.monthlySalaryWith13th ?? e.monthlySalary ?? 0), 0);
+      .reduce((sum, e) => sum + agMonthly(e), 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEmployees]);
+  }, [visibleEmployees, agMonthly]);
 
   // ── Absenzen-KPIs (admin only) ────────────────────────────────────────────
   const absenceData = useMemo(() => {
@@ -794,7 +808,7 @@ const Dashboard = () => {
   const revenueIstStichtagB    = revenueIstStichtag !== null ? toBase(revenueIstStichtag, takeawayStichtagSum) : null;
   const revenuePrevYearStichtagB = revenuePrevYearStichtag !== null ? toBase(revenuePrevYearStichtag) : null;
 
-  // Personalkosten bis Stichtag (aus Ist-Stunden × Stundenlohn)
+  // Personalkosten bis Stichtag (aus Ist-Stunden × Total-AG-Stundensatz)
   const actualLaborCostStichtag = useMemo(() => {
     if (!stichtagDateStr) return null;
     const set = new Set(daysUpToStichtag);
@@ -806,10 +820,10 @@ const Dashboard = () => {
           return empId === emp.id && set.has(date);
         })
         .reduce((s, [, e]) => s + e.hours, 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEmployees, actualData, stichtagDateStr]);
+  }, [visibleEmployees, actualData, stichtagDateStr, agRate]);
 
   // ── Effektiver Stichtag: letzter Tag mit Ist-Umsatz (oder expliziter Stichtag) ──
   // Für den "zweiten Budget pro rata"-Vergleich
@@ -868,17 +882,17 @@ const Dashboard = () => {
           return empId === emp.id && daySet.has(date);
         })
         .reduce((s, [, e]) => s + e.hours, 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEmployees, actualData, effectiveCutoff]);
+  }, [visibleEmployees, actualData, effectiveCutoff, agRate]);
 
   const plannedLaborCostEffective = useMemo(() => {
     if (!effectiveCutoff || !effectiveDayNum || effectiveDays.length === 0) return null;
     const daySet = new Set(effectiveDays);
     return visibleEmployees.reduce((sum, emp) => {
       if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-        return sum + emp.monthlySalary * effectiveDayNum / daysInRefMonth;
+        return sum + agMonthly(emp) * effectiveDayNum / daysInRefMonth;
       }
       const hrs = Object.entries(scheduleData)
         .filter(([key]) => {
@@ -887,10 +901,10 @@ const Dashboard = () => {
           return empId === emp.id && daySet.has(date);
         })
         .reduce((s, [, day]) => s + calcDayHours(day), 0);
-      return sum + hrs * emp.hourlyWage;
+      return sum + hrs * agRate(emp);
     }, 0);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleEmployees, scheduleData, effectiveCutoff, effectiveDayNum, daysInRefMonth]);
+  }, [visibleEmployees, scheduleData, effectiveCutoff, effectiveDayNum, daysInRefMonth, agRate, agMonthly]);
 
   // Vorjahr pro rata: gleicher Cutoff-Tag, aber Vorjahresdaten
   // Fallback-Kette: 1. Tagesdaten Vorjahr (dailyBudgets), 2. Monatswert aus reporting_v1 pro rata

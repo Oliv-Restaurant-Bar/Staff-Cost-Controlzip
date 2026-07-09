@@ -28,6 +28,8 @@ import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { socialCostFactorFromRates, EMPLOYER_COST_LABELS, EMPLOYER_COST_LABELS_SHORT, EMPLOYER_COST_INFO } from '@/lib/social-costs';
+import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry, type DayDetailEntry } from '@/lib/overtime-analysis';
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
@@ -1689,7 +1691,7 @@ function FlexBreakdownModal({ target, onClose }: {
                 )}
                 {hourlyWage > 0 && (
                   <span className="rounded-full bg-muted border border-border px-2 py-0.5 text-[11px] font-mono text-muted-foreground">
-                    {fmtCHFDec(hourlyWage)}/h
+                    {fmtCHFDec(hourlyWage)}/h (Total AG)
                   </span>
                 )}
                 <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted-foreground">
@@ -1861,7 +1863,7 @@ function FlexBreakdownModal({ target, onClose }: {
                     </table>
                   </div>
                   <p className="text-[10px] text-muted-foreground px-1">
-                    Basis: {fmtCHFDec(hourlyWage)}/h × {dailyH.toFixed(2)} h/Tag = {fmtCHFDec(dailyH * hourlyWage)}/Ferientag
+                    Basis: {fmtCHFDec(hourlyWage)}/h (Total Arbeitgeberkosten) × {dailyH.toFixed(2)} h/Tag = {fmtCHFDec(dailyH * hourlyWage)}/Ferientag
                   </p>
                 </div>
               )}
@@ -2440,7 +2442,9 @@ export default function PersonalFixPage() {
     const mode = varPricingMode[empId] ?? 'hourly';
     if (varView !== 'manual' || mode === 'hourly') {
       const foundEmp = emp ?? variableEmployees.find(e => e.id === empId);
-      return getVarHoursFor(empId) * (foundEmp?.hourlyWage ?? 0);
+      // Kosten = Total Arbeitgeberkosten/h (SL-Brutto inkl. Zuschläge × AG-Faktor), nie roher hourlyWage.
+      const rate = foundEmp ? (getEffectiveHourlyRate(foundEmp, socialCostRates) ?? 0) : 0;
+      return getVarHoursFor(empId) * rate;
     }
     // Tagessatz
     const dr = varDayRate[empId];
@@ -2451,12 +2455,16 @@ export default function PersonalFixPage() {
         ? Math.round(dr.daysPerWeek! * WEEKS_PER_MONTH * 10) / 10
         : 0;
     return days * dr.ratePerDay;
-  }, [varView, varPricingMode, varDayRate, variableEmployees, getVarHoursFor]);
+  }, [varView, varPricingMode, varDayRate, variableEmployees, getVarHoursFor, socialCostRates]);
 
   // ── Fix-Kosten mit Pro-rata je ausgewähltem Monat ─────────────────────────
+  // Kosten = Total Arbeitgeberkosten: Bruttolohn (inkl. 13.) × AG-Sozialkosten-Faktor.
+  // Brutto-Basen (getFixCost/getProRataFixCost/getYearlyFixCost) bleiben pure Brutto-
+  // Funktionen; der Faktor wird NUR hier an der Memo-Grenze angewendet (linear).
 
-  const fixedWithCost = useMemo(() =>
-    fixedEmployees.map(emp => {
+  const fixedWithCost = useMemo(() => {
+    const agFactor = socialCostFactorFromRates(socialCostRates);
+    return fixedEmployees.map(emp => {
       const phases     = contractHistoryMap[emp.id] ?? [];
       const midSwitch  = getMidMonthSwitchInMonth(phases, selectedYear, selectedMonth);
 
@@ -2466,26 +2474,27 @@ export default function PersonalFixPage() {
         const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
         const daysAsFixed = daysInMonth - switchDay + 1;
         const full        = getFixCost(emp);
-        const cost        = Math.round(full * (daysAsFixed / daysInMonth) * 100) / 100;
+        const cost        = Math.round(full * (daysAsFixed / daysInMonth) * agFactor * 100) / 100;
         return {
           emp,
           cost,
           label: `Pro rata ab ${String(switchDay).padStart(2, '0')}.${String(selectedMonth).padStart(2, '0')}. (Vertragswechsel)`,
           excluded: false,
-          yearlyCost: getYearlyFixCost(emp, selectedYear),
+          yearlyCost: Math.round(getYearlyFixCost(emp, selectedYear) * agFactor * 100) / 100,
           hasMidMonthSwitch: true,
         };
       }
 
+      const base = getProRataFixCost(emp, selectedYear, selectedMonth);
       return {
-        ...getProRataFixCost(emp, selectedYear, selectedMonth),
+        ...base,
+        cost: Math.round(base.cost * agFactor * 100) / 100,
         emp,
-        yearlyCost: getYearlyFixCost(emp, selectedYear),
+        yearlyCost: Math.round(getYearlyFixCost(emp, selectedYear) * agFactor * 100) / 100,
         hasMidMonthSwitch: false,
       };
-    }),
-    [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap],
-  );
+    });
+  }, [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap, socialCostRates]);
 
   const activeFixedEmployees = useMemo(() =>
     fixedWithCost.filter(r => !r.excluded),
@@ -2538,12 +2547,12 @@ export default function PersonalFixPage() {
   // ── Stichtag-Controlling: Plan + Ist getrennt (varView-unabhängig) ─────────
   // Variable Kosten immer aus Plan-Stunden (Dienstplan) bzw. Ist-Stunden (Mirus)
   const varPlanTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + (planHours[e.id] ?? 0) * (e.hourlyWage ?? 0), 0),
-    [variableEmployees, planHours],
+    variableEmployees.reduce((s, e) => s + (planHours[e.id] ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0), 0),
+    [variableEmployees, planHours, socialCostRates],
   );
   const varIstTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + (istHours[e.id] ?? 0) * (e.hourlyWage ?? 0), 0),
-    [variableEmployees, istHours],
+    variableEmployees.reduce((s, e) => s + (istHours[e.id] ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0), 0),
+    [variableEmployees, istHours, socialCostRates],
   );
 
   // Zusatzkosten-IST: Fixlohn-MA Tage mit isAdditionalCost=true → fliessen als variable Flex-Kosten ein
@@ -2668,7 +2677,7 @@ export default function PersonalFixPage() {
   }, [tenantId]);
 
   // ── Ferienabbau-Berechnungen ───────────────────────────────────────────────
-  // FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
+  // FE-Tage × (weeklyHours/5 oder 8.4h) × Total Arbeitgeberkosten/h
   // IST: aus actual-hours-* (localStorage), PLAN: aus schedule-v2-* (localStorage)
   // Supabase hat kein absenceType-Feld → Ferien immer aus localStorage
   // IST-Ferienabbau pro Mitarbeiter
@@ -2676,19 +2685,19 @@ export default function PersonalFixPage() {
     const days = ferienIstDays[emp.id] ?? 0;
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-    return days * dailyH * (emp.hourlyWage ?? 0);
-  }, [ferienIstDays]);
+    return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0);
+  }, [ferienIstDays, socialCostRates]);
 
   // PLAN-Ferienabbau pro Mitarbeiter
   const getEmpFerienPlanCHF = useCallback((emp: Employee): number => {
     const days = ferienPlanDays[emp.id] ?? 0;
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-    return days * dailyH * (emp.hourlyWage ?? 0);
-  }, [ferienPlanDays]);
+    return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0);
+  }, [ferienPlanDays, socialCostRates]);
 
   // ── K/U 80%-Kosten (info-only, immer anzeigen wenn K/U-Tage vorhanden) ───────
-  // K/U-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn × 80 %
+  // K/U-Tage × (weeklyHours/5 oder 8.4h) × Total Arbeitgeberkosten/h × 80 %
   const getEmpKuCHF = useCallback((emp: Employee): number => {
     // Basis: Plan-Tage (wie Ferienabbau); fallback auf Ist wenn kein Plan vorhanden
     const days = (kuPlanDays[emp.id] ?? 0) > 0
@@ -2696,8 +2705,8 @@ export default function PersonalFixPage() {
       : (kuIstDays[emp.id] ?? 0);
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-    return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
-  }, [kuPlanDays, kuIstDays]);
+    return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0) * 0.8;
+  }, [kuPlanDays, kuIstDays, socialCostRates]);
 
   const getEmpKrankCHF = useCallback((emp: Employee): number => {
     const planK = kuPlanBreakdown[emp.id]?.krank ?? 0;
@@ -2705,8 +2714,8 @@ export default function PersonalFixPage() {
     const days  = planK > 0 ? planK : istK;
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-    return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
-  }, [kuPlanBreakdown, kuIstBreakdown]);
+    return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0) * 0.8;
+  }, [kuPlanBreakdown, kuIstBreakdown, socialCostRates]);
 
   const getEmpUnfallCHF = useCallback((emp: Employee): number => {
     const planU = kuPlanBreakdown[emp.id]?.unfall ?? 0;
@@ -2714,8 +2723,8 @@ export default function PersonalFixPage() {
     const days  = planU > 0 ? planU : istU;
     if (!days) return 0;
     const dailyH = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-    return days * dailyH * (emp.hourlyWage ?? 0) * 0.8;
-  }, [kuPlanBreakdown, kuIstBreakdown]);
+    return days * dailyH * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0) * 0.8;
+  }, [kuPlanBreakdown, kuIstBreakdown, socialCostRates]);
 
   // Alle Mitarbeitenden (Fix + Variable) für K/U-Kosten
   const allKUEmployees = useMemo(() =>
@@ -2784,7 +2793,7 @@ export default function PersonalFixPage() {
   }, [variableEmployees, getEmpFerienCHF, getEmpFerienPlanCHF, varView, totalVarCost]);
 
   // ── Kanonische 3-Ebenen-Definitionen (view-mode-unabhängig) ──────────────
-  // Ebene 1: Variable Arbeit  = echte Arbeitsstunden × Stundenlohn (FE = 0 h)
+  // Ebene 1: Variable Arbeit  = echte Arbeitsstunden × Total Arbeitgeberkosten/h (FE = 0 h)
   // Ebene 2: Ferienabbau       = FE-Tage × Tagessatz (separat)
   // Ebene 3: Total Variabel    = Variable Arbeit + Ferienabbau  (Addition!)
   //
@@ -2875,7 +2884,7 @@ export default function PersonalFixPage() {
       let cutoffPlanWork = 0;
       let cutoffIstWork  = 0;
       for (const emp of variableEmployees) {
-        const wage = emp.hourlyWage ?? 0;
+        const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
         if (!wage) continue;
         const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
         const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
@@ -3010,7 +3019,7 @@ export default function PersonalFixPage() {
       else { const e = weekMap.get(wk)!; e.maxDay = day; e.days++; }
     }
     for (const emp of variableEmployees) {
-      const wage = emp.hourlyWage ?? 0;
+      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
       if (!wage) continue;
       const planDays = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
       const istDays  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
@@ -3031,7 +3040,7 @@ export default function PersonalFixPage() {
       return { weekKey: wk, label: `KW ${wk.slice(2)}`, planFlex: e.planFlex, istFlex: e.istFlex, dateRange, dates, daysInWeek: e.days };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey]);
+  }, [variableEmployees, selectedYear, selectedMonth, daysInSelectedMonth, tenantKey, socialCostRates]);
 
   // ── Fix-Kosten pro Woche (pro-rata nach Tagen) ────────────────────────────
   const fixByWeek = useMemo(() =>
@@ -3170,7 +3179,7 @@ export default function PersonalFixPage() {
     const cutoffStr = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}-${String(effectiveForecastCutoff).padStart(2, '0')}`;
     let remaining = 0;
     for (const emp of variableEmployees) {
-      const wage = emp.hourlyWage ?? 0;
+      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
       if (!wage) continue;
       // Full month plan (no cutoff), dann filtern auf Tage NACH dem Stichtag/heute
       const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, null, wage, tenantKey);
@@ -3182,7 +3191,7 @@ export default function PersonalFixPage() {
     console.log(`[FLEX-FORECAST] remaining planned flex: ${remaining.toFixed(2)}`);
     return remaining;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, forecastIstDay, pfix.active.istWork]);
+  }, [variableEmployees, selectedYear, selectedMonth, effectiveForecastCutoff, forecastIstDay, pfix.active.istWork, socialCostRates]);
 
   // Forecast Monatsende derived values
   // Gesamter Monat: Budget gesamt minus FIX gesamt (= pfix.month.fix)
@@ -3222,7 +3231,7 @@ export default function PersonalFixPage() {
     const factor   = proRataDay !== null ? proRataFactor : 1;
 
     const rows = variableEmployees.map(emp => {
-      const wage = emp.hourlyWage ?? 0;
+      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
       let planH: number, istH: number, planWork: number, istWork: number;
 
       if (proRataDay !== null) {
@@ -3366,7 +3375,7 @@ export default function PersonalFixPage() {
     const dayMap = new Map<string, { pw: number; iw: number }>();
 
     for (const emp of variableEmployees) {
-      const wage = emp.hourlyWage ?? 0;
+      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
       if (!wage) continue;
 
       const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, cutoff, wage, tenantKey);
@@ -3434,7 +3443,7 @@ export default function PersonalFixPage() {
     console.log(`[AMPEL] status: ${monthStatus} | plan: ${monthPlan.toFixed(2)} | pct: ${monthPctVal.toFixed(2)}`);
 
     return { days, weeks, monthPlan, monthIst, monthDiff };
-  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode]);
+  }, [variableEmployees, selectedYear, selectedMonth, proRataDay, planHours, istHours, abwMode, socialCostRates]);
 
   // Pro-Rata pro variablen Mitarbeiter (für UI-Tabelle + Export)
   // ferienCHF: IST-Basis im Ist-Modus, PLAN-Basis im Plan/Manuell-Modus
@@ -3480,12 +3489,15 @@ export default function PersonalFixPage() {
   const varBudgetDelta     = personnelBudget > 0 ? availableVarBudget - totalVarCost : 0;
   const varBudgetOverrun   = varBudgetDelta < 0;
 
-  // Ø Stundenlohn aller variablen Mitarbeiter mit Lohn hinterlegt
+  // Ø Total Arbeitgeberkosten/h aller variablen Mitarbeiter mit Lohn hinterlegt
+  // (gleiche AG-Basis wie availableVarBudget, sonst stimmen die "verfügbaren Stunden" nicht).
   const avgHourlyWage = useMemo(() => {
-    const empsWithWage = variableEmployees.filter(e => (e.hourlyWage ?? 0) > 0);
-    if (!empsWithWage.length) return 0;
-    return empsWithWage.reduce((s, e) => s + e.hourlyWage, 0) / empsWithWage.length;
-  }, [variableEmployees]);
+    const ratesPerEmp = variableEmployees
+      .map(e => getEffectiveHourlyRate(e, socialCostRates) ?? 0)
+      .filter(r => r > 0);
+    if (!ratesPerEmp.length) return 0;
+    return ratesPerEmp.reduce((s, r) => s + r, 0) / ratesPerEmp.length;
+  }, [variableEmployees, socialCostRates]);
 
   // Maximal mögliche Stunden mit verfügbarem Variabel-Budget
   const maxVarHours = availableVarBudget > 0 && avgHourlyWage > 0
@@ -3547,7 +3559,7 @@ export default function PersonalFixPage() {
           emp,
           hours: getVarHoursFor(emp.id),
           monthlyCost: getVarMonthlyCostFor(emp.id, emp),
-          hourlyWage: emp.hourlyWage ?? 0,
+          hourlyWage: getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
         }));
       }
 
@@ -3612,8 +3624,8 @@ export default function PersonalFixPage() {
           return {
             emp,
             hours: hrs,
-            monthlyCost: hrs * (emp.hourlyWage ?? 0),
-            hourlyWage: emp.hourlyWage ?? 0,
+            monthlyCost: hrs * (getEffectiveHourlyRate(emp, socialCostRates) ?? 0),
+            hourlyWage: getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
           };
         });
       }
@@ -5034,7 +5046,14 @@ export default function PersonalFixPage() {
                         <tr className="bg-muted/30 border-b border-border text-muted-foreground">
                           <th className="px-3 py-2 text-left font-medium">Name</th>
                           <th className="px-3 py-2 text-center font-medium">Abt.</th>
-                          <th className="px-3 py-2 text-right font-medium">CHF/h</th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/h</span>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
+                            </Tooltip>
+                          </th>
                           <th className="px-3 py-2 text-right font-medium text-blue-500">Plan Std</th>
                           <th className="px-3 py-2 text-right font-medium text-orange-500">Ist Std</th>
                           <th className="px-3 py-2 text-right font-medium text-blue-700">Flex Plan</th>
@@ -5339,7 +5358,7 @@ export default function PersonalFixPage() {
                 </table>
               </div>
               <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
-                Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × CHF/h × 80 % (bei fehlendem Plan: Ist-Tage).
+                Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × Total AG/h × 80 % (bei fehlendem Plan: Ist-Tage).
               </p>
             </section>
           );
@@ -5349,11 +5368,12 @@ export default function PersonalFixPage() {
         <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
           <Info className="h-4 w-4 shrink-0 mt-0.5" />
           <p>
-            <strong>Personal FIX</strong>: Garantierter Monatslohn inkl. amortisiertem 13. Monatslohn.
+            <strong>Personal FIX</strong>: {EMPLOYER_COST_LABELS.total} = Bruttolohn (inkl. amortisiertem 13. Monatslohn) + {EMPLOYER_COST_LABELS.social}.
             Mitarbeiter die im gewählten Monat austreten werden <em>pro rata</em> (Arbeitstage ÷ Monatstage) abgerechnet.
             Bereits ausgetretene Mitarbeiter werden ausgeblendet.{' '}
-            <strong>Personal FLEX</strong>: Stunden × Stundenlohn.
+            <strong>Personal FLEX</strong>: Stunden × {EMPLOYER_COST_LABELS.total}/h.
             Wähle Plan- oder Ist-Stunden direkt aus dem Dienstplan — oder trage Stunden manuell ein.
+            Tagessatz-Einträge sind All-in-Beträge und werden nicht zusätzlich mit AG-Sozialkosten beaufschlagt.
           </p>
         </div>
 
@@ -5382,7 +5402,7 @@ export default function PersonalFixPage() {
                 </div>
                 <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
                   <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
-                  <span className="whitespace-nowrap">FIX: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
+                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
                   <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
                 </div>
               </button>
@@ -5403,8 +5423,15 @@ export default function PersonalFixPage() {
                           <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
                         </Tooltip>
                       </th>
-                      <th className="text-right px-4 py-2 font-medium">FIX-Kosten/Mt</th>
-                      <th className="text-right px-4 py-2 font-medium">FIX-Kosten/Jahr</th>
+                      <th className="text-right px-4 py-2 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="text-right px-4 py-2 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -5514,7 +5541,7 @@ export default function PersonalFixPage() {
 
       <FlexPeriodPopup
         target={flexPeriodPopup}
-        employees={variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: e.hourlyWage ?? 0, weeklyHours: e.weeklyHours ?? 42 }))}
+        employees={variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: getEffectiveHourlyRate(e, socialCostRates) ?? 0, weeklyHours: e.weeklyHours ?? 42 }))}
         onClose={() => setFlexPeriodPopup(null)}
       />
       <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
@@ -5532,7 +5559,7 @@ export default function PersonalFixPage() {
           daysInWeek:  w.daysInWeek,
           daysInMonth: daysInSelectedMonth,
           fixEmps:     fix.empCosts,
-          flexEmps:    variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: e.hourlyWage ?? 0 })),
+          flexEmps:    variableEmployees.map(e => ({ id: e.id, name: e.name, hourlyWage: getEffectiveHourlyRate(e, socialCostRates) ?? 0 })),
           year:        selectedYear,
           month:       selectedMonth,
         };

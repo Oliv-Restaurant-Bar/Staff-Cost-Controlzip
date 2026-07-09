@@ -14,6 +14,8 @@ import { de } from 'date-fns/locale';
 import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import type { SocialCostRates } from '@/lib/social-costs';
 
 export type ExportHoursType = 'plan' | 'ist' | 'both';
 
@@ -26,6 +28,8 @@ export interface PrintExportOptions {
   hoursType: ExportHoursType;
   includeCosts: boolean;
   isWeekExport: boolean;
+  /** AG-Sozialkostensätze — Kosten = Total Arbeitgeberkosten, nie roher hourlyWage */
+  rates: SocialCostRates;
 }
 
 const WEEKDAY_NAMES_SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -81,7 +85,8 @@ export async function exportScheduleToExcelPrint(options: PrintExportOptions): P
     days, 
     hoursType, 
     includeCosts,
-    isWeekExport
+    isWeekExport,
+    rates
   } = options;
 
   const shifts = getShiftConfig();
@@ -134,8 +139,8 @@ export async function exportScheduleToExcelPrint(options: PrintExportOptions): P
       ? (isWeekExport ? emp.weeklyHours : emp.weeklyHours * 4.33) 
       : (isWeekExport ? 42 : 42 * 4.33);
     
-    const planCost = planHours * (emp.hourlyWage || 0);
-    const istCost = istHours * (emp.hourlyWage || 0);
+    const planCost = planHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
+    const istCost = istHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
     
     return { planHours, istHours, targetHours, planCost, istCost };
   };
@@ -156,12 +161,12 @@ export async function exportScheduleToExcelPrint(options: PrintExportOptions): P
       if (daySchedule) {
         const dayPlanHours = calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
         planHours += dayPlanHours;
-        planCost += dayPlanHours * (emp.hourlyWage || 0);
+        planCost += dayPlanHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
       
       if (actualEntry?.hours) {
         istHours += actualEntry.hours;
-        istCost += actualEntry.hours * (emp.hourlyWage || 0);
+        istCost += actualEntry.hours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
     });
 
@@ -541,7 +546,7 @@ function createSummarySheet(
   kücheEmployees: Employee[],
   options: PrintExportOptions
 ) {
-  const { scheduleData, actualHoursData, currentMonth, days, hoursType, includeCosts, isWeekExport } = options;
+  const { scheduleData, actualHoursData, currentMonth, days, hoursType, includeCosts, isWeekExport, rates } = options;
   const sheet = workbook.addWorksheet('Zusammenfassung');
 
   const showPlan = hoursType === 'plan' || hoursType === 'both';
@@ -586,8 +591,8 @@ function createSummarySheet(
       planHours,
       istHours,
       targetHours,
-      planCost: planHours * (emp.hourlyWage || 0),
-      istCost: istHours * (emp.hourlyWage || 0),
+      planCost: planHours * (getEffectiveHourlyRate(emp, rates) ?? 0),
+      istCost: istHours * (getEffectiveHourlyRate(emp, rates) ?? 0),
       diff: istHours - planHours,
       saldo: (showIst ? istHours : planHours) - targetHours
     };
@@ -784,7 +789,8 @@ export async function exportScheduleToPDFPrint(options: PrintExportOptions): Pro
     days, 
     hoursType, 
     includeCosts,
-    isWeekExport
+    isWeekExport,
+    rates
   } = options;
 
   const shifts = getShiftConfig();
@@ -838,8 +844,8 @@ export async function exportScheduleToPDFPrint(options: PrintExportOptions): Pro
     return {
       planHours,
       istHours,
-      planCost: planHours * (emp.hourlyWage || 0),
-      istCost: istHours * (emp.hourlyWage || 0)
+      planCost: planHours * (getEffectiveHourlyRate(emp, rates) ?? 0),
+      istCost: istHours * (getEffectiveHourlyRate(emp, rates) ?? 0)
     };
   };
 
@@ -858,11 +864,11 @@ export async function exportScheduleToPDFPrint(options: PrintExportOptions): Pro
       if (daySchedule) {
         const dayPlanHours = calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
         planHours += dayPlanHours;
-        planCost += dayPlanHours * (emp.hourlyWage || 0);
+        planCost += dayPlanHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
       if (actualEntry?.hours) {
         istHours += actualEntry.hours;
-        istCost += actualEntry.hours * (emp.hourlyWage || 0);
+        istCost += actualEntry.hours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
     });
 

@@ -522,14 +522,14 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
                 <>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Personal FIX: erscheint in FIX-Sektion</p>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Flex-Sektion: nicht mehr aufgeführt</p>
-                  <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Wochenreport: Monatslohn-Kosten</p>
-                  <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Forecast: FIX-Kosten berücksichtigt</p>
+                  <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Wochenreport: Total Arbeitgeberkosten (Monatslohn)</p>
+                  <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Forecast: Total Arbeitgeberkosten berücksichtigt</p>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Alte Reports: Vertragshistorie erhalten</p>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Iststunden: weiterhin sichtbar</p>
                 </>
               ) : (
                 <>
-                  <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Flex-Sektion: erscheint mit Stundenlohn</p>
+                  <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Flex-Sektion: Kosten zu Total Arbeitgeberkosten/h</p>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Personal FIX: nicht mehr in FIX</p>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Forecast: variable Kosten</p>
                   <p className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-green-500" /> Alte Reports: Vertragshistorie erhalten</p>

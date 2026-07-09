@@ -79,7 +79,14 @@ export function computeDailyLaborRatio(
 
 export interface EmployeeDayInput {
   employmentType?: string;
+  /**
+   * Monatskosten-Basis. Der Caller übergibt hier die TOTAL ARBEITGEBERKOSTEN
+   * pro Monat (Bruttolohn inkl. anteil. 13. + AG-Sozialkosten), nicht den
+   * rohen Vertragslohn — damit die Manager-PKQ dieselbe Basis hat wie die
+   * übrigen Kostenansichten.
+   */
   monthlySalary?: number;
+  /** Stundenkosten-Basis. Der Caller übergibt die Total Arbeitgeberkosten/h. */
   hourlyWage?: number;
   /** Net work hours for the day (break-deducted), from `calculateDayHours`. */
   dayHours: number;

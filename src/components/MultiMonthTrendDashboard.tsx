@@ -3,6 +3,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, subMonths } from '
 import { de } from 'date-fns/locale';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Employee, TimeEntry, DailyBudget } from '@/types/personnel';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { TrendingUp, TrendingDown, Minus, BarChart3, Calendar, Euro, Clock, ArrowRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -59,6 +60,8 @@ export const MultiMonthTrendDashboard = ({
   dailyBudgets,
   selectedDate,
 }: MultiMonthTrendDashboardProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   // Calculate data for the last 6 months
   const monthlyData = useMemo(() => {
     const data: MonthData[] = [];
@@ -97,10 +100,11 @@ export const MultiMonthTrendDashboard = ({
           const aHours = entry.actualHours || 0;
           const pHours = entry.plannedHours || 0;
           
+          const rate = rateById.get(employee.id) ?? 0;
           actualHours += aHours;
           plannedHours += pHours;
-          actualCosts += aHours * employee.hourlyWage;
-          plannedCosts += pHours * employee.hourlyWage;
+          actualCosts += aHours * rate;
+          plannedCosts += pHours * rate;
         });
       });
       
@@ -124,7 +128,7 @@ export const MultiMonthTrendDashboard = ({
     }
     
     return data;
-  }, [employees, timeEntries, dailyBudgets, selectedDate]);
+  }, [employees, timeEntries, dailyBudgets, selectedDate, rateById]);
   
   // Calculate trends
   const trends = useMemo(() => {

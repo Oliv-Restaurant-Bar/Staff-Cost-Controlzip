@@ -78,7 +78,13 @@ import { toast } from 'sonner';
 import { VertragswechselDialog } from '@/components/VertragswechselDialog';
 import { loadContractHistory, ContractPhase, deleteContractPhase } from '@/lib/contract-history-store';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
-import { socialCostFactorFromRates, totalSocialRatePct } from '@/lib/social-costs';
+import {
+  socialCostFactorFromRates,
+  totalSocialRatePct,
+  EMPLOYER_COST_LABELS,
+  EMPLOYER_COST_LABELS_SHORT,
+} from '@/lib/social-costs';
+import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { getEmployerCostRate } from '@/lib/employee-rate';
 import { TABLE, TABLE_SCROLL, TABLE_WRAP, TH, TH_NUM, TH_STICKY, TD, TD_NUM } from '@/components/ui/table-style';
 
@@ -3492,9 +3498,9 @@ CREATE POLICY "Anon self-register new employee"
               </DialogTitle>
             </DialogHeader>
             <p className="text-xs text-muted-foreground">
-              Personalaufwand = Bruttolohn + {centralSocialPct.toFixed(1)}% AG-Sozialkosten
-              (zentrale Sätze aus den Einstellungen). Stundenwerte = berechneter
-              AG-Stundenkostensatz; die Summenzeile umfasst nur fixe Monatslöhne.
+              {EMPLOYER_COST_LABELS.total} = {EMPLOYER_COST_LABELS.gross} + {centralSocialPct.toFixed(1)}%{' '}
+              {EMPLOYER_COST_LABELS.social} (zentrale Sätze aus den Einstellungen). Stundenwerte =
+              berechneter AG-Stundenkostensatz; die Summenzeile umfasst nur fixe Monatslöhne.
             </p>
             {(() => {
               const rows = employees
@@ -3528,9 +3534,14 @@ CREATE POLICY "Anon self-register new employee"
                         <tr>
                           <th className={cn(TH, TH_STICKY)}>Mitarbeiter</th>
                           <th className={cn(TH, TH_STICKY)}>Lohnbasis</th>
-                          <th className={cn(TH, TH_NUM, TH_STICKY)}>Brutto/h</th>
-                          <th className={cn(TH, TH_NUM, TH_STICKY)}>AG-Sozial/h</th>
-                          <th className={cn(TH, TH_NUM, TH_STICKY)}>Total AG/h</th>
+                          <th className={cn(TH, TH_NUM, TH_STICKY)}>{EMPLOYER_COST_LABELS_SHORT.gross}/h</th>
+                          <th className={cn(TH, TH_NUM, TH_STICKY)}>{EMPLOYER_COST_LABELS_SHORT.social}/h</th>
+                          <th className={cn(TH, TH_NUM, TH_STICKY)}>
+                            <span className="inline-flex items-center gap-1">
+                              {EMPLOYER_COST_LABELS_SHORT.total}/h
+                              <EmployerCostInfoTip rates={socialCostRates} side="left" />
+                            </span>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3573,9 +3584,9 @@ CREATE POLICY "Anon self-register new employee"
               );
             })()}
             <p className="text-[11px] text-muted-foreground">
-              Stundenlöhner sind variabel (Kosten = Ist-Stunden × Total AG/h) und daher
-              nicht in der Monats-Summenzeile enthalten. Brutto bei Stundenlöhnern =
-              auszahlbarer Lohn inkl. Ferien-/Feiertagsentschädigung und 13.
+              Stundenlöhner sind variabel (Kosten = Ist-Stunden × {EMPLOYER_COST_LABELS.total}/h)
+              und daher nicht in der Monats-Summenzeile enthalten. {EMPLOYER_COST_LABELS.gross} bei
+              Stundenlöhnern = auszahlbarer Lohn inkl. Ferien-/Feiertagsentschädigung und 13.
             </p>
           </DialogContent>
         </Dialog>

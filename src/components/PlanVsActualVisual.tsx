@@ -3,6 +3,7 @@ import { format, startOfWeek, endOfWeek, eachDayOfInterval, startOfMonth, endOfM
 import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget, grossToNet } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Clock, Euro, TrendingUp, TrendingDown, Minus, Target, AlertTriangle, CheckCircle2, LineChart } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
@@ -36,6 +37,8 @@ export const PlanVsActualVisual = ({
   selectedDate,
   showNetRevenue = false,
 }: PlanVsActualVisualProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const [viewMode, setViewMode] = useState<ViewMode>('both');
   const dateString = format(selectedDate, 'yyyy-MM-dd');
   
@@ -63,8 +66,9 @@ export const PlanVsActualVisual = ({
           if (!emp) return;
           plannedHours += entry.plannedHours || 0;
           actualHours += entry.actualHours || 0;
-          plannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
-          actualCost += (entry.actualHours || 0) * emp.hourlyWage;
+          const rate = rateById.get(emp.id) ?? 0;
+          plannedCost += (entry.plannedHours || 0) * rate;
+          actualCost += (entry.actualHours || 0) * rate;
         });
       });
 
@@ -87,7 +91,7 @@ export const PlanVsActualVisual = ({
     const monthData = calculatePeriodData(monthDays);
 
     return { dayData, weekData, monthData };
-  }, [selectedDate, dateString, dailyBudgets, timeEntries, employees, showNetRevenue]);
+  }, [selectedDate, dateString, dailyBudgets, timeEntries, employees, showNetRevenue, rateById]);
 
   // Calculate 7-day trend data
   const trendData = useMemo(() => {
@@ -107,8 +111,9 @@ export const PlanVsActualVisual = ({
         if (!emp) return;
         plannedHours += entry.plannedHours || 0;
         actualHours += entry.actualHours || 0;
-        plannedCost += (entry.plannedHours || 0) * emp.hourlyWage;
-        actualCost += (entry.actualHours || 0) * emp.hourlyWage;
+        const rate = rateById.get(emp.id) ?? 0;
+        plannedCost += (entry.plannedHours || 0) * rate;
+        actualCost += (entry.actualHours || 0) * rate;
       });
 
       const isToday = ds === format(selectedDate, 'yyyy-MM-dd');
@@ -126,7 +131,7 @@ export const PlanVsActualVisual = ({
         isToday,
       };
     });
-  }, [selectedDate, timeEntries, employees]);
+  }, [selectedDate, timeEntries, employees, rateById]);
 
   // Visual comparison bar component
   const ComparisonBar = ({ 

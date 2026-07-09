@@ -106,6 +106,9 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency, getEmployeeDisplayName, isEmployeeActiveInMonth } from '@/lib/personnel-utils';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import { socialCostFactorFromRates, EMPLOYER_COST_INFO } from '@/lib/social-costs';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -392,9 +395,21 @@ const SchedulePlanner = () => {
     currentMonth.getFullYear(),
     currentMonth.getMonth() + 1,
   );
+  // ── Zentrale AG-Sozialkostensätze: alle Kosten = Total Arbeitgeberkosten ──
+  // (Bruttolohn inkl. anteil. 13. + AG-Sozialkosten) — nie roher hourlyWage.
+  const { rates: socialCostRates } = useSocialCostRates();
+  const agFactor = socialCostFactorFromRates(socialCostRates);
+  const agRate = useCallback(
+    (emp: Employee) => getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
+    [socialCostRates],
+  );
+  const agMonthly = useCallback(
+    (emp: Employee) => (emp.monthlySalaryWith13th ?? emp.monthlySalary ?? 0) * agFactor,
+    [agFactor],
+  );
   const paFixCost = useMemo(
-    () => roleScopedEmployees.reduce((s, e) => s + (e.monthlySalaryWith13th ?? e.monthlySalary ?? 0), 0),
-    [roleScopedEmployees],
+    () => roleScopedEmployees.reduce((s, e) => s + agMonthly(e), 0),
+    [roleScopedEmployees, agMonthly],
   );
 
   // ── Planungshilfe: Highlight + Jump ──────────────────────────────────────
@@ -2144,6 +2159,7 @@ const SchedulePlanner = () => {
           restaurantName,
           showEmpHours:  options.showEmpHours,
           showDayTotals: options.showDayTotals,
+          rates: socialCostRates,
         });
         toast.success(`PDF (${rangeLabel}) erfolgreich exportiert`);
       } else {
@@ -2158,6 +2174,7 @@ const SchedulePlanner = () => {
           includeCosts: options.includeCosts,
           actualHoursData,
           restaurantName,
+          rates: socialCostRates,
         });
         toast.success(`Excel (${rangeLabel}) erfolgreich exportiert`);
       }
@@ -2726,11 +2743,11 @@ const SchedulePlanner = () => {
 
   const totalPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + emp.monthlySalary;
+      return sum + agMonthly(emp);
     }
     // K + U included for hourly workers (paid absences in monthly forecast)
     const hrs = calculateCostableHoursForForecast(emp.id);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   const visibleEmployeeIds = new Set(visibleEmployees.map(e => e.id));
@@ -2748,17 +2765,17 @@ const SchedulePlanner = () => {
     .reduce((sum, [, b]) => sum + (b.plannedRevenue || 0), 0);
 
 
-  // ── Geplante Personalkosten: Monat / Woche / Tag ───────────────────────────
+  // ── Geplante Personalkosten (Total AG): Monat / Woche / Tag ────────────────
   const weeklyPlannedLaborCost = visibleEmployees.reduce((sum, emp) => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
+      return sum + agMonthly(emp) * (displayDays.length / daysInMonth.length);
     }
     // K + U absence hours included for hourly workers (paid absences in weekly forecast)
     const hrs = displayDays.reduce((h, day) => {
       const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
       return h + (ds ? calculateDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
     }, 0);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   // ── Kueche-Manager: per-day manager-safe header totals (Plan-PKQ) ──────────
@@ -2776,10 +2793,13 @@ const SchedulePlanner = () => {
       const dateStr = format(day, 'yyyy-MM-dd');
       const inputs: EmployeeDayInput[] = visibleEmployees.map(emp => {
         const ds = scheduleData[`${emp.id}-${dateStr}`];
+        // AG-Basis: Lohnfelder tragen Total Arbeitgeberkosten (Monat bzw. /h),
+        // damit die Manager-PKQ dieselbe Basis hat wie die Wochen-/Monats-Karten.
+        // CHF bleibt intern — toDailyTotalsDisplay strippt personnelCost weiterhin.
         return {
           employmentType: emp.employmentType,
-          monthlySalary: emp.monthlySalary,
-          hourlyWage: emp.hourlyWage,
+          monthlySalary: (emp.monthlySalary ?? 0) > 0 ? agMonthly(emp) : emp.monthlySalary,
+          hourlyWage: agRate(emp),
           dayHours: ds ? calculateDayHours(ds) : 0,
           dayAbsenceHours: ds ? getDayAbsenceHoursForForecast(ds) : 0,
         };
@@ -2791,16 +2811,16 @@ const SchedulePlanner = () => {
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isKuecheManager, visibleEmployees, displayDays, scheduleData, dailyBudgets, laborCostThreshold, daysInMonth]);
+  }, [isKuecheManager, visibleEmployees, displayDays, scheduleData, dailyBudgets, laborCostThreshold, daysInMonth, agMonthly, agRate]);
 
-  // ── Ist-Personalkosten: aus tatsächlich erfassten Stunden ──────────────────
+  // ── Ist-Personalkosten (Total AG): aus tatsächlich erfassten Stunden ───────
   const weeklyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
     const hrs = displayDays.reduce((h, day) => {
       const cellKey = `${emp.id}-${format(day, 'yyyy-MM-dd')}`;
       const entry = actualHoursData[cellKey];
       return h + (entry?.hours || 0);
     }, 0);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   const monthlyIstLaborCost = visibleEmployees.reduce((sum, emp) => {
@@ -2809,29 +2829,29 @@ const SchedulePlanner = () => {
       const entry = actualHoursData[cellKey];
       return h + (entry?.hours || 0);
     }, 0);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
-  // ── Gesamt-Personalkosten (immer Küche + Service, unabhängig vom Dept-Filter) ──────
+  // ── Gesamt-Personalkosten Total AG (immer Küche + Service, unabhängig vom Dept-Filter) ──────
   const gesamtMonthlyPlannedLaborCost = activeEmployees.reduce((sum, emp) => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + emp.monthlySalary;
+      return sum + agMonthly(emp);
     }
     // K + U included for hourly workers in the monthly forecast total
     const hrs = calculateCostableHoursForForecast(emp.id);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   const gesamtWeeklyPlannedLaborCost = activeEmployees.reduce((sum, emp) => {
     if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-      return sum + emp.monthlySalary * (displayDays.length / daysInMonth.length);
+      return sum + agMonthly(emp) * (displayDays.length / daysInMonth.length);
     }
     // K + U absence hours included for hourly workers in the weekly forecast total
     const hrs = displayDays.reduce((h, day) => {
       const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
       return h + (ds ? calculateDayHours(ds) + getDayAbsenceHoursForForecast(ds) : 0);
     }, 0);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   const gesamtWeeklyIstLaborCost = activeEmployees.reduce((sum, emp) => {
@@ -2839,7 +2859,7 @@ const SchedulePlanner = () => {
       const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
       return h + (entry?.hours || 0);
     }, 0);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   const gesamtMonthlyIstLaborCost = activeEmployees.reduce((sum, emp) => {
@@ -2847,7 +2867,7 @@ const SchedulePlanner = () => {
       const entry = actualHoursData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`];
       return h + (entry?.hours || 0);
     }, 0);
-    return sum + hrs * emp.hourlyWage;
+    return sum + hrs * agRate(emp);
   }, 0);
 
   const gesamtActiveLaborCost = scheduleMode === 'ist'
@@ -3147,19 +3167,19 @@ const SchedulePlanner = () => {
     const actualHrs = Object.entries(actualHoursData)
       .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
       .reduce((s, [, e]) => s + e.hours, 0);
-    return sum + actualHrs * (emp.hourlyWage ?? 0);
+    return sum + actualHrs * agRate(emp);
   }, 0);
 
   // ── Lohnkosten Versicherung: K/U-Abwesenheiten zu 80% ─────────────────────
   // Krank (K) und Unfall (U) in IST → Arbeitgeber wird durch Versicherung entlastet.
-  // Effektive Kosten = 80% des normalen Stundenlohns für diese Tage.
+  // Effektive Kosten = 80% der Total Arbeitgeberkosten/h für diese Tage.
   const totalKrankUnfallLaborCost = useMemo(() => visibleEmployees.reduce((sum, emp) => {
     const kuHrs = Object.entries(actualHoursData)
       .filter(([key]) => monthDateSet.has(key.slice(-10)) && key.startsWith(`${emp.id}-`))
       .filter(([, e]) => e.absenceType === 'K' || e.absenceType === 'U')
       .reduce((s, [, e]) => s + e.hours, 0);
-    return sum + kuHrs * (emp.hourlyWage ?? 0);
-  }, 0), [actualHoursData, visibleEmployees, monthDateSet]);
+    return sum + kuHrs * agRate(emp);
+  }, 0), [actualHoursData, visibleEmployees, monthDateSet, agRate]);
 
   // 20% Versicherungsersatz (der Anteil den die Versicherung übernimmt)
   const insuranceCostOffset = totalKrankUnfallLaborCost * 0.20;
@@ -3174,7 +3194,7 @@ const SchedulePlanner = () => {
   // ── Ferienabbau (FE-Einträge im Plan + Ist) ────────────────────────────────
   // Plan-FE: scheduleData[key].frühAbsence === 'FE' oder spätAbsence === 'FE'
   // Ist-FE:  actualHoursData[key].absenceType === 'FE' (hours=0)
-  // Ferienabbau CHF = FE-Tage × (weeklyHours/5 oder 8.4h) × Stundenlohn
+  // Ferienabbau CHF = FE-Tage × (weeklyHours/5 oder 8.4h) × Total Arbeitgeberkosten/h
   const { ferienSollTage, ferienSollCHF, ferienIstTage, ferienabbauCHF } = useMemo(() => {
     let sollTage = 0;
     let sollChf = 0;
@@ -3204,15 +3224,16 @@ const SchedulePlanner = () => {
         }
       }
 
+      const empAgRate = agRate(emp);
       if (empSollFe > 0) {
-        const chf = empSollFe * dailyH * emp.hourlyWage;
-        console.log(`[FERIEN] Soll-Ferienabbau: ${emp.name} ${empSollFe} Tage × ${dailyH.toFixed(1)}h × CHF ${emp.hourlyWage} = CHF ${chf.toFixed(2)}`);
+        const chf = empSollFe * dailyH * empAgRate;
+        console.log(`[FERIEN] Soll-Ferienabbau: ${emp.name} ${empSollFe} Tage × ${dailyH.toFixed(1)}h × CHF ${empAgRate.toFixed(2)} (Total AG/h) = CHF ${chf.toFixed(2)}`);
         sollTage += empSollFe;
         sollChf  += chf;
       }
       if (empIstFe > 0) {
-        const chf = empIstFe * dailyH * emp.hourlyWage;
-        console.log(`[FERIEN] Ist-Ferienabbau: ${emp.name} ${empIstFe} Tage × ${dailyH.toFixed(1)}h × CHF ${emp.hourlyWage} = CHF ${chf.toFixed(2)}`);
+        const chf = empIstFe * dailyH * empAgRate;
+        console.log(`[FERIEN] Ist-Ferienabbau: ${emp.name} ${empIstFe} Tage × ${dailyH.toFixed(1)}h × CHF ${empAgRate.toFixed(2)} (Total AG/h) = CHF ${chf.toFixed(2)}`);
         istTage += empIstFe;
         istChf  += chf;
       }
@@ -3225,7 +3246,7 @@ const SchedulePlanner = () => {
       ferienabbauCHF: istChf,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scheduleData, actualHoursData, visibleEmployees, daysInMonth]);
+  }, [scheduleData, actualHoursData, visibleEmployees, daysInMonth, agRate]);
 
   // ── Planungshilfe: Jump + Remove-Handler ──────────────────────────────────
 
@@ -5289,7 +5310,7 @@ const SchedulePlanner = () => {
                         <th className="text-right px-3 py-2 font-semibold text-xs">Soll-Std.</th>
                         <th className="text-right px-3 py-2 font-semibold text-xs">Ist-Std.</th>
                         <th className="text-right px-3 py-2 font-semibold text-xs">Δ Std.</th>
-                        <th className="text-right px-3 py-2 font-semibold text-xs">Kosten (Soll)</th>
+                        <th className="text-right px-3 py-2 font-semibold text-xs" title={EMPLOYER_COST_INFO.total}>Kosten Soll (Total AG)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -5300,7 +5321,7 @@ const SchedulePlanner = () => {
                           return sum + (actualHoursData[key]?.hours ?? 0);
                         }, 0);
                         const diffH = empActualH - empPlannedH;
-                        const hrRate = emp.hourlyWage ?? 0;
+                        const hrRate = agRate(emp);
                         const plannedCost = empPlannedH * hrRate;
                         if (empPlannedH === 0 && empActualH === 0) return null;
                         return (
@@ -6654,8 +6675,8 @@ const SchedulePlanner = () => {
             absenceDays[entry.absenceType as keyof typeof absenceDays]++;
           }
         });
-        const hourlyRate = emp.hourlyWage ?? 0;
-        const monthlyRate = emp.monthlySalary ?? 0;
+        const hourlyRate = agRate(emp);
+        const monthlyRate = (emp.monthlySalary ?? 0) > 0 ? agMonthly(emp) : 0;
         const planCost = monthlyRate > 0
           ? monthlyRate
           : plannedHrs * hourlyRate;

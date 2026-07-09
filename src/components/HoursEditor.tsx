@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, startOfWeek, endOfWeek, isSameMonth, addWeeks, subWeeks, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useWeekSync } from '@/hooks/useWeekSync';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -61,6 +62,8 @@ export const HoursEditor = ({
   onImportPlannedHours,
   onImportActualHours,
 }: HoursEditorProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById, rates } = useEmployerRateMap(employees);
   const { currentWeekStart, currentMonthStart, navigateWeek, navigateMonth, weekNumber } = useWeekSync('HoursEditor', selectedDate);
   const [viewMode, setViewMode] = useState<ViewMode>('week');
   const [hoursMode, setHoursMode] = useState<HoursMode>('actual');
@@ -105,7 +108,7 @@ export const HoursEditor = ({
       const employee = employees.find((e) => e.id === entry.employeeId);
       if (!employee) return sum;
       const hours = mode === 'planned' ? (entry.plannedHours || 0) : (entry.actualHours || 0);
-      return sum + hours * employee.hourlyWage;
+      return sum + hours * (rateById.get(employee.id) ?? 0);
     }, 0);
   };
 
@@ -127,7 +130,7 @@ export const HoursEditor = ({
     return dayEntries.map(entry => {
       const employee = employees.find((e) => e.id === entry.employeeId);
       const hours = mode === 'planned' ? (entry.plannedHours || 0) : (entry.actualHours || 0);
-      const cost = employee ? hours * employee.hourlyWage : 0;
+      const cost = employee ? hours * (rateById.get(employee.id) ?? 0) : 0;
       return {
         employeeName: employee?.name || 'Unbekannt',
         employeeId: entry.employeeId,
@@ -146,8 +149,8 @@ export const HoursEditor = ({
       const employee = employees.find((e) => e.id === entry.employeeId);
       const plannedHours = entry.plannedHours || 0;
       const actualHours = entry.actualHours || 0;
-      const plannedCost = employee ? plannedHours * employee.hourlyWage : 0;
-      const actualCost = employee ? actualHours * employee.hourlyWage : 0;
+      const plannedCost = employee ? plannedHours * (rateById.get(employee.id) ?? 0) : 0;
+      const actualCost = employee ? actualHours * (rateById.get(employee.id) ?? 0) : 0;
       return {
         employeeName: employee?.name || 'Unbekannt',
         employeeId: entry.employeeId,
@@ -1176,7 +1179,7 @@ export const HoursEditor = ({
                 variant="default"
                 size="sm"
                 onClick={() => {
-                  exportComprehensiveReport(employees, timeEntries, dailyBudgets, currentMonthStart);
+                  exportComprehensiveReport(employees, timeEntries, dailyBudgets, currentMonthStart, rates);
                   toast.success('Umfassender Report exportiert');
                 }}
                 className="gap-1 text-xs bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
@@ -1314,7 +1317,7 @@ export const HoursEditor = ({
               return sum + timeEntries.filter(te => te.date === dateString).reduce((s, entry) => {
                 const emp = employees.find(e => e.id === entry.employeeId);
                 if (emp?.department !== 'service') return s;
-                return s + (entry.plannedHours || 0) * emp.hourlyWage;
+                return s + (entry.plannedHours || 0) * (rateById.get(emp.id) ?? 0);
               }, 0);
             }, 0);
             const serviceActualCosts = days.reduce((sum, day) => {
@@ -1322,7 +1325,7 @@ export const HoursEditor = ({
               return sum + timeEntries.filter(te => te.date === dateString).reduce((s, entry) => {
                 const emp = employees.find(e => e.id === entry.employeeId);
                 if (emp?.department !== 'service') return s;
-                return s + (entry.actualHours || 0) * emp.hourlyWage;
+                return s + (entry.actualHours || 0) * (rateById.get(emp.id) ?? 0);
               }, 0);
             }, 0);
             
@@ -1341,7 +1344,7 @@ export const HoursEditor = ({
               return sum + timeEntries.filter(te => te.date === dateString).reduce((s, entry) => {
                 const emp = employees.find(e => e.id === entry.employeeId);
                 if (emp?.department !== 'küche') return s;
-                return s + (entry.plannedHours || 0) * emp.hourlyWage;
+                return s + (entry.plannedHours || 0) * (rateById.get(emp.id) ?? 0);
               }, 0);
             }, 0);
             const kücheActualCosts = days.reduce((sum, day) => {
@@ -1349,7 +1352,7 @@ export const HoursEditor = ({
               return sum + timeEntries.filter(te => te.date === dateString).reduce((s, entry) => {
                 const emp = employees.find(e => e.id === entry.employeeId);
                 if (emp?.department !== 'küche') return s;
-                return s + (entry.actualHours || 0) * emp.hourlyWage;
+                return s + (entry.actualHours || 0) * (rateById.get(emp.id) ?? 0);
               }, 0);
             }, 0);
 

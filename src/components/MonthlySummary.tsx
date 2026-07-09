@@ -5,6 +5,7 @@ import { Employee, TimeEntry, DailyBudget } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useWeekSync } from '@/hooks/useWeekSync';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { 
@@ -41,6 +42,8 @@ export const MonthlySummary = ({
   selectedDate,
   onBudgetUpdate
 }: MonthlySummaryProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const { currentMonthStart, navigateMonth } = useWeekSync('MonthlySummary', selectedDate);
   const [editingBudgets, setEditingBudgets] = useState<Record<string, { planned: string; actual: string }>>({});
   const [showBudgetEditor, setShowBudgetEditor] = useState(false);
@@ -71,12 +74,14 @@ export const MonthlySummary = ({
         const employee = employees.find((e) => e.id === entry.employeeId);
         if (!employee) return;
 
+        const rate = rateById.get(employee.id) ?? 0;
+
         plannedHours += entry.plannedHours;
-        plannedCost += entry.plannedHours * employee.hourlyWage;
+        plannedCost += entry.plannedHours * rate;
 
         if (entry.actualHours !== undefined) {
           actualHours += entry.actualHours;
-          actualCost += entry.actualHours * employee.hourlyWage;
+          actualCost += entry.actualHours * rate;
         }
       });
 
@@ -131,7 +136,7 @@ export const MonthlySummary = ({
       revenueVariance,
       costVariance,
     };
-  }, [employees, timeEntries, dailyBudgets, currentMonthStart]);
+  }, [employees, timeEntries, dailyBudgets, currentMonthStart, rateById]);
 
   // Chart data for Recharts
   const chartData = monthData.days.map((day) => ({

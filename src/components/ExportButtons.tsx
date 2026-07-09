@@ -10,6 +10,7 @@ import { Employee, TimeEntry, DailyBudget, DailySummary } from '@/types/personne
 import { exportDailyReport, exportWeeklyReport } from '@/lib/pdf-export';
 import { toast } from 'sonner';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 
 interface ExportButtonsProps {
   selectedDate: Date;
@@ -27,10 +28,11 @@ export const ExportButtons = ({
   dailySummary,
 }: ExportButtonsProps) => {
   const { showNetRevenue } = useRevenueDisplay();
+  const { rates } = useSocialCostRates();
 
   const handleDailyExport = () => {
     try {
-      exportDailyReport(selectedDate, employees, timeEntries, dailyBudgets, dailySummary, showNetRevenue);
+      exportDailyReport(selectedDate, employees, timeEntries, dailyBudgets, dailySummary, rates, showNetRevenue);
       toast.success('Tagesbericht wurde exportiert');
     } catch (error) {
       console.error('Export error:', error);
@@ -40,7 +42,7 @@ export const ExportButtons = ({
 
   const handleWeeklyExport = () => {
     try {
-      exportWeeklyReport(selectedDate, employees, timeEntries, dailyBudgets, showNetRevenue);
+      exportWeeklyReport(selectedDate, employees, timeEntries, dailyBudgets, rates, showNetRevenue);
       toast.success('Wochenbericht wurde exportiert');
     } catch (error) {
       console.error('Export error:', error);

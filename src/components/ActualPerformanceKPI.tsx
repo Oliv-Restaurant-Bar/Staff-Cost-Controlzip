@@ -22,6 +22,7 @@ import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, 
 import { de } from 'date-fns/locale';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { cn } from '@/lib/utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { exportActualPerformanceExcel, exportActualPerformancePDF } from '@/lib/actual-performance-export';
 import { toast } from 'sonner';
 import { LineChart, Line, ResponsiveContainer, Tooltip } from 'recharts';
@@ -68,6 +69,8 @@ export const ActualPerformanceKPI = ({
 }: ActualPerformanceKPIProps) => {
   const [activePeriod, setActivePeriod] = useState<PeriodType>('week');
   const { showNetRevenue } = useRevenueDisplay();
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
 
   // Calculate data for a date range
   const calculatePeriodData = (startDate: Date, endDate: Date, label: string, shortLabel: string, prevStartDate: Date, prevEndDate: Date): PeriodData => {
@@ -100,7 +103,7 @@ export const ActualPerformanceKPI = ({
         const emp = employees.find(e => e.id === entry.employeeId);
         if (emp) {
           dayHours += hours;
-          dayCosts += hours * emp.hourlyWage;
+          dayCosts += hours * (rateById.get(emp.id) ?? 0);
         }
       });
       
@@ -129,7 +132,7 @@ export const ActualPerformanceKPI = ({
         const emp = employees.find(e => e.id === entry.employeeId);
         if (emp) {
           dayHours += hours;
-          dayCosts += hours * emp.hourlyWage;
+          dayCosts += hours * (rateById.get(emp.id) ?? 0);
         }
       });
       
@@ -181,7 +184,7 @@ export const ActualPerformanceKPI = ({
         const emp = employees.find(e => e.id === entry.employeeId);
         if (emp) {
           dayHours += hours;
-          dayCosts += hours * emp.hourlyWage;
+          dayCosts += hours * (rateById.get(emp.id) ?? 0);
         }
       });
       
@@ -196,7 +199,7 @@ export const ActualPerformanceKPI = ({
     }
     
     return days;
-  }, [selectedDate, employees, timeEntries, dailyBudgets, showNetRevenue]);
+  }, [selectedDate, employees, timeEntries, dailyBudgets, showNetRevenue, rateById]);
 
   const periodData = useMemo(() => {
     const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 });
@@ -242,7 +245,7 @@ export const ActualPerformanceKPI = ({
         prevYearStart, prevYearEnd
       ),
     };
-  }, [selectedDate, employees, timeEntries, dailyBudgets, showNetRevenue]);
+  }, [selectedDate, employees, timeEntries, dailyBudgets, showNetRevenue, rateById]);
 
   const currentData = periodData[activePeriod];
 

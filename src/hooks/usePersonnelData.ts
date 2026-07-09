@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Employee, TimeEntry, DailyBudget, MirusImportEntry, MirusDailyImportEntry, ScheduleImportEntry, RevenueImportEntry, HourlyRevenue } from '@/types/personnel';
 import { calculateHours, calculateDailySummary } from '@/lib/personnel-utils';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { toast } from 'sonner';
 import { upsertAllEmployees } from '@/lib/supabase-db';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, eachMonthOfInterval, subMonths, addMonths } from 'date-fns';
@@ -499,6 +500,8 @@ const sampleTimeEntries: TimeEntry[] = [];
 
 export const usePersonnelData = () => {
   const { tenantId } = useTenant();
+  // Zentrale AG-Sozialkostensätze — Kostenbasis = Total Arbeitgeberkosten.
+  const { rates: socialCostRates } = useSocialCostRates();
   // Start empty — Supabase will populate with tenant-correct data.
   // Never pre-fill with Oliv defaultEmployees (they would show as initial state for Beaulieu).
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -961,10 +964,11 @@ export const usePersonnelData = () => {
         dayEntries,
         employees,
         budget.plannedRevenue,
-        budget.actualRevenue
+        budget.actualRevenue,
+        socialCostRates
       );
     },
-    [timeEntries, employees, dailyBudgets]
+    [timeEntries, employees, dailyBudgets, socialCostRates]
   );
 
   const importScheduleData = useCallback(

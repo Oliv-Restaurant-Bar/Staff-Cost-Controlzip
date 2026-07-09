@@ -27,6 +27,7 @@ import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useShiftConfig, calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { PatternWarning, PatternType } from '@/lib/pattern-warnings';
 
@@ -285,6 +286,8 @@ export const ScheduleGrid = ({
   onEmployeeClick,
 }: ScheduleGridProps) => {
   const { shiftMap, absenceShifts } = useShiftConfig();
+  // Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById, rates } = useEmployerRateMap(employees);
   
   // Use prop if provided (allows per-department threshold), else fall back to localStorage
   const LABOR_COST_THRESHOLD_KEY = 'labor_cost_threshold';
@@ -364,7 +367,8 @@ export const ScheduleGrid = ({
 
       // Calculate costs (work hours + paid absences)
       if (emp.hourlyWage) {
-        totalCosts += (netWorkHours + absencePaidHours) * emp.hourlyWage;
+        const agRate = rateById.get(emp.id) ?? 0;
+        totalCosts += (netWorkHours + absencePaidHours) * agRate;
 
         // Slot-level cost split (break deduction distributed proportionally)
         if (grossWorkHours > 0 && emp.hourlyWage) {
@@ -372,8 +376,8 @@ export const ScheduleGrid = ({
           const spätNetH  = spätHours  > 0 ? spätHours  - breakDeduction * (spätHours  / grossWorkHours) : 0;
           const dept = emp.department === 'küche' ? 'küche' : 'service';
           if (!slotCosts[dept]) slotCosts[dept] = { früh: 0, spät: 0, frühHours: 0, spätHours: 0 };
-          slotCosts[dept].früh      += Math.max(0, frühNetH)  * emp.hourlyWage;
-          slotCosts[dept].spät      += Math.max(0, spätNetH)  * emp.hourlyWage;
+          slotCosts[dept].früh      += Math.max(0, frühNetH)  * agRate;
+          slotCosts[dept].spät      += Math.max(0, spätNetH)  * agRate;
           slotCosts[dept].frühHours += Math.max(0, frühNetH);
           slotCosts[dept].spätHours += Math.max(0, spätNetH);
         }
@@ -410,9 +414,9 @@ export const ScheduleGrid = ({
     const maxCostsAllowed = effectiveRevenue * (laborCostThreshold / 100);
     const excessCosts = totalCosts - maxCostsAllowed;
 
-    // Estimate excess hours based on average hourly wage
+    // Estimate excess hours based on average employer cost rate (AG-Basis wie totalCosts)
     const avgHourlyWage = employees.length > 0
-      ? employees.reduce((sum, e) => sum + (e.hourlyWage || 0), 0) / employees.filter(e => e.hourlyWage).length
+      ? employees.reduce((sum, e) => sum + (e.hourlyWage ? (rateById.get(e.id) ?? 0) : 0), 0) / employees.filter(e => e.hourlyWage).length
       : 30;
     const excessHours = avgHourlyWage > 0 ? excessCosts / avgHourlyWage : 0;
 
@@ -535,7 +539,7 @@ export const ScheduleGrid = ({
       const stats = getDailyStats(day);
       if (!stats.isOverBudget) return;
       const suggestions = computeSuggestions(
-        dateStr, employees, scheduleData, dismissedIds, stats.excessCosts,
+        dateStr, employees, scheduleData, dismissedIds, stats.excessCosts, rates,
       );
       // Mark the TOP priority suggestions (tier 1+2: aushilfe + double-shifts first)
       const topSuggestions = suggestions.slice(0, 4);
@@ -550,7 +554,7 @@ export const ScheduleGrid = ({
     });
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days, employees, scheduleData, dismissedIds, laborCostThreshold, dailyBudgets]);
+  }, [days, employees, scheduleData, dismissedIds, laborCostThreshold, dailyBudgets, rates]);
 
   // Track which inline suggestion popover is currently open (key = cellKey-slot)
   const [openInlineId, setOpenInlineId] = useState<string | null>(null);
@@ -621,7 +625,7 @@ export const ScheduleGrid = ({
         hours = Math.max(0, gross - breakDeduction);
       }
 
-      const cost = hours * (emp.hourlyWage || 0);
+      const cost = hours * (rateById.get(emp.id) ?? 0);
 
       // Build human-readable shift display for the dialog
       const parts: string[] = [];
@@ -1396,7 +1400,7 @@ export const ScheduleGrid = ({
       const dateLabel = format(parsedDate, 'EEEE, d. MMMM yyyy', { locale: de });
 
       // Build a map from employeeId → suggestion for this day
-      const allSuggestions = computeSuggestions(openDialogDay, employees, scheduleData, dismissedIds, excessCosts);
+      const allSuggestions = computeSuggestions(openDialogDay, employees, scheduleData, dismissedIds, excessCosts, rates);
       const suggestionByEmpId = new Map(allSuggestions.map(s => [s.employeeId, s]));
       const pendingCount = allSuggestions.filter(s => !snoozedIds.includes(s.id) && !dismissedIds.includes(s.id)).length;
       const totalSaving = allSuggestions.reduce((sum, s) => sum + s.savingCost, 0);

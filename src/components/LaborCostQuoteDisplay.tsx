@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { exportLaborCostQuoteReport, exportLaborCostQuoteMonthlyReport } from '@/lib/pdf-export';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 interface LaborCostQuoteDisplayProps {
   employees: Employee[];
   timeEntries: TimeEntry[];
@@ -25,6 +26,8 @@ export const LaborCostQuoteDisplay = ({
 }: LaborCostQuoteDisplayProps) => {
   const [thresholdService, setThresholdService] = useState(40);
   const [thresholdKueche, setThresholdKueche] = useState(35);
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById, rates } = useEmployerRateMap(employees);
   const dateString = format(selectedDate, 'yyyy-MM-dd');
 
   // Use average threshold for general display
@@ -37,7 +40,7 @@ export const LaborCostQuoteDisplay = ({
       const employee = employees.find((e) => e.id === entry.employeeId);
       if (!employee) return sum;
       const hours = mode === 'planned' ? (entry.plannedHours || 0) : (entry.actualHours || 0);
-      return sum + hours * employee.hourlyWage;
+      return sum + hours * (rateById.get(employee.id) ?? 0);
     }, 0);
   };
 
@@ -239,11 +242,11 @@ export const LaborCostQuoteDisplay = ({
   };
 
   const handleExportWeeklyPDF = () => {
-    exportLaborCostQuoteReport(selectedDate, employees, timeEntries, dailyBudgets, { service: thresholdService, küche: thresholdKueche });
+    exportLaborCostQuoteReport(selectedDate, employees, timeEntries, dailyBudgets, { service: thresholdService, küche: thresholdKueche }, rates);
   };
 
   const handleExportMonthlyPDF = () => {
-    exportLaborCostQuoteMonthlyReport(selectedDate, employees, timeEntries, dailyBudgets, { service: thresholdService, küche: thresholdKueche });
+    exportLaborCostQuoteMonthlyReport(selectedDate, employees, timeEntries, dailyBudgets, { service: thresholdService, küche: thresholdKueche }, rates);
   };
 
   return (

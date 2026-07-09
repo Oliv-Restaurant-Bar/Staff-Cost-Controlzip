@@ -1,6 +1,8 @@
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import type { SocialCostRates } from '@/lib/social-costs';
 
 export type SuggestionActionType = 'remove_all' | 'remove_spat' | 'remove_frueh';
 
@@ -51,6 +53,7 @@ export function computeSuggestions(
   scheduleData: Record<string, DaySchedule>,
   dismissedIds: string[],
   _excessCostTarget: number,   // kept for backward compatibility; not used for early exit
+  rates: SocialCostRates,
 ): CorrectionSuggestion[] {
   const dismissed = new Set(dismissedIds);
 
@@ -83,7 +86,8 @@ export function computeSuggestions(
     const gross = (hasF ? fH : 0) + (hasS ? sH : 0);
     const breakD = calculateBreakDeduction(gross);
     const netH = Math.max(0, gross - breakD);
-    const wage = emp.hourlyWage || 0;
+    // Kosten = Total Arbeitgeberkosten, nie roher hourlyWage
+    const wage = getEffectiveHourlyRate(emp, rates) ?? 0;
     const cost = netH * wage;
 
     const isAushilfe =
@@ -130,8 +134,8 @@ export function computeSuggestions(
       }
     } else if (isDoubleShift) {
       // Remove the more expensive of the two slots
-      const frühCost = fH * (emp.hourlyWage || 0);
-      const spätCost = sH * (emp.hourlyWage || 0);
+      const frühCost = fH * (getEffectiveHourlyRate(emp, rates) ?? 0);
+      const spätCost = sH * (getEffectiveHourlyRate(emp, rates) ?? 0);
 
       if (spätCost >= frühCost) {
         const id = `${emp.id}-${dateStr}-remove-spat`;

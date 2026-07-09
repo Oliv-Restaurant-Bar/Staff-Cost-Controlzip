@@ -6,6 +6,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Employee, TimeEntry, DailyBudget, HourlyRevenue } from '@/types/personnel';
 import { formatCurrency } from '@/lib/personnel-utils';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, addDays } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
@@ -46,6 +47,8 @@ export const ShiftRevenueComparison = ({
   selectedDate,
   showNetRevenue = false,
 }: ShiftRevenueComparisonProps) => {
+  // Kosten = Total Arbeitgeberkosten (Bruttolohn + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
   const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
   
   const dateString = format(selectedDate, 'yyyy-MM-dd');
@@ -97,7 +100,7 @@ export const ShiftRevenueComparison = ({
               id: emp.id,
               name: emp.name,
               department: emp.department,
-              wage: emp.hourlyWage,
+              wage: rateById.get(emp.id) ?? 0,
             });
           }
         }
@@ -131,7 +134,7 @@ export const ShiftRevenueComparison = ({
     }
     
     return data;
-  }, [timeEntries, employees, budget, dateString]);
+  }, [timeEntries, employees, budget, dateString, rateById]);
 
   // Generate optimization suggestions with department-specific analysis
   const suggestions = useMemo((): OptimizationSuggestion[] => {

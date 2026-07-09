@@ -4,6 +4,8 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, getWeek, getDay, a
 import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget } from '@/types/personnel';
 import { formatCurrency, formatHours } from './personnel-utils';
+import { getEffectiveHourlyRate } from './employee-rate';
+import type { SocialCostRates } from './social-costs';
 
 interface WeekTrendData {
   weekNum: number;
@@ -300,11 +302,13 @@ const drawTrendIndicator = (doc: jsPDF, x: number, y: number, isPositive: boolea
   }
 };
 
+// Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten), nie roher hourlyWage.
 export const exportComprehensiveReport = (
   employees: Employee[],
   timeEntries: TimeEntry[],
   dailyBudgets: Record<string, DailyBudget>,
-  selectedDate: Date
+  selectedDate: Date,
+  rates: SocialCostRates
 ) => {
   const doc = new jsPDF();
   const monthStart = startOfMonth(selectedDate);
@@ -327,7 +331,7 @@ export const exportComprehensiveReport = (
       const employee = employees.find(e => e.id === entry.employeeId);
       if (!employee) return sum;
       const hours = mode === 'planned' ? (entry.plannedHours || 0) : (entry.actualHours || 0);
-      return sum + hours * employee.hourlyWage;
+      return sum + hours * (getEffectiveHourlyRate(employee, rates) ?? 0);
     }, 0);
   };
   
@@ -359,8 +363,9 @@ export const exportComprehensiveReport = (
       
       const actualHours = entry.actualHours || 0;
       const plannedHours = entry.plannedHours || 0;
-      const actualCost = actualHours * employee.hourlyWage;
-      const plannedCost = plannedHours * employee.hourlyWage;
+      const agRate = getEffectiveHourlyRate(employee, rates) ?? 0;
+      const actualCost = actualHours * agRate;
+      const plannedCost = plannedHours * agRate;
       
       if (employee.department === 'service') {
         serviceDept.hours += actualHours;

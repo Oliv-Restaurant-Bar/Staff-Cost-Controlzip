@@ -12,6 +12,7 @@ import { ChevronLeft, ChevronRight, FileText, Loader2, Users, CalendarDays } fro
 import { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 import { exportScheduleToPDF } from '@/lib/schedule-export-import';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { toast } from 'sonner';
 
 interface SchedulePDFDialogProps {
@@ -39,6 +40,7 @@ export function SchedulePDFDialog({
   const [department, setDepartment] = useState<DeptOption>('all');
   const [includeWeeks, setIncludeWeeks] = useState(true);
   const [loading, setLoading] = useState(false);
+  const { rates } = useSocialCostRates();
 
   const serviceCount = employees.filter(e => e.department === 'service').length;
   const kücheCount = employees.filter(e => e.department === 'küche').length;
@@ -54,6 +56,7 @@ export function SchedulePDFDialog({
         dailyBudgets,
         showCosts,
         includeWeeklyPages: includeWeeks,
+        rates,
       });
       toast.success('PDF erfolgreich exportiert');
       onOpenChange(false);

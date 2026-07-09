@@ -84,6 +84,33 @@ export const SOCIAL_COST_RATE_FIELDS: ReadonlyArray<{
   { key: 'otherPct', label: 'Weitere AG-Kosten',              info: 'Optionale weitere Arbeitgeberkosten in % des Bruttolohns (z.B. übernommene NBU-Prämie, weitere GAV-Fonds).' },
 ];
 
+// ── Zentrale FIBU-Begriffe (Single Source of Truth für ALLE Module) ──────────
+// Personalstamm, Personalbedarf, Dienstplanung, Kennzahlen, Budget, Forecast,
+// Erfolgsrechnung, Controlling verwenden EXAKT diese Bezeichnungen — keine
+// Modul-eigenen Begriffe wie „FIX-Kosten" für diese Grössen.
+export const EMPLOYER_COST_LABELS = {
+  /** Bruttolohn inkl. anteiligem 13. Monatslohn */
+  gross: 'Bruttolohn',
+  /** Sämtliche Arbeitgeberbeiträge (AHV/ALV/FAK/VK/UVG-BU/KTG/BVG/L-GAV/weitere) */
+  social: 'Arbeitgeber-Sozialkosten',
+  /** Bruttolohn + Arbeitgeber-Sozialkosten */
+  total: 'Total Arbeitgeberkosten',
+} as const;
+
+/** Kurzformen für enge Tabellenspalten — Langform gehört in den Tooltip. */
+export const EMPLOYER_COST_LABELS_SHORT = {
+  gross: 'Brutto',
+  social: 'AG-Sozialkosten',
+  total: 'Total AG',
+} as const;
+
+/** Standard-Erklärsätze für Tooltips/InfoTips (überall identisch verwenden). */
+export const EMPLOYER_COST_INFO = {
+  gross: 'Bruttolohn inkl. anteiligem 13. Monatslohn (bei Stundenlohn inkl. Ferien-/Feiertagsentschädigung).',
+  social: 'Sämtliche Arbeitgeberbeiträge: AHV/IV/EO, ALV, FAK, Verwaltungskosten AK, UVG-BU, KTG, BVG, L-GAV, weitere.',
+  total: 'Total Arbeitgeberkosten = Bruttolohn + Arbeitgeber-Sozialkosten. Basis aller Personalkosten-Auswertungen.',
+} as const;
+
 // ── Normalisierung ───────────────────────────────────────────────────────────
 
 const clampPct = (v: unknown, fallback: number): number => {

@@ -2,6 +2,7 @@ import { format, getDay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { useState } from 'react';
 import { useShiftConfig } from '@/hooks/useShiftConfig';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Employee } from '@/types/personnel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
@@ -68,6 +69,9 @@ export const DayDetailDialog = ({
   activeDepartment,
 }: DayDetailDialogProps) => {
   const { shiftMap } = useShiftConfig();
+  // Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById } = useEmployerRateMap(employees);
+  const agRate = (emp: Employee) => rateById.get(emp.id) ?? 0;
   const [editingRevenue, setEditingRevenue] = useState(false);
   const [revenueInput, setRevenueInput] = useState('');
   type PvIstFilter = 'all' | 'deviation' | 'over' | 'under';
@@ -164,17 +168,17 @@ export const DayDetailDialog = ({
     if (gross === 0) return;
     const breakDeduction = calculateBreakDeduction(gross);
     const net = Math.max(0, gross - breakDeduction);
-    totalPlannedCost += net * emp.hourlyWage;
+    totalPlannedCost += net * agRate(emp);
 
     // Split break deduction proportionally
     const frühNet = Math.max(0, frühH - breakDeduction * (frühH / gross));
     const spätNet = Math.max(0, spätH - breakDeduction * (spätH / gross));
-    frühPlannedCost += frühNet * emp.hourlyWage;
-    spätPlannedCost += spätNet * emp.hourlyWage;
+    frühPlannedCost += frühNet * agRate(emp);
+    spätPlannedCost += spätNet * agRate(emp);
 
     const dept = emp.department === 'küche' ? 'küche' : 'service';
-    deptSlotCosts[dept].früh  += frühNet * emp.hourlyWage;
-    deptSlotCosts[dept].spät  += spätNet * emp.hourlyWage;
+    deptSlotCosts[dept].früh  += frühNet * agRate(emp);
+    deptSlotCosts[dept].spät  += spätNet * agRate(emp);
     deptSlotCosts[dept].frühH += frühNet;
     deptSlotCosts[dept].spätH += spätNet;
   });
@@ -213,7 +217,7 @@ export const DayDetailDialog = ({
   const totalIstCost = actualHoursData
     ? employees.reduce((sum, emp) => {
         const h = actualHoursData[`${emp.id}-${dateStr}`]?.hours ?? 0;
-        return sum + h * (emp.hourlyWage || 0);
+        return sum + h * agRate(emp);
       }, 0)
     : 0;
   const istRevenue = (actualRevenue !== undefined && actualRevenue > 0) ? actualRevenue : null;
@@ -224,7 +228,7 @@ export const DayDetailDialog = ({
   const avgWage = (() => {
     const waged = employees.filter(e => (e.hourlyWage || 0) > 0);
     if (waged.length === 0) return 0;
-    return waged.reduce((s, e) => s + (e.hourlyWage || 0), 0) / waged.length;
+    return waged.reduce((s, e) => s + agRate(e), 0) / waged.length;
   })();
   const istDevHours = (istOverTarget && avgWage > 0 && istDevCHF !== null)
     ? istDevCHF / avgWage
@@ -236,8 +240,8 @@ export const DayDetailDialog = ({
     .map(emp => {
       const planHours  = calculateDayHours(scheduleData[`${emp.id}-${dateStr}`] ?? {});
       const istHours   = actualHoursData?.[`${emp.id}-${dateStr}`]?.hours ?? 0;
-      const planCost   = planHours * (emp.hourlyWage || 0);
-      const istCost    = istHours  * (emp.hourlyWage || 0);
+      const planCost   = planHours * agRate(emp);
+      const istCost    = istHours  * agRate(emp);
       return { emp, planHours, istHours, planCost, istCost };
     })
     .filter(r => r.planHours > 0 || r.istHours > 0);
@@ -396,7 +400,7 @@ export const DayDetailDialog = ({
                 if (vActual?.hours && vActual.hours > 0) hours = vActual.hours;
                 else if (vDs && !vDs.frühAbsence && !vDs.spätAbsence) hours = netHoursFromSchedule(vDs);
                 if (hours <= 0) return [];
-                return [{ name: v.name, hours, cost: hours * (v.hourlyWage ?? 0) }];
+                return [{ name: v.name, hours, cost: hours * agRate(v) }];
               });
 
               const replacedHrs  = replacements.reduce((s, r) => s + r.hours, 0);
@@ -471,7 +475,7 @@ export const DayDetailDialog = ({
           {hasCostData && (() => {
             const wageEmployees = employees.filter(e => e.hourlyWage && e.hourlyWage > 0);
             const avgWage = wageEmployees.length > 0
-              ? wageEmployees.reduce((s, e) => s + (e.hourlyWage || 0), 0) / wageEmployees.length
+              ? wageEmployees.reduce((s, e) => s + agRate(e), 0) / wageEmployees.length
               : 0;
             const overHours = isOverCostTarget && avgWage > 0 ? excessCost! / avgWage : null;
 

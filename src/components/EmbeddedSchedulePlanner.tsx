@@ -28,6 +28,7 @@ import { EmployeeForm } from '@/components/EmployeeForm';
 import { importScheduleFromExcelV2, NameMatchInfo } from '@/lib/schedule-export-import';
 import { exportScheduleToExcelPrint, exportScheduleToPDFPrint, PrintExportOptions } from '@/lib/schedule-print-export';
 import { toast } from 'sonner';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMonths, eachWeekOfInterval, startOfWeek, endOfWeek, isWithinInterval, getISOWeek, isSameMonth } from 'date-fns';
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
@@ -89,6 +90,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
   const { shifts, shiftMap, updateShifts } = useShiftConfig();
   const { currentWeekStart, currentMonthStart, weekNumber, monthLabel, navigateWeek, navigateMonth } = useWeekSync('EmbeddedSchedulePlanner', selectedDate);
   const { tenantId, tenantKey } = useTenant();
+  const { rates: socialCostRates } = useSocialCostRates();
 
   // Use Supabase hook for employees and schedule — tenant-filtered
   const {
@@ -470,7 +472,8 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
         days: exportDays,
         hoursType: options.hoursType || 'plan',
         includeCosts: options.includeCosts ?? true,
-        isWeekExport
+        isWeekExport,
+        rates: socialCostRates
       };
 
       // Export Excel with new print-optimized format
@@ -504,7 +507,8 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
         days: exportDays,
         hoursType: options?.hoursType || 'plan',
         includeCosts: options?.includeCosts ?? showCosts,
-        isWeekExport
+        isWeekExport,
+        rates: socialCostRates
       };
 
       await exportScheduleToPDFPrint(printOptions);
