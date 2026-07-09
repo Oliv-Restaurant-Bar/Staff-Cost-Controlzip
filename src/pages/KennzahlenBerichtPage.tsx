@@ -23,6 +23,11 @@ import {
   Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 import { cn } from '@/lib/utils';
+import { PageShell } from '@/components/layout/PageShell';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
+import { LoadingState, EmptyState } from '@/components/ui/page-states';
+import type { Tone } from '@/components/ui/tones';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
@@ -125,6 +130,13 @@ function tLight(actual: number, target: number, lowerIsBetter = false): 'green' 
   if (lowerIsBetter) { return r <= 1.0 ? 'green' : r <= 1.12 ? 'yellow' : 'red'; }
   return r >= 0.97 ? 'green' : r >= 0.88 ? 'yellow' : 'red';
 }
+
+/** Ampel → Design-System-Ton (grün=gut, gelb=Achtung, rot=kritisch). */
+const TL_TONE: Record<'green' | 'yellow' | 'red', Tone> = {
+  green: 'good',
+  yellow: 'warn',
+  red: 'critical',
+};
 
 function getSupp(supp: Record<string, number>, pattern: string): number {
   const lower = pattern.toLowerCase();
@@ -639,53 +651,48 @@ export default function KennzahlenBerichtPage() {
 
   // ── Render ────────────────────────────────────────────────────────────
 
+  const header = (
+    <PageHeader
+      icon={<BarChart2 />}
+      title="Kennzahlen Bericht"
+      info="Management-Report: Umsatz, Personalkosten und Warenaufwand für den gewählten Zeitraum — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF."
+      meta={rangeLabel}
+      actions={
+        <button
+          onClick={exportPdf}
+          disabled={!summary || loading}
+          className="flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
+        >
+          <Download className="h-3.5 w-3.5" />
+          PDF exportieren
+        </button>
+      }
+    >
+      <div className="ml-2 flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+        <button
+          onClick={() => setViewMode('dashboard')}
+          className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+            viewMode === 'dashboard' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}
+        >
+          <LayoutDashboard className="h-3 w-3" />
+          Dashboard
+        </button>
+        <button
+          onClick={() => setViewMode('excel')}
+          className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
+            viewMode === 'excel' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}
+        >
+          <Table2 className="h-3 w-3" />
+          Excel Vorlage
+        </button>
+      </div>
+    </PageHeader>
+  );
+
   return (
-    <div className="min-h-screen bg-background">
+    <PageShell header={header}>
 
-      {/* ── Sticky Header ──────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <BarChart2 className="h-4 w-4 text-muted-foreground" />
-            <h1 className="text-sm font-semibold">Kennzahlen Bericht</h1>
-          </div>
-          <span className="text-xs text-muted-foreground hidden sm:block">{rangeLabel}</span>
-
-          <div className="flex items-center gap-0.5 bg-muted rounded-md p-0.5 ml-2">
-            <button
-              onClick={() => setViewMode('dashboard')}
-              className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
-                viewMode === 'dashboard' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}
-            >
-              <LayoutDashboard className="h-3 w-3" />
-              Dashboard
-            </button>
-            <button
-              onClick={() => setViewMode('excel')}
-              className={cn('flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium transition-colors',
-                viewMode === 'excel' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground')}
-            >
-              <Table2 className="h-3 w-3" />
-              Excel Vorlage
-            </button>
-          </div>
-
-          <div className="ml-auto">
-            <button
-              onClick={exportPdf}
-              disabled={!summary || loading}
-              className="flex items-center gap-1.5 h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
-            >
-              <Download className="h-3.5 w-3.5" />
-              PDF exportieren
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className={cn('mx-auto px-4 py-4 space-y-4', viewMode === 'excel' ? 'max-w-6xl' : 'max-w-7xl')}>
-
-        {/* ── Period selector ──────────────────────────────────────────── */}
+        {/* ── Period selector (Toolbar) ────────────────────────────────── */}
         <div className="flex flex-wrap gap-1.5 items-center">
           {PERIOD_BTNS.map(({ key, label }) => (
             <button key={key} onClick={() => setPeriod(key)}
@@ -706,25 +713,20 @@ export default function KennzahlenBerichtPage() {
         </div>
 
         {/* ── Loading ──────────────────────────────────────────────────── */}
-        {loading && (
-          <div className="flex items-center justify-center py-16 gap-2 text-muted-foreground text-sm">
-            <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-            Lade Berichtsdaten…
-          </div>
-        )}
+        {loading && <LoadingState label="Lade Berichtsdaten…" />}
 
         {/* ── Dashboard view ───────────────────────────────────────────── */}
         {!loading && summary && viewMode === 'dashboard' && <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiGrid>
             <KpiCard label="Nettoumsatz"    value={fmtChf(summary.netTotal)}
-              sub={summary.daysWithData > 0 ? `${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} light={tlRev} />
+              sub={summary.daysWithData > 0 ? `${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
             <KpiCard label="Personalkosten" value={fmtChf(summary.laborActual)}
-              sub={summary.netTotal > 0 ? `${fmtPct(pkPct)} vom Umsatz` : '—'} light={tlPk} />
+              sub={summary.netTotal > 0 ? `${fmtPct(pkPct)} vom Umsatz` : '—'} tone={TL_TONE[tlPk]} />
             <KpiCard label="WES Total"      value={summary.warenTotal > 0 ? fmtChf(summary.warenTotal) : '—'}
-              sub={summary.warenTotal > 0 ? `${fmtPct(wesPct)} vom Umsatz` : 'Keine Rechnungen'} light={tlWes} />
+              sub={summary.warenTotal > 0 ? `${fmtPct(wesPct)} vom Umsatz` : 'Keine Rechnungen'} tone={TL_TONE[tlWes]} />
             <KpiCard label="Abw. Budget"    value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
-              sub={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : 'Kein Budget'} light={tlBudg} />
-          </div>
+              sub={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : 'Kein Budget'} tone={TL_TONE[tlBudg]} />
+          </KpiGrid>
 
           <BSection title="Umsatzübersicht" icon={<DollarSign className="h-4 w-4" />}>
             <DGrid>
@@ -815,13 +817,14 @@ export default function KennzahlenBerichtPage() {
         )}
 
         {!loading && !summary && (
-          <div className="text-center py-16 text-muted-foreground text-sm">
-            Keine Daten für den ausgewählten Zeitraum.
-          </div>
+          <EmptyState
+            icon={BarChart2}
+            title="Keine Daten für den ausgewählten Zeitraum"
+            description="Wähle einen anderen Zeitraum oder importiere zuerst Umsatzdaten."
+          />
         )}
 
-      </main>
-    </div>
+    </PageShell>
   );
 }
 
@@ -976,22 +979,6 @@ function BSection({ title, icon, children }: { title: string; icon: ReactNode; c
 
 function DGrid({ children }: { children: ReactNode }) {
   return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-8">{children}</div>;
-}
-
-function KpiCard({ label, value, sub, light }: {
-  label: string; value: string; sub: string; light: 'green' | 'yellow' | 'red';
-}) {
-  const dot = light === 'green' ? 'bg-emerald-500' : light === 'red' ? 'bg-red-500' : 'bg-amber-400';
-  return (
-    <div className="rounded-lg border border-border bg-card p-3 flex flex-col gap-1 min-h-[80px]">
-      <div className="flex items-center gap-1.5">
-        <span className={cn('h-2 w-2 rounded-full shrink-0', dot)} />
-        <p className="text-[11px] text-muted-foreground truncate">{label}</p>
-      </div>
-      <p className="text-lg font-bold leading-tight tracking-tight">{value}</p>
-      <p className="text-[11px] text-muted-foreground leading-tight">{sub}</p>
-    </div>
-  );
 }
 
 function Row({ label, value, bold, hint, diff }: {

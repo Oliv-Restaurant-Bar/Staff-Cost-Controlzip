@@ -50,6 +50,18 @@ UX-Gewinn: mittel · Risiko: gering, weil rein mechanisch und nur in migrierten 
 ### Phase 3.4 — Dashboard (zwei Teilschritte)
 UX-Gewinn: **sehr hoch** (meistgenutzte Seite) · Risiko: mittel (4 Rollen, Lohn-Gates).
 - Vorab: Rollen-Audit der KPI-Sichten (admin/service/kueche/beaulieu — Anzahl je Rolle verschieden; kueche_manager darf NIE CHF-Beträge sehen).
+
+#### Rollen-Audit KPI-Sichten (durchgeführt 09.07.2026, Phase 3.1 — nur Analyse, keine Änderung)
+Quelle: `src/pages/Dashboard.tsx` (Inline-`KpiCard` ~Z. 122; Perioden-Selector Heute/Woche/Monat/Jahr ~Z. 203 + Referenzdatum-Navigation ~Z. 206–218; Ansicht-Filter „Alle/Umsatz/Ist vs. Budget/Ist vs. Vorjahr/Personal" ~Z. 1038) und `src/hooks/usePermissions.ts`.
+
+| Rolle | KPI-Karten (oben) | CHF sichtbar? | Gates |
+|---|---|---|---|
+| admin (+ Gast: identische Sicht, read-only) | 12–18 je nach Ansicht-Filter/Stichtag: Umsatz Ist/Budget/Vorjahr, Abw. abs/%, Pro-rata, Stichtag, PK Ist/Plan, Kostenquote Ist/Plan, Abw. PK | JA (voll) | `isAdmin` + `showUmsatz`/`showPersonal`/`showJbv` |
+| beaulieu_manager | ~6–10: Umsatz + PK des eigenen Mandanten | JA (Mandant) | `isBeaulieuManager` + Ansicht-Filter |
+| service_manager | 3–4: nur PK Ist/Plan + Kostenquote (Abteilung Service) | Umsatz NEIN; PK-Totals JA | `showPersonal` + `canSeePersonnelCostTotals` |
+| kueche_manager | 3–4: nur PK Ist/Plan + Kostenquote (Abteilung Küche) | Umsatz NEIN; PK-Totals JA | `showPersonal` + `canSeePersonnelCostTotals` |
+
+WICHTIGE Präzisierung fürs 3.4-Umbau-Gate: `canSeePersonnelCostTotals` ist in `usePermissions.ts` (Z. 244) hart `true` für ALLE Rollen — kueche_manager sieht auf dem Dashboard heute also Abteilungs-PK-Summen in CHF (verifiziert). Das „NIE CHF"-Verbot betrifft Einzellöhne (`canSeeHourlyWages` = nur admin/beaulieu) und die Dienstplan-Tagesheader (`schedule-daily-totals`), NICHT die Dashboard-PK-Totals. Beim 8→4-Umbau (b) darf sich an dieser Sichtbarkeitsgrenze NICHTS ändern; Umsatz-Sektionen bleiben strikt `isAdmin`-gebunden (Z. 1112, 1235).
 - (a) 1:1-Tausch auf shared KpiCard + PageShell, Anzahl unverändert.
 - (b) 8→4 Standard-KPIs + „Weitere Kennzahlen"-Collapsible; Zustand in localStorage bzw. für Manager-Rollen default-offen. Komponententest pro Rolle.
 - Gate: Tests pro Rolle + e2e.

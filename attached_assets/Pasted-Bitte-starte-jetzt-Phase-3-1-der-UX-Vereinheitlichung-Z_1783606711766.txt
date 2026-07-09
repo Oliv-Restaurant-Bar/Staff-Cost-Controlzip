@@ -1,0 +1,76 @@
+Bitte starte jetzt Phase 3.1 der UX-Vereinheitlichung.
+
+Ziel:
+Die App soll ein gemeinsames, schlichtes, modernes und lesefreundliches Designsystem erhalten. Es geht nicht um neue Funktionen, sondern um Vereinheitlichung, bessere Bedienbarkeit und weniger Platzverschwendung.
+
+Vorbereitung:
+- Lies zuerst docs/ux-phase3-plan.md.
+- Lies die bestehenden Layout-/UI-Komponenten, Navigation, Dashboard, Kennzahlen-Bericht und replit.md.
+- Bitte keine Logik- oder Datenmodelländerungen.
+- Keine neuen Features.
+- Lohn-/PII-/Rollen-Sichtbarkeit darf nicht verändert werden.
+
+Phase 3.1 Umsetzung:
+
+1. Gemeinsame UI-Bausteine vorbereiten
+Erstelle oder vereinheitliche wiederverwendbare Komponenten für:
+- PageShell / Seitenrahmen
+- PageHeader mit kompakter Toolbar
+- Info-Tooltip statt langen Erklärungstexten
+- Standard-KPI-Karte
+- Status-Ampel grün/orange/rot
+- kompakte Tabellenstandards
+- Warn-/Hinweisboxen
+- Empty State / Loading State falls bereits vorhanden sinnvoll angleichen
+
+2. Designregeln festlegen
+Bitte appweit konsistente Defaults vorbereiten:
+- Grün = gut
+- Orange = Achtung
+- Rot = kritisch
+- Blau = Info
+- Grau = neutral
+- einheitliche Card-Radien
+- einheitliche Abstände
+- kompakte Buttons
+- kompakte Toolbars
+- Zahlen rechtsbündig
+- Tabellenkopf sticky wo sinnvoll
+- maximal 4 sichtbare Standard-KPIs, weitere Kennzahlen einklappbar
+
+3. Pilot-Seite
+Setze den neuen Standard zuerst auf dem Kennzahlen-Bericht als risikoarmen Pilot um.
+Wenn möglich zusätzlich Dashboard nur vorbereiten/analysieren, aber noch keine riskante Rollen-Logik umbauen.
+
+4. replit.md kurz ordnen
+Bitte replit.md nicht komplett neu schreiben, aber die UX-Phase-3-Struktur sauber ergänzen:
+- Designsystem / UX-Leitlinien
+- Phase 3.1 Bausteine
+- Pilot Kennzahlen-Bericht
+- Hinweis: OP-Listen-Tool später, soll das gleiche Designsystem verwenden
+
+5. UX-Leitlinie
+Arbeitsrelevante Inhalte müssen immer vor erklärendem Text stehen.
+Jede Seite soll künftig ungefähr diesem Muster folgen:
+- kompakte Toolbar
+- wichtige Warnung nur wenn nötig
+- max. 4 KPI-Karten
+- Haupttabelle oder Hauptinhalt möglichst ohne langes Scrollen sichtbar
+- Details erst per Klick, Tooltip oder einklappbarem Bereich
+
+6. Tests
+Bitte gezielte Tests ergänzen/anpassen für:
+- neue gemeinsame Komponenten
+- Kennzahlen-Bericht nach Umstellung
+- keine Rollensichtbarkeitsänderung
+- keine Datenlogikänderung
+
+7. Abschluss
+- Type-Check-Gate für geänderte Dateien
+- relevante Tests laufen lassen
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Jede Änderung muss sich nahtlos in das bestehende Designsystem einfügen. Neue Komponenten dürfen nur entstehen, wenn sie später appweit wiederverwendet werden können. Ziel ist eine schlichte, moderne, einheitliche, benutzerfreundliche und lesefreundliche Oberfläche mit möglichst wenig Klicks und ohne unnötige Platzverschwendung.
