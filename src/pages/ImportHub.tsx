@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
+import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useTenant } from '@/contexts/TenantContext';
@@ -1879,10 +1880,30 @@ const AnnualPersonnelCostImportSection = () => {
 
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
+/** Checklisten-Prefill: ?target=… → Sektions-Anker im Import-Center. */
+const PREFILL_TARGET_ANCHORS: Record<string, string> = {
+  tagesumsatz: 'umsatz-ist',
+  mirus: 'ist-stunden',
+  maison: 'marketing-umsatz',
+};
+
 const ImportHub = () => {
   const { isAdmin, isBeaulieuManager, isBeaulieuViewer } = usePermissions();
   const { isGuest } = useGuestSession();
   const { tenant } = useTenant();
+  const [searchParams] = useSearchParams();
+
+  // Advisory: bei ?target=… aus der Import-Checkliste zur passenden Sektion
+  // scrollen (Sektionen rendern nur für Admins — ohne Element passiert nichts).
+  useEffect(() => {
+    const target = searchParams.get('target');
+    const anchor = target ? PREFILL_TARGET_ANCHORS[target] : undefined;
+    if (!anchor) return;
+    const t = setTimeout(() => {
+      document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchParams]);
   // Single source of truth: the page is reachable iff the role can see ≥1 import card
   // (same visibleCategories() the grid uses). Guests get 0 cards → redirected; Beaulieu-GF
   // gets its route cards; Beaulieu-Viewer gets Warenrechnungen only; admin gets all 9.
@@ -1931,6 +1952,11 @@ const ImportHub = () => {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-6 pb-24 space-y-4">
+
+        {/* Hinweise aus der Import-Checkliste (advisory, schränken nichts ein) */}
+        <ImportTaskPrefillHint forTarget="tagesumsatz" />
+        <ImportTaskPrefillHint forTarget="mirus" />
+        <ImportTaskPrefillHint forTarget="maison" />
 
         {/* ── Import-Bereiche (Karten-Übersicht) ────────────────────────── */}
         <ImportCenterGrid />

@@ -23,6 +23,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
+import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import {
   Upload, Users, CalendarRange, Contact, History, Clock, FileText,
   CheckCircle2, XCircle, Loader2, Database,
@@ -187,6 +188,9 @@ export default function ForatableImportPage() {
           Zum Gäste-CRM
         </Link>
       </div>
+
+      {/* Hinweis aus der Import-Checkliste (advisory, schränkt nichts ein) */}
+      <ImportTaskPrefillHint />
 
       {/* „Letzter Import"-Anzeige (DB-Zeitstempel) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

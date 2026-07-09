@@ -15,7 +15,8 @@
 
 import { useTenant } from '@/contexts/TenantContext';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { usePermissions } from '@/hooks/usePermissions';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -166,8 +167,14 @@ function BudgetContent() {
   const { isAdmin } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const currentYear = new Date().getFullYear();
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-  const [budget, setBudget]             = useState<BudgetYear>(() => loadBudgetWithPL(currentYear, tenantKey(BUDGET_STORAGE_KEY)));
+  // Prefill aus der Import-Checkliste (?year=…) — advisory Vorauswahl, sonst aktuelles Jahr.
+  const [searchParams] = useSearchParams();
+  const [initialYear] = useState(() => {
+    const y = Number(searchParams.get('year'));
+    return Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : currentYear;
+  });
+  const [selectedYear, setSelectedYear] = useState(initialYear);
+  const [budget, setBudget]             = useState<BudgetYear>(() => loadBudgetWithPL(initialYear, tenantKey(BUDGET_STORAGE_KEY)));
   const [savedYears, setSavedYears]     = useState<number[]>(() => availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
   const [activeTab, setActiveTab]       = useState<'pl' | 'rules'>('pl');
 
@@ -467,6 +474,9 @@ function BudgetContent() {
 
   return (
     <div className="p-4 md:p-6 max-w-[1700px] mx-auto space-y-5">
+
+      {/* Hinweis aus der Import-Checkliste (advisory, schränkt nichts ein) */}
+      <ImportTaskPrefillHint />
 
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3">

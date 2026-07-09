@@ -17,6 +17,7 @@
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
@@ -2381,6 +2382,10 @@ const Reporting = () => {
       </header>
 
       <div className="flex-1 max-w-6xl mx-auto w-full px-4 py-5 space-y-5 pb-20">
+
+        {/* Hinweise aus der Import-Checkliste (advisory, schränken nichts ein) */}
+        <ImportTaskPrefillHint forTarget="erfolgsrechnung" />
+        <ImportTaskPrefillHint forTarget="istkosten" />
 
         <StichtagBanner />
 

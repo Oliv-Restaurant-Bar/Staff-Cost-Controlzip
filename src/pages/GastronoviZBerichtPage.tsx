@@ -16,6 +16,7 @@ import {
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
+import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate } from 'react-router-dom';
@@ -812,6 +813,9 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
           ))}
         </div>
       </div>
+
+      {/* Hinweis aus der Import-Checkliste (advisory, schränkt nichts ein) */}
+      <ImportTaskPrefillHint />
 
       {/* ── Import Tab ──────────────────────────────────────────────────────── */}
       {tab === 'import' && <>

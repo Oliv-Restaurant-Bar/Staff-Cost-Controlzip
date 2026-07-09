@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { ResetProductMonthDialog } from '@/components/ResetProductMonthDialog';
+import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -524,6 +525,9 @@ export default function SalesUpload() {
           </p>
         </div>
       </div>
+
+      {/* Hinweis aus der Import-Checkliste (advisory, schränkt nichts ein) */}
+      <ImportTaskPrefillHint />
 
       {/* ── Erfolg ──────────────────────────────────────────────────────────── */}
       {step === 'done' && (
