@@ -27,6 +27,7 @@ import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry, type DayDetailEntry } from '@/lib/overtime-analysis';
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
@@ -1903,6 +1904,7 @@ export default function PersonalFixPage() {
   const { isAdmin, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
+  const { rates: socialCostRates } = useSocialCostRates();
   const maisonOn = getMaisonEnabledSync(tenantKey);
   if (!isAdmin && !isBeaulieuManager) return <Navigate to="/personal" replace />;
 
@@ -2550,7 +2552,7 @@ export default function PersonalFixPage() {
     const yearMonthPrefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     let total = 0;
     for (const emp of fixedEmployees) {
-      const wage = getEffectiveHourlyRate(emp);
+      const wage = getEffectiveHourlyRate(emp, socialCostRates);
       if (!wage) continue;
       let cost = 0;
       let dayCount = 0;
@@ -2569,7 +2571,7 @@ export default function PersonalFixPage() {
       total += cost;
     }
     return total;
-  }, [fixedEmployees, selectedYear, selectedMonth, supabaseActualHours]);
+  }, [fixedEmployees, selectedYear, selectedMonth, supabaseActualHours, socialCostRates]);
 
   // ── Überstunden-Auswertung (nur Festangestellte) ───────────────────────────
   // Baut Ist-Stunden-Einträge des gewählten Monats aus den Supabase-Ist-Daten und
@@ -2625,6 +2627,7 @@ export default function PersonalFixPage() {
       employees: candidates,
       entries,
       daysInMonth,
+      socialCostRates,
       departmentFilter: 'all',
       disabledEmployeeIds: overtimeDisabledIds,
     });
@@ -2634,11 +2637,12 @@ export default function PersonalFixPage() {
       entries,
       year: selectedYear,
       month: selectedMonth,
+      socialCostRates,
       departmentFilter: 'all',
       disabledEmployeeIds: overtimeDisabledIds,
     });
     return { overtimeAnalysis: monthly, weeklyOvertimeAnalysis: weekly, dayDetailEntries: detail };
-  }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds]);
+  }, [supabaseActualHours, employees, selectedYear, selectedMonth, overtimeDisabledIds, socialCostRates]);
 
   // Persistierte „Überstunden deaktiviert"-Liste pro Mandant laden
   useEffect(() => {
@@ -2881,7 +2885,7 @@ export default function PersonalFixPage() {
       // Zusatzkosten von Fixlohn-MA bis Stichtag ebenfalls einrechnen (direkt aus Supabase-Daten)
       const yearMonthPrefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
       for (const emp of fixedEmployees) {
-        const wage = getEffectiveHourlyRate(emp);
+        const wage = getEffectiveHourlyRate(emp, socialCostRates);
         if (!wage) continue;
         for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
           const empIdFromKey = cellKey.slice(0, cellKey.length - 11);
@@ -2926,7 +2930,7 @@ export default function PersonalFixPage() {
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       varArbeitPlanMonat, varArbeitIstMonat, ferienPlanTotalCHF, ferienIstTotalCHF,
       totalFixCost, proRataDay, proRataFactor, tenantKey, scheduleRefreshTick,
-      supabaseActualHours]);
+      supabaseActualHours, socialCostRates]);
 
   // ── Monatsumsatz für PKQ-Berechnung ──────────────────────────────────────
   // Summiert Netto-Umsatz (actualRevenue – MWST 8.1%) für PKQ-Berechnung.
@@ -3274,7 +3278,7 @@ export default function PersonalFixPage() {
     // Fixlohn-MA mit isAdditionalCost=true Einträgen erscheinen als eigene Zeile
     // im Flex-Kosten-Block (Plan = 0, Ist = berechnete Zusatzkosten)
     for (const emp of fixedEmployees) {
-      const wage = getEffectiveHourlyRate(emp);
+      const wage = getEffectiveHourlyRate(emp, socialCostRates);
       if (!wage) continue;
       const cutoff = proRataDay;
       // Zusatzkosten IST: direkt aus Supabase-Daten (persistent, nicht localStorage)
@@ -3347,7 +3351,7 @@ export default function PersonalFixPage() {
     return rows;
   }, [variableEmployees, fixedEmployees, selectedYear, selectedMonth, planHours, istHours,
       getEmpFerienPlanCHF, getEmpFerienCHF, proRataDay, proRataFactor, pfix, tenantKey,
-      scheduleRefreshTick, supabaseActualHours]);
+      scheduleRefreshTick, supabaseActualHours, socialCostRates]);
 
   // ── Abweichungsanalyse: tägliche Aggregation aller Flex-Mitarbeiter ──────────
   const pfixAbw = useMemo((): {

@@ -305,17 +305,8 @@ const loadEmployeesFromStorage = (): Employee[] => {
 
     const storedEmployees: Employee[] = JSON.parse(stored);
 
-    // One-time migration: update socialCostFactor from 1.13 → 1.03
-    let migrated = false;
-    for (const emp of storedEmployees) {
-      if ((emp as Employee & { socialCostFactor?: number }).socialCostFactor === 1.13) {
-        (emp as Employee & { socialCostFactor?: number }).socialCostFactor = 1.03;
-        migrated = true;
-      }
-    }
-    if (migrated) {
-      localStorage.setItem(EMPLOYEES_STORAGE_KEY, JSON.stringify(storedEmployees));
-    }
+    // Hinweis: per-MA socialCostFactor wird nicht mehr gelesen/migriert —
+    // AG-Sozialkosten kommen zentral aus den Einstellungen (useSocialCostRates).
 
     // Guard: Demo-/Default-Mitarbeiter (IDs 1–24) aus dem Cache filtern falls vorhanden.
     // Diese dürfen niemals als echte Mitarbeiter erscheinen.

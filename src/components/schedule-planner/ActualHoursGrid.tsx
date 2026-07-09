@@ -6,6 +6,7 @@ import { Employee } from '@/types/personnel';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { LGAV } from '@/lib/salaryCalc';
 import { getEffectiveHourlyRate, getWageLabel } from '@/lib/employee-rate';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { cn } from '@/lib/utils';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
@@ -94,6 +95,7 @@ const ActualHoursCell = ({
   showCosts?: boolean;
   quickEntry?: AbsenceCode | null;
 }) => {
+  const { rates: socialCostRates } = useSocialCostRates();
   const [isEditing, setIsEditing] = useState(false);
   const [inputMode, setInputMode] = useState<'hours' | 'times' | 'chf'>('hours');
   const [hoursInput, setHoursInput] = useState('');
@@ -114,7 +116,7 @@ const ActualHoursCell = ({
   const isDayOffDay = isDayOff(employee, day);
 
   // Effektiver Stundenansatz: hourlyWage > 0 → direkt; Monatslohn → L-GAV intern; sonst 0
-  const effectiveRate = getEffectiveHourlyRate(employee) ?? 0;
+  const effectiveRate = getEffectiveHourlyRate(employee, socialCostRates) ?? 0;
 
   // Calculate hours from CHF amount
   const hoursFromChf = (chfInput && effectiveRate > 0) ? (parseFloat(chfInput.replace(',', '.')) / effectiveRate) : 0;
@@ -601,6 +603,9 @@ export const ActualHoursGrid = ({
 }: ActualHoursGridProps) => {
   const isWeekView = days.length <= 7;
 
+  // Zentrale AG-Sozialkostensätze für alle Stundenkostensätze in diesem Grid
+  const { rates: socialCostRates } = useSocialCostRates();
+
   // ── Schnellerfassung-Modus ─────────────────────────────────────────────────
   const [quickEntry, setQuickEntry] = useState<AbsenceCode | null>(null);
 
@@ -636,7 +641,7 @@ export const ActualHoursGrid = ({
       }
 
       if (entry.hours > 0) {
-        const effRate = getEffectiveHourlyRate(emp) ?? 0;
+        const effRate = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
         const istCost = entry.hours * effRate;
         totalHours += entry.hours;
         totalCosts += istCost;
@@ -665,7 +670,7 @@ export const ActualHoursGrid = ({
     const maxAllowedCosts = revenueForMark > 0 ? revenueForMark * (LABOR_COST_THRESHOLD / 100) : 0;
     const excessCosts = Math.max(0, totalCosts - maxAllowedCosts);
     const isOverBudget = revenueForMark > 0 && totalCosts > maxAllowedCosts;
-    const empsWithRate = employees.map(e => getEffectiveHourlyRate(e) ?? 0).filter(r => r > 0);
+    const empsWithRate = employees.map(e => getEffectiveHourlyRate(e, socialCostRates) ?? 0).filter(r => r > 0);
     const avgWage = empsWithRate.length > 0 ? empsWithRate.reduce((s, r) => s + r, 0) / empsWithRate.length : 0;
     const excessHours = avgWage > 0 ? excessCosts / avgWage : 0;
 
@@ -702,7 +707,7 @@ export const ActualHoursGrid = ({
       const entry = actualHoursData[cellKey];
       const isAbsence = !!entry?.absenceType;
       const hours = (!isAbsence && entry?.hours) ? entry.hours : 0;
-      const effRate = getEffectiveHourlyRate(emp) ?? 0;
+      const effRate = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
       const cost = hours * effRate;
       return { employee: emp, hours, cost, effRate };
     }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
@@ -718,7 +723,7 @@ export const ActualHoursGrid = ({
     const suggestions: { employee: typeof employees[0]; currentHours: number; suggestedCut: number; saving: number }[] = [];
     for (const { employee, hours, cost } of breakdown) {
       if (remainingExcess <= 0) break;
-      const empRate = getEffectiveHourlyRate(employee) ?? 0;
+      const empRate = getEffectiveHourlyRate(employee, socialCostRates) ?? 0;
       const maxCut = Math.min(hours, remainingExcess / (empRate || 1));
       const actualCut = Math.ceil(maxCut * 2) / 2; // round to 0.5h
       const saving = actualCut * (empRate || 0);
@@ -960,8 +965,8 @@ export const ActualHoursGrid = ({
                         {getEmployeeDisplayName(employee)}
                       </span>
                     </div>
-                    <div className={`text-[9px] mt-0.5 ${getEffectiveHourlyRate(employee) == null ? 'text-red-500 font-semibold' : 'text-muted-foreground'}`}>
-                      {getWageLabel(employee)}
+                    <div className={`text-[9px] mt-0.5 ${getEffectiveHourlyRate(employee, socialCostRates) == null ? 'text-red-500 font-semibold' : 'text-muted-foreground'}`}>
+                      {getWageLabel(employee, socialCostRates)}
                     </div>
                   </td>
 

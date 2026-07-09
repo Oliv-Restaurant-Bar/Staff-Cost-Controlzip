@@ -39,10 +39,10 @@ import {
   archiveContractPhase, phaseFromEmployee, ContractPhase,
 } from '@/lib/contract-history-store';
 import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { socialCostFactorFromRates, totalSocialRatePct } from '@/lib/social-costs';
 
 // ─── Typen & Konstanten ───────────────────────────────────────────────────────
-
-const DEFAULT_SOCIAL_COST_FACTOR = 1.03;
 
 interface Props {
   employee: Employee;
@@ -97,15 +97,15 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
   const [newEmploymentType, setNewEmploymentType] = useState<EmploymentType>('vollzeit');
   const [newWeeklyHours,    setNewWeeklyHours]    = useState<string>(String(employee.weeklyHours ?? 42));
   const [has13th,           setHas13th]           = useState(employee.has13thSalary ?? false);
-  const [socialFactor,      setSocialFactor]      = useState(
-    String(employee.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR),
-  );
   const [effectiveFrom,    setEffectiveFrom]      = useState(today);
   const [note,             setNote]               = useState('');
   const [saving,           setSaving]             = useState(false);
 
   // ── Berechnungen für Vorschau ──────────────────────────────────────────────
-  const factor    = parseFloat(socialFactor) || DEFAULT_SOCIAL_COST_FACTOR;
+  // AG-Sozialkosten kommen ZENTRAL aus den Einstellungen (nicht pro MA).
+  const { rates: socialCostRates } = useSocialCostRates();
+  const factor    = socialCostFactorFromRates(socialCostRates);
+  const socialPct = totalSocialRatePct(socialCostRates);
   const mlVal     = parseFloat(newMonthlySalary) || 0;
   const slVal     = parseFloat(newHourlyWage)    || 0;
   const hoursVal  = parseFloat(newWeeklyHours)   || 42;
@@ -176,7 +176,6 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
           monthlySalaryWith13th:   has13th ? +(mlVal * 13 / 12).toFixed(2) : undefined,
           hourlyWage:              0,         // nicht mehr Stundenlohnbasis
           has13thSalary:           has13th,
-          socialCostFactor:        factor,
           weeklyHours:             hoursVal,
         };
       } else {
@@ -189,7 +188,6 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
           monthlySalaryWith13th:   undefined,
           hourlyWage:              slVal,
           has13thSalary:           has13th,
-          socialCostFactor:        factor,
           weeklyHours:             hoursVal,
         };
       }
@@ -204,6 +202,8 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
         hourlyWage:            newContractType === 'hourly' ? slVal : undefined,
         weeklyHours:           hoursVal,
         has13thSalary:         has13th,
+        // Zentraler AG-Sozialkostenfaktor zum Zeitpunkt des Wechsels — rein
+        // historische Dokumentation, wird von keiner Berechnung mehr gelesen.
         socialCostFactor:      factor,
         note:                  note.trim() || undefined,
       };
@@ -229,7 +229,6 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
       setNewEmploymentType(currentlyMonthly ? 'minijob' : 'vollzeit');
       setNewWeeklyHours(String(employee.weeklyHours ?? 42));
       setHas13th(employee.has13thSalary ?? false);
-      setSocialFactor(String(employee.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR));
       setEffectiveFrom(today);
       setNote('');
     }
@@ -383,18 +382,16 @@ export function VertragswechselDialog({ employee, tenantKeyFn, open, onOpenChang
               )}
             </div>
             <div>
-              <Label className="text-xs text-muted-foreground mb-1 block">AG-Sozialkostenfaktor</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number" min="1.00" max="1.40" step="0.01"
-                  value={socialFactor}
-                  onChange={e => setSocialFactor(e.target.value)}
-                  className="h-9 text-sm w-24"
-                />
-                <span className="text-xs text-muted-foreground">
-                  = {((factor - 1) * 100).toFixed(1)}% AG
-                </span>
+              <Label className="text-xs text-muted-foreground mb-1 block">
+                AG-Sozialkosten
+                <span className="ml-1 text-[10px] italic opacity-60">zentral für alle MA</span>
+              </Label>
+              <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm text-muted-foreground">
+                {socialPct.toFixed(1)}% auf Bruttolohn
               </div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Sätze in Einstellungen → Sozialkostensätze Arbeitgeber
+              </p>
             </div>
           </div>
 

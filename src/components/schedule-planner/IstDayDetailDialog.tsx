@@ -29,6 +29,8 @@ import {
 import { DaySchedule } from './ScheduleGrid';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
 import { getEffectiveHourlyRate, ABSENCE_CODES } from './ActualHoursGrid';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import type { SocialCostRates } from '@/lib/social-costs';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,7 @@ function computeStats(
   actualHoursData: Record<string, { hours: number; start?: string; end?: string; absenceType?: string }>,
   scheduleData: Record<string, DaySchedule> | undefined,
   dateStr: string,
+  socialCostRates: SocialCostRates,
 ): DeptStats {
   const emps = dept === 'all' ? employees : employees.filter(e => e.department === dept);
 
@@ -83,7 +86,7 @@ function computeStats(
   const cost = emps.reduce((s, e) => {
     const entry = actualHoursData[`${e.id}-${dateStr}`];
     if (!entry || entry.absenceType) return s;
-    return s + (entry.hours ?? 0) * (getEffectiveHourlyRate(e) ?? 0);
+    return s + (entry.hours ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
   }, 0);
 
   const empBreakdown = emps
@@ -92,7 +95,7 @@ function computeStats(
       if (!entry || entry.absenceType) return null;
       const h = entry.hours ?? 0;
       if (h === 0) return null;
-      return { emp: e, hours: h, cost: h * (getEffectiveHourlyRate(e) ?? 0) };
+      return { emp: e, hours: h, cost: h * (getEffectiveHourlyRate(e, socialCostRates) ?? 0) };
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)
     .sort((a, b) => b.cost - a.cost);
@@ -136,6 +139,7 @@ export function IstDayDetailDialog({
 }: IstDayDetailDialogProps) {
   const [dept, setDept] = useState<DeptFilter>('all');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const { rates: socialCostRates } = useSocialCostRates();
 
   if (!date) return null;
 
@@ -144,10 +148,10 @@ export function IstDayDetailDialog({
   const hasRevenue = istRevenue !== null;
 
   // Gesamt-Stats (Küche + Service zusammen) — immer Basis für Hero, Status-Banner und Zielprüfung
-  const gesamtStats = computeStats('all', employees, actualHoursData, scheduleData, dateStr);
+  const gesamtStats = computeStats('all', employees, actualHoursData, scheduleData, dateStr, socialCostRates);
 
   // Stats für den Drilldown (Abteilungs-Detail-Tabelle)
-  const stats = computeStats(dept, employees, actualHoursData, scheduleData, dateStr);
+  const stats = computeStats(dept, employees, actualHoursData, scheduleData, dateStr, socialCostRates);
 
   // PKQ immer auf Basis Gesamt (Küche + Service / Gesamtumsatz)
   const pkqPct = hasRevenue ? (gesamtStats.cost / istRevenue!) * 100 : null;
@@ -163,7 +167,7 @@ export function IstDayDetailDialog({
 
   // For avg-wage based extra hours estimate (use all employees)
   const avgWage = (() => {
-    const rates = employees.map(e => getEffectiveHourlyRate(e) ?? 0).filter(r => r > 0);
+    const rates = employees.map(e => getEffectiveHourlyRate(e, socialCostRates) ?? 0).filter(r => r > 0);
     return rates.length ? rates.reduce((a, b) => a + b) / rates.length : 0;
   })();
   const extraHours = devCHF !== null && devCHF > 0 && avgWage > 0 ? devCHF / avgWage : 0;
@@ -214,8 +218,8 @@ export function IstDayDetailDialog({
   const sc = statusCfg[status];
 
   // Dept-split for overview bar (always computed from total)
-  const kücheSt   = computeStats('küche',   employees, actualHoursData, scheduleData, dateStr);
-  const serviceSt = computeStats('service', employees, actualHoursData, scheduleData, dateStr);
+  const kücheSt   = computeStats('küche',   employees, actualHoursData, scheduleData, dateStr, socialCostRates);
+  const serviceSt = computeStats('service', employees, actualHoursData, scheduleData, dateStr, socialCostRates);
   const splitTotal = kücheSt.cost + serviceSt.cost;
   const kShare = splitTotal > 0 ? (kücheSt.cost / splitTotal) * 100 : 0;
   const sShare = splitTotal > 0 ? (serviceSt.cost / splitTotal) * 100 : 0;
@@ -472,7 +476,7 @@ export function IstDayDetailDialog({
                           </td>
                           <td className="px-2 py-1.5 text-right font-mono">{fmtH(h)}</td>
                           <td className="px-2 py-1.5 text-right font-mono text-muted-foreground">
-                            {(getEffectiveHourlyRate(emp) ?? 0).toFixed(2)}
+                            {(getEffectiveHourlyRate(emp, socialCostRates) ?? 0).toFixed(2)}
                           </td>
                           <td className="px-3 py-1.5 text-right font-mono font-semibold">
                             {fmtChf(c)}

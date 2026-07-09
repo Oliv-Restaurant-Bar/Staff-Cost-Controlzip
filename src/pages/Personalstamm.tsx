@@ -77,6 +77,10 @@ import { calcSL, calcML, LGAV } from '@/lib/salaryCalc';
 import { toast } from 'sonner';
 import { VertragswechselDialog } from '@/components/VertragswechselDialog';
 import { loadContractHistory, ContractPhase, deleteContractPhase } from '@/lib/contract-history-store';
+import { useSocialCostRates } from '@/hooks/useSocialCostRates';
+import { socialCostFactorFromRates, totalSocialRatePct } from '@/lib/social-costs';
+import { getEmployerCostRate } from '@/lib/employee-rate';
+import { TABLE, TABLE_SCROLL, TABLE_WRAP, TH, TH_NUM, TH_STICKY, TD, TD_NUM } from '@/components/ui/table-style';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -144,10 +148,6 @@ interface LocalEmployeeData {
   salaryExt?:          SalaryExtension;
 }
 
-// ─── Standardwerte ────────────────────────────────────────────────────────────
-
-const DEFAULT_SOCIAL_COST_FACTOR = 1.03; // 3% AG-Anteil
-
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
 const DEPT_LABELS: Record<Department, string> = {
@@ -179,54 +179,6 @@ function formatCHF(v?: number): string {
   return new Intl.NumberFormat('de-CH', {
     style: 'currency', currency: 'CHF', maximumFractionDigits: 2,
   }).format(v);
-}
-
-/** Vollständige Lohnkostenberechnung inkl. Sozialkosten */
-interface SalaryCosts {
-  mode:              'monthly' | 'hourly' | 'none';
-  grossMonthly:      number | null;
-  annualGross:       number | null;
-  socialFactor:      number;
-  socialCostMonthly: number | null;
-  totalAnnual:       number | null;
-  internalHourly:    number | null;
-}
-
-function calcSalaryCosts(emp: Employee): SalaryCosts {
-  const factor  = emp.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
-  const has13th = emp.has13thSalary ?? false;
-
-  if ((emp.contractType === 'monthly' || (emp.weeklyHours && emp.weeklyHours > 0)) && emp.monthlySalary && emp.monthlySalary > 0) {
-    const ml = calcML(emp.monthlySalary, has13th, emp.weeklyHours || 42, factor);
-    return {
-      mode: 'monthly',
-      grossMonthly:      ml.effectiveMonthlyGross,
-      annualGross:       ml.annualGross,
-      socialFactor:      factor,
-      socialCostMonthly: ml.socialCostMonthly,
-      totalAnnual:       ml.annualEmployerCost,
-      internalHourly:    ml.internalHourlyCost,
-    };
-  }
-
-  if (emp.hourlyWage > 0) {
-    const sl = calcSL(emp.hourlyWage, has13th, factor);
-    return {
-      mode: 'hourly',
-      grossMonthly:      null,
-      annualGross:       null,
-      socialFactor:      factor,
-      socialCostMonthly: sl.socialCostPerHour,
-      totalAnnual:       null,
-      internalHourly:    sl.internalHourlyCost,
-    };
-  }
-
-  return { mode: 'none', grossMonthly: null, annualGross: null, socialFactor: factor, socialCostMonthly: null, totalAnnual: null, internalHourly: null };
-}
-
-function calcInternalHourlyCost(emp: Employee): number | null {
-  return calcSalaryCosts(emp).internalHourly;
 }
 
 /** Pro-rata Ferien- und Feiertags-Anspruch */
@@ -373,6 +325,11 @@ const Personalstamm = () => {
   // Daten sehen darf. Entspricht exakt der bisherigen canEditEmployees-Semantik.
   const canManageAllEmployees = isAdmin || isBeaulieuManager;
 
+  // ── Zentrale AG-Sozialkostensätze (Einstellungen) — NICHT pro Mitarbeiter ──
+  const { rates: socialCostRates } = useSocialCostRates();
+  const centralSocialFactor = socialCostFactorFromRates(socialCostRates);
+  const centralSocialPct    = totalSocialRatePct(socialCostRates);
+
   // ── Daten ──────────────────────────────────────────────────────────────────
   const [employees, setEmployees]         = useState<Employee[]>([]);
   const [localData, setLocalData]         = useState<Record<string, LocalEmployeeData>>({});
@@ -430,6 +387,7 @@ const Personalstamm = () => {
   const [openPersonal,   setOpenPersonal]   = useState(false);
   const [openContractF,  setOpenContractF]  = useState(false);
   const [showVertragswechsel, setShowVertragswechsel] = useState(false);
+  const [showWageOverview, setShowWageOverview]       = useState(false);
   const [contractHistory,     setContractHistory]     = useState<ContractPhase[]>([]);
   const [deleteContractTarget, setDeleteContractTarget] = useState<ContractPhase | null>(null);
 
@@ -482,8 +440,9 @@ const Personalstamm = () => {
             const s = loc.salaryExt;
             updated = {
               ...updated,
-              socialCostFactor: emp.socialCostFactor ?? s.socialCostFactor,
-              has13thSalary:    emp.has13thSalary    ?? s.has13thSalary,
+              // socialCostFactor wird NICHT mehr migriert — AG-Sozialkosten
+              // kommen zentral aus den Einstellungen (Hard-Cut).
+              has13thSalary: emp.has13thSalary ?? s.has13thSalary,
             };
           }
           if (hasPersonal && loc.personalInfo) {
@@ -1073,6 +1032,17 @@ const Personalstamm = () => {
                     {pendingEmployees.length + submissions.length}
                   </span>
                 )}
+              </Button>
+            )}
+            {canEditWages && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setShowWageOverview(true)}
+              >
+                <Calculator className="h-3.5 w-3.5 mr-1" />
+                Lohnkosten
               </Button>
             )}
             {canEditEmployees ? (
@@ -2647,25 +2617,20 @@ CREATE POLICY "Anon self-register new employee"
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block">
-                              AG-Sozialkostenfaktor
-                              <span className="ml-1 text-[10px] italic opacity-60">z.B. 1.03 = 3%</span>
+                              AG-Sozialkosten
+                              <span className="ml-1 text-[10px] italic opacity-60">zentral für alle MA</span>
                             </Label>
-                            <div className="flex items-center gap-2">
-                              <Input
-                                type="number" min="1.00" max="1.40" step="0.01"
-                                value={editData?.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR}
-                                onChange={e => setEditData(d => d ? { ...d, socialCostFactor: parseFloat(e.target.value) || DEFAULT_SOCIAL_COST_FACTOR } : d)}
-                                className="h-9 text-sm w-24"
-                              />
-                              <span className="text-xs text-muted-foreground">
-                                = {(((editData?.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR) - 1) * 100).toFixed(1)}% AG
-                              </span>
+                            <div className="h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm text-muted-foreground">
+                              {centralSocialPct.toFixed(1)}% auf Bruttolohn
                             </div>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              Sätze in Einstellungen → Sozialkostensätze Arbeitgeber
+                            </p>
                           </div>
                         </div>
 
                         {editData && (() => {
-                          const factor   = editData.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+                          const factor   = centralSocialFactor;
                           const has13th  = editData.has13thSalary ?? false;
                           // Auto-Detection: hasML wenn contractType='monthly' ODER Monatslohn vorhanden (für Beaulieu ohne contractType)
                           const hasML    = !!(editData.contractType === 'monthly' || (!editData.contractType && (editData.monthlySalary ?? 0) > 0))
@@ -2730,7 +2695,7 @@ CREATE POLICY "Anon self-register new employee"
                       (() => {
                         const empForCost = selectedEmp ?? editData;
                         if (!empForCost) return null;
-                        const factor   = empForCost.socialCostFactor ?? DEFAULT_SOCIAL_COST_FACTOR;
+                        const factor   = centralSocialFactor;
                         const has13th  = empForCost.has13thSalary ?? false;
                         const hasSL    = empForCost.hourlyWage > 0 && empForCost.contractType !== 'monthly';
                         const mlHoursV = empForCost.weeklyHours || 42;
@@ -2750,8 +2715,8 @@ CREATE POLICY "Anon self-register new employee"
                           <div className="space-y-3">
                             <div className="grid grid-cols-2 gap-y-1.5 text-sm">
                               <DataRow
-                                label="AG-Sozialkostenfaktor"
-                                value={`${factor.toFixed(2)} (${((factor - 1) * 100).toFixed(1)}%)`}
+                                label="AG-Sozialkosten (zentral)"
+                                value={`${centralSocialPct.toFixed(1)}% auf Bruttolohn`}
                               />
                               <DataRow label="13. Monatslohn" value={has13th ? 'Ja – vereinbart' : 'Nicht vereinbart'} />
                               {hasML && empForCost.monthlySalary && (
@@ -3515,6 +3480,106 @@ CREATE POLICY "Anon self-register new employee"
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Lohnkosten-Übersicht (AG-Total) — lohn-gated ────────────────────── */}
+      {canEditWages && showWageOverview && (
+        <Dialog open={showWageOverview} onOpenChange={setShowWageOverview}>
+          <DialogContent className="max-w-[min(900px,95vw)] max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Calculator className="h-4 w-4 text-primary" />
+                Lohnkosten-Übersicht — Arbeitgeber-Total
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-xs text-muted-foreground">
+              Personalaufwand = Bruttolohn + {centralSocialPct.toFixed(1)}% AG-Sozialkosten
+              (zentrale Sätze aus den Einstellungen). Stundenwerte = berechneter
+              AG-Stundenkostensatz; die Summenzeile umfasst nur fixe Monatslöhne.
+            </p>
+            {(() => {
+              const rows = employees
+                .filter(e => getLocalEntry(localData, e.id).active)
+                .map(e => ({ emp: e, rate: getEmployerCostRate(e, socialCostRates) }))
+                .sort((a, b) => a.emp.name.localeCompare(b.emp.name, 'de-CH'));
+              if (rows.length === 0) {
+                return <p className="text-sm text-muted-foreground italic py-4">Keine aktiven Mitarbeiter.</p>;
+              }
+              const mlSum = rows
+                .filter(r => r.rate?.source === 'ml')
+                .reduce((acc, r) => {
+                  const ml = calcML(
+                    r.emp.monthlySalary || 0,
+                    r.emp.has13thSalary ?? false,
+                    r.emp.weeklyHours || 42,
+                    centralSocialFactor,
+                  );
+                  acc.count += 1;
+                  acc.gross += ml.effectiveMonthlyGross;
+                  acc.social += ml.socialCostMonthly;
+                  acc.total += ml.totalMonthlyEmployerCost;
+                  return acc;
+                }, { count: 0, gross: 0, social: 0, total: 0 });
+              const fmt = (v: number) => v.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              return (
+                <div className={TABLE_WRAP}>
+                  <div className={cn(TABLE_SCROLL, 'max-h-[55vh]')}>
+                    <table className={TABLE}>
+                      <thead>
+                        <tr>
+                          <th className={cn(TH, TH_STICKY)}>Mitarbeiter</th>
+                          <th className={cn(TH, TH_STICKY)}>Lohnbasis</th>
+                          <th className={cn(TH, TH_NUM, TH_STICKY)}>Brutto/h</th>
+                          <th className={cn(TH, TH_NUM, TH_STICKY)}>AG-Sozial/h</th>
+                          <th className={cn(TH, TH_NUM, TH_STICKY)}>Total AG/h</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map(({ emp, rate }) => (
+                          <tr key={emp.id}>
+                            <td className={TD}>
+                              <span className="font-medium">{emp.name}</span>
+                              <span className="ml-1.5 text-[11px] text-muted-foreground">
+                                {DEPT_LABELS[emp.department]} · {TYPE_LABELS[emp.employmentType]}
+                              </span>
+                            </td>
+                            <td className={cn(TD, 'text-xs text-muted-foreground whitespace-nowrap')}>
+                              {rate?.source === 'ml'
+                                ? `ML ${fmt(emp.monthlySalary || 0)}/Mt.`
+                                : rate?.source === 'sl'
+                                  ? `SL ${fmt(emp.hourlyWage)}/h`
+                                  : <span className="text-red-500 font-medium">kein Lohn</span>}
+                            </td>
+                            <td className={cn(TD, TD_NUM)}>{rate ? fmt(rate.grossHourly) : '–'}</td>
+                            <td className={cn(TD, TD_NUM)}>{rate ? fmt(rate.socialHourly) : '–'}</td>
+                            <td className={cn(TD, TD_NUM, 'font-semibold')}>{rate ? fmt(rate.totalHourly) : '–'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      {mlSum.count > 0 && (
+                        <tfoot>
+                          <tr className="bg-muted font-semibold">
+                            <td className={TD} colSpan={2}>
+                              Summe Monatslöhne fix ({mlSum.count} MA) — CHF/Monat
+                            </td>
+                            <td className={cn(TD, TD_NUM)}>{fmt(mlSum.gross)}</td>
+                            <td className={cn(TD, TD_NUM)}>{fmt(mlSum.social)}</td>
+                            <td className={cn(TD, TD_NUM)}>{fmt(mlSum.total)}</td>
+                          </tr>
+                        </tfoot>
+                      )}
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+            <p className="text-[11px] text-muted-foreground">
+              Stundenlöhner sind variabel (Kosten = Ist-Stunden × Total AG/h) und daher
+              nicht in der Monats-Summenzeile enthalten. Brutto bei Stundenlöhnern =
+              auszahlbarer Lohn inkl. Ferien-/Feiertagsentschädigung und 13.
+            </p>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* ── Vertragswechsel-Dialog ──────────────────────────────────────────── */}
       {showVertragswechsel && selectedEmp && canEditWages && (

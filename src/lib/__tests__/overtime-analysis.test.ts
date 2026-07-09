@@ -27,6 +27,8 @@ import {
   type WeekOvertimeRow,
   type EmployeeOvertimeResult,
 } from '@/lib/overtime-analysis';
+import { DEFAULT_SOCIAL_COST_RATES } from '@/lib/social-costs';
+import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 
 // ── Test-Helfer ──────────────────────────────────────────────────────────────
 function emp(partial: Partial<Employee> & { id: string }): Employee {
@@ -38,6 +40,16 @@ function emp(partial: Partial<Employee> & { id: string }): Employee {
     ...partial,
   } as Employee;
 }
+
+// Zentrale AG-Sozialkostensätze für alle Tests. Kosten-Erwartungen werden aus
+// demselben zentralen Satz (getEffectiveHourlyRate = Total AG-Kosten/h)
+// abgeleitet — die Satz-Mathematik selbst ist in social-costs/salaryCalc
+// getestet; hier prüfen wir NUR "Kosten = Überstunden × zentraler Satz".
+const RATES = DEFAULT_SOCIAL_COST_RATES;
+const round2 = (n: number) => Math.round(n * 100) / 100;
+/** Total AG-Stundenkosten für SL-Fixture mit Stundenlohn 50 bzw. 40. */
+const RATE50 = getEffectiveHourlyRate(emp({ id: '_r50', hourlyWage: 50 }), RATES)!;
+const RATE40 = getEffectiveHourlyRate(emp({ id: '_r40', hourlyWage: 40 }), RATES)!;
 
 /** Erzeugt `count` Tageseinträge ab 2026-06-01 mit `hours` pro Tag. */
 function days(
@@ -112,6 +124,7 @@ describe('unter Monatssoll → 0 Überstunden', () => {
       employees: [e],
       entries: days('A', 16, 10), // 160 h
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     expect(res.employees).toHaveLength(1);
     const r = res.employees[0];
@@ -134,14 +147,15 @@ describe('über Monatssoll → Überstunden = Ist − Soll', () => {
       employees: [e],
       entries: days('B', 19, 10), // 190 h
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     const r = res.employees[0];
     expect(r.productiveHours).toBe(190);
     expect(r.difference).toBe(10);
     expect(r.overtimeHours).toBe(10);
-    expect(r.overtimeCost).toBe(500); // 10 × 50
+    expect(r.overtimeCost).toBe(round2(10 * RATE50)); // 10 × Total-AG-Satz
     expect(res.totalOvertimeHours).toBe(10);
-    expect(res.totalOvertimeCost).toBe(500);
+    expect(res.totalOvertimeCost).toBe(round2(10 * RATE50));
     expect(res.affectedEmployeeCount).toBe(1);
   });
 
@@ -151,12 +165,13 @@ describe('über Monatssoll → Überstunden = Ist − Soll', () => {
       employees: [e],
       entries: days('P80', 15, 10), // 150 h
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     const r = res.employees[0];
     expect(r.monthlyTargetHours).toBe(144);
     expect(r.workloadPercent).toBe(80);
     expect(r.overtimeHours).toBe(6);
-    expect(r.overtimeCost).toBe(240); // 6 × 40
+    expect(r.overtimeCost).toBe(round2(6 * RATE40)); // 6 × Total-AG-Satz
   });
 });
 
@@ -174,6 +189,7 @@ describe('stündliche/flexible Mitarbeiter ausgeschlossen', () => {
         ...days('FAKE', 25, 12),
       ],
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     expect(res.employees.map((r) => r.employeeId)).toEqual(['FIX']);
   });
@@ -190,6 +206,7 @@ describe('Abwesenheiten ausgeschlossen', () => {
         ...days('E', 5, 8.4, { absenceType: 'FE', startDay: 18 }), // 42 h Ferien (ignoriert)
       ],
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     const r = res.employees[0];
     expect(r.productiveHours).toBe(170);
@@ -205,6 +222,7 @@ describe('Überstunden pro Mitarbeiter deaktivierbar', () => {
       employees: [e],
       entries: days('F', 19, 10), // 190 h → wäre 10 h ÜS
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
       disabledEmployeeIds: ['F'],
     });
     const r = res.employees[0];
@@ -229,13 +247,14 @@ describe('manuelle Zusatzkosten (isAdditionalCost)', () => {
         ...days('G', 4, 10, { isAdditionalCost: true, startDay: 18 }), // 40 h Zusatzkosten
       ],
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     const r = res.employees[0];
     expect(r.productiveHours).toBe(170);       // Zusatz NICHT enthalten
     expect(r.overtimeHours).toBe(0);           // 170 < 180 → keine ÜS
     expect(r.additionalCostHours).toBe(40);
     expect(r.additionalCostDays).toBe(4);
-    expect(r.additionalCost).toBe(2000);       // 4 × (10 × 50)
+    expect(r.additionalCost).toBe(round2(4 * round2(10 * RATE50))); // 4 × (10 × Satz)
   });
 
   it('Mitarbeiter mit NUR Zusatzkosten erscheint trotzdem in der Tabelle', () => {
@@ -244,6 +263,7 @@ describe('manuelle Zusatzkosten (isAdditionalCost)', () => {
       employees: [e],
       entries: days('H', 3, 8, { isAdditionalCost: true }), // nur Zusatz, kein produktiv
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     expect(res.employees).toHaveLength(1);
     const r = res.employees[0];
@@ -265,6 +285,7 @@ describe('Tage über 8.4 h (nur Info)', () => {
         ...days('I', 5, 8, { startDay: 11 }), // 5 Tage à 8 h = 40 h
       ],
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
     });
     const r = res.employees[0];
     expect(r.productiveHours).toBe(130);
@@ -282,6 +303,7 @@ describe('Abteilungsfilter', () => {
       employees: [kueche, service],
       entries: [...days('K', 19, 10), ...days('S', 19, 10)],
       daysInMonth: JUNE_DAYS,
+      socialCostRates: RATES,
       departmentFilter: 'küche',
     });
     expect(res.employees.map((r) => r.employeeId)).toEqual(['K']);
@@ -362,6 +384,7 @@ describe('Wochenansicht: 100 % über Wochensoll → Überstunden', () => {
       entries: days('W1', 5, 10, { startDay: 8 }), // KW24, 50 h
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     expect(res.employees).toHaveLength(1);
     const r = res.employees[0];
@@ -372,9 +395,9 @@ describe('Wochenansicht: 100 % über Wochensoll → Überstunden', () => {
     expect(w.productiveHours).toBe(50);
     expect(w.difference).toBe(8);
     expect(w.overtimeHours).toBe(8);
-    expect(w.overtimeCost).toBe(400); // 8 × 50
+    expect(w.overtimeCost).toBe(round2(8 * RATE50)); // 8 × Total-AG-Satz
     expect(res.totalOvertimeHours).toBe(8);
-    expect(res.totalOvertimeCost).toBe(400);
+    expect(res.totalOvertimeCost).toBe(round2(8 * RATE50));
     expect(res.affectedEmployeeCount).toBe(1);
   });
 });
@@ -387,6 +410,7 @@ describe('Wochenansicht: 100 % unter Wochensoll → 0 Überstunden', () => {
       entries: days('W2', 3, 10, { startDay: 8 }), // KW24, 30 h
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     const w = res.employees[0].weeks[0];
     expect(w.weeklyTargetHours).toBe(42);
@@ -407,13 +431,14 @@ describe('Wochenansicht: 80 % Pensum → Soll skaliert', () => {
       entries: days('W80', 5, 8, { startDay: 8 }), // KW24, 40 h
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     const r = res.employees[0];
     expect(r.workloadPercent).toBe(80);
     const w = r.weeks[0];
     expect(w.weeklyTargetHours).toBe(33.6);
     expect(w.overtimeHours).toBe(6.4);
-    expect(w.overtimeCost).toBe(256); // 6.4 × 40
+    expect(w.overtimeCost).toBe(round2(6.4 * RATE40)); // 6.4 × Total-AG-Satz
   });
 });
 
@@ -425,6 +450,7 @@ describe('Wochenansicht: Randwoche am Monatsrand anteilig', () => {
       entries: days('WR', 2, 7, { startDay: 29 }), // 29.+30.06. = KW27, 14 h
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     const w = res.employees[0].weeks[0];
     expect(w.isoWeek).toBe(27);
@@ -432,7 +458,7 @@ describe('Wochenansicht: Randwoche am Monatsrand anteilig', () => {
     expect(w.weeklyTargetHours).toBe(12); // 42 × 2/7
     expect(w.productiveHours).toBe(14);
     expect(w.overtimeHours).toBe(2);
-    expect(w.overtimeCost).toBe(100); // 2 × 50
+    expect(w.overtimeCost).toBe(round2(2 * RATE50)); // 2 × Total-AG-Satz
   });
 });
 
@@ -444,6 +470,7 @@ describe('Wochenansicht: pro Mitarbeiter deaktiviert → 0 Kosten', () => {
       entries: days('WD', 5, 10, { startDay: 8 }), // KW24, 50 h → wäre 8 h ÜS
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
       disabledEmployeeIds: ['WD'],
     });
     const r = res.employees[0];
@@ -473,6 +500,7 @@ describe('Wochenansicht: stündliche/flexible Mitarbeiter ausgeschlossen', () =>
       ],
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     expect(res.employees.map((r) => r.employeeId)).toEqual(['WFIX']);
   });
@@ -489,6 +517,7 @@ describe('Wochenansicht: Abwesenheiten ausgeschlossen', () => {
       ],
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     const w = res.employees[0].weeks[0];
     expect(w.productiveHours).toBe(30); // Ferien zählen nicht
@@ -507,13 +536,14 @@ describe('Wochenansicht: manuelle Zusatzkosten separat (keine Überstunden)', ()
       ],
       year: 2026,
       month: 6,
+      socialCostRates: RATES,
     });
     const w = res.employees[0].weeks[0];
     expect(w.productiveHours).toBe(30);          // Zusatz NICHT enthalten
     expect(w.overtimeHours).toBe(0);             // 30 < 42
     expect(w.additionalCostHours).toBe(20);
     expect(w.additionalCostDays).toBe(2);
-    expect(w.additionalCost).toBe(1000);         // 2 × (10 × 50)
+    expect(w.additionalCost).toBe(round2(2 * round2(10 * RATE50))); // 2 × (10 × Satz)
   });
 });
 
@@ -525,16 +555,16 @@ describe('Wochenansicht erfasst, was die Monatsansicht verfehlt', () => {
       ...days('WX', 3, 10, { startDay: 8 }),  // KW24: 30 h → 0 h ÜS
     ];
     // Monatsansicht: 80 h gesamt, Monatssoll 180 → keine Überstunden
-    const monthly = computeOvertimeAnalysis({ employees: [e], entries, daysInMonth: 30 });
+    const monthly = computeOvertimeAnalysis({ employees: [e], entries, daysInMonth: 30, socialCostRates: RATES });
     expect(monthly.employees[0].overtimeHours).toBe(0);
     // Wochenansicht: KW23 erzeugt 8 h Überstunden
-    const weekly = computeWeeklyOvertimeAnalysis({ employees: [e], entries, year: 2026, month: 6 });
+    const weekly = computeWeeklyOvertimeAnalysis({ employees: [e], entries, year: 2026, month: 6, socialCostRates: RATES });
     const r = weekly.employees[0];
     expect(r.weeks.map((w) => w.isoWeek)).toEqual([23, 24]);
     expect(r.weeks[0].overtimeHours).toBe(8);
     expect(r.weeks[1].overtimeHours).toBe(0);
     expect(r.totalOvertimeHours).toBe(8);
-    expect(weekly.totalOvertimeCost).toBe(400);
+    expect(weekly.totalOvertimeCost).toBe(round2(8 * RATE50));
   });
 });
 

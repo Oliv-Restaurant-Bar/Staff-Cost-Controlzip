@@ -45,6 +45,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { Employee, Department } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
+import type { SocialCostRates } from '@/lib/social-costs';
 
 /**
  * Tagesgrenze — NUR informativ. Tage über diesem Wert werden als „Tage über
@@ -162,6 +163,8 @@ export interface OvertimeAnalysisInput {
   entries: OvertimeHoursEntry[];
   /** Kalendertage des gewählten Monats (für das Monatssoll) */
   daysInMonth: number;
+  /** Zentrale AG-Sozialkostensätze (Basis für den Stundenkostensatz) */
+  socialCostRates: SocialCostRates;
   /** Abteilungsfilter; 'all'/undefined = alle Abteilungen */
   departmentFilter?: Department | 'all';
   /** Mitarbeiter-IDs mit deaktivierter Überstundenberechnung */
@@ -235,7 +238,7 @@ export function computeOvertimeAnalysis(input: OvertimeAnalysisInput): OvertimeA
 
   for (const [empId, acc] of perEmp) {
     const emp = fixedById.get(empId)!;
-    const rate = getEffectiveHourlyRate(emp);
+    const rate = getEffectiveHourlyRate(emp, input.socialCostRates);
     const rateAvailable = rate != null;
 
     // Produktive Stunden + Tages-Info (über 8.4 h)
@@ -467,6 +470,8 @@ export interface WeeklyOvertimeInput {
   year: number;
   /** Monat (1-basiert) */
   month: number;
+  /** Zentrale AG-Sozialkostensätze (Basis für den Stundenkostensatz) */
+  socialCostRates: SocialCostRates;
   departmentFilter?: Department | 'all';
   disabledEmployeeIds?: Iterable<string>;
 }
@@ -522,7 +527,7 @@ export function computeWeeklyOvertimeAnalysis(input: WeeklyOvertimeInput): Weekl
 
   for (const [empId, weeks] of perEmp) {
     const emp = fixedById.get(empId)!;
-    const rate = getEffectiveHourlyRate(emp);
+    const rate = getEffectiveHourlyRate(emp, input.socialCostRates);
     const rateAvailable = rate != null;
     const overtimeDisabled = disabled.has(empId);
 

@@ -28,6 +28,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
 import { UserManagementCard } from '@/components/UserManagementCard';
 import { ZielwerteCard } from '@/components/ZielwerteCard';
+import { SocialCostRatesCard } from '@/components/SocialCostRatesCard';
 
 const DEFAULT_PASSWORD = 'admin123';
 
@@ -1529,6 +1530,9 @@ const Settings = () => {
               </p>
             </CardContent>
           </Card>
+
+          {/* Zentrale AG-Sozialkostensätze */}
+          <SocialCostRatesCard />
 
           {/* Import Settings */}
           <Card className="mt-6">
