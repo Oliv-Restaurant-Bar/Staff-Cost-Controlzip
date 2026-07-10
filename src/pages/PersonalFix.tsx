@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react
 import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
@@ -53,6 +53,15 @@ import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { KpiCard as DsKpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
+import { InfoTip } from '@/components/ui/info-tip';
+import { loadMonth } from '@/lib/reporting-store';
+import { computePLForMonth } from '@/lib/pl-engine';
+import {
+  computeFlexScopes,
+  buildErfolgsrechnungVergleich,
+  buildPkqBreakdown,
+  type ComparisonTone,
+} from '@/lib/personal-fix-reconciliation';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +82,14 @@ function prevMonth(year: number, month: number): [number, number] {
 function nextMonth(year: number, month: number): [number, number] {
   return month === 12 ? [year + 1, 1] : [year, month + 1];
 }
+
+/** Kurz-Status-Label für den Vergleich Berechnet ↔ Erfolgsrechnung (Ampel-Ton). */
+const ER_STATUS_LABEL: Record<ComparisonTone, string> = {
+  good: 'im Rahmen',
+  warn: 'beobachten',
+  critical: 'prüfen',
+  neutral: '—',
+};
 
 /**
  * Einheitlicher, einklappbarer Abschnittskopf (Icon / Titel / optionaler
@@ -1967,7 +1984,7 @@ function FlexBreakdownModal({ target, onClose }: {
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
-  const { isAdmin, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
+  const { isAdmin, isGuest, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
   const { rates: socialCostRates } = useSocialCostRates();
@@ -3046,6 +3063,52 @@ export default function PersonalFixPage() {
       ? (maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing')
       : 'Ist-Umsatz';
 
+  // ── Erfolgsrechnung (FIBU-5xxx) für „Planung vs. Erfolgsrechnung" ──────────
+  // Read-only: reporting_v1-Blob (mandantengeprefixt) direkt aus localStorage
+  // (gleiches Muster wie Import-Cockpit/Reporting — app-weiter Sync ist Wahrheit).
+  // computePLForMonth ist EXAKT die Quelle der Reporting-Seite → Single Source of Truth.
+  const erfolgsrechnung = useMemo(() => {
+    const rec = loadMonth(selectedYear, selectedMonth, tenantKey('reporting_v1'));
+    // „clean" = OHNE personnelCostActual → rein 5xxx-basiert, identisch mit Erfolgsrechnung
+    const plClean = computePLForMonth({ ...rec, personnelCostActual: undefined });
+    const plTotalPersonnel = plClean.rows.find(r => r.def.id === 'total_personnel')?.values.actual ?? null;
+    const plFull = computePLForMonth(rec);
+    const plNetRevenue = plFull.rows.find(r => r.def.id === 'net_revenue')?.values.actual ?? null;
+    return {
+      personnelCostActual: rec.personnelCostActual ?? null,
+      plTotalPersonnel,
+      plNetRevenue,
+    };
+    // scheduleRefreshTick: neu lesen, wenn app-weiter Sync neue Reporting-Daten bringt
+  }, [selectedYear, selectedMonth, tenantKey, scheduleRefreshTick]);
+
+  // Vergleich Berechneter Personalaufwand ↔ Erfolgsrechnung (rein, primitive Eingaben)
+  const erVergleich = useMemo(() => buildErfolgsrechnungVergleich({
+    berechnetCHF: pfix.active.istTotal,
+    personnelCostActual: erfolgsrechnung.personnelCostActual,
+    plTotalPersonnel: erfolgsrechnung.plTotalPersonnel,
+    plNetRevenue: erfolgsrechnung.plNetRevenue,
+    effectiveRevenue,
+  }), [erfolgsrechnung, pfix.active.istTotal, effectiveRevenue]);
+
+  // PKQ-Herleitung für InfoTip (echte Werte + Quelle, nichts hartcodiert)
+  const pkqBreakdown = useMemo(() => buildPkqBreakdown({
+    personalIst: pfix.active.istTotal,
+    revenue: effectiveRevenue,
+    revenueIsAssumed,
+    revenueLabel,
+    monthLabel: getMonthLabel(selectedYear, selectedMonth),
+    cutoffDay: proRataDay,
+  }), [pfix.active.istTotal, effectiveRevenue, revenueIsAssumed, revenueLabel, selectedYear, selectedMonth, proRataDay]);
+
+  // Die drei fachlich unterschiedlichen „Flex Ist"-Grössen aus denselben Bausteinen
+  // (Single Source of Truth für die Abstimmung; nur ganzer Monat, s. Reconciliation-Block).
+  const flexScopes = useMemo(() => computeFlexScopes({
+    varArbeitIst: varIstTotalCHF,
+    zusatzIst: zusatzIstCHF,
+    ferienIst: ferienIstTotalCHF,
+  }), [varIstTotalCHF, zusatzIstCHF, ferienIstTotalCHF]);
+
   // ── pfix-derived budget comparison (always uses Ist actuals as "spend") ────
   // When a cutoff (Stichtag) is active, scale the budget pro rata to that day
   // so that "Ist bis Stichtag" is compared against "Budget bis Stichtag".
@@ -3898,12 +3961,130 @@ export default function PersonalFixPage() {
             <DsKpiCard
               label="PKQ Ist"
               value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-              sub={pkqPlan !== null ? `Plan ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
+              sub={
+                <span className="inline-flex items-center gap-1" data-testid="pfix-pkq-sub">
+                  {pkqPlan !== null ? `Plan ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
+                  <InfoTip
+                    side="top"
+                    text={
+                      pkqBreakdown.hasRevenue && pkqBreakdown.pkq !== null ? (
+                        <span>
+                          <b>PKQ Ist = Total Personal Ist ÷ Nettoumsatz</b>
+                          <br />
+                          {fmtCHF(pkqBreakdown.personalIst)} ÷ {fmtCHF(pkqBreakdown.revenue)} = {pkqBreakdown.pkq.toFixed(1)} %
+                          <br />
+                          Umsatz: {pkqBreakdown.revenueLabel}
+                          {pkqBreakdown.revenueIsAssumed ? ' (manuelle Annahme)' : ''}, netto (nach MWST).
+                          <br />
+                          Periode: {pkqBreakdown.monthLabel}
+                          {pkqBreakdown.cutoffDay !== null ? ` (bis ${pkqBreakdown.cutoffDay}.)` : ''}.
+                        </span>
+                      ) : (
+                        <span>
+                          PKQ Ist = Total Personal Ist ÷ Nettoumsatz. Für {pkqBreakdown.monthLabel} ist kein
+                          Umsatz erfasst — die Quote ist nicht berechenbar.
+                        </span>
+                      )
+                    }
+                  />
+                </span>
+              }
               tone={pkqIst !== null && pkqPlan !== null
                 ? (pkqIst > pkqPlan + 1 ? 'critical' : pkqIst < pkqPlan - 1 ? 'good' : 'neutral')
                 : 'neutral'}
             />
           </KpiGrid>
+
+          {/* ── Planung vs. Erfolgsrechnung (berechnet ↔ FIBU-5xxx) ─────────── */}
+          {/* Nur ganzer Monat: die Erfolgsrechnung liegt monatsweise vor, ein
+              Stichtag-Vergleich (pro rata) wäre irreführend. */}
+          {proRataDay === null && (
+            <div
+              data-testid="pfix-er-vergleich"
+              className="rounded-lg border border-border bg-muted/10 p-3 space-y-2"
+            >
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Planung vs. Erfolgsrechnung
+                </h3>
+                <InfoTip
+                  side="top"
+                  text={
+                    <span>
+                      Vergleich des <b>berechneten</b> Personalaufwands (App-Kalkulation, Total Arbeitgeberkosten)
+                      mit dem <b>effektiven</b> Personalaufwand aus der Erfolgsrechnung (FIBU-Konten 5000–5999),
+                      Periode {getMonthLabel(selectedYear, selectedMonth)}. Der FIBU-Ist-Wert enthält bereits den
+                      vollen Arbeitgeberaufwand — er wird <b>nicht</b> nochmals mit Sozialkosten multipliziert.
+                      Umsatzbasis für beide Quoten: {fmtCHF(effectiveRevenue)} ({revenueLabel}).
+                    </span>
+                  }
+                />
+              </div>
+
+              {erVergleich.status === 'missing' ? (
+                <div
+                  data-testid="pfix-er-missing"
+                  className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
+                  {!isGuest && (
+                    <Link
+                      to="/reporting"
+                      data-testid="pfix-er-import-link"
+                      className="font-medium text-primary underline underline-offset-2"
+                    >
+                      Erfolgsrechnung importieren →
+                    </Link>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <DsKpiCard
+                    label="Berechneter Personalaufwand"
+                    value={fmtCHF(erVergleich.berechnetCHF)}
+                    sub={erVergleich.berechnetPct !== null ? `${erVergleich.berechnetPct.toFixed(1)} % vom Umsatz` : 'Quote n/a'}
+                    tone="info"
+                  />
+                  <DsKpiCard
+                    label="Erfolgsrechnung (FIBU)"
+                    value={fmtCHF(erVergleich.fibuCHF)}
+                    sub={
+                      <span className="inline-flex items-center gap-1">
+                        {erVergleich.fibuPct !== null ? `${erVergleich.fibuPct.toFixed(1)} % vom Umsatz` : 'Quote n/a'}
+                        <InfoTip
+                          side="top"
+                          text={
+                            <span>
+                              {erVergleich.fibuSource === 'personnelCostActual'
+                                ? 'Quelle: erfasster Personalaufwand-Ist der Erfolgsrechnung.'
+                                : 'Quelle: Summe der FIBU-Konten 5000–5999 (Personalaufwand) der Erfolgsrechnung.'}{' '}
+                              Periode {getMonthLabel(selectedYear, selectedMonth)}. Dieser Wert enthält bereits den
+                              vollen Arbeitgeberaufwand und wird nicht nochmals mit Sozialkosten multipliziert.
+                              {erVergleich.revenueMismatch
+                                ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
+                                : ''}
+                            </span>
+                          }
+                        />
+                      </span>
+                    }
+                    tone="neutral"
+                  />
+                  <DsKpiCard
+                    label="Differenz (Berechnet − FIBU)"
+                    value={`${erVergleich.diffCHF > 0.005 ? '+' : erVergleich.diffCHF < -0.005 ? '−' : ''}${fmtCHF(Math.abs(erVergleich.diffCHF))}`}
+                    sub={
+                      erVergleich.diffPp !== null
+                        ? `${erVergleich.diffPp > 0.05 ? '+' : erVergleich.diffPp < -0.05 ? '−' : ''}${Math.abs(erVergleich.diffPp).toFixed(1)} Pp · ${ER_STATUS_LABEL[erVergleich.tone]}`
+                        : ER_STATUS_LABEL[erVergleich.tone]
+                    }
+                    tone={erVergleich.tone}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <MoreKpis label="Alle Kennzahlen (Plan + Ist, 4 Ebenen)" storageKey="pfix-more-kpis">
         {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -3915,9 +4096,9 @@ export default function PersonalFixPage() {
             color="blue"
           />
           <KpiCard
-            title={proRataDay !== null ? `Flex Arbeit Ist bis ${proRataDay}.` : 'Flex Arbeit Ist'}
+            title={proRataDay !== null ? `Flex Arbeit Ist (inkl. Zusatzk.) bis ${proRataDay}.` : 'Flex Arbeit Ist (inkl. Zusatzk.)'}
             value={fmtCHF(pfix.active.istWork)}
-            sub="Mirus-Ist-Stunden × Lohn"
+            sub="Mirus-Ist-Std × Lohn + Zusatzkosten Fixlohn-MA"
             icon={<Clock className="h-5 w-5" />}
             color={pfix.active.istWork > 0 ? 'orange' : 'default'}
           />
@@ -3943,9 +4124,9 @@ export default function PersonalFixPage() {
             color="blue"
           />
           <KpiCard
-            title={proRataDay !== null ? `Total Flex Ist bis ${proRataDay}.` : 'Total Flex Ist'}
+            title={proRataDay !== null ? `Total Flex Ist (inkl. Ferien) bis ${proRataDay}.` : 'Total Flex Ist (inkl. Ferien)'}
             value={fmtCHF(pfix.active.istTotalVar)}
-            sub="Flex Arbeit + Ferien (Ist)"
+            sub="Flex Arbeit + Zusatzkosten + Ferien (Ist)"
             icon={<TrendingUp className="h-5 w-5" />}
             color={pfix.active.istTotalVar > 0 ? 'orange' : 'default'}
           />
@@ -5553,14 +5734,71 @@ export default function PersonalFixPage() {
                   );
                 })}
                 <div className="flex flex-col items-start rounded-lg border border-border bg-background px-3 py-2 min-w-[140px]">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Plan</span>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Flex Arbeit Plan</span>
                   <span className="text-base font-bold font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-0.5">{fmtCHF(monthPlan)}</span>
                 </div>
                 <div className="flex flex-col items-start rounded-lg border border-border bg-background px-3 py-2 min-w-[140px]">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Total Ist</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Flex Arbeit Ist</span>
+                    <InfoTip
+                      side="top"
+                      text={
+                        <span>
+                          Nur die Ist-Arbeitskosten der <b>variablen</b> MA (Stunden × Lohn). OHNE Zusatzkosten von
+                          Fixlohn-MA und OHNE Ferienabbau — daher tiefer als „Flex Ist" in der Tabelle „Flex Kosten
+                          pro Mitarbeiter". Siehe Abstimmung unten.
+                        </span>
+                      }
+                    />
+                  </div>
                   <span className="text-base font-bold font-mono tabular-nums text-orange-700 dark:text-orange-400 mt-0.5">{fmtCHF(monthIst)}</span>
                 </div>
               </div>
+
+              {/* ── Abstimmung „Flex Ist": drei Grössen, eine Quelle ──────────── */}
+              {proRataDay === null && (flexScopes.zusatzDelta > 0.005 || flexScopes.ferienDelta > 0.005) && (
+                <div
+                  data-testid="pfix-flex-reconciliation"
+                  className="px-4 py-2.5 border-b border-border bg-muted/5 text-xs"
+                >
+                  <div className="mb-1 flex items-center gap-1.5 font-medium text-muted-foreground">
+                    <span>Abstimmung „Flex Ist" (ganzer Monat)</span>
+                    <InfoTip
+                      side="top"
+                      text={
+                        <span>
+                          Die drei „Flex Ist"-Werte der Seite unterscheiden sich nur im Umfang und werden aus
+                          denselben Bausteinen abgeleitet: die Flex-Auswertung zeigt reine Arbeitskosten variabler
+                          MA, die Tabelle „Flex Kosten pro Mitarbeiter" zählt zusätzlich die Zusatzkosten von
+                          Fixlohn-MA, das Total zusätzlich den Ferienabbau.
+                        </span>
+                      }
+                    />
+                  </div>
+                  <div className="space-y-0.5 font-mono tabular-nums">
+                    <div className="flex justify-between gap-4">
+                      <span>Flex Arbeit Ist (nur variable MA)</span>
+                      <span data-testid="pfix-recon-arbeit">{fmtCHF(flexScopes.flexArbeitIst)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4 text-muted-foreground">
+                      <span>+ Zusatzkosten Fixlohn-MA</span>
+                      <span data-testid="pfix-recon-zusatz">+ {fmtCHF(flexScopes.zusatzDelta)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4 border-t border-border/60 pt-0.5">
+                      <span>= Flex Ist inkl. Zusatzkosten (Tabelle „Flex Kosten pro MA")</span>
+                      <span data-testid="pfix-recon-mitzusatz">{fmtCHF(flexScopes.flexMitZusatzIst)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4 text-muted-foreground">
+                      <span>+ Ferienabbau Ist</span>
+                      <span data-testid="pfix-recon-ferien">+ {fmtCHF(flexScopes.ferienDelta)}</span>
+                    </div>
+                    <div className="flex justify-between gap-4 border-t border-border/60 pt-0.5 font-semibold">
+                      <span>= Total Flex Ist (inkl. Ferien)</span>
+                      <span data-testid="pfix-recon-total">{fmtCHF(flexScopes.totalFlexIst)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ── Toggle + Legende ──────────────────────────────────────────── */}
               <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-border bg-muted/5">
@@ -5590,8 +5828,8 @@ export default function PersonalFixPage() {
                       <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
                         <th className="text-center px-3 py-2 font-medium w-8">●</th>
                         <th className="text-left px-4 py-2 font-medium">Zeitraum</th>
-                        <th className="text-right px-4 py-2 font-medium text-blue-600">Total Flex Plan</th>
-                        <th className="text-right px-4 py-2 font-medium text-orange-600">Total Flex Ist</th>
+                        <th className="text-right px-4 py-2 font-medium text-blue-600">Flex Arbeit Plan</th>
+                        <th className="text-right px-4 py-2 font-medium text-orange-600">Flex Arbeit Ist</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. %</th>
                         <th className="text-left px-3 py-2 font-medium">Status</th>

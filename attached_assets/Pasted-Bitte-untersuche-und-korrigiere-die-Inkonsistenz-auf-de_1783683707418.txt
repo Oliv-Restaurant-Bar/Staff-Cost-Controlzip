@@ -1,0 +1,171 @@
+Bitte untersuche und korrigiere die Inkonsistenz auf der Seite „Personal FIX + VARIABEL“.
+
+Ausgangslage Juni 2026:
+- Mitarbeiter-Tabelle „Flex Kosten pro Mitarbeiter“ zeigt Total Flex Ist: CHF 51'623
+- „Flex-Auswertung — Plan vs. Ist“ zeigt Total Flex Ist: CHF 48'982
+- Differenz: CHF 2'641
+
+Diese beiden Werte müssen entweder exakt übereinstimmen oder die unterschiedliche fachliche Abgrenzung muss klar ausgewiesen werden.
+
+1. Ursachenanalyse
+
+Bitte verfolge im Code beide Berechnungswege vollständig:
+
+A. Total Flex Ist in der Mitarbeiter-Tabelle
+B. Total Flex Ist in der Flex-Auswertung Plan vs. Ist
+
+Für beide Werte dokumentieren:
+- Datenquelle
+- berücksichtigte Mitarbeitende
+- Zeitraum
+- verwendete Ist-Stunden
+- Zusatzkosten
+- Filter
+- Rollen-/Statusausschlüsse
+- Rundung
+- Arbeitgeberkosten-Sätze
+- allfällige Abgrenzungen
+
+Erstelle zuerst eine kurze technische Gegenüberstellung und finde exakt heraus, welche Positionen die CHF 2'641 Differenz verursachen.
+
+Nicht einfach einen Wert an den anderen angleichen, bevor die Ursache nachgewiesen ist.
+
+2. Single Source of Truth
+
+Falls beide Werte fachlich dasselbe darstellen sollen:
+- auf eine gemeinsame zentrale Berechnung umstellen
+- beide Ansichten müssen denselben Total-Flex-Ist-Wert verwenden
+- keine doppelte oder parallele Summenlogik
+
+Falls die Werte fachlich unterschiedlich sind:
+- klare unterschiedliche Bezeichnungen verwenden
+- Abgrenzung direkt sichtbar machen
+- Tooltip mit Erklärung
+- keine identischen Labels für unterschiedliche Kennzahlen
+
+3. PKQ Ist transparent machen
+
+Die KPI „PKQ Ist 53.2 %“ braucht einen nachvollziehbaren Rechnungsweg.
+
+Bei Klick oder per Info-Tooltip anzeigen:
+
+Total Personal Ist
+÷ Umsatz Ist
+= PKQ Ist
+
+Beispiel:
+CHF 132'712
+÷ CHF 249'459
+= 53.2 %
+
+Bitte den tatsächlich verwendeten Umsatzwert und die Datenquelle anzeigen:
+- Umsatzquelle
+- Zeitraum
+- Import-/FIBU-Stand
+- ob netto oder brutto
+- ob abgegrenzt
+
+Keine hart codierten Beispielwerte verwenden, sondern echte Monatswerte.
+
+4. Vergleich mit Erfolgsrechnung ergänzen
+
+Direkt im oberen Bereich „Total Personal FIX + VARIABEL Ist“ eine neue kompakte Vergleichsansicht ergänzen:
+
+Titel:
+„Planung vs. Erfolgsrechnung“
+
+Anzeigen:
+
+Berechneter Personalaufwand
+- CHF-Betrag
+- Prozent vom Umsatz
+
+Personalaufwand Erfolgsrechnung
+- CHF-Betrag aus den relevanten FIBU-5xxx-Konten
+- Prozent vom Umsatz
+
+Differenz
+- CHF
+- Prozentpunkte
+- Status:
+  - Übereinstimmend
+  - geringe Abweichung
+  - auffällige Abweichung
+
+Beispielstruktur:
+
+Berechnet
+CHF 132'712
+53.2 %
+
+Erfolgsrechnung
+CHF 128'450
+51.5 %
+
+Differenz
++CHF 4'262
++1.7 Prozentpunkte
+
+5. Rechnungsweg Erfolgsrechnung
+
+Bei Klick oder Tooltip zeigen:
+- welche FIBU-Konten einbezogen werden
+- welcher Zeitraum verwendet wird
+- ob Arbeitgeberkosten bereits enthalten sind
+- Hinweis:
+  „FIBU-Ist enthält bereits den effektiven Arbeitgeberaufwand und wird nicht nochmals mit Sozialkosten multipliziert.“
+
+6. Fehlende Erfolgsrechnungsdaten
+
+Falls für den gewählten Monat keine Erfolgsrechnung importiert ist:
+- keine 0 anzeigen
+- stattdessen:
+  „Keine Erfolgsrechnung für Juni 2026 importiert“
+- Aktion:
+  „Erfolgsrechnung importieren“
+
+7. Design / UX
+
+Die neue Vergleichsansicht soll:
+- kompakt
+- schlicht
+- modern
+- lesefreundlich
+- einheitlich mit dem Phase-3-Designsystem sein
+
+Keine zusätzliche grosse Auswertungsbox.
+
+Am besten:
+- drei kompakte KPI-Felder oder eine kompakte Vergleichszeile
+- Details nur per Tooltip oder aufklappbarem Bereich
+- Berechneter Wert neutral/blau
+- FIBU-Ist neutral
+- positive/negative Abweichung nach fachlicher Bedeutung grün/orange/rot
+
+8. Tests
+
+Bitte Tests ergänzen für:
+- beide Flex-Ist-Ansichten verwenden dieselbe zentrale Berechnung, falls fachlich identisch
+- exakte Aufklärung der bisherigen CHF-2'641-Differenz
+- Zusatzkosten werden korrekt ein- oder ausgeschlossen
+- PKQ-Rechnung Personalaufwand ÷ Umsatz
+- Prozentdarstellung mit korrektem Nenner
+- Erfolgsrechnung fehlt → kein falscher Nullwert
+- FIBU-Ist wird nicht mit Sozialkosten multipliziert
+- Vergleich berechnet CHF-Differenz und Prozentpunkte korrekt
+- Rollen-/Lohnsichtbarkeit bleibt unverändert
+
+9. Abschluss
+
+Bitte danach:
+- Ursache der CHF-2'641-Differenz konkret benennen
+- Code korrigieren
+- Type-Check-Gate
+- gezielte Regressionstests
+- Browser-/Live-Check
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Ziel ist nicht nur gleiche Zahlen anzuzeigen, sondern eine fachlich nachvollziehbare und prüfbare Verbindung zwischen Personalplanung und Erfolgsrechnung herzustellen.
