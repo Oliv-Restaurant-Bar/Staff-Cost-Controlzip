@@ -24,6 +24,8 @@ interface Props {
   tenantId: string;
   /** Nach erfolgreichem Import (Liste neu laden). */
   onImported: () => void;
+  /** DB-Tabellen fehlen noch (Migration nicht ausgeführt) → Import blockieren. */
+  tableMissing?: boolean;
 }
 
 const chf = (v: number) =>
@@ -41,7 +43,7 @@ function flattenItems(parsed: OpListeParseResult): OpCompareItem[] {
   );
 }
 
-export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Props) {
+export function OpImportDialog({ open, onOpenChange, tenantId, onImported, tableMissing = false }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<'idle' | 'parsing' | 'preview' | 'saving'>('idle');
   const [fileName, setFileName] = useState<string | null>(null);
@@ -50,6 +52,8 @@ export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Pro
   const [debugLines, setDebugLines] = useState<string[]>([]);
   const [existing, setExisting] = useState<OpImportRecord | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** Bewusste Freigabe, obwohl der Gesamtsaldo im PDF nicht erkannt wurde. */
+  const [overrideMissingTotal, setOverrideMissingTotal] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -60,6 +64,7 @@ export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Pro
       setDebugLines([]);
       setExisting(null);
       setSaveError(null);
+      setOverrideMissingTotal(false);
     }
   }, [open]);
 
@@ -117,8 +122,18 @@ export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Pro
   };
 
   const top10 = parsed ? topSuppliers(flattenItems(parsed), 10) : [];
-  const totalOpen = parsed ? (parsed.totals.openAmount ?? parsed.itemsSum) : 0;
+  const recognizedTotal = parsed ? parsed.totals.openAmount : null;
+  const totalMissing = phase !== 'idle' && phase !== 'parsing' && parsed !== null && recognizedTotal === null;
   const itemCount = parsed ? parsed.suppliers.reduce((s, sup) => s + sup.items.length, 0) : 0;
+
+  // Import nur zulassen, wenn: Parser ok + Stichtag + ≥1 Posten + Tabellen
+  // erreichbar + (Gesamtsaldo erkannt ODER bewusst freigegeben).
+  const canConfirm =
+    !!parsed
+    && !!parsed.snapshotDate
+    && itemCount > 0
+    && !tableMissing
+    && (recognizedTotal !== null || overrideMissingTotal);
 
   return (
     <Dialog open={open} onOpenChange={o => { if (phase !== 'saving') onOpenChange(o); }}>
@@ -194,7 +209,13 @@ export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Pro
               </div>
               <div className="rounded-md border border-border p-2">
                 <p className="text-[10px] text-muted-foreground">Gesamtsaldo</p>
-                <p className="font-semibold">{chf(totalOpen)}</p>
+                {recognizedTotal !== null ? (
+                  <p className="font-semibold" data-testid="op-preview-total">{chf(recognizedTotal)}</p>
+                ) : (
+                  <p className="font-semibold text-amber-700 dark:text-amber-400" data-testid="op-preview-total-missing">
+                    nicht erkannt
+                  </p>
+                )}
               </div>
             </div>
 
@@ -205,6 +226,33 @@ export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Pro
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {w}
                   </p>
                 ))}
+              </div>
+            )}
+
+            {totalMissing && (
+              <div className="rounded-md border border-amber-500/60 bg-amber-500/10 p-2 space-y-2" data-testid="op-total-missing-notice">
+                <p className="flex items-start gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  Gesamtsaldo konnte im PDF nicht erkannt werden. Bitte den Wert im PDF prüfen
+                  (Summe der erkannten Posten: {chf(parsed.itemsSum)}).
+                </p>
+                <label className="flex items-center gap-2 cursor-pointer text-amber-700 dark:text-amber-400">
+                  <input
+                    type="checkbox"
+                    checked={overrideMissingTotal}
+                    onChange={e => setOverrideMissingTotal(e.target.checked)}
+                    disabled={phase === 'saving'}
+                    data-testid="op-override-total"
+                  />
+                  <span>Trotzdem importieren — Summe der Posten wird als Gesamtsaldo gespeichert.</span>
+                </label>
+              </div>
+            )}
+
+            {tableMissing && (
+              <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-destructive" data-testid="op-dialog-table-missing">
+                <AlertTriangle className="h-3.5 w-3.5 inline mr-1" />
+                Datenbank-Tabellen fehlen noch — bitte die Migration im Supabase SQL-Editor ausführen. Import ist bis dahin gesperrt.
               </div>
             )}
 
@@ -257,7 +305,12 @@ export function OpImportDialog({ open, onOpenChange, tenantId, onImported }: Pro
             Abbrechen
           </Button>
           {(phase === 'preview' || phase === 'saving') && (
-            <Button size="sm" onClick={() => void handleSave()} disabled={phase === 'saving'} data-testid="op-import-confirm">
+            <Button
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={phase === 'saving' || !canConfirm}
+              data-testid="op-import-confirm"
+            >
               {phase === 'saving' && <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />}
               {existing ? 'Ersetzen & Importieren' : 'Importieren'}
             </Button>

@@ -18,8 +18,10 @@ import {
   computeDayStaffingSummary,
   summarizeStaffingKpis,
   staffingTooltipLines,
+  staffingHeadline,
   type PlannedEmployeeDay,
   type ShiftComparisonRow,
+  type StaffingComparisonResult,
 } from '@/lib/staffing-comparison-utils';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -588,5 +590,93 @@ describe('staffingTooltipLines', () => {
     expect(byLabel['Produktivität']).toBe('1350');
     expect(byLabel['Umsatz pro Mitarbeiter']).toBe('CHF 1800');
     expect(byLabel['Differenz']).toBe('+1 Person');
+  });
+});
+
+// ─── staffingHeadline (kompakter Kopfzeilen-Status) ───────────────────────────
+
+function headlineRow(required: number, planned: number): ShiftComparisonRow {
+  return {
+    positionKey: 'srv',
+    shiftStart: '10:00',
+    shiftEnd: '14:00',
+    required,
+    planned,
+    diff: planned - required,
+    status: comparisonStatus(required, planned),
+  };
+}
+
+function resultFrom(
+  rows: ShiftComparisonRow[],
+  hasRequirements = rows.length > 0,
+): StaffingComparisonResult {
+  const totals = rows.reduce(
+    (t, r) => ({
+      required: t.required + r.required,
+      planned: t.planned + r.planned,
+      diff: t.diff + r.diff,
+    }),
+    { required: 0, planned: 0, diff: 0 },
+  );
+  const counts = rows.reduce(
+    (c, r) => {
+      c[r.status] += 1;
+      return c;
+    },
+    { optimal: 0, overstaffed: 0, understaffed: 0 },
+  );
+  return { hasRequirements, groups: [], orphanPositions: [], rows, totals, counts };
+}
+
+describe('staffingHeadline', () => {
+  it('kein Bedarf definiert → kind none, neutral', () => {
+    const h = staffingHeadline(resultFrom([], false));
+    expect(h.kind).toBe('none');
+    expect(h.tone).toBe('neutral');
+    expect(h.label).toBe('Kein Bedarf definiert');
+  });
+
+  it('Bedarf vorhanden aber keine Zeilen im eigenen Bereich → none', () => {
+    // hasRequirements true, aber rows leer (z.B. gescopte Rolle)
+    const h = staffingHeadline(resultFrom([], true));
+    expect(h.kind).toBe('none');
+  });
+
+  it('alle Schichten exakt erfüllt → Im Plan (grün)', () => {
+    const h = staffingHeadline(resultFrom([headlineRow(3, 3), headlineRow(2, 2)]));
+    expect(h.kind).toBe('optimal');
+    expect(h.tone).toBe('green');
+    expect(h.label).toBe('Im Plan');
+  });
+
+  it('nur Unterbesetzung → understaffed mit Personenanzahl (rot)', () => {
+    const h = staffingHeadline(resultFrom([headlineRow(3, 1), headlineRow(2, 2)]));
+    expect(h.kind).toBe('understaffed');
+    expect(h.tone).toBe('red');
+    expect(h.understaffPersons).toBe(2);
+    expect(h.label).toBe('2 Personen unterbesetzt');
+  });
+
+  it('Singular bei genau 1 Person', () => {
+    const h = staffingHeadline(resultFrom([headlineRow(3, 2)]));
+    expect(h.label).toBe('1 Person unterbesetzt');
+  });
+
+  it('nur Überbesetzung → overstaffed mit Personenanzahl (rot)', () => {
+    const h = staffingHeadline(resultFrom([headlineRow(2, 4)]));
+    expect(h.kind).toBe('overstaffed');
+    expect(h.tone).toBe('red');
+    expect(h.overstaffPersons).toBe(2);
+    expect(h.label).toBe('2 Personen überbesetzt');
+  });
+
+  it('Mischfall (unter- UND überbesetzt) mittelt sich NICHT zu Im Plan', () => {
+    // Netto diff = 0, aber es gibt echte Abweichungen → mixed, rot.
+    const h = staffingHeadline(resultFrom([headlineRow(3, 1), headlineRow(1, 3)]));
+    expect(h.kind).toBe('mixed');
+    expect(h.tone).toBe('red');
+    expect(h.understaffPersons).toBe(2);
+    expect(h.overstaffPersons).toBe(2);
   });
 });

@@ -48,6 +48,11 @@ export interface OpPdfLine {
 export function parseSwissAmount(raw: string): number | null {
   let v = raw.trim();
   if (!v) return null;
+  // Währungskürzel entfernen — Totalzellen kleben es oft an den Betrag
+  // ("CHF 364'637.50", "CHF364637.50", "Total der Währung CHF CHF 364'637.50").
+  // Beträge enthalten sonst nie Buchstaben, daher ist das global sicher.
+  v = v.replace(/chf/gi, '').trim();
+  if (!v) return null;
   let neg = false;
   if (v.endsWith('-')) { neg = true; v = v.slice(0, -1).trim(); }
   if (v.startsWith('-')) { neg = true; v = v.slice(1).trim(); }
@@ -57,6 +62,27 @@ export function parseSwissAmount(raw: string): number | null {
   const n = parseFloat(v);
   if (!Number.isFinite(n)) return null;
   return neg ? -n : n;
+}
+
+/** Betrags-Muster für die Freitext-Extraktion (Schweizer Format, opt. Minus). */
+const AMOUNT_TEXT_RE = /-?\d{1,3}(?:['’\u2019\u00a0 ]\d{3})+\.\d{2}|-?\d+\.\d{2}/g;
+
+/**
+ * Extrahiert alle Schweizer Beträge aus freiem Zeilentext (in Lesereihenfolge).
+ * Ganzzahlen ohne Nachkommastellen (z. B. „103" in „von 103 Posten") werden
+ * bewusst NICHT erfasst. Fallback für Fusszeilen, in denen der Betrag mit dem
+ * Text/Währungskürzel in EINEM Text-Item verklebt ist (keine Spaltenanker).
+ */
+export function extractAmountsFromText(text: string): number[] {
+  const out: number[] = [];
+  const matches = text.match(AMOUNT_TEXT_RE);
+  if (matches) {
+    for (const m of matches) {
+      const v = parseSwissAmount(m);
+      if (v !== null) out.push(v);
+    }
+  }
+  return out;
 }
 
 const DATE_RE = /^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/;
@@ -171,9 +197,21 @@ const RE_KREDITOREN = /kreditor/i;
 const RE_STICHTAG = /op[-\s]?stich(datum|tag)/i;
 const RE_TOTAL = /^total\b/i;
 const RE_GESAMT = /gesamt\s?-?\s?(saldo|total)/i;
+/** Netto-Gesamtsaldo (Priorität 1): „Gesamt Saldo von 103 Posten: CHF 364'637.50". */
+const RE_GESAMT_POSTEN = /gesamt\s*-?\s*saldo\s+von\s+\d+\s+posten/i;
+/** Teilsummen, die NICHT als Gesamtsaldo gelten (Rechnungen = brutto, Gutschriften = negativ). */
+const RE_GESAMT_SUBTOTAL = /gesamt\s*-?\s*saldo\s+von\s+\d+\s+(rechnungen|gutschriften)/i;
+/** Währungs-Total (Priorität 2): „Total der Währung CHF CHF 364'637.50". */
+const RE_TOTAL_WAEHRUNG = /total\s+der\s+w(?:ä|ae|a)hrung/i;
 const RE_ANZAHL_POSTEN = /anzahl\s+(posten|rechnungen)/i;
 const RE_ANZAHL_KONTEN = /(angezeigte\s+)?personenkonten/i;
 const RE_SEITE = /^seite\s+\d+/i;
+
+/** Postenanzahl aus „… von 103 Posten" (dient als Fallback für totals.itemCount). */
+function extractPostenCount(text: string): number | null {
+  const m = text.match(/von\s+(\d+)\s+posten/i);
+  return m ? parseInt(m[1], 10) : null;
+}
 
 function firstToken(text: string): string {
   return text.trim().split(/\s+/)[0] ?? '';
@@ -263,6 +301,28 @@ export function parseOpListe(lines: OpPdfLine[]): OpListeParseResult {
   /** true, sobald der letzte Block per Total-Zeile geschlossen wurde. */
   let lastBlockClosed = true;
 
+  // Gesamtsaldo-Kandidaten nach Priorität getrennt sammeln (erst nach der
+  // Schleife entscheiden). Ohne diese Trennung überschreibt die letzte
+  // „Gesamt Saldo von …"-Zeile (Gutschriften, negativ) den echten Netto-Saldo.
+  let gesamtPostenOpen: number | null = null;      // Prio 1: „von N Posten"
+  let gesamtPostenBuckets: OpBuckets | null = null;
+  let gesamtPostenCount: number | null = null;
+  let gesamtGenericOpen: number | null = null;     // Prio 3: schlichtes „Gesamtsaldo"
+  let gesamtGenericBuckets: OpBuckets | null = null;
+  let totalWaehrungOpen: number | null = null;     // Prio 2: „Total der Währung CHF"
+  let totalWaehrungBuckets: OpBuckets | null = null;
+
+  /**
+   * Betrag einer Fusszeile lesen: erst per Spaltenanker (assignAmounts), sonst
+   * per Freitext-Extraktion (Betrag klebt in EINEM Item am Text/Währungskürzel).
+   */
+  const readFooterAmount = (l: OpPdfLine): { open: number | null; buckets: OpBuckets } => {
+    const a = assignAmounts(l, anchors);
+    if (a.open !== null) return { open: a.open, buckets: a.buckets };
+    const textAmounts = extractAmountsFromText(l.text);
+    return { open: textAmounts.length > 0 ? textAmounts[0] : null, buckets: a.buckets };
+  };
+
   const closeCurrent = () => {
     if (!current) return;
     current.itemsSum = round2(current.items.reduce((s, it) => s + it.openAmount, 0));
@@ -287,11 +347,37 @@ export function parseOpListe(lines: OpPdfLine[]): OpListeParseResult {
       continue; // Kopfzeilen-Wiederholung je Seite
     }
 
-    // Gesamt-Totale / Zähler (Fussbereich)
+    // Währungs-Total (Prio 2) — VOR RE_TOTAL prüfen: die Zeile beginnt zwar mit
+    // „Total", ist aber KEIN Lieferanten-Total, sondern der Gesamtsaldo je Währung.
+    if (RE_TOTAL_WAEHRUNG.test(text)) {
+      closeCurrent();
+      const { open, buckets } = readFooterAmount(line);
+      if (open !== null) { totalWaehrungOpen = open; totalWaehrungBuckets = buckets; }
+      lastBlockClosed = true;
+      continue;
+    }
+
+    // Gesamt-Saldo-Zeilen (Fussbereich). Es gibt bis zu drei Varianten:
+    //   „… von N Posten"       = Netto-Gesamtsaldo (Prio 1)
+    //   „… von N Rechnungen"   = Brutto-Teilsumme  → NICHT als Gesamtsaldo nehmen
+    //   „… von N Gutschriften" = negative Teilsumme → NICHT als Gesamtsaldo nehmen
+    // Jede Variante schliesst zusätzlich den offenen Lieferantenblock.
     if (RE_GESAMT.test(text)) {
       closeCurrent();
-      const { open, buckets } = assignAmounts(line, anchors);
-      if (open !== null) { totals.openAmount = open; totals.buckets = buckets; }
+      if (!RE_GESAMT_SUBTOTAL.test(text)) {
+        const { open, buckets } = readFooterAmount(line);
+        if (open !== null) {
+          if (RE_GESAMT_POSTEN.test(text)) {
+            gesamtPostenOpen = open;
+            gesamtPostenBuckets = buckets;
+          } else if (gesamtGenericOpen === null) {
+            gesamtGenericOpen = open;
+            gesamtGenericBuckets = buckets;
+          }
+        }
+        const n = extractPostenCount(text);
+        if (n !== null) gesamtPostenCount = n;
+      }
       lastBlockClosed = true;
       continue;
     }
@@ -364,6 +450,23 @@ export function parseOpListe(lines: OpPdfLine[]): OpListeParseResult {
     unparsedLines.push(text);
   }
   closeCurrent();
+
+  // Gesamtsaldo nach Priorität festlegen: „von N Posten" (Netto) > „Total der
+  // Währung CHF" > schlichtes „Gesamtsaldo". Bleibt alles leer, ist openAmount
+  // null (= kein Total erkannt) — NIE stillschweigend 0.00.
+  if (gesamtPostenOpen !== null) {
+    totals.openAmount = gesamtPostenOpen;
+    totals.buckets = gesamtPostenBuckets ?? { ...EMPTY_BUCKETS };
+  } else if (totalWaehrungOpen !== null) {
+    totals.openAmount = totalWaehrungOpen;
+    totals.buckets = totalWaehrungBuckets ?? { ...EMPTY_BUCKETS };
+  } else if (gesamtGenericOpen !== null) {
+    totals.openAmount = gesamtGenericOpen;
+    totals.buckets = gesamtGenericBuckets ?? { ...EMPTY_BUCKETS };
+  }
+  if (totals.itemCount === null && gesamtPostenCount !== null) {
+    totals.itemCount = gesamtPostenCount;
+  }
 
   const itemsSum = round2(suppliers.reduce((s, sup) => s + sup.itemsSum, 0));
 

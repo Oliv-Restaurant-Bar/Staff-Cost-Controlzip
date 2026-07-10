@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { format, getISODay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
-import { ClipboardList, ArrowRight, CalendarDays } from 'lucide-react';
+import { ClipboardList, ArrowRight, CalendarDays, ChevronDown } from 'lucide-react';
 
 import type { Department, Employee } from '@/types/personnel';
 import type { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
@@ -20,7 +20,9 @@ import {
   computeStaffingComparison,
   summarizeStaffingKpis,
   formatStaffingDiff,
+  staffingHeadline,
   type ShiftComparisonRow,
+  type StaffingHeadline,
 } from '@/lib/staffing-comparison-utils';
 import {
   StaffingKpiCards,
@@ -29,7 +31,7 @@ import {
 } from '@/components/schedule-planner/staffing-status-ui';
 import { StaffingDemandContext } from '@/components/schedule-planner/StaffingDemandContext';
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Select,
   SelectContent,
@@ -62,6 +64,51 @@ const DEPARTMENT_LABEL: Record<Department, string> = {
   service: 'Service',
   küche: 'Küche',
 };
+
+/**
+ * Merkt den Auf-/Zu-Status lokal pro Browser. Standard ist geschlossen — der
+ * Dienstplan bleibt die dominante Arbeitsfläche; der Personalbedarf ist nur
+ * ergänzend. Ist noch nichts gespeichert, bleibt das Panel zu.
+ */
+const OPEN_STORAGE_KEY = 'staffing-comparison-open';
+
+function readInitialOpen(): boolean {
+  try {
+    return localStorage.getItem(OPEN_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function persistOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OPEN_STORAGE_KEY, open ? '1' : '0');
+  } catch {
+    /* localStorage nicht verfügbar → Status wird nur pro Sitzung gehalten. */
+  }
+}
+
+const HEADLINE_PILL: Record<StaffingHeadline['tone'], string> = {
+  green:
+    'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+  red: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800',
+  neutral: 'bg-muted text-muted-foreground border-border',
+};
+
+/** Kompakte Status-Pille für die eingeklappte Kopfzeile. */
+function HeadlinePill({ headline }: { headline: StaffingHeadline }) {
+  return (
+    <span
+      data-testid="staffing-panel-status"
+      className={cn(
+        'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap',
+        HEADLINE_PILL[headline.tone],
+      )}
+    >
+      {headline.label}
+    </span>
+  );
+}
 
 function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
   return (
@@ -124,24 +171,57 @@ export function StaffingComparisonPanel({
   );
 
   const kpis = useMemo(() => summarizeStaffingKpis(result.rows), [result.rows]);
+  const headline = useMemo(() => staffingHeadline(result), [result]);
 
   const loading = posLoading || reqLoading;
 
+  const [open, setOpen] = useState<boolean>(readInitialOpen);
+  const toggleOpen = useCallback(() => {
+    setOpen((prev) => {
+      const next = !prev;
+      persistOpen(next);
+      return next;
+    });
+  }, []);
+
   return (
-    <Card className="mt-6">
-      <CardHeader className="pb-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <ClipboardList className="h-5 w-5 text-muted-foreground" />
-            <div>
-              <CardTitle className="text-base">Personalbedarf-Abgleich</CardTitle>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                SOLL-Besetzung vs. eingeplante Mitarbeitende ·{' '}
-                {weekdayLabel(weekday)}, {format(selectedDate, 'dd.MM.yyyy', { locale: de })}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+    <Card className="mt-6" data-testid="staffing-comparison-panel">
+      {/*
+       * Kompakte, immer sichtbare Kopfzeile. Standard = geschlossen, damit der
+       * Dienstplan die dominante Arbeitsfläche bleibt. Zeigt nur Titel, Datum,
+       * Kurzstatus + Chevron (keine feste/min. Höhe, kein Overlay über dem Grid).
+       */}
+      <button
+        type="button"
+        data-testid="staffing-panel-toggle"
+        aria-expanded={open}
+        aria-controls="staffing-panel-content"
+        onClick={toggleOpen}
+        className="flex w-full items-center gap-2 rounded-t-lg px-4 py-2.5 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <ClipboardList className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="text-base font-semibold">Personalbedarf-Abgleich</span>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {format(selectedDate, 'dd.MM.yyyy', { locale: de })}
+        </span>
+        {!loading && <HeadlinePill headline={headline} />}
+        <ChevronDown
+          className={cn(
+            'ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform',
+            open && 'rotate-180',
+          )}
+          aria-hidden
+        />
+      </button>
+
+      {open && (
+        <CardContent id="staffing-panel-content" className="pt-0">
+          {/* Steuerung (Datum / Saison / Heute) — nur im geöffneten Zustand. */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <p className="mr-auto text-xs text-muted-foreground">
+              SOLL-Besetzung vs. eingeplante Mitarbeitende ·{' '}
+              {weekdayLabel(weekday)}, {format(selectedDate, 'dd.MM.yyyy', { locale: de })}
+            </p>
             <div className="relative">
               <CalendarDays className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -178,33 +258,36 @@ export function StaffingComparisonPanel({
               Heute
             </Button>
           </div>
-        </div>
-      </CardHeader>
 
-      <CardContent className="pt-0">
-        {/* Nachfrage-Kontext (Reservationen) — admin-only, rendert sonst nichts. */}
-        <StaffingDemandContext date={dateStr} className="mb-3" />
-        {loading ? (
-          <p className="text-sm text-muted-foreground py-6 text-center">Lädt …</p>
-        ) : !result.hasRequirements ? (
-          <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-center">
-            <p className="text-sm text-muted-foreground">
-              Für diesen Tag ist noch kein Personalbedarf definiert.
-            </p>
-            <Link
-              to="/personalbedarf"
-              className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+          {/* Nachfrage-Kontext (Reservationen) — nur geöffnet, admin-only. */}
+          <StaffingDemandContext date={dateStr} className="mb-3" />
+          {loading ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">Lädt …</p>
+          ) : !result.hasRequirements ? (
+            <div
+              data-testid="staffing-empty"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2"
             >
-              Personalbedarf definieren
-              <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          </div>
-        ) : result.rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-6 text-center">
-            Für deinen Bereich ist an diesem Tag kein Personalbedarf hinterlegt.
-          </p>
-        ) : (
-          <div className="space-y-5">
+              <p className="text-sm text-muted-foreground">
+                Für diesen Tag ist noch kein Personalbedarf definiert.
+              </p>
+              <Link
+                to="/personalbedarf"
+                className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+              >
+                Definieren
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+          ) : result.rows.length === 0 ? (
+            <p
+              data-testid="staffing-empty-scope"
+              className="text-sm text-muted-foreground py-2"
+            >
+              Für deinen Bereich ist an diesem Tag kein Personalbedarf hinterlegt.
+            </p>
+          ) : (
+            <div className="space-y-5" data-testid="staffing-content">
             {/* KPI-Kacheln */}
             <StaffingKpiCards kpis={kpis} />
 
@@ -313,8 +396,9 @@ export function StaffingComparisonPanel({
               </Link>
             </div>
           </div>
-        )}
-      </CardContent>
+          )}
+        </CardContent>
+      )}
     </Card>
   );
 }

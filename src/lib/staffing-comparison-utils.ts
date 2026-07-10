@@ -538,6 +538,88 @@ export function summarizeStaffingKpis(rows: ShiftComparisonRow[]): StaffingKpiSu
   };
 }
 
+// ─── Kompakte Kopfzeilen-Status (eingeklapptes Panel) ─────────────────────────
+
+/** Kurzstatus des Tages für die kompakte, eingeklappte Kopfzeile. */
+export type StaffingHeadlineKind =
+  | 'none' // kein Bedarf (Saison×Wochentag) bzw. nichts im eigenen Bereich
+  | 'optimal' // jede Bedarfs-Schicht exakt erfüllt
+  | 'understaffed' // nur Unterbesetzung
+  | 'overstaffed' // nur Überbesetzung
+  | 'mixed'; // beides (unter- UND überbesetzte Schichten)
+
+export interface StaffingHeadline {
+  kind: StaffingHeadlineKind;
+  /** Σ fehlende Personen-Schichten (Unterbesetzung). */
+  understaffPersons: number;
+  /** Σ überzählige Personen-Schichten (Überbesetzung). */
+  overstaffPersons: number;
+  /** Ampel-Farbe für die Kopfzeilen-Pille. */
+  tone: StatusColor | 'neutral';
+  /** Kurztext, z.B. „Im Plan" oder „2 Personen unterbesetzt". */
+  label: string;
+}
+
+function personsWord(n: number): string {
+  return n === 1 ? 'Person' : 'Personen';
+}
+
+/**
+ * Leitet den kompakten Kopfzeilen-Status rein aus dem Abgleichsergebnis ab
+ * (KEINE neue Berechnung, nutzt `summarizeStaffingKpis`). „none" deckt sowohl
+ * „kein Bedarf definiert" (Saison×Wochentag) als auch „nichts im eigenen
+ * Bereich" ab (beides ⇒ keine Zeilen). Netto-Mischfälle bleiben ehrlich als
+ * `mixed` sichtbar statt sich zu „Im Plan" auszumitteln.
+ */
+export function staffingHeadline(result: StaffingComparisonResult): StaffingHeadline {
+  if (!result.hasRequirements || result.rows.length === 0) {
+    return {
+      kind: 'none',
+      understaffPersons: 0,
+      overstaffPersons: 0,
+      tone: 'neutral',
+      label: 'Kein Bedarf definiert',
+    };
+  }
+  const kpis = summarizeStaffingKpis(result.rows);
+  const under = kpis.understaffPersonShifts;
+  const over = kpis.overstaffPersonShifts;
+  if (under === 0 && over === 0) {
+    return {
+      kind: 'optimal',
+      understaffPersons: 0,
+      overstaffPersons: 0,
+      tone: 'green',
+      label: 'Im Plan',
+    };
+  }
+  if (under > 0 && over === 0) {
+    return {
+      kind: 'understaffed',
+      understaffPersons: under,
+      overstaffPersons: 0,
+      tone: 'red',
+      label: `${under} ${personsWord(under)} unterbesetzt`,
+    };
+  }
+  if (over > 0 && under === 0) {
+    return {
+      kind: 'overstaffed',
+      understaffPersons: 0,
+      overstaffPersons: over,
+      tone: 'red',
+      label: `${over} ${personsWord(over)} überbesetzt`,
+    };
+  }
+  return {
+    kind: 'mixed',
+    understaffPersons: under,
+    overstaffPersons: over,
+    tone: 'red',
+    label: `${under} unter-, ${over} überbesetzt`,
+  };
+}
+
 // ─── Tooltip auf der Differenz ────────────────────────────────────────────────
 
 /**

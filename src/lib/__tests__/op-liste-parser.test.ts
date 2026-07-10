@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   calibrateColumns,
+  extractAmountsFromText,
   parseChDate,
   parseOpListe,
   parseSwissAmount,
@@ -71,12 +72,33 @@ describe('parseSwissAmount', () => {
     expect(parseSwissAmount('-50.00')).toBe(-50);
     expect(parseSwissAmount('(50.00)')).toBe(-50);
   });
+  it('entfernt das Währungskürzel CHF (auch verklebt)', () => {
+    expect(parseSwissAmount("CHF 364'637.50")).toBe(364637.5);
+    expect(parseSwissAmount('CHF364637.50')).toBe(364637.5);
+    expect(parseSwissAmount('CHF -578.95')).toBe(-578.95);
+    // reiner Betrag-Parser bleibt strikt: Zeilen mit Text ergeben null
+    expect(parseSwissAmount("Total der Währung CHF CHF 364'637.50")).toBeNull();
+  });
   it('lehnt Nicht-Beträge ab (OP-Nummern, Daten, Text)', () => {
     expect(parseSwissAmount('12345')).toBeNull();       // Ganzzahl = OP-Nr
     expect(parseSwissAmount('01.05.2026')).toBeNull();  // Datum
     expect(parseSwissAmount('Total')).toBeNull();
     expect(parseSwissAmount('1.5')).toBeNull();         // nur 2 Nachkommastellen
     expect(parseSwissAmount('')).toBeNull();
+  });
+});
+
+describe('extractAmountsFromText', () => {
+  it('extrahiert Beträge aus Freitext (CHF-Präfix, negativ)', () => {
+    expect(extractAmountsFromText("Total der Währung CHF CHF 364'637.50")).toEqual([364637.5]);
+    expect(extractAmountsFromText('Gesamt Saldo von 1 Gutschriften: CHF -578.95')).toEqual([-578.95]);
+  });
+  it('erfasst KEINE Ganzzahlen ohne Nachkommastellen (Postenanzahl)', () => {
+    // „103" (Postenanzahl) darf NICHT als Betrag gelesen werden
+    expect(extractAmountsFromText("Gesamt Saldo von 103 Posten: CHF 364'637.50")).toEqual([364637.5]);
+  });
+  it('liefert eine leere Liste ohne Beträge', () => {
+    expect(extractAmountsFromText('Gesamt Saldo von 103 Posten')).toEqual([]);
   });
 });
 
@@ -255,5 +277,66 @@ describe('parseOpListe — Fehlerpfade (failureReason + debug)', () => {
     const r = parseOpListe([TITLE, STICHTAG, HEADER]);
     expect(r.success).toBe(false);
     expect(r.failureReason).toContain('Keine Lieferantenblöcke');
+  });
+});
+
+// ── Gesamtsaldo-Prioritätslogik (echtes Fussformat) ──────────────────────────
+
+/** Standard-Fixture ohne die synthetischen Fusszeilen. */
+function fixtureWithoutFooter(): OpPdfLine[] {
+  return standardFixture().filter(l =>
+    !l.text.startsWith('Gesamtsaldo')
+    && !l.text.startsWith('Anzahl Posten')
+    && !l.text.startsWith('Angezeigte'),
+  );
+}
+
+describe('parseOpListe — Gesamtsaldo-Prioritäten', () => {
+  it('nimmt „Gesamt Saldo von N Posten" (Prio 1), nicht Rechnungen/Gutschriften/Währung', () => {
+    const fixture: OpPdfLine[] = [
+      ...fixtureWithoutFooter(),
+      line([X.text, 'Gesamt Saldo von 103 Posten:'], [X.offen, "CHF 364'637.50"]),
+      line([X.text, 'Gesamt Saldo von 102 Rechnungen:'], [X.offen, "CHF 365'216.45"]),
+      line([X.text, 'Gesamt Saldo von 1 Gutschriften:'], [X.offen, 'CHF -578.95']),
+      line([X.text, "Total der Währung CHF CHF 364'637.50"]),
+    ];
+    const r = parseOpListe(fixture);
+    expect(r.success).toBe(true);
+    expect(r.totals.openAmount).toBe(364637.5);
+    // Postenanzahl aus der Posten-Zeile abgeleitet (keine „Anzahl Posten"-Zeile)
+    expect(r.totals.itemCount).toBe(103);
+  });
+
+  it('nutzt „Total der Währung CHF" (Prio 2), wenn keine Posten-Zeile existiert', () => {
+    const fixture: OpPdfLine[] = [
+      ...fixtureWithoutFooter(),
+      line([X.text, "Total der Währung CHF CHF 3'550.50"]),
+    ];
+    const r = parseOpListe(fixture);
+    expect(r.success).toBe(true);
+    expect(r.totals.openAmount).toBe(3550.5);
+  });
+
+  it('ignoriert Subtotale (Rechnungen/Gutschriften) als Gesamtsaldo', () => {
+    // Nur Subtotale vorhanden → kein echtes Total erkannt → openAmount null
+    const fixture: OpPdfLine[] = [
+      ...fixtureWithoutFooter(),
+      line([X.text, 'Gesamt Saldo von 102 Rechnungen:'], [X.offen, "CHF 365'216.45"]),
+      line([X.text, 'Gesamt Saldo von 1 Gutschriften:'], [X.offen, 'CHF -578.95']),
+    ];
+    const r = parseOpListe(fixture);
+    expect(r.success).toBe(true);
+    expect(r.totals.openAmount).toBeNull();
+  });
+
+  it('lässt den Gesamtsaldo null (kein falscher Wert 0.00) und warnt nur bei erkanntem Total', () => {
+    const fixture = fixtureWithoutFooter();
+    const r = parseOpListe(fixture);
+    expect(r.success).toBe(true);
+    expect(r.totals.openAmount).toBeNull();
+    // Hinweis auf fehlenden Gesamtsaldo
+    expect(r.warnings.some(w => /Gesamtsaldo/i.test(w) && /nicht/i.test(w))).toBe(true);
+    // KEINE Abweichungswarnung, wenn gar kein Total erkannt wurde
+    expect(r.warnings.some(w => /weicht/i.test(w))).toBe(false);
   });
 });

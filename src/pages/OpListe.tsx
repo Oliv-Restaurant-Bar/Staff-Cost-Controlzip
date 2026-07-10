@@ -385,6 +385,7 @@ export default function OpListe() {
         open={importOpen}
         onOpenChange={setImportOpen}
         tenantId={tenantId}
+        tableMissing={tableMissing}
         onImported={() => void reload()}
       />
     </div>

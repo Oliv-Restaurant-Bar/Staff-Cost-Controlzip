@@ -1,0 +1,218 @@
+Bitte passe die Erweiterung des bestehenden „Foratable Report“ an die bereits vorhandene CRM-Auswertung an.
+
+Wichtig:
+In der CRM-Auswertung gibt es bereits eine Ansicht für zukünftige Reservationen. Diese Logik und vorhandene Komponenten sollen wiederverwendet werden. Es darf keine zweite parallele Zukunftslogik entstehen.
+
+Ziel:
+Im Foratable Report sollen die zukünftigen Reservationen neu ganz oben stehen, weil sie operativ die wichtigste Information liefern. Zusätzlich soll es eine kompakte Kalenderübersicht geben, die zuerst nur als kleine Übersicht sichtbar ist und sich erst nach Klick vollständig öffnet.
+
+1. Bestehende CRM-Zukunftsansicht wiederverwenden
+
+Bitte zuerst die bestehende CRM-Auswertung für zukünftige Reservationen lesen und prüfen:
+
+- Datenquelle
+- Zeitraumlogik
+- Statusfilter
+- Tagesaggregation
+- Kennzahlen
+- vorhandene Komponenten
+- bestehende Drilldowns
+- PII-/Rollengating
+
+Die Zukunftsansicht im Foratable Report soll auf derselben zentralen Logik basieren.
+
+Keine zweite Berechnung und keine parallelen Helper bauen, wenn die CRM-Auswertung bereits dieselben Werte liefert.
+
+2. Neue Seitenreihenfolge
+
+Der Foratable Report soll künftig so aufgebaut sein:
+
+A. Kompakter Seitenkopf
+B. Zukunftsübersicht Reservationen ganz oben
+C. Zeitraum-Auswahl
+D. Kompakte Kalenderübersicht
+E. Bestehende Report-KPIs und Detailauswertungen
+F. Status-Verteilung, Räume und weitere bestehende Blöcke
+G. Drucken / PDF / Import-Aktionen weiterhin verfügbar
+
+Die Zukunftsübersicht muss vor den bisherigen allgemeinen Report-Kennzahlen stehen.
+
+3. Zukunftsübersicht ganz oben
+
+Oben eine kompakte Sektion:
+
+„Zukünftige Reservationen“
+
+Darin maximal 4 zentrale Kennzahlen:
+
+- Personen zukünftig
+- Reservationen zukünftig
+- nächster starker Tag
+- stärkster Tag im gewählten Zeitraum
+
+Optional zusätzlich einklappbar:
+- Ø Gruppengrösse
+- nächste 7 Tage
+- nächste 14 Tage
+- nächste 30 Tage
+
+Wenn diese Kennzahlen bereits in der CRM-Auswertung existieren, exakt dieselbe Berechnung verwenden.
+
+4. Zeitraum-Auswahl
+
+Schnellauswahl:
+
+- Aktueller Monat
+- Nächste 7 Tage
+- Nächste 14 Tage
+- Nächste 30 Tage
+- Individuell
+
+Bei „Individuell“:
+- Von
+- Bis
+- Anzeigen
+
+Definition:
+- Nächste 7 Tage = heute bis heute + 6 Tage
+- Nächste 14 Tage = heute bis heute + 13 Tage
+- Nächste 30 Tage = heute bis heute + 29 Tage
+
+5. Kalender nur als kompakte Übersicht
+
+Die Kalenderansicht soll nicht sofort als grosser Block geöffnet sein.
+
+Standardmässig sichtbar ist nur eine kompakte Kalender-Zusammenfassung, zum Beispiel:
+
+„Kalenderübersicht · Juli 2026“
+
+Darunter oder rechts:
+- Anzahl Tage mit Reservationen
+- stärkster Tag
+- Personen im Zeitraum
+- Button oder Chevron „Kalender öffnen“
+
+Im geschlossenen Zustand:
+- maximale Höhe ca. 56–90 px
+- keine grosse Monatsmatrix
+- keine Detailtabelle
+
+Erst nach Klick auf „Kalender öffnen“ oder auf die kompakte Übersicht soll der vollständige Kalender erscheinen.
+
+6. Geöffnete Kalenderansicht
+
+Im geöffneten Zustand pro Tag anzeigen:
+
+- Datum
+- Anzahl Personen
+- Anzahl Reservationen
+
+Beispiel:
+
+12
+85 Pers.
+23 Res.
+
+Optional:
+- Abweichung zum Wochentagsdurchschnitt
+- Statusfarbe
+
+Farben sparsam:
+- Grau = 0 Reservationen
+- Grün = normal
+- Orange = hoch
+- Rot = sehr hoch
+
+Schwellenwerte möglichst aus bestehender CRM-/Reservationsanalyse-Logik wiederverwenden.
+
+7. Klick auf einen Kalendertag
+
+Beim Klick auf einen Tag ein bestehendes oder neues kompaktes Detail-Popup öffnen mit:
+
+- Datum
+- Wochentag
+- Personen total
+- Reservationen total
+- Ø Gruppengrösse
+- Zeitfenster
+- Räume
+- Status-Verteilung
+
+Keine Gastnamen, Telefonnummern oder E-Mail-Adressen anzeigen.
+
+8. Kalender und CRM müssen identische Werte zeigen
+
+Sehr wichtig:
+
+Wenn für denselben Zeitraum in CRM-Auswertung und Foratable Report z. B. 823 Personen / 212 Reservationen angezeigt werden, müssen diese Werte identisch sein.
+
+Dafür eine zentrale Tagesaggregations- und Zukunftslogik verwenden.
+
+Keine getrennten Statusfilter.
+
+9. Bestehende Foratable-Report-Auswertungen nach unten
+
+Die heutigen Blöcke:
+- Zeitraum
+- Reservationen
+- Personen
+- Ø Gruppe
+- abgeschlossen
+- storniert
+- neue Gäste
+- wiederkehrend
+- Status-Verteilung
+- Räume
+
+bleiben erhalten, sollen aber unterhalb der neuen Zukunftsübersicht und der kompakten Kalendersektion stehen.
+
+Falls nötig:
+- einzelne Blöcke einklappbar machen
+- keine Inhalte löschen
+
+10. Design / UX
+
+Sehr wichtig:
+
+- schlicht
+- modern
+- lesefreundlich
+- einheitlich mit Phase-3-Designsystem
+- Zukunftsinformationen zuerst
+- Kalender zunächst kompakt
+- vollständiger Kalender erst nach Klick
+- keine doppelte Kartenlandschaft
+- wenig vertikaler Leerraum
+- klare Abschnittshierarchie
+- Desktop-first
+- bestehende gemeinsame Komponenten wiederverwenden
+
+11. Tests
+
+Bitte Tests ergänzen für:
+
+- Zukunftsübersicht steht oberhalb der bisherigen Report-KPIs
+- Werte entsprechen exakt der CRM-Auswertung
+- Aktueller Monat / 7 / 14 / 30 Tage funktionieren
+- Kalender ist standardmässig geschlossen
+- Klick öffnet Kalender
+- Kalender zeigt Personen und Reservationen pro Tag
+- Tage ohne Reservationen zeigen 0
+- Klick auf Tag öffnet Detailansicht
+- keine PII in Übersicht oder Popup
+- bestehende Report-Auswertungen bleiben erhalten
+
+12. Abschluss
+
+Bitte danach:
+
+- Type-Check-Gate
+- relevante Regressionstests
+- Browser-/Live-Check
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Die CRM-Auswertung bleibt die fachliche Quelle für Zukunftsreservationen.
+Der Foratable Report soll diese Informationen operativ ganz oben sichtbar machen und zusätzlich eine einklappbare Kalenderübersicht anbieten.
