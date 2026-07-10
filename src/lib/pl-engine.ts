@@ -154,9 +154,9 @@ export const PL_STRUCTURE: PLRowDef[] = [
     computedFrom: { type: 'sum', rowIds: ['revenue_total'] },
   },
 
-  // ── DIREKTER WARENAUFWAND ────────────────────────────────────────────────────
+  // ── WARENAUFWAND ─────────────────────────────────────────────────────────────
   { id: 'spacer_1', type: 'spacer', label: '', indent: 0, showPercent: false },
-  { id: 'section_cogs', type: 'section', label: 'DIREKTER WARENAUFWAND', indent: 0, showPercent: false },
+  { id: 'section_cogs', type: 'section', label: 'WARENAUFWAND', indent: 0, showPercent: false },
   {
     id: 'cogs_food', type: 'line', label: 'Wareneinsatz Küche',
     indent: 1, showPercent: false, valueRole: 'negative',
@@ -167,15 +167,28 @@ export const PL_STRUCTURE: PLRowDef[] = [
     indent: 1, showPercent: false, valueRole: 'negative',
     categoryIds: ['wareneinsatz_bar', 'wareneinsatz_getraenke', 'warenaufwand_getraenke', 'beverage_cost'],
   },
+  // Zwischensumme direkter Warenaufwand (Küche + Getränke, Konten 4000–4070).
+  {
+    id: 'total_cogs_direct', type: 'subtotal', label: 'Direkter Warenaufwand',
+    indent: 0, showPercent: false, valueRole: 'negative',
+    computedFrom: { type: 'sum', rowIds: ['cogs_food', 'cogs_bev'] },
+  },
   {
     id: 'cogs_other', type: 'line', label: 'Warenaufwand Diverses',
     indent: 1, showPercent: false, valueRole: 'negative',
     categoryIds: ['wareneinsatz_diverses', 'warenaufwand_diverses'],
   },
+  // Zwischensumme übriger Warenaufwand (Diverses, Konten 4071–4999).
   {
-    id: 'total_cogs', type: 'subtotal', label: 'Total Warenaufwand',
+    id: 'total_cogs_uebrig', type: 'subtotal', label: 'Übriger Warenaufwand',
     indent: 0, showPercent: false, valueRole: 'negative',
-    computedFrom: { type: 'sum', rowIds: ['cogs_food', 'cogs_bev', 'cogs_other'] },
+    computedFrom: { type: 'sum', rowIds: ['cogs_other'] },
+  },
+  // Gesamtwarenaufwand (id bleibt `total_cogs` — alle Konsumenten referenzieren ihn per id).
+  {
+    id: 'total_cogs', type: 'subtotal', label: 'Gesamtwarenaufwand',
+    indent: 0, showPercent: false, valueRole: 'negative',
+    computedFrom: { type: 'sum', rowIds: ['total_cogs_direct', 'total_cogs_uebrig'] },
   },
   {
     id: 'gross_profit_1', type: 'result', label: 'Bruttogewinn 1',

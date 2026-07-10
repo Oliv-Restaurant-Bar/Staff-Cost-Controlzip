@@ -101,10 +101,14 @@ export function safePkQuote(
 export interface ErfolgsrechnungVergleichInput {
   /** Berechneter Personalaufwand (App-Kalkulation, Total Personal Ist). */
   berechnetCHF: number;
-  /** FIBU: explizit erfasster Personalaufwand-Ist (`personnelCostActual`), falls > 0. */
-  personnelCostActual: number | null | undefined;
-  /** FIBU: aus 5xxx abgeleiteter Personalaufwand (PL-Engine `total_personnel`, „clean"). */
-  plTotalPersonnel: number | null | undefined;
+  /**
+   * FIBU-Ist laut Erfolgsrechnung = „Löhne (Total)" (personnel_wages) +
+   * „Sozialleistungen" (personnel_social) aus DERSELBEN computePLForMonth-
+   * Berechnung, die auch die Erfolgsrechnung/PLView rendert (Single Source of
+   * Truth) — KEINE eigene 5xxx-Aggregation, KEINE separate Kontenauswahl, KEIN
+   * „Übriger Personalaufwand". `null`/≤ 0 → Vergleich „missing" (nie 0 anzeigen).
+   */
+  fibuCHF: number | null | undefined;
   /** P&L-Nettoumsatz (`net_revenue.actual`) — nur als Kontroll-/Referenzwert. */
   plNetRevenue: number | null | undefined;
   /** Umsatz für BEIDE Quoten (identischer Nenner → Prozentpunkte vergleichbar). */
@@ -115,10 +119,8 @@ export type ErfolgsrechnungVergleich =
   | { status: 'missing' }
   | {
       status: 'ok';
-      /** Effektiver Personalaufwand laut Erfolgsrechnung. */
+      /** Effektiver Personalaufwand laut Erfolgsrechnung (Löhne + Sozialleistungen). */
       fibuCHF: number;
-      /** Herkunft des FIBU-Werts. */
-      fibuSource: 'personnelCostActual' | 'pl5xxx';
       /** Berechneter Personalaufwand (durchgereicht). */
       berechnetCHF: number;
       /** Berechnet − FIBU (CHF). Positiv = App rechnet höher als die Buchhaltung. */
@@ -202,36 +204,27 @@ export function buildErfolgsVergleichPaar(i: ErfolgsVergleichPaarInput): Erfolgs
 }
 
 /**
- * Vergleicht den berechneten Personalaufwand mit der Erfolgsrechnung.
+ * Vergleicht den berechneten Personalaufwand mit der Erfolgsrechnung (Ist-Ebene).
  *
- * FIBU-Wert: `personnelCostActual` (> 0) hat Vorrang, sonst der aus 5xxx
- * abgeleitete PL-Wert — exakt die Regel der Reporting-Seite (Single Source
- * of Truth). Der FIBU-Wert enthält BEREITS den effektiven Arbeitgeberaufwand
- * und wird NIE zusätzlich mit dem Sozialkostenfaktor multipliziert.
+ * Der FIBU-Wert (`fibuCHF`) ist EXAKT „Löhne (Total)" + „Sozialleistungen" aus
+ * derselben computePLForMonth-Berechnung, die auch die Erfolgsrechnung/PLView
+ * rendert (Single Source of Truth) — keine separate Kontenauswahl, keine eigene
+ * Aggregation, kein „Übriger Personalaufwand". Der Wert enthält bereits den
+ * vollen Arbeitgeberaufwand und wird NIE zusätzlich mit dem Sozialkostenfaktor
+ * multipliziert. Fehlt er (≤ 0) → `{ status: 'missing' }` (nie 0 anzeigen).
  *
- * Fehlt beides → `{ status: 'missing' }` (Aufrufer zeigt „keine Erfolgsrechnung",
- * niemals 0).
+ * Dünner Wrapper um `buildErfolgsVergleichPaar` (gemeinsame Vergleichsmathematik);
+ * ergänzt nur das Ist-spezifische `revenueMismatch`-Flag.
  */
 export function buildErfolgsrechnungVergleich(
   i: ErfolgsrechnungVergleichInput,
 ): ErfolgsrechnungVergleich {
-  const explicit =
-    i.personnelCostActual != null && i.personnelCostActual > 0 ? i.personnelCostActual : null;
-  const derived =
-    i.plTotalPersonnel != null && i.plTotalPersonnel > 0 ? i.plTotalPersonnel : null;
-  const fibuCHF = explicit ?? derived;
-
-  // Reine Vergleichsmathematik über die generische Ebenen-Funktion (Single Source
-  // of Truth); hier zusätzlich die Ist-spezifischen Felder fibuSource + revenueMismatch.
   const paar = buildErfolgsVergleichPaar({
     appCHF: i.berechnetCHF,
-    fibuCHF,
+    fibuCHF: i.fibuCHF,
     revenue: i.effectiveRevenue,
   });
   if (paar.status === 'missing') return { status: 'missing' };
-
-  const fibuSource: 'personnelCostActual' | 'pl5xxx' =
-    explicit != null ? 'personnelCostActual' : 'pl5xxx';
 
   const revenueMismatch =
     i.plNetRevenue != null && i.plNetRevenue > 0 && i.effectiveRevenue > 0
@@ -241,7 +234,6 @@ export function buildErfolgsrechnungVergleich(
   return {
     status: 'ok',
     fibuCHF: paar.fibuCHF,
-    fibuSource,
     berechnetCHF: paar.appCHF,
     diffCHF: paar.diffCHF,
     berechnetPct: paar.appPct,

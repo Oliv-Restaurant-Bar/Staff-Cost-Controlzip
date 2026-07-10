@@ -69,29 +69,28 @@ describe('toneForDiffPp — Ampel anhand Prozentpunkte-Abweichung', () => {
   });
 });
 
-describe('buildErfolgsrechnungVergleich — Planung vs. Erfolgsrechnung', () => {
-  it('missing, wenn weder personnelCostActual noch PL-5xxx vorhanden (niemals 0)', () => {
-    const r = buildErfolgsrechnungVergleich({
-      berechnetCHF: 60_000,
-      personnelCostActual: undefined,
-      plTotalPersonnel: 0,
-      plNetRevenue: null,
-      effectiveRevenue: 200_000,
-    });
-    expect(r.status).toBe('missing');
+describe('buildErfolgsrechnungVergleich — Ist vs. Erfolgsrechnung', () => {
+  it('missing, wenn fibuCHF fehlt/≤ 0 (niemals 0 anzeigen)', () => {
+    expect(buildErfolgsrechnungVergleich({
+      berechnetCHF: 60_000, fibuCHF: null, plNetRevenue: null, effectiveRevenue: 200_000,
+    }).status).toBe('missing');
+    expect(buildErfolgsrechnungVergleich({
+      berechnetCHF: 60_000, fibuCHF: 0, plNetRevenue: null, effectiveRevenue: 200_000,
+    }).status).toBe('missing');
+    expect(buildErfolgsrechnungVergleich({
+      berechnetCHF: 60_000, fibuCHF: undefined, plNetRevenue: null, effectiveRevenue: 200_000,
+    }).status).toBe('missing');
   });
 
-  it('nutzt personnelCostActual als FIBU-Wert OHNE Sozialkosten-Multiplikation', () => {
+  it('nutzt fibuCHF (Löhne + Sozialleistungen) direkt OHNE Sozialkosten-Multiplikation', () => {
     const r = buildErfolgsrechnungVergleich({
       berechnetCHF: 62_000,
-      personnelCostActual: 60_000,
-      plTotalPersonnel: 58_000, // wird ignoriert, weil explizit vorhanden
+      fibuCHF: 60_000,
       plNetRevenue: 200_000,
       effectiveRevenue: 200_000,
     });
     expect(r.status).toBe('ok');
     if (r.status !== 'ok') return;
-    expect(r.fibuSource).toBe('personnelCostActual');
     expect(r.fibuCHF).toBe(60_000); // exakt der FIBU-Wert, kein Faktor angewandt
     expect(r.diffCHF).toBe(2_000); // 62'000 − 60'000
     expect(r.berechnetPct).toBeCloseTo(31, 6);
@@ -101,17 +100,15 @@ describe('buildErfolgsrechnungVergleich — Planung vs. Erfolgsrechnung', () => 
     expect(r.revenueMismatch).toBe(false);
   });
 
-  it('fällt auf PL-5xxx zurück, wenn kein expliziter FIBU-Wert', () => {
+  it('grosse Abweichung → tone critical (> 3 Pp)', () => {
     const r = buildErfolgsrechnungVergleich({
       berechnetCHF: 70_000,
-      personnelCostActual: undefined,
-      plTotalPersonnel: 58_000,
+      fibuCHF: 58_000,
       plNetRevenue: 200_000,
       effectiveRevenue: 200_000,
     });
     expect(r.status).toBe('ok');
     if (r.status !== 'ok') return;
-    expect(r.fibuSource).toBe('pl5xxx');
     expect(r.fibuCHF).toBe(58_000);
     expect(r.diffCHF).toBe(12_000);
     expect(r.diffPp).toBeCloseTo(6, 6); // 35 % − 29 %
@@ -121,8 +118,7 @@ describe('buildErfolgsrechnungVergleich — Planung vs. Erfolgsrechnung', () => 
   it('Prozentpunkte nutzen denselben Umsatz für beide Quoten', () => {
     const r = buildErfolgsrechnungVergleich({
       berechnetCHF: 50_000,
-      personnelCostActual: 44_000,
-      plTotalPersonnel: null,
+      fibuCHF: 44_000,
       plNetRevenue: 200_000,
       effectiveRevenue: 200_000,
     });
@@ -135,8 +131,7 @@ describe('buildErfolgsrechnungVergleich — Planung vs. Erfolgsrechnung', () => 
   it('Quoten null bei zu kleinem Umsatz → tone neutral, aber CHF-Diff bleibt', () => {
     const r = buildErfolgsrechnungVergleich({
       berechnetCHF: 5_000,
-      personnelCostActual: 4_000,
-      plTotalPersonnel: null,
+      fibuCHF: 4_000,
       plNetRevenue: null,
       effectiveRevenue: 500, // < MIN_REVENUE_FOR_QUOTE
     });
@@ -151,8 +146,7 @@ describe('buildErfolgsrechnungVergleich — Planung vs. Erfolgsrechnung', () => 
   it('revenueMismatch, wenn P&L-Nettoumsatz > 5 % vom PKQ-Umsatz abweicht', () => {
     const r = buildErfolgsrechnungVergleich({
       berechnetCHF: 60_000,
-      personnelCostActual: 60_000,
-      plTotalPersonnel: null,
+      fibuCHF: 60_000,
       plNetRevenue: 230_000, // +15 % ggü. 200'000
       effectiveRevenue: 200_000,
     });
@@ -202,8 +196,7 @@ describe('buildErfolgsVergleichPaar — generische Ebene (Planung ODER Ist)', ()
     const paar = buildErfolgsVergleichPaar({ appCHF: 62_000, fibuCHF: 60_000, revenue: 200_000 });
     const ist = buildErfolgsrechnungVergleich({
       berechnetCHF: 62_000,
-      personnelCostActual: 60_000,
-      plTotalPersonnel: null,
+      fibuCHF: 60_000,
       plNetRevenue: 200_000,
       effectiveRevenue: 200_000,
     });

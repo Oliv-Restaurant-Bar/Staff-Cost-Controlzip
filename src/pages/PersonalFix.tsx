@@ -3145,44 +3145,50 @@ export default function PersonalFixPage() {
     const budgetData = loadBudgetWithPL(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
     const budgetByRow = buildBudgetByRowForMonth(budgetData, selectedMonth - 1, lookupAccount);
     const overrides = budgetByRow.size > 0 ? { budgetByRow } : undefined;
-    // „clean" = OHNE personnelCostActual → rein 5xxx-basiert, identisch mit Erfolgsrechnung
-    const plClean = computePLForMonth({ ...rec, personnelCostActual: undefined }, overrides);
-    const cleanPersonnel = plClean.rows.find(r => r.def.id === 'total_personnel');
-    const plTotalPersonnel = cleanPersonnel?.values.actual ?? null;
+    // EXAKT dieselbe Berechnung wie die Erfolgsrechnung (PLView) — kein „clean"-Sonderweg.
+    // FIBU-Personalaufwand = „Löhne (Total)" (personnel_wages) + „Sozialleistungen"
+    // (personnel_social); „Übriger Personalaufwand" (personnel_other) bleibt BEWUSST
+    // aussen vor (die App-Kalkulation modelliert ihn nicht). Single Source of Truth.
     const plFull = computePLForMonth(rec, overrides);
-    const fullRevenue = plFull.rows.find(r => r.def.id === 'net_revenue');
+    const findRow = (id: string) => plFull.rows.find(r => r.def.id === id);
+    const wages = findRow('personnel_wages');
+    const social = findRow('personnel_social');
+    const fullRevenue = findRow('net_revenue');
+    // Summe zweier PL-Zellen; null nur, wenn BEIDE Werte fehlen (nie 0 erfinden).
+    const sumCells = (
+      a: number | undefined, b: number | undefined,
+    ): number | null => (a === undefined && b === undefined ? null : (a ?? 0) + (b ?? 0));
+    const plPersonnelActual = sumCells(wages?.values.actual, social?.values.actual);
+    const plPersonnelBudget = sumCells(wages?.values.budget, social?.values.budget);
     const plNetRevenue = fullRevenue?.values.actual ?? null;
-    // Budget-Ebene der Erfolgsrechnung (Plan-Seite) — unabhängig von personnelCostActual.
-    const plBudgetPersonnel =
-      plFull.rows.find(r => r.def.id === 'total_personnel')?.values.budget ?? null;
     const plBudgetRevenue = fullRevenue?.values.budget ?? null;
     return {
-      personnelCostActual: rec.personnelCostActual ?? null,
-      plTotalPersonnel,
+      plPersonnelActual,
+      plPersonnelBudget,
       plNetRevenue,
-      plBudgetPersonnel,
       plBudgetRevenue,
     };
     // scheduleRefreshTick: neu lesen, wenn app-weiter Sync neue Reporting-Daten bringt
   }, [selectedYear, selectedMonth, tenantKey, scheduleRefreshTick]);
 
-  // Ist vs. Erfolgsrechnung Ist: berechneter Personalaufwand (Ist) ↔ FIBU-5xxx-Ist
+  // Ist vs. Erfolgsrechnung Ist: berechneter Personalaufwand (Ist) ↔ Erfolgsrechnung
+  // (Löhne + Sozialleistungen), EXAKT wie in der Erfolgsrechnung dargestellt.
   const erVergleich = useMemo(() => buildErfolgsrechnungVergleich({
     berechnetCHF: pfix.active.istTotal,
-    personnelCostActual: erfolgsrechnung.personnelCostActual,
-    plTotalPersonnel: erfolgsrechnung.plTotalPersonnel,
+    fibuCHF: erfolgsrechnung.plPersonnelActual,
     plNetRevenue: erfolgsrechnung.plNetRevenue,
     effectiveRevenue,
   }), [erfolgsrechnung, pfix.active.istTotal, effectiveRevenue]);
 
-  // Planung vs. Erfolgsrechnung (Budget): geplanter Personalaufwand ↔ FIBU-Budget.
+  // Planung vs. Erfolgsrechnung (Budget): geplanter Personalaufwand ↔ ER-Budget
+  // (Löhne + Sozialleistungen, Plan-Seite; identische Definition wie Ist).
   // Nenner = Plan-Umsatz der Erfolgsrechnung; fehlt er, bleibt die Quote n/a (CHF
   // bleibt trotzdem vergleichbar) — nie den Ist-Umsatz mit Plan-Kosten mischen.
   const erVergleichPlan = useMemo(() => buildErfolgsVergleichPaar({
     appCHF: pfix.active.planTotal,
-    fibuCHF: erfolgsrechnung.plBudgetPersonnel,
+    fibuCHF: erfolgsrechnung.plPersonnelBudget,
     revenue: erfolgsrechnung.plBudgetRevenue ?? 0,
-  }), [erfolgsrechnung.plBudgetPersonnel, erfolgsrechnung.plBudgetRevenue, pfix.active.planTotal]);
+  }), [erfolgsrechnung.plPersonnelBudget, erfolgsrechnung.plBudgetRevenue, pfix.active.planTotal]);
 
   // PKQ-Herleitung für InfoTip (echte Werte + Quelle, nichts hartcodiert)
   const pkqBreakdown = useMemo(() => buildPkqBreakdown({
@@ -4180,12 +4186,11 @@ export default function PersonalFixPage() {
                           diffPp: erVergleich.diffPp,
                           tone: erVergleich.tone,
                         } : null}
-                        missingText="Noch keine Ist-Buchung (FIBU 5xxx) vorhanden."
+                        missingText="Noch keine Löhne/Sozialleistungen in der Erfolgsrechnung erfasst."
                         fibuTip={
                           <span>
-                            {erVergleich.status === 'ok' && erVergleich.fibuSource === 'personnelCostActual'
-                              ? 'Quelle: erfasster Personalaufwand-Ist der Erfolgsrechnung.'
-                              : 'Quelle: Summe der FIBU-Konten 5000–5999 (Personalaufwand) der Erfolgsrechnung.'}{' '}
+                            Quelle: „Löhne (Total)" + „Sozialleistungen" der Erfolgsrechnung
+                            (exakt dieselben Werte wie dort dargestellt).{' '}
                             Periode {getMonthLabel(selectedYear, selectedMonth)}. Dieser Wert enthält bereits den
                             vollen Arbeitgeberaufwand und wird nicht nochmals mit Sozialkosten multipliziert.
                             {erVergleich.status === 'ok' && erVergleich.revenueMismatch
