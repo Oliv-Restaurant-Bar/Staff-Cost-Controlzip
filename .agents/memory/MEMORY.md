@@ -34,6 +34,7 @@
 - [replit.md editing pitfalls](replit-md-editing.md) — never inline German bullets in bash-heredoc Python (quote mixups kill the string); write temp file via write tool, then splice.
 - [Vitest full-run OOM & singleFork pollution](vitest-oom-chunking.md) — full `vitest run` OOM-killed silently beside dev server; chunk it; singleFork kills isolation → false failures, re-verify isolated.
 - [E2E-Verifikation hinter Supabase-Login](e2e-auth-verification.md) — Self-Signup + user_profiles-Self-Upsert = Test-Admin möglich; Gast-Token rein client-seitig, sieht aber keine Admin-Flächen.
+- [Warenkosten↔FIBU Abgleich](warenkosten-er-abgleich.md) — operative-vs-FIBU cost compare must gate to whole elapsed months (FIBU sums full months) or partial periods fake a red diff.
 - [Architect response shape](architect-response-shape.md) — architect result.result can be just file echoes; the verdict lives in result.message — log both, don't re-spin.
 - [OP-Liste Gesamtsaldo priority](op-liste-total-priority.md) — resolve footer total AFTER loop by priority (Posten>Währung>generic), exclude Rechnungen/Gutschriften subtotals; keep null not silent 0.00.
 - [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.

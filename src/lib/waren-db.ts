@@ -14,6 +14,16 @@
 import { kvGet, kvSet } from './supabase-kv';
 import { tenantKey } from './tenant-utils';
 import type { TenantId } from '@/contexts/TenantContext';
+import {
+  type WarenKategorie,
+  kategorieFromKonto,
+} from './warenkosten-quote';
+
+// WarenKategorie + kategorieFromKonto leben zentral in `warenkosten-quote`
+// (reine, IO-freie Lib = Single Source of Truth). Re-Export aus Kompatibilität,
+// damit bestehende Importe aus `@/lib/waren-db` weiter funktionieren.
+export { kategorieFromKonto };
+export type { WarenKategorie };
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -23,11 +33,6 @@ export interface Supplier {
   active: boolean;
   createdAt: string;
 }
-
-/**
- * Kategorie einer Warenrechnung für die Kostenaufteilung Food/Beverage.
- */
-export type WarenKategorie = 'Food' | 'Beverage' | 'Sonstiges';
 
 /**
  * Zuordnung eines Rechnungsbetrags zu einem Warenkonto.
@@ -72,22 +77,7 @@ export const WARENKONTO_LIST: { value: string; label: string }[] = [
   { value: '6040', label: '6040 – Betriebsaufwand' },
 ];
 
-/**
- * Leitet die WarenKategorie automatisch vom Warenkonto ab (Fallback-Hilfe).
- * Wichtig: Die explizit gespeicherte `InvoiceEntry.kategorie` hat immer Vorrang.
- *
- * Mapping:
- *   4000 (Lebensmittel), 4030 (Tiefkühl) → Food
- *   4020 (Getränke)                       → Beverage
- *   alle anderen                          → Sonstiges
- */
-export function kategorieFromKonto(konto: string | undefined): WarenKategorie {
-  if (!konto) return 'Sonstiges';
-  const n = parseInt(konto, 10);
-  if (n === 4000 || n === 4030) return 'Food';
-  if (n === 4020)               return 'Beverage';
-  return 'Sonstiges';
-}
+// kategorieFromKonto: siehe `warenkosten-quote` (re-exportiert oben).
 
 // ─── Standard-Lieferanten ─────────────────────────────────────────────────────
 

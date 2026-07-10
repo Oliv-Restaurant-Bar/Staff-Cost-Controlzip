@@ -365,14 +365,14 @@ export default function WesAnalyse() {
                         {row.liefTotal > 0 ? chf(row.liefTotal) : <span className="text-muted-foreground">–</span>}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums bg-blue-50/30 text-blue-700">
-                        {row.liefTotal > 0 ? pct(row.liefTotal, row.revenue) : '–'}
+                        {row.liefTotal > 0 ? pct(row.liefFood + row.liefBeverage, row.revenue) : '–'}
                       </td>
                       {/* Buchhaltung */}
                       <td className="px-3 py-2 text-right tabular-nums bg-emerald-50/30">
                         {row.hasBuchData ? chf(row.buchTotal) : <span className="text-muted-foreground">–</span>}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums bg-emerald-50/30 text-emerald-700">
-                        {row.hasBuchData ? pct(row.buchTotal, row.revenue) : '–'}
+                        {row.hasBuchData ? pct(row.buchFood + row.buchBeverage, row.revenue) : '–'}
                       </td>
                       {/* Diff */}
                       <td className="px-3 py-2 text-right">
@@ -401,13 +401,13 @@ export default function WesAnalyse() {
                     {totals.liefTotal > 0 ? chf(totals.liefTotal) : '–'}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums bg-blue-50/30 text-blue-700">
-                    {totals.liefTotal > 0 ? pct(totals.liefTotal, totals.revenue) : '–'}
+                    {totals.liefTotal > 0 ? pct(totals.liefFood + totals.liefBeverage, totals.revenue) : '–'}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums bg-emerald-50/30">
                     {hasAnyBuchData ? chf(totals.buchTotal) : '–'}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums bg-emerald-50/30 text-emerald-700">
-                    {hasAnyBuchData ? pct(totals.buchTotal, totals.revenue) : '–'}
+                    {hasAnyBuchData ? pct(totals.buchFood + totals.buchBeverage, totals.revenue) : '–'}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     {hasAnyBuchData && hasAnyLiefData
@@ -418,6 +418,10 @@ export default function WesAnalyse() {
               </tfoot>
             </table>
           </div>
+
+          <p className="text-xs text-muted-foreground">
+            Die Quote (%) basiert auf den relevanten Warenkosten (Food + Beverage); «Diverses / Betriebsmaterial» ist ausgeschlossen. Die CHF-Beträge zeigen den vollen Aufwand inkl. Diverses.
+          </p>
 
           {/* Food vs Beverage Split */}
           {(hasAnyRezData || hasAnyLiefData || hasAnyBuchData) && (

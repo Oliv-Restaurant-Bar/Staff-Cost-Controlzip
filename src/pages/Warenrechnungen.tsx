@@ -30,6 +30,22 @@ import {
   type KontoSplit,
   type WarenKategorie,
 } from '@/lib/waren-db';
+import {
+  computeWarenkostenTotals,
+  warenkostenQuote,
+  buildErVergleich,
+  erVergleichStatusLabel,
+  type WarenkostenEntryInput,
+  type ErVergleichStatus,
+} from '@/lib/warenkosten-quote';
+import { exportWarenkostenToExcel } from '@/lib/warenkosten-export';
+import { loadMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { computePLForMonth } from '@/lib/pl-engine';
+import { HintBox } from '@/components/ui/hint-box';
+import { StatusPill } from '@/components/ui/status-pill';
+import { InfoTip } from '@/components/ui/info-tip';
+import { Link } from 'react-router-dom';
+import { TONE_TEXT, type Tone } from '@/components/ui/tones';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -52,7 +68,7 @@ import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt,
+  Filter, X, Receipt, Download,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -113,6 +129,14 @@ function fmtChf(val: number): string {
 }
 function fmtPct(val: number): string {
   return val.toFixed(1) + ' %';
+}
+/**
+ * Relevante Warenkosten (Food + Beverage) einer Eintragsliste – Basis JEDER
+ * Warenkostenquote. Sonstiges ist bewusst AUSGESCHLOSSEN. Single Source of
+ * Truth: delegiert an `computeWarenkostenTotals` aus `warenkosten-quote`.
+ */
+function relevantNetOf(list: WarenkostenEntryInput[]): number {
+  return computeWarenkostenTotals(list).relevantNet;
 }
 function generateId(): string {
   return `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -221,10 +245,18 @@ function PctBadge({ pct }: { pct: number | null }) {
   );
 }
 
+/** ER-Abgleich-Status → Design-System-Ton (Ampel). */
+const ER_STATUS_TONE: Record<ErVergleichStatus, Tone> = {
+  ok: 'good',
+  warn: 'warn',
+  critical: 'critical',
+  none: 'neutral',
+};
+
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
 export default function WarenrechnungenPage() {
-  const { tenantId, tenant } = useTenant();
+  const { tenantId, tenant, tenantKey } = useTenant();
   const { role, warenrechnungenPerms } = usePermissions();
   const { canView, canCreate, canEdit, canDelete, canExport } = warenrechnungenPerms;
 
@@ -399,15 +431,19 @@ export default function WarenrechnungenPage() {
   const isCurrentMonth = year === today.getFullYear() && month === today.getMonth() + 1;
 
   const stats = useMemo(() => computeMonthStats(entries, revenueByDate), [entries, revenueByDate]);
+  // Kategorisierte Monatssummen (Food/Beverage/Sonstiges) – Basis der Quote.
+  const monthTotals = useMemo(() => computeWarenkostenTotals(entries), [entries]);
 
   const totalRevenue = useMemo(
     () => Object.values(revenueByDate).reduce((s, v) => s + v, 0),
     [revenueByDate],
   );
-  const monthPct     = totalRevenue > 0 ? (stats.totalNet / totalRevenue) * 100 : null;
-  const todayNet     = useMemo(() => entries.filter(e => e.date === todayStr).reduce((s, e) => s + e.amountNet, 0), [entries, todayStr]);
+  // Quote = relevante Warenkosten (Food+Beverage) / Umsatz; Sonstiges ausgeschlossen.
+  const monthPct     = warenkostenQuote(monthTotals.relevantNet, totalRevenue);
+  const todayEntries = useMemo(() => entries.filter(e => e.date === todayStr), [entries, todayStr]);
+  const todayNet     = useMemo(() => todayEntries.reduce((s, e) => s + e.amountNet, 0), [todayEntries]);
   const todayRevenue = revenueByDate[todayStr] ?? 0;
-  const todayPct     = todayRevenue > 0 ? (todayNet / todayRevenue) * 100 : null;
+  const todayPct     = warenkostenQuote(relevantNetOf(todayEntries), todayRevenue);
 
   const datesWithEntries = useMemo(() => Array.from(new Set(entries.map(e => e.date))).sort(), [entries]);
 
@@ -454,9 +490,11 @@ export default function WarenrechnungenPage() {
   const suppliersWithEntries = stats.supplierTotals.length;
 
   function getCumulative(upToDate: string) {
-    const cumNet = entries.filter(e => e.date <= upToDate).reduce((s, e) => s + e.amountNet, 0);
+    const list   = entries.filter(e => e.date <= upToDate);
+    const cumNet = list.reduce((s, e) => s + e.amountNet, 0);
     const cumRev = Object.entries(revenueByDate).filter(([d]) => d <= upToDate).reduce((s, [, v]) => s + v, 0);
-    return { cumNet, cumRev, pct: cumRev > 0 ? (cumNet / cumRev) * 100 : null };
+    // Quote nur auf relevante Warenkosten (Food+Beverage); cumNet bleibt Gesamtanzeige.
+    return { cumNet, cumRev, pct: warenkostenQuote(relevantNetOf(list), cumRev) };
   }
 
   // ─── Chart-Daten ────────────────────────────────────────────────────────────
@@ -508,11 +546,14 @@ export default function WarenrechnungenPage() {
     // Kumulierte Werte über den ganzen Monat
     let runCumNet = 0;
     let runCumRev = 0;
-    const cumByDate: Record<string, { cumNet: number; cumRev: number }> = {};
+    let runCumRel = 0;
+    const cumByDate: Record<string, { cumNet: number; cumRev: number; cumRel: number }> = {};
     for (const d of allDays.filter(d2 => d2 <= todayStr)) {
-      runCumNet += entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+      const dayEntries = entries.filter(e => e.date === d);
+      runCumNet += dayEntries.reduce((s, e) => s + e.amountNet, 0);
+      runCumRel += relevantNetOf(dayEntries);
       runCumRev += revenueByDate[d] ?? 0;
-      cumByDate[d] = { cumNet: runCumNet, cumRev: runCumRev };
+      cumByDate[d] = { cumNet: runCumNet, cumRev: runCumRev, cumRel: runCumRel };
     }
 
     const currentWeekKey = (() => { const { week, isoYear } = getIsoWeek(todayStr); return `${isoYear}-W${String(week).padStart(2, '0')}`; })();
@@ -529,12 +570,13 @@ export default function WarenrechnungenPage() {
 
       const revenue = weekDays.reduce((s, d) => s + (revenueByDate[d] ?? 0), 0);
       const costNet = weekDays.reduce((s, d) => s + entries.filter(e => e.date === d).reduce((s2, e) => s2 + e.amountNet, 0), 0);
-      const pct     = revenue > 0 ? (costNet / revenue) * 100 : null;
+      const costRel = weekDays.reduce((s, d) => s + relevantNetOf(entries.filter(e => e.date === d)), 0);
+      const pct     = warenkostenQuote(costRel, revenue);
 
       // Kumuliert bis Ende der Woche (letzter bekannter Tag)
       const lastDay    = weekDays[weekDays.length - 1] ?? to;
-      const cum        = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0 };
-      const cumPct     = cum.cumRev > 0 ? (cum.cumNet / cum.cumRev) * 100 : null;
+      const cum        = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0, cumRel: 0 };
+      const cumPct     = warenkostenQuote(cum.cumRel, cum.cumRev);
       const isComplete = to <= todayStr;
       const isCurrent  = wk === currentWeekKey;
 
@@ -573,13 +615,18 @@ export default function WarenrechnungenPage() {
     const past = allDays.filter(d => d <= todayStr);
     let cumNet = 0;
     let cumRev = 0;
+    let cumRel = 0;
     const points = past.map(d => {
-      const dayNet = entries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+      const dayEntries = entries.filter(e => e.date === d);
+      const dayNet = dayEntries.reduce((s, e) => s + e.amountNet, 0);
+      const dayRel = relevantNetOf(dayEntries);
       const dayRev = revenueByDate[d] ?? 0;
       cumNet += dayNet;
+      cumRel += dayRel;
       cumRev += dayRev;
-      const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
-      const cumPct = cumRev > 0 ? (cumNet / cumRev) * 100 : null;
+      // Quote-Prozente auf relevante Warenkosten (Food+Beverage); dayNet/cumNet bleiben Gesamtanzeige.
+      const dayPct = warenkostenQuote(dayRel, dayRev);
+      const cumPct = warenkostenQuote(cumRel, cumRev);
       return { date: d, label: formatDateShort(d), dayNet, dayRev, dayPct, cumNet, cumRev, cumPct, hasEntry: dayNet > 0 };
     });
     const daysLoaded = points.filter(p => p.hasEntry).length;
@@ -626,15 +673,68 @@ export default function WarenrechnungenPage() {
   const analyseKPIs = useMemo(() => {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
     const totalRev  = Object.entries(analysisRevenue).filter(([k]) => k <= effectiveTo).reduce((s, [, v]) => s + v, 0);
-    const totalCost = analysisEntries.filter(e => e.date <= effectiveTo).reduce((s, e) => s + e.amountNet, 0);
-    const pct = totalRev > 0 ? (totalCost / totalRev) * 100 : null;
+    const periodEntries = analysisEntries.filter(e => e.date <= effectiveTo);
+    const totals = computeWarenkostenTotals(periodEntries);
+    const totalCost    = totals.totalNet;     // inkl. Sonstiges – Gesamtanzeige
+    const relevantCost = totals.relevantNet;  // Food+Beverage – alleinige Quotenbasis
+    const pct = warenkostenQuote(relevantCost, totalRev);
     console.log(`[WAREN-ANALYSE] mode: ${analyseMode}`);
     console.log(`[WAREN-ANALYSE] range: ${analyseDates.from} – ${effectiveTo}`);
     console.log(`[WAREN-ANALYSE] revenue total: CHF ${totalRev.toFixed(0)}`);
-    console.log(`[WAREN-ANALYSE] cost total: CHF ${totalCost.toFixed(0)}`);
+    console.log(`[WAREN-ANALYSE] cost total (inkl. Sonstiges): CHF ${totalCost.toFixed(0)}`);
+    console.log(`[WAREN-ANALYSE] cost relevant (Food+Bev): CHF ${relevantCost.toFixed(0)}`);
     console.log(`[WAREN-ANALYSE] cost pct: ${pct !== null ? pct.toFixed(1) + '%' : '–'}`);
-    return { totalRev, totalCost, pct };
+    return {
+      totalRev, totalCost, relevantCost, pct, effectiveTo,
+      foodCost: totals.foodNet, beverageCost: totals.beverageNet, sonstigeCost: totals.sonstigeNet,
+    };
   }, [analysisEntries, analysisRevenue, analyseDates, analyseMode, todayStr]);
+
+  /**
+   * Abgleich berechnete Warenkosten (operativ, Food+Beverage) ↔ Erfolgsrechnung
+   * (FIBU cogs_food/cogs_bev). SINGLE SOURCE OF TRUTH:
+   *  - berechnete Seite = dieselben kategorisierten Summen wie die Analyse-KPIs,
+   *  - FIBU-Seite = `computePLForMonth` (identische Quelle wie Reporting/PLView),
+   *    die Werte werden NICHT nachträglich faktorisiert.
+   * Beide Quoten teilen die FIBU-Umsatzbasis (net_revenue) über `buildErVergleich`.
+   */
+  const erVergleich = useMemo(() => {
+    const sk = tenantKey(REPORTING_STORAGE_KEY);
+    const [fy, fm, fd] = analyseDates.from.split('-').map(Number);
+    const [ty, tm, td] = analyseDates.to.split('-').map(Number);
+    let cogsFood = 0, cogsBev = 0, cogsOther = 0, netRev = 0;
+    let anyEr = false;
+    let y = fy, m = fm;
+    // Über alle Kalendermonate des Analyse-Zeitraums summieren.
+    while (y < ty || (y === ty && m <= tm)) {
+      const record = loadMonth(y, m, sk);
+      if (record.expenseCategories.length > 0) anyEr = true;
+      const pl = computePLForMonth(record);
+      const val = (id: string) => pl.rows.find(r => r.def.id === id)?.values.actual ?? 0;
+      cogsFood  += val('cogs_food');
+      cogsBev   += val('cogs_bev');
+      cogsOther += val('cogs_other');
+      netRev    += val('net_revenue');
+      m++; if (m > 12) { m = 1; y++; }
+    }
+    const v = buildErVergleich({
+      calcFood: analyseKPIs.foodCost,
+      calcBev: analyseKPIs.beverageCost,
+      er: anyEr ? { cogsFood, cogsBev, cogsOther, revenue: netRev > 0 ? netRev : null } : null,
+    });
+    // Der FIBU-Abgleich summiert IMMER ganze Kalendermonate. Aussagekräftig ist
+    // er nur, wenn der Analyse-Zeitraum genau abgeschlossene Monate abdeckt
+    // (1. bis Monatsende, komplett in der Vergangenheit). Teilzeiträume
+    // (Woche / laufender Monat / YTD) würden eine Scheindifferenz erzeugen.
+    const lastDayToMonth = new Date(ty, tm, 0).getDate();
+    const [cy, cm] = todayStr.split('-').map(Number);
+    const monthAligned =
+      fd === 1 && td === lastDayToMonth && (ty < cy || (ty === cy && tm < cm));
+    console.log(`[WAREN-ER] hasEr: ${v.hasEr} · aligned: ${monthAligned} · calc ${v.calcQuote?.toFixed(1) ?? '–'}% · er ${v.erQuote?.toFixed(1) ?? '–'}% · diffPp ${v.diffPp?.toFixed(2) ?? '–'}`);
+    return { ...v, monthAligned };
+    // tenantKey ist nicht memoisiert; tenantId triggert korrektes Neuladen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analyseDates, analyseKPIs.foodCost, analyseKPIs.beverageCost, tenantId, todayStr]);
 
   const analyseSuppliers = useMemo(() => {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
@@ -682,13 +782,15 @@ export default function WarenrechnungenPage() {
       return getDaysInMonth(aYear, aMonth);
     })();
     const past = allDays.filter(d => d <= todayStr);
-    let cumNet = 0, cumRev = 0;
+    let cumNet = 0, cumRev = 0, cumRel = 0;
     return past.map(d => {
-      const dayNet = analysisEntries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+      const dayEntries = analysisEntries.filter(e => e.date === d);
+      const dayNet = dayEntries.reduce((s, e) => s + e.amountNet, 0);
+      const dayRel = relevantNetOf(dayEntries);
       const dayRev = analysisRevenue[d] ?? 0;
-      cumNet += dayNet; cumRev += dayRev;
-      const dayPct = dayRev > 0 ? (dayNet / dayRev) * 100 : null;
-      const cumPct = cumRev > 0 ? (cumNet / cumRev) * 100 : null;
+      cumNet += dayNet; cumRel += dayRel; cumRev += dayRev;
+      const dayPct = warenkostenQuote(dayRel, dayRev);
+      const cumPct = warenkostenQuote(cumRel, cumRev);
       return { date: d, label: formatDateShort(d), dayNet, dayRev, dayPct, cumNet, cumRev, cumPct, hasEntry: dayNet > 0 };
     });
   }, [analyseMode, analysisEntries, analysisRevenue, analyseDates, aYear, aMonth, todayStr]);
@@ -712,16 +814,18 @@ export default function WarenrechnungenPage() {
         monthList.push(`${aRangeYear}-${String(m2).padStart(2,'0')}`);
       }
     }
-    let cumNet = 0, cumRev = 0;
+    let cumNet = 0, cumRev = 0, cumRel = 0;
     return monthList.map(mk => {
       const [y, m] = mk.split('-').map(Number);
       const days   = getDaysInMonth(y, m);
       const pastDs = days.filter(d => d <= todayStr && d <= analyseDates.to);
       const revenue = pastDs.reduce((s, d) => s + (rangeRevenue[d] ?? 0), 0);
-      const costNet = rangeEntries.filter(e => e.date >= days[0] && e.date <= days[days.length-1] && e.date <= todayStr).reduce((s, e) => s + e.amountNet, 0);
-      cumNet += costNet; cumRev += revenue;
-      const pct    = revenue > 0 ? (costNet / revenue) * 100 : null;
-      const cumPct = cumRev > 0 ? (cumNet / cumRev) * 100 : null;
+      const monthEntries = rangeEntries.filter(e => e.date >= days[0] && e.date <= days[days.length-1] && e.date <= todayStr);
+      const costNet = monthEntries.reduce((s, e) => s + e.amountNet, 0);
+      const costRel = relevantNetOf(monthEntries);
+      cumNet += costNet; cumRel += costRel; cumRev += revenue;
+      const pct    = warenkostenQuote(costRel, revenue);
+      const cumPct = warenkostenQuote(cumRel, cumRev);
       // Debug-Logs
       console.log(`[WAREN-YEAR] month: ${mk}`);
       console.log(`[WAREN-YEAR] revenue: CHF ${revenue.toFixed(0)}`);
@@ -742,12 +846,14 @@ export default function WarenrechnungenPage() {
       const { week, isoYear } = getIsoWeek(d);
       weekKeys.add(`${isoYear}-W${String(week).padStart(2,'0')}`);
     }
-    let runCumNet = 0, runCumRev = 0;
-    const cumByDate: Record<string, { cumNet: number; cumRev: number }> = {};
+    let runCumNet = 0, runCumRev = 0, runCumRel = 0;
+    const cumByDate: Record<string, { cumNet: number; cumRev: number; cumRel: number }> = {};
     for (const d of pastDays) {
-      runCumNet += analysisEntries.filter(e => e.date === d).reduce((s, e) => s + e.amountNet, 0);
+      const dayEntries = analysisEntries.filter(e => e.date === d);
+      runCumNet += dayEntries.reduce((s, e) => s + e.amountNet, 0);
+      runCumRel += relevantNetOf(dayEntries);
       runCumRev += analysisRevenue[d] ?? 0;
-      cumByDate[d] = { cumNet: runCumNet, cumRev: runCumRev };
+      cumByDate[d] = { cumNet: runCumNet, cumRev: runCumRev, cumRel: runCumRel };
     }
     const currentWeekKey = (() => { const { week, isoYear } = getIsoWeek(todayStr); return `${isoYear}-W${String(week).padStart(2,'0')}`; })();
     const result: WeekData[] = [];
@@ -758,10 +864,11 @@ export default function WarenrechnungenPage() {
       const weekDays = pastDays.filter(d => d >= from && d <= to);
       const revenue = weekDays.reduce((s, d) => s + (analysisRevenue[d] ?? 0), 0);
       const costNet = weekDays.reduce((s, d) => s + analysisEntries.filter(e => e.date === d).reduce((s2, e) => s2 + e.amountNet, 0), 0);
-      const pct = revenue > 0 ? (costNet / revenue) * 100 : null;
+      const costRel = weekDays.reduce((s, d) => s + relevantNetOf(analysisEntries.filter(e => e.date === d)), 0);
+      const pct = warenkostenQuote(costRel, revenue);
       const lastDay = weekDays[weekDays.length - 1] ?? to;
-      const cum = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0 };
-      const cumPct = cum.cumRev > 0 ? (cum.cumNet / cum.cumRev) * 100 : null;
+      const cum = cumByDate[lastDay] ?? { cumNet: 0, cumRev: 0, cumRel: 0 };
+      const cumPct = warenkostenQuote(cum.cumRel, cum.cumRev);
       const isComplete = to <= todayStr; const isCurrent = wk === currentWeekKey;
       const status: WeekStatus = pct === null ? 'nodata' : pct <= targetPct ? 'green' : pct <= targetPct + 2 ? 'yellow' : 'red';
       result.push({ weekKey: wk, weekLabel: `KW ${String(week2).padStart(2,'0')}`, from, to, revenue, costNet, pct, cumNet: cum.cumNet, cumRev: cum.cumRev, cumPct, status, isCurrent, isComplete });
@@ -798,13 +905,33 @@ export default function WarenrechnungenPage() {
   })();
   const forecastRev      = forecastRevs[forecastKey] ?? 0;         // nur der Zusatzumsatz
   const forecastTotal    = analyseKPIs.totalRev + forecastRev;     // aktuell + zusatz
-  const forecastPct      = forecastRev > 0 && analyseKPIs.totalCost > 0 && forecastTotal > 0
-    ? (analyseKPIs.totalCost / forecastTotal) * 100 : null;
+  const forecastPct      = forecastRev > 0 && analyseKPIs.relevantCost > 0 && forecastTotal > 0
+    ? warenkostenQuote(analyseKPIs.relevantCost, forecastTotal) : null;
   const forecastQuickValues = analyseMode === 'week'
     ? [1000, 2000, 3000, 5000, 7500, 10000]
     : analyseMode === 'year' || analyseMode === 'ytd'
     ? [25000, 50000, 75000, 100000, 150000, 200000]
     : [2000, 5000, 10000, 15000, 20000, 25000, 30000];
+
+  /** Excel-Export des aktuellen Analyse-Zeitraums (Detail + Zusammenfassung). */
+  async function handleWarenkostenExport() {
+    if (!canExport) { toast.error('Keine Berechtigung zum Export.'); return; }
+    if (analysisEntries.length === 0) { toast.error('Keine Rechnungen im gewählten Zeitraum.'); return; }
+    try {
+      await exportWarenkostenToExcel({
+        periodLabel: analyseRangeLabel,
+        from: analyseDates.from,
+        to: analyseDates.to,
+        tenantName: tenant.name,
+        invoices: analysisEntries,
+        revenue: analyseKPIs.totalRev > 0 ? analyseKPIs.totalRev : null,
+      });
+      toast.success('Excel-Export erstellt.');
+    } catch (e) {
+      console.error('[WAREN-EXPORT] Export fehlgeschlagen:', e);
+      toast.error('Export fehlgeschlagen.');
+    }
+  }
 
   async function handleSave() {
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
@@ -1485,14 +1612,27 @@ export default function WarenrechnungenPage() {
                         {label}
                       </button>
                     ))}
-                    <div className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground pr-1">
-                      <span>Ziel</span>
-                      <input
-                        type="number" min={0} max={100} step={1} value={targetPct}
-                        onChange={e => setTargetPct(Number(e.target.value))}
-                        className="w-14 h-7 rounded-md border border-border bg-background px-2 text-center text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
-                      />
-                      <span>%</span>
+                    <div className="ml-auto flex items-center gap-3">
+                      {canExport && (
+                        <button
+                          onClick={handleWarenkostenExport}
+                          disabled={rangeLoading || analysisEntries.length === 0}
+                          title="Warenkosten des Zeitraums als Excel exportieren"
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm font-medium border border-border bg-background hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          Excel-Export
+                        </button>
+                      )}
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground pr-1">
+                        <span>Ziel</span>
+                        <input
+                          type="number" min={0} max={100} step={1} value={targetPct}
+                          onChange={e => setTargetPct(Number(e.target.value))}
+                          className="w-14 h-7 rounded-md border border-border bg-background px-2 text-center text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+                        />
+                        <span>%</span>
+                      </div>
                     </div>
                   </div>
 
@@ -1674,6 +1814,8 @@ export default function WarenrechnungenPage() {
                       label="Warenkosten netto" Icon={ShoppingCart}
                       value={analyseKPIs.totalCost > 0 ? `CHF ${fmtChf(analyseKPIs.totalCost)}` : '–'}
                       variant="default"
+                      sub={analyseKPIs.totalCost > 0 ? `davon relevant (Food+Bev): CHF ${fmtChf(analyseKPIs.relevantCost)}` : undefined}
+                      sub2={analyseKPIs.sonstigeCost > 0 ? `Sonstiges: CHF ${fmtChf(analyseKPIs.sonstigeCost)} · nicht in Quote` : undefined}
                     />
                     <KpiBox
                       label="Warenkosten % · Stand aktuell" Icon={BarChart3}
@@ -1688,6 +1830,120 @@ export default function WarenrechnungenPage() {
                       sub={analyseSuppliers.length > 0 ? analyseSuppliers[0].name : '–'}
                       variant="default"
                     />
+                  </div>
+                )}
+
+                {/* ── Warenkosten vs. Erfolgsrechnung (FIBU-Abgleich) ──────── */}
+                {!rangeLoading && (
+                  <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <BarChart3 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                      <span className="text-sm font-semibold text-foreground">Warenkosten vs. Erfolgsrechnung</span>
+                      <InfoTip
+                        text={
+                          <span>
+                            <b>Berechnete Quote</b> = relevante Warenkosten (Food&nbsp;+&nbsp;Beverage) ÷ Umsatz.
+                            «Sonstiges» ist bewusst ausgeschlossen. Zum Abgleich werden die berechneten Werte dem
+                            FIBU-Warenaufwand der Erfolgsrechnung (Konten Küche + Getränke) gegenübergestellt.
+                            Beide Quoten nutzen dieselbe Umsatzbasis (Betriebsertrag netto der Erfolgsrechnung),
+                            damit die Differenz die Kostenabweichung misst – nicht eine Umsatzverzerrung.
+                          </span>
+                        }
+                      />
+                      {erVergleich.monthAligned && erVergleich.hasEr && (
+                        <StatusPill tone={ER_STATUS_TONE[erVergleich.status]} className="ml-auto">
+                          {erVergleichStatusLabel(erVergleich.status)}
+                        </StatusPill>
+                      )}
+                    </div>
+
+                    {!erVergleich.monthAligned ? (
+                      <HintBox
+                        tone="neutral"
+                        title="Abgleich nur für ganze Monate"
+                      >
+                        Der FIBU-Abgleich vergleicht immer vollständige Kalendermonate. Für Wochen, den laufenden (Teil-)Monat oder YTD ist er nicht aussagekräftig – wähle einen abgeschlossenen Monat oder mehrere ganze Monate (bis zum Vormonat).
+                      </HintBox>
+                    ) : !erVergleich.hasEr ? (
+                      <HintBox
+                        tone="info"
+                        title="Keine Erfolgsrechnung importiert"
+                        action={
+                          <Link to="/reporting" className="font-medium underline whitespace-nowrap">
+                            Erfolgsrechnung importieren →
+                          </Link>
+                        }
+                      >
+                        Für diesen Zeitraum liegen keine FIBU-Werte vor – die berechnete Warenkostenquote kann nicht gegengeprüft werden.
+                      </HintBox>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-xs text-muted-foreground">
+                                <th className="text-left font-medium py-1 pr-2"> </th>
+                                <th className="text-right font-medium py-1 px-2">Food</th>
+                                <th className="text-right font-medium py-1 px-2">Beverage</th>
+                                <th className="text-right font-medium py-1 px-2">Total relevant</th>
+                                <th className="text-right font-medium py-1 pl-2">Quote</th>
+                              </tr>
+                            </thead>
+                            <tbody className="tabular-nums">
+                              <tr className="border-t border-border/60">
+                                <td className="py-1.5 pr-2 text-muted-foreground">Berechnet (operativ)</td>
+                                <td className="text-right px-2">CHF {fmtChf(erVergleich.calcFood)}</td>
+                                <td className="text-right px-2">CHF {fmtChf(erVergleich.calcBev)}</td>
+                                <td className="text-right px-2 font-semibold">CHF {fmtChf(erVergleich.calcTotal)}</td>
+                                <td className="text-right pl-2 font-semibold">{erVergleich.calcQuote !== null ? fmtPct(erVergleich.calcQuote) : '–'}</td>
+                              </tr>
+                              <tr className="border-t border-border/60">
+                                <td className="py-1.5 pr-2 text-muted-foreground">Erfolgsrechnung (FIBU)</td>
+                                <td className="text-right px-2">CHF {fmtChf(erVergleich.erFood)}</td>
+                                <td className="text-right px-2">CHF {fmtChf(erVergleich.erBev)}</td>
+                                <td className="text-right px-2 font-semibold">CHF {fmtChf(erVergleich.erTotal)}</td>
+                                <td className="text-right pl-2 font-semibold">{erVergleich.erQuote !== null ? fmtPct(erVergleich.erQuote) : '–'}</td>
+                              </tr>
+                              <tr className="border-t border-border">
+                                <td className="py-1.5 pr-2 font-medium">Differenz (FIBU − berechnet)</td>
+                                <td className="px-2" />
+                                <td className="px-2" />
+                                <td className="text-right px-2 font-semibold">{erVergleich.diffChf !== null ? `CHF ${fmtChf(erVergleich.diffChf)}` : '–'}</td>
+                                <td className={cn('text-right pl-2 font-bold', TONE_TEXT[ER_STATUS_TONE[erVergleich.status]])}>
+                                  {erVergleich.diffPp !== null ? `${erVergleich.diffPp > 0 ? '+' : ''}${erVergleich.diffPp.toFixed(1)} pp` : '–'}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                        {erVergleich.erOther > 0 && (
+                          <p className="text-[11px] text-muted-foreground/70">
+                            FIBU «Warenaufwand Diverses» (nicht in relevanter Quote): CHF {fmtChf(erVergleich.erOther)}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {erVergleich.monthAligned && (
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground border-t border-border/50 pt-2">
+                        <span>
+                          Relevant (Food+Bev):{' '}
+                          <span className="font-medium text-foreground tabular-nums">CHF {fmtChf(analyseKPIs.relevantCost)}</span>
+                        </span>
+                        <span>
+                          Sonstiges (nicht in Quote):{' '}
+                          <span className="font-medium text-foreground tabular-nums">CHF {fmtChf(analyseKPIs.sonstigeCost)}</span>
+                        </span>
+                        <span className="sm:ml-auto">
+                          Umsatzbasis:{' '}
+                          {erVergleich.revenue !== null ? (
+                            <span className="font-medium text-foreground tabular-nums">CHF {fmtChf(erVergleich.revenue)} (FIBU netto)</span>
+                          ) : (
+                            <span className="text-amber-600 dark:text-amber-400">kein FIBU-Umsatz</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 

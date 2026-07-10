@@ -1,0 +1,275 @@
+Bitte korrigiere die Seite „Personal FIX + VARIABEL“ fachlich und erweitere die oberen KPI-Boxen um klickbare Detailnavigation.
+
+1. Fehler im Abgleich mit der Erfolgsrechnung korrigieren
+
+Aktuell wird in der Zeile „Ist“ unter der Spalte „Erfolgsrechnung“ fälschlich CHF 90'084 angezeigt.
+
+Für Juni 2026 muss dort der effektive Personalaufwand aus der Erfolgsrechnung von CHF 128'074 verwendet werden.
+
+Bitte zuerst den Datenfluss prüfen und exakt feststellen, warum aktuell CHF 90'084 verwendet wird.
+
+Wahrscheinliche Ursache:
+- Es wird nur ein Teil der FIBU-5xxx-Konten summiert
+- oder es wird eine alte Personalaufwandslogik verwendet
+- oder Arbeitgeberkosten bzw. weitere Personalkostenkonten fehlen
+- oder es wird irrtümlich auf den früheren FIBU-Lohnblock statt auf den vollständigen Personalaufwand der Erfolgsrechnung zugegriffen
+
+Wichtig:
+Nicht CHF 128'074 hart codieren.
+
+Die Spalte „Erfolgsrechnung“ muss den vollständigen Personalaufwand aus der bereits importierten Erfolgsrechnung für den gewählten Monat verwenden.
+
+2. Vollständige FIBU-Konten prüfen
+
+Bitte prüfen, welche Konten in der Erfolgsrechnung zum Personalaufwand gehören.
+
+Der Vergleich muss dieselbe Summe verwenden wie die Erfolgsrechnung selbst.
+
+Mindestens prüfen:
+- Bruttolöhne
+- 13. Monatslohn
+- Lohnzulagen
+- Arbeitgeberbeiträge
+- AHV/IV/EO Arbeitgeber
+- ALV Arbeitgeber
+- FAK
+- Verwaltungskosten
+- UVG Arbeitgeber
+- KTG Arbeitgeber
+- BVG Arbeitgeber
+- L-GAV Arbeitgeberbeitrag
+- weitere effektiv als Personalaufwand gebuchte 5xxx-Konten
+
+Nicht einbeziehen:
+- Arbeitnehmerabzüge als zusätzlichen Aufwand
+- Quellensteuer als Aufwand
+- Durchlaufkonten
+- Verbindlichkeitskonten
+
+Regel:
+FIBU-Ist ist bereits der vollständige Arbeitgeberaufwand und wird niemals nochmals mit einem Sozialkostenfaktor multipliziert.
+
+3. Gemeinsame Datenquelle verwenden
+
+Die Zahl im Abgleich muss exakt mit der Erfolgsrechnung übereinstimmen.
+
+Für Juni 2026:
+- Erfolgsrechnung Personalaufwand: CHF 128'074
+- Personal FIX + VARIABEL App-Ist: CHF 132'712
+- Differenz App − Erfolgsrechnung: CHF 4'638
+
+Bitte den exakten Wert aus den vorhandenen Erfolgsrechnungsdaten übernehmen und nicht separat neu summieren, falls es bereits eine zentrale Erfolgsrechnungsfunktion gibt.
+
+Single Source of Truth:
+- Erfolgsrechnung-Seite
+- Personalabgleich
+- Reporting
+- Exporte
+
+müssen denselben FIBU-Personalaufwand verwenden.
+
+4. Prozentwerte neu berechnen
+
+Nach der Korrektur die Prozentwerte aktualisieren.
+
+Beispielstruktur:
+
+App-Kalkulation Ist
+CHF 132'712
+53.2 %
+
+Erfolgsrechnung Ist
+CHF 128'074
+Erfolgsrechnungs-PKQ %
+
+Differenz
++CHF 4'638
+Differenz in Prozentpunkten
+
+Die Prozentwerte müssen auf derselben Umsatzbasis beruhen oder klar unterschiedlich bezeichnet werden.
+
+Falls die Erfolgsrechnung eine eigene Umsatzbasis verwendet:
+- diese sichtbar ausweisen
+- nicht still mit der App-Umsatzbasis vermischen
+
+5. Rechnungsweg sichtbar machen
+
+Beim Info-Icon in der Erfolgsrechnungs-Spalte anzeigen:
+
+„Personalaufwand Erfolgsrechnung“
+
+- verwendeter Monat
+- verwendete Konten
+- Total Personalaufwand
+- verwendete Umsatzbasis
+- Personalaufwandsquote
+- Importstand / Quelldatei
+- Hinweis:
+  „Der FIBU-Wert enthält bereits alle Arbeitgeberkosten und wird nicht nochmals mit Sozialkosten multipliziert.“
+
+6. Obere KPI-Boxen klickbar machen
+
+Die oberen Auswertungsboxen sollen anklickbar sein.
+
+Betroffene KPI-Boxen:
+- Total Ist
+- Total Plan
+- Differenz Ist − Plan
+- PKQ Ist
+- weitere sichtbare Haupt-KPIs
+
+Beim Hover:
+- Cursor pointer
+- dezenter Hover-Effekt
+- kleines Chevron oder Hinweis „Details“
+
+7. Klick auf „Total Ist CHF 132'712“
+
+Beim Klick auf „Total Ist“ soll der Benutzer direkt zur detaillierten Zusammensetzung dieser Kennzahl gelangen.
+
+Bevorzugte Lösung:
+- auf derselben Seite zur Detailauswertung scrollen
+oder
+- Detail-Drawer/Dialog öffnen, falls die Detailauswertung nicht direkt sichtbar ist
+
+Die Detailansicht muss zeigen:
+
+Total Personal Ist CHF 132'712
+
+Zusammensetzung:
+- FIX Ist
+- FLEX Ist
+- Arbeitgeber-Sozialkosten
+- weitere berücksichtigte Personalkosten
+- Total Arbeitgeberkosten
+
+Zusätzlich:
+- Service
+- Küche
+- weitere Abteilungen
+- pro Mitarbeiter oder pro Kostenart
+- Vergleich Plan vs. Ist
+- Anteil am Umsatz
+
+Alle Werte müssen aus derselben zentralen Berechnung stammen wie die KPI-Box.
+
+8. Klick auf „Total Plan“
+
+Detailansicht:
+- FIX Plan
+- FLEX Plan
+- geplante Arbeitgeber-Sozialkosten
+- Total Plan
+- Budget
+- Differenz zum Budget
+
+9. Klick auf „Differenz Ist − Plan“
+
+Detailansicht:
+- Total Ist
+- Total Plan
+- Differenz CHF
+- Differenz %
+- grösste positive Abweichungen
+- grösste Einsparungen
+- Mitarbeitende oder Bereiche mit grösster Abweichung
+
+10. Klick auf „PKQ Ist“
+
+Detailansicht mit vollständigem Rechnungsweg:
+
+Total Personal Ist
+÷ Umsatz Ist
+= PKQ Ist
+
+Zum Beispiel:
+CHF 132'712
+÷ verwendeter Umsatz
+= 53.2 %
+
+Bitte anzeigen:
+- Personalaufwand
+- Umsatz
+- Zeitraum
+- Datenquelle des Umsatzes
+- Datenquelle des Personalaufwands
+- Brutto oder Netto
+- allfällige Abgrenzung
+
+11. Navigation / UX
+
+Wenn auf eine KPI geklickt wird:
+- Zielbereich klar hervorheben
+- Seite weich scrollen
+- Abschnitt kurz visuell markieren
+- Zurück-nach-oben oder „Zur Übersicht“-Möglichkeit anbieten
+
+Keine neue separate Seite bauen, wenn dieselbe Detailauswertung sinnvoll auf der bestehenden Seite angezeigt werden kann.
+
+12. Design
+
+Bitte vollständig im Phase-3-Designsystem umsetzen:
+
+- schlicht
+- modern
+- kompakt
+- lesefreundlich
+- klickbare Karten klar erkennbar
+- keine unnötig grossen Dialoge
+- Details strukturiert und aufklappbar
+- Zahlen rechtsbündig
+- konsistente Farben:
+  - Blau = Plan
+  - Orange = Ist
+  - Grün = günstige Abweichung
+  - Rot = ungünstige Abweichung
+  - Grau = neutral
+
+13. Fehlende Erfolgsrechnung
+
+Falls für einen Monat keine Erfolgsrechnung importiert ist:
+
+Nicht 0 anzeigen.
+
+Stattdessen:
+„Keine Erfolgsrechnung für Juni 2026 importiert“
+
+Mit Aktion:
+„Erfolgsrechnung importieren“
+
+14. Tests
+
+Bitte Tests ergänzen für:
+
+- Erfolgsrechnung Ist verwendet den vollständigen Personalaufwand
+- Juni 2026 liefert CHF 128'074 aus der echten Datenquelle
+- keine Hartcodierung des Werts
+- FIBU-Ist wird nicht mit Sozialkosten multipliziert
+- Arbeitnehmerabzüge und Quellensteuer werden nicht zusätzlich gerechnet
+- Differenz CHF 132'712 − CHF 128'074 wird korrekt berechnet
+- Prozentpunkte korrekt
+- KPI „Total Ist“ ist klickbar
+- Klick führt zur richtigen Detailauswertung
+- Detailauswertung zeigt dieselbe Summe wie die KPI
+- PKQ-Detail zeigt vollständigen Rechnungsweg
+- fehlende Erfolgsrechnung zeigt keinen falschen Nullwert
+- Rollen- und Lohnsichtbarkeit bleiben unverändert
+
+15. Abschluss
+
+Bitte danach:
+
+- Ursache für den bisherigen Wert CHF 90'084 konkret benennen
+- zentralen FIBU-Personalaufwand korrigieren
+- Klicknavigation der KPI-Karten umsetzen
+- Type-Check-Gate
+- relevante Regressionstests
+- Browser-/Live-Check
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Die Erfolgsrechnungszahl darf nicht nur optisch ersetzt werden. Der Personalabgleich muss dieselbe zentrale Zahl verwenden wie die Erfolgsrechnung selbst.
+
+Die oberen KPI-Karten sollen danach als echte Einstiegspunkte in die jeweilige Detailauswertung funktionieren.
