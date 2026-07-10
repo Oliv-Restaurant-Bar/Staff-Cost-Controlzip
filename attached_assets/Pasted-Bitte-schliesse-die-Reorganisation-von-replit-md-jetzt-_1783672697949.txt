@@ -1,0 +1,100 @@
+Bitte schliesse die Reorganisation von replit.md jetzt vollständig ab.
+
+Vor dem Abschluss bitte nochmals folgende Punkte verifizieren:
+
+1. Architect-Review
+- Führe einen Architect-Review über den tatsächlichen Task-Diff durch.
+- Prüfe insbesondere:
+  - keine fachlichen Informationen verloren
+  - keine Architekturentscheidungen verändert
+  - keine Inkonsistenzen durch das Zusammenführen entstanden
+  - keine veralteten Verweise mehr vorhanden
+
+2. Dokumentationsprüfung
+Bitte bestätigen:
+
+✓ Alle 9 Hauptkapitel vorhanden
+✓ Projektübersicht
+✓ Architektur
+✓ Designsystem / UX
+✓ Module
+✓ Importsystem
+✓ Finanzlogik
+✓ Offene Roadmap
+✓ Entwicklungsregeln
+✓ Changelog
+
+3. Finanzlogik prüfen
+
+Bitte bestätigen, dass folgende Regeln eindeutig dokumentiert sind:
+
+- Bruttolohn
+- Arbeitgeber-Sozialkosten
+- Total Arbeitgeberkosten
+- FIBU-Ist enthält bereits den effektiven Arbeitgeberaufwand
+- FIBU-Ist wird niemals nochmals mit Sozialkosten multipliziert
+- Arbeitnehmerabzüge sind reine Durchlaufposten
+- Quellensteuer ist kein Personalaufwand
+- zentrale Sozialkostensätze (Single Source of Truth)
+
+4. UX-/Designsystem prüfen
+
+Bitte bestätigen, dass dokumentiert ist:
+
+- gemeinsame PageShell
+- PageHeader
+- KPI-Komponenten
+- Tabellenstandards
+- Dialogstandards
+- Farbdefinitionen
+- Wiederverwendung gemeinsamer Komponenten
+- Desktop-first
+- schlichtes, modernes und lesefreundliches Design
+
+5. Module
+
+Bitte bestätigen, dass alle aktuellen Hauptmodule dokumentiert sind:
+
+- Dashboard
+- Import-Cockpit
+- Tagesabschlüsse
+- Reservationsanalyse
+- Produktanalyse
+- Personalstamm
+- Dienstplanung
+- Personalbedarf
+- CRM
+- Reporting
+- Kennzahlen
+
+6. Roadmap
+
+Bitte prüfen, dass zukünftige Themen sauber getrennt sind und weiterhin enthalten bleiben:
+
+- OP-Listen-Tool
+- Erfolgsrechnung
+- Budget-Ausbau
+- Monatsabschluss
+- weitere geplante Controlling-Module
+
+7. Qualität
+
+Bitte prüfen:
+
+- keine doppelten Kapitel
+- keine widersprüchlichen Aussagen
+- keine veralteten Architekturhinweise
+- keine veralteten TODOs
+- interne Verweise korrekt
+
+8. Abschluss
+
+Wenn alles passt:
+
+- Architect-Review abschliessen
+- Commit-Message schreiben
+- Session-Plan bereinigen
+- kurze Zusammenfassung geben, welche Bereiche strukturell verbessert wurden
+
+Wichtig:
+Es sollen keine Codeänderungen mehr erfolgen. Nur die Dokumentation wird final verifiziert und abgeschlossen.
