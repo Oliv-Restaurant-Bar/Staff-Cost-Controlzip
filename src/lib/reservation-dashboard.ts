@@ -121,6 +121,60 @@ export function countInRange(
   return { reservations, persons };
 }
 
+// ── Tagesaggregation (Kalenderübersicht) ─────────────────────────────────────
+
+/** Aggregat eines einzelnen Kalendertags (keine PII). */
+export interface DayAggregate {
+  /** "yyyy-MM-dd". */
+  date: string;
+  reservations: number;
+  persons: number;
+}
+
+/** "yyyy-MM-dd" + n Tage (UTC-Arithmetik, DST-sicher) → "yyyy-MM-dd". */
+export function addIsoDays(iso: string, n: number): string {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+}
+
+/**
+ * Aggregiert Reservationen je Kalendertag im Bereich [from, to] (beide inkl.),
+ * gefiltert über ein Status-Prädikat.  Enthält AUCH Nulltage (0 Reservationen),
+ * damit die Kalenderübersicht lückenlos ist.  Verwendet dieselbe Datums-,
+ * Status- und Personen-Zähllogik wie `countInRange` → über denselben Bereich
+ * gilt garantiert:  Σ days.reservations === countInRange(…).reservations  und
+ * Σ days.persons === countInRange(…).persons.
+ *
+ * Zeilen ohne Datum werden ignoriert; unbekannte Personenzahl zählt als 0
+ * Personen (aber 1 Reservation) — exakt wie `countInRange`.  Tage sind
+ * chronologisch aufsteigend sortiert.
+ */
+export function aggregateReservationsByDay(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  statusFilter: (s: string) => boolean,
+): DayAggregate[] {
+  if (!from || !to || from > to) return [];
+  // Alle Kalendertage im Bereich vorbelegen, damit Nulltage erhalten bleiben.
+  const byDate = new Map<string, DayAggregate>();
+  for (let d = from.slice(0, 10); d <= to; d = addIsoDays(d, 1)) {
+    byDate.set(d, { date: d, reservations: 0, persons: 0 });
+  }
+  for (const r of rows) {
+    if (!r.date) continue;
+    const d = r.date.slice(0, 10);
+    const bucket = byDate.get(d);
+    if (!bucket) continue; // ausserhalb [from, to]
+    if (!statusFilter(r.status)) continue;
+    bucket.reservations++;
+    bucket.persons += r.partySize ?? 0;
+  }
+  return [...byDate.values()];
+}
+
 // ── Zukunftsreservationen ────────────────────────────────────────────────────
 
 /** Datumsgrenzen für die Zukunfts-Kacheln (alle "yyyy-MM-dd"). */

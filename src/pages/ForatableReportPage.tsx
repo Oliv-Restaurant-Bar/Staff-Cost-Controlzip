@@ -1,20 +1,24 @@
 /**
  * ForatableReportPage — Foratable Report (`/foratable-report`)
  * ===========================================================
- * Wertet BEREITS importierte Reservationen (DB, mandantengefiltert) für einen
- * frei wählbaren Zeitraum aus — kein Upload, kein Import.  Die Kennzahlen sind
- * identisch zur CSV-Vorschau im Reservationen-Import, da dieselbe Logik
- * (`computeReservationStats`) und dieselbe Darstellung (`ReservationSummary`)
- * wiederverwendet werden.
+ * Zwei Blickrichtungen auf bereits importierte Reservationen (DB, mandanten-
+ * gefiltert) für einen frei wählbaren Zeitraum — kein Upload, kein Import:
+ *
+ *  1. ZUKUNFT (oben): Zukunftsübersicht + kompakte Kalenderübersicht ab heute.
+ *     Werte identisch zur CRM-Auswertung (zentrale Logik in foratable-future.ts
+ *     bzw. reservation-dashboard.ts: countInRange/aggregateReservationsByDay).
+ *  2. REPORT (unten): bestehende Auswertung (Kennzahlen, Status, beste Zeiten).
+ *     Identisch zur CSV-Vorschau im Import (`ReservationSummary`).
  *
  * Datenschutz: Reservationen enthalten personenbezogene Daten — Zugriff nur für
- * eingeloggte Admins (RLS auf `authenticated`).  Der Report selbst zeigt nur
- * Aggregate, keine Einzelgast-Daten.
+ * eingeloggte Admins (RLS auf `authenticated`; Gäste ausgeschlossen). Sowohl
+ * Report als auch Kalender-Popup zeigen ausschliesslich Aggregate, keine
+ * Einzelgast-Daten.
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  BarChart2, CalendarRange, Loader2, Printer, FileDown, AlertTriangle, Clock,
+  BarChart2, CalendarRange, Loader2, Printer, FileDown, AlertTriangle, Clock, ChevronDown,
 } from 'lucide-react';
 import { Navigate, Link } from 'react-router-dom';
 import jsPDF from 'jspdf';
@@ -28,22 +32,41 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { PageShell } from '@/components/layout/PageShell';
+import { PageHeader } from '@/components/layout/PageHeader';
+import {
   ReservationSummary, fdate, NUM0, NUM1, STATUS_LABEL,
 } from '@/components/reservations/ReservationSummary';
+import {
+  FutureReservationsOverview, FutureCalendarSection,
+} from '@/components/foratable/FutureReservationsSection';
 import { loadForatableReport } from '@/lib/foratable-report-db';
-import { quickRange } from '@/lib/foratable-report';
-import type { ForatableReport, ReportRange, QuickRangeKind } from '@/lib/foratable-report';
+import { loadFutureReservationRows } from '@/lib/foratable-future-db';
+import type { ForatableReport } from '@/lib/foratable-report';
+import {
+  futureQuickRange, buildFutureOverview,
+  type FutureRange, type FutureRangeKind, type FutureMetric,
+} from '@/lib/foratable-future';
+import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
 import { sortTimeSlots, topTimeSlots } from '@/lib/reservation-time-analysis';
 import type { TimeSortKey } from '@/lib/reservation-time-analysis';
 
-const QUICK_RANGES: Array<{ kind: QuickRangeKind; label: string }> = [
+const QUICK_RANGES: Array<{ kind: Exclude<FutureRangeKind, 'custom'>; label: string }> = [
   { kind: 'current-month', label: 'Aktueller Monat' },
-  { kind: 'last-month',    label: 'Letzter Monat' },
-  { kind: 'current-year',  label: 'Aktuelles Jahr' },
-  { kind: 'last-year',     label: 'Letztes Jahr' },
+  { kind: 'next-7',  label: 'Nächste 7 Tage' },
+  { kind: 'next-14', label: 'Nächste 14 Tage' },
+  { kind: 'next-30', label: 'Nächste 30 Tage' },
 ];
 
 const PCT = new Intl.NumberFormat('de-CH', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 1 });
+
+/** Lokales Heute als „yyyy-MM-dd" (nicht UTC — Schweizer Zeitzone). */
+function todayIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export default function ForatableReportPage() {
   const { tenantId, tenant } = useTenant();
@@ -53,17 +76,22 @@ export default function ForatableReportPage() {
   // (read-only Gäste-Links dürfen keine Reservationsdaten abfragen).
   const canView = isAdmin && !isGuest;
 
-  const initial = quickRange('current-month');
-  const [from, setFrom] = useState(initial.from);
-  const [to, setTo] = useState(initial.to);
+  const [today] = useState(todayIso);
+  const [applied, setApplied] = useState<FutureRange>(() => futureQuickRange('current-month', todayIso()));
+  const [from, setFrom] = useState(() => applied.from);
+  const [to, setTo] = useState(() => applied.to);
+
   const [report, setReport] = useState<ForatableReport | null>(null);
+  const [futureRows, setFutureRows] = useState<ReservationDetailRow[]>([]);
+  const [metric, setMetric] = useState<FutureMetric>('persons');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reportOpen, setReportOpen] = useState(true);
   // „Beste Reservationszeiten": Sortierung (Anzahl/Personen) + Top 10 / Alle Zeiten.
   const [timeSort, setTimeSort] = useState<TimeSortKey>('count');
   const [showAllTimes, setShowAllTimes] = useState(false);
 
-  const runReport = useCallback(async (range: ReportRange) => {
+  const runReport = useCallback(async (range: FutureRange) => {
     if (!canView) return; // niemals Daten für nicht berechtigte Sessions laden
     if (range.from > range.to) {
       setError('Das Von-Datum darf nicht nach dem Bis-Datum liegen.');
@@ -71,33 +99,49 @@ export default function ForatableReportPage() {
     }
     setLoading(true);
     setError(null);
+    setApplied(range);
     try {
-      const r = await loadForatableReport(tenantId, range);
-      setReport(r);
+      // Report (voller Bereich) + Zukunfts-Rohzeilen (ab heute) parallel laden.
+      const [rep, fRows] = await Promise.all([
+        loadForatableReport(tenantId, { from: range.from, to: range.to }),
+        loadFutureReservationRows(tenantId, today, range.to),
+      ]);
+      setReport(rep);
+      setFutureRows(fRows);
       setShowAllTimes(false); // neuer Zeitraum → wieder Top 10 zeigen
     } catch (e) {
       setReport(null);
+      setFutureRows([]);
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       toast.error('Report konnte nicht geladen werden.');
     } finally {
       setLoading(false);
     }
-  }, [tenantId, canView]);
+  }, [tenantId, canView, today]);
 
   // Initial + bei Mandantenwechsel den aktuell gewählten Zeitraum laden.
   useEffect(() => {
     if (!canView) return; // kein DB-Zugriff vor dem Redirect für nicht berechtigte Nutzer
-    runReport({ from, to });
+    runReport(applied);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, canView]);
 
-  const applyQuick = (kind: QuickRangeKind) => {
-    const range = quickRange(kind);
+  // Zukunftsübersicht + Kalender aus den (ab heute geladenen) Rohzeilen — rein,
+  // reagiert auf Kennzahl-Umschalter ohne Neuladen.
+  const overview = useMemo(
+    () => buildFutureOverview(futureRows, applied, today, metric),
+    [futureRows, applied, today, metric],
+  );
+
+  const applyQuick = (kind: Exclude<FutureRangeKind, 'custom'>) => {
+    const range = futureQuickRange(kind, today);
     setFrom(range.from);
     setTo(range.to);
     runReport(range);
   };
+
+  const applyCustom = () => runReport({ kind: 'custom', from, to });
 
   const handlePrint = () => window.print();
 
@@ -187,41 +231,56 @@ export default function ForatableReportPage() {
   if (!canView) return <Navigate to="/" replace />;
 
   return (
-    <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-5">
-      {/* Kopf */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <BarChart2 className="h-6 w-6 text-primary" />
-            Foratable Report
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Auswertung bereits importierter Reservationen für einen frei wählbaren Zeitraum.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {report && (
+    <PageShell
+      width="default"
+      header={
+        <PageHeader
+          icon={<BarChart2 />}
+          title="Foratable Report"
+          info="Auswertung bereits importierter Reservationen für einen frei wählbaren Zeitraum — mit Ausblick auf zukünftige Reservationen. Zeigt nur Aggregate, keine Einzelgast-Daten."
+          meta={`${tenant.name} · ${fdate(applied.from)} – ${fdate(applied.to)}`}
+          actions={
             <>
-              <Button variant="outline" size="sm" onClick={handlePrint} className="print:hidden">
-                <Printer className="h-4 w-4 mr-1.5" /> Drucken
-              </Button>
-              <Button variant="outline" size="sm" onClick={handlePdf} className="print:hidden">
-                <FileDown className="h-4 w-4 mr-1.5" /> PDF
-              </Button>
+              {report && (
+                <>
+                  <Button variant="outline" size="sm" onClick={handlePrint} className="print:hidden">
+                    <Printer className="h-4 w-4 mr-1.5" /> Drucken
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handlePdf} className="print:hidden">
+                    <FileDown className="h-4 w-4 mr-1.5" /> PDF
+                  </Button>
+                </>
+              )}
+              <Link
+                to="/foratable-import"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-medium hover:bg-muted/60 print:hidden"
+              >
+                <CalendarRange className="h-4 w-4" />
+                Zum Import
+              </Link>
             </>
-          )}
-          <Link
-            to="/foratable-import"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted/60 print:hidden"
-          >
-            <CalendarRange className="h-4 w-4" />
-            Zum Import
-          </Link>
-        </div>
-      </div>
+          }
+        />
+      }
+    >
+      {/* (B) Zukunftsübersicht */}
+      <FutureReservationsOverview overview={overview} metric={metric} onMetricChange={setMetric} />
 
-      {/* Filterleiste */}
-      <div className="rounded-lg border border-border bg-card p-4 space-y-3 print:hidden">
+      {/* (C) Zeitraumauswahl */}
+      <div className="rounded-lg border border-border bg-card p-3 space-y-3 print:hidden">
+        <div className="flex flex-wrap gap-2">
+          {QUICK_RANGES.map((q) => (
+            <Button
+              key={q.kind}
+              variant={applied.kind === q.kind ? 'default' : 'secondary'}
+              size="sm"
+              onClick={() => applyQuick(q.kind)}
+              disabled={loading}
+            >
+              {q.label}
+            </Button>
+          ))}
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
             <Label htmlFor="report-from">Von</Label>
@@ -239,22 +298,15 @@ export default function ForatableReportPage() {
               className="w-[160px]"
             />
           </div>
-          <Button onClick={() => runReport({ from, to })} disabled={loading}>
+          <Button onClick={applyCustom} disabled={loading}>
             {loading && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-            Report anzeigen
+            Individuell anzeigen
           </Button>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {QUICK_RANGES.map((q) => (
-            <Button
-              key={q.kind} variant="secondary" size="sm"
-              onClick={() => applyQuick(q.kind)} disabled={loading}
-            >
-              {q.label}
-            </Button>
-          ))}
-        </div>
       </div>
+
+      {/* (D) Kalenderübersicht (einklappbar, default zu) */}
+      <FutureCalendarSection overview={overview} metric={metric} detailRows={futureRows} />
 
       {/* Fehler */}
       {error && (
@@ -271,138 +323,151 @@ export default function ForatableReportPage() {
         </div>
       )}
 
-      {/* Report */}
+      {/* (E–G) Bestehender Report (einklappbar, Logik unverändert) */}
       {report && (
-        <div className="space-y-5">
-          <div className="flex items-center gap-2 text-sm">
-            <CalendarRange className="h-4 w-4 text-muted-foreground" />
-            <span className="font-medium">
-              {tenant.name} · {fdate(report.range.from)} – {fdate(report.range.to)}
-            </span>
+        <Collapsible open={reportOpen} onOpenChange={setReportOpen} className="space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-sm">
+              <CalendarRange className="h-4 w-4 text-muted-foreground" />
+              <span className="font-medium">
+                Report · {fdate(report.range.from)} – {fdate(report.range.to)}
+              </span>
+            </div>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground print:hidden"
+              >
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', reportOpen && 'rotate-180')} />
+                {reportOpen ? 'Report einklappen' : 'Report anzeigen'}
+              </button>
+            </CollapsibleTrigger>
           </div>
 
-          {report.stats.reservationCount === 0 ? (
-            <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-              Keine importierten Reservationen in diesem Zeitraum.
-            </div>
-          ) : (
-            <ReservationSummary
-              stats={report.stats}
-              newGuests={report.newGuests}
-              returningGuests={report.returningGuests}
-              hideTopTimes
-            />
-          )}
-
-          {report.stats.reservationCount > 0 && (
-            <section className="rounded-lg border border-border bg-card p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold flex items-center gap-2">
-                  <Clock className="h-5 w-5 text-primary" /> Beste Reservationszeiten
-                </h2>
-                <div className="flex items-center gap-2 print:hidden">
-                  <div className="inline-flex rounded-lg border border-border overflow-hidden text-sm">
-                    <button
-                      type="button"
-                      onClick={() => setTimeSort('count')}
-                      aria-pressed={timeSort === 'count'}
-                      className={cn(
-                        'px-3 py-1.5 transition-colors',
-                        timeSort === 'count' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted/60',
-                      )}
-                    >
-                      Reservationen
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setTimeSort('persons')}
-                      aria-pressed={timeSort === 'persons'}
-                      className={cn(
-                        'px-3 py-1.5 border-l border-border transition-colors',
-                        timeSort === 'persons' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted/60',
-                      )}
-                    >
-                      Personen
-                    </button>
-                  </div>
-                  {report.timeAnalysis.slots.length > 10 && (
-                    <Button variant="outline" size="sm" onClick={() => setShowAllTimes((s) => !s)}>
-                      {showAllTimes ? 'Top 10' : 'Alle Zeiten'}
-                    </Button>
-                  )}
-                </div>
+          <CollapsibleContent className="space-y-4">
+            {report.stats.reservationCount === 0 ? (
+              <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+                Keine importierten Reservationen in diesem Zeitraum.
               </div>
+            ) : (
+              <ReservationSummary
+                stats={report.stats}
+                newGuests={report.newGuests}
+                returningGuests={report.returningGuests}
+                hideTopTimes
+              />
+            )}
 
-              <p className="text-xs text-muted-foreground">
-                Reservationen mit Uhrzeit, ohne Stornos &amp; No-Shows
-                {` · ${NUM0.format(report.timeAnalysis.totalReservations)} Reservationen · ${NUM0.format(report.timeAnalysis.totalPersons)} Personen`}
-                {report.timeAnalysis.ignoredNoTime > 0 &&
-                  ` · ${NUM0.format(report.timeAnalysis.ignoredNoTime)} ohne Uhrzeit nicht berücksichtigt`}
-              </p>
-
-              {displayedTimeSlots.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Keine Reservationszeiten im gewählten Zeitraum.</p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
-                        <th className="py-2 pr-3 text-left font-medium">Zeit</th>
-                        <th className="py-2 px-3 text-right font-medium">Reservationen</th>
-                        <th className="py-2 px-3 text-right font-medium">Personen</th>
-                        <th className="py-2 px-3 text-right font-medium">% Res.</th>
-                        <th className="py-2 pl-3 text-right font-medium">% Pers.</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {displayedTimeSlots.map((slot, i) => {
-                        const metricVal = timeSort === 'persons' ? slot.persons : slot.count;
-                        const barPct = maxTimeMetric > 0 ? (metricVal / maxTimeMetric) * 100 : 0;
-                        const strongest = i === 0;
-                        return (
-                          <tr
-                            key={slot.time}
-                            className={cn('border-b border-border/60 last:border-0', strongest && 'bg-primary/5')}
-                          >
-                            <td className="py-2 pr-3 align-top">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium tabular-nums">{slot.time}</span>
-                                {strongest && (
-                                  <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary print:hidden">
-                                    Spitze
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-1 h-1.5 w-full min-w-[80px] overflow-hidden rounded-full bg-muted print:hidden">
-                                <div
-                                  className={cn('h-full rounded-full', strongest ? 'bg-primary' : 'bg-primary/40')}
-                                  style={{ width: `${barPct}%` }}
-                                />
-                              </div>
-                            </td>
-                            <td className={cn('py-2 px-3 text-right tabular-nums', timeSort === 'count' && 'font-semibold')}>
-                              {NUM0.format(slot.count)}
-                            </td>
-                            <td className={cn('py-2 px-3 text-right tabular-nums', timeSort === 'persons' && 'font-semibold')}>
-                              {NUM0.format(slot.persons)}
-                            </td>
-                            <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">
-                              {PCT.format(slot.shareCount)}
-                            </td>
-                            <td className="py-2 pl-3 text-right tabular-nums text-muted-foreground">
-                              {PCT.format(slot.sharePersons)}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+            {report.stats.reservationCount > 0 && (
+              <section className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <Clock className="h-5 w-5 text-primary" /> Beste Reservationszeiten
+                  </h2>
+                  <div className="flex items-center gap-2 print:hidden">
+                    <div className="inline-flex rounded-lg border border-border overflow-hidden text-sm">
+                      <button
+                        type="button"
+                        onClick={() => setTimeSort('count')}
+                        aria-pressed={timeSort === 'count'}
+                        className={cn(
+                          'px-3 py-1.5 transition-colors',
+                          timeSort === 'count' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted/60',
+                        )}
+                      >
+                        Reservationen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimeSort('persons')}
+                        aria-pressed={timeSort === 'persons'}
+                        className={cn(
+                          'px-3 py-1.5 border-l border-border transition-colors',
+                          timeSort === 'persons' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted/60',
+                        )}
+                      >
+                        Personen
+                      </button>
+                    </div>
+                    {report.timeAnalysis.slots.length > 10 && (
+                      <Button variant="outline" size="sm" onClick={() => setShowAllTimes((s) => !s)}>
+                        {showAllTimes ? 'Top 10' : 'Alle Zeiten'}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              )}
-            </section>
-          )}
-        </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Reservationen mit Uhrzeit, ohne Stornos &amp; No-Shows
+                  {` · ${NUM0.format(report.timeAnalysis.totalReservations)} Reservationen · ${NUM0.format(report.timeAnalysis.totalPersons)} Personen`}
+                  {report.timeAnalysis.ignoredNoTime > 0 &&
+                    ` · ${NUM0.format(report.timeAnalysis.ignoredNoTime)} ohne Uhrzeit nicht berücksichtigt`}
+                </p>
+
+                {displayedTimeSlots.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Keine Reservationszeiten im gewählten Zeitraum.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
+                          <th className="py-2 pr-3 text-left font-medium">Zeit</th>
+                          <th className="py-2 px-3 text-right font-medium">Reservationen</th>
+                          <th className="py-2 px-3 text-right font-medium">Personen</th>
+                          <th className="py-2 px-3 text-right font-medium">% Res.</th>
+                          <th className="py-2 pl-3 text-right font-medium">% Pers.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayedTimeSlots.map((slot, i) => {
+                          const metricVal = timeSort === 'persons' ? slot.persons : slot.count;
+                          const barPct = maxTimeMetric > 0 ? (metricVal / maxTimeMetric) * 100 : 0;
+                          const strongest = i === 0;
+                          return (
+                            <tr
+                              key={slot.time}
+                              className={cn('border-b border-border/60 last:border-0', strongest && 'bg-primary/5')}
+                            >
+                              <td className="py-2 pr-3 align-top">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium tabular-nums">{slot.time}</span>
+                                  {strongest && (
+                                    <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary print:hidden">
+                                      Spitze
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-1 h-1.5 w-full min-w-[80px] overflow-hidden rounded-full bg-muted print:hidden">
+                                  <div
+                                    className={cn('h-full rounded-full', strongest ? 'bg-primary' : 'bg-primary/40')}
+                                    style={{ width: `${barPct}%` }}
+                                  />
+                                </div>
+                              </td>
+                              <td className={cn('py-2 px-3 text-right tabular-nums', timeSort === 'count' && 'font-semibold')}>
+                                {NUM0.format(slot.count)}
+                              </td>
+                              <td className={cn('py-2 px-3 text-right tabular-nums', timeSort === 'persons' && 'font-semibold')}>
+                                {NUM0.format(slot.persons)}
+                              </td>
+                              <td className="py-2 px-3 text-right tabular-nums text-muted-foreground">
+                                {PCT.format(slot.shareCount)}
+                              </td>
+                              <td className="py-2 pl-3 text-right tabular-nums text-muted-foreground">
+                                {PCT.format(slot.sharePersons)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       )}
-    </div>
+    </PageShell>
   );
 }

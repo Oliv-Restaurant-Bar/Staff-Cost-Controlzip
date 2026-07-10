@@ -1,0 +1,207 @@
+Bitte erweitere das Modul „Warenkosten“ fachlich und funktional.
+
+Ziel:
+Die Warenkosten sollen transparenter, korrekt abgegrenzt und direkt mit der Erfolgsrechnung vergleichbar sein.
+
+Bitte umsetzen:
+
+1. Excel-Export
+
+Ergänze im Warenkosten-Modul einen Excel-Export.
+
+Der Export soll den aktuell gewählten Zeitraum übernehmen und mindestens folgende Spalten enthalten:
+
+- Datum / Periode
+- Lieferant oder Quelle
+- Kategorie
+- Unterkategorie
+- Betrag
+- Zuordnung Food / Beverage / Sonstige
+- Im Warenkosten-% enthalten: Ja / Nein
+- Umsatzbasis
+- Warenkosten %
+- Quelle / Import
+- Bemerkung, falls vorhanden
+
+Zusätzlich im Export:
+- Summenzeile Food
+- Summenzeile Beverage
+- Summenzeile Sonstige
+- Summenzeile relevante Warenkosten
+- Warenkostenquote %
+- Warenaufwand Erfolgsrechnung
+- Differenz zur Erfolgsrechnung in CHF und %
+
+Formatierung:
+- CHF mit Schweizer Zahlenformat
+- Prozentwerte sauber formatiert
+- Kopfzeile fixiert
+- Autofilter
+- sinnvolle Spaltenbreiten
+- klare, moderne und lesefreundliche Struktur
+- Dateiname z. B. `Warenkosten_Juni_2026.xlsx`
+
+2. „Sonstige“ aus der Warenkostenquote ausschliessen
+
+Wichtig:
+Die Kategorie „Sonstige“ darf nicht in die Berechnungsbasis der Warenkostenquote einfliessen.
+
+Neu gilt:
+
+Relevante Warenkosten
+= Food + Beverage
+
+Warenkostenquote
+= relevante Warenkosten / relevanter Umsatz
+
+„Sonstige“ wird weiterhin separat angezeigt, aber:
+
+- nicht in Warenkosten total für die Prozentberechnung einrechnen
+- nicht in der Warenkostenquote berücksichtigen
+- klar mit Hinweis kennzeichnen:
+  „Nicht in Warenkostenquote enthalten“
+
+Bitte prüfen, ob aktuell „Sonstige“ an irgendeiner Stelle trotzdem in Summe oder Quote einfliesst, und dies zentral korrigieren.
+
+3. Gegenüberstellung mit Erfolgsrechnung
+
+Ergänze eine kompakte Vergleichsansicht:
+
+Titel:
+„Warenkosten vs. Erfolgsrechnung“
+
+Anzeigen:
+
+A. Berechnete Warenkosten
+- Food
+- Beverage
+- relevante Warenkosten total
+- Warenkostenquote %
+
+B. Warenaufwand Erfolgsrechnung
+- Betrag aus den relevanten FIBU-Konten
+- Prozent vom Umsatz
+
+C. Differenz
+- CHF
+- Prozentpunkte
+- Status:
+  - Übereinstimmend
+  - geringe Abweichung
+  - auffällige Abweichung
+
+Beispiel:
+
+Berechnete Warenkosten
+CHF 48'500
+19.4 %
+
+Erfolgsrechnung Warenaufwand
+CHF 51'200
+20.5 %
+
+Differenz
++CHF 2'700
++1.1 Prozentpunkte
+
+4. FIBU-Logik
+
+Bitte die bestehenden Erfolgsrechnungs-/Reporting-Importe wiederverwenden.
+
+Prüfe und dokumentiere:
+- welche FIBU-Konten als Warenaufwand gelten
+- ob Food, Beverage und Sonstige dort getrennt oder gemeinsam vorliegen
+- ob der Erfolgsrechnungswert bereits definitiv gebucht ist
+- welcher Zeitraum und welche Umsatzbasis verwendet werden
+
+Wichtig:
+Der FIBU-Wert darf nicht nochmals mit Faktoren verändert werden.
+
+5. Fehlende Erfolgsrechnung
+
+Falls für den gewählten Zeitraum keine Erfolgsrechnung importiert ist:
+
+Nicht 0 anzeigen.
+
+Stattdessen:
+„Keine Erfolgsrechnung für diesen Zeitraum importiert“
+
+Mit Aktion:
+„Erfolgsrechnung importieren“
+
+6. Rechnungsweg sichtbar machen
+
+Bei Klick oder Info-Tooltip anzeigen:
+
+Berechnete Warenkostenquote
+= (Food + Beverage) / Umsatz
+
+Sonstige
+= separat ausgewiesen, nicht Bestandteil der Quote
+
+Erfolgsrechnung Warenaufwand %
+= Warenaufwand FIBU / Umsatz FIBU oder definierte gemeinsame Umsatzbasis
+
+Bitte klar angeben, welche Umsatzbasis verwendet wird.
+
+7. Design / UX
+
+Die Erweiterung soll sich vollständig in das Phase-3-Designsystem einfügen:
+
+- schlicht
+- modern
+- kompakt
+- lesefreundlich
+- keine grosse zusätzliche Analysefläche
+- Vergleich möglichst als kompakte KPI-Zeile oder kleine Vergleichskarte
+- Details nur aufklappbar oder per Tooltip
+- klare Farben:
+  - Grün = im Rahmen / Übereinstimmung
+  - Orange = leichte Abweichung
+  - Rot = deutliche Abweichung
+  - Grau = neutral
+  - Blau = Information
+
+8. Single Source of Truth
+
+Die Warenkostenquote darf nur an einer zentralen Stelle berechnet werden.
+
+Alle Ansichten, Exporte und Vergleiche müssen dieselbe Logik verwenden:
+
+- Food + Beverage
+- Sonstige ausgeschlossen
+- identische Umsatzbasis
+- identische Rundung
+
+Keine doppelte Berechnung in verschiedenen Komponenten.
+
+9. Tests
+
+Bitte Tests ergänzen für:
+
+- Excel-Export enthält korrekte Spalten und Summen
+- Sonstige wird angezeigt, aber nicht in Warenkostenquote eingerechnet
+- Food + Beverage ergeben relevante Warenkosten
+- Warenkostenquote verwendet korrekten Nenner
+- Vergleich mit Erfolgsrechnung berechnet CHF-Differenz korrekt
+- Prozentpunkte korrekt
+- fehlende Erfolgsrechnung zeigt keinen falschen Nullwert
+- FIBU-Wert wird nicht verändert
+- Export und UI zeigen dieselben Totale
+
+10. Abschluss
+
+Bitte danach:
+
+- Ursache prüfen, ob „Sonstige“ bisher fälschlich eingerechnet wurde
+- Berechnung zentral korrigieren
+- Excel-Export testen
+- Browser-/Live-Check
+- Type-Check-Gate
+- relevante Regressionstests
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Das Ziel ist eine fachlich saubere Warenkostenquote und eine direkte, nachvollziehbare Gegenüberstellung mit dem Warenaufwand aus der Erfolgsrechnung.

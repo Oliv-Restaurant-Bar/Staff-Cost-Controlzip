@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isActiveStatus, isOpenStatus, isExcludedStatus, countInRange,
+  aggregateReservationsByDay, addIsoDays,
   futureReservationKpis, guestDashboardKpis,
   type ReservationAggRow, type FutureBoundaries,
 } from '../reservation-dashboard';
@@ -80,6 +81,67 @@ describe('countInRange', () => {
 
   it('leere Eingabe ergibt 0/0', () => {
     expect(countInRange([], '2026-01-01', '2026-12-31', isActiveStatus)).toEqual({ reservations: 0, persons: 0 });
+  });
+});
+
+// ── aggregateReservationsByDay + addIsoDays ────────────────────────────────────
+
+describe('addIsoDays', () => {
+  it('addiert Tage UTC-sicher inkl. Monats-/Jahreswechsel', () => {
+    expect(addIsoDays('2026-06-29', 1)).toBe('2026-06-30');
+    expect(addIsoDays('2026-06-30', 1)).toBe('2026-07-01');
+    expect(addIsoDays('2026-12-31', 1)).toBe('2027-01-01');
+    expect(addIsoDays('2026-07-01', 6)).toBe('2026-07-07');
+    expect(addIsoDays('2028-02-28', 1)).toBe('2028-02-29'); // Schaltjahr
+  });
+});
+
+describe('aggregateReservationsByDay', () => {
+  const rows: ReservationAggRow[] = [
+    { date: '2026-06-22', partySize: 4, status: 'confirmed' },
+    { date: '2026-06-22', partySize: 2, status: 'seated' },     // gleicher Tag, aktiv
+    { date: '2026-06-24', partySize: 3, status: 'completed' },
+    { date: '2026-06-24', partySize: 5, status: 'storniert' },  // ausgeschlossen → zählt nicht
+    { date: '2026-06-26', partySize: null, status: 'arrived' }, // aktiv, Personen unbekannt → 0
+    { date: '2026-06-30', partySize: 8, status: 'confirmed' },  // Obergrenze inkl.
+    { date: '2026-07-01', partySize: 9, status: 'confirmed' },  // ausserhalb
+    { date: null, partySize: 6, status: 'confirmed' },          // ohne Datum → ignoriert
+  ];
+
+  it('liefert einen Eintrag pro Kalendertag inkl. Nulltagen (lückenlos)', () => {
+    const days = aggregateReservationsByDay(rows, '2026-06-22', '2026-06-30', isActiveStatus);
+    expect(days).toHaveLength(9); // 22.–30. Juni = 9 Tage
+    expect(days.map(d => d.date)[0]).toBe('2026-06-22');
+    expect(days.map(d => d.date)[8]).toBe('2026-06-30');
+    // Nulltag 23. Juni vorhanden mit 0/0
+    const d23 = days.find(d => d.date === '2026-06-23')!;
+    expect(d23).toEqual({ date: '2026-06-23', reservations: 0, persons: 0 });
+  });
+
+  it('summiert aktive Reservationen/Personen je Tag (Storno zählt nicht, null=0 Personen)', () => {
+    const days = aggregateReservationsByDay(rows, '2026-06-22', '2026-06-30', isActiveStatus);
+    expect(days.find(d => d.date === '2026-06-22')).toEqual({ date: '2026-06-22', reservations: 2, persons: 6 });
+    expect(days.find(d => d.date === '2026-06-24')).toEqual({ date: '2026-06-24', reservations: 1, persons: 3 });
+    expect(days.find(d => d.date === '2026-06-26')).toEqual({ date: '2026-06-26', reservations: 1, persons: 0 });
+    expect(days.find(d => d.date === '2026-06-30')).toEqual({ date: '2026-06-30', reservations: 1, persons: 8 });
+  });
+
+  it('ist über denselben Bereich exakt deckungsgleich mit countInRange (Kernpflicht)', () => {
+    const from = '2026-06-22', to = '2026-06-30';
+    const days = aggregateReservationsByDay(rows, from, to, isActiveStatus);
+    const total = countInRange(rows, from, to, isActiveStatus);
+    const sumRes = days.reduce((s, d) => s + d.reservations, 0);
+    const sumPers = days.reduce((s, d) => s + d.persons, 0);
+    expect(sumRes).toBe(total.reservations);
+    expect(sumPers).toBe(total.persons);
+  });
+
+  it('leerer/ungültiger Bereich ergibt []', () => {
+    expect(aggregateReservationsByDay(rows, '2026-07-05', '2026-07-01', isActiveStatus)).toEqual([]);
+    expect(aggregateReservationsByDay([], '2026-06-22', '2026-06-23', isActiveStatus)).toEqual([
+      { date: '2026-06-22', reservations: 0, persons: 0 },
+      { date: '2026-06-23', reservations: 0, persons: 0 },
+    ]);
   });
 });
 
