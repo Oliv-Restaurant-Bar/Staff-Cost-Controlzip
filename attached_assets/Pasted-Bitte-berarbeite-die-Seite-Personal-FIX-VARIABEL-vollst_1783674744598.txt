@@ -1,0 +1,203 @@
+Bitte überarbeite die Seite „Personal FIX + VARIABEL“ vollständig im bestehenden Code.
+
+Ziel:
+Die Seite soll deutlich aufgeräumter, kompakter, verständlicher und arbeitsorientierter werden. Die wichtigsten Kennzahlen und die Personalübersicht sollen sofort sichtbar sein. Weniger wichtige Bereiche sollen weiter nach unten oder einklappbar sein.
+
+Wichtig:
+- Keine neue Fachlogik
+- Keine Datenmodelländerung
+- Keine Berechnungsänderung
+- Nur Reihenfolge, Darstellung, Standardansichten und UX verbessern
+- Bestehende Arbeitgeberkosten-Logik unverändert beibehalten
+- Keine Bild- oder Mockup-Generierung
+
+Bitte zuerst die aktuelle Seitenstruktur, Komponenten, Tests und das Phase-3-Designsystem lesen und danach umsetzen.
+
+1. Neue Reihenfolge der Seite
+
+Die Seite soll künftig in dieser Reihenfolge aufgebaut sein:
+
+A. Kompakter Seitenkopf
+B. „Total Personal FIX + VARIABEL Ist — [Monat Jahr]“
+C. Mitarbeiterübersicht / Flex-Kosten pro Mitarbeiter
+D. Überstundenkosten-Übersicht, standardmässig eingeklappt
+E. Monatsansicht, standardmässig eingeklappt
+F. Budget-Auswertung, standardmässig eingeklappt
+G. Flex-Auswertung Plan vs. Ist ganz zuunterst
+
+Die heutige Reihenfolge soll entsprechend geändert werden.
+
+2. Oberster Hauptbereich
+
+Direkt unter dem Seitenkopf soll neu erscheinen:
+
+„Total Personal FIX + VARIABEL Ist — Juni 2026“
+
+Dieser Bereich soll die wichtigsten Zahlen des Monats kompakt zusammenfassen.
+
+Bitte nur die relevantesten Kennzahlen sichtbar anzeigen, zum Beispiel:
+- Total Personal Plan
+- Total Personal Ist
+- Abweichung CHF
+- Abweichung %
+- FIX Ist
+- FLEX Ist
+- Personalkostenquote Ist, falls bereits vorhanden
+
+Maximal 4 bis 6 kompakte KPI-Felder in einer ruhigen Zeile oder einem kompakten Grid.
+
+Wichtig:
+- Keine grosse leere Karte
+- Keine langen Erklärtexte
+- Die Zahlen müssen sofort verständlich sein
+- Bruttolohn, Arbeitgeber-Sozialkosten und Total Arbeitgeberkosten weiterhin fachlich korrekt darstellen, wo diese bereits verwendet werden
+- Details nur per Tooltip oder aufklappbar
+
+3. Mitarbeiterübersicht direkt danach
+
+Die Tabelle „Flex Kosten pro Mitarbeiter“ soll direkt unter der Totalübersicht erscheinen.
+
+Bitte verbessern:
+- Tabellenkopf sticky
+- kompakte Zeilen
+- klare Spaltenhierarchie
+- Zahlen rechtsbündig
+- Namen und Abteilung links
+- Planwerte blau, Istwerte orange, positive Einsparung grün, Mehrkosten rot
+- Sozialkosten/Total AG-Kosten nur dort anzeigen, wo fachlich bereits vorgesehen
+- Keine neuen Berechnungen
+- Optional zuerst nur die auffälligsten oder ersten Mitarbeitenden zeigen, falls es bereits eine bestehende Auf-/Zuklapp-Logik gibt
+- Bestehende Detailklicks beibehalten
+
+4. Überstundenkosten-Übersicht
+
+Die Überstundenkosten-Übersicht soll:
+- weiter nach unten
+- standardmässig eingeklappt
+- als kompakte Accordion-/Details-Zeile dargestellt werden
+- nur Titel, Kurzstatus und Chevron zeigen, solange geschlossen
+- beim Öffnen den bestehenden Inhalt unverändert anzeigen
+
+Titel:
+„Überstundenkosten-Übersicht“
+
+Optionaler Kurzstatus rechts:
+- Total Überstundenkosten
+- Anzahl betroffene Mitarbeitende
+nur falls diese Werte bereits ohne neue Berechnung vorhanden sind
+
+5. Monatsansicht
+
+Die heutige „Monatsansicht — Juni 2026“ soll:
+- weiter nach unten
+- standardmässig eingeklappt
+- als kompakte Accordion-/Details-Zeile dargestellt werden
+- bestehenden Inhalt beim Öffnen unverändert anzeigen
+
+Die Monatsansicht darf nicht mehr die erste Bildschirmansicht blockieren.
+
+6. Budget-Auswertung
+
+Die Budget-Auswertung soll:
+- unterhalb der Monatsansicht oder direkt davor platziert werden
+- standardmässig eingeklappt sein
+- nur eine kompakte Kopfzeile zeigen
+- beim Öffnen die bestehende Budget-Auswertung unverändert anzeigen
+
+Die grosse Budget-Karte darf nicht mehr den oberen Bildschirmbereich dominieren.
+
+7. Flex-Auswertung Plan vs. Ist
+
+Die Flex-Auswertung „Plan vs. Ist“ soll ganz zuunterst stehen.
+
+Standardansicht:
+- Aggregation „Woche“ voreingestellt
+- nicht mehr „Tag“
+
+Die Reihenfolge der Aggregationsauswahl soll sein:
+- Woche
+- Tag
+- Monat
+- Jahr, falls vorhanden
+
+Wichtig:
+- Beim erstmaligen Öffnen der Seite immer Wochenansicht
+- Bestehende Nutzerinteraktion danach normal beibehalten
+- Falls der Zustand aktuell persistent gespeichert wird, bitte prüfen:
+  - Standard ist „Woche“
+  - gespeicherte gültige Auswahl darf weiterhin respektiert werden, sofern das heutige Verhalten so vorgesehen ist
+- Keine Änderung an Berechnungslogik oder Exporten
+
+8. Visuelle Hierarchie
+
+Bitte die Seite nach dem Phase-3-Designsystem neu strukturieren:
+
+- kompakter PageHeader
+- klare Abschnittstitel
+- keine unnötigen grossen Rahmen
+- weniger vertikaler Leerraum
+- Hauptinhalt innerhalb der ersten Bildschirmhöhe sichtbar
+- einheitliche Card-Radien
+- einheitliche Abstände
+- einheitliche Buttonhöhen
+- schlichte, moderne und lesefreundliche Darstellung
+- Desktop-first
+- keine überladenen Farben
+- Grün = Einsparung / im Plan
+- Orange = Ist / Hinweis
+- Rot = Mehrkosten / kritisch
+- Blau = Plan / Information
+- Grau = neutral
+
+9. Kompakte Abschnittsköpfe
+
+Für einklappbare Bereiche bitte einen einheitlichen Abschnittskopf verwenden mit:
+- Icon
+- Titel
+- optionalem Kurzstatus
+- Chevron rechts
+
+Keine langen Beschreibungen im offenen Zustand oberhalb des Inhalts.
+
+10. Funktionalität unverändert lassen
+
+Folgende Funktionen müssen unverändert bleiben:
+- Monatsnavigation
+- PDF-Export
+- Excel-Export
+- Abgrenzen
+- Mitarbeiterdetails
+- Plan-/Ist-Berechnungen
+- Arbeitgeberkosten
+- Budgetlogik
+- Monatslogik
+- Überstundenberechnung
+- Rollen- und Lohnsichtbarkeit
+
+11. Tests
+
+Bitte gezielte Tests ergänzen oder anpassen für:
+- Total Personal FIX + VARIABEL erscheint vor Monatsansicht und Budget
+- Flex-Kosten-pro-Mitarbeiter erscheint im oberen Bereich
+- Überstundenkosten standardmässig eingeklappt
+- Monatsansicht standardmässig eingeklappt
+- Budget-Auswertung standardmässig eingeklappt
+- Flex-Auswertung steht nach diesen Bereichen
+- Flex-Auswertung startet standardmässig in Wochenansicht
+- bestehende Exporte und Interaktionen bleiben verfügbar
+- keine Änderung der berechneten Werte
+
+12. Abschluss
+
+Bitte danach:
+- Type-Check-Gate für die geänderten Dateien
+- relevante Regressionstests
+- Browser-/Live-Check auf Desktop
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md mit dem neuen Seitenaufbau aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Die Seite soll nach dem Umbau wie eine klare Arbeitsseite wirken:
+oben sofort Monatskosten und Mitarbeitende,
+unten erst Detailanalysen, Budget, Monatsansicht und Flex-Auswertung.

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
 import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
@@ -49,6 +49,10 @@ import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/l
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Collapsible, CollapsibleContent, CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { KpiCard as DsKpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -68,6 +72,66 @@ function prevMonth(year: number, month: number): [number, number] {
 
 function nextMonth(year: number, month: number): [number, number] {
   return month === 12 ? [year + 1, 1] : [year, month + 1];
+}
+
+/**
+ * Einheitlicher, einklappbarer Abschnittskopf (Icon / Titel / optionaler
+ * Kurzstatus / Chevron rechts). Rein UX — kapselt Radix Collapsible.
+ * Inhalt wird bei geschlossenem Zustand ausgehängt (Radix); der Zustand liegt
+ * in dieser Komponente, alle Daten kommen aus der Elternkomponente.
+ */
+function CollapsibleSection({
+  icon,
+  title,
+  status,
+  defaultOpen = false,
+  testid,
+  children,
+}: {
+  icon?: ReactNode;
+  title: ReactNode;
+  /** Kurzstatus rechts (bleibt sichtbar, auch wenn geschlossen). */
+  status?: ReactNode;
+  defaultOpen?: boolean;
+  testid?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section
+      data-testid={testid}
+      className="rounded-xl border border-border bg-card shadow-sm overflow-hidden"
+    >
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            data-testid={testid ? `${testid}-trigger` : undefined}
+            className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
+          >
+            {icon && (
+              <span className="text-muted-foreground [&>svg]:h-4 [&>svg]:w-4 shrink-0" aria-hidden>
+                {icon}
+              </span>
+            )}
+            <span className="text-sm font-semibold">{title}</span>
+            <span className="ml-auto flex items-center gap-2">
+              {status && <span className="text-xs text-muted-foreground">{status}</span>}
+              <ChevronDown
+                className={cn(
+                  'h-4 w-4 text-muted-foreground transition-transform shrink-0',
+                  open && 'rotate-180',
+                )}
+              />
+            </span>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="border-t border-border">
+          <div className="p-4 space-y-4">{children}</div>
+        </CollapsibleContent>
+      </Collapsible>
+    </section>
+  );
 }
 
 /** Basis-Monatslohn eines Mitarbeiters */
@@ -2000,7 +2064,7 @@ export default function PersonalFixPage() {
 
   // ── Flex-Breakdown-Popup ──────────────────────────────────────────────────
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
-  const [abwMode,   setAbwMode]   = useState<AbwMode>('day');
+  const [abwMode,   setAbwMode]   = useState<AbwMode>('week');
   const [forecastViewMode, setForecastViewMode] = useState<'actual' | 'forecast'>('actual');
   const [dayDetailModal, setDayDetailModal] = useState<AbwDay | null>(null);
   const [forecastIstDay,   setForecastIstDay]   = useState<number | null>(null);
@@ -3793,6 +3857,258 @@ export default function PersonalFixPage() {
           </div>
         )}
 
+        {/* ── B: Total Personal FIX + VARIABEL Ist — Kopf-KPIs ─────────────── */}
+        <section
+          data-testid="pfix-total-summary"
+          className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3"
+        >
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">
+              Total Personal FIX + VARIABEL Ist — {getMonthLabel(selectedYear, selectedMonth)}
+              {proRataDay !== null ? ` (bis ${proRataDay}.)` : ''}
+            </h2>
+          </div>
+          <KpiGrid>
+            <DsKpiCard
+              label="Total Ist"
+              value={fmtCHF(pfix.active.istTotal)}
+              sub={`FIX ${fmtCHF(pfix.active.fix)} + Flex ${fmtCHF(pfix.active.istTotalVar)}`}
+              tone={personnelBudget > 0
+                ? (pfix.active.istTotal <= personnelBudget * (proRataDay !== null ? proRataFactor : 1) ? 'good' : 'critical')
+                : 'neutral'}
+            />
+            <DsKpiCard
+              label="Total Plan"
+              value={fmtCHF(pfix.active.planTotal)}
+              sub="FIX + Flex (Plan)"
+              tone="info"
+            />
+            <DsKpiCard
+              label="Diff. Ist − Plan"
+              value={`${pfix.active.diffTotal > 0.005 ? '+' : pfix.active.diffTotal < -0.005 ? '−' : ''}${fmtCHF(Math.abs(pfix.active.diffTotal))}`}
+              sub={pfix.active.diffTotal > 0.005 ? 'Ist über Plan' : pfix.active.diffTotal < -0.005 ? 'Ist unter Plan' : 'Plan = Ist'}
+              tone={pfix.active.diffTotal > 0.005 ? 'critical' : pfix.active.diffTotal < -0.005 ? 'good' : 'neutral'}
+              trend={{
+                direction: pfix.active.diffTotal > 0.005 ? 'up' : pfix.active.diffTotal < -0.005 ? 'down' : 'flat',
+                tone: pfix.active.diffTotal > 0.005 ? 'critical' : pfix.active.diffTotal < -0.005 ? 'good' : 'neutral',
+                label: 'Ist − Plan',
+              }}
+            />
+            <DsKpiCard
+              label="PKQ Ist"
+              value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
+              sub={pkqPlan !== null ? `Plan ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
+              tone={pkqIst !== null && pkqPlan !== null
+                ? (pkqIst > pkqPlan + 1 ? 'critical' : pkqIst < pkqPlan - 1 ? 'good' : 'neutral')
+                : 'neutral'}
+            />
+          </KpiGrid>
+          <MoreKpis label="Alle Kennzahlen (Plan + Ist, 4 Ebenen)" storageKey="pfix-more-kpis">
+        {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <KpiCard
+            title={proRataDay !== null ? `Flex Arbeit Plan bis ${proRataDay}.` : 'Flex Arbeit Plan'}
+            value={fmtCHF(pfix.active.planWork)}
+            sub="Dienstplan-Stunden × Lohn"
+            icon={<Clock className="h-5 w-5" />}
+            color="blue"
+          />
+          <KpiCard
+            title={proRataDay !== null ? `Flex Arbeit Ist bis ${proRataDay}.` : 'Flex Arbeit Ist'}
+            value={fmtCHF(pfix.active.istWork)}
+            sub="Mirus-Ist-Stunden × Lohn"
+            icon={<Clock className="h-5 w-5" />}
+            color={pfix.active.istWork > 0 ? 'orange' : 'default'}
+          />
+          <KpiCard
+            title={proRataDay !== null ? `PKQ Plan bis ${proRataDay}.` : 'PKQ Plan'}
+            value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
+            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(effectiveRevenue)}${revenueIsAssumed ? ' (Annahme)' : ''}` : 'Kein Umsatz erfasst'}
+            icon={<TrendingDown className="h-5 w-5" />}
+            color="blue"
+          />
+          <KpiCard
+            title={proRataDay !== null ? `PKQ Ist bis ${proRataDay}.` : 'PKQ Ist'}
+            value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
+            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(effectiveRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
+            icon={<TrendingDown className="h-5 w-5" />}
+            color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
+          />
+          <KpiCard
+            title={proRataDay !== null ? `Total Flex Plan bis ${proRataDay}.` : 'Total Flex Plan'}
+            value={fmtCHF(pfix.active.planTotalVar)}
+            sub="Flex Arbeit + Ferien (Plan)"
+            icon={<TrendingUp className="h-5 w-5" />}
+            color="blue"
+          />
+          <KpiCard
+            title={proRataDay !== null ? `Total Flex Ist bis ${proRataDay}.` : 'Total Flex Ist'}
+            value={fmtCHF(pfix.active.istTotalVar)}
+            sub="Flex Arbeit + Ferien (Ist)"
+            icon={<TrendingUp className="h-5 w-5" />}
+            color={pfix.active.istTotalVar > 0 ? 'orange' : 'default'}
+          />
+          <KpiCard
+            title={proRataDay !== null ? `Diff. Arbeit bis ${proRataDay}.` : 'Diff. Arbeit'}
+            value={fmtCHF(Math.abs(pfix.active.diffWork))}
+            sub={pfix.active.diffWork === 0 ? 'Plan = Ist' : pfix.active.diffWork > 0 ? '↑ Ist über Plan' : '✓ Ist unter Plan'}
+            icon={<BarChart2 className="h-5 w-5" />}
+            color={pfix.active.diffWork > 0 ? 'red' : pfix.active.diffWork < 0 ? 'green' : 'default'}
+            delta={pfix.active.diffWork}
+            deltaLabel="Ist − Plan (Arbeit)"
+          />
+          <KpiCard
+            title={proRataDay !== null ? `Personal FIX bis ${proRataDay}.` : 'Personal FIX / Monat'}
+            value={fmtCHF(pfix.active.fix)}
+            sub={`${activeFixedEmployees.length} MA · Fixlohn`}
+            icon={<DollarSign className="h-5 w-5" />}
+            color="blue"
+          />
+        </div>
+          </MoreKpis>
+        </section>
+
+        {/* ── C: Flex Kosten pro Mitarbeiter ─────────────────────────────── */}
+        {pfixPerEmp.length > 0 && (
+          <section data-testid="pfix-flex-per-employee" className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+                  <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/20 border-b border-border">
+                    <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Flex Kosten pro Mitarbeiter
+                      {proRataDay !== null && ` — bis ${proRataDay}.`}
+                    </span>
+                    <Badge variant="secondary" className="text-xs ml-auto">{pfixPerEmp.length} MA</Badge>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs min-w-[580px]">
+                      <thead>
+                        <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                          <th className="px-3 py-2 text-left font-medium">Name</th>
+                          <th className="px-3 py-2 text-center font-medium">Abt.</th>
+                          <th className="px-3 py-2 text-right font-medium">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/h</span>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
+                            </Tooltip>
+                          </th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-500">Plan Std</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-500">Ist Std</th>
+                          <th className="px-3 py-2 text-right font-medium text-blue-700">Flex Plan</th>
+                          <th className="px-3 py-2 text-right font-medium text-orange-700">Flex Ist</th>
+                          <th className="px-3 py-2 text-right font-medium">Diff.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pfixPerEmp.map((row, i) => {
+                          const dc = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
+                          const openBreakdown = (field: BreakdownField) => setBreakdown({
+                            empId:       row.id,
+                            empName:     row.name,
+                            field,
+                            hourlyWage:  row.hourlyWage,
+                            weeklyHours: row.weeklyHours,
+                            year:        selectedYear,
+                            month:       selectedMonth,
+                            cutoffDay:   proRataDay,
+                            factor:      proRataDay !== null ? proRataFactor : 1,
+                          });
+                          const clickCell = (field: BreakdownField, amount: number, colorClass: string) => (
+                            <td className="px-3 py-1.5 text-right">
+                              {amount > 0
+                                ? <button onClick={() => openBreakdown(field)}
+                                    className={cn('font-mono font-semibold underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer', colorClass)}
+                                    title="Tagesdetails anzeigen">
+                                    {fmtCHF(amount)}
+                                  </button>
+                                : <span className="text-muted-foreground font-mono">–</span>}
+                            </td>
+                          );
+                          const isZusatz = (row as any).isFixedAdditional === true;
+                          return (
+                            <tr key={row.id + (isZusatz ? '-zusatz' : '')} className={
+                              isZusatz
+                                ? 'bg-orange-50/60 dark:bg-orange-900/10 hover:bg-orange-100/50 dark:hover:bg-orange-900/20 border-l-2 border-orange-400'
+                                : i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'
+                            }>
+                              <td className="px-3 py-1.5 font-medium">
+                                <div className="flex items-center gap-2">
+                                  {row.name}
+                                  {isZusatz && (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
+                                      Zusatzkosten
+                                      <button
+                                        onClick={e => { e.stopPropagation(); clearZusatzkostenPlan(row.id, row.name); }}
+                                        className="ml-0.5 leading-none text-orange-500 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                                        title="Zusatzkosten-Markierung entfernen"
+                                      >×</button>
+                                    </span>
+                                  )}
+                                  {!isZusatz && row.hourlyWage === 0 && (
+                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
+                                      Lohn fehlt
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{row.hourlyWage > 0 ? `${row.hourlyWage.toFixed(2)}` : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planH > 0 ? `${row.planH.toFixed(1)} h` : '–'}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-orange-500 dark:text-orange-400">{row.istH > 0 ? `${row.istH.toFixed(1)} h` : '–'}</td>
+                              {clickCell('planWork', row.planWork, 'text-blue-700 dark:text-blue-400')}
+                              {clickCell('istWork',  row.istWork,  'text-orange-700 dark:text-orange-400')}
+                              <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
+                          <td className="px-3 py-2" colSpan={3}>Total</td>
+                          <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planH,0).toFixed(1)} h</td>
+                          <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istH,0).toFixed(1)} h</td>
+                          <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planWork, 0))}</td>
+                          <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istWork, 0))}</td>
+                          <td className="px-3 py-2" />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+          </section>
+        )}
+
+        {/* ── D: Überstundenkosten Festangestellte (einklappbar) ──────────────── */}
+        <CollapsibleSection
+          testid="pfix-section-overtime"
+          icon={<Clock />}
+          title="Überstundenkosten Festangestellte"
+        >
+          <OvertimeCostCard
+            analysis={overtimeAnalysis}
+            weeklyAnalysis={weeklyOvertimeAnalysis}
+            dayDetailEntries={dayDetailEntries}
+            regularCost={pfix.month.istTotal}
+            netRevenue={effectiveRevenue}
+            includeOvertime={includeOvertime}
+            onIncludeOvertimeChange={setIncludeOvertime}
+            canSeeIndividualRates={canSeeHourlyWages}
+            canSeeTotals={canSeePersonnelCostTotals}
+            periodLabel={new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
+            onToggleEmployeeDisabled={handleToggleOvertimeDisabled}
+            canManageDisable={canSeePersonnelCostTotals}
+          />
+        </CollapsibleSection>
+
+        {/* ── E: Monatsansicht (einklappbar) ───────────────────────────────── */}
+        <CollapsibleSection
+          testid="pfix-section-monatsansicht"
+          icon={<Calendar />}
+          title={`Monatsansicht — ${getMonthLabel(selectedYear, selectedMonth)}`}
+          status={proRataDay !== null ? `Stichtag aktiv — bis ${proRataDay}. · ${(proRataFactor * 100).toFixed(0)} %` : 'Monatsansicht'}
+        >
+
         {/* ── Modus-Steuerung (Pro-Rata Toggle) ────────────────────────────── */}
         <div className="rounded-xl border border-border bg-card shadow-sm p-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -3845,12 +4161,409 @@ export default function PersonalFixPage() {
           </div>
         </div>
 
-        {/* ── Budget-Auswertung ───────────────────────────────────────────────── */}
-        <section className="rounded-xl border-2 border-violet-200 dark:border-violet-800 bg-card shadow-sm overflow-hidden">
+        {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
+        {Object.entries(byDept).map(([dept, rows]) => {
+          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
+          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const isCollapsed = expandedFixDepts.has(dept);
+          const toggleDept  = () => setExpandedFixDepts(prev => {
+            const next = new Set(prev);
+            if (next.has(dept)) next.delete(dept); else next.add(dept);
+            return next;
+          });
+          return (
+            <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <button
+                onClick={toggleDept}
+                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                aria-expanded={!isCollapsed}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  {DEPT_ICON[dept]}
+                  {DEPT_LABEL[dept] ?? dept} — FIX
+                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
+                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
+                </div>
+                <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
+                  <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
+                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
+                </div>
+              </button>
+
+              {!isCollapsed && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[540px]">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                      <th className="text-left px-4 py-2 font-medium">Name</th>
+                      <th className="text-left px-4 py-2 font-medium">Anstellung</th>
+                      <th className="text-right px-4 py-2 font-medium">Basis-Lohn/Mt</th>
+                      <th className="text-right px-4 py-2 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">inkl. 13. /Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="text-right px-4 py-2 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="text-right px-4 py-2 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {rows.map(({ emp, cost, label, yearlyCost }) => {
+                      const isSavingThis = saving === emp.id;
+                      const isProRata = label !== null;
+                      return (
+                        <tr
+                          key={emp.id}
+                          className={cn('hover:bg-muted/30 transition-colors', isSavingThis && 'opacity-50')}
+                        >
+                          <td className="px-4 py-2.5 font-medium">
+                            <div className="flex items-center gap-2">
+                              {emp.name}
+                              {isProRata && (
+                                <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
+                                  {label}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {canEditEmployees ? (
+                              <InlineSalaryEditor empId={emp.id} field="monthlySalary" value={emp.monthlySalary} onSaved={handleSaved} />
+                            ) : (
+                              <span className="font-mono text-sm">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {canEditEmployees ? (
+                              <InlineSalaryEditor empId={emp.id} field="monthlySalaryWith13th" value={emp.monthlySalaryWith13th} onSaved={handleSaved} />
+                            ) : (
+                              <span className="font-mono text-sm">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
+                            {cost > 0
+                              ? <span>{fmtCHF(cost)}{isProRata && <span className="text-xs font-normal text-amber-600 ml-1">*</span>}</span>
+                              : <span className="text-muted-foreground">–</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
+                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/20 font-semibold border-t-2 border-border">
+                      <td className="px-4 py-2.5 text-sm" colSpan={2}>Total {DEPT_LABEL[dept] ?? dept}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{fmtCHF(deptBase)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">
+                        {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              )}
+            </section>
+          );
+        })}
+
+        {/* ── Ferienabbau Drill-down ──────────────────────────────────────── */}
+        {(ferienIstTotalCHF > 0 || ferienPlanTotalCHF > 0) && (
+          <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+            <button
+              onClick={() => setShowFerienDetail(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-blue-50/40 dark:bg-blue-950/10 hover:bg-blue-50/70 dark:hover:bg-blue-950/20 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
+                <Calendar className="h-4 w-4 text-blue-500" />
+                Ferienabbau — Mitarbeiter-Detail
+                <Badge variant="secondary" className="text-xs">
+                  {[...fixedEmployees, ...variableEmployees].filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0).length} MA
+                </Badge>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="hidden sm:inline">Plan: <strong className="font-mono text-blue-600 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</strong></span>
+                <span className="hidden sm:inline">Ist: <strong className="font-mono text-orange-600 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</strong></span>
+                <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', showFerienDetail && 'rotate-180')} />
+              </div>
+            </button>
+            {showFerienDetail && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[520px]">
+                  <thead>
+                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                      <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
+                      <th className="px-3 py-2 text-right font-medium text-blue-500">Tage Plan</th>
+                      <th className="px-3 py-2 text-right font-medium text-orange-500">Tage Ist</th>
+                      <th className="px-3 py-2 text-right font-medium">h / Tag</th>
+                      <th className="px-3 py-2 text-right font-medium">CHF / h</th>
+                      <th className="px-3 py-2 text-right font-medium text-blue-600">Plan CHF</th>
+                      <th className="px-3 py-2 text-right font-medium text-orange-600">Ist CHF</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {[...fixedEmployees, ...variableEmployees]
+                      .filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0)
+                      .map((emp, i) => {
+                        const isFixed   = fixedEmployees.some(fe => fe.id === emp.id);
+                        const planDays = ferienPlanDays[emp.id] ?? 0;
+                        const istDays  = ferienIstDays[emp.id] ?? 0;
+                        const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+                        const wage     = emp.hourlyWage ?? 0;
+                        const planCHF  = planDays * dailyH * wage;
+                        const istCHF   = istDays  * dailyH * wage;
+                        const hasPlanDetail = (ferienPlanDetail[emp.id]?.length ?? 0) > 0;
+                        const hasIstDetail  = (ferienIstDetail[emp.id]?.length ?? 0) > 0;
+                        return (
+                          <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
+                            <td className="px-4 py-2 font-medium">
+                              <div className="flex items-center gap-1.5">
+                                {emp.name}
+                                {isFixed && (
+                                  <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
+                                    Fixlohn
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">
+                              {planDays > 0 ? (
+                                <button
+                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'plan', empName: emp.name })}
+                                  className={cn(
+                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
+                                    hasPlanDetail ? 'cursor-pointer' : 'no-underline cursor-default',
+                                  )}
+                                  title={hasPlanDetail ? 'Tage anzeigen' : undefined}
+                                  disabled={!hasPlanDetail}
+                                >
+                                  {planDays}
+                                </button>
+                              ) : '–'}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">
+                              {istDays > 0 ? (
+                                <button
+                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'ist', empName: emp.name })}
+                                  className={cn(
+                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
+                                    hasIstDetail ? 'cursor-pointer' : 'no-underline cursor-default',
+                                  )}
+                                  title={hasIstDetail ? 'Tage anzeigen' : undefined}
+                                  disabled={!hasIstDetail}
+                                >
+                                  {istDays}
+                                </button>
+                              ) : '–'}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
+                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{planCHF > 0 ? fmtCHF(planCHF) : '–'}</td>
+                            <td className="px-3 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{istCHF > 0 ? fmtCHF(istCHF) : '–'}</td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30 font-bold">
+                      <td className="px-4 py-2 text-sm" colSpan={5}>Total Ferienabbau</td>
+                      <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</td>
+                      <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ── Kranken-/Unfallkosten (80 %) ─────────────────────────────────── */}
+        {(() => {
+          const empWithKU = [...fixedEmployees, ...variableEmployees].filter(e =>
+            (kuPlanDays[e.id] ?? 0) > 0 || (kuIstDays[e.id] ?? 0) > 0
+          );
+          if (empWithKU.length === 0) return null;
+          return (
+            <section className="rounded-xl border border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20">
+                <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+                  <AlertCircle className="h-4 w-4 text-amber-500" />
+                  Kranken-/Unfallkosten (80 %)
+                  <Badge variant="secondary" className="text-xs">{empWithKU.length} MA mit K/U-Tagen</Badge>
+                </div>
+                {totalKuCHF > 0 && (
+                  <span className="text-sm font-mono font-bold text-amber-700 dark:text-amber-400">
+                    {fmtCHF(totalKuCHF)}
+                  </span>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs min-w-[600px]">
+                  <thead>
+                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                      <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Mitarbeiter</th>
+                      <th className="px-2 py-1 text-center font-medium text-orange-600 border-b border-border/40" colSpan={2}>Krank (K)</th>
+                      <th className="px-2 py-1 text-center font-medium text-red-600 border-b border-border/40" colSpan={2}>Unfall (U)</th>
+                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>h / Tag</th>
+                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>CHF / h</th>
+                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>80 % CHF</th>
+                    </tr>
+                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
+                      <th className="px-2 py-1 text-right font-medium text-orange-500">Plan</th>
+                      <th className="px-2 py-1 text-right font-medium text-orange-400/80">Ist</th>
+                      <th className="px-2 py-1 text-right font-medium text-red-500">Plan</th>
+                      <th className="px-2 py-1 text-right font-medium text-red-400/80">Ist</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {empWithKU.map((emp, i) => {
+                      const planBrk   = kuPlanBreakdown[emp.id] ?? { krank: 0, unfall: 0 };
+                      const istBrk    = kuIstBreakdown[emp.id]  ?? { krank: 0, unfall: 0 };
+                      const planDays  = kuPlanDays[emp.id] ?? 0;
+                      const istDays   = kuIstDays[emp.id]  ?? 0;
+                      const basisDays = planDays > 0 ? planDays : istDays;
+                      const dailyH    = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
+                      const wage      = emp.hourlyWage ?? 0;
+                      const chf80     = basisDays * dailyH * wage * 0.8;
+                      const hasKPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => SICK_CODES.has(e.type));
+                      const hasKIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => SICK_CODES.has(e.type));
+                      const hasUPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => ACCIDENT_CODES.has(e.type));
+                      const hasUIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => ACCIDENT_CODES.has(e.type));
+                      const mkBtn = (
+                        val: number,
+                        src: 'plan'|'ist',
+                        tf: 'krank'|'unfall',
+                        hasDetail: boolean,
+                        cls: string,
+                      ) => val > 0 ? (
+                        <button
+                          onClick={() => setShowKuDetail({ empId: emp.id, empName: emp.name, typeFilter: tf })}
+                          className={cn('tabular-nums', hasDetail ? 'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity' : 'cursor-default')}
+                          title={hasDetail ? 'Tage anzeigen' : undefined}
+                          disabled={!hasDetail}
+                        >
+                          <span className={cls}>{val}</span>
+                        </button>
+                      ) : <span className="text-muted-foreground/40">–</span>;
+                      return (
+                        <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
+                          <td className="px-4 py-2.5 font-medium">{emp.name}</td>
+                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.krank, 'plan', 'krank', hasKPlanDetail, 'text-orange-600 dark:text-orange-400')}</td>
+                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.krank,  'ist',  'krank', hasKIstDetail,  'text-orange-500/70 dark:text-orange-400/60')}</td>
+                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.unfall, 'plan', 'unfall', hasUPlanDetail, 'text-red-600 dark:text-red-400')}</td>
+                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.unfall, 'ist',  'unfall', hasUIstDetail,  'text-red-500/70 dark:text-red-400/60')}</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-700 dark:text-amber-400">
+                            {chf80 > 0 ? fmtCHF(chf80) : '–'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  {totalKuCHF > 0 && (() => {
+                    const totKP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.krank  ?? 0), 0);
+                    const totKI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.krank   ?? 0), 0);
+                    const totUP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.unfall  ?? 0), 0);
+                    const totUI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.unfall   ?? 0), 0);
+                    return (
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold text-xs">
+                          <td className="px-4 py-2 text-amber-800 dark:text-amber-300">Total</td>
+                          <td className="px-2 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{totKP > 0 ? totKP : '–'}</td>
+                          <td className="px-2 py-2 text-right font-mono text-orange-500/70">{totKI > 0 ? totKI : '–'}</td>
+                          <td className="px-2 py-2 text-right font-mono text-red-600 dark:text-red-400">{totUP > 0 ? totUP : '–'}</td>
+                          <td className="px-2 py-2 text-right font-mono text-red-500/70">{totUI > 0 ? totUI : '–'}</td>
+                          <td colSpan={2} />
+                          <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
+                </table>
+              </div>
+              <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
+                Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × Total AG/h × 80 % (bei fehlendem Plan: Ist-Tage).
+              </p>
+            </section>
+          );
+        })()}
+
+        {/* ── Erklärung ────────────────────────────────────────────────────── */}
+        <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
+          <Info className="h-4 w-4 shrink-0 mt-0.5" />
+          <p>
+            <strong>Personal FIX</strong>: {EMPLOYER_COST_LABELS.total} = Bruttolohn (inkl. amortisiertem 13. Monatslohn) + {EMPLOYER_COST_LABELS.social}.
+            Mitarbeiter die im gewählten Monat austreten werden <em>pro rata</em> (Arbeitstage ÷ Monatstage) abgerechnet.
+            Bereits ausgetretene Mitarbeiter werden ausgeblendet.{' '}
+            <strong>Personal FLEX</strong>: Stunden × {EMPLOYER_COST_LABELS.total}/h.
+            Wähle Plan- oder Ist-Stunden direkt aus dem Dienstplan — oder trage Stunden manuell ein.
+            Tagessatz-Einträge sind All-in-Beträge und werden nicht zusätzlich mit AG-Sozialkosten beaufschlagt.
+          </p>
+        </div>
+
+        {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
+        {pfix.active.istTotalVar > 0 && (
+          <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm font-bold">
+              <Users className="h-4 w-4 text-emerald-600" />
+              Total Personal FIX + VARIABEL Ist{proRataDay !== null ? ` bis ${proRataDay}.` : ''} · {getMonthLabel(selectedYear, selectedMonth)}
+            </div>
+            <div className="flex flex-wrap items-center gap-6 text-sm">
+              <span className="text-muted-foreground">
+                FIX: <strong className="font-mono text-blue-700 dark:text-blue-300">{fmtCHF(pfix.active.fix)}</strong>
+              </span>
+              <span className="text-muted-foreground">+</span>
+              <span className="text-muted-foreground">
+                VARIABEL: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istTotalVar)}</strong>
+              </span>
+              <span className="text-muted-foreground">=</span>
+              <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg font-mono">{fmtCHF(pfix.active.istTotal)}/Mt</span>
+              {personnelBudget > 0 && (() => {
+                const budget = personnelBudget * (proRataDay !== null ? proRataFactor : 1);
+                return (
+                  <span className={cn(
+                    'text-xs font-medium px-2 py-0.5 rounded-full',
+                    pfix.active.istTotal <= budget
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
+                  )}>
+                    {pfix.active.istTotal <= budget ? '✓ im Budget' : `↑ ${fmtCHF(pfix.active.istTotal - budget)} über Budget`}
+                  </span>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+        </CollapsibleSection>
+
+        {/* ── F: Budget-Auswertung (einklappbar) ───────────────────────────── */}
+        <CollapsibleSection
+          testid="pfix-section-budget"
+          icon={<Target />}
+          title={`Budget-Auswertung — ${getMonthLabel(selectedYear, selectedMonth)}`}
+          status={budgetRevenue != null ? 'Szenario aktiv' : undefined}
+        >
+        <div className="overflow-hidden -m-4">
           <div className="flex items-center justify-between px-4 py-3 bg-violet-50/40 dark:bg-violet-950/20 border-b border-border">
             <div className="flex items-center gap-2">
-              <Target className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-              <span className="text-sm font-bold">Budget-Auswertung — {getMonthLabel(selectedYear, selectedMonth)}</span>
               {budgetRevenue != null && (
                 <span className="ml-1 text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-700">
                   Szenario aktiv
@@ -4742,88 +5455,8 @@ export default function PersonalFixPage() {
               )}
             </div>
           )}
-        </section>
-
-        {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <KpiCard
-            title={proRataDay !== null ? `Flex Arbeit Plan bis ${proRataDay}.` : 'Flex Arbeit Plan'}
-            value={fmtCHF(pfix.active.planWork)}
-            sub="Dienstplan-Stunden × Lohn"
-            icon={<Clock className="h-5 w-5" />}
-            color="blue"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Flex Arbeit Ist bis ${proRataDay}.` : 'Flex Arbeit Ist'}
-            value={fmtCHF(pfix.active.istWork)}
-            sub="Mirus-Ist-Stunden × Lohn"
-            icon={<Clock className="h-5 w-5" />}
-            color={pfix.active.istWork > 0 ? 'orange' : 'default'}
-          />
-          <KpiCard
-            title={proRataDay !== null ? `PKQ Plan bis ${proRataDay}.` : 'PKQ Plan'}
-            value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
-            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(effectiveRevenue)}${revenueIsAssumed ? ' (Annahme)' : ''}` : 'Kein Umsatz erfasst'}
-            icon={<TrendingDown className="h-5 w-5" />}
-            color="blue"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `PKQ Ist bis ${proRataDay}.` : 'PKQ Ist'}
-            value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(effectiveRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
-            icon={<TrendingDown className="h-5 w-5" />}
-            color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Total Flex Plan bis ${proRataDay}.` : 'Total Flex Plan'}
-            value={fmtCHF(pfix.active.planTotalVar)}
-            sub="Flex Arbeit + Ferien (Plan)"
-            icon={<TrendingUp className="h-5 w-5" />}
-            color="blue"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Total Flex Ist bis ${proRataDay}.` : 'Total Flex Ist'}
-            value={fmtCHF(pfix.active.istTotalVar)}
-            sub="Flex Arbeit + Ferien (Ist)"
-            icon={<TrendingUp className="h-5 w-5" />}
-            color={pfix.active.istTotalVar > 0 ? 'orange' : 'default'}
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Diff. Arbeit bis ${proRataDay}.` : 'Diff. Arbeit'}
-            value={fmtCHF(Math.abs(pfix.active.diffWork))}
-            sub={pfix.active.diffWork === 0 ? 'Plan = Ist' : pfix.active.diffWork > 0 ? '↑ Ist über Plan' : '✓ Ist unter Plan'}
-            icon={<BarChart2 className="h-5 w-5" />}
-            color={pfix.active.diffWork > 0 ? 'red' : pfix.active.diffWork < 0 ? 'green' : 'default'}
-            delta={pfix.active.diffWork}
-            deltaLabel="Ist − Plan (Arbeit)"
-          />
-          <KpiCard
-            title={proRataDay !== null ? `Personal FIX bis ${proRataDay}.` : 'Personal FIX / Monat'}
-            value={fmtCHF(pfix.active.fix)}
-            sub={`${activeFixedEmployees.length} MA · Fixlohn`}
-            icon={<DollarSign className="h-5 w-5" />}
-            color="blue"
-          />
         </div>
-
-        {/* ── Überstundenkosten (Festangestellte) ──────────────────────────────── */}
-        <div className="mt-4">
-          <OvertimeCostCard
-            analysis={overtimeAnalysis}
-            weeklyAnalysis={weeklyOvertimeAnalysis}
-            dayDetailEntries={dayDetailEntries}
-            regularCost={pfix.month.istTotal}
-            netRevenue={effectiveRevenue}
-            includeOvertime={includeOvertime}
-            onIncludeOvertimeChange={setIncludeOvertime}
-            canSeeIndividualRates={canSeeHourlyWages}
-            canSeeTotals={canSeePersonnelCostTotals}
-            periodLabel={new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
-            onToggleEmployeeDisabled={handleToggleOvertimeDisabled}
-            canManageDisable={canSeePersonnelCostTotals}
-          />
-        </div>
-
+        </CollapsibleSection>
 
         {/* ── Einheitliche Flex-Auswertung ───────────────────────────────────── */}
         {(pfixAbw.days.length > 0 || pfixPerEmp.length > 0) && (() => {
@@ -4933,7 +5566,7 @@ export default function PersonalFixPage() {
               <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-border bg-muted/5">
                 <span className="text-xs text-muted-foreground font-medium">Aggregation:</span>
                 <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                  {(['day', 'week', 'month', 'year'] as AbwMode[]).map(m => (
+                  {(['week', 'day', 'month', 'year'] as AbwMode[]).map(m => (
                     <button key={m} onClick={() => setAbwMode(m)}
                       className={cn('rounded px-3 py-1 text-xs font-medium transition-colors',
                         abwMode === m ? 'bg-background shadow text-foreground' : 'text-muted-foreground hover:text-foreground')}>
@@ -5028,514 +5661,9 @@ export default function PersonalFixPage() {
                   </table>
                 </div>
               )}
-
-              {/* ── Mitarbeiter-Vergleichstabelle ─────────────────────────────── */}
-              {pfixPerEmp.length > 0 && (
-                <>
-                  <div className="flex items-center gap-2 px-4 py-2.5 border-t border-border bg-muted/20">
-                    <Users className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Flex Kosten pro Mitarbeiter
-                      {proRataDay !== null && ` — bis ${proRataDay}.`}
-                    </span>
-                    <Badge variant="secondary" className="text-xs ml-auto">{pfixPerEmp.length} MA</Badge>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border-t border-border min-w-[580px]">
-                      <thead>
-                        <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                          <th className="px-3 py-2 text-left font-medium">Name</th>
-                          <th className="px-3 py-2 text-center font-medium">Abt.</th>
-                          <th className="px-3 py-2 text-right font-medium">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/h</span>
-                              </TooltipTrigger>
-                              <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
-                            </Tooltip>
-                          </th>
-                          <th className="px-3 py-2 text-right font-medium text-blue-500">Plan Std</th>
-                          <th className="px-3 py-2 text-right font-medium text-orange-500">Ist Std</th>
-                          <th className="px-3 py-2 text-right font-medium text-blue-700">Flex Plan</th>
-                          <th className="px-3 py-2 text-right font-medium text-orange-700">Flex Ist</th>
-                          <th className="px-3 py-2 text-right font-medium">Diff.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {pfixPerEmp.map((row, i) => {
-                          const dc = (v: number) => v === 0 ? 'text-muted-foreground' : v > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400';
-                          const openBreakdown = (field: BreakdownField) => setBreakdown({
-                            empId:       row.id,
-                            empName:     row.name,
-                            field,
-                            hourlyWage:  row.hourlyWage,
-                            weeklyHours: row.weeklyHours,
-                            year:        selectedYear,
-                            month:       selectedMonth,
-                            cutoffDay:   proRataDay,
-                            factor:      proRataDay !== null ? proRataFactor : 1,
-                          });
-                          const clickCell = (field: BreakdownField, amount: number, colorClass: string) => (
-                            <td className="px-3 py-1.5 text-right">
-                              {amount > 0
-                                ? <button onClick={() => openBreakdown(field)}
-                                    className={cn('font-mono font-semibold underline underline-offset-2 decoration-dotted hover:opacity-80 transition-opacity cursor-pointer', colorClass)}
-                                    title="Tagesdetails anzeigen">
-                                    {fmtCHF(amount)}
-                                  </button>
-                                : <span className="text-muted-foreground font-mono">–</span>}
-                            </td>
-                          );
-                          const isZusatz = (row as any).isFixedAdditional === true;
-                          return (
-                            <tr key={row.id + (isZusatz ? '-zusatz' : '')} className={
-                              isZusatz
-                                ? 'bg-orange-50/60 dark:bg-orange-900/10 hover:bg-orange-100/50 dark:hover:bg-orange-900/20 border-l-2 border-orange-400'
-                                : i % 2 === 0 ? 'bg-background hover:bg-muted/20' : 'bg-muted/10 hover:bg-muted/20'
-                            }>
-                              <td className="px-3 py-1.5 font-medium">
-                                <div className="flex items-center gap-2">
-                                  {row.name}
-                                  {isZusatz && (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 whitespace-nowrap">
-                                      Zusatzkosten
-                                      <button
-                                        onClick={e => { e.stopPropagation(); clearZusatzkostenPlan(row.id, row.name); }}
-                                        className="ml-0.5 leading-none text-orange-500 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                                        title="Zusatzkosten-Markierung entfernen"
-                                      >×</button>
-                                    </span>
-                                  )}
-                                  {!isZusatz && row.hourlyWage === 0 && (
-                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
-                                      Lohn fehlt
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="px-3 py-1.5 text-center text-muted-foreground capitalize">{row.dept}</td>
-                              <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{row.hourlyWage > 0 ? `${row.hourlyWage.toFixed(2)}` : '–'}</td>
-                              <td className="px-3 py-1.5 text-right font-mono text-blue-500 dark:text-blue-400">{row.planH > 0 ? `${row.planH.toFixed(1)} h` : '–'}</td>
-                              <td className="px-3 py-1.5 text-right font-mono text-orange-500 dark:text-orange-400">{row.istH > 0 ? `${row.istH.toFixed(1)} h` : '–'}</td>
-                              {clickCell('planWork', row.planWork, 'text-blue-700 dark:text-blue-400')}
-                              {clickCell('istWork',  row.istWork,  'text-orange-700 dark:text-orange-400')}
-                              <td className={cn('px-3 py-1.5 text-right font-mono font-semibold', dc(row.diffWork))}>{row.diffWork === 0 ? '–' : `${row.diffWork > 0 ? '+' : ''}${fmtCHF(row.diffWork)}`}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                      <tfoot>
-                        <tr className="border-t-2 border-border bg-muted/30 font-bold text-xs">
-                          <td className="px-3 py-2" colSpan={3}>Total</td>
-                          <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">{pfixPerEmp.reduce((s,r)=>s+r.planH,0).toFixed(1)} h</td>
-                          <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">{pfixPerEmp.reduce((s,r)=>s+r.istH,0).toFixed(1)} h</td>
-                          <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.planWork, 0))}</td>
-                          <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfixPerEmp.reduce((s, r) => s + r.istWork, 0))}</td>
-                          <td className="px-3 py-2" />
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </>
-              )}
             </section>
           );
         })()}
-
-        {/* ── Ferienabbau Drill-down ──────────────────────────────────────── */}
-        {(ferienIstTotalCHF > 0 || ferienPlanTotalCHF > 0) && (
-          <section className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-            <button
-              onClick={() => setShowFerienDetail(v => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-blue-50/40 dark:bg-blue-950/10 hover:bg-blue-50/70 dark:hover:bg-blue-950/20 transition-colors text-left"
-            >
-              <div className="flex items-center gap-2 text-sm font-semibold text-blue-900 dark:text-blue-100">
-                <Calendar className="h-4 w-4 text-blue-500" />
-                Ferienabbau — Mitarbeiter-Detail
-                <Badge variant="secondary" className="text-xs">
-                  {[...fixedEmployees, ...variableEmployees].filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0).length} MA
-                </Badge>
-              </div>
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                <span className="hidden sm:inline">Plan: <strong className="font-mono text-blue-600 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</strong></span>
-                <span className="hidden sm:inline">Ist: <strong className="font-mono text-orange-600 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</strong></span>
-                <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', showFerienDetail && 'rotate-180')} />
-              </div>
-            </button>
-            {showFerienDetail && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[520px]">
-                  <thead>
-                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-4 py-2 text-left font-medium">Mitarbeiter</th>
-                      <th className="px-3 py-2 text-right font-medium text-blue-500">Tage Plan</th>
-                      <th className="px-3 py-2 text-right font-medium text-orange-500">Tage Ist</th>
-                      <th className="px-3 py-2 text-right font-medium">h / Tag</th>
-                      <th className="px-3 py-2 text-right font-medium">CHF / h</th>
-                      <th className="px-3 py-2 text-right font-medium text-blue-600">Plan CHF</th>
-                      <th className="px-3 py-2 text-right font-medium text-orange-600">Ist CHF</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {[...fixedEmployees, ...variableEmployees]
-                      .filter(e => (ferienIstDays[e.id] ?? 0) > 0 || (ferienPlanDays[e.id] ?? 0) > 0)
-                      .map((emp, i) => {
-                        const isFixed   = fixedEmployees.some(fe => fe.id === emp.id);
-                        const planDays = ferienPlanDays[emp.id] ?? 0;
-                        const istDays  = ferienIstDays[emp.id] ?? 0;
-                        const dailyH   = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-                        const wage     = emp.hourlyWage ?? 0;
-                        const planCHF  = planDays * dailyH * wage;
-                        const istCHF   = istDays  * dailyH * wage;
-                        const hasPlanDetail = (ferienPlanDetail[emp.id]?.length ?? 0) > 0;
-                        const hasIstDetail  = (ferienIstDetail[emp.id]?.length ?? 0) > 0;
-                        return (
-                          <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                            <td className="px-4 py-2 font-medium">
-                              <div className="flex items-center gap-1.5">
-                                {emp.name}
-                                {isFixed && (
-                                  <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
-                                    Fixlohn
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-blue-500 dark:text-blue-400">
-                              {planDays > 0 ? (
-                                <button
-                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'plan', empName: emp.name })}
-                                  className={cn(
-                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
-                                    hasPlanDetail ? 'cursor-pointer' : 'no-underline cursor-default',
-                                  )}
-                                  title={hasPlanDetail ? 'Tage anzeigen' : undefined}
-                                  disabled={!hasPlanDetail}
-                                >
-                                  {planDays}
-                                </button>
-                              ) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-orange-500 dark:text-orange-400">
-                              {istDays > 0 ? (
-                                <button
-                                  onClick={() => setShowFerienDayDetail({ empId: emp.id, source: 'ist', empName: emp.name })}
-                                  className={cn(
-                                    'underline decoration-dotted underline-offset-2 hover:opacity-70 transition-opacity',
-                                    hasIstDetail ? 'cursor-pointer' : 'no-underline cursor-default',
-                                  )}
-                                  title={hasIstDetail ? 'Tage anzeigen' : undefined}
-                                  disabled={!hasIstDetail}
-                                >
-                                  {istDays}
-                                </button>
-                              ) : '–'}
-                            </td>
-                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
-                            <td className="px-3 py-2 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
-                            <td className="px-3 py-2 text-right font-mono text-blue-600 dark:text-blue-400">{planCHF > 0 ? fmtCHF(planCHF) : '–'}</td>
-                            <td className="px-3 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{istCHF > 0 ? fmtCHF(istCHF) : '–'}</td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30 font-bold">
-                      <td className="px-4 py-2 text-sm" colSpan={5}>Total Ferienabbau</td>
-                      <td className="px-3 py-2 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(ferienPlanTotalCHF)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-orange-700 dark:text-orange-400">{fmtCHF(ferienIstTotalCHF)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ── Kranken-/Unfallkosten (80 %) ─────────────────────────────────── */}
-        {(() => {
-          const empWithKU = [...fixedEmployees, ...variableEmployees].filter(e =>
-            (kuPlanDays[e.id] ?? 0) > 0 || (kuIstDays[e.id] ?? 0) > 0
-          );
-          if (empWithKU.length === 0) return null;
-          return (
-            <section className="rounded-xl border border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20">
-                <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
-                  <AlertCircle className="h-4 w-4 text-amber-500" />
-                  Kranken-/Unfallkosten (80 %)
-                  <Badge variant="secondary" className="text-xs">{empWithKU.length} MA mit K/U-Tagen</Badge>
-                </div>
-                {totalKuCHF > 0 && (
-                  <span className="text-sm font-mono font-bold text-amber-700 dark:text-amber-400">
-                    {fmtCHF(totalKuCHF)}
-                  </span>
-                )}
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs min-w-[600px]">
-                  <thead>
-                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-4 py-2 text-left font-medium" rowSpan={2}>Mitarbeiter</th>
-                      <th className="px-2 py-1 text-center font-medium text-orange-600 border-b border-border/40" colSpan={2}>Krank (K)</th>
-                      <th className="px-2 py-1 text-center font-medium text-red-600 border-b border-border/40" colSpan={2}>Unfall (U)</th>
-                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>h / Tag</th>
-                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>CHF / h</th>
-                      <th className="px-3 py-1 text-right font-medium" rowSpan={2}>80 % CHF</th>
-                    </tr>
-                    <tr className="bg-muted/30 border-b border-border text-muted-foreground">
-                      <th className="px-2 py-1 text-right font-medium text-orange-500">Plan</th>
-                      <th className="px-2 py-1 text-right font-medium text-orange-400/80">Ist</th>
-                      <th className="px-2 py-1 text-right font-medium text-red-500">Plan</th>
-                      <th className="px-2 py-1 text-right font-medium text-red-400/80">Ist</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {empWithKU.map((emp, i) => {
-                      const planBrk   = kuPlanBreakdown[emp.id] ?? { krank: 0, unfall: 0 };
-                      const istBrk    = kuIstBreakdown[emp.id]  ?? { krank: 0, unfall: 0 };
-                      const planDays  = kuPlanDays[emp.id] ?? 0;
-                      const istDays   = kuIstDays[emp.id]  ?? 0;
-                      const basisDays = planDays > 0 ? planDays : istDays;
-                      const dailyH    = emp.weeklyHours ? emp.weeklyHours / 5 : 8.4;
-                      const wage      = emp.hourlyWage ?? 0;
-                      const chf80     = basisDays * dailyH * wage * 0.8;
-                      const hasKPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => SICK_CODES.has(e.type));
-                      const hasKIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => SICK_CODES.has(e.type));
-                      const hasUPlanDetail = (kuPlanDetail[emp.id] ?? []).some(e => ACCIDENT_CODES.has(e.type));
-                      const hasUIstDetail  = (kuIstDetail[emp.id]  ?? []).some(e => ACCIDENT_CODES.has(e.type));
-                      const mkBtn = (
-                        val: number,
-                        src: 'plan'|'ist',
-                        tf: 'krank'|'unfall',
-                        hasDetail: boolean,
-                        cls: string,
-                      ) => val > 0 ? (
-                        <button
-                          onClick={() => setShowKuDetail({ empId: emp.id, empName: emp.name, typeFilter: tf })}
-                          className={cn('tabular-nums', hasDetail ? 'underline decoration-dotted underline-offset-2 cursor-pointer hover:opacity-70 transition-opacity' : 'cursor-default')}
-                          title={hasDetail ? 'Tage anzeigen' : undefined}
-                          disabled={!hasDetail}
-                        >
-                          <span className={cls}>{val}</span>
-                        </button>
-                      ) : <span className="text-muted-foreground/40">–</span>;
-                      return (
-                        <tr key={emp.id} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/10'}>
-                          <td className="px-4 py-2.5 font-medium">{emp.name}</td>
-                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.krank, 'plan', 'krank', hasKPlanDetail, 'text-orange-600 dark:text-orange-400')}</td>
-                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.krank,  'ist',  'krank', hasKIstDetail,  'text-orange-500/70 dark:text-orange-400/60')}</td>
-                          <td className="px-2 py-2.5 text-right font-mono font-semibold">{mkBtn(planBrk.unfall, 'plan', 'unfall', hasUPlanDetail, 'text-red-600 dark:text-red-400')}</td>
-                          <td className="px-2 py-2.5 text-right font-mono">{mkBtn(istBrk.unfall, 'ist',  'unfall', hasUIstDetail,  'text-red-500/70 dark:text-red-400/60')}</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{dailyH.toFixed(1)} h</td>
-                          <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">{wage > 0 ? fmtCHFDec(wage) : '–'}</td>
-                          <td className="px-3 py-2.5 text-right font-mono font-semibold text-amber-700 dark:text-amber-400">
-                            {chf80 > 0 ? fmtCHF(chf80) : '–'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  {totalKuCHF > 0 && (() => {
-                    const totKP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.krank  ?? 0), 0);
-                    const totKI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.krank   ?? 0), 0);
-                    const totUP = empWithKU.reduce((s, e) => s + (kuPlanBreakdown[e.id]?.unfall  ?? 0), 0);
-                    const totUI = empWithKU.reduce((s, e) => s + (kuIstBreakdown[e.id]?.unfall   ?? 0), 0);
-                    return (
-                      <tfoot>
-                        <tr className="border-t-2 border-border bg-amber-50/40 dark:bg-amber-950/10 font-bold text-xs">
-                          <td className="px-4 py-2 text-amber-800 dark:text-amber-300">Total</td>
-                          <td className="px-2 py-2 text-right font-mono text-orange-600 dark:text-orange-400">{totKP > 0 ? totKP : '–'}</td>
-                          <td className="px-2 py-2 text-right font-mono text-orange-500/70">{totKI > 0 ? totKI : '–'}</td>
-                          <td className="px-2 py-2 text-right font-mono text-red-600 dark:text-red-400">{totUP > 0 ? totUP : '–'}</td>
-                          <td className="px-2 py-2 text-right font-mono text-red-500/70">{totUI > 0 ? totUI : '–'}</td>
-                          <td colSpan={2} />
-                          <td className="px-3 py-2 text-right font-mono text-amber-700 dark:text-amber-400">{fmtCHF(totalKuCHF)}</td>
-                        </tr>
-                      </tfoot>
-                    );
-                  })()}
-                </table>
-              </div>
-              <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
-                Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × Total AG/h × 80 % (bei fehlendem Plan: Ist-Tage).
-              </p>
-            </section>
-          );
-        })()}
-
-        {/* ── Erklärung ────────────────────────────────────────────────────── */}
-        <div className="flex items-start gap-2.5 rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20 p-3 text-xs text-blue-800 dark:text-blue-200">
-          <Info className="h-4 w-4 shrink-0 mt-0.5" />
-          <p>
-            <strong>Personal FIX</strong>: {EMPLOYER_COST_LABELS.total} = Bruttolohn (inkl. amortisiertem 13. Monatslohn) + {EMPLOYER_COST_LABELS.social}.
-            Mitarbeiter die im gewählten Monat austreten werden <em>pro rata</em> (Arbeitstage ÷ Monatstage) abgerechnet.
-            Bereits ausgetretene Mitarbeiter werden ausgeblendet.{' '}
-            <strong>Personal FLEX</strong>: Stunden × {EMPLOYER_COST_LABELS.total}/h.
-            Wähle Plan- oder Ist-Stunden direkt aus dem Dienstplan — oder trage Stunden manuell ein.
-            Tagessatz-Einträge sind All-in-Beträge und werden nicht zusätzlich mit AG-Sozialkosten beaufschlagt.
-          </p>
-        </div>
-
-        {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
-        {Object.entries(byDept).map(([dept, rows]) => {
-          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
-          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
-          const isCollapsed = expandedFixDepts.has(dept);
-          const toggleDept  = () => setExpandedFixDepts(prev => {
-            const next = new Set(prev);
-            if (next.has(dept)) next.delete(dept); else next.add(dept);
-            return next;
-          });
-          return (
-            <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-              <button
-                onClick={toggleDept}
-                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-                aria-expanded={!isCollapsed}
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  {DEPT_ICON[dept]}
-                  {DEPT_LABEL[dept] ?? dept} — FIX
-                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
-                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
-                </div>
-                <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
-                  <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
-                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
-                </div>
-              </button>
-
-              {!isCollapsed && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[540px]">
-                  <thead>
-                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
-                      <th className="text-left px-4 py-2 font-medium">Name</th>
-                      <th className="text-left px-4 py-2 font-medium">Anstellung</th>
-                      <th className="text-right px-4 py-2 font-medium">Basis-Lohn/Mt</th>
-                      <th className="text-right px-4 py-2 font-medium">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help underline decoration-dotted">inkl. 13. /Mt</span>
-                          </TooltipTrigger>
-                          <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
-                        </Tooltip>
-                      </th>
-                      <th className="text-right px-4 py-2 font-medium">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
-                        </Tooltip>
-                      </th>
-                      <th className="text-right px-4 py-2 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {rows.map(({ emp, cost, label, yearlyCost }) => {
-                      const isSavingThis = saving === emp.id;
-                      const isProRata = label !== null;
-                      return (
-                        <tr
-                          key={emp.id}
-                          className={cn('hover:bg-muted/30 transition-colors', isSavingThis && 'opacity-50')}
-                        >
-                          <td className="px-4 py-2.5 font-medium">
-                            <div className="flex items-center gap-2">
-                              {emp.name}
-                              {isProRata && (
-                                <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
-                                  {label}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {canEditEmployees ? (
-                              <InlineSalaryEditor empId={emp.id} field="monthlySalary" value={emp.monthlySalary} onSaved={handleSaved} />
-                            ) : (
-                              <span className="font-mono text-sm">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {canEditEmployees ? (
-                              <InlineSalaryEditor empId={emp.id} field="monthlySalaryWith13th" value={emp.monthlySalaryWith13th} onSaved={handleSaved} />
-                            ) : (
-                              <span className="font-mono text-sm">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
-                            {cost > 0
-                              ? <span>{fmtCHF(cost)}{isProRata && <span className="text-xs font-normal text-amber-600 ml-1">*</span>}</span>
-                              : <span className="text-muted-foreground">–</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
-                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/20 font-semibold border-t-2 border-border">
-                      <td className="px-4 py-2.5 text-sm" colSpan={2}>Total {DEPT_LABEL[dept] ?? dept}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">{fmtCHF(deptBase)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">
-                        {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-              )}
-            </section>
-          );
-        })}
-
-
-
-        {/* ── Gesamt-Total FIX + VARIABEL ──────────────────────────────────── */}
-        {pfix.active.istTotalVar > 0 && (
-          <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-700 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-bold">
-              <Users className="h-4 w-4 text-emerald-600" />
-              Total Personal FIX + VARIABEL Ist{proRataDay !== null ? ` bis ${proRataDay}.` : ''} · {getMonthLabel(selectedYear, selectedMonth)}
-            </div>
-            <div className="flex flex-wrap items-center gap-6 text-sm">
-              <span className="text-muted-foreground">
-                FIX: <strong className="font-mono text-blue-700 dark:text-blue-300">{fmtCHF(pfix.active.fix)}</strong>
-              </span>
-              <span className="text-muted-foreground">+</span>
-              <span className="text-muted-foreground">
-                VARIABEL: <strong className="font-mono text-orange-700 dark:text-orange-400">{fmtCHF(pfix.active.istTotalVar)}</strong>
-              </span>
-              <span className="text-muted-foreground">=</span>
-              <span className="text-emerald-700 dark:text-emerald-300 font-bold text-lg font-mono">{fmtCHF(pfix.active.istTotal)}/Mt</span>
-              {personnelBudget > 0 && (() => {
-                const budget = personnelBudget * (proRataDay !== null ? proRataFactor : 1);
-                return (
-                  <span className={cn(
-                    'text-xs font-medium px-2 py-0.5 rounded-full',
-                    pfix.active.istTotal <= budget
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
-                      : 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
-                  )}>
-                    {pfix.active.istTotal <= budget ? '✓ im Budget' : `↑ ${fmtCHF(pfix.active.istTotal - budget)} über Budget`}
-                  </span>
-                );
-              })()}
-            </div>
-          </div>
-        )}
-
 
       </main>
 
