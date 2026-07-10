@@ -145,6 +145,63 @@ export function toneForDiffPp(diffPp: number | null): ComparisonTone {
 }
 
 /**
+ * Generisches Vergleichspaar App-Kalkulation ↔ Erfolgsrechnung (eine Ebene).
+ *
+ * Bewusst wertneutral (kein „Plan"/„Ist" im Typ): dieselbe reine Funktion bildet
+ * BEIDE Abgleiche der Seite ab —
+ *   • Planung  vs. Erfolgsrechnung-Budget  (appCHF = App-Plan,  fibuCHF = FIBU-Budget)
+ *   • Ist      vs. Erfolgsrechnung-Ist     (appCHF = App-Ist,   fibuCHF = FIBU-5xxx)
+ * Beide Quoten teilen denselben `revenue`-Nenner → Prozentpunkte vergleichbar.
+ * Fehlt der Erfolgsrechnungs-Wert (≤ 0) → `{ status: 'missing' }` (nie 0 anzeigen).
+ */
+export interface ErfolgsVergleichPaarInput {
+  /** Von der App berechneter Personalaufwand dieser Ebene (Plan ODER Ist). */
+  appCHF: number;
+  /** Personalaufwand laut Erfolgsrechnung dieser Ebene (Budget ODER Ist). */
+  fibuCHF: number | null | undefined;
+  /** Umsatz-Nenner für BEIDE Quoten dieser Ebene (Plan-Umsatz bzw. Ist-Umsatz). */
+  revenue: number;
+}
+
+export type ErfolgsVergleichPaar =
+  | { status: 'missing' }
+  | {
+      status: 'ok';
+      /** App-Personalaufwand (durchgereicht). */
+      appCHF: number;
+      /** Erfolgsrechnungs-Personalaufwand. */
+      fibuCHF: number;
+      /** App − FIBU (CHF). Positiv = App rechnet höher als die Buchhaltung. */
+      diffCHF: number;
+      /** PK-Quote App (% vom Umsatz) — `null` bei zu kleinem Umsatz. */
+      appPct: number | null;
+      /** PK-Quote FIBU (% vom Umsatz) — `null` bei zu kleinem Umsatz. */
+      fibuPct: number | null;
+      /** Differenz der Quoten in Prozentpunkten (App − FIBU). */
+      diffPp: number | null;
+      /** Ampel-Ton anhand `diffPp`. */
+      tone: ComparisonTone;
+    };
+
+export function buildErfolgsVergleichPaar(i: ErfolgsVergleichPaarInput): ErfolgsVergleichPaar {
+  const fibuCHF = i.fibuCHF != null && i.fibuCHF > 0 ? i.fibuCHF : null;
+  if (fibuCHF == null) return { status: 'missing' };
+  const appPct = safePkQuote(i.appCHF, i.revenue);
+  const fibuPct = safePkQuote(fibuCHF, i.revenue);
+  const diffPp = appPct != null && fibuPct != null ? appPct - fibuPct : null;
+  return {
+    status: 'ok',
+    appCHF: i.appCHF,
+    fibuCHF,
+    diffCHF: i.appCHF - fibuCHF,
+    appPct,
+    fibuPct,
+    diffPp,
+    tone: toneForDiffPp(diffPp),
+  };
+}
+
+/**
  * Vergleicht den berechneten Personalaufwand mit der Erfolgsrechnung.
  *
  * FIBU-Wert: `personnelCostActual` (> 0) hat Vorrang, sonst der aus 5xxx
@@ -163,14 +220,18 @@ export function buildErfolgsrechnungVergleich(
   const derived =
     i.plTotalPersonnel != null && i.plTotalPersonnel > 0 ? i.plTotalPersonnel : null;
   const fibuCHF = explicit ?? derived;
-  if (fibuCHF == null) return { status: 'missing' };
+
+  // Reine Vergleichsmathematik über die generische Ebenen-Funktion (Single Source
+  // of Truth); hier zusätzlich die Ist-spezifischen Felder fibuSource + revenueMismatch.
+  const paar = buildErfolgsVergleichPaar({
+    appCHF: i.berechnetCHF,
+    fibuCHF,
+    revenue: i.effectiveRevenue,
+  });
+  if (paar.status === 'missing') return { status: 'missing' };
 
   const fibuSource: 'personnelCostActual' | 'pl5xxx' =
     explicit != null ? 'personnelCostActual' : 'pl5xxx';
-
-  const berechnetPct = safePkQuote(i.berechnetCHF, i.effectiveRevenue);
-  const fibuPct = safePkQuote(fibuCHF, i.effectiveRevenue);
-  const diffPp = berechnetPct != null && fibuPct != null ? berechnetPct - fibuPct : null;
 
   const revenueMismatch =
     i.plNetRevenue != null && i.plNetRevenue > 0 && i.effectiveRevenue > 0
@@ -179,14 +240,14 @@ export function buildErfolgsrechnungVergleich(
 
   return {
     status: 'ok',
-    fibuCHF,
+    fibuCHF: paar.fibuCHF,
     fibuSource,
-    berechnetCHF: i.berechnetCHF,
-    diffCHF: i.berechnetCHF - fibuCHF,
-    berechnetPct,
-    fibuPct,
-    diffPp,
-    tone: toneForDiffPp(diffPp),
+    berechnetCHF: paar.appCHF,
+    diffCHF: paar.diffCHF,
+    berechnetPct: paar.appPct,
+    fibuPct: paar.fibuPct,
+    diffPp: paar.diffPp,
+    tone: paar.tone,
     revenueMismatch,
   };
 }

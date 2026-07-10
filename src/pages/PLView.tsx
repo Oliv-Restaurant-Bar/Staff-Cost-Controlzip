@@ -41,7 +41,7 @@ import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, STORAGE_KE
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
-import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides } from '@/lib/pl-engine';
+import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth } from '@/lib/pl-engine';
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
@@ -752,24 +752,6 @@ const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
   depreciation:      'pl_other_op',
   // Finanzaufwand (6900–6999)
   bank_fees:         'pl_finance',
-};
-
-// Mappt BPL-Kategorie-ID → PL_STRUCTURE-Zeilen-ID (für Budget-Override in Klassisch-View)
-const BPL_CAT_TO_PL_ROW: Record<string, string> = {
-  pl_revenue:         'revenue_total',
-  pl_goods_cost:      'total_cogs',
-  pl_wages:           'personnel_wages',
-  pl_social:          'personnel_social',
-  pl_personnel_other: 'personnel_other',
-  pl_rent:            'rent',
-  pl_maintenance:     'maintenance',
-  pl_vehicles:        'other_operating',
-  pl_insurance:       'insurance',
-  pl_energy:          'utilities',
-  pl_admin:           'admin',
-  pl_marketing:       'marketing',
-  pl_other_op:        'other_operating',
-  pl_finance:         'other_operating',
 };
 
 function computeBPLRows(
@@ -2519,25 +2501,10 @@ const PLViewPage = () => {
 
   // Pro-Monat Overrides (Budget + Vorjahr) für alle 12 Monate — zentral für Klassisch & Jahresansicht
   const allMonthOverrides = useMemo((): PLMonthOverrides[] => {
-    const items = budgetData.plLineItems ?? [];
-    const cats  = budgetData.plCategories ?? [];
     return Array.from({ length: 12 }, (_, idx) => {
-      const budgetByRow = new Map<string, number>();
-      for (const item of items) {
-        if (item.isInternal) continue;
-        const val = item.monthlyValues[idx] ?? 0;
-        if (val === 0) continue;
-        let rowId: string | null = null;
-        if (item.accountNumber) {
-          const res = lookupAccount(item.accountNumber);
-          if (res.mapping) rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-        }
-        if (!rowId) {
-          const cat = cats.find(c => c.id === item.categoryId);
-          if (cat) rowId = BPL_CAT_TO_PL_ROW[cat.id] ?? null;
-        }
-        if (rowId) budgetByRow.set(rowId, (budgetByRow.get(rowId) ?? 0) + val);
-      }
+      // Budget-Overrides zentral aus pl-engine (Single Source of Truth — dieselbe
+      // Quelle nutzt PersonalFix für „Planung vs. Erfolgsrechnung").
+      const budgetByRow = buildBudgetByRowForMonth(budgetData, idx, lookupAccount);
       const prevYearByRow = new Map<string, number>();
       const prevRec = prevYearRecords[idx];
       const effRec  = effectiveAllRecords[idx];

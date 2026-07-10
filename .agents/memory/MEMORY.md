@@ -34,3 +34,4 @@
 - [replit.md editing pitfalls](replit-md-editing.md) — never inline German bullets in bash-heredoc Python (quote mixups kill the string); write temp file via write tool, then splice.
 - [Vitest full-run OOM & singleFork pollution](vitest-oom-chunking.md) — full `vitest run` OOM-killed silently beside dev server; chunk it; singleFork kills isolation → false failures, re-verify isolated.
 - [E2E-Verifikation hinter Supabase-Login](e2e-auth-verification.md) — Self-Signup + user_profiles-Self-Upsert = Test-Admin möglich; Gast-Token rein client-seitig, sieht aber keine Admin-Flächen.
+- [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.

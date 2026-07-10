@@ -31,6 +31,7 @@ import {
 } from '@/types/pl';
 import { lookupAccount } from '@/lib/account-mapping-store';
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
+import type { BudgetPLLineItem, BudgetPLCategory } from '@/types/budget';
 
 /**
  * Gibt die P&L-Zeilen-ID für eine categoryId zurück.
@@ -301,6 +302,72 @@ function variance(actual: number | undefined, reference: number | undefined): nu
 function variancePct(actual: number | undefined, reference: number | undefined): number | undefined {
   if (actual === undefined || reference === undefined || reference === 0) return undefined;
   return ((actual - reference) / Math.abs(reference)) * 100;
+}
+
+// ─── Budget-Planung → P&L-Zeilen-Mapping ──────────────────────────────────────
+
+/**
+ * Mappt BPL-Kategorie-ID (Budget-Modul) → PL_STRUCTURE-Zeilen-ID.
+ * Fallback, wenn eine Budgetposition keine per Kontonummer auflösbare
+ * P&L-Zuordnung hat.
+ */
+export const BPL_CAT_TO_PL_ROW: Record<string, string> = {
+  pl_revenue:         'revenue_total',
+  pl_goods_cost:      'total_cogs',
+  pl_wages:           'personnel_wages',
+  pl_social:          'personnel_social',
+  pl_personnel_other: 'personnel_other',
+  pl_rent:            'rent',
+  pl_maintenance:     'maintenance',
+  pl_vehicles:        'other_operating',
+  pl_insurance:       'insurance',
+  pl_energy:          'utilities',
+  pl_admin:           'admin',
+  pl_marketing:       'marketing',
+  pl_other_op:        'other_operating',
+  pl_finance:         'other_operating',
+};
+
+/**
+ * Baut die `budgetByRow`-Map (PL-Zeilen-ID → Budget-CHF) für EINEN Monat aus
+ * den Budget-P&L-Positionen. Einzige Quelle des ER-Budgets (Single Source of
+ * Truth) — sowohl die Erfolgsrechnung (PLView) als auch die Planung-vs-ER-
+ * Auswertung (PersonalFix) leiten ihr Budget hierüber ab, damit beide Seiten
+ * exakt dieselben Zahlen zeigen.
+ *
+ * Zuordnung je Position: zuerst per Kontonummer (account-mapping → PLCategory),
+ * sonst per Budget-Kategorie (BPL_CAT_TO_PL_ROW). `isInternal`-Positionen und
+ * 0-Werte werden ausgelassen.
+ *
+ * `lookupFn` ist injizierbar (Default = `lookupAccount`), damit die Funktion
+ * ohne localStorage rein getestet werden kann.
+ */
+export function buildBudgetByRowForMonth(
+  budget: { plLineItems?: BudgetPLLineItem[]; plCategories?: BudgetPLCategory[] },
+  monthIdx: number,
+  lookupFn: (accountNumber: string) => { mapping?: { plCategory: string } | null } = lookupAccount,
+): Map<string, number> {
+  const items = budget.plLineItems ?? [];
+  const cats  = budget.plCategories ?? [];
+  const budgetByRow = new Map<string, number>();
+  for (const item of items) {
+    if (item.isInternal) continue;
+    const val = item.monthlyValues[monthIdx] ?? 0;
+    if (val === 0) continue;
+    let rowId: string | null = null;
+    if (item.accountNumber) {
+      const res = lookupFn(item.accountNumber);
+      if (res.mapping) {
+        rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory as keyof typeof PL_CATEGORY_TO_ROW_ID] ?? null;
+      }
+    }
+    if (!rowId) {
+      const cat = cats.find(c => c.id === item.categoryId);
+      if (cat) rowId = BPL_CAT_TO_PL_ROW[cat.id] ?? null;
+    }
+    if (rowId) budgetByRow.set(rowId, (budgetByRow.get(rowId) ?? 0) + val);
+  }
+  return budgetByRow;
 }
 
 // ─── Haupt-Berechnungslogik ───────────────────────────────────────────────────

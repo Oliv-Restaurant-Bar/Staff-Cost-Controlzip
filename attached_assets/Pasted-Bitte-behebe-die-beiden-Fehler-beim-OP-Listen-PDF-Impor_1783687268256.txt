@@ -1,0 +1,169 @@
+Bitte behebe die beiden Fehler beim OP-Listen-PDF-Import.
+
+Aktuelle Fehler:
+
+1. Datenbankfehler:
+"Could not find the table 'public.creditor_op_imports' in the schema cache"
+
+2. Parserfehler:
+Die Summe der Einzelposten wird erkannt, aber der Gesamtsaldo aus dem PDF bleibt 0.00.
+
+Bitte zuerst den bestehenden OP-Listen-Code, die Supabase-Migrationen, das Datenbankschema und den PDF-Parser prüfen.
+
+1. Datenbanktabellen anlegen
+
+Bitte prüfen, ob Migrationen für folgende Tabellen bereits existieren:
+
+- creditor_op_imports
+- creditor_op_items
+
+Falls sie fehlen:
+- saubere Supabase-Migration erstellen
+- bestehende Tenant-/Restaurant-/RLS-Muster der App verwenden
+- keine Migration direkt im Produktionscode verstecken
+
+Mindestens benötigte Struktur:
+
+creditor_op_imports:
+- id
+- tenant_id
+- restaurant_id
+- snapshot_date
+- imported_at
+- source_filename
+- total_open_amount
+- total_items
+- total_invoices
+- supplier_count
+- raw_totals_json
+- created_by
+- created_at
+
+creditor_op_items:
+- id
+- import_id
+- tenant_id
+- supplier_name
+- supplier_number
+- op_date
+- op_number
+- invoice_text
+- open_amount
+- overdue_29_plus
+- overdue_since_29
+- overdue_since_14
+- due_in_15
+- due_in_30
+- due_after_30
+- created_at
+
+Bitte:
+- Foreign Key zwischen items und imports
+- sinnvolle Indizes
+- RLS tenant-safe
+- Rollen-/Tenant-Muster aus bestehenden Tabellen übernehmen
+
+2. Migration ausführen / Schema aktualisieren
+
+Bitte sicherstellen, dass die Migration nicht nur erstellt, sondern auch gegen die aktuell verbundene Supabase-Datenbank angewendet wird.
+
+Danach:
+- Supabase-Schema-Cache aktualisieren bzw. Verbindung neu laden
+- prüfen, dass creditor_op_imports und creditor_op_items wirklich erreichbar sind
+
+3. Parser für Gesamtsaldo korrigieren
+
+Der Parser erkennt aktuell:
+- Stichtag
+- Lieferanten
+- Posten
+- Einzelbeträge
+
+Aber nicht den Gesamt-Saldo.
+
+Bitte den Parser für Zeilen wie diese robust machen:
+
+"Gesamt Saldo von 103 Posten: CHF 364'637.50"
+"Gesamt Saldo von 102 Rechnungen: CHF 365'216.45"
+"Gesamt Saldo von 1 Gutschriften: CHF -578.95"
+"Total der Währung CHF CHF 364'637.50"
+
+Priorität für total_open_amount:
+
+1. "Gesamt Saldo von ... Posten"
+2. falls nicht vorhanden: "Total der Währung CHF"
+3. als letzter Fallback: Summe der Einzelposten
+
+Wichtig:
+- Schweizer Zahlenformat korrekt parsen
+- Apostroph als Tausendertrennzeichen
+- negative Gutschriften
+- Dezimalpunkt
+- keine Verwechslung mit Total pro Lieferant
+
+4. Validierung verbessern
+
+Die Warnung soll nur erscheinen, wenn:
+- PDF-Gesamtsaldo tatsächlich erkannt wurde
+- und Summe Einzelposten davon abweicht
+
+Wenn kein Gesamtsaldo erkannt wird:
+- nicht "PDF-Gesamtsaldo 0.00" anzeigen
+- stattdessen:
+  "Gesamtsaldo konnte im PDF nicht erkannt werden"
+- Import standardmässig blockieren, ausser es gibt eine bewusste Admin-Bestätigung
+
+5. Import-Button
+
+Der Button "Importieren" darf nur aktiv sein, wenn:
+- Tabellen erreichbar
+- Stichtag erkannt
+- mindestens ein Posten erkannt
+- Gesamtsaldo erkannt oder bewusst bestätigt
+- keine nicht behandelte Parser-Fehlermeldung vorhanden
+
+6. Bestehender Stichtag
+
+Wenn für den gleichen snapshot_date bereits ein Import existiert:
+- nicht still überschreiben
+- Dialog:
+  "Für den 09.07.2026 existiert bereits eine OP-Liste"
+- Optionen:
+  - Abbrechen
+  - Bestehenden Import ersetzen
+
+Beim Ersetzen:
+- atomar Import + Items ersetzen
+- keine doppelten Posten zurücklassen
+
+7. Tests
+
+Bitte Tests ergänzen für:
+
+- Erkennung "Gesamt Saldo von 103 Posten"
+- Erkennung "Total der Währung CHF"
+- negatives Gutschriften-Total
+- Schweizer Zahlenformat
+- Gesamtsaldo wird nicht mit Lieferanten-Total verwechselt
+- fehlender Gesamtsaldo ergibt keinen falschen Wert 0.00
+- Import blockiert bei fehlender Tabelle
+- Migrationstabellen vorhanden
+- Ersetzen eines bestehenden Stichtags
+- Summe Einzelposten entspricht Gesamtsaldo
+
+8. Abschluss
+
+Bitte danach:
+- Migration erfolgreich anwenden
+- PDF erneut importieren
+- prüfen, dass Gesamtsaldo korrekt angezeigt wird
+- prüfen, dass Import gespeichert wird
+- Browser-/Live-Check
+- Type-Check
+- relevante Tests
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Nicht nur die Fehlermeldung ausblenden. Die Datenbankstruktur und die Parserlogik müssen fachlich korrekt repariert werden.

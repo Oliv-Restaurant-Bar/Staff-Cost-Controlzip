@@ -5,6 +5,7 @@ import {
   safePkQuote,
   toneForDiffPp,
   buildErfolgsrechnungVergleich,
+  buildErfolgsVergleichPaar,
   buildPkqBreakdown,
   PERSONALAUFWAND_DIFF_PP_GOOD,
   PERSONALAUFWAND_DIFF_PP_WARN,
@@ -157,6 +158,61 @@ describe('buildErfolgsrechnungVergleich — Planung vs. Erfolgsrechnung', () => 
     });
     if (r.status !== 'ok') throw new Error('erwartet ok');
     expect(r.revenueMismatch).toBe(true);
+  });
+});
+
+describe('buildErfolgsVergleichPaar — generische Ebene (Planung ODER Ist)', () => {
+  it('missing, wenn der Erfolgsrechnungs-Wert fehlt/≤ 0 (niemals 0 anzeigen)', () => {
+    expect(buildErfolgsVergleichPaar({ appCHF: 60_000, fibuCHF: null, revenue: 200_000 }).status).toBe('missing');
+    expect(buildErfolgsVergleichPaar({ appCHF: 60_000, fibuCHF: 0, revenue: 200_000 }).status).toBe('missing');
+    expect(buildErfolgsVergleichPaar({ appCHF: 60_000, fibuCHF: -5, revenue: 200_000 }).status).toBe('missing');
+  });
+
+  it('Plan-Ebene: App-Plan ↔ ER-Budget, gemeinsamer Nenner, Diff + Ampel', () => {
+    const r = buildErfolgsVergleichPaar({ appCHF: 62_000, fibuCHF: 60_000, revenue: 200_000 });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(r.appCHF).toBe(62_000);
+    expect(r.fibuCHF).toBe(60_000);
+    expect(r.diffCHF).toBe(2_000);
+    expect(r.appPct).toBeCloseTo(31, 6);
+    expect(r.fibuPct).toBeCloseTo(30, 6);
+    expect(r.diffPp).toBeCloseTo(1, 6); // ≤ 1 Pp
+    expect(r.tone).toBe('good');
+  });
+
+  it('grosse Abweichung → tone critical (> 3 Pp)', () => {
+    const r = buildErfolgsVergleichPaar({ appCHF: 70_000, fibuCHF: 58_000, revenue: 200_000 });
+    if (r.status !== 'ok') throw new Error('erwartet ok');
+    expect(r.diffPp).toBeCloseTo(6, 6); // 35 % − 29 %
+    expect(r.tone).toBe('critical');
+  });
+
+  it('Quoten null bei zu kleinem Umsatz → tone neutral, CHF-Diff bleibt', () => {
+    const r = buildErfolgsVergleichPaar({ appCHF: 5_000, fibuCHF: 4_000, revenue: 500 });
+    if (r.status !== 'ok') throw new Error('erwartet ok');
+    expect(r.appPct).toBeNull();
+    expect(r.fibuPct).toBeNull();
+    expect(r.diffPp).toBeNull();
+    expect(r.tone).toBe('neutral');
+    expect(r.diffCHF).toBe(1_000);
+  });
+
+  it('erzeugt dieselbe Mathematik wie buildErfolgsrechnungVergleich (Ist-Ebene)', () => {
+    const paar = buildErfolgsVergleichPaar({ appCHF: 62_000, fibuCHF: 60_000, revenue: 200_000 });
+    const ist = buildErfolgsrechnungVergleich({
+      berechnetCHF: 62_000,
+      personnelCostActual: 60_000,
+      plTotalPersonnel: null,
+      plNetRevenue: 200_000,
+      effectiveRevenue: 200_000,
+    });
+    if (paar.status !== 'ok' || ist.status !== 'ok') throw new Error('erwartet ok');
+    expect(paar.diffCHF).toBe(ist.diffCHF);
+    expect(paar.appPct).toBe(ist.berechnetPct);
+    expect(paar.fibuPct).toBe(ist.fibuPct);
+    expect(paar.diffPp).toBe(ist.diffPp);
+    expect(paar.tone).toBe(ist.tone);
   });
 });
 

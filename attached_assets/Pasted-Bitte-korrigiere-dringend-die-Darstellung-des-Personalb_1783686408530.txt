@@ -1,0 +1,98 @@
+Bitte korrigiere dringend die Darstellung des Personalbedarf-Abgleichs im Dienstplan.
+
+Problem:
+Der grosse Personalbedarf-Block unterhalb des Dienstplans nimmt zu viel Höhe ein und verdeckt bzw. verdrängt den eigentlichen Dienstplan. Dadurch ist die Kernfunktion der Seite schlecht bedienbar.
+
+Ziel:
+Der Dienstplan muss jederzeit die dominante Arbeitsfläche bleiben. Der Personalbedarf darf nur ergänzend sichtbar sein und niemals den Plan verdrängen.
+
+Bitte umsetzen:
+
+1. Personalbedarf standardmässig einklappen
+- Der Bereich „Personalbedarf-Abgleich“ soll beim Öffnen der Dienstplan-Seite standardmässig geschlossen sein.
+- Sichtbar bleibt nur eine kompakte Kopfzeile mit:
+  - Titel „Personalbedarf-Abgleich“
+  - ausgewähltem Datum
+  - kurzem Status, z. B. „Kein Bedarf definiert“, „Im Plan“, „Unterbesetzt“ oder „Überbesetzt“
+  - Chevron zum Auf-/Zuklappen
+
+2. Keine feste grosse Höhe
+- Entferne jede feste oder minimale Höhe, die den Personalbedarf unnötig gross macht.
+- Im geschlossenen Zustand maximal eine kompakte Zeile von ungefähr 44–56 px.
+- Erst beim Öffnen soll der bestehende Inhalt erscheinen.
+
+3. Dienstplan nicht verdrängen
+- Der Dienstplanbereich soll die verfügbare Bildschirmhöhe erhalten.
+- Der Personalbedarf darf nicht über dem Grid liegen und den Plan nicht nach oben wegdrücken.
+- Falls der Bereich aktuell sticky/fixed/absolute ist: prüfen und so anpassen, dass kein Overlay auf dem Dienstplan entsteht.
+
+4. Position verbessern
+Bevorzugte Lösung:
+- Personalbedarf als einklappbares Bottom-Panel unterhalb des Dienstplans
+oder
+- als rechter Drawer/Sidepanel, falls das besser zur bestehenden Architektur passt.
+
+Wichtig:
+- Standardmässig geschlossen
+- bei Bedarf bewusst öffnen
+- der Plan bleibt immer sichtbar
+
+5. Kompakte Statuszeile
+Im geschlossenen Zustand z. B.:
+
+„Personalbedarf-Abgleich · 29.06.2026 · Kein Bedarf definiert“
+
+oder
+
+„Personalbedarf-Abgleich · 29.06.2026 · 2 Personen unterbesetzt“
+
+Keine grosse Reservationen-Zeile und keine grosse Empty-State-Fläche im geschlossenen Zustand.
+
+6. Reservations-Zeile
+- Die Zeile „Gebucht waren …“ nur im geöffneten Zustand anzeigen.
+- Nicht im kompakten geschlossenen Zustand.
+- Dadurch bleibt die Seite ruhig und der Fokus auf dem Dienstplan.
+
+7. Empty State
+Wenn kein Personalbedarf definiert ist:
+- Im geöffneten Zustand kompakt anzeigen
+- Keine grosse leere Box
+- Stattdessen kurze Zeile:
+  „Für diesen Tag ist noch kein Personalbedarf definiert.“
+  Aktion rechts: „Definieren“
+
+8. Design
+- Schlicht
+- modern
+- kompakt
+- einheitlich mit Phase-3-Designsystem
+- keine unnötige Platzverschwendung
+- Dienstplan ist Hauptinhalt
+- Personalbedarf ist Zusatzinformation
+
+9. Verhalten merken
+- Optional den letzten Auf-/Zu-Status pro Benutzer lokal merken.
+- Standard bleibt jedoch geschlossen, wenn noch kein gespeicherter Zustand vorhanden ist.
+
+10. Tests
+Bitte Tests ergänzen/anpassen für:
+- Personalbedarf standardmässig geschlossen
+- geschlossener Zustand zeigt nur kompakte Kopfzeile
+- Reservations-Zeile nur im geöffneten Zustand
+- Empty State nur im geöffneten Zustand
+- Dienstplan-Grid bleibt sichtbar
+- Auf-/Zuklappen funktioniert
+- keine Logikänderung am Personalbedarf selbst
+
+11. Abschluss
+- Browser-/Live-Check auf Desktop
+- prüfen, dass der Dienstplan ohne Scroll- oder Overlay-Probleme sichtbar ist
+- Type-Check
+- relevante Tests
+- Architect-Review
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Nicht die Personalbedarf-Funktion entfernen.
+Nur so darstellen, dass sie den Dienstplan nicht mehr behindert.
