@@ -1,0 +1,106 @@
+Bitte reorganisiere jetzt replit.md.
+
+Ziel:
+Die Datei ist inzwischen sehr umfangreich geworden. Bitte nicht einfach Inhalte löschen oder stark kürzen, sondern neu strukturieren und doppelte bzw. veraltete Informationen zusammenführen.
+
+Wichtig:
+- Keine fachlichen Informationen verlieren.
+- Keine Historie löschen, solange sie noch relevant ist.
+- Inhalte zusammenführen statt entfernen.
+- Bestehende Architekturentscheidungen beibehalten.
+
+Bitte folgende Struktur verwenden:
+
+1. Projektübersicht
+- Ziel der App
+- Hauptmodule
+- Grundprinzipien
+
+2. Architektur
+- Frontend
+- Backend
+- Datenmodell
+- Berechnungslogiken
+- Single Source of Truth
+- Import-Engine
+- Designsystem
+
+3. Designsystem / UX
+- Phase 3 Standards
+- gemeinsame Komponenten
+- Seitenstruktur
+- Farbdefinitionen
+- KPI-Regeln
+- Tabellenstandards
+- Dialogstandards
+
+4. Module
+Je Modul eine kompakte Beschreibung:
+- Dashboard
+- Import-Cockpit
+- Tagesabschlüsse
+- Reservationsanalyse
+- Produktanalyse
+- Personalstamm
+- Dienstplanung
+- Personalbedarf
+- CRM
+- Reporting
+- Kennzahlen
+
+Nur aktueller Stand, keine veralteten Zwischenstände.
+
+5. Importsystem
+- Importtypen
+- Frequenzen
+- Checklisten-Logik
+- Teilimport-Logik
+- Monatsabschluss-Logik
+
+6. Finanzlogik
+Neues eigenes Kapitel:
+- Bruttolohn
+- Arbeitgeber-Sozialkosten
+- Total Arbeitgeberkosten
+- FIBU-Ist
+- Budget
+- Erfolgsrechnung
+- zentrale Sozialkostensätze
+- keine Doppelzählung von Arbeitnehmerabzügen
+- Quellensteuer ist kein Aufwand
+
+Diese Regeln gelten appweit.
+
+7. Offene Roadmap
+Nur zukünftige Themen:
+- OP-Listen-Tool
+- Erfolgsrechnung
+- Budget-Ausbau
+- weitere geplante Module
+
+Keine bereits erledigten Aufgaben hier aufführen.
+
+8. Entwicklungsregeln
+- Wiederverwendung bestehender Komponenten
+- Keine parallelen Berechnungen
+- Keine doppelten UI-Komponenten
+- Tests
+- Type-Check
+- Architect-Review
+- Dokumentationspflicht
+
+9. Changelog
+Historische Änderungen nur noch in stark komprimierter Form.
+Keine langen chronologischen Listen mehr.
+Nur wichtige Meilensteine.
+
+Wichtig:
+
+Bitte keine Inhalte löschen, sondern logisch neu ordnen.
+
+Falls doppelte Informationen existieren:
+- zusammenführen
+- nur eine Version behalten
+- Verweise aktualisieren.
+
+Die Datei soll künftig deutlich schneller lesbar sein und als technische Projektdokumentation dienen, nicht als Arbeitsjournal.
