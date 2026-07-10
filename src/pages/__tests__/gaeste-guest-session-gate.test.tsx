@@ -3,9 +3,9 @@
  * Gast-Session-Gating Gäste-CRM (PII-Schutz)
  * ==============================================================================
  * Regressionstest für zwei Schutzschichten:
- *   1. Navigation: ALLE Foratable-Einträge (Gäste CRM, Auswertung, Analyse,
- *      Duplikate, Foratable Report) tragen `hideForGuest` — Gast-Sessions sehen
- *      die Menüpunkte gar nicht (usePermissions().isAdmin schliesst Gäste ein!).
+ *   1. Navigation: ALLE Foratable-Einträge (Gäste CRM, Gäste & Reservationen,
+ *      Analyse, Duplikate) tragen `hideForGuest` — Gast-Sessions sehen die
+ *      Menüpunkte gar nicht (usePermissions().isAdmin schliesst Gäste ein!).
  *   2. Seiten: Gast-Session (isAdmin=true, isGuest=true) wird auf `/`
  *      umgeleitet, und es feuert KEIN einziger Gäste-PII-Fetch.
  * Schwere DB-Layer sind gemockt; die Spies stellen sicher, dass die
@@ -92,7 +92,7 @@ describe('Navigation — Foratable-Gruppe für Gast-Sessions unsichtbar', () => 
   it('ALLE Foratable-Items tragen hideForGuest', () => {
     const foratable = NAV_GROUPS.find(g => g.groupLabel === 'Foratable');
     expect(foratable).toBeTruthy();
-    expect(foratable!.items.length).toBeGreaterThanOrEqual(5);
+    expect(foratable!.items.length).toBeGreaterThanOrEqual(4);
     for (const item of foratable!.items) {
       expect(item.hideForGuest, `${item.path} muss hideForGuest tragen`).toBe(true);
     }

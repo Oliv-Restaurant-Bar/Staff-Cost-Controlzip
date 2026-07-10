@@ -172,7 +172,8 @@ export async function fetchNoShowCountsByGuest(
 
 const DETAIL_COLS =
   'id, guest_id, reservation_date, reservation_time, party_size, status_normalized, ' +
-  'first_name, last_name, mobile, email, room, area, comment, note';
+  'first_name, last_name, mobile, email, room, area, comment, note, ' +
+  'external_reservation_id, selection';
 
 function rowDisplayName(
   first: string | null, last: string | null, email: string | null, mobile: string | null,
@@ -219,6 +220,8 @@ async function fetchReservationDetailRows(
         email: r.email ?? null,
         comment: r.comment ?? null,
         note: r.note ?? null,
+        externalReservationId: r.external_reservation_id ? String(r.external_reservation_id) : null,
+        selection: r.selection ?? null,
       });
     }
     if (data.length < PAGE) break;

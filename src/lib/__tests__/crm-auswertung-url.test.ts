@@ -23,10 +23,10 @@ describe('parseCrmViewState', () => {
     expect(parseCrmViewState(sp(''))).toEqual(EMPTY_CRM_VIEW_STATE);
   });
 
-  it('liest gültigen tab/future/campaign', () => {
-    const s = parseCrmViewState(sp('tab=campaigns&future=next30&campaign=vip-lange-nicht-da'));
+  it('liest gültigen tab/range/campaign', () => {
+    const s = parseCrmViewState(sp('tab=campaigns&range=next-30&campaign=vip-lange-nicht-da'));
     expect(s.tab).toBe('campaigns');
-    expect(s.future).toBe('next30');
+    expect(s.rangeKind).toBe('next-30');
     expect(s.campaign).toBe('vip-lange-nicht-da');
   });
 
@@ -34,38 +34,42 @@ describe('parseCrmViewState', () => {
     expect(parseCrmViewState(sp('tab=hacker')).tab).toBe('overview');
   });
 
-  it('verwirft ungültigen future-Key → null', () => {
-    expect(parseCrmViewState(sp('future=naechstesJahrtausend')).future).toBeNull();
+  it('verwirft ungültige range-Kind → current-month', () => {
+    expect(parseCrmViewState(sp('range=naechstesJahrtausend')).rangeKind).toBe('current-month');
   });
 
-  it('akzeptiert alle gültigen future-Keys', () => {
-    for (const k of ['currentMonth', 'nextMonth', 'next30', 'next60', 'next90', 'openNext90']) {
-      expect(parseCrmViewState(sp(`future=${k}`)).future).toBe(k);
+  it('akzeptiert alle gültigen Schnellauswahl-Kinds', () => {
+    for (const k of ['current-month', 'next-7', 'next-14', 'next-30'] as const) {
+      expect(parseCrmViewState(sp(`range=${k}`)).rangeKind).toBe(k);
     }
   });
 
-  it('nimmt den Zeitraum nur bei vollständiger Auswahl (rsel + rfrom + rto)', () => {
-    const full = parseCrmViewState(sp('rsel=active&rfrom=2026-01-01&rto=2026-02-01'));
-    expect(full.rangeSel).toBe('active');
+  it('nimmt den individuellen Zeitraum nur bei range=custom + rfrom + rto', () => {
+    const full = parseCrmViewState(sp('range=custom&rfrom=2026-01-01&rto=2026-02-01'));
+    expect(full.rangeKind).toBe('custom');
     expect(full.rangeFrom).toBe('2026-01-01');
     expect(full.rangeTo).toBe('2026-02-01');
   });
 
-  it('verwirft den Zeitraum komplett, wenn rsel fehlt', () => {
+  it('verwirft custom, wenn ein Datum fehlt oder ungültig ist → current-month', () => {
+    expect(parseCrmViewState(sp('range=custom&rfrom=2026-01-01')).rangeKind).toBe('current-month');
+    expect(parseCrmViewState(sp('range=custom&rfrom=2026-1-1&rto=2026-02-01')).rangeKind).toBe('current-month');
+    const bad = parseCrmViewState(sp('range=custom&rfrom=böse&rto=2026-02-01'));
+    expect(bad.rangeKind).toBe('current-month');
+    expect(bad.rangeFrom).toBeNull();
+    expect(bad.rangeTo).toBeNull();
+  });
+
+  it('ignoriert rfrom/rto ohne range=custom', () => {
     const s = parseCrmViewState(sp('rfrom=2026-01-01&rto=2026-02-01'));
-    expect(s.rangeSel).toBeNull();
+    expect(s.rangeKind).toBe('current-month');
     expect(s.rangeFrom).toBeNull();
     expect(s.rangeTo).toBeNull();
   });
 
-  it('verwirft den Zeitraum, wenn ein Datum fehlt oder ungültig ist', () => {
-    expect(parseCrmViewState(sp('rsel=open&rfrom=2026-01-01')).rangeSel).toBeNull();
-    expect(parseCrmViewState(sp('rsel=open&rfrom=2026-1-1&rto=2026-02-01')).rangeSel).toBeNull();
-    expect(parseCrmViewState(sp('rsel=open&rfrom=böse&rto=2026-02-01')).rangeFrom).toBeNull();
-  });
-
-  it('verwirft ungültiges rsel', () => {
-    expect(parseCrmViewState(sp('rsel=evil&rfrom=2026-01-01&rto=2026-02-01')).rangeSel).toBeNull();
+  it('degradiert alte URL-Parameter (future/rsel) auf Defaults', () => {
+    const s = parseCrmViewState(sp('future=next30&rsel=active&rfrom=2026-01-01&rto=2026-02-01'));
+    expect(s).toEqual(EMPTY_CRM_VIEW_STATE);
   });
 });
 
@@ -74,27 +78,27 @@ describe('crmViewStateToParams', () => {
     expect(crmViewStateToParams(EMPTY_CRM_VIEW_STATE).toString()).toBe('');
   });
 
-  it('lässt tab=overview weg', () => {
-    expect(crmViewStateToParams({ ...EMPTY_CRM_VIEW_STATE, tab: 'overview' }).toString()).toBe('');
+  it('lässt tab=overview und range=current-month weg', () => {
+    expect(crmViewStateToParams({ ...EMPTY_CRM_VIEW_STATE, tab: 'overview', rangeKind: 'current-month' }).toString()).toBe('');
   });
 
-  it('emittiert nicht-Default tab/future/campaign', () => {
+  it('emittiert nicht-Default tab/range/campaign', () => {
     const p = crmViewStateToParams({
-      ...EMPTY_CRM_VIEW_STATE, tab: 'return', future: 'next90', campaign: 'geburtstag',
+      ...EMPTY_CRM_VIEW_STATE, tab: 'return', rangeKind: 'next-14', campaign: 'geburtstag',
     });
     expect(p.get('tab')).toBe('return');
-    expect(p.get('future')).toBe('next90');
+    expect(p.get('range')).toBe('next-14');
     expect(p.get('campaign')).toBe('geburtstag');
   });
 
-  it('emittiert den Zeitraum nur vollständig', () => {
-    const partial = crmViewStateToParams({ ...EMPTY_CRM_VIEW_STATE, rangeSel: 'active', rangeFrom: '2026-01-01' });
-    expect(partial.has('rsel')).toBe(false);
+  it('emittiert den individuellen Zeitraum nur vollständig', () => {
+    const partial = crmViewStateToParams({ ...EMPTY_CRM_VIEW_STATE, rangeKind: 'custom', rangeFrom: '2026-01-01' });
+    expect(partial.has('range')).toBe(false);
     expect(partial.has('rfrom')).toBe(false);
     const full = crmViewStateToParams({
-      ...EMPTY_CRM_VIEW_STATE, rangeSel: 'open', rangeFrom: '2026-01-01', rangeTo: '2026-02-01',
+      ...EMPTY_CRM_VIEW_STATE, rangeKind: 'custom', rangeFrom: '2026-01-01', rangeTo: '2026-02-01',
     });
-    expect(full.get('rsel')).toBe('open');
+    expect(full.get('range')).toBe('custom');
     expect(full.get('rfrom')).toBe('2026-01-01');
     expect(full.get('rto')).toBe('2026-02-01');
   });
@@ -103,9 +107,9 @@ describe('crmViewStateToParams', () => {
 describe('round-trip parse ↔ serialize', () => {
   const cases: CrmViewState[] = [
     EMPTY_CRM_VIEW_STATE,
-    { tab: 'campaigns', future: 'next30', rangeSel: null, rangeFrom: null, rangeTo: null, campaign: 'vip-lange-nicht-da' },
-    { tab: 'overview', future: 'openNext90', rangeSel: 'active', rangeFrom: '2026-03-01', rangeTo: '2026-03-31', campaign: null },
-    { tab: 'return', future: null, rangeSel: 'open', rangeFrom: '2025-12-01', rangeTo: '2026-01-15', campaign: 'no-show-risiko' },
+    { tab: 'campaigns', rangeKind: 'next-30', rangeFrom: null, rangeTo: null, campaign: 'vip-lange-nicht-da' },
+    { tab: 'overview', rangeKind: 'custom', rangeFrom: '2026-03-01', rangeTo: '2026-03-31', campaign: null },
+    { tab: 'return', rangeKind: 'next-7', rangeFrom: null, rangeTo: null, campaign: 'no-show-risiko' },
   ];
   it('bleibt unter parse(serialize(x)) === x stabil', () => {
     for (const state of cases) {
@@ -132,7 +136,7 @@ describe('buildGuestHref', () => {
     expect(buildGuestHref('a/b?c')).toBe(`/gaeste/${encodeURIComponent('a/b?c')}`);
   });
   it('encodiert das from-Ziel als Parameter', () => {
-    const from = `${CRM_AUSWERTUNG_PATH}?tab=return&future=next30`;
+    const from = `${CRM_AUSWERTUNG_PATH}?tab=return&range=next-30`;
     const href = buildGuestHref('g-1', from);
     expect(href).toBe(`/gaeste/g-1?from=${encodeURIComponent(from)}`);
     // Und ist wieder dekodierbar zum exakten Ziel:

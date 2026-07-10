@@ -1,19 +1,24 @@
 /**
- * FutureReservationsSection — Zukünftige Reservationen (Foratable Report)
- * ======================================================================
- * Zwei Bausteine für den Kopfbereich des Foratable Reports:
+ * FutureReservationsSection — Zukünftige Reservationen (Gäste & Reservationen)
+ * ===========================================================================
+ * Bausteine des Zukunftsbereichs der Seite „Gäste & Reservationen":
  *  - `FutureReservationsOverview`  — Zukunftsübersicht (max. 4 KPI-Karten +
- *    weitere Kennzahlen hinter „Weitere Kennzahlen").
+ *    weitere Kennzahlen hinter „Weitere Kennzahlen"). Die Karten sind optional
+ *    klickbar (Drilldown): die Summen-Karten öffnen die Detailliste des
+ *    Zeitraums, die Tages-Karten öffnen das Tages-Popup.
  *  - `FutureCalendarSection`       — kompakte, standardmässig EINGEKLAPPTE
- *    Kalenderübersicht; Klick auf einen Tag öffnet ein Popup mit AGGREGIERTEN
- *    Tageswerten — bewusst OHNE personenbezogene Daten.
+ *    Kalenderübersicht; Klick auf einen Tag meldet das Datum via `onDayClick`
+ *    an die Seite (die den EINEN Tages-Dialog besitzt).
+ *  - `DayReservationsDialog`       — Tages-Popup. Ohne `showPii` rein AGGREGIERT
+ *    (kein PII); mit `showPii` zusätzlich die (admin-gegatete) Detailliste mit
+ *    Status-Filter. „Erwartete Personen" zählt nur aktive Reservationen
+ *    (Stornos sichtbar, aber nicht mitgezählt).
  *
- * Beide teilen sich `overview` (buildFutureOverview) und die Kennzahl (metric).
- * Alle Zahlen stammen aus foratable-future.ts und sind damit wertegleich zur
- * CRM-Auswertung.
+ * Alle Zahlen stammen aus foratable-future.ts / reservation-dashboard.ts und
+ * sind damit wertegleich zur restlichen CRM-Auswertung.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronDown, Clock, DoorOpen, Users } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -21,13 +26,14 @@ import { KpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 import { HintBox } from '@/components/ui/hint-box';
 import { InfoTip } from '@/components/ui/info-tip';
 import { StatusPill } from '@/components/ui/status-pill';
+import { ReservationDetailList } from '@/components/crm/ReservationDetailList';
 import {
   Collapsible, CollapsibleContent, CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
-import { DIALOG_MD } from '@/components/ui/dialog-size';
+import { DIALOG_MD, DIALOG_LG } from '@/components/ui/dialog-size';
 import { NUM0, NUM1, fdate, STATUS_LABEL } from '@/components/reservations/ReservationSummary';
 import type { ReservationStatusNormalized } from '@/lib/reservation-import-parser';
 import {
@@ -40,7 +46,7 @@ import {
   type FutureMetric,
   type FutureOverview,
 } from '@/lib/foratable-future';
-import type { ReservationDetailRow } from '@/lib/reservation-dashboard';
+import { filterReservationDetails, type ReservationDetailRow } from '@/lib/reservation-dashboard';
 
 // ── Farb-Flächen der Kalenderzellen (aus levelColor abgeleitet) ──────────────
 
@@ -55,6 +61,9 @@ const WEEKDAY_COLS = [1, 2, 3, 4, 5, 6, 7];
 
 const metricLabel = (m: FutureMetric) => (m === 'persons' ? 'Personen' : 'Reservationen');
 const metricOf = (d: CalendarDay, m: FutureMetric) => (m === 'persons' ? d.persons : d.reservations);
+
+/** Normalisierter Status-Schlüssel (klein, Fallback „unknown"). */
+const normStatus = (s: string | null | undefined) => (s ?? 'unknown').trim().toLowerCase() || 'unknown';
 
 /** Formatiert einen Tag als „Fr 18.07." (kurz, ohne Jahr). */
 function shortDay(day: CalendarDay): string {
@@ -140,25 +149,60 @@ function FutureCalendar({
   );
 }
 
-// ── Tages-Popup (nur Aggregate, KEINE PII) ───────────────────────────────────
+// ── Tages-Popup ──────────────────────────────────────────────────────────────
+//
+// Ohne `showPii`: rein AGGREGIERT (keine Namen/Telefon/E-Mail/Kommentare).
+// Mit `showPii` (nur für admin-gegatete Aufrufer): zusätzlich die Detailliste
+// inkl. Status-Filter. „Erwartete Personen" = aktive Personen (Stornos sind in
+// der Liste sichtbar, zählen aber nicht mit).
 
-function DayDetailDialog({
+export function DayReservationsDialog({
   date,
   detailRows,
   onClose,
+  showPii = false,
+  onSelectGuest,
 }: {
   date: string | null;
   detailRows: ReservationDetailRow[];
   onClose: () => void;
+  /** Zeigt die (admin-gegatete) Detailliste mit personenbezogenen Daten. */
+  showPii?: boolean;
+  onSelectGuest?: (guestId: string) => void;
 }) {
   const detail = useMemo(
     () => (date ? buildDayDetail(detailRows, date) : null),
     [date, detailRows],
   );
 
+  // Alle Reservationen des Tages (alle Status), stabil sortiert — nur für die PII-Liste.
+  const dayRows = useMemo(
+    () => (date && showPii ? filterReservationDetails(detailRows, date.slice(0, 10), date.slice(0, 10), () => true) : []),
+    [date, detailRows, showPii],
+  );
+
+  // Whitelist-Filter der Detailliste (leer = alle Status).
+  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
+  useEffect(() => { setStatusFilter(new Set()); }, [date]);
+
+  const filteredRows = useMemo(
+    () => (statusFilter.size === 0 ? dayRows : dayRows.filter((r) => statusFilter.has(normStatus(r.status)))),
+    [dayRows, statusFilter],
+  );
+  const filteredPersons = filteredRows.reduce((s, r) => s + (r.partySize ?? 0), 0);
+
+  const toggleStatus = (key: string) => {
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   return (
     <Dialog open={!!date} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className={DIALOG_MD} data-testid="ftr-day-dialog">
+      <DialogContent className={showPii ? DIALOG_LG : DIALOG_MD} data-testid="ftr-day-dialog">
         {detail && (
           <>
             <DialogHeader>
@@ -167,17 +211,19 @@ function DayDetailDialog({
                 {WEEKDAY_LABEL_LONG[detail.weekday]}, {fdate(detail.date)}
               </DialogTitle>
               <DialogDescription>
-                Aggregierte Tageswerte der Reservationen — ohne personenbezogene Daten.
+                {showPii
+                  ? 'Tagesübersicht mit Aggregatwerten und der vollständigen Reservationsliste.'
+                  : 'Aggregierte Tageswerte der Reservationen — ohne personenbezogene Daten.'}
               </DialogDescription>
             </DialogHeader>
 
-            {detail.active.reservations === 0 ? (
-              <HintBox tone="neutral">Keine aktiven Reservationen an diesem Tag.</HintBox>
+            {detail.active.reservations === 0 && detail.statuses.length === 0 ? (
+              <HintBox tone="neutral">Keine Reservationen an diesem Tag.</HintBox>
             ) : (
-              <div className="space-y-4">
+              <div className="max-h-[75vh] space-y-4 overflow-auto">
                 <KpiGrid>
                   <KpiCard label="Reservationen" value={NUM0.format(detail.active.reservations)} tone="info" />
-                  <KpiCard label="Personen" value={NUM0.format(detail.active.persons)} tone="good" />
+                  <KpiCard label="Erwartete Personen" value={NUM0.format(detail.active.persons)} tone="good" />
                   <KpiCard
                     label="Ø Gruppe"
                     value={detail.avgPartySize !== null ? NUM1.format(detail.avgPartySize) : '—'}
@@ -209,17 +255,60 @@ function DayDetailDialog({
                 {detail.statuses.length > 0 && (
                   <div className="space-y-1.5">
                     <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                      <Clock className="h-3.5 w-3.5" /> Status (alle Reservationen des Tages)
+                      <Clock className="h-3.5 w-3.5" />
+                      Status (alle Reservationen des Tages)
+                      {showPii && ' — zum Filtern anklicken'}
                     </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {detail.statuses.map((s) => (
-                        <StatusPill key={s.status} tone="neutral" showDot={false}>
-                          {STATUS_LABEL[s.status as ReservationStatusNormalized] ?? s.status}
-                          {': '}
-                          {NUM0.format(s.reservations)}
-                        </StatusPill>
-                      ))}
-                    </div>
+                    {showPii ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {detail.statuses.map((s) => {
+                          const active = statusFilter.has(s.status);
+                          return (
+                            <button
+                              key={s.status}
+                              type="button"
+                              data-testid={`ftr-day-status-${s.status}`}
+                              onClick={() => toggleStatus(s.status)}
+                              aria-pressed={active}
+                              className={cn(
+                                'rounded-full border px-2 py-0.5 text-xs transition-colors',
+                                active
+                                  ? 'border-primary bg-primary/10 text-foreground'
+                                  : 'border-border text-muted-foreground hover:bg-muted/60',
+                              )}
+                            >
+                              {STATUS_LABEL[s.status as ReservationStatusNormalized] ?? s.status}
+                              {': '}
+                              {NUM0.format(s.reservations)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {detail.statuses.map((s) => (
+                          <StatusPill key={s.status} tone="neutral" showDot={false}>
+                            {STATUS_LABEL[s.status as ReservationStatusNormalized] ?? s.status}
+                            {': '}
+                            {NUM0.format(s.reservations)}
+                          </StatusPill>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {showPii && (
+                  <div data-testid="ftr-day-pii-list">
+                    <ReservationDetailList
+                      title="Reservationen des Tages"
+                      rows={filteredRows}
+                      persons={filteredPersons}
+                      onSelectGuest={onSelectGuest}
+                      showResNr
+                      showTyp
+                      hideDate
+                    />
                   </div>
                 )}
               </div>
@@ -270,10 +359,16 @@ export function FutureReservationsOverview({
   overview,
   metric,
   onMetricChange,
+  onOpenTotals,
+  onOpenDay,
 }: {
   overview: FutureOverview;
   metric: FutureMetric;
   onMetricChange: (m: FutureMetric) => void;
+  /** Öffnet die Detailliste des gesamten (aktiven) Zeitraums (Summen-Karten). */
+  onOpenTotals?: () => void;
+  /** Öffnet das Tages-Popup für einen bestimmten Tag (Tages-Karten). */
+  onOpenDay?: (date: string) => void;
 }) {
   const strong = overview.strongestDay;
   const next = overview.nextStrongDay;
@@ -312,23 +407,31 @@ export function FutureReservationsOverview({
               value={NUM0.format(overview.totals.persons)}
               sub={`${NUM0.format(overview.daysWithReservations)} Tage belegt`}
               tone="good"
+              data-testid="ftr-kpi-persons"
+              onClick={onOpenTotals}
             />
             <KpiCard
               label="Reservationen zukünftig"
               value={NUM0.format(overview.totals.reservations)}
               tone="info"
+              data-testid="ftr-kpi-reservations"
+              onClick={onOpenTotals}
             />
             <KpiCard
               label="Nächster starker Tag"
               value={next ? shortDay(next) : '—'}
               sub={next ? `${NUM0.format(metricOf(next, metric))} ${metricLabel(metric)}` : 'keine hohe Auslastung'}
               tone={next ? levelTone(next.level) : 'neutral'}
+              data-testid="ftr-kpi-next-strong"
+              onClick={onOpenDay && next ? () => onOpenDay(next.date) : undefined}
             />
             <KpiCard
               label="Stärkster Tag"
               value={strong ? shortDay(strong) : '—'}
               sub={strong ? `${NUM0.format(metricOf(strong, metric))} ${metricLabel(metric)}` : '—'}
               tone={strong ? levelTone(strong.level) : 'neutral'}
+              data-testid="ftr-kpi-strongest"
+              onClick={onOpenDay && strong ? () => onOpenDay(strong.date) : undefined}
             />
           </KpiGrid>
 
@@ -362,58 +465,52 @@ export function FutureReservationsOverview({
 }
 
 // ── (D) Kalenderübersicht — einklappbar (default zu) ─────────────────────────
+//
+// Der Tages-Dialog wird NICHT mehr hier besessen — die Seite hält EINEN Dialog
+// (wiederverwendet von Kalender + KPI-Karten) und erhält Klicks via `onDayClick`.
 
 export function FutureCalendarSection({
   overview,
   metric,
-  detailRows,
+  onDayClick,
 }: {
   overview: FutureOverview;
   metric: FutureMetric;
-  detailRows: ReservationDetailRow[];
+  onDayClick: (date: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   if (overview.empty) return null;
 
   return (
-    <>
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            data-testid="ftr-calendar-toggle"
-            className="flex w-full items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors hover:bg-muted/60 print:hidden"
-          >
-            <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            Kalenderübersicht
-            <span className="ml-auto text-xs font-normal text-muted-foreground">
-              {fdate(overview.effectiveFrom)} – {fdate(overview.effectiveTo)}
-            </span>
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="pt-3">
-          <div className="rounded-lg border border-border bg-card p-3">
-            <FutureCalendar days={overview.days} metric={metric} onDayClick={setSelectedDate} />
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
-              <Users className="h-3 w-3" />
-              Farbe = relative Auslastung ({metricLabel(metric)}):
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-muted" /> keine</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-200 dark:bg-emerald-900" /> normal</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-200 dark:bg-amber-900" /> hoch</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-200 dark:bg-red-900" /> sehr hoch</span>
-            </div>
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          data-testid="ftr-calendar-toggle"
+          className="flex w-full items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-sm font-medium transition-colors hover:bg-muted/60 print:hidden"
+        >
+          <ChevronDown className={cn('h-4 w-4 transition-transform', open && 'rotate-180')} />
+          <CalendarDays className="h-4 w-4 text-muted-foreground" />
+          Kalenderübersicht
+          <span className="ml-auto text-xs font-normal text-muted-foreground">
+            {fdate(overview.effectiveFrom)} – {fdate(overview.effectiveTo)}
+          </span>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-3">
+        <div className="rounded-lg border border-border bg-card p-3">
+          <FutureCalendar days={overview.days} metric={metric} onDayClick={onDayClick} />
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground">
+            <Users className="h-3 w-3" />
+            Farbe = relative Auslastung ({metricLabel(metric)}):
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-muted" /> keine</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-200 dark:bg-emerald-900" /> normal</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-200 dark:bg-amber-900" /> hoch</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-red-200 dark:bg-red-900" /> sehr hoch</span>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
-
-      <DayDetailDialog
-        date={selectedDate}
-        detailRows={detailRows}
-        onClose={() => setSelectedDate(null)}
-      />
-    </>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

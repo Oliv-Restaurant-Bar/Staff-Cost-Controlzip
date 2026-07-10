@@ -62,11 +62,28 @@ function noteText(r: ReservationDetailRow): string {
   return [r.comment, r.note].map(s => (s ?? '').trim()).filter(Boolean).join(' — ');
 }
 
-export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
+function typText(r: ReservationDetailRow): string {
+  return (r.selection ?? '').trim() || '—';
+}
+
+function resNrText(r: ReservationDetailRow): string {
+  return (r.externalReservationId ?? '').trim() || '—';
+}
+
+export function ReservationDetailList({
+  title, rows, persons, onSelectGuest,
+  showResNr = false, showTyp = false, hideDate = false,
+}: {
   title: string;
   rows: ReservationDetailRow[];
   persons: number;
   onSelectGuest?: (guestId: string) => void;
+  /** Zusätzliche Spalte „Res.Nr." (Foratable-Reservationsnummer). */
+  showResNr?: boolean;
+  /** Zusätzliche Spalte „Typ" (Foratable-Auswahl / `selection`). */
+  showTyp?: boolean;
+  /** Blendet die Datumsspalte aus (z. B. in der Tages-Detailansicht). */
+  hideDate?: boolean;
 }) {
   return (
     <div className="mt-3 rounded-lg border border-border bg-card">
@@ -94,14 +111,16 @@ export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
             <table className="w-full min-w-[820px] text-sm">
               <thead className="[&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-muted [&_th]:border-b [&_th]:border-border">
                 <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground">
-                  <th className="px-3 py-2 font-medium">Datum</th>
+                  {!hideDate && <th className="px-3 py-2 font-medium">Datum</th>}
                   <th className="px-3 py-2 font-medium">Uhrzeit</th>
                   <th className="px-3 py-2 font-medium">Gast</th>
                   <th className="px-3 py-2 text-right font-medium">Personen</th>
                   <th className="px-3 py-2 font-medium">Status</th>
                   <th className="px-3 py-2 font-medium">Raum / Bereich</th>
+                  {showTyp && <th className="px-3 py-2 font-medium">Typ</th>}
                   <th className="px-3 py-2 font-medium">Telefon / E-Mail</th>
                   <th className="px-3 py-2 font-medium">Kommentar</th>
+                  {showResNr && <th className="px-3 py-2 text-right font-medium">Res.Nr.</th>}
                 </tr>
               </thead>
               <tbody>
@@ -109,7 +128,7 @@ export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
                   const note = noteText(r);
                   return (
                     <tr key={r.id} className="border-b border-border last:border-0 hover:bg-muted/40">
-                      <td className="px-3 py-2 tabular-nums">{fdate(r.date)}</td>
+                      {!hideDate && <td className="px-3 py-2 tabular-nums">{fdate(r.date)}</td>}
                       <td className="px-3 py-2 tabular-nums">{r.time ?? '—'}</td>
                       <td className="px-3 py-2">
                         <GuestProfileLink name={r.displayName} guestId={r.guestId} onSelect={onSelectGuest} />
@@ -121,10 +140,12 @@ export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
                         </span>
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{roomArea(r)}</td>
+                      {showTyp && <td className="px-3 py-2 text-muted-foreground">{typText(r)}</td>}
                       <td className="px-3 py-2 text-muted-foreground">{contact(r)}</td>
                       <td className="px-3 py-2 max-w-[240px] truncate text-muted-foreground" title={note || undefined}>
                         {note || '—'}
                       </td>
+                      {showResNr && <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">{resNrText(r)}</td>}
                     </tr>
                   );
                 })}
@@ -148,9 +169,11 @@ export function ReservationDetailList({ title, rows, persons, onSelectGuest }: {
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs tabular-nums text-muted-foreground">
-                    <span>{fdate(r.date)}{r.time ? `, ${r.time}` : ''}</span>
+                    <span>{hideDate ? (r.time ?? '—') : `${fdate(r.date)}${r.time ? `, ${r.time}` : ''}`}</span>
                     <span>{NUM0.format(ps)} {ps === 1 ? 'Person' : 'Personen'}</span>
                     {ra !== '—' && <span>{ra}</span>}
+                    {showTyp && typText(r) !== '—' && <span>Typ: {typText(r)}</span>}
+                    {showResNr && resNrText(r) !== '—' && <span>Nr. {resNrText(r)}</span>}
                   </div>
                   {c !== '—' && <div className="text-xs text-muted-foreground">{c}</div>}
                   {note && <div className="text-xs text-muted-foreground">{note}</div>}

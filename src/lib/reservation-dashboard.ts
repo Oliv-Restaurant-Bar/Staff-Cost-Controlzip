@@ -237,6 +237,12 @@ export interface ReservationDetailRow extends ReservationAggRow {
   email: string | null;
   comment: string | null;
   note: string | null;
+  /** Res.Nr. aus Foratable (external_reservation_id) — für die Tages-Detailliste.
+   *  Optional (schlanke Fixtures/Aggregatzeilen führen das Feld nicht). */
+  externalReservationId?: string | null;
+  /** „Auswahl" aus Foratable (Spalte `selection`) — in der Liste als „Typ" gezeigt.
+   *  Optional (schlanke Fixtures führen das Feld nicht). */
+  selection?: string | null;
 }
 
 /** Auswählbare Zukunfts-Kachel. */

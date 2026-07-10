@@ -26,6 +26,8 @@ export function KpiCard({
   tone = 'neutral',
   trend,
   className,
+  onClick,
+  'data-testid': dataTestid,
 }: {
   label: string;
   value: ReactNode;
@@ -35,15 +37,13 @@ export function KpiCard({
   /** Expliziter Trend: Pfeilrichtung + Bewertung + Text, z. B. {direction:'up', tone:'good', label:'+4.2 %'} */
   trend?: { direction: 'up' | 'down' | 'flat'; tone: Tone; label: string };
   className?: string;
+  /** Optional: macht die Karte klickbar (rendert als Button, z. B. für Drilldown-Dialoge). */
+  onClick?: () => void;
+  'data-testid'?: string;
 }) {
   const arrow = trend?.direction === 'up' ? '↑' : trend?.direction === 'down' ? '↓' : '→';
-  return (
-    <div
-      className={cn(
-        'flex min-h-[80px] flex-col gap-1 rounded-lg border border-border bg-card p-3',
-        className,
-      )}
-    >
+  const inner = (
+    <>
       <div className="flex items-center gap-1.5">
         <span className={cn('h-2 w-2 shrink-0 rounded-full', TONE_DOT[tone])} aria-hidden />
         <p className="truncate text-[11px] text-muted-foreground">{label}</p>
@@ -59,6 +59,31 @@ export function KpiCard({
           {sub}
         </p>
       )}
+    </>
+  );
+
+  const base = 'flex min-h-[80px] flex-col gap-1 rounded-lg border border-border bg-card p-3';
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        data-testid={dataTestid}
+        className={cn(
+          base,
+          'text-left transition-colors hover:border-primary/60 hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+          className,
+        )}
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className={cn(base, className)} data-testid={dataTestid}>
+      {inner}
     </div>
   );
 }

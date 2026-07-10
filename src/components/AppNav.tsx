@@ -10,7 +10,7 @@
  *   Umsatz       → Umsatzabstimmung · Tagesabschlüsse · Budget · Erfolgsrechnung · Produkteanalyse
  *   Personal     → Dienstplanung · Personalkosten · Personalstamm · Datenintegrität MA
  *   Warenkosten  → Warenrechnungen · WES Analyse · Produkte
- *   Foratable    → Gäste CRM (sekundär: CRM Auswertung · Reservations Analyse · Duplikate · Report)
+ *   Foratable    → Gäste CRM (sekundär: Gäste & Reservationen · Reservations Analyse · Duplikate)
  *   Admin        → Einstellungen
  *   Import       → Import (zentrales Import-Center /import; Cockpit nur via Header-Link/URL)
  *
@@ -284,7 +284,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/gaeste/auswertung',
-        label: 'CRM Auswertung',
+        label: 'Gäste & Reservationen',
         shortLabel: 'Auswertung',
         icon: BarChart3,
         adminOnly: true,
@@ -305,15 +305,6 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'Gäste Duplikate',
         shortLabel: 'Duplikate',
         icon: GitMerge,
-        adminOnly: true,
-        hideForGuest: true,
-        secondary: true,
-      },
-      {
-        path: '/foratable-report',
-        label: 'Foratable Report',
-        shortLabel: 'Report',
-        icon: BarChart2,
         adminOnly: true,
         hideForGuest: true,
         secondary: true,

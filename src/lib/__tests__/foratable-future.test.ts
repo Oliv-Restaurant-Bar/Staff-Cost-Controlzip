@@ -18,7 +18,7 @@ import {
   type FutureRange,
 } from '../foratable-future';
 import {
-  countInRange, isActiveStatus,
+  countInRange, isActiveStatus, filterReservationDetails,
   type ReservationAggRow, type ReservationDetailRow,
 } from '../reservation-dashboard';
 
@@ -251,5 +251,37 @@ describe('buildDayDetail', () => {
     expect(d.timeFrom).toBeNull();
     expect(d.rooms).toEqual([]);
     expect(d.statuses).toEqual([]);
+  });
+});
+
+// ── Zukunfts-Kachel ↔ klickbare Detailliste: deckungsgleich (SSOT) ─────────────
+// Die klickbaren KPI-Karten „Personen/Reservationen zukünftig" öffnen eine Liste
+// aus filterReservationDetails(rows, effectiveFrom, effectiveTo, isActiveStatus).
+// Diese Liste MUSS exakt der Kachelzahl entsprechen (gleicher Bereich + Filter).
+
+describe('Zukunfts-Kachel ↔ Detailliste (Wertegleichheit)', () => {
+  const today = '2026-07-10';
+  const mk = (
+    id: string, date: string, partySize: number, status: string,
+  ): ReservationDetailRow => ({
+    id, guestId: `g-${id}`, date, partySize, status, displayName: id,
+    time: '19:00', room: null, area: null, phone: null, email: null,
+    comment: null, note: null, externalReservationId: `RES-${id}`, selection: null,
+  });
+  const rows: ReservationDetailRow[] = [
+    mk('a', '2026-07-05', 4, 'confirmed'),  // Vergangenheit → clamp raus
+    mk('b', '2026-07-10', 4, 'confirmed'),
+    mk('c', '2026-07-12', 6, 'completed'),
+    mk('d', '2026-07-12', 3, 'storniert'), // ausgeschlossen
+    mk('e', '2026-07-18', 8, 'confirmed'),
+    mk('f', '2026-07-15', 2, 'pending'),   // offen → nicht aktiv
+  ];
+
+  it('filterReservationDetails über [effectiveFrom, effectiveTo] === overview.totals', () => {
+    const range = futureQuickRange('current-month', today);
+    const ov = buildFutureOverview(rows, range, today);
+    const list = filterReservationDetails(rows, ov.effectiveFrom, ov.effectiveTo, isActiveStatus);
+    expect(list.length).toBe(ov.totals.reservations);
+    expect(list.reduce((s, r) => s + (r.partySize ?? 0), 0)).toBe(ov.totals.persons);
   });
 });
