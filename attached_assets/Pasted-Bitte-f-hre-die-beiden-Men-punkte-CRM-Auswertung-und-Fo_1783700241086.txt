@@ -1,0 +1,375 @@
+Bitte führe die beiden Menüpunkte „CRM Auswertung“ und „Foratable Report“ zu einer einzigen gemeinsamen Seite zusammen.
+
+Ziel:
+Es soll nur noch eine zentrale Seite für Gäste-, CRM- und Reservationsauswertungen geben. Die zukünftigen Reservationen stehen operativ ganz oben. Darunter folgen Kalender, CRM-Kennzahlen und weitere Analysen.
+
+Wichtig:
+- Keine parallele Zukunftslogik mehr
+- Keine doppelten Kennzahlen
+- Bestehende Datenquellen und Berechnungen wiederverwenden
+- Keine Datenbankänderung, falls nicht zwingend nötig
+- Bestehende Rollen-, PII- und Tenant-Gates unverändert beibehalten
+- Keine Bild- oder Mockup-Generierung
+- Direkt im bestehenden Code umsetzen
+
+1. Menüpunkte zusammenführen
+
+Bitte:
+- „Foratable Report“ als separaten sichtbaren Menüpunkt entfernen
+- „CRM Auswertung“ als zentralen Menüpunkt beibehalten
+- bestehende Foratable-Report-Funktionen in diese gemeinsame Seite integrieren
+
+Bevorzugter neuer Menüname:
+„Gäste & Reservationen“
+
+Alternativ, falls Routenkompatibilität wichtiger ist:
+„CRM Auswertung“
+
+Route:
+- bestehende Haupt-Route beibehalten, wenn möglich
+- alte Foratable-Report-Route soll weiterhin funktionieren, aber auf die gemeinsame Seite weiterleiten
+- keine kaputten Links aus Import-Cockpit, Navigation oder Exports
+
+2. Neue Seitenreihenfolge
+
+Die gemeinsame Seite soll künftig so aufgebaut sein:
+
+A. Kompakter Seitenkopf
+B. Zukünftige Reservationen
+C. Kalenderübersicht
+D. CRM-Gäste-Kennzahlen
+E. Rückkehrpotenzial
+F. Kampagnen
+G. weitere bestehende Report-Auswertungen
+H. Export-/Druckfunktionen
+
+Die zukünftigen Reservationen müssen klar zuoberst stehen.
+
+3. Zukünftige Reservationen ganz oben
+
+Bitte die bereits vorhandene Zukunftslogik aus CRM-Auswertung und Foratable Report konsolidieren.
+
+Oben maximal 4 kompakte KPI-Karten:
+
+- Personen zukünftig
+- Reservationen zukünftig
+- nächster starker Tag
+- stärkster Tag
+
+Zusätzlich optional einklappbar:
+- nächster Monat
+- nächste 30 Tage
+- nächste 60 Tage
+- nächste 90 Tage
+- durchschnittliche Gruppengrösse
+- belegte Tage
+
+Wichtig:
+Die Werte dürfen nicht doppelt oder unterschiedlich berechnet werden.
+Eine zentrale gemeinsame Aggregationslogik verwenden.
+
+4. KPI-Karten klickbar machen
+
+Alle KPI-Karten im Bereich „Zukünftige Reservationen“ sollen klickbar sein.
+
+Beim Klick soll ein Detail-Dialog oder Drawer geöffnet werden.
+
+Beispiele:
+
+A. Klick auf „Personen zukünftig“
+zeigt:
+- Personen total
+- Reservationen total
+- Zeitraum
+- Personen nach Tag
+- stärkste Tage
+- durchschnittliche Gruppengrösse
+- Räume
+- Zeitfenster
+
+B. Klick auf „Reservationen zukünftig“
+zeigt:
+- Reservationen nach Tag
+- Status-Verteilung
+- Zeitfenster
+- Räume
+- Gruppengrössen
+
+C. Klick auf „Nächster starker Tag“
+zeigt:
+- Datum
+- Wochentag
+- Personen
+- Reservationen
+- Zeitfenster
+- Räume
+- vollständige Reservationsliste des Tages
+
+D. Klick auf „Stärkster Tag“
+zeigt dieselben Details für den stärksten Tag im gewählten Zeitraum.
+
+Die Karten sollen visuell als klickbar erkennbar sein:
+- Hover-Zustand
+- Cursor
+- dezentes Chevron oder „Details“
+
+5. Zeitraum-Auswahl
+
+Direkt unter oder innerhalb des Zukunftsbereichs eine kompakte Schnellauswahl:
+
+- Aktueller Monat
+- Nächste 7 Tage
+- Nächste 14 Tage
+- Nächste 30 Tage
+- Individuell
+
+Bei „Individuell“:
+- Von
+- Bis
+- Anzeigen
+
+Die Auswahl steuert:
+- Zukunfts-KPIs
+- Kalender
+- Detaildialoge
+- Liste
+
+6. Kalenderübersicht verbessern
+
+Die Kalenderansicht soll deutlich besser lesbar und informativer werden.
+
+Standard:
+- Kalender zunächst kompakt geschlossen
+- sichtbare Kopfzeile:
+  „Kalenderübersicht · Juli 2026“
+- rechts:
+  - belegte Tage
+  - Personen total
+  - stärkster Tag
+  - Chevron „Öffnen“
+
+Nach Klick:
+vollständige Monatsansicht öffnen.
+
+7. Inhalt jedes Kalendertags
+
+Pro Tag im Kalender anzeigen:
+
+- Kalendertag
+- Personen
+- Reservationen
+- optional stärkstes Zeitfenster
+- optional Raumhinweis
+
+Beispiel:
+
+12
+85 Pers.
+23 Res.
+
+Tage ohne Reservationen:
+- 0 Pers.
+- 0 Res.
+- neutral/grau
+
+Farblogik:
+- Grau = keine Reservationen
+- Grün = normale Auslastung
+- Orange = hohe Auslastung
+- Rot = sehr hohe Auslastung
+
+Schwellenwerte aus bestehender Reservationsanalyse oder CRM-Logik wiederverwenden.
+Keine neue konkurrierende Farblogik bauen.
+
+8. Klick auf Kalendertag
+
+Beim Klick auf einen Kalendertag soll ein Detail-Dialog oder Drawer geöffnet werden.
+
+Dieser zeigt oben:
+
+- Datum
+- Wochentag
+- Personen total
+- Reservationen total
+- Ø Gruppengrösse
+- stärkstes Zeitfenster
+- Raumverteilung
+
+Darunter eine vollständige Reservationsliste für diesen Tag.
+
+Spalten:
+
+- Uhrzeit
+- Personen
+- Gastname
+- Status
+- Raum
+- Reservationstyp
+- Telefonnummer
+- E-Mail
+- Notiz
+- Reservationsnummer
+
+Wichtig für Datenschutz:
+- vollständige Gastdaten nur für berechtigte Admin-/CRM-Rollen
+- Manager ohne PII-Berechtigung sehen nur aggregierte Werte oder maskierte Daten
+- Gäste/öffentliche Rollen sehen keine Reservationsdetails
+- bestehende PII-Gates wiederverwenden
+- keine Gastdaten in Logs oder unnötigem State
+
+9. Tagesdetail strukturieren
+
+Im Tagesdialog zuerst kompakte Zusammenfassung:
+
+- Früheste Reservation
+- späteste Reservation
+- Peak-Zeitfenster
+- grösste Gruppe
+- Räume
+- offene/bestätigte/stornierte Reservationen
+
+Danach die Reservationsliste.
+
+Zusätzliche Filter im Dialog:
+- Alle
+- Bestätigt
+- Offen
+- Storniert
+- No-Show
+- Raum
+- Zeitfenster
+
+Standard:
+- stornierte Reservationen nicht in „erwartete Personen“ einrechnen
+- in der Detailtabelle aber auf Wunsch sichtbar
+
+10. CRM-Bereich darunter
+
+Unterhalb der Zukunfts- und Kalenderbereiche sollen die bestehenden CRM-Bereiche erhalten bleiben:
+
+- Gäste-Überblick
+- Rückkehrpotenzial
+- Kampagnen
+- VIP
+- Stammgäste
+- inaktive Gäste
+- No-Show-Risiko
+- neue Gäste
+- wiederkehrende Gäste
+
+Diese Bereiche sollen in Tabs oder klaren Sektionen organisiert bleiben.
+
+11. Bestehende Foratable-Report-Funktionen übernehmen
+
+Folgende Funktionen dürfen nicht verloren gehen:
+
+- Drucken
+- PDF
+- „Zum Import“
+- Status-Verteilung
+- Räume
+- Zeitraum-Kennzahlen
+- abgeschlossene Reservationen
+- stornierte Reservationen
+- neue Gäste
+- wiederkehrende Gäste
+
+Diese Funktionen können weiter unten oder einklappbar angezeigt werden.
+
+12. Keine doppelte UI
+
+Bitte prüfen und zusammenführen:
+
+- Zukunfts-KPI-Komponenten
+- Tagesaggregationen
+- Kalenderkomponenten
+- Statusfilter
+- Raumaggregation
+- Zeitfensteraggregation
+- Detaildialoge
+- Zeitraum-Presets
+
+Bestehende Phase-3-Komponenten und CRM-Helfer wiederverwenden.
+
+Keine parallelen Komponenten für CRM und Foratable bauen.
+
+13. Design / UX
+
+Sehr wichtig:
+
+- schlicht
+- modern
+- ruhig
+- lesefreundlich
+- einheitlich mit dem Phase-3-Designsystem
+- Zukunftsreservationen zuerst
+- Kalender kompakt und informativ
+- Details erst nach Klick
+- maximal 4 sichtbare Haupt-KPIs
+- weitere Kennzahlen einklappbar
+- keine langen Erklärungstexte
+- keine unnötigen grossen Karten
+- gleiche Abstände, Radien, Buttons und Tabellen wie in den übrigen migrierten Modulen
+- Desktop-first
+- auf kleineren Bildschirmen Drawer statt zu breitem Dialog
+
+14. Technische Single Source of Truth
+
+Bitte eine zentrale Logik verwenden für:
+
+- zukünftige aktive Reservationen
+- Personen pro Tag
+- Reservationen pro Tag
+- Statusfilter
+- Räume
+- Zeitfenster
+- Gruppengrösse
+- stärkster Tag
+- nächster starker Tag
+
+CRM-Auswertung, Kalender, KPI-Dialoge und Tagesdetail müssen dieselben Zahlen liefern.
+
+15. Tests
+
+Bitte Tests ergänzen für:
+
+- nur noch ein sichtbarer Menüpunkt
+- alte Foratable-Route leitet korrekt weiter
+- Zukunftsreservationen stehen zuoberst
+- KPI-Karten sind klickbar
+- Klick auf KPI öffnet korrekte Detailwerte
+- Kalender ist standardmässig geschlossen
+- Kalender öffnet per Klick
+- Kalender zeigt Personen und Reservationen pro Tag
+- Klick auf Tag öffnet Tagesdetail
+- Tagesdetail zeigt alle Reservationen für den gewählten Tag
+- Statusfilter funktionieren
+- stornierte Reservationen zählen nicht zu erwarteten Personen
+- berechtigte Rollen sehen PII
+- nicht berechtigte Rollen sehen keine PII
+- CRM und Kalender verwenden identische Aggregate
+- bestehende Druck-, PDF- und Importfunktionen bleiben erhalten
+
+16. Abschluss
+
+Bitte danach:
+
+- Type-Check-Gate
+- relevante Regressionstests
+- Browser-/Live-Check als Admin
+- Browser-/Live-Check für Rolle ohne PII-Rechte
+- Architect-Review über den tatsächlichen Task-Diff
+- replit.md aktualisieren
+- Commit-Message schreiben
+
+Wichtig:
+Ziel ist eine einzige zentrale Seite für Gäste und Reservationen.
+
+Oben:
+„Was erwartet uns in den nächsten Tagen?“
+
+Darunter:
+Kalender und Tagesdetails.
+
+Erst danach:
+CRM- und historische Auswertungen.
