@@ -55,14 +55,15 @@ import {
 import { KpiCard as DsKpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 import { InfoTip } from '@/components/ui/info-tip';
 import { TONE_TEXT } from '@/components/ui/tones';
+import { StatusPill } from '@/components/ui/status-pill';
 import { loadMonth } from '@/lib/reporting-store';
-import { computePLForMonth, buildBudgetByRowForMonth } from '@/lib/pl-engine';
-import { loadBudgetWithPL, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
-import { lookupAccount } from '@/lib/account-mapping-store';
+import { computePLForMonth } from '@/lib/pl-engine';
 import {
   computeFlexScopes,
   buildErfolgsrechnungVergleich,
-  buildErfolgsVergleichPaar,
+  buildBudgetVsIst,
+  budgetDeltaText,
+  appVsErText,
   buildPkqBreakdown,
   type ComparisonTone,
 } from '@/lib/personal-fix-reconciliation';
@@ -95,68 +96,73 @@ const ER_STATUS_LABEL: Record<ComparisonTone, string> = {
   neutral: '—',
 };
 
-/** View-Model einer Vergleichsebene (Planung ODER Ist) für die ER-Abgleich-Tabelle. */
-interface ErRowView {
-  appPct: number | null;
-  fibuCHF: number;
-  fibuPct: number | null;
-  diffCHF: number;
-  diffPp: number | null;
-  tone: ComparisonTone;
-}
+/** „+CHF X" / „−CHF X" / „CHF 0" — Differenz mit sichtbarem Vorzeichen. */
+const signCHF = (n: number) =>
+  `${n > 0.005 ? '+' : n < -0.005 ? '−' : ''}${fmtCHF(Math.abs(n))}`;
+/** „+1.0" / „−1.0" / „0.0" — Prozentpunkt-Differenz mit sichtbarem Vorzeichen. */
+const signPp = (pp: number) =>
+  `${pp > 0.05 ? '+' : pp < -0.05 ? '−' : ''}${Math.abs(pp).toFixed(1)}`;
+
+/** Einheitliche Quoten-Zelle: „54.2 %" bzw. „—", wenn keine Quote berechenbar. */
+const fmtQuote = (p: number | null) => (p !== null ? `${p.toFixed(1)} %` : '—');
 
 /**
- * Eine Zeile der ER-Abgleich-Tabelle (App-Kalkulation ↔ Erfolgsrechnung).
- * Die App-Spalte wird IMMER angezeigt (der App-Wert existiert stets); fehlt der
- * Erfolgsrechnungs-Gegenwert (`view === null`), zeigen FIBU-/Differenz-Spalte
- * eine Klartext-Notiz statt einer erfundenen 0.
+ * Kompakter Vergleichsblock des Personalcontrollings: zwei Kennzahl-Zeilen
+ * (CHF + Quote) mit linker/rechter Grösse und farbig getönter Differenz.
+ * Reine Darstellung — Werte, Wording und Ton kommen fertig von aussen (SSOT),
+ * hier findet KEINE Berechnung statt.
  */
-function ErVergleichRow({
-  testid, label, sublabel, appCHF, view, missingText, fibuTip,
+function ControllingBlock({
+  testid, title, info, pill, footer, colLeft, colRight, colDiff, chf, pct,
 }: {
   testid: string;
-  label: string;
-  sublabel: string;
-  appCHF: number;
-  view: ErRowView | null;
-  missingText: string;
-  fibuTip: ReactNode;
+  title: string;
+  info?: ReactNode;
+  pill?: ReactNode;
+  footer?: ReactNode;
+  colLeft: string;
+  colRight: string;
+  colDiff: string;
+  chf: { left: string; right: string; diff: string; tone: ComparisonTone };
+  pct: { left: string; right: string; diff: string; tone: ComparisonTone };
 }) {
-  const pct = (p: number | null) => (p !== null ? `${p.toFixed(1)} %` : 'Quote n/a');
-  const signCHF = (n: number) =>
-    `${n > 0.005 ? '+' : n < -0.005 ? '−' : ''}${fmtCHF(Math.abs(n))}`;
-  const signPp = (pp: number | null) =>
-    pp !== null ? `${pp > 0.05 ? '+' : pp < -0.05 ? '−' : ''}${Math.abs(pp).toFixed(1)} Pp · ` : '';
   return (
-    <tr data-testid={testid} className="border-b border-border/50 last:border-0">
-      <td className="py-1.5 pr-2 align-top">
-        <div className="font-medium text-foreground">{label}</div>
-        <div className="text-[11px] text-muted-foreground">{sublabel}</div>
-      </td>
-      <td className="py-1.5 px-2 text-right align-top tabular-nums">
-        <div className="font-mono text-foreground">{fmtCHF(appCHF)}</div>
-        <div className="text-[11px] text-muted-foreground">{view ? pct(view.appPct) : '—'}</div>
-      </td>
-      {view === null ? (
-        <td colSpan={2} className="py-1.5 px-2 text-right align-top text-[11px] text-muted-foreground">
-          {missingText}
-        </td>
-      ) : (
-        <>
-          <td className="py-1.5 px-2 text-right align-top tabular-nums">
-            <div className="inline-flex items-center justify-end gap-1 font-mono text-foreground">
-              {fmtCHF(view.fibuCHF)}
-              <InfoTip side="top" text={fibuTip} />
-            </div>
-            <div className="text-[11px] text-muted-foreground">{pct(view.fibuPct)}</div>
-          </td>
-          <td className={`py-1.5 pl-2 text-right align-top tabular-nums ${TONE_TEXT[view.tone]}`}>
-            <div className="font-mono font-semibold">{signCHF(view.diffCHF)}</div>
-            <div className="text-[11px]">{signPp(view.diffPp)}{ER_STATUS_LABEL[view.tone]}</div>
-          </td>
-        </>
-      )}
-    </tr>
+    <div data-testid={testid} className="rounded-md border border-border bg-card p-2.5 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            {title}
+          </span>
+          {info}
+        </div>
+        {pill}
+      </div>
+      <table className="w-full text-xs tabular-nums">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <th className="w-12 py-0.5 pr-2 text-left font-medium" />
+            <th className="py-0.5 px-2 text-right font-medium">{colLeft}</th>
+            <th className="py-0.5 px-2 text-right font-medium">{colRight}</th>
+            <th className="py-0.5 pl-2 text-right font-medium">{colDiff}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-t border-border/50">
+            <td className="py-1 pr-2 text-left text-muted-foreground">CHF</td>
+            <td className="py-1 px-2 text-right font-mono text-foreground">{chf.left}</td>
+            <td className="py-1 px-2 text-right font-mono text-foreground">{chf.right}</td>
+            <td className={`py-1 pl-2 text-right font-mono font-semibold ${TONE_TEXT[chf.tone]}`}>{chf.diff}</td>
+          </tr>
+          <tr className="border-t border-border/50">
+            <td className="py-1 pr-2 text-left text-muted-foreground">Quote</td>
+            <td className="py-1 px-2 text-right font-mono text-foreground">{pct.left}</td>
+            <td className="py-1 px-2 text-right font-mono text-foreground">{pct.right}</td>
+            <td className={`py-1 pl-2 text-right font-mono ${TONE_TEXT[pct.tone]}`}>{pct.diff}</td>
+          </tr>
+        </tbody>
+      </table>
+      {footer && <div className="text-[11px] text-muted-foreground">{footer}</div>}
+    </div>
   );
 }
 
@@ -3132,24 +3138,19 @@ export default function PersonalFixPage() {
       ? (maisonExclude ? 'exkl. Marketing' : 'inkl. Marketing')
       : 'Ist-Umsatz';
 
-  // ── Erfolgsrechnung (FIBU-5xxx) für „Planung vs. Erfolgsrechnung" ──────────
+  // ── Erfolgsrechnung (FIBU-5xxx) für „App vs. Erfolgsrechnung" (Ist-Kontrolle) ──
   // Read-only: reporting_v1-Blob (mandantengeprefixt) direkt aus localStorage
   // (gleiches Muster wie Import-Cockpit/Reporting — app-weiter Sync ist Wahrheit).
   // computePLForMonth ist EXAKT die Quelle der Reporting-Seite → Single Source of Truth.
   const erfolgsrechnung = useMemo(() => {
     const rec = loadMonth(selectedYear, selectedMonth, tenantKey('reporting_v1'));
-    // ER-Budget-Overrides aus dem Budget-Modul (budget_v1) — zentral via pl-engine,
-    // damit Erfolgsrechnung (PLView) und diese Auswertung EXAKT dieselben Budget-
-    // Zahlen zeigen (Single Source of Truth). Ohne diese Overrides bliebe das
-    // Budget in `total_personnel`/`net_revenue` leer.
-    const budgetData = loadBudgetWithPL(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
-    const budgetByRow = buildBudgetByRowForMonth(budgetData, selectedMonth - 1, lookupAccount);
-    const overrides = budgetByRow.size > 0 ? { budgetByRow } : undefined;
     // EXAKT dieselbe Berechnung wie die Erfolgsrechnung (PLView) — kein „clean"-Sonderweg.
     // FIBU-Personalaufwand = „Löhne (Total)" (personnel_wages) + „Sozialleistungen"
     // (personnel_social); „Übriger Personalaufwand" (personnel_other) bleibt BEWUSST
     // aussen vor (die App-Kalkulation modelliert ihn nicht). Single Source of Truth.
-    const plFull = computePLForMonth(rec, overrides);
+    // Nur die Ist-Seite (actual) wird gebraucht (Kontrolle App ↔ ER-Ist) — daher keine
+    // ER-Budget-Overrides mehr (die frühere Planung↔ER-Budget-Zeile ist entfallen).
+    const plFull = computePLForMonth(rec);
     const findRow = (id: string) => plFull.rows.find(r => r.def.id === id);
     const wages = findRow('personnel_wages');
     const social = findRow('personnel_social');
@@ -3159,14 +3160,10 @@ export default function PersonalFixPage() {
       a: number | undefined, b: number | undefined,
     ): number | null => (a === undefined && b === undefined ? null : (a ?? 0) + (b ?? 0));
     const plPersonnelActual = sumCells(wages?.values.actual, social?.values.actual);
-    const plPersonnelBudget = sumCells(wages?.values.budget, social?.values.budget);
     const plNetRevenue = fullRevenue?.values.actual ?? null;
-    const plBudgetRevenue = fullRevenue?.values.budget ?? null;
     return {
       plPersonnelActual,
-      plPersonnelBudget,
       plNetRevenue,
-      plBudgetRevenue,
     };
     // scheduleRefreshTick: neu lesen, wenn app-weiter Sync neue Reporting-Daten bringt
   }, [selectedYear, selectedMonth, tenantKey, scheduleRefreshTick]);
@@ -3180,15 +3177,16 @@ export default function PersonalFixPage() {
     effectiveRevenue,
   }), [erfolgsrechnung, pfix.active.istTotal, effectiveRevenue]);
 
-  // Planung vs. Erfolgsrechnung (Budget): geplanter Personalaufwand ↔ ER-Budget
-  // (Löhne + Sozialleistungen, Plan-Seite; identische Definition wie Ist).
-  // Nenner = Plan-Umsatz der Erfolgsrechnung; fehlt er, bleibt die Quote n/a (CHF
-  // bleibt trotzdem vergleichbar) — nie den Ist-Umsatz mit Plan-Kosten mischen.
-  const erVergleichPlan = useMemo(() => buildErfolgsVergleichPaar({
-    appCHF: pfix.active.planTotal,
-    fibuCHF: erfolgsrechnung.plPersonnelBudget,
-    revenue: erfolgsrechnung.plBudgetRevenue ?? 0,
-  }), [erfolgsrechnung.plPersonnelBudget, erfolgsrechnung.plBudgetRevenue, pfix.active.planTotal]);
+  // Budget vs. Ist (Block A des Personalcontrollings): App-Budget (planTotal) ↔ App-Ist
+  // (istTotal), beide Quoten auf demselben effektiven Umsatz → Prozentpunkte vergleichbar.
+  // Zentrale, richtungsabhängige Differenz (Ist − Budget) — SSOT für KPI-Karte + Block A,
+  // keine Parallelberechnung (Werte kommen aus pfix.active + pkqPlan/pkqIst).
+  const budgetVsIst = useMemo(() => buildBudgetVsIst({
+    budgetCHF: pfix.active.planTotal,
+    istCHF: pfix.active.istTotal,
+    budgetPct: pkqPlan,
+    istPct: pkqIst,
+  }), [pfix.active.planTotal, pfix.active.istTotal, pkqPlan, pkqIst]);
 
   // PKQ-Herleitung für InfoTip (echte Werte + Quelle, nichts hartcodiert)
   const pkqBreakdown = useMemo(() => buildPkqBreakdown({
@@ -4041,20 +4039,20 @@ export default function PersonalFixPage() {
                 : 'neutral'}
             />
             <DsKpiCard
-              label="Total Plan"
+              label="Total Budget"
               value={fmtCHF(pfix.active.planTotal)}
-              sub="FIX + Flex (Plan)"
+              sub="FIX + Flex (Budget)"
               tone="info"
             />
             <DsKpiCard
-              label="Diff. Ist − Plan"
-              value={`${pfix.active.diffTotal > 0.005 ? '+' : pfix.active.diffTotal < -0.005 ? '−' : ''}${fmtCHF(Math.abs(pfix.active.diffTotal))}`}
-              sub={pfix.active.diffTotal > 0.005 ? 'Ist über Plan' : pfix.active.diffTotal < -0.005 ? 'Ist unter Plan' : 'Plan = Ist'}
-              tone={pfix.active.diffTotal > 0.005 ? 'critical' : pfix.active.diffTotal < -0.005 ? 'good' : 'neutral'}
+              label="Abweichung Ist − Budget"
+              value={signCHF(budgetVsIst.diffCHF)}
+              sub={budgetDeltaText(budgetVsIst.diffCHF)}
+              tone={budgetVsIst.tone}
               trend={{
-                direction: pfix.active.diffTotal > 0.005 ? 'up' : pfix.active.diffTotal < -0.005 ? 'down' : 'flat',
-                tone: pfix.active.diffTotal > 0.005 ? 'critical' : pfix.active.diffTotal < -0.005 ? 'good' : 'neutral',
-                label: 'Ist − Plan',
+                direction: budgetVsIst.direction === 'over' ? 'up' : budgetVsIst.direction === 'under' ? 'down' : 'flat',
+                tone: budgetVsIst.tone,
+                label: 'Ist − Budget',
               }}
             />
             <DsKpiCard
@@ -4062,7 +4060,7 @@ export default function PersonalFixPage() {
               value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
               sub={
                 <span className="inline-flex items-center gap-1" data-testid="pfix-pkq-sub">
-                  {pkqPlan !== null ? `Plan ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
+                  {pkqPlan !== null ? `Budget ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
                   <InfoTip
                     side="top"
                     text={
@@ -4094,123 +4092,146 @@ export default function PersonalFixPage() {
             />
           </KpiGrid>
 
-          {/* ── Abgleich mit der Erfolgsrechnung: Planung + Ist (App ↔ FIBU-5xxx) ─ */}
+          {/* ── Personalcontrolling: Budget vs. Ist (Betrieb) + App vs. Erfolgsrechnung (Kontrolle) ─ */}
           {/* Nur ganzer Monat: die Erfolgsrechnung liegt monatsweise vor, ein
-              Stichtag-Vergleich (pro rata) wäre irreführend.
-              Zwei Ebenen: Planung ↔ ER-Budget · Ist ↔ ER-Ist (FIBU 5000–5999). */}
+              Stichtag-Vergleich (pro rata) wäre irreführend. */}
           {proRataDay === null && (
             <div
-              data-testid="pfix-er-vergleich"
-              className="rounded-lg border border-border bg-muted/10 p-3 space-y-2"
+              data-testid="pfix-personalcontrolling"
+              className="rounded-lg border border-border bg-muted/10 p-3 space-y-3"
             >
               <div className="flex items-center gap-1.5">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Abgleich mit der Erfolgsrechnung
+                  Personalcontrolling
                 </h3>
                 <InfoTip
                   side="top"
                   text={
                     <span>
-                      Stellt den <b>von der App berechneten</b> Personalaufwand (Total Arbeitgeberkosten) dem
-                      Personalaufwand aus der Erfolgsrechnung gegenüber, Periode {getMonthLabel(selectedYear, selectedMonth)}.
-                      Zwei Ebenen: <b>Planung</b> (geplanter Aufwand ↔ Budget der Erfolgsrechnung) und
-                      {' '}<b>Ist</b> (berechneter Ist-Aufwand ↔ effektive FIBU-Konten 5000–5999). Die FIBU-Werte
-                      enthalten bereits den vollen Arbeitgeberaufwand — sie werden <b>nicht</b> nochmals mit
-                      Sozialkosten multipliziert. Ist-Quote auf {fmtCHF(effectiveRevenue)} ({revenueLabel}),
-                      Plan-Quote auf den Plan-Umsatz der Erfolgsrechnung.
+                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)}:{' '}
+                      <b>Budget vs. Ist</b> zeigt betriebswirtschaftlich, ob der Ist-Personalaufwand
+                      unter oder über dem geplanten Budget liegt (Richtung = gut/schlecht).{' '}
+                      <b>App vs. Erfolgsrechnung</b> ist eine technische Kontrolle, ob der von der App
+                      berechnete Ist-Aufwand mit dem Personalaufwand der Erfolgsrechnung (FIBU-Konten
+                      5000–5999, voller Arbeitgeberaufwand) übereinstimmt — hier zählt nur die
+                      Grösse der Abweichung. Quoten auf {fmtCHF(effectiveRevenue)} ({revenueLabel}).
                     </span>
                   }
                 />
               </div>
 
-              {erVergleich.status === 'missing' && erVergleichPlan.status === 'missing' ? (
-                <div
-                  data-testid="pfix-er-missing"
-                  className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-                >
-                  <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
-                  {!isGuest && (
-                    <Link
-                      to="/reporting"
-                      data-testid="pfix-er-import-link"
-                      className="font-medium text-primary underline underline-offset-2"
-                    >
-                      Erfolgsrechnung importieren →
-                    </Link>
-                  )}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-                        <th className="py-1 pr-2 text-left font-medium">Abgleich</th>
-                        <th className="py-1 px-2 text-right font-medium">App-Kalkulation</th>
-                        <th className="py-1 px-2 text-right font-medium">Erfolgsrechnung</th>
-                        <th className="py-1 pl-2 text-right font-medium">Differenz (App − ER)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <ErVergleichRow
-                        testid="pfix-er-row-plan"
-                        label="Planung"
-                        sublabel="geplant ↔ Budget"
-                        appCHF={pfix.active.planTotal}
-                        view={erVergleichPlan.status === 'ok' ? {
-                          appPct: erVergleichPlan.appPct,
-                          fibuCHF: erVergleichPlan.fibuCHF,
-                          fibuPct: erVergleichPlan.fibuPct,
-                          diffCHF: erVergleichPlan.diffCHF,
-                          diffPp: erVergleichPlan.diffPp,
-                          tone: erVergleichPlan.tone,
-                        } : null}
-                        missingText="Kein Budget in der Erfolgsrechnung erfasst."
-                        fibuTip={
+              <div className="grid gap-3 md:grid-cols-2">
+                {/* Block A — Budget vs. Ist (betriebswirtschaftlich, richtungsabhängig) */}
+                <ControllingBlock
+                  testid="pfix-pc-budget-ist"
+                  title="Budget vs. Ist"
+                  colLeft="Budget"
+                  colRight="Ist App"
+                  colDiff="Ist − Budget"
+                  pill={
+                    <StatusPill tone={budgetVsIst.tone} size="xs">
+                      {budgetDeltaText(budgetVsIst.diffCHF)}
+                    </StatusPill>
+                  }
+                  chf={{
+                    left: fmtCHF(budgetVsIst.budgetCHF),
+                    right: fmtCHF(budgetVsIst.istCHF),
+                    diff: signCHF(budgetVsIst.diffCHF),
+                    tone: budgetVsIst.tone,
+                  }}
+                  pct={{
+                    left: fmtQuote(budgetVsIst.budgetPct),
+                    right: fmtQuote(budgetVsIst.istPct),
+                    diff: budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
+                    tone: budgetVsIst.tone,
+                  }}
+                />
+
+                {/* Block B — App vs. Erfolgsrechnung (technische Kontrolle, betragsbasiert) */}
+                {erVergleich.status === 'ok' ? (
+                  <ControllingBlock
+                    testid="pfix-pc-app-er"
+                    title="App vs. Erfolgsrechnung"
+                    colLeft="Ist App"
+                    colRight="Ist ER"
+                    colDiff="App − ER"
+                    info={
+                      <InfoTip
+                        side="top"
+                        text={
                           <span>
-                            Quelle: Budget-Personalaufwand der Erfolgsrechnung (Plan-Seite),
-                            Periode {getMonthLabel(selectedYear, selectedMonth)}. Plan-Quote auf den
-                            Plan-Umsatz der Erfolgsrechnung.
-                          </span>
-                        }
-                      />
-                      <ErVergleichRow
-                        testid="pfix-er-row-ist"
-                        label="Ist"
-                        sublabel="berechnet ↔ FIBU-Ist"
-                        appCHF={pfix.active.istTotal}
-                        view={erVergleich.status === 'ok' ? {
-                          appPct: erVergleich.berechnetPct,
-                          fibuCHF: erVergleich.fibuCHF,
-                          fibuPct: erVergleich.fibuPct,
-                          diffCHF: erVergleich.diffCHF,
-                          diffPp: erVergleich.diffPp,
-                          tone: erVergleich.tone,
-                        } : null}
-                        missingText="Noch keine Löhne/Sozialleistungen in der Erfolgsrechnung erfasst."
-                        fibuTip={
-                          <span>
-                            Quelle: „Löhne (Total)" + „Sozialleistungen" der Erfolgsrechnung
-                            (exakt dieselben Werte wie dort dargestellt).{' '}
-                            Periode {getMonthLabel(selectedYear, selectedMonth)}. Dieser Wert enthält bereits den
-                            vollen Arbeitgeberaufwand und wird nicht nochmals mit Sozialkosten multipliziert.
-                            {erVergleich.status === 'ok' && erVergleich.revenueMismatch
+                            Kontrolle: der von der App berechnete Ist-Personalaufwand (Total
+                            Arbeitgeberkosten) gegenüber „Löhne (Total)" + „Sozialleistungen" der
+                            Erfolgsrechnung (exakt dieselben Werte wie dort, FIBU 5000–5999). Diese
+                            enthalten bereits den vollen Arbeitgeberaufwand und werden <b>nicht</b>{' '}
+                            nochmals mit Sozialkosten multipliziert. Ist-Quote auf{' '}
+                            {fmtCHF(effectiveRevenue)} ({revenueLabel}).
+                            {erVergleich.revenueMismatch
                               ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
                               : ''}
                           </span>
                         }
                       />
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    }
+                    pill={
+                      <StatusPill tone={erVergleich.tone} size="xs">
+                        {ER_STATUS_LABEL[erVergleich.tone]}
+                      </StatusPill>
+                    }
+                    footer={
+                      <span className={TONE_TEXT[erVergleich.tone]}>
+                        {appVsErText(erVergleich.diffCHF)}
+                      </span>
+                    }
+                    chf={{
+                      left: fmtCHF(pfix.active.istTotal),
+                      right: fmtCHF(erVergleich.fibuCHF),
+                      diff: signCHF(erVergleich.diffCHF),
+                      tone: erVergleich.tone,
+                    }}
+                    pct={{
+                      left: fmtQuote(erVergleich.berechnetPct),
+                      right: fmtQuote(erVergleich.fibuPct),
+                      diff: erVergleich.diffPp !== null ? `${signPp(erVergleich.diffPp)} Pp` : '—',
+                      tone: erVergleich.tone,
+                    }}
+                  />
+                ) : (
+                  <div
+                    data-testid="pfix-pc-app-er"
+                    className="rounded-md border border-border bg-card p-2.5 space-y-2"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        App vs. Erfolgsrechnung
+                      </span>
+                    </div>
+                    <div
+                      data-testid="pfix-pc-app-er-missing"
+                      className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
+                      {!isGuest && (
+                        <Link
+                          to="/reporting"
+                          data-testid="pfix-er-import-link"
+                          className="font-medium text-primary underline underline-offset-2"
+                        >
+                          Erfolgsrechnung importieren →
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
-          <MoreKpis label="Alle Kennzahlen (Plan + Ist, 4 Ebenen)" storageKey="pfix-more-kpis">
-        {/* ── KPI-Block (8 Karten: Plan + Ist für alle 4 Ebenen) ───────────── */}
+          <MoreKpis label="Alle Kennzahlen (Budget + Ist, 4 Ebenen)" storageKey="pfix-more-kpis">
+        {/* ── KPI-Block (8 Karten: Budget + Ist für alle 4 Ebenen) ───────────── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <KpiCard
-            title={proRataDay !== null ? `Flex Arbeit Plan bis ${proRataDay}.` : 'Flex Arbeit Plan'}
+            title={proRataDay !== null ? `Flex Arbeit Budget bis ${proRataDay}.` : 'Flex Arbeit Budget'}
             value={fmtCHF(pfix.active.planWork)}
             sub="Dienstplan-Stunden × Lohn"
             icon={<Clock className="h-5 w-5" />}
@@ -4224,7 +4245,7 @@ export default function PersonalFixPage() {
             color={pfix.active.istWork > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `PKQ Plan bis ${proRataDay}.` : 'PKQ Plan'}
+            title={proRataDay !== null ? `PKQ Budget bis ${proRataDay}.` : 'PKQ Budget'}
             value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
             sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(effectiveRevenue)}${revenueIsAssumed ? ' (Annahme)' : ''}` : 'Kein Umsatz erfasst'}
             icon={<TrendingDown className="h-5 w-5" />}
@@ -4238,9 +4259,9 @@ export default function PersonalFixPage() {
             color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `Total Flex Plan bis ${proRataDay}.` : 'Total Flex Plan'}
+            title={proRataDay !== null ? `Total Flex Budget bis ${proRataDay}.` : 'Total Flex Budget'}
             value={fmtCHF(pfix.active.planTotalVar)}
-            sub="Flex Arbeit + Ferien (Plan)"
+            sub="Flex Arbeit + Ferien (Budget)"
             icon={<TrendingUp className="h-5 w-5" />}
             color="blue"
           />
@@ -4254,11 +4275,11 @@ export default function PersonalFixPage() {
           <KpiCard
             title={proRataDay !== null ? `Diff. Arbeit bis ${proRataDay}.` : 'Diff. Arbeit'}
             value={fmtCHF(Math.abs(pfix.active.diffWork))}
-            sub={pfix.active.diffWork === 0 ? 'Plan = Ist' : pfix.active.diffWork > 0 ? '↑ Ist über Plan' : '✓ Ist unter Plan'}
+            sub={pfix.active.diffWork === 0 ? 'Im Budget' : pfix.active.diffWork > 0 ? '↑ Ist über Budget' : '✓ Ist unter Budget'}
             icon={<BarChart2 className="h-5 w-5" />}
             color={pfix.active.diffWork > 0 ? 'red' : pfix.active.diffWork < 0 ? 'green' : 'default'}
             delta={pfix.active.diffWork}
-            deltaLabel="Ist − Plan (Arbeit)"
+            deltaLabel="Ist − Budget (Arbeit)"
           />
           <KpiCard
             title={proRataDay !== null ? `Personal FIX bis ${proRataDay}.` : 'Personal FIX / Monat'}

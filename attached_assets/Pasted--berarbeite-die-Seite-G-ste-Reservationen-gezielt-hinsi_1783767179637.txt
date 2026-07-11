@@ -1,0 +1,329 @@
+Überarbeite die Seite „Gäste & Reservationen“ gezielt hinsichtlich Übersichtlichkeit, Zeitraumsteuerung, Kalendernavigation und Report-Darstellung.
+
+Ziel:
+Die Seite soll sofort verständlich machen, welche Kennzahlen und Auswertungen vom ausgewählten Zeitraum betroffen sind. Die aktuelle Darstellung ist zu gross, zu verteilt und der wichtige Report geht optisch unter.
+
+Bitte setze Folgendes um:
+
+1. Zeitraumsteuerung klar mit den Auswertungen verbinden
+
+Aktuell ist nicht eindeutig erkennbar, ob „Aktueller Monat“, „Nächste 7 Tage“, „Nächste 14 Tage“, „Nächste 30 Tage“ oder ein individueller Zeitraum nur den Kalender oder auch die oberen Kennzahlen und den Report beeinflusst.
+
+Baue deshalb oben einen klaren, kompakten Steuerungsbereich:
+
+Titel:
+„Auswertungszeitraum“
+
+Schnellauswahl:
+„Aktueller Monat“
+„Nächste 7 Tage“
+„Nächste 14 Tage“
+„Nächste 30 Tage“
+„Individuell“
+
+Direkt daneben oder darunter:
+„Aktive Auswertung: 11.07.2026–24.07.2026“
+
+Mache eindeutig sichtbar:
+
+Die oberen KPI-Karten beziehen sich auf den aktiven Zeitraum.
+Der Detailreport bezieht sich auf denselben aktiven Zeitraum.
+Der Kalender zeigt grundsätzlich einen vollständigen Kalendermonat und wird separat navigiert.
+
+Ergänze unter dem Zeitraumtitel einen kurzen Hinweis:
+
+„Kennzahlen und Report beziehen sich auf den gewählten Auswertungszeitraum.“
+
+Der Kalender darf davon unabhängig einen ganzen Monat anzeigen.
+
+2. Zeitraumsteuerung kleiner und kompakter gestalten
+
+Die aktuelle Filterbox braucht zu viel Platz.
+
+Reduziere:
+
+Innenabstände
+Buttonhöhe
+Abstände zwischen Buttons und Datumsfeldern
+unnötige Rahmen und Leerflächen
+
+Die Schnellauswahl soll in einer kompakten Segment- oder Buttonleiste dargestellt werden.
+
+Beim Klick auf „Individuell“ werden die Datumsfelder eingeblendet.
+
+Bei den festen Zeiträumen sollen die Datumsfelder entweder kompakt angezeigt oder ausgeblendet werden, sofern der aktive Zeitraum oben klar sichtbar bleibt.
+
+Der Button „Individuell anzeigen“ soll entfallen, wenn die Auswahl nach Änderung der Datumsfelder automatisch angewendet werden kann.
+
+Falls eine automatische Anwendung technisch nicht sinnvoll ist, verwende einen kleinen Button „Anwenden“.
+
+3. Obere KPI-Karten klar beschriften
+
+Die oberen KPI-Karten müssen klar zeigen, dass sie zum aktiven Auswertungszeitraum gehören.
+
+Ändere die Überschrift von:
+
+„Zukünftige Reservationen“
+
+zu:
+
+„Auswertung · 11.07.2026–24.07.2026“
+
+oder dynamisch entsprechend dem aktiven Zeitraum.
+
+Zeige weiterhin kompakt:
+
+Personen
+Reservationen
+Nächster starker Tag
+Stärkster Tag
+
+Die Umschaltung „Personen / Reservationen“ bleibt erhalten.
+
+Reduziere die Höhe der KPI-Karten etwas:
+
+kleinere Innenabstände
+kompaktere Labels
+kein unnötiger Leerraum
+
+Die Kennzahlen müssen trotzdem gut lesbar bleiben.
+
+4. Kalender immer als vollständigen Monat anzeigen
+
+Der Kalender darf nicht nur die Tage des ausgewählten Auswertungszeitraums anzeigen.
+
+Zeige immer den vollständigen Kalendermonat:
+
+alle Tage vom ersten bis zum letzten Tag des Monats
+inklusive bereits vergangener Tage
+inklusive Wochenzeilen mit leeren Randtagen oder Tagen des Vor- und Folgemonats, falls dies zum bestehenden Kalenderdesign passt
+
+Vergangene Tage dürfen optisch dezenter dargestellt werden, müssen aber weiterhin sichtbar und lesbar bleiben.
+
+Der aktive Auswertungszeitraum soll innerhalb des Kalenders dezent markiert werden, zum Beispiel durch:
+
+leichten Hintergrund
+Rahmen
+kleinen Zeitraumindikator
+
+Diese Markierung darf die Statusfarben der einzelnen Tage nicht überdecken.
+
+5. Monatsnavigation im Kalender ergänzen
+
+Füge direkt im Kalenderkopf eine eigene Monatsnavigation ein:
+
+Pfeil zurück
+Monat und Jahr, zum Beispiel „Juli 2026“
+Pfeil vor
+Button „Heute“
+
+Beim Wechseln des Kalendermonats darf sich der aktive Auswertungszeitraum nicht automatisch verändern.
+
+Beispiel:
+
+Aktiver Reportzeitraum:
+11.07.2026–24.07.2026
+
+Angezeigter Kalendermonat:
+August 2026
+
+Beide Zustände müssen unabhängig voneinander funktionieren.
+
+Der Kalenderkopf soll klar unterscheiden zwischen:
+
+„Kalendermonat“
+und
+„Auswertungszeitraum“
+
+6. Report stärker hervorheben
+
+Der Bereich:
+
+„Report · 11.07.2026–24.07.2026“
+
+ist aktuell optisch zu unauffällig und wirkt verloren.
+
+Gestalte ihn als klaren Hauptbereich unterhalb des Kalenders.
+
+Verwende einen deutlichen Abschnittskopf:
+
+„Detailreport“
+
+Darunter:
+
+„Auswertungszeitraum 11.07.2026–24.07.2026“
+
+Zusätzlich einen kurzen Untertitel:
+
+„Zusammensetzung der Reservationen und Gäste im gewählten Zeitraum“
+
+Der Report soll visuell als zusammengehörende Auswertung erkennbar sein.
+
+Nutze dafür:
+
+einen gemeinsamen Container
+klaren Kopfbereich
+kompakte KPI-Zeile
+saubere Untergliederung
+weniger verstreute Einzelkarten
+
+7. Report-Kennzahlen kompakter gruppieren
+
+Die aktuellen Report-Karten nehmen zu viel Platz ein.
+
+Fasse die wichtigsten Kennzahlen in einer kompakten KPI-Zeile zusammen:
+
+Zeitraum
+Reservationen
+Personen
+Ø Gruppengrösse
+Abgeschlossen
+Storniert
+Neue Gäste
+Wiederkehrend
+
+Bevorzuge eine responsive Grid-Darstellung:
+
+Desktop:
+4 Karten pro Zeile oder alle Kennzahlen in einer kompakten Kennzahlenleiste
+
+Kleinere Breiten:
+2 Karten pro Zeile
+
+Reduziere die Kartenhöhe und verwende konsistente Beschriftungen.
+
+Der Zeitraum muss nicht als gleich grosse KPI-Karte dargestellt werden, falls er bereits prominent im Reportkopf steht. Vermeide doppelte Informationen.
+
+8. Report-Inhalte klar strukturieren
+
+Unterhalb der Kennzahlen sollen die Auswertungen klar gegliedert werden:
+
+Status-Verteilung
+Räume
+Bereiche
+weitere vorhandene Reportauswertungen
+
+Nutze ein kompaktes Zwei-Spalten-Layout, wo sinnvoll.
+
+Beispiel:
+
+links:
+Status-Verteilung
+
+rechts:
+Räume
+
+nächste Zeile:
+Bereiche und weitere Auswertungen
+
+Vermeide grosse leere Flächen und unterschiedlich hohe Karten ohne Grund.
+
+9. Ein- und Ausklappen verbessern
+
+Der aktuelle Link „Report einklappen“ ist zu unauffällig.
+
+Verwende im Reportkopf einen klaren kleinen Button:
+
+„Report ausblenden“
+beziehungsweise
+„Report anzeigen“
+
+mit Chevron-Icon.
+
+Der Report soll standardmässig geöffnet sein.
+
+Der Kalender soll ebenfalls standardmässig geöffnet sein.
+
+Speichere den Ein- und Ausklappzustand nur lokal, falls dies bereits dem bestehenden Verhalten der App entspricht. Keine neue Datenbanklogik dafür einführen.
+
+10. Visuelle Hierarchie der gesamten Seite
+
+Die Reihenfolge soll künftig eindeutig sein:
+
+Seitenkopf „Gäste & Reservationen“
+Auswertungszeitraum
+KPI-Karten zum aktiven Zeitraum
+Kalenderübersicht mit eigenem Kalendermonat
+Detailreport zum aktiven Zeitraum
+
+Der Nutzer muss jederzeit erkennen:
+
+welcher Zeitraum ausgewertet wird
+welcher Monat im Kalender angezeigt wird
+welche Kennzahlen vom Zeitraum betroffen sind
+wo der Detailreport beginnt
+
+11. Designvorgaben
+
+Achte auf ein einheitliches, modernes, schlichtes und platzsparendes Design, synchron mit der bestehenden Anwendung.
+
+Wichtig:
+
+bestehende Typografie verwenden
+bestehende Farben und Komponenten verwenden
+keine neuen isolierten Sonderdesigns
+weniger vertikale Höhe
+weniger unnötige Karten
+weniger grosse Leerflächen
+klare Abschnittsüberschriften
+einheitliche Innenabstände
+gut lesbare Zahlen
+responsive Darstellung
+keine horizontalen Scrollbars auf normalen Desktopbreiten
+bestehende Statusfarben fachlich beibehalten
+
+12. Fachliche Logik
+
+Der aktive Auswertungszeitraum steuert:
+
+obere KPI-Karten
+Detailreport
+Kennzahlen innerhalb des Reports
+
+Der angezeigte Kalendermonat steuert nur:
+
+welcher vollständige Monat im Kalender sichtbar ist
+
+Beide Zustände müssen getrennt geführt werden.
+
+Beim Klick auf einen Kalendertag dürfen bestehende Tagesdetails oder Drilldowns weiterhin funktionieren.
+
+Bereits vergangene Tage dürfen nicht aus der Kalenderansicht entfernt werden.
+
+13. Tests
+
+Ergänze oder aktualisiere Tests für mindestens folgende Fälle:
+
+„Nächste 7 Tage“ aktualisiert KPI-Karten und Detailreport
+„Nächste 14 Tage“ aktualisiert KPI-Karten und Detailreport
+„Nächste 30 Tage“ aktualisiert KPI-Karten und Detailreport
+individueller Zeitraum aktualisiert KPI-Karten und Detailreport
+Kalender zeigt vollständigen Monat
+vergangene Tage bleiben sichtbar
+Kalender kann einen Monat zurück navigieren
+Kalender kann einen Monat vor navigieren
+„Heute“ springt zum aktuellen Monat
+Kalendermonat und Auswertungszeitraum funktionieren unabhängig
+Reportüberschrift zeigt den aktiven Zeitraum
+Report ist standardmässig geöffnet
+Personen-/Reservationen-Umschaltung funktioniert weiterhin korrekt
+keine Regression bei Tagesklicks oder bestehenden Drilldowns
+
+Führe danach die betroffenen Tests und den Typecheck aus.
+
+14. Dokumentation und Review
+
+Aktualisiere replit.md kurz mit:
+
+getrennter Steuerung von Auswertungszeitraum und Kalendermonat
+vollständiger Monatskalender inklusive vergangener Tage
+neuer kompakter Detailreport
+klare Zuordnung der KPI-Karten zum aktiven Zeitraum
+
+Führe danach einen auf den tatsächlichen Task-Diff begrenzten Architect-Review durch.
+
+Wichtig:
+
+Keine Änderungen an Personal, Erfolgsrechnung, Warenaufwand, Gäste-Duplikaten oder Importlogik vornehmen.
+Keine neue Datenbankstruktur einführen.
+Keine bereits abgeschlossenen Änderungen zurücksetzen.

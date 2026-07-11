@@ -7,6 +7,10 @@ import {
   buildErfolgsrechnungVergleich,
   buildErfolgsVergleichPaar,
   buildPkqBreakdown,
+  buildBudgetVsIst,
+  budgetDeltaText,
+  appVsErText,
+  fmtChfWhole,
   PERSONALAUFWAND_DIFF_PP_GOOD,
   PERSONALAUFWAND_DIFF_PP_WARN,
   MIN_REVENUE_FOR_QUOTE,
@@ -240,5 +244,81 @@ describe('buildPkqBreakdown — PKQ-Herleitung für InfoTip', () => {
     expect(b.pkq).toBeNull();
     expect(b.hasRevenue).toBe(false);
     expect(b.cutoffDay).toBeNull();
+  });
+});
+
+describe('buildBudgetVsIst — richtungsabhängiger Budget-↔-Ist-Vergleich (Block A)', () => {
+  it('Ist unter Budget → direction under, tone good, negative Differenz', () => {
+    // Reales Beispiel: Budget 135\u2019473 / 54.2 %, Ist 132\u2019712 / 53.2 %.
+    const r = buildBudgetVsIst({
+      budgetCHF: 135_473,
+      istCHF: 132_712,
+      budgetPct: 54.2,
+      istPct: 53.2,
+    });
+    expect(r.diffCHF).toBe(132_712 - 135_473); // −2761 = Ist − Budget (zentrale Differenz)
+    expect(r.diffCHF).toBeLessThan(0);
+    expect(r.direction).toBe('under');
+    expect(r.tone).toBe('good');
+    expect(r.diffPp).toBeCloseTo(-1.0, 10);
+  });
+
+  it('Ist über Budget → direction over, tone critical, positive Differenz', () => {
+    const r = buildBudgetVsIst({
+      budgetCHF: 120_000,
+      istCHF: 128_500,
+      budgetPct: 48,
+      istPct: 51.4,
+    });
+    expect(r.diffCHF).toBe(8_500);
+    expect(r.direction).toBe('over');
+    expect(r.tone).toBe('critical');
+    expect(r.diffPp).toBeCloseTo(3.4, 10);
+  });
+
+  it('Ist == Budget (im Rundungsrauschen) → direction onbudget, tone neutral', () => {
+    const r = buildBudgetVsIst({
+      budgetCHF: 100_000,
+      istCHF: 100_000.004, // < BUDGET_DIFF_EPSILON
+      budgetPct: 50,
+      istPct: 50,
+    });
+    expect(r.direction).toBe('onbudget');
+    expect(r.tone).toBe('neutral');
+    expect(r.diffPp).toBe(0);
+  });
+
+  it('diffPp = null, sobald eine Quote fehlt (Schutz vor Division durch 0)', () => {
+    expect(
+      buildBudgetVsIst({ budgetCHF: 100_000, istCHF: 90_000, budgetPct: null, istPct: 45 }).diffPp,
+    ).toBeNull();
+    expect(
+      buildBudgetVsIst({ budgetCHF: 100_000, istCHF: 90_000, budgetPct: 50, istPct: null }).diffPp,
+    ).toBeNull();
+    expect(
+      buildBudgetVsIst({ budgetCHF: 100_000, istCHF: 90_000, budgetPct: null, istPct: null }).diffPp,
+    ).toBeNull();
+  });
+});
+
+describe('Klartext-Wording (Budget-Abweichung + App-↔-ER)', () => {
+  it('fmtChfWhole nutzt Schweizer Tausender-Apostroph ohne Rappen', () => {
+    const s = fmtChfWhole(135_473);
+    expect(s).toContain('135\u2019473'); // 135'473 (U+2019)
+    expect(s).toContain('CHF');
+    expect(s).not.toContain('.00');
+  });
+
+  it('budgetDeltaText: unter / über / im Budget', () => {
+    expect(budgetDeltaText(-2_761)).toBe(`${fmtChfWhole(2_761)} unter Budget`);
+    expect(budgetDeltaText(8_500)).toBe(`${fmtChfWhole(8_500)} über Budget`);
+    expect(budgetDeltaText(0)).toBe('Im Budget');
+    expect(budgetDeltaText(0.004)).toBe('Im Budget'); // Rundungsrauschen
+  });
+
+  it('appVsErText: höher / tiefer / stimmen überein', () => {
+    expect(appVsErText(1_212)).toBe(`App ${fmtChfWhole(1_212)} höher als ER`);
+    expect(appVsErText(-900)).toBe(`App ${fmtChfWhole(900)} tiefer als ER`);
+    expect(appVsErText(0)).toBe('App und ER stimmen überein');
   });
 });

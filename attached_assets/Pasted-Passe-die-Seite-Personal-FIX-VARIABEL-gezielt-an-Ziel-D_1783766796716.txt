@@ -1,0 +1,181 @@
+Passe die Seite „Personal FIX + VARIABEL“ gezielt an.
+
+Ziel:
+Der betriebswirtschaftlich wichtige Vergleich zwischen Ist und Budget muss im Bereich „Abgleich mit der Erfolgsrechnung“ wieder klar sichtbar sein. Gleichzeitig muss der technische Abgleich zwischen App und Erfolgsrechnung erhalten bleiben. Diese beiden Vergleiche dürfen nicht vermischt werden.
+
+Bitte setze Folgendes um:
+
+1. Bereich umbenennen
+
+Benenne den bisherigen Bereich
+
+„Abgleich mit der Erfolgsrechnung“
+
+neu in
+
+„Personalcontrolling“
+
+um.
+
+2. Zwei klar getrennte Vergleiche anzeigen
+
+Zeige innerhalb dieses Bereichs zwei kompakte, klar getrennte Blöcke.
+
+Block A: „Budget vs. Ist“
+
+Dieser Block ist der primäre betriebswirtschaftliche Vergleich und muss deutlich sichtbar sein.
+
+Zeige:
+
+Budget CHF
+Ist App CHF
+Differenz Ist minus Budget in CHF
+Budget Personalquote
+Ist Personalquote
+Differenz in Prozentpunkten
+
+Für Juni 2026 muss anhand der aktuell sichtbaren Werte beispielsweise erkennbar sein:
+
+Budget: CHF 135'473
+Ist App: CHF 132'712
+Differenz: rund CHF 2'761 beziehungsweise CHF 2'762 unter Budget
+Budgetquote: 54.2 %
+Istquote: 53.2 %
+Differenz: rund 1.0 Prozentpunkt unter Budget
+
+Achte auf eine klare, verständliche Formulierung:
+
+Bei Ist unter Budget:
+„CHF X unter Budget“
+
+Bei Ist über Budget:
+„CHF X über Budget“
+
+Bei gleicher Höhe:
+„Im Budget“
+
+Die Farbe muss fachlich korrekt sein:
+
+Unter Budget: grün
+Über Budget: rot
+Im Budget: neutral oder grün
+
+Die Differenz darf nicht nur als mathematisches Minuszeichen angezeigt werden. Der Nutzer muss direkt erkennen, ob das Ergebnis besser oder schlechter als Budget ist.
+
+Block B: „App vs. Erfolgsrechnung“
+
+Dieser Block dient nur der technischen Datenkontrolle.
+
+Zeige:
+
+Ist App CHF
+Ist Erfolgsrechnung CHF
+Differenz App minus Erfolgsrechnung in CHF
+Istquote App
+Istquote Erfolgsrechnung
+Differenz in Prozentpunkten
+
+Formuliere die Abweichung sachlich:
+
+„App CHF X höher als ER“
+„App CHF X tiefer als ER“
+„App und ER stimmen überein“
+
+Die bestehende Warnlogik wie „prüfen“ oder „beobachten“ darf erhalten bleiben, muss aber ausschliesslich diesen technischen Datenabgleich betreffen.
+
+3. Kompakte Darstellung
+
+Die Seite darf nicht höher oder unübersichtlicher werden.
+
+Nutze eine kompakte Darstellung, zum Beispiel:
+
+eine gemeinsame Tabelle mit zwei klar getrennten Zeilen oder Abschnitten
+
+oder
+
+zwei kleine nebeneinanderliegende Vergleichskarten innerhalb des bestehenden Containers
+
+Bevorzuge die Lösung, die am besten zum bestehenden Designsystem passt und am wenigsten zusätzlichen Platz benötigt.
+
+4. Bestehende KPI-Karte oben beibehalten
+
+Die obere KPI-Karte „Diff. Ist – Plan“ beziehungsweise „Diff. Ist – Budget“ soll bestehen bleiben.
+
+Verbessere die Beschriftung auf:
+
+„Abweichung Ist – Budget“
+
+Darunter soll eine verständliche Aussage stehen:
+
+„CHF X unter Budget“
+oder
+„CHF X über Budget“
+
+Vermeide unklare Formulierungen wie nur „Ist unter Plan“.
+
+5. Begriffe vereinheitlichen
+
+Verwende auf dieser Seite konsequent den Begriff „Budget“ statt teilweise „Plan“ und teilweise „Budget“, sofern mit beiden Werten dieselbe Grundlage gemeint ist.
+
+Bevorzugte Begriffe:
+
+Total Budget
+Abweichung Ist – Budget
+Budgetquote
+Budget vs. Ist
+
+Nur wenn „Plan“ fachlich eine andere Datenquelle ist, darf der Begriff bestehen bleiben. Prüfe dies zuerst im Code und ändere keine fachlich unterschiedlichen Werte einfach um.
+
+6. Berechnungslogik
+
+Nutze die bereits vorhandenen Werte und Berechnungen.
+
+Keine doppelte oder neue Parallelberechnung einführen.
+
+Die Differenz muss zentral und eindeutig berechnet werden:
+
+Ist minus Budget
+
+Die textliche Bewertung soll daraus abgeleitet werden.
+
+Achte auf korrekte Rundung, Schweizer Zahlenformat und Vorzeichen.
+
+7. Design
+
+Achte auf ein einheitliches, schlichtes und modernes Design, synchron mit der bestehenden Anwendung.
+
+Wichtig:
+
+keine unnötigen zusätzlichen Höhen
+keine grossen leeren Flächen
+klare visuelle Hierarchie
+lesefreundliche Spalten
+bestehende Typografie, Abstände, Rahmen, Farben und Badges weiterverwenden
+mobile und kleinere Desktopbreiten berücksichtigen
+keine neue isolierte Sondergestaltung nur für diese Seite
+
+8. Tests
+
+Ergänze oder aktualisiere Tests für mindestens diese Fälle:
+
+Ist unter Budget
+Ist über Budget
+Ist exakt im Budget
+App höher als Erfolgsrechnung
+App tiefer als Erfolgsrechnung
+App und Erfolgsrechnung identisch
+korrekte Prozentpunkt-Differenz
+korrekte Schweizer CHF-Formatierung
+keine Division durch null bei fehlendem oder null Umsatz
+
+Führe danach die betroffenen Tests und den Typecheck aus.
+
+9. Dokumentation und Review
+
+Aktualisiere replit.md kurz und präzise mit der neuen Struktur des Personalcontrollings.
+
+Führe anschliessend einen korrekt auf den tatsächlichen Task-Diff begrenzten Architect-Review durch.
+
+Wichtig:
+Keine Änderungen an Gäste-CRM, Reservationen, Importen oder anderen unabhängigen Modulen vornehmen.
+Keine früheren, bereits abgeschlossenen Änderungen zurücksetzen.

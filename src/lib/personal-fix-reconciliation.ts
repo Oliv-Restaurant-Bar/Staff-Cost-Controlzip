@@ -286,3 +286,103 @@ export function buildPkqBreakdown(i: PkqBreakdownInput): PkqBreakdown {
     hasRevenue: i.revenue > 0,
   };
 }
+
+// ─── 4) Budget vs. Ist (Personalcontrolling, Block A) + Klartext-Wording ─────
+
+/** Schweizer CHF-Format ohne Rappen (z. B. „CHF 2'761"). Node-Intl-fähig, DOM-frei. */
+export function fmtChfWhole(n: number): string {
+  return n.toLocaleString('de-CH', {
+    style: 'currency',
+    currency: 'CHF',
+    maximumFractionDigits: 0,
+  });
+}
+
+/** Kleinste relevante CHF-Differenz (Rundungsrauschen darunter = „gleich"). */
+export const BUDGET_DIFF_EPSILON = 0.005;
+
+/** Richtung der Ist-Abweichung gegenüber dem Budget. */
+export type BudgetDirection = 'under' | 'over' | 'onbudget';
+
+export interface BudgetVsIstInput {
+  /** Budget-Personalaufwand (App-Plan, Total Personal Budget). */
+  budgetCHF: number;
+  /** Ist-Personalaufwand (Total Personal Ist). */
+  istCHF: number;
+  /** Budget-Personalquote (% vom Umsatz) — `null` bei zu kleinem/fehlendem Umsatz. */
+  budgetPct: number | null;
+  /** Ist-Personalquote (% vom Umsatz, GLEICHER Nenner) — `null` bei zu kleinem/fehlendem Umsatz. */
+  istPct: number | null;
+}
+
+export interface BudgetVsIst {
+  budgetCHF: number;
+  istCHF: number;
+  /** Zentrale, eindeutige Differenz: Ist − Budget (negativ = unter Budget = gut). */
+  diffCHF: number;
+  budgetPct: number | null;
+  istPct: number | null;
+  /** Ist − Budget in Prozentpunkten (istPct − budgetPct); `null`, wenn eine Quote fehlt. */
+  diffPp: number | null;
+  direction: BudgetDirection;
+  /** Fachlicher Ton: unter Budget → good, im Budget → neutral, über Budget → critical. */
+  tone: ComparisonTone;
+}
+
+/**
+ * Betriebswirtschaftlicher Vergleich Budget ↔ Ist (Block A des Personalcontrollings).
+ *
+ * Anders als `toneForDiffPp` (technischer Betragsvergleich) ist der Ton hier
+ * RICHTUNGSABHÄNGIG: Ist unter Budget ist gut (grün), über Budget schlecht (rot).
+ * Es findet KEINE Parallelberechnung des Personalaufwands statt — die Funktion
+ * erhält die bereits berechneten CHF- und Quoten-Werte und leitet nur Differenz
+ * (Ist − Budget), Prozentpunkte, Richtung und Ton daraus ab.
+ */
+export function buildBudgetVsIst(i: BudgetVsIstInput): BudgetVsIst {
+  const diffCHF = i.istCHF - i.budgetCHF;
+  const diffPp =
+    i.istPct != null && i.budgetPct != null ? i.istPct - i.budgetPct : null;
+  let direction: BudgetDirection;
+  let tone: ComparisonTone;
+  if (diffCHF > BUDGET_DIFF_EPSILON) {
+    direction = 'over';
+    tone = 'critical';
+  } else if (diffCHF < -BUDGET_DIFF_EPSILON) {
+    direction = 'under';
+    tone = 'good';
+  } else {
+    direction = 'onbudget';
+    tone = 'neutral';
+  }
+  return {
+    budgetCHF: i.budgetCHF,
+    istCHF: i.istCHF,
+    diffCHF,
+    budgetPct: i.budgetPct,
+    istPct: i.istPct,
+    diffPp,
+    direction,
+    tone,
+  };
+}
+
+/**
+ * Klartext-Bewertung der Budget-Abweichung (Block A + KPI-Karte „Abweichung
+ * Ist − Budget"). „CHF X unter Budget" / „CHF X über Budget" / „Im Budget" —
+ * der Nutzer erkennt die Richtung direkt, nicht nur ein mathematisches Vorzeichen.
+ */
+export function budgetDeltaText(diffCHF: number): string {
+  if (diffCHF > BUDGET_DIFF_EPSILON) return `${fmtChfWhole(Math.abs(diffCHF))} über Budget`;
+  if (diffCHF < -BUDGET_DIFF_EPSILON) return `${fmtChfWhole(Math.abs(diffCHF))} unter Budget`;
+  return 'Im Budget';
+}
+
+/**
+ * Sachliche Beschreibung der technischen App-↔-Erfolgsrechnung-Abweichung (Block B).
+ * „App CHF X höher als ER" / „App CHF X tiefer als ER" / „App und ER stimmen überein".
+ */
+export function appVsErText(diffCHF: number): string {
+  if (diffCHF > BUDGET_DIFF_EPSILON) return `App ${fmtChfWhole(Math.abs(diffCHF))} höher als ER`;
+  if (diffCHF < -BUDGET_DIFF_EPSILON) return `App ${fmtChfWhole(Math.abs(diffCHF))} tiefer als ER`;
+  return 'App und ER stimmen überein';
+}
