@@ -49,6 +49,17 @@ export interface DrilldownAbsenceDay {
   type: string;
 }
 
+/** Ein Zeitfenster (HH:MM) einer Schicht — Plan aus schedule-v2, Ist aus Stempelung. */
+export interface DrilldownShiftSlot { start: string; end: string }
+
+/** Schichtzeiten pro MA-Tag (nur wo vorhanden — NIE geschätzt). Key: "empId|YYYY-MM-DD". */
+export interface DrilldownShiftTimes {
+  planSlots: DrilldownShiftSlot[];
+  istSlots: DrilldownShiftSlot[];
+  /** Pausenabzug Plan in h (brutto − netto) oder null wenn unbekannt. */
+  planBreakH: number | null;
+}
+
 export interface DrilldownInput {
   year: number;
   month: number; // 1-basiert
@@ -81,6 +92,11 @@ export interface DrilldownInput {
   dailyRevenue: Record<string, number>;
   /** Monatliche Fixkosten (AG-Total) für die anteilige Tages-Personalquote. */
   fixMonthCHF: number;
+  /**
+   * Optionale Schichtzeiten pro MA-Tag ("empId|YYYY-MM-DD") für die Detailstufe.
+   * Fehlende Einträge werden im UI als "—" gezeigt — nie geschätzt.
+   */
+  shiftTimes?: Record<string, DrilldownShiftTimes>;
 }
 
 export type DrilldownGroup = 'day' | 'employee' | 'position';
@@ -153,6 +169,11 @@ export const DRILLDOWN_THRESHOLDS = {
   hoursFlag: 2,
   /** Tagesumsatz unter diesem Anteil des Monatsschnitts → umsatz_tief. */
   lowRevenueFactor: 0.75,
+  /** Detailstufe: Toleranz der Abstimmung Detail ↔ übergeordnete Zeile. */
+  detailToleranceH: 0.05,
+  detailToleranceCHF: 1,
+  /** Detailstufe: |Diff h| unterhalb derer eine Schicht als "ohne Stundenabweichung" gilt. */
+  shiftQuietHours: 0.25,
 } as const;
 
 /** Ton einer Drilldown-Zeile: über Plan = schlecht (orange/rot), im Rahmen/darunter = grün. */
@@ -503,6 +524,277 @@ const csvField = (v: string | number | null): string => {
   const s = typeof v === 'number' ? String(v) : v;
   return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+
+// ── Detailstufe (2. Drilldown-Ebene: Tag / Mitarbeitende / Position) ─────────
+
+/** Die angeklickte Übersichtszeile — bestimmt Filter + Abstimmungsreferenz. */
+export interface DrilldownDetailSelection {
+  group: DrilldownGroup;
+  period: DrilldownPeriod;
+  key: string;
+  label: string;
+  sublabel?: string;
+}
+
+/** Zellen, die zur angeklickten Zeile gehören (gleiche Bucket-Logik wie buildDrilldownRows). */
+export function filterCellsForSelection(
+  input: DrilldownInput,
+  cells: DrilldownFactCell[],
+  sel: Pick<DrilldownDetailSelection, 'group' | 'period' | 'key'>,
+): DrilldownFactCell[] {
+  if (sel.group === 'day') {
+    if (sel.period === 'day') return cells.filter(c => c.date === sel.key);
+    if (sel.period === 'week') return cells.filter(c => `w${pad2(isoWeekOf(c.date))}` === sel.key);
+    return [...cells]; // Monat = alle Zellen im Scope
+  }
+  if (sel.group === 'employee') {
+    const empId = sel.key.startsWith('emp:') ? sel.key.slice(4) : sel.key;
+    return cells.filter(c => c.empId === empId);
+  }
+  const empById = new Map(input.employees.map(e => [e.id, e]));
+  return cells.filter(c => {
+    const emp = empById.get(c.empId);
+    const pk = emp ? positionKeyForEmployee(emp) : { key: 'dept:Service', label: '' };
+    return pk.key === sel.key;
+  });
+}
+
+/**
+ * Zusätzliche Schicht-Auffälligkeiten (nur Detailstufe, bewusst GETRENNT von
+ * DrilldownCause — die bestehenden Ursachen bleiben die SSOT und werden
+ * unverändert weiterverwendet).
+ */
+export type DrilldownShiftFlag =
+  | 'zeiten_abweichend'      // Plan- und Ist-Zeiten vorhanden, aber unterschiedlich
+  | 'kosten_ohne_stunden'    // Kostenabweichung ohne nennenswerte Stundenabweichung
+  | 'stunden_ohne_kosten';   // Stundenabweichung ohne relevante Kostenabweichung
+
+export const DRILLDOWN_SHIFT_FLAG_LABEL: Record<DrilldownShiftFlag, string> = {
+  zeiten_abweichend:   'Schichtzeiten weichen ab',
+  kosten_ohne_stunden: 'Kostenabweichung ohne Stundenabweichung',
+  stunden_ohne_kosten: 'Stundenabweichung ohne Kostenwirkung',
+};
+
+const fmtSlots = (slots: DrilldownShiftSlot[]): string | null =>
+  slots.length > 0 ? slots.map(s => `${s.start}–${s.end}`).join(' · ') : null;
+
+export interface DrilldownShiftRow {
+  /** "empId|YYYY-MM-DD" */
+  key: string;
+  date: string;
+  dateLabel: string;
+  empId: string;
+  empName: string;
+  position: string;
+  /** "11:00–14:00 · 18:00–22:00" oder null = keine Zeiten vorhanden. */
+  planTimes: string | null;
+  istTimes: string | null;
+  /** Pausenabzug Plan (h) oder null = unbekannt. */
+  pauseH: number | null;
+  planH: number; istH: number; diffH: number;
+  planCHF: number; istCHF: number; diffCHF: number;
+  causes: DrilldownCauseCount[];
+  flags: DrilldownShiftFlag[];
+  tone: ComparisonTone;
+  /** Wichtigste Ursache bzw. Auffälligkeit als Text ("Im Plan" wenn keine). */
+  status: string;
+}
+
+/** Schichtzeilen (1 Zeile = 1 MA-Tag-Einsatz) der Detailstufe — Basis: Faktenzellen. */
+export function buildDetailShiftRows(
+  input: DrilldownInput,
+  cells: DrilldownFactCell[],
+  sel: Pick<DrilldownDetailSelection, 'group' | 'period' | 'key'>,
+): DrilldownShiftRow[] {
+  const t = DRILLDOWN_THRESHOLDS;
+  const empById = new Map(input.employees.map(e => [e.id, e]));
+  const filtered = filterCellsForSelection(input, cells, sel);
+
+  return filtered.map(c => {
+    const emp = empById.get(c.empId);
+    const times = input.shiftTimes?.[`${c.empId}|${c.date}`];
+    const planTimes = times ? fmtSlots(times.planSlots) : null;
+    const istTimes = times ? fmtSlots(times.istSlots) : null;
+    const diffH = round2(c.istH - c.planH);
+    const diffCHF = round2(c.istCHF - c.planCHF);
+    const causes = collectCauses([c], input, diffH);
+
+    const flags: DrilldownShiftFlag[] = [];
+    if (planTimes !== null && istTimes !== null && c.planH > 0 && c.istH > 0 && planTimes !== istTimes) {
+      flags.push('zeiten_abweichend');
+    }
+    if (Math.abs(diffCHF) >= t.warnCHF && Math.abs(diffH) < t.shiftQuietHours) {
+      flags.push('kosten_ohne_stunden');
+    }
+    if (Math.abs(diffH) >= t.hoursFlag && Math.abs(diffCHF) < t.warnCHF) {
+      flags.push('stunden_ohne_kosten');
+    }
+
+    const status = causes.length > 0
+      ? DRILLDOWN_CAUSE_LABEL[causes[0].cause]
+      : flags.length > 0
+        ? DRILLDOWN_SHIFT_FLAG_LABEL[flags[0]]
+        : 'Im Plan';
+
+    return {
+      key: `${c.empId}|${c.date}`,
+      date: c.date,
+      dateLabel: dayLabel(c.date),
+      empId: c.empId,
+      empName: emp?.name ?? c.empId,
+      position: emp ? positionKeyForEmployee(emp).label : '—',
+      planTimes, istTimes,
+      pauseH: times?.planBreakH ?? null,
+      planH: round2(c.planH), istH: round2(c.istH), diffH,
+      planCHF: round2(c.planCHF), istCHF: round2(c.istCHF), diffCHF,
+      causes, flags,
+      tone: toneForDrilldownRow(c.planCHF, diffCHF),
+      status,
+    };
+  }).sort((a, b) =>
+    a.date === b.date
+      ? (a.empName === b.empName ? a.empId.localeCompare(b.empId) : a.empName.localeCompare(b.empName, 'de-CH'))
+      : a.date.localeCompare(b.date));
+}
+
+export interface DrilldownDetailKpis {
+  planH: number; istH: number; diffH: number;
+  planCHF: number; istCHF: number; diffCHF: number;
+  shiftCount: number;
+  /** Schichten mit mindestens einer Ursache oder Auffälligkeit. */
+  issueCount: number;
+}
+
+export function buildDetailKpis(rows: DrilldownShiftRow[]): DrilldownDetailKpis {
+  let planH = 0, istH = 0, planCHF = 0, istCHF = 0, issueCount = 0;
+  for (const r of rows) {
+    planH += r.planH; istH += r.istH; planCHF += r.planCHF; istCHF += r.istCHF;
+    if (r.causes.length > 0 || r.flags.length > 0) issueCount++;
+  }
+  return {
+    planH: round2(planH), istH: round2(istH), diffH: round2(istH - planH),
+    planCHF: round2(planCHF), istCHF: round2(istCHF), diffCHF: round2(istCHF - planCHF),
+    shiftCount: rows.length, issueCount,
+  };
+}
+
+/** Tageskontext — NUR aus bereits geladenen Daten (kein Wert wird erfunden). */
+export interface DrilldownDetailContext {
+  /** Umsatz der abgedeckten Tage oder null = kein Umsatz erfasst. */
+  revenue: number | null;
+  /** Anzahl MA mit Plan-Stunden bzw. Ist-Stunden in der Auswahl. */
+  plannedStaff: number;
+  actualStaff: number;
+  dates: string[];
+}
+
+export function buildDetailContext(
+  input: DrilldownInput,
+  filteredCells: DrilldownFactCell[],
+): DrilldownDetailContext {
+  const dates = [...new Set(filteredCells.map(c => c.date))].sort();
+  let rev = 0; let hasRev = false;
+  for (const d of dates) {
+    const r = input.dailyRevenue[d];
+    if (r !== undefined && r > 0) { rev += r; hasRev = true; }
+  }
+  const planned = new Set<string>();
+  const actual = new Set<string>();
+  for (const c of filteredCells) {
+    if (c.planH > 0) planned.add(c.empId);
+    if (c.istH > 0) actual.add(c.empId);
+  }
+  return {
+    revenue: hasRev ? round2(rev) : null,
+    plannedStaff: planned.size,
+    actualStaff: actual.size,
+    dates,
+  };
+}
+
+/** Abstimmung Detail-Summen ↔ angeklickte Übersichtszeile (kleine Toleranz, nie stumm). */
+export interface DrilldownDetailReconciliation {
+  sumPlanH: number; sumIstH: number; sumDiffCHF: number;
+  parentPlanH: number; parentIstH: number; parentDiffCHF: number;
+  diffH: number; diffCHF: number;
+  ok: boolean;
+}
+
+export function reconcileDetail(
+  rows: DrilldownShiftRow[],
+  parent: Pick<DrilldownRow, 'planH' | 'istH' | 'diffCHF'>,
+): DrilldownDetailReconciliation {
+  const t = DRILLDOWN_THRESHOLDS;
+  let sumPlanH = 0, sumIstH = 0, sumDiffCHF = 0;
+  for (const r of rows) { sumPlanH += r.planH; sumIstH += r.istH; sumDiffCHF += r.diffCHF; }
+  sumPlanH = round2(sumPlanH); sumIstH = round2(sumIstH); sumDiffCHF = round2(sumDiffCHF);
+  const diffH = round2(Math.max(Math.abs(sumPlanH - parent.planH), Math.abs(sumIstH - parent.istH)));
+  const diffCHF = round2(sumDiffCHF - parent.diffCHF);
+  return {
+    sumPlanH, sumIstH, sumDiffCHF,
+    parentPlanH: parent.planH, parentIstH: parent.istH, parentDiffCHF: parent.diffCHF,
+    diffH, diffCHF,
+    ok: diffH <= t.detailToleranceH && Math.abs(diffCHF) <= t.detailToleranceCHF,
+  };
+}
+
+export type ShiftSortCol =
+  | 'date' | 'empName' | 'position'
+  | 'planH' | 'istH' | 'diffH' | 'planCHF' | 'istCHF' | 'diffCHF';
+
+/** Stabile Sortierung (Tie-Break Datum + empId), null = Eingangs-Reihenfolge. */
+export function sortShiftRows(
+  rows: DrilldownShiftRow[],
+  sort: { col: ShiftSortCol; dir: 1 | -1 } | null,
+): DrilldownShiftRow[] {
+  if (!sort) return rows;
+  const tieBreak = (a: DrilldownShiftRow, b: DrilldownShiftRow) =>
+    a.date === b.date ? a.empId.localeCompare(b.empId) : a.date.localeCompare(b.date);
+  return [...rows].sort((a, b) => {
+    let cmp: number;
+    if (sort.col === 'date') cmp = a.date.localeCompare(b.date);
+    else if (sort.col === 'empName') cmp = a.empName.localeCompare(b.empName, 'de-CH');
+    else if (sort.col === 'position') cmp = a.position.localeCompare(b.position, 'de-CH');
+    else cmp = a[sort.col] - b[sort.col];
+    return sort.dir * cmp || tieBreak(a, b);
+  });
+}
+
+/** CSV der Detailstufe — exportiert NUR die übergebenen (sichtbaren) Schichtzeilen. */
+export function buildShiftCsv(rows: DrilldownShiftRow[]): string {
+  const header = [
+    'Datum', 'Mitarbeitender', 'Position',
+    'Plan Start', 'Plan Ende', 'Plan h',
+    'Ist Start', 'Ist Ende', 'Ist h',
+    'Pause h', 'Diff h', 'Plan CHF', 'Ist CHF', 'Diff CHF', 'Ursache',
+  ];
+  const starts = (s: string | null) =>
+    s === null ? '' : s.split(' · ').map(x => x.split('–')[0]).join(' / ');
+  const ends = (s: string | null) =>
+    s === null ? '' : s.split(' · ').map(x => x.split('–')[1] ?? '').join(' / ');
+  const lines = [header.map(csvField).join(';')];
+  for (const r of rows) {
+    const causeText = [
+      ...r.causes.map(c => DRILLDOWN_CAUSE_LABEL[c.cause]),
+      ...r.flags.map(f => DRILLDOWN_SHIFT_FLAG_LABEL[f]),
+    ].join(', ');
+    lines.push([
+      csvField(r.date), csvField(r.empName), csvField(r.position),
+      csvField(starts(r.planTimes)), csvField(ends(r.planTimes)), csvField(r.planH),
+      csvField(starts(r.istTimes)), csvField(ends(r.istTimes)), csvField(r.istH),
+      csvField(r.pauseH), csvField(r.diffH),
+      csvField(r.planCHF), csvField(r.istCHF), csvField(r.diffCHF),
+      csvField(causeText || 'Im Plan'),
+    ].join(';'));
+  }
+  return lines.join('\n');
+}
+
+/** Titel der Detailansicht: Tag → langer Wochentag, sonst Label der Zeile. */
+export function detailTitleForSelection(sel: DrilldownDetailSelection): string {
+  if (sel.group === 'day' && sel.period === 'day') return dayLabelLong(sel.key);
+  return sel.label;
+}
 
 export function buildDrilldownCsv(rows: DrilldownRow[], groupHeader: string): string {
   const header = [

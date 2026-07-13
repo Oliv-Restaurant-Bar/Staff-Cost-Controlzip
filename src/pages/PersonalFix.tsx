@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react
 import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate, Link, useNavigate } from 'react-router-dom';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
@@ -36,7 +36,7 @@ import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase
 import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { ControllingDrilldownDialog, type DrilldownFocus } from '@/components/personal-fix/ControllingDrilldownDialog';
 import type {
-  DrilldownInput, DrilldownDayValue, DrilldownAbsenceDay,
+  DrilldownInput, DrilldownDayValue, DrilldownAbsenceDay, DrilldownShiftTimes,
 } from '@/lib/personal-controlling-drilldown';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -2079,6 +2079,7 @@ export default function PersonalFixPage() {
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
   const { rates: socialCostRates } = useSocialCostRates();
+  const navigate = useNavigate();
   const maisonOn = getMaisonEnabledSync(tenantKey);
   if (!isAdmin && !isBeaulieuManager) return <Navigate to="/personal" replace />;
 
@@ -3257,6 +3258,48 @@ export default function PersonalFixPage() {
       const net = grossToNet(val.actualRevenue ?? 0, maisonExclude ? 0 : (val.takeawayRevenue ?? 0));
       if (net > 0) dailyRevenue[date] = net;
     }
+    // Schichtzeiten für die Detailstufe — NUR aus bereits geladenen Quellen:
+    // Plan aus schedule-v2 (localStorage), Ist aus supabaseActualHours (State).
+    // Fehlende Zeiten bleiben leer → UI zeigt "—", es wird nichts geschätzt.
+    const shiftTimes: Record<string, DrilldownShiftTimes> = {};
+    const shiftTimesAt = (empId: string, date: string): DrilldownShiftTimes => {
+      const k = `${empId}|${date}`;
+      return shiftTimes[k] ?? (shiftTimes[k] = { planSlots: [], istSlots: [], planBreakH: null });
+    };
+    const knownEmpIds = new Set([...variableEmployees, ...fixedEmployees].map(e => e.id));
+    try {
+      const raw = localStorage.getItem(tenantKey(`schedule-v2-${selectedYear}-${String(selectedMonth).padStart(2, '0')}`));
+      if (raw) {
+        const data: Record<string, any> = JSON.parse(raw);
+        for (const [cellKey, ds] of Object.entries(data)) {
+          const date = cellKey.slice(-10);
+          if (!date.startsWith(prefix)) continue;
+          const empId = cellKey.slice(0, cellKey.length - 11);
+          if (!knownEmpIds.has(empId)) continue;
+          // FE-markierte Einträge überspringen — konsistent mit loadDailyPlanDetails
+          if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
+          const slots: { start: string; end: string }[] = [];
+          if (ds?.früh?.start && ds?.früh?.end) slots.push({ start: ds.früh.start, end: ds.früh.end });
+          if (ds?.spät?.start && ds?.spät?.end) slots.push({ start: ds.spät.start, end: ds.spät.end });
+          if (slots.length === 0) continue;
+          const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
+          const st = shiftTimesAt(empId, date);
+          st.planSlots = slots;
+          st.planBreakH = Math.round(calculateBreakDeduction(gross) * 100) / 100;
+        }
+      }
+    } catch { /* defekter Blob → keine Zeiten, nie raten */ }
+    for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      const empId = cellKey.slice(0, cellKey.length - 11);
+      if (!knownEmpIds.has(empId)) continue;
+      const slots: { start: string; end: string }[] = [];
+      if (entry.start && entry.end) slots.push({ start: entry.start, end: entry.end });
+      if (entry.start2 && entry.end2) slots.push({ start: entry.start2, end: entry.end2 });
+      if (slots.length === 0) continue;
+      shiftTimesAt(empId, date).istSlots = slots;
+    }
     // Letzter Tag mit erwartbar vollständigen Ist-Daten: Vergangenheits-Monat =
     // Monatslänge, laufender Monat = gestern, Zukunftsmonat = 0.
     const dim = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -3288,6 +3331,7 @@ export default function PersonalFixPage() {
       sickCodes: [...SICK_CODES],
       accidentCodes: [...ACCIDENT_CODES],
       dailyRevenue, fixMonthCHF: pfix.active.fix,
+      shiftTimes,
     };
   }, [drilldownFocus, variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       proRataDay, tenantKey, socialCostRates, supabaseActualHours, monthlyRevenues,
@@ -6179,6 +6223,7 @@ export default function PersonalFixPage() {
           manualVarHours={varView === 'manual'}
           overtimeCostCHF={overtimeAnalysis.totalOvertimeCost}
           er={erVergleich}
+          onOpenSchedule={() => navigate('/personal')}
         />
       )}
 

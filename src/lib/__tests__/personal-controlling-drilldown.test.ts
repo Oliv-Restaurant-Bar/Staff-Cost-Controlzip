@@ -14,6 +14,14 @@ import {
   dayLabel,
   weekLabel,
   daysInMonth,
+  filterCellsForSelection,
+  buildDetailShiftRows,
+  buildDetailKpis,
+  buildDetailContext,
+  reconcileDetail,
+  sortShiftRows,
+  buildShiftCsv,
+  detailTitleForSelection,
   DRILLDOWN_THRESHOLDS,
   DRILLDOWN_CAUSE_LABEL,
   type DrilldownInput,
@@ -305,5 +313,245 @@ describe('positionKeyForEmployee', () => {
       .toEqual({ key: 'pos:chef-de-rang', label: 'Chef De Rang' });
     expect(positionKeyForEmployee({ id: 'x', name: 'X', department: 'kueche', position: null, isFixed: false }).label)
       .toBe('Küche (ohne Position)');
+  });
+});
+
+// ── Detailstufe (2. Drilldown-Ebene) ─────────────────────────────────────────
+
+describe('filterCellsForSelection', () => {
+  const input = makeInput();
+  const cells = buildFactCells(input);
+
+  it('day/day filters to the exact date', () => {
+    const f = filterCellsForSelection(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    expect(f.every(c => c.date === '2026-06-01')).toBe(true);
+    expect(f.map(c => c.empId).sort()).toEqual(['anna', 'ben']);
+  });
+
+  it('day/week filters to the ISO week bucket', () => {
+    const f = filterCellsForSelection(input, cells, { group: 'day', period: 'week', key: 'w23' });
+    // KW 23 = 01.–07.06. → alle Zellen bis inkl. 05.06.
+    expect(f.length).toBeGreaterThan(0);
+    expect(f.every(c => isoWeekOf(c.date) === 23)).toBe(true);
+  });
+
+  it('day/month returns all cells', () => {
+    const f = filterCellsForSelection(input, cells, { group: 'day', period: 'month', key: 'month' });
+    expect(f.length).toBe(cells.length);
+  });
+
+  it('employee selection filters by empId (emp:-prefix)', () => {
+    const f = filterCellsForSelection(input, cells, { group: 'employee', period: 'day', key: 'emp:anna' });
+    expect(f.length).toBeGreaterThan(0);
+    expect(f.every(c => c.empId === 'anna')).toBe(true);
+  });
+
+  it('position selection matches slug key and department fallback', () => {
+    const pos = filterCellsForSelection(input, cells, { group: 'position', period: 'day', key: 'pos:service-front' });
+    expect(pos.every(c => c.empId === 'anna')).toBe(true);
+    const dept = filterCellsForSelection(input, cells, { group: 'position', period: 'day', key: 'dept:Küche' });
+    expect(dept.every(c => c.empId === 'ben')).toBe(true);
+  });
+});
+
+const SHIFT_TIMES_FIXTURE = {
+  'anna|2026-06-01': {
+    planSlots: [{ start: '11:00', end: '14:00' }, { start: '18:00', end: '23:00' }],
+    istSlots:  [{ start: '11:00', end: '15:00' }, { start: '18:00', end: '24:00' }],
+    planBreakH: 0.5,
+  },
+  'ben|2026-06-01': {
+    planSlots: [{ start: '10:00', end: '16:00' }],
+    istSlots:  [{ start: '10:00', end: '16:00' }],
+    planBreakH: 0,
+  },
+};
+
+describe('buildDetailShiftRows', () => {
+  const input = makeInput({ shiftTimes: SHIFT_TIMES_FIXTURE });
+  const cells = buildFactCells(input);
+
+  it('formats plan/ist times, keeps pause, never invents missing times', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    const anna = rows.find(r => r.empId === 'anna')!;
+    expect(anna.planTimes).toBe('11:00–14:00 · 18:00–23:00');
+    expect(anna.istTimes).toBe('11:00–15:00 · 18:00–24:00');
+    expect(anna.pauseH).toBe(0.5);
+    // Tag ohne shiftTimes-Eintrag → null (UI zeigt "—"), NIE geschätzt
+    const rows4 = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-04' });
+    expect(rows4[0].planTimes).toBeNull();
+    expect(rows4[0].istTimes).toBeNull();
+    expect(rows4[0].pauseH).toBeNull();
+  });
+
+  it('reuses SSOT causes per shift (fehlende_stempelung, ungeplant, ueberstunden)', () => {
+    const missing = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-03' });
+    expect(missing[0].causes.map(c => c.cause)).toContain('fehlende_stempelung');
+    const unplanned = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-04' });
+    expect(unplanned[0].causes.map(c => c.cause)).toContain('ungeplant');
+    const ot = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    expect(ot.find(r => r.empId === 'anna')!.causes.map(c => c.cause)).toContain('ueberstunden');
+  });
+
+  it('flags zeiten_abweichend only when both time sets exist and differ', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    expect(rows.find(r => r.empId === 'anna')!.flags).toContain('zeiten_abweichend');
+    expect(rows.find(r => r.empId === 'ben')!.flags).not.toContain('zeiten_abweichend');
+  });
+
+  it('flags kosten_ohne_stunden and stunden_ohne_kosten via thresholds', () => {
+    const inp = makeInput({
+      planDays: [
+        { empId: 'anna', date: '2026-06-01', hours: 8, cost: 200 },
+        { empId: 'ben',  date: '2026-06-02', hours: 8, cost: 200 },
+      ],
+      istDays: [
+        // gleiche Stunden, +80 CHF → kosten_ohne_stunden
+        { empId: 'anna', date: '2026-06-01', hours: 8, cost: 280 },
+        // +3 h, aber nur +30 CHF (< warnCHF) → stunden_ohne_kosten
+        { empId: 'ben',  date: '2026-06-02', hours: 11, cost: 230 },
+      ],
+      zusatzPlanDays: [], zusatzIstDays: [], absences: [], overtimeDayKeys: [],
+    });
+    const c = buildFactCells(inp);
+    const r1 = buildDetailShiftRows(inp, c, { group: 'day', period: 'day', key: '2026-06-01' });
+    expect(r1[0].flags).toContain('kosten_ohne_stunden');
+    const r2 = buildDetailShiftRows(inp, c, { group: 'day', period: 'day', key: '2026-06-02' });
+    expect(r2[0].flags).toContain('stunden_ohne_kosten');
+  });
+
+  it('status text: erste Ursache, sonst erste Auffälligkeit, sonst "Im Plan"', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    const ben = rows.find(r => r.empId === 'ben')!;
+    expect(ben.status).toBe('Im Plan');
+    const missing = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-03' });
+    expect(missing[0].status).toBe(DRILLDOWN_CAUSE_LABEL.fehlende_stempelung);
+  });
+
+  it('default sort: date, then name (stable)', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'employee', period: 'day', key: 'emp:anna' });
+    const dates = rows.map(r => r.date);
+    expect([...dates].sort()).toEqual(dates);
+  });
+});
+
+describe('buildDetailKpis / buildDetailContext', () => {
+  const input = makeInput({ shiftTimes: SHIFT_TIMES_FIXTURE });
+  const cells = buildFactCells(input);
+  const sel = { group: 'day' as const, period: 'day' as const, key: '2026-06-01' };
+  const rows = buildDetailShiftRows(input, cells, sel);
+
+  it('KPIs sum the shift rows (parity with cells)', () => {
+    const k = buildDetailKpis(rows);
+    expect(k.planH).toBe(14);
+    expect(k.istH).toBe(16);
+    expect(k.diffH).toBe(2);
+    expect(k.planCHF).toBe(320);
+    expect(k.istCHF).toBe(370);
+    expect(k.diffCHF).toBe(50);
+    expect(k.shiftCount).toBe(2);
+    expect(k.issueCount).toBe(1); // nur anna (ueberstunden + zeiten_abweichend)
+  });
+
+  it('context: revenue only from recorded days, staffing counts from cells', () => {
+    const ctx = buildDetailContext(input, filterCellsForSelection(input, cells, sel));
+    expect(ctx.revenue).toBe(5000);
+    expect(ctx.plannedStaff).toBe(2);
+    expect(ctx.actualStaff).toBe(2);
+    expect(ctx.dates).toEqual(['2026-06-01']);
+  });
+
+  it('context revenue is null (not 0) when no revenue recorded', () => {
+    const inp = makeInput({ dailyRevenue: {} });
+    const c = buildFactCells(inp);
+    const ctx = buildDetailContext(inp, filterCellsForSelection(inp, c, sel));
+    expect(ctx.revenue).toBeNull();
+  });
+});
+
+describe('reconcileDetail', () => {
+  const input = makeInput({ shiftTimes: SHIFT_TIMES_FIXTURE });
+  const cells = buildFactCells(input);
+
+  it('detail sums match the clicked parent row (ok=true)', () => {
+    const parent = buildDrilldownRows(input, cells, { group: 'day', period: 'day' })
+      .find(r => r.key === '2026-06-01')!;
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    const rec = reconcileDetail(rows, parent);
+    expect(rec.ok).toBe(true);
+    expect(rec.sumIstH).toBe(parent.istH);
+    expect(rec.sumDiffCHF).toBeCloseTo(parent.diffCHF, 2);
+  });
+
+  it('mismatch beyond tolerance is flagged, never silent', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    const rec = reconcileDetail(rows, { planH: 14, istH: 16, diffCHF: 999 });
+    expect(rec.ok).toBe(false);
+    expect(rec.diffCHF).toBeCloseTo(50 - 999, 2);
+  });
+});
+
+describe('sortShiftRows', () => {
+  const input = makeInput({ shiftTimes: SHIFT_TIMES_FIXTURE });
+  const cells = buildFactCells(input);
+  const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'month', key: 'month' });
+
+  it('null sort keeps input order (same content)', () => {
+    expect(sortShiftRows(rows, null)).toBe(rows);
+  });
+
+  it('sorts numerically and reverses on dir=-1 with stable tie-break', () => {
+    const asc = sortShiftRows(rows, { col: 'istCHF', dir: 1 });
+    for (let i = 1; i < asc.length; i++) expect(asc[i].istCHF).toBeGreaterThanOrEqual(asc[i - 1].istCHF);
+    const desc = sortShiftRows(rows, { col: 'istCHF', dir: -1 });
+    for (let i = 1; i < desc.length; i++) expect(desc[i].istCHF).toBeLessThanOrEqual(desc[i - 1].istCHF);
+    // Tie-Break deterministisch: gleiche Werte → Datum/empId-Reihenfolge
+    const tied = sortShiftRows(rows, { col: 'planCHF', dir: 1 });
+    const zeroPlan = tied.filter(r => r.planCHF === 0).map(r => r.key);
+    expect(zeroPlan).toEqual([...zeroPlan].sort((a, b) => {
+      const [ea, da] = a.split('|'); const [eb, db] = b.split('|');
+      return da === db ? ea.localeCompare(eb) : da.localeCompare(db);
+    }));
+  });
+
+  it('sorts by name with locale compare', () => {
+    const byName = sortShiftRows(rows, { col: 'empName', dir: 1 });
+    const names = byName.map(r => r.empName);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, 'de-CH')));
+  });
+});
+
+describe('buildShiftCsv / detailTitleForSelection', () => {
+  const input = makeInput({ shiftTimes: SHIFT_TIMES_FIXTURE });
+  const cells = buildFactCells(input);
+
+  it('CSV: 15 Spalten, Zeiten in Start/Ende gesplittet, fehlende Zeiten leer', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    const csv = buildShiftCsv(rows);
+    const lines = csv.split('\n');
+    expect(lines[0]).toBe('Datum;Mitarbeitender;Position;Plan Start;Plan Ende;Plan h;Ist Start;Ist Ende;Ist h;Pause h;Diff h;Plan CHF;Ist CHF;Diff CHF;Ursache');
+    expect(lines.length).toBe(rows.length + 1);
+    const annaLine = lines.find(l => l.includes('Anna'))!;
+    expect(annaLine).toContain('11:00 / 18:00'); // zwei Plan-Starts
+    expect(annaLine).toContain('14:00 / 23:00'); // zwei Plan-Enden
+    expect(annaLine).toContain(DRILLDOWN_CAUSE_LABEL.ueberstunden);
+    // Tag ohne Zeiten → leere Zeitfelder, kein erfundener Wert
+    const rows4 = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-04' });
+    const line4 = buildShiftCsv(rows4).split('\n')[1];
+    expect(line4.startsWith('2026-06-04;Ben;')).toBe(true);
+    expect(line4).toContain(';;;'); // leere Start/Ende-Felder
+  });
+
+  it('CSV quotes fields containing semicolons', () => {
+    const rows = buildDetailShiftRows(input, cells, { group: 'day', period: 'day', key: '2026-06-01' });
+    const hacked = [{ ...rows[0], empName: 'Nach; Name' }];
+    expect(buildShiftCsv(hacked)).toContain('"Nach; Name"');
+  });
+
+  it('detail title: long weekday for day rows, row label otherwise', () => {
+    expect(detailTitleForSelection({ group: 'day', period: 'day', key: '2026-06-01', label: 'Mo 01.06.' }))
+      .toBe('Montag 01.06.');
+    expect(detailTitleForSelection({ group: 'employee', period: 'day', key: 'emp:anna', label: 'Anna' }))
+      .toBe('Anna');
   });
 });

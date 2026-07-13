@@ -12,7 +12,7 @@
  * Fokus 'er' rendert stattdessen die monatliche Überleitung App ↔ Erfolgsrechnung.
  */
 import { useMemo, useState } from 'react';
-import { Download, Search } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Download, Search } from 'lucide-react';
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -22,7 +22,7 @@ import { StatusPill } from '@/components/ui/status-pill';
 import { HintBox } from '@/components/ui/hint-box';
 import { InfoTip } from '@/components/ui/info-tip';
 import { TONE_TEXT } from '@/components/ui/tones';
-import { TABLE, TH, TH_NUM, TD, TD_NUM } from '@/components/ui/table-style';
+import { TABLE, TH, TH_NUM, TD, TD_NUM, ROW_CLICKABLE } from '@/components/ui/table-style';
 import { cn } from '@/lib/utils';
 import {
   buildFactCells,
@@ -30,11 +30,23 @@ import {
   buildDrilldownCsv,
   buildMainCauseSentence,
   summarizeDrilldownCells,
+  buildDetailShiftRows,
+  buildDetailKpis,
+  buildDetailContext,
+  filterCellsForSelection,
+  reconcileDetail,
+  sortShiftRows,
+  buildShiftCsv,
+  detailTitleForSelection,
   DRILLDOWN_CAUSE_LABEL,
+  DRILLDOWN_SHIFT_FLAG_LABEL,
   type DrilldownInput,
   type DrilldownGroup,
   type DrilldownPeriod,
   type DrilldownRow,
+  type DrilldownDetailSelection,
+  type DrilldownFactCell,
+  type ShiftSortCol,
 } from '@/lib/personal-controlling-drilldown';
 import {
   fmtChfWhole,
@@ -73,6 +85,8 @@ export interface ControllingDrilldownDialogProps {
   /** Überstundenkosten des Monats (separat ausgewiesen, nicht im Flex-Total). */
   overtimeCostCHF: number;
   er: ErfolgsrechnungVergleich;
+  /** Navigation zum Dienstplan (bestehende Route) — optional, ohne Router-Kopplung. */
+  onOpenSchedule?: () => void;
 }
 
 const FOCUS_TITLE: Record<DrilldownFocus, string> = {
@@ -131,6 +145,14 @@ export function ControllingDrilldownDialog(props: ControllingDrilldownDialogProp
   const [period, setPeriod] = useState<DrilldownPeriod>('day');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<{ col: SortCol; dir: 1 | -1 } | null>(null);
+  /** Zweite Drilldown-Stufe: angeklickte Zeile (Snapshot für Filter + Abstimmung). */
+  const [detail, setDetail] = useState<{ sel: DrilldownDetailSelection; row: DrilldownRow } | null>(null);
+
+  const openDetail = (row: DrilldownRow, g: DrilldownGroup, p: DrilldownPeriod) =>
+    setDetail({
+      sel: { group: g, period: p, key: row.key, label: row.label, sublabel: row.sublabel },
+      row,
+    });
 
   const cells = useMemo(() => buildFactCells(input), [input]);
   const totals = useMemo(() => summarizeDrilldownCells(cells, input), [cells, input]);
@@ -201,6 +223,10 @@ export function ControllingDrilldownDialog(props: ControllingDrilldownDialogProp
         data-testid="pfix-dd-dialog"
         aria-describedby={undefined}
         className="w-[min(1100px,95vw)] max-w-none max-h-[88vh] overflow-y-auto"
+        onEscapeKeyDown={e => {
+          // Escape schliesst nur die Detailstufe, nicht den ganzen Dialog.
+          if (detail) { e.preventDefault(); setDetail(null); }
+        }}
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
@@ -213,6 +239,15 @@ export function ControllingDrilldownDialog(props: ControllingDrilldownDialogProp
 
         {focus === 'er' ? (
           <ErBridgeView {...props} />
+        ) : detail ? (
+          <DetailView
+            input={input}
+            cells={cells}
+            sel={detail.sel}
+            parentRow={detail.row}
+            onBack={() => setDetail(null)}
+            onOpenSchedule={props.onOpenSchedule}
+          />
         ) : (
           <div className="space-y-4">
             {(props.revenueIsAssumed || props.manualVarHours) && (
@@ -343,7 +378,24 @@ export function ControllingDrilldownDialog(props: ControllingDrilldownDialogProp
                     </tr>
                   )}
                   {visibleRows.map(r => (
-                    <tr key={r.key} data-testid={`pfix-dd-row-${r.key}`} className="border-t border-border/60">
+                    <tr
+                      key={r.key}
+                      data-testid={`pfix-dd-row-${r.key}`}
+                      tabIndex={0}
+                      aria-label={`Details zu ${r.label} öffnen`}
+                      className={cn(
+                        'border-t border-border/60',
+                        ROW_CLICKABLE,
+                        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
+                      )}
+                      onClick={() => openDetail(r, group, period)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          openDetail(r, group, period);
+                        }
+                      }}
+                    >
                       <td className={TD}>
                         <span className="font-medium">{r.label}</span>
                         {r.sublabel && <span className="ml-1.5 text-[11px] text-muted-foreground">{r.sublabel}</span>}
@@ -486,6 +538,263 @@ function ErBridgeView(props: ControllingDrilldownDialogProps) {
         Typische Gründe für Differenzen: 13. Monatslohn-Abgrenzung, Sozialkosten-Sätze,
         noch nicht verbuchte Löhne oder manuell angepasste Stunden in der App.
       </p>
+    </div>
+  );
+}
+
+// ── Detailstufe: Tages-/Schichtansicht einer angeklickten Zeile ──────────────
+
+const TONE_STATUS_LABEL: Record<ComparisonTone, string> = {
+  good: 'Im Plan',
+  warn: 'Über Plan',
+  critical: 'Deutlich über Plan',
+  neutral: 'Neutral',
+};
+
+function DetailView({ input, cells, sel, parentRow, onBack, onOpenSchedule }: {
+  input: DrilldownInput;
+  cells: DrilldownFactCell[];
+  sel: DrilldownDetailSelection;
+  parentRow: DrilldownRow;
+  onBack: () => void;
+  onOpenSchedule?: () => void;
+}) {
+  const [shiftSort, setShiftSort] = useState<{ col: ShiftSortCol; dir: 1 | -1 } | null>(null);
+
+  const baseRows = useMemo(() => buildDetailShiftRows(input, cells, sel), [input, cells, sel]);
+  const shiftRows = useMemo(() => sortShiftRows(baseRows, shiftSort), [baseRows, shiftSort]);
+  const kpis = useMemo(() => buildDetailKpis(baseRows), [baseRows]);
+  const context = useMemo(
+    () => buildDetailContext(input, filterCellsForSelection(input, cells, sel)),
+    [input, cells, sel],
+  );
+  const recon = useMemo(() => reconcileDetail(baseRows, parentRow), [baseRows, parentRow]);
+
+  const multiDay = context.dates.length > 1;
+  const mainCause = parentRow.causes.length > 0 ? DRILLDOWN_CAUSE_LABEL[parentRow.causes[0].cause] : null;
+
+  const toggleShiftSort = (col: ShiftSortCol) =>
+    setShiftSort(prev => (prev?.col === col ? (prev.dir === 1 ? { col, dir: -1 } : null) : { col, dir: 1 }));
+  const shiftSortMark = (col: ShiftSortCol) =>
+    shiftSort?.col === col ? (shiftSort.dir === 1 ? ' ↑' : ' ↓') : '';
+
+  const handleShiftExport = () => {
+    const csv = buildShiftCsv(shiftRows);
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `personalcontrolling-detail-${input.year}-${String(input.month).padStart(2, '0')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const thSort = (col: ShiftSortCol, label: string, num = true) => (
+    <th
+      className={cn(TH, num && TH_NUM, 'cursor-pointer select-none bg-muted')}
+      onClick={() => toggleShiftSort(col)}
+    >
+      {label}{shiftSortMark(col)}
+    </th>
+  );
+
+  return (
+    <div className="space-y-4" data-testid="pfix-dd-detail">
+      {/* Kopf: Zurück + Aktionen */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button
+          data-testid="pfix-dd-back"
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 text-xs"
+          onClick={onBack}
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Zurück zur Übersicht
+        </Button>
+        <div className="flex items-center gap-2">
+          {onOpenSchedule && (
+            <Button
+              data-testid="pfix-dd-open-schedule"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs"
+              onClick={onOpenSchedule}
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+              Im Dienstplan öffnen
+            </Button>
+          )}
+          <Button
+            data-testid="pfix-dd-detail-export"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={handleShiftExport}
+          >
+            <Download className="h-3.5 w-3.5" />
+            CSV
+          </Button>
+        </div>
+      </div>
+
+      {/* Kopfbereich der Auswahl */}
+      <div className="space-y-1" data-testid="pfix-dd-detail-header">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold">{detailTitleForSelection(sel)}</span>
+          {sel.sublabel && <span className="text-xs text-muted-foreground">{sel.sublabel}</span>}
+          <StatusPill size="xs" tone={parentRow.tone}>{TONE_STATUS_LABEL[parentRow.tone]}</StatusPill>
+        </div>
+        {mainCause && (
+          <p className="text-xs text-muted-foreground" data-testid="pfix-dd-detail-cause">
+            Hauptursache: {mainCause}
+          </p>
+        )}
+      </div>
+
+      {/* KPIs (≤4 Karten) + kompakte Kontextzeile */}
+      <div data-testid="pfix-dd-detail-kpis">
+        <KpiGrid>
+          <KpiCard
+            label="Ist-Stunden"
+            value={fmtH(kpis.istH)}
+            sub={`Plan ${fmtH(kpis.planH)} h`}
+            tone={kpis.diffH > 0 ? 'warn' : 'good'}
+          />
+          <KpiCard
+            label="Diff Stunden"
+            value={`${signH(kpis.diffH)} h`}
+            sub={`${kpis.shiftCount} Einsätze`}
+            tone={kpis.diffH > 0 ? 'warn' : 'good'}
+          />
+          <KpiCard
+            label="Ist-Kosten"
+            value={fmtChfWhole(kpis.istCHF)}
+            sub={`Plan ${fmtChfWhole(kpis.planCHF)}`}
+            tone={kpis.diffCHF > 0 ? 'warn' : 'good'}
+          />
+          <KpiCard
+            label="Diff Kosten"
+            value={`${signChf(kpis.diffCHF)} CHF`}
+            sub={`${kpis.issueCount} Auffälligkeit${kpis.issueCount === 1 ? '' : 'en'}`}
+            tone={kpis.diffCHF > 0 ? (kpis.diffCHF > 200 ? 'critical' : 'warn') : 'good'}
+          />
+        </KpiGrid>
+      </div>
+
+      {/* Tageskontext — nur vorhandene Daten, nichts wird geschätzt */}
+      <p className="text-xs text-muted-foreground" data-testid="pfix-dd-detail-context">
+        {context.revenue !== null && <>Umsatz {fmtChfWhole(context.revenue)} · </>}
+        Besetzung: {context.plannedStaff} MA geplant · {context.actualStaff} MA im Einsatz
+        {multiDay && <> · {context.dates.length} Tage</>}
+      </p>
+
+      {/* Schichttabelle */}
+      {shiftRows.length === 0 ? (
+        <div data-testid="pfix-dd-detail-empty">
+          <HintBox tone="info" title="Keine Schichtdaten">
+            Für diese Auswahl liegen keine Plan- oder Ist-Einsätze vor.
+          </HintBox>
+        </div>
+      ) : (
+        <div className="max-h-[45vh] overflow-auto rounded-md border border-border">
+          <table className={TABLE} data-testid="pfix-dd-detail-table">
+            <thead className="sticky top-0 z-10 bg-muted">
+              <tr>
+                {multiDay && thSort('date', 'Tag', false)}
+                {thSort('empName', 'Mitarbeitende', false)}
+                {thSort('position', 'Position', false)}
+                <th className={cn(TH, 'bg-muted')}>
+                  <span className="inline-flex items-center gap-1">
+                    Plan-Zeiten
+                    <InfoTip side="top" text="Zeiten aus dem Dienstplan. „—“ = keine Zeiten hinterlegt — es wird nichts geschätzt." />
+                  </span>
+                </th>
+                <th className={cn(TH, 'bg-muted')}>Ist-Zeiten</th>
+                <th className={cn(TH, TH_NUM, 'bg-muted')}>
+                  <span className="inline-flex items-center gap-1">
+                    Pause h
+                    <InfoTip side="top" text="Pausenabzug gemäss Plan (brutto − netto). Ist-Pausen werden nicht erfasst." />
+                  </span>
+                </th>
+                {thSort('planH', 'Plan h')}
+                {thSort('istH', 'Ist h')}
+                {thSort('diffH', 'Diff h')}
+                {thSort('planCHF', 'Plan CHF')}
+                {thSort('istCHF', 'Ist CHF')}
+                {thSort('diffCHF', 'Diff CHF')}
+                <th className={cn(TH, 'bg-muted')}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shiftRows.map(r => (
+                <tr key={r.key} data-testid={`pfix-dd-shift-${r.key}`} className="border-t border-border/60">
+                  {multiDay && <td className={cn(TD, 'whitespace-nowrap')}>{r.dateLabel}</td>}
+                  <td className={TD}><span className="font-medium">{r.empName}</span></td>
+                  <td className={cn(TD, 'text-xs text-muted-foreground')}>{r.position}</td>
+                  <td className={cn(TD, 'whitespace-nowrap text-xs tabular-nums')}>{r.planTimes ?? '—'}</td>
+                  <td className={cn(TD, 'whitespace-nowrap text-xs tabular-nums')}>{r.istTimes ?? '—'}</td>
+                  <td className={cn(TD, TD_NUM)}>{r.pauseH !== null ? fmtH(r.pauseH) : '—'}</td>
+                  <td className={cn(TD, TD_NUM)}>{fmtH(r.planH)}</td>
+                  <td className={cn(TD, TD_NUM)}>{fmtH(r.istH)}</td>
+                  <td className={cn(TD, TD_NUM, r.diffH !== 0 && TONE_TEXT[r.diffH > 0 ? 'warn' : 'good'])}>
+                    {signH(r.diffH)}
+                  </td>
+                  <td className={cn(TD, TD_NUM)}>{chfNumber(r.planCHF)}</td>
+                  <td className={cn(TD, TD_NUM)}>{chfNumber(r.istCHF)}</td>
+                  <td className={cn(TD, TD_NUM, 'font-medium', TONE_TEXT[r.tone])}>{signChf(r.diffCHF)}</td>
+                  <td className={TD}>
+                    <span className="flex flex-wrap gap-1">
+                      {r.causes.length === 0 && r.flags.length === 0 ? (
+                        <span className="text-xs text-muted-foreground">Im Plan</span>
+                      ) : (
+                        <>
+                          {r.causes.slice(0, 2).map(c => (
+                            <StatusPill
+                              key={c.cause}
+                              size="xs"
+                              tone={c.cause === 'ungeplant' || c.cause === 'fehlende_stempelung' ? 'critical' : 'warn'}
+                            >
+                              {DRILLDOWN_CAUSE_LABEL[c.cause]}
+                            </StatusPill>
+                          ))}
+                          {r.flags.map(f => (
+                            <StatusPill key={f} size="xs" tone="info">
+                              {DRILLDOWN_SHIFT_FLAG_LABEL[f]}
+                            </StatusPill>
+                          ))}
+                        </>
+                      )}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Abstimmung Detail ↔ angeklickte Zeile */}
+      <div
+        className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs"
+        data-testid="pfix-dd-detail-recon"
+      >
+        {recon.ok ? (
+          <StatusPill size="xs" tone="good">Abgestimmt</StatusPill>
+        ) : (
+          <StatusPill size="xs" tone="warn">Abweichung zur Übersicht</StatusPill>
+        )}
+        <span className="text-muted-foreground">
+          Summe Detail: {fmtH(recon.sumIstH)} h Ist ({fmtH(recon.sumPlanH)} h Plan) ·
+          {' '}{signChf(recon.sumDiffCHF)} CHF — Zeile: {fmtH(recon.parentIstH)} h Ist ({fmtH(recon.parentPlanH)} h Plan) ·
+          {' '}{signChf(recon.parentDiffCHF)} CHF
+        </span>
+        {!recon.ok && (
+          <span className={TONE_TEXT.warn} data-testid="pfix-dd-detail-recon-warn">
+            Differenz {signChf(recon.diffCHF)} CHF / {signH(recon.diffH)} h
+          </span>
+        )}
+      </div>
     </div>
   );
 }

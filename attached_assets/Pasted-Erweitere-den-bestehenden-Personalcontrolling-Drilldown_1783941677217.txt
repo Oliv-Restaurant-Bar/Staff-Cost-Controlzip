@@ -1,0 +1,278 @@
+Erweitere den bestehenden Personalcontrolling-Drilldown um eine zweite Detailstufe für einzelne Tage und Mitarbeitende.
+
+Ziel:
+Der bestehende ControllingDrilldownDialog soll nicht nur aggregierte Ursachen anzeigen, sondern bei Klick auf eine Tabellenzeile eine konkrete Tagesanalyse öffnen. Dadurch muss klar nachvollziehbar werden, an welchem Tag, bei welcher Person und durch welche Schicht die Abweichung entstanden ist.
+
+1. Bestehende Architektur zuerst prüfen
+
+Lies zuerst vollständig:
+
+* src/lib/personal-controlling-drilldown.ts
+* src/components/personal-fix/ControllingDrilldownDialog.tsx
+* die beiden bestehenden Drilldown-Testdateien
+* die relevanten Loader und Datenstrukturen in src/pages/PersonalFix.tsx
+* bestehende Komponenten für Dialoge, Tabellen, Status, Schichten und Dienstplan-Verlinkungen
+* bestehende Datums-, CHF-, Stunden- und Prozent-Formatter
+
+Nutze die bestehende Architektur weiter. Keine parallele zweite Berechnungslogik in der Komponente einführen.
+
+2. Zweite Drilldown-Stufe
+
+Wenn im bestehenden Drilldown eine Zeile für einen Tag, eine Position oder einen Mitarbeitenden angeklickt wird, öffnet sich innerhalb des Dialogs eine zweite Detailansicht.
+
+Bevorzugte Umsetzung:
+
+* kein zweiter Browser-Modal über dem bestehenden Modal
+* innerhalb desselben Dialogs zwischen Übersicht und Detailansicht wechseln
+* oben ein klarer Zurück-Button
+* Titel und Zeitraum müssen jederzeit sichtbar sein
+
+Die Detailansicht muss abhängig von der angeklickten Zeile gefiltert werden.
+
+3. Inhalt der Tagesdetailansicht
+
+Für den ausgewählten Tag beziehungsweise die ausgewählte Kombination aus Tag und Mitarbeitendem anzeigen:
+
+Kopfbereich
+
+* Datum inklusive Wochentag
+* Position
+* Mitarbeitender
+* Status der Abweichung
+* Hauptursache
+* Link oder Aktion „Im Dienstplan öffnen“, sofern bereits eine passende Route oder bestehende Navigation vorhanden ist
+
+Keine neue Route erfinden, wenn bereits eine passende Tages- oder Dienstplanansicht existiert.
+
+KPI-Karten
+
+Kompakt anzeigen:
+
+* geplante Stunden
+* Ist-Stunden
+* Mehr- oder Minderstunden
+* geplante Personalkosten
+* Ist-Personalkosten
+* Kostendifferenz
+* Anzahl Schichten
+* Anzahl Abwesenheiten oder Auffälligkeiten
+
+Nutze dieselben KPI-Komponenten und Formatierungsregeln wie in der bestehenden App.
+
+Schichttabelle
+
+Pro Schicht beziehungsweise Mitarbeitereinsatz:
+
+* Mitarbeitender
+* Position
+* geplante Startzeit
+* geplante Endzeit
+* geplante Stunden
+* Ist-Startzeit
+* Ist-Endzeit
+* Ist-Stunden
+* Pausen
+* Stundenabweichung
+* geplante Kosten
+* Ist-Kosten
+* Kostendifferenz
+* Status oder Ursache
+
+Falls für einen Wert keine verlässlichen Daten vorhanden sind, zeige einen verständlichen Gedankenstrich oder einen kompakten Hinweis. Keine Werte schätzen.
+
+4. Ursachen sauber darstellen
+
+Bestehende Ursachen weiterverwenden:
+
+* Überstunden
+* Ferien
+* Krankheit
+* Unfall
+* Zusatzkosten
+* fehlende Stempelung
+* ungeplanter Einsatz
+* Mehrstunden
+* Minderstunden
+
+Zusätzlich unterscheiden:
+
+* geplant, aber keine Ist-Zeit vorhanden
+* Ist-Zeit vorhanden, aber nicht geplant
+* Schichtzeiten stimmen nicht überein
+* Kostenabweichung ohne Stundenabweichung
+* Stundenabweichung ohne relevante Kostenabweichung
+
+Keine neuen frei erfundenen Statuswerte einführen, wenn dafür bereits eine bestehende Single Source of Truth vorhanden ist.
+
+5. Kontextkennzahlen des Tages
+
+Falls die Daten in PersonalFix.tsx bereits geladen sind und ohne neue Abfrage verfügbar sind, zeige zusätzlich in einem kompakten Kontextbereich:
+
+* Reservationen oder Personen des Tages
+* Umsatz des Tages
+* Personalbedarf Soll
+* geplante Besetzung
+* tatsächliche Besetzung
+* Unter- oder Überbesetzung
+
+Wichtig:
+
+* keine neuen DB-Abfragen nur für diesen Dialog
+* nur bereits geladene Daten verwenden
+* fehlende Kontextdaten ruhig ausblenden
+* keine erfundenen Nullwerte anzeigen
+
+6. Reine Logik erweitern
+
+Erweitere personal-controlling-drilldown.ts um klar getrennte reine Funktionen und Typen für:
+
+* Auswahl einer Drilldown-Zeile
+* Filterung der relevanten Tages- und Schichtdaten
+* Ermittlung der Tages-KPIs
+* Ermittlung der Ursachen pro Schicht
+* Abstimmung der Detailwerte gegen die übergeordnete Drilldown-Zeile
+* Sortierung der Schichten
+
+Die React-Komponente darf keine komplexe Geschäftslogik duplizieren.
+
+7. Abstimmung und Datenkonsistenz
+
+Am Ende der Detailansicht einen kompakten Abstimmungsbereich anzeigen:
+
+* Summe der sichtbaren geplanten Stunden
+* Summe der sichtbaren Ist-Stunden
+* Summe der Kostendifferenz
+* Wert der angeklickten übergeordneten Zeile
+* Abstimmung erfolgreich oder Differenz vorhanden
+
+Rundungsdifferenzen nur innerhalb einer klar definierten kleinen Toleranz akzeptieren.
+
+Wenn die Abstimmung nicht aufgeht:
+
+* keinen Fehler verstecken
+* verständlichen Hinweis anzeigen
+* Ursache im Code nachvollziehbar machen
+* keine automatische Manipulation der Zahlen
+
+8. Bedienung
+
+* Tabellenzeilen mit Detaildaten klar als klickbar kennzeichnen
+* Hover- und Fokuszustand verwenden
+* vollständige Tastaturbedienung ermöglichen
+* Enter und Leertaste öffnen die Detailansicht
+* Escape oder Zurück schliesst nur die Detailstufe und führt zur Übersicht zurück
+* Such- und Sortierzustand der Hauptansicht beim Zurückgehen beibehalten
+* keine unnötigen Animationen
+
+9. Design
+
+Das Design muss vollständig mit der bestehenden App synchron bleiben:
+
+* schlicht
+* modern
+* kompakt
+* gut lesbar
+* benutzerfreundlich
+* keine grossen leeren Flächen
+* keine unnötigen Erklärungstexte
+* klare visuelle Hierarchie
+* bestehende Farben, Abstände, Radiuswerte und Tabellenstile verwenden
+* responsive Darstellung für kleinere Bildschirme
+* keine horizontale Überladung ohne sinnvolle Scroll-Lösung
+* wichtige Abweichungen hervorheben, neutrale Werte ruhig darstellen
+* Rot nur für echte negative Abweichungen oder Fehler
+* Orange für Warnungen beziehungsweise Überbesetzung
+* Grün für abgestimmte oder korrekte Werte
+
+10. CSV-Export
+
+Erweitere den bestehenden CSV-Export so, dass in der Detailansicht nur die aktuell gefilterten Schichtzeilen exportiert werden können.
+
+Der Export soll mindestens enthalten:
+
+* Datum
+* Mitarbeitender
+* Position
+* Plan Start
+* Plan Ende
+* Plan Stunden
+* Ist Start
+* Ist Ende
+* Ist Stunden
+* Pause
+* Stundenabweichung
+* Plan Kosten
+* Ist Kosten
+* Kostendifferenz
+* Ursache
+
+Bestehende NBSP-sichere CHF- und Zahlenformatierung weiterverwenden.
+
+11. Tests
+
+Erweitere die vorhandenen Tests mindestens um:
+
+Pure-Logic-Tests
+
+* Filterung nach Tag
+* Filterung nach Mitarbeitendem
+* Filterung nach Position
+* ungeplanter Einsatz
+* geplante Schicht ohne Ist-Zeit
+* fehlende Stempelung
+* Mehrstunden
+* Minderstunden
+* Ferien
+* Krankheit
+* Unfall
+* Kostenabweichung
+* korrekte KPI-Summen
+* Abstimmung erfolgreich
+* Abstimmung mit echter Differenz
+* stabile Sortierung
+* NBSP-sichere CHF-Ausgabe
+* leere Datenmenge
+
+Komponenten-Tests
+
+* Klick auf Zeile öffnet Detailansicht
+* Tastaturöffnung mit Enter
+* Zurück führt zur unveränderten Hauptansicht
+* richtige KPI-Werte werden angezeigt
+* Schichttabelle zeigt die korrekten Daten
+* fehlende Kontextdaten verursachen keinen Fehler
+* CSV-Export nutzt nur die gefilterten Detailzeilen
+* Dialog schliesst nicht vollständig, wenn nur die Detailstufe verlassen wird
+* keine Accessibility-Warnungen
+
+Keine bestehenden Tests abschwächen oder entfernen.
+
+12. Validierung
+
+Danach:
+
+1. relevante Tests ausführen
+2. Type-Check für die berührten Dateien beziehungsweise den verfügbaren Projekt-Type-Check ausführen
+3. neue Fehler klar von Legacy-Fehlern unterscheiden
+4. App-Runtime prüfen
+5. Architect-Review ausschliesslich auf den tatsächlichen Task-Diff beschränken
+6. berechtigte Review-Befunde beheben
+7. Tests und Review erneut ausführen
+8. replit.md kompakt aktualisieren
+
+Keine alten oder unrelated Dateien zurücksetzen.
+
+13. Abschlussbericht
+
+Am Ende kompakt auflisten:
+
+* geänderte Dateien
+* neue reine Funktionen
+* neue Detailansichten
+* verfügbare Kontextkennzahlen
+* CSV-Export
+* Testergebnis
+* Type-Check-Ergebnis
+* Runtime-Ergebnis
+* Architect-Review-Ergebnis
+* allfällige Einschränkungen aufgrund fehlender vorhandener Daten
