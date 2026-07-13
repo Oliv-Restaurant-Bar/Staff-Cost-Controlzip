@@ -37,7 +37,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
-import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableYears, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
@@ -66,6 +66,8 @@ import {
 } from '@/lib/maison-store';
 import { useMaison } from '@/contexts/MaisonContext';
 import { kvGet } from '@/lib/supabase-kv';
+import { MultiYearAnalysisSection } from '@/components/reporting/MultiYearAnalysisSection';
+import type { YearSeries } from '@/lib/multi-year-analysis';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -2273,10 +2275,10 @@ const currentYear  = new Date().getFullYear();
 const currentMonth = new Date().getMonth() + 1;
 const years = [currentYear - 1, currentYear, currentYear + 1];
 
-type ViewMode = 'monthly' | 'yearly' | 'budget_pl';
+type ViewMode = 'monthly' | 'yearly' | 'budget_pl' | 'multi_year';
 
 const PLViewPage = () => {
-  const { tenantId, tenantKey } = useTenant();
+  const { tenantId, tenant, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -2391,6 +2393,35 @@ const PLViewPage = () => {
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year, tenantKey(REPORTING_STORAGE_KEY)), [year, month, refreshKey, tenantId]);
   const prevYearRecords = useMemo(() => loadYear(year - 1, tenantKey(REPORTING_STORAGE_KEY)), [year, tenantId]);
+
+  // ── Mehrjahresanalyse: Roh-Serien je Jahr (loadYear → computePLForMonth) ────
+  // BEWUSST dieselbe SSOT wie die Erfolgsrechnung, OHNE Maison-/Exclude-Effekte
+  // (Roh-Reporting-Daten aller Jahre; Einschränkungen erklärt die Sektion selbst).
+  const multiYearSeries = useMemo<YearSeries[] | null>(() => {
+    if (mode !== 'multi_year') return null;
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    return availableYears(storeKey).map(y => {
+      const recs = loadYear(y, storeKey);
+      const netRevenue: (number | null)[] = [];
+      const personnelPct: (number | null)[] = [];
+      const wesPct: (number | null)[] = [];
+      for (let m = 0; m < 12; m++) {
+        const res = computePLForMonth(recs[m]);
+        if (!res.hasData) {
+          netRevenue.push(null); personnelPct.push(null); wesPct.push(null);
+          continue;
+        }
+        const rowVal = (id: string) => res.rows.find(r => r.def.id === id)?.values.actual ?? null;
+        const rev = rowVal('net_revenue');
+        const pers = rowVal('total_personnel');
+        const cogs = rowVal('total_cogs');
+        netRevenue.push(rev);
+        personnelPct.push(rev != null && rev !== 0 && pers != null ? (pers / rev) * 100 : null);
+        wesPct.push(rev != null && rev !== 0 && cogs != null ? (cogs / rev) * 100 : null);
+      }
+      return { year: y, netRevenue, personnelPct, wesPct };
+    });
+  }, [mode, refreshKey, tenantId, tenantKey]);
 
   // Vorjahres-Diagnose: macht sichtbar, ob/welche Vorjahresdaten vorhanden sind
   // (verändert KEINE Berechnungen, erfindet KEINE Werte — nur Sichtbarkeit).
@@ -2938,15 +2969,26 @@ const PLViewPage = () => {
               >
                 <Table2 className="h-3 w-3" /> Jahr
               </button>
+              <button
+                className={cn('px-2 py-1.5 flex items-center gap-1',
+                  mode === 'multi_year' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
+                )}
+                onClick={() => setMode('multi_year')}
+                data-testid="plview-mode-multi-year"
+              >
+                <TrendingUp className="h-3 w-3" /><span className="hidden sm:inline">Mehrjahre</span><span className="sm:hidden">MJ</span>
+              </button>
             </div>
 
-            {/* Jahr */}
-            <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-              <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {years.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            {/* Jahr (nicht bei Mehrjahresanalyse — dort werden alle Jahre gezeigt) */}
+            {mode !== 'multi_year' && (
+              <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+                <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {years.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
 
             {/* Monat (Monatsansicht + Budget P&L) */}
             {(mode === 'monthly' || mode === 'budget_pl') && (
@@ -3315,7 +3357,19 @@ const PLViewPage = () => {
           </div>
         )}
 
+        {/* Mehrjahresanalyse (Banken-/Investorensicht) */}
+        {mode === 'multi_year' && multiYearSeries && (
+          <MultiYearAnalysisSection
+            series={multiYearSeries}
+            restaurantName={tenant.shortName}
+            dataSourceHints={[
+              'Basis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der Tagesansicht-Abgleich der Erfolgsrechnung (Tagesumsätze als massgebliche IST-Quelle, Maison-/Ausschluss-Effekte) wird hier NICHT angewendet — Werte können daher von der Monats-/Jahresansicht abweichen.',
+            ]}
+          />
+        )}
+
         {/* P&L-Tabelle */}
+        {mode !== 'multi_year' && (
         <div className="rounded-lg border border-border overflow-hidden shadow-sm">
           {/* Tabellen-Header */}
           <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
@@ -3390,6 +3444,7 @@ const PLViewPage = () => {
             : <YearView results={yearResult.months} onClickMonth={handleYearMonthClick} pctMode={pctMode} revenueTotal={yearNetRevTotal} excludeMonthIdx={excludeMonthIdx} />
           }
         </div>
+        )}
 
         {/* ── Hochrechnung: Betriebsergebnis → Nettoumsatz (pro Monat) ───────── */}
         {mode === 'yearly' && (

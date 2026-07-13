@@ -1,0 +1,848 @@
+Setze jetzt die professionelle Mehrjahresanalyse für die Erfolgsrechnung vollständig um.
+
+ZIEL
+
+Erweitere die bestehende Erfolgsrechnung um eine eigene, live nutzbare Bank- und Investorenansicht mit:
+
+- Mehrjahresvergleich
+- Monats- und Jahresentwicklung
+- klaren Wachstumskennzahlen
+- nachvollziehbarer Executive Summary
+- professionellen Diagrammen
+- PDF-Management-Report
+- strukturiertem Excel-Export
+
+Die bestehende Erfolgsrechnung und ihre Berechnungen dürfen nicht beschädigt oder ersetzt werden.
+
+WICHTIGE GRUNDSÄTZE
+
+- Keine neuen Datenbanktabellen, Views oder Migrationen.
+- Keine bestehenden Buchhaltungswerte verändern.
+- Keine Zahlen schätzen oder ergänzen.
+- Bestehende Single Sources of Truth für Erfolgsrechnung, Budget, Ist und Vorjahr verwenden.
+- Keine neue parallele Erfolgsrechnungslogik in React-Komponenten.
+- Berechnungen in einer reinen, testbaren Library zentralisieren.
+- Keine unnötigen neuen DB-Abfragen, wenn die Daten bereits geladen sind.
+- Keine automatischen Management-Aussagen, die nicht eindeutig aus den Daten ableitbar sind.
+- Alle Beträge im Schweizer Format darstellen.
+- Exportwerte müssen exakt mit der sichtbaren Analyse abstimmen.
+
+==================================================
+1. BESTEHENDE ARCHITEKTUR PRÜFEN
+==================================================
+
+Lies zuerst vollständig die relevanten Dateien für:
+
+- Erfolgsrechnung
+- Jahresübersicht
+- Monatsansicht
+- Budget
+- Ist-Werte
+- Vorjahreswerte
+- bestehende P&L- beziehungsweise ER-Importe
+- Monats- und Jahresfilter
+- bestehende PDF-Exporte
+- bestehende Excel-Exporte
+- bestehende Diagramm-Komponenten
+- bestehende KPI-Karten
+- bestehende Tabellenstile
+- Unternehmensname und Report-Metadaten
+- Rollen und Exportberechtigungen
+
+Suche insbesondere nach der bestehenden Erfolgsrechnungsseite und ihrer aktuellen Datenstruktur.
+
+Prüfe vor der Umsetzung:
+
+- ob Jahresdaten als vollständige Monatsreihen vorliegen
+- ob Jahreswerte direkt gespeichert oder aus Monaten summiert werden
+- wie Teiljahre erkannt werden
+- wie Totalwerte aktuell berechnet werden
+- welche Konten beziehungsweise Positionen dargestellt werden
+- ob Umsatz netto und weitere ER-Positionen über dieselbe Struktur laufen
+
+Erstelle danach einen kurzen Umsetzungsplan und baue anschliessend direkt weiter.
+
+==================================================
+2. NEUE ANSICHT
+==================================================
+
+Ergänze in der Erfolgsrechnung eine klare Ansichtsumschaltung:
+
+- Erfolgsrechnung
+- Mehrjahresanalyse
+- Management Report
+
+Die bisherige Erfolgsrechnung bleibt unverändert die Standardansicht.
+
+„Mehrjahresanalyse“ ist die interaktive Analyseansicht.
+
+„Management Report“ ist die kompakte, präsentationsfähige Live-Ansicht für Bank, Investoren und Verwaltungsrat.
+
+Keine neue Hauptnavigation erstellen, wenn Tabs oder Segmented Controls innerhalb der bestehenden Seite genügen.
+
+==================================================
+3. REINE MEHRJAHRES-LIBRARY
+==================================================
+
+Erstelle eine neue reine Library, beispielsweise:
+
+src/lib/financial-multi-year-analysis.ts
+
+Sie muss vollständig frei sein von:
+
+- React
+- DOM
+- Supabase
+- Navigation
+- UI-Komponenten
+
+Definiere klare Typen und reine Funktionen für:
+
+- Finanzjahr
+- Monatswert
+- Jahreswert
+- Teiljahr
+- Vergleichsperiode
+- Erfolgsrechnungsposition
+- absolutes Wachstum
+- prozentuales Wachstum
+- Basisjahrvergleich
+- CAGR
+- Monatsranking
+- Jahresranking
+- Trend
+- Diagrammdaten
+- Executive Summary
+- Exportdaten
+- Abstimmung
+
+Zentrale Funktionen sollen sinngemäss enthalten:
+
+- normalizeFinancialYears
+- determineComparablePeriod
+- buildMultiYearRows
+- calculateAbsoluteChange
+- calculatePercentageChange
+- calculateCagr
+- calculateMonthlyRanking
+- calculateYearlyRanking
+- calculateYearShare
+- determineTrend
+- buildExecutiveSummary
+- buildLineChartData
+- buildAnnualChartData
+- buildWaterfallData
+- buildManagementReportData
+- reconcileMultiYearTotals
+- buildExcelWorkbookData
+
+Passe Namen an die vorhandenen Projektkonventionen an.
+
+==================================================
+4. TEILJAHRE KORREKT VERGLEICHEN
+==================================================
+
+Das ist zwingend korrekt umzusetzen.
+
+Wenn das aktuelle Jahr beispielsweise nur Januar bis Juni enthält:
+
+- aktuelles Jahr Januar bis Juni
+- Vorjahr Januar bis Juni
+- Basisjahr Januar bis Juni
+
+Es darf niemals ein Teiljahr mit einem vollständigen Vorjahr verglichen werden.
+
+Beispiel:
+
+2026 Januar bis Juni darf nur mit Januar bis Juni 2025 und Januar bis Juni 2024 verglichen werden.
+
+Kennzeichne Teiljahre sichtbar:
+
+- YTD Januar–Juni
+- Stand 30.06.2026
+- 6 von 12 Monaten vorhanden
+
+Volljahreswerte dürfen zusätzlich gezeigt werden, aber klar getrennt und niemals als direkter Vergleich zum Teiljahr.
+
+Wenn Monate fehlen oder unvollständig sind:
+
+- keine Werte erfinden
+- fehlende Monate als „—“ darstellen
+- Vergleich nur über gemeinsame vorhandene Monate berechnen
+- verwendete Vergleichsperiode sichtbar ausweisen
+
+==================================================
+5. TOTALWERTE UND ABSTIMMUNG
+==================================================
+
+Prüfe, ob die vorhandenen Jahres-Totalwerte mit der Summe der sichtbaren Monate übereinstimmen.
+
+Falls ein gespeicherter Jahreswert und die Monatssumme voneinander abweichen:
+
+- Differenz nicht verstecken
+- keine automatische Überschreibung
+- einen kompakten Abstimmungshinweis anzeigen
+- gespeichertes Total und Monatssumme getrennt ausweisen
+- Ursache nur benennen, wenn sie aus den Daten nachweisbar ist
+
+Beispiel:
+
+„Gespeichertes Jahrestotal weicht um CHF 53'051 von der Summe der vorhandenen Monatswerte ab.“
+
+Der Management Report darf nur abgestimmte Werte als eindeutig darstellen. Unstimmigkeiten müssen im Abschnitt „Datenqualität“ erscheinen.
+
+==================================================
+6. MEHRJAHRESAUSWAHL
+==================================================
+
+Unterstütze:
+
+- 2 Jahre
+- 3 Jahre
+- bis zu 5 Jahre, sofern Daten vorhanden sind
+
+Standard:
+
+- aktuelles Jahr
+- Vorjahr
+- Basisjahr
+
+Der Benutzer kann die verfügbaren Jahre auswählen.
+
+Die Auswahl muss:
+
+- chronologisch sortiert sein
+- bestehende Filter respektieren
+- mindestens zwei Jahre verlangen
+- das älteste ausgewählte Jahr als Basisjahr verwenden
+- das neueste ausgewählte Jahr als aktuelles Vergleichsjahr verwenden
+
+==================================================
+7. KPI-KARTEN
+==================================================
+
+Zeige oberhalb der Analyse kompakte KPI-Karten:
+
+- Umsatz aktuelle Vergleichsperiode
+- Umsatz Vorjahresperiode
+- Veränderung CHF
+- Veränderung %
+- Veränderung seit Basisjahr CHF
+- Veränderung seit Basisjahr %
+- CAGR
+- durchschnittlicher Monatsumsatz
+- bester Monat
+- schwächster Monat
+- Anzahl Monate im Vergleich
+- Trend
+
+Bei vollständigen Jahren zusätzlich:
+
+- höchster Jahresumsatz
+- stärkstes Jahreswachstum
+
+KPI-Regeln:
+
+- CAGR nur bei mindestens zwei gültigen Jahresendpunkten und positiver Datenbasis
+- keine Division durch null
+- niemals NaN oder Infinity anzeigen
+- nicht berechenbare Werte als „—“
+- Teiljahre klar als YTD kennzeichnen
+- keine grosse KPI-Wand erzeugen
+- auf kleinen Bildschirmen sinnvoll umbrechen
+
+==================================================
+8. MEHRJAHRESTABELLE
+==================================================
+
+Erstelle eine professionelle, kompakte Tabelle.
+
+Zeilen:
+
+- Januar bis Dezember
+- Total Vergleichsperiode
+- optional Volljahrestotal, sofern vorhanden und klar getrennt
+
+Spalten je ausgewähltem Jahr:
+
+- Wert
+- Differenz zum Vorjahr CHF
+- Differenz zum Vorjahr %
+- Differenz zum Basisjahr CHF
+- Differenz zum Basisjahr %
+
+Bei drei Jahren beispielsweise:
+
+- 2024
+- 2025
+- Δ 2025/2024 CHF
+- Δ 2025/2024 %
+- 2026
+- Δ 2026/2025 CHF
+- Δ 2026/2025 %
+- Δ 2026/2024 CHF
+- Δ 2026/2024 %
+
+Zusätzlich pro Monat:
+
+- Rang im jeweiligen Jahr
+- Anteil an der Vergleichsperiode
+- Trendindikator
+
+UX:
+
+- Sticky Header
+- Sticky erste Spalte
+- ruhige Zahlenformatierung
+- horizontales Scrollen nur innerhalb der Tabelle
+- keine abgeschnittenen Monatsnamen
+- klare visuelle Trennung zwischen Wert- und Vergleichsspalten
+- positive Veränderungen dezent grün
+- negative Veränderungen dezent rot
+- nahezu unverändert neutral
+- Farben nicht als einzige Informationsquelle verwenden
+- zusätzlich Plus/Minus und Pfeilsymbol
+
+==================================================
+9. ER-POSITIONEN
+==================================================
+
+Die Mehrjahresanalyse darf nicht nur hart auf Umsatz programmiert sein.
+
+Sie muss grundsätzlich mit der bestehenden ER-Struktur funktionieren, mindestens für:
+
+- Umsatz beziehungsweise Betriebsertrag
+- Warenaufwand
+- Bruttoergebnis
+- Personalaufwand
+- übriger Betriebsaufwand
+- EBITDA beziehungsweise vorhandene Ergebnisstufen
+- weitere bereits vorhandene ER-Positionen
+
+Ermögliche eine kompakte Positionsauswahl.
+
+Standardmässig:
+
+- Umsatz netto beziehungsweise Betriebsertrag netto
+
+Der Benutzer kann weitere Positionen analysieren.
+
+Bei Aufwandpositionen muss die Interpretation korrekt sein:
+
+- höherer Umsatz ist in der Regel positiv
+- höherer Aufwand ist nicht automatisch positiv
+- Ergebnispositionen nach ihrer bestehenden Semantik behandeln
+
+Keine pauschale Grün-/Rot-Logik für alle Konten verwenden.
+
+==================================================
+10. MONATS-DRILLDOWN
+==================================================
+
+Klick auf einen Monat öffnet innerhalb der bestehenden Analyse einen Detaildialog oder eine interne Detailstufe.
+
+Anzeigen:
+
+- Monat und verwendete Vergleichsperiode
+- Wert pro Jahr
+- Differenz zum jeweiligen Vorjahr CHF
+- Differenz zum jeweiligen Vorjahr %
+- Differenz zum Basisjahr
+- Anteil am jeweiligen Jahres- oder YTD-Wert
+- Monatsranking
+- Mehrjahrestrend
+- kompakter Linienchart
+- Abstimmung der dargestellten Werte
+
+Falls bereits geladen und fachlich passend verfügbar:
+
+- Reservationen
+- Personen
+- Umsatz pro Person
+- durchschnittlicher Bon
+- Personalkostenquote
+- Wareneinsatzquote
+- Öffnungstage
+- Tagesdurchschnitt
+- stärkster Tag
+- schwächster Tag
+
+Diese Zusatzkennzahlen nur anzeigen, wenn belastbare Daten vorhanden sind.
+
+Keine zusätzlichen DB-Abfragen allein für diesen Dialog einführen.
+
+==================================================
+11. DIAGRAMME
+==================================================
+
+Baue mindestens drei professionelle Diagramme:
+
+A. Monatsverlauf
+
+- Linienchart
+- Januar bis Dezember
+- eine Linie pro Jahr
+- fehlende Monate nicht als null darstellen
+- Teiljahreslinie endet beim letzten vorhandenen Monat
+
+B. Jahres- beziehungsweise Periodenvergleich
+
+- Balkendiagramm
+- ausgewählte Jahre
+- bei Teiljahren klar als YTD markieren
+
+C. Veränderungsbeiträge
+
+- Wasserfall oder nachvollziehbares Delta-Balkendiagramm
+- Veränderung pro Monat vom Vorjahr zum aktuellen Jahr
+- positive und negative Beiträge
+- Summe entspricht der Gesamtveränderung
+
+Optional nur bei echtem Mehrwert:
+
+- Monats-Heatmap
+- Wachstums-Heatmap
+
+Keine unnötigen Diagramme hinzufügen.
+
+Nutze vorhandene Chart-Komponenten und das bestehende Designsystem.
+
+==================================================
+12. EXECUTIVE SUMMARY
+==================================================
+
+Erzeuge automatisch eine kurze, sachliche Executive Summary.
+
+Sie darf nur Aussagen enthalten, die eindeutig berechnet wurden.
+
+Mögliche Inhalte:
+
+- Entwicklung von Basisjahr über Vorjahr zum aktuellen Jahr
+- Veränderung CHF und %
+- Vergleichsperiode
+- stärkste positive Monatsbeiträge
+- negative Monate
+- Kontinuität des Wachstums
+- Datenqualität oder Teiljahresstatus
+
+Beispielstil:
+
+„Der Nettoumsatz stieg in der Periode Januar bis Juni von CHF 1.18 Mio. im Jahr 2024 auf CHF 1.35 Mio. im Jahr 2025 und CHF 1.64 Mio. im Jahr 2026. Gegenüber der Vergleichsperiode 2025 entspricht dies einem Wachstum von CHF 285'136 beziehungsweise 21.1 %. Alle sechs vergleichbaren Monate lagen über dem Vorjahreswert.“
+
+Regeln:
+
+- kein Marketingtext
+- keine Zukunftsprognosen ohne Forecast-Daten
+- „nachhaltig“ nur verwenden, wenn eine klar definierte Regel erfüllt ist
+- keine Kausalität behaupten
+- keine Empfehlungen als Fakten darstellen
+- Zahlen müssen exakt mit Tabelle und Export übereinstimmen
+- bei Teiljahr immer Periode nennen
+
+==================================================
+13. MANAGEMENT-REPORT-ANSICHT
+==================================================
+
+Erstelle eine eigene Live-Ansicht „Management Report“.
+
+Sie soll wie ein kompakter professioneller Bericht aufgebaut sein:
+
+1. Kopfbereich
+   - Firmenname
+   - Titel
+   - Berichtsperiode
+   - Erstellungsdatum
+   - Datenstand
+   - Kennzeichnung Volljahr oder YTD
+
+2. Executive Summary
+
+3. KPI-Übersicht
+
+4. Mehrjahresvergleich
+
+5. Monatsentwicklung
+
+6. Diagramme
+
+7. stärkste positive Entwicklungen
+
+8. schwache beziehungsweise rückläufige Monate
+
+9. Datenqualität und Einschränkungen
+
+10. Methodik
+   - Vergleich über gemeinsame Monate
+   - Definition Basisjahr
+   - Rundungsregeln
+   - verwendete Datenquelle
+
+Die Live-Ansicht muss auch ohne Export gut präsentierbar sein.
+
+Keine internen Debug- oder technischen Begriffe anzeigen.
+
+==================================================
+14. PDF-MANAGEMENT-REPORT
+==================================================
+
+Ergänze oben rechts:
+
+„Management Report PDF“
+
+Verwende bevorzugt die bestehende PDF-Export-Infrastruktur.
+
+Der PDF-Bericht muss enthalten:
+
+- professionelles Deckblatt
+- Firmenname
+- Berichtsperiode
+- Erstellungsdatum
+- Executive Summary
+- KPI-Übersicht
+- Mehrjahrestabelle
+- Monatsvergleich
+- Diagramme
+- Top-Entwicklungen
+- schwache Monate
+- Datenqualität
+- Methodik
+- Seitenzahlen
+- konsistente Kopf- und Fusszeile
+
+PDF-Anforderungen:
+
+- A4
+- saubere Seitenumbrüche
+- keine abgeschnittenen Tabellen
+- wiederholte Tabellenköpfe
+- keine UI-Buttons oder Filter im Export
+- CHF-Formatierung einheitlich
+- Teiljahr klar gekennzeichnet
+- Exportwerte exakt identisch zur Live-Ansicht
+- Diagramme lesbar
+- keine leeren unnötigen Seiten
+
+Falls die bestehende PDF-Infrastruktur keine Diagramme sauber unterstützt, nutze die im Projekt bereits etablierte Alternative. Keine fragile neue Browser-Screenshot-Lösung einbauen, wenn eine strukturierte PDF-Erzeugung vorhanden ist.
+
+==================================================
+15. EXCEL-EXPORT
+==================================================
+
+Ergänze:
+
+„Mehrjahresanalyse Excel“
+
+Verwende bevorzugt die bestehende Excel-Infrastruktur.
+
+Die Arbeitsmappe soll enthalten:
+
+Tab 1: Management Summary
+
+- Berichtsperiode
+- Basisjahr
+- Vergleichsjahre
+- Executive Summary
+- zentrale KPIs
+
+Tab 2: Monatsvergleich
+
+- alle Monatswerte
+- Vorjahresdifferenzen CHF
+- Vorjahresdifferenzen %
+- Basisjahrdifferenzen CHF
+- Basisjahrdifferenzen %
+- Ranking
+- Anteil
+
+Tab 3: Jahresvergleich
+
+- Jahres- oder YTD-Summen
+- Wachstum
+- CAGR
+- durchschnittlicher Monatswert
+
+Tab 4: Erfolgsrechnungspositionen
+
+- ausgewählte ER-Positionen
+- Werte je Jahr
+- Vergleiche
+
+Tab 5: Diagrammdaten
+
+- strukturierte Rohdaten für Linien-, Balken- und Delta-Diagramme
+
+Tab 6: Datenqualität
+
+- fehlende Monate
+- Totalabweichungen
+- nicht vergleichbare Perioden
+- Hinweise
+
+Excel-Anforderungen:
+
+- echte Zahlenzellen, keine formatierten Textbeträge
+- Prozentzellen als Prozentwerte
+- Kopfzeilen fixieren
+- Autofilter
+- sinnvolle Spaltenbreiten
+- keine Bilder
+- keine Formeln mit externen Abhängigkeiten
+- Export muss auch ohne App verständlich sein
+
+==================================================
+16. DATENQUALITÄT
+==================================================
+
+Erstelle einen kompakten Abschnitt „Datenqualität“.
+
+Erkenne mindestens:
+
+- fehlende Monate
+- Teiljahr
+- unterschiedliche verfügbare Vergleichsperioden
+- gespeichertes Total weicht von Monatssumme ab
+- doppelte Monatswerte
+- nicht berechenbare Prozentwerte
+- fehlendes Basisjahr
+- unvollständige ER-Positionen
+
+Schweregrade:
+
+- Hinweis
+- Warnung
+- Fehler
+
+Ein Datenqualitätsfehler darf nicht stillschweigend ignoriert werden.
+
+==================================================
+17. BERECHNUNGSREGELN
+==================================================
+
+Absolute Veränderung:
+
+aktueller Wert minus Vergleichswert
+
+Prozentuale Veränderung:
+
+(aktueller Wert minus Vergleichswert) / absoluter Vergleichswert
+
+Bei Vergleichswert null:
+
+- kein Prozentwert
+- „—“ anzeigen
+- Datenqualitätshinweis erzeugen
+
+CAGR:
+
+(nuester Wert / ältester Wert) hoch (1 / Anzahl Jahresabstände) minus 1
+
+Nur berechnen, wenn:
+
+- beide Endwerte positiv und gültig sind
+- mindestens ein vollständiger Jahresabstand vorhanden ist
+
+Nahezu unverändert:
+
+Definiere eine kleine nachvollziehbare Toleranz zentral in der Library.
+
+Keine doppelten Rundungen in Zwischenberechnungen.
+
+Erst für die Anzeige formatieren.
+
+==================================================
+18. DESIGN
+==================================================
+
+Das Design muss vollständig mit der restlichen App synchron sein:
+
+- schlicht
+- modern
+- professionell
+- kompakt
+- gut lesbar
+- bank- und investorentauglich
+- keine übergrossen Überschriften
+- keine riesigen Karten
+- keine unnötigen Erklärungstexte
+- keine grossen leeren Flächen
+- klare visuelle Hierarchie
+- bestehende Farben, Radien, Abstände und Typografie
+- responsive
+- Print-Ansicht berücksichtigen
+- Exportbuttons kompakt oben rechts
+- Filter kompakt links beziehungsweise oberhalb der Analyse
+- Tabellenwerte rechtsbündig
+- Monatsnamen linksbündig
+- negative Werte eindeutig mit Minuszeichen
+
+Die Ansicht soll professionell wirken, aber nicht wie eine fremde zweite Anwendung. Keine Kopie von Power BI bauen; nur dessen Klarheit und Informationsdichte als Orientierung verwenden.
+
+==================================================
+19. BERECHTIGUNGEN UND DATENSCHUTZ
+==================================================
+
+Prüfe die bestehenden Rollenrechte der Erfolgsrechnung.
+
+- Keine neuen Rollen erfinden.
+- Exporte nur für bereits berechtigte Benutzer.
+- Keine personenbezogenen Daten in Bank- oder Investorenexporte aufnehmen.
+- Keine Mitarbeiter-, Gäste- oder Reservationsdetails exportieren.
+- Nur aggregierte Finanz- und Betriebskennzahlen verwenden.
+- Keine sensiblen Rohdaten in Logs schreiben.
+
+==================================================
+20. TESTS DER REINEN LOGIK
+==================================================
+
+Erstelle umfassende Tests mindestens für:
+
+- zwei Jahre
+- drei Jahre
+- fünf Jahre
+- Volljahre
+- Teiljahre
+- Vergleich nur über gemeinsame Monate
+- fehlender Monat
+- absolute Veränderung
+- prozentuale Veränderung
+- Basisjahrvergleich
+- CAGR
+- CAGR nicht berechenbar
+- Vergleichswert null
+- negativer Wert
+- Aufwandposition
+- Ergebnisposition
+- Monatsranking
+- Gleichstand im Ranking
+- Anteil an Jahres- beziehungsweise YTD-Summe
+- bester Monat
+- schwächster Monat
+- Trend steigend
+- Trend stabil
+- Trend rückläufig
+- Wasserfalldaten
+- Linienchartdaten
+- Balkendiagrammdaten
+- Executive Summary
+- Executive Summary bei Teiljahr
+- Executive Summary mit negativem Monat
+- Totalabstimmung erfolgreich
+- Totalabweichung
+- leere Datenmenge
+- nur ein Jahr
+- doppelte Monate
+- stabile Sortierung
+- keine Division durch null
+- keine NaN-Werte
+- keine Infinity-Werte
+- Schweizer Zahlenformatierung
+- Excel-Datenstruktur
+- PDF-Report-Datenstruktur
+- Datenqualitätsmeldungen
+
+Keine bestehenden Tests entfernen oder abschwächen.
+
+==================================================
+21. KOMPONENTENTESTS
+==================================================
+
+Teste mindestens:
+
+- Umschaltung zur Mehrjahresanalyse
+- Umschaltung zum Management Report
+- Jahresauswahl
+- Positionsauswahl
+- Teiljahreskennzeichnung
+- KPI-Werte
+- Mehrjahrestabelle
+- Sticky Tabellenstruktur soweit testbar
+- Monatsklick öffnet Drilldown
+- Zurück schliesst nur die Detailstufe
+- Diagrammdaten werden korrekt übergeben
+- Executive Summary wird angezeigt
+- Datenqualitätshinweis erscheint
+- fehlende Monate verursachen keinen Fehler
+- Totalabweichung wird sichtbar
+- PDF-Export verwendet die aktuellen Filter
+- Excel-Export verwendet die aktuellen Filter
+- Exportberechtigung
+- Tastaturbedienung
+- Escape-Verhalten
+- keine Accessibility-Warnungen
+
+==================================================
+22. VALIDIERUNG
+==================================================
+
+Nach der Umsetzung:
+
+1. Alle relevanten neuen Tests ausführen.
+2. Bestehende Tests der Erfolgsrechnung ausführen.
+3. Type-Check allein ausführen.
+4. Neue Fehler von bestehenden Legacy-Fehlern trennen.
+5. Jeden neuen Fehler in Task-Dateien beheben.
+6. App-Runtime prüfen.
+7. Mehrjahresanalyse mit mindestens diesen Fällen prüfen:
+   - drei vollständige Jahre
+   - aktuelles Teiljahr
+   - fehlender Monat
+   - Nullwert im Vorjahr
+   - Totalabweichung
+8. PDF erzeugen und visuell prüfen.
+9. Excel erzeugen und Struktur prüfen.
+10. Architect-Review nur auf den tatsächlichen Task-Diff beschränken.
+11. Berechtigte Review-Befunde beheben.
+12. Tests, Type-Check und Review erneut ausführen.
+13. replit.md nur kompakt aktualisieren.
+14. Keine unrelated Dateien zurücksetzen oder nebenbei umbauen.
+
+==================================================
+23. DOKUMENTATION
+==================================================
+
+Ergänze replit.md kompakt mit:
+
+- Mehrjahresanalyse der Erfolgsrechnung
+- Vergleich über gemeinsame Monate
+- Teiljahreskennzeichnung
+- Vorjahres- und Basisjahrvergleich
+- CAGR und Trendkennzahlen
+- Monats-Drilldown
+- Management-Report-Liveansicht
+- PDF-Management-Report
+- Excel-Export
+- Datenqualitätsprüfung
+- keine neuen Tabellen oder Migrationen
+
+Keine lange technische Chronik ergänzen.
+
+==================================================
+24. ABSCHLUSSBERICHT
+==================================================
+
+Schliesse kompakt ab mit:
+
+- tatsächlich geänderte Dateien
+- neue reine Funktionen
+- verwendete Datenquellen
+- unterstützte Jahre und Perioden
+- Teiljahreslogik
+- neue KPI-Karten
+- Mehrjahrestabelle
+- Monats-Drilldown
+- Diagramme
+- Executive Summary
+- Live-Management-Report
+- PDF-Export
+- Excel-Export
+- Datenqualitätsprüfungen
+- Berechtigungen
+- Testergebnis
+- Type-Check-Ergebnis
+- Runtime-Ergebnis
+- Architect-Review-Ergebnis
+- bekannte Einschränkungen
+
+Commit-Message:
+
+feat(reporting): add multi-year financial analysis and management report

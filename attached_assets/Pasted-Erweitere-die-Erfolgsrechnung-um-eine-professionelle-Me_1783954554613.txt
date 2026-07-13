@@ -1,0 +1,382 @@
+Erweitere die Erfolgsrechnung um eine professionelle Mehrjahresanalyse (Bank-/Investoren-Ansicht). Das Ziel ist, dass die Erfolgsrechnung nicht mehr nur IST und Budget zeigt, sondern die Entwicklung des Unternehmens über mehrere Jahre nachvollziehbar präsentiert.
+
+WICHTIG
+
+• Keine bestehenden Berechnungen verändern.
+• Keine neuen Datenbanktabellen oder Migrationen.
+• Nur auf bereits vorhandene Erfolgsrechnungs- und Monatsdaten aufbauen.
+• Design muss vollständig mit der bestehenden App synchron sein:
+  - schlicht
+  - modern
+  - kompakt
+  - lesefreundlich
+  - einheitlich
+  - professionell (geeignet für Banken, Investoren und Verwaltungsrat)
+
+====================================================
+1. Neue Ansicht "Mehrjahresanalyse"
+====================================================
+
+Ergänze oberhalb der Erfolgsrechnung einen neuen Tab:
+
+• Standard
+• Mehrjahresanalyse
+
+Die Standardansicht bleibt unverändert.
+
+====================================================
+2. Vergleich über mehrere Jahre
+====================================================
+
+In der Mehrjahresanalyse soll der Benutzer auswählen können:
+
+• 2 Jahre
+• 3 Jahre
+• 5 Jahre (automatisch sobald vorhanden)
+
+Die Tabelle soll automatisch alle vorhandenen Jahre laden.
+
+Beispiel:
+
+                2024      2025      2026
+
+Jan
+Feb
+Mär
+...
+
+Total
+
+====================================================
+3. Automatische Vergleichsspalten
+====================================================
+
+Neben jedem Jahr automatisch berechnen:
+
+Δ Vorjahr CHF
+
+Δ Vorjahr %
+
+Δ Basisjahr CHF
+
+Δ Basisjahr %
+
+Beispiel:
+
+2024
+2025
+Δ25/24
+%
+2026
+Δ26/25
+%
+Δ26/24
+%
+
+Alles automatisch.
+
+====================================================
+4. Zusammenfassung oberhalb der Tabelle
+====================================================
+
+Neue KPI-Karten:
+
+• Umsatz aktuelles Jahr
+• Umsatz Vorjahr
+• Wachstum CHF
+• Wachstum %
+• CAGR (jährliches Wachstum)
+• Durchschnittliches Monatswachstum
+• Bester Monat
+• Schwächster Monat
+• Höchster Jahresumsatz
+• Trend (steigend / stabil / rückläufig)
+
+====================================================
+5. Monatsanalyse
+====================================================
+
+Jeder Monat erhält automatisch:
+
+• Rang innerhalb des Jahres
+• Veränderung zu Vorjahr
+• Veränderung zum Basisjahr
+• Anteil am Jahresumsatz
+• Trendpfeil
+
+Farben:
+
+Grün = Verbesserung
+
+Rot = Rückgang
+
+Neutral = nahezu unverändert
+
+Keine aggressiven Farben.
+
+====================================================
+6. Klick auf Monat
+====================================================
+
+Klick auf Januar öffnet Analyse.
+
+Anzeigen:
+
+Umsatz 2024
+
+Umsatz 2025
+
+Umsatz 2026
+
+Differenzen
+
+Prozent
+
+Anteil Jahresumsatz
+
+Ranking
+
+Monatsdurchschnitt
+
+Trenddiagramm
+
+Falls vorhanden zusätzlich:
+
+Reservationen
+
+Personen
+
+Ø Bon
+
+Personalquote
+
+Wareneinsatzquote
+
+Nur bereits geladene Daten verwenden.
+
+Keine neue DB-Abfrage.
+
+====================================================
+7. Jahresanalyse
+====================================================
+
+Unterhalb der Tabelle:
+
+Jahr 2024
+
+Umsatz
+
+Wachstum
+
+beste Monate
+
+schlechteste Monate
+
+Saisonverlauf
+
+Jahr 2025
+
+...
+
+Jahr 2026
+
+...
+
+====================================================
+8. Grafiken
+====================================================
+
+Professionelle Diagramme.
+
+Mindestens:
+
+Linienchart
+
+Alle Jahre übereinander
+
+Monate Januar-Dezember
+
+Balkendiagramm
+
+Jahresumsatz
+
+Wachstum
+
+Wasserfall
+
+Wachstum pro Monat
+
+Optional:
+
+Heatmap
+
+====================================================
+9. Bank-/Investorenbericht
+====================================================
+
+Neuer Button:
+
+"Management Report"
+
+Exportiert ein professionelles PDF.
+
+Deckblatt:
+
+Firmenname
+
+Berichtsjahr
+
+Erstellt am
+
+danach:
+
+Executive Summary
+
+Wesentliche Entwicklungen
+
+Mehrjahresvergleich
+
+Monatsentwicklung
+
+Diagramme
+
+Wachstum
+
+Top-Monate
+
+Schwache Monate
+
+Empfehlungen
+
+Alle Tabellen sauber formatiert.
+
+====================================================
+10. Excel Export
+====================================================
+
+Excel soll enthalten:
+
+Tab 1
+
+Übersicht
+
+Tab 2
+
+Monatsvergleich
+
+Tab 3
+
+Jahresvergleich
+
+Tab 4
+
+Kennzahlen
+
+Tab 5
+
+Diagrammdaten
+
+Keine Bilder.
+
+Nur strukturierte Daten.
+
+====================================================
+11. Executive Summary automatisch erzeugen
+====================================================
+
+Oberhalb des Reports automatisch:
+
+Beispiel:
+
+"Der Umsatz entwickelte sich von CHF 1.18 Mio. (2024) über CHF 1.35 Mio. (2025) auf CHF 1.64 Mio. (2026, Januar–Juni). Dies entspricht einem Wachstum von 39.4 % gegenüber 2024 und 21.1 % gegenüber dem Vorjahr. Sämtliche Monate des ersten Halbjahres liegen über dem Vorjahresniveau, was auf ein nachhaltiges operatives Wachstum hindeutet."
+
+Nur Aussagen treffen, die aus den vorhandenen Zahlen eindeutig ableitbar sind.
+
+====================================================
+12. Design
+====================================================
+
+Keine riesigen Tabellen.
+
+Sticky Header
+
+Sticky erste Spalte
+
+Monate sauber ausgerichtet
+
+Schöne Abstände
+
+KPI-Karten kompakt
+
+Diagramme modern
+
+Exportbuttons oben rechts
+
+Responsive
+
+Professionelles Erscheinungsbild wie Power BI oder Microsoft Fabric.
+
+====================================================
+13. Tests
+====================================================
+
+Erstelle umfassende Tests für:
+
+• Mehrjahresberechnung
+• CAGR
+• Wachstum %
+• Wachstum CHF
+• Monatsranking
+• Basisjahrvergleich
+• Jahresvergleich
+• Executive Summary
+• PDF-Daten
+• Excel-Daten
+• Diagrammdaten
+• Leere Jahre
+• Teiljahre (z.B. Januar–Juni)
+• Keine Division durch Null
+• Keine NaN-/Infinity-Werte
+• Stabile Sortierung
+• Exportdaten
+• Accessibility
+• Komponenten
+
+Keine bestehenden Tests abschwächen.
+
+====================================================
+14. Validierung
+====================================================
+
+Nach Umsetzung:
+
+• relevante Tests ausführen
+• Type-Check separat
+• Runtime prüfen
+• Architect Review nur auf tatsächlichen Diff
+• berechtigte Befunde beheben
+• replit.md kompakt ergänzen
+
+Keine unrelated Dateien ändern.
+
+====================================================
+15. Abschluss
+====================================================
+
+Zusammenfassung mit:
+
+• geänderte Dateien
+• neue Berechnungen
+• neue KPIs
+• Diagramme
+• PDF
+• Excel
+• Tests
+• Type-Check
+• Runtime
+• Architect Review
+• Commit-Message
+
+Commit:
+
+feat(reporting): add multi-year financial analysis and management report
