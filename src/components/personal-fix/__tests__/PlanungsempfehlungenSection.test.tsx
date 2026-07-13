@@ -207,6 +207,24 @@ describe('PlanungsempfehlungenSection — Karten, Limit, Filter', () => {
   });
 });
 
+describe('PlanungsempfehlungenSection — Kartendarstellung', () => {
+  it('zeigt Titel, Aktion, Position und Zeitfenster auf der Karte', () => {
+    renderSection();
+    const card = screen.getByTestId(/^reco-card-/);
+    expect(card.textContent).toContain('Freitags ist der Service unterbesetzt');
+    expect(card.textContent).toContain('1 Person mehr einplanen');
+    expect(card.textContent).toContain('Service');
+    expect(card.textContent).toContain('11:00–14:00 Uhr');
+  });
+
+  it('rendert alle sechs Filter-Chips', () => {
+    renderSection();
+    for (const f of ['alle', 'unterbesetzung', 'ueberbesetzung', 'schichtzeit', 'kosten', 'datenqualitaet']) {
+      expect(screen.getByTestId(`reco-filter-${f}`)).toBeTruthy();
+    }
+  });
+});
+
 describe('PlanungsempfehlungenSection — Detail-Dialog', () => {
   it('öffnet Details mit Begründung, Vergleichstagen und Einschränkungen', () => {
     renderSection();
@@ -220,6 +238,65 @@ describe('PlanungsempfehlungenSection — Detail-Dialog', () => {
     expect(within(table).getAllByText('betroffen')).toHaveLength(3);
     expect(within(dialog).getByTestId('reco-detail-limitations').textContent)
       .toContain('Keine Reservationsdaten');
+  });
+
+  it('stellt Plan-, Ist- und Soll-Werte der Vergleichstage korrekt dar', () => {
+    renderSection();
+    fireEvent.click(screen.getByTestId(/^reco-detail-btn-/));
+    const table = screen.getByTestId('reco-detail-days');
+    const firstRow = within(table).getAllByRole('row')[1];
+    const cells = within(firstRow).getAllByRole('cell').map((c) => c.textContent);
+    expect(cells[0]).toBe('03.07.');           // Tag
+    expect(cells[1]).toBe('10.0');             // Plan h
+    expect(cells[2]).toBe('12.0');             // Ist h
+    expect(cells[3]).toBe('2');                // Plan Pers.
+    expect(cells[4]).toBe('3');                // Ist Pers.
+    expect(cells[5]).toBe('3');                // Soll
+    expect(cells[6]).toContain('3');           // Umsatz CHF 3'200 (locale-Trennzeichen)
+    expect(cells[6]).toContain('200');
+    expect(cells[7]).toBe('45');               // Reserv. Pers.
+  });
+
+  it('zeigt „—" statt Fehler bei fehlenden Umsatz-/Reservations-/Soll-Daten', () => {
+    const rec = makeRec({
+      comparableDays: [
+        makeDay({ date: '2026-07-03', revenue: null, persons: null, planPersons: null, istPersons: null, required: null }),
+        makeDay({ date: '2026-07-10', revenue: null, persons: null, planPersons: null, istPersons: null, required: null }),
+        makeDay({ date: '2026-07-17', revenue: null, persons: null, planPersons: null, istPersons: null, required: null }),
+      ],
+    });
+    renderSection({ result: makeResult([rec]) });
+    fireEvent.click(screen.getByTestId(/^reco-detail-btn-/));
+    const table = screen.getByTestId('reco-detail-days');
+    const firstRow = within(table).getAllByRole('row')[1];
+    const cells = within(firstRow).getAllByRole('cell').map((c) => c.textContent);
+    expect(cells[3]).toBe('—');
+    expect(cells[5]).toBe('—');
+    expect(cells[6]).toBe('—');
+    expect(cells[7]).toBe('—');
+    expect(table.textContent).not.toContain('NaN');
+    expect(table.textContent).not.toContain('Infinity');
+  });
+
+  it('öffnet die Details der ANGEKLICKTEN Empfehlung', () => {
+    const recs = [
+      makeRec({ id: 'a', title: 'Empfehlung A' }),
+      makeRec({ id: 'b', title: 'Empfehlung B', type: 'kosten', tone: 'warn' }),
+    ];
+    renderSection({ result: makeResult(recs) });
+    fireEvent.click(screen.getByTestId('reco-detail-btn-b'));
+    expect(screen.getByTestId('reco-detail-dialog').textContent).toContain('Empfehlung B');
+  });
+
+  it('Escape schliesst nur den Detail-Dialog, nicht die Sektion', () => {
+    const { props } = renderSection();
+    fireEvent.click(screen.getByTestId(/^reco-detail-btn-/));
+    const dialog = screen.getByTestId('reco-detail-dialog');
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByTestId('reco-detail-dialog')).toBeNull();
+    expect(screen.getByTestId('reco-section')).toBeTruthy();
+    expect(screen.getAllByTestId(/^reco-card-/).length).toBeGreaterThan(0);
+    expect(props.onOpenChange).not.toHaveBeenCalled();
   });
 });
 
@@ -265,5 +342,104 @@ describe('PlanungsempfehlungenSection — Simulations-Dialog', () => {
     fireEvent.click(within(dialog).getByTestId('reco-sim-people-minus'));
     fireEvent.click(within(dialog).getByTestId('reco-sim-people-minus'));
     expect(within(dialog).getByTestId('reco-sim-issues').textContent?.length).toBeGreaterThan(0);
+  });
+
+  it('Stundenänderung aktualisiert Planstunden und Kosten', () => {
+    renderSection();
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    const dialog = screen.getByTestId('reco-sim-dialog');
+    // Basis: 10 h × CHF 30/h = CHF 300; +2 h → 12 h × 30 = CHF 360
+    expect(within(dialog).getByTestId('reco-sim-cost-row').textContent).toContain('300');
+    fireEvent.change(within(dialog).getByTestId('reco-sim-hours'), { target: { value: '2' } });
+    expect(within(dialog).getByTestId('reco-sim-hours-row').textContent).toContain('12.0 h');
+    expect(within(dialog).getByTestId('reco-sim-cost-row').textContent).toContain('360');
+  });
+
+  it('Start-/Endzeit sind editierbar, wenn Soll-Zeiten vorhanden sind', () => {
+    renderSection();
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    const dialog = screen.getByTestId('reco-sim-dialog');
+    const start = within(dialog).getByTestId('reco-sim-start') as HTMLInputElement;
+    const end = within(dialog).getByTestId('reco-sim-end') as HTMLInputElement;
+    expect(start.disabled).toBe(false);
+    expect(end.disabled).toBe(false);
+    expect(start.value).toBe('11:00');
+    fireEvent.change(start, { target: { value: '12:00' } });
+    expect((within(dialog).getByTestId('reco-sim-start') as HTMLInputElement).value).toBe('12:00');
+    expect(dialog.textContent).not.toContain('NaN');
+  });
+
+  it('Start-/Endzeit sind deaktiviert, wenn keine Soll-Zeiten vorliegen', () => {
+    const rec = makeRec({ simulationBase: makeBase({ shiftStart: null, shiftEnd: null }) });
+    renderSection({ result: makeResult([rec]) });
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    const dialog = screen.getByTestId('reco-sim-dialog');
+    expect((within(dialog).getByTestId('reco-sim-start') as HTMLInputElement).disabled).toBe(true);
+    expect((within(dialog).getByTestId('reco-sim-end') as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it('zeigt PKQ nur bei gültigem Umsatz — bei null-Umsatz „—" statt NaN/Infinity', () => {
+    const rec = makeRec({ simulationBase: makeBase({ avgRevenueCHF: null }) });
+    renderSection({ result: makeResult([rec]) });
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    const dialog = screen.getByTestId('reco-sim-dialog');
+    const pkqRow = within(dialog).getByTestId('reco-sim-pkq-row');
+    expect(pkqRow.textContent).toContain('—');
+    expect(pkqRow.textContent).not.toContain('%');
+    fireEvent.click(within(dialog).getByTestId('reco-sim-people-plus'));
+    expect(dialog.textContent).not.toContain('NaN');
+    expect(dialog.textContent).not.toContain('Infinity');
+  });
+
+  it('zeigt PKQ mit gültigem Umsatz (Basis 300/3000 = 10.0 %)', () => {
+    renderSection();
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    const pkqRow = within(screen.getByTestId('reco-sim-dialog')).getByTestId('reco-sim-pkq-row');
+    expect(pkqRow.textContent).toContain('10.0 %');
+  });
+
+  it('Escape schliesst nur den Simulations-Dialog, nicht die Sektion', () => {
+    const { props } = renderSection();
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    fireEvent.keyDown(screen.getByTestId('reco-sim-dialog'), { key: 'Escape' });
+    expect(screen.queryByTestId('reco-sim-dialog')).toBeNull();
+    expect(screen.getByTestId('reco-section')).toBeTruthy();
+    expect(props.onOpenChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('PlanungsempfehlungenSection — Accessibility', () => {
+  it('rendert Sektion und beide Dialoge ohne Konsolen-Warnungen (a11y)', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      renderSection();
+      fireEvent.click(screen.getByTestId(/^reco-detail-btn-/));
+      fireEvent.keyDown(screen.getByTestId('reco-detail-dialog'), { key: 'Escape' });
+      fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+      fireEvent.keyDown(screen.getByTestId('reco-sim-dialog'), { key: 'Escape' });
+      const offending = [...errSpy.mock.calls, ...warnSpy.mock.calls]
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('aria') || m.includes('Description') || m.includes('Warning:'));
+      expect(offending).toEqual([]);
+    } finally {
+      errSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('alle Bedienelemente sind native Buttons/Inputs (Tastatur: Enter/Leertaste)', () => {
+    renderSection();
+    // Trigger, Filter-Chips und Karten-Aktionen sind echte <button>-Elemente,
+    // Enter/Leertaste-Aktivierung ist damit Browser-Standardverhalten.
+    expect(screen.getByTestId('reco-trigger').tagName).toBe('BUTTON');
+    expect(screen.getByTestId('reco-filter-alle').tagName).toBe('BUTTON');
+    expect(screen.getByTestId(/^reco-detail-btn-/).tagName).toBe('BUTTON');
+    expect(screen.getByTestId(/^reco-sim-btn-/).tagName).toBe('BUTTON');
+    fireEvent.click(screen.getByTestId(/^reco-sim-btn-/));
+    const dialog = screen.getByTestId('reco-sim-dialog');
+    expect(within(dialog).getByTestId('reco-sim-reset').tagName).toBe('BUTTON');
+    expect(within(dialog).getByTestId('reco-sim-open-schedule').tagName).toBe('BUTTON');
+    expect((within(dialog).getByTestId('reco-sim-hours') as HTMLInputElement).tagName).toBe('INPUT');
   });
 });

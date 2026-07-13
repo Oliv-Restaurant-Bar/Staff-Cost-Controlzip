@@ -1,0 +1,194 @@
+rstelle jetzt die Komponententests für die neue Sektion „Planungsempfehlungen“ und schliesse das Feature danach vollständig ab.
+
+1. Komponententests ergänzen
+
+Teste mindestens folgende Fälle:
+
+* Empfehlungen werden korrekt angezeigt
+* Titel, Position, Zeitraum und Begründung erscheinen
+* Datenbasis beziehungsweise Anzahl Vergleichstage wird angezeigt
+* Filter „Alle“, „Unterbesetzung“, „Überbesetzung“, „Schichtzeiten“, „Kosten“ und „Datenqualität“ funktionieren
+* Filter ohne Treffer zeigt einen kompakten Empty-State
+* Klick auf „Details“ öffnet die korrekte Detailansicht
+* die verwendeten Vergleichstage werden im Detail angezeigt
+* Soll-, Plan- und Ist-Werte werden korrekt dargestellt
+* fehlende Reservationen oder Umsatzdaten verursachen keinen Fehler
+* Klick auf „Simulation“ öffnet die Simulation
+* Mitarbeitende plus und minus verändert die Simulation korrekt
+* Stundenänderung aktualisiert Planstunden und Kosten
+* Start- und Endzeit können verändert werden, sofern Zeitdaten vorhanden sind
+* Personalkostenquote wird nur angezeigt, wenn ein gültiger Umsatz vorhanden ist
+* bei fehlendem oder null Umsatz entsteht weder NaN noch Infinity
+* Reset stellt die Ausgangswerte vollständig wieder her
+* Hinweis „Simulation – noch nicht übernommen“ ist sichtbar
+* „Im Dienstplan öffnen“ verwendet nur die bestehende Navigation
+* Escape schliesst nur den aktuell geöffneten Unterdialog beziehungsweise die Detailstufe
+* Tastaturbedienung mit Enter und Leertaste funktioniert
+* keine Accessibility-Warnungen entstehen
+* zu geringe Datenbasis zeigt den vorgesehenen Hinweis statt erfundener Empfehlungen
+* maximal die vorgesehene Anzahl Empfehlungen wird zuerst angezeigt
+* „Alle anzeigen“ zeigt die restlichen Empfehlungen
+
+Verwende realistische, kleine Test-Fixtures und keine unnötig grossen Mock-Daten.
+
+2. Pure-Logic-Tests nochmals prüfen
+
+Stelle sicher, dass die Tests der neuen Library mindestens diese Bereiche abdecken:
+
+* Unterbesetzung
+* Überbesetzung
+* zusätzliche Person
+* eine Person weniger
+* längere oder kürzere Schicht
+* spätere Startzeit
+* frühere Endzeit
+* Mindestanzahl Vergleichstage
+* gleiche Wochentage
+* getrennte Positionen
+* Saisonvergleich
+* fehlende Reservationen
+* fehlender Umsatz
+* fehlende Schichtzeiten
+* Priorisierung
+* stabile Sortierung
+* Begrenzung der sichtbaren Empfehlungen
+* Kostenwirkung
+* Simulation
+* Reset
+* leere Daten
+* Division durch null
+* keine NaN- oder Infinity-Werte
+
+Keine bestehenden Tests entfernen oder abschwächen.
+
+3. UI und Wiring kontrollieren
+
+Prüfe danach nochmals:
+
+* Die Sektion erscheint an einer fachlich sinnvollen Stelle im Personalbedarf beziehungsweise Personalcontrolling.
+* Sie erzeugt keine grosse leere Fläche.
+* Standardmässig werden nur die wichtigsten 5 bis 8 Empfehlungen angezeigt.
+* Die Karten sind kompakt, ruhig und mit dem bestehenden Design synchron.
+* Bestehende Komponenten, Farben, Abstände, Radien und Typografie werden wiederverwendet.
+* Rot wird nur für klare Unterbesetzung oder hohes Risiko verwendet.
+* Orange steht für Optimierung oder Überbesetzung.
+* Grün steht für eine klar positive Einsparungs- oder Verbesserungsmöglichkeit.
+* Empfehlungen reagieren auf die bestehenden Zeitraum-, Saison-, Wochentag- und Positionsfilter.
+* Es existiert keine parallele zweite Filterlogik.
+* Es wurden keine zusätzlichen DB-Abfragen eingeführt.
+* Es wurden keine Tabellen, Views oder Migrationen erstellt.
+* Keine Empfehlung verändert automatisch den Dienstplan.
+
+4. Alle relevanten Tests ausführen
+
+Führe aus:
+
+* Tests der neuen Empfehlungs-Library
+* Komponententests der neuen Sektion
+* bestehende Personalcontrolling- und Personalbedarf-Tests, die durch das Wiring betroffen sein könnten
+
+Falls ein Test fehlschlägt:
+
+* Ursache vollständig analysieren
+* die Implementierung korrigieren
+* keine Erwartungen künstlich an die fehlerhafte Implementierung anpassen
+* danach die gesamten relevanten Suites erneut ausführen
+
+5. Type-Check
+
+Führe den Type-Check allein aus und nicht parallel mit den Tests.
+
+Falls projektweite Legacy-Fehler bestehen:
+
+* trenne sie klar von neuen Fehlern
+* prüfe alle neuen und berührten Dateien gezielt
+* behebe jeden neuen Fehler aus diesem Task
+* lasse alte unrelated Fehler unangetastet
+
+Prüfe insbesondere:
+
+* src/lib/staffing-recommendations.ts
+* neue Empfehlungs-Komponente
+* Detail- und Simulations-Komponenten
+* src/pages/PersonalFix.tsx
+* neue Testdateien
+
+6. Runtime prüfen
+
+Prüfe die laufende App:
+
+* Seite lädt ohne neue Runtime-Fehler
+* Empfehlungen rendern bei vorhandenen Daten
+* Empty-State rendert bei fehlender Datenbasis
+* Details öffnen und schliessen korrekt
+* Simulation funktioniert lokal
+* Reset funktioniert
+* Navigation in den Dienstplan verwendet die bestehende Route
+* keine Endlosschleifen
+* keine unnötigen Re-Renders
+* keine neuen Console-Fehler
+* bekannte React-Router-Warnungen dürfen als bestehend dokumentiert werden
+
+7. Architect-Review
+
+Führe einen Architect-Review ausschliesslich auf dem tatsächlichen Task-Diff aus.
+
+Der Review soll besonders prüfen:
+
+* Geschäftslogik ist DOM-, React- und Supabase-frei
+* keine Blackbox- oder Zufallslogik
+* jede Empfehlung ist nachvollziehbar
+* Mindestdatenbasis wird eingehalten
+* keine erfundenen Werte
+* keine Division durch null
+* keine NaN- oder Infinity-Ausgaben
+* Empfehlungen sind stabil sortiert
+* Übersicht, Detail und Simulation verwenden dieselben Werte
+* Simulation speichert nichts
+* keine zusätzlichen DB-Abfragen
+* keine automatische Dienstplanänderung
+* Designsystem und Accessibility sind eingehalten
+* keine unrelated Änderungen
+
+Berechtigte Befunde beheben und danach Tests, Type-Check und Review nochmals ausführen.
+
+8. Dokumentation
+
+Aktualisiere replit.md nur kompakt mit:
+
+* Planungsempfehlungen aus historischen Vergleichstagen
+* Unter-, Überbesetzungs- und Schichtzeit-Empfehlungen
+* erklärbare Datenbasis
+* Detailansicht
+* lokale Simulation ohne Speicherung
+* bestehende Datenquellen, keine neuen DB-Abfragen
+* keine automatische Dienstplanänderung
+
+Keine lange technische Beschreibung ergänzen.
+
+9. Abschluss
+
+Prüfe mit git diff, dass nur die erwarteten Dateien verändert wurden.
+
+Keine unrelated Dateien zurücksetzen.
+
+Erstelle danach die Commit-Message:
+
+feat(personal): add staffing recommendations and simulation
+
+Schliesse mit einer kompakten Zusammenfassung ab:
+
+* geänderte Dateien
+* neue reine Funktionen
+* Empfehlungstypen
+* Mindestdatenbasis
+* Detailansicht
+* Simulation
+* Filter
+* verwendete Datenquellen
+* Tests
+* Type-Check
+* Runtime
+* Architect-Review
+* bekannte Einschränkungen
+* Commit-Message
