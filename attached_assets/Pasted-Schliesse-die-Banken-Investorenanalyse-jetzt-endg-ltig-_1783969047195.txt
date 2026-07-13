@@ -1,0 +1,173 @@
+Schliesse die Banken-/Investorenanalyse jetzt endgültig ab.
+
+Aktueller verifizierter Stand:
+
+- neuer Banken-/Investorenmodus in PLView verdrahtet
+- Annual-Cost-Imports werden asynchron geladen
+- BankImportInfo wird aus den Importdaten abgeleitet
+- PDF-Export nach dem bestehenden zweistufigen Exportmuster umgesetzt
+- Design-System-APIs geprüft und KpiCard-Verwendung korrigiert
+- J1–J18-Testabdeckung erstellt
+- 31 neue Tests erfolgreich
+- 84 benachbarte Tests erfolgreich
+- insgesamt 115 relevante Tests erfolgreich
+- HMR ohne Laufzeitfehler
+- gezielter Typecheck sauber
+- Architect-Review PASS
+- zwei kleine Review-Polish-Punkte umgesetzt
+- EmptyState-Tests an das tatsächliche Komponentenverhalten angepasst
+- replit.md bereits ergänzt
+
+Führe jetzt nur noch diese Abschlussarbeiten aus:
+
+1. Dokumentation final prüfen
+
+Ergänze replit.md nur noch dort, wo es für das tatsächlich umgesetzte Verhalten nötig ist.
+
+Dokumentiere kompakt:
+
+- Banken-/Investorenmodus innerhalb der Erfolgsrechnung
+- Laden vorhandener jährlicher Kostenimporte
+- Verhalten bei weniger als zwei verfügbaren Geschäftsjahren
+- EmptyState statt irreführender Vergleichswerte
+- gemeinsame Datenbasis von Ansicht und PDF
+- neue Testabdeckung inklusive happy-dom-Komponententest
+- Datenqualitäts- und Importhinweise
+
+Keine geplanten oder nicht vollständig umgesetzten Funktionen dokumentieren.
+
+2. Session- und Arbeitsartefakte entfernen
+
+Entferne:
+
+- temporäre Session-Pläne
+- Debug-Ausgaben
+- Test-Snapshots, falls unbeabsichtigt erzeugt
+- temporäre Exportdateien
+- ungenutzte Imports
+- tote Variablen
+- auskommentierten Implementierungscode
+
+Keine fachfremden Dateien anfassen.
+
+3. Git-Scope prüfen
+
+Prüfe mit dem tatsächlichen aktuellen Task-Diff:
+
+- alle neu erstellten Dateien
+- alle geänderten Dateien
+- untracked files
+- unbeabsichtigte Änderungen
+- temporäre Dateien
+
+Achte besonders darauf, dass neue untracked Dateien im Commit enthalten sind, da sie in einem normalen Diff-Stat eventuell nicht sichtbar waren.
+
+Gib die vollständige Liste der tatsächlich zum Task gehörenden Dateien aus.
+
+4. Finalen Testlauf ausführen
+
+Führe nochmals nacheinander und nicht parallel aus:
+
+- 31 neue J-Tests
+- 84 relevante Nachbartests
+- gezielten TypeScript-Typecheck
+- Produktionsbuild, sofern im Projekt vorhanden und ohne bekannte Legacy-Blocker möglich
+
+Vermeide parallele Ausführung, damit der Typecheck nicht erneut wegen Speichermangel beendet wird.
+
+Falls ein vollständiger Projekt-Typecheck wegen dokumentierter Legacy-Fehler nicht möglich ist:
+
+- gezielten Typecheck der geänderten Oberfläche ausführen
+- Legacy-Fehler klar separat ausweisen
+- keine bestehenden Fehler dieser Aufgabe zurechnen
+
+5. Runtime-Sanity-Check
+
+Prüfe die laufende Anwendung nochmals:
+
+- neuer Banken-/Investorenmodus ist auswählbar
+- Ansicht öffnet ohne Fehler
+- bei mindestens zwei Jahren erscheint der Bericht
+- bei weniger als zwei Jahren erscheint der korrekte EmptyState
+- Importhinweis wird korrekt angezeigt
+- keine Endlosschleife durch den asynchronen Load-Effekt
+- keine wiederholten unnötigen Importabfragen
+- keine React-Warnings
+- keine Console-Errors
+- bestehende Erfolgsrechnungsmodi funktionieren weiterhin
+
+6. PDF-Sanity-Check
+
+Erzeuge einen echten PDF-Export aus dem neuen Modus und prüfe:
+
+- PDF wird erfolgreich erstellt
+- gleiche Daten wie in der Ansicht
+- korrekte Jahre
+- korrekte Schweizer Zahlenformate
+- keine NaN-, undefined- oder Infinity-Werte
+- EmptyState führt nicht zu einem fehlerhaften Bericht
+- Import- und Datenhinweise sind verständlich
+- keine abgeschnittenen Inhalte
+- keine internen Variablennamen oder technischen Begriffe
+
+7. Architect-Review-Ergebnis sichern
+
+Das bestehende Architect-Review war PASS.
+
+Prüfe nur noch, ob die danach vorgenommenen zwei Polish-Änderungen und die Testkorrekturen den Scope wesentlich verändert haben.
+
+Falls nein:
+
+- kein unnötiges Vollreview wiederholen
+- den bestehenden PASS mit den danach erneut bestandenen Tests dokumentieren
+
+Falls doch:
+
+- nur den kleinen nachgelagerten Diff gezielt reviewen
+
+8. Commit vorbereiten
+
+Erstelle einen Commit mit:
+
+feat: add bank and investor report for multi-year P&L
+
+Vor dem Commit bestätigen:
+
+- replit.md final
+- keine Session-Pläne mehr vorhanden
+- keine temporären Dateien
+- alle neuen Dateien getrackt
+- 31 neue Tests grün
+- 84 Nachbartests grün
+- Typegate sauber
+- Runtime ohne Fehler
+- Architect-Review PASS
+
+9. Commit ausführen
+
+Führe den Commit tatsächlich aus.
+
+Danach gib eine Abschlusszusammenfassung aus mit:
+
+- Commit-Hash
+- Commit-Message
+- Liste der geänderten und neuen Dateien
+- 31 neue Tests erfolgreich
+- 84 Nachbartests erfolgreich
+- Gesamtsumme 115 relevante Tests
+- Typecheck-Ergebnis
+- Build-Ergebnis
+- Runtime-Ergebnis
+- PDF-Sanity-Check
+- Architect-Review PASS
+- verbleibende bekannte Einschränkungen
+
+Wichtig:
+
+Keine neue Funktion mehr entwickeln.
+
+Keine bestehenden funktionierenden Bereiche umbauen.
+
+Keine fremden Altänderungen zurücksetzen.
+
+Nur sauber abschliessen, committen und den verifizierten Stand dokumentieren.

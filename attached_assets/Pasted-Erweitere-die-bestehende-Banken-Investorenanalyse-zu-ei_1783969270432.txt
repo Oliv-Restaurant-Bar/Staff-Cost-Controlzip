@@ -1,0 +1,630 @@
+Erweitere die bestehende Banken-/Investorenanalyse zu einer professionellen Management-Reporting-Lösung.
+
+Wichtig:
+
+Die bestehende Architektur, Datenmodelle und Analysefunktionen bleiben erhalten.
+
+Es soll keine zweite Reporting-Lösung entstehen.
+
+Alle neuen Ansichten müssen dieselben zentral berechneten Analysedaten verwenden wie:
+
+- Erfolgsrechnung
+- Banken-/Investorenmodus
+- PDF
+- Excel
+
+Keine Parallelberechnungen.
+
+--------------------------------------------------------
+PHASE 2 – MANAGEMENT REPORTING
+--------------------------------------------------------
+
+## 1. Mehrjahresvergleich
+
+Erweitere den Vergleich.
+
+Nicht mehr nur:
+
+2024 ↔ 2025
+
+sondern automatisch:
+
+• alle importierten Geschäftsjahre
+• beliebig viele Jahre
+
+Beispiele:
+
+2023
+2024
+2025
+2026
+
+Neue Auswahl:
+
+○ Zwei Jahre
+○ Drei Jahre
+○ Alle Jahre
+
+Standard:
+
+letzte zwei vorhandenen Jahre.
+
+Sortierung:
+
+chronologisch.
+
+Fehlende Jahre dürfen keine Lückenfehler verursachen.
+
+--------------------------------------------------------
+
+## 2. Executive Summary
+
+Neue erste Seite im Management Report.
+
+Sie muss für Banken und Investoren innerhalb von 30 Sekunden verständlich sein.
+
+Oben:
+
+Geschäft
+Zeitraum
+Importstand
+
+Danach grosse Executive-KPI-Karten:
+
+• Umsatz
+• Umsatzwachstum
+• Bruttogewinn
+• Bruttomarge
+• Warenquote
+• Personalquote
+• EBITDA
+• EBIT
+• EBIT-Marge
+
+Zusätzlich:
+
+Gesamttrend:
+
+🟢 positiv
+
+🟡 stabil
+
+🔴 kritisch
+
+Die Bewertung erfolgt ausschliesslich anhand definierter Regeln.
+
+Keine KI-Texte.
+
+--------------------------------------------------------
+
+## 3. Management Scorecard
+
+Neue kompakte Tabelle.
+
+Zeilen:
+
+Umsatz
+
+Bruttogewinn
+
+Warenaufwand
+
+Personalaufwand
+
+EBITDA
+
+EBIT
+
+Jahresgewinn
+
+Spalten:
+
+2023
+
+2024
+
+2025
+
+Diff
+
+Diff %
+
+Trend
+
+Quote
+
+Ampel
+
+Alle Trends automatisch berechnen.
+
+--------------------------------------------------------
+
+## 4. Waterfall Chart
+
+Neue Visualisierung.
+
+Darstellung:
+
+Umsatz
+
+↓
+
+Warenaufwand
+
+↓
+
+Bruttogewinn
+
+↓
+
+Personalaufwand
+
+↓
+
+Deckungsbeitrag
+
+↓
+
+übriger Aufwand
+
+↓
+
+EBITDA
+
+↓
+
+Abschreibungen
+
+↓
+
+EBIT
+
+↓
+
+Jahresgewinn
+
+Farblogik:
+
+Ertrag positiv
+
+Kosten negativ
+
+Zwischentotale hervorgehoben.
+
+Diagramm nutzt vorhandene Chartbibliothek.
+
+Keine neue Library.
+
+--------------------------------------------------------
+
+## 5. EBIT-Treiberanalyse
+
+Neue Analyse:
+
+"Warum hat sich das Betriebsergebnis verändert?"
+
+Darstellung:
+
+EBIT Veränderung
+
+=
+
++ Umsatzentwicklung
+
+− Warenkosten
+
+− Personalkosten
+
+− übrige Kosten
+
+± Abschreibungen
+
+= EBIT
+
+Alle Werte absolut.
+
+Darunter:
+
+Prozentuale Auswirkungen.
+
+Keine Schätzungen.
+
+--------------------------------------------------------
+
+## 6. Kennzahlenhistorie
+
+Neue Diagramme:
+
+• Umsatz
+
+• Warenquote
+
+• Personalquote
+
+• Bruttomarge
+
+• EBIT
+
+• EBIT-Marge
+
+über alle vorhandenen Jahre.
+
+Diagramme:
+
+ruhig
+
+klar
+
+einheitlich
+
+keine Animationen.
+
+--------------------------------------------------------
+
+## 7. Benchmark
+
+Neue Zielbereiche.
+
+Standardwerte:
+
+Warenquote
+
+<30 %
+
+Personalquote
+
+<35 %
+
+EBITDA
+
+>15 %
+
+EBIT
+
+>10 %
+
+Bruttomarge
+
+>70 %
+
+Diese Zielwerte zentral konfigurierbar.
+
+Anzeige:
+
+Ist
+
+Ziel
+
+Abweichung
+
+Ampel
+
+--------------------------------------------------------
+
+## 8. Heatmap
+
+Neue Monatsübersicht.
+
+Zeilen:
+
+Jahre
+
+Spalten:
+
+Jan–Dez
+
+Farben:
+
+deutlich über Durchschnitt
+
+leicht über Durchschnitt
+
+Durchschnitt
+
+unter Durchschnitt
+
+stark unter Durchschnitt
+
+Umschaltbar zwischen:
+
+Umsatz
+
+EBIT
+
+Warenquote
+
+Personalquote
+
+--------------------------------------------------------
+
+## 9. Kernaussagen erweitern
+
+Bisher maximal fünf Aussagen.
+
+Erweitere auf zwei Bereiche.
+
+Positive Entwicklungen
+
+Verbesserungspotenziale
+
+Maximal:
+
+5 + 5 Aussagen.
+
+Nur regelbasiert.
+
+Keine KI.
+
+--------------------------------------------------------
+
+## 10. Investor Timeline
+
+Neue kleine Übersicht:
+
+Importierte Geschäftsjahre
+
+mit:
+
+Umsatz
+
+EBIT
+
+Status
+
+Vollständigkeit
+
+Importdatum
+
+Dadurch sieht ein Investor sofort, welche Jahre vollständig vorhanden sind.
+
+--------------------------------------------------------
+
+## 11. PDF erweitern
+
+Neue Reihenfolge:
+
+1 Executive Summary
+
+2 KPI
+
+3 Mehrjahresvergleich
+
+4 Umsatzentwicklung
+
+5 Waterfall
+
+6 EBIT-Treiber
+
+7 Warenkosten
+
+8 Personalkosten
+
+9 Heatmap
+
+10 Scorecard
+
+11 Kernaussagen
+
+12 Datenqualität
+
+Professionelles Layout.
+
+Keine abgeschnittenen Tabellen.
+
+--------------------------------------------------------
+
+## 12. Excel erweitern
+
+Neue Arbeitsblätter:
+
+Executive Summary
+
+Mehrjahresvergleich
+
+Waterfall
+
+Treiberanalyse
+
+Benchmark
+
+Heatmap
+
+Historie
+
+Alle Werte als echte Zahlen.
+
+--------------------------------------------------------
+
+## 13. Drilldown
+
+Jede KPI-Karte öffnet einen Dialog.
+
+Beispiele:
+
+Umsatz
+
+↓
+
+Monate
+
+↓
+
+Tage
+
+↓
+
+Konten
+
+↓
+
+Buchungen
+
+Personalkosten
+
+↓
+
+Monate
+
+↓
+
+Kostenarten
+
+↓
+
+Konten
+
+Warenkosten
+
+↓
+
+Monate
+
+↓
+
+Konten
+
+↓
+
+Lieferanten
+
+Nur bereits vorhandene Daten verwenden.
+
+Keine zusätzlichen Datenbanktabellen.
+
+--------------------------------------------------------
+
+## 14. Performance
+
+Alle Kennzahlen einmal zentral berechnen.
+
+Alle Komponenten:
+
+Management Report
+
+PDF
+
+Excel
+
+Charts
+
+Executive Summary
+
+verwenden dieselben Memo-Daten.
+
+Keine doppelten Berechnungen.
+
+--------------------------------------------------------
+
+## 15. Tests
+
+Ergänze Regressionstests für:
+
+• Mehrjahresvergleich
+
+• Waterfall
+
+• EBIT-Treiber
+
+• Heatmap
+
+• Benchmark
+
+• KPI-Scorecard
+
+• Drilldown
+
+• PDF
+
+• Excel
+
+• Performance der Memoisierung
+
+• mehrere Geschäftsjahre
+
+• fehlende Jahre
+
+• Basiswert 0
+
+• keine NaN
+
+• keine Infinity
+
+--------------------------------------------------------
+
+## 16. Design
+
+Die komplette Banken-/Investorenanalyse muss aussehen wie aus einem Guss.
+
+Vorgaben:
+
+• schlicht
+
+• modern
+
+• hochwertig
+
+• viel Weissraum nur dort, wo sinnvoll
+
+• keine riesigen KPI-Karten
+
+• kompakte Tabellen
+
+• konsistente Farben
+
+• einheitliche Rundungen
+
+• gleiche Typografie wie bestehende Controlling-Seiten
+
+• Desktop zuerst optimieren
+
+• mobile Ansicht nicht verschlechtern
+
+Die Ansicht soll hochwertig genug sein, um sie direkt einer Bank, einem Investor oder einem Verwaltungsrat zu präsentieren.
+
+--------------------------------------------------------
+
+## 17. Verifikation
+
+Nach Abschluss:
+
+• TypeScript
+
+• Build
+
+• relevante Tests
+
+• PDF erzeugen
+
+• Excel erzeugen
+
+• Mehrjahresvergleich prüfen
+
+• Waterfall prüfen
+
+• Executive Summary prüfen
+
+• Heatmap prüfen
+
+• Drilldowns prüfen
+
+• Performance prüfen
+
+• Architect-Review ausschliesslich über den tatsächlichen Task-Diff durchführen.
+
+--------------------------------------------------------
+
+## 18. Dokumentation
+
+Aktualisiere replit.md ausschliesslich mit tatsächlich implementiertem Verhalten.
+
+Keine geplanten Funktionen dokumentieren.
+
+Nur umgesetzte Erweiterungen aufnehmen.
+
+Wichtig:
+
+Vor jeder Implementierung zuerst die bestehende Architektur analysieren und wiederverwenden.
+
+Nicht mehrere Reporting-Systeme aufbauen.
+
+Alle neuen Funktionen müssen auf derselben zentralen Erfolgsrechnungs-Analyse aufbauen.
