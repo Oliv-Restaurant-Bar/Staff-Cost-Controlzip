@@ -34,6 +34,10 @@ import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHoursEntry, type DayDetailEntry } from '@/lib/overtime-analysis';
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
 import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
+import { ControllingDrilldownDialog, type DrilldownFocus } from '@/components/personal-fix/ControllingDrilldownDialog';
+import type {
+  DrilldownInput, DrilldownDayValue, DrilldownAbsenceDay,
+} from '@/lib/personal-controlling-drilldown';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -44,7 +48,7 @@ import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
-import { SICK_CODES, ACCIDENT_CODES } from '@/lib/absence-utils';
+import { SICK_CODES, ACCIDENT_CODES, VACATION_CODES } from '@/lib/absence-utils';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -113,7 +117,7 @@ const fmtQuote = (p: number | null) => (p !== null ? `${p.toFixed(1)} %` : '—'
  * hier findet KEINE Berechnung statt.
  */
 function ControllingBlock({
-  testid, title, info, pill, footer, colLeft, colRight, colDiff, chf, pct,
+  testid, title, info, pill, footer, colLeft, colRight, colDiff, chf, pct, onClick,
 }: {
   testid: string;
   title: string;
@@ -125,9 +129,21 @@ function ControllingBlock({
   colDiff: string;
   chf: { left: string; right: string; diff: string; tone: ComparisonTone };
   pct: { left: string; right: string; diff: string; tone: ComparisonTone };
+  /** Optional: öffnet den Personalcontrolling-Drilldown (ganze Kachel klickbar). */
+  onClick?: () => void;
 }) {
   return (
-    <div data-testid={testid} className="rounded-md border border-border bg-card p-2.5 space-y-2">
+    <div
+      data-testid={testid}
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      className={cn(
+        'rounded-md border border-border bg-card p-2.5 space-y-2',
+        onClick && 'cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30',
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2156,6 +2172,8 @@ export default function PersonalFixPage() {
 
   // ── Flex-Breakdown-Popup ──────────────────────────────────────────────────
   const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
+  // Personalcontrolling-Drilldown (Ursachenanalyse) — null = geschlossen
+  const [drilldownFocus, setDrilldownFocus] = useState<DrilldownFocus | null>(null);
   const [abwMode,   setAbwMode]   = useState<AbwMode>('week');
   const [forecastViewMode, setForecastViewMode] = useState<'actual' | 'forecast'>('actual');
   const [dayDetailModal, setDayDetailModal] = useState<AbwDay | null>(null);
@@ -3198,6 +3216,83 @@ export default function PersonalFixPage() {
     cutoffDay: proRataDay,
   }), [pfix.active.istTotal, effectiveRevenue, revenueIsAssumed, revenueLabel, selectedYear, selectedMonth, proRataDay]);
 
+  // ── Drilldown-Daten (Ursachenanalyse) ─────────────────────────────────────
+  // Nur bei geöffnetem Dialog aufgebaut (gated memo). Nutzt dieselben Loader
+  // wie pfix/FlexBreakdownModal (localStorage + bereits geladene Supabase-
+  // Daten) — KEINE neuen DB-Abfragen, reine Ableitung aus geladenen Daten.
+  const drilldownInput = useMemo<DrilldownInput | null>(() => {
+    if (!drilldownFocus) return null;
+    void scheduleRefreshTick; // localStorage-Reread bei Dienstplan-Änderung
+    const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const planDays: DrilldownDayValue[] = [];
+    const istDays: DrilldownDayValue[] = [];
+    const zusatzPlanDays: DrilldownDayValue[] = [];
+    const zusatzIstDays: DrilldownDayValue[] = [];
+    for (const emp of variableEmployees) {
+      const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
+      if (!wage) continue;
+      for (const r of loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey))
+        planDays.push({ empId: emp.id, date: r.date, hours: r.hours, cost: r.cost });
+      for (const r of loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey))
+        istDays.push({ empId: emp.id, date: r.date, hours: r.hours, cost: r.cost });
+    }
+    for (const emp of fixedEmployees) {
+      const wage = getEffectiveHourlyRate(emp, socialCostRates);
+      if (!wage) continue;
+      for (const r of loadZusatzPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey))
+        zusatzPlanDays.push({ empId: emp.id, date: r.date, hours: r.hours, cost: r.cost });
+      for (const r of loadZusatzIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey))
+        zusatzIstDays.push({ empId: emp.id, date: r.date, hours: r.hours, cost: r.cost });
+    }
+    const absences: DrilldownAbsenceDay[] = [];
+    for (const [cellKey, entry] of Object.entries(supabaseActualHours)) {
+      const date = cellKey.slice(-10);
+      if (!date.startsWith(prefix)) continue;
+      if (!entry.absenceType) continue;
+      absences.push({ empId: cellKey.slice(0, cellKey.length - 11), date, type: entry.absenceType });
+    }
+    const dailyRevenue: Record<string, number> = {};
+    for (const [date, val] of Object.entries(monthlyRevenues)) {
+      if (!date.startsWith(prefix)) continue;
+      const net = grossToNet(val.actualRevenue ?? 0, maisonExclude ? 0 : (val.takeawayRevenue ?? 0));
+      if (net > 0) dailyRevenue[date] = net;
+    }
+    // Letzter Tag mit erwartbar vollständigen Ist-Daten: Vergangenheits-Monat =
+    // Monatslänge, laufender Monat = gestern, Zukunftsmonat = 0.
+    const dim = new Date(selectedYear, selectedMonth, 0).getDate();
+    const now = new Date();
+    const cy = now.getFullYear();
+    const cm = now.getMonth() + 1;
+    const lastCompletedDay =
+      selectedYear < cy || (selectedYear === cy && selectedMonth < cm) ? dim
+      : selectedYear === cy && selectedMonth === cm ? Math.max(0, now.getDate() - 1)
+      : 0;
+    const employees: DrilldownInput['employees'] = [
+      ...variableEmployees.map(e => ({
+        id: e.id, name: e.name, department: e.department ?? '',
+        position: e.primaryStation ?? null, isFixed: false,
+      })),
+      ...fixedEmployees.map(e => ({
+        id: e.id, name: e.name, department: e.department ?? '',
+        position: e.primaryStation ?? null, isFixed: true,
+      })),
+    ];
+    return {
+      year: selectedYear, month: selectedMonth, cutoffDay: proRataDay, lastCompletedDay,
+      employees, planDays, istDays, zusatzPlanDays, zusatzIstDays, absences,
+      // Überstunden liegen nur monatlich pro MA vor (keine Tageszuordnung) —
+      // der Dialog zeigt sie als Monats-Hinweiszeile statt als Tages-Ursache.
+      overtimeDayKeys: [],
+      // Absenz-Codes aus der SSOT (absence-utils) — nie hier hartcodieren
+      vacationCodes: [...VACATION_CODES],
+      sickCodes: [...SICK_CODES],
+      accidentCodes: [...ACCIDENT_CODES],
+      dailyRevenue, fixMonthCHF: pfix.active.fix,
+    };
+  }, [drilldownFocus, variableEmployees, fixedEmployees, selectedYear, selectedMonth,
+      proRataDay, tenantKey, socialCostRates, supabaseActualHours, monthlyRevenues,
+      maisonExclude, pfix.active.fix, scheduleRefreshTick]);
+
   // Die drei fachlich unterschiedlichen „Flex Ist"-Grössen aus denselben Bausteinen
   // (Single Source of Truth für die Abstimmung; nur ganzer Monat, s. Reconciliation-Block).
   const flexScopes = useMemo(() => computeFlexScopes({
@@ -4037,12 +4132,14 @@ export default function PersonalFixPage() {
               tone={personnelBudget > 0
                 ? (pfix.active.istTotal <= personnelBudget * (proRataDay !== null ? proRataFactor : 1) ? 'good' : 'critical')
                 : 'neutral'}
+              onClick={() => setDrilldownFocus('ist')}
             />
             <DsKpiCard
               label="Total Budget"
               value={fmtCHF(pfix.active.planTotal)}
               sub="FIX + Flex (Budget)"
               tone="info"
+              onClick={() => setDrilldownFocus('budget')}
             />
             <DsKpiCard
               label="Abweichung Ist − Budget"
@@ -4054,6 +4151,7 @@ export default function PersonalFixPage() {
                 tone: budgetVsIst.tone,
                 label: 'Ist − Budget',
               }}
+              onClick={() => setDrilldownFocus('abweichung')}
             />
             <DsKpiCard
               label="PKQ Ist"
@@ -4089,6 +4187,7 @@ export default function PersonalFixPage() {
               tone={pkqIst !== null && pkqPlan !== null
                 ? (pkqIst > pkqPlan + 1 ? 'critical' : pkqIst < pkqPlan - 1 ? 'good' : 'neutral')
                 : 'neutral'}
+              onClick={() => setDrilldownFocus('quote')}
             />
           </KpiGrid>
 
@@ -4128,6 +4227,7 @@ export default function PersonalFixPage() {
                   colLeft="Budget"
                   colRight="Ist App"
                   colDiff="Ist − Budget"
+                  onClick={() => setDrilldownFocus('abweichung')}
                   pill={
                     <StatusPill tone={budgetVsIst.tone} size="xs">
                       {budgetDeltaText(budgetVsIst.diffCHF)}
@@ -4155,6 +4255,7 @@ export default function PersonalFixPage() {
                     colLeft="Ist App"
                     colRight="Ist ER"
                     colDiff="App − ER"
+                    onClick={() => setDrilldownFocus('er')}
                     info={
                       <InfoTip
                         side="top"
@@ -6053,6 +6154,33 @@ export default function PersonalFixPage() {
         onClose={() => setFlexPeriodPopup(null)}
       />
       <FlexBreakdownModal target={breakdown} onClose={() => setBreakdown(null)} />
+
+      {/* ── Personalcontrolling-Drilldown (Ursachenanalyse) ───────────────── */}
+      {drilldownFocus && drilldownInput && (
+        <ControllingDrilldownDialog
+          focus={drilldownFocus}
+          onClose={() => setDrilldownFocus(null)}
+          monthLabel={getMonthLabel(selectedYear, selectedMonth)}
+          cutoffDay={proRataDay}
+          input={drilldownInput}
+          bridge={{
+            fixCHF: pfix.active.fix,
+            varArbeitPlanCHF: pfix.active.planWork,
+            varArbeitIstCHF: pfix.active.istWork,
+            ferienPlanCHF: pfix.active.planHoliday,
+            ferienIstCHF: pfix.active.istHoliday,
+            planTotalCHF: pfix.active.planTotal,
+            istTotalCHF: pfix.active.istTotal,
+          }}
+          pkqIst={pkqIst}
+          pkqBudget={pkqPlan}
+          effectiveRevenue={effectiveRevenue}
+          revenueIsAssumed={revenueIsAssumed}
+          manualVarHours={varView === 'manual'}
+          overtimeCostCHF={overtimeAnalysis.totalOvertimeCost}
+          er={erVergleich}
+        />
+      )}
 
       {/* ── KW-Detail-Popup (Fix + Flex pro Woche) ───────────────────────── */}
       {weekDetailTarget && (() => {

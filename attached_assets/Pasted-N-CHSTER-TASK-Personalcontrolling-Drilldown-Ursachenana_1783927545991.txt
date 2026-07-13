@@ -1,0 +1,87 @@
+NÄCHSTER TASK – Personalcontrolling (Drilldown & Ursachenanalyse)
+
+Ziel:
+Die neue Personalcontrolling-Sektion soll nicht nur Abweichungen anzeigen, sondern dem Benutzer sofort erklären, WARUM eine Abweichung entstanden ist. Der Benutzer soll ohne Suchen erkennen können, welche Tage, Positionen und Mitarbeitenden die Differenz verursachen.
+
+Umsetzung:
+
+1. Personalcontrolling-Karten klickbar machen.
+   Jede KPI (Personalaufwand, Umsatz pro Personalstunde, Personalquote, Stunden, Budgetabweichung usw.) öffnet einen Detaildialog.
+
+2. Im Detaildialog anzeigen:
+
+   • Zusammenfassung oben mit den wichtigsten Kennzahlen.
+   • Tabelle nach Tagen.
+   • Möglichkeit nach Position zu gruppieren.
+   • Möglichkeit nach Mitarbeitenden zu gruppieren.
+   • Möglichkeit zwischen Tag / Woche / Monat umzuschalten.
+
+3. Für jede Abweichung die Ursache berechnen und visualisieren:
+
+   Beispiele:
+   • Zu viele geplante Stunden
+   • Zu wenig Umsatz
+   • Überstunden
+   • Zusätzliche Mitarbeitende
+   • Hohe Krankheitsvertretungen
+   • Ferien
+   • Fehlende Stempelungen
+   • Manuelle Anpassungen
+
+4. Abweichungen farblich priorisieren:
+
+   Rot:
+   Kritische Abweichungen mit grossem Einfluss.
+
+   Orange:
+   Beobachten.
+
+   Grün:
+   Im Zielbereich.
+
+5. Jede Zeile erhält eine Erklärung.
+
+   Beispiel:
+
+   "Personalquote +3.2 %, hauptsächlich verursacht durch Mittwoch und Donnerstag."
+
+   oder
+
+   "Service +18 Stunden gegenüber Soll."
+
+6. Tabellen modernisieren:
+
+   • Sticky Header
+   • Sortierung
+   • Filter
+   • Suche
+   • Export
+   • Responsive
+   • Einheitliche Abstände wie im übrigen Controlling
+
+7. Performance:
+
+   Keine zusätzlichen Datenbankabfragen.
+   Alle Berechnungen aus den bereits geladenen Daten ableiten.
+   Memoisierung beibehalten.
+   Keine doppelte Berechnung.
+
+8. Dokumentation:
+
+   replit.md aktualisieren.
+
+9. Qualität:
+
+   Alle betroffenen Tests anpassen oder ergänzen.
+   TypeScript clean.
+   Architect Review durchführen.
+
+WICHTIGES DESIGN:
+
+• Gleiche Designsprache wie im gesamten Controlling.
+• Schlicht, modern und hochwertig.
+• Keine Platzverschwendung.
+• Die wichtigsten Kennzahlen müssen sofort sichtbar sein.
+• Drilldowns erst auf Klick öffnen.
+• Mobile und Desktop sauber unterstützen.
+• Konsistente Farben, Icons, Abstände und Typografie mit allen übrigen Modulen.

@@ -1,0 +1,491 @@
+/**
+ * Personalcontrolling-Drilldown-Dialog (Personal FIX).
+ *
+ * Zeigt die Ursachenanalyse zum Flex-Personalaufwand mit Tagesgranularität:
+ * Gruppierung Tage / Positionen / Mitarbeitende, Periode Tag / Woche / Monat,
+ * Suche, Sortierung, Ursachen-Pills, Erklärungssätze und CSV-Export.
+ *
+ * Abstimmungs-Prinzip (SSOT): die Tabelle deckt NUR variable Arbeit + Zusatz-
+ * kosten ab (einzige Ebene mit Tagesdaten). Fixlöhne + Ferienabbau werden als
+ * Monatslinien aus `bridge` (= pfix.active, von der Seite durchgereicht — hier
+ * NIE neu berechnet) zur Brücke auf das Total ergänzt.
+ * Fokus 'er' rendert stattdessen die monatliche Überleitung App ↔ Erfolgsrechnung.
+ */
+import { useMemo, useState } from 'react';
+import { Download, Search } from 'lucide-react';
+
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
+import { StatusPill } from '@/components/ui/status-pill';
+import { HintBox } from '@/components/ui/hint-box';
+import { InfoTip } from '@/components/ui/info-tip';
+import { TONE_TEXT } from '@/components/ui/tones';
+import { TABLE, TH, TH_NUM, TD, TD_NUM } from '@/components/ui/table-style';
+import { cn } from '@/lib/utils';
+import {
+  buildFactCells,
+  buildDrilldownRows,
+  buildDrilldownCsv,
+  buildMainCauseSentence,
+  summarizeDrilldownCells,
+  DRILLDOWN_CAUSE_LABEL,
+  type DrilldownInput,
+  type DrilldownGroup,
+  type DrilldownPeriod,
+  type DrilldownRow,
+} from '@/lib/personal-controlling-drilldown';
+import {
+  fmtChfWhole,
+  type ComparisonTone,
+  type ErfolgsrechnungVergleich,
+} from '@/lib/personal-fix-reconciliation';
+
+// ── Typen ────────────────────────────────────────────────────────────────────
+
+export type DrilldownFocus = 'ist' | 'budget' | 'abweichung' | 'quote' | 'er';
+
+/** Monatswerte aus pfix.active — SSOT der Seite, hier nur angezeigt. */
+export interface DrilldownBridge {
+  fixCHF: number;
+  varArbeitPlanCHF: number;
+  varArbeitIstCHF: number;
+  ferienPlanCHF: number;
+  ferienIstCHF: number;
+  planTotalCHF: number;
+  istTotalCHF: number;
+}
+
+export interface ControllingDrilldownDialogProps {
+  focus: DrilldownFocus;
+  onClose: () => void;
+  monthLabel: string;
+  cutoffDay: number | null;
+  input: DrilldownInput;
+  bridge: DrilldownBridge;
+  pkqIst: number | null;
+  pkqBudget: number | null;
+  effectiveRevenue: number;
+  revenueIsAssumed: boolean;
+  /** true = manuelle variable Stunden (varHours) aktiv → Tagesdaten ≠ KPI-Basis. */
+  manualVarHours: boolean;
+  /** Überstundenkosten des Monats (separat ausgewiesen, nicht im Flex-Total). */
+  overtimeCostCHF: number;
+  er: ErfolgsrechnungVergleich;
+}
+
+const FOCUS_TITLE: Record<DrilldownFocus, string> = {
+  ist:        'Drilldown: Personalaufwand Ist',
+  budget:     'Drilldown: Budget vs. Ist',
+  abweichung: 'Drilldown: Abweichung Ist − Budget',
+  quote:      'Drilldown: Personalquote',
+  er:         'Überleitung: App vs. Erfolgsrechnung',
+};
+
+const GROUP_LABEL: Record<DrilldownGroup, string> = {
+  day: 'Tage', employee: 'Mitarbeitende', position: 'Positionen',
+};
+const PERIOD_LABEL: Record<DrilldownPeriod, string> = {
+  day: 'Tag', week: 'Woche', month: 'Monat',
+};
+
+type SortCol = 'label' | 'planH' | 'istH' | 'diffH' | 'planCHF' | 'istCHF' | 'diffCHF' | 'revenue' | 'pkqPct';
+
+const fmtH = (n: number) =>
+  n.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const signH = (n: number) => `${n >= 0 ? '+' : '−'}${fmtH(Math.abs(n))}`;
+// fmtChfWhole liefert "CHF 1'234" mit geschütztem Leerzeichen (de-CH) — Präfix via Regex entfernen
+const chfNumber = (n: number) => fmtChfWhole(n).replace(/CHF\s*/u, '');
+const signChf = (n: number) => `${n >= 0 ? '+' : '−'}${chfNumber(Math.abs(n))}`;
+
+function ToggleGroup<T extends string>({ value, options, labels, onChange, testidPrefix }: {
+  value: T; options: T[]; labels: Record<T, string>; onChange: (v: T) => void; testidPrefix: string;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-border p-0.5">
+      {options.map(o => (
+        <button
+          key={o}
+          type="button"
+          data-testid={`${testidPrefix}-${o}`}
+          onClick={() => onChange(o)}
+          className={cn(
+            'rounded px-2 py-1 text-xs transition-colors',
+            o === value ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {labels[o]}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Hauptkomponente ──────────────────────────────────────────────────────────
+
+export function ControllingDrilldownDialog(props: ControllingDrilldownDialogProps) {
+  const { focus, onClose, monthLabel, cutoffDay, input, bridge } = props;
+
+  const [group, setGroup] = useState<DrilldownGroup>('day');
+  const [period, setPeriod] = useState<DrilldownPeriod>('day');
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<{ col: SortCol; dir: 1 | -1 } | null>(null);
+
+  const cells = useMemo(() => buildFactCells(input), [input]);
+  const totals = useMemo(() => summarizeDrilldownCells(cells, input), [cells, input]);
+  const rows = useMemo(
+    () => buildDrilldownRows(input, cells, { group, period }),
+    [input, cells, group, period],
+  );
+  /** Hauptursachen-Satz immer auf Tagesbasis (unabhängig von der aktuellen Gruppierung). */
+  const daySentence = useMemo(() => {
+    const dayRows = group === 'day' && period === 'day'
+      ? rows
+      : buildDrilldownRows(input, cells, { group: 'day', period: 'day' });
+    return buildMainCauseSentence(dayRows);
+  }, [input, cells, rows, group, period]);
+
+  const visibleRows = useMemo(() => {
+    let out = rows;
+    const q = search.trim().toLowerCase();
+    if (q) {
+      out = out.filter(r =>
+        r.label.toLowerCase().includes(q)
+        || (r.sublabel ?? '').toLowerCase().includes(q)
+        || r.explanation.toLowerCase().includes(q)
+        || r.causes.some(c => DRILLDOWN_CAUSE_LABEL[c.cause].toLowerCase().includes(q)));
+    }
+    if (sort) {
+      out = [...out].sort((a, b) => {
+        if (sort.col === 'label') return sort.dir * a.label.localeCompare(b.label, 'de-CH');
+        const av = a[sort.col] ?? Number.NEGATIVE_INFINITY;
+        const bv = b[sort.col] ?? Number.NEGATIVE_INFINITY;
+        return sort.dir * ((av as number) - (bv as number));
+      });
+    }
+    return out;
+  }, [rows, search, sort]);
+
+  const toggleSort = (col: SortCol) =>
+    setSort(prev => (prev?.col === col ? (prev.dir === 1 ? { col, dir: -1 } : null) : { col, dir: 1 }));
+  const sortMark = (col: SortCol) => (sort?.col === col ? (sort.dir === 1 ? ' ↑' : ' ↓') : '');
+
+  const isTimeGroup = group === 'day';
+  const groupHeader = isTimeGroup ? (period === 'day' ? 'Tag' : period === 'week' ? 'Woche' : 'Monat') : GROUP_LABEL[group];
+
+  const handleExport = () => {
+    const csv = buildDrilldownCsv(visibleRows, groupHeader);
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `personalcontrolling-drilldown-${input.year}-${String(input.month).padStart(2, '0')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const cutoffSuffix = cutoffDay !== null ? ` (bis ${cutoffDay}.)` : '';
+  const diffFlexCHF = totals.diffCHF;
+  const diffTotalCHF = bridge.istTotalCHF - bridge.planTotalCHF;
+  const kpiTone: ComparisonTone = diffTotalCHF > 0 ? (diffTotalCHF > 500 ? 'critical' : 'warn') : 'good';
+
+  // Abstimmungskontrolle: Tabellen-Summe (Ist) ↔ pfix-Flex-Ist. Bei manueller
+  // Stundenanpassung weicht das bewusst ab (Hinweisbox), sonst nur Rundung.
+  const reconDiff = Math.round((totals.istCHF - bridge.varArbeitIstCHF) * 100) / 100;
+  const reconOk = Math.abs(reconDiff) < 1;
+
+  return (
+    <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent
+        data-testid="pfix-dd-dialog"
+        aria-describedby={undefined}
+        className="w-[min(1100px,95vw)] max-w-none max-h-[88vh] overflow-y-auto"
+      >
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            {FOCUS_TITLE[focus]}
+            <span className="text-sm font-normal text-muted-foreground">
+              {monthLabel}{cutoffSuffix}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+
+        {focus === 'er' ? (
+          <ErBridgeView {...props} />
+        ) : (
+          <div className="space-y-4">
+            {(props.revenueIsAssumed || props.manualVarHours) && (
+              <div data-testid="pfix-dd-hint-manual">
+                <HintBox tone="warn" title="Manuelle Anpassung aktiv">
+                  {props.manualVarHours
+                    ? 'Die variablen Stunden sind manuell übersteuert — die Tagesdaten unten zeigen die Dienstplan-/Stempel-Basis, nicht die manuelle Eingabe. '
+                    : ''}
+                  {props.revenueIsAssumed
+                    ? 'Der Umsatz ist eine manuelle Annahme — Tagesquoten basieren auf den erfassten Tagesumsätzen.'
+                    : ''}
+                </HintBox>
+              </div>
+            )}
+
+            <div data-testid="pfix-dd-kpis">
+              <KpiGrid>
+                <KpiCard
+                  label="Flex-Aufwand Ist"
+                  value={fmtChfWhole(totals.istCHF)}
+                  sub={`Plan ${fmtChfWhole(totals.planCHF)} (variable Arbeit + Zusatz)`}
+                  tone={diffFlexCHF > 0 ? 'warn' : 'good'}
+                />
+                <KpiCard
+                  label="Abweichung Flex"
+                  value={`${signChf(diffFlexCHF)} CHF`}
+                  sub={`${signH(totals.diffH)} h gegenüber Soll`}
+                  tone={diffFlexCHF > 0 ? (diffFlexCHF > 500 ? 'critical' : 'warn') : 'good'}
+                />
+                <KpiCard
+                  label="Total Ist (inkl. FIX)"
+                  value={fmtChfWhole(bridge.istTotalCHF)}
+                  sub={`Budget ${fmtChfWhole(bridge.planTotalCHF)} · ${signChf(diffTotalCHF)} CHF`}
+                  tone={kpiTone}
+                />
+                <KpiCard
+                  label="Personalquote Ist"
+                  value={props.pkqIst !== null ? `${props.pkqIst.toFixed(1)} %` : '—'}
+                  sub={props.pkqBudget !== null ? `Budget ${props.pkqBudget.toFixed(1)} %` : 'Kein Umsatz erfasst'}
+                  tone={props.pkqIst !== null && props.pkqBudget !== null
+                    ? (props.pkqIst > props.pkqBudget + 1 ? 'critical' : props.pkqIst < props.pkqBudget - 1 ? 'good' : 'neutral')
+                    : 'neutral'}
+                />
+              </KpiGrid>
+            </div>
+
+            {daySentence && (
+              <p data-testid="pfix-dd-sentence" className="text-sm text-muted-foreground">
+                {daySentence}
+              </p>
+            )}
+
+            {/* Toolbar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <ToggleGroup
+                value={group}
+                options={['day', 'position', 'employee'] as DrilldownGroup[]}
+                labels={GROUP_LABEL}
+                onChange={g => { setGroup(g); setSort(null); }}
+                testidPrefix="pfix-dd-group"
+              />
+              {isTimeGroup && (
+                <ToggleGroup
+                  value={period}
+                  options={['day', 'week', 'month'] as DrilldownPeriod[]}
+                  labels={PERIOD_LABEL}
+                  onChange={p => { setPeriod(p); setSort(null); }}
+                  testidPrefix="pfix-dd-period"
+                />
+              )}
+              <div className="relative ml-auto">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  data-testid="pfix-dd-search"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Suchen (Name, Ursache …)"
+                  className="h-8 w-48 pl-7 text-xs"
+                />
+              </div>
+              <Button
+                data-testid="pfix-dd-export"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs"
+                onClick={handleExport}
+              >
+                <Download className="h-3.5 w-3.5" />
+                CSV
+              </Button>
+            </div>
+
+            {/* Tabelle */}
+            <div className="max-h-[45vh] overflow-auto rounded-md border border-border">
+              <table className={TABLE} data-testid="pfix-dd-table">
+                <thead className="sticky top-0 z-10 bg-muted">
+                  <tr>
+                    <th className={cn(TH, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('label')}>
+                      {groupHeader}{sortMark('label')}
+                    </th>
+                    <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('planH')}>Plan h{sortMark('planH')}</th>
+                    <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('istH')}>Ist h{sortMark('istH')}</th>
+                    <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('diffH')}>Diff h{sortMark('diffH')}</th>
+                    <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('planCHF')}>Plan CHF{sortMark('planCHF')}</th>
+                    <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('istCHF')}>Ist CHF{sortMark('istCHF')}</th>
+                    <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('diffCHF')}>Diff CHF{sortMark('diffCHF')}</th>
+                    {isTimeGroup && (
+                      <>
+                        <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('revenue')}>Umsatz{sortMark('revenue')}</th>
+                        <th className={cn(TH, TH_NUM, 'cursor-pointer select-none bg-muted')} onClick={() => toggleSort('pkqPct')}>
+                          <span className="inline-flex items-center gap-1">
+                            Quote %{sortMark('pkqPct')}
+                            <InfoTip side="top" text="Näherung: Flex-Ist des Tages + anteilige Fixkosten (gleichmässig pro Tag verteilt), geteilt durch den Netto-Tagesumsatz." />
+                          </span>
+                        </th>
+                      </>
+                    )}
+                    <th className={cn(TH, 'bg-muted')}>Ursachen</th>
+                    <th className={cn(TH, 'bg-muted')}>Erklärung</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRows.length === 0 && (
+                    <tr>
+                      <td className={cn(TD, 'text-muted-foreground')} colSpan={isTimeGroup ? 11 : 9}>
+                        Keine Zeilen — Suchfilter anpassen oder Daten importieren.
+                      </td>
+                    </tr>
+                  )}
+                  {visibleRows.map(r => (
+                    <tr key={r.key} data-testid={`pfix-dd-row-${r.key}`} className="border-t border-border/60">
+                      <td className={TD}>
+                        <span className="font-medium">{r.label}</span>
+                        {r.sublabel && <span className="ml-1.5 text-[11px] text-muted-foreground">{r.sublabel}</span>}
+                      </td>
+                      <td className={cn(TD, TD_NUM)}>{fmtH(r.planH)}</td>
+                      <td className={cn(TD, TD_NUM)}>{fmtH(r.istH)}</td>
+                      <td className={cn(TD, TD_NUM, r.diffH > 0 ? TONE_TEXT[r.tone] : undefined)}>{signH(r.diffH)}</td>
+                      <td className={cn(TD, TD_NUM)}>{chfNumber(r.planCHF)}</td>
+                      <td className={cn(TD, TD_NUM)}>{chfNumber(r.istCHF)}</td>
+                      <td className={cn(TD, TD_NUM, 'font-semibold', TONE_TEXT[r.tone])}>{signChf(r.diffCHF)}</td>
+                      {isTimeGroup && (
+                        <>
+                          <td className={cn(TD, TD_NUM)}>{r.revenue !== null ? chfNumber(r.revenue) : '—'}</td>
+                          <td className={cn(TD, TD_NUM)}>{r.pkqPct !== null ? `${r.pkqPct.toFixed(1)} %` : '—'}</td>
+                        </>
+                      )}
+                      <td className={TD}>
+                        <span className="flex flex-wrap gap-1">
+                          {r.causes.slice(0, 3).map(c => (
+                            <StatusPill
+                              key={c.cause}
+                              size="xs"
+                              tone={c.cause === 'fehlende_stempelung' || c.cause === 'ungeplant' ? 'critical'
+                                : c.cause === 'ferien' ? 'info'
+                                : c.cause === 'weniger_stunden' ? 'neutral'
+                                : 'warn'}
+                            >
+                              {DRILLDOWN_CAUSE_LABEL[c.cause]}{c.count > 1 ? ` ×${c.count}` : ''}
+                            </StatusPill>
+                          ))}
+                          {r.causes.length > 3 && (
+                            <span className="text-[11px] text-muted-foreground">+{r.causes.length - 3}</span>
+                          )}
+                        </span>
+                      </td>
+                      <td className={cn(TD, 'max-w-[260px] text-[11px] text-muted-foreground')}>{r.explanation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Abstimmungs-Brücke auf das Total (SSOT: pfix.active) */}
+            <div data-testid="pfix-dd-footer" className="rounded-md border border-border bg-muted/20 p-3 text-xs">
+              <p className="mb-1.5 font-semibold text-muted-foreground">
+                Brücke zum Total Personalaufwand{cutoffSuffix}
+                <InfoTip
+                  side="top"
+                  text="Nur variable Arbeit + Zusatzkosten haben Tagesdaten. Fixlöhne und Ferienabbau liegen monatlich vor und werden hier als Monatslinien ergänzt — die Werte stammen 1:1 aus der Personal-FIX-Berechnung."
+                />
+              </p>
+              <table className="w-full tabular-nums">
+                <tbody>
+                  <tr>
+                    <td className="py-0.5">Variable Arbeit + Zusatz (Tabelle)</td>
+                    <td className="py-0.5 text-right">{fmtChfWhole(bridge.varArbeitIstCHF)}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-0.5">Ferienabbau (Monatslinie)</td>
+                    <td className="py-0.5 text-right">{fmtChfWhole(bridge.ferienIstCHF)}</td>
+                  </tr>
+                  <tr>
+                    <td className="py-0.5">Personal FIX (Monatslinie)</td>
+                    <td className="py-0.5 text-right">{fmtChfWhole(bridge.fixCHF)}</td>
+                  </tr>
+                  <tr className="border-t border-border font-semibold">
+                    <td className="py-1">Total Personalaufwand Ist</td>
+                    <td className="py-1 text-right" data-testid="pfix-dd-footer-total">{fmtChfWhole(bridge.istTotalCHF)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              {!reconOk && !props.manualVarHours && (
+                <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400" data-testid="pfix-dd-recon-warn">
+                  Hinweis: Tabellen-Summe ({fmtChfWhole(totals.istCHF)}) weicht {signChf(reconDiff)} CHF von der
+                  Personal-FIX-Flexsumme ab (Rundung/Datenstand).
+                </p>
+              )}
+              {props.overtimeCostCHF > 0 && (
+                <p className="mt-1 text-[11px] text-muted-foreground" data-testid="pfix-dd-overtime-note">
+                  Überstundenkosten Festangestellte: {fmtChfWhole(props.overtimeCostCHF)} — separat ausgewiesen,
+                  nicht Teil des Flex-Totals (Monatssicht, keine Tageszuordnung).
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── ER-Überleitung (monatlich, keine Tagesdaten) ─────────────────────────────
+
+function ErBridgeView(props: ControllingDrilldownDialogProps) {
+  const { bridge, er } = props;
+  if (er.status !== 'ok') {
+    return (
+      <HintBox tone="info" title="Erfolgsrechnung fehlt">
+        Für diesen Monat ist kein Personalaufwand in der Erfolgsrechnung erfasst —
+        die Überleitung kann nicht angezeigt werden. Erfolgsrechnung importieren unter „Reporting".
+      </HintBox>
+    );
+  }
+  const rows: Array<{ label: string; value: number; sub?: string }> = [
+    { label: 'Personal FIX (Monatslöhne inkl. AG-Kosten)', value: bridge.fixCHF },
+    { label: 'Variable Arbeit + Zusatzkosten', value: bridge.varArbeitIstCHF },
+    { label: 'Ferienabbau', value: bridge.ferienIstCHF },
+  ];
+  return (
+    <div className="space-y-3" data-testid="pfix-dd-er-bridge">
+      <HintBox tone="info" title="Monatliche Kontrolle">
+        Die Erfolgsrechnung liegt nur monatlich vor — hier gibt es bewusst keine Tagesaufschlüsselung.
+        Verglichen wird der App-Ist-Personalaufwand mit „Löhne (Total)" + „Sozialleistungen" der FIBU.
+      </HintBox>
+      <table className="w-full text-sm tabular-nums">
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.label} className="border-t border-border/60">
+              <td className="py-1.5">{r.label}</td>
+              <td className="py-1.5 text-right">{fmtChfWhole(r.value)}</td>
+            </tr>
+          ))}
+          <tr className="border-t border-border font-semibold">
+            <td className="py-1.5">App: Total Personalaufwand Ist</td>
+            <td className="py-1.5 text-right">{fmtChfWhole(er.berechnetCHF)}</td>
+          </tr>
+          <tr className="border-t border-border/60">
+            <td className="py-1.5">Erfolgsrechnung: Löhne + Sozialleistungen</td>
+            <td className="py-1.5 text-right">{fmtChfWhole(er.fibuCHF)}</td>
+          </tr>
+          <tr className="border-t border-border font-semibold">
+            <td className="py-1.5">Differenz App − ER</td>
+            <td className={cn('py-1.5 text-right', TONE_TEXT[er.tone])} data-testid="pfix-dd-er-diff">
+              {signChf(er.diffCHF)} CHF
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="text-xs text-muted-foreground">
+        Typische Gründe für Differenzen: 13. Monatslohn-Abgrenzung, Sozialkosten-Sätze,
+        noch nicht verbuchte Löhne oder manuell angepasste Stunden in der App.
+      </p>
+    </div>
+  );
+}
