@@ -37,6 +37,7 @@ export const BANK_ROW_IDS = [
   'revenue_total',
   'net_revenue',
   'total_cogs_direct',
+  'total_cogs_uebrig',
   'total_cogs',
   'gross_profit_1',
   'total_personnel',
@@ -63,6 +64,7 @@ export const BANK_POSITION_ROWS: BankRowDef[] = [
   { id: 'revenue_total',      label: 'Umsatz (netto)',            semantics: 'revenue', emphasis: false },
   { id: 'net_revenue',        label: 'Betriebsertrag netto',      semantics: 'revenue', emphasis: true },
   { id: 'total_cogs_direct',  label: 'Direkter Warenaufwand',     semantics: 'expense', emphasis: false },
+  { id: 'total_cogs_uebrig',  label: 'Übriger Warenaufwand',      semantics: 'expense', emphasis: false },
   { id: 'total_cogs',         label: 'Gesamtwarenaufwand',        semantics: 'expense', emphasis: true },
   { id: 'gross_profit_1',     label: 'Bruttogewinn 1',            semantics: 'result',  emphasis: true },
   { id: 'total_personnel',    label: 'Personalaufwand',           semantics: 'expense', emphasis: true },
@@ -78,6 +80,62 @@ export const BANK_TOTALS_ROW_IDS: BankRowId[] = [
   'net_revenue', 'total_cogs', 'gross_profit_1', 'total_personnel',
   'gross_profit_2', 'ebitda', 'ebit',
 ];
+
+// ─── Phase 2: Management-Reporting (N Jahre, additiv) ────────────────────────
+
+/**
+ * USER-ENTSCHEID: Der Bericht endet bei EBIT — es gibt KEINE Jahresgewinn-
+ * Zeile (Finanzergebnis/Steuern sind nicht importiert, nichts wird geschätzt).
+ * Dieser Hinweis erscheint identisch in UI, PDF und Excel.
+ */
+export const EBIT_REPORT_NOTE =
+  'Finanzergebnis und Steuern sind in dieser Auswertung nicht enthalten. Der Bericht endet daher bei EBIT.';
+
+/** Jahresauswahl-Modi (Spez. Phase 2 §1). */
+export type BankYearMode = 'two' | 'three' | 'all';
+
+/**
+ * Wählt die zu vergleichenden Jahre: chronologisch, 'two' = letzte 2,
+ * 'three' = letzte 3, 'all' = alle. Fehlende Jahre (Lücken) sind erlaubt —
+ * es zählt nur, welche Jahre tatsächlich Daten haben.
+ */
+export function selectBankYears(yearsWithData: number[], mode: BankYearMode): number[] {
+  const sorted = [...new Set(yearsWithData)].sort((a, b) => a - b);
+  if (mode === 'all') return sorted;
+  const n = mode === 'three' ? 3 : 2;
+  return sorted.slice(-n);
+}
+
+/** Scorecard-Zeilen (Spez. Phase 2 §3) — endet bei EBIT (kein Jahresgewinn). */
+export const BANK_SCORECARD_ROW_IDS: BankRowId[] = [
+  'net_revenue', 'gross_profit_1', 'total_cogs', 'total_personnel', 'ebitda', 'ebit',
+];
+
+/** Benchmark-Zielbereiche (Spez. Phase 2 §7) — zentral konfigurierbar. */
+export interface BankBenchmarkDef {
+  id: 'warenquote' | 'personalquote' | 'ebitda_marge' | 'ebit_marge' | 'bruttomarge';
+  label: string;
+  /** Zielwert in % */
+  target: number;
+  /** 'below' = Ist soll unter dem Ziel liegen, 'above' = darüber */
+  direction: 'below' | 'above';
+}
+
+export const BANK_BENCHMARKS: BankBenchmarkDef[] = [
+  { id: 'warenquote',    label: 'Warenquote',    target: 30, direction: 'below' },
+  { id: 'personalquote', label: 'Personalquote', target: 35, direction: 'below' },
+  { id: 'ebitda_marge',  label: 'EBITDA-Marge',  target: 15, direction: 'above' },
+  { id: 'ebit_marge',    label: 'EBIT-Marge',    target: 10, direction: 'above' },
+  { id: 'bruttomarge',   label: 'Bruttomarge',   target: 70, direction: 'above' },
+];
+
+/** Toleranzband (pp): Ziel knapp verfehlt → neutral statt kritisch. */
+export const BANK_BENCHMARK_TOLERANCE_PP = 1.0;
+
+/** Heatmap-Schwellen: CHF-Metriken relative Abweichung vom Ø in % … */
+export const BANK_HEATMAP_PCT_THRESHOLDS = { strong: 10, slight: 2 } as const;
+/** … Quoten-Metriken Abweichung vom Ø in Prozentpunkten. */
+export const BANK_HEATMAP_PP_THRESHOLDS = { strong: 2, slight: 0.5 } as const;
 
 // ─── Zentrale Rechenhelfer (Spez. I — einzeln getestet) ──────────────────────
 
@@ -300,6 +358,156 @@ export interface BankCostStructureYear {
   };
 }
 
+// ─── Phase-2-Ergebnistypen (N Jahre, additiv) ────────────────────────────────
+
+/** Trend über die gewählten Jahre (regelbasiert, Neutralband BANK_NEUTRAL_PCT). */
+export type BankTrend = 'steigend' | 'fallend' | 'stabil' | 'gemischt';
+
+export interface BankMultiYearRow {
+  id: BankRowId;
+  label: string;
+  semantics: BankRowSemantics;
+  emphasis: boolean;
+  /** Wert je gewähltem Jahr (chronologisch, Index = years-Index); fehlend = null */
+  values: (number | null)[];
+  /** Quote vom Umsatz je Jahr in % (null bei revenue-Zeilen/fehlendem Umsatz) */
+  quotes: (number | null)[];
+  /** Neuestes Jahr vs. Vorjahr in der Auswahl */
+  diffChf: number | null;
+  diffPct: number | null;
+  trend: BankTrend | null;
+  /** Ampel nach Wirkung (expense via toneForCostDelta relativ zum Umsatz) */
+  tone: GrowthTone;
+}
+
+export interface BankMultiYearTable {
+  /** Gewählte Jahre, chronologisch */
+  years: number[];
+  rows: BankMultiYearRow[];
+}
+
+export interface BankExecutiveSummary {
+  /** 9 KPI-Karten (Spez. Phase 2 §2), Vergleich neuestes Jahr vs. Vorjahr */
+  kpis: BankKpi[];
+  /** Regelbasierter Gesamttrend (keine KI-Texte) */
+  gesamtTrend: { tone: GrowthTone; label: 'positiv' | 'stabil' | 'kritisch'; reasons: string[] };
+}
+
+export interface BankWaterfallStep {
+  id: BankRowId;
+  label: string;
+  kind: 'start' | 'cost' | 'subtotal';
+  /** Betrag der Stufe (Kosten als positive Zahl, wie in der P&L gespeichert) */
+  value: number | null;
+  /**
+   * Zwischenstand NACH der Stufe. Subtotale übernehmen den Engine-Wert
+   * (gross_profit_1 usw.) — KEINE Zweitberechnung.
+   */
+  cumulative: number | null;
+}
+
+export interface BankWaterfall {
+  year: number;
+  steps: BankWaterfallStep[];
+  /** Alle Stufen vorhanden? (fehlend ≠ 0) */
+  complete: boolean;
+  /** EBIT-Hinweis (identisch UI/PDF/Excel) */
+  note: string;
+}
+
+export interface BankEbitDriver {
+  id: 'umsatz' | 'waren' | 'personal' | 'uebrig' | 'abschreibungen';
+  label: string;
+  /** Beitrag zur EBIT-Veränderung in CHF (+ = verbessert EBIT); null = fehlend */
+  contribution: number | null;
+  /** Beitrag in % des Basis-EBIT (|Basis|); null bei Basis 0/fehlend */
+  pctOfBaseEbit: number | null;
+}
+
+export interface BankEbitDrivers {
+  baseYear: number;
+  currentYear: number;
+  ebitBase: number | null;
+  ebitCurrent: number | null;
+  ebitDelta: number | null;
+  drivers: BankEbitDriver[];
+  /** ebitDelta − Summe der Beiträge (Kontrollwert, sollte ≈ 0 sein) */
+  residual: number | null;
+  complete: boolean;
+}
+
+export type BankHistoryMetricId =
+  | 'umsatz' | 'warenquote' | 'personalquote' | 'bruttomarge' | 'ebit' | 'ebit_marge';
+
+export interface BankHistoryPoint {
+  year: number;
+  value: number | null;
+  /** Jahr vollständig (12 Datenmonate)? Teiljahre werden markiert, nie geschätzt. */
+  complete: boolean;
+}
+
+export interface BankHistorySeries {
+  id: BankHistoryMetricId;
+  label: string;
+  unit: 'chf' | 'pct';
+  points: BankHistoryPoint[];
+}
+
+export interface BankBenchmarkRow extends BankBenchmarkDef {
+  /** Ist-Wert des neuesten Jahres in % (Vergleichszeitraum) */
+  ist: number | null;
+  /** Abweichung in pp, VORZEICHEN: positiv = besser als Ziel */
+  abweichungPp: number | null;
+  tone: GrowthTone;
+}
+
+export type BankHeatmapMetricId = 'umsatz' | 'ebit' | 'warenquote' | 'personalquote';
+
+/** Beschreibende Einordnung relativ zum Ø (nicht gut/schlecht gefärbt). */
+export type BankHeatmapBucket =
+  | 'deutlich_ueber' | 'leicht_ueber' | 'durchschnitt' | 'unter' | 'stark_unter';
+
+export interface BankHeatmapCell {
+  value: number | null;
+  bucket: BankHeatmapBucket | null;
+}
+
+export interface BankHeatmapYearRow {
+  year: number;
+  /** 12 Zellen (Index = Monatsindex 0–11) */
+  cells: BankHeatmapCell[];
+}
+
+export interface BankHeatmap {
+  metric: BankHeatmapMetricId;
+  label: string;
+  unit: 'chf' | 'pct';
+  /** Ø über alle vorhandenen Zellen (null wenn keine Daten) */
+  average: number | null;
+  rows: BankHeatmapYearRow[];
+}
+
+export interface BankYearImportInfo {
+  importedAt: string | null;
+  fileName?: string | null;
+}
+
+export interface BankTimelineEntry {
+  year: number;
+  umsatz: number | null;
+  ebit: number | null;
+  /** Anzahl Monate mit gebuchten Daten (0–12) */
+  monthsWithData: number;
+  status: 'vollständig' | 'teilweise' | 'leer';
+  /** Importdatum aus der Import-Registry (null = unbekannt) */
+  importedAt: string | null;
+}
+
+export interface BankKernaussagenPlus {
+  positive: string[];
+  potenziale: string[];
+}
+
 export interface BankInvestorAnalysis {
   baseYear: number;
   currentYear: number;
@@ -337,6 +545,32 @@ export interface BankInvestorAnalysis {
   dataQuality: DataQualityItem[];
   /** Beide Jahre mit Daten vorhanden? */
   hasData: boolean;
+
+  // ── Phase 2: Management-Reporting (N Jahre, alle Felder additiv) ──────────
+  /** Gewählte Jahre (chronologisch, ≥2); Fallback [baseYear, currentYear] */
+  years: number[];
+  /** Alle P&L-Positionen über die gewählten Jahre */
+  multiYear: BankMultiYearTable;
+  /** Kompakte Scorecard (Spez. §3) — endet bei EBIT */
+  scorecard: BankMultiYearTable;
+  /** Executive Summary (Spez. §2): 9 KPIs + regelbasierter Gesamttrend */
+  executive: BankExecutiveSummary;
+  /** Waterfall Umsatz→EBIT des neuesten Jahres (Spez. §4) */
+  waterfall: BankWaterfall;
+  /** EBIT-Treiberanalyse neuestes Jahr vs. Vorjahr (Spez. §5) */
+  ebitDrivers: BankEbitDrivers;
+  /** Kennzahlenhistorie über alle gewählten Jahre (Spez. §6) */
+  historie: BankHistorySeries[];
+  /** Benchmark Ist/Ziel/Abweichung/Ampel (Spez. §7) */
+  benchmarks: BankBenchmarkRow[];
+  /** Heatmaps Jahr×Monat je Metrik (Spez. §8) */
+  heatmaps: Record<BankHeatmapMetricId, BankHeatmap>;
+  /** Investor Timeline (Spez. §10) */
+  timeline: BankTimelineEntry[];
+  /** Kernaussagen 5+5 (Spez. §9) — `kernaussagen` bleibt unverändert */
+  kernaussagenPlus: BankKernaussagenPlus;
+  /** EBIT-Hinweis (USER-ENTSCHEID) — identisch in UI/PDF/Excel */
+  ebitNote: string;
 }
 
 export interface BankInvestorOptions {
@@ -349,6 +583,13 @@ export interface BankInvestorOptions {
   /** Stand des letzten Imports (Anzeige im Kopf) */
   importStand?: string | null;
   dataSource?: string;
+  /**
+   * Phase 2: gewählte Jahre (chronologisch, ≥2). Fehlt das Feld, wird
+   * [baseYear, currentYear] verwendet — bestehende Aufrufer unverändert.
+   */
+  years?: number[];
+  /** Phase 2: Import-Metadaten je Jahr für die Investor Timeline */
+  importInfoByYear?: Record<number, BankYearImportInfo>;
 }
 
 // ─── Format (de-CH) ──────────────────────────────────────────────────────────
@@ -645,6 +886,381 @@ export function buildBankInvestorAnalysis(
     }
   }
 
+  // ═══ Phase 2: Management-Reporting (N Jahre, additiv) ══════════════════════
+  const selectedYears = (opts.years && opts.years.length >= 2
+    ? [...new Set(opts.years)].sort((a, b) => a - b)
+    : [baseYear, currentYear]);
+  const seriesByYear = new Map(series.map(s => [s.year, s]));
+  const newestYear = selectedYears[selectedYears.length - 1];
+  const prevYear = selectedYears[selectedYears.length - 2];
+  const yearSeries = (y: number) => seriesByYear.get(y);
+  /** Jahreswert über den Vergleichszeitraum (gleiche monthIndices wie 2-Jahres-Teil) */
+  const yearTotal = (y: number, id: string) => sumRow(yearSeries(y), id, monthIndices);
+  /** Jahreswert über ALLE 12 Monate (Historie/Timeline — Teiljahre werden markiert) */
+  const ALL_MONTHS = Array.from({ length: 12 }, (_, i) => i);
+  const fullYearTotal = (y: number, id: string) => sumRow(yearSeries(y), id, ALL_MONTHS);
+
+  const revPerYear = selectedYears.map(y => yearTotal(y, 'net_revenue'));
+  const revNew = revPerYear[revPerYear.length - 1];
+  const revPrev = revPerYear[revPerYear.length - 2];
+  const revGrowthPct = pctChange(revNew, revPrev);
+
+  // ── Mehrjahres-Tabelle + Scorecard (Spez. §1/§3) ───────────────────────────
+  const trendForValues = (values: (number | null)[]): BankTrend | null => {
+    const present = values.filter((v): v is number => v != null);
+    if (present.length < 2) return null;
+    let up = 0, down = 0;
+    for (let i = 1; i < present.length; i++) {
+      const p = pctChange(present[i], present[i - 1]);
+      if (p == null) return 'gemischt'; // Basis 0 → nicht vergleichbar
+      if (p > BANK_NEUTRAL_PCT) up++;
+      else if (p < -BANK_NEUTRAL_PCT) down++;
+    }
+    if (up > 0 && down === 0) return 'steigend';
+    if (down > 0 && up === 0) return 'fallend';
+    if (up === 0 && down === 0) return 'stabil';
+    return 'gemischt';
+  };
+
+  const buildMultiYearRow = (def: BankRowDef): BankMultiYearRow => {
+    const values = selectedYears.map(y => yearTotal(y, def.id));
+    const quotes = selectedYears.map((y, i) =>
+      def.semantics === 'revenue' ? null : quotePct(values[i], revPerYear[i]));
+    const vNew = values[values.length - 1];
+    const vPrev = values[values.length - 2];
+    const diffChf = absChange(vNew, vPrev);
+    const diffPct = pctChange(vNew, vPrev);
+    const tone: GrowthTone = def.semantics === 'expense'
+      ? toneForCostDelta(diffPct, revGrowthPct)
+      : toneForResultDelta(diffPct, diffChf);
+    return {
+      id: def.id, label: def.label, semantics: def.semantics, emphasis: def.emphasis,
+      values, quotes, diffChf, diffPct, trend: trendForValues(values), tone,
+    };
+  };
+
+  const multiYearRows = BANK_POSITION_ROWS.map(buildMultiYearRow);
+  const multiYearById = new Map(multiYearRows.map(r => [r.id, r]));
+  const multiYear: BankMultiYearTable = { years: selectedYears, rows: multiYearRows };
+  const scorecard: BankMultiYearTable = {
+    years: selectedYears,
+    rows: BANK_SCORECARD_ROW_IDS
+      .map(id => multiYearById.get(id))
+      .filter((r): r is BankMultiYearRow => r != null),
+  };
+
+  // ── Executive Summary (Spez. §2): neuestes Jahr vs. Vorjahr der Auswahl ───
+  const my = (id: BankRowId) => multiYearById.get(id)!;
+  const nyVal = (id: BankRowId) => my(id).values[selectedYears.length - 1];
+  const pvVal = (id: BankRowId) => my(id).values[selectedYears.length - 2];
+  const nyQuote = (id: BankRowId) => quotePct(nyVal(id), revNew);
+  const pvQuote = (id: BankRowId) => quotePct(pvVal(id), revPrev);
+  const toneForMargin = (pp: number | null): GrowthTone => {
+    if (pp == null) return 'neutral';
+    if (pp > BANK_NEUTRAL_PP) return 'good';
+    if (pp < -BANK_NEUTRAL_PP) return 'critical';
+    return 'neutral';
+  };
+  const chfKpi = (id: string, label: string, rowId: BankRowId, resultTone: boolean): BankKpi => {
+    const c = nyVal(rowId); const b = pvVal(rowId);
+    const dChf = absChange(c, b); const dPct = pctChange(c, b);
+    return {
+      id, label,
+      value: chf(c),
+      delta: dChf != null ? `${chfDelta(dChf)} vs. ${prevYear}` : '',
+      tone: resultTone ? toneForResultDelta(dPct, dChf) : toneForCostDelta(dPct, revGrowthPct),
+      raw: { current: c, base: b, diffChf: dChf, diffPct: dPct, diffPp: null },
+    };
+  };
+  const quoteKpi = (id: string, label: string, rowId: BankRowId, marginTone: boolean): BankKpi => {
+    const c = nyQuote(rowId); const b = pvQuote(rowId);
+    const pp = ppChange(c, b);
+    return {
+      id, label,
+      value: pctFmt(c),
+      delta: fmtPpDelta(pp, prevYear),
+      tone: marginTone ? toneForMargin(pp) : toneForQuoteDelta(pp),
+      raw: { current: c, base: b, diffChf: null, diffPct: null, diffPp: pp },
+    };
+  };
+  const executiveKpis: BankKpi[] = [
+    chfKpi('umsatz', `Umsatz ${newestYear}`, 'net_revenue', true),
+    {
+      id: 'umsatz_wachstum', label: 'Umsatzwachstum',
+      value: fmtPctChange(revGrowthPct),
+      delta: revGrowthPct != null ? `vs. ${prevYear}` : '',
+      tone: toneForResultDelta(revGrowthPct, absChange(revNew, revPrev)),
+      raw: { current: revNew, base: revPrev, diffChf: absChange(revNew, revPrev), diffPct: revGrowthPct, diffPp: null },
+    },
+    chfKpi('bruttogewinn', 'Bruttogewinn 1', 'gross_profit_1', true),
+    quoteKpi('bruttomarge', 'Bruttomarge', 'gross_profit_1', true),
+    quoteKpi('warenquote', 'Warenquote', 'total_cogs', false),
+    quoteKpi('personalquote', 'Personalquote', 'total_personnel', false),
+    chfKpi('ebitda', 'EBITDA', 'ebitda', true),
+    chfKpi('ebit', 'Betriebsergebnis (EBIT)', 'ebit', true),
+    quoteKpi('ebit_marge', 'EBIT-Marge', 'ebit', true),
+  ];
+  // Gesamttrend: 5 Signale, rein regelbasiert (keine KI-Texte)
+  const trendSignals: Array<{ tone: GrowthTone; good: string; bad: string }> = [
+    { tone: executiveKpis[1].tone, good: 'Der Umsatz wächst.', bad: 'Der Umsatz ist rückläufig.' },
+    { tone: executiveKpis[7].tone, good: 'Das Betriebsergebnis (EBIT) hat sich verbessert.', bad: 'Das Betriebsergebnis (EBIT) hat sich verschlechtert.' },
+    { tone: executiveKpis[4].tone, good: 'Die Warenquote hat sich verbessert.', bad: 'Die Warenquote ist gestiegen.' },
+    { tone: executiveKpis[5].tone, good: 'Die Personalquote hat sich verbessert.', bad: 'Die Personalquote ist gestiegen.' },
+    { tone: executiveKpis[8].tone, good: 'Die EBIT-Marge hat sich verbessert.', bad: 'Die EBIT-Marge ist gesunken.' },
+  ];
+  const goods = trendSignals.filter(s => s.tone === 'good').length;
+  const crits = trendSignals.filter(s => s.tone === 'critical').length;
+  // Score-Regel: deutliches Übergewicht (≥2) entscheidet, sonst stabil
+  const trendScore = goods - crits;
+  const trendLabel: 'positiv' | 'stabil' | 'kritisch' =
+    trendScore >= 2 ? 'positiv' : trendScore <= -2 ? 'kritisch' : 'stabil';
+  const executive: BankExecutiveSummary = {
+    kpis: executiveKpis,
+    gesamtTrend: {
+      label: trendLabel,
+      tone: trendLabel === 'positiv' ? 'good' : trendLabel === 'kritisch' ? 'critical' : 'neutral',
+      reasons: trendSignals
+        .filter(s => s.tone !== 'neutral')
+        .map(s => (s.tone === 'good' ? s.good : s.bad)),
+    },
+  };
+
+  // ── Waterfall Umsatz→EBIT, neuestes Jahr (Spez. §4; endet bei EBIT) ────────
+  const WATERFALL_DEFS: Array<{ id: BankRowId; label: string; kind: 'start' | 'cost' | 'subtotal' }> = [
+    { id: 'net_revenue',        label: 'Umsatz',                     kind: 'start' },
+    { id: 'total_cogs',         label: 'Warenaufwand',               kind: 'cost' },
+    { id: 'gross_profit_1',     label: 'Bruttogewinn 1',             kind: 'subtotal' },
+    { id: 'total_personnel',    label: 'Personalaufwand',            kind: 'cost' },
+    { id: 'gross_profit_2',     label: 'Deckungsbeitrag (BG 2)',     kind: 'subtotal' },
+    { id: 'total_opex',         label: 'Übriger Betriebsaufwand',    kind: 'cost' },
+    { id: 'ebitda',             label: 'EBITDA',                     kind: 'subtotal' },
+    { id: 'total_depreciation', label: 'Abschreibungen',             kind: 'cost' },
+    { id: 'ebit',               label: 'EBIT',                       kind: 'subtotal' },
+  ];
+  let running: number | null = null;
+  const waterfallSteps: BankWaterfallStep[] = WATERFALL_DEFS.map(def => {
+    const v = nyVal(def.id);
+    if (def.kind === 'start') running = v;
+    else if (def.kind === 'subtotal') running = v; // Engine-Wert, keine Zweitberechnung
+    else running = running != null && v != null ? running - v : null;
+    return { id: def.id, label: def.label, kind: def.kind, value: v, cumulative: running };
+  });
+  const waterfall: BankWaterfall = {
+    year: newestYear,
+    steps: waterfallSteps,
+    complete: waterfallSteps.every(s => s.value != null),
+    note: EBIT_REPORT_NOTE,
+  };
+
+  // ── EBIT-Treiberanalyse (Spez. §5): neuestes Jahr vs. Vorjahr ──────────────
+  const ebitNew = nyVal('ebit');
+  const ebitPrev = pvVal('ebit');
+  const ebitDelta = absChange(ebitNew, ebitPrev);
+  const driverDefs: Array<{ id: BankEbitDriver['id']; label: string; rowId: BankRowId; sign: 1 | -1 }> = [
+    { id: 'umsatz',          label: 'Umsatzentwicklung',   rowId: 'net_revenue',        sign: 1 },
+    { id: 'waren',           label: 'Warenkosten',         rowId: 'total_cogs',         sign: -1 },
+    { id: 'personal',        label: 'Personalkosten',      rowId: 'total_personnel',    sign: -1 },
+    { id: 'uebrig',          label: 'Übrige Kosten',       rowId: 'total_opex',         sign: -1 },
+    { id: 'abschreibungen',  label: 'Abschreibungen',      rowId: 'total_depreciation', sign: -1 },
+  ];
+  const drivers: BankEbitDriver[] = driverDefs.map(d => {
+    const delta = absChange(nyVal(d.rowId), pvVal(d.rowId));
+    const contribution = delta == null ? null : d.sign * delta;
+    const pctOfBaseEbit = contribution != null && ebitPrev != null && ebitPrev !== 0
+      ? (contribution / Math.abs(ebitPrev)) * 100
+      : null;
+    return { id: d.id, label: d.label, contribution, pctOfBaseEbit };
+  });
+  const driversComplete = drivers.every(d => d.contribution != null) && ebitDelta != null;
+  const contributionSum = driversComplete
+    ? drivers.reduce((s, d) => s + (d.contribution ?? 0), 0)
+    : null;
+  const ebitDrivers: BankEbitDrivers = {
+    baseYear: prevYear,
+    currentYear: newestYear,
+    ebitBase: ebitPrev,
+    ebitCurrent: ebitNew,
+    ebitDelta,
+    drivers,
+    residual: ebitDelta != null && contributionSum != null ? ebitDelta - contributionSum : null,
+    complete: driversComplete,
+  };
+
+  // ── Kennzahlenhistorie (Spez. §6): volle Jahre, Teiljahre markiert ─────────
+  const historyDefs: Array<{ id: BankHistoryMetricId; label: string; unit: 'chf' | 'pct';
+    calc: (y: number) => number | null }> = [
+    { id: 'umsatz',        label: 'Umsatz',        unit: 'chf', calc: y => fullYearTotal(y, 'net_revenue') },
+    { id: 'warenquote',    label: 'Warenquote',    unit: 'pct', calc: y => quotePct(fullYearTotal(y, 'total_cogs'), fullYearTotal(y, 'net_revenue')) },
+    { id: 'personalquote', label: 'Personalquote', unit: 'pct', calc: y => quotePct(fullYearTotal(y, 'total_personnel'), fullYearTotal(y, 'net_revenue')) },
+    { id: 'bruttomarge',   label: 'Bruttomarge',   unit: 'pct', calc: y => quotePct(fullYearTotal(y, 'gross_profit_1'), fullYearTotal(y, 'net_revenue')) },
+    { id: 'ebit',          label: 'EBIT',          unit: 'chf', calc: y => fullYearTotal(y, 'ebit') },
+    { id: 'ebit_marge',    label: 'EBIT-Marge',    unit: 'pct', calc: y => quotePct(fullYearTotal(y, 'ebit'), fullYearTotal(y, 'net_revenue')) },
+  ];
+  const historie: BankHistorySeries[] = historyDefs.map(def => ({
+    id: def.id, label: def.label, unit: def.unit,
+    points: selectedYears.map(y => ({
+      year: y,
+      value: def.calc(y),
+      complete: isYearComplete(yearSeries(y)),
+    })),
+  }));
+
+  // ── Benchmark (Spez. §7): neuestes Jahr, Vergleichszeitraum ────────────────
+  const benchmarkIst: Record<BankBenchmarkDef['id'], number | null> = {
+    warenquote:    nyQuote('total_cogs'),
+    personalquote: nyQuote('total_personnel'),
+    ebitda_marge:  nyQuote('ebitda'),
+    ebit_marge:    nyQuote('ebit'),
+    bruttomarge:   nyQuote('gross_profit_1'),
+  };
+  const benchmarks: BankBenchmarkRow[] = BANK_BENCHMARKS.map(def => {
+    const ist = benchmarkIst[def.id];
+    // Vorzeichen: positiv = besser als Ziel
+    const abweichungPp = ist == null ? null
+      : def.direction === 'below' ? def.target - ist : ist - def.target;
+    let tone: GrowthTone = 'neutral';
+    if (abweichungPp != null) {
+      if (abweichungPp >= 0) tone = 'good';
+      else if (abweichungPp >= -BANK_BENCHMARK_TOLERANCE_PP) tone = 'neutral';
+      else tone = 'critical';
+    }
+    return { ...def, ist, abweichungPp, tone };
+  });
+
+  // ── Heatmaps Jahr×Monat (Spez. §8): beschreibend relativ zum Ø ─────────────
+  const heatmapDefs: Array<{ id: BankHeatmapMetricId; label: string; unit: 'chf' | 'pct';
+    cellValue: (s: YearSeries | undefined, m: number) => number | null }> = [
+    { id: 'umsatz', label: 'Umsatz', unit: 'chf',
+      cellValue: (s, m) => s?.byPosition?.['net_revenue']?.[m] ?? null },
+    { id: 'ebit', label: 'EBIT', unit: 'chf',
+      cellValue: (s, m) => s?.byPosition?.['ebit']?.[m] ?? null },
+    { id: 'warenquote', label: 'Warenquote', unit: 'pct',
+      cellValue: (s, m) => quotePct(s?.byPosition?.['total_cogs']?.[m] ?? null, s?.byPosition?.['net_revenue']?.[m] ?? null) },
+    { id: 'personalquote', label: 'Personalquote', unit: 'pct',
+      cellValue: (s, m) => quotePct(s?.byPosition?.['total_personnel']?.[m] ?? null, s?.byPosition?.['net_revenue']?.[m] ?? null) },
+  ];
+  const heatBucket = (value: number | null, avg: number | null, unit: 'chf' | 'pct'): BankHeatmapBucket | null => {
+    if (value == null || avg == null) return null;
+    let dev: number;
+    let strong: number; let slight: number;
+    if (unit === 'chf') {
+      if (avg === 0) return null;
+      dev = ((value - avg) / Math.abs(avg)) * 100;
+      strong = BANK_HEATMAP_PCT_THRESHOLDS.strong; slight = BANK_HEATMAP_PCT_THRESHOLDS.slight;
+    } else {
+      dev = value - avg;
+      strong = BANK_HEATMAP_PP_THRESHOLDS.strong; slight = BANK_HEATMAP_PP_THRESHOLDS.slight;
+    }
+    if (dev >= strong) return 'deutlich_ueber';
+    if (dev >= slight) return 'leicht_ueber';
+    if (dev > -slight) return 'durchschnitt';
+    if (dev > -strong) return 'unter';
+    return 'stark_unter';
+  };
+  const buildHeatmap = (def: (typeof heatmapDefs)[number]): BankHeatmap => {
+    const rawRows = selectedYears.map(y => ({
+      year: y,
+      values: ALL_MONTHS.map(m => def.cellValue(yearSeries(y), m)),
+    }));
+    const allValues = rawRows.flatMap(r => r.values).filter((v): v is number => v != null);
+    const average = allValues.length > 0
+      ? allValues.reduce((s, v) => s + v, 0) / allValues.length
+      : null;
+    return {
+      metric: def.id, label: def.label, unit: def.unit, average,
+      rows: rawRows.map(r => ({
+        year: r.year,
+        cells: r.values.map(v => ({ value: v, bucket: heatBucket(v, average, def.unit) })),
+      })),
+    };
+  };
+  const heatmaps = Object.fromEntries(
+    heatmapDefs.map(def => [def.id, buildHeatmap(def)]),
+  ) as Record<BankHeatmapMetricId, BankHeatmap>;
+
+  // ── Investor Timeline (Spez. §10) ──────────────────────────────────────────
+  const timeline: BankTimelineEntry[] = selectedYears.map(y => {
+    const s = yearSeries(y);
+    const monthsWithDataCount = s
+      ? ALL_MONTHS.filter(m => monthHasData(s, m)).length
+      : 0;
+    return {
+      year: y,
+      umsatz: fullYearTotal(y, 'net_revenue'),
+      ebit: fullYearTotal(y, 'ebit'),
+      monthsWithData: monthsWithDataCount,
+      status: monthsWithDataCount === 12 ? 'vollständig' : monthsWithDataCount > 0 ? 'teilweise' : 'leer',
+      importedAt: opts.importInfoByYear?.[y]?.importedAt ?? null,
+    };
+  });
+
+  // ── Kernaussagen 5+5 (Spez. §9): rein regelbasiert ─────────────────────────
+  const positive: string[] = [];
+  const potenziale: string[] = [];
+  const wareQuotePpNew = ppChange(nyQuote('total_cogs'), pvQuote('total_cogs'));
+  const persQuotePpNew = ppChange(nyQuote('total_personnel'), pvQuote('total_personnel'));
+  if (revGrowthPct != null) {
+    if (revGrowthPct > BANK_NEUTRAL_PCT) {
+      positive.push(`Der Umsatz ist gegenüber ${prevYear} um ${pctFmt(Math.abs(revGrowthPct))} gestiegen.`);
+    } else if (revGrowthPct < -BANK_NEUTRAL_PCT) {
+      potenziale.push(`Der Umsatz ist gegenüber ${prevYear} um ${pctFmt(Math.abs(revGrowthPct))} gesunken.`);
+    }
+  }
+  if (wareQuotePpNew != null && Math.abs(wareQuotePpNew) >= 0.05) {
+    (wareQuotePpNew < 0 ? positive : potenziale).push(
+      wareQuotePpNew < 0
+        ? `Die Warenquote hat sich um ${fmtPpAbs(wareQuotePpNew)} verbessert.`
+        : `Die Warenquote liegt ${fmtPpAbs(wareQuotePpNew)} über dem Vorjahr.`,
+    );
+  }
+  if (persQuotePpNew != null && Math.abs(persQuotePpNew) >= 0.05) {
+    (persQuotePpNew < 0 ? positive : potenziale).push(
+      persQuotePpNew < 0
+        ? `Die Personalquote hat sich um ${fmtPpAbs(persQuotePpNew)} verbessert.`
+        : `Die Personalquote liegt ${fmtPpAbs(persQuotePpNew)} über dem Vorjahr.`,
+    );
+  }
+  if (ebitDelta != null && Math.abs(ebitDelta) >= 500) {
+    (ebitDelta >= 0 ? positive : potenziale).push(
+      `Das Betriebsergebnis hat sich um CHF ${Math.round(Math.abs(ebitDelta)).toLocaleString('de-CH')} ${ebitDelta >= 0 ? 'verbessert' : 'verschlechtert'}.`,
+    );
+  }
+  {
+    const persDiffPct = pctChange(nyVal('total_personnel'), pvVal('total_personnel'));
+    if (revGrowthPct != null && persDiffPct != null) {
+      const gap = revGrowthPct - persDiffPct;
+      if (gap > BANK_NEUTRAL_PCT) {
+        positive.push('Das Umsatzwachstum liegt über dem Wachstum der Personalkosten.');
+      } else if (gap < -BANK_NEUTRAL_PCT) {
+        potenziale.push('Die Personalkosten wachsen schneller als der Umsatz.');
+      }
+    }
+  }
+  for (const b of benchmarks) {
+    if (b.ist == null) continue;
+    if (b.tone === 'good') {
+      positive.push(`${b.label} (${pctFmt(b.ist)}) erfüllt den Zielwert von ${b.direction === 'below' ? 'unter' : 'über'} ${pctFmt(b.target, 0)}.`);
+    } else if (b.tone === 'critical') {
+      potenziale.push(`${b.label} (${pctFmt(b.ist)}) verfehlt den Zielwert von ${b.direction === 'below' ? 'unter' : 'über'} ${pctFmt(b.target, 0)}.`);
+    }
+  }
+  const kernaussagenPlus: BankKernaussagenPlus = {
+    positive: positive.slice(0, 5),
+    potenziale: potenziale.slice(0, 5),
+  };
+
+  // ── Datenqualität: unvollständige weitere Jahre der Auswahl (additiv) ──────
+  for (const y of selectedYears) {
+    if (y === baseYear || y === currentYear) continue; // bereits oben abgedeckt
+    const s = yearSeries(y);
+    const hasAny = s != null && lastMonthWithData(s) >= 0;
+    if (!hasAny) {
+      dataQuality.push({ severity: 'fehler', text: `${y} enthält keine Erfolgsrechnungsdaten.` });
+    } else if (!isYearComplete(s)) {
+      dataQuality.push({ severity: 'hinweis', text: `${y} enthält Daten bis ${MONTH_LABELS_LONG[lastMonthWithData(s)]}.` });
+    }
+  }
+
   return {
     baseYear,
     currentYear,
@@ -670,6 +1286,19 @@ export function buildBankInvestorAnalysis(
     kernaussagen: kernaussagenMax5,
     dataQuality,
     hasData: baseHasData && curHasData,
+    // Phase 2 (additiv)
+    years: selectedYears,
+    multiYear,
+    scorecard,
+    executive,
+    waterfall,
+    ebitDrivers,
+    historie,
+    benchmarks,
+    heatmaps,
+    timeline,
+    kernaussagenPlus,
+    ebitNote: EBIT_REPORT_NOTE,
   };
 }
 

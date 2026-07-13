@@ -31,7 +31,20 @@ import {
 } from '@/types/pl';
 import { lookupAccount } from '@/lib/account-mapping-store';
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
+import { classifyWarenaufwandKonto } from '@/lib/warenaufwand-gruppierung';
 import type { BudgetPLLineItem, BudgetPLCategory } from '@/types/budget';
+
+/**
+ * Warenaufwand-Zeilen → Gruppen-Fallback nach Kontenzuordnung (nur wenn die
+ * Kontonummer KEINE numerische Range-Zuordnung erlaubt): Küche/Getränke gelten
+ * als direkt, Diverses als übrig. Die numerische Range (4000–4070 / 4071–4900)
+ * ist die Single Source of Truth und gewinnt bei Konflikten.
+ */
+const COGS_ROW_GROUP: Record<string, 'direct' | 'uebrig'> = {
+  cogs_food:  'direct',
+  cogs_bev:   'direct',
+  cogs_other: 'uebrig',
+};
 
 /**
  * Gibt die P&L-Zeilen-ID für eine categoryId zurück.
@@ -383,6 +396,42 @@ export function buildBudgetByRowForMonth(
   return budgetByRow;
 }
 
+/**
+ * Baut die Budget-Aufteilung des Warenaufwands nach numerischer Range
+ * (4000–4070 direkt / 4071–4900 übrig) für EINEN Monat. Mitgliedschaft
+ * identisch mit `buildBudgetByRowForMonth` (nur Positionen, die per
+ * Kontonummer auf eine Warenaufwand-Zeile auflösen) — dadurch gilt immer:
+ * direct + uebrig = Budget(cogs_food) + Budget(cogs_bev) + Budget(cogs_other).
+ * Konten ohne Range-Zuordnung fallen auf die Kontenzuordnungs-Gruppe zurück.
+ * `undefined`, wenn kein Warenaufwand-Budget existiert (kein erfundenes 0).
+ */
+export function buildCogsBudgetSplitForMonth(
+  budget: { plLineItems?: BudgetPLLineItem[]; plCategories?: BudgetPLCategory[] },
+  monthIdx: number,
+  lookupFn: (accountNumber: string) => { mapping?: { plCategory: string } | null } = lookupAccount,
+): { direct: number; uebrig: number } | undefined {
+  const items = budget.plLineItems ?? [];
+  let direct = 0;
+  let uebrig = 0;
+  let any = false;
+  for (const item of items) {
+    if (item.isInternal) continue;
+    const val = item.monthlyValues[monthIdx] ?? 0;
+    if (val === 0) continue;
+    if (!item.accountNumber) continue;
+    const res = lookupFn(item.accountNumber);
+    if (!res.mapping) continue;
+    const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory as keyof typeof PL_CATEGORY_TO_ROW_ID] ?? null;
+    const catGroup = rowId ? COGS_ROW_GROUP[rowId] : undefined;
+    if (!catGroup) continue; // keine Warenaufwand-Position
+    const rangeGroup = classifyWarenaufwandKonto(item.accountNumber) ?? catGroup;
+    if (rangeGroup === 'direct') direct += val;
+    else uebrig += val;
+    any = true;
+  }
+  return any ? { direct, uebrig } : undefined;
+}
+
 // ─── Haupt-Berechnungslogik ───────────────────────────────────────────────────
 
 /**
@@ -393,6 +442,12 @@ export function buildBudgetByRowForMonth(
 export interface PLMonthOverrides {
   budgetByRow?:   Map<string, number>;
   prevYearByRow?: Map<string, number>;
+  /**
+   * Budget-Aufteilung des Warenaufwands nach numerischer Range
+   * (aus `buildCogsBudgetSplitForMonth`). Ersetzt die kategoriebasierte
+   * Formel-Aufteilung der Zwischentotale — die Summe bleibt identisch.
+   */
+  cogsBudgetSplit?: { direct: number; uebrig: number };
 }
 
 /**
@@ -580,6 +635,45 @@ export function computePLForMonth(
     }
   }
 
+  // Warenaufwand-Zwischentotale: numerische Range (4000–4070 / 4071–4900) ist
+  // die Single Source of Truth. Wir sammeln Verschiebungen gegenüber der
+  // kategoriebasierten Formel-Aufteilung + Datenqualitätshinweise (kein
+  // stilles Ummappen — Konflikte werden sichtbar gemacht).
+  let cogsMoveToDirectActual = 0;
+  let cogsMoveToDirectPY = 0;
+  const dataQualityWarnings: string[] = [];
+  const cogsWarnedAccounts = new Set<string>();
+  function trackCogsRange(
+    accountId: string,
+    actualAmt: number | undefined,
+    pyAmt: number | undefined,
+    catGroup: 'direct' | 'uebrig',
+  ) {
+    const rangeGroup = classifyWarenaufwandKonto(accountId);
+    if (rangeGroup === null) {
+      if (!cogsWarnedAccounts.has(accountId)) {
+        cogsWarnedAccounts.add(accountId);
+        dataQualityWarnings.push(
+          `Konto ${accountId} ist dem Warenaufwand zugeordnet, liegt aber ausserhalb des Bereichs 4000–4900 — ` +
+          `Zwischentotal folgt der Kontenzuordnung (${catGroup === 'direct' ? 'Direkter' : 'Übriger'} Warenaufwand).`,
+        );
+      }
+      return;
+    }
+    if (rangeGroup !== catGroup) {
+      const sign = rangeGroup === 'direct' ? 1 : -1;
+      if (actualAmt !== undefined) cogsMoveToDirectActual += sign * actualAmt;
+      if (pyAmt !== undefined) cogsMoveToDirectPY += sign * pyAmt;
+      if (!cogsWarnedAccounts.has(accountId)) {
+        cogsWarnedAccounts.add(accountId);
+        dataQualityWarnings.push(
+          `Konto ${accountId}: Kontenzuordnung (${catGroup === 'direct' ? 'direkt' : 'übrig'}) widerspricht dem ` +
+          `numerischen Bereich — Zwischentotal folgt der Kontonummer (${rangeGroup === 'direct' ? 'Direkter' : 'Übriger'} Warenaufwand).`,
+        );
+      }
+    }
+  }
+
   // B) Numerische Kontonummern (CSV-Import): via resolveRowId zuordnen
   for (const cat of numericActual) {
     const rowId = resolveRowId(cat.categoryId) ?? 'other_operating';
@@ -597,6 +691,8 @@ export function computePLForMonth(
     }
 
     const pyMatch = numericPY.find(p => p.categoryId === cat.categoryId);
+    const cogsGroup = COGS_ROW_GROUP[rowId];
+    if (cogsGroup) trackCogsRange(cat.categoryId, cat.amount ?? 0, pyMatch?.amount, cogsGroup);
     addCategoryToRow(rowId, cat, pyMatch ?? null, 'csv_import');
   }
 
@@ -608,6 +704,8 @@ export function computePLForMonth(
     // Vorjahr-Umsatz: nur überspringen wenn revenuePreviousYear direkt gesetzt UND KEINE individuellen PY-3xxx-Konten
     if (rowId === 'revenue_total' && !_hasIndivPYRev && record.revenuePreviousYear !== undefined) continue;
     if (rowId === 'personnel_wages' && record.personnelCostPreviousYear !== undefined) continue;
+    const cogsGroupPY = COGS_ROW_GROUP[rowId];
+    if (cogsGroupPY) trackCogsRange(cat.categoryId, undefined, cat.amount ?? 0, cogsGroupPY);
     const existing = rowValues.get(rowId) ?? {};
     rowValues.set(rowId, {
       ...existing,
@@ -700,6 +798,24 @@ export function computePLForMonth(
     }
   }
 
+  // Schritt 4b: Warenaufwand-Zwischentotale auf die numerische Range (SSoT)
+  // korrigieren. Die Verschiebung ist nullsummig — Gesamtwarenaufwand,
+  // Bruttogewinn 1 und alle Folgezeilen bleiben rechnerisch unverändert.
+  if (cogsMoveToDirectActual !== 0) {
+    resolvedActual.set('total_cogs_direct', (resolvedActual.get('total_cogs_direct') ?? 0) + cogsMoveToDirectActual);
+    resolvedActual.set('total_cogs_uebrig', (resolvedActual.get('total_cogs_uebrig') ?? 0) - cogsMoveToDirectActual);
+  }
+  if (cogsMoveToDirectPY !== 0) {
+    resolvedPY.set('total_cogs_direct', (resolvedPY.get('total_cogs_direct') ?? 0) + cogsMoveToDirectPY);
+    resolvedPY.set('total_cogs_uebrig', (resolvedPY.get('total_cogs_uebrig') ?? 0) - cogsMoveToDirectPY);
+  }
+  // Budget-Split nach numerischer Range (aus buildCogsBudgetSplitForMonth):
+  // ersetzt die kategoriebasierte Formel-Aufteilung; Summe bleibt identisch.
+  if (overrides?.cogsBudgetSplit) {
+    resolvedBudget.set('total_cogs_direct', overrides.cogsBudgetSplit.direct);
+    resolvedBudget.set('total_cogs_uebrig', overrides.cogsBudgetSplit.uebrig);
+  }
+
   // Schritt 5: PLCellValues zusammenbauen
   const revenueActual = resolvedActual.get('net_revenue');
 
@@ -725,7 +841,14 @@ export function computePLForMonth(
     };
   });
 
-  return { year: record.year, month: record.month, monthId: record.id, rows, hasData };
+  return {
+    year: record.year,
+    month: record.month,
+    monthId: record.id,
+    rows,
+    hasData,
+    dataQualityWarnings: dataQualityWarnings.length > 0 ? dataQualityWarnings : undefined,
+  };
 }
 
 /**
@@ -775,12 +898,15 @@ export function computePLForYear(
     };
   });
 
+  const yearWarnings = Array.from(new Set(months.flatMap(m => m.dataQualityWarnings ?? [])));
+
   const total: PLMonthResult = {
     year,
     month: 0,  // 0 = Jahressumme
     monthId: `${year}-total`,
     rows: totalRows,
     hasData: months.some(m => m.hasData),
+    dataQualityWarnings: yearWarnings.length > 0 ? yearWarnings : undefined,
   };
 
   return { year, months, total };

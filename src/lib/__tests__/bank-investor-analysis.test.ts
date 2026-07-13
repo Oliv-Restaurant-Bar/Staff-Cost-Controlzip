@@ -15,6 +15,8 @@ import {
   buildBankInvestorAnalysis,
   BANK_ROW_IDS, BANK_POSITION_ROWS, BANK_TOTALS_ROW_IDS,
   BANK_NEUTRAL_PCT, BANK_NEUTRAL_PP,
+  selectBankYears, EBIT_REPORT_NOTE, BANK_SCORECARD_ROW_IDS,
+  BANK_BENCHMARKS, BANK_BENCHMARK_TOLERANCE_PP,
 } from '../bank-investor-analysis';
 import { buildBankInvestorExcelData, bankInvestorExcelFileName } from '../bank-investor-excel';
 import { buildBankInvestorPdfData, bankInvestorPdfFileName, pdfSafe } from '../bank-investor-pdf';
@@ -288,9 +290,9 @@ describe('J14 fmtPp/fmtPctChange', () => {
 describe('J15 Excel-Aufbereitung', () => {
   const a = buildDefault(true);
   const x = buildBankInvestorExcelData(a);
-  it('liefert die 6 Blätter der Spezifikation', () => {
+  it('liefert die 7 Blätter der Spezifikation (Phase 2: + Mehrjahresanalyse)', () => {
     expect(x.sheets.map(s => s.name)).toEqual([
-      'Übersicht', 'Monatsvergleich', 'ER 2024', 'ER 2025', 'Kennzahlen und Margen', 'Datenqualität',
+      'Übersicht', 'Monatsvergleich', 'ER 2024', 'ER 2025', 'Kennzahlen und Margen', 'Mehrjahresanalyse', 'Datenqualität',
     ]);
     expect(x.fileName).toBe('Mehrjahresanalyse_Oliv_2024-2025.xlsx');
     expect(bankInvestorExcelFileName(2024, 2025)).toBe('Mehrjahresanalyse_Restaurant_2024-2025.xlsx');
@@ -367,5 +369,389 @@ describe('J18 pdfSafe & Datenhinweise', () => {
     expect(p.datenhinweise.some(d => d.label === 'Warnung')).toBe(true);
     const ohne = buildBankInvestorPdfData(buildDefault(true));
     expect(ohne.datenhinweise.length).toBeGreaterThan(0); // Teiljahr-Hinweis
+  });
+});
+
+// ═══ P1–P12: Phase 2 Management-Reporting (N Jahre, additiv) ═════════════════
+
+// 2023: Umsatz 90k/Monat, Ware 29.7k (33 %), Personal 39.6k (44 %), EBIT 1.7k
+const YEAR_2023 = makeYear(2023, {
+  revenue_total: 90_000, net_revenue: 90_000,
+  total_cogs_direct: 27_000, total_cogs: 29_700,
+  gross_profit_1: 60_300, total_personnel: 39_600, gross_profit_2: 20_700,
+  total_opex: 14_000, ebitda: 6_700, total_depreciation: 5_000, ebit: 1_700,
+});
+
+const buildThreeYears = () =>
+  buildBankInvestorAnalysis([YEAR_2023, BASE_2024, CURRENT_2025], {
+    baseYear: 2024, currentYear: 2025, untilSameMonth: true, restaurantName: 'Oliv',
+    years: [2023, 2024, 2025],
+    importInfoByYear: {
+      2025: { importedAt: '2026-07-01T10:00:00.000Z', fileName: 'konto_2025.xlsx' },
+    },
+  });
+
+describe('P1 selectBankYears', () => {
+  it('wählt chronologisch letzte 2/3/alle, robust bei Lücken und Duplikaten', () => {
+    expect(selectBankYears([2025, 2022, 2024], 'two')).toEqual([2024, 2025]);
+    expect(selectBankYears([2025, 2022, 2024], 'three')).toEqual([2022, 2024, 2025]);
+    expect(selectBankYears([2025, 2022, 2024, 2022], 'all')).toEqual([2022, 2024, 2025]);
+    expect(selectBankYears([2025], 'three')).toEqual([2025]);
+  });
+});
+
+describe('P2 years-Fallback & Rückwärtskompatibilität', () => {
+  it('ohne opts.years → [baseYear, currentYear]; Legacy-Felder unverändert', () => {
+    const a = buildDefault(true);
+    expect(a.years).toEqual([2024, 2025]);
+    expect(a.multiYear.years).toEqual([2024, 2025]);
+    expect(a.baseYear).toBe(2024);
+    expect(a.kernaussagen.length).toBeGreaterThan(0); // Legacy bleibt
+    expect(a.ebitNote).toBe(EBIT_REPORT_NOTE);
+  });
+});
+
+describe('P3 Mehrjahres-Tabelle & Scorecard', () => {
+  it('Werte je Jahr über den Vergleichszeitraum (Jan–Aug), Diff = neuestes vs. Vorjahr', () => {
+    const a = buildThreeYears();
+    const rev = a.multiYear.rows.find(r => r.id === 'net_revenue')!;
+    expect(rev.values).toEqual([720_000, 800_000, 880_000]);
+    expect(rev.diffChf).toBe(80_000);
+    expect(rev.diffPct).toBeCloseTo(10);
+    expect(rev.trend).toBe('steigend');
+    expect(rev.quotes).toEqual([null, null, null]); // revenue-Zeile ohne Quote
+    const ware = a.multiYear.rows.find(r => r.id === 'total_cogs')!;
+    expect(ware.quotes[2]).toBeCloseTo(29);
+    expect(ware.quotes[0]).toBeCloseTo(33);
+  });
+  it('Scorecard endet bei EBIT — kein Jahresgewinn (USER-ENTSCHEID)', () => {
+    const a = buildThreeYears();
+    expect(a.scorecard.rows.map(r => r.id)).toEqual(BANK_SCORECARD_ROW_IDS);
+    expect(a.scorecard.rows.map(r => r.id)).not.toContain('jahresgewinn');
+    const ebit = a.scorecard.rows.find(r => r.id === 'ebit')!;
+    expect(ebit.values).toEqual([13_600, 80_000, 96_000]);
+    expect(ebit.trend).toBe('steigend');
+    expect(ebit.tone).toBe('good');
+  });
+  it('fehlendes Jahr in der Auswahl → null-Werte, kein Absturz', () => {
+    const a = buildBankInvestorAnalysis([BASE_2024, CURRENT_2025], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true,
+      years: [2023, 2024, 2025],
+    });
+    const rev = a.multiYear.rows.find(r => r.id === 'net_revenue')!;
+    expect(rev.values[0]).toBeNull();
+    expect(rev.values[2]).toBe(880_000);
+    expect(a.dataQuality.some(d => d.text.includes('2023'))).toBe(true);
+  });
+});
+
+describe('P4 Executive Summary', () => {
+  it('liefert 9 KPIs in Spez.-Reihenfolge, Vergleich neuestes vs. Vorjahr', () => {
+    const a = buildThreeYears();
+    expect(a.executive.kpis.map(k => k.id)).toEqual([
+      'umsatz', 'umsatz_wachstum', 'bruttogewinn', 'bruttomarge',
+      'warenquote', 'personalquote', 'ebitda', 'ebit', 'ebit_marge',
+    ]);
+    const wachstum = a.executive.kpis[1];
+    expect(wachstum.raw.diffPct).toBeCloseTo(10);
+    expect(wachstum.tone).toBe('good');
+    const warenquote = a.executive.kpis[4];
+    expect(warenquote.raw.diffPp).toBeCloseTo(-1);
+    expect(warenquote.tone).toBe('good');
+    const persquote = a.executive.kpis[5];
+    expect(persquote.raw.diffPp).toBeCloseTo(1);
+    expect(persquote.tone).toBe('critical');
+  });
+  it('Gesamttrend score-basiert: 4 gute + 1 kritisches Signal → positiv', () => {
+    const a = buildThreeYears();
+    expect(a.executive.gesamtTrend.label).toBe('positiv');
+    expect(a.executive.gesamtTrend.tone).toBe('good');
+    expect(a.executive.gesamtTrend.reasons.length).toBeGreaterThan(0);
+  });
+  it('umgekehrte Entwicklung → kritisch', () => {
+    // 2025 schlechter als 2024: Umsatz −10 %, Quoten rauf, EBIT runter
+    const bad2025 = makeYear(2025, {
+      revenue_total: 90_000, net_revenue: 90_000,
+      total_cogs_direct: 27_000, total_cogs: 29_700,
+      gross_profit_1: 60_300, total_personnel: 39_600, gross_profit_2: 20_700,
+      total_opex: 14_000, ebitda: 6_700, total_depreciation: 5_000, ebit: 1_700,
+    }, 8);
+    const a = buildBankInvestorAnalysis([BASE_2024, bad2025], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true,
+    });
+    expect(a.executive.gesamtTrend.label).toBe('kritisch');
+  });
+});
+
+describe('P5 Waterfall Umsatz→EBIT', () => {
+  it('9 Stufen, Subtotale = Engine-Werte, Kette rechnerisch konsistent', () => {
+    const a = buildThreeYears();
+    expect(a.waterfall.year).toBe(2025);
+    expect(a.waterfall.note).toBe(EBIT_REPORT_NOTE);
+    expect(a.waterfall.complete).toBe(true);
+    const ids = a.waterfall.steps.map(s => s.id);
+    expect(ids).toEqual([
+      'net_revenue', 'total_cogs', 'gross_profit_1', 'total_personnel',
+      'gross_profit_2', 'total_opex', 'ebitda', 'total_depreciation', 'ebit',
+    ]);
+    const byId = new Map(a.waterfall.steps.map(s => [s.id, s]));
+    expect(byId.get('net_revenue')!.cumulative).toBe(880_000);
+    // Kosten-Stufe: Zwischenstand = vorheriger Stand − Kosten
+    expect(byId.get('total_cogs')!.cumulative).toBe(880_000 - 255_200);
+    // Subtotal übernimmt Engine-Wert und stimmt mit der Kette überein
+    expect(byId.get('gross_profit_1')!.cumulative).toBe(624_800);
+    expect(byId.get('ebit')!.cumulative).toBe(96_000);
+    // Letzte Stufe ist EBIT — kein Jahresgewinn
+    expect(a.waterfall.steps[a.waterfall.steps.length - 1].id).toBe('ebit');
+  });
+  it('fehlende Stufe → complete=false, Werte bleiben null (nie 0 erfinden)', () => {
+    const noDepr = makeYear(2025, {
+      revenue_total: 110_000, net_revenue: 110_000, total_cogs: 31_900,
+      gross_profit_1: 78_100, total_personnel: 45_100, gross_profit_2: 33_000,
+      total_opex: 16_000, ebitda: 17_000, ebit: 12_000,
+    }, 8);
+    const a = buildBankInvestorAnalysis([BASE_2024, noDepr], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true,
+    });
+    const depr = a.waterfall.steps.find(s => s.id === 'total_depreciation')!;
+    expect(depr.value).toBeNull();
+    expect(a.waterfall.complete).toBe(false);
+  });
+});
+
+describe('P6 EBIT-Treiberanalyse', () => {
+  it('Beiträge summieren sich exakt zur EBIT-Veränderung (Residual 0)', () => {
+    const a = buildThreeYears();
+    const d = a.ebitDrivers;
+    expect(d.baseYear).toBe(2024);
+    expect(d.currentYear).toBe(2025);
+    expect(d.ebitDelta).toBe(16_000);
+    const byId = new Map(d.drivers.map(x => [x.id, x]));
+    expect(byId.get('umsatz')!.contribution).toBe(80_000);
+    expect(byId.get('waren')!.contribution).toBe(-15_200);
+    expect(byId.get('personal')!.contribution).toBe(-40_800);
+    expect(byId.get('uebrig')!.contribution).toBe(-8_000);
+    expect(byId.get('abschreibungen')!.contribution).toBeCloseTo(0);
+    expect(d.residual).toBeCloseTo(0);
+    expect(d.complete).toBe(true);
+    // %-Wirkung relativ zu |Basis-EBIT|
+    expect(byId.get('umsatz')!.pctOfBaseEbit).toBeCloseTo(100);
+  });
+});
+
+describe('P7 Kennzahlenhistorie', () => {
+  it('volle Jahressummen, Teiljahre mit complete=false markiert (nie geschätzt)', () => {
+    const a = buildThreeYears();
+    expect(a.historie.map(h => h.id)).toEqual([
+      'umsatz', 'warenquote', 'personalquote', 'bruttomarge', 'ebit', 'ebit_marge',
+    ]);
+    const umsatz = a.historie.find(h => h.id === 'umsatz')!;
+    expect(umsatz.points).toEqual([
+      { year: 2023, value: 1_080_000, complete: true },
+      { year: 2024, value: 1_200_000, complete: true },
+      { year: 2025, value: 880_000, complete: false },
+    ]);
+    const marge = a.historie.find(h => h.id === 'ebit_marge')!;
+    expect(marge.points[2].value).toBeCloseTo((96_000 / 880_000) * 100);
+  });
+});
+
+describe('P8 Benchmark', () => {
+  it('Vorzeichen: positiv = besser als Ziel; Ampel mit Toleranzband', () => {
+    const a = buildThreeYears();
+    const byId = new Map(a.benchmarks.map(b => [b.id, b]));
+    expect(a.benchmarks.map(b => b.id)).toEqual(BANK_BENCHMARKS.map(b => b.id));
+    const ware = byId.get('warenquote')!;   // 29 % < Ziel 30 % → +1 pp besser
+    expect(ware.ist).toBeCloseTo(29);
+    expect(ware.abweichungPp).toBeCloseTo(1);
+    expect(ware.tone).toBe('good');
+    const pers = byId.get('personalquote')!; // 41 % > Ziel 35 % → −6 pp
+    expect(pers.abweichungPp).toBeCloseTo(-6);
+    expect(pers.tone).toBe('critical');
+    const ebitda = byId.get('ebitda_marge')!; // 15.45 % > 15 %
+    expect(ebitda.tone).toBe('good');
+  });
+  it('knapp verfehlt (innerhalb Toleranz) → neutral; fehlende Daten → null/neutral', () => {
+    // Warenquote 30.5 % → −0.5 pp, innerhalb BANK_BENCHMARK_TOLERANCE_PP
+    const knapp = makeYear(2025, {
+      revenue_total: 100_000, net_revenue: 100_000, total_cogs: 30_500,
+      gross_profit_1: 69_500, total_personnel: 40_000, gross_profit_2: 29_500,
+      total_opex: 15_000, ebitda: 14_500, total_depreciation: 5_000, ebit: 9_500,
+    }, 8);
+    const a = buildBankInvestorAnalysis([BASE_2024, knapp], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true,
+    });
+    const ware = a.benchmarks.find(b => b.id === 'warenquote')!;
+    expect(ware.abweichungPp).toBeCloseTo(-0.5);
+    expect(Math.abs(ware.abweichungPp!)).toBeLessThanOrEqual(BANK_BENCHMARK_TOLERANCE_PP);
+    expect(ware.tone).toBe('neutral');
+    const leer = buildBankInvestorAnalysis([makeYear(2024, {}), makeYear(2025, {}, 8)], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true,
+    });
+    expect(leer.benchmarks.every(b => b.ist == null && b.tone === 'neutral')).toBe(true);
+  });
+});
+
+describe('P9 Heatmap', () => {
+  it('Ø über alle Zellen, Buckets beschreibend, fehlende Monate = null', () => {
+    const a = buildThreeYears();
+    const umsatz = a.heatmaps.umsatz;
+    // Ø = (12×90k + 12×100k + 8×110k) / 32 = 98'750
+    expect(umsatz.average).toBeCloseTo(98_750);
+    expect(umsatz.rows.map(r => r.year)).toEqual([2023, 2024, 2025]);
+    const r2025 = umsatz.rows[2];
+    expect(r2025.cells[0].value).toBe(110_000);
+    expect(r2025.cells[0].bucket).toBe('deutlich_ueber'); // +11.4 % > 10 %
+    expect(r2025.cells[8].value).toBeNull();              // Sep fehlt
+    expect(r2025.cells[8].bucket).toBeNull();
+    const r2023 = umsatz.rows[0];
+    expect(r2023.cells[0].bucket).toBe('unter'); // −8.9 %
+    // Quoten-Heatmap in pp: 2025 29 % vs. Ø
+    const ware = a.heatmaps.warenquote;
+    expect(ware.unit).toBe('pct');
+    expect(ware.rows[2].cells[0].value).toBeCloseTo(29);
+  });
+});
+
+describe('P10 Investor Timeline', () => {
+  it('Status/Vollständigkeit je Jahr + Importdatum aus Registry (null = unbekannt)', () => {
+    const a = buildThreeYears();
+    expect(a.timeline.map(t => t.year)).toEqual([2023, 2024, 2025]);
+    const t2025 = a.timeline[2];
+    expect(t2025.monthsWithData).toBe(8);
+    expect(t2025.status).toBe('teilweise');
+    expect(t2025.umsatz).toBe(880_000);
+    expect(t2025.importedAt).toBe('2026-07-01T10:00:00.000Z');
+    const t2024 = a.timeline[1];
+    expect(t2024.status).toBe('vollständig');
+    expect(t2024.importedAt).toBeNull();
+  });
+});
+
+describe('P11 Kernaussagen 5+5', () => {
+  it('trennt positive Punkte und Potenziale, je max. 5, rein regelbasiert', () => {
+    const a = buildThreeYears();
+    expect(a.kernaussagenPlus.positive.length).toBeLessThanOrEqual(5);
+    expect(a.kernaussagenPlus.potenziale.length).toBeLessThanOrEqual(5);
+    expect(a.kernaussagenPlus.positive.some(s => s.includes('Umsatz'))).toBe(true);
+    expect(a.kernaussagenPlus.positive.some(s => s.includes('Warenquote'))).toBe(true);
+    expect(a.kernaussagenPlus.potenziale.some(s => s.includes('Personalquote'))).toBe(true);
+    expect(a.kernaussagenPlus.potenziale.some(s => s.includes('Personalkosten wachsen schneller'))).toBe(true);
+  });
+});
+
+describe('P12 EBIT-Hinweis', () => {
+  it('identischer Hinweistext an allen Stellen (USER-ENTSCHEID: Ende bei EBIT)', () => {
+    const a = buildThreeYears();
+    expect(a.ebitNote).toBe(EBIT_REPORT_NOTE);
+    expect(a.waterfall.note).toBe(EBIT_REPORT_NOTE);
+    expect(EBIT_REPORT_NOTE).toContain('EBIT');
+    expect(EBIT_REPORT_NOTE).toContain('Steuern');
+  });
+});
+
+// ── P13–P14: Export-Aufbereitung Phase 2 (PDF + Excel, gleiche Quelle) ───────
+
+describe('P13 PDF-Aufbereitung Phase 2', () => {
+  const a = buildThreeYears();
+  const p = buildBankInvestorPdfData(a, { generatedAt: '2026-07-13T10:30:00' });
+  it('Gesamttrend + Scorecard stammen 1:1 aus dem Analysis-Objekt', () => {
+    expect(p.gesamtTrend.label).toBe('Gesamttrend');
+    expect(p.gesamtTrend.value).toContain(a.executive.gesamtTrend.label);
+    expect(p.gesamtTrend.tone).toBe(a.executive.gesamtTrend.tone);
+    expect(p.scorecardTabelle.head).toEqual([
+      'Kennzahl', '2023', '2024', '2025', 'Quote 2023', 'Quote 2024', 'Quote 2025', 'Δ CHF', 'Δ %', 'Trend',
+    ]);
+    expect(p.scorecardTabelle.rows).toHaveLength(a.scorecard.rows.length);
+    // Umsatzzeile: Jahreswerte im de-CH-Format
+    expect(p.scorecardTabelle.rows[0][3]).toBe((880_000).toLocaleString('de-CH'));
+    expect(p.scorecardTabelle.strongRows).toContain(
+      a.scorecard.rows.findIndex(r => r.id === 'ebit'),
+    );
+  });
+  it('Waterfall: Kosten mit Minuszeichen, Subtotale fett, EBIT-Hinweis identisch', () => {
+    expect(p.waterfallTabelle.titel).toContain('2025');
+    const kostenIdx = a.waterfall.steps.findIndex(s => s.kind === 'cost');
+    expect(p.waterfallTabelle.rows[kostenIdx][1].startsWith('−')).toBe(true);
+    const subtotalIdx = a.waterfall.steps.findIndex(s => s.kind === 'subtotal');
+    expect(p.waterfallTabelle.strongRows).toContain(subtotalIdx);
+    expect(p.ebitHinweis).toBe(EBIT_REPORT_NOTE);
+  });
+  it('EBIT-Treiber, Historie (Teiljahr *), Benchmark, Timeline, Kernaussagen 5+5', () => {
+    expect(p.ebitTreiberTabelle.rows).toHaveLength(a.ebitDrivers.drivers.length);
+    expect(p.ebitTreiberZusammenfassung[0].label).toBe('EBIT 2024');
+    // Historie: Spalten = Jahre; Teiljahr 2025 mit Stern markiert
+    expect(p.historieTabelle.head).toEqual(['Kennzahl', '2023', '2024', '2025']);
+    const umsatzHist = p.historieTabelle.rows[0];
+    expect(umsatzHist[3].endsWith('*')).toBe(true);
+    expect(umsatzHist[2].endsWith('*')).toBe(false);
+    // Benchmark: eine Zeile je Definition, Bewertungstext gesetzt
+    expect(p.benchmarkTabelle.rows).toHaveLength(BANK_BENCHMARKS.length);
+    expect(p.benchmarkTabelle.rows.every(r => ['erfüllt', 'verfehlt', 'im Toleranzband', 'keine Daten'].includes(r[4]))).toBe(true);
+    // Timeline: 3 Jahre, Importdatum formatiert, unbekannt = —
+    expect(p.timelineTabelle.rows).toHaveLength(3);
+    expect(p.timelineTabelle.rows[2][5]).toBe('01.07.2026');
+    expect(p.timelineTabelle.rows[1][5]).toBe('—');
+    // Kernaussagen 5+5
+    expect(p.kernaussagenPositive).toEqual(a.kernaussagenPlus.positive);
+    expect(p.kernaussagenPotenziale).toEqual(a.kernaussagenPlus.potenziale);
+  });
+  it('fehlende Werte bleiben — (nie 0 erfinden)', () => {
+    const leer = buildBankInvestorAnalysis([BASE_2024], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true,
+    });
+    const p2 = buildBankInvestorPdfData(leer);
+    // Neustes Jahr (2025) hat keine Daten → alle Waterfall-Stufen bleiben —
+    expect(p2.waterfallTabelle.rows.every(r => r[1] === '—' && r[2] === '—')).toBe(true);
+    expect(p2.timelineTabelle.rows.some(r => r[3] === '—')).toBe(true);
+  });
+});
+
+describe('P14 Excel-Aufbereitung Phase 2', () => {
+  const a = buildThreeYears();
+  const x = buildBankInvestorExcelData(a);
+  it('Übersicht trägt Gesamttrend, 9 Executive-KPIs, Kernaussagen 5+5 und EBIT-Hinweis', () => {
+    const ueb = x.sheets[0];
+    const flat = ueb.rows.map(r => r.map(c => c.v));
+    expect(flat[0][0]).toBe('Gesamttrend');
+    expect(flat[0][1]).toBe(a.executive.gesamtTrend.label);
+    expect(flat.some(r => r[0] === 'Positive Entwicklungen')).toBe(true);
+    expect(flat.some(r => r[0] === 'Verbesserungspotenziale')).toBe(true);
+    expect(flat.some(r => r[0] === 'Hinweis' && r[1] === EBIT_REPORT_NOTE)).toBe(true);
+    // 9 Executive-KPIs zwischen Titel und erster Leerzeile
+    const kpiTitleIdx = flat.findIndex(r => r[0] === 'Executive-Kennzahlen');
+    expect(flat.slice(kpiTitleIdx + 1, kpiTitleIdx + 1 + a.executive.kpis.length)).toHaveLength(a.executive.kpis.length);
+  });
+  it('Blatt Mehrjahresanalyse: Scorecard-Werte als echte Zahlen, Waterfall-Kosten negativ', () => {
+    const mj = x.sheets[5];
+    expect(mj.name).toBe('Mehrjahresanalyse');
+    const flat = mj.rows.map(r => r.map(c => c?.v));
+    // Scorecard-Kopfzeile mit allen Jahren
+    const scHead = mj.rows[1].map(c => c.v);
+    expect(scHead).toContain('2023');
+    expect(scHead).toContain('2025');
+    // Umsatzzeile = Zeile 2: 2025-Wert als echte Zahl
+    expect(mj.rows[2][3].v).toBe(880_000);
+    expect(mj.rows[2][3].fmt).toBe('chf');
+    // Waterfall: Kostenstufe negativ als Zahl
+    const wfHeadIdx = flat.findIndex(r => typeof r[0] === 'string' && (r[0] as string).startsWith('Vom Umsatz zum EBIT'));
+    const kostenOffset = a.waterfall.steps.findIndex(s => s.kind === 'cost');
+    const kostenRow = mj.rows[wfHeadIdx + 2 + kostenOffset];
+    expect(typeof kostenRow[1].v).toBe('number');
+    expect((kostenRow[1].v as number)).toBeLessThan(0);
+    // Benchmark + Timeline-Blöcke vorhanden
+    expect(flat.some(r => typeof r[0] === 'string' && (r[0] as string).startsWith('Benchmark-Vergleich'))).toBe(true);
+    expect(flat.some(r => r[0] === 'Datenbasis je Geschäftsjahr')).toBe(true);
+    expect(flat.some(r => r[0] === 'Hinweis' && r[1] === EBIT_REPORT_NOTE)).toBe(true);
+    // Timeline: Importdatum formatiert
+    expect(flat.some(r => r[5] === '01.07.2026')).toBe(true);
+  });
+  it('Historie im Excel: Teiljahr als Text mit Stern, volle Jahre als Zahl', () => {
+    const mj = x.sheets[5];
+    const flat = mj.rows.map(r => r.map(c => c?.v));
+    const histIdx = flat.findIndex(r => typeof r[0] === 'string' && (r[0] as string).startsWith('Kennzahlenhistorie'));
+    const umsatzRow = mj.rows[histIdx + 2]; // Kopf + 1. Serie (Umsatz)
+    expect(umsatzRow[2].v).toBe(1_200_000);          // 2024 voll → Zahl
+    expect(String(umsatzRow[3].v).endsWith('*')).toBe(true); // 2025 Teiljahr → Text mit *
   });
 });

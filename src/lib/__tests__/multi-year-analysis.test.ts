@@ -338,10 +338,11 @@ import {
 } from '../multi-year-analysis';
 
 describe('ER-Positionen & Semantik (§9)', () => {
-  it('6 Positionen, Umsatz ist Default', () => {
-    expect(MULTI_YEAR_POSITIONS).toHaveLength(6);
+  it('8 Positionen inkl. Warenaufwand-Zwischentotale, Umsatz ist Default', () => {
+    expect(MULTI_YEAR_POSITIONS).toHaveLength(8);
     expect(MULTI_YEAR_POSITIONS.map((p) => p.id)).toEqual([
-      'net_revenue', 'total_cogs', 'gross_profit_1', 'total_personnel', 'total_opex', 'ebitda',
+      'net_revenue', 'total_cogs_direct', 'total_cogs_uebrig', 'total_cogs',
+      'gross_profit_1', 'total_personnel', 'total_opex', 'ebitda',
     ]);
     expect(DEFAULT_POSITION.id).toBe('net_revenue');
     expect(DEFAULT_POSITION.semantics).toBe('revenue');

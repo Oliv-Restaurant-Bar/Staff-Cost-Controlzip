@@ -56,6 +56,8 @@ export interface MultiYearPosition {
 
 export const MULTI_YEAR_POSITIONS: MultiYearPosition[] = [
   { id: 'net_revenue', label: 'Umsatz (netto)', summarySubject: 'Der Umsatz', semantics: 'revenue' },
+  { id: 'total_cogs_direct', label: 'Direkter Warenaufwand', summarySubject: 'Der direkte Warenaufwand', semantics: 'expense' },
+  { id: 'total_cogs_uebrig', label: 'Übriger Warenaufwand', summarySubject: 'Der übrige Warenaufwand', semantics: 'expense' },
   { id: 'total_cogs', label: 'Warenaufwand', summarySubject: 'Der Warenaufwand', semantics: 'expense' },
   { id: 'gross_profit_1', label: 'Bruttogewinn 1', summarySubject: 'Der Bruttogewinn 1', semantics: 'result' },
   { id: 'total_personnel', label: 'Personalaufwand', summarySubject: 'Der Personalaufwand', semantics: 'expense' },

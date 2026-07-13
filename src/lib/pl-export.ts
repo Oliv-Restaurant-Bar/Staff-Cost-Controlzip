@@ -564,6 +564,8 @@ function addPrevMonthComparison(
 
   const rows: VmRow[] = [
     { label: 'Betriebsertrag netto',  curV: curRev,                              prevV: prevRev,                              isResult: false, isExpense: false },
+    { label: 'Direkter Warenaufwand', curV: getKpi(curResult, 'total_cogs_direct'), prevV: getKpi(prevResult, 'total_cogs_direct'), isResult: false, isExpense: true },
+    { label: 'Übriger Warenaufwand',  curV: getKpi(curResult, 'total_cogs_uebrig'), prevV: getKpi(prevResult, 'total_cogs_uebrig'), isResult: false, isExpense: true },
     { label: 'Warenaufwand total',    curV: getKpi(curResult, 'total_cogs'),      prevV: getKpi(prevResult, 'total_cogs'),      isResult: false, isExpense: true },
     { label: 'Personalaufwand total', curV: getKpi(curResult, 'total_personnel'), prevV: getKpi(prevResult, 'total_personnel'), isResult: false, isExpense: true },
     { label: 'EBITDA',                curV: getKpi(curResult, 'ebitda'),          prevV: getKpi(prevResult, 'ebitda'),          isResult: true,  isExpense: false },
@@ -1115,7 +1117,7 @@ export async function exportPLToPDF(
           },
         });
       } else {
-        const body = buildKlassischBody(exportRows, revA, revPY);
+        const body = buildKlassischBody(monthResult.rows, revA, revPY);
         autoTable(doc, {
           startY: yK,
           margin: { top: 22, bottom: 15 },
@@ -1219,6 +1221,8 @@ export async function exportPLToPDF(
 
     const KEY_ROWS: { id: string; isPct?: boolean; pctLabel?: string }[] = [
       { id: 'revenue_total' },
+      { id: 'total_cogs_direct' },
+      { id: 'total_cogs_uebrig' },
       { id: 'total_cogs',      isPct: true, pctLabel: 'Warenkosten %' },
       { id: 'total_personnel', isPct: true, pctLabel: 'Personalquote %' },
       { id: 'total_opex' },

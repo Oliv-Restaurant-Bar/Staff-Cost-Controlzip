@@ -57,7 +57,16 @@ export interface BankInvestorPdfData {
   vergleichsLabel: string;
   importStand: string;
   datenquelle: string;
+  /** Gesamttrend (Phase 2 §2) — regelbasierte Einordnung */
+  gesamtTrend: BankPdfKeyValue;
   kpis: BankPdfKeyValue[];
+  /** Mehrjahres-Scorecard (Phase 2 §3) */
+  scorecardTabelle: BankPdfTable;
+  /** Waterfall Umsatz→EBIT (Phase 2 §4) */
+  waterfallTabelle: BankPdfTable;
+  /** EBIT-Treiber (Phase 2 §5) */
+  ebitTreiberZusammenfassung: BankPdfKeyValue[];
+  ebitTreiberTabelle: BankPdfTable;
   umsatzTabelle: BankPdfTable;
   umsatzErkenntnisse: BankPdfKeyValue[];
   warenTabelle: BankPdfTable;
@@ -65,8 +74,20 @@ export interface BankInvestorPdfData {
   personalTabelle: BankPdfTable;
   personalZusammenfassung: BankPdfKeyValue[];
   zwischentotale: BankPdfTable;
+  /** EBIT-Hinweis (identisch UI/Excel) — direkt unter den Zwischentotalen */
+  ebitHinweis: string;
   kostenstruktur: BankPdfTable;
+  /** Kennzahlenhistorie über alle gewählten Jahre (Phase 2 §6) */
+  historieTabelle: BankPdfTable;
+  /** Benchmark-Vergleich (Phase 2 §7) */
+  benchmarkTabelle: BankPdfTable;
+  /** Legacy-Kernaussagen (Phase 1, bleibt für Kompatibilität) */
   kernaussagen: string[];
+  /** Kernaussagen 5+5 (Phase 2 §9) */
+  kernaussagenPositive: string[];
+  kernaussagenPotenziale: string[];
+  /** Investor Timeline (Phase 2 §10) */
+  timelineTabelle: BankPdfTable;
   datenhinweise: BankPdfKeyValue[];
   fileName: string;
 }
@@ -161,6 +182,102 @@ export function buildBankInvestorPdfData(
     ? analysis.dataQuality.map(d => ({ label: SEVERITY_LABEL[d.severity] ?? d.severity, value: d.text }))
     : [{ label: '—', value: 'Keine Datenqualitätshinweise.' }];
 
+  // ── Phase 2: Gesamttrend + Scorecard + Waterfall + Treiber + Historie +
+  //    Benchmark + Timeline (alles direkt aus dem Analysis-Objekt) ────────────
+  const trend = analysis.executive.gesamtTrend;
+  const gesamtTrend: BankPdfKeyValue = {
+    label: 'Gesamttrend',
+    value: `${trend.label} — ${trend.reasons.join(' · ')}`,
+    tone: trend.tone,
+  };
+
+  const sc = analysis.scorecard;
+  const TREND_WORD: Record<string, string> = {
+    steigend: 'steigend', fallend: 'fallend', stabil: 'stabil', gemischt: 'gemischt',
+  };
+  const scorecardTabelle: BankPdfTable = {
+    titel: `Mehrjahres-Scorecard (${sc.years.join(' / ')})`,
+    head: ['Kennzahl', ...sc.years.map(String), ...sc.years.map(y => `Quote ${y}`), 'Δ CHF', 'Δ %', 'Trend'],
+    rows: sc.rows.map(r => [
+      r.label,
+      ...r.values.map(chfS),
+      ...r.quotes.map(pctS),
+      chfS(r.diffChf),
+      r.diffPct == null ? 'n. vgl.' : fmtPctChange(r.diffPct),
+      r.trend ? TREND_WORD[r.trend] ?? r.trend : '—',
+    ]),
+    strongRows: sc.rows.map((r, i) => (r.emphasis ? i : -1)).filter(i => i >= 0),
+  };
+
+  const wf = analysis.waterfall;
+  const waterfallTabelle: BankPdfTable = {
+    titel: `Vom Umsatz zum EBIT ${wf.year}`,
+    head: ['Stufe', 'Betrag CHF', 'Zwischenstand CHF'],
+    rows: wf.steps.map(s => [
+      s.label,
+      s.value == null ? '—' : `${s.kind === 'cost' ? '−' : ''}${chfS(Math.abs(s.value))}`,
+      chfS(s.cumulative),
+    ]),
+    strongRows: wf.steps.map((s, i) => (s.kind !== 'cost' ? i : -1)).filter(i => i >= 0),
+  };
+
+  const drv = analysis.ebitDrivers;
+  const ebitTreiberZusammenfassung: BankPdfKeyValue[] = [
+    { label: `EBIT ${drv.baseYear}`, value: `CHF ${chfS(drv.ebitBase)}` },
+    { label: `EBIT ${drv.currentYear}`, value: `CHF ${chfS(drv.ebitCurrent)}` },
+    { label: 'Veränderung', value: drv.ebitDelta == null ? '—' : `${drv.ebitDelta >= 0 ? '+' : '−'}CHF ${chfS(Math.abs(drv.ebitDelta))}` },
+  ];
+  const ebitTreiberTabelle: BankPdfTable = {
+    titel: `EBIT-Treiber ${drv.baseYear} → ${drv.currentYear}`,
+    head: ['Treiber', 'Beitrag CHF', 'in % des Basis-EBIT'],
+    rows: drv.drivers.map(d => [
+      d.label,
+      d.contribution == null ? '—' : `${d.contribution >= 0 ? '+' : '−'}${chfS(Math.abs(d.contribution))}`,
+      pctS(d.pctOfBaseEbit),
+    ]),
+  };
+
+  const histYears = analysis.years;
+  const historieTabelle: BankPdfTable = {
+    titel: 'Kennzahlenhistorie (volle Jahressummen, * = Teiljahr)',
+    head: ['Kennzahl', ...histYears.map(String)],
+    rows: analysis.historie.map(s => [
+      s.label,
+      ...histYears.map(y => {
+        const p = s.points.find(pt => pt.year === y);
+        if (!p || p.value == null) return '—';
+        const val = s.unit === 'chf' ? chfS(p.value) : pctS(p.value);
+        return p.complete ? val : `${val} *`;
+      }),
+    ]),
+  };
+
+  const benchmarkTabelle: BankPdfTable = {
+    titel: `Benchmark-Vergleich ${currentYear}`,
+    head: ['Kennzahl', 'Ist', 'Ziel', 'Abweichung', 'Bewertung'],
+    rows: analysis.benchmarks.map(b => [
+      b.label,
+      pctS(b.ist),
+      `${b.direction === 'below' ? '<=' : '>='} ${pctS(b.target)}`,
+      b.abweichungPp == null ? '—' : fmtPp(b.abweichungPp),
+      b.ist == null ? 'keine Daten' : b.tone === 'good' ? 'erfüllt' : b.tone === 'critical' ? 'verfehlt' : 'im Toleranzband',
+    ]),
+  };
+
+  const timelineTabelle: BankPdfTable = {
+    titel: 'Datenbasis je Geschäftsjahr',
+    head: ['Jahr', 'Status', 'Monate mit Daten', 'Umsatz CHF', 'EBIT CHF', 'Importiert am'],
+    rows: analysis.timeline.map(tl => {
+      let importedAt = '—';
+      if (tl.importedAt) {
+        const d = new Date(tl.importedAt);
+        importedAt = Number.isNaN(d.getTime()) ? tl.importedAt :
+          `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+      }
+      return [String(tl.year), tl.status, `${tl.monthsWithData} / 12`, chfS(tl.umsatz), chfS(tl.ebit), importedAt];
+    }),
+  };
+
   return {
     titel: header.title,
     untertitel: `${baseYear}–${currentYear}`,
@@ -169,7 +286,12 @@ export function buildBankInvestorPdfData(
     vergleichsLabel: comparison.label,
     importStand: header.importStand ?? '—',
     datenquelle: header.dataSource,
+    gesamtTrend,
     kpis,
+    scorecardTabelle,
+    waterfallTabelle,
+    ebitTreiberZusammenfassung,
+    ebitTreiberTabelle,
     umsatzTabelle,
     umsatzErkenntnisse,
     warenTabelle: costTable('Warenaufwand und Warenquote', analysis.wareMonths),
@@ -177,8 +299,14 @@ export function buildBankInvestorPdfData(
     personalTabelle: costTable('Personalaufwand und Personalquote', analysis.personalMonths),
     personalZusammenfassung: costSummaryRows(analysis.personalSummary, 'Personalaufwand'),
     zwischentotale,
+    ebitHinweis: analysis.ebitNote,
     kostenstruktur,
+    historieTabelle,
+    benchmarkTabelle,
     kernaussagen: analysis.kernaussagen,
+    kernaussagenPositive: analysis.kernaussagenPlus.positive,
+    kernaussagenPotenziale: analysis.kernaussagenPlus.potenziale,
+    timelineTabelle,
     datenhinweise,
     fileName: bankInvestorPdfFileName(baseYear, currentYear, header.restaurantName),
   };
@@ -266,25 +394,65 @@ export function renderBankInvestorPdf(data: BankInvestorPdfData): jsPDF {
   y = 38;
   doc.setTextColor(0, 0, 0);
 
-  // ── Abschnitte ──────────────────────────────────────────────────────────────
-  sectionTitle('Executive-Kennzahlen');
-  kvTable(data.kpis, true);
+  // Kleingedruckter Hinweistext (z. B. EBIT-Hinweis) — mit Zeilenumbruch.
+  const noteText = (text: string) => {
+    const lines = doc.splitTextToSize(pdfSafe(text), pageW - 2 * MARGIN) as string[];
+    ensureSpace(lines.length * 3.6 + 4);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.setTextColor(110, 110, 110);
+    doc.text(lines, MARGIN, y);
+    doc.setTextColor(0, 0, 0);
+    y += lines.length * 3.6 + 4;
+  };
 
+  // ── Abschnitte (Reihenfolge = Bildschirm) ───────────────────────────────────
+  // 1. Executive Summary: Gesamttrend + KPIs
+  sectionTitle('Executive Summary');
+  kvTable([data.gesamtTrend, ...data.kpis], true);
+
+  // 2. Mehrjahres-Scorecard
+  dataTable(data.scorecardTabelle);
+
+  // 3. Waterfall Umsatz→EBIT
+  dataTable(data.waterfallTabelle);
+
+  // 4. EBIT-Treiber
+  dataTable(data.ebitTreiberTabelle);
+  kvTable(data.ebitTreiberZusammenfassung);
+
+  // 5. Umsatzentwicklung
   dataTable(data.umsatzTabelle);
   sectionTitle('Erkenntnisse Umsatz');
   kvTable(data.umsatzErkenntnisse);
 
+  // 6.+7. Waren-/Personalaufwand
   dataTable(data.warenTabelle);
   kvTable(data.warenZusammenfassung);
 
   dataTable(data.personalTabelle);
   kvTable(data.personalZusammenfassung);
 
+  // 8. Zwischentotale + EBIT-Hinweis
   dataTable(data.zwischentotale);
-  dataTable(data.kostenstruktur);
+  noteText(data.ebitHinweis);
 
+  // 9. Kostenstruktur + Kennzahlenhistorie
+  dataTable(data.kostenstruktur);
+  dataTable(data.historieTabelle);
+
+  // 10. Benchmark
+  dataTable(data.benchmarkTabelle);
+
+  // 11. Kernaussagen 5+5
   sectionTitle('Kernaussagen');
-  if (data.kernaussagen.length > 0) {
+  const hasPlus = data.kernaussagenPositive.length > 0 || data.kernaussagenPotenziale.length > 0;
+  if (hasPlus) {
+    kvTable([
+      ...data.kernaussagenPositive.map(s => ({ label: 'Positiv', value: s, tone: 'good' })),
+      ...data.kernaussagenPotenziale.map(s => ({ label: 'Potenzial', value: s, tone: 'critical' })),
+    ], true);
+  } else if (data.kernaussagen.length > 0) {
     kvTable(data.kernaussagen.map((s, i) => ({ label: `${i + 1}.`, value: s })));
   } else {
     doc.setFont('helvetica', 'normal');
@@ -292,6 +460,9 @@ export function renderBankInvestorPdf(data: BankInvestorPdfData): jsPDF {
     doc.text('Keine Kernaussagen verfügbar (unzureichende Datenbasis).', MARGIN, y);
     y += 8;
   }
+
+  // 12. Investor Timeline + Datenhinweise
+  dataTable(data.timelineTabelle);
 
   sectionTitle('Datenhinweise und Importstand');
   kvTable(data.datenhinweise);

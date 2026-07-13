@@ -41,7 +41,8 @@ import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableY
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
-import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth } from '@/lib/pl-engine';
+import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth, buildCogsBudgetSplitForMonth } from '@/lib/pl-engine';
+import { gruppiereWarenaufwandKonten, WARENAUFWAND_GRUPPE_LABEL, type WarenaufwandGruppe } from '@/lib/warenaufwand-gruppierung';
 import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
@@ -623,6 +624,8 @@ interface BPLRow {
   itemId?: string;
   isInternal?: boolean;
   isTopDownable?: boolean;
+  /** Zwischentotal-Zeile (z.B. Direkter/Übriger Warenaufwand) — nicht klickbar/editierbar */
+  isGroupSubtotal?: boolean;
 }
 
 interface BPLRowWithValues extends BPLRow {
@@ -764,7 +767,8 @@ const PL_CAT_TO_BPL: Partial<Record<string, string>> = {
   bank_fees:         'pl_finance',
 };
 
-function computeBPLRows(
+// Export nur für Tests (Warenaufwand-Gruppierung in der klassischen Ansicht)
+export function computeBPLRows(
   budget: BudgetYear,
   rec: MonthlyFinancialRecord | undefined,
   mIdx: number,
@@ -839,6 +843,11 @@ function computeBPLRows(
         (rec?.expenseCategoriesPreviousYear ?? []).some(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= 3000 && n <= 3999; })
       );
 
+      // Mitglieder-Zeilen werden zuerst gesammelt: beim Warenaufwand werden sie
+      // anschliessend nach numerischer Range (4000–4070 / 4071–4900) gruppiert
+      // und mit Zwischentotalen ausgegeben; sonst unverändert angehängt.
+      const memberRows: BPLRowWithValues[] = [];
+
       const its = items.filter(i => i.categoryId === cat.id && !i.isHidden).sort((a, b) => a.sortOrder - b.sortOrder);
       for (const item of its) {
         if (item.accountNumber) {
@@ -867,7 +876,7 @@ function computeBPLRows(
         // Verstecke nur Default-Items die in allen drei Spalten 0 haben (kein Sage-Wert, kein Budget, kein VJ).
         const alwaysShow = item.isInternal || item.isForceVisible || item.isDefault === false;
         if (!alwaysShow && iA === 0 && iB === 0 && iP === 0) continue;
-        rows.push({
+        memberRows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
           itemId: item.id, itemLabel: item.label, itemAccountNumber: item.accountNumber,
@@ -890,12 +899,49 @@ function computeBPLRows(
           ?? (rec?.expenseCategoriesPreviousYear ?? []).find(c => c.categoryId === ar.accountNum)?.amount
           ?? 0;
         if (ar.amount === 0 && iP === 0) continue;
-        rows.push({
+        memberRows.push({
           catId: cat.id, catLabel: cat.label, catType: 'items',
           isExpense: cat.isExpense, isCategory: false,
           itemId: `actual_${ar.accountNum}`, itemLabel: ar.label, itemAccountNumber: ar.accountNum,
           values: makeCell(ar.amount, 0, iP, cat.isExpense),
         });
+      }
+
+      if (cat.id === 'pl_goods_cost' && memberRows.length > 0) {
+        // Warenaufwand: Zeilen nach numerischer Range gruppieren (SSoT
+        // warenaufwand-gruppierung). Konten ohne Range-Zuordnung fallen auf
+        // die Kontenzuordnungs-Gruppe zurück (kein stilles Ummappen).
+        const grouped = gruppiereWarenaufwandKonten(memberRows, r => r.itemAccountNumber);
+        const direct = [...grouped.direct];
+        const uebrig = [...grouped.uebrig];
+        for (const r of grouped.unzugeordnet) {
+          const plCat = r.itemAccountNumber ? lookupAccount(r.itemAccountNumber).mapping?.plCategory : undefined;
+          if (plCat === 'cogs_food' || plCat === 'cogs_beverage') direct.push(r);
+          else uebrig.push(r);
+        }
+        const pushGroup = (groupRows: BPLRowWithValues[], gruppe: WarenaufwandGruppe) => {
+          // Leere Gruppe → Block UND Zwischentotal weglassen (fehlend ≠ 0)
+          if (groupRows.length === 0) return;
+          rows.push(...groupRows);
+          // Interne Positionen zählen (wie beim Kategorie-Total) nicht mit
+          const rel = groupRows.filter(r => !r.isInternal);
+          rows.push({
+            catId: cat.id, catLabel: cat.label, catType: 'items',
+            isExpense: cat.isExpense, isCategory: false, isGroupSubtotal: true,
+            itemId: `subtotal_${gruppe}`,
+            itemLabel: WARENAUFWAND_GRUPPE_LABEL[gruppe],
+            values: makeCell(
+              rel.reduce((s, r) => s + r.values.actual, 0),
+              rel.reduce((s, r) => s + r.values.budget, 0),
+              rel.reduce((s, r) => s + r.values.prevYear, 0),
+              cat.isExpense,
+            ),
+          });
+        };
+        pushGroup(direct, 'direct');
+        pushGroup(uebrig, 'uebrig');
+      } else {
+        rows.push(...memberRows);
       }
     } else if (cat.type === 'result') {
       const isTopDownable = (cat.resultFormula ?? []).some(
@@ -1190,6 +1236,28 @@ const BPLRowComp = ({ row, onClick, compact, onDelete, month, year, onSaved, hig
         {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} isExpense={row.isExpense} />}
         {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums opacity-65', py)}>{fmt(v.prevYear)}</td>}
         {showPrevYear && pctMode !== 'off' && <td className={cn(py, pctMode === 'subtle' ? 'px-2 text-right font-mono tabular-nums text-[10px] italic text-white/30' : 'px-2 text-right font-mono tabular-nums text-xs text-[#c8d9b8] font-bold')}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
+        {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} isExpense={row.isExpense} />}
+      </tr>
+    );
+  }
+
+  if (row.isGroupSubtotal) {
+    // Zwischentotal (Direkter/Übriger Warenaufwand) — reine Anzeigezeile
+    const p = pctVal(v.actual);
+    return (
+      <tr className="bg-muted/60 dark:bg-slate-800/60 border-t border-b border-slate-200 dark:border-slate-700 font-semibold" data-testid={`bpl-${row.itemId}`}>
+        <td className={cn('px-3 pl-6 text-xs text-gray-700 dark:text-gray-300 uppercase tracking-wide', pyItem)} colSpan={2}>
+          {row.itemLabel}
+        </td>
+        <td className={cn('px-2 text-right text-sm font-mono tabular-nums font-semibold', pyItem)}>{fmt(v.actual)}</td>
+        {pctMode !== 'off' && (
+          <td className={cn(pctClass, pyItem)}>{p ?? <span className="opacity-30">—</span>}</td>
+        )}
+        {showBudget && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-600 dark:text-gray-400', pyItem)}>{fmt(v.budget)}</td>}
+        {showBudget && pctMode !== 'off' && <td className={cn(pctBudClass, pyItem)}>{pctValBudget(v.budget) ?? <span className="opacity-30">—</span>}</td>}
+        {showBudget && <BPLVarCell value={v.vsBudget} pct={v.vsBudgetPct} isExpense={row.isExpense} />}
+        {showPrevYear && <td className={cn('px-2 text-right text-sm font-mono tabular-nums text-gray-600 dark:text-gray-400', pyItem)}>{fmt(v.prevYear)}</td>}
+        {showPrevYear && pctMode !== 'off' && <td className={cn(pctPYClass, pyItem)}>{pctValPY(v.prevYear) ?? <span className="opacity-30">—</span>}</td>}
         {showPrevYear && <BPLVarCell value={v.vsPrevYear} pct={v.vsPrevYearPct} isExpense={row.isExpense} />}
       </tr>
     );
@@ -2466,7 +2534,16 @@ const PLViewPage = () => {
         ? latest
         : `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
     }
-    return { unmappedAccounts: unmapped > 0 ? unmapped : undefined, importStand };
+    // Import-Metadaten je Jahr für die Investor Timeline (neuester Eintrag
+    // je Geschäftsjahr; Tombstones sind bereits im Loader gefiltert).
+    const importInfoByYear: Record<number, { importedAt: string | null; fileName?: string | null }> = {};
+    for (const e of annualImports) {
+      const prev = importInfoByYear[e.year];
+      if (!prev || (e.importedAt && (!prev.importedAt || e.importedAt > prev.importedAt))) {
+        importInfoByYear[e.year] = { importedAt: e.importedAt || null, fileName: e.fileName || null };
+      }
+    }
+    return { unmappedAccounts: unmapped > 0 ? unmapped : undefined, importStand, importInfoByYear };
   }, [annualImports]);
 
   // Vorjahres-Diagnose: macht sichtbar, ob/welche Vorjahresdaten vorhanden sind
@@ -2633,6 +2710,8 @@ const PLViewPage = () => {
       return {
         budgetByRow:   budgetByRow.size   > 0 ? budgetByRow   : undefined,
         prevYearByRow: prevYearByRow.size > 0 ? prevYearByRow : undefined,
+        // Warenaufwand-Budget nach numerischer Range (SSoT für die Zwischentotale)
+        cogsBudgetSplit: buildCogsBudgetSplitForMonth(budgetData, idx, lookupAccount),
       };
     });
   }, [budgetData, prevYearRecords, effectiveAllRecords]);
@@ -3447,6 +3526,7 @@ const PLViewPage = () => {
             restaurantName={tenant.shortName}
             unmappedAccounts={bankImportInfo.unmappedAccounts}
             importStand={bankImportInfo.importStand}
+            importInfoByYear={bankImportInfo.importInfoByYear}
           />
         )}
 

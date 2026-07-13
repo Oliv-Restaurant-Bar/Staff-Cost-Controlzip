@@ -1,0 +1,375 @@
+Setze jetzt die fehlenden Zwischentotale im Bereich Warenaufwand der Erfolgsrechnung korrekt um.
+
+Ausgangslage:
+
+In der Erfolgsrechnung werden die Warenaufwandskonten aktuell direkt unter der Hauptgruppe „Warenaufwand“ angezeigt.
+
+Es fehlen jedoch die fachlich notwendigen Zwischentotale:
+
+1. Direkter Warenaufwand
+   Konten 4000 bis 4070
+
+2. Übriger Warenaufwand
+   Konten 4071 bis 4900
+
+Danach muss weiterhin der Gesamtwarenaufwand als Summe beider Gruppen erscheinen.
+
+Aktuell sichtbare Konten sind beispielsweise:
+
+4000 Prodega Warenaufwand
+4020 Wein
+4030 Bier
+4040 Spirituosen
+4050 Mineral
+4060 Küche Warenaufwand
+4070 Kaffee, Tee
+4090 Übriger Warenaufwand
+4701 Betriebsmaterial Restaurant
+4800 Einkaufsabrechnungskonto Gebinde
+
+Diese müssen anhand ihrer Kontonummer korrekt gruppiert werden.
+
+Zielstruktur:
+
+WARENAUFWAND
+
+Direkter Warenaufwand
+  4000–4070 einzelne Konten
+Direkter Warenaufwand Total
+
+Übriger Warenaufwand
+  4071–4900 einzelne Konten
+Übriger Warenaufwand Total
+
+Gesamtwarenaufwand
+
+Bruttogewinn 1
+
+Wichtig:
+
+Die Grenzen sind inklusive:
+
+- Direkter Warenaufwand: accountNumber >= 4000 && accountNumber <= 4070
+- Übriger Warenaufwand: accountNumber >= 4071 && accountNumber <= 4900
+
+Konten ausserhalb dieser Bereiche dürfen nicht versehentlich in diese Zwischentotale einfliessen.
+
+1. Bestehende P&L-Struktur zuerst analysieren
+
+Prüfe vor der Änderung:
+
+- wo die P&L-Zeilenstruktur zentral definiert ist
+- wie Konten den Erfolgsrechnungsgruppen zugeordnet werden
+- wie Zwischentotale aktuell berechnet werden
+- wie Budget, Ist, Vorjahr und Mehrjahreswerte zusammengesetzt werden
+- welche zentrale Struktur von UI, Management Report, Banken-/Investorenansicht, PDF und Excel verwendet wird
+
+Keine reine Darstellungslogik nur in PLView einbauen.
+
+Die beiden Zwischentotale müssen Teil der zentralen Erfolgsrechnungsstruktur werden.
+
+2. Gruppierungslogik umsetzen
+
+Erstelle beziehungsweise erweitere eine zentrale, getestete Zuordnung:
+
+Direkter Warenaufwand:
+4000–4070
+
+Übriger Warenaufwand:
+4071–4900
+
+Die Zuordnung muss numerisch über die Kontonummer erfolgen.
+
+Nicht über:
+
+- Kontobezeichnung
+- Reihenfolge
+- Textsuche
+- Position im Array
+
+Kontonummern können als String oder Zahl vorliegen und müssen robust normalisiert werden.
+
+Beispiele:
+
+"4000" → 4000
+4000 → 4000
+"4070 " → 4070
+"4'070" darf nur unterstützt werden, falls solche Werte im bestehenden Import tatsächlich vorkommen
+
+Ungültige Kontonummern dürfen nicht stillschweigend einer Gruppe zugeordnet werden.
+
+3. Neue Zwischentotale
+
+Berechne zentral:
+
+directCostOfGoods =
+Summe aller Konten 4000–4070
+
+otherCostOfGoods =
+Summe aller Konten 4071–4900
+
+totalCostOfGoods =
+directCostOfGoods + otherCostOfGoods
+
+Bruttogewinn 1 =
+Betriebsertrag netto − Gesamtwarenaufwand
+
+Verwende dabei exakt die bestehende Vorzeichenlogik der Erfolgsrechnung.
+
+Keine zusätzliche Vorzeichenumkehr in der UI.
+
+4. Darstellung in allen Ansichten
+
+Die neuen Zwischentotale müssen konsistent erscheinen in:
+
+- Budget P&L
+- Klassisch
+- Jahr
+- Mehrjahre
+- Management Report
+- Banken & Investoren
+- Analyseansichten
+- PDF-Export
+- Excel-Export
+
+Die fachliche Reihenfolge muss überall gleich sein.
+
+5. Darstellung in der klassischen Erfolgsrechnung
+
+Unter „Warenaufwand“:
+
+A. Direkter Warenaufwand
+
+Zeige zuerst die Konten 4000–4070.
+
+Danach eine hervorgehobene Zeile:
+
+„Direkter Warenaufwand“
+
+oder, falls die bestehende Namenskonvention Totale explizit kennzeichnet:
+
+„Direkter Warenaufwand Total“
+
+B. Übriger Warenaufwand
+
+Danach die Konten 4071–4900.
+
+Danach eine hervorgehobene Zeile:
+
+„Übriger Warenaufwand“
+
+oder:
+
+„Übriger Warenaufwand Total“
+
+C. Gesamtwarenaufwand
+
+Danach die bestehende Gesamtzeile:
+
+„Gesamtwarenaufwand“
+
+Anschliessend:
+
+„Bruttogewinn 1“
+
+Verwende die bereits bestehende visuelle Hierarchie:
+
+- Bereichsheader grün
+- Detailkonten normal
+- Zwischentotale leicht hervorgehoben
+- Gesamtwarenaufwand stärker hervorgehoben
+- Bruttogewinn 1 als bestehendes Resultat-Subtotal
+
+Keine zusätzlichen grossen Karten oder neue Farben einführen.
+
+6. Budget-, Ist- und Vorjahreswerte
+
+Die beiden Zwischentotale müssen für jede vorhandene Wertespalte korrekt berechnet werden:
+
+- Ist
+- Budget
+- Abweichung
+- Vorjahr
+- Vorjahresabweichung
+- Monatswerte
+- Jahreswerte
+- Mehrjahreswerte
+
+Beispiel:
+
+Direkter Warenaufwand Ist =
+Summe Ist aller Konten 4000–4070
+
+Direkter Warenaufwand Budget =
+Summe Budget aller Konten 4000–4070
+
+Direkter Warenaufwand Vorjahr =
+Summe Vorjahr aller Konten 4000–4070
+
+Dasselbe für Übriger Warenaufwand.
+
+Abweichungen sollen aus den aggregierten Werten berechnet werden und nicht durch das Summieren bereits gerundeter Prozentabweichungen.
+
+7. Fehlende Konten und Nullwerte
+
+Wenn in einem Bereich keine Konten vorhanden sind:
+
+- Zwischentotal nicht mit irreführenden Daten füllen
+- bestehende Konvention für fehlende Werte verwenden
+- kein NaN
+- kein Infinity
+- keine leere Berechnung, die als CHF 0 ausgegeben wird, falls die Daten tatsächlich fehlen
+
+Wenn Konten vorhanden sind und ihre Summe 0 ergibt, darf korrekt 0 angezeigt werden.
+
+Fehlend und 0 müssen unterschieden bleiben.
+
+8. Konten ausserhalb der Gruppen
+
+Prüfe, ob es Warenaufwandskonten ausserhalb 4000–4900 gibt.
+
+Falls ja:
+
+- nicht stillschweigend verwerfen
+- nicht automatisch einer der beiden Gruppen zuordnen
+- bestehende Mappinglogik respektieren
+- bei Bedarf als Datenqualitätshinweis melden
+
+Keine Änderung anderer Erfolgsrechnungsbereiche.
+
+9. Management- und Banken-/Investorenanalyse
+
+Stelle sicher, dass folgende Kennzahlen danach aus der zentralen P&L-Struktur stammen:
+
+- Direkter Warenaufwand
+- Übriger Warenaufwand
+- Gesamtwarenaufwand
+- Warenquote
+- Bruttogewinn 1
+- Bruttomarge
+
+Falls die Managementanalyse bisher nur Gesamtwarenaufwand zeigt, ergänze die beiden Zwischentotale mindestens in der detaillierten Positionstabelle und in den Exporten.
+
+Die Executive Summary muss nicht mit zusätzlichen KPI-Karten überladen werden.
+
+10. PDF-Export
+
+Im PDF muss die Warenaufwandsstruktur ebenfalls korrekt sein:
+
+Warenaufwand
+  Direkter Warenaufwand
+    Konten 4000–4070
+  Direkter Warenaufwand Total
+  Übriger Warenaufwand
+    Konten 4071–4900
+  Übriger Warenaufwand Total
+Gesamtwarenaufwand
+Bruttogewinn 1
+
+Verwende dieselbe zentrale Zeilenstruktur wie die UI.
+
+Keine separate PDF-Gruppierungslogik.
+
+11. Excel-Export
+
+In allen relevanten P&L-Arbeitsblättern müssen die neuen Zwischentotale enthalten sein.
+
+Prüfe insbesondere:
+
+- Erfolgsrechnung Jahr
+- Erfolgsrechnung Basisjahr
+- Erfolgsrechnung Vergleichsjahr
+- Mehrjahresvergleich
+- Management-/Bankenblätter
+
+Zwischentotale sollen als eigene Zeilen exportiert werden.
+
+Beträge müssen echte Zahlen bleiben.
+
+12. Tests
+
+Ergänze gezielte Tests.
+
+Mindestens:
+
+1. Konto 4000 wird Direkter Warenaufwand zugeordnet
+2. Konto 4070 wird Direkter Warenaufwand zugeordnet
+3. Konto 4071 wird Übriger Warenaufwand zugeordnet
+4. Konto 4900 wird Übriger Warenaufwand zugeordnet
+5. Konto 3999 wird keiner der beiden Gruppen zugeordnet
+6. Konto 4901 wird keiner der beiden Gruppen zugeordnet
+7. String-Kontonummern werden korrekt normalisiert
+8. Direkter Warenaufwand summiert nur 4000–4070
+9. Übriger Warenaufwand summiert nur 4071–4900
+10. Gesamtwarenaufwand entspricht der Summe beider Zwischentotale
+11. Bruttogewinn 1 verwendet den neuen Gesamtwarenaufwand korrekt
+12. Budgetwerte werden korrekt aggregiert
+13. Ist-Werte werden korrekt aggregiert
+14. Vorjahreswerte werden korrekt aggregiert
+15. Monatswerte werden korrekt aggregiert
+16. Mehrjahreswerte werden korrekt aggregiert
+17. fehlende Werte erzeugen kein NaN oder Infinity
+18. UI-Reihenfolge ist korrekt
+19. PDF enthält beide Zwischentotale
+20. Excel enthält beide Zwischentotale
+
+Regressionstest:
+
+Mit den Konten
+
+4000
+4020
+4030
+4040
+4050
+4060
+4070
+4090
+4701
+4800
+
+müssen:
+
+4000–4070 im Direkten Warenaufwand
+
+und
+
+4090, 4701, 4800 im Übrigen Warenaufwand
+
+erscheinen.
+
+Die Summe beider Zwischentotale muss exakt dem Gesamtwarenaufwand entsprechen.
+
+13. Verifikation
+
+Nach Umsetzung:
+
+- TypeScript-Typecheck ausführen
+- relevante P&L-Tests ausführen
+- Exporttests ausführen
+- Management-/Bankenansicht testen
+- klassische Erfolgsrechnung visuell prüfen
+- Screenshot beziehungsweise Runtime-Prüfung durchführen
+- kontrollieren, dass im sichtbaren Bereich nach Konto 4070 das Zwischentotal „Direkter Warenaufwand“ erscheint
+- kontrollieren, dass danach Konten ab 4071 unter „Übriger Warenaufwand“ erscheinen
+- kontrollieren, dass danach „Übriger Warenaufwand“ und „Gesamtwarenaufwand“ folgen
+- kontrollieren, dass Bruttogewinn 1 rechnerisch unverändert korrekt bleibt
+- Architect-Review nur über den tatsächlichen Task-Diff durchführen
+
+14. Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit dem tatsächlich umgesetzten Verhalten:
+
+- Direkter Warenaufwand 4000–4070
+- Übriger Warenaufwand 4071–4900
+- Gesamtwarenaufwand als Summe
+- zentrale Verwendung in allen Ansichten und Exporten
+- getestete Grenzwerte 4070 und 4071
+
+Wichtig:
+
+Nicht nur zwei visuelle Zeilen in PLView einfügen.
+
+Die Zwischentotale müssen zentral im Erfolgsrechnungsmodell beziehungsweise in der gemeinsamen P&L-Aufbereitung entstehen, damit alle Ansichten und Exporte dieselben Werte verwenden.
+
+Bestehende funktionierende P&L-, Management- und Exportlogik nicht duplizieren.

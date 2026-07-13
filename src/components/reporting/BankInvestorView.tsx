@@ -16,17 +16,27 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { KpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 import { HintBox } from '@/components/ui/hint-box';
 import { InfoTip } from '@/components/ui/info-tip';
 import { EmptyState } from '@/components/ui/page-states';
 import { TABLE, TH, TH_NUM, TD, TD_NUM } from '@/components/ui/table-style';
 import { TONE_TEXT, type Tone } from '@/components/ui/tones';
 import {
-  buildBankInvestorAnalysis, fmtPctChange, fmtPp,
-  type BankInvestorAnalysis, type BankPositionRow,
+  buildBankInvestorAnalysis, fmtPctChange, fmtPp, selectBankYears,
+  type BankInvestorAnalysis, type BankPositionRow, type BankYearMode,
+  type BankYearImportInfo,
 } from '@/lib/bank-investor-analysis';
 import type { YearSeries, GrowthTone, DataQualityItem } from '@/lib/multi-year-analysis';
+import { BankExecutiveSection } from './bank-investor/BankExecutiveSection';
+import { BankScorecardSection, type BankDrillMetric } from './bank-investor/BankScorecardSection';
+import { BankBenchmarkSection } from './bank-investor/BankBenchmarkSection';
+import { BankWaterfallSection } from './bank-investor/BankWaterfallSection';
+import { BankEbitDriversSection } from './bank-investor/BankEbitDriversSection';
+import { BankHistorieSection } from './bank-investor/BankHistorieSection';
+import { BankHeatmapSection } from './bank-investor/BankHeatmapSection';
+import { BankTimelineSection } from './bank-investor/BankTimelineSection';
+import { BankKernaussagenSection } from './bank-investor/BankKernaussagenSection';
+import { BankDrilldownDialog } from './bank-investor/BankDrilldownDialog';
 
 // ── Format-Helfer (nur Darstellung) ──────────────────────────────────────────
 
@@ -38,14 +48,6 @@ const pctS = (v: number | null): string =>
 const toneToUi: Record<GrowthTone, Tone> = { good: 'good', critical: 'critical', neutral: 'neutral' };
 const DQ_TONE: Record<DataQualityItem['severity'], Tone> = { fehler: 'critical', warnung: 'warn', hinweis: 'info' };
 
-/** Pfeilrichtung aus der tatsächlichen Wertentwicklung (nicht aus dem Ton). */
-function kpiTrend(k: BankInvestorAnalysis['kpis'][number]): { direction: 'up' | 'down' | 'flat'; tone: Tone; label: string } | undefined {
-  if (!k.delta) return undefined;
-  const diff = k.raw.diffPp ?? k.raw.diffPct ?? k.raw.diffChf;
-  const direction = diff == null || diff === 0 ? 'flat' : diff > 0 ? 'up' : 'down';
-  return { direction, tone: toneToUi[k.tone], label: k.delta };
-}
-
 // ── Props ────────────────────────────────────────────────────────────────────
 
 interface BankInvestorViewProps {
@@ -55,9 +57,11 @@ interface BankInvestorViewProps {
   unmappedAccounts?: number;
   /** Stand des letzten Imports (Anzeige im Kopf) */
   importStand?: string | null;
+  /** Import-Metadaten je Jahr (Investor Timeline) */
+  importInfoByYear?: Record<number, BankYearImportInfo>;
 }
 
-export function BankInvestorView({ series, restaurantName, unmappedAccounts, importStand }: BankInvestorViewProps) {
+export function BankInvestorView({ series, restaurantName, unmappedAccounts, importStand, importInfoByYear }: BankInvestorViewProps) {
   const yearsWithData = useMemo(
     () => series.filter(s => s.values.some(v => v != null)).map(s => s.year).sort((a, b) => a - b),
     [series],
@@ -68,15 +72,29 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
 
   const [baseYear, setBaseYear] = useState<number>(defaultBase);
   const [currentYear, setCurrentYear] = useState<number>(defaultCurrent);
+  const [yearMode, setYearMode] = useState<BankYearMode>('two');
   const [untilSameMonth, setUntilSameMonth] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
+  const [drillMetric, setDrillMetric] = useState<BankDrillMetric | null>(null);
+
+  /** Gewählte Jahre: manuell (2 Jahre) oder automatisch letzte 3/alle. */
+  const selectedYears = useMemo(() => {
+    if (yearMode === 'two') return [baseYear, currentYear].sort((a, b) => a - b);
+    return selectBankYears(yearsWithData, yearMode);
+  }, [yearMode, baseYear, currentYear, yearsWithData]);
+
+  // Im 3-Jahres-/Alle-Modus vergleichen die 2-Jahres-Teile (Charts, Treiber)
+  // immer das neueste Jahr mit seinem Vorjahr in der Auswahl.
+  const effCurrentYear = yearMode === 'two' ? currentYear : selectedYears[selectedYears.length - 1] ?? currentYear;
+  const effBaseYear = yearMode === 'two' ? baseYear : selectedYears[selectedYears.length - 2] ?? baseYear;
 
   const analysis: BankInvestorAnalysis = useMemo(
     () => buildBankInvestorAnalysis(series, {
-      baseYear, currentYear, untilSameMonth,
+      baseYear: effBaseYear, currentYear: effCurrentYear, untilSameMonth,
       restaurantName, unmappedAccounts, importStand,
+      years: selectedYears, importInfoByYear,
     }),
-    [series, baseYear, currentYear, untilSameMonth, restaurantName, unmappedAccounts, importStand],
+    [series, effBaseYear, effCurrentYear, untilSameMonth, restaurantName, unmappedAccounts, importStand, selectedYears, importInfoByYear],
   );
 
   const handlePdf = async () => {
@@ -125,9 +143,6 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
     );
   }
 
-  const kpiMain = analysis.kpis.slice(0, 4);
-  const kpiMore = analysis.kpis.slice(4);
-
   return (
     <div className="space-y-6" data-testid="bank-investor-view">
       {/* ── Kopf + Filter ── */}
@@ -146,26 +161,40 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={String(baseYear)} onValueChange={v => setBaseYear(Number(v))}>
-            <SelectTrigger className="h-8 w-[110px] text-xs" data-testid="bank-base-year">
+          <Select value={yearMode} onValueChange={v => setYearMode(v as BankYearMode)}>
+            <SelectTrigger className="h-8 w-[130px] text-xs" data-testid="bank-year-mode">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {yearsWithData.map(y => (
-                <SelectItem key={y} value={String(y)} disabled={y === currentYear}>Basis {y}</SelectItem>
-              ))}
+              <SelectItem value="two">2 Jahre</SelectItem>
+              <SelectItem value="three" disabled={yearsWithData.length < 3}>Letzte 3 Jahre</SelectItem>
+              <SelectItem value="all" disabled={yearsWithData.length < 3}>Alle Jahre</SelectItem>
             </SelectContent>
           </Select>
-          <Select value={String(currentYear)} onValueChange={v => setCurrentYear(Number(v))}>
-            <SelectTrigger className="h-8 w-[110px] text-xs" data-testid="bank-current-year">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {yearsWithData.map(y => (
-                <SelectItem key={y} value={String(y)} disabled={y === baseYear}>Aktuell {y}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {yearMode === 'two' && (
+            <>
+              <Select value={String(baseYear)} onValueChange={v => setBaseYear(Number(v))}>
+                <SelectTrigger className="h-8 w-[110px] text-xs" data-testid="bank-base-year">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearsWithData.map(y => (
+                    <SelectItem key={y} value={String(y)} disabled={y === currentYear}>Basis {y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={String(currentYear)} onValueChange={v => setCurrentYear(Number(v))}>
+                <SelectTrigger className="h-8 w-[110px] text-xs" data-testid="bank-current-year">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearsWithData.map(y => (
+                    <SelectItem key={y} value={String(y)} disabled={y === baseYear}>Aktuell {y}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
           <div className="flex items-center gap-1.5 pl-1">
             <Switch id="bank-same-month" checked={untilSameMonth} onCheckedChange={setUntilSameMonth} data-testid="bank-same-month" />
             <Label htmlFor="bank-same-month" className="text-xs cursor-pointer">Bis gleicher Monat</Label>
@@ -197,37 +226,17 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
         />
       ) : (
         <>
-          {/* ── Executive-KPIs ── */}
-          <div data-testid="bank-kpis">
-            <KpiGrid>
-              {kpiMain.map(k => (
-                <KpiCard
-                  key={k.id}
-                  label={k.label}
-                  value={k.value}
-                  tone={toneToUi[k.tone]}
-                  trend={kpiTrend(k)}
-                  data-testid={`bank-kpi-${k.id}`}
-                />
-              ))}
-            </KpiGrid>
-            {kpiMore.length > 0 && (
-              <MoreKpis storageKey="bank-investor-more-kpis" className="mt-3">
-                <KpiGrid>
-                  {kpiMore.map(k => (
-                    <KpiCard
-                      key={k.id}
-                      label={k.label}
-                      value={k.value}
-                      tone={toneToUi[k.tone]}
-                      trend={kpiTrend(k)}
-                      data-testid={`bank-kpi-${k.id}`}
-                    />
-                  ))}
-                </KpiGrid>
-              </MoreKpis>
-            )}
-          </div>
+          {/* ── Executive Summary (Phase 2 §2): Gesamttrend + 9 KPIs ── */}
+          <BankExecutiveSection executive={analysis.executive} />
+
+          {/* ── Mehrjahres-Scorecard (Phase 2 §3) ── */}
+          <BankScorecardSection scorecard={analysis.scorecard} onDrill={setDrillMetric} />
+
+          {/* ── Waterfall Umsatz→EBIT (Phase 2 §4) ── */}
+          <BankWaterfallSection waterfall={analysis.waterfall} />
+
+          {/* ── EBIT-Treiber (Phase 2 §5) ── */}
+          <BankEbitDriversSection drivers={analysis.ebitDrivers} />
 
           {/* ── Umsatzentwicklung ── */}
           <section className="rounded-lg border border-border bg-card p-4 space-y-3" data-testid="bank-revenue-section">
@@ -333,6 +342,9 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
                 </tbody>
               </table>
             </div>
+            <p className="px-4 py-2 text-xs text-muted-foreground border-t border-border" data-testid="bank-ebit-note">
+              {analysis.ebitNote}
+            </p>
           </section>
 
           {/* ── Mehrjahresvergleich nach Position ── */}
@@ -395,20 +407,23 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
             </div>
           </section>
 
-          {/* ── Kernaussagen ── */}
-          {analysis.kernaussagen.length > 0 && (
-            <section className="rounded-lg border border-border bg-card p-4" data-testid="bank-kernaussagen">
-              <h3 className="text-sm font-semibold mb-2">Kernaussagen</h3>
-              <ul className="space-y-1.5 text-sm">
-                {analysis.kernaussagen.map((s, i) => (
-                  <li key={i} className="flex gap-2">
-                    <span className="text-muted-foreground tabular-nums">{i + 1}.</span>
-                    <span>{s}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
+          {/* ── Kennzahlenhistorie (Phase 2 §6) ── */}
+          <BankHistorieSection historie={analysis.historie} />
+
+          {/* ── Benchmark (Phase 2 §7) ── */}
+          <BankBenchmarkSection benchmarks={analysis.benchmarks} year={analysis.currentYear} />
+
+          {/* ── Saisonalitäts-Heatmap (Phase 2 §8) ── */}
+          <BankHeatmapSection heatmaps={analysis.heatmaps} />
+
+          {/* ── Kernaussagen 5+5 (Phase 2 §9) ── */}
+          <BankKernaussagenSection kernaussagen={analysis.kernaussagenPlus} />
+
+          {/* ── Investor Timeline (Phase 2 §10) ── */}
+          <BankTimelineSection timeline={analysis.timeline} />
+
+          {/* ── Drilldown Monatsdetail (Phase 2 §11) ── */}
+          <BankDrilldownDialog metric={drillMetric} analysis={analysis} onClose={() => setDrillMetric(null)} />
         </>
       )}
     </div>

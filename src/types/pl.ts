@@ -125,6 +125,11 @@ export interface PLMonthResult {
   rows: PLComputedRow[];
   /** Hat dieser Monat überhaupt Daten? */
   hasData: boolean;
+  /**
+   * Datenqualitätshinweise (z.B. Warenaufwand-Konto ausserhalb 4000–4900 oder
+   * Konflikt Kontenzuordnung ↔ numerischer Bereich). Kein stilles Ummappen.
+   */
+  dataQualityWarnings?: string[];
 }
 
 /** P&L-Jahresübersicht: alle 12 Monate nebeneinander + Summe */

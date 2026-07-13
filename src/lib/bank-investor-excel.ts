@@ -61,12 +61,24 @@ export function buildBankInvestorExcelData(analysis: BankInvestorAnalysis): Bank
   const subtitle = `${header.restaurantName} · ${comparison.label}`;
 
   // ── Blatt 1: Übersicht ──────────────────────────────────────────────────────
+  const trend = analysis.executive.gesamtTrend;
   const uebersichtRows: BankExcelCell[][] = [
-    [t('Executive-Kennzahlen', true)],
-    ...kpis.map(k => [t(k.label), t(k.value), t(k.delta)]),
+    [t('Gesamttrend', true), t(trend.label, true), t(trend.reasons.join(' · '))],
     [],
-    [t('Kernaussagen', true)],
-    ...analysis.kernaussagen.map(s => [t(`• ${s}`)]),
+    [t('Executive-Kennzahlen', true)],
+    ...analysis.executive.kpis.map(k => [t(k.label), t(k.value), t(k.delta)]),
+    [],
+    [t('Positive Entwicklungen', true)],
+    ...(analysis.kernaussagenPlus.positive.length > 0
+      ? analysis.kernaussagenPlus.positive.map(s => [t(`• ${s}`)])
+      : [[t('• Keine positiven Auffälligkeiten im Vergleichszeitraum.')]]),
+    [],
+    [t('Verbesserungspotenziale', true)],
+    ...(analysis.kernaussagenPlus.potenziale.length > 0
+      ? analysis.kernaussagenPlus.potenziale.map(s => [t(`• ${s}`)])
+      : [[t('• Keine Auffälligkeiten.')]]),
+    [],
+    [t('Hinweis', true), t(analysis.ebitNote)],
   ];
 
   // ── Blatt 2: Monatsvergleich (Spez. H, Mindestspalten) ──────────────────────
@@ -121,7 +133,75 @@ export function buildBankInvestorExcelData(analysis: BankInvestorAnalysis): Bank
     pct(r.baseQuote), pct(r.currentQuote), pct(r.quotePp),
   ]);
 
-  // ── Blatt 6: Datenqualität ──────────────────────────────────────────────────
+  // ── Blatt 6: Mehrjahresanalyse (Phase 2: Scorecard · Waterfall · Treiber ·
+  //    Historie · Benchmark · Timeline) ─────────────────────────────────────────
+  const sc = analysis.scorecard;
+  const TREND_WORD: Record<string, string> = {
+    steigend: 'steigend', fallend: 'fallend', stabil: 'stabil', gemischt: 'gemischt',
+  };
+  const mehrjahresRows: BankExcelCell[][] = [
+    [t(`Mehrjahres-Scorecard (${sc.years.join(' / ')})`, true)],
+    [t('Kennzahl', true), ...sc.years.map(y => t(String(y), true)), ...sc.years.map(y => t(`Quote ${y}`, true)), t('Δ CHF', true), t('Δ %', true), t('Trend', true)],
+    ...sc.rows.map(r => [
+      t(r.label, r.emphasis),
+      ...r.values.map(v => chf(v, r.emphasis)),
+      ...r.quotes.map(q => pct(q)),
+      chf(r.diffChf),
+      pct(r.diffPct),
+      t(r.trend ? TREND_WORD[r.trend] ?? r.trend : '—'),
+    ]),
+    [],
+    [t(`Vom Umsatz zum EBIT ${analysis.waterfall.year}`, true)],
+    [t('Stufe', true), t('Betrag CHF', true), t('Zwischenstand CHF', true)],
+    ...analysis.waterfall.steps.map(s => [
+      t(s.label, s.kind !== 'cost'),
+      chf(s.value == null ? null : s.kind === 'cost' ? -Math.abs(s.value) : s.value),
+      chf(s.cumulative, s.kind !== 'cost'),
+    ]),
+    [],
+    [t(`EBIT-Treiber ${analysis.ebitDrivers.baseYear} → ${analysis.ebitDrivers.currentYear}`, true)],
+    [t('Treiber', true), t('Beitrag CHF', true), t('in % des Basis-EBIT', true)],
+    ...analysis.ebitDrivers.drivers.map(d => [t(d.label), chf(d.contribution), pct(d.pctOfBaseEbit)]),
+    [t('EBIT-Veränderung total', true), chf(analysis.ebitDrivers.ebitDelta, true)],
+    [],
+    [t('Kennzahlenhistorie (volle Jahressummen, * = Teiljahr)', true)],
+    [t('Kennzahl', true), ...analysis.years.map(y => t(String(y), true))],
+    ...analysis.historie.map(s => [
+      t(s.label),
+      ...analysis.years.map(y => {
+        const p = s.points.find(pt => pt.year === y);
+        if (!p || p.value == null) return t('—');
+        const cell = s.unit === 'chf' ? chf(p.value) : pct(p.value);
+        return p.complete ? cell : t(`${typeof cell.v === 'number' ? (s.unit === 'chf' ? Math.round(p.value).toLocaleString('de-CH') : `${p.value.toFixed(1)} %`) : cell.v} *`);
+      }),
+    ]),
+    [],
+    [t(`Benchmark-Vergleich ${currentYear}`, true)],
+    [t('Kennzahl', true), t('Ist', true), t('Ziel', true), t('Abweichung (pp)', true), t('Bewertung', true)],
+    ...analysis.benchmarks.map(b => [
+      t(b.label),
+      pct(b.ist),
+      t(`${b.direction === 'below' ? '≤' : '≥'} ${b.target.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`),
+      pct(b.abweichungPp),
+      t(b.ist == null ? 'keine Daten' : b.tone === 'good' ? 'erfüllt' : b.tone === 'critical' ? 'verfehlt' : 'im Toleranzband'),
+    ]),
+    [],
+    [t('Datenbasis je Geschäftsjahr', true)],
+    [t('Jahr', true), t('Status', true), t('Monate mit Daten', true), t('Umsatz CHF', true), t('EBIT CHF', true), t('Importiert am', true)],
+    ...analysis.timeline.map(tl => {
+      let importedAt = '—';
+      if (tl.importedAt) {
+        const d = new Date(tl.importedAt);
+        importedAt = Number.isNaN(d.getTime()) ? tl.importedAt :
+          `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+      }
+      return [t(String(tl.year)), t(tl.status), t(`${tl.monthsWithData} / 12`), chf(tl.umsatz), chf(tl.ebit), t(importedAt)];
+    }),
+    [],
+    [t('Hinweis', true), t(analysis.ebitNote)],
+  ];
+
+  // ── Blatt 7: Datenqualität ──────────────────────────────────────────────────
   const dqRows: BankExcelCell[][] = analysis.dataQuality.length > 0
     ? analysis.dataQuality.map(d => [t(SEVERITY_LABEL[d.severity] ?? d.severity), t(d.text)])
     : [[t('—'), t('Keine Datenqualitätshinweise.')]];
@@ -129,11 +209,12 @@ export function buildBankInvestorExcelData(analysis: BankInvestorAnalysis): Bank
   return {
     fileName: bankInvestorExcelFileName(baseYear, currentYear, header.restaurantName),
     sheets: [
-      { name: 'Übersicht', title: header.title, subtitle, head: [], rows: uebersichtRows, widths: [36, 26, 26] },
+      { name: 'Übersicht', title: header.title, subtitle, head: [], rows: uebersichtRows, widths: [36, 26, 60] },
       { name: 'Monatsvergleich', title: `Monatsvergleich ${baseYear} vs. ${currentYear}`, subtitle, head: monatHead, rows: monatRows, widths: [12, ...Array(14).fill(15)] },
       erSheet('base', baseYear),
       erSheet('current', currentYear),
       { name: 'Kennzahlen und Margen', title: 'Zwischentotale und Margen', subtitle, head: kennzahlenHead, rows: kennzahlenRows, widths: [30, 15, 15, 15, 13, 13, 13, 18] },
+      { name: 'Mehrjahresanalyse', title: `Mehrjahresanalyse ${analysis.years.join(' / ')}`, subtitle, head: [], rows: mehrjahresRows, widths: [34, ...Array(Math.max(sc.years.length * 2 + 3, 6)).fill(16)] },
       { name: 'Datenqualität', title: 'Datenqualität und Importstand', subtitle, head: ['Schweregrad', 'Hinweis'], rows: dqRows, widths: [14, 90] },
     ],
   };
