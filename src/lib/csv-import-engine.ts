@@ -515,6 +515,45 @@ export function buildMonthRecord(
   }
 }
 
+/**
+ * Baut NUR die ExpenseCategory-Liste aus gematchten Zeilen — ohne die
+ * Direktfelder revenueActual / personnelCostActual zu setzen.
+ *
+ * Verwendung: Jahres-Kontoblatt-Import (Replace-Scope). Dort dürfen die
+ * Direktfelder anderer Quellen (Gastronovi-Umsatz, Mirus-Personalkosten)
+ * NICHT überschrieben werden; die P&L-Engine hat für individuelle
+ * 3xxx-/5xxx-Konten ohnehin Vorrang-Logik (hasIndividualRevenueAccounts).
+ *
+ * Vorzeichen wie buildMonthRecord: Ertragskonten (sign 'income') werden
+ * negiert (Soll − Haben ist dort negativ → positiver Betrag).
+ */
+export function buildExpenseCategoriesOnly(
+  matched: MatchedCSVRow[],
+  unresolved: MatchedCSVRow[],
+): ExpenseCategory[] {
+  const expenseCategories: ExpenseCategory[] = [];
+
+  for (const row of matched) {
+    const { parsed, sign } = row;
+    const amount = sign === 'income' ? -parsed.amount : parsed.amount;
+    expenseCategories.push({
+      categoryId: parsed.accountNumber,
+      label: parsed.accountName,
+      amount,
+    });
+  }
+
+  for (const row of unresolved) {
+    expenseCategories.push({
+      categoryId: row.parsed.accountNumber,
+      label: `[Unzugeordnet] ${row.parsed.accountName}`,
+      amount: row.parsed.amount,
+    });
+  }
+
+  return expenseCategories;
+}
+
 // ─── Vollständiger Parse-Durchlauf ────────────────────────────────────────────
 
 /**

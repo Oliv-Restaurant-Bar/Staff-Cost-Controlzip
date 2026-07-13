@@ -71,6 +71,7 @@ export type ImportSource =
   | 'pdf_previous_year' // PDF-Import: Vorjahresdaten
   | 'csv_current'       // CSV-Import: laufendes Jahr
   | 'csv_previous_year' // CSV-Import: Vorjahr
+  | 'annual_cost_import' // Sage Jahres-Kontoblatt (Replace-Scope pro Geschäftsjahr)
   | 'gastronovi'        // Zukünftig: Umsatz-Import aus gastronovi-Kassensystem
   | 'supabase_sync';    // Zukünftig: Sync aus Supabase-Tabelle
 

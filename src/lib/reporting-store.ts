@@ -32,6 +32,7 @@ import {
   ImportRecord,
   ImportMode,
   ImportSource,
+  ExpenseCategory,
   createEmptyMonth,
   monthId,
   AnnualSummary,
@@ -199,6 +200,109 @@ export function deleteMonth(year: number, month: number, storeKey: string = STOR
   safeDeleteReportingMonth(id, storeKey).catch(err => {
     console.error('[REPORTING] deleteMonth: safeDeleteReportingMonth fehlgeschlagen', err);
   });
+}
+
+// ─── Jahres-Kontoblatt-Import: Replace-Scope pro Geschäftsjahr ────────────────
+
+/**
+ * Numerische Konto-Kategorien (FIBU-Quelle Sage Kontoblatt) — exakt dieselbe
+ * Grenze, die pl-engine (resolveRowId) und PLView (prevYearByRow) verwenden.
+ * Auch '[Unzugeordnet]'-Zeilen tragen numerische IDs und gehören dazu.
+ */
+const NUMERIC_ACCOUNT_RE = /^\d{3,5}$/;
+
+export interface ReplaceAnnualCostResult {
+  /** Monate, die neue Kontodaten erhalten haben */
+  monthsWritten: number;
+  /** Monate, in denen nur alte Kontodaten entfernt wurden */
+  monthsCleared: number;
+}
+
+/**
+ * Ersetzt für ein Geschäftsjahr in ALLEN 12 Monaten die numerischen
+ * Konto-Kategorien (expenseCategories) durch die Daten eines
+ * Jahres-Kontoblatt-Imports — idempotent:
+ *
+ * - Numerische Kategorien werden komplett ersetzt (auch in Monaten, die in
+ *   der neuen Datei fehlen → entfernt stale Werte aus früheren Importen).
+ * - Manuelle (nicht-numerische) Kategorien, revenueActual (Gastronovi),
+ *   personnelCost*-Felder, Budget- und PY-Felder bleiben unangetastet.
+ * - Andere Jahre bleiben unberührt.
+ * - Schreibpfad pro Monat über safeUpsertReportingMonth (kein naiver Blob-Write).
+ *
+ * `categoriesByMonth` = Monat (1–12) → fertige ExpenseCategory-Liste
+ * (aus matchCSVRows + buildExpenseCategoriesOnly, Vorzeichen bereits korrekt).
+ */
+export function replaceAnnualCostYear(
+  year: number,
+  categoriesByMonth: Map<number, ExpenseCategory[]>,
+  opts: { fileName?: string; note?: string },
+  storeKey: string = STORAGE_KEY,
+): ReplaceAnnualCostResult {
+  const all = loadAll(storeKey);
+  const now = new Date().toISOString();
+  let monthsWritten = 0;
+  let monthsCleared = 0;
+  const touchedIds: string[] = [];
+
+  for (let month = 1; month <= 12; month++) {
+    const id = monthId(year, month);
+    const existing = all[id];
+    const newCats = categoriesByMonth.get(month) ?? [];
+    const hadNumeric = (existing?.expenseCategories ?? []).some(c => NUMERIC_ACCOUNT_RE.test(c.categoryId));
+
+    // Nichts zu ersetzen und nichts Neues → Monat nicht anfassen (keine leeren Records erzeugen)
+    if (newCats.length === 0 && !hadNumeric) continue;
+
+    const rec = existing ?? createEmptyMonth(year, month);
+    const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+
+    const importRecord: ImportRecord = {
+      importId: uuidv4(),
+      importedAt: now,
+      source: 'annual_cost_import',
+      mode: 'replace',
+      fileName: opts.fileName,
+      note: opts.note ?? `Jahres-Kontoblatt ${year}: Konto-Kategorien ersetzt`,
+      affectedFields: ['expenseCategories'],
+    };
+
+    all[id] = {
+      ...rec,
+      expenseCategories: [...keptManual, ...newCats],
+      imports: [...rec.imports, importRecord],
+      updatedAt: now,
+    };
+    touchedIds.push(id);
+    if (newCats.length > 0) monthsWritten++; else monthsCleared++;
+  }
+
+  saveAll(all, storeKey);
+  for (const id of touchedIds) {
+    safeUpsertReportingMonth(id, all[id], storeKey).catch(err => {
+      console.error('[REPORTING] replaceAnnualCostYear: safeUpsertReportingMonth fehlgeschlagen', id, err);
+    });
+  }
+
+  return { monthsWritten, monthsCleared };
+}
+
+/**
+ * Entfernt alle numerischen Konto-Kategorien eines Geschäftsjahres
+ * (Lösch-Aktion der Import-Verwaltung). Manuelle Kategorien und
+ * Direktfelder bleiben erhalten.
+ */
+export function removeAnnualCostYear(
+  year: number,
+  opts: { note?: string },
+  storeKey: string = STORAGE_KEY,
+): ReplaceAnnualCostResult {
+  return replaceAnnualCostYear(
+    year,
+    new Map(),
+    { note: opts.note ?? `Jahres-Kontoblatt ${year}: Konto-Kategorien entfernt` },
+    storeKey,
+  );
 }
 
 /**

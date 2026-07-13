@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -41,8 +41,25 @@ import {
   type AnnualPersonnelCostResult,
 } from '@/lib/annual-personnel-cost-import';
 import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-import-engine';
-import { matchCSVRows, buildMonthRecord } from '@/lib/csv-import-engine';
-import { saveMonth } from '@/lib/reporting-store';
+import { matchCSVRows, buildMonthRecord, buildExpenseCategoriesOnly } from '@/lib/csv-import-engine';
+import {
+  saveMonth,
+  replaceAnnualCostYear,
+  removeAnnualCostYear,
+  STORAGE_KEY as REPORTING_STORAGE_KEY,
+} from '@/lib/reporting-store';
+import {
+  loadAnnualCostImports,
+  upsertAnnualCostImport,
+  markAnnualCostImportDeleted,
+  ANNUAL_COST_IMPORTS_KEY,
+  type AnnualCostImportEntry,
+} from '@/lib/annual-cost-imports-store';
+import type { ExpenseCategory } from '@/types/reporting';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
@@ -622,6 +639,7 @@ const AnnualRevenueImportSection = () => {
 const MONTH_LABELS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
 const AnnualCostImportSection = () => {
+  const { tenantKey } = useTenant();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsing, setParsing]     = useState(false);
   const [result, setResult]       = useState<AnnualKostenResult | null>(null);
@@ -629,7 +647,50 @@ const AnnualCostImportSection = () => {
   const [saving, setSaving]       = useState(false);
   const [saved, setSaved]         = useState(false);
   const [error, setError]         = useState('');
-  const [dataType, setDataType]   = useState<'actual' | 'previous_year'>('previous_year');
+  const [entries, setEntries]     = useState<AnnualCostImportEntry[]>([]);
+  const [deleteYear, setDeleteYear] = useState<number | null>(null);
+  const [deleting, setDeleting]   = useState(false);
+
+  const registryKey  = tenantKey(ANNUAL_COST_IMPORTS_KEY);
+  const reportingKey = tenantKey(REPORTING_STORAGE_KEY);
+
+  const refreshEntries = (key: string) => {
+    loadAnnualCostImports(key).then(setEntries).catch(err => {
+      console.warn('[ANNUAL-IMPORTS] Registry laden fehlgeschlagen', err);
+    });
+  };
+  useEffect(() => { refreshEntries(registryKey); }, [registryKey]);
+
+  /**
+   * Vorschau-Aufbereitung: Matching gegen den Kontenplan + Kategorie-Listen
+   * pro Monat + Summen (Aufwand/Ertrag) + Liste der nicht zugeordneten Konten.
+   * Genau DIESE categoriesByMonth werden beim Bestätigen gespeichert.
+   */
+  const preview = useMemo(() => {
+    if (!result || result.detectedYear === null || result.ambiguousYear) return null;
+    const categoriesByMonth = new Map<number, ExpenseCategory[]>();
+    const unmapped = new Map<string, { name: string; total: number }>();
+    let sumExpense = 0;
+    let sumIncome = 0;
+    let sumUnmapped = 0;
+
+    for (const [month, rows] of result.byMonth.entries()) {
+      const mr = matchCSVRows(rows);
+      categoriesByMonth.set(month, buildExpenseCategoriesOnly(mr.matched, mr.unresolved));
+      for (const m of mr.matched) {
+        // parsed.amount = Soll − Haben; Ertragskonten sind dort negativ
+        if (m.sign === 'income') sumIncome += -m.parsed.amount;
+        else sumExpense += m.parsed.amount;
+      }
+      for (const u of mr.unresolved) {
+        sumUnmapped += u.parsed.amount;
+        const prev = unmapped.get(u.parsed.accountNumber) ?? { name: u.parsed.accountName, total: 0 };
+        unmapped.set(u.parsed.accountNumber, { name: prev.name, total: prev.total + u.parsed.amount });
+      }
+    }
+
+    return { categoriesByMonth, unmapped, sumExpense, sumIncome, sumUnmapped };
+  }, [result]);
 
   const handleFile = async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
@@ -644,8 +705,9 @@ const AnnualCostImportSection = () => {
     try {
       const buf = await file.arrayBuffer();
       const res = await parseAnnualSageKontoblattByMonth(buf);
-      if (res.byMonth.size === 0) {
-        setError(res.warnings.find(w => w.toLowerCase().includes('keine')) ?? 'Keine Buchungszeilen gefunden.');
+      if (res.failureReason) {
+        // Uneindeutiges Jahr oder keine Buchungen → Import abbrechen, Grund anzeigen
+        setError(res.failureReason);
       } else {
         setResult(res);
       }
@@ -662,62 +724,79 @@ const AnnualCostImportSection = () => {
     if (file) handleFile(file);
   };
 
-  const handleSave = () => {
-    if (!result) return;
+  const handleSave = async () => {
+    if (!result || !preview || result.detectedYear === null || result.ambiguousYear) return;
     setSaving(true);
-    let savedCount = 0;
-    const sourceYear = result.detectedYear;
-    const saveYear = dataType === 'previous_year' ? sourceYear + 1 : sourceYear;
-
-    for (const [month, rows] of result.byMonth.entries()) {
-      if (rows.length === 0) continue;
-      const matchResult = matchCSVRows(rows);
-      const config = { year: saveYear, month, dataType, mode: 'update' as const, fileName };
-      const record = buildMonthRecord(matchResult.matched, matchResult.unresolved, config);
-      saveMonth(
-        { ...record, year: saveYear, month },
-        dataType === 'previous_year' ? 'csv_previous_year' : 'csv_current',
-        'update',
-        { fileName, note: `Jahresimport ${sourceYear} (${dataType === 'previous_year' ? 'Vorjahr' : 'Ist'})` },
+    try {
+      const year = result.detectedYear;
+      const { monthsWritten, monthsCleared } = replaceAnnualCostYear(
+        year,
+        preview.categoriesByMonth,
+        { fileName },
+        reportingKey,
       );
-      savedCount++;
+      await upsertAnnualCostImport(registryKey, {
+        year,
+        fileName,
+        importedAt: new Date().toISOString(),
+        periodFrom: result.periodFrom,
+        periodTo: result.periodTo,
+        accountCount: result.accountCount,
+        bookingCount: result.bookingCount,
+        monthsWithData: result.byMonth.size,
+        unmappedCount: preview.unmapped.size,
+        skippedOutOfYear: result.skippedOutOfYear,
+        sumExpense: preview.sumExpense,
+        sumIncome: preview.sumIncome,
+      });
+      refreshEntries(registryKey);
+      setSaved(true);
+      toast.success(
+        `Jahr ${year}: ${monthsWritten} Monate gespeichert` +
+        (monthsCleared > 0 ? `, ${monthsCleared} Monate von alten Kontodaten bereinigt` : ''),
+      );
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Speichern fehlgeschlagen.');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
-    setSaved(true);
-    toast.success(
-      dataType === 'previous_year'
-        ? `${savedCount} Monate als Vorjahr-Kosten (${sourceYear}) gespeichert`
-        : `${savedCount} Monate als Ist-Kosten ${sourceYear} gespeichert`,
-    );
+  };
+
+  const handleDelete = async () => {
+    if (deleteYear === null) return;
+    setDeleting(true);
+    try {
+      const res = removeAnnualCostYear(deleteYear, {}, reportingKey);
+      await markAnnualCostImportDeleted(registryKey, deleteYear);
+      refreshEntries(registryKey);
+      toast.success(`Jahr ${deleteYear}: Kontodaten aus ${res.monthsCleared} Monaten entfernt`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Löschen fehlgeschlagen.');
+    } finally {
+      setDeleting(false);
+      setDeleteYear(null);
+    }
   };
 
   const fmtChf = (v: number) =>
     v === 0 ? '—' : new Intl.NumberFormat('de-CH', { maximumFractionDigits: 0 }).format(v);
 
+  const unmappedList = preview ? Array.from(preview.unmapped.entries()) : [];
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2 flex-wrap">
-        <label className="text-xs text-muted-foreground whitespace-nowrap">Speichern als:</label>
-        <Select value={dataType} onValueChange={v => setDataType(v as 'actual' | 'previous_year')}>
-          <SelectTrigger className="h-7 text-xs w-52">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="previous_year">Vorjahr-Vergleich (empfohlen)</SelectItem>
-            <SelectItem value="actual">Ist-Daten (für das Quellenjahr)</SelectItem>
-          </SelectContent>
-        </Select>
-        {result && (
-          <span className="text-[10px] text-muted-foreground">
-            {dataType === 'previous_year'
-              ? `→ Vorjahr-Kosten auf ${result.detectedYear + 1}-Datensätze`
-              : `→ Ist-Kosten für Jahr ${result.detectedYear}`}
-          </span>
-        )}
-      </div>
+      {/* Immer gerendert, damit «Ersetzen» in der Verwaltungstabelle den Dateidialog öffnen kann */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx,.xls"
+        className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+      />
 
       {!result && !parsing && (
         <div
+          data-testid="annual-import-dropzone"
           className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-5 text-center cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-900/20 transition-colors"
           onClick={() => fileRef.current?.click()}
           onDrop={handleDrop}
@@ -727,14 +806,9 @@ const AnnualCostImportSection = () => {
           <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
             Excel-Datei hierher ziehen oder klicken
           </p>
-          <p className="text-[10px] text-muted-foreground mt-1">.xlsx · Sage Kontoblatt (Jahresexport)</p>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
-          />
+          <p className="text-[10px] text-muted-foreground mt-1">
+            .xlsx · Sage Kontoblatt (Jahresexport, z.B. 01.01.25 – 31.12.25)
+          </p>
         </div>
       )}
 
@@ -746,23 +820,66 @@ const AnnualCostImportSection = () => {
       )}
 
       {error && (
-        <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400">
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
-          {error}
+        <div data-testid="annual-import-error" className="flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
+          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+          <span>{error}</span>
         </div>
       )}
 
-      {result && !saved && (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            <strong>{result.byMonth.size}</strong> Monate erkannt aus{' '}
-            <em>{fileName}</em> (Jahr {result.detectedYear})
-          </p>
+      {result && preview && !saved && (
+        <div className="space-y-2" data-testid="annual-import-preview">
+          {/* Jahr-Bestätigung + Zeitraum */}
+          <div className="rounded border bg-muted/30 p-2 space-y-1">
+            <p className="text-xs">
+              <span className="font-semibold">Geschäftsjahr {result.detectedYear}</span>{' '}
+              <span className="text-muted-foreground">
+                ({result.yearSource === 'period'
+                  ? `aus Dateizeitraum ${result.periodFrom ?? '?'} – ${result.periodTo ?? '?'}`
+                  : 'aus den Buchungsdaten abgeleitet'})
+              </span>
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              <em>{fileName}</em> · {result.byMonth.size} Monate · {result.accountCount} Konten ·{' '}
+              {result.bookingCount} Buchungen
+              {result.skippedOutOfYear > 0 && (
+                <span className="text-orange-600 dark:text-orange-400">
+                  {' '}· {result.skippedOutOfYear} Buchung(en) ausserhalb {result.detectedYear} übersprungen
+                </span>
+              )}
+            </p>
+            <p className="text-[11px] text-muted-foreground tabular-nums">
+              Summe Aufwand: <span className="font-medium">{fmtChf(Math.round(preview.sumExpense))} CHF</span>
+              {' '}· Summe Ertrag (FIBU): <span className="font-medium">{fmtChf(Math.round(preview.sumIncome))} CHF</span>
+              {preview.sumUnmapped !== 0 && (
+                <> · davon unzugeordnet: <span className="font-medium">{fmtChf(Math.round(preview.sumUnmapped))} CHF</span></>
+              )}
+            </p>
+          </div>
+
+          {/* Nicht zugeordnete Konten */}
+          {unmappedList.length > 0 && (
+            <div
+              data-testid="annual-import-unmapped"
+              className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-950/20 p-2 space-y-1"
+            >
+              <p className="text-[11px] font-medium text-amber-800 dark:text-amber-300">
+                {unmappedList.length} Konto/Konten ohne Zuordnung im Kontenplan — werden als
+                «[Unzugeordnet]» importiert und in der Erfolgsrechnung als Übriger Aufwand geführt:
+              </p>
+              <ul className="text-[11px] text-amber-800/90 dark:text-amber-300/90 space-y-0.5 max-h-28 overflow-auto">
+                {unmappedList.map(([acc, info]) => (
+                  <li key={acc} className="tabular-nums">
+                    {acc} {info.name} — {fmtChf(Math.round(info.total))} CHF
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {/* Vorschau: Gesamtkosten pro Monat */}
           <div className="rounded border text-[11px] overflow-auto">
             <table className="w-full min-w-[480px]">
-              <thead className="bg-muted/60">
+              <thead className="bg-muted">
                 <tr>
                   {MONTH_LABELS.map(m => (
                     <th key={m} className="text-center py-1 px-1 font-medium">{m}</th>
@@ -779,7 +896,7 @@ const AnnualCostImportSection = () => {
                         'text-center py-1 px-1 tabular-nums',
                         total === 0 && 'text-muted-foreground',
                       )}>
-                        {fmtChf(total)}
+                        {fmtChf(Math.round(total))}
                       </td>
                     );
                   })}
@@ -788,12 +905,22 @@ const AnnualCostImportSection = () => {
             </table>
           </div>
 
+          <p className="text-[10px] text-muted-foreground">
+            Beim Bestätigen werden die Konto-Kategorien des Jahres {result.detectedYear} in allen 12
+            Monaten ersetzt (wiederholbarer Import, keine Duplikate). Gastronovi-Umsatz,
+            Personalkosten-Direktwerte und manuelle Kategorien bleiben unberührt.
+          </p>
+
           <div className="flex gap-2">
-            <Button size="sm" className="h-8 text-xs" onClick={handleSave} disabled={saving}>
+            <Button
+              size="sm" className="h-8 text-xs"
+              onClick={handleSave} disabled={saving}
+              data-testid="annual-import-confirm"
+            >
               {saving
                 ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
                 : <CheckCircle2 className="h-3.5 w-3.5 mr-1" />}
-              Alle {result.byMonth.size} Monate speichern
+              Import bestätigen (Jahr {result.detectedYear})
             </Button>
             <Button
               size="sm" variant="outline" className="h-8 text-xs"
@@ -806,7 +933,7 @@ const AnnualCostImportSection = () => {
       )}
 
       {saved && (
-        <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400">
+        <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400" data-testid="annual-import-saved">
           <CheckCircle2 className="h-4 w-4" />
           Daten gespeichert.{' '}
           <button className="underline" onClick={() => { setResult(null); setFileName(''); setSaved(false); }}>
@@ -814,6 +941,97 @@ const AnnualCostImportSection = () => {
           </button>
         </div>
       )}
+
+      {/* ── Import-Verwaltung: importierte Geschäftsjahre ── */}
+      {entries.length > 0 && (
+        <div className="space-y-1 pt-1" data-testid="annual-import-registry">
+          <p className="text-[11px] font-medium text-muted-foreground">Importierte Geschäftsjahre</p>
+          <div className="rounded border text-[11px] overflow-auto">
+            <table className="w-full min-w-[560px]">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="text-left py-1 px-2 font-medium">Jahr</th>
+                  <th className="text-left py-1 px-2 font-medium">Datei</th>
+                  <th className="text-left py-1 px-2 font-medium">Importiert</th>
+                  <th className="text-right py-1 px-2 font-medium">Konten</th>
+                  <th className="text-right py-1 px-2 font-medium">Buchungen</th>
+                  <th className="text-right py-1 px-2 font-medium">Monate</th>
+                  <th className="text-left py-1 px-2 font-medium">Status</th>
+                  <th className="text-right py-1 px-2 font-medium">Aktionen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries.map(e => (
+                  <tr key={e.year} className="border-t" data-testid={`annual-import-row-${e.year}`}>
+                    <td className="py-1 px-2 font-medium tabular-nums">{e.year}</td>
+                    <td className="py-1 px-2 max-w-[180px] truncate" title={e.fileName}>{e.fileName}</td>
+                    <td className="py-1 px-2 whitespace-nowrap">
+                      {e.importedAt ? format(parseISO(e.importedAt), 'dd.MM.yyyy HH:mm', { locale: de }) : '—'}
+                    </td>
+                    <td className="py-1 px-2 text-right tabular-nums">{e.accountCount}</td>
+                    <td className="py-1 px-2 text-right tabular-nums">{e.bookingCount}</td>
+                    <td className="py-1 px-2 text-right tabular-nums">{e.monthsWithData}</td>
+                    <td className="py-1 px-2">
+                      {e.unmappedCount > 0 ? (
+                        <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20">
+                          {e.unmappedCount} unzugeordnet
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] border-green-300 text-green-700 bg-green-50 dark:bg-green-950/20">
+                          vollständig
+                        </Badge>
+                      )}
+                    </td>
+                    <td className="py-1 px-2 text-right whitespace-nowrap">
+                      <Button
+                        size="sm" variant="ghost" className="h-6 px-2 text-[11px]"
+                        onClick={() => { setResult(null); setSaved(false); setError(''); fileRef.current?.click(); }}
+                        data-testid={`annual-import-replace-${e.year}`}
+                      >
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                        Ersetzen
+                      </Button>
+                      <Button
+                        size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-red-600 hover:text-red-700"
+                        onClick={() => setDeleteYear(e.year)}
+                        data-testid={`annual-import-delete-${e.year}`}
+                      >
+                        Löschen
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Lösch-Bestätigung ── */}
+      <AlertDialog open={deleteYear !== null} onOpenChange={open => { if (!open) setDeleteYear(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Jahres-Import {deleteYear} löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Entfernt alle importierten Konto-Kategorien des Jahres {deleteYear} aus der
+              Erfolgsrechnung (alle 12 Monate). Gastronovi-Umsatz, Personalkosten-Direktwerte und
+              manuell erfasste Kategorien bleiben erhalten. Die Aktion kann durch einen erneuten
+              Import rückgängig gemacht werden.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-red-600 hover:bg-red-700"
+              data-testid="annual-import-delete-confirm"
+            >
+              {deleting ? 'Wird gelöscht…' : 'Endgültig löschen'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

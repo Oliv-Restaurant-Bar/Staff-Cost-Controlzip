@@ -20,7 +20,7 @@ import {
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
-  Calculator, ArrowRight, FileText,
+  Calculator, ArrowRight, FileText, Landmark,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -68,7 +68,10 @@ import { useMaison } from '@/contexts/MaisonContext';
 import { kvGet } from '@/lib/supabase-kv';
 import { MultiYearAnalysisSection } from '@/components/reporting/MultiYearAnalysisSection';
 import { ManagementReportView } from '@/components/reporting/ManagementReportView';
+import { BankInvestorView } from '@/components/reporting/BankInvestorView';
 import { MULTI_YEAR_POSITIONS, type YearSeries } from '@/lib/multi-year-analysis';
+import { BANK_ROW_IDS } from '@/lib/bank-investor-analysis';
+import { loadAnnualCostImports, ANNUAL_COST_IMPORTS_KEY, type AnnualCostImportEntry } from '@/lib/annual-cost-imports-store';
 
 /** Datenbasis-Hinweis für Mehrjahresanalyse + Management Report (gleiche Quelle). */
 const MULTI_YEAR_DATA_SOURCE_HINT =
@@ -2280,7 +2283,7 @@ const currentYear  = new Date().getFullYear();
 const currentMonth = new Date().getMonth() + 1;
 const years = [currentYear - 1, currentYear, currentYear + 1];
 
-type ViewMode = 'monthly' | 'yearly' | 'budget_pl' | 'multi_year' | 'mgmt_report';
+type ViewMode = 'monthly' | 'yearly' | 'budget_pl' | 'multi_year' | 'mgmt_report' | 'bank_investor';
 
 const PLViewPage = () => {
   const { tenantId, tenant, tenantKey } = useTenant();
@@ -2301,6 +2304,8 @@ const PLViewPage = () => {
   const [annualDistribInput, setAnnualDistribInput] = useState('');
   const [hochYearOpen,  setHochYearOpen]  = useState(true);
   const [hochMonthOpen, setHochMonthOpen] = useState(true);
+  // Banken-/Investorensicht: Importstand + nicht gemappte Konten (read-only Hinweis)
+  const [annualImports, setAnnualImports] = useState<AnnualCostImportEntry[]>([]);
   const [persFixed,     setPersFixed]     = useState(false);
   const [compareMode,      setCompareMode]      = useState<'all' | 'ist_budget' | 'ist_vorjahr' | 'monat_vs_monat'>('all');
   const [cmpMonth,         setCmpMonth]         = useState<number>(() => month > 1 ? month - 1 : 12);
@@ -2403,9 +2408,14 @@ const PLViewPage = () => {
   // BEWUSST dieselbe SSOT wie die Erfolgsrechnung, OHNE Maison-/Exclude-Effekte
   // (Roh-Reporting-Daten aller Jahre; Einschränkungen erklärt die Sektion selbst).
   const multiYearSeries = useMemo<YearSeries[] | null>(() => {
-    if (mode !== 'multi_year' && mode !== 'mgmt_report') return null;
+    if (mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor') return null;
     const storeKey = tenantKey(REPORTING_STORAGE_KEY);
-    const positionIds = MULTI_YEAR_POSITIONS.map(p => p.id);
+    // Banken-/Investorensicht braucht ALLE P&L-Zwischentotale — Vereinigungsmenge
+    // (dieselben computePLForMonth-Rows, nur mehr IDs; keine Zweitberechnung).
+    const positionIds = Array.from(new Set([
+      ...MULTI_YEAR_POSITIONS.map(p => p.id),
+      ...BANK_ROW_IDS,
+    ]));
     return availableYears(storeKey).map(y => {
       const recs = loadYear(y, storeKey);
       const values: (number | null)[] = [];
@@ -2432,6 +2442,32 @@ const PLViewPage = () => {
       return { year: y, values, byPosition, personnelPct, wesPct };
     });
   }, [mode, refreshKey, tenantId, tenantKey]);
+
+  // Banken-/Investorensicht: Import-Registry read-only laden (Importstand +
+  // nicht gemappte Konten als Datenqualitätshinweis — KEIN Schreibpfad).
+  useEffect(() => {
+    if (mode !== 'bank_investor') return;
+    let cancelled = false;
+    loadAnnualCostImports(tenantKey(ANNUAL_COST_IMPORTS_KEY))
+      .then(entries => { if (!cancelled) setAnnualImports(entries); })
+      .catch(() => { if (!cancelled) setAnnualImports([]); });
+    return () => { cancelled = true; };
+  }, [mode, tenantId, tenantKey, refreshKey]);
+
+  const bankImportInfo = useMemo(() => {
+    const unmapped = annualImports.reduce((sum, e) => sum + (e.unmappedCount || 0), 0);
+    const latest = annualImports.reduce<string | null>(
+      (acc, e) => (e.importedAt && (!acc || e.importedAt > acc) ? e.importedAt : acc), null,
+    );
+    let importStand: string | null = null;
+    if (latest) {
+      const d = new Date(latest);
+      importStand = Number.isNaN(d.getTime())
+        ? latest
+        : `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+    }
+    return { unmappedAccounts: unmapped > 0 ? unmapped : undefined, importStand };
+  }, [annualImports]);
 
   // Vorjahres-Diagnose: macht sichtbar, ob/welche Vorjahresdaten vorhanden sind
   // (verändert KEINE Berechnungen, erfindet KEINE Werte — nur Sichtbarkeit).
@@ -2997,10 +3033,19 @@ const PLViewPage = () => {
               >
                 <FileText className="h-3 w-3" /><span className="hidden sm:inline">Management Report</span><span className="sm:hidden">Report</span>
               </button>
+              <button
+                className={cn('px-2 py-1.5 flex items-center gap-1',
+                  mode === 'bank_investor' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
+                )}
+                onClick={() => setMode('bank_investor')}
+                data-testid="plview-mode-bank-investor"
+              >
+                <Landmark className="h-3 w-3" /><span className="hidden sm:inline">Banken &amp; Investoren</span><span className="sm:hidden">Bank</span>
+              </button>
             </div>
 
-            {/* Jahr (nicht bei Mehrjahresanalyse/Report — dort werden alle Jahre gezeigt) */}
-            {mode !== 'multi_year' && mode !== 'mgmt_report' && (
+            {/* Jahr (nicht bei Mehrjahresanalyse/Report/Bankensicht — dort werden alle Jahre gezeigt) */}
+            {mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor' && (
               <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
                 <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -3394,8 +3439,19 @@ const PLViewPage = () => {
           />
         )}
 
+        {/* Banken & Investoren (gleiche Datenbasis wie Mehrjahresanalyse) */}
+        {mode === 'bank_investor' && multiYearSeries && (
+          <BankInvestorView
+            key={tenantId}
+            series={multiYearSeries}
+            restaurantName={tenant.shortName}
+            unmappedAccounts={bankImportInfo.unmappedAccounts}
+            importStand={bankImportInfo.importStand}
+          />
+        )}
+
         {/* P&L-Tabelle */}
-        {mode !== 'multi_year' && mode !== 'mgmt_report' && (
+        {mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor' && (
         <div className="rounded-lg border border-border overflow-hidden shadow-sm">
           {/* Tabellen-Header */}
           <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">

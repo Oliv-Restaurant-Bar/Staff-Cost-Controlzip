@@ -1,0 +1,240 @@
+Schliesse jetzt die Umsetzung der Banken-/Investorenanalyse vollständig ab.
+
+Aktueller Stand laut letzter Ausführung:
+
+- T102 UI abgeschlossen
+- Exportdaten angebunden
+- ManagementReportView erstellt
+- Excel-Export erweitert
+- PDF-Export erweitert
+- bestehende und neue Tests angepasst
+- 68 Library-Tests erfolgreich
+- 15 Component-Tests erfolgreich
+- LSP-Diagnostik sauber
+- Anwendung kompiliert ohne neue Fehler
+- Modusauswahl und Runtime-Ansicht geprüft
+- replit.md wird aktuell ergänzt
+
+Führe jetzt keine neue Funktionsentwicklung mehr durch, sondern mache den Abschluss kontrolliert.
+
+1. replit.md fertigstellen
+
+Aktualisiere die Dokumentation kompakt und nur mit tatsächlich umgesetztem Verhalten.
+
+Dokumentiere insbesondere:
+
+- mehrjährige Erfolgsrechnungsanalyse
+- ManagementReportView beziehungsweise Banken-/Investorenansicht
+- Vergleich von Basisjahr und aktuellem Jahr
+- Umsatzentwicklung
+- Warenaufwand und Warenquote
+- Personalaufwand und Personalquote
+- zentrale Zwischentotale und Margen
+- regelbasierte Kernaussagen
+- gemeinsame Datengrundlage für UI, PDF und Excel
+- Excel-Export mit den neu ergänzten Arbeitsblättern
+- PDF-Export mit neutraler betriebswirtschaftlicher Bewertung
+- Datenqualitätshinweise
+- Vergleich bis zum gleichen Monat, sofern umgesetzt
+
+Keine Funktionen dokumentieren, die nicht tatsächlich vorhanden sind.
+
+2. Tatsächlichen Task-Diff prüfen
+
+Ermittle den vollständigen aktuellen Task-Diff.
+
+Prüfe:
+
+- welche Dateien für diese Aufgabe neu erstellt wurden
+- welche Dateien geändert wurden
+- ob versehentlich unabhängige Module verändert wurden
+- ob temporäre Dateien, Debug-Ausgaben oder Testartefakte enthalten sind
+- ob ungenutzte Imports, tote Helfer oder doppelte Berechnungslogik zurückgeblieben sind
+
+Entferne nur eindeutig durch diese Aufgabe entstandenen toten Code.
+
+Keine fremden oder früheren Änderungen zurücksetzen.
+
+3. Zentrale Datenlogik kontrollieren
+
+Stelle sicher, dass ManagementReportView, PDF und Excel dieselben zentral aufbereiteten Analysedaten verwenden.
+
+Es darf keine voneinander abweichende Berechnungslogik geben für:
+
+- Umsatzveränderung
+- Warenquote
+- Personalquote
+- Bruttomarge
+- EBIT-Marge
+- absolute Differenzen
+- Prozentdifferenzen
+- Prozentpunktveränderungen
+- betriebswirtschaftliche Tonalität
+- Kernaussagen
+
+Falls UI, PDF oder Excel noch eigene Parallelberechnungen enthalten, konsolidiere sie in die bestehende zentrale Analysefunktion.
+
+4. Inhaltliche Plausibilitätsprüfung
+
+Prüfe anhand realistischer Testdaten:
+
+- Umsatz 2024 und 2025 stimmen mit der Erfolgsrechnung überein
+- Warenaufwand stimmt mit dem P&L-Zwischentotal überein
+- Personalaufwand stimmt mit dem P&L-Zwischentotal überein
+- Bruttogewinn und EBIT werden aus der bestehenden Erfolgsrechnungsstruktur übernommen
+- Jahreswerte entsprechen der Summe der verwendeten Monatswerte
+- Kostenquoten werden gegen den Nettoumsatz berechnet
+- fehlende Werte erscheinen nicht fälschlich als CHF 0
+- ein Basiswert von 0 erzeugt weder NaN noch Infinity
+- negative Kostenentwicklung wird betriebswirtschaftlich korrekt bewertet
+- sinkende Waren- oder Personalquote wird positiv bewertet
+- steigende absolute Kosten werden nicht automatisch negativ markiert, wenn der Umsatz stärker wächst
+
+5. ManagementReportView visuell prüfen
+
+Öffne die Banken-/Investorenansicht in der laufenden Anwendung und kontrolliere:
+
+- klarer Titel und Datenstand
+- Basisjahr und Vergleichsjahr sichtbar
+- kompakte Executive-KPIs
+- Umsatzentwicklung gut lesbar
+- Warenkosten und Warenquote verständlich getrennt
+- Personalkosten und Personalquote verständlich getrennt
+- Zwischentotale visuell priorisiert
+- Kernaussagen maximal fünf Punkte
+- keine übergrossen Leerflächen
+- keine abgeschnittenen Inhalte
+- keine unnötigen Scrollflächen innerhalb von Karten
+- klare Chart-Legenden
+- konsistente CHF- und Prozentformatierung
+- Schweizer Zahlenformat
+- Design synchron mit der bestehenden Erfolgsrechnung
+
+Desktopansicht priorisieren, responsive Verhalten aber nicht beschädigen.
+
+6. PDF-Export visuell prüfen
+
+Erzeuge einen realen Banken-/Investoren-PDF-Export.
+
+Kontrolliere:
+
+- Datei wird erfolgreich erzeugt
+- keine leeren Seiten
+- keine abgeschnittenen Diagramme
+- keine abgeschnittenen Tabellen
+- saubere Seitenumbrüche
+- Betrieb und Datenstand sichtbar
+- Basisjahr und Vergleichsjahr sichtbar
+- CHF- und Prozentwerte korrekt formatiert
+- Diagramme und Kennzahlen stimmen mit der Bildschirmansicht überein
+- neutrale beziehungsweise positive/negative Texte sind semantisch korrekt
+- keine internen technischen Begriffe im Bericht
+- keine Testdatenbezeichnungen oder Debug-Texte
+
+Falls die bestehende PDF-Technik Diagramme nicht direkt sauber exportiert, verwende die bereits vorhandene Exportarchitektur und keine neue Bibliothek.
+
+7. Excel-Export real prüfen
+
+Erzeuge eine reale Excel-Datei und öffne beziehungsweise inspiziere sie technisch.
+
+Kontrolliere alle tatsächlich vorgesehenen Arbeitsblätter.
+
+Mindestens prüfen:
+
+- Übersicht
+- Monatsvergleich
+- Erfolgsrechnung Basisjahr
+- Erfolgsrechnung Vergleichsjahr
+- Kennzahlen und Margen
+- Datenqualität
+- weitere neu implementierte Management-Blätter
+
+Prüfe:
+
+- Blattnamen sind Excel-kompatibel
+- Beträge sind echte Zahlen
+- Prozentwerte sind echte Prozentwerte
+- keine Zahlen als Text
+- keine NaN-, Infinity- oder undefined-Werte
+- Monatsreihenfolge Januar bis Dezember
+- Basisjahr und Vergleichsjahr korrekt beschriftet
+- Jahressummen stimmen
+- Spaltenbreiten sind brauchbar
+- Kopfzeilen sind lesbar
+- Zwischentotale sind hervorgehoben
+- kein bestehendes Exportblatt wurde unbeabsichtigt entfernt
+
+8. Vollständige Tests ausführen
+
+Führe mindestens aus:
+
+- alle betroffenen Analyse-Library-Tests
+- alle PDF-Exporttests
+- alle Excel-Exporttests
+- alle ManagementReportView-Komponententests
+- alle PLView- beziehungsweise Erfolgsrechnungs-Komponententests
+- TypeScript-Typecheck
+- Produktionsbuild, falls im Projekt vorgesehen
+
+Tests weiterhin in sinnvollen Blöcken ausführen, falls ein Gesamtlauf zu viel Speicher benötigt.
+
+Bei Fehlern:
+
+- tatsächliche Ursache beheben
+- keine Tests abschwächen
+- keine Assertions entfernen, nur damit der Lauf grün wird
+- keine TypeScript-Fehler mit `any` oder `@ts-ignore` verdecken
+
+9. Architect-Review
+
+Führe danach ein gezieltes Architect-Review ausschliesslich über den tatsächlichen Task-Diff durch.
+
+Das Review soll insbesondere prüfen:
+
+- keine parallele P&L-Berechnungslogik
+- keine Abweichung zwischen UI, PDF und Excel
+- korrekte Behandlung fehlender Daten
+- korrekte Prozent- und Margenberechnung
+- keine Vermischung von Geschäftsjahren
+- keine Performanceprobleme durch unnötige Neuberechnungen
+- keine unnötig grosse neue Komponente ohne sinnvolle Aufteilung
+- keine Änderung fachfremder Module
+- keine Regression bestehender Erfolgsrechnungs- oder Exportfunktionen
+
+Falls das Review fremde frühere Dateien beanstandet, verifiziere den Scope mit dem tatsächlichen Task-Diff und ändere keine unabhängigen Altarbeiten.
+
+10. Abschlussbericht
+
+Gib danach eine klare Abschlusszusammenfassung aus mit:
+
+- umgesetzten Funktionen
+- neuem Analysemodus
+- PDF-Erweiterungen
+- Excel-Erweiterungen
+- Anzahl erfolgreicher Tests
+- Typecheck-Ergebnis
+- Build-Ergebnis
+- Architect-Review-Ergebnis
+- Liste der tatsächlich geänderten Dateien
+- verbleibenden Einschränkungen, falls es welche gibt
+
+11. Commit
+
+Erstelle erst nach allen erfolgreichen Prüfungen einen sauberen Commit.
+
+Geeignete Commit-Message:
+
+feat: add bank and investor management report for multi-year P&L
+
+Wichtig:
+
+Nicht nur einen Commit-Text ausgeben.
+
+Vor dem Commit sicherstellen, dass:
+
+- der Working Tree nur die beabsichtigten Änderungen enthält
+- keine temporären Dateien enthalten sind
+- replit.md aktuell ist
+- alle Tests grün sind
+- Typecheck sauber ist
+- das Architect-Review bestanden wurde

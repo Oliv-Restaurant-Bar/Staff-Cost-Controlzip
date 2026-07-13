@@ -827,28 +827,87 @@ export async function parseSageKontoblattExcel(buffer: ArrayBuffer): Promise<Exc
 export interface AnnualKostenResult {
   /** Monat (1–12) → ParsedCSVRow[] (summiert pro Konto) */
   byMonth: Map<number, ParsedCSVRow[]>;
-  detectedYear: number;
+  /** Erkanntes Geschäftsjahr — null wenn uneindeutig/nicht erkennbar (dann NICHT speichern) */
+  detectedYear: number | null;
+  /** Woher stammt das Jahr: Dateizeitraum-Kopf, Buchungsdaten oder nicht erkennbar */
+  yearSource: 'period' | 'bookings' | 'none';
+  /** Zeitraum aus dem Dateikopf, z.B. "01.01.25" / "31.12.25" */
+  periodFrom?: string;
+  periodTo?: string;
+  /** true = Jahr uneindeutig (Zeitraum umfasst mehrere Jahre o.ä.) → Import abbrechen */
+  ambiguousYear: boolean;
+  /** Anzahl erkannter Konten (mit mind. einer Netto-Bewegung ≠ 0) */
+  accountCount: number;
+  /** Anzahl gültiger, verwendeter Buchungszeilen */
+  bookingCount: number;
+  /** Buchungen mit Datum ausserhalb des erkannten Jahres (übersprungen) */
+  skippedOutOfYear: number;
+  /** Sonstige übersprungene Zeilen (Totale, Saldo Vortrag, Zeilen ohne Datum/Betrag) */
+  skippedOtherRows: number;
   warnings: string[];
+  /** Gesetzt wenn nichts importierbar ist — beschreibt den konkreten Grund */
+  failureReason?: string;
+  /** Diagnose: reale Dateistruktur offenlegen statt Format zu raten */
+  debug: {
+    sheetName: string;
+    rowCount: number;
+    headerLines: string[];
+    bookingYearCounts: Record<string, number>;
+    sampleSkippedRows: string[];
+  };
+}
+
+function expandYear(yy: number): number {
+  return yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
 }
 
 /**
  * Liest ein Sage-Kontoblatt-Excel das einen ganzen Jahr-Zeitraum umfasst
  * (z.B. 01.01.25 – 31.12.25) und gruppiert Buchungszeilen nach Monat.
  *
- * Ergebnis: pro Monat ein Array von ParsedCSVRow[], die dann einzeln über
- * matchCSVRows + buildMonthRecord + saveMonth gespeichert werden können.
+ * Härtungsregeln (Spec Vorjahreskosten-Import):
+ * - Geschäftsjahr aus dem Dateizeitraum ("vom 01.01.25 bis 31.12.25"), NIE aus dem Dateinamen.
+ *   Fallback: eindeutiges Jahr der Buchungsdaten. Mehrere Jahre → ambiguousYear, kein Speichern.
+ * - Buchungszeilen zählen nur, wenn ihr Buchungsdatum im erkannten Jahr liegt (sonst skippedOutOfYear).
+ * - Struktur-/Saldozeilen (Total, Total Soll/Haben, Saldo Vortrag) werden explizit übersprungen.
+ * - Beträge bleiben Soll − Haben (Netto-Bewegung); die Ertrags-Negation macht buildMonthRecord
+ *   via Konten-Mapping-sign — hier KEINE Doppel-Negation.
+ *
+ * Ergebnis: pro Monat ein Array von ParsedCSVRow[], die dann über
+ * matchCSVRows + Record-Builder + Replace-Scope gespeichert werden.
  */
 export async function parseAnnualSageKontoblattByMonth(
   buffer: ArrayBuffer,
 ): Promise<AnnualKostenResult> {
   const warnings: string[] = [];
+  const emptyResult = (failureReason: string, debugPartial?: Partial<AnnualKostenResult['debug']>): AnnualKostenResult => ({
+    byMonth: new Map(),
+    detectedYear: null,
+    yearSource: 'none',
+    ambiguousYear: false,
+    accountCount: 0,
+    bookingCount: 0,
+    skippedOutOfYear: 0,
+    skippedOtherRows: 0,
+    warnings,
+    failureReason,
+    debug: {
+      sheetName: '',
+      rowCount: 0,
+      headerLines: [],
+      bookingYearCounts: {},
+      sampleSkippedRows: [],
+      ...debugPartial,
+    },
+  });
 
   let workbook: XLSX.WorkBook;
   try {
     workbook = XLSX.read(buffer, { type: 'array' });
   } catch (e) {
-    warnings.push(`Excel-Datei konnte nicht geöffnet werden: ${String(e)}`);
-    return { byMonth: new Map(), detectedYear: new Date().getFullYear() - 1, warnings };
+    const reason = `Excel-Datei konnte nicht geöffnet werden: ${String(e)}`;
+    warnings.push(reason);
+    return emptyResult(reason);
   }
 
   const sheetName = workbook.SheetNames[0];
@@ -859,20 +918,58 @@ export async function parseAnnualSageKontoblattByMonth(
     raw: true,
   }) as (string | number | null)[][];
 
-  // Jahr aus Kopfzeile "vom: 01.01.25 bis 31.12.25"
-  let detectedYear = new Date().getFullYear() - 1;
-  const headerLine = String(data[1]?.join(' ') ?? '');
-  const sageVomM = headerLine.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
-  if (sageVomM) {
-    const yy = parseInt(sageVomM[3]);
-    detectedYear = yy < 100 ? (yy < 50 ? 2000 + yy : 1900 + yy) : yy;
+  // ── Zeitraum aus den Kopfzeilen (erste 8 Zeilen): "vom 01.01.25 bis 31.12.25" ──
+  const headerLines: string[] = [];
+  let periodFrom: string | undefined;
+  let periodTo: string | undefined;
+  let periodYear: number | null = null;
+  let ambiguousYear = false;
+
+  for (let i = 0; i < Math.min(8, data.length); i++) {
+    const line = (data[i] ?? []).filter(c => c !== null && c !== '').map(String).join(' ').trim();
+    if (line) headerLines.push(line);
+  }
+  const dateRe = /(\d{1,2})\.(\d{1,2})\.(\d{2,4})/g;
+  for (const line of headerLines) {
+    const matches = Array.from(line.matchAll(dateRe));
+    if (matches.length >= 2) {
+      periodFrom = matches[0][0];
+      periodTo   = matches[1][0];
+      const yFrom = expandYear(parseInt(matches[0][3]));
+      const yTo   = expandYear(parseInt(matches[1][3]));
+      if (yFrom !== yTo) {
+        ambiguousYear = true;
+        warnings.push(
+          `Dateizeitraum umfasst mehrere Jahre (${periodFrom} – ${periodTo}). ` +
+          'Import abgebrochen — bitte eine Datei mit genau einem Geschäftsjahr exportieren.',
+        );
+      } else {
+        periodYear = yFrom;
+      }
+      break;
+    }
+    if (matches.length === 1 && /vom|periode|zeitraum/i.test(line)) {
+      periodFrom = matches[0][0];
+      periodYear = expandYear(parseInt(matches[0][3]));
+      break;
+    }
   }
 
-  // Konten + Buchungszeilen einlesen
-  // monthAccountSums: month → accountNumber → { name, soll, haben }
-  const monthAccountSums = new Map<number, Map<string, { name: string; soll: number; haben: number }>>();
+  // ── Buchungszeilen einsammeln (Phase 1: rohe Buchungen mit vollem Datum) ──
+  interface RawBooking { account: string; name: string; month: number; year: number; soll: number; haben: number }
+  const rawBookings: RawBooking[] = [];
+  const bookingYearCounts: Record<string, number> = {};
+  const sampleSkippedRows: string[] = [];
+  let skippedOtherRows = 0;
 
   let currentAccount: { number: string; name: string } | null = null;
+
+  const noteSkip = (row: (string | number | null)[]) => {
+    skippedOtherRows++;
+    if (sampleSkippedRows.length < 10) {
+      sampleSkippedRows.push(row.filter(c => c !== null && c !== '').map(String).join(' | ').slice(0, 160));
+    }
+  };
 
   for (let i = 0; i < data.length; i++) {
     const row = data[i];
@@ -883,14 +980,22 @@ export async function parseAnnualSageKontoblattByMonth(
     const col6 = row[6];
     const col7 = row[7];
 
-    // Konto-Header: col0 ist 4-stellige Zahl, col6 leer
-    if (typeof col0 === 'number' && col0 >= 1000 && col0 <= 9999 && !col6 && col3 && col3.length >= 2) {
-      currentAccount = { number: String(Math.round(col0)), name: col3 };
+    // Konto-Header: col0 = 4-stellige Kontonummer (Zahl ODER Text), col6 leer, col3 = Kontoname
+    const col0Str = typeof col0 === 'string' ? col0.trim() : '';
+    const isNumericHeader = typeof col0 === 'number' && col0 >= 1000 && col0 <= 9999;
+    const isTextHeader = /^\d{4}$/.test(col0Str) && parseInt(col0Str) >= 1000;
+    if ((isNumericHeader || isTextHeader) && !col6 && col3 && col3.length >= 2) {
+      currentAccount = {
+        number: isNumericHeader ? String(Math.round(col0 as number)) : col0Str,
+        name: col3,
+      };
       continue;
     }
 
     if (!currentAccount) continue;
-    if (col3 === 'Total Haben' || col3 === 'Total' || col3 === 'Saldo Vortrag') continue;
+
+    // Struktur-/Saldozeilen explizit überspringen (keine Buchungen)
+    if (/^(total( (soll|haben))?|saldo( vortrag)?)$/i.test(col3)) continue;
 
     // Buchungszeile: col0 = Datum-String oder Excel-Serial
     let dateStr = '';
@@ -900,13 +1005,17 @@ export async function parseAnnualSageKontoblattByMonth(
       dateStr = col0.trim();
     }
 
-    if (!dateStr) continue;
+    if (!dateStr) {
+      // Zeile innerhalb eines Kontoblocks ohne erkennbares Datum → Diagnose-Zähler
+      if (col3 || col6 || col7) noteSkip(row);
+      continue;
+    }
 
-    // Monat aus Datum extrahieren
     const parts = dateStr.split('.');
-    if (parts.length < 2) continue;
+    if (parts.length < 3) { noteSkip(row); continue; }
     const month = parseInt(parts[1]);
-    if (isNaN(month) || month < 1 || month > 12) continue;
+    const bookingYear = expandYear(parseInt(parts[2]));
+    if (isNaN(month) || month < 1 || month > 12 || isNaN(bookingYear)) { noteSkip(row); continue; }
 
     // Sage: Soll- und Haben-Beträge sind immer positive Zahlen in ihrer Spalte
     const soll  = typeof col6 === 'number' ? col6 : (parseAmount(String(col6 ?? '')) ?? 0);
@@ -914,38 +1023,99 @@ export async function parseAnnualSageKontoblattByMonth(
 
     if (soll === 0 && haben === 0) continue;
 
-    if (!monthAccountSums.has(month)) {
-      monthAccountSums.set(month, new Map());
-    }
-    const accounts = monthAccountSums.get(month)!;
-    const accKey = currentAccount.number;
-    const prev = accounts.get(accKey) ?? { name: currentAccount.name, soll: 0, haben: 0 };
-    accounts.set(accKey, {
-      name: prev.name,
-      soll:  prev.soll  + soll,
-      haben: prev.haben + haben,
+    bookingYearCounts[String(bookingYear)] = (bookingYearCounts[String(bookingYear)] ?? 0) + 1;
+    rawBookings.push({
+      account: currentAccount.number,
+      name: currentAccount.name,
+      month,
+      year: bookingYear,
+      soll,
+      haben,
     });
   }
 
-  if (monthAccountSums.size === 0) {
-    warnings.push(
+  const debug: AnnualKostenResult['debug'] = {
+    sheetName,
+    rowCount: data.length,
+    headerLines,
+    bookingYearCounts,
+    sampleSkippedRows,
+  };
+
+  if (ambiguousYear) {
+    return {
+      ...emptyResult('Geschäftsjahr uneindeutig: Dateizeitraum umfasst mehrere Jahre.', debug),
+      periodFrom,
+      periodTo,
+      ambiguousYear: true,
+      skippedOtherRows,
+    };
+  }
+
+  if (rawBookings.length === 0) {
+    const reason =
       'Keine Buchungszeilen gefunden. Prüfe ob das Excel im Sage-Kontoblatt-Format vorliegt ' +
-      '(Datum in Spalte A, Soll in Spalte G, Haben in Spalte H).',
+      '(Kontonummer in Spalte A als Blockkopf, Datum in Spalte A, Text in Spalte D, Soll in Spalte G, Haben in Spalte H).';
+    warnings.push(reason);
+    return { ...emptyResult(reason, debug), periodFrom, periodTo, skippedOtherRows };
+  }
+
+  // ── Jahr bestimmen: Zeitraum-Kopf hat Vorrang, sonst eindeutiges Buchungsjahr ──
+  let detectedYear: number | null = periodYear;
+  let yearSource: AnnualKostenResult['yearSource'] = periodYear !== null ? 'period' : 'none';
+  if (detectedYear === null) {
+    const years = Object.keys(bookingYearCounts).map(Number).sort();
+    if (years.length === 1) {
+      detectedYear = years[0];
+      yearSource = 'bookings';
+      warnings.push(`Kein Zeitraum im Dateikopf gefunden — Jahr ${detectedYear} aus den Buchungsdaten abgeleitet.`);
+    } else {
+      const reason =
+        `Geschäftsjahr uneindeutig: kein Zeitraum im Dateikopf und Buchungen aus mehreren Jahren ` +
+        `(${years.join(', ')}). Import abgebrochen — keine Teildaten gespeichert.`;
+      warnings.push(reason);
+      return {
+        ...emptyResult(reason, debug),
+        periodFrom,
+        periodTo,
+        ambiguousYear: true,
+        skippedOtherRows,
+      };
+    }
+  }
+
+  // ── Phase 2: nur Buchungen im erkannten Jahr aggregieren ──
+  const monthAccountSums = new Map<number, Map<string, { name: string; soll: number; haben: number }>>();
+  let bookingCount = 0;
+  let skippedOutOfYear = 0;
+
+  for (const b of rawBookings) {
+    if (b.year !== detectedYear) { skippedOutOfYear++; continue; }
+    bookingCount++;
+    if (!monthAccountSums.has(b.month)) monthAccountSums.set(b.month, new Map());
+    const accounts = monthAccountSums.get(b.month)!;
+    const prev = accounts.get(b.account) ?? { name: b.name, soll: 0, haben: 0 };
+    accounts.set(b.account, { name: prev.name, soll: prev.soll + b.soll, haben: prev.haben + b.haben });
+  }
+
+  if (skippedOutOfYear > 0) {
+    warnings.push(
+      `${skippedOutOfYear} Buchung(en) mit Datum ausserhalb ${detectedYear} übersprungen.`,
     );
   }
 
-  // ParsedCSVRow[] pro Monat aufbauen
+  // ── ParsedCSVRow[] pro Monat aufbauen (Netto: Soll − Haben, Vorzeichen via Mapping) ──
   const byMonth = new Map<number, ParsedCSVRow[]>();
+  const accountSet = new Set<string>();
 
   for (const [month, accounts] of monthAccountSums.entries()) {
     const rows: ParsedCSVRow[] = [];
     let lineIndex = 0;
 
     for (const [accNum, { name, soll, haben }] of accounts.entries()) {
-      // Netto-Aufwand: Soll minus Haben (kann negativ sein bei Korrekturen/Stornos)
       const amount = soll - haben;
       if (amount === 0) continue;
-
+      accountSet.add(accNum);
       rows.push({
         lineIndex:     ++lineIndex,
         rawLine:       `${accNum} ${name} → ${amount.toFixed(2)}`,
@@ -956,15 +1126,26 @@ export async function parseAnnualSageKontoblattByMonth(
       });
     }
 
-    if (rows.length > 0) {
-      byMonth.set(month, rows);
-    }
+    if (rows.length > 0) byMonth.set(month, rows);
   }
 
-  const monthCount = byMonth.size;
   warnings.push(
-    `Sage-Jahres-Kontoblatt erkannt: ${monthCount} Monate mit Buchungsdaten (Jahr ${detectedYear}).`,
+    `Sage-Jahres-Kontoblatt erkannt: ${byMonth.size} Monate mit Buchungsdaten, ` +
+    `${accountSet.size} Konten, ${bookingCount} Buchungen (Jahr ${detectedYear}).`,
   );
 
-  return { byMonth, detectedYear, warnings };
+  return {
+    byMonth,
+    detectedYear,
+    yearSource,
+    periodFrom,
+    periodTo,
+    ambiguousYear: false,
+    accountCount: accountSet.size,
+    bookingCount,
+    skippedOutOfYear,
+    skippedOtherRows,
+    warnings,
+    debug,
+  };
 }

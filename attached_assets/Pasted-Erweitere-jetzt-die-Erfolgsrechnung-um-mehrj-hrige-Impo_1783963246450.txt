@@ -1,0 +1,640 @@
+Erweitere jetzt die Erfolgsrechnung um mehrjährige Imports und eine professionelle Banken-/Investorenanalyse.
+
+Ausgangslage:
+
+Aktuell kann eine Erfolgsrechnung beziehungsweise Vorjahreskosten-Datei für 2025 importiert werden. Die bestehende Ansicht zeigt die Erfolgsrechnung monatsweise und nach Positionen.
+
+Neu soll zusätzlich möglich sein:
+
+1. Erfolgsrechnungsdaten für 2024 hochzuladen
+2. mehrere Geschäftsjahre sauber parallel zu verwalten
+3. 2024, 2025 und später weitere Jahre direkt zu vergleichen
+4. eine visuell hochwertige Auswertung für Banken und Investoren zu erstellen
+5. diese Analyse als PDF und Excel zu exportieren
+
+Wichtig:
+
+Keine separate Insel-Lösung bauen.
+
+Die bestehende Import-, Mapping-, Erfolgsrechnungs- und Exportarchitektur erweitern und wiederverwenden.
+
+A. Mehrjährige Erfolgsrechnungs-Imports
+
+1. Importjahr automatisch erkennen
+
+Das Geschäftsjahr muss primär aus den Buchungsdaten beziehungsweise aus dem in der Datei enthaltenen Zeitraum erkannt werden.
+
+Beispiele:
+
+01.01.2024 bis 31.12.2024 → Geschäftsjahr 2024
+01.01.2025 bis 31.12.2025 → Geschäftsjahr 2025
+
+Der Dateiname darf nicht die alleinige Quelle für die Jahresbestimmung sein.
+
+Unterstütze mindestens:
+
+- Erfolgsrechnung 2024
+- Erfolgsrechnung 2025
+- spätere Geschäftsjahre ohne neue Sonderlogik
+
+2. Jahr vor dem Speichern bestätigen
+
+Nach dem Parsen zeigt die Importvorschau:
+
+- erkannte Datei
+- erkanntes Geschäftsjahr
+- Zeitraum von/bis
+- Anzahl erkannter Konten
+- Anzahl Buchungszeilen
+- Summe Ertrag
+- Summe Aufwand
+- nicht gemappte Konten
+
+Das erkannte Jahr soll sichtbar und vor dem endgültigen Import bestätigbar sein.
+
+Falls das Jahr nicht eindeutig ermittelt werden kann, darf nichts gespeichert werden.
+
+3. Daten sauber pro Geschäftsjahr trennen
+
+Jeder importierte Datensatz muss eindeutig mindestens nach folgenden Dimensionen getrennt sein:
+
+- Betrieb beziehungsweise Mandant
+- Geschäftsjahr
+- Monat
+- Konto
+- Erfolgsrechnungsposition
+- Importquelle
+- Importlauf
+
+Ein Import 2024 darf keine Werte aus 2025 überschreiben.
+
+Ein erneuter Import für denselben Betrieb, dieselbe Quelle und dasselbe Geschäftsjahr soll nur genau diesen Bereich ersetzen.
+
+Andere Jahre, Budgets und manuelle Werte dürfen nicht verändert werden.
+
+4. Importverwaltung ergänzen
+
+Zeige im Importbereich kompakt die vorhandenen Erfolgsrechnungs-Imports:
+
+- Geschäftsjahr
+- Dateiname
+- importiert am
+- Zeitraum
+- Anzahl Konten
+- Anzahl Buchungen
+- Status
+- Aktion „Ersetzen“
+- Aktion „Löschen“ nur mit Bestätigung
+
+Beispiel:
+
+2024 | Erfolgsrechnung 2024.xlsx | vollständig
+2025 | Vorjahreskosten 2025.xlsx | vollständig
+
+Keine grossen Karten verwenden. Eine kompakte Tabelle oder Liste genügt.
+
+5. Erfolgsrechnung nach Jahr anzeigen
+
+Der bestehende Jahreswähler muss alle tatsächlich importierten Geschäftsjahre anzeigen.
+
+Mindestens:
+
+- 2024
+- 2025
+
+Beim Wechsel des Jahres müssen ausschliesslich die Werte dieses Jahres geladen werden.
+
+Keine Vermischung zwischen verschiedenen Jahren.
+
+B. Mehrjahresvergleich
+
+Erweitere die bestehende Analysefunktion der Erfolgsrechnung um einen Modus:
+
+„Mehrjahresvergleich“
+
+Vergleichbare Jahre:
+
+- 2024
+- 2025
+- optional Budget oder Forecast, sofern bereits vorhanden
+
+Zeige pro Erfolgsrechnungsposition mindestens:
+
+- 2024
+- 2025
+- absolute Veränderung
+- Veränderung in Prozent
+- Anteil am Umsatz 2024
+- Anteil am Umsatz 2025
+
+Unterstütze mindestens diese Positionen:
+
+- Umsatz netto
+- Betriebsertrag netto
+- direkter Warenaufwand
+- Gesamtwarenaufwand
+- Bruttogewinn 1
+- Personalaufwand
+- Bruttogewinn 2 beziehungsweise Deckungsbeitrag, sofern vorhanden
+- übriger Betriebsaufwand
+- EBITDA beziehungsweise Betriebsergebnis vor Abschreibungen, sofern vorhanden
+- Abschreibungen
+- EBIT beziehungsweise Betriebsergebnis
+- Jahresergebnis, sofern in der bestehenden Struktur vorhanden
+
+Die bestehende P&L-Zeilenstruktur und vorhandene Zwischentotale verwenden.
+
+Keine Zwischentotale separat oder widersprüchlich neu berechnen, wenn sie bereits aus der bestehenden Erfolgsrechnungslogik kommen.
+
+C. Neue Ansicht „Banken & Investoren“
+
+Erstelle innerhalb der bestehenden Erfolgsrechnung eine neue Analyseansicht beziehungsweise einen klaren Analysemodus:
+
+„Banken & Investoren“
+
+Diese Ansicht ist keine neue Hauptnavigation, sondern wird über den bestehenden Analyse-Button oder einen passenden Tab innerhalb der Erfolgsrechnung geöffnet.
+
+Ziel:
+
+Eine Person von Bank, Finanzierungspartner oder Investor soll innerhalb weniger Sekunden erkennen können:
+
+- wie sich der Umsatz entwickelt
+- wie sich Warenkosten entwickeln
+- wie sich Personalkosten entwickeln
+- ob sich die Margen verbessern oder verschlechtern
+- wie sich zentrale Zwischentotale entwickeln
+- ob das Betriebsergebnis wächst
+
+D. Aufbau der Banken-/Investorenanalyse
+
+1. Kopfbereich
+
+Kompakter Titel:
+
+„Geschäftsentwicklung 2024–2025“
+
+Darunter:
+
+- Betrieb
+- ausgewählte Jahre
+- Stand des letzten Imports
+- Datenquelle
+
+Keine langen Erklärungstexte.
+
+2. Executive-KPI-Zeile
+
+Zeige kompakt und visuell hochwertig:
+
+- Umsatz 2025
+- Umsatzveränderung zu 2024
+- Bruttogewinn 1
+- Bruttomarge
+- Personalaufwand
+- Personalquote
+- Warenaufwand
+- Warenquote
+- EBIT beziehungsweise Betriebsergebnis
+- EBIT-Marge
+
+Die Darstellung soll wichtige Werte priorisieren.
+
+Positive Entwicklungen grün, negative rot, neutrale grau.
+
+Wichtig:
+
+Kosten sind nicht automatisch positiv, nur weil sie sinken oder negativ, nur weil sie steigen.
+
+Die Ampellogik muss nach betriebswirtschaftlicher Wirkung erfolgen:
+
+- Umsatz steigt → positiv
+- Bruttogewinn steigt → positiv
+- EBIT steigt → positiv
+- Warenquote sinkt → positiv
+- Personalquote sinkt → positiv
+- Kosten absolut steigen bei stärkerem Umsatzwachstum → nicht pauschal rot
+- Margenverschlechterung → negativ
+
+3. Umsatzentwicklung
+
+Erstelle ein visuell klares Diagramm:
+
+„Umsatzentwicklung nach Monat“
+
+Darstellung:
+
+- Monate Januar bis Dezember auf der X-Achse
+- Linie oder Säulen für 2024
+- Linie oder Säulen für 2025
+- optional Budget, sofern vorhanden
+- Tooltip mit:
+  - Umsatz 2024
+  - Umsatz 2025
+  - absolute Differenz
+  - Prozentdifferenz
+
+Unter dem Chart kompakte Erkenntnisse:
+
+- stärkster Monat
+- schwächster Monat
+- grösster Zuwachs
+- grösster Rückgang
+- Jahreswachstum in Prozent
+
+Keine automatischen KI-Texte. Nur deterministisch aus den geladenen Daten berechnete Aussagen.
+
+4. Warenkostenentwicklung
+
+Diagramm:
+
+„Warenaufwand und Warenquote“
+
+Zeige pro Monat:
+
+- Warenaufwand absolut
+- Warenquote in Prozent des Umsatzes
+
+Vergleiche 2024 und 2025.
+
+Zusätzlich kompakt:
+
+- Gesamtwarenaufwand 2024
+- Gesamtwarenaufwand 2025
+- Veränderung absolut
+- Veränderung in Prozent
+- Warenquote 2024
+- Warenquote 2025
+- Veränderung der Quote in Prozentpunkten
+
+5. Personalkostenentwicklung
+
+Diagramm:
+
+„Personalaufwand und Personalquote“
+
+Zeige pro Monat:
+
+- Personalaufwand absolut
+- Personalquote in Prozent des Umsatzes
+
+Vergleiche 2024 und 2025.
+
+Zusätzlich kompakt:
+
+- Personalaufwand 2024
+- Personalaufwand 2025
+- Veränderung absolut
+- Veränderung in Prozent
+- Personalquote 2024
+- Personalquote 2025
+- Veränderung der Quote in Prozentpunkten
+
+6. Zwischentotale und Margen
+
+Erstelle eine kompakte Vergleichstabelle:
+
+Spalten:
+
+- Kennzahl
+- 2024
+- 2025
+- Veränderung CHF
+- Veränderung %
+- Quote 2024
+- Quote 2025
+- Veränderung Quote
+
+Zeilen mindestens:
+
+- Umsatz netto
+- Gesamtwarenaufwand
+- Bruttogewinn 1
+- Personalaufwand
+- Deckungsbeitrag beziehungsweise Bruttogewinn 2
+- EBITDA, sofern vorhanden
+- EBIT
+- Jahresergebnis, sofern vorhanden
+
+Zwischentotale visuell stärker hervorheben.
+
+7. Kostenstruktur
+
+Erstelle eine kompakte Kostenstruktur-Visualisierung.
+
+Zeige für jedes Jahr den Anteil am Umsatz von:
+
+- Warenaufwand
+- Personalaufwand
+- übriger Betriebsaufwand
+- Abschreibungen
+- Betriebsergebnis
+
+Geeignete Darstellung:
+
+- gestapelte Säulen pro Jahr
+oder
+- zwei nebeneinanderliegende 100-Prozent-Strukturbalken
+
+Keine unübersichtlichen Kreisdiagramme mit vielen Segmenten.
+
+8. Kernaussagen
+
+Am Ende der Ansicht eine kompakte Box „Kernaussagen“.
+
+Nur regelbasierte Aussagen aus vorhandenen Daten, zum Beispiel:
+
+- „Der Umsatz ist gegenüber 2024 um 8,4 % gestiegen.“
+- „Die Warenquote hat sich um 1,2 Prozentpunkte verbessert.“
+- „Die Personalquote liegt 0,8 Prozentpunkte über dem Vorjahr.“
+- „Das Betriebsergebnis hat sich um CHF 84'000 verbessert.“
+- „Das Umsatzwachstum liegt über dem Wachstum der Personalkosten.“
+
+Maximal 5 Aussagen.
+
+Keine Empfehlung zu Krediten, Unternehmenswert oder Investitionsentscheidungen berechnen.
+
+E. Filter und Bedienung
+
+Oben kompakte Filter:
+
+- Vergleichsjahr Basis
+- Vergleichsjahr aktuell
+- Gesamtjahr oder Monat bis Monat
+- optional Betrieb, falls mehrere Betriebe unterstützt werden
+
+Standard:
+
+- Basisjahr 2024
+- aktuelles Jahr 2025
+- Gesamtjahr
+
+Zusätzliche Auswahl:
+
+„Bis gleicher Monat vergleichen“
+
+Beispiel:
+
+Wenn 2025 nur bis August vollständig ist, vergleiche Januar bis August 2025 mit Januar bis August 2024.
+
+Verhindere irreführende Vergleiche eines unvollständigen Jahres mit einem vollständigen Vorjahr.
+
+Zeige klar:
+
+„Vergleich Januar–August 2025 mit Januar–August 2024“
+
+F. Datenqualität
+
+Vor Anzeige der Banken-/Investorenanalyse prüfen:
+
+- sind beide Jahre vorhanden?
+- sind die Monate vollständig?
+- gibt es nicht gemappte Konten?
+- fehlen zentrale Erfolgsrechnungspositionen?
+- stimmen Jahreswerte mit der Summe der Monatswerte überein?
+
+Zeige bei Datenproblemen einen kompakten Hinweis.
+
+Beispiele:
+
+- „2025 enthält Daten bis August.“
+- „3 Konten sind noch keiner Erfolgsrechnungsposition zugeordnet.“
+- „Personalaufwand 2024 ist nicht vollständig vorhanden.“
+
+Keine stillschweigend irreführenden Nullwerte verwenden.
+
+Fehlende Werte als „nicht vorhanden“ behandeln, nicht automatisch als CHF 0.
+
+G. PDF-Export für Banken und Investoren
+
+Erweitere den bestehenden PDF-Export um einen Exporttyp:
+
+„Banken-/Investorenbericht“
+
+Der PDF-Bericht soll professionell und druckbar sein.
+
+Format:
+
+- A4 quer oder sinnvoll gemischte Seitenausrichtung
+- saubere Seitenumbrüche
+- keine abgeschnittenen Tabellen oder Diagramme
+- Datum und Datenstand
+- Seitenzahlen
+- Betrieb im Kopfbereich
+- dezente, professionelle Gestaltung
+
+Inhalt:
+
+1. Titelblatt beziehungsweise kompakter Berichtskopf
+2. Executive-KPIs
+3. Umsatzentwicklung
+4. Warenaufwand und Warenquote
+5. Personalaufwand und Personalquote
+6. Zwischentotale und Margen
+7. Kostenstruktur
+8. Kernaussagen
+9. Datenhinweise und Importstand
+
+Der Export muss exakt dieselben Berechnungen verwenden wie die Bildschirmansicht.
+
+Keine separate Berechnungslogik für den PDF-Export.
+
+H. Excel-Export
+
+Erstelle zusätzlich einen Excel-Export:
+
+„Mehrjahresanalyse 2024–2025“
+
+Arbeitsblätter:
+
+1. Übersicht
+2. Monatsvergleich
+3. Erfolgsrechnung 2024
+4. Erfolgsrechnung 2025
+5. Kennzahlen und Margen
+6. Datenqualität
+
+Im Monatsvergleich mindestens:
+
+- Monat
+- Umsatz 2024
+- Umsatz 2025
+- Umsatz Diff
+- Umsatz Diff %
+- Warenaufwand 2024
+- Warenaufwand 2025
+- Warenquote 2024
+- Warenquote 2025
+- Personalaufwand 2024
+- Personalaufwand 2025
+- Personalquote 2024
+- Personalquote 2025
+- EBIT 2024
+- EBIT 2025
+
+Zahlen als echte Zahlen exportieren, nicht als Text.
+
+Prozentwerte als Excel-Prozentformat.
+
+CHF-Beträge mit Schweizer Zahlenformat.
+
+I. Berechnungsregeln
+
+Verwende zentrale, getestete Hilfsfunktionen für:
+
+- absolute Veränderung
+- prozentuale Veränderung
+- Quote vom Umsatz
+- Veränderung in Prozentpunkten
+- Vergleich bis gleicher Monat
+- Vollständigkeit eines Jahres
+- positive oder negative betriebswirtschaftliche Wirkung
+
+Regeln:
+
+Prozentveränderung:
+(aktueller Wert − Basiswert) / absoluter Basiswert
+
+Bei Basiswert 0:
+
+- kein Infinity
+- kein NaN
+- verständliche Anzeige „nicht vergleichbar“
+
+Quote:
+Position / Umsatz
+
+Prozentpunktveränderung:
+aktuelle Quote − Basisquote
+
+J. Tests
+
+Ergänze gezielte Tests für:
+
+1. Import 2024 wird als 2024 gespeichert
+2. Import 2025 wird als 2025 gespeichert
+3. Import 2024 überschreibt 2025 nicht
+4. erneuter Import 2024 ersetzt nur 2024
+5. Jahreswähler zeigt beide Jahre
+6. Erfolgsrechnung lädt korrekt je Jahr
+7. Mehrjahresvergleich berechnet absolute Differenz korrekt
+8. Mehrjahresvergleich berechnet Prozentdifferenz korrekt
+9. Warenquote wird korrekt berechnet
+10. Personalquote wird korrekt berechnet
+11. Prozentpunktveränderung wird korrekt berechnet
+12. unvollständiges Jahr wird nur bis zum gleichen Monat verglichen
+13. fehlende Werte werden nicht als Null ausgegeben
+14. Basiswert 0 erzeugt kein NaN oder Infinity
+15. Jahreswert entspricht der Summe der Monatswerte
+16. PDF und Bildschirm verwenden dieselben aufbereiteten Daten
+17. Excel-Export enthält echte Zahlen und Prozentwerte
+18. nicht gemappte Konten lösen einen Datenqualitätshinweis aus
+
+Erstelle einen Regressionstest:
+
+Nach Import der Erfolgsrechnungen 2024 und 2025 kann der Benutzer beide Jahre auswählen und in der Banken-/Investorenanalyse Umsatz, Warenaufwand, Personalaufwand und Zwischentotale korrekt vergleichen.
+
+K. Design
+
+Das Design muss vollständig mit der bestehenden Anwendung synchron sein.
+
+Verwende:
+
+- bestehende Karten
+- bestehende Typografie
+- bestehende Tabellen
+- bestehende Dialoge
+- bestehende Farblogik
+- bestehende Exportbuttons
+- bestehende Abstände und Rundungen
+
+Die Banken-/Investorenanalyse soll:
+
+- hochwertig
+- ruhig
+- modern
+- professionell
+- banktauglich
+- investorentauglich
+- kompakt
+- leicht lesbar
+
+wirken.
+
+Wichtige Grundsätze:
+
+- keine übergrossen Leerflächen
+- keine überladenen Dashboards
+- maximal notwendige KPI-Karten
+- Diagramme mit klaren Legenden
+- keine grellen Farben
+- keine unnötigen Animationen
+- Zwischentotale deutlich hervorheben
+- mobile Ansicht funktional, Desktopansicht priorisieren
+- Export muss visuell ebenso sauber wie die Bildschirmansicht sein
+
+L. Technische Umsetzung
+
+Vor der Umsetzung zuerst prüfen:
+
+- bestehender XLSX-Parser
+- bestehende Importtabellen
+- bestehendes P&L-Datenmodell
+- bestehende Konten-Mappinglogik
+- bestehende Jahresauswahl
+- bestehende Analyseansicht
+- bestehender PDF-Export
+- bestehender Excel-Export
+- vorhandene Chart-Bibliothek
+
+Keine neue Chart- oder Exportbibliothek hinzufügen, wenn die Anwendung bereits eine geeignete verwendet.
+
+Keine doppelten Berechnungen in UI-Komponenten.
+
+Die aufbereiteten Vergleichsdaten zentral erzeugen und für:
+
+- Bildschirm
+- PDF
+- Excel
+
+wiederverwenden.
+
+M. Verifikation
+
+Nach Umsetzung:
+
+- echten Import mit der vorhandenen Datei für 2025 testen
+- zusätzlich einen Import mit einer 2024-Datei testen
+- kontrollieren, dass beide Jahre separat gespeichert sind
+- kontrollieren, dass der Jahreswechsel korrekt funktioniert
+- kontrollieren, dass die Banken-/Investorenanalyse beide Jahre korrekt vergleicht
+- kontrollieren, dass Umsatz, Warenaufwand, Personalaufwand und Zwischentotale mit der Erfolgsrechnung übereinstimmen
+- PDF visuell prüfen
+- Excel-Datei öffnen und Zahlenformate prüfen
+- TypeScript-Typecheck ausführen
+- relevante Tests ausführen
+- Architect-Review nur über den tatsächlichen Task-Diff durchführen
+
+N. Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit tatsächlich umgesetztem Verhalten:
+
+- mehrjährige Erfolgsrechnungs-Imports
+- Trennung nach Geschäftsjahr
+- Replace-Scope pro Jahr
+- Mehrjahresvergleich
+- Banken-/Investorenanalyse
+- Vergleich bis gleicher Monat
+- Datenqualitätshinweise
+- PDF-Export
+- Excel-Export
+- zentrale gemeinsame Berechnungslogik
+
+Wichtig:
+
+Zuerst den bestehenden Datenfluss und die bestehende Architektur analysieren.
+
+Danach die Funktion vollständig umsetzen.
+
+Nicht nur ein optisches Dashboard mit statischen oder separat berechneten Werten bauen.
+
+Alle Zahlen müssen nachweisbar aus den importierten Erfolgsrechnungsdaten und den bestehenden P&L-Zwischentotalen stammen.
