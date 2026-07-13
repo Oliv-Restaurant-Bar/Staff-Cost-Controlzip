@@ -13,14 +13,14 @@ import {
 
 /** Volles Jahr: Jan=base, dann +step pro Monat */
 function fullYear(year: number, base: number, step = 0): YearSeries {
-  return { year, netRevenue: Array.from({ length: 12 }, (_, i) => base + i * step) };
+  return { year, values: Array.from({ length: 12 }, (_, i) => base + i * step) };
 }
 
 /** Teiljahr Januar–Juni */
 function halfYear(year: number, base: number, step = 0): YearSeries {
   return {
     year,
-    netRevenue: Array.from({ length: 12 }, (_, i) => (i < 6 ? base + i * step : null)),
+    values: Array.from({ length: 12 }, (_, i) => (i < 6 ? base + i * step : null)),
   };
 }
 
@@ -32,7 +32,7 @@ const Y26H = halfYear(2026, 130_000);         // Teiljahr Jan–Jun, 780k
 
 describe('nonEmptyYears / selectLastYears', () => {
   it('filtert leere Jahre heraus und sortiert aufsteigend', () => {
-    const empty: YearSeries = { year: 2023, netRevenue: Array(12).fill(null) };
+    const empty: YearSeries = { year: 2023, values: Array(12).fill(null) };
     const out = nonEmptyYears([Y25, empty, Y24]);
     expect(out.map((s) => s.year)).toEqual([2024, 2025]);
   });
@@ -43,10 +43,10 @@ describe('nonEmptyYears / selectLastYears', () => {
   });
 
   it('normalisiert kurze Arrays auf 12 Monate', () => {
-    const short: YearSeries = { year: 2024, netRevenue: [100, 200] };
+    const short: YearSeries = { year: 2024, values: [100, 200] };
     const out = nonEmptyYears([short]);
-    expect(out[0].netRevenue).toHaveLength(12);
-    expect(out[0].netRevenue[11]).toBeNull();
+    expect(out[0].values).toHaveLength(12);
+    expect(out[0].values[11]).toBeNull();
   });
 });
 
@@ -175,8 +175,8 @@ describe('buildMultiYearAnalysis — Kanten', () => {
   });
 
   it('Umsatz 0 im Vorjahr: Prozent-Δ null statt Infinity', () => {
-    const zero: YearSeries = { year: 2024, netRevenue: [0, ...Array(11).fill(null)] };
-    const next: YearSeries = { year: 2025, netRevenue: [50_000, ...Array(11).fill(null)] };
+    const zero: YearSeries = { year: 2024, values: [0, ...Array(11).fill(null)] };
+    const next: YearSeries = { year: 2025, values: [50_000, ...Array(11).fill(null)] };
     const a = buildMultiYearAnalysis([zero, next]);
     const jan25 = a.monthRows[0].cells.find((c) => c.year === 2025)!;
     expect(jan25.vsPrevYear.pct).toBeNull();
@@ -186,7 +186,7 @@ describe('buildMultiYearAnalysis — Kanten', () => {
   it('keine NaN/Infinity irgendwo im Ergebnis (JSON-Scan)', () => {
     const messy: YearSeries = {
       year: 2025,
-      netRevenue: [0, null, 50_000, null, 0, 80_000, null, null, null, null, null, null],
+      values: [0, null, 50_000, null, 0, 80_000, null, null, null, null, null, null],
     };
     const a = buildMultiYearAnalysis([fullYear(2024, 0), messy]);
     const json = JSON.stringify(a);
@@ -242,8 +242,8 @@ describe('buildMultiYearAnalysis — Diagrammdaten', () => {
   });
 
   it('Wasserfall: kumulierte Monatsdeltas + Totalbalken, korrekte Sockel', () => {
-    const prev: YearSeries = { year: 2025, netRevenue: [100, 100, ...Array(10).fill(null)] };
-    const cur: YearSeries = { year: 2026, netRevenue: [150, 80, ...Array(10).fill(null)] };
+    const prev: YearSeries = { year: 2025, values: [100, 100, ...Array(10).fill(null)] };
+    const cur: YearSeries = { year: 2026, values: [150, 80, ...Array(10).fill(null)] };
     const a = buildMultiYearAnalysis([prev, cur]);
     const w = a.chart.waterfall;
     expect(w).toHaveLength(3); // Jan, Feb, Total
@@ -276,7 +276,7 @@ describe('buildMultiYearAnalysis — Executive Summary', () => {
   it('zählt Monate über Vorjahr korrekt, wenn nicht alle darüber liegen', () => {
     const mixed: YearSeries = {
       year: 2025,
-      netRevenue: [120_000, 90_000, ...Array(10).fill(null)],
+      values: [120_000, 90_000, ...Array(10).fill(null)],
     };
     const a = buildMultiYearAnalysis([Y24, mixed]);
     expect(a.executiveSummary.join(' ')).toContain('1 von 2 vergleichbaren Monaten');
@@ -327,5 +327,161 @@ describe('Formatierer', () => {
     expect(fmtDeltaChf(5000)).toBe('+5’000');
     expect(fmtPct(Number.POSITIVE_INFINITY)).toBe('—');
     expect(fmtChf(Number.NaN)).toBe('—');
+  });
+});
+
+// ─── Erweiterte Spezifikation: ER-Positionen, Jahresauswahl, Datenqualität ────
+
+import {
+  MULTI_YEAR_POSITIONS, DEFAULT_POSITION, MIN_YEAR_SELECTION, MAX_YEAR_SELECTION,
+  selectYears, toneForDeltaPct, toneForTrend, buildMethodikNotes,
+} from '../multi-year-analysis';
+
+describe('ER-Positionen & Semantik (§9)', () => {
+  it('6 Positionen, Umsatz ist Default', () => {
+    expect(MULTI_YEAR_POSITIONS).toHaveLength(6);
+    expect(MULTI_YEAR_POSITIONS.map((p) => p.id)).toEqual([
+      'net_revenue', 'total_cogs', 'gross_profit_1', 'total_personnel', 'total_opex', 'ebitda',
+    ]);
+    expect(DEFAULT_POSITION.id).toBe('net_revenue');
+    expect(DEFAULT_POSITION.semantics).toBe('revenue');
+  });
+
+  it('toneForDeltaPct: Aufwand immer neutral, Ertrag/Ergebnis nach Schwelle', () => {
+    expect(toneForDeltaPct(25, 'expense')).toBe('neutral');
+    expect(toneForDeltaPct(-25, 'expense')).toBe('neutral');
+    expect(toneForDeltaPct(25, 'revenue')).toBe('good');
+    expect(toneForDeltaPct(-25, 'result')).toBe('critical');
+    expect(toneForDeltaPct(1, 'revenue')).toBe('neutral');
+    expect(toneForDeltaPct(null, 'revenue')).toBe('neutral');
+  });
+
+  it('toneForTrend: Aufwand neutral, sonst steigend=good', () => {
+    expect(toneForTrend('steigend', 'expense')).toBe('neutral');
+    expect(toneForTrend('steigend', 'revenue')).toBe('good');
+    expect(toneForTrend('ruecklaeufig', 'result')).toBe('critical');
+    expect(toneForTrend(null, 'revenue')).toBe('neutral');
+  });
+
+  it('Aufwandposition: Monatszellen & Waterfall neutral, Summary ohne "Wachstum von"', () => {
+    const a = buildMultiYearAnalysis([fullYear(2025, 100_000), fullYear(2026, 120_000)], {
+      position: MULTI_YEAR_POSITIONS.find((p) => p.id === 'total_personnel')!,
+    });
+    expect(a.position.id).toBe('total_personnel');
+    for (const row of a.monthRows) for (const c of row.cells) expect(c.tone).toBe('neutral');
+    for (const w of a.chart.waterfall) expect(w.tone).toBe('neutral');
+    const text = a.executiveSummary.join(' ');
+    expect(text).toContain('Der Personalaufwand entwickelte sich');
+    expect(text).not.toContain('einem Wachstum von');
+    expect(text).toContain('einer Veränderung von');
+    expect(text).not.toContain('nachhaltiges operatives Wachstum');
+  });
+
+  it('Ertragsposition (Default) behält bisherige Wording bei', () => {
+    const a = buildMultiYearAnalysis([fullYear(2025, 100_000), fullYear(2026, 120_000)]);
+    expect(a.position.id).toBe('net_revenue');
+    const text = a.executiveSummary.join(' ');
+    expect(text).toContain('Der Umsatz entwickelte sich');
+    expect(text).toContain('einem Wachstum von');
+  });
+});
+
+describe('Explizite Jahresauswahl (§6)', () => {
+  const six = [2020, 2021, 2022, 2023, 2024, 2025].map((y) => fullYear(y, 100_000));
+
+  it('Konstanten min 2 / max 5', () => {
+    expect(MIN_YEAR_SELECTION).toBe(2);
+    expect(MAX_YEAR_SELECTION).toBe(5);
+  });
+
+  it('behält nur gewählte Jahre, chronologisch', () => {
+    const sel = selectYears(six, [2024, 2021]);
+    expect(sel.map((s) => s.year)).toEqual([2021, 2024]);
+  });
+
+  it('kappt auf 5 Jahre (die neuesten gewinnen)', () => {
+    const sel = selectYears(six, [2020, 2021, 2022, 2023, 2024, 2025]);
+    expect(sel.map((s) => s.year)).toEqual([2021, 2022, 2023, 2024, 2025]);
+  });
+
+  it('ignoriert Jahre ohne Daten', () => {
+    const sel = selectYears(six, [2024, 2019]);
+    expect(sel.map((s) => s.year)).toEqual([2024]);
+  });
+});
+
+describe('Datenqualität mit Schweregraden (§16)', () => {
+  it('leer ⇒ Fehler', () => {
+    const a = buildMultiYearAnalysis([]);
+    expect(a.dataQuality).toHaveLength(1);
+    expect(a.dataQuality[0].severity).toBe('fehler');
+    expect(a.dataQuality[0].text).toContain('Keine Erfolgsrechnungs-Daten');
+  });
+
+  it('Jahres-Dublette ⇒ Fehler, erste Reihe gewinnt', () => {
+    const a = buildMultiYearAnalysis([fullYear(2025, 100_000), fullYear(2025, 999_999), fullYear(2026, 120_000)]);
+    const dup = a.dataQuality.find((d) => d.text.includes('mehrfach vorhanden'));
+    expect(dup?.severity).toBe('fehler');
+    expect(a.totals.find((t) => t.year === 2025)?.total).toBe(100_000 * 12);
+  });
+
+  it('nur ein Jahr ⇒ Warnung', () => {
+    const a = buildMultiYearAnalysis([fullYear(2026, 100_000)]);
+    expect(a.dataQuality.some((d) => d.severity === 'warnung' && d.text.includes('Nur ein Jahr'))).toBe(true);
+  });
+
+  it('zusammenhängendes Teiljahr (YTD) ⇒ Hinweis', () => {
+    const a = buildMultiYearAnalysis([fullYear(2025, 100_000), halfYear(2026, 120_000)]);
+    const item = a.dataQuality.find((d) => d.text.includes('Teiljahr'));
+    expect(item?.severity).toBe('hinweis');
+  });
+
+  it('Teiljahr mit Lücke mitten im Jahr ⇒ Warnung', () => {
+    const vals: (number | null)[] = Array.from({ length: 12 }, (_, i) => (i === 5 ? null : 100_000));
+    const a = buildMultiYearAnalysis([fullYear(2025, 100_000), { year: 2026, values: vals }]);
+    const item = a.dataQuality.find((d) => d.text.includes('Teiljahr'));
+    expect(item?.severity).toBe('warnung');
+  });
+
+  it('fehlende Zwischenjahre ⇒ Warnung', () => {
+    const a = buildMultiYearAnalysis([fullYear(2023, 100_000), fullYear(2026, 120_000)]);
+    const item = a.dataQuality.find((d) => d.text.includes('fehlen Jahre'));
+    expect(item?.severity).toBe('warnung');
+  });
+
+  it('limitations spiegelt dataQuality-Texte', () => {
+    const a = buildMultiYearAnalysis([fullYear(2025, 100_000), halfYear(2026, 120_000)]);
+    expect(a.limitations).toEqual(a.dataQuality.map((d) => d.text));
+  });
+});
+
+describe('Negative Jahressummen (z. B. EBITDA) (§9)', () => {
+  it('Anteile null + Hinweis statt verzerrter Prozente', () => {
+    const a = buildMultiYearAnalysis([fullYear(2025, -5_000), fullYear(2026, -4_000)], {
+      position: MULTI_YEAR_POSITIONS.find((p) => p.id === 'ebitda')!,
+    });
+    for (const row of a.monthRows) for (const c of row.cells) expect(c.shareOfYearPct).toBeNull();
+    for (const ys of a.yearSummaries) for (const q of ys.quarters) expect(q.sharePct).toBeNull();
+    expect(a.dataQuality.some((d) => d.severity === 'hinweis' && d.text.includes('nicht positiv'))).toBe(true);
+  });
+
+  it('Vorjahreswert 0 ⇒ Hinweis, pct null', () => {
+    const withZero: (number | null)[] = Array(12).fill(100_000);
+    withZero[3] = 0;
+    const a = buildMultiYearAnalysis([{ year: 2025, values: withZero }, fullYear(2026, 110_000)]);
+    const cell = a.monthRows[3].cells.find((c) => c.year === 2026)!;
+    expect(cell.vsPrevYear.pct).toBeNull();
+    expect(a.dataQuality.some((d) => d.text.includes('Vorjahreswert 0'))).toBe(true);
+  });
+});
+
+describe('Methodik-Notizen (§13/§14)', () => {
+  it('statische Regeln + optionale Datenquellen-Hinweise', () => {
+    const base = buildMethodikNotes();
+    expect(base.length).toBeGreaterThanOrEqual(6);
+    expect(base.some((n) => n.includes('gemeinsame Datenmonate'))).toBe(true);
+    expect(base.some((n) => n.includes('CAGR'))).toBe(true);
+    const withHints = buildMethodikNotes({ dataSourceHints: ['Quelle: Erfolgsrechnung (FIBU).'] });
+    expect(withHints[withHints.length - 1]).toBe('Quelle: Erfolgsrechnung (FIBU).');
   });
 });

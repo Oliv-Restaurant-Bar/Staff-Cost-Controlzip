@@ -9,7 +9,8 @@
  *      Objekt — keine Zweitberechnungen.
  *
  * Blätter: Übersicht (KPIs + Executive Summary + Hinweise) · Monatsvergleich ·
- * Jahresanalyse · Wachstum (Wasserfall-Daten) · Rohdaten.
+ * Jahresanalyse · Wachstum (Wasserfall-Daten) · Rohdaten · ER-Positionen
+ * (Jahrestotale aller Positionen, §15) · Datenqualität (Schweregrade, §15/§16).
  *
  * Zahlenformate: Schweizer Darstellung über exceljs-numFmt
  * (CHF `#,##0.00`, Prozent `0.0"%"`). Die reine Lib rundet NICHT.
@@ -19,7 +20,21 @@ import {
   MONTH_LABELS_LONG,
   fmtPct,
   type MultiYearAnalysis,
+  type MultiYearPosition,
+  type YearTotalCell,
 } from './multi-year-analysis';
+
+/** Zeile der ER-Positionen-Übersicht (aus buildPositionsOverview). */
+export interface PositionsOverviewEntry {
+  position: MultiYearPosition;
+  totals: YearTotalCell[];
+}
+
+const SEVERITY_LABEL: Record<string, string> = {
+  fehler: 'Fehler',
+  warnung: 'Warnung',
+  hinweis: 'Hinweis',
+};
 
 // ─── Aufbereitete Daten (rein) ────────────────────────────────────────────────
 
@@ -61,31 +76,32 @@ const pct = (v: number | null, strong = false): ExcelCell => ({ v, fmt: 'pct', s
 /** REINE Aufbereitung aller 5 Blätter aus dem Analysis-Objekt. */
 export function buildMultiYearExcelData(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string } = {},
+  opts: { restaurantName?: string; positionsOverview?: PositionsOverviewEntry[] } = {},
 ): MultiYearExcelData {
-  const { years, baseYear, kpis, totals, monthRows, yearSummaries, chart } = analysis;
+  const { years, baseYear, kpis, totals, monthRows, yearSummaries, chart, position } = analysis;
+  const isRevenue = position.semantics === 'revenue';
   const restaurantName = opts.restaurantName ?? 'Restaurant';
   const span = years.length > 0 ? `${years[0]}–${years[years.length - 1]}` : '—';
-  const subtitle = `${restaurantName} · Vergleichszeitraum ${span}`;
+  const subtitle = `${restaurantName} · ${position.label} · Vergleichszeitraum ${span}`;
 
   // ── Blatt 1: Übersicht ──────────────────────────────────────────────────────
   const uebersichtRows: ExcelCell[][] = [
     [t('Kennzahlen', true)],
-    [t(`Umsatz ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`), chf(kpis.latestYearRevenue)],
-    [t(`Wachstum vs. ${kpis.prevYear ?? 'Vorjahr'}`), pct(kpis.growthPct)],
-    [t('Wachstum CHF (gemeinsame Monate)'), chf(kpis.growthChf)],
+    [t(`${position.label} ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`), chf(kpis.latestYearValue)],
+    [t(`Veränderung vs. ${kpis.prevYear ?? 'Vorjahr'}`), pct(kpis.growthPct)],
+    [t('Veränderung CHF (gemeinsame Monate)'), chf(kpis.growthChf)],
     [t(kpis.cagrFromYear != null ? `CAGR ${kpis.cagrFromYear}–${kpis.cagrToYear} (volle Jahre)` : 'CAGR'), pct(kpis.cagrPct)],
-    [t('Ø monatliches Wachstum'), pct(kpis.avgMonthlyGrowthPct)],
-    [t(`Bester Monat ${kpis.latestYear ?? ''}`.trim()), t(kpis.bestMonth ? kpis.bestMonth.label : '—'), chf(kpis.bestMonth?.value ?? null)],
-    [t(`Schwächster Monat ${kpis.latestYear ?? ''}`.trim()), t(kpis.worstMonth ? kpis.worstMonth.label : '—'), chf(kpis.worstMonth?.value ?? null)],
-    [t('Bestes Jahresergebnis'), t(kpis.highestAnnual ? `${kpis.highestAnnual.year}${kpis.highestAnnual.isPartial ? ' (Teiljahr)' : ''}` : '—'), chf(kpis.highestAnnual?.total ?? null)],
-    [t('Umsatztrend'), t(kpis.trend === 'steigend' ? 'Steigend' : kpis.trend === 'ruecklaeufig' ? 'Rückläufig' : kpis.trend === 'stabil' ? 'Stabil' : '—')],
+    [t('Ø monatliche Veränderung'), pct(kpis.avgMonthlyGrowthPct)],
+    [t(`Höchster Monat ${kpis.latestYear ?? ''}`.trim()), t(kpis.bestMonth ? kpis.bestMonth.label : '—'), chf(kpis.bestMonth?.value ?? null)],
+    [t(`Tiefster Monat ${kpis.latestYear ?? ''}`.trim()), t(kpis.worstMonth ? kpis.worstMonth.label : '—'), chf(kpis.worstMonth?.value ?? null)],
+    [t('Höchster Jahreswert'), t(kpis.highestAnnual ? `${kpis.highestAnnual.year}${kpis.highestAnnual.isPartial ? ' (Teiljahr)' : ''}` : '—'), chf(kpis.highestAnnual?.total ?? null)],
+    [t('Trend'), t(kpis.trend === 'steigend' ? 'Steigend' : kpis.trend === 'ruecklaeufig' ? 'Rückläufig' : kpis.trend === 'stabil' ? 'Stabil' : '—')],
     [],
     [t('Executive Summary', true)],
     ...analysis.executiveSummary.map(s => [t(`• ${s}`)]),
     [],
     [t('Hinweise zur Datenbasis', true)],
-    ...analysis.limitations.map(s => [t(`• ${s}`)]),
+    ...analysis.dataQuality.map(d => [t(`• [${SEVERITY_LABEL[d.severity] ?? d.severity}] ${d.text}`)]),
   ];
 
   // ── Blatt 2: Monatsvergleich ────────────────────────────────────────────────
@@ -118,7 +134,7 @@ export function buildMultiYearExcelData(
 
   // ── Blatt 3: Jahresanalyse ──────────────────────────────────────────────────
   const jahresHead = [
-    'Jahr', 'Nettoumsatz CHF', 'Datenmonate', 'Teiljahr',
+    'Jahr', `${position.label} CHF`, 'Datenmonate', 'Teiljahr',
     'Δ VJ % (gemeinsame Monate)', `Δ Basisjahr ${baseYear ?? ''} %`.replace('  ', ' '),
     'Top-Monate', 'Schwächste Monate', 'Q1 %', 'Q2 %', 'Q3 %', 'Q4 %',
   ];
@@ -150,7 +166,7 @@ export function buildMultiYearExcelData(
   ]);
 
   // ── Blatt 5: Rohdaten ───────────────────────────────────────────────────────
-  const rohHead = ['Jahr', 'Monat', 'Nettoumsatz CHF', 'Personalkosten %', 'Warenkosten %', 'Rang im Jahr', 'Anteil am Jahr %'];
+  const rohHead = ['Jahr', 'Monat', `${position.label} CHF`, 'Personalkosten %', 'Warenkosten %', 'Rang im Jahr', 'Anteil am Jahr %'];
   const rohRows: ExcelCell[][] = [];
   for (const y of years) {
     for (const row of monthRows) {
@@ -167,6 +183,34 @@ export function buildMultiYearExcelData(
     }
   }
 
+  // ── Blatt 6: ER-Positionen (§15) ────────────────────────────────────────────
+  const overview = opts.positionsOverview ?? [];
+  const erHead = [
+    'Position',
+    ...years.map(y => `${y} CHF`),
+    'Δ VJ % (gemeinsame Monate)',
+    `Δ Basisjahr ${baseYear ?? ''} %`.replace('  ', ' '),
+  ];
+  const erRows: ExcelCell[][] = overview.map(entry => {
+    const byYear = new Map(entry.totals.map(tc => [tc.year, tc]));
+    const last = entry.totals.length > 0 ? entry.totals[entry.totals.length - 1] : null;
+    return [
+      t(entry.position.label, entry.position.id === position.id),
+      ...years.map(y => chf(byYear.get(y)?.total ?? null)),
+      pct(last?.vsPrevYearCommon.pct ?? null),
+      pct(last?.vsBaseYearCommon.pct ?? null),
+    ];
+  });
+
+  // ── Blatt 7: Datenqualität (§15/§16) ────────────────────────────────────────
+  const dqHead = ['Schweregrad', 'Hinweis'];
+  const dqRows: ExcelCell[][] = analysis.dataQuality.length > 0
+    ? analysis.dataQuality.map(d => [
+        t(SEVERITY_LABEL[d.severity] ?? d.severity, d.severity === 'fehler'),
+        t(d.text, d.severity === 'fehler'),
+      ])
+    : [[t('—'), t('Keine Auffälligkeiten in der Datenbasis erkannt.')]];
+
   const sheets: ExcelSheetData[] = [
     {
       name: 'Übersicht',
@@ -178,7 +222,7 @@ export function buildMultiYearExcelData(
     },
     {
       name: 'Monatsvergleich',
-      title: 'Monatsumsätze im Vergleich (CHF netto)',
+      title: isRevenue ? 'Monatsumsätze im Vergleich (CHF netto)' : `${position.label} pro Monat im Vergleich (CHF)`,
       subtitle,
       head: monatsHead,
       rows: monatsRows,
@@ -209,6 +253,22 @@ export function buildMultiYearExcelData(
       head: rohHead,
       rows: rohRows,
       widths: [8, 12, 18, 16, 16, 12, 16],
+    },
+    {
+      name: 'ER-Positionen',
+      title: 'ER-Positionen im Mehrjahresvergleich (Jahrestotale, Teiljahre = Summe der Datenmonate)',
+      subtitle,
+      head: erHead,
+      rows: erRows,
+      widths: [26, ...years.map(() => 16), 24, 20],
+    },
+    {
+      name: 'Datenqualität',
+      title: 'Datenqualität und Einschränkungen der Analyse',
+      subtitle,
+      head: dqHead,
+      rows: dqRows,
+      widths: [14, 110],
     },
   ];
 

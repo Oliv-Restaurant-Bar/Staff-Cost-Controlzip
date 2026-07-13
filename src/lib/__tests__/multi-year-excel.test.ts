@@ -10,7 +10,7 @@ import {
 } from '../multi-year-excel';
 
 function fullYear(year: number, base: number, step = 0): YearSeries {
-  return { year, netRevenue: Array.from({ length: 12 }, (_, i) => base + i * step) };
+  return { year, values: Array.from({ length: 12 }, (_, i) => base + i * step) };
 }
 
 const Y24 = fullYear(2024, 100_000);
@@ -27,9 +27,10 @@ describe('buildMultiYearExcelData', () => {
   const analysis = buildMultiYearAnalysis([Y24, Y25]);
   const data = buildMultiYearExcelData(analysis, { restaurantName: 'Oliv' });
 
-  it('liefert genau 5 Blätter in fester Reihenfolge', () => {
+  it('liefert genau 7 Blätter in fester Reihenfolge', () => {
     expect(data.sheets.map(s => s.name)).toEqual([
       'Übersicht', 'Monatsvergleich', 'Jahresanalyse', 'Wachstum', 'Rohdaten',
+      'ER-Positionen', 'Datenqualität',
     ]);
     expect(data.fileName).toBe('Mehrjahresanalyse_Oliv_2024-2025.xlsx');
   });
@@ -73,6 +74,45 @@ describe('buildMultiYearExcelData', () => {
     expect(s.rows).toHaveLength(analysis.chart.waterfall.length);
     const last = s.rows[s.rows.length - 1];
     expect(last[0].strong).toBe(true);
+  });
+
+  it('ER-Positionen: Zeilen aus positionsOverview, analysierte Position fett', () => {
+    const withOverview = buildMultiYearExcelData(analysis, {
+      restaurantName: 'Oliv',
+      positionsOverview: [
+        {
+          position: { id: 'net_revenue', label: 'Umsatz (netto)', summarySubject: 'Der Umsatz', semantics: 'revenue' },
+          totals: buildMultiYearAnalysis([Y24, Y25]).totals,
+        },
+      ],
+    });
+    const s = withOverview.sheets[5];
+    expect(s.name).toBe('ER-Positionen');
+    expect(s.head[0]).toBe('Position');
+    expect(s.head).toContain('2024 CHF');
+    expect(s.rows).toHaveLength(1);
+    expect(s.rows[0][0]).toMatchObject({ v: 'Umsatz (netto)', strong: true });
+    // Ohne positionsOverview bleibt das Blatt vorhanden, aber leer
+    expect(data.sheets[5].rows).toHaveLength(0);
+  });
+
+  it('Datenqualität: Schweregrad-Zeilen, ohne Auffälligkeiten Platzhalter', () => {
+    const s = data.sheets[6];
+    expect(s.name).toBe('Datenqualität');
+    expect(s.head).toEqual(['Schweregrad', 'Hinweis']);
+    // Y24/Y25 sind vollständige Jahre → keine DQ-Einträge → Platzhalterzeile
+    expect(s.rows).toHaveLength(1);
+    expect(String(s.rows[0][1].v)).toContain('Keine Auffälligkeiten');
+
+    // Teiljahr erzeugt mindestens einen Hinweis mit Schweregrad-Label
+    const partial: YearSeries = {
+      year: 2026,
+      values: Array.from({ length: 12 }, (_, i) => (i < 6 ? 120_000 : null)),
+    };
+    const dq = buildMultiYearExcelData(buildMultiYearAnalysis([Y24, Y25, partial]), {}).sheets[6];
+    expect(dq.rows.length).toBeGreaterThan(0);
+    const severities = dq.rows.map(r => String(r[0].v));
+    expect(severities.some(x => ['Hinweis', 'Warnung', 'Fehler'].includes(x))).toBe(true);
   });
 
   it('Rohdaten: Jahre × 12 Monate mit Rang und Jahresanteil', () => {

@@ -15,9 +15,15 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  fmtChf, fmtMio, fmtPct, fmtDeltaChf,
+  fmtChf, fmtMio, fmtPct, fmtDeltaChf, buildMethodikNotes,
   type MultiYearAnalysis,
 } from './multi-year-analysis';
+
+const SEVERITY_LABEL: Record<string, string> = {
+  fehler: 'Fehler',
+  warnung: 'Warnung',
+  hinweis: 'Hinweis',
+};
 
 // ── Hilfen (rein) ────────────────────────────────────────────────────────────
 
@@ -55,15 +61,22 @@ export interface ManagementReportData {
   /** Je Jahr: Top-/Flop-Monate + Quartalsanteile als Textzeilen */
   jahresDetails: { titel: string; zeilen: ReportKeyValue[] }[];
   hinweise: string[];
+  /** Titel der Monatstabelle (positionsabhängig) */
+  monatsTitel: string;
+  /** §14: Datenqualität mit Schweregrad-Label (Fehler zuerst) */
+  datenqualitaet: ReportKeyValue[];
+  /** §14: Methodik-Hinweise (buildMethodikNotes + Datenquellen-Hinweise) */
+  methodik: string[];
   fileName: string;
 }
 
 /** REINE Aufbereitung — leitet alles aus dem Analysis-Objekt ab. */
 export function buildManagementReportData(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string; generatedAt?: string } = {},
+  opts: { restaurantName?: string; generatedAt?: string; dataSourceHints?: string[] } = {},
 ): ManagementReportData {
-  const { years, baseYear, kpis, totals, monthRows, yearSummaries } = analysis;
+  const { years, baseYear, kpis, totals, monthRows, yearSummaries, position } = analysis;
+  const isRevenue = position.semantics === 'revenue';
   const restaurantName = opts.restaurantName ?? 'Restaurant';
 
   const gen = opts.generatedAt ? new Date(opts.generatedAt) : new Date();
@@ -74,39 +87,39 @@ export function buildManagementReportData(
 
   const kpiRows: ReportKeyValue[] = [
     {
-      label: `Umsatz ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`,
-      value: `CHF ${fmtChf(kpis.latestYearRevenue)}${kpis.latestYearRevenue != null ? ` (${fmtMio(kpis.latestYearRevenue)})` : ''}`,
+      label: `${isRevenue ? 'Umsatz' : position.label} ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`,
+      value: `CHF ${fmtChf(kpis.latestYearValue)}${kpis.latestYearValue != null ? ` (${fmtMio(kpis.latestYearValue)})` : ''}`,
     },
     {
-      label: `Wachstum vs. ${kpis.prevYear ?? 'Vorjahr'}${kpis.growthCommonMonths > 0 && kpis.growthCommonMonths < 12 ? ` (${kpis.growthCommonMonths} gemeinsame Monate)` : ''}`,
+      label: `${isRevenue ? 'Wachstum' : 'Veränderung'} vs. ${kpis.prevYear ?? 'Vorjahr'}${kpis.growthCommonMonths > 0 && kpis.growthCommonMonths < 12 ? ` (${kpis.growthCommonMonths} gemeinsame Monate)` : ''}`,
       value: kpis.growthPct == null ? '—' : `${fmtPct(kpis.growthPct)} (${fmtDeltaChf(kpis.growthChf)} CHF)`,
     },
     {
       label: kpis.cagrFromYear != null ? `CAGR ${kpis.cagrFromYear}–${kpis.cagrToYear} (volle Jahre)` : 'CAGR',
       value: kpis.cagrPct == null ? '— (braucht mind. 2 vollständige Jahre)' : fmtPct(kpis.cagrPct),
     },
-    { label: 'Ø monatliches Wachstum', value: fmtPct(kpis.avgMonthlyGrowthPct) },
+    { label: isRevenue ? 'Ø monatliches Wachstum' : 'Ø monatliche Veränderung', value: fmtPct(kpis.avgMonthlyGrowthPct) },
     {
-      label: `Bester Monat ${kpis.latestYear ?? ''}`.trim(),
+      label: `${isRevenue ? 'Bester Monat' : 'Höchster Monat'} ${kpis.latestYear ?? ''}`.trim(),
       value: kpis.bestMonth ? `${kpis.bestMonth.label} (CHF ${fmtChf(kpis.bestMonth.value)})` : '—',
     },
     {
-      label: `Schwächster Monat ${kpis.latestYear ?? ''}`.trim(),
+      label: `${isRevenue ? 'Schwächster Monat' : 'Tiefster Monat'} ${kpis.latestYear ?? ''}`.trim(),
       value: kpis.worstMonth ? `${kpis.worstMonth.label} (CHF ${fmtChf(kpis.worstMonth.value)})` : '—',
     },
     {
-      label: 'Bestes Jahresergebnis',
+      label: isRevenue ? 'Bestes Jahresergebnis' : 'Höchster Jahreswert',
       value: kpis.highestAnnual
         ? `${kpis.highestAnnual.year}: CHF ${fmtChf(kpis.highestAnnual.total)}${kpis.highestAnnual.isPartial ? ' (Teiljahr)' : ''}`
         : '—',
     },
     {
-      label: 'Umsatztrend',
+      label: isRevenue ? 'Umsatztrend' : `Trend ${position.label}`,
       value: kpis.trend === 'steigend' ? 'Steigend' : kpis.trend === 'ruecklaeufig' ? 'Rückläufig' : kpis.trend === 'stabil' ? 'Stabil' : '—',
     },
   ];
 
-  const jahresUebersichtHead = ['Jahr', 'Nettoumsatz CHF', 'Δ Vorjahr', `Δ Basisjahr ${baseYear ?? ''}`.trim(), 'Datenbasis'];
+  const jahresUebersichtHead = ['Jahr', `${isRevenue ? 'Nettoumsatz' : position.label} CHF`, 'Δ Vorjahr', `Δ Basisjahr ${baseYear ?? ''}`.trim(), 'Datenbasis'];
   const jahresUebersicht = totals.map(t => [
     String(t.year),
     fmtChf(t.total),
@@ -149,8 +162,14 @@ export function buildManagementReportData(
     ],
   }));
 
+  // §14: Datenqualität nach Schweregrad (Fehler zuerst), nie stillschweigend.
+  const severityOrder = { fehler: 0, warnung: 1, hinweis: 2 } as const;
+  const datenqualitaet: ReportKeyValue[] = [...analysis.dataQuality]
+    .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
+    .map(d => ({ label: SEVERITY_LABEL[d.severity] ?? d.severity, value: d.text }));
+
   return {
-    titel: 'Management-Report — Mehrjahresanalyse Umsatz',
+    titel: `Management-Report — Mehrjahresanalyse ${isRevenue ? 'Umsatz' : position.label}`,
     untertitel: years.length > 0 ? `Vergleichszeitraum ${years[0]}–${years[years.length - 1]}` : 'Keine Daten',
     restaurantName,
     erstelltAm,
@@ -162,6 +181,9 @@ export function buildManagementReportData(
     monatsTabelle,
     jahresDetails,
     hinweise: analysis.limitations,
+    monatsTitel: isRevenue ? 'Monatsumsätze im Vergleich (CHF netto)' : `${position.label} pro Monat im Vergleich (CHF)`,
+    datenqualitaet,
+    methodik: buildMethodikNotes({ dataSourceHints: opts.dataSourceHints }),
     fileName: managementReportFileName(years, opts.restaurantName),
   };
 }
@@ -272,7 +294,7 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
   table([data.jahresUebersichtHead], data.jahresUebersicht, { numericFrom: 1 });
 
   // Monatstabelle
-  sectionTitle('Monatsumsätze im Vergleich (CHF netto)');
+  sectionTitle(data.monatsTitel);
   table([data.monatsTabelleHead], data.monatsTabelle, { numericFrom: 1 });
 
   // Jahres-Details
@@ -289,12 +311,18 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
     table([], jd.zeilen.map(z => [z.label, z.value]));
   }
 
-  // Hinweise
-  if (data.hinweise.length > 0) {
-    sectionTitle('Hinweise zur Datenbasis');
+  // Datenqualität (§14 — Schweregrade, Fehler zuerst)
+  if (data.datenqualitaet.length > 0) {
+    sectionTitle('Datenqualität');
+    table([['Schweregrad', 'Hinweis']], data.datenqualitaet.map(d => [d.label, d.value]));
+  }
+
+  // Methodik (§14 — nachvollziehbare Rechenregeln)
+  if (data.methodik.length > 0) {
+    sectionTitle('Methodik');
     doc.setFontSize(8.5);
     doc.setTextColor(...MUTED);
-    for (const h of data.hinweise) {
+    for (const h of data.methodik) {
       const lines = doc.splitTextToSize(pdfSafe(`• ${h}`), pageW - margin * 2) as string[];
       ensureSpace(lines.length * 4.2 + 2);
       y += 4.2;
@@ -322,7 +350,7 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
 /** Komfort: aufbereiten, rendern und Download anstossen. */
 export function exportManagementReportPDF(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string; generatedAt?: string } = {},
+  opts: { restaurantName?: string; generatedAt?: string; dataSourceHints?: string[] } = {},
 ): void {
   const data = buildManagementReportData(analysis, opts);
   const doc = renderManagementReportPdf(data);

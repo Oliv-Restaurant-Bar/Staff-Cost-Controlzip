@@ -6,7 +6,7 @@
  * Datenquelle: YearSeries[] aus PLView (roh loadYear → computePLForMonth).
  */
 import { useMemo, useState } from 'react';
-import { BarChart3, FileDown, FileSpreadsheet, TrendingUp } from 'lucide-react';
+import { BarChart3, CalendarRange, FileDown, FileSpreadsheet, TrendingUp } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,8 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Checkbox } from '@/components/ui/checkbox';
 import { KpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 import { HintBox } from '@/components/ui/hint-box';
 import { InfoTip } from '@/components/ui/info-tip';
@@ -33,10 +35,12 @@ import {
 import { toast } from 'sonner';
 
 import {
-  buildMultiYearAnalysis, buildMonthDetail, nonEmptyYears, selectLastYears,
+  buildMultiYearAnalysis, buildMonthDetail, buildPositionsOverview, nonEmptyYears, selectYears, seriesForPosition,
   fmtChf, fmtMio, fmtPct, fmtDeltaChf,
-  YEAR_COUNT_OPTIONS, MONTH_LABELS_LONG,
-  type GrowthTone, type MultiYearAnalysis, type YearCountOption, type YearSeries,
+  MONTH_LABELS_LONG, MULTI_YEAR_POSITIONS, DEFAULT_POSITION,
+  MIN_YEAR_SELECTION, MAX_YEAR_SELECTION,
+  type DataQualityItem, type DataQualitySeverity,
+  type GrowthTone, type MultiYearAnalysis, type YearSeries,
 } from '@/lib/multi-year-analysis';
 
 // ─── Hilfen (nur Darstellung) ─────────────────────────────────────────────────
@@ -84,14 +88,46 @@ export function MultiYearAnalysisSection({
   /** Zusätzliche seitenspezifische Hinweise zur Datenbasis (vor den Lib-Hinweisen). */
   dataSourceHints?: string[];
 }) {
-  const [yearCount, setYearCount] = useState<YearCountOption>(3);
+  const [positionId, setPositionId] = useState<string>(DEFAULT_POSITION.id);
+  const [selectedYears, setSelectedYears] = useState<number[] | null>(null);
   const [detailMonthIdx, setDetailMonthIdx] = useState<number | null>(null);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
 
-  const usable = useMemo(() => nonEmptyYears(series), [series]);
+  const position = MULTI_YEAR_POSITIONS.find((p) => p.id === positionId) ?? DEFAULT_POSITION;
+  const isExpense = position.semantics === 'expense';
+  const isRevenue = position.semantics === 'revenue';
+
+  const usable = useMemo(
+    () => nonEmptyYears(seriesForPosition(series, position.id)),
+    [series, position.id],
+  );
+  const availableYearsList = useMemo(() => usable.map((s) => s.year), [usable]);
+
+  // §6: Standard = aktuelles Jahr + Vorjahr + Basisjahr (die letzten 3 verfügbaren).
+  // Explizite Auswahl wird mit den verfügbaren Jahren geschnitten; fällt sie
+  // unter das Minimum, greift wieder der Standard.
+  const effectiveYears = useMemo(() => {
+    const fallback = availableYearsList.slice(-3);
+    if (selectedYears == null) return fallback;
+    const kept = selectedYears.filter((y) => availableYearsList.includes(y));
+    return kept.length >= Math.min(MIN_YEAR_SELECTION, availableYearsList.length) ? kept : fallback;
+  }, [selectedYears, availableYearsList]);
+
+  const toggleYear = (y: number) => {
+    const cur = new Set(effectiveYears);
+    if (cur.has(y)) {
+      if (cur.size <= MIN_YEAR_SELECTION) return;
+      cur.delete(y);
+    } else {
+      if (cur.size >= MAX_YEAR_SELECTION) return;
+      cur.add(y);
+    }
+    setSelectedYears([...cur].sort((a, b) => a - b));
+  };
+
   const analysis: MultiYearAnalysis = useMemo(
-    () => buildMultiYearAnalysis(selectLastYears(usable, yearCount)),
-    [usable, yearCount],
+    () => buildMultiYearAnalysis(selectYears(usable, effectiveYears), { position }),
+    [usable, effectiveYears, position],
   );
   const detail = useMemo(
     () => (detailMonthIdx == null ? null : buildMonthDetail(analysis, detailMonthIdx)),
@@ -100,11 +136,18 @@ export function MultiYearAnalysisSection({
 
   const { kpis, monthRows, totals, years, baseYear, chart, yearSummaries } = analysis;
 
+  // §16: Datenqualität nach Schweregrad gruppiert (Fehler nie stillschweigend).
+  const dqBySeverity = useMemo(() => {
+    const g: Record<DataQualitySeverity, DataQualityItem[]> = { fehler: [], warnung: [], hinweis: [] };
+    for (const item of analysis.dataQuality) g[item.severity].push(item);
+    return g;
+  }, [analysis.dataQuality]);
+
   const handleExportPDF = async () => {
     setExporting('pdf');
     try {
       const { exportManagementReportPDF } = await import('@/lib/management-report-pdf');
-      exportManagementReportPDF(analysis, { restaurantName });
+      exportManagementReportPDF(analysis, { restaurantName, dataSourceHints });
       toast.success('Management-Report (PDF) erstellt');
     } catch (e) {
       console.error('Management-Report PDF fehlgeschlagen:', e);
@@ -118,7 +161,10 @@ export function MultiYearAnalysisSection({
     setExporting('excel');
     try {
       const { exportMultiYearToExcel } = await import('@/lib/multi-year-excel');
-      await exportMultiYearToExcel(analysis, { restaurantName });
+      await exportMultiYearToExcel(analysis, {
+        restaurantName,
+        positionsOverview: buildPositionsOverview(series, effectiveYears),
+      });
       toast.success('Mehrjahresanalyse (Excel) erstellt');
     } catch (e) {
       console.error('Mehrjahres-Excel fehlgeschlagen:', e);
@@ -147,22 +193,62 @@ export function MultiYearAnalysisSection({
         <h2 className="flex items-center gap-1.5 text-sm font-bold">
           <TrendingUp className="h-4 w-4 text-indigo-600" />
           Mehrjahresanalyse
-          <InfoTip text="Banken-/Investorensicht: Netto-Umsatz über mehrere Jahre. Datenquelle sind die im Reporting erfassten Monatswerte (gleiche Basis wie die Erfolgsrechnung). Teiljahre werden fair über gemeinsame Monate verglichen." />
+          <InfoTip text="Banken-/Investorensicht: eine ER-Position über mehrere Jahre. Datenquelle sind die im Reporting erfassten Monatswerte (gleiche Basis wie die Erfolgsrechnung). Teiljahre werden fair über gemeinsame Monate verglichen." />
         </h2>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Select
-            value={String(yearCount)}
-            onValueChange={(v) => setYearCount(Number(v) as YearCountOption)}
+            value={position.id}
+            onValueChange={(v) => setPositionId(v)}
           >
-            <SelectTrigger className="h-8 w-36 text-xs" data-testid="mya-yearcount">
+            <SelectTrigger className="h-8 w-48 text-xs" data-testid="mya-position">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {YEAR_COUNT_OPTIONS.map((n) => (
-                <SelectItem key={n} value={String(n)}>{n}-Jahres-Vergleich</SelectItem>
+              {MULTI_YEAR_POSITIONS.map((p) => (
+                <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline" size="sm" className="h-8 gap-1 text-xs"
+                data-testid="mya-years"
+                title="Jahre für den Vergleich auswählen (min. 2, max. 5)"
+              >
+                <CalendarRange className="h-3.5 w-3.5" />
+                {effectiveYears.length <= 3 ? effectiveYears.join(' · ') : `${effectiveYears.length} Jahre`}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-52 p-3" data-testid="mya-years-popover">
+              <p className="mb-2 text-xs font-semibold">Jahre im Vergleich</p>
+              <div className="space-y-1.5">
+                {availableYearsList.map((y) => {
+                  const checked = effectiveYears.includes(y);
+                  const disabled =
+                    (checked && effectiveYears.length <= MIN_YEAR_SELECTION) ||
+                    (!checked && effectiveYears.length >= MAX_YEAR_SELECTION);
+                  return (
+                    <label
+                      key={y}
+                      className={cn('flex items-center gap-2 text-xs', disabled ? 'opacity-50' : 'cursor-pointer')}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={disabled}
+                        onCheckedChange={() => toggleYear(y)}
+                        data-testid={`mya-year-checkbox-${y}`}
+                      />
+                      <span className="tabular-nums">{y}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-[10px] text-muted-foreground">
+                Min. {MIN_YEAR_SELECTION}, max. {MAX_YEAR_SELECTION} Jahre. Das älteste gewählte Jahr ist das Basisjahr.
+              </p>
+            </PopoverContent>
+          </Popover>
           <Button
             variant="outline" size="sm" className="h-8 gap-1 text-xs"
             onClick={handleExportPDF} disabled={exporting !== null}
@@ -184,15 +270,37 @@ export function MultiYearAnalysisSection({
         </div>
       </div>
 
-      {/* Hinweise/Einschränkungen */}
-      {((dataSourceHints?.length ?? 0) > 0 || analysis.limitations.length > 0) && (
-        <div data-testid="mya-limitations">
-          <HintBox tone="info" title="Hinweise zur Datenbasis">
-            <ul className="list-disc space-y-0.5 pl-4">
-              {(dataSourceHints ?? []).map((l, i) => <li key={`h-${i}`}>{l}</li>)}
-              {analysis.limitations.map((l, i) => <li key={i}>{l}</li>)}
-            </ul>
-          </HintBox>
+      {/* Datenqualität (§16) — nach Schweregrad, Fehler nie stillschweigend */}
+      {((dataSourceHints?.length ?? 0) > 0 || analysis.dataQuality.length > 0) && (
+        <div className="space-y-2" data-testid="mya-limitations">
+          {dqBySeverity.fehler.length > 0 && (
+            <div data-testid="mya-dq-fehler">
+              <HintBox tone="critical" title="Datenqualität — Fehler">
+                <ul className="list-disc space-y-0.5 pl-4">
+                  {dqBySeverity.fehler.map((d, i) => <li key={i}>{d.text}</li>)}
+                </ul>
+              </HintBox>
+            </div>
+          )}
+          {dqBySeverity.warnung.length > 0 && (
+            <div data-testid="mya-dq-warnung">
+              <HintBox tone="warn" title="Datenqualität — Warnungen">
+                <ul className="list-disc space-y-0.5 pl-4">
+                  {dqBySeverity.warnung.map((d, i) => <li key={i}>{d.text}</li>)}
+                </ul>
+              </HintBox>
+            </div>
+          )}
+          {((dataSourceHints?.length ?? 0) > 0 || dqBySeverity.hinweis.length > 0) && (
+            <div data-testid="mya-dq-hinweis">
+              <HintBox tone="info" title="Hinweise zur Datenbasis">
+                <ul className="list-disc space-y-0.5 pl-4">
+                  {(dataSourceHints ?? []).map((l, i) => <li key={`h-${i}`}>{l}</li>)}
+                  {dqBySeverity.hinweis.map((d, i) => <li key={i}>{d.text}</li>)}
+                </ul>
+              </HintBox>
+            </div>
+          )}
         </div>
       )}
 
@@ -200,19 +308,19 @@ export function MultiYearAnalysisSection({
       <KpiGrid>
         <KpiCard
           data-testid="mya-kpi-revenue"
-          label={`Umsatz ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`}
-          value={fmtChf(kpis.latestYearRevenue)}
-          sub={kpis.latestYearRevenue != null ? fmtMio(kpis.latestYearRevenue) : undefined}
+          label={`${position.label} ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`}
+          value={fmtChf(kpis.latestYearValue)}
+          sub={kpis.latestYearValue != null ? fmtMio(kpis.latestYearValue) : undefined}
           tone="info"
         />
         <KpiCard
           data-testid="mya-kpi-growth"
-          label={`Wachstum vs. ${kpis.prevYear ?? 'Vorjahr'}${kpis.growthCommonMonths > 0 && kpis.growthCommonMonths < 12 ? ` (${kpis.growthCommonMonths} Mte.)` : ''}`}
+          label={`Veränderung vs. ${kpis.prevYear ?? 'Vorjahr'}${kpis.growthCommonMonths > 0 && kpis.growthCommonMonths < 12 ? ` (${kpis.growthCommonMonths} Mte.)` : ''}`}
           value={fmtPct(kpis.growthPct)}
-          tone={kpis.growthPct == null ? 'neutral' : kpis.growthPct >= 0 ? 'good' : 'critical'}
+          tone={kpis.growthPct == null || isExpense ? 'neutral' : kpis.growthPct >= 0 ? 'good' : 'critical'}
           trend={kpis.growthChf != null ? {
             direction: kpis.growthChf > 0 ? 'up' : kpis.growthChf < 0 ? 'down' : 'flat',
-            tone: kpis.growthChf >= 0 ? 'good' : 'critical',
+            tone: isExpense ? 'neutral' : kpis.growthChf >= 0 ? 'good' : 'critical',
             label: `${fmtDeltaChf(kpis.growthChf)} CHF`,
           } : undefined}
         />
@@ -220,40 +328,40 @@ export function MultiYearAnalysisSection({
           data-testid="mya-kpi-cagr"
           label={kpis.cagrFromYear != null ? `CAGR ${kpis.cagrFromYear}–${kpis.cagrToYear}` : 'CAGR'}
           value={fmtPct(kpis.cagrPct)}
-          sub={kpis.cagrPct == null ? 'Braucht ≥2 vollständige Jahre' : 'Ø Wachstum p. a. (volle Jahre)'}
-          tone={kpis.cagrPct == null ? 'neutral' : kpis.cagrPct >= 0 ? 'good' : 'critical'}
+          sub={kpis.cagrPct == null ? 'Braucht ≥2 vollständige Jahre' : 'Ø Veränderung p. a. (volle Jahre)'}
+          tone={kpis.cagrPct == null || isExpense ? 'neutral' : kpis.cagrPct >= 0 ? 'good' : 'critical'}
         />
         <KpiCard
           data-testid="mya-kpi-trend"
-          label="Umsatztrend"
+          label={isRevenue ? 'Umsatztrend' : `Trend ${position.label}`}
           value={kpis.trend ? TREND_LABEL[kpis.trend] : '—'}
-          sub="Basis: Wachstum letztes vs. Vorjahr"
-          tone={kpis.trend ? TREND_TONE[kpis.trend] : 'neutral'}
+          sub="Basis: Veränderung letztes vs. Vorjahr"
+          tone={kpis.trend == null || isExpense ? 'neutral' : TREND_TONE[kpis.trend]}
         />
       </KpiGrid>
       <div data-testid="mya-kpi-more">
       <MoreKpis storageKey="mya-more-kpis">
         <KpiGrid>
           <KpiCard
-            label="Ø monatliches Wachstum"
+            label="Ø monatliche Veränderung"
             value={fmtPct(kpis.avgMonthlyGrowthPct)}
             sub="Ø der monatlichen VJ-Veränderungen"
-            tone={kpis.avgMonthlyGrowthPct == null ? 'neutral' : kpis.avgMonthlyGrowthPct >= 0 ? 'good' : 'critical'}
+            tone={kpis.avgMonthlyGrowthPct == null || isExpense ? 'neutral' : kpis.avgMonthlyGrowthPct >= 0 ? 'good' : 'critical'}
           />
           <KpiCard
-            label={`Bester Monat ${kpis.latestYear ?? ''}`}
+            label={`${isExpense ? 'Höchster Monat' : 'Bester Monat'} ${kpis.latestYear ?? ''}`}
             value={kpis.bestMonth ? kpis.bestMonth.label : '—'}
             sub={kpis.bestMonth ? fmtChf(kpis.bestMonth.value) : undefined}
-            tone="good"
+            tone={isExpense ? 'neutral' : 'good'}
           />
           <KpiCard
-            label={`Schwächster Monat ${kpis.latestYear ?? ''}`}
+            label={`${isExpense ? 'Tiefster Monat' : 'Schwächster Monat'} ${kpis.latestYear ?? ''}`}
             value={kpis.worstMonth ? kpis.worstMonth.label : '—'}
             sub={kpis.worstMonth ? fmtChf(kpis.worstMonth.value) : undefined}
-            tone="warn"
+            tone={isExpense ? 'neutral' : 'warn'}
           />
           <KpiCard
-            label="Bestes Jahresergebnis"
+            label={isExpense ? 'Höchster Jahreswert' : 'Bestes Jahresergebnis'}
             value={kpis.highestAnnual ? String(kpis.highestAnnual.year) : '—'}
             sub={kpis.highestAnnual ? `${fmtChf(kpis.highestAnnual.total)}${kpis.highestAnnual.isPartial ? ' (Teiljahr)' : ''}` : undefined}
             tone="info"
@@ -277,7 +385,7 @@ export function MultiYearAnalysisSection({
       <div className={TABLE_WRAP} data-testid="mya-table">
         <div className="flex items-center justify-between bg-slate-900 px-4 py-3 text-white">
           <div>
-            <h3 className="text-sm font-bold">Netto-Umsatz im Mehrjahresvergleich</h3>
+            <h3 className="text-sm font-bold">{position.label} im Mehrjahresvergleich</h3>
             <p className="mt-0.5 text-[11px] text-slate-400">
               {years.join(' · ')} — Klick auf einen Monat öffnet den Detailvergleich.
               Δ VJ = Veränderung zum Vorjahr, Δ {baseYear ?? 'Basis'} = Veränderung zum Basisjahr.
@@ -299,11 +407,11 @@ export function MultiYearAnalysisSection({
                 <th className={cn(TH, TH_STICKY, 'left-0 z-20 sticky bg-muted top-[33px]')} />
                 {years.map((y) => (
                   y === baseYear ? (
-                    <th key={y} className={cn(TH, TH_NUM, TH_STICKY, 'top-[33px]')}>Umsatz</th>
+                    <th key={y} className={cn(TH, TH_NUM, TH_STICKY, 'top-[33px]')}>{isRevenue ? 'Umsatz' : 'Wert'}</th>
                   ) : (
                     <th key={y} colSpan={3} className={cn(TH, TH_STICKY, 'top-[33px] p-0')}>
                       <div className="grid grid-cols-3">
-                        <span className={cn(TH, TH_NUM, 'px-3')}>Umsatz</span>
+                        <span className={cn(TH, TH_NUM, 'px-3')}>{isRevenue ? 'Umsatz' : 'Wert'}</span>
                         <span className={cn(TH, TH_NUM, 'px-3')}>Δ VJ</span>
                         <span className={cn(TH, TH_NUM, 'px-3')}>Δ {baseYear}</span>
                       </div>
@@ -388,8 +496,8 @@ export function MultiYearAnalysisSection({
         {/* Monatsverlauf (Linien) */}
         <div className="rounded-lg border border-border bg-card p-4" data-testid="mya-chart-line">
           <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
-            Monatsumsätze im Jahresvergleich
-            <InfoTip text="Netto-Umsatz pro Monat, eine Linie pro Jahr. Lücken = Monate ohne erfasste Daten." />
+            {isRevenue ? 'Monatsumsätze im Jahresvergleich' : `${position.label} pro Monat im Jahresvergleich`}
+            <InfoTip text={`${position.label} pro Monat, eine Linie pro Jahr. Lücken = Monate ohne erfasste Daten.`} />
           </h3>
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={chart.line} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
@@ -413,16 +521,16 @@ export function MultiYearAnalysisSection({
         {/* Jahresumsätze (Balken) */}
         <div className="rounded-lg border border-border bg-card p-4" data-testid="mya-chart-bars">
           <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
-            Jahresumsätze
-            <InfoTip text="Jahres-Nettoumsatz (Summe der erfassten Monate). Teiljahre sind entsprechend markiert." />
+            {isRevenue ? 'Jahresumsätze' : `${position.label} pro Jahr`}
+            <InfoTip text={`${position.label} pro Jahr (Summe der erfassten Monate). Teiljahre sind entsprechend markiert.`} />
           </h3>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={chart.bars} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis dataKey="year" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => fmtMio(v)} width={64} />
-              <RechartsTooltip formatter={(v: number) => [`CHF ${fmtChf(v)}`, 'Umsatz']} />
-              <Bar dataKey="total" name="Nettoumsatz" radius={[4, 4, 0, 0]}>
+              <RechartsTooltip formatter={(v: number) => [`CHF ${fmtChf(v)}`, position.label]} />
+              <Bar dataKey="total" name={position.label} radius={[4, 4, 0, 0]}>
                 {chart.bars.map((b, i) => (
                   <Cell key={b.year} fill={b.year === kpis.latestYear ? '#4f46e5' : '#a5b4fc'} opacity={b.isPartial ? 0.65 : 1} />
                 ))}
@@ -436,8 +544,10 @@ export function MultiYearAnalysisSection({
       {chart.waterfall.length > 0 && chart.waterfallYears && (
         <div className="rounded-lg border border-border bg-card p-4" data-testid="mya-chart-waterfall">
           <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
-            Wachstums-Wasserfall {chart.waterfallYears.from} → {chart.waterfallYears.to}
-            <InfoTip text="Monatliche Umsatzveränderung zum Vorjahr, kumuliert. Grün = Zuwachs, Rot = Rückgang; der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren." />
+            {isRevenue ? 'Wachstums-Wasserfall' : 'Veränderungs-Wasserfall'} {chart.waterfallYears.from} → {chart.waterfallYears.to}
+            <InfoTip text={isExpense
+              ? `Monatliche Veränderung von «${position.label}» zum Vorjahr, kumuliert (neutral dargestellt — mehr Aufwand ist nicht automatisch gut oder schlecht). Der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren.`
+              : 'Monatliche Veränderung zum Vorjahr, kumuliert. Grün = Zuwachs, Rot = Rückgang; der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren.'} />
           </h3>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={chart.waterfall} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
@@ -445,14 +555,14 @@ export function MultiYearAnalysisSection({
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} width={44} />
               <RechartsTooltip
-                formatter={(v: number, name: string) => (name === 'Sockel' ? [null, null] : [`CHF ${fmtDeltaChf(v)}`, 'Δ Umsatz'])}
+                formatter={(v: number, name: string) => (name === 'Sockel' ? [null, null] : [`CHF ${fmtDeltaChf(v)}`, `Δ ${position.label}`])}
                 labelFormatter={(label: string) => {
                   const entry = chart.waterfall.find((w) => w.label === label);
                   return entry ? `${label} — Δ ${fmtDeltaChf(entry.delta)} (kumuliert ${fmtDeltaChf(entry.cumEnd)})` : label;
                 }}
               />
               <Bar dataKey="base" name="Sockel" stackId="wf" fill="transparent" isAnimationActive={false} />
-              <Bar dataKey="height" name="Δ Umsatz" stackId="wf" radius={[2, 2, 0, 0]}>
+              <Bar dataKey="height" name={`Δ ${position.label}`} stackId="wf" radius={[2, 2, 0, 0]}>
                 {chart.waterfall.map((w) => (
                   <Cell key={w.label} fill={w.isTotal ? '#4f46e5' : TONE_FILL[w.tone]} />
                 ))}
@@ -473,7 +583,7 @@ export function MultiYearAnalysisSection({
                   <StatusPill tone="info" size="xs" showDot={false}>Teiljahr: {ys.partialLabel}</StatusPill>
                 )}
                 {ys.growthPct != null && (
-                  <StatusPill tone={ys.growthPct >= 0 ? 'good' : 'critical'} size="xs">
+                  <StatusPill tone={isExpense ? 'neutral' : ys.growthPct >= 0 ? 'good' : 'critical'} size="xs">
                     {fmtPct(ys.growthPct)} vs. VJ
                   </StatusPill>
                 )}
@@ -522,7 +632,7 @@ export function MultiYearAnalysisSection({
               <DialogHeader>
                 <DialogTitle>{detail.label} im Mehrjahresvergleich</DialogTitle>
                 <DialogDescription>
-                  Netto-Umsatz, Veränderungen und Quoten je Jahr.
+                  {position.label}, Veränderungen und Quoten je Jahr.
                   Ø über {detail.yearsWithValue} Jahr{detail.yearsWithValue === 1 ? '' : 'e'} mit Daten: {fmtChf(detail.avgValue)} CHF.
                 </DialogDescription>
               </DialogHeader>
@@ -531,7 +641,7 @@ export function MultiYearAnalysisSection({
                   <thead>
                     <tr>
                       <th className={TH}>Jahr</th>
-                      <th className={cn(TH, TH_NUM)}>Umsatz (CHF)</th>
+                      <th className={cn(TH, TH_NUM)}>{position.label} (CHF)</th>
                       <th className={cn(TH, TH_NUM)}>Δ Vorjahr</th>
                       <th className={cn(TH, TH_NUM)}>Δ Basisjahr {baseYear}</th>
                       <th className={cn(TH, TH_NUM)}>Rang im Jahr</th>

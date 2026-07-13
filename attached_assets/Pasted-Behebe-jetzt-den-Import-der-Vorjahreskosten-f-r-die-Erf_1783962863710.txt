@@ -1,0 +1,307 @@
+Behebe jetzt den Import der Vorjahreskosten für die Erfolgsrechnung.
+
+Ausgangslage:
+
+Die hochgeladene Datei „Vorjahreskosten 2025(1).XLSX“ wird im Import akzeptiert, aber die Kosten werden in der Erfolgsrechnung für das Jahr 2025 nicht vollständig angezeigt.
+
+In der Erfolgsrechnung erscheinen aktuell beispielsweise beim Warenaufwand nur Werte für März und April, obwohl die importierte Kontoblatt-Datei Buchungen über das gesamte Jahr 2025 enthält.
+
+Wichtig:
+Die Datei ist kein bereits zusammengefasster Monatsreport, sondern ein Kontoblatt mit einzelnen Kontenblöcken und Buchungszeilen.
+
+Tatsächlicher Aufbau der Datei:
+
+Sheet:
+„Kontoblatt“
+
+Kopfbereich:
+Zeile 2 enthält den Zeitraum:
+„01.01.25 bis 31.12.25“
+
+Spalten:
+A = Datum beziehungsweise Kontonummer am Beginn eines Kontenblocks
+B = Belegnummer
+D = Buchungstext beziehungsweise Kontobezeichnung
+F = Gegenkonto
+G = Soll
+H = Haben
+K = Saldo
+
+Beispiel eines Kontenblocks:
+
+4000 | | | Prodega Warenaufwand
+      | | | Saldo Vortrag
+04.01.2025 | 1213 | | LSV Prodega RE 183 | | 4060 | | 335.70
+07.01.2025 | 10   | | Zahlung             | | 1020 | 335.70 |
+...
+      | | | Total Soll
+      | | | Total Haben
+
+Weitere Kontenblöcke folgen untereinander, beispielsweise:
+6800 Abschreibungen & WB Maschinen und Apparate
+6810 Abschreibungen & WB Mobiliar und Einrichtungen
+6820 Abschreibungen & WB Büromaschinen, EDV
+6880 Abschreibungen & WB Wäsche, Geschirr und Berufskleider
+6940 Bankspesen
+
+Ziel:
+
+Alle erfolgsrelevanten Buchungen aus dieser Kontoblatt-Datei müssen korrekt nach:
+
+1. Geschäftsjahr
+2. Monat
+3. Konto
+4. Erfolgsrechnungsposition
+
+aggregiert und in der Erfolgsrechnung angezeigt werden.
+
+Umsetzung:
+
+1. Bestehenden Importpfad untersuchen
+
+Prüfe zuerst vollständig:
+
+- Welcher Importtyp für „Vorjahreskosten“ verwendet wird
+- Wo die importierten Daten gespeichert werden
+- Welche Tabellen beziehungsweise Persistenzschlüssel verwendet werden
+- Wie die Erfolgsrechnung die importierten Vorjahreskosten lädt
+- Ob Import und Erfolgsrechnung unterschiedliche Datenmodelle, Jahre oder source_type-Werte verwenden
+- Warum aktuell offenbar nur einzelne Monate wie März und April erscheinen
+
+Keine neue parallele Importlogik bauen, bevor die bestehende Ursache verstanden ist.
+
+2. Kontoblatt korrekt parsen
+
+Implementiere einen robusten Parser für diesen tatsächlichen Dateiaufbau.
+
+Ein Kontenblock beginnt, wenn:
+
+- Spalte A eine vierstellige Kontonummer enthält
+- und in Spalte D eine Kontobezeichnung steht
+
+Diese Kontonummer und Kontobezeichnung gelten für alle nachfolgenden Buchungszeilen bis zum nächsten Kontenblock.
+
+Eine Buchungszeile ist nur gültig, wenn:
+
+- Spalte A ein gültiges Datum enthält
+- das Datum im erkannten Importjahr liegt
+- und in Spalte G oder H ein numerischer Betrag vorhanden ist
+
+Folgende Zeilen dürfen nicht als Buchung importiert werden:
+
+- „Saldo Vortrag“
+- „Total Soll“
+- „Total Haben“
+- reine Textfortsetzungszeilen
+- Leerzeilen
+- Kontokopfzeilen
+- Kommentarzeilen
+- Seitenkopf und Seitenfuss
+
+Datumswerte müssen sowohl als Excel-Datum als auch als Textdatum wie `04.01.2025` unterstützt werden.
+
+Schweizer Zahlenformate müssen unterstützt werden:
+
+- 1'234.50
+- 1’234.50
+- 1 234.50
+- 1234.50
+- numerische Excel-Zellen
+
+3. Betrag korrekt bestimmen
+
+Für jede Buchungszeile müssen mindestens gespeichert beziehungsweise intern ermittelt werden:
+
+- accountNumber
+- accountName
+- bookingDate
+- year
+- month
+- debit
+- credit
+- netAmount
+- bookingText
+- counterAccount
+
+Die Vorzeichenlogik darf nicht pauschal für alle Konten gleich behandelt werden.
+
+Für Aufwandskonten muss eine Sollbuchung grundsätzlich den Aufwand erhöhen und eine Habenbuchung den Aufwand reduzieren.
+
+Für Ertragskonten muss eine Habenbuchung grundsätzlich den Ertrag erhöhen und eine Sollbuchung den Ertrag reduzieren.
+
+Nutze dafür die bestehende Konten- beziehungsweise P&L-Mappinglogik der Anwendung.
+
+Keine doppelte Vorzeichenumkehr zwischen Import, Speicherung und Erfolgsrechnung.
+
+4. Monatsaggregation
+
+Aggregiere die Buchungen eindeutig nach:
+
+- importierter Betrieb beziehungsweise Mandant
+- Jahr
+- Monat
+- Kontonummer
+- Erfolgsrechnungszeile
+
+Beispiel:
+
+accountNumber: 6940
+year: 2025
+month: 1
+amount: Summe aller gültigen Januar-Buchungen des Kontos 6940
+
+Die Jahresgesamtsumme muss exakt der Summe der zwölf Monatswerte entsprechen.
+
+5. Erfolgsrechnung anbinden
+
+Stelle sicher, dass die Erfolgsrechnung bei ausgewähltem Jahr 2025 genau diese importierten Werte lädt.
+
+Wichtig:
+
+- Ein Import für das Geschäftsjahr 2025 muss in der Ansicht 2025 erscheinen
+- Der Import darf nicht versehentlich als Vorjahr 2024 gespeichert werden
+- Der Dateiname „Vorjahreskosten 2025“ darf nicht zur Jahresbestimmung verwendet werden
+- Massgebend ist primär der Zeitraum beziehungsweise das Datum in der Datei
+- Die Ansicht darf nicht nur bereits bekannte oder manuell konfigurierte Monate anzeigen
+- Nullwerte und fehlende Werte müssen unterschieden werden
+- Vorhandene Monatswerte dürfen nicht durch `undefined`, leere Arrays oder falsche Fallbacks ersetzt werden
+
+Prüfe insbesondere Memoization, Query Keys, Jahresfilter und source_type-Filter.
+
+6. Konten-Mapping
+
+Verwende die bestehende Kontenzuordnung zur Erfolgsrechnung.
+
+Nicht gemappte Konten dürfen nicht stillschweigend verschwinden.
+
+Zeige nach dem Import eine kompakte Kontrolle:
+
+- Anzahl erkannte Konten
+- Anzahl importierte Buchungen
+- erkannter Zeitraum
+- importierte Summe
+- Anzahl nicht gemappte Konten
+- Liste der nicht gemappten Konten mit Kontonummer und Kontobezeichnung
+
+Nicht gemappte Konten sollen im Import gespeichert bleiben und später zugeordnet werden können.
+
+7. Idempotenz und Ersetzen
+
+Ein erneuter Import derselben Vorjahreskosten für denselben Betrieb und dasselbe Jahr darf keine Doppelwerte erzeugen.
+
+Beim erneuten Import:
+
+- bestehende Daten derselben Importquelle und desselben Geschäftsjahres gezielt ersetzen
+- keine Daten anderer Jahre löschen
+- keine manuell gepflegten Budgetwerte löschen
+- keine IST-Daten anderer Quellen verändern
+
+Verwende eine stabile Importidentität beziehungsweise einen eindeutig definierten Replace-Scope.
+
+8. Importkontrolle
+
+Nach erfolgreichem Import muss eine Vorschau beziehungsweise Zusammenfassung erscheinen:
+
+- Datei
+- erkanntes Jahr
+- Zeitraum von/bis
+- erkannte Konten
+- gültige Buchungszeilen
+- übersprungene Zeilen
+- nicht gemappte Konten
+- Summe Aufwand
+- Summe Ertrag
+
+Bei einem strukturell ungültigen Import muss eine verständliche Fehlermeldung erscheinen und es dürfen keine halben Daten gespeichert werden.
+
+9. Bestehende Ansicht nicht unnötig umbauen
+
+Die Erfolgsrechnung selbst soll funktional und optisch grundsätzlich unverändert bleiben.
+
+Nur notwendige Ergänzungen:
+
+- importierte Werte korrekt anzeigen
+- fehlende Kontenzuordnungen transparent machen
+- bei Bedarf einen kleinen Hinweis auf die zuletzt importierte Vorjahreskosten-Datei anzeigen
+
+Kein neues grosses Dashboard und keine zusätzliche parallele P&L-Seite bauen.
+
+10. Tests
+
+Ergänze gezielte Tests mit einem realistischen Kontoblatt-Aufbau.
+
+Mindestens testen:
+
+- Kontonummer und Kontobezeichnung werden als Blockkontext erkannt
+- Buchungen werden dem richtigen Konto zugeordnet
+- Buchungen aus Januar bis Dezember werden erkannt
+- Excel-Datumswerte und Textdatumswerte funktionieren
+- Soll und Haben werden korrekt verarbeitet
+- Saldo-Vortrag wird ignoriert
+- Total-Soll und Total-Haben werden ignoriert
+- Textfortsetzungszeilen werden ignoriert
+- Kontenwechsel funktioniert
+- Jahresfilter 2025 funktioniert
+- erneuter Import erzeugt keine Doppelwerte
+- Jahreswert entspricht der Summe der zwölf Monatswerte
+- nicht gemappte Konten werden gemeldet und nicht stillschweigend gelöscht
+- die Erfolgsrechnung erhält die importierten Monatswerte
+
+Erstelle zusätzlich einen Regressionstest für den konkreten Fehler:
+
+Nach dem Import einer Datei mit Kosten in mehreren Monaten dürfen in der Erfolgsrechnung nicht nur März und April befüllt sein. Jeder Monat mit gültigen Buchungen muss seinen aggregierten Wert erhalten.
+
+11. Verifikation
+
+Nach der Umsetzung:
+
+- TypeScript-Typecheck ausführen
+- relevante Importtests ausführen
+- relevante Erfolgsrechnungstests ausführen
+- tatsächlichen Datenfluss vom XLSX-Parser bis zur dargestellten Tabellenzelle prüfen
+- mit der hochgeladenen Datei „Vorjahreskosten 2025(1).XLSX“ einen echten Testimport durchführen
+- kontrollieren, dass Januar bis Dezember beziehungsweise alle tatsächlich bebuchten Monate angezeigt werden
+- kontrollieren, dass die Jahressumme der Summe der Monatswerte entspricht
+- kontrollieren, dass kein bestehender Budget-, IST- oder Vorjahresimport beschädigt wurde
+
+12. Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit tatsächlich umgesetztem Verhalten:
+
+- unterstützter Kontoblatt-Aufbau
+- Erkennung der Kontenblöcke
+- Monatsaggregation
+- Vorzeichenlogik
+- Idempotenz beziehungsweise Replace-Scope
+- Behandlung nicht gemappter Konten
+- Anzeige in der Erfolgsrechnung
+
+Design und Bedienung:
+
+Alle Ergänzungen müssen sich optisch an den bestehenden Import- und Erfolgsrechnungsseiten orientieren.
+
+Die Oberfläche soll:
+
+- schlicht
+- modern
+- kompakt
+- gut lesbar
+- einheitlich mit den bestehenden Komponenten
+- ohne unnötig grosse Karten oder lange Erklärungstexte
+
+sein.
+
+Wichtig:
+
+Nicht nur Symptome im Frontend überdecken.
+
+Finde und behebe die tatsächliche Ursache zwischen:
+
+XLSX-Parsing
+→ Speicherung
+→ Jahres- und Monatsaggregation
+→ Konten-Mapping
+→ Laden in der Erfolgsrechnung
+→ Darstellung.
+
+Bestehende funktionierende Import- und Reportinglogik darf nicht durch eine separate Sonderlösung dupliziert werden.

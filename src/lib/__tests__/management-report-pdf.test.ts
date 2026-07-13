@@ -11,13 +11,13 @@ import {
 } from '../management-report-pdf';
 
 function fullYear(year: number, base: number, step = 0): YearSeries {
-  return { year, netRevenue: Array.from({ length: 12 }, (_, i) => base + i * step) };
+  return { year, values: Array.from({ length: 12 }, (_, i) => base + i * step) };
 }
 
 function halfYear(year: number, base: number): YearSeries {
   return {
     year,
-    netRevenue: Array.from({ length: 12 }, (_, i) => (i < 6 ? base : null)),
+    values: Array.from({ length: 12 }, (_, i) => (i < 6 ? base : null)),
   };
 }
 

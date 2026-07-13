@@ -28,7 +28,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import type { YearSeries } from '@/lib/multi-year-analysis';
 
 function fullYear(year: number, base: number, step = 0): YearSeries {
-  return { year, netRevenue: Array.from({ length: 12 }, (_, i) => base + i * step) };
+  return { year, values: Array.from({ length: 12 }, (_, i) => base + i * step) };
 }
 
 const SERIES: YearSeries[] = [
@@ -36,7 +36,7 @@ const SERIES: YearSeries[] = [
   fullYear(2025, 110_000),
   {
     year: 2026,
-    netRevenue: Array.from({ length: 12 }, (_, i) => (i < 6 ? 130_000 : null)),
+    values: Array.from({ length: 12 }, (_, i) => (i < 6 ? 130_000 : null)),
   },
 ];
 
@@ -58,7 +58,8 @@ describe('MultiYearAnalysisSection', () => {
   it('rendert Toolbar mit Jahresauswahl und beiden Export-Buttons', () => {
     renderSection();
     expect(screen.getByTestId('mya-section')).toBeTruthy();
-    expect(screen.getByTestId('mya-yearcount')).toBeTruthy();
+    expect(screen.getByTestId('mya-position')).toBeTruthy();
+    expect(screen.getByTestId('mya-years')).toBeTruthy();
     expect(screen.getByTestId('mya-export-pdf')).toBeTruthy();
     expect(screen.getByTestId('mya-export-excel')).toBeTruthy();
   });
@@ -122,7 +123,7 @@ describe('MultiYearAnalysisSection', () => {
   });
 
   it('Leerzustand: ohne Daten erscheint mya-empty statt der Analyse', () => {
-    renderSection([{ year: 2026, netRevenue: Array(12).fill(null) }]);
+    renderSection([{ year: 2026, values: Array(12).fill(null) }]);
     expect(screen.getByTestId('mya-empty')).toBeTruthy();
     expect(screen.queryByTestId('mya-section')).toBeNull();
   });

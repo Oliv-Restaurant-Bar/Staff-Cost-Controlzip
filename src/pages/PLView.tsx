@@ -20,7 +20,7 @@ import {
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
   Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
-  Calculator, ArrowRight,
+  Calculator, ArrowRight, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -67,7 +67,12 @@ import {
 import { useMaison } from '@/contexts/MaisonContext';
 import { kvGet } from '@/lib/supabase-kv';
 import { MultiYearAnalysisSection } from '@/components/reporting/MultiYearAnalysisSection';
-import type { YearSeries } from '@/lib/multi-year-analysis';
+import { ManagementReportView } from '@/components/reporting/ManagementReportView';
+import { MULTI_YEAR_POSITIONS, type YearSeries } from '@/lib/multi-year-analysis';
+
+/** Datenbasis-Hinweis für Mehrjahresanalyse + Management Report (gleiche Quelle). */
+const MULTI_YEAR_DATA_SOURCE_HINT =
+  'Basis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der Tagesansicht-Abgleich der Erfolgsrechnung (Tagesumsätze als massgebliche IST-Quelle, Maison-/Ausschluss-Effekte) wird hier NICHT angewendet — Werte können daher von der Monats-/Jahresansicht abweichen.';
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -2275,7 +2280,7 @@ const currentYear  = new Date().getFullYear();
 const currentMonth = new Date().getMonth() + 1;
 const years = [currentYear - 1, currentYear, currentYear + 1];
 
-type ViewMode = 'monthly' | 'yearly' | 'budget_pl' | 'multi_year';
+type ViewMode = 'monthly' | 'yearly' | 'budget_pl' | 'multi_year' | 'mgmt_report';
 
 const PLViewPage = () => {
   const { tenantId, tenant, tenantKey } = useTenant();
@@ -2398,28 +2403,33 @@ const PLViewPage = () => {
   // BEWUSST dieselbe SSOT wie die Erfolgsrechnung, OHNE Maison-/Exclude-Effekte
   // (Roh-Reporting-Daten aller Jahre; Einschränkungen erklärt die Sektion selbst).
   const multiYearSeries = useMemo<YearSeries[] | null>(() => {
-    if (mode !== 'multi_year') return null;
+    if (mode !== 'multi_year' && mode !== 'mgmt_report') return null;
     const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    const positionIds = MULTI_YEAR_POSITIONS.map(p => p.id);
     return availableYears(storeKey).map(y => {
       const recs = loadYear(y, storeKey);
-      const netRevenue: (number | null)[] = [];
+      const values: (number | null)[] = [];
+      const byPosition: Record<string, (number | null)[]> =
+        Object.fromEntries(positionIds.map(id => [id, [] as (number | null)[]]));
       const personnelPct: (number | null)[] = [];
       const wesPct: (number | null)[] = [];
       for (let m = 0; m < 12; m++) {
         const res = computePLForMonth(recs[m]);
         if (!res.hasData) {
-          netRevenue.push(null); personnelPct.push(null); wesPct.push(null);
+          values.push(null); personnelPct.push(null); wesPct.push(null);
+          for (const id of positionIds) byPosition[id].push(null);
           continue;
         }
         const rowVal = (id: string) => res.rows.find(r => r.def.id === id)?.values.actual ?? null;
         const rev = rowVal('net_revenue');
         const pers = rowVal('total_personnel');
         const cogs = rowVal('total_cogs');
-        netRevenue.push(rev);
+        values.push(rev);
+        for (const id of positionIds) byPosition[id].push(rowVal(id));
         personnelPct.push(rev != null && rev !== 0 && pers != null ? (pers / rev) * 100 : null);
         wesPct.push(rev != null && rev !== 0 && cogs != null ? (cogs / rev) * 100 : null);
       }
-      return { year: y, netRevenue, personnelPct, wesPct };
+      return { year: y, values, byPosition, personnelPct, wesPct };
     });
   }, [mode, refreshKey, tenantId, tenantKey]);
 
@@ -2978,10 +2988,19 @@ const PLViewPage = () => {
               >
                 <TrendingUp className="h-3 w-3" /><span className="hidden sm:inline">Mehrjahre</span><span className="sm:hidden">MJ</span>
               </button>
+              <button
+                className={cn('px-2 py-1.5 flex items-center gap-1',
+                  mode === 'mgmt_report' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-muted'
+                )}
+                onClick={() => setMode('mgmt_report')}
+                data-testid="plview-mode-mgmt-report"
+              >
+                <FileText className="h-3 w-3" /><span className="hidden sm:inline">Management Report</span><span className="sm:hidden">Report</span>
+              </button>
             </div>
 
-            {/* Jahr (nicht bei Mehrjahresanalyse — dort werden alle Jahre gezeigt) */}
-            {mode !== 'multi_year' && (
+            {/* Jahr (nicht bei Mehrjahresanalyse/Report — dort werden alle Jahre gezeigt) */}
+            {mode !== 'multi_year' && mode !== 'mgmt_report' && (
               <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
                 <SelectTrigger className="h-8 w-24 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -3362,14 +3381,21 @@ const PLViewPage = () => {
           <MultiYearAnalysisSection
             series={multiYearSeries}
             restaurantName={tenant.shortName}
-            dataSourceHints={[
-              'Basis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der Tagesansicht-Abgleich der Erfolgsrechnung (Tagesumsätze als massgebliche IST-Quelle, Maison-/Ausschluss-Effekte) wird hier NICHT angewendet — Werte können daher von der Monats-/Jahresansicht abweichen.',
-            ]}
+            dataSourceHints={[MULTI_YEAR_DATA_SOURCE_HINT]}
+          />
+        )}
+
+        {/* Management Report (Live-Ansicht, gleiche Datenbasis wie Mehrjahresanalyse) */}
+        {mode === 'mgmt_report' && multiYearSeries && (
+          <ManagementReportView
+            series={multiYearSeries}
+            restaurantName={tenant.shortName}
+            dataSourceHints={[MULTI_YEAR_DATA_SOURCE_HINT]}
           />
         )}
 
         {/* P&L-Tabelle */}
-        {mode !== 'multi_year' && (
+        {mode !== 'multi_year' && mode !== 'mgmt_report' && (
         <div className="rounded-lg border border-border overflow-hidden shadow-sm">
           {/* Tabellen-Header */}
           <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
