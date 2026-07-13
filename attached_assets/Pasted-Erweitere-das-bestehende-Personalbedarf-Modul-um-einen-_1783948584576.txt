@@ -1,0 +1,397 @@
+Erweitere das bestehende Personalbedarf-Modul um einen ersten intelligenten Planungsassistenten mit konkreten Schichtempfehlungen.
+
+Ziel:
+Das Modul soll nicht nur Abweichungen anzeigen, sondern aus bereits vorhandenen Daten konkrete, nachvollziehbare Empfehlungen für die zukünftige Personalplanung ableiten.
+
+Wichtig:
+
+* keine künstliche KI-Blackbox
+* keine erfundenen Werte
+* keine neuen DB-Tabellen oder Migrationen
+* keine automatischen Änderungen am Dienstplan
+* zuerst nur Empfehlungen und Simulationen
+* bestehende Single Sources of Truth weiterverwenden
+* bestehendes Designsystem vollständig einhalten
+
+1. Bestehende Architektur vollständig prüfen
+
+Lies zuerst die relevanten Dateien und Datenquellen für:
+
+* Personalbedarf Soll
+* Dienstplan und geplante Schichten
+* Ist-Arbeitszeiten
+* Personalcontrolling
+* Reservationen und Personen
+* Tagesumsatz
+* Saison- und Wochentagslogik
+* Positionen
+* Stundenkosten
+* bestehende Ampel- und Besetzungslogik
+* bestehende KPI-Komponenten, Tabellen, Dialoge und Filter
+
+Prüfe insbesondere, welche Daten in PersonalFix.tsx bereits geladen sind.
+
+Keine neue Datenabfrage einführen, solange die benötigten Werte bereits im Seitenzustand vorhanden sind.
+
+2. Neue Sektion „Planungsempfehlungen“
+
+Ergänze im Personalbedarf- beziehungsweise Personalcontrolling-Bereich eine kompakte Sektion:
+
+Planungsempfehlungen
+
+Die Sektion soll konkrete Vorschläge für den aktuell gewählten Zeitraum anzeigen.
+
+Beispiele:
+
+* Freitag, 18:00–22:00 Uhr: eine zusätzliche Serviceperson einplanen
+* Montagmittag: Service um 30 Minuten später starten
+* Dienstagabend: eine Küchenperson weniger einplanen
+* Samstag: zusätzliche Schicht wegen hoher Reservationen prüfen
+* Position Bar ist regelmässig überbesetzt
+* Küche weist an diesem Wochentag wiederholt Mehrstunden auf
+
+Jede Empfehlung muss aus vorhandenen Daten nachvollziehbar abgeleitet werden.
+
+3. Reine Empfehlungslogik
+
+Erstelle eine neue reine Library, bevorzugt:
+
+src/lib/staffing-recommendations.ts
+
+Die Library muss DOM-, React- und Supabase-frei sein.
+
+Definiere klare Typen und reine Funktionen für:
+
+* Eingabedaten
+* historische Vergleichstage
+* Bedarf Soll
+* Planstunden
+* Ist-Stunden
+* geplante und tatsächliche Besetzung
+* Reservationen oder Personen
+* Umsatz
+* Position
+* Zeitfenster
+* Empfehlung
+* Begründung
+* Schweregrad
+* Konfidenz beziehungsweise Datenbasis
+
+Die Empfehlungslogik soll mindestens folgende Fälle erkennen:
+
+Unterbesetzung
+
+Wenn an vergleichbaren Tagen wiederholt:
+
+* Ist-Bedarf über Plan liegt
+* Mehrstunden entstehen
+* ungeplante Einsätze vorkommen
+* Personalbedarf Soll nicht erreicht wird
+* hohe Reservationen oder hoher Umsatz mit Unterbesetzung zusammentreffen
+
+Empfehlung:
+
+* zusätzliche Person
+* zusätzliche Stunden
+* frühere Startzeit
+* spätere Endzeit
+
+Überbesetzung
+
+Wenn an vergleichbaren Tagen wiederholt:
+
+* Planstunden deutlich über Bedarf Soll liegen
+* tatsächliche Besetzung über Soll liegt
+* Personalkostenquote erhöht ist
+* gleichzeitig Reservationen oder Umsatz tief sind
+
+Empfehlung:
+
+* eine Person weniger
+* kürzere Schicht
+* spätere Startzeit
+* frühere Endzeit
+
+Schichtzeit-Verschiebung
+
+Wenn die Abweichung hauptsächlich am Anfang oder Ende einer Schicht entsteht:
+
+* Startzeit verschieben
+* Endzeit anpassen
+* Split-Schicht prüfen
+
+Nur empfehlen, wenn die vorhandenen Daten eine zeitliche Zuordnung tatsächlich erlauben.
+
+Wiederkehrende Muster
+
+Vergleiche möglichst:
+
+* gleichen Wochentag
+* gleiche Position
+* ähnliche Saison
+* ähnliche Reservationen oder Personen
+* ähnliche Umsatzklasse
+
+Eine Empfehlung darf erst entstehen, wenn genügend Vergleichsdaten vorhanden sind.
+
+Definiere eine sinnvolle Mindestdatenbasis, zum Beispiel mindestens 3 vergleichbare Tage.
+
+4. Empfehlungen müssen erklärbar sein
+
+Jede Empfehlung benötigt:
+
+* Titel
+* betroffener Tag oder Wochentag
+* Position
+* Zeitfenster, falls verfügbar
+* konkrete Empfehlung
+* erwartete Veränderung
+* nachvollziehbare Begründung
+* Anzahl Vergleichstage
+* wichtigste Kennzahlen
+* Vertrauensstufe
+
+Beispiel:
+
+„Freitagabend Service verstärken“
+
+Begründung:
+
+„An 5 vergleichbaren Freitagen lag die tatsächliche Besetzung durchschnittlich 0,8 Personen unter dem Soll. Gleichzeitig entstanden im Durchschnitt 4,2 Mehrstunden und 2 ungeplante Einsätze.“
+
+Vertrauensstufen:
+
+* hohe Datenbasis
+* mittlere Datenbasis
+* geringe Datenbasis
+
+Keine Prozentwerte oder Konfidenzwerte erfinden, wenn keine belastbare Berechnung vorhanden ist.
+
+5. Priorisierung
+
+Empfehlungen sortieren nach:
+
+1. operative Dringlichkeit
+2. wiederkehrendes Muster
+3. finanzielle Auswirkung
+4. Datenbasis
+
+Verwende maximal 5 bis 8 Empfehlungen gleichzeitig.
+
+Wenn mehr Empfehlungen vorhanden sind:
+
+* wichtigste zuerst anzeigen
+* restliche über „Alle anzeigen“ zugänglich machen
+
+Keine lange unübersichtliche Liste erzeugen.
+
+6. UI-Design
+
+Die neue Sektion muss:
+
+* kompakt sein
+* direkt verständlich sein
+* mit bestehenden Karten und Tabellen harmonieren
+* schlicht und modern aussehen
+* keine grossen leeren Flächen erzeugen
+* keine unnötigen Erklärungstexte enthalten
+* dieselben Abstände, Radien, Farben und Typografien verwenden wie die restliche App
+
+Empfehlungskarte:
+
+* kurzer Titel
+* konkrete Empfehlung
+* kleine Begründung
+* betroffene Position
+* Zeitraum
+* Datenbasis
+* Schweregrad
+* Button „Details“
+* Button „Simulation“
+
+Farblogik:
+
+* Rot nur bei klarer Unterbesetzung oder hohem Risiko
+* Orange bei Optimierungspotenzial oder Überbesetzung
+* Grün bei Einsparungs- oder Verbesserungsmöglichkeit
+* neutrale Hinweise grau oder blau
+
+7. Empfehlungs-Detail
+
+Klick auf „Details“ öffnet einen kompakten Dialog oder eine interne Detailstufe.
+
+Anzeigen:
+
+* Empfehlung
+* Begründung
+* verwendete Vergleichstage
+* Soll-, Plan- und Ist-Werte
+* Reservationen oder Personen
+* Umsatz
+* Personalkosten
+* Mehr- oder Minderstunden
+* ungeplante Einsätze
+* Abwesenheiten
+* Datenbasis und Einschränkungen
+
+Die verwendeten Vergleichstage müssen sichtbar sein, damit die Empfehlung kontrolliert werden kann.
+
+8. Simulation
+
+Klick auf „Simulation“ öffnet eine einfache Simulation.
+
+Der Benutzer kann verändern:
+
+* Anzahl Mitarbeitende plus oder minus
+* geplante Stunden plus oder minus
+* Startzeit
+* Endzeit
+* Position
+
+Danach sofort anzeigen:
+
+* neue Planstunden
+* neue geplante Personalkosten
+* neue Personalkostenquote, falls Umsatz vorhanden
+* neue Über- oder Unterbesetzung
+* Differenz zum aktuellen Plan
+* erwartete Einsparung oder Mehrkosten
+
+Wichtig:
+
+* keine Speicherung
+* keine Änderung am Dienstplan
+* nur lokale Simulation
+* klarer Hinweis „Simulation – noch nicht übernommen“
+* Reset-Button
+* Werte nicht automatisch runden oder manipulieren
+
+9. Keine automatische Dienstplanänderung
+
+Noch keine Schicht direkt erstellen oder verändern.
+
+Es darf nur folgende Aktion geben:
+
+* „Im Dienstplan öffnen“
+
+Diese Aktion darf nur auf eine bestehende passende Ansicht navigieren.
+
+Keine neue Route erfinden, wenn bereits eine Tages- oder Wochenansicht existiert.
+
+10. Datenbasis und Einschränkungen
+
+Wenn zu wenig Daten vorhanden sind:
+
+* keine falsche Empfehlung anzeigen
+* stattdessen kompakter Hinweis:
+    „Noch nicht genügend vergleichbare Tage für eine belastbare Empfehlung.“
+
+Wenn Reservationen, Umsatz oder Schichtzeiten fehlen:
+
+* verfügbare Daten verwenden
+* fehlende Daten klar kennzeichnen
+* keine Nullwerte erfinden
+* keine Empfehlung auf fehlenden Daten aufbauen
+
+11. Filter
+
+Die Empfehlungen müssen auf bestehende Filter reagieren:
+
+* Zeitraum
+* Saison
+* Wochentag
+* Position
+* Tag, Woche oder Monat
+
+Wenn möglich, ergänze einen kompakten Filter:
+
+* Alle Empfehlungen
+* Unterbesetzung
+* Überbesetzung
+* Schichtzeiten
+* Kosten
+* Datenqualität
+
+Keine doppelte oder parallele Filterlogik aufbauen.
+
+12. Tests
+
+Erstelle umfassende Pure-Logic-Tests für mindestens:
+
+* Unterbesetzung erkannt
+* Überbesetzung erkannt
+* zusätzliche Person empfohlen
+* kürzere Schicht empfohlen
+* spätere Startzeit empfohlen
+* frühere Endzeit empfohlen
+* Mindestdatenbasis nicht erreicht
+* fehlender Umsatz
+* fehlende Reservationen
+* fehlende Schichtzeiten
+* gleiche Wochentage korrekt verglichen
+* Positionen korrekt getrennt
+* Saison korrekt berücksichtigt
+* Priorisierung
+* Begrenzung der sichtbaren Empfehlungen
+* stabile Sortierung
+* Kostenwirkung
+* Simulation plus Mitarbeitender
+* Simulation minus Mitarbeitender
+* Simulation Stundenänderung
+* Reset der Simulation
+* leere Datenmenge
+* keine Division durch null
+* keine NaN- oder Infinity-Werte
+
+Komponenten-Tests mindestens für:
+
+* Empfehlungen werden angezeigt
+* „Details“ öffnet die korrekte Detailansicht
+* Vergleichstage sind sichtbar
+* „Simulation“ öffnet die Simulation
+* Simulationswerte aktualisieren sich
+* Reset funktioniert
+* fehlende Daten verursachen keinen Fehler
+* zu geringe Datenbasis zeigt den richtigen Hinweis
+* Filter funktionieren
+* Tastaturbedienung funktioniert
+* keine Accessibility-Warnungen
+
+Keine bestehenden Tests abschwächen oder entfernen.
+
+13. Dokumentation und Validierung
+
+Nach der Umsetzung:
+
+1. relevante Tests ausführen
+2. Type-Check allein ausführen
+3. neue Fehler klar von bestehenden Legacy-Fehlern unterscheiden
+4. App-Runtime prüfen
+5. Architect-Review nur auf den tatsächlichen Task-Diff beschränken
+6. berechtigte Befunde beheben
+7. Tests und Review erneut ausführen
+8. replit.md kompakt aktualisieren
+9. keine unrelated Dateien zurücksetzen
+10. keine bestehenden Funktionen ausserhalb dieses Features umbauen
+
+14. Abschlussbericht
+
+Am Ende kompakt auflisten:
+
+* geänderte Dateien
+* neue reine Funktionen
+* verwendete Datenquellen
+* Empfehlungstypen
+* Detailansicht
+* Simulation
+* Filter
+* Testergebnis
+* Type-Check-Ergebnis
+* Runtime-Ergebnis
+* Architect-Review-Ergebnis
+* bekannte Einschränkungen
+* Commit-Message
+
+Verwende als Commit-Message sinngemäss:
+
+feat(personal): add staffing recommendations and simulation

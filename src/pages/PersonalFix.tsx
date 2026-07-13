@@ -35,9 +35,21 @@ import { computeOvertimeAnalysis, computeWeeklyOvertimeAnalysis, type OvertimeHo
 import { loadOvertimeDisabledIds, saveOvertimeDisabledIds } from '@/lib/supabase-kv';
 import { OvertimeCostCard } from '@/components/personal-fix/OvertimeCostCard';
 import { ControllingDrilldownDialog, type DrilldownFocus } from '@/components/personal-fix/ControllingDrilldownDialog';
+import { buildFactCells } from '@/lib/personal-controlling-drilldown';
 import type {
   DrilldownInput, DrilldownDayValue, DrilldownAbsenceDay, DrilldownShiftTimes,
 } from '@/lib/personal-controlling-drilldown';
+import { PlanungsempfehlungenSection } from '@/components/personal-fix/PlanungsempfehlungenSection';
+import {
+  buildStaffingRecommendations, type StaffingRecoResult,
+} from '@/lib/staffing-recommendations';
+import { DEFAULT_SEASON } from '@/lib/staffing-requirements-utils';
+import type { StaffingSeason } from '@/types/staffing';
+import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
+import { usePositions } from '@/hooks/usePositions';
+import { resolvePositionKey } from '@/lib/position-utils';
+import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
+import { personsPerDay, type ReservationAnalyticsRow } from '@/lib/reservation-analytics';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -2184,6 +2196,52 @@ export default function PersonalFixPage() {
   // Incremented whenever schedule-v2-* localStorage changes (schedule-updated event)
   // so that pfixPerEmp and planHours re-read the latest data without a page reload.
   const [scheduleRefreshTick, setScheduleRefreshTick] = useState(0);
+  // ── Planungsempfehlungen (read-only, lazy) ─────────────────────────────────
+  const [planungOpen, setPlanungOpen] = useState(false);
+  const [recoSeason, setRecoSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
+  // Personen pro Tag aus Reservationen: null = nicht verfügbar/Fehler.
+  const [recoPersons, setRecoPersons] = useState<Record<string, number> | null>(null);
+  const [recoPersonsLoaded, setRecoPersonsLoaded] = useState(false);
+  const { requirements: staffingRequirements } = useStaffingRequirements();
+  const { positions } = usePositions();
+
+  // Monat/Tenant-Wechsel → Reservations-Personen neu laden (lazy, nur wenn offen).
+  useEffect(() => {
+    setRecoPersons(null);
+    setRecoPersonsLoaded(false);
+  }, [selectedYear, selectedMonth, tenantId]);
+
+  // Reservationen NUR lesen (Personen pro Tag), PII wird sofort abgestreift.
+  // Fehler/fehlende Tabellen → null (die Empfehlungen kennzeichnen das als
+  // fehlende Datenbasis, es wird nichts geschätzt).
+  useEffect(() => {
+    if (!planungOpen || recoPersonsLoaded) return;
+    let alive = true;
+    const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+    const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
+    void fetchReservationsInRange(tenantId, `${prefix}-01`, `${prefix}-${String(lastDay).padStart(2, '0')}`)
+      .then((detailRows) => {
+        if (!alive) return;
+        const rows: ReservationAnalyticsRow[] = detailRows.map((r) => ({
+          reservationDate: r.date,
+          reservationTime: r.time ?? null,
+          partySize: r.partySize,
+          statusNormalized: r.status as ReservationAnalyticsRow['statusNormalized'],
+          reservedAt: null,
+          guestKey: null,
+        }));
+        const map: Record<string, number> = {};
+        for (const p of personsPerDay(rows, { excludeCancelled: true })) map[p.date] = p.persons;
+        setRecoPersons(map);
+        setRecoPersonsLoaded(true);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setRecoPersons(null);
+        setRecoPersonsLoaded(true);
+      });
+    return () => { alive = false; };
+  }, [planungOpen, recoPersonsLoaded, tenantId, selectedYear, selectedMonth]);
 
   useEffect(() => {
     const handler = () => setScheduleRefreshTick(t => t + 1);
@@ -3222,7 +3280,7 @@ export default function PersonalFixPage() {
   // wie pfix/FlexBreakdownModal (localStorage + bereits geladene Supabase-
   // Daten) — KEINE neuen DB-Abfragen, reine Ableitung aus geladenen Daten.
   const drilldownInput = useMemo<DrilldownInput | null>(() => {
-    if (!drilldownFocus) return null;
+    if (!drilldownFocus && !planungOpen) return null;
     void scheduleRefreshTick; // localStorage-Reread bei Dienstplan-Änderung
     const prefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
     const planDays: DrilldownDayValue[] = [];
@@ -3333,9 +3391,45 @@ export default function PersonalFixPage() {
       dailyRevenue, fixMonthCHF: pfix.active.fix,
       shiftTimes,
     };
-  }, [drilldownFocus, variableEmployees, fixedEmployees, selectedYear, selectedMonth,
+  }, [drilldownFocus, planungOpen, variableEmployees, fixedEmployees, selectedYear, selectedMonth,
       proRataDay, tenantKey, socialCostRates, supabaseActualHours, monthlyRevenues,
       maisonExclude, pfix.active.fix, scheduleRefreshTick]);
+
+  // ── Planungsempfehlungen (rein abgeleitet, kein Schreibpfad) ──────────────
+  // Nutzt DIESELBE Faktentabelle wie der Controlling-Drilldown (buildFactCells
+  // auf drilldownInput — SSOT) plus Personalbedarf (SOLL) und optionale
+  // Reservations-Personen. Nur bei geöffneter Sektion berechnet.
+  const recoResult = useMemo<StaffingRecoResult | null>(() => {
+    if (!planungOpen || !drilldownInput || !recoPersonsLoaded) return null;
+    const positionLabels: Record<string, string> = {};
+    for (const p of positions) positionLabels[p.key] = p.name;
+    return buildStaffingRecommendations({
+      year: selectedYear,
+      month: selectedMonth,
+      lastCompletedDay: drilldownInput.lastCompletedDay,
+      cells: buildFactCells(drilldownInput),
+      employees: drilldownInput.employees.map((e) => ({
+        id: e.id,
+        position: resolvePositionKey(positions, e.position) ?? null,
+      })),
+      shiftTimes: drilldownInput.shiftTimes,
+      requirements: staffingRequirements
+        .filter((r) => r.scopeType === 'weekly')
+        .map((r) => ({
+          season: r.season,
+          weekday: r.weekday,
+          positionKey: r.positionKey,
+          shiftStart: r.shiftStart,
+          shiftEnd: r.shiftEnd,
+          requiredCount: r.requiredCount,
+        })),
+      season: recoSeason,
+      positionLabels,
+      dailyRevenue: drilldownInput.dailyRevenue,
+      personsByDate: recoPersons,
+    });
+  }, [planungOpen, drilldownInput, recoPersonsLoaded, recoPersons, positions,
+      staffingRequirements, recoSeason, selectedYear, selectedMonth]);
 
   // Die drei fachlich unterschiedlichen „Flex Ist"-Grössen aus denselben Bausteinen
   // (Single Source of Truth für die Abstimmung; nur ganzer Monat, s. Reconciliation-Block).
@@ -4371,6 +4465,19 @@ export default function PersonalFixPage() {
               </div>
             </div>
           )}
+
+          {/* ── Planungsempfehlungen: regelbasiert, read-only, lokale Simulation ── */}
+          <PlanungsempfehlungenSection
+            open={planungOpen}
+            onOpenChange={setPlanungOpen}
+            result={recoResult}
+            loading={planungOpen && recoResult === null}
+            season={recoSeason}
+            onSeasonChange={setRecoSeason}
+            hasRequirements={staffingRequirements.length > 0}
+            monthLabel={getMonthLabel(selectedYear, selectedMonth)}
+            onOpenSchedule={() => navigate('/personal')}
+          />
 
           <MoreKpis label="Alle Kennzahlen (Budget + Ist, 4 Ebenen)" storageKey="pfix-more-kpis">
         {/* ── KPI-Block (8 Karten: Budget + Ist für alle 4 Ebenen) ───────────── */}
