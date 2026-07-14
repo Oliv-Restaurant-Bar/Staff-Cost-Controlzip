@@ -60,7 +60,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { safeUpsertReportingMonth } from '../supabase-kv';
+import { safeUpsertReportingMonth, safeDeleteReportingMonth } from '../supabase-kv';
 
 const KEY = 'test_reporting_kv_guard';
 const rec = (marker: string) => ({ marker });
@@ -116,5 +116,43 @@ describe('safeUpsertReportingMonth — kein kompletter Blob-Replace', () => {
     expect(state.rows[KEY]).toEqual({ '2025-03': rec('2025-03') });
     // localStorage nicht mit unvollständigem Stand überschrieben
     expect(JSON.parse(localStorageStore[KEY]!)).toEqual({ '2025-03': rec('2025-03') });
+  });
+});
+
+describe('safeDeleteReportingMonth — Fehler nie still verschlucken', () => {
+  it('entfernt NUR den Ziel-Monat — andere Monate bleiben im KV erhalten', async () => {
+    state.rows[KEY] = {
+      '2025-03': rec('2025-03'),
+      '2026-01': rec('2026-01'),
+    };
+    localStorageStore[KEY] = JSON.stringify(state.rows[KEY]);
+
+    await safeDeleteReportingMonth('2025-03', KEY);
+
+    const blob = state.rows[KEY] as Record<string, unknown>;
+    expect(Object.keys(blob)).toEqual(['2026-01']);
+    expect(JSON.parse(localStorageStore[KEY]!)).toEqual({ '2026-01': rec('2026-01') });
+  });
+
+  it('Upsert-Fehler → wirft sichtbar, KV-Blob und localStorage bleiben unverändert', async () => {
+    state.rows[KEY] = {
+      '2025-03': rec('2025-03'),
+      '2026-01': rec('2026-01'),
+    };
+    localStorageStore[KEY] = JSON.stringify(state.rows[KEY]);
+    state.failWrite = true;
+
+    await expect(safeDeleteReportingMonth('2025-03', KEY)).rejects.toBeTruthy();
+
+    // Fehlgeschlagenes Löschen gilt NICHT still als Erfolg:
+    expect(state.rows[KEY]).toEqual({
+      '2025-03': rec('2025-03'),
+      '2026-01': rec('2026-01'),
+    });
+    // localStorage wird bei Fehler nicht angefasst
+    expect(JSON.parse(localStorageStore[KEY]!)).toEqual({
+      '2025-03': rec('2025-03'),
+      '2026-01': rec('2026-01'),
+    });
   });
 });

@@ -47,12 +47,96 @@ function loadAll(storeKey: string = STORAGE_KEY): Record<number, BudgetYear> {
   }
 }
 
-function saveAll(data: Record<number, BudgetYear>, storeKey: string = STORAGE_KEY): void {
+/**
+ * Serialisierte Backup-Queue: verhindert, dass zwei parallele KV-Backups
+ * denselben Blob mit read→merge→write gegenseitig überschreiben (Race).
+ */
+let kvBackupQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Sicheres KV-Backup für budget_v1 (read→merge→write statt Voll-Replace).
+ *
+ * PROBLEM (behoben): Der frühere naive `kvSet(storeKey, data)` ersetzte den
+ * GESAMTEN Supabase-Stand durch den localStorage-Stand. War localStorage stale
+ * (frischer Login, anderer Browser), verschwanden dort gespeicherte Budgetjahre.
+ *
+ * Merge-Regeln:
+ *  - Das explizit geänderte Jahr (`action.year`) gewinnt immer lokal
+ *    (bzw. wird bei `action.deleted` explizit entfernt — kein Union-Resurrect).
+ *  - Alle anderen Jahre: neueres `updatedAt` gewinnt; nur einseitig vorhandene
+ *    Jahre bleiben erhalten.
+ *  - Backup-Fehler sind sichtbar (Toast), localStorage bleibt Primärspeicher.
+ */
+async function backupBudgetsToKV(
+  data: Record<number, BudgetYear>,
+  storeKey: string,
+  action: { year: number; deleted?: boolean },
+): Promise<void> {
+  try {
+    const { kvGetStrict, kvSetStrict } = await import('./supabase-kv');
+    // kvGetStrict statt kvGet: Ein Lesefehler darf nicht wie «Remote ist leer»
+    // aussehen — sonst würde der Merge remote-only Jahre verlieren. Bei
+    // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt).
+    const remote = await kvGetStrict(storeKey);
+    const remoteMap: Record<string, BudgetYear> =
+      remote && typeof remote === 'object' && !Array.isArray(remote)
+        ? (remote as Record<string, BudgetYear>)
+        : {};
+    const localMap = data as unknown as Record<string, BudgetYear>;
+
+    const merged: Record<string, BudgetYear> = {};
+    const allYears = new Set([...Object.keys(remoteMap), ...Object.keys(localMap)]);
+    for (const y of allYears) {
+      const l = localMap[y];
+      const r = remoteMap[y];
+      if (Number(y) === action.year) {
+        if (action.deleted) continue;           // explizites Löschen — nicht wiederbeleben
+        if (l) { merged[y] = l; continue; }     // lokale Aktion gewinnt für das Zieljahr
+        if (r) { merged[y] = r; }
+        continue;
+      }
+      if (l && r) {
+        const lTime = Date.parse(l.updatedAt ?? '') || 0;
+        const rTime = Date.parse(r.updatedAt ?? '') || 0;
+        merged[y] = lTime >= rTime ? l : r;
+      } else {
+        merged[y] = (l ?? r)!;
+      }
+    }
+
+    await kvSetStrict(storeKey, merged);
+  } catch (err) {
+    console.error(`[BUDGET] KV-Backup fehlgeschlagen für ${storeKey}:`, err);
+    try {
+      const { toast } = await import('sonner');
+      toast.error(
+        'Budget: Backup nach Supabase fehlgeschlagen — lokal gespeichert. Bitte Verbindung prüfen.',
+        { duration: 10000, id: 'budget-kv-write-failed' },
+      );
+    } catch { /* Sonner nicht verfügbar */ }
+  }
+}
+
+function saveAll(
+  data: Record<number, BudgetYear>,
+  storeKey: string = STORAGE_KEY,
+  action?: { year: number; deleted?: boolean },
+): void {
   localStorage.setItem(storeKey, JSON.stringify(data));
-  // Asynchron zu Supabase synchronisieren (fire-and-forget)
-  import('./supabase-kv').then(({ kvSet }) => {
-    kvSet(storeKey, data).catch(() => { /* silently ignore */ });
-  });
+  if (!action) {
+    // Ohne Jahres-Kontext kein sicherer Merge möglich — bewusst NICHT naiv
+    // den ganzen Blob ersetzen. Alle internen Aufrufer übergeben `action`.
+    console.warn(`[BUDGET] saveAll ohne action — KV-Backup übersprungen (${storeKey})`);
+    return;
+  }
+  // Snapshot der Daten für die asynchrone Queue (data kann danach mutiert werden)
+  const snapshot = JSON.parse(JSON.stringify(data)) as Record<number, BudgetYear>;
+  kvBackupQueue = kvBackupQueue.then(() => backupBudgetsToKV(snapshot, storeKey, action));
+}
+
+/** Für Tests: wartet, bis alle ausstehenden KV-Backups abgeschlossen sind. */
+export function flushBudgetKVBackups(): Promise<void> {
+  return kvBackupQueue;
 }
 
 /** Erstellt ein leeres Budgetjahr mit den Standard-Positionen */
@@ -89,14 +173,14 @@ export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): Bu
       if (storeKey === STORAGE_KEY) {
         const seeded = createSeededBudget2026();
         all[2026] = seeded;
-        saveAll(all, storeKey);
+        saveAll(all, storeKey, { year: 2026 });
         return seeded;
       }
       // Auto-Seed für Beaulieu — Werte aus Budget_Beaulieu_2026.xlsx
       if (storeKey === 'beaulieu:budget_v1') {
         const seeded = createSeededBeaulieuBudget2026();
         all[2026] = seeded;
-        saveAll(all, storeKey);
+        saveAll(all, storeKey, { year: 2026 });
         return seeded;
       }
     }
@@ -112,7 +196,7 @@ export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYea
   const seeded = createSeededBudget2026();
   const all = loadAll(storeKey);
   all[2026] = seeded;
-  saveAll(all, storeKey);
+  saveAll(all, storeKey, { year: 2026 });
   return seeded;
 }
 
@@ -126,7 +210,7 @@ export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY)
     ...data,
     updatedAt: new Date().toISOString(),
   };
-  saveAll(all, storeKey);
+  saveAll(all, storeKey, { year: data.year });
 }
 
 /**
@@ -146,7 +230,7 @@ export function availableBudgetYears(storeKey: string = STORAGE_KEY): number[] {
 export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): void {
   const all = loadAll(storeKey);
   delete all[year];
-  saveAll(all, storeKey);
+  saveAll(all, storeKey, { year, deleted: true });
 }
 
 // ─── Jahr-Kopie ───────────────────────────────────────────────────────────────

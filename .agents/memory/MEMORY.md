@@ -7,6 +7,7 @@
 - [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees; FK on schedule_entries was dropped.
 - [Kawtar/Party employee migration](kawtar-party-migration.md) — Migrated to employees (IDs: kawtar, party); loadEmployees filters isActive !== false to hide archived aush_* ghosts.
 - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
+- [budget_v1 KV-Backup Merge](budget-kv-backup.md) — Budget-Blobs nur per Jahr-Merge mit Aktions-Kontext sichern; kvGetStrict für Merge-Basen (Lesefehler ≠ leer); keine Jahr-Tombstones (bekannte Grenze).
 - [KV merge-on-save tombstones](kv-merge-tombstones.md) — hard-deleted keys in union-merged blobs resurrect from the remote KV; every remove path needs a tombstone (deleted+updatedAt) + reader filters.
 - [Detail-page state reset on :id change](detail-page-state-reset.md) — `/:id` pages are reused across param changes; reset fetched-record state at top of load() AND in catch, or the previous record leaks (cross-guest PII).
 - [Admin gate excludes guests (read+write)](admin-write-gate-guest-session.md) — isAdmin = isAdminUser || isGuest; admin-only PII/write pages must gate isAdmin && !isGuest on BOTH route guard AND data-fetch effect.

@@ -1,0 +1,199 @@
+Ab sofort beginnt Phase "Stabilisierung & Produktreife".
+
+WICHTIG:
+
+In dieser Phase werden grundsätzlich keine neuen grossen Funktionen entwickelt.
+
+Priorität hat:
+
+1. Stabilität
+2. Datenintegrität
+3. Performance
+4. Benutzerfreundlichkeit
+5. Einheitliches Design
+
+==================================================
+T001 – Datenintegrität
+==================================================
+
+Prüfe systematisch alle Kernmodule auf mögliche Datenverluste oder Inkonsistenzen.
+
+Insbesondere:
+
+- Reporting
+- Erfolgsrechnung
+- Mehrjahresanalyse
+- Bankenbericht
+- Dienstplanung
+- Personal
+- Tagesabschlüsse
+- Umsatzabstimmung
+- Gäste
+- Reservationen
+- Produktanalyse
+- Warenkosten
+- Import-Cockpit
+
+Prüfen auf:
+
+- Überschreiben statt Merge
+- Race Conditions
+- veraltete States
+- doppelte Berechnungen
+- doppelte Datenquellen
+- fehlende Reloads
+- nicht bestätigte Speicherungen
+- fehlerhafte Synchronisation
+- unvollständige Drilldowns
+- Summenabweichungen
+- Rundungsfehler
+
+Keine Architekturänderungen.
+
+Nur bestehende Schwachstellen beseitigen.
+
+==================================================
+T002 – Einheitliche Berechnungen
+==================================================
+
+Kontrolliere sämtliche Kennzahlen.
+
+Es darf je Kennzahl nur EINE Berechnungsquelle geben.
+
+Beispiele:
+
+Umsatz
+
+Personal
+
+Warenaufwand
+
+Personalquote
+
+EBIT
+
+Überstunden
+
+Stunden
+
+Kosten
+
+Importstatus
+
+Jede Auswertung, jeder Export und jeder Drilldown muss dieselbe Quelle verwenden.
+
+==================================================
+T003 – Kompaktere Oberfläche
+==================================================
+
+Überprüfe jede Seite.
+
+Frage bei jeder Ansicht:
+
+Braucht der Benutzer diese Information sofort?
+
+Falls nein:
+
+- weiter nach unten
+- einklappbar
+- Detailansicht
+
+Die ersten 700–900 Pixel sollen nur die wichtigsten Informationen zeigen.
+
+==================================================
+T004 – Einheitliches Design
+==================================================
+
+Alle Seiten müssen dasselbe Erscheinungsbild haben.
+
+Kontrolliere:
+
+- Karten
+- Tabellen
+- Dialoge
+- Farben
+- Abstände
+- Schriftgrössen
+- KPI-Karten
+- Icons
+- Buttons
+- Filter
+- Toolbars
+
+Keine Sonderlösungen.
+
+==================================================
+T005 – Performance
+==================================================
+
+Prüfe:
+
+- unnötige Re-Renders
+- doppelte Berechnungen
+- unnötige Datenbankabfragen
+- doppelte useEffects
+- grosse Tabellen
+- langsame Dialoge
+- langsame Monatswechsel
+
+Optimieren ohne Fachlogik zu verändern.
+
+==================================================
+T006 – Benutzerführung
+==================================================
+
+Jede Seite soll folgende Fragen sofort beantworten:
+
+Wo bin ich?
+
+Was ist wichtig?
+
+Was muss ich tun?
+
+Wo bekomme ich Details?
+
+Reduziere unnötige Texte.
+
+==================================================
+T007 – Speicher- und Synchronisationssicherheit
+==================================================
+
+Alle Schreibvorgänge müssen:
+
+- bestätigt werden
+- Merge verwenden
+- Daten anderer Bereiche erhalten
+- Fehler sichtbar anzeigen
+- niemals still scheitern
+
+==================================================
+T008 – Regression
+==================================================
+
+Nach jeder Optimierung:
+
+- betroffene Tests
+- TypeScript-Typecheck
+- Architect-Review
+
+Keine neuen Funktionen entwickeln.
+
+Keine bestehenden Funktionen entfernen.
+
+Nur stabilisieren, vereinfachen und vereinheitlichen.
+
+==================================================
+Ziel
+==================================================
+
+Die Anwendung soll sich wie ein professionelles Controlling-System anfühlen:
+
+- schnell
+- stabil
+- kompakt
+- übersichtlich
+- konsistent
+- keine Datenverluste
+- keine unterschiedlichen Berechnungen
+- keine unnötigen Klicks
+- Management, Treuhänder, Banken und Investoren finden die wichtigsten Informationen innerhalb weniger Sekunden.

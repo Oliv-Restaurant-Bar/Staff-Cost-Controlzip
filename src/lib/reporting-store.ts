@@ -40,7 +40,7 @@ import {
   SageJournalEntry,
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet, safeUpsertReportingMonth, safeDeleteReportingMonth } from './supabase-kv';
+import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth } from './supabase-kv';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -197,8 +197,16 @@ export function deleteMonth(year: number, month: number, storeKey: string = STOR
   saveAll(all, storeKey);
   // Sicher aus Supabase entfernen: erst KV-Stand lesen, nur diesen Monat entfernen,
   // dann zurückschreiben — andere Monate bleiben erhalten
-  safeDeleteReportingMonth(id, storeKey).catch(err => {
+  safeDeleteReportingMonth(id, storeKey).catch(async err => {
     console.error('[REPORTING] deleteMonth: safeDeleteReportingMonth fehlgeschlagen', err);
+    try {
+      const { toast } = await import('sonner');
+      toast.error(
+        `Monat ${id} wurde lokal gelöscht, aber das Löschen im Supabase-Backup ist fehlgeschlagen. ` +
+        'Der Monat kann beim nächsten Sync wieder erscheinen — bitte Verbindung prüfen und erneut löschen.',
+        { duration: 10000, id: 'reporting-delete-failed' },
+      );
+    } catch { /* Sonner nicht verfügbar */ }
   });
 }
 
@@ -502,7 +510,17 @@ export function saveJournalEntries(
     final = [...loadJournalEntries(year, month), ...entries];
   }
   localStorage.setItem(key, JSON.stringify(final));
-  kvSet(key, final).catch(() => {});
+  // kvSetStrict statt kvSet: Backup-Fehler dürfen nie still verschluckt werden (T007).
+  kvSetStrict(key, final).catch(async err => {
+    console.error(`[Journal] KV-Backup fehlgeschlagen: ${key}`, err);
+    try {
+      const { toast } = await import('sonner');
+      toast.error(
+        'Buchungszeilen: Backup nach Supabase fehlgeschlagen — lokal gespeichert. Bitte Verbindung prüfen.',
+        { duration: 10000, id: 'journal-kv-failed' },
+      );
+    } catch { /* Sonner nicht verfügbar */ }
+  });
   console.log(`[Journal] Gespeichert: ${key} (${final.length} Einträge) → localStorage + Supabase`);
 }
 
@@ -536,7 +554,7 @@ export async function loadJournalEntriesFromDB(year: number, month: number): Pro
     const local = loadJournalEntries(year, month);
     if (local.length > 0) {
       console.log(`[Journal] Supabase leer – sync localStorage→Supabase: ${key} (${local.length} Einträge)`);
-      kvSet(key, local).catch(() => {});
+      kvSet(key, local).catch(err => console.error(`[Journal] Auto-Migration nach Supabase fehlgeschlagen: ${key}`, err));
     } else {
       console.log(`[Journal] Keine Daten: ${key}`);
     }

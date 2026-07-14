@@ -56,6 +56,24 @@ export async function kvGet(key: string): Promise<unknown | null> {
   }
 }
 
+/**
+ * Wie kvGet, wirft aber bei Nichtverfügbarkeit oder Lesefehler statt still
+ * null zu liefern. Für Merge-Schreibpfade, die den Remote-Stand als Basis
+ * brauchen: ein Lesefehler darf dort NIE wie «Remote ist leer» aussehen.
+ */
+export async function kvGetStrict(key: string): Promise<unknown | null> {
+  if (!(await isAvailable())) {
+    throw new Error('Supabase nicht verfügbar');
+  }
+  const { data, error } = await (supabase as any)
+    .from('app_settings')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.value ?? null;
+}
+
 export async function kvSet(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) return;
   try {
@@ -70,9 +88,10 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
 
 /**
  * Wie kvSet, wirft aber einen Fehler wenn Supabase nicht erreichbar ist
- * oder der Schreibvorgang fehlschlägt. Nur für kritische Umsatzdaten.
+ * oder der Schreibvorgang fehlschlägt. Für kritische Finanzdaten
+ * (Umsatz, Budget, Buchungszeilen), deren Backup-Fehler sichtbar sein müssen.
  */
-async function kvSetStrict(key: string, value: unknown): Promise<void> {
+export async function kvSetStrict(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) {
     throw new Error('Supabase nicht verfügbar');
   }
@@ -298,14 +317,19 @@ export async function safeDeleteReportingMonth(
         : {};
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { [monthId]: _removed, ...rest } = base;
-    await (supabase as any)
+    // WICHTIG: Supabase wirft bei Schreibfehlern NICHT — { error } explizit prüfen,
+    // sonst gilt ein fehlgeschlagenes Löschen still als Erfolg (T007).
+    const { error } = await (supabase as any)
       .from('app_settings')
       .upsert({ key: storeKey, value: rest }, { onConflict: 'key' });
+    if (error) throw error;
     localStorage.setItem(storeKey, JSON.stringify(rest));
     notifyKV(storeKey);
     console.log(`[REPORTING] safeDeleteReportingMonth: ${storeKey} / ${monthId} ✓`);
   } catch (err) {
     console.error(`[REPORTING] safeDeleteReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
+    // Fehler weiterreichen — der Aufrufer muss ihn sichtbar machen (nie still scheitern).
+    throw err;
   }
 }
 
