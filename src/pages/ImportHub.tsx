@@ -46,8 +46,10 @@ import {
   saveMonth,
   replaceAnnualCostYear,
   removeAnnualCostYear,
+  yearsWithData,
   STORAGE_KEY as REPORTING_STORAGE_KEY,
 } from '@/lib/reporting-store';
+import { HintBox } from '@/components/ui/hint-box';
 import {
   loadAnnualCostImports,
   upsertAnnualCostImport,
@@ -729,7 +731,7 @@ const AnnualCostImportSection = () => {
     setSaving(true);
     try {
       const year = result.detectedYear;
-      const { monthsWritten, monthsCleared } = replaceAnnualCostYear(
+      const { monthsWritten, monthsCleared, kvBackup } = replaceAnnualCostYear(
         year,
         preview.categoriesByMonth,
         { fileName },
@@ -755,6 +757,13 @@ const AnnualCostImportSection = () => {
         `Jahr ${year}: ${monthsWritten} Monate gespeichert` +
         (monthsCleared > 0 ? `, ${monthsCleared} Monate von alten Kontodaten bereinigt` : ''),
       );
+      const backup = await kvBackup;
+      if (backup.failedMonths.length > 0) {
+        toast.warning(
+          `Supabase-Backup unvollständig: ${backup.failedMonths.length} Monat(e) nicht hochgeladen ` +
+          `(lokal gespeichert). Import später erneut ausführen, um das Backup zu vervollständigen.`,
+        );
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Speichern fehlgeschlagen.');
     } finally {
@@ -770,6 +779,13 @@ const AnnualCostImportSection = () => {
       await markAnnualCostImportDeleted(registryKey, deleteYear);
       refreshEntries(registryKey);
       toast.success(`Jahr ${deleteYear}: Kontodaten aus ${res.monthsCleared} Monaten entfernt`);
+      const backup = await res.kvBackup;
+      if (backup.failedMonths.length > 0) {
+        toast.warning(
+          `Supabase-Backup unvollständig: ${backup.failedMonths.length} Monat(e) nicht aktualisiert ` +
+          `(lokal entfernt). Löschung später erneut ausführen, um das Backup zu vervollständigen.`,
+        );
+      }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Löschen fehlgeschlagen.');
     } finally {
@@ -910,6 +926,22 @@ const AnnualCostImportSection = () => {
             Monaten ersetzt (wiederholbarer Import, keine Duplikate). Gastronovi-Umsatz,
             Personalkosten-Direktwerte und manuelle Kategorien bleiben unberührt.
           </p>
+
+          {result.detectedYear !== null && (() => {
+            const otherYears = yearsWithData(reportingKey).filter(y => y !== result.detectedYear);
+            return (
+              <div data-testid="annual-import-year-scope-hint">
+                <HintBox tone="info" title={`Schreibschutz: Nur Jahr ${result.detectedYear} wird verändert`}>
+                  Es werden ausschliesslich Daten des Jahres {result.detectedYear} importiert.{' '}
+                  {otherYears.length > 0
+                    ? `Bereits vorhandene Daten der Jahre ${otherYears.join(', ')} bleiben unverändert.`
+                    : 'Bereits vorhandene Daten anderer Jahre bleiben unverändert.'}{' '}
+                  Eine automatische Integritätsprüfung bricht den Import ab, bevor etwas gespeichert
+                  wird, falls Daten anderer Jahre verändert würden.
+                </HintBox>
+              </div>
+            );
+          })()}
 
           <div className="flex gap-2">
             <Button

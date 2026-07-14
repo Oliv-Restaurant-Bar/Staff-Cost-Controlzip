@@ -216,6 +216,44 @@ export interface ReplaceAnnualCostResult {
   monthsWritten: number;
   /** Monate, in denen nur alte Kontodaten entfernt wurden */
   monthsCleared: number;
+  /**
+   * Supabase-Backup-Ergebnis (localStorage ist bereits geschrieben).
+   * failedMonths ≠ [] → Backup unvollständig, Aufrufer muss es sichtbar machen.
+   */
+  kvBackup: Promise<{ failedMonths: string[] }>;
+}
+
+/**
+ * Integritätsprüfung für Jahres-Schreiboperationen (Schreibschutz fremder Jahre).
+ *
+ * Vergleicht den Datenbestand VOR und NACH einer geplanten Jahres-Operation:
+ * Es dürfen ausschliesslich Monats-Records des Zieljahres angelegt, verändert
+ * oder entfernt werden. Jeder Record eines anderen Jahres muss bitgenau
+ * (JSON-identisch) erhalten bleiben — sonst wird mit einem Fehler abgebrochen,
+ * BEVOR irgendetwas gespeichert wird.
+ */
+export function assertYearScopedChanges(
+  before: Record<string, MonthlyFinancialRecord>,
+  after: Record<string, MonthlyFinancialRecord>,
+  targetYear: number,
+): void {
+  const prefix = `${targetYear}-`;
+  const ids = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const violations: string[] = [];
+  for (const id of ids) {
+    if (id.startsWith(prefix)) continue;
+    const b = before[id];
+    const a = after[id];
+    if (b === undefined && a !== undefined) violations.push(`${id} (würde neu angelegt)`);
+    else if (b !== undefined && a === undefined) violations.push(`${id} (würde gelöscht)`);
+    else if (JSON.stringify(b) !== JSON.stringify(a)) violations.push(`${id} (würde verändert)`);
+  }
+  if (violations.length > 0) {
+    throw new Error(
+      `Integritätsprüfung fehlgeschlagen: Die Jahres-Operation ${targetYear} würde Daten anderer Jahre verändern — ` +
+      `${violations.join(', ')}. Es wurde NICHTS gespeichert.`,
+    );
+  }
 }
 
 /**
@@ -239,7 +277,8 @@ export function replaceAnnualCostYear(
   opts: { fileName?: string; note?: string },
   storeKey: string = STORAGE_KEY,
 ): ReplaceAnnualCostResult {
-  const all = loadAll(storeKey);
+  const before = loadAll(storeKey);
+  const next: Record<string, MonthlyFinancialRecord> = { ...before };
   const now = new Date().toISOString();
   let monthsWritten = 0;
   let monthsCleared = 0;
@@ -247,7 +286,7 @@ export function replaceAnnualCostYear(
 
   for (let month = 1; month <= 12; month++) {
     const id = monthId(year, month);
-    const existing = all[id];
+    const existing = next[id];
     const newCats = categoriesByMonth.get(month) ?? [];
     const hadNumeric = (existing?.expenseCategories ?? []).some(c => NUMERIC_ACCOUNT_RE.test(c.categoryId));
 
@@ -267,7 +306,7 @@ export function replaceAnnualCostYear(
       affectedFields: ['expenseCategories'],
     };
 
-    all[id] = {
+    next[id] = {
       ...rec,
       expenseCategories: [...keptManual, ...newCats],
       imports: [...rec.imports, importRecord],
@@ -277,14 +316,41 @@ export function replaceAnnualCostYear(
     if (newCats.length > 0) monthsWritten++; else monthsCleared++;
   }
 
-  saveAll(all, storeKey);
-  for (const id of touchedIds) {
-    safeUpsertReportingMonth(id, all[id], storeKey).catch(err => {
-      console.error('[REPORTING] replaceAnnualCostYear: safeUpsertReportingMonth fehlgeschlagen', id, err);
-    });
-  }
+  // Integritätsprüfung VOR jedem Schreiben: ausschliesslich Monate des
+  // Zieljahres dürfen sich geändert haben — sonst Abbruch ohne zu speichern.
+  assertYearScopedChanges(before, next, year);
 
-  return { monthsWritten, monthsCleared };
+  saveAll(next, storeKey);
+  // Supabase-Backup SEQUENZIELL (read→merge→write pro Monat): parallele
+  // safeUpserts würden denselben Blob gleichzeitig lesen und sich gegenseitig
+  // überschreiben (last-writer-wins → Monatsverlust im KV-Backup).
+  const kvBackup = (async () => {
+    const failedMonths: string[] = [];
+    for (const id of touchedIds) {
+      try {
+        await safeUpsertReportingMonth(id, next[id], storeKey);
+      } catch (err) {
+        console.error('[REPORTING] replaceAnnualCostYear: safeUpsertReportingMonth fehlgeschlagen', id, err);
+        failedMonths.push(id);
+      }
+    }
+    // Fehlgeschlagene Monate lokal re-schreiben: nachfolgende erfolgreiche
+    // Upserts synchronisieren localStorage mit dem Remote-Stand (remote gewinnt
+    // pro Monat) und könnten den fehlgeschlagenen Monat lokal auf den alten
+    // Remote-Wert zurückdrehen — «lokal gespeichert» muss aber strikt gelten.
+    if (failedMonths.length > 0) {
+      try {
+        const current = loadAll(storeKey);
+        for (const id of failedMonths) current[id] = next[id];
+        localStorage.setItem(storeKey, JSON.stringify(current));
+      } catch (err) {
+        console.error('[REPORTING] replaceAnnualCostYear: lokales Re-Write fehlgeschlagen', err);
+      }
+    }
+    return { failedMonths };
+  })();
+
+  return { monthsWritten, monthsCleared, kvBackup };
 }
 
 /**
@@ -319,6 +385,21 @@ export function availableYears(storeKey: string = STORAGE_KEY): number[] {
   const current = new Date().getFullYear();
   years.add(current);
   return Array.from(years).sort((a, b) => b - a); // Neueste zuerst
+}
+
+/**
+ * Jahre, die tatsächlich Monats-Records enthalten (ohne das automatisch
+ * ergänzte laufende Jahr aus availableYears). Für Hinweise wie
+ * «Daten der Jahre X, Y bleiben unverändert» beim Jahresimport.
+ */
+export function yearsWithData(storeKey: string = STORAGE_KEY): number[] {
+  const all = loadAll(storeKey);
+  const years = new Set<number>();
+  Object.keys(all).forEach(id => {
+    const y = parseInt(id.split('-')[0]);
+    if (!isNaN(y)) years.add(y);
+  });
+  return Array.from(years).sort((a, b) => a - b);
 }
 
 /**

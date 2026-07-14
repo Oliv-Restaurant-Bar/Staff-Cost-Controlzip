@@ -59,9 +59,11 @@ import type { ParsedCSVRow, MatchedCSVRow } from '../csv-import-engine';
 import {
   replaceAnnualCostYear,
   removeAnnualCostYear,
+  assertYearScopedChanges,
   loadMonth,
   saveMonth,
 } from '../reporting-store';
+import type { MonthlyFinancialRecord } from '@/types/reporting';
 import type { ExpenseCategory } from '@/types/reporting';
 
 // ─── Helfer ───────────────────────────────────────────────────────────────────
@@ -450,5 +452,147 @@ describe('replaceAnnualCostYear', () => {
     // Manuelle Kategorie + Direktfelder überleben die Löschung
     expect(m3.expenseCategories.find(c => c.categoryId === 'miete')?.amount).toBe(9000);
     expect(m3.revenueActual).toBe(55000);
+  });
+});
+
+// ─── E. Jahresimport-Schreibschutz (T006/T007): fremde Jahre bitgenau erhalten ─
+
+describe('Jahresimport-Schreibschutz — fremde Jahre bleiben bitgenau erhalten', () => {
+  const cat = (id: string, label: string, amount: number): ExpenseCategory => ({
+    categoryId: id, label, amount,
+  });
+
+  /** Roh-Snapshot aller Monats-Records, die NICHT zum Jahr `excludeYear` gehören. */
+  function snapshotOtherYears(excludeYear: number): string {
+    const all = JSON.parse(localStorageStore[TEST_KEY] ?? '{}') as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const id of Object.keys(all).sort()) {
+      if (!id.startsWith(`${excludeYear}-`)) out[id] = all[id];
+    }
+    return JSON.stringify(out);
+  }
+
+  function seedYears() {
+    // 2025: Kontodaten + Umsatz + manuelle Kategorie; 2026: Kontodaten
+    saveMonth(
+      { year: 2025, month: 3, revenueActual: 55000, personnelCostActual: 21000,
+        expenseCategories: [cat('miete', 'Miete (manuell)', 9000)] },
+      'manual', 'update', {}, TEST_KEY,
+    );
+    replaceAnnualCostYear(2025, new Map([
+      [1, [cat('4000', 'W', 100)]],
+      [3, [cat('4000', 'W', 500), cat('5000', 'Löhne', 20000)]],
+    ]), {}, TEST_KEY);
+    replaceAnnualCostYear(2026, new Map([
+      [2, [cat('4000', 'W', 600)]],
+      [6, [cat('4020', 'Getränke', 250)]],
+    ]), {}, TEST_KEY);
+  }
+
+  it('Import 2024 → 2025 und 2026 bitgenau unverändert (inkl. Monats-Anzahl)', async () => {
+    seedYears();
+    const before = snapshotOtherYears(2024);
+    const countBefore = Object.keys(JSON.parse(localStorageStore[TEST_KEY]!)).length;
+
+    const res = replaceAnnualCostYear(2024, new Map([
+      [3, [cat('4000', 'W 2024', 450)]],
+      [11, [cat('4000', 'W 2024', 470)]],
+    ]), { fileName: 'kosten_2024.xlsx' }, TEST_KEY);
+
+    expect(snapshotOtherYears(2024)).toBe(before);
+    // Genau 2 neue Monate (2024-03, 2024-11) — keine fremden Records entfernt
+    expect(Object.keys(JSON.parse(localStorageStore[TEST_KEY]!)).length).toBe(countBefore + 2);
+    // KV-Backup vollständig (gemockt) — keine Fehlmonate
+    await expect(res.kvBackup).resolves.toEqual({ failedMonths: [] });
+  });
+
+  it('Import 2025 → 2024 und 2026 bitgenau unverändert', () => {
+    seedYears();
+    replaceAnnualCostYear(2024, new Map([[5, [cat('4000', 'W', 900)]]]), {}, TEST_KEY);
+    const before2024und2026 = snapshotOtherYears(2025);
+
+    replaceAnnualCostYear(2025, new Map([[7, [cat('4000', 'W neu', 777)]]]), {}, TEST_KEY);
+
+    expect(snapshotOtherYears(2025)).toBe(before2024und2026);
+  });
+
+  it('Import 2026 → 2024 und 2025 bitgenau unverändert', () => {
+    seedYears();
+    replaceAnnualCostYear(2024, new Map([[5, [cat('4000', 'W', 900)]]]), {}, TEST_KEY);
+    const before = snapshotOtherYears(2026);
+
+    replaceAnnualCostYear(2026, new Map([[9, [cat('4000', 'W neu', 888)]]]), {}, TEST_KEY);
+
+    expect(snapshotOtherYears(2026)).toBe(before);
+  });
+
+  it('Mehrfachimport 2024 → fremde Jahre weiterhin bitgenau, keine Dubletten', () => {
+    seedYears();
+    const byMonth = new Map<number, ExpenseCategory[]>([[3, [cat('4000', 'W', 450)]]]);
+    const before = snapshotOtherYears(2024);
+
+    replaceAnnualCostYear(2024, byMonth, {}, TEST_KEY);
+    replaceAnnualCostYear(2024, byMonth, {}, TEST_KEY);
+    replaceAnnualCostYear(2024, byMonth, {}, TEST_KEY);
+
+    expect(snapshotOtherYears(2024)).toBe(before);
+    const m3 = loadMonth(2024, 3, TEST_KEY);
+    expect(m3.expenseCategories.filter(c => c.categoryId === '4000')).toHaveLength(1);
+    expect(m3.expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(450);
+  });
+
+  it('Löschen 2024 → 2025 und 2026 bleiben vollständig und bitgenau erhalten', () => {
+    seedYears();
+    replaceAnnualCostYear(2024, new Map([
+      [3, [cat('4000', 'W', 450)]],
+      [11, [cat('4000', 'W', 470)]],
+    ]), {}, TEST_KEY);
+    const before = snapshotOtherYears(2024);
+
+    const res = removeAnnualCostYear(2024, {}, TEST_KEY);
+    expect(res.monthsCleared).toBe(2);
+
+    expect(snapshotOtherYears(2024)).toBe(before);
+    expect(loadMonth(2024, 3, TEST_KEY).expenseCategories.filter(c => /^\d{3,5}$/.test(c.categoryId))).toHaveLength(0);
+  });
+});
+
+// ─── F. Integritätsprüfung assertYearScopedChanges (T007) ────────────────────
+
+describe('assertYearScopedChanges — Abbruch bei Fremdjahr-Änderung', () => {
+  const rec = (year: number, month: number, amount: number): MonthlyFinancialRecord => ({
+    id: `${year}-${String(month).padStart(2, '0')}`,
+    year, month,
+    revenueActual: 0, revenueBudget: 0, revenuePreviousYear: 0,
+    personnelCostActual: 0, personnelCostPlanned: 0, personnelCostPreviousYear: 0,
+    expenseCategories: [{ categoryId: '4000', label: 'W', amount }],
+    expenseCategoriesPreviousYear: [],
+    imports: [],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  } as unknown as MonthlyFinancialRecord);
+
+  it('erlaubt Änderungen ausschliesslich im Zieljahr', () => {
+    const before = { '2025-03': rec(2025, 3, 100) };
+    const after  = { '2025-03': rec(2025, 3, 100), '2024-05': rec(2024, 5, 50) };
+    expect(() => assertYearScopedChanges(before, after, 2024)).not.toThrow();
+  });
+
+  it('wirft, wenn ein Fremdjahr-Record verändert würde', () => {
+    const before = { '2025-03': rec(2025, 3, 100) };
+    const after  = { '2025-03': rec(2025, 3, 999), '2024-05': rec(2024, 5, 50) };
+    expect(() => assertYearScopedChanges(before, after, 2024)).toThrow(/2025-03/);
+  });
+
+  it('wirft, wenn ein Fremdjahr-Record gelöscht würde', () => {
+    const before = { '2025-03': rec(2025, 3, 100), '2026-01': rec(2026, 1, 10) };
+    const after  = { '2025-03': rec(2025, 3, 100) };
+    expect(() => assertYearScopedChanges(before, after, 2024)).toThrow(/2026-01/);
+  });
+
+  it('wirft, wenn ein Fremdjahr-Record neu angelegt würde', () => {
+    const before = {} as Record<string, MonthlyFinancialRecord>;
+    const after  = { '2025-01': rec(2025, 1, 10) };
+    expect(() => assertYearScopedChanges(before, after, 2024)).toThrow(/2025-01/);
   });
 });

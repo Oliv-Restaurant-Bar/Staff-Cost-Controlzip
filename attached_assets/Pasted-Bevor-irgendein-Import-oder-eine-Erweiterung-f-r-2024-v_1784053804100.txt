@@ -1,0 +1,241 @@
+Bevor irgendein Import oder eine Erweiterung für 2024 vorgenommen wird, stelle sicher, dass sämtliche bereits vorhandenen Reporting-Daten für 2025 und 2026 vollständig geschützt sind.
+
+Dies ist eine fachlich kritische Anforderung.
+
+Es darf unter keinen Umständen passieren, dass durch den 2024-Import bestehende Daten von 2025 oder 2026 verändert, überschrieben oder gelöscht werden.
+
+==================================================
+T001 – Bestehende Daten vollständig absichern
+==================================================
+
+Prüfe zuerst die komplette Persistenz der Reporting-Daten.
+
+Untersuche:
+
+- reporting_v1
+- reporting-store
+- safeUpsertReportingMonth
+- safeDeleteReportingMonth
+- Reporting-Import
+- Jahres-Kosten-Import
+- P&L-Engine
+- Mehrjahresanalyse
+- Bankenbericht
+- Management Report
+- Import-Registry
+
+Identifiziere sämtliche Stellen, an denen Jahresdaten geschrieben werden.
+
+==================================================
+T002 – Schreibschutz für bestehende Jahre
+==================================================
+
+Der Import eines Jahres darf ausschliesslich Datensätze des Zieljahres verändern.
+
+Beispiele:
+
+Import 2024
+
+→ darf nur 2024 schreiben
+
+Import 2025
+
+→ darf nur 2025 schreiben
+
+Import 2026
+
+→ darf nur 2026 schreiben
+
+Kein Import darf:
+
+- andere Jahre löschen
+- andere Jahre überschreiben
+- andere Jahre zurücksetzen
+- Monate anderer Jahre verändern
+- Reporting-Blobs komplett ersetzen
+
+Nur gezielte Merge-Schreibpfade verwenden.
+
+==================================================
+T003 – Sichere Merge-Strategie
+==================================================
+
+Vor jedem Speichern:
+
+1.
+
+Bestehende Reporting-Daten laden.
+
+2.
+
+Nur Monate des Zieljahres aktualisieren.
+
+3.
+
+Alle übrigen Jahre unverändert übernehmen.
+
+4.
+
+Speichern.
+
+Verboten:
+
+replace()
+
+kompletter Blob-Write
+
+reset auf Jahresbasis
+
+Neuaufbau aller Jahre
+
+Jeder Schreibvorgang muss additiv erfolgen.
+
+==================================================
+T004 – Import-Garantie
+==================================================
+
+Ein Import 2024 muss garantieren:
+
+2025 bleibt bitgenau erhalten.
+
+2026 bleibt bitgenau erhalten.
+
+Importiert werden ausschliesslich:
+
+2024
+
+Falls der Import erneut durchgeführt wird:
+
+nur 2024 aktualisieren
+
+keine Dubletten
+
+keine Datenverluste
+
+idempotent
+
+==================================================
+T005 – Sicherheitsprüfung
+==================================================
+
+Vor jedem Schreiben prüfen:
+
+Existieren bereits Daten anderer Jahre?
+
+Wenn ja:
+
+nur Zieljahr ändern.
+
+Alle anderen Jahre unverändert übernehmen.
+
+==================================================
+T006 – Regressionstests
+==================================================
+
+Ergänze mindestens folgende Tests:
+
+Import 2024
+
+→ 2025 unverändert
+
+Import 2024
+
+→ 2026 unverändert
+
+Import 2025
+
+→ 2024 unverändert
+
+Import 2026
+
+→ 2024 unverändert
+
+Import 2026
+
+→ 2025 unverändert
+
+Mehrfachimport 2024
+
+→ keine Dubletten
+
+Löschen 2024
+
+→ 2025 bleibt vollständig
+
+Löschen 2024
+
+→ 2026 bleibt vollständig
+
+Alle Reporting-Monate bleiben erhalten.
+
+Alle KPIs bleiben identisch.
+
+Bankenbericht unverändert.
+
+Mehrjahresanalyse unverändert.
+
+==================================================
+T007 – Integritätsprüfung
+==================================================
+
+Nach jeder Speicherung automatisch prüfen:
+
+Anzahl Reporting-Monate vor dem Import
+
+Anzahl Reporting-Monate nach dem Import
+
+Es dürfen ausschliesslich Monate des Zieljahres verändert worden sein.
+
+Falls andere Jahre verändert würden:
+
+Import sofort abbrechen.
+
+Fehlermeldung anzeigen.
+
+Keine Daten speichern.
+
+==================================================
+T008 – Benutzerhinweis
+==================================================
+
+Vor einem Jahresimport anzeigen:
+
+"Es werden ausschliesslich Daten des Jahres 2024 importiert.
+
+Bereits vorhandene Daten der Jahre 2025 und 2026 bleiben unverändert."
+
+Nur falls dies tatsächlich technisch garantiert ist.
+
+==================================================
+T009 – Dokumentation
+==================================================
+
+replit.md ergänzen:
+
+- Jahresimporte arbeiten ausschliesslich auf dem Zieljahr.
+- Andere Jahre bleiben unverändert.
+- Reporting-Daten werden ausschliesslich per Merge aktualisiert.
+- Kein Jahresimport ersetzt den kompletten Datenbestand.
+
+Keine Testzahlen dokumentieren.
+
+==================================================
+T010 – Abschluss
+==================================================
+
+Am Ende ausgeben:
+
+1. Wie 2025 geschützt wird.
+2. Wie 2026 geschützt wird.
+3. Welche Merge-Strategie verwendet wird.
+4. Welche Sicherheitsprüfungen ergänzt wurden.
+5. Welche Regressionstests ergänzt wurden.
+6. Typecheck.
+7. Architect-Review.
+8. Tatsächlich geänderte Dateien.
+
+WICHTIG:
+
+Die Integrität der bereits vorhandenen Daten von 2025 und 2026 hat absolute Priorität.
+
+Kein Import von 2024 darf jemals bestehende Daten dieser Jahre verändern oder verlieren.

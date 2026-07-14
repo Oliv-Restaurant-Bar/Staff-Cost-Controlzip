@@ -248,20 +248,35 @@ export async function safeUpsertReportingMonth(
       remote && typeof remote === 'object' && !Array.isArray(remote)
         ? (remote as Record<string, unknown>)
         : {};
+    // 1b. Schutz: kvGet liefert bei Lese-Fehlern null (nicht unterscheidbar von
+    //     «noch kein Blob»). Damit ein fehlgeschlagener Remote-Read nie Monate
+    //     verwirft, werden lokale Monate als Basis-Union ergänzt (remote gewinnt
+    //     pro Monat — nur der Ziel-Monat wird ersetzt).
+    let localBase: Record<string, unknown> = {};
+    try {
+      const rawLocal = JSON.parse(localStorage.getItem(storeKey) || '{}');
+      if (rawLocal && typeof rawLocal === 'object' && !Array.isArray(rawLocal)) {
+        localBase = rawLocal as Record<string, unknown>;
+      }
+    } catch { /* localStorage unlesbar → nur remote als Basis */ }
     // 2. Nur den einen Monat aktualisieren — alle anderen Monate bleiben erhalten
-    const merged = { ...base, [monthId]: monthRecord };
-    // 3. Nach Supabase schreiben
-    await (supabase as any)
+    const merged = { ...localBase, ...base, [monthId]: monthRecord };
+    // 3. Nach Supabase schreiben — Fehler explizit prüfen (Supabase wirft nicht)
+    const { error } = await (supabase as any)
       .from('app_settings')
       .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
+    if (error) throw error;
     // 4. localStorage mit dem vollständigen Stand synchronisieren
     localStorage.setItem(storeKey, JSON.stringify(merged));
     notifyKV(storeKey);
     console.log(`[REPORTING] safeUpsertReportingMonth: ${storeKey} / ${monthId} ✓`);
   } catch (err) {
     console.error(`[REPORTING] safeUpsertReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
-    // Fallback: bestmöglicher direkter Schreibversuch
-    kvSet(storeKey, { [monthId]: monthRecord }).catch(() => {});
+    // KEIN Fallback-kvSet: Ein direkter Blob-Write mit nur EINEM Monat würde
+    // alle anderen Monate/Jahre in Supabase löschen (verbotener kompletter
+    // Blob-Replace). localStorage bleibt Primärspeicher — der Fehler wird
+    // weitergereicht, damit der Aufrufer ihn sichtbar machen kann.
+    throw err;
   }
 }
 
