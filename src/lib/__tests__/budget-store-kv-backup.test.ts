@@ -12,8 +12,8 @@
  *      remote existieren, bleiben erhalten (stale-localStorage-Szenario).
  *   2. deleteBudgetYear: schreibt einen Jahr-Tombstone (deleted+updatedAt) —
  *      ein stales Gerät kann das Jahr nicht wiederbeleben; Leser filtern.
- *   3. Auto-Seed 2026: überschreibt NIE remote bearbeitete echte Werte;
- *      bei Remote-Lesefehler wird kein Seed geschrieben; idempotent.
+ *   3. Auto-Seed 2026 (seit Runde 2.2 reiner View-Default): blosses Laden
+ *      schreibt NIE — weder localStorage noch KV; Remote bleibt unberührt.
  *   4. Offline vs. echter Fehler: offline → Info-Hinweis, Fehler → Fehler-Toast.
  *   5. copyBudgetYear erreicht das KV-Backup (action vorhanden).
  */
@@ -285,52 +285,45 @@ describe('Jahr-Tombstones (Befund 4) — Löschen überlebt stale Geräte', () =
   });
 });
 
-describe('Auto-Seed 2026 (Befund 3) — Seed überschreibt nie Remote-Daten', () => {
-  it('Seed verliert gegen remote bearbeitetes 2026 mit echten Werten; localStorage konvergiert', async () => {
+describe('Auto-Seed 2026 (Runde 2.2) — reiner View-Default, blosses Laden schreibt nie', () => {
+  it('lokal leer, remote leer: Seed nur in-memory (viewDefault), kein localStorage-/KV-Write', async () => {
+    const loaded = loadBudgetYear(2026, STORAGE_KEY);
+    await flushBudgetKVBackups();
+
+    expect((loaded as BudgetYear & { viewDefault?: boolean }).viewDefault).toBe(true);
+    expect(loaded.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0))).toBe(true);
+    expect(localStorageStore[STORAGE_KEY]).toBeUndefined();
+    expect(state.rows[STORAGE_KEY]).toBeUndefined();
+  });
+
+  it('remote bearbeitetes 2026 bleibt unberührt — der View-Seed löst keinen Merge/Write aus', async () => {
     // Remote hat ein BEARBEITETES 2026 (Marker 777); localStorage ist leer
     state.rows[STORAGE_KEY] = {
       2026: realYear(2026, '2026-05-01T00:00:00.000Z', 777),
     };
 
-    // Frisches Gerät: loadBudgetYear triggert den Auto-Seed
+    // Frisches Gerät: loadBudgetYear liefert nur den View-Default
     loadBudgetYear(2026, STORAGE_KEY);
     await flushBudgetKVBackups();
 
-    const remote = state.rows[STORAGE_KEY] as Record<string, BudgetYear>;
-    expect(remote['2026'].plLineItems?.[0].monthlyValues[0]).toBe(777); // remote gewinnt
-    // localStorage wurde auf den Remote-Stand nachgezogen
-    const local = JSON.parse(localStorageStore[STORAGE_KEY]) as Record<string, BudgetYear>;
-    expect(local['2026'].plLineItems?.[0].monthlyValues[0]).toBe(777);
-  });
-
-  it('Seed wird bei leerem Remote geschrieben und ist idempotent', async () => {
-    const first = loadBudgetYear(2026, STORAGE_KEY);
-    await flushBudgetKVBackups();
-
-    const remote = state.rows[STORAGE_KEY] as Record<string, BudgetYear>;
-    expect(remote['2026']).toBeDefined();
-    const remoteUpdatedAt = remote['2026'].updatedAt;
-
-    // Zweiter Load: Seed hat echte Werte → KEIN erneuter Seed/Write
-    const second = loadBudgetYear(2026, STORAGE_KEY);
-    await flushBudgetKVBackups();
-    expect(second.updatedAt).toBe(first.updatedAt);
-    expect((state.rows[STORAGE_KEY] as Record<string, BudgetYear>)['2026'].updatedAt)
-      .toBe(remoteUpdatedAt);
-  });
-
-  it('Remote-Lesefehler: der Seed wird NICHT nach Supabase geschrieben', async () => {
-    state.rows[STORAGE_KEY] = {
-      2026: realYear(2026, '2026-05-01T00:00:00.000Z', 777),
-    };
-    state.failRead = true;
-
-    loadBudgetYear(2026, STORAGE_KEY);
-    await flushBudgetKVBackups();
-
-    // Remote unverändert — der Seed hat die bearbeiteten Werte nicht überschrieben
     const remote = state.rows[STORAGE_KEY] as Record<string, BudgetYear>;
     expect(remote['2026'].plLineItems?.[0].monthlyValues[0]).toBe(777);
+    expect(remote['2026'].updatedAt).toBe('2026-05-01T00:00:00.000Z');
+    // Kein localStorage-Nachzug mehr nötig — es gab keinen persistierten Seed-Race
+    expect(localStorageStore[STORAGE_KEY]).toBeUndefined();
+  });
+
+  it('erst explizites Speichern macht aus dem View-Default ein echtes Budget (ohne viewDefault-Flag)', async () => {
+    const seed = loadBudgetYear(2026, STORAGE_KEY);
+    saveBudgetYear(seed, STORAGE_KEY); // echte Benutzeraktion
+    await flushBudgetKVBackups();
+
+    const local = JSON.parse(localStorageStore[STORAGE_KEY]) as Record<string, BudgetYear & { viewDefault?: boolean }>;
+    expect(local['2026']).toBeDefined();
+    expect(local['2026'].viewDefault).toBeUndefined();
+    const remote = state.rows[STORAGE_KEY] as Record<string, BudgetYear & { viewDefault?: boolean }>;
+    expect(remote['2026']).toBeDefined();
+    expect(remote['2026'].viewDefault).toBeUndefined();
   });
 });
 

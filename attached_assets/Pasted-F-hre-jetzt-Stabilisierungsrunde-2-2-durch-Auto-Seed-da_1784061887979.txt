@@ -1,0 +1,275 @@
+Führe jetzt Stabilisierungsrunde 2.2 durch:
+
+Auto-Seed darf beim Laden niemals persistiert werden.
+
+WICHTIG:
+
+C1 ist bereits behoben:
+Reine Ladevorgänge schreiben nicht mehr nach Supabase.
+
+Jetzt entferne die verbleibende Seed-Sonderlogik aus dem Persistenz- und Merge-Pfad, ohne das sichtbare Benutzerverhalten unnötig zu verändern.
+
+Keine weiteren Architekturumbauten.
+Keine Rundungsänderungen.
+Kein generischer safeBlobUpsert in diesem Task.
+Keine UI-Neugestaltung ausser den zwingend nötigen Hinweisen.
+
+==================================================
+T001 – Aktuellen Seed-Pfad vollständig prüfen
+==================================================
+
+Prüfe projektweit alle Stellen rund um:
+
+- loadBudgetYear
+- loadBudgetWithPL
+- 2026-Auto-Seed
+- seeded-Flag
+- seedOutrankedByRemote
+- hasRealBudgetValues
+- resetBudget2026ToSeed
+- saveBudgetYear
+- copyBudgetYear
+- Budget-Seite
+- Reporting/PL-Konsumenten
+- lokale und Remote-Budget-Merges
+
+Dokumentiere intern exakt:
+
+- wann aktuell ein Seed erzeugt wird
+- wann er in localStorage landet
+- wann er ins KV-Backup gelangt
+- welche Sonderregeln nur wegen des persistierten Seeds existieren
+
+==================================================
+T002 – Seed zu reinem UI-/View-Default machen
+==================================================
+
+Zielverhalten:
+
+Wenn für 2026 noch kein echtes Budget existiert, darf die Anwendung weiterhin sinnvolle Startwerte anzeigen.
+
+Aber:
+
+- dieser Seed ist zunächst nur ein nicht persistierter View-Default
+- beim blossen Laden entsteht kein Budget-Record
+- beim blossen Öffnen wird nichts in localStorage geschrieben
+- beim blossen Öffnen wird nichts nach Supabase geschrieben
+- kein updatedAt wird erzeugt
+- kein Importstatus darf fälschlich auf „vorhanden“ oder „erledigt“ wechseln
+- kein Tombstone darf überschrieben werden
+- kein Remote-Budget darf beeinflusst werden
+
+Der Seed soll erst dann ein echtes Budget werden, wenn der Benutzer eine echte Aktion ausführt, zum Beispiel:
+
+- einen Wert ändert
+- ausdrücklich speichert
+- bewusst auf Seed zurücksetzt
+- das Jahr kopiert
+- einen anderen bestehenden Mutationspfad auslöst
+
+==================================================
+T003 – Persistierung erst bei echter Nutzeraktion
+==================================================
+
+Bei der ersten echten Bearbeitung eines nur angezeigten Seeds:
+
+- daraus ein reguläres Budgetobjekt erzeugen
+- korrektes Jahr und Tenant verwenden
+- updatedAt erst jetzt setzen
+- über den bestehenden sicheren Save-Pfad persistieren
+- andere Jahre unverändert lassen
+- Tombstones respektieren
+- kein paralleler Sonder-Save nur für Seed
+
+Der explizite Benutzerbefehl „2026 auf Seed zurücksetzen“ bleibt erlaubt.
+
+Dieser Reset ist eine echte Mutation und darf speichern.
+
+Er muss klar vom automatischen View-Default getrennt bleiben.
+
+==================================================
+T004 – Seed-Sonderlogik abbauen
+==================================================
+
+Prüfe nach der Umstellung, welche Sonderlogik entfallen kann:
+
+- seeded-Flag in Merge-Actions
+- seedOutrankedByRemote
+- Schutzlogik nur für automatisch persistierte Seeds
+- localStorage-Nachzug nur wegen Seed-Races
+- Sonderfälle in Tests und Merges
+
+Entferne nur Code, der durch den neuen reinen View-Default objektiv überflüssig wird.
+
+Nicht blind löschen.
+
+Bestehende fachliche Regeln für:
+
+- User-Reset
+- Save
+- Copy
+- Delete
+- Tombstones
+- Tenant-Trennung
+
+müssen unverändert sicher bleiben.
+
+==================================================
+T005 – Importstatus und Leser korrekt halten
+==================================================
+
+Prüfe alle Leser:
+
+- Import-Checkliste
+- Import-Cockpit
+- Budget-Seite
+- Dashboard
+- Reporting
+- Mehrjahresanalyse
+- Bankenbericht
+- weitere Budget-Konsumenten
+
+Ein nur angezeigter Seed darf nicht als persistiertes Budgetjahr zählen.
+
+Regeln:
+
+- View-Default sichtbar
+- Datenbestand weiterhin „nicht gespeichert“
+- Importstatus erst nach echter Persistierung auf vorhanden/erledigt
+- Tombstone bleibt gelöscht, bis der Benutzer bewusst neu speichert
+- keine künstlichen Zeitstempel
+
+==================================================
+T006 – Echte App-Einstiegspfade testen
+==================================================
+
+Ergänze Regressionstests auf dem echten Einstiegspfad, nicht nur auf isolierten Store-Funktionen.
+
+Mindestens:
+
+1. Lokal leer, Remote leer:
+   - loadBudgetWithPL(2026) zeigt Seedwerte
+   - kein localStorage-Write
+   - kein Supabase-Write
+   - kein updatedAt
+   - Importstatus bleibt „nicht vorhanden“
+
+2. Lokal leer, Remote mit echtem 2026-Budget:
+   - Remote-Werte werden angezeigt
+   - kein Seed greift
+   - kein Re-Save
+   - Remote bleibt byte-identisch
+
+3. Lokal stale Seed/Altstand, Remote mit echtem Budget:
+   - Remote gewinnt nach bestehender Sync-Logik
+   - blosses Öffnen schreibt nichts zurück
+
+4. 2026-Tombstone vorhanden:
+   - automatischer View-Seed darf Tombstone nicht wiederbeleben
+   - erst bewusste Benutzeraktion darf ein neues Budget erzeugen
+
+5. Benutzer ändert einen Seedwert:
+   - erst dann wird ein echtes Budget erzeugt
+   - genau ein Save
+   - korrektes Tenant-Key
+   - andere Jahre unverändert
+
+6. Benutzer klickt explizit „Auf Seed zurücksetzen“:
+   - echte Mutation
+   - speichert korrekt
+   - Remote wird bewusst aktualisiert
+
+7. Oliv und Beaulieu:
+   - View-Seed getrennt
+   - erste Persistierung tenant-korrekt
+   - keine Cross-Tenant-Writes
+
+8. Mehrfaches Laden:
+   - keine Writes
+   - keine neuen Zeitstempel
+   - keine Dubletten
+
+==================================================
+T007 – Speicher- und UI-Verhalten
+==================================================
+
+Die UI soll klar unterscheiden:
+
+- „Vorschlag / Standardwerte, noch nicht gespeichert“
+- „Gespeichertes Budget“
+
+Nutze bestehende HintBox-/Status-Komponenten.
+
+Nur kompakt.
+
+Keine neue grosse UI-Fläche.
+
+Falls der Benutzer die Seite verlässt, ohne den View-Seed zu verändern:
+
+- keine Warnung nötig
+- nichts zu speichern
+- nichts geht verloren, weil es nur ein Default war
+
+Sobald der Benutzer Werte ändert:
+
+- normaler Dirty-State
+- normaler Speichern-Workflow
+- bestehende Sicherheitslogik verwenden
+
+==================================================
+T008 – Verifikation
+==================================================
+
+Führe aus:
+
+- neue fokussierte Seed-/Budget-Tests
+- bestehende Budget-KV- und Tombstone-Tests
+- App-Einstiegstests für loadBudgetWithPL
+- Tenant-Tests
+- projektspezifischen TypeScript-Typecheck
+- Architect-Review nur über den tatsächlichen Task-Diff
+
+Prüfe zusätzlich per projektweiter Suche:
+
+- ob automatische Seed-Saves vollständig verschwunden sind
+- ob kein Ladepfad Seed persistiert
+- ob kein Importstatus einen reinen View-Seed als Datenbestand zählt
+
+==================================================
+T009 – Dokumentation
+==================================================
+
+Aktualisiere replit.md kompakt:
+
+- Auto-Seed ist nur ein nicht persistierter View-Default
+- Persistierung erfolgt erst nach echter Benutzeraktion
+- reine Ladevorgänge schreiben nie
+- View-Seed zählt nicht als importiertes oder gespeichertes Budget
+- expliziter Reset auf Seed bleibt eine echte Mutation
+
+Keine Testzahlen.
+Kein Entwicklungsprotokoll.
+
+==================================================
+Abschlussbericht
+==================================================
+
+Am Ende ausgeben:
+
+1. Wo der Seed zuvor persistiert wurde.
+2. Welche Seed-Sonderlogik entfernt werden konnte.
+3. Wie der neue View-Default funktioniert.
+4. Wann erstmals persistiert wird.
+5. Wie Tombstones behandelt werden.
+6. Wie Import-Cockpit und Checkliste den Seed bewerten.
+7. Ergebnis der echten loadBudgetWithPL-Tests.
+8. Tenant-Test Oliv/Beaulieu.
+9. Typecheck.
+10. Architect-Review.
+11. Tatsächlich geänderte Dateien.
+
+WICHTIG:
+
+Das sichtbare Budget-Startverhalten darf benutzerfreundlich bleiben.
+
+Aber ein automatisch angezeigter Seed ist kein gespeicherter Finanzdatensatz und darf niemals ohne echte Benutzeraktion persistiert werden.

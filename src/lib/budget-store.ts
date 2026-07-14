@@ -48,7 +48,7 @@ export const STORAGE_KEY = 'budget_v1';
 type StoredBudgetYear = BudgetYear & { deleted?: boolean };
 
 /** Kontext jedes Speichervorgangs — Pflicht, damit der KV-Merge das Zieljahr kennt (Befund 1). */
-type BudgetSaveAction = { year: number; deleted?: boolean; seeded?: boolean };
+type BudgetSaveAction = { year: number; deleted?: boolean };
 
 /** Hat das Jahr echte (nicht-null) Budgetwerte in den P&L-Positionen? */
 function hasRealBudgetValues(b: StoredBudgetYear | undefined | null): boolean {
@@ -78,11 +78,9 @@ let kvBackupQueue: Promise<void> = Promise.resolve();
  *
  * Merge-Regeln:
  *  - Das explizit geänderte Jahr (`action.year`) gewinnt lokal — als Daten
- *    ODER als Tombstone (`deleted`, kein Union-Resurrect).
- *  - Ausnahme Auto-Seed (`action.seeded`): hat der Remote-Stand für das Jahr
- *    bereits ECHTE Werte, gewinnt remote — ein automatischer Seed darf nie
- *    remote bearbeitete Budgets überschreiben (Befund 3). localStorage wird
- *    dann auf den Remote-Stand nachgezogen.
+ *    ODER als Tombstone (`deleted`, kein Union-Resurrect). Jeder Save ist
+ *    eine echte Benutzeraktion: der 2026-Seed ist seit Stabilisierungsrunde
+ *    2.2 ein reiner View-Default und erreicht diesen Pfad nie automatisch.
  *  - Alle anderen Jahre: neueres `updatedAt` gewinnt (Tombstones inklusive);
  *    nur einseitig vorhandene Jahre bleiben erhalten.
  *  - Backup-Probleme sind sichtbar: offline/nicht konfiguriert → dezenter
@@ -110,8 +108,7 @@ async function backupBudgetsToKV(
       });
     // kvGetStrict statt kvGet: Ein Lesefehler darf nicht wie «Remote ist leer»
     // aussehen — sonst würde der Merge remote-only Jahre verlieren. Bei
-    // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt);
-    // insbesondere wird dann auch NIE ein Auto-Seed nach remote geschrieben.
+    // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt).
     const remote = await kvGetStrict(storeKey);
     const remoteMap: Record<string, StoredBudgetYear> =
       remote && typeof remote === 'object' && !Array.isArray(remote)
@@ -119,19 +116,12 @@ async function backupBudgetsToKV(
         : {};
     const localMap = data as unknown as Record<string, StoredBudgetYear>;
 
-    let seedOutrankedByRemote: StoredBudgetYear | null = null;
     const merged: Record<string, StoredBudgetYear> = {};
     const allYears = new Set([...Object.keys(remoteMap), ...Object.keys(localMap)]);
     for (const y of allYears) {
       const l = localMap[y];
       const r = remoteMap[y];
       if (Number(y) === action.year) {
-        if (action.seeded && hasRealBudgetValues(r)) {
-          // Auto-Seed verliert gegen remote bearbeitete echte Werte (Befund 3)
-          merged[y] = r;
-          seedOutrankedByRemote = r;
-          continue;
-        }
         if (l) { merged[y] = l; continue; }     // lokale Aktion gewinnt (Daten oder Tombstone)
         if (r && !action.deleted) { merged[y] = r; }
         continue;
@@ -146,18 +136,6 @@ async function backupBudgetsToKV(
     }
 
     await kvSetStrict(storeKey, merged);
-
-    if (seedOutrankedByRemote) {
-      // localStorage auf den gewonnenen Remote-Stand nachziehen, damit alle
-      // Geräte konvergieren (der lokale Seed war nur ein Platzhalter).
-      try {
-        const rawLocal = JSON.parse(localStorage.getItem(storeKey) || '{}') as Record<string, StoredBudgetYear>;
-        rawLocal[String(action.year)] = seedOutrankedByRemote;
-        localStorage.setItem(storeKey, JSON.stringify(rawLocal));
-        if (typeof window !== 'undefined') window.dispatchEvent(new Event('store-synced'));
-      } catch { /* localStorage nicht verfügbar */ }
-      console.log(`[BUDGET] Auto-Seed ${action.year}: Remote-Stand mit echten Werten gewinnt — Seed nicht hochgeladen (${storeKey})`);
-    }
   } catch (err) {
     console.error(`[BUDGET] KV-Backup fehlgeschlagen für ${storeKey}:`, err);
     if (notifyProblem) {
@@ -199,49 +177,41 @@ function createEmptyBudgetYear(year: number): BudgetYear {
 
 /**
  * Budgetjahr laden.
- * Für Jahr 2026: Wird beim ersten Aufruf automatisch mit den Excel-Daten befüllt,
- * sofern noch keine plLineItems vorhanden sind.
- * Für andere Jahre: Gibt ein leeres Budgetjahr zurück.
+ * Für Jahr 2026: Existiert noch kein echtes Budget (keine Werte ≠ 0), werden
+ * die Excel-Seed-Werte als reiner View-Default zurückgegeben — NICHT
+ * persistiert (`viewDefault: true`): beim blossen Laden entsteht weder ein
+ * localStorage-Record noch ein KV-Backup, kein updatedAt, kein Importstatus,
+ * kein Tombstone-Resurrect. Persistiert wird erst bei einer echten
+ * Benutzeraktion über die bestehenden Save-Pfade.
+ * Für andere Jahre: Gibt ein leeres Budgetjahr zurück (ebenfalls nicht persistiert).
  */
 export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
   const all = loadAll(storeKey);
   const entry = all[year];
   // Tombstones (gelöschte Jahre) für alle Leser wie «nicht vorhanden» behandeln
   const existing = entry && !entry.deleted ? entry : undefined;
-  if (year === 2026) {
-    // Nur seeden wenn noch keine echten Werte vorhanden (alle 0 oder keine Items)
-    const hasRealValues = hasRealBudgetValues(existing);
-    if (!hasRealValues) {
-      // Auto-Seed für Oliv (Standard-Key). `seeded: true` markiert den Save als
-      // automatischen Seed: der KV-Merge lässt dann remote bearbeitete echte
-      // Werte gewinnen (Befund 3) — der Seed überschreibt nie Remote-Daten.
-      if (storeKey === STORAGE_KEY) {
-        const seeded = createSeededBudget2026();
-        all[2026] = seeded;
-        saveAll(all, storeKey, { year: 2026, seeded: true });
-        return seeded;
-      }
-      // Auto-Seed für Beaulieu — Werte aus Budget_Beaulieu_2026.xlsx
-      if (storeKey === 'beaulieu:budget_v1') {
-        const seeded = createSeededBeaulieuBudget2026();
-        all[2026] = seeded;
-        saveAll(all, storeKey, { year: 2026, seeded: true });
-        return seeded;
-      }
+  if (year === 2026 && !hasRealBudgetValues(existing)) {
+    // View-Default für Oliv bzw. Beaulieu (Werte aus den Budget-2026-Excels)
+    if (storeKey === STORAGE_KEY) {
+      return { ...createSeededBudget2026(), viewDefault: true };
     }
-    return existing ?? createEmptyBudgetYear(year);
+    if (storeKey === 'beaulieu:budget_v1') {
+      return { ...createSeededBeaulieuBudget2026(), viewDefault: true };
+    }
   }
   return existing ?? createEmptyBudgetYear(year);
 }
 
 /**
  * Budget 2026 auf Excel-Seed zurücksetzen (alle bestehenden Daten werden überschrieben).
+ * Explizite Benutzeraktion — läuft über den normalen Save-Pfad (updatedAt wird
+ * gesetzt, ein allfälliger Tombstone bewusst ersetzt, KV-Backup läuft).
  */
 export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYear {
-  const seeded = createSeededBudget2026();
-  const all = loadAll(storeKey);
-  all[2026] = seeded;
-  saveAll(all, storeKey, { year: 2026 });
+  const seeded = storeKey === 'beaulieu:budget_v1'
+    ? createSeededBeaulieuBudget2026()
+    : createSeededBudget2026();
+  saveBudgetYear(seeded, storeKey);
   return seeded;
 }
 
@@ -257,6 +227,9 @@ export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY)
   };
   // Explizites Speichern ersetzt einen allfälligen Tombstone (Jahr-Neuanlage)
   delete rec.deleted;
+  // Erste echte Benutzeraktion auf einem View-Default (2026-Seed) macht daraus
+  // ein reguläres Budget — das transiente Flag wird nie mitpersistiert.
+  delete rec.viewDefault;
   all[data.year] = rec;
   saveAll(all, storeKey, { year: data.year });
 }
@@ -767,6 +740,10 @@ export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): 
  */
 function persistMigratedBudgetLocally(budget: BudgetYear, storeKey: string): void {
   try {
+    // View-Defaults (nicht persistierter 2026-Seed) NIE lokal ablegen — auch
+    // dann nicht, wenn ein wertloser Alt-Record (alles 0) im Storage liegt:
+    // der bliebe sonst still durch Seed-Werte ersetzt.
+    if (budget.viewDefault) return;
     const all = loadAll(storeKey);
     const existing = all[budget.year];
     if (!existing || existing.deleted) return;

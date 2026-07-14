@@ -189,6 +189,14 @@ export interface BudgetYear {
   plCategories?: BudgetPLCategory[];
   /** P&L Struktur: Einzelpositionen / Unterkonten */
   plLineItems?: BudgetPLLineItem[];
+
+  /**
+   * Transient: reiner View-Default (z. B. 2026-Seed), NIE persistiert.
+   * Wird nur in-memory von loadBudgetYear gesetzt, wenn kein echtes Budget
+   * existiert. Jeder echte Save-Pfad entfernt das Flag (saveBudgetYear);
+   * der lokale Migrations-Persist überspringt View-Defaults vollständig.
+   */
+  viewDefault?: boolean;
 }
 
 // ─── Berechnete Werte ─────────────────────────────────────────────────────────
