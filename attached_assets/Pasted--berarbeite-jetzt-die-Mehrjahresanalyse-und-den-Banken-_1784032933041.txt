@@ -1,0 +1,143 @@
+Überarbeite jetzt die Mehrjahresanalyse und den Banken-/Investorenbericht anhand folgender fachlicher Anforderungen.
+
+1.
+
+2024 muss vollständig integriert werden.
+
+Standardmässig werden angezeigt:
+
+2024
+2025
+2026
+
+nicht nur 2025 und 2026.
+
+Alle bestehenden Vergleichstabellen, KPIs und Diagramme müssen automatisch drei Jahre unterstützen.
+
+2.
+
+Die Mehrjahresanalyse verwendet ausschliesslich tatsächlich vorhandene Monatsdaten.
+
+Falls für 2026 bereits Umsätze importiert wurden, dürfen diese Monate niemals als „—" erscheinen.
+
+Untersuche die Datenquelle und die Vergleichslogik.
+
+Die Anzeige muss dieselben Monatswerte verwenden wie die Erfolgsrechnung.
+
+Keine zweite Berechnung.
+
+3.
+
+Die wichtigsten Auswertungen gehören an den Anfang.
+
+Reihenfolge:
+
+Jahresvergleich
+
+Umsatzentwicklung
+
+Personalkostenentwicklung
+
+Personalquote
+
+EBIT
+
+Monatsvergleich
+
+Executive Summary
+
+weitere KPIs
+
+Benchmarks
+
+Historie
+
+Waterfall
+
+Alle übrigen Informationen bleiben erhalten, werden aber weiter unten angezeigt.
+
+4.
+
+Ergänze oberhalb der Analyse einen Vergleichsmodus.
+
+Auswahl:
+
+○ Ganzes Jahr
+
+● Vergleich bis gleicher Monat
+
+Bei "Vergleich bis gleicher Monat" soll zusätzlich ein Monatsselector erscheinen.
+
+Beispiel:
+
+Vergleich bis:
+
+Juni ▼
+
+Dann werden automatisch verglichen:
+
+2024 Januar–Juni
+
+2025 Januar–Juni
+
+2026 Januar–Juni
+
+Diese Logik muss für sämtliche Kennzahlen gelten:
+
+Umsatz
+
+Personalaufwand
+
+Personalquote
+
+Warenaufwand
+
+Bruttogewinn
+
+EBITDA
+
+EBIT
+
+EBIT-Marge
+
+5.
+
+Die Mehrjahresanalyse soll standardmässig genau die Fragen beantworten, welche Banken und Investoren zuerst stellen:
+
+Wie entwickelt sich der Umsatz?
+
+Wie entwickeln sich die Personalkosten?
+
+Verbessert oder verschlechtert sich die Personalquote?
+
+Wie entwickelt sich das operative Ergebnis?
+
+Diese vier Blöcke gehören deshalb direkt unter die Jahresauswahl.
+
+6.
+
+Designvorgaben:
+
+schlicht
+
+modern
+
+keine grossen Textblöcke
+
+wichtige Kennzahlen oberhalb des Folds
+
+wenig Leerraum
+
+Desktop-first
+
+bestehendes Designsystem verwenden
+
+keine neue Berechnungslogik
+
+keine Schätzungen
+
+fehlend ≠ 0
+
+Bericht endet weiterhin bei EBIT.
+
+Aktualisiere danach replit.md mit dem tatsächlich umgesetzten Verhalten.

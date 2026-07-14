@@ -202,6 +202,72 @@ describe('buildYearKpiComparison — fehlende Werte', () => {
   });
 });
 
+// ─── Vergleichsmodi (Runde 6): fullYear + throughMonth ───────────────────────
+
+describe('buildYearKpiComparison — Modus fullYear', () => {
+  it('volle Jahre: identische Summen wie commonMonth, aber ohne Common-Month-Label', () => {
+    const cmp = buildYearKpiComparison([S2024, S2025], [2024, 2025], { mode: 'fullYear' });
+    expect(cmp.mode).toBe('fullYear');
+    expect(row(cmp, 'net_revenue').valueByYear).toEqual([1_200_000, 1_320_000]);
+    expect(cmp.commonMonthsLabel).toBeNull();
+    expect(cmp.partialNote).toBeNull();
+    expect(cmp.isFullYears).toBe(true);
+  });
+
+  it('Teiljahr: je Jahr die EIGENEN Datenmonate — nie Schnittmenge, nie Hochrechnung', () => {
+    const cmp = buildYearKpiComparison([S2024, S2025, S2026H1], [2024, 2025, 2026], { mode: 'fullYear' });
+    const r = row(cmp, 'net_revenue');
+    // Volle Jahre bleiben 12 Monate, 2026 nur die eigenen 6 Monate:
+    expect(r.valueByYear).toEqual([1_200_000, 1_320_000, 720_000]);
+    expect(cmp.partialYears).toEqual([2026]);
+    expect(cmp.partialNote).toContain('keine Hochrechnung');
+    expect(cmp.dataQuality.some((d) =>
+      d.severity === 'warnung' && d.text.includes('Ganzjahresmodus') && d.text.includes('2026'),
+    )).toBe(true);
+    // Selector-Basis bleibt die Schnittmenge (für den Wechsel zurück):
+    expect(cmp.availableCommonMonths).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('Quote im fullYear-Modus = Quotient der jahres-eigenen Summen', () => {
+    const cmp = buildYearKpiComparison([S2024, S2026H1], [2024, 2026], { mode: 'fullYear' });
+    const r = row(cmp, 'personnel_quote');
+    // 2026: 6×40k / 6×120k = 33.33 % — Teiljahr, aber konsistente Quote
+    expect(r.valueByYear[1]).toBeCloseTo((240_000 / 720_000) * 100, 6);
+  });
+});
+
+describe('buildYearKpiComparison — throughMonth (Monats-Selector)', () => {
+  it('begrenzt die Vergleichsbasis auf Monate ≤ gewähltem Monat (1-basiert)', () => {
+    const cmp = buildYearKpiComparison([S2024, S2025, S2026H1], [2024, 2025, 2026], {
+      mode: 'commonMonth', throughMonth: 3,
+    });
+    expect(cmp.commonMonths).toEqual([0, 1, 2]);
+    expect(cmp.commonMonthsLabel).toBe('Januar–März');
+    expect(row(cmp, 'net_revenue').valueByYear).toEqual([300_000, 330_000, 360_000]);
+    // Selector-Basis bleibt UNGEFILTERT (sonst verschwinden Auswahloptionen):
+    expect(cmp.availableCommonMonths).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('throughMonth über der Schnittmenge wirkt wie ohne Begrenzung', () => {
+    const cmp = buildYearKpiComparison([S2024, S2026H1], [2024, 2026], { throughMonth: 11 });
+    expect(cmp.commonMonths).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('keine gemeinsamen Monate bis zum gewählten Monat ⇒ Fehler, keine Werte', () => {
+    // 2025 hat nur Jul–Dez ⇒ Schnittmenge mit 2024 (Jan–Dez) = Jul–Dez; tm=3 leert sie.
+    const h2: YearSeries = mkSeries(2025, 12, 110_000, 37_800);
+    h2.values = h2.values.map((v, m) => (m >= 6 ? v : null));
+    h2.byPosition = Object.fromEntries(
+      Object.entries(h2.byPosition!).map(([k, arr]) => [k, arr!.map((v, m) => (m >= 6 ? v : null))]),
+    );
+    const cmp = buildYearKpiComparison([S2024, h2], [2024, 2025], { throughMonth: 3 });
+    expect(cmp.hasAnyData).toBe(false);
+    expect(cmp.rows).toHaveLength(0);
+    expect(cmp.availableCommonMonths).toEqual([6, 7, 8, 9, 10, 11]);
+    expect(cmp.dataQuality.some((d) => d.severity === 'fehler' && d.text.includes('gewählten Monat'))).toBe(true);
+  });
+});
+
 // ─── Personalkosten-Aussagen (§7) ─────────────────────────────────────────────
 
 describe('buildPersonnelInsights', () => {

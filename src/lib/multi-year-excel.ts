@@ -152,8 +152,8 @@ export function buildMultiYearExcelData(
 
     cmpRows.push([]);
     cmpRows.push([t('Hinweise', true)]);
-    if (cmp.partialYears.length > 0) {
-      cmpRows.push([t(`• * Teiljahr — alle Werte über die gemeinsamen Monate (${cmp.commonMonthsLabel ?? '—'}), keine Hochrechnung.`)]);
+    if (cmp.partialNote) {
+      cmpRows.push([t(`• ${cmp.partialNote}`)]);
     }
     cmpRows.push([t(`• ${EBIT_REPORT_NOTE}`)]);
     for (const d of cmp.dataQuality) {

@@ -57,7 +57,8 @@ import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
 import { computePriorYearDiagnostics } from '@/lib/pl-prior-year-diagnostics';
-import { computeMonthlyIstNet, computeMonthlyIstGross, computeMonthlyVjNet } from '@/lib/revenue-sync';
+import { computeMonthlyVjNet } from '@/lib/revenue-sync';
+import { applyEffectiveMonthRules, applyEffectiveYearRules } from '@/lib/effective-records';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -2416,6 +2417,25 @@ const PLViewPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, year]);
 
+  // Take-Away-Werte ALLER Jahre (nur Mehrjahres-/Bank-Modi): damit die
+  // Mehrjahresserien exakt dieselben Monatswerte verwenden wie die ER
+  // (Keys "YYYY-MM" sind jahrespräfixiert → gefahrlos mergebar).
+  const [takeawayAllYears, setTakeawayAllYears] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor') return;
+    let cancelled = false;
+    const yrs = availableYears(tenantKey(REPORTING_STORAGE_KEY));
+    Promise.all(yrs.map(y => kvGet(tenantKey(`takeaway-monthly-${y}`)).catch(() => null)))
+      .then(list => {
+        if (cancelled) return;
+        const merged: Record<string, number> = {};
+        for (const v of list) Object.assign(merged, (v as Record<string, number> | null) ?? {});
+        setTakeawayAllYears(merged);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, tenantId, refreshKey]);
+
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
   // Gibt 0 zurück wenn "Ausblenden" (maisonColPref=false) → Marketing-Zeile verschwindet
   const maisonMonthNet = useMemo(() => {
@@ -2480,48 +2500,6 @@ const PLViewPage = () => {
     [tenantId, tenantKey, refreshKey],
   );
 
-  // ── Mehrjahresanalyse: Roh-Serien je Jahr (loadYear → computePLForMonth) ────
-  // BEWUSST dieselbe SSOT wie die Erfolgsrechnung, OHNE Maison-/Exclude-Effekte
-  // (Roh-Reporting-Daten aller Jahre; Einschränkungen erklärt die Sektion selbst).
-  const multiYearSeries = useMemo<YearSeries[] | null>(() => {
-    if (mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor') return null;
-    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
-    // Banken-/Investorensicht braucht ALLE P&L-Zwischentotale — Vereinigungsmenge
-    // (dieselben computePLForMonth-Rows, nur mehr IDs; keine Zweitberechnung).
-    const positionIds = Array.from(new Set([
-      ...MULTI_YEAR_POSITIONS.map(p => p.id),
-      ...BANK_ROW_IDS,
-      // Personal-Komponenten für den Jahresvergleichs-Drilldown (§8):
-      // Löhne + Sozialleistungen + übriger Personalaufwand = Total Personal.
-      'personnel_wages', 'personnel_social', 'personnel_other',
-    ]));
-    return availableYears(storeKey).map(y => {
-      const recs = loadYear(y, storeKey);
-      const values: (number | null)[] = [];
-      const byPosition: Record<string, (number | null)[]> =
-        Object.fromEntries(positionIds.map(id => [id, [] as (number | null)[]]));
-      const personnelPct: (number | null)[] = [];
-      const wesPct: (number | null)[] = [];
-      for (let m = 0; m < 12; m++) {
-        const res = computePLForMonth(recs[m]);
-        if (!res.hasData) {
-          values.push(null); personnelPct.push(null); wesPct.push(null);
-          for (const id of positionIds) byPosition[id].push(null);
-          continue;
-        }
-        const rowVal = (id: string) => res.rows.find(r => r.def.id === id)?.values.actual ?? null;
-        const rev = rowVal('net_revenue');
-        const pers = rowVal('total_personnel');
-        const cogs = rowVal('total_cogs');
-        values.push(rev);
-        for (const id of positionIds) byPosition[id].push(rowVal(id));
-        personnelPct.push(rev != null && rev !== 0 && pers != null ? (pers / rev) * 100 : null);
-        wesPct.push(rev != null && rev !== 0 && cogs != null ? (cogs / rev) * 100 : null);
-      }
-      return { year: y, values, byPosition, personnelPct, wesPct };
-    });
-  }, [mode, refreshKey, tenantId, tenantKey]);
-
   // Banken-/Investorensicht: Import-Registry read-only laden (Importstand +
   // nicht gemappte Konten als Datenqualitätshinweis — KEIN Schreibpfad).
   useEffect(() => {
@@ -2570,6 +2548,56 @@ const PLViewPage = () => {
     catch { return {}; }
   }, [refreshKey, tenantId]);
 
+  // ── Mehrjahresanalyse: Serien je Jahr (effektive Records → computePLForMonth)
+  // Datenbasis IDENTISCH zur Erfolgsrechnung: dieselbe SSoT-Lib (effective-records)
+  // wendet IST-Umsatz-Sync (Tagesansicht) + Personalkosten-Buchhaltungsvorrang an —
+  // importierte Monate erscheinen nie als "—", nur weil reporting_v1 leer ist.
+  // (VJ-Umsatz-Regel betrifft nur die VJ-Spalte der Monatssicht — hier irrelevant.)
+  const multiYearSeries = useMemo<YearSeries[] | null>(() => {
+    if (mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor') return null;
+    const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+    // Banken-/Investorensicht braucht ALLE P&L-Zwischentotale — Vereinigungsmenge
+    // (dieselben computePLForMonth-Rows, nur mehr IDs; keine Zweitberechnung).
+    const positionIds = Array.from(new Set([
+      ...MULTI_YEAR_POSITIONS.map(p => p.id),
+      ...BANK_ROW_IDS,
+      // Personal-Komponenten für den Jahresvergleichs-Drilldown (§8):
+      // Löhne + Sozialleistungen + übriger Personalaufwand = Total Personal.
+      'personnel_wages', 'personnel_social', 'personnel_other',
+    ]));
+    return availableYears(storeKey).map(y => {
+      const recs = applyEffectiveYearRules(loadYear(y, storeKey), {
+        year: y,
+        dailyBudgets: dailyBudgetsData,
+        maisonDaily: maisonEnabled ? maisonDaily : undefined,
+        takeawayMonthly: takeawayAllYears,
+        net: showNetRevenue,
+      });
+      const values: (number | null)[] = [];
+      const byPosition: Record<string, (number | null)[]> =
+        Object.fromEntries(positionIds.map(id => [id, [] as (number | null)[]]));
+      const personnelPct: (number | null)[] = [];
+      const wesPct: (number | null)[] = [];
+      for (let m = 0; m < 12; m++) {
+        const res = computePLForMonth(recs[m]);
+        if (!res.hasData) {
+          values.push(null); personnelPct.push(null); wesPct.push(null);
+          for (const id of positionIds) byPosition[id].push(null);
+          continue;
+        }
+        const rowVal = (id: string) => res.rows.find(r => r.def.id === id)?.values.actual ?? null;
+        const rev = rowVal('net_revenue');
+        const pers = rowVal('total_personnel');
+        const cogs = rowVal('total_cogs');
+        values.push(rev);
+        for (const id of positionIds) byPosition[id].push(rowVal(id));
+        personnelPct.push(rev != null && rev !== 0 && pers != null ? (pers / rev) * 100 : null);
+        wesPct.push(rev != null && rev !== 0 && cogs != null ? (cogs / rev) * 100 : null);
+      }
+      return { year: y, values, byPosition, personnelPct, wesPct };
+    });
+  }, [mode, refreshKey, tenantId, tenantKey, dailyBudgetsData, maisonEnabled, maisonDaily, takeawayAllYears, showNetRevenue]);
+
   // Budget P&L laden (vor den Overrides benötigt)
   const budgetData = useMemo(() => loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)), [year, refreshKey, tenantId]);
 
@@ -2582,48 +2610,16 @@ const PLViewPage = () => {
   const effectiveAllRecords = useMemo(() => {
     return records.map((rec, idx) => {
       const m = idx + 1;
-      let r = rec;
-
-      // ── IST-Umsatz ────────────────────────────────────────────────────────
-      const hasIndivRev = r.expenseCategories.some(c => {
-        const n = parseInt(c.categoryId);
-        return !isNaN(n) && n >= 3000 && n <= 3999;
+      // ── IST-Umsatz + Personalkosten-Buchhaltungsvorrang (SSoT-Lib) ────────
+      // "Anzeigen" (showMarketingCol) = immer inkl. Umsatz; ignoriert maisonExclude
+      // Maison wird immer eingerechnet wenn aktiviert — unabhängig von der Spalten-Anzeige
+      let r = applyEffectiveMonthRules(rec, m, {
+        year,
+        dailyBudgets: dailyBudgetsData,
+        maisonDaily: maisonEnabled ? maisonDaily : undefined,
+        takeawayMonthly: takeawayMonthlyMap,
+        net: showNetRevenue,
       });
-      if (!hasIndivRev) {
-        const mm = String(m).padStart(2, '0');
-        // "Anzeigen" (showMarketingCol) = immer inkl. Umsatz; ignoriert maisonExclude
-        // Maison wird immer eingerechnet wenn aktiviert — unabhängig von der Spalten-Anzeige
-        const maisonArg = maisonEnabled ? maisonDaily : undefined;
-        const taMonthly = takeawayMonthlyMap[`${year}-${mm}`] ?? 0;
-        const tagesansichtRev = showNetRevenue
-          ? computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined)
-          : computeMonthlyIstGross(year, m, dailyBudgetsData, undefined, maisonArg);
-        if (tagesansichtRev > 0) {
-          if (r.revenueActual && Math.abs(r.revenueActual - tagesansichtRev) > 1) {
-            console.warn(
-              `[REVENUE-SYNC] ${year}-${String(m).padStart(2,'0')}: ` +
-              `reporting_v1=${r.revenueActual.toFixed(0)} vs tagesansicht_${showNetRevenue ? 'net' : 'gross'}=${tagesansichtRev.toFixed(0)} ` +
-              `(diff=${(tagesansichtRev - r.revenueActual).toFixed(0)}) → verwende Tagesansicht`,
-            );
-          }
-          // Kto. 3000/3010 aufteilen: Netto = direkt; Brutto = Netto × 1.026
-          if (taMonthly > 0) {
-            const kto3010 = showNetRevenue ? taMonthly : Math.round(taMonthly * 1.026 * 100) / 100;
-            const kto3000 = tagesansichtRev - kto3010;
-            r = {
-              ...r,
-              revenueActual: tagesansichtRev,
-              expenseCategories: [
-                ...r.expenseCategories,
-                { categoryId: '3000', amount: kto3000, label: showNetRevenue ? 'Betriebsertrag Netto' : 'Betriebsertrag Brutto' },
-                { categoryId: '3010', amount: kto3010, label: 'Take-Away Umsatz' },
-              ],
-            };
-          } else {
-            r = { ...r, revenueActual: tagesansichtRev };
-          }
-        }
-      }
 
       // ── VJ-Umsatz ─────────────────────────────────────────────────────────
       const hasIndivPYRev = (r.expenseCategoriesPreviousYear ?? []).some(c => {
@@ -2638,20 +2634,6 @@ const PLViewPage = () => {
           const prevActual = prevYearRecords[idx]?.revenueActual;
           if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
         }
-      }
-
-      // ── Personalkosten: Buchhaltung hat Vorrang vor Dienstplan ────────────
-      // Wenn 5xxx-Lohnkonten (5000–5009) in expenseCategories vorhanden sind,
-      // personnelCostActual entfernen → PLEngine nutzt direkt die Buchhaltungs-
-      // konten (identisch mit Reporting / plResultsClean). Additiv-Konten wie
-      // 5004/5005 werden dann normal summiert, nicht als Override behandelt.
-      // Ohne Buchhaltungsdaten bleibt personnelCostActual als Fallback erhalten.
-      const hasAccountingWages = r.expenseCategories.some(c => {
-        const n = parseInt(c.categoryId);
-        return !isNaN(n) && n >= 5000 && n <= 5009;
-      });
-      if (hasAccountingWages && r.personnelCostActual !== undefined) {
-        r = { ...r, personnelCostActual: undefined };
       }
 
       return r;

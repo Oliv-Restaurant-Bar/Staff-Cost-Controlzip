@@ -353,6 +353,25 @@ export function nonEmptyYears(series: YearSeries[]): YearSeries[] {
     .sort((a, b) => a.year - b.year);
 }
 
+/**
+ * Jahre mit IRGENDWELCHEN Daten (Umsatz ODER byPosition-Zeilen), aufsteigend.
+ * Für die Jahresauswahl-Basis: ein reines Kosten-Jahr (Jahres-Kontoblatt ohne
+ * Umsatzdaten) muss wählbar bleiben — nonEmptyYears würde es verschlucken.
+ */
+export function yearsWithAnyData(series: YearSeries[]): number[] {
+  const seen = new Set<number>();
+  const years: number[] = [];
+  for (const s of series) {
+    if (seen.has(s.year)) continue;
+    seen.add(s.year);
+    const hasAny =
+      s.values.some((v) => v != null) ||
+      Object.values(s.byPosition ?? {}).some((row) => (row ?? []).some((v) => v != null));
+    if (hasAny) years.push(s.year);
+  }
+  return years.sort((a, b) => a - b);
+}
+
 /** Wählt die letzten `count` Jahre mit Daten (aufsteigend zurückgegeben). */
 export function selectLastYears(series: YearSeries[], count: number): YearSeries[] {
   const clean = nonEmptyYears(series);
@@ -854,17 +873,42 @@ export interface YearComparisonRow {
   firstToLast: YearComparisonDelta | null;
 }
 
+/** Vergleichsmodus: Schnittmenge («bis gleicher Monat») oder Ganzjahressummen. */
+export type YearComparisonMode = 'commonMonth' | 'fullYear';
+
+export interface YearKpiComparisonOptions {
+  /** Default 'commonMonth' (bisheriges Verhalten: Schnittmenge aller Jahre) */
+  mode?: YearComparisonMode;
+  /**
+   * Nur mode='commonMonth': Vergleich zusätzlich auf Monate ≤ throughMonth
+   * (1–12) begrenzen. undefined/null = automatisch (alle gemeinsamen Monate).
+   */
+  throughMonth?: number | null;
+}
+
 export interface YearKpiComparison {
+  /** Verwendeter Vergleichsmodus */
+  mode: YearComparisonMode;
   /** Ausgewählte Jahre mit Daten, aufsteigend */
   years: number[];
-  /** Gemeinsame Datenmonats-Indizes ALLER Jahre (Basis sämtlicher Werte) */
+  /**
+   * Datenmonats-Indizes der Vergleichsbasis: commonMonth = gemeinsame Monate
+   * (ggf. auf throughMonth begrenzt); fullYear = Vereinigung der Datenmonate.
+   */
   commonMonths: number[];
+  /** Gemeinsame Monate OHNE throughMonth-Begrenzung (Basis des Monats-Selectors) */
+  availableCommonMonths: number[];
   /** "Januar–Juni" bzw. null bei vollem Jahr / keiner Schnittmenge */
   commonMonthsLabel: string | null;
   /** true = alle Jahre haben 12 Datenmonate (echte Ganzjahressummen) */
   isFullYears: boolean;
   /** Jahre mit weniger als 12 Datenmonaten (sichtbare Teiljahr-Kennzeichnung) */
   partialYears: number[];
+  /**
+   * Zentrale Fussnote zur Teiljahr-Kennzeichnung («* Teiljahr — …»), identisch
+   * in UI, Excel und PDF; null wenn keine Teiljahre vorhanden sind.
+   */
+  partialNote: string | null;
   rows: YearComparisonRow[];
   dataQuality: DataQualityItem[];
   hasAnyData: boolean;
@@ -916,8 +960,21 @@ function comparisonDelta(
 /**
  * Jahresvergleichs-Tabelle (§5/§6): Kennzahlen × Jahre + Δ je Jahrespaar.
  * `series` = Roh-Serien mit byPosition (PLView), `years` = gewählte Jahre.
+ *
+ * Vergleichsmodi (opts.mode):
+ *   'commonMonth' (Default) — EINE Vergleichsbasis: Schnittmenge der Daten-
+ *     monate ALLER Jahre («bis gleicher Monat»), optional zusätzlich auf
+ *     Monate ≤ opts.throughMonth begrenzt. Keine Hochrechnung.
+ *   'fullYear' — je Jahr die Summe über die EIGENEN Datenmonate (Ganzjahr).
+ *     Teiljahre bleiben sichtbar markiert; bei ungleicher Abdeckung warnt ein
+ *     Datenqualitätshinweis (Summen nicht direkt vergleichbar). Keine Hochrechnung.
  */
-export function buildYearKpiComparison(series: YearSeries[], years: number[]): YearKpiComparison {
+export function buildYearKpiComparison(
+  series: YearSeries[],
+  years: number[],
+  opts: YearKpiComparisonOptions = {},
+): YearKpiComparison {
+  const mode: YearComparisonMode = opts.mode ?? 'commonMonth';
   const dataQuality: DataQualityItem[] = [];
   const wanted = new Set(years);
   const chfRowIds = YEAR_COMPARISON_ROWS.filter((r) => r.kind === 'chf').map((r) => r.id);
@@ -940,45 +997,76 @@ export function buildYearKpiComparison(series: YearSeries[], years: number[]): Y
   const selYears = clean.map((s) => s.year);
 
   const empty: YearKpiComparison = {
-    years: selYears, commonMonths: [], commonMonthsLabel: null,
-    isFullYears: false, partialYears: [], rows: [], dataQuality, hasAnyData: false,
+    mode, years: selYears, commonMonths: [], availableCommonMonths: [],
+    commonMonthsLabel: null, isFullYears: false, partialYears: [],
+    partialNote: null, rows: [], dataQuality, hasAnyData: false,
   };
   if (clean.length === 0) {
     dataQuality.push({ severity: 'fehler', text: 'Keine Erfolgsrechnungs-Daten für den Jahresvergleich vorhanden.' });
     return empty;
   }
 
-  // Schnittmenge über ALLE Jahre
-  let common: number[] = dataMonthsByYear.get(selYears[0]) ?? [];
+  // Schnittmenge über ALLE Jahre (auch im Ganzjahresmodus als Selector-Basis)
+  let intersect: number[] = dataMonthsByYear.get(selYears[0]) ?? [];
   for (const y of selYears.slice(1)) {
     const set = new Set(dataMonthsByYear.get(y) ?? []);
-    common = common.filter((m) => set.has(m));
+    intersect = intersect.filter((m) => set.has(m));
   }
+  const availableCommonMonths = intersect;
 
   const partialYears = selYears.filter((y) => (dataMonthsByYear.get(y) ?? []).length < 12);
   const isFullYears = partialYears.length === 0;
 
-  if (common.length === 0) {
-    dataQuality.push({
-      severity: 'fehler',
-      text: 'Die ausgewählten Jahre haben keine gemeinsamen Datenmonate — ein Vergleich ist aufgrund fehlender Daten nicht möglich.',
-    });
-    return { ...empty, partialYears, hasAnyData: false };
+  // Vergleichsbasis je Modus
+  let common: number[];
+  if (mode === 'fullYear') {
+    // Ganzjahr: Vereinigung aller Datenmonate (nur für Anzeige/Label) —
+    // summiert wird je Jahr über die EIGENEN Datenmonate (s. chfValue).
+    const union = new Set<number>();
+    for (const y of selYears) for (const m of dataMonthsByYear.get(y) ?? []) union.add(m);
+    common = Array.from(union).sort((a, b) => a - b);
+  } else {
+    const tm = opts.throughMonth;
+    common = tm != null && tm >= 1 && tm <= 12
+      ? intersect.filter((m) => m < tm) // Monats-Indizes 0-basiert: m ≤ tm−1
+      : intersect;
+    if (common.length === 0) {
+      dataQuality.push({
+        severity: 'fehler',
+        text: tm != null && intersect.length > 0
+          ? 'Bis zum gewählten Monat haben die ausgewählten Jahre keine gemeinsamen Datenmonate — ein Vergleich ist aufgrund fehlender Daten nicht möglich.'
+          : 'Die ausgewählten Jahre haben keine gemeinsamen Datenmonate — ein Vergleich ist aufgrund fehlender Daten nicht möglich.',
+      });
+      return { ...empty, availableCommonMonths, partialYears, hasAnyData: false };
+    }
   }
 
+  let partialNote: string | null = null;
   if (!isFullYears) {
-    dataQuality.push({
-      severity: 'hinweis',
-      text: `Teiljahr(e) ${partialYears.join(', ')} — Vergleich bis gleicher Monat (${partialRangeLabel(common) ?? `${common.length} Monate`}), keine Hochrechnung auf zwölf Monate.`,
-    });
+    if (mode === 'fullYear') {
+      partialNote = `* Teiljahr — Summe über die vorhandenen Datenmonate des Jahres, keine Hochrechnung auf zwölf Monate.`;
+      dataQuality.push({
+        severity: 'warnung',
+        text: `Ganzjahresmodus mit Teiljahr(en) ${partialYears.join(', ')}: Die Jahressummen decken unterschiedlich viele Monate ab und sind nur eingeschränkt direkt vergleichbar.`,
+      });
+    } else {
+      const label = partialRangeLabel(common) ?? `${common.length} Monate`;
+      partialNote = `* Teiljahr — alle Werte über die gemeinsamen Monate (${label}), keine Hochrechnung.`;
+      dataQuality.push({
+        severity: 'hinweis',
+        text: `Teiljahr(e) ${partialYears.join(', ')} — Vergleich bis gleicher Monat (${label}), keine Hochrechnung auf zwölf Monate.`,
+      });
+    }
   }
 
-  // CHF-Zeilen: Summe über die gemeinsamen Monate; ein null-Monat macht den
+  // CHF-Zeilen: Summe über die Vergleichsmonate; ein null-Monat macht den
   // Jahreswert null (fehlend ≠ 0, nie still untersummieren).
+  // fullYear: je Jahr die EIGENEN Datenmonate; commonMonth: gemeinsame Monate.
   const chfValue = (s: YearSeries, rowId: string): number | null => {
     const vals = rowMonthValues(s, rowId);
+    const monthsForYear = mode === 'fullYear' ? (dataMonthsByYear.get(s.year) ?? []) : common;
     let sum = 0;
-    for (const m of common) {
+    for (const m of monthsForYear) {
       const v = vals[m];
       if (v == null) return null;
       sum += v;
@@ -1029,11 +1117,14 @@ export function buildYearKpiComparison(series: YearSeries[], years: number[]): Y
   });
 
   return {
+    mode,
     years: selYears,
     commonMonths: common,
-    commonMonthsLabel: partialRangeLabel(common),
+    availableCommonMonths,
+    commonMonthsLabel: mode === 'fullYear' ? null : partialRangeLabel(common),
     isFullYears,
     partialYears,
+    partialNote,
     rows,
     dataQuality,
     hasAnyData: rows.some((r) => r.valueByYear.some((v) => v != null)),

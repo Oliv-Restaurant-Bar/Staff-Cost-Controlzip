@@ -26,7 +26,7 @@ import {
   type BankInvestorAnalysis, type BankPositionRow, type BankYearMode,
   type BankYearImportInfo,
 } from '@/lib/bank-investor-analysis';
-import type { YearSeries, GrowthTone, DataQualityItem } from '@/lib/multi-year-analysis';
+import { yearsWithAnyData, type YearSeries, type GrowthTone, type DataQualityItem } from '@/lib/multi-year-analysis';
 import { BankExecutiveSection } from './bank-investor/BankExecutiveSection';
 import { BankScorecardSection, type BankDrillMetric } from './bank-investor/BankScorecardSection';
 import { BankBenchmarkSection } from './bank-investor/BankBenchmarkSection';
@@ -62,17 +62,19 @@ interface BankInvestorViewProps {
 }
 
 export function BankInvestorView({ series, restaurantName, unmappedAccounts, importStand, importInfoByYear }: BankInvestorViewProps) {
-  const yearsWithData = useMemo(
-    () => series.filter(s => s.values.some(v => v != null)).map(s => s.year).sort((a, b) => a - b),
-    [series],
-  );
+  // Jahresbasis: Jahre mit IRGENDWELCHEN Daten (Umsatz ODER Kosten-Zeilen) —
+  // ein reines Kosten-Jahr (z. B. 2024 aus dem Jahres-Kontoblatt) zählt mit.
+  const yearsWithData = useMemo(() => yearsWithAnyData(series), [series]);
 
   const defaultCurrent = yearsWithData[yearsWithData.length - 1] ?? new Date().getFullYear();
   const defaultBase = yearsWithData.filter(y => y < defaultCurrent).pop() ?? defaultCurrent - 1;
 
   const [baseYear, setBaseYear] = useState<number>(defaultBase);
   const [currentYear, setCurrentYear] = useState<number>(defaultCurrent);
-  const [yearMode, setYearMode] = useState<BankYearMode>('two');
+  // null = automatisch: «Letzte 3 Jahre», sobald drei Jahre mit Daten vorliegen
+  // (robust gegen nachträglich fertig geladene Serien), sonst 2 Jahre.
+  const [yearModeSel, setYearModeSel] = useState<BankYearMode | null>(null);
+  const yearMode: BankYearMode = yearModeSel ?? (yearsWithData.length >= 3 ? 'three' : 'two');
   const [untilSameMonth, setUntilSameMonth] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
   const [drillMetric, setDrillMetric] = useState<BankDrillMetric | null>(null);
@@ -161,7 +163,7 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={yearMode} onValueChange={v => setYearMode(v as BankYearMode)}>
+          <Select value={yearMode} onValueChange={v => setYearModeSel(v as BankYearMode)}>
             <SelectTrigger className="h-8 w-[130px] text-xs" data-testid="bank-year-mode">
               <SelectValue />
             </SelectTrigger>
@@ -226,18 +228,6 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
         />
       ) : (
         <>
-          {/* ── Executive Summary (Phase 2 §2): Gesamttrend + 9 KPIs ── */}
-          <BankExecutiveSection executive={analysis.executive} />
-
-          {/* ── Mehrjahres-Scorecard (Phase 2 §3) ── */}
-          <BankScorecardSection scorecard={analysis.scorecard} onDrill={setDrillMetric} />
-
-          {/* ── Waterfall Umsatz→EBIT (Phase 2 §4) ── */}
-          <BankWaterfallSection waterfall={analysis.waterfall} />
-
-          {/* ── EBIT-Treiber (Phase 2 §5) ── */}
-          <BankEbitDriversSection drivers={analysis.ebitDrivers} />
-
           {/* ── Umsatzentwicklung ── */}
           <section className="rounded-lg border border-border bg-card p-4 space-y-3" data-testid="bank-revenue-section">
             <h3 className="text-sm font-semibold">Umsatzentwicklung nach Monat</h3>
@@ -317,6 +307,15 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
               </div>
             </section>
           ))}
+
+          {/* ── EBIT-Treiber (Phase 2 §5) ── */}
+          <BankEbitDriversSection drivers={analysis.ebitDrivers} />
+
+          {/* ── Executive Summary (Phase 2 §2): Gesamttrend + 9 KPIs ── */}
+          <BankExecutiveSection executive={analysis.executive} />
+
+          {/* ── Mehrjahres-Scorecard (Phase 2 §3) ── */}
+          <BankScorecardSection scorecard={analysis.scorecard} onDrill={setDrillMetric} />
 
           {/* ── Zwischentotale und Margen ── */}
           <section className="rounded-lg border border-border bg-card overflow-hidden" data-testid="bank-totals-table">
@@ -407,20 +406,23 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
             </div>
           </section>
 
-          {/* ── Kennzahlenhistorie (Phase 2 §6) ── */}
-          <BankHistorieSection historie={analysis.historie} />
-
           {/* ── Benchmark (Phase 2 §7) ── */}
           <BankBenchmarkSection benchmarks={analysis.benchmarks} year={analysis.currentYear} />
+
+          {/* ── Kennzahlenhistorie (Phase 2 §6) ── */}
+          <BankHistorieSection historie={analysis.historie} />
 
           {/* ── Saisonalitäts-Heatmap (Phase 2 §8) ── */}
           <BankHeatmapSection heatmaps={analysis.heatmaps} />
 
+          {/* ── Investor Timeline (Phase 2 §10) ── */}
+          <BankTimelineSection timeline={analysis.timeline} />
+
           {/* ── Kernaussagen 5+5 (Phase 2 §9) ── */}
           <BankKernaussagenSection kernaussagen={analysis.kernaussagenPlus} />
 
-          {/* ── Investor Timeline (Phase 2 §10) ── */}
-          <BankTimelineSection timeline={analysis.timeline} />
+          {/* ── Waterfall Umsatz→EBIT (Phase 2 §4) — zuletzt (Vorgabe: ganz ans Ende) ── */}
+          <BankWaterfallSection waterfall={analysis.waterfall} />
 
           {/* ── Drilldown Monatsdetail (Phase 2 §11) ── */}
           <BankDrilldownDialog metric={drillMetric} analysis={analysis} onClose={() => setDrillMetric(null)} />

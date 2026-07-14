@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { KpiCard, KpiGrid, MoreKpis } from '@/components/ui/kpi-card';
 import { HintBox } from '@/components/ui/hint-box';
 import { InfoTip } from '@/components/ui/info-tip';
@@ -36,13 +37,13 @@ import { toast } from 'sonner';
 
 import {
   buildMultiYearAnalysis, buildMonthDetail, buildPositionsOverview, nonEmptyYears, selectYears, seriesForPosition,
-  buildYearKpiComparison, buildPersonnelInsights, buildComparisonDrilldown,
+  yearsWithAnyData, buildYearKpiComparison, buildPersonnelInsights, buildComparisonDrilldown,
   fmtChf, fmtMio, fmtPct, fmtDeltaChf, fmtPpSigned, fmtQuotePct,
   MONTH_LABELS_LONG, MULTI_YEAR_POSITIONS, DEFAULT_POSITION,
   MIN_YEAR_SELECTION, MAX_YEAR_SELECTION,
   type DataQualityItem, type DataQualitySeverity,
   type GrowthTone, type MultiYearAnalysis, type YearSeries,
-  type YearKpiComparison, type YearComparisonRowDef, type YearComparisonDelta,
+  type YearKpiComparison, type YearComparisonMode, type YearComparisonRowDef, type YearComparisonDelta,
 } from '@/lib/multi-year-analysis';
 import { EBIT_REPORT_NOTE } from '@/lib/bank-investor-analysis';
 
@@ -111,6 +112,10 @@ export function MultiYearAnalysisSection({
   const [selectedYears, setSelectedYears] = useState<number[] | null>(null);
   const [detailMonthIdx, setDetailMonthIdx] = useState<number | null>(null);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
+  // Vergleichsmodus (§4 der Vorgabe): «bis gleicher Monat» (Default) oder Ganzjahr;
+  // throughMonth = 1–12 bzw. null = automatisch (alle gemeinsamen Monate).
+  const [cmpMode, setCmpMode] = useState<YearComparisonMode>('commonMonth');
+  const [throughMonth, setThroughMonth] = useState<number | null>(null);
 
   const position = MULTI_YEAR_POSITIONS.find((p) => p.id === positionId) ?? DEFAULT_POSITION;
   const isExpense = position.semantics === 'expense';
@@ -120,7 +125,9 @@ export function MultiYearAnalysisSection({
     () => nonEmptyYears(seriesForPosition(series, position.id)),
     [series, position.id],
   );
-  const availableYearsList = useMemo(() => usable.map((s) => s.year), [usable]);
+  // Jahresauswahl-Basis: Jahre mit IRGENDWELCHEN Daten (Umsatz ODER Kosten-Zeilen) —
+  // ein reines Kosten-Jahr (z. B. 2024 aus dem Jahres-Kontoblatt) bleibt wählbar.
+  const availableYearsList = useMemo(() => yearsWithAnyData(series), [series]);
 
   // §6: Standard = aktuelles Jahr + Vorjahr + Basisjahr (die letzten 3 verfügbaren).
   // Explizite Auswahl wird mit den verfügbaren Jahren geschnitten; fällt sie
@@ -142,6 +149,9 @@ export function MultiYearAnalysisSection({
       cur.add(y);
     }
     setSelectedYears([...cur].sort((a, b) => a - b));
+    // Monats-Selector zurücksetzen: die gemeinsamen Monate der neuen Auswahl
+    // können den alten Monat nicht mehr enthalten (sonst sichtbarer Fehler).
+    setThroughMonth(null);
   };
 
   const analysis: MultiYearAnalysis = useMemo(
@@ -158,9 +168,34 @@ export function MultiYearAnalysisSection({
   // Exporte (UI ≡ Export, §10).
   const [cmpDrillRowId, setCmpDrillRowId] = useState<string | null>(null);
   const cmp: YearKpiComparison = useMemo(
-    () => buildYearKpiComparison(series, effectiveYears),
-    [series, effectiveYears],
+    () => buildYearKpiComparison(series, effectiveYears, {
+      mode: cmpMode,
+      throughMonth: cmpMode === 'commonMonth' ? throughMonth : null,
+    }),
+    [series, effectiveYears, cmpMode, throughMonth],
   );
+  // Anzeige-Wert des Monats-Selectors: gewählter Monat oder automatisch der
+  // letzte gemeinsame Datenmonat (Index 0-basiert → Wert 1–12).
+  const lastCommonMonth = cmp.availableCommonMonths.length > 0
+    ? cmp.availableCommonMonths[cmp.availableCommonMonths.length - 1] + 1
+    : null;
+  const throughMonthValue = throughMonth ?? lastCommonMonth;
+  // Die 4 Entwicklungsblöcke (§5 der Vorgabe) — NUR aus den cmp-Zeilen, keine Zweitberechnung.
+  const devBlocks = useMemo(() => {
+    const defs: { id: string; label: string }[] = [
+      { id: 'net_revenue', label: 'Umsatzentwicklung' },
+      { id: 'total_personnel', label: 'Personalkosten' },
+      { id: 'personnel_quote', label: 'Personalquote' },
+      { id: 'ebit', label: 'EBIT' },
+    ];
+    return defs.map(({ id, label }) => {
+      const row = cmp.rows.find((r) => r.def.id === id) ?? null;
+      const lastIdx = cmp.years.length - 1;
+      const value = row?.valueByYear[lastIdx] ?? null;
+      const delta = row && row.deltas.length > 0 ? row.deltas[row.deltas.length - 1] : null;
+      return { id, label, row, value, delta };
+    });
+  }, [cmp]);
   const cmpInsights = useMemo(() => buildPersonnelInsights(cmp), [cmp]);
   const cmpDrill = useMemo(
     () => (cmpDrillRowId == null ? null : buildComparisonDrilldown(series, effectiveYears, cmpDrillRowId)),
@@ -343,82 +378,51 @@ export function MultiYearAnalysisSection({
         </div>
       )}
 
-      {/* KPI-Karten (max. 4 sichtbar) */}
-      <KpiGrid>
-        <KpiCard
-          data-testid="mya-kpi-revenue"
-          label={`${position.label} ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`}
-          value={fmtChf(kpis.latestYearValue)}
-          sub={kpis.latestYearValue != null ? fmtMio(kpis.latestYearValue) : undefined}
-          tone="info"
-        />
-        <KpiCard
-          data-testid="mya-kpi-growth"
-          label={`Veränderung vs. ${kpis.prevYear ?? 'Vorjahr'}${kpis.growthCommonMonths > 0 && kpis.growthCommonMonths < 12 ? ` (${kpis.growthCommonMonths} Mte.)` : ''}`}
-          value={fmtPct(kpis.growthPct)}
-          tone={kpis.growthPct == null || isExpense ? 'neutral' : kpis.growthPct >= 0 ? 'good' : 'critical'}
-          trend={kpis.growthChf != null ? {
-            direction: kpis.growthChf > 0 ? 'up' : kpis.growthChf < 0 ? 'down' : 'flat',
-            tone: isExpense ? 'neutral' : kpis.growthChf >= 0 ? 'good' : 'critical',
-            label: `${fmtDeltaChf(kpis.growthChf)} CHF`,
-          } : undefined}
-        />
-        <KpiCard
-          data-testid="mya-kpi-cagr"
-          label={kpis.cagrFromYear != null ? `CAGR ${kpis.cagrFromYear}–${kpis.cagrToYear}` : 'CAGR'}
-          value={fmtPct(kpis.cagrPct)}
-          sub={kpis.cagrPct == null ? 'Braucht ≥2 vollständige Jahre' : 'Ø Veränderung p. a. (volle Jahre)'}
-          tone={kpis.cagrPct == null || isExpense ? 'neutral' : kpis.cagrPct >= 0 ? 'good' : 'critical'}
-        />
-        <KpiCard
-          data-testid="mya-kpi-trend"
-          label={isRevenue ? 'Umsatztrend' : `Trend ${position.label}`}
-          value={kpis.trend ? TREND_LABEL[kpis.trend] : '—'}
-          sub="Basis: Veränderung letztes vs. Vorjahr"
-          tone={kpis.trend == null || isExpense ? 'neutral' : TREND_TONE[kpis.trend]}
-        />
-      </KpiGrid>
-      <div data-testid="mya-kpi-more">
-      <MoreKpis storageKey="mya-more-kpis">
-        <KpiGrid>
-          <KpiCard
-            label="Ø monatliche Veränderung"
-            value={fmtPct(kpis.avgMonthlyGrowthPct)}
-            sub="Ø der monatlichen VJ-Veränderungen"
-            tone={kpis.avgMonthlyGrowthPct == null || isExpense ? 'neutral' : kpis.avgMonthlyGrowthPct >= 0 ? 'good' : 'critical'}
-          />
-          <KpiCard
-            label={`${isExpense ? 'Höchster Monat' : 'Bester Monat'} ${kpis.latestYear ?? ''}`}
-            value={kpis.bestMonth ? kpis.bestMonth.label : '—'}
-            sub={kpis.bestMonth ? fmtChf(kpis.bestMonth.value) : undefined}
-            tone={isExpense ? 'neutral' : 'good'}
-          />
-          <KpiCard
-            label={`${isExpense ? 'Tiefster Monat' : 'Schwächster Monat'} ${kpis.latestYear ?? ''}`}
-            value={kpis.worstMonth ? kpis.worstMonth.label : '—'}
-            sub={kpis.worstMonth ? fmtChf(kpis.worstMonth.value) : undefined}
-            tone={isExpense ? 'neutral' : 'warn'}
-          />
-          <KpiCard
-            label={isExpense ? 'Höchster Jahreswert' : 'Bestes Jahresergebnis'}
-            value={kpis.highestAnnual ? String(kpis.highestAnnual.year) : '—'}
-            sub={kpis.highestAnnual ? `${fmtChf(kpis.highestAnnual.total)}${kpis.highestAnnual.isPartial ? ' (Teiljahr)' : ''}` : undefined}
-            tone="info"
-          />
-        </KpiGrid>
-      </MoreKpis>
+      {/* Vergleichsmodus (§4 der Vorgabe): Ganzjahr vs. «bis gleicher Monat» + Monatsselector */}
+      <div
+        className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-border bg-card px-4 py-2.5"
+        data-testid="mya-cmp-mode"
+      >
+        <span className="text-xs font-semibold">Vergleichsmodus</span>
+        <RadioGroup
+          value={cmpMode}
+          onValueChange={(v) => setCmpMode(v as YearComparisonMode)}
+          className="flex flex-wrap items-center gap-x-5 gap-y-1.5"
+        >
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+            <RadioGroupItem value="commonMonth" data-testid="mya-mode-common" />
+            Vergleich bis gleicher Monat
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+            <RadioGroupItem value="fullYear" data-testid="mya-mode-fullyear" />
+            Ganzes Jahr
+          </label>
+        </RadioGroup>
+        {cmpMode === 'commonMonth' && cmp.availableCommonMonths.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Vergleich bis:</span>
+            <Select
+              value={throughMonthValue != null ? String(throughMonthValue) : undefined}
+              onValueChange={(v) => setThroughMonth(Number(v))}
+            >
+              <SelectTrigger className="h-7 w-32 text-xs" data-testid="mya-through-month">
+                <SelectValue placeholder="Monat" />
+              </SelectTrigger>
+              <SelectContent>
+                {cmp.availableCommonMonths.map((mIdx) => (
+                  <SelectItem key={mIdx} value={String(mIdx + 1)}>
+                    {MONTH_LABELS_LONG[mIdx]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <InfoTip text="Alle Kennzahlen des Jahresvergleichs werden je Jahr über Januar bis zum gewählten Monat summiert — nur Monate mit Daten in allen gewählten Jahren sind wählbar. Keine Hochrechnung." />
+          </div>
+        )}
+        {cmpMode === 'fullYear' && !cmp.isFullYears && (
+          <InfoTip text="Ganzjahresmodus: je Jahr die Summe der vorhandenen Datenmonate. Teiljahre sind markiert und nur eingeschränkt direkt vergleichbar — keine Hochrechnung." />
+        )}
       </div>
-
-      {/* Executive Summary */}
-      {analysis.executiveSummary.length > 0 && (
-        <div data-testid="mya-summary">
-          <HintBox tone="neutral" title="Executive Summary">
-            <ul className="list-disc space-y-0.5 pl-4">
-              {analysis.executiveSummary.map((s, i) => <li key={i}>{s}</li>)}
-            </ul>
-          </HintBox>
-        </div>
-      )}
 
       {/* Jahresvergleich (§5–§7): Kennzahlen × Jahre + Δ je Jahrespaar — endet bei EBIT */}
       {cmp.hasAnyData ? (
@@ -431,7 +435,13 @@ export function MultiYearAnalysisSection({
                 Klick auf eine CHF-Zeile zeigt die Zusammensetzung nach Monat.
               </p>
             </div>
-            {!cmp.isFullYears && cmp.commonMonthsLabel && (
+            {cmp.mode === 'fullYear' ? (
+              <div className="ml-auto" data-testid="mya-cmp-mode-pill">
+                <StatusPill tone="info" size="xs" showDot={false}>
+                  Ganzes Jahr{cmp.partialYears.length > 0 ? ' (Teiljahre markiert)' : ''}
+                </StatusPill>
+              </div>
+            ) : cmp.commonMonthsLabel && (
               <div className="ml-auto" data-testid="mya-cmp-partial-pill">
                 <StatusPill tone="info" size="xs" showDot={false}>
                   Vergleich bis gleicher Monat: {cmp.commonMonthsLabel}
@@ -497,9 +507,7 @@ export function MultiYearAnalysisSection({
           </div>
           <div className="border-t border-border bg-muted/40 px-4 py-2 text-[11px] text-muted-foreground" data-testid="mya-cmp-dq">
               <ul className="list-disc space-y-0.5 pl-4">
-                {cmp.partialYears.length > 0 && (
-                  <li>* Teiljahr — alle Werte über die gemeinsamen Monate ({cmp.commonMonthsLabel ?? '—'}), keine Hochrechnung.</li>
-                )}
+                {cmp.partialNote && <li>{cmp.partialNote}</li>}
                 <li>{EBIT_REPORT_NOTE}</li>
                 {cmp.dataQuality.map((d, i) => (
                   <li key={i} className={d.severity === 'fehler' ? TONE_TEXT.critical : d.severity === 'warnung' ? TONE_TEXT.warn : undefined}>
@@ -516,6 +524,35 @@ export function MultiYearAnalysisSection({
               {cmp.dataQuality.map((d, i) => <li key={i}>{d.text}</li>)}
             </ul>
           </HintBox>
+        </div>
+      )}
+
+      {/* Die 4 Entwicklungsblöcke (§5 der Vorgabe): Umsatz, Personalkosten, Personalquote, EBIT —
+          Werte 1:1 aus den Jahresvergleichs-Zeilen (cmp), keine Zweitberechnung */}
+      {cmp.hasAnyData && cmp.years.length >= 2 && (
+        <div data-testid="mya-dev-blocks">
+          <KpiGrid>
+            {devBlocks.map(({ id, label, row, value, delta }) => {
+              const latestYear = cmp.years[cmp.years.length - 1];
+              const isQuote = row?.def.kind === 'quote';
+              const deltaMetric = delta == null ? null : isQuote ? delta.pp : delta.chf;
+              return (
+                <KpiCard
+                  key={id}
+                  data-testid={`mya-dev-${id}`}
+                  label={`${label} ${latestYear}${cmp.partialYears.includes(latestYear) ? ' *' : ''}`}
+                  value={row == null ? '—' : isQuote ? fmtQuotePct(value) : fmtChf(value)}
+                  sub={delta ? `vs. ${delta.fromYear}` : 'Kein Vorjahresvergleich möglich'}
+                  tone={row && delta ? cmpDeltaTone(row.def, delta) : 'neutral'}
+                  trend={row && delta && deltaMetric != null ? {
+                    direction: deltaMetric > 0 ? 'up' : deltaMetric < 0 ? 'down' : 'flat',
+                    tone: cmpDeltaTone(row.def, delta),
+                    label: cmpDeltaText(row.def, delta),
+                  } : undefined}
+                />
+              );
+            })}
+          </KpiGrid>
         </div>
       )}
 
@@ -640,6 +677,83 @@ export function MultiYearAnalysisSection({
         </div>
       </div>
 
+      {/* Executive Summary */}
+      {analysis.executiveSummary.length > 0 && (
+        <div data-testid="mya-summary">
+          <HintBox tone="neutral" title="Executive Summary">
+            <ul className="list-disc space-y-0.5 pl-4">
+              {analysis.executiveSummary.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          </HintBox>
+        </div>
+      )}
+
+      {/* KPI-Karten (max. 4 sichtbar) */}
+      <KpiGrid>
+        <KpiCard
+          data-testid="mya-kpi-revenue"
+          label={`${position.label} ${kpis.latestYear ?? '—'}${kpis.latestYearPartialLabel ? ` (${kpis.latestYearPartialLabel})` : ''}`}
+          value={fmtChf(kpis.latestYearValue)}
+          sub={kpis.latestYearValue != null ? fmtMio(kpis.latestYearValue) : undefined}
+          tone="info"
+        />
+        <KpiCard
+          data-testid="mya-kpi-growth"
+          label={`Veränderung vs. ${kpis.prevYear ?? 'Vorjahr'}${kpis.growthCommonMonths > 0 && kpis.growthCommonMonths < 12 ? ` (${kpis.growthCommonMonths} Mte.)` : ''}`}
+          value={fmtPct(kpis.growthPct)}
+          tone={kpis.growthPct == null || isExpense ? 'neutral' : kpis.growthPct >= 0 ? 'good' : 'critical'}
+          trend={kpis.growthChf != null ? {
+            direction: kpis.growthChf > 0 ? 'up' : kpis.growthChf < 0 ? 'down' : 'flat',
+            tone: isExpense ? 'neutral' : kpis.growthChf >= 0 ? 'good' : 'critical',
+            label: `${fmtDeltaChf(kpis.growthChf)} CHF`,
+          } : undefined}
+        />
+        <KpiCard
+          data-testid="mya-kpi-cagr"
+          label={kpis.cagrFromYear != null ? `CAGR ${kpis.cagrFromYear}–${kpis.cagrToYear}` : 'CAGR'}
+          value={fmtPct(kpis.cagrPct)}
+          sub={kpis.cagrPct == null ? 'Braucht ≥2 vollständige Jahre' : 'Ø Veränderung p. a. (volle Jahre)'}
+          tone={kpis.cagrPct == null || isExpense ? 'neutral' : kpis.cagrPct >= 0 ? 'good' : 'critical'}
+        />
+        <KpiCard
+          data-testid="mya-kpi-trend"
+          label={isRevenue ? 'Umsatztrend' : `Trend ${position.label}`}
+          value={kpis.trend ? TREND_LABEL[kpis.trend] : '—'}
+          sub="Basis: Veränderung letztes vs. Vorjahr"
+          tone={kpis.trend == null || isExpense ? 'neutral' : TREND_TONE[kpis.trend]}
+        />
+      </KpiGrid>
+      <div data-testid="mya-kpi-more">
+      <MoreKpis storageKey="mya-more-kpis">
+        <KpiGrid>
+          <KpiCard
+            label="Ø monatliche Veränderung"
+            value={fmtPct(kpis.avgMonthlyGrowthPct)}
+            sub="Ø der monatlichen VJ-Veränderungen"
+            tone={kpis.avgMonthlyGrowthPct == null || isExpense ? 'neutral' : kpis.avgMonthlyGrowthPct >= 0 ? 'good' : 'critical'}
+          />
+          <KpiCard
+            label={`${isExpense ? 'Höchster Monat' : 'Bester Monat'} ${kpis.latestYear ?? ''}`}
+            value={kpis.bestMonth ? kpis.bestMonth.label : '—'}
+            sub={kpis.bestMonth ? fmtChf(kpis.bestMonth.value) : undefined}
+            tone={isExpense ? 'neutral' : 'good'}
+          />
+          <KpiCard
+            label={`${isExpense ? 'Tiefster Monat' : 'Schwächster Monat'} ${kpis.latestYear ?? ''}`}
+            value={kpis.worstMonth ? kpis.worstMonth.label : '—'}
+            sub={kpis.worstMonth ? fmtChf(kpis.worstMonth.value) : undefined}
+            tone={isExpense ? 'neutral' : 'warn'}
+          />
+          <KpiCard
+            label={isExpense ? 'Höchster Jahreswert' : 'Bestes Jahresergebnis'}
+            value={kpis.highestAnnual ? String(kpis.highestAnnual.year) : '—'}
+            sub={kpis.highestAnnual ? `${fmtChf(kpis.highestAnnual.total)}${kpis.highestAnnual.isPartial ? ' (Teiljahr)' : ''}` : undefined}
+            tone="info"
+          />
+        </KpiGrid>
+      </MoreKpis>
+      </div>
+
       {/* Diagramme */}
       <div className="grid gap-4 xl:grid-cols-2">
         {/* Monatsverlauf (Linien) */}
@@ -688,38 +802,6 @@ export function MultiYearAnalysisSection({
           </ResponsiveContainer>
         </div>
       </div>
-
-      {/* Wachstums-Wasserfall */}
-      {chart.waterfall.length > 0 && chart.waterfallYears && (
-        <div className="rounded-lg border border-border bg-card p-4" data-testid="mya-chart-waterfall">
-          <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
-            {isRevenue ? 'Wachstums-Wasserfall' : 'Veränderungs-Wasserfall'} {chart.waterfallYears.from} → {chart.waterfallYears.to}
-            <InfoTip text={isExpense
-              ? `Monatliche Veränderung von «${position.label}» zum Vorjahr, kumuliert (neutral dargestellt — mehr Aufwand ist nicht automatisch gut oder schlecht). Der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren.`
-              : 'Monatliche Veränderung zum Vorjahr, kumuliert. Grün = Zuwachs, Rot = Rückgang; der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren.'} />
-          </h3>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={chart.waterfall} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} width={44} />
-              <RechartsTooltip
-                formatter={(v: number, name: string) => (name === 'Sockel' ? [null, null] : [`CHF ${fmtDeltaChf(v)}`, `Δ ${position.label}`])}
-                labelFormatter={(label: string) => {
-                  const entry = chart.waterfall.find((w) => w.label === label);
-                  return entry ? `${label} — Δ ${fmtDeltaChf(entry.delta)} (kumuliert ${fmtDeltaChf(entry.cumEnd)})` : label;
-                }}
-              />
-              <Bar dataKey="base" name="Sockel" stackId="wf" fill="transparent" isAnimationActive={false} />
-              <Bar dataKey="height" name={`Δ ${position.label}`} stackId="wf" radius={[2, 2, 0, 0]}>
-                {chart.waterfall.map((w) => (
-                  <Cell key={w.label} fill={w.isTotal ? '#4f46e5' : TONE_FILL[w.tone]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
 
       {/* Jahres-Zusammenfassungen */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="mya-year-cards">
@@ -772,6 +854,38 @@ export function MultiYearAnalysisSection({
           </div>
         ))}
       </div>
+
+      {/* Wachstums-Wasserfall */}
+      {chart.waterfall.length > 0 && chart.waterfallYears && (
+        <div className="rounded-lg border border-border bg-card p-4" data-testid="mya-chart-waterfall">
+          <h3 className="mb-2 flex items-center gap-1 text-xs font-semibold text-muted-foreground">
+            {isRevenue ? 'Wachstums-Wasserfall' : 'Veränderungs-Wasserfall'} {chart.waterfallYears.from} → {chart.waterfallYears.to}
+            <InfoTip text={isExpense
+              ? `Monatliche Veränderung von «${position.label}» zum Vorjahr, kumuliert (neutral dargestellt — mehr Aufwand ist nicht automatisch gut oder schlecht). Der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren.`
+              : 'Monatliche Veränderung zum Vorjahr, kumuliert. Grün = Zuwachs, Rot = Rückgang; der letzte Balken zeigt die Gesamtveränderung. Nur Monate mit Werten in beiden Jahren.'} />
+          </h3>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={chart.waterfall} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${Math.round(v / 1000)}k`} width={44} />
+              <RechartsTooltip
+                formatter={(v: number, name: string) => (name === 'Sockel' ? [null, null] : [`CHF ${fmtDeltaChf(v)}`, `Δ ${position.label}`])}
+                labelFormatter={(label: string) => {
+                  const entry = chart.waterfall.find((w) => w.label === label);
+                  return entry ? `${label} — Δ ${fmtDeltaChf(entry.delta)} (kumuliert ${fmtDeltaChf(entry.cumEnd)})` : label;
+                }}
+              />
+              <Bar dataKey="base" name="Sockel" stackId="wf" fill="transparent" isAnimationActive={false} />
+              <Bar dataKey="height" name={`Δ ${position.label}`} stackId="wf" radius={[2, 2, 0, 0]}>
+                {chart.waterfall.map((w) => (
+                  <Cell key={w.label} fill={w.isTotal ? '#4f46e5' : TONE_FILL[w.tone]} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Monats-Detail-Dialog */}
       <Dialog open={detail != null} onOpenChange={(open) => { if (!open) setDetailMonthIdx(null); }}>

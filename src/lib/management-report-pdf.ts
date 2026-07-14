@@ -210,8 +210,8 @@ export function buildManagementReportData(
       ...r.deltas.map(d => dText(r.def.kind, d)),
       ...(flPair ? [dText(r.def.kind, r.firstToLast)] : []),
     ]);
-    if (cmp.partialYears.length > 0) {
-      jahresvergleichHinweise.push(`* Teiljahr — alle Werte über die gemeinsamen Monate (${cmp.commonMonthsLabel ?? '—'}), keine Hochrechnung.`);
+    if (cmp.partialNote) {
+      jahresvergleichHinweise.push(cmp.partialNote);
     }
     jahresvergleichHinweise.push(EBIT_REPORT_NOTE);
     for (const d of cmp.dataQuality) {
