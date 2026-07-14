@@ -55,12 +55,14 @@ All 8 chunks pass even with the dev workflow running. Flag gotcha: use `--silent
 silently skips that test file.
 
 ## `tsc --noEmit` itself now OOMs too (2026-07)
-`npx tsc -p tsconfig.app.json --noEmit` is ALSO OOM-killed silently (exit -1, no
-output) even with `NODE_OPTIONS=--max-old-space-size=12288` while the dev workflow
-runs. Don't burn attempts on it.
+`npx tsc -p tsconfig.app.json --noEmit` is OOM-killed silently (exit -1, no output)
+even with `NODE_OPTIONS=--max-old-space-size=12288` while the dev workflow runs —
+**when output goes to the terminal**. Redirecting to a file makes it complete:
 
-**How to apply:** use the workspace LSP diagnostics as the type gate instead
-(`getLatestLspDiagnostics` in code_execution — call without args for a global check).
-It reports the same tsserver errors without spawning a second compiler process.
-Batched `vitest run` of the affected files (`--pool=forks --maxWorkers=1`) still works
-fine for ~12 files per invocation.
+    NODE_OPTIONS=--max-old-space-size=12288 npx tsc -p tsconfig.app.json --noEmit > /tmp/tsc-out.txt 2>&1
+
+exits 2 with ~338 pre-existing legacy errors — grep the file for YOUR touched files
+only. If even the redirect run dies, fall back to workspace LSP diagnostics
+(`getLatestLspDiagnostics` in code_execution) as the type gate. Batched `vitest run`
+of the affected files (`--pool=forks --maxWorkers=1`) still works fine for ~12 files
+per invocation.

@@ -200,16 +200,29 @@ export function isYearComplete(series: YearSeries | undefined): boolean {
 
 /**
  * Vergleichs-Monatsindizes: Gesamtjahr = 0–11; „bis gleicher Monat" =
- * Januar bis zum letzten Datenmonat des AKTUELLEN Jahres.
+ * Januar bis zum letzten Datenmonat des AKTUELLEN Jahres — begrenzt auf
+ * voll vergangene Kalendermonate (der laufende Monat ist unvollständig,
+ * Teilmonats-Umsatz würde den Vergleich verzerren; identisch zum
+ * Standardverhalten des Jahresvergleichs in multi-year-analysis).
+ * Liegen NUR laufende/unvollständige Datenmonate vor, wird nicht still
+ * geleert, sondern die volle Datenspanne verwendet (Datenqualitätshinweis
+ * übernimmt buildBankInvestorAnalysis).
  */
 export function comparisonMonthIndices(
   current: YearSeries | undefined,
   untilSameMonth: boolean,
+  today: Date = new Date(),
 ): number[] {
   if (!untilSameMonth) return Array.from({ length: 12 }, (_, i) => i);
   const last = lastMonthWithData(current);
   if (last < 0) return [];
-  return Array.from({ length: last + 1 }, (_, i) => i);
+  const all = Array.from({ length: last + 1 }, (_, i) => i);
+  const curY = today.getFullYear();
+  const curM = today.getMonth();
+  const notFullyPast = (m: number): boolean =>
+    current != null && (current.year > curY || (current.year === curY && m >= curM));
+  const fullyPast = all.filter(m => !notFullyPast(m));
+  return fullyPast.length > 0 ? fullyPast : all;
 }
 
 /** Summe einer Zeile über Monatsindizes; null wenn KEIN Monat einen Wert hat. */
@@ -590,6 +603,8 @@ export interface BankInvestorOptions {
   years?: number[];
   /** Phase 2: Import-Metadaten je Jahr für die Investor Timeline */
   importInfoByYear?: Record<number, BankYearImportInfo>;
+  /** Referenzdatum für „voll vergangene Monate" (Tests); Default: jetzt. */
+  today?: Date;
 }
 
 // ─── Format (de-CH) ──────────────────────────────────────────────────────────
@@ -620,7 +635,8 @@ export function buildBankInvestorAnalysis(
   const base = series.find(s => s.year === baseYear);
   const current = series.find(s => s.year === currentYear);
 
-  const monthIndices = comparisonMonthIndices(current, untilSameMonth);
+  const cmpToday = opts.today ?? new Date();
+  const monthIndices = comparisonMonthIndices(current, untilSameMonth, cmpToday);
   const isPartialRange = monthIndices.length > 0 && monthIndices.length < 12;
   const rangeLabel = monthIndices.length === 0
     ? '—'
@@ -852,6 +868,28 @@ export function buildBankInvestorAnalysis(
   if (!baseHasData) dataQuality.push({ severity: 'fehler', text: `${baseYear} enthält keine Erfolgsrechnungsdaten.` });
   if (!curHasData) dataQuality.push({ severity: 'fehler', text: `${currentYear} enthält keine Erfolgsrechnungsdaten.` });
 
+  if (curHasData) {
+    const last = lastMonthWithData(current);
+    // Laufender (unvollständiger) Monat aus dem Vergleich ausgeschlossen? Nie still.
+    if (untilSameMonth && monthIndices.length > 0 && monthIndices[monthIndices.length - 1] < last) {
+      dataQuality.push({
+        severity: 'hinweis',
+        text: `Der laufende Monat ist noch unvollständig und wird im Vergleich „bis gleicher Monat" nicht mitgezählt — die Vergleichsbasis endet bei ${MONTH_LABELS_LONG[monthIndices[monthIndices.length - 1]]}.`,
+      });
+    }
+    // Fallback-Fall: KEIN Datenmonat liegt voll in der Vergangenheit — die
+    // volle Datenspanne wird gezeigt statt still geleert. Nie ohne Warnung.
+    const notFullyPastFirst = current != null && (
+      current.year > cmpToday.getFullYear() ||
+      (current.year === cmpToday.getFullYear() && (monthIndices[0] ?? 0) >= cmpToday.getMonth())
+    );
+    if (untilSameMonth && monthIndices.length > 0 && notFullyPastFirst) {
+      dataQuality.push({
+        severity: 'warnung',
+        text: 'Alle Datenmonate des aktuellen Jahres liegen im laufenden, noch unvollständigen Monat — die Werte sind nur eingeschränkt vergleichbar.',
+      });
+    }
+  }
   if (curHasData && !isYearComplete(current)) {
     const last = lastMonthWithData(current);
     dataQuality.push({ severity: 'hinweis', text: `${currentYear} enthält Daten bis ${MONTH_LABELS_LONG[last]}.` });

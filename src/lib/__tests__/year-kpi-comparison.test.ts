@@ -176,7 +176,11 @@ describe('buildYearKpiComparison — fehlende Werte', () => {
     neg.byPosition!.ebit = Array(12).fill(-1_000);
     const pos = mkSeries(2026, 12, 120_000, 40_000);
     pos.byPosition!.ebit = Array(12).fill(500);
-    const cmp = buildYearKpiComparison([zero, neg, pos], [2024, 2025, 2026]);
+    // today NACH 2026: alle 12 Monate sind voll vergangen (deterministisch,
+    // unabhängig vom realen Datum — sonst kappt der Laufmonats-Standard).
+    const cmp = buildYearKpiComparison([zero, neg, pos], [2024, 2025, 2026], {
+      today: new Date(2027, 1, 1),
+    });
     const r = row(cmp, 'ebit');
     expect(r.deltas[0].pct).toBeNull(); // Basis 0
     // −12'000 → +6'000: Δ = 18'000, % = 18'000/|−12'000| = 150 %
@@ -265,6 +269,82 @@ describe('buildYearKpiComparison — throughMonth (Monats-Selector)', () => {
     expect(cmp.rows).toHaveLength(0);
     expect(cmp.availableCommonMonths).toEqual([6, 7, 8, 9, 10, 11]);
     expect(cmp.dataQuality.some((d) => d.severity === 'fehler' && d.text.includes('gewählten Monat'))).toBe(true);
+  });
+});
+
+// ─── Laufmonats-Standard + leere Jahre (Runde 7) ─────────────────────────────
+
+describe('buildYearKpiComparison — Standard schliesst den laufenden Monat aus', () => {
+  it('Default endet beim letzten voll vergangenen gemeinsamen Monat (Juli-Teilmonat raus)', () => {
+    // 2026 hat Jan–Jul Daten, heute = 14.07.2026 ⇒ Juli unvollständig ⇒ Basis Jan–Jun.
+    const s2026Jul = mkSeries(2026, 7, 120_000, 40_000);
+    const cmp = buildYearKpiComparison([S2025, s2026Jul], [2025, 2026], {
+      today: new Date(2026, 6, 14),
+    });
+    expect(cmp.commonMonths).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(cmp.appliedThroughMonth).toBe(6);
+    // Juli bleibt im Selector wählbar (Erweiterung «Vergleich bis» möglich):
+    expect(cmp.availableCommonMonths).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(cmp.dataQuality.some((d) => d.severity === 'hinweis' && d.text.includes('laufende Monat'))).toBe(true);
+    expect(row(cmp, 'net_revenue').valueByYear).toEqual([660_000, 720_000]);
+  });
+
+  it('expliziter throughMonth übersteuert den Standard (Juli bewusst einbeziehbar)', () => {
+    const s2026Jul = mkSeries(2026, 7, 120_000, 40_000);
+    const cmp = buildYearKpiComparison([S2025, s2026Jul], [2025, 2026], {
+      today: new Date(2026, 6, 14), throughMonth: 7,
+    });
+    expect(cmp.commonMonths).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(cmp.appliedThroughMonth).toBe(7);
+    expect(row(cmp, 'net_revenue').valueByYear).toEqual([770_000, 840_000]);
+  });
+
+  it('nur laufende Monate vorhanden ⇒ zeigen mit Warnung, nie leerer Vergleich', () => {
+    const a = mkSeries(2025, 1, 100_000, 36_000);
+    const b = mkSeries(2026, 1, 110_000, 37_800);
+    const cmp = buildYearKpiComparison([a, b], [2025, 2026], {
+      today: new Date(2026, 0, 20),
+    });
+    expect(cmp.commonMonths).toEqual([0]);
+    expect(cmp.hasAnyData).toBe(true);
+    expect(cmp.dataQuality.some((d) => d.severity === 'warnung' && d.text.includes('unvollständigen Monat'))).toBe(true);
+  });
+});
+
+describe('buildYearKpiComparison — Jahre ohne Daten bleiben sichtbar', () => {
+  it('leeres Jahr bleibt Spalte mit «—» + Import-Hinweis; Schnittmenge nur über Datenjahre', () => {
+    const empty2024: YearSeries = {
+      year: 2024,
+      values: Array(12).fill(null),
+      byPosition: Object.fromEntries(
+        Object.keys(S2025.byPosition!).map((k) => [k, Array(12).fill(null)]),
+      ),
+    };
+    const cmp = buildYearKpiComparison([empty2024, S2025, S2026H1], [2024, 2025, 2026], {
+      today: new Date(2026, 6, 14),
+    });
+    expect(cmp.years).toEqual([2024, 2025, 2026]);
+    expect(cmp.emptyYears).toEqual([2024]);
+    expect(cmp.emptyNote).toContain('2024');
+    expect(cmp.emptyNote).toContain('«—»');
+    // Schnittmenge NUR über Jahre mit Daten (2025 ∩ 2026-H1 = Jan–Jun):
+    expect(cmp.commonMonths).toEqual([0, 1, 2, 3, 4, 5]);
+    const r = row(cmp, 'net_revenue');
+    expect(r.valueByYear).toEqual([null, 660_000, 720_000]);
+    // Δ 2025 vs. 2024 hat keine Basis ⇒ null (fehlend ≠ 0):
+    expect(r.deltas[0].chf).toBeNull();
+    // Leeres Jahr erzeugt KEINE Zeilen-Warnungsflut (nur den einen Hinweis):
+    expect(cmp.dataQuality.filter((d) => d.text.includes('2024')).length).toBeLessThanOrEqual(1);
+    expect(cmp.dataQuality.some((d) => d.text.includes('Jahresdaten importieren'))).toBe(true);
+  });
+
+  it('gänzlich fehlendes Jahr in der Auswahl wird wie ein leeres Jahr behandelt', () => {
+    const cmp = buildYearKpiComparison([S2025, S2026H1], [2024, 2025, 2026], {
+      today: new Date(2026, 6, 14),
+    });
+    expect(cmp.years).toEqual([2024, 2025, 2026]);
+    expect(cmp.emptyYears).toEqual([2024]);
+    expect(row(cmp, 'net_revenue').valueByYear).toEqual([null, 660_000, 720_000]);
   });
 });
 

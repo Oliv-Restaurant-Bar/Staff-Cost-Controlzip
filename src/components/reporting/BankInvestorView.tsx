@@ -26,7 +26,7 @@ import {
   type BankInvestorAnalysis, type BankPositionRow, type BankYearMode,
   type BankYearImportInfo,
 } from '@/lib/bank-investor-analysis';
-import { yearsWithAnyData, type YearSeries, type GrowthTone, type DataQualityItem } from '@/lib/multi-year-analysis';
+import { yearsWithAnyData, selectableYears, type YearSeries, type GrowthTone, type DataQualityItem } from '@/lib/multi-year-analysis';
 import { BankExecutiveSection } from './bank-investor/BankExecutiveSection';
 import { BankScorecardSection, type BankDrillMetric } from './bank-investor/BankScorecardSection';
 import { BankBenchmarkSection } from './bank-investor/BankBenchmarkSection';
@@ -62,8 +62,12 @@ interface BankInvestorViewProps {
 }
 
 export function BankInvestorView({ series, restaurantName, unmappedAccounts, importStand, importInfoByYear }: BankInvestorViewProps) {
-  // Jahresbasis: Jahre mit IRGENDWELCHEN Daten (Umsatz ODER Kosten-Zeilen) —
-  // ein reines Kosten-Jahr (z. B. 2024 aus dem Jahres-Kontoblatt) zählt mit.
+  // Jahresbasis der Selektoren: ALLE Serien-Jahre (auch ohne Daten — z. B.
+  // aktuelles Jahr −2 vor dem Import) — identisch zu Mehrjahresanalyse und
+  // Management Report (selectableYears). Jahre ohne Daten erscheinen als
+  // «—» mit Datenqualitätshinweis, nie still verschluckt.
+  const allYears = useMemo(() => selectableYears(series), [series]);
+  // Jahre mit tatsächlichen Daten: nur für sinnvolle Defaults + Empty-State.
   const yearsWithData = useMemo(() => yearsWithAnyData(series), [series]);
 
   const defaultCurrent = yearsWithData[yearsWithData.length - 1] ?? new Date().getFullYear();
@@ -71,10 +75,10 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
 
   const [baseYear, setBaseYear] = useState<number>(defaultBase);
   const [currentYear, setCurrentYear] = useState<number>(defaultCurrent);
-  // null = automatisch: «Letzte 3 Jahre», sobald drei Jahre mit Daten vorliegen
+  // null = automatisch: «Letzte 3 Jahre», sobald drei Jahre wählbar sind
   // (robust gegen nachträglich fertig geladene Serien), sonst 2 Jahre.
   const [yearModeSel, setYearModeSel] = useState<BankYearMode | null>(null);
-  const yearMode: BankYearMode = yearModeSel ?? (yearsWithData.length >= 3 ? 'three' : 'two');
+  const yearMode: BankYearMode = yearModeSel ?? (allYears.length >= 3 ? 'three' : 'two');
   const [untilSameMonth, setUntilSameMonth] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null);
   const [drillMetric, setDrillMetric] = useState<BankDrillMetric | null>(null);
@@ -82,8 +86,8 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
   /** Gewählte Jahre: manuell (2 Jahre) oder automatisch letzte 3/alle. */
   const selectedYears = useMemo(() => {
     if (yearMode === 'two') return [baseYear, currentYear].sort((a, b) => a - b);
-    return selectBankYears(yearsWithData, yearMode);
-  }, [yearMode, baseYear, currentYear, yearsWithData]);
+    return selectBankYears(allYears, yearMode);
+  }, [yearMode, baseYear, currentYear, allYears]);
 
   // Im 3-Jahres-/Alle-Modus vergleichen die 2-Jahres-Teile (Charts, Treiber)
   // immer das neueste Jahr mit seinem Vorjahr in der Auswahl.
@@ -169,8 +173,8 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="two">2 Jahre</SelectItem>
-              <SelectItem value="three" disabled={yearsWithData.length < 3}>Letzte 3 Jahre</SelectItem>
-              <SelectItem value="all" disabled={yearsWithData.length < 3}>Alle Jahre</SelectItem>
+              <SelectItem value="three" disabled={allYears.length < 3}>Letzte 3 Jahre</SelectItem>
+              <SelectItem value="all" disabled={allYears.length < 3}>Alle Jahre</SelectItem>
             </SelectContent>
           </Select>
           {yearMode === 'two' && (
@@ -180,7 +184,7 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {yearsWithData.map(y => (
+                  {allYears.map(y => (
                     <SelectItem key={y} value={String(y)} disabled={y === currentYear}>Basis {y}</SelectItem>
                   ))}
                 </SelectContent>
@@ -190,7 +194,7 @@ export function BankInvestorView({ series, restaurantName, unmappedAccounts, imp
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {yearsWithData.map(y => (
+                  {allYears.map(y => (
                     <SelectItem key={y} value={String(y)} disabled={y === baseYear}>Aktuell {y}</SelectItem>
                   ))}
                 </SelectContent>

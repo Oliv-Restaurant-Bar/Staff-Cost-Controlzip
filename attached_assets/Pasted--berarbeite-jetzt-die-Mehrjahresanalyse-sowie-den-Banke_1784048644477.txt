@@ -1,0 +1,371 @@
+Überarbeite jetzt die Mehrjahresanalyse sowie den Banken-/Investorenbericht vollständig mit Fokus auf eine korrekte Datenbasis, einen professionellen Jahresvergleich und eine kompakte Management-Darstellung.
+
+WICHTIG:
+
+Es geht NICHT um kosmetische Änderungen.
+
+Es geht um eine fachlich korrekte Analyse für Geschäftsleitung, Banken und Investoren.
+
+Die bestehende Architektur (P&L-Engine, Mehrjahresanalyse, Reporting-Store, Bankenbericht) muss vollständig erhalten bleiben.
+
+Keine zweite Berechnungslogik.
+
+Alle Ansichten müssen dieselbe Datenquelle verwenden.
+
+==================================================
+T001 – Vollständige Datenbasis sicherstellen
+==================================================
+
+Prüfe zuerst die komplette Datenpipeline.
+
+Ich vermute aktuell:
+
+- 2024 wird nicht vollständig berücksichtigt.
+- Bereits importierte Umsätze aus 2026 erscheinen teilweise nicht.
+- Die Mehrjahresanalyse verwendet nicht exakt dieselbe Datenbasis wie die Erfolgsrechnung.
+
+Untersuche deshalb:
+
+- Reporting Store
+- P&L Engine
+- Mehrjahresanalyse
+- Bankenbericht
+- Management Report
+- Monatsauswahl
+- Jahresauswahl
+- Importdaten
+- Umsatzquellen
+- Jahresfilter
+- vorhandene Monate
+
+Suche insbesondere nach:
+
+- fest codierten Jahren
+- Mindestjahr 2025
+- aktuelles Jahr/Vorjahr
+- Filter auf vollständige Jahre
+- Monatsfilter
+- falscher Merge
+- falsche Coverage-Logik
+- fehlende Common-Month-Berechnung
+
+Alle Analysen müssen exakt dieselben Monatsdaten verwenden wie die Erfolgsrechnung.
+
+Keine Zweitberechnung.
+
+==================================================
+T002 – 2024 vollständig integrieren
+==================================================
+
+2024 ist ein reguläres Geschäftsjahr.
+
+Es muss überall erscheinen:
+
+- Erfolgsrechnung
+- Mehrjahresanalyse
+- Management Report
+- Bankenbericht
+- Diagramme
+- Tabellen
+- Exporte
+
+Standardmässig sollen die letzten drei verfügbaren Jahre angezeigt werden:
+
+2024
+2025
+2026
+
+Nicht nur 2025 und 2026.
+
+==================================================
+T003 – Pro-rata-Jahresvergleich
+==================================================
+
+Das ist künftig der Standardmodus.
+
+Oben direkt:
+
+Vergleichsmodus
+
+○ Ganzes Jahr
+
+● Vergleich bis gleicher Monat
+
+Bei "Vergleich bis gleicher Monat":
+
+automatisch alle Jahre bis zum gleichen Monat vergleichen.
+
+Beispiel:
+
+2024 Januar–Juni
+
+2025 Januar–Juni
+
+2026 Januar–Juni
+
+Keine Hochrechnung.
+
+Keine künstlichen Jahreswerte.
+
+Teiljahre klar kennzeichnen.
+
+Der Benutzer soll zusätzlich den Vergleichsmonat wählen können.
+
+Zum Beispiel:
+
+Vergleich bis:
+
+Januar
+Februar
+...
+Juni
+...
+Dezember
+
+Standard:
+
+letzter tatsächlich vorhandener Monat.
+
+Diese Logik gilt für ALLE Kennzahlen.
+
+==================================================
+T004 – Management Dashboard komplett neu priorisieren
+==================================================
+
+Momentan muss man zu weit scrollen.
+
+Das widerspricht dem eigentlichen Zweck.
+
+Die Seite soll oberhalb des sichtbaren Bereichs bereits die wichtigsten Antworten liefern.
+
+Neue Reihenfolge:
+
+1.
+
+Jahresvergleich
+
+2024 | 2025 | 2026
+
+2.
+
+Vier Managementkarten
+
+Umsatzentwicklung
+
+Personalkostenentwicklung
+
+Personalquote
+
+EBIT
+
+3.
+
+Monatsvergleich
+
+4.
+
+Erst danach:
+
+Executive Summary
+
+Waterfall
+
+Treiber
+
+Benchmarks
+
+Historie
+
+Heatmaps
+
+Timeline
+
+Detailanalysen
+
+==================================================
+T005 – Managementkarten neu
+==================================================
+
+Die vier Karten sollen sofort beantworten:
+
+Wie entwickelt sich der Umsatz?
+
+Wie entwickeln sich die Personalkosten?
+
+Verbessert sich die Personalquote?
+
+Wie entwickelt sich das operative Ergebnis?
+
+Jede Karte zeigt:
+
+2024
+
+2025
+
+2026
+
+CHF
+
+%
+
+Trend
+
+Ampel
+
+Drilldown
+
+==================================================
+T006 – Monatsvergleich
+==================================================
+
+Direkt unter den Managementkarten.
+
+Zeilen:
+
+Jan
+
+Feb
+
+...
+
+Dez
+
+Spalten:
+
+2024
+
+2025
+
+2026
+
+Differenz
+
+%
+
+Keine Diagramme zuerst.
+
+Die Zahlen sind wichtiger.
+
+==================================================
+T007 – Personalkostenanalyse
+==================================================
+
+Eigener kompakter Block.
+
+Mindestens:
+
+Umsatz
+
+Personalaufwand
+
+Personalquote
+
+Veränderung Umsatz
+
+Veränderung Personal
+
+Veränderung Personalquote
+
+Automatische Aussagen:
+
+Personalkosten wachsen schneller als Umsatz.
+
+oder
+
+Umsatz wächst stärker als Personal.
+
+oder
+
+Personalquote verbessert.
+
+oder
+
+Personalquote verschlechtert.
+
+Nur regelbasiert.
+
+Keine KI.
+
+==================================================
+T008 – Bankenbericht identisch
+==================================================
+
+Die identische Logik muss gelten für:
+
+Mehrjahresanalyse
+
+Management Report
+
+Bankenbericht
+
+Keine zweite Berechnung.
+
+==================================================
+T009 – Design
+==================================================
+
+Desktop-first.
+
+Schlicht.
+
+Modern.
+
+Professionell.
+
+Keine grossen Textblöcke.
+
+Keine riesigen KPI-Bereiche.
+
+Keine unnötigen Leerflächen.
+
+Maximal vier KPI-Karten gleichzeitig sichtbar.
+
+Die eigentliche Analyse muss ohne Scrollen beginnen.
+
+Sticky Header behalten.
+
+Tabellen kompakt.
+
+Zahlen rechtsbündig.
+
+de-CH Format.
+
+==================================================
+T010 – Regression
+==================================================
+
+Prüfe:
+
+- 2024 überall sichtbar
+- 2026 verwendet alle vorhandenen Monate
+- Pro-rata korrekt
+- Teiljahre korrekt
+- Monatsvergleich korrekt
+- Umsatz identisch zur Erfolgsrechnung
+- Personal identisch zur Erfolgsrechnung
+- Bankenbericht identisch
+- Export identisch
+- EBIT-Ende unverändert
+- keine Jahresgewinn-Zeile
+- fehlend ≠ 0
+
+Danach:
+
+- fokussierte Tests
+- TypeScript-Typecheck
+- Architect-Review nur über den Task-Diff
+
+Aktualisiere anschliessend replit.md ausschliesslich mit dem tatsächlich umgesetzten Verhalten.
+
+Am Ende ausgeben:
+
+1. Ursache für die bisher unvollständige Datenbasis.
+2. Warum 2026 Monate fehlten.
+3. Wie 2024 integriert wurde.
+4. Wie der Pro-rata-Vergleich funktioniert.
+5. Welche Ansichten geändert wurden.
+6. Welche Exporte angepasst wurden.
+7. Testergebnis.
+8. Typecheck.
+9. Architect-Review.
+10. Liste aller geänderten Dateien.

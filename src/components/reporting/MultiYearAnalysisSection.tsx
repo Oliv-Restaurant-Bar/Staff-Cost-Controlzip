@@ -37,7 +37,7 @@ import { toast } from 'sonner';
 
 import {
   buildMultiYearAnalysis, buildMonthDetail, buildPositionsOverview, nonEmptyYears, selectYears, seriesForPosition,
-  yearsWithAnyData, buildYearKpiComparison, buildPersonnelInsights, buildComparisonDrilldown,
+  selectableYears, buildYearKpiComparison, buildPersonnelInsights, buildComparisonDrilldown,
   fmtChf, fmtMio, fmtPct, fmtDeltaChf, fmtPpSigned, fmtQuotePct,
   MONTH_LABELS_LONG, MULTI_YEAR_POSITIONS, DEFAULT_POSITION,
   MIN_YEAR_SELECTION, MAX_YEAR_SELECTION,
@@ -125,9 +125,10 @@ export function MultiYearAnalysisSection({
     () => nonEmptyYears(seriesForPosition(series, position.id)),
     [series, position.id],
   );
-  // Jahresauswahl-Basis: Jahre mit IRGENDWELCHEN Daten (Umsatz ODER Kosten-Zeilen) —
-  // ein reines Kosten-Jahr (z. B. 2024 aus dem Jahres-Kontoblatt) bleibt wählbar.
-  const availableYearsList = useMemo(() => yearsWithAnyData(series), [series]);
+  // Jahresauswahl-Basis: ALLE Serien-Jahre — auch ohne Daten (z. B. aktuelles
+  // Jahr −2 vor dem Import): sie erscheinen als «—»-Spalte mit Import-Hinweis,
+  // statt still zu fehlen. Reine Kosten-Jahre bleiben ebenfalls wählbar.
+  const availableYearsList = useMemo(() => selectableYears(series), [series]);
 
   // §6: Standard = aktuelles Jahr + Vorjahr + Basisjahr (die letzten 3 verfügbaren).
   // Explizite Auswahl wird mit den verfügbaren Jahren geschnitten; fällt sie
@@ -174,12 +175,10 @@ export function MultiYearAnalysisSection({
     }),
     [series, effectiveYears, cmpMode, throughMonth],
   );
-  // Anzeige-Wert des Monats-Selectors: gewählter Monat oder automatisch der
-  // letzte gemeinsame Datenmonat (Index 0-basiert → Wert 1–12).
-  const lastCommonMonth = cmp.availableCommonMonths.length > 0
-    ? cmp.availableCommonMonths[cmp.availableCommonMonths.length - 1] + 1
-    : null;
-  const throughMonthValue = throughMonth ?? lastCommonMonth;
+  // Anzeige-Wert des Monats-Selectors: der EFFEKTIV angewendete Monat aus dem
+  // cmp-Objekt (explizit gewählt ODER Standard = letzter voll vergangener
+  // gemeinsamer Monat) — UI und Exporte zeigen identisch dieselbe Basis.
+  const throughMonthValue = cmp.appliedThroughMonth;
   // Die 4 Entwicklungsblöcke (§5 der Vorgabe) — NUR aus den cmp-Zeilen, keine Zweitberechnung.
   const devBlocks = useMemo(() => {
     const defs: { id: string; label: string }[] = [
@@ -198,8 +197,11 @@ export function MultiYearAnalysisSection({
   }, [cmp]);
   const cmpInsights = useMemo(() => buildPersonnelInsights(cmp), [cmp]);
   const cmpDrill = useMemo(
-    () => (cmpDrillRowId == null ? null : buildComparisonDrilldown(series, effectiveYears, cmpDrillRowId)),
-    [series, effectiveYears, cmpDrillRowId],
+    () => (cmpDrillRowId == null ? null : buildComparisonDrilldown(series, effectiveYears, cmpDrillRowId, {
+      mode: cmpMode,
+      throughMonth: cmpMode === 'commonMonth' ? throughMonth : null,
+    })),
+    [series, effectiveYears, cmpDrillRowId, cmpMode, throughMonth],
   );
   const cmpDrillHasComponents = cmpDrill?.perYear.some((y) => y.components != null) ?? false;
 
@@ -456,7 +458,7 @@ export function MultiYearAnalysisSection({
                   <th className={cn(TH, TH_STICKY, 'left-0 z-20 sticky bg-muted')}>Kennzahl</th>
                   {cmp.years.map((y) => (
                     <th key={y} className={cn(TH, TH_NUM, TH_STICKY)}>
-                      {y}{cmp.partialYears.includes(y) ? ' *' : ''}
+                      {y}{cmp.partialYears.includes(y) ? ' *' : cmp.emptyYears.includes(y) ? ' †' : ''}
                     </th>
                   ))}
                   {cmp.years.slice(1).map((y, i) => (
@@ -508,6 +510,7 @@ export function MultiYearAnalysisSection({
           <div className="border-t border-border bg-muted/40 px-4 py-2 text-[11px] text-muted-foreground" data-testid="mya-cmp-dq">
               <ul className="list-disc space-y-0.5 pl-4">
                 {cmp.partialNote && <li>{cmp.partialNote}</li>}
+                {cmp.emptyNote && <li>{cmp.emptyNote}</li>}
                 <li>{EBIT_REPORT_NOTE}</li>
                 {cmp.dataQuality.map((d, i) => (
                   <li key={i} className={d.severity === 'fehler' ? TONE_TEXT.critical : d.severity === 'warnung' ? TONE_TEXT.warn : undefined}>

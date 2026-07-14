@@ -106,9 +106,26 @@ describe('J4 lastMonthWithData/isYearComplete', () => {
 
 describe('J5 comparisonMonthIndices', () => {
   it('Gesamtjahr = 12 Monate, „bis gleicher Monat" = Datenstand des aktuellen Jahres', () => {
-    expect(comparisonMonthIndices(CURRENT_2025, false)).toHaveLength(12);
-    expect(comparisonMonthIndices(CURRENT_2025, true)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-    expect(comparisonMonthIndices(undefined, true)).toEqual([]);
+    // Referenzdatum NACH 2025: alle Datenmonate liegen voll in der Vergangenheit.
+    const later = new Date(2026, 0, 15);
+    expect(comparisonMonthIndices(CURRENT_2025, false, later)).toHaveLength(12);
+    expect(comparisonMonthIndices(CURRENT_2025, true, later)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(comparisonMonthIndices(undefined, true, later)).toEqual([]);
+  });
+
+  it('schliesst den laufenden (unvollständigen) Kalendermonat aus', () => {
+    // Heute = 14. August 2025 → Datenmonat August (Index 7) ist unvollständig.
+    const today = new Date(2025, 7, 14);
+    expect(comparisonMonthIndices(CURRENT_2025, true, today)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    // Gesamtjahresmodus bleibt unberührt (bewusste Nutzerwahl).
+    expect(comparisonMonthIndices(CURRENT_2025, false, today)).toHaveLength(12);
+  });
+
+  it('fällt auf die volle Datenspanne zurück, wenn KEIN Monat voll vergangen ist', () => {
+    // Heute = 5. Januar 2025 → kein Kalendermonat 2025 ist voll vergangen:
+    // lieber die volle Datenspanne zeigen als still leeren (Hinweis in DQ).
+    const today = new Date(2025, 0, 5);
+    expect(comparisonMonthIndices(CURRENT_2025, true, today)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 });
 
@@ -261,6 +278,22 @@ describe('J13 Datenqualität', () => {
     expect(a.dataQuality.some(d => d.severity === 'fehler' && d.text.startsWith('2024'))).toBe(true);
     expect(a.dataQuality.some(d => d.text.includes('3 Konten'))).toBe(true);
     expect(a.hasData).toBe(false);
+  });
+  it('laufender Monat ausgeschlossen → sichtbarer Hinweis (nie still)', () => {
+    // Heute = 14. August 2025 → Daten bis August, Vergleich endet bei Juli.
+    const a = buildBankInvestorAnalysis([BASE_2024, CURRENT_2025], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true, today: new Date(2025, 7, 14),
+    });
+    expect(a.dataQuality.some(d => d.severity === 'hinweis' && d.text.includes('Vergleichsbasis endet bei Juli'))).toBe(true);
+    expect(a.comparison.label).toContain('Januar–Juli');
+  });
+  it('NUR laufende Datenmonate → volle Datenspanne + Warnung (nie still leeren)', () => {
+    // Heute = 5. Januar 2025 → kein Monat 2025 voll vergangen: Fallback.
+    const a = buildBankInvestorAnalysis([BASE_2024, CURRENT_2025], {
+      baseYear: 2024, currentYear: 2025, untilSameMonth: true, today: new Date(2025, 0, 5),
+    });
+    expect(a.comparison.label).toContain('Januar–August');
+    expect(a.dataQuality.some(d => d.severity === 'warnung' && d.text.includes('laufenden, noch unvollständigen Monat'))).toBe(true);
   });
   it('zentrale Position fehlt trotz Umsatz → Warnung', () => {
     const base = makeYear(2024, { net_revenue: 100_000 }); // kein Personal/Ware

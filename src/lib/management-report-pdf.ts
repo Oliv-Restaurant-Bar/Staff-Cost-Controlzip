@@ -141,19 +141,27 @@ export function buildManagementReportData(
     t.isPartial && t.partialLabel ? `Teiljahr: ${t.partialLabel}` : `${t.monthsWithData} Monate`,
   ]);
 
-  const monatsTabelleHead = ['Monat', ...years.map(String), 'Δ VJ'];
+  // Monatsvergleich: Spalten = ALLE gewählten Jahre aus dem cmp-Objekt (auch
+  // leere «—»-Jahre, mit «†» markiert) — identisch zur UI. Ohne cmp: Analysejahre.
+  const monatsJahre = opts.yearComparison ? opts.yearComparison.years : years;
+  const monatsLeereJahre = opts.yearComparison?.emptyYears ?? [];
+  const monatsTabelleHead = [
+    'Monat',
+    ...monatsJahre.map(y => `${y}${monatsLeereJahre.includes(y) ? ' †' : ''}`),
+    'Δ VJ',
+  ];
   const monatsTabelle: string[][] = monthRows.map(row => {
     const lastCell = row.cells[row.cells.length - 1];
     return [
       row.label,
-      ...row.cells.map(c => fmtChf(c.value)),
+      ...monatsJahre.map(y => fmtChf(row.cells.find(c => c.year === y)?.value ?? null)),
       row.cells.length > 1 ? fmtPct(lastCell.vsPrevYear.pct) : '—',
     ];
   });
   const lastTotal = totals[totals.length - 1];
   monatsTabelle.push([
     'Total',
-    ...totals.map(t => fmtChf(t.total)),
+    ...monatsJahre.map(y => fmtChf(totals.find(t => t.year === y)?.total ?? null)),
     totals.length > 1 && lastTotal ? fmtPct(lastTotal.vsPrevYearCommon.pct) : '—',
   ]);
 
@@ -195,7 +203,7 @@ export function buildManagementReportData(
       : null;
     jahresvergleichHead = [
       'Kennzahl',
-      ...cmp.years.map(y => `${y}${cmp.partialYears.includes(y) ? ' *' : ''}`),
+      ...cmp.years.map(y => `${y}${cmp.partialYears.includes(y) ? ' *' : cmp.emptyYears.includes(y) ? ' †' : ''}`),
       ...pairs.map(p => `Δ ${p.to} vs. ${p.from}`),
       ...(flPair ? [`Δ ${flPair.to} vs. ${flPair.from}`] : []),
     ];
@@ -212,6 +220,9 @@ export function buildManagementReportData(
     ]);
     if (cmp.partialNote) {
       jahresvergleichHinweise.push(cmp.partialNote);
+    }
+    if (cmp.emptyNote) {
+      jahresvergleichHinweise.push(cmp.emptyNote);
     }
     jahresvergleichHinweise.push(EBIT_REPORT_NOTE);
     for (const d of cmp.dataQuality) {
@@ -320,7 +331,44 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
     y = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 2;
   };
 
-  // Executive Summary
+  // 1. Jahresvergleich — Kennzahlen bis EBIT, dieselbe Datenbasis wie die UI
+  if (data.jahresvergleich.length > 0) {
+    sectionTitle('Jahresvergleich (Kennzahlen bis EBIT)');
+    table([data.jahresvergleichHead], data.jahresvergleich, { numericFrom: 1 });
+    if (data.jahresvergleichHinweise.length > 0) {
+      doc.setFontSize(8);
+      doc.setTextColor(...MUTED);
+      for (const h of data.jahresvergleichHinweise) {
+        const lines = doc.splitTextToSize(pdfSafe(`• ${h}`), pageW - margin * 2) as string[];
+        ensureSpace(lines.length * 4 + 2);
+        y += 4;
+        doc.text(lines, margin, y);
+        y += (lines.length - 1) * 4;
+      }
+      y += 1;
+    }
+  }
+
+  // 2. Monatsvergleich (Spalten = alle gewählten Jahre, leere Jahre «—»)
+  sectionTitle(data.monatsTitel);
+  table([data.monatsTabelleHead], data.monatsTabelle, { numericFrom: 1 });
+
+  // 3. Personalkosten-Analyse — regelbasierte Aussagen aus dem cmp-Objekt
+  if (data.jahresvergleich.length > 0 && data.personalEntwicklung.length > 0) {
+    sectionTitle('Personalkosten-Analyse');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...NAVY);
+    for (const s of data.personalEntwicklung) {
+      const lines = doc.splitTextToSize(pdfSafe(`• ${s}`), pageW - margin * 2) as string[];
+      ensureSpace(lines.length * 4.6 + 2);
+      y += 4.6;
+      doc.text(lines, margin, y);
+      y += (lines.length - 1) * 4.6;
+    }
+    y += 2;
+  }
+
+  // 4. Executive Summary
   sectionTitle('Executive Summary');
   if (data.executiveSummary.length === 0) {
     doc.setFontSize(9);
@@ -341,48 +389,13 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
     y += 2;
   }
 
-  // Kennzahlen
+  // 5. Kennzahlen
   sectionTitle('Kennzahlen');
   table([['Kennzahl', 'Wert']], data.kpis.map(k => [k.label, k.value]), { numericFrom: 1 });
 
-  // Jahresübersicht
+  // 6. Jahresübersicht
   sectionTitle('Jahresübersicht');
   table([data.jahresUebersichtHead], data.jahresUebersicht, { numericFrom: 1 });
-
-  // Jahresvergleich (§5–§7) — Kennzahlen bis EBIT, dieselbe Datenbasis wie die UI
-  if (data.jahresvergleich.length > 0) {
-    sectionTitle('Jahresvergleich (Kennzahlen bis EBIT)');
-    table([data.jahresvergleichHead], data.jahresvergleich, { numericFrom: 1 });
-    if (data.jahresvergleichHinweise.length > 0) {
-      doc.setFontSize(8);
-      doc.setTextColor(...MUTED);
-      for (const h of data.jahresvergleichHinweise) {
-        const lines = doc.splitTextToSize(pdfSafe(`• ${h}`), pageW - margin * 2) as string[];
-        ensureSpace(lines.length * 4 + 2);
-        y += 4;
-        doc.text(lines, margin, y);
-        y += (lines.length - 1) * 4;
-      }
-      y += 1;
-    }
-    if (data.personalEntwicklung.length > 0) {
-      sectionTitle('Personalkosten-Entwicklung');
-      doc.setFontSize(9.5);
-      doc.setTextColor(...NAVY);
-      for (const s of data.personalEntwicklung) {
-        const lines = doc.splitTextToSize(pdfSafe(`• ${s}`), pageW - margin * 2) as string[];
-        ensureSpace(lines.length * 4.6 + 2);
-        y += 4.6;
-        doc.text(lines, margin, y);
-        y += (lines.length - 1) * 4.6;
-      }
-      y += 2;
-    }
-  }
-
-  // Monatstabelle
-  sectionTitle(data.monatsTitel);
-  table([data.monatsTabelleHead], data.monatsTabelle, { numericFrom: 1 });
 
   // Jahres-Details
   sectionTitle('Jahresanalysen');

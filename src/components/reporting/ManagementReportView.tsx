@@ -19,9 +19,13 @@ import {
 } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { InfoTip } from '@/components/ui/info-tip';
+import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
+import { HintBox } from '@/components/ui/hint-box';
 import { EmptyState } from '@/components/ui/page-states';
 import { StatusPill } from '@/components/ui/status-pill';
-import { TONE_TEXT } from '@/components/ui/tones';
+import { TONE_TEXT, type Tone } from '@/components/ui/tones';
 import {
   TABLE, TD, TD_NUM, TH, TH_NUM,
 } from '@/components/ui/table-style';
@@ -33,11 +37,14 @@ import { toast } from 'sonner';
 
 import {
   buildMultiYearAnalysis, buildMethodikNotes, nonEmptyYears, selectYears, seriesForPosition,
-  fmtChf, fmtMio, fmtPct, fmtDeltaChf,
-  MULTI_YEAR_POSITIONS, DEFAULT_POSITION,
+  selectableYears, buildYearKpiComparison, buildPersonnelInsights,
+  fmtChf, fmtMio, fmtPct, fmtDeltaChf, fmtPpSigned, fmtQuotePct,
+  MONTH_LABELS_LONG, MULTI_YEAR_POSITIONS, DEFAULT_POSITION,
   MIN_YEAR_SELECTION, MAX_YEAR_SELECTION,
   type DataQualityItem, type DataQualitySeverity, type MultiYearAnalysis, type YearSeries,
+  type YearKpiComparison, type YearComparisonMode, type YearComparisonRowDef, type YearComparisonDelta,
 } from '@/lib/multi-year-analysis';
+import { EBIT_REPORT_NOTE } from '@/lib/bank-investor-analysis';
 
 const LINE_COLORS = ['#94a3b8', '#818cf8', '#0ea5e9', '#f59e0b', '#10b981'];
 
@@ -52,6 +59,22 @@ const SEVERITY_META: Record<DataQualitySeverity, { label: string; text: string }
   warnung: { label: 'Warnung', text: 'text-amber-700' },
   hinweis: { label: 'Hinweis', text: 'text-muted-foreground' },
 };
+
+/**
+ * Farb-Richtung einer Δ-Zelle (§6 replit.md): Aufwand-CHF neutral,
+ * Quote-runter = grün, fehlende Basis neutral — identisch zur Mehrjahresanalyse.
+ */
+function cmpDeltaTone(def: YearComparisonRowDef, d: YearComparisonDelta): Tone {
+  const v = def.kind === 'quote' ? d.pp : d.chf;
+  if (v == null || v === 0 || def.betterWhen === 'neutral') return 'neutral';
+  return (def.betterWhen === 'up') === v > 0 ? 'good' : 'critical';
+}
+
+function cmpDeltaText(def: YearComparisonRowDef, d: YearComparisonDelta): string {
+  if (def.kind === 'quote') return fmtPpSigned(d.pp);
+  if (d.chf == null) return '—';
+  return `${fmtDeltaChf(d.chf)} (${fmtPct(d.pct)})`;
+}
 
 /** Abschnittstitel im Berichts-Stil (nummeriert, dezente Linie). */
 function ReportSection({
@@ -83,6 +106,10 @@ export function ManagementReportView({
   const [positionId, setPositionId] = useState<string>(DEFAULT_POSITION.id);
   const [selectedYears, setSelectedYears] = useState<number[] | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Vergleichsmodus wie in der Mehrjahresanalyse: «bis gleicher Monat» (Default,
+  // Standard = letzter voll vergangener gemeinsamer Monat) oder Ganzjahr.
+  const [cmpMode, setCmpMode] = useState<YearComparisonMode>('commonMonth');
+  const [throughMonth, setThroughMonth] = useState<number | null>(null);
 
   const position = MULTI_YEAR_POSITIONS.find((p) => p.id === positionId) ?? DEFAULT_POSITION;
   const isExpense = position.semantics === 'expense';
@@ -92,7 +119,9 @@ export function ManagementReportView({
     () => nonEmptyYears(seriesForPosition(series, position.id)),
     [series, position.id],
   );
-  const availableYearsList = useMemo(() => usable.map((s) => s.year), [usable]);
+  // Jahresauswahl-Basis: ALLE Serien-Jahre — auch ohne Daten (z. B. aktuelles
+  // Jahr −2 vor dem Import) erscheinen als «—»-Spalte statt still zu fehlen.
+  const availableYearsList = useMemo(() => selectableYears(series), [series]);
 
   // Gleiche Auswahl-Logik wie in der Mehrjahresanalyse (§6).
   const effectiveYears = useMemo(() => {
@@ -112,6 +141,9 @@ export function ManagementReportView({
       cur.add(y);
     }
     setSelectedYears([...cur].sort((a, b) => a - b));
+    // Monats-Selector zurücksetzen: die gemeinsamen Monate der neuen Auswahl
+    // können den alten Monat nicht mehr enthalten (sonst sichtbarer Fehler).
+    setThroughMonth(null);
   };
 
   const analysis: MultiYearAnalysis = useMemo(
@@ -119,6 +151,35 @@ export function ManagementReportView({
     [usable, effectiveYears, position],
   );
   const { kpis, monthRows, totals, years, baseYear, chart, yearSummaries } = analysis;
+
+  // Jahresvergleich: rohe Serien mit byPosition (NICHT seriesForPosition) —
+  // DASSELBE cmp-Objekt geht an den PDF-Export (UI ≡ Export).
+  const cmp: YearKpiComparison = useMemo(
+    () => buildYearKpiComparison(series, effectiveYears, {
+      mode: cmpMode,
+      throughMonth: cmpMode === 'commonMonth' ? throughMonth : null,
+    }),
+    [series, effectiveYears, cmpMode, throughMonth],
+  );
+  // Anzeige-Wert des Monats-Selectors = EFFEKTIV angewendeter Monat aus dem cmp.
+  const throughMonthValue = cmp.appliedThroughMonth;
+  // Die 4 Entwicklungsblöcke — NUR aus den cmp-Zeilen, keine Zweitberechnung.
+  const devBlocks = useMemo(() => {
+    const defs: { id: string; label: string }[] = [
+      { id: 'net_revenue', label: 'Umsatzentwicklung' },
+      { id: 'total_personnel', label: 'Personalkosten' },
+      { id: 'personnel_quote', label: 'Personalquote' },
+      { id: 'ebit', label: 'EBIT' },
+    ];
+    return defs.map(({ id, label }) => {
+      const row = cmp.rows.find((r) => r.def.id === id) ?? null;
+      const lastIdx = cmp.years.length - 1;
+      const value = row?.valueByYear[lastIdx] ?? null;
+      const delta = row && row.deltas.length > 0 ? row.deltas[row.deltas.length - 1] : null;
+      return { id, label, row, value, delta };
+    });
+  }, [cmp]);
+  const cmpInsights = useMemo(() => buildPersonnelInsights(cmp), [cmp]);
 
   const dqBySeverity = useMemo(() => {
     const g: Record<DataQualitySeverity, DataQualityItem[]> = { fehler: [], warnung: [], hinweis: [] };
@@ -145,7 +206,10 @@ export function ManagementReportView({
     setExporting(true);
     try {
       const { exportManagementReportPDF } = await import('@/lib/management-report-pdf');
-      exportManagementReportPDF(analysis, { restaurantName, dataSourceHints });
+      exportManagementReportPDF(analysis, {
+        restaurantName, dataSourceHints,
+        yearComparison: cmp, personnelInsights: cmpInsights,
+      });
       toast.success('Management-Report (PDF) erstellt');
     } catch (e) {
       console.error('Management-Report PDF fehlgeschlagen:', e);
@@ -166,6 +230,9 @@ export function ManagementReportView({
       </div>
     );
   }
+
+  // Fortlaufende Abschnittsnummern — bedingte Abschnitte erzeugen keine Lücken.
+  let sectionNr = 0;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6" data-testid="mrv-report">
@@ -229,6 +296,54 @@ export function ManagementReportView({
         </Button>
       </div>
 
+      {/* Vergleichsmodus (identische Logik wie Mehrjahresanalyse): Ganzjahr vs.
+          «bis gleicher Monat» + Monatsselector — wirkt auf Jahresvergleich,
+          Entwicklungsblöcke und Personalkosten-Analyse. */}
+      <div
+        className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-border bg-card px-4 py-2.5"
+        data-testid="mrv-cmp-mode"
+      >
+        <span className="text-xs font-semibold">Vergleichsmodus</span>
+        <RadioGroup
+          value={cmpMode}
+          onValueChange={(v) => setCmpMode(v as YearComparisonMode)}
+          className="flex flex-wrap items-center gap-x-5 gap-y-1.5"
+        >
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+            <RadioGroupItem value="commonMonth" data-testid="mrv-mode-common" />
+            Vergleich bis gleicher Monat
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs">
+            <RadioGroupItem value="fullYear" data-testid="mrv-mode-fullyear" />
+            Ganzes Jahr
+          </label>
+        </RadioGroup>
+        {cmpMode === 'commonMonth' && cmp.availableCommonMonths.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Vergleich bis:</span>
+            <Select
+              value={throughMonthValue != null ? String(throughMonthValue) : undefined}
+              onValueChange={(v) => setThroughMonth(Number(v))}
+            >
+              <SelectTrigger className="h-7 w-32 text-xs" data-testid="mrv-through-month">
+                <SelectValue placeholder="Monat" />
+              </SelectTrigger>
+              <SelectContent>
+                {cmp.availableCommonMonths.map((mIdx) => (
+                  <SelectItem key={mIdx} value={String(mIdx + 1)}>
+                    {MONTH_LABELS_LONG[mIdx]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <InfoTip text="Alle Kennzahlen des Jahresvergleichs werden je Jahr über Januar bis zum gewählten Monat summiert — nur Monate mit Daten in allen gewählten Jahren sind wählbar. Keine Hochrechnung." />
+          </div>
+        )}
+        {cmpMode === 'fullYear' && !cmp.isFullYears && (
+          <InfoTip text="Ganzjahresmodus: je Jahr die Summe der vorhandenen Datenmonate. Teiljahre sind markiert und nur eingeschränkt direkt vergleichbar — keine Hochrechnung." />
+        )}
+      </div>
+
       {/* Berichts-Dokument */}
       <div className="rounded-lg border border-border bg-card px-6 py-6 shadow-sm sm:px-10 sm:py-8">
         {/* Kopfbereich */}
@@ -252,8 +367,197 @@ export function ManagementReportView({
         </header>
 
         <div className="mt-6 space-y-7">
-          {/* 1. Executive Summary */}
-          <ReportSection nr={1} title="Executive Summary" testId="mrv-summary">
+          {/* 1. Jahresvergleich (Kennzahlen × Jahre, endet bei EBIT) — DASSELBE
+              cmp-Objekt wie im PDF-Export, keine Zweitberechnung */}
+          <ReportSection nr={++sectionNr} title={`Jahresvergleich ${cmp.years.join(' · ')}`} testId="mrv-cmp">
+            {cmp.hasAnyData ? (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  {cmp.mode === 'fullYear' ? (
+                    <div data-testid="mrv-cmp-mode-pill">
+                      <StatusPill tone="info" size="xs" showDot={false}>
+                        Ganzes Jahr{cmp.partialYears.length > 0 ? ' (Teiljahre markiert)' : ''}
+                      </StatusPill>
+                    </div>
+                  ) : cmp.commonMonthsLabel && (
+                    <div data-testid="mrv-cmp-partial-pill">
+                      <StatusPill tone="info" size="xs" showDot={false}>
+                        Vergleich bis gleicher Monat: {cmp.commonMonthsLabel}
+                      </StatusPill>
+                    </div>
+                  )}
+                </div>
+                <div className="overflow-x-auto">
+                  <table className={TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={TH}>Kennzahl</th>
+                        {cmp.years.map((y) => (
+                          <th key={y} className={cn(TH, TH_NUM)}>
+                            {y}{cmp.partialYears.includes(y) ? ' *' : cmp.emptyYears.includes(y) ? ' †' : ''}
+                          </th>
+                        ))}
+                        {cmp.years.slice(1).map((y, i) => (
+                          <th key={`d-${y}`} className={cn(TH, TH_NUM)}>Δ {y} vs. {cmp.years[i]}</th>
+                        ))}
+                        {cmp.years.length >= 3 && (
+                          <th className={cn(TH, TH_NUM)}>
+                            Δ {cmp.years[cmp.years.length - 1]} vs. {cmp.years[0]}
+                          </th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cmp.rows.map((r) => (
+                        <tr key={r.def.id} data-testid={`mrv-cmp-row-${r.def.id}`}>
+                          <td className={cn(TD, 'font-medium')}>{r.def.label}</td>
+                          {r.valueByYear.map((v, i) => (
+                            <td key={cmp.years[i]} className={cn(TD, TD_NUM)}>
+                              {r.def.kind === 'quote' ? fmtQuotePct(v) : fmtChf(v)}
+                            </td>
+                          ))}
+                          {r.deltas.map((d) => (
+                            <td
+                              key={`${d.fromYear}-${d.toYear}`}
+                              className={cn(TD, TD_NUM, 'text-xs', TONE_TEXT[cmpDeltaTone(r.def, d)])}
+                            >
+                              {cmpDeltaText(r.def, d)}
+                            </td>
+                          ))}
+                          {cmp.years.length >= 3 && (
+                            <td className={cn(TD, TD_NUM, 'text-xs',
+                              r.firstToLast ? TONE_TEXT[cmpDeltaTone(r.def, r.firstToLast)] : 'text-muted-foreground')}>
+                              {r.firstToLast ? cmpDeltaText(r.def, r.firstToLast) : '—'}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <ul className="list-disc space-y-0.5 pl-5 text-[11px] text-muted-foreground" data-testid="mrv-cmp-dq">
+                  {cmp.partialNote && <li>{cmp.partialNote}</li>}
+                  {cmp.emptyNote && <li>{cmp.emptyNote}</li>}
+                  <li>{EBIT_REPORT_NOTE}</li>
+                  {cmp.dataQuality.map((d, i) => (
+                    <li key={i} className={d.severity === 'fehler' ? TONE_TEXT.critical : d.severity === 'warnung' ? TONE_TEXT.warn : undefined}>
+                      {d.text}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <div data-testid="mrv-cmp-empty">
+                <HintBox tone="critical" title="Jahresvergleich nicht möglich">
+                  <ul className="list-disc space-y-0.5 pl-4">
+                    {cmp.dataQuality.map((d, i) => <li key={i}>{d.text}</li>)}
+                  </ul>
+                </HintBox>
+              </div>
+            )}
+          </ReportSection>
+
+          {/* 2. Entwicklungsblöcke: Umsatz, Personalkosten, Personalquote, EBIT —
+              Werte 1:1 aus den Jahresvergleichs-Zeilen (cmp) */}
+          {cmp.hasAnyData && cmp.years.length >= 2 && (
+            <ReportSection nr={++sectionNr} title="Entwicklung auf einen Blick" testId="mrv-dev-blocks">
+              <KpiGrid>
+                {devBlocks.map(({ id, label, row, value, delta }) => {
+                  const latestYear = cmp.years[cmp.years.length - 1];
+                  const isQuote = row?.def.kind === 'quote';
+                  const deltaMetric = delta == null ? null : isQuote ? delta.pp : delta.chf;
+                  return (
+                    <KpiCard
+                      key={id}
+                      data-testid={`mrv-dev-${id}`}
+                      label={`${label} ${latestYear}${cmp.partialYears.includes(latestYear) ? ' *' : ''}`}
+                      value={row == null ? '—' : isQuote ? fmtQuotePct(value) : fmtChf(value)}
+                      sub={delta ? `vs. ${delta.fromYear}` : 'Kein Vorjahresvergleich möglich'}
+                      tone={row && delta ? cmpDeltaTone(row.def, delta) : 'neutral'}
+                      trend={row && delta && deltaMetric != null ? {
+                        direction: deltaMetric > 0 ? 'up' : deltaMetric < 0 ? 'down' : 'flat',
+                        tone: cmpDeltaTone(row.def, delta),
+                        label: cmpDeltaText(row.def, delta),
+                      } : undefined}
+                    />
+                  );
+                })}
+              </KpiGrid>
+            </ReportSection>
+          )}
+
+          {/* 3. Monatsvergleich — Spalten = alle gewählten Jahre, leere Jahre «—» */}
+          <ReportSection nr={++sectionNr} title={isRevenue ? 'Monatsumsätze im Vergleich (CHF netto)' : `${position.label} pro Monat im Vergleich (CHF)`} testId="mrv-months-table">
+            <div className="overflow-x-auto">
+              <table className={TABLE}>
+                <thead>
+                  <tr>
+                    <th className={TH}>Monat</th>
+                    {cmp.years.map((y) => (
+                      <th key={y} className={cn(TH, TH_NUM)}>
+                        {y}{cmp.emptyYears.includes(y) ? ' †' : ''}
+                      </th>
+                    ))}
+                    <th className={cn(TH, TH_NUM)}>Δ VJ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthRows.map((row) => {
+                    const lastCell = row.cells[row.cells.length - 1];
+                    return (
+                      <tr key={row.monthIdx}>
+                        <td className={cn(TD, 'font-medium')}>{row.label}</td>
+                        {cmp.years.map((y) => {
+                          const c = row.cells.find((cell) => cell.year === y);
+                          return (
+                            <td key={y} className={cn(TD, TD_NUM)}>{fmtChf(c?.value ?? null)}</td>
+                          );
+                        })}
+                        <td className={cn(TD, TD_NUM, 'text-xs',
+                          lastCell?.vsPrevYear.pct == null || isExpense
+                            ? 'text-muted-foreground'
+                            : lastCell.vsPrevYear.pct >= 0 ? TONE_TEXT.good : TONE_TEXT.critical)}>
+                          {row.cells.length > 1 ? fmtPct(lastCell?.vsPrevYear.pct ?? null) : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  <tr className="border-t-2 border-border bg-muted/60 font-semibold">
+                    <td className={TD}>Total</td>
+                    {cmp.years.map((y) => {
+                      const t = totals.find((tt) => tt.year === y);
+                      return (
+                        <td key={y} className={cn(TD, TD_NUM)}>
+                          {fmtChf(t?.total ?? null)}
+                          {t?.isPartial && t.partialLabel && (
+                            <span className="ml-1 font-normal text-[10px] text-muted-foreground">({t.partialLabel})</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className={cn(TD, TD_NUM, 'text-xs')}>
+                      {totals.length > 1 && latestTotal ? fmtPct(latestTotal.vsPrevYearCommon.pct) : '—'}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            {cmp.emptyNote && (
+              <p className="text-[11px] text-muted-foreground">{cmp.emptyNote}</p>
+            )}
+          </ReportSection>
+
+          {/* 4. Personalkosten-Analyse — regelbasierte Aussagen, keine Schätzungen */}
+          {cmp.hasAnyData && cmpInsights.length > 0 && (
+            <ReportSection nr={++sectionNr} title="Personalkosten-Analyse" testId="mrv-cmp-insights">
+              <ul className="list-disc space-y-1 pl-5 text-[13px] leading-relaxed">
+                {cmpInsights.map((l, i) => <li key={i}>{l}</li>)}
+              </ul>
+            </ReportSection>
+          )}
+
+          {/* 5. Executive Summary */}
+          <ReportSection nr={++sectionNr} title="Executive Summary" testId="mrv-summary">
             {analysis.executiveSummary.length === 0 ? (
               <p className="text-xs text-muted-foreground">Keine Zusammenfassung verfügbar.</p>
             ) : (
@@ -263,8 +567,8 @@ export function ManagementReportView({
             )}
           </ReportSection>
 
-          {/* 2. KPI-Übersicht */}
-          <ReportSection nr={2} title="Kennzahlen im Überblick" testId="mrv-kpis">
+          {/* 6. KPI-Übersicht */}
+          <ReportSection nr={++sectionNr} title="Kennzahlen im Überblick" testId="mrv-kpis">
             <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-xs sm:grid-cols-2">
               {[
                 {
@@ -304,8 +608,8 @@ export function ManagementReportView({
             </div>
           </ReportSection>
 
-          {/* 3. Mehrjahresvergleich */}
-          <ReportSection nr={3} title="Mehrjahresvergleich" testId="mrv-years-table">
+          {/* 7. Mehrjahresvergleich */}
+          <ReportSection nr={++sectionNr} title="Mehrjahresvergleich" testId="mrv-years-table">
             <table className={TABLE}>
               <thead>
                 <tr>
@@ -346,56 +650,8 @@ export function ManagementReportView({
             </table>
           </ReportSection>
 
-          {/* 4. Monatsentwicklung */}
-          <ReportSection nr={4} title={isRevenue ? 'Monatsumsätze im Vergleich (CHF netto)' : `${position.label} pro Monat im Vergleich (CHF)`} testId="mrv-months-table">
-            <div className="overflow-x-auto">
-              <table className={TABLE}>
-                <thead>
-                  <tr>
-                    <th className={TH}>Monat</th>
-                    {years.map((y) => <th key={y} className={cn(TH, TH_NUM)}>{y}</th>)}
-                    <th className={cn(TH, TH_NUM)}>Δ VJ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthRows.map((row) => {
-                    const lastCell = row.cells[row.cells.length - 1];
-                    return (
-                      <tr key={row.monthIdx}>
-                        <td className={cn(TD, 'font-medium')}>{row.label}</td>
-                        {row.cells.map((c) => (
-                          <td key={c.year} className={cn(TD, TD_NUM)}>{fmtChf(c.value)}</td>
-                        ))}
-                        <td className={cn(TD, TD_NUM, 'text-xs',
-                          lastCell?.vsPrevYear.pct == null || isExpense
-                            ? 'text-muted-foreground'
-                            : lastCell.vsPrevYear.pct >= 0 ? TONE_TEXT.good : TONE_TEXT.critical)}>
-                          {row.cells.length > 1 ? fmtPct(lastCell?.vsPrevYear.pct ?? null) : '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  <tr className="border-t-2 border-border bg-muted/60 font-semibold">
-                    <td className={TD}>Total</td>
-                    {totals.map((t) => (
-                      <td key={t.year} className={cn(TD, TD_NUM)}>
-                        {fmtChf(t.total)}
-                        {t.isPartial && t.partialLabel && (
-                          <span className="ml-1 font-normal text-[10px] text-muted-foreground">({t.partialLabel})</span>
-                        )}
-                      </td>
-                    ))}
-                    <td className={cn(TD, TD_NUM, 'text-xs')}>
-                      {totals.length > 1 && latestTotal ? fmtPct(latestTotal.vsPrevYearCommon.pct) : '—'}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </ReportSection>
-
-          {/* 5. Diagramme */}
-          <ReportSection nr={5} title="Entwicklung im Zeitverlauf" testId="mrv-charts">
+          {/* 8. Diagramme */}
+          <ReportSection nr={++sectionNr} title="Entwicklung im Zeitverlauf" testId="mrv-charts">
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="rounded-md border border-border p-3">
                 <p className="mb-2 text-[11px] font-semibold text-muted-foreground">
@@ -440,8 +696,8 @@ export function ManagementReportView({
             </div>
           </ReportSection>
 
-          {/* 6. Stärkste und schwächste Monate je Jahr */}
-          <ReportSection nr={6} title={isExpense ? 'Höchste und tiefste Monate je Jahr' : 'Stärkste und schwächste Monate je Jahr'} testId="mrv-top-flop">
+          {/* 9. Stärkste und schwächste Monate je Jahr */}
+          <ReportSection nr={++sectionNr} title={isExpense ? 'Höchste und tiefste Monate je Jahr' : 'Stärkste und schwächste Monate je Jahr'} testId="mrv-top-flop">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {yearSummaries.map((ys) => (
                 <div key={ys.year} className="rounded-md border border-border p-3" data-testid={`mrv-year-detail-${ys.year}`}>
@@ -481,8 +737,8 @@ export function ManagementReportView({
             </div>
           </ReportSection>
 
-          {/* 7. Datenqualität (§16 — Fehler nie stillschweigend) */}
-          <ReportSection nr={7} title="Datenqualität und Einschränkungen" testId="mrv-data-quality">
+          {/* 10. Datenqualität (§16 — Fehler nie stillschweigend) */}
+          <ReportSection nr={++sectionNr} title="Datenqualität und Einschränkungen" testId="mrv-data-quality">
             {analysis.dataQuality.length === 0 ? (
               <p className="text-xs text-muted-foreground">Keine Auffälligkeiten in der Datenbasis erkannt.</p>
             ) : (
@@ -501,8 +757,8 @@ export function ManagementReportView({
             )}
           </ReportSection>
 
-          {/* 8. Methodik */}
-          <ReportSection nr={8} title="Methodik" testId="mrv-methodik">
+          {/* 11. Methodik */}
+          <ReportSection nr={++sectionNr} title="Methodik" testId="mrv-methodik">
             <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
               {methodik.map((m, i) => <li key={i}>{m}</li>)}
             </ul>

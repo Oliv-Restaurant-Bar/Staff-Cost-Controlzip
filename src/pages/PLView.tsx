@@ -2565,7 +2565,15 @@ const PLViewPage = () => {
       // Löhne + Sozialleistungen + übriger Personalaufwand = Total Personal.
       'personnel_wages', 'personnel_social', 'personnel_other',
     ]));
-    return availableYears(storeKey).map(y => {
+    // Jahresbasis: Jahre mit Records ∪ [aktuell−2 … aktuell] — abgeschlossene
+    // Geschäftsjahre (z. B. Vorvorjahr) erscheinen als wählbare, leere Serie
+    // («—»-Spalte mit Import-Hinweis), statt still zu fehlen.
+    const currentYr = new Date().getFullYear();
+    const seriesYearBasis = Array.from(new Set([
+      ...availableYears(storeKey),
+      currentYr - 2, currentYr - 1, currentYr,
+    ])).sort((a, b) => a - b);
+    return seriesYearBasis.map(y => {
       const recs = applyEffectiveYearRules(loadYear(y, storeKey), {
         year: y,
         dailyBudgets: dailyBudgetsData,

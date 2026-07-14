@@ -881,16 +881,30 @@ export interface YearKpiComparisonOptions {
   mode?: YearComparisonMode;
   /**
    * Nur mode='commonMonth': Vergleich zusätzlich auf Monate ≤ throughMonth
-   * (1–12) begrenzen. undefined/null = automatisch (alle gemeinsamen Monate).
+   * (1–12) begrenzen. undefined/null = automatisch: alle gemeinsamen Monate,
+   * die vollständig in der Vergangenheit liegen (laufender Monat ist
+   * unvollständig und würde den Vergleich verzerren — «fehlend ≠ 0»).
    */
   throughMonth?: number | null;
+  /** Referenzdatum für die Laufender-Monat-Erkennung (Default: heute; für Tests). */
+  today?: Date;
 }
 
 export interface YearKpiComparison {
   /** Verwendeter Vergleichsmodus */
   mode: YearComparisonMode;
-  /** Ausgewählte Jahre mit Daten, aufsteigend */
+  /** Ausgewählte Jahre, aufsteigend — auch Jahre OHNE Daten (sichtbare «—»-Spalten) */
   years: number[];
+  /** Gewählte Jahre ohne jegliche ER-Daten — werden als «—»-Spalte gezeigt, nie gedroppt */
+  emptyYears: number[];
+  /** Fussnote zur Kennzeichnung leerer Jahre («† keine Daten»); null wenn keine */
+  emptyNote: string | null;
+  /**
+   * Effektiv angewendeter «Vergleich bis»-Monat (1–12) im commonMonth-Modus —
+   * explizit gewählt ODER Standard (letzter voll vergangener gemeinsamer Monat).
+   * UI und Exporte zeigen DENSELBEN Wert. null im fullYear-Modus / ohne Basis.
+   */
+  appliedThroughMonth: number | null;
   /**
    * Datenmonats-Indizes der Vergleichsbasis: commonMonth = gemeinsame Monate
    * (ggf. auf throughMonth begrenzt); fullYear = Vereinigung der Datenmonate.
@@ -934,6 +948,11 @@ function dedupeComparisonYears(series: YearSeries[], wanted: Set<number>): YearS
     if (!wanted.has(s.year) || seen.has(s.year)) continue;
     seen.add(s.year);
     clean.push({ ...s, values: normalize12(s.values) });
+  }
+  // Gewählte Jahre OHNE Serie (z. B. Vorvorjahr vor dem Import) als leere
+  // «—»-Spalte synthetisieren — nie still droppen (fehlend ≠ 0).
+  for (const y of wanted) {
+    if (!seen.has(y)) clean.push({ year: y, values: Array(12).fill(null), byPosition: {} });
   }
   return clean.sort((a, b) => a.year - b.year);
 }
@@ -981,41 +1000,52 @@ export function buildYearKpiComparison(
 
   // Datenmonate je Jahr = Monate, in denen MINDESTENS eine Vergleichszeile
   // einen Wert hat (reine Kosten-Monate aus dem Jahres-Kontoblatt zählen mit).
+  // Jahre OHNE Daten bleiben als sichtbare «—»-Spalte erhalten (nie droppen),
+  // werden aber von der Schnittmengen-Berechnung ausgeschlossen.
   const dataMonthsByYear = new Map<number, number[]>();
-  const clean = dedupeComparisonYears(series, wanted).filter((s) => {
+  const clean = dedupeComparisonYears(series, wanted);
+  for (const s of clean) {
     const idx: number[] = [];
     for (let m = 0; m < 12; m++) {
       if (chfRowIds.some((id) => rowMonthValues(s, id)[m] != null)) idx.push(m);
     }
     if (idx.length === 0) {
-      dataQuality.push({ severity: 'warnung', text: `${s.year}: keine Erfolgsrechnungs-Daten vorhanden — Jahr wird im Vergleich nicht angezeigt.` });
-      return false;
+      dataQuality.push({
+        severity: 'warnung',
+        text: `${s.year}: keine Erfolgsrechnungs-Daten vorhanden — das Jahr wird mit «—» angezeigt. Jahresdaten importieren (z. B. Jahres-Kontoblatt ${s.year}), damit es vergleichbar wird.`,
+      });
+    } else {
+      dataMonthsByYear.set(s.year, idx);
     }
-    dataMonthsByYear.set(s.year, idx);
-    return true;
-  });
+  }
   const selYears = clean.map((s) => s.year);
+  const emptyYears = selYears.filter((y) => !dataMonthsByYear.has(y));
+  const dataYears = selYears.filter((y) => dataMonthsByYear.has(y));
+  const emptyNote = emptyYears.length > 0
+    ? `† ${emptyYears.join(', ')}: keine Erfolgsrechnungs-Daten vorhanden — Werte werden als «—» angezeigt, keine Schätzung.`
+    : null;
 
   const empty: YearKpiComparison = {
-    mode, years: selYears, commonMonths: [], availableCommonMonths: [],
+    mode, years: selYears, emptyYears, emptyNote, appliedThroughMonth: null,
+    commonMonths: [], availableCommonMonths: [],
     commonMonthsLabel: null, isFullYears: false, partialYears: [],
     partialNote: null, rows: [], dataQuality, hasAnyData: false,
   };
-  if (clean.length === 0) {
+  if (dataYears.length === 0) {
     dataQuality.push({ severity: 'fehler', text: 'Keine Erfolgsrechnungs-Daten für den Jahresvergleich vorhanden.' });
     return empty;
   }
 
-  // Schnittmenge über ALLE Jahre (auch im Ganzjahresmodus als Selector-Basis)
-  let intersect: number[] = dataMonthsByYear.get(selYears[0]) ?? [];
-  for (const y of selYears.slice(1)) {
+  // Schnittmenge über alle Jahre MIT Daten (auch im Ganzjahresmodus als Selector-Basis)
+  let intersect: number[] = dataMonthsByYear.get(dataYears[0]) ?? [];
+  for (const y of dataYears.slice(1)) {
     const set = new Set(dataMonthsByYear.get(y) ?? []);
     intersect = intersect.filter((m) => set.has(m));
   }
   const availableCommonMonths = intersect;
 
-  const partialYears = selYears.filter((y) => (dataMonthsByYear.get(y) ?? []).length < 12);
-  const isFullYears = partialYears.length === 0;
+  const partialYears = dataYears.filter((y) => (dataMonthsByYear.get(y) ?? []).length < 12);
+  const isFullYears = partialYears.length === 0 && emptyYears.length === 0;
 
   // Vergleichsbasis je Modus
   let common: number[];
@@ -1023,13 +1053,43 @@ export function buildYearKpiComparison(
     // Ganzjahr: Vereinigung aller Datenmonate (nur für Anzeige/Label) —
     // summiert wird je Jahr über die EIGENEN Datenmonate (s. chfValue).
     const union = new Set<number>();
-    for (const y of selYears) for (const m of dataMonthsByYear.get(y) ?? []) union.add(m);
+    for (const y of dataYears) for (const m of dataMonthsByYear.get(y) ?? []) union.add(m);
     common = Array.from(union).sort((a, b) => a - b);
   } else {
     const tm = opts.throughMonth;
-    common = tm != null && tm >= 1 && tm <= 12
-      ? intersect.filter((m) => m < tm) // Monats-Indizes 0-basiert: m ≤ tm−1
-      : intersect;
+    if (tm != null && tm >= 1 && tm <= 12) {
+      common = intersect.filter((m) => m < tm); // Monats-Indizes 0-basiert: m ≤ tm−1
+    } else {
+      // Standard: nur gemeinsame Monate, die vollständig in der Vergangenheit
+      // liegen — der laufende Kalendermonat ist unvollständig und würde den
+      // Vergleich verzerren (Teilmonats-Umsatz, fehlende Kosten → «—»-Kaskade).
+      const today = opts.today ?? new Date();
+      const curY = today.getFullYear();
+      const curM = today.getMonth();
+      const notFullyPast = (m: number): boolean =>
+        dataYears.some((y) => y > curY || (y === curY && m >= curM));
+      const fullyPast = intersect.filter((m) => !notFullyPast(m));
+      if (fullyPast.length > 0) {
+        if (fullyPast.length < intersect.length) {
+          const lastIdx = fullyPast[fullyPast.length - 1];
+          dataQuality.push({
+            severity: 'hinweis',
+            text: `Der laufende Monat ist noch unvollständig und wird im Standardvergleich nicht mitgezählt — die Vergleichsbasis endet bei ${MONTH_LABELS_LONG[lastIdx]}. Bei Bedarf über «Vergleich bis» erweiterbar.`,
+          });
+        }
+        common = fullyPast;
+      } else {
+        // Nur laufende/unvollständige Monate vorhanden: lieber zeigen als leeren
+        // Vergleich — mit sichtbarer Warnung (nie still).
+        common = intersect;
+        if (intersect.length > 0) {
+          dataQuality.push({
+            severity: 'warnung',
+            text: 'Alle gemeinsamen Datenmonate liegen im laufenden, noch unvollständigen Monat — die Werte sind nur eingeschränkt vergleichbar.',
+          });
+        }
+      }
+    }
     if (common.length === 0) {
       dataQuality.push({
         severity: 'fehler',
@@ -1040,6 +1100,9 @@ export function buildYearKpiComparison(
       return { ...empty, availableCommonMonths, partialYears, hasAnyData: false };
     }
   }
+  const appliedThroughMonth = mode === 'commonMonth' && common.length > 0
+    ? common[common.length - 1] + 1
+    : null;
 
   let partialNote: string | null = null;
   if (!isFullYears) {
@@ -1065,6 +1128,7 @@ export function buildYearKpiComparison(
   const chfValue = (s: YearSeries, rowId: string): number | null => {
     const vals = rowMonthValues(s, rowId);
     const monthsForYear = mode === 'fullYear' ? (dataMonthsByYear.get(s.year) ?? []) : common;
+    if (monthsForYear.length === 0) return null; // Jahr ohne Daten: «—», nie 0
     let sum = 0;
     for (const m of monthsForYear) {
       const v = vals[m];
@@ -1079,7 +1143,8 @@ export function buildYearKpiComparison(
     const perYear = clean.map((s) => chfValue(s, id));
     chfByRow.set(id, perYear);
     perYear.forEach((v, i) => {
-      if (v == null) {
+      // Leere Jahre haben bereits eine eigene Warnung — nicht je Zeile wiederholen.
+      if (v == null && dataMonthsByYear.has(selYears[i])) {
         const label = YEAR_COMPARISON_ROWS.find((r) => r.id === id)?.label ?? id;
         dataQuality.push({
           severity: 'warnung',
@@ -1119,6 +1184,9 @@ export function buildYearKpiComparison(
   return {
     mode,
     years: selYears,
+    emptyYears,
+    emptyNote,
+    appliedThroughMonth,
     commonMonths: common,
     availableCommonMonths,
     commonMonthsLabel: mode === 'fullYear' ? null : partialRangeLabel(common),
@@ -1129,6 +1197,16 @@ export function buildYearKpiComparison(
     dataQuality,
     hasAnyData: rows.some((r) => r.valueByYear.some((v) => v != null)),
   };
+}
+
+/**
+ * Wählbare Jahre für die Jahres-Selektoren der Mehrjahres-/Report-Ansichten:
+ * ALLE Serien-Jahre (auch ohne Daten — z. B. aktuelles Jahr −2 vor dem Import),
+ * aufsteigend. Eine Zweitfilterung nach Umsatz (nonEmptyYears) würde reine
+ * Kosten-Jahre bzw. leere, aber fachlich relevante Jahre still verstecken.
+ */
+export function selectableYears(series: YearSeries[]): number[] {
+  return Array.from(new Set(series.map((s) => s.year))).sort((a, b) => a - b);
 }
 
 // ─── Personalkosten-Analyseblock (§7): regelbasierte Aussagen ─────────────────
@@ -1263,11 +1341,12 @@ export function buildComparisonDrilldown(
   series: YearSeries[],
   years: number[],
   rowId: string,
+  opts: YearKpiComparisonOptions = {},
 ): ComparisonDrilldown | null {
   const def = YEAR_COMPARISON_ROWS.find((r) => r.id === rowId && r.kind === 'chf');
   if (!def) return null;
 
-  const cmp = buildYearKpiComparison(series, years);
+  const cmp = buildYearKpiComparison(series, years, opts);
   const clean = dedupeComparisonYears(series, new Set(cmp.years));
   const row = cmp.rows.find((r) => r.def.id === rowId);
   if (!row || clean.length === 0) return null;
