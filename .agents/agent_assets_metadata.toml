@@ -12,3 +12,9 @@ id = "BQkZ2NFzbojrvvjt6sdpi"
 uri = "file://docs/mirus_monthly_reports_database_plan.md"
 type = "text"
 title = "Datenbankarchitektur — Arbeitszeiten & Monatsblätter"
+
+[[outputs]]
+id = "Nz5d_p5_x5C9s92ugcYAt"
+uri = "file://last-task-patch.zip"
+type = "unspecified"
+title = "Git-Patch: Speichersicherheits-Fixes (letzter Task)"

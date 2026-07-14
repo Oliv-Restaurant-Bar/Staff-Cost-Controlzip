@@ -1,0 +1,794 @@
+From 9d74f4de3e01dce0e8038386bfd4551210f122ac Mon Sep 17 00:00:00 2001
+From: Replit Agent <agent@replit.com>
+Date: Tue, 14 Jul 2026 19:23:46 +0000
+Subject: [PATCH] Improve data integrity for budget and reporting backups
+
+Implement merge-based backups using `kvGetStrict` and `kvSetStrict` to prevent data loss and ensure errors are visible, alongside adding comprehensive tests for backup functionality and error handling.
+
+Replit-Commit-Author: Agent
+Replit-Commit-Session-Id: 8cf78ecd-8c22-403a-b86d-ad4720910ca5
+Replit-Commit-Checkpoint-Type: full_checkpoint
+Replit-Commit-Event-Id: c655dca9-ac01-4c1f-aa68-b93cff44ce07
+Replit-Commit-Screenshot-Url: https://storage.googleapis.com/screenshot-production-us-central1/d5651d95-6760-4a2f-b150-c549cbd74b06/8cf78ecd-8c22-403a-b86d-ad4720910ca5/lG5hlZn
+Replit-Helium-Checkpoint-Created: true
+---
+ .agents/memory/MEMORY.md                      |   1 +
+ .agents/memory/budget-kv-backup.md            |  20 ++
+ ...sierung-Produktreife-WIC_1784056301434.txt | 199 ++++++++++++++++++
+ .../__tests__/budget-store-kv-backup.test.ts  | 187 ++++++++++++++++
+ .../safeUpsertReportingMonth.test.ts          |  40 +++-
+ src/lib/budget-store.ts                       | 104 ++++++++-
+ src/lib/reporting-store.ts                    |  26 ++-
+ src/lib/supabase-kv.ts                        |  30 ++-
+ 8 files changed, 589 insertions(+), 18 deletions(-)
+ create mode 100644 .agents/memory/budget-kv-backup.md
+ create mode 100644 attached_assets/Pasted-Ab-sofort-beginnt-Phase-Stabilisierung-Produktreife-WIC_1784056301434.txt
+ create mode 100644 src/lib/__tests__/budget-store-kv-backup.test.ts
+
+diff --git a/.agents/memory/MEMORY.md b/.agents/memory/MEMORY.md
+index ac0b615..015753c 100644
+--- a/.agents/memory/MEMORY.md
++++ b/.agents/memory/MEMORY.md
+@@ -7,6 +7,7 @@
+ - [External helpers architecture](external-helpers.md) — External cost people (aush_* IDs) live in schedule_extra_cost_people, NOT employees; FK on schedule_entries was dropped.
+ - [Kawtar/Party employee migration](kawtar-party-migration.md) — Migrated to employees (IDs: kawtar, party); loadEmployees filters isActive !== false to hide archived aush_* ghosts.
+ - [Reporting safe-upsert pattern](reporting-safe-upsert.md) — saveAll() naive kvSet wipes other months from Supabase when localStorage is stale; use safeUpsertReportingMonth / safeDeleteReportingMonth instead.
++- [budget_v1 KV-Backup Merge](budget-kv-backup.md) — Budget-Blobs nur per Jahr-Merge mit Aktions-Kontext sichern; kvGetStrict für Merge-Basen (Lesefehler ≠ leer); keine Jahr-Tombstones (bekannte Grenze).
+ - [KV merge-on-save tombstones](kv-merge-tombstones.md) — hard-deleted keys in union-merged blobs resurrect from the remote KV; every remove path needs a tombstone (deleted+updatedAt) + reader filters.
+ - [Detail-page state reset on :id change](detail-page-state-reset.md) — `/:id` pages are reused across param changes; reset fetched-record state at top of load() AND in catch, or the previous record leaks (cross-guest PII).
+ - [Admin gate excludes guests (read+write)](admin-write-gate-guest-session.md) — isAdmin = isAdminUser || isGuest; admin-only PII/write pages must gate isAdmin && !isGuest on BOTH route guard AND data-fetch effect.
+diff --git a/.agents/memory/budget-kv-backup.md b/.agents/memory/budget-kv-backup.md
+new file mode 100644
+index 0000000..17c55f1
+--- /dev/null
++++ b/.agents/memory/budget-kv-backup.md
+@@ -0,0 +1,20 @@
++---
++name: budget_v1 KV-Backup Merge-Regeln
++description: Sicherer read→merge→write-Pfad für Budget-Blobs; kvGetStrict für Merge-Basen; bekannte Grenze fehlender Tombstones.
++---
++
++# budget_v1 KV-Backup (saveAll → backupBudgetsToKV)
++
++**Regel:** Budget-Blobs (`budget_v1`, `beaulieu:budget_v1`) dürfen NIE per naivem `kvSet(storeKey, data)` nach Supabase geschrieben werden. `saveAll` verlangt einen Aktions-Kontext `{ year, deleted? }`; ohne ihn wird das KV-Backup bewusst übersprungen (Warnung), nie naiv ersetzt.
++
++**Merge-Regeln:** Zieljahr der Aktion gewinnt lokal (bzw. wird bei `deleted` explizit entfernt — kein Union-Resurrect der eigenen Aktion); Fremdjahre per `updatedAt`-Vergleich (neuer gewinnt, Gleichstand → lokal); einseitig vorhandene Jahre bleiben erhalten. Backups laufen über eine serialisierte Promise-Queue mit Deep-Snapshot (`flushBudgetKVBackups()` für Tests).
++
++**Why:** Der frühere Voll-Replace löschte remote gespeicherte Budgetjahre, sobald localStorage stale war (frischer Browser/anderes Gerät) — Klasse „naiver Blob-Write" wie beim Reporting.
++
++**kvGetStrict für Merge-Basen:** `kvGet` liefert bei Lesefehler `null` — ununterscheidbar von «leer». Jeder Merge-Schreibpfad, der den Remote-Stand als Basis braucht, muss `kvGetStrict` nutzen (wirft bei Fehler ⇒ Backup bricht sichtbar ab, localStorage bleibt Primärspeicher).
++
++**Bekannte Grenzen (bewusst, im Backlog):**
++- Keine Jahr-Tombstones: Ein auf Gerät A gelöschtes Budgetjahr kann von Gerät B mit stale localStorage beim nächsten Save wiederbelebt werden.
++- Auto-Seed-Restrisiko: Frischer Browser vor Abschluss des Supabase-Syncs seedet 2026 und überschreibt per Zieljahr-Regel remote editierte 2026-Werte (vorher: ganzer Blob zerstört — jetzt nur das eine Jahr).
++
++**How to apply:** Bei jedem neuen Schreibpfad auf Budget-/Reporting-Blobs zuerst prüfen, ob er über die sicheren Merge-Funktionen läuft; `kvSetStrict`/`kvGetStrict` statt still-schluckender Varianten für Finanzdaten.
+diff --git a/attached_assets/Pasted-Ab-sofort-beginnt-Phase-Stabilisierung-Produktreife-WIC_1784056301434.txt b/attached_assets/Pasted-Ab-sofort-beginnt-Phase-Stabilisierung-Produktreife-WIC_1784056301434.txt
+new file mode 100644
+index 0000000..6f7b16c
+--- /dev/null
++++ b/attached_assets/Pasted-Ab-sofort-beginnt-Phase-Stabilisierung-Produktreife-WIC_1784056301434.txt
+@@ -0,0 +1,199 @@
++Ab sofort beginnt Phase "Stabilisierung & Produktreife".
++
++WICHTIG:
++
++In dieser Phase werden grundsätzlich keine neuen grossen Funktionen entwickelt.
++
++Priorität hat:
++
++1. Stabilität
++2. Datenintegrität
++3. Performance
++4. Benutzerfreundlichkeit
++5. Einheitliches Design
++
++==================================================
++T001 – Datenintegrität
++==================================================
++
++Prüfe systematisch alle Kernmodule auf mögliche Datenverluste oder Inkonsistenzen.
++
++Insbesondere:
++
++- Reporting
++- Erfolgsrechnung
++- Mehrjahresanalyse
++- Bankenbericht
++- Dienstplanung
++- Personal
++- Tagesabschlüsse
++- Umsatzabstimmung
++- Gäste
++- Reservationen
++- Produktanalyse
++- Warenkosten
++- Import-Cockpit
++
++Prüfen auf:
++
++- Überschreiben statt Merge
++- Race Conditions
++- veraltete States
++- doppelte Berechnungen
++- doppelte Datenquellen
++- fehlende Reloads
++- nicht bestätigte Speicherungen
++- fehlerhafte Synchronisation
++- unvollständige Drilldowns
++- Summenabweichungen
++- Rundungsfehler
++
++Keine Architekturänderungen.
++
++Nur bestehende Schwachstellen beseitigen.
++
++==================================================
++T002 – Einheitliche Berechnungen
++==================================================
++
++Kontrolliere sämtliche Kennzahlen.
++
++Es darf je Kennzahl nur EINE Berechnungsquelle geben.
++
++Beispiele:
++
++Umsatz
++
++Personal
++
++Warenaufwand
++
++Personalquote
++
++EBIT
++
++Überstunden
++
++Stunden
++
++Kosten
++
++Importstatus
++
++Jede Auswertung, jeder Export und jeder Drilldown muss dieselbe Quelle verwenden.
++
++==================================================
++T003 – Kompaktere Oberfläche
++==================================================
++
++Überprüfe jede Seite.
++
++Frage bei jeder Ansicht:
++
++Braucht der Benutzer diese Information sofort?
++
++Falls nein:
++
++- weiter nach unten
++- einklappbar
++- Detailansicht
++
++Die ersten 700–900 Pixel sollen nur die wichtigsten Informationen zeigen.
++
++==================================================
++T004 – Einheitliches Design
++==================================================
++
++Alle Seiten müssen dasselbe Erscheinungsbild haben.
++
++Kontrolliere:
++
++- Karten
++- Tabellen
++- Dialoge
++- Farben
++- Abstände
++- Schriftgrössen
++- KPI-Karten
++- Icons
++- Buttons
++- Filter
++- Toolbars
++
++Keine Sonderlösungen.
++
++==================================================
++T005 – Performance
++==================================================
++
++Prüfe:
++
++- unnötige Re-Renders
++- doppelte Berechnungen
++- unnötige Datenbankabfragen
++- doppelte useEffects
++- grosse Tabellen
++- langsame Dialoge
++- langsame Monatswechsel
++
++Optimieren ohne Fachlogik zu verändern.
++
++==================================================
++T006 – Benutzerführung
++==================================================
++
++Jede Seite soll folgende Fragen sofort beantworten:
++
++Wo bin ich?
++
++Was ist wichtig?
++
++Was muss ich tun?
++
++Wo bekomme ich Details?
++
++Reduziere unnötige Texte.
++
++==================================================
++T007 – Speicher- und Synchronisationssicherheit
++==================================================
++
++Alle Schreibvorgänge müssen:
++
++- bestätigt werden
++- Merge verwenden
++- Daten anderer Bereiche erhalten
++- Fehler sichtbar anzeigen
++- niemals still scheitern
++
++==================================================
++T008 – Regression
++==================================================
++
++Nach jeder Optimierung:
++
++- betroffene Tests
++- TypeScript-Typecheck
++- Architect-Review
++
++Keine neuen Funktionen entwickeln.
++
++Keine bestehenden Funktionen entfernen.
++
++Nur stabilisieren, vereinfachen und vereinheitlichen.
++
++==================================================
++Ziel
++==================================================
++
++Die Anwendung soll sich wie ein professionelles Controlling-System anfühlen:
++
++- schnell
++- stabil
++- kompakt
++- übersichtlich
++- konsistent
++- keine Datenverluste
++- keine unterschiedlichen Berechnungen
++- keine unnötigen Klicks
++- Management, Treuhänder, Banken und Investoren finden die wichtigsten Informationen innerhalb weniger Sekunden.
+\ No newline at end of file
+diff --git a/src/lib/__tests__/budget-store-kv-backup.test.ts b/src/lib/__tests__/budget-store-kv-backup.test.ts
+new file mode 100644
+index 0000000..d3ea7e0
+--- /dev/null
++++ b/src/lib/__tests__/budget-store-kv-backup.test.ts
+@@ -0,0 +1,187 @@
++// @vitest-environment node
++/**
++ * Schutztest: budget_v1 KV-Backup (kein Voll-Replace mehr)
++ * =========================================================
++ * Deckt die geschlossene Lücke ab: Der frühere naive `kvSet(storeKey, data)`
++ * in saveAll() ersetzte den GESAMTEN Supabase-Stand durch den localStorage-
++ * Stand. War localStorage stale (frischer Login, anderer Browser), waren dort
++ * gespeicherte Budgetjahre dauerhaft verloren.
++ *
++ * Getestet:
++ *   1. saveBudgetYear: nur das Zieljahr wird ersetzt — Fremdjahre, die NUR
++ *      remote existieren, bleiben erhalten (stale-localStorage-Szenario).
++ *   2. deleteBudgetYear: explizites Löschen wird remote vollzogen (kein
++ *      Union-Resurrect), Fremdjahre bleiben erhalten.
++ *   3. Fremdjahr-Konflikt: neueres updatedAt gewinnt.
++ *   4. Schreibfehler: wirft nicht in den Aufrufer, localStorage bleibt intakt.
++ */
++
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++// ─── Mocks (vor Produktions-Import, vi.mock wird gehoisted) ───────────────────
++
++const localStorageStore: Record<string, string> = {};
++vi.stubGlobal('localStorage', {
++  getItem: (k: string) => localStorageStore[k] ?? null,
++  setItem: (k: string, v: string) => { localStorageStore[k] = v; },
++  removeItem: (k: string) => { delete localStorageStore[k]; },
++  clear: () => { Object.keys(localStorageStore).forEach(k => delete localStorageStore[k]); },
++});
++
++const state = {
++  rows: {} as Record<string, unknown>,
++  failWrite: false,
++  failRead: false,
++};
++
++vi.mock('@/integrations/supabase/client', () => ({
++  supabase: {
++    from: (_table: string) => ({
++      select: (_cols: string) => ({
++        limit: async (_n: number) => ({ data: [], error: null }),
++        eq: (_col: string, key: string) => ({
++          maybeSingle: async () => {
++            if (state.failRead) return { data: null, error: { message: 'read fail' } };
++            return {
++              data: state.rows[key] !== undefined ? { value: state.rows[key] } : null,
++              error: null,
++            };
++          },
++        }),
++      }),
++      upsert: async (row: { key: string; value: unknown }) => {
++        if (state.failWrite) return { error: { message: 'write fail' } };
++        state.rows[row.key] = row.value;
++        return { error: null };
++      },
++    }),
++  },
++}));
++
++vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() } }));
++
++import {
++  saveBudgetYear,
++  deleteBudgetYear,
++  flushBudgetKVBackups,
++} from '../budget-store';
++import type { BudgetYear } from '@/types/budget';
++
++const KEY = 'test_budget_kv_guard';
++
++function year(y: number, updatedAt: string, marker = ''): BudgetYear {
++  return {
++    year: y,
++    positions: [],
++    rules: [],
++    wasAutoCalculated: false,
++    createdAt: updatedAt,
++    updatedAt,
++    ...(marker ? { copiedFromYear: Number(marker) } : {}),
++  } as BudgetYear;
++}
++
++beforeEach(() => {
++  Object.keys(localStorageStore).forEach(k => delete localStorageStore[k]);
++  state.rows = {};
++  state.failWrite = false;
++  state.failRead = false;
++});
++
++describe('budget_v1 KV-Backup — kein kompletter Blob-Replace', () => {
++  it('saveBudgetYear ersetzt NUR das Zieljahr — remote-only Fremdjahre bleiben erhalten', async () => {
++    // Remote (Supabase) kennt 2024 + 2025; localStorage ist stale (leer).
++    state.rows[KEY] = {
++      2024: year(2024, '2026-01-01T00:00:00.000Z'),
++      2025: year(2025, '2026-01-01T00:00:00.000Z'),
++    };
++
++    saveBudgetYear(year(2026, '2026-07-14T00:00:00.000Z'), KEY);
++    await flushBudgetKVBackups();
++
++    const remote = state.rows[KEY] as Record<string, BudgetYear>;
++    expect(Object.keys(remote).sort()).toEqual(['2024', '2025', '2026']);
++    expect(remote['2024']).toBeDefined();
++    expect(remote['2025']).toBeDefined();
++    expect(remote['2026'].year).toBe(2026);
++  });
++
++  it('deleteBudgetYear entfernt das Jahr remote (kein Union-Resurrect), Fremdjahre bleiben', async () => {
++    state.rows[KEY] = {
++      2024: year(2024, '2026-01-01T00:00:00.000Z'),
++      2025: year(2025, '2026-01-01T00:00:00.000Z'),
++    };
++    localStorageStore[KEY] = JSON.stringify({
++      2024: year(2024, '2026-01-01T00:00:00.000Z'),
++      2025: year(2025, '2026-01-01T00:00:00.000Z'),
++    });
++
++    deleteBudgetYear(2025, KEY);
++    await flushBudgetKVBackups();
++
++    const remote = state.rows[KEY] as Record<string, BudgetYear>;
++    expect(Object.keys(remote)).toEqual(['2024']);
++  });
++
++  it('Fremdjahr-Konflikt: neueres updatedAt gewinnt (lokal neuer als remote)', async () => {
++    state.rows[KEY] = {
++      2025: { ...year(2025, '2026-01-01T00:00:00.000Z'), wasAutoCalculated: true },
++    };
++    localStorageStore[KEY] = JSON.stringify({
++      2025: year(2025, '2026-06-01T00:00:00.000Z'), // lokal neuer
++    });
++
++    saveBudgetYear(year(2026, '2026-07-14T00:00:00.000Z'), KEY);
++    await flushBudgetKVBackups();
++
++    const remote = state.rows[KEY] as Record<string, BudgetYear>;
++    // lokale (neuere) 2025-Version gewinnt → wasAutoCalculated=false
++    expect(remote['2025'].wasAutoCalculated).toBe(false);
++  });
++
++  it('Fremdjahr-Konflikt: remote gewinnt wenn remote neuer ist', async () => {
++    state.rows[KEY] = {
++      2025: { ...year(2025, '2026-06-01T00:00:00.000Z'), wasAutoCalculated: true },
++    };
++    localStorageStore[KEY] = JSON.stringify({
++      2025: year(2025, '2026-01-01T00:00:00.000Z'), // lokal älter
++    });
++
++    saveBudgetYear(year(2026, '2026-07-14T00:00:00.000Z'), KEY);
++    await flushBudgetKVBackups();
++
++    const remote = state.rows[KEY] as Record<string, BudgetYear>;
++    expect(remote['2025'].wasAutoCalculated).toBe(true);
++  });
++
++  it('Lesefehler: Backup bricht ab — remote-only Jahre werden NIE durch lokalen Stand ersetzt', async () => {
++    // Remote kennt 2025, aber der Read scheitert. Ein naiver Pfad würde den
++    // rein lokalen Stand schreiben und 2025 remote löschen.
++    state.rows[KEY] = { 2025: year(2025, '2026-01-01T00:00:00.000Z') };
++    state.failRead = true;
++
++    saveBudgetYear(year(2026, '2026-07-14T00:00:00.000Z'), KEY);
++    await flushBudgetKVBackups();
++
++    // Remote unverändert — kein Write ohne verlässliche Remote-Basis
++    const remote = state.rows[KEY] as Record<string, BudgetYear>;
++    expect(Object.keys(remote)).toEqual(['2025']);
++    // localStorage hat das Zieljahr trotzdem (Primärspeicher)
++    const local = JSON.parse(localStorageStore[KEY]) as Record<string, BudgetYear>;
++    expect(local['2026']).toBeDefined();
++  });
++
++  it('Schreibfehler: wirft nicht in den Aufrufer, localStorage bleibt intakt', async () => {
++    state.rows[KEY] = { 2025: year(2025, '2026-01-01T00:00:00.000Z') };
++    state.failWrite = true;
++
++    expect(() => saveBudgetYear(year(2026, '2026-07-14T00:00:00.000Z'), KEY)).not.toThrow();
++    await flushBudgetKVBackups();
++
++    // Remote unverändert (Schreiben schlug fehl), localStorage hat das Zieljahr
++    const remote = state.rows[KEY] as Record<string, BudgetYear>;
++    expect(Object.keys(remote)).toEqual(['2025']);
++    const local = JSON.parse(localStorageStore[KEY]) as Record<string, BudgetYear>;
++    expect(local['2026']).toBeDefined();
++  });
++});
+diff --git a/src/lib/__tests__/safeUpsertReportingMonth.test.ts b/src/lib/__tests__/safeUpsertReportingMonth.test.ts
+index 9b7cf44..f83d59c 100644
+--- a/src/lib/__tests__/safeUpsertReportingMonth.test.ts
++++ b/src/lib/__tests__/safeUpsertReportingMonth.test.ts
+@@ -60,7 +60,7 @@ vi.mock('@/integrations/supabase/client', () => ({
+   },
+ }));
+ 
+-import { safeUpsertReportingMonth } from '../supabase-kv';
++import { safeUpsertReportingMonth, safeDeleteReportingMonth } from '../supabase-kv';
+ 
+ const KEY = 'test_reporting_kv_guard';
+ const rec = (marker: string) => ({ marker });
+@@ -118,3 +118,41 @@ describe('safeUpsertReportingMonth — kein kompletter Blob-Replace', () => {
+     expect(JSON.parse(localStorageStore[KEY]!)).toEqual({ '2025-03': rec('2025-03') });
+   });
+ });
++
++describe('safeDeleteReportingMonth — Fehler nie still verschlucken', () => {
++  it('entfernt NUR den Ziel-Monat — andere Monate bleiben im KV erhalten', async () => {
++    state.rows[KEY] = {
++      '2025-03': rec('2025-03'),
++      '2026-01': rec('2026-01'),
++    };
++    localStorageStore[KEY] = JSON.stringify(state.rows[KEY]);
++
++    await safeDeleteReportingMonth('2025-03', KEY);
++
++    const blob = state.rows[KEY] as Record<string, unknown>;
++    expect(Object.keys(blob)).toEqual(['2026-01']);
++    expect(JSON.parse(localStorageStore[KEY]!)).toEqual({ '2026-01': rec('2026-01') });
++  });
++
++  it('Upsert-Fehler → wirft sichtbar, KV-Blob und localStorage bleiben unverändert', async () => {
++    state.rows[KEY] = {
++      '2025-03': rec('2025-03'),
++      '2026-01': rec('2026-01'),
++    };
++    localStorageStore[KEY] = JSON.stringify(state.rows[KEY]);
++    state.failWrite = true;
++
++    await expect(safeDeleteReportingMonth('2025-03', KEY)).rejects.toBeTruthy();
++
++    // Fehlgeschlagenes Löschen gilt NICHT still als Erfolg:
++    expect(state.rows[KEY]).toEqual({
++      '2025-03': rec('2025-03'),
++      '2026-01': rec('2026-01'),
++    });
++    // localStorage wird bei Fehler nicht angefasst
++    expect(JSON.parse(localStorageStore[KEY]!)).toEqual({
++      '2025-03': rec('2025-03'),
++      '2026-01': rec('2026-01'),
++    });
++  });
++});
+diff --git a/src/lib/budget-store.ts b/src/lib/budget-store.ts
+index cfc012a..fa54990 100644
+--- a/src/lib/budget-store.ts
++++ b/src/lib/budget-store.ts
+@@ -47,12 +47,96 @@ function loadAll(storeKey: string = STORAGE_KEY): Record<number, BudgetYear> {
+   }
+ }
+ 
+-function saveAll(data: Record<number, BudgetYear>, storeKey: string = STORAGE_KEY): void {
++/**
++ * Serialisierte Backup-Queue: verhindert, dass zwei parallele KV-Backups
++ * denselben Blob mit read→merge→write gegenseitig überschreiben (Race).
++ */
++let kvBackupQueue: Promise<void> = Promise.resolve();
++
++/**
++ * Sicheres KV-Backup für budget_v1 (read→merge→write statt Voll-Replace).
++ *
++ * PROBLEM (behoben): Der frühere naive `kvSet(storeKey, data)` ersetzte den
++ * GESAMTEN Supabase-Stand durch den localStorage-Stand. War localStorage stale
++ * (frischer Login, anderer Browser), verschwanden dort gespeicherte Budgetjahre.
++ *
++ * Merge-Regeln:
++ *  - Das explizit geänderte Jahr (`action.year`) gewinnt immer lokal
++ *    (bzw. wird bei `action.deleted` explizit entfernt — kein Union-Resurrect).
++ *  - Alle anderen Jahre: neueres `updatedAt` gewinnt; nur einseitig vorhandene
++ *    Jahre bleiben erhalten.
++ *  - Backup-Fehler sind sichtbar (Toast), localStorage bleibt Primärspeicher.
++ */
++async function backupBudgetsToKV(
++  data: Record<number, BudgetYear>,
++  storeKey: string,
++  action: { year: number; deleted?: boolean },
++): Promise<void> {
++  try {
++    const { kvGetStrict, kvSetStrict } = await import('./supabase-kv');
++    // kvGetStrict statt kvGet: Ein Lesefehler darf nicht wie «Remote ist leer»
++    // aussehen — sonst würde der Merge remote-only Jahre verlieren. Bei
++    // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt).
++    const remote = await kvGetStrict(storeKey);
++    const remoteMap: Record<string, BudgetYear> =
++      remote && typeof remote === 'object' && !Array.isArray(remote)
++        ? (remote as Record<string, BudgetYear>)
++        : {};
++    const localMap = data as unknown as Record<string, BudgetYear>;
++
++    const merged: Record<string, BudgetYear> = {};
++    const allYears = new Set([...Object.keys(remoteMap), ...Object.keys(localMap)]);
++    for (const y of allYears) {
++      const l = localMap[y];
++      const r = remoteMap[y];
++      if (Number(y) === action.year) {
++        if (action.deleted) continue;           // explizites Löschen — nicht wiederbeleben
++        if (l) { merged[y] = l; continue; }     // lokale Aktion gewinnt für das Zieljahr
++        if (r) { merged[y] = r; }
++        continue;
++      }
++      if (l && r) {
++        const lTime = Date.parse(l.updatedAt ?? '') || 0;
++        const rTime = Date.parse(r.updatedAt ?? '') || 0;
++        merged[y] = lTime >= rTime ? l : r;
++      } else {
++        merged[y] = (l ?? r)!;
++      }
++    }
++
++    await kvSetStrict(storeKey, merged);
++  } catch (err) {
++    console.error(`[BUDGET] KV-Backup fehlgeschlagen für ${storeKey}:`, err);
++    try {
++      const { toast } = await import('sonner');
++      toast.error(
++        'Budget: Backup nach Supabase fehlgeschlagen — lokal gespeichert. Bitte Verbindung prüfen.',
++        { duration: 10000, id: 'budget-kv-write-failed' },
++      );
++    } catch { /* Sonner nicht verfügbar */ }
++  }
++}
++
++function saveAll(
++  data: Record<number, BudgetYear>,
++  storeKey: string = STORAGE_KEY,
++  action?: { year: number; deleted?: boolean },
++): void {
+   localStorage.setItem(storeKey, JSON.stringify(data));
+-  // Asynchron zu Supabase synchronisieren (fire-and-forget)
+-  import('./supabase-kv').then(({ kvSet }) => {
+-    kvSet(storeKey, data).catch(() => { /* silently ignore */ });
+-  });
++  if (!action) {
++    // Ohne Jahres-Kontext kein sicherer Merge möglich — bewusst NICHT naiv
++    // den ganzen Blob ersetzen. Alle internen Aufrufer übergeben `action`.
++    console.warn(`[BUDGET] saveAll ohne action — KV-Backup übersprungen (${storeKey})`);
++    return;
++  }
++  // Snapshot der Daten für die asynchrone Queue (data kann danach mutiert werden)
++  const snapshot = JSON.parse(JSON.stringify(data)) as Record<number, BudgetYear>;
++  kvBackupQueue = kvBackupQueue.then(() => backupBudgetsToKV(snapshot, storeKey, action));
++}
++
++/** Für Tests: wartet, bis alle ausstehenden KV-Backups abgeschlossen sind. */
++export function flushBudgetKVBackups(): Promise<void> {
++  return kvBackupQueue;
+ }
+ 
+ /** Erstellt ein leeres Budgetjahr mit den Standard-Positionen */
+@@ -89,14 +173,14 @@ export function loadBudgetYear(year: number, storeKey: string = STORAGE_KEY): Bu
+       if (storeKey === STORAGE_KEY) {
+         const seeded = createSeededBudget2026();
+         all[2026] = seeded;
+-        saveAll(all, storeKey);
++        saveAll(all, storeKey, { year: 2026 });
+         return seeded;
+       }
+       // Auto-Seed für Beaulieu — Werte aus Budget_Beaulieu_2026.xlsx
+       if (storeKey === 'beaulieu:budget_v1') {
+         const seeded = createSeededBeaulieuBudget2026();
+         all[2026] = seeded;
+-        saveAll(all, storeKey);
++        saveAll(all, storeKey, { year: 2026 });
+         return seeded;
+       }
+     }
+@@ -112,7 +196,7 @@ export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYea
+   const seeded = createSeededBudget2026();
+   const all = loadAll(storeKey);
+   all[2026] = seeded;
+-  saveAll(all, storeKey);
++  saveAll(all, storeKey, { year: 2026 });
+   return seeded;
+ }
+ 
+@@ -126,7 +210,7 @@ export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY)
+     ...data,
+     updatedAt: new Date().toISOString(),
+   };
+-  saveAll(all, storeKey);
++  saveAll(all, storeKey, { year: data.year });
+ }
+ 
+ /**
+@@ -146,7 +230,7 @@ export function availableBudgetYears(storeKey: string = STORAGE_KEY): number[] {
+ export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): void {
+   const all = loadAll(storeKey);
+   delete all[year];
+-  saveAll(all, storeKey);
++  saveAll(all, storeKey, { year, deleted: true });
+ }
+ 
+ // ─── Jahr-Kopie ───────────────────────────────────────────────────────────────
+diff --git a/src/lib/reporting-store.ts b/src/lib/reporting-store.ts
+index 156d94d..fc53c5b 100644
+--- a/src/lib/reporting-store.ts
++++ b/src/lib/reporting-store.ts
+@@ -40,7 +40,7 @@ import {
+   SageJournalEntry,
+ } from '@/types/reporting';
+ import { v4 as uuidv4 } from 'uuid';
+-import { kvGet, kvSet, safeUpsertReportingMonth, safeDeleteReportingMonth } from './supabase-kv';
++import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth } from './supabase-kv';
+ 
+ // ─── Konstanten ───────────────────────────────────────────────────────────────
+ 
+@@ -197,8 +197,16 @@ export function deleteMonth(year: number, month: number, storeKey: string = STOR
+   saveAll(all, storeKey);
+   // Sicher aus Supabase entfernen: erst KV-Stand lesen, nur diesen Monat entfernen,
+   // dann zurückschreiben — andere Monate bleiben erhalten
+-  safeDeleteReportingMonth(id, storeKey).catch(err => {
++  safeDeleteReportingMonth(id, storeKey).catch(async err => {
+     console.error('[REPORTING] deleteMonth: safeDeleteReportingMonth fehlgeschlagen', err);
++    try {
++      const { toast } = await import('sonner');
++      toast.error(
++        `Monat ${id} wurde lokal gelöscht, aber das Löschen im Supabase-Backup ist fehlgeschlagen. ` +
++        'Der Monat kann beim nächsten Sync wieder erscheinen — bitte Verbindung prüfen und erneut löschen.',
++        { duration: 10000, id: 'reporting-delete-failed' },
++      );
++    } catch { /* Sonner nicht verfügbar */ }
+   });
+ }
+ 
+@@ -502,7 +510,17 @@ export function saveJournalEntries(
+     final = [...loadJournalEntries(year, month), ...entries];
+   }
+   localStorage.setItem(key, JSON.stringify(final));
+-  kvSet(key, final).catch(() => {});
++  // kvSetStrict statt kvSet: Backup-Fehler dürfen nie still verschluckt werden (T007).
++  kvSetStrict(key, final).catch(async err => {
++    console.error(`[Journal] KV-Backup fehlgeschlagen: ${key}`, err);
++    try {
++      const { toast } = await import('sonner');
++      toast.error(
++        'Buchungszeilen: Backup nach Supabase fehlgeschlagen — lokal gespeichert. Bitte Verbindung prüfen.',
++        { duration: 10000, id: 'journal-kv-failed' },
++      );
++    } catch { /* Sonner nicht verfügbar */ }
++  });
+   console.log(`[Journal] Gespeichert: ${key} (${final.length} Einträge) → localStorage + Supabase`);
+ }
+ 
+@@ -536,7 +554,7 @@ export async function loadJournalEntriesFromDB(year: number, month: number): Pro
+     const local = loadJournalEntries(year, month);
+     if (local.length > 0) {
+       console.log(`[Journal] Supabase leer – sync localStorage→Supabase: ${key} (${local.length} Einträge)`);
+-      kvSet(key, local).catch(() => {});
++      kvSet(key, local).catch(err => console.error(`[Journal] Auto-Migration nach Supabase fehlgeschlagen: ${key}`, err));
+     } else {
+       console.log(`[Journal] Keine Daten: ${key}`);
+     }
+diff --git a/src/lib/supabase-kv.ts b/src/lib/supabase-kv.ts
+index 2e6ef80..a2c46fc 100644
+--- a/src/lib/supabase-kv.ts
++++ b/src/lib/supabase-kv.ts
+@@ -56,6 +56,24 @@ export async function kvGet(key: string): Promise<unknown | null> {
+   }
+ }
+ 
++/**
++ * Wie kvGet, wirft aber bei Nichtverfügbarkeit oder Lesefehler statt still
++ * null zu liefern. Für Merge-Schreibpfade, die den Remote-Stand als Basis
++ * brauchen: ein Lesefehler darf dort NIE wie «Remote ist leer» aussehen.
++ */
++export async function kvGetStrict(key: string): Promise<unknown | null> {
++  if (!(await isAvailable())) {
++    throw new Error('Supabase nicht verfügbar');
++  }
++  const { data, error } = await (supabase as any)
++    .from('app_settings')
++    .select('value')
++    .eq('key', key)
++    .maybeSingle();
++  if (error) throw error;
++  return data?.value ?? null;
++}
++
+ export async function kvSet(key: string, value: unknown): Promise<void> {
+   if (!(await isAvailable())) return;
+   try {
+@@ -70,9 +88,10 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
+ 
+ /**
+  * Wie kvSet, wirft aber einen Fehler wenn Supabase nicht erreichbar ist
+- * oder der Schreibvorgang fehlschlägt. Nur für kritische Umsatzdaten.
++ * oder der Schreibvorgang fehlschlägt. Für kritische Finanzdaten
++ * (Umsatz, Budget, Buchungszeilen), deren Backup-Fehler sichtbar sein müssen.
+  */
+-async function kvSetStrict(key: string, value: unknown): Promise<void> {
++export async function kvSetStrict(key: string, value: unknown): Promise<void> {
+   if (!(await isAvailable())) {
+     throw new Error('Supabase nicht verfügbar');
+   }
+@@ -298,14 +317,19 @@ export async function safeDeleteReportingMonth(
+         : {};
+     // eslint-disable-next-line @typescript-eslint/no-unused-vars
+     const { [monthId]: _removed, ...rest } = base;
+-    await (supabase as any)
++    // WICHTIG: Supabase wirft bei Schreibfehlern NICHT — { error } explizit prüfen,
++    // sonst gilt ein fehlgeschlagenes Löschen still als Erfolg (T007).
++    const { error } = await (supabase as any)
+       .from('app_settings')
+       .upsert({ key: storeKey, value: rest }, { onConflict: 'key' });
++    if (error) throw error;
+     localStorage.setItem(storeKey, JSON.stringify(rest));
+     notifyKV(storeKey);
+     console.log(`[REPORTING] safeDeleteReportingMonth: ${storeKey} / ${monthId} ✓`);
+   } catch (err) {
+     console.error(`[REPORTING] safeDeleteReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
++    // Fehler weiterreichen — der Aufrufer muss ihn sichtbar machen (nie still scheitern).
++    throw err;
+   }
+ }
+ 
+-- 
+2.50.1
+
