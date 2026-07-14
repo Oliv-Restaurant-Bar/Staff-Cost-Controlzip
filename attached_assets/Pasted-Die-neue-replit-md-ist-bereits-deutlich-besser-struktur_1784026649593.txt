@@ -1,0 +1,97 @@
+Die neue replit.md ist bereits deutlich besser strukturiert. Führe jetzt eine zweite Bereinigungsrunde durch, die sich AUSSCHLIESSLICH auf Duplikate und Wiederholungen konzentriert.
+
+WICHTIG:
+
+Es geht NICHT darum, weitere Inhalte zu kürzen oder Architekturentscheidungen zu entfernen.
+
+Es geht ausschliesslich darum, identische oder nahezu identische Inhalte zusammenzuführen.
+
+Vorgehen:
+
+1. Lies die komplette replit.md.
+
+2. Suche systematisch nach:
+   - doppelten Überschriften
+   - doppelt beschriebenen Regeln
+   - identischen Architekturabschnitten
+   - mehrfach erwähnten Implementierungsregeln
+   - mehrfach beschriebenen Rollen
+   - mehrfach beschriebenen Persistenzregeln
+   - mehrfach beschriebenen Importregeln
+   - mehrfach beschriebenen UI-Regeln
+   - mehrfach beschriebenen Exportregeln
+   - mehrfach beschriebenen Datenschutzregeln
+
+3. Prüfe jede Wiederholung.
+
+Falls zwei Abschnitte dieselbe Aussage treffen:
+
+→ NICHT löschen.
+→ Zu EINEM vollständigen Abschnitt zusammenführen.
+→ Keine Information verlieren.
+
+Falls zwei Abschnitte unterschiedliche Informationen enthalten:
+
+→ sauber zusammenführen.
+
+Nicht zwei getrennte Kapitel behalten.
+
+Besonders prüfen:
+
+- Projektübersicht
+- Projektüberblick
+- Architektur
+- Architektur und Datenfluss
+- Globale Architekturregeln
+- Rollen
+- Rollen und Berechtigungen
+- Navigation
+- Hauptmodule
+- Persistenz
+- Single Source of Truth
+- Reine Logik getrennt von IO
+- Import-Engine
+- Datenschutz
+- UI-Richtlinien
+- Exportregeln
+
+Diese Themen dürfen jeweils nur EINMAL vorkommen.
+
+WICHTIG:
+
+Die zwei Mandanten Oliv und Beaulieu sind KEINE Begründung für doppelte Kapitel.
+
+Mandantenfähigkeit darf genau einmal beschrieben werden.
+
+Alle gemeinsamen Regeln ebenfalls nur einmal.
+
+Nicht entfernen:
+
+- Banken-/Investorenentscheid (EBIT)
+- Warenaufwand 4000–4070 / 4071–4900
+- Tombstone-Regeln
+- Importregeln
+- Berechtigungen
+- Datenschutz
+- Exportregeln
+- UI-Standards
+- Roadmap
+- Architekturprinzipien
+
+Nach Abschluss:
+
+Kontrolliere nochmals die komplette Datei und bestätige ausdrücklich:
+
+- jede Hauptüberschrift existiert nur einmal
+- jede Architekturregel existiert nur einmal
+- jede Persistenzregel existiert nur einmal
+- jede Importregel existiert nur einmal
+- jede Exportregel existiert nur einmal
+- keine fachlichen Informationen gingen verloren
+- ausschliesslich replit.md wurde geändert
+
+Keine Codeänderungen.
+Keine Tests.
+Kein Typecheck.
+
+Nur die Dokumentation bereinigen.
