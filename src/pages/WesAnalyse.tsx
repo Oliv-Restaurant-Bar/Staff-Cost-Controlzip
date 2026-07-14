@@ -178,6 +178,10 @@ function chf(val: number): string {
   return val.toLocaleString('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
+// Vergleichs-Quote der WES-Analyse: stellt Rezept-/Lieferschein-/FIBU-Summen
+// (inkl. «Übriger Warenaufwand») demselben Umsatz gegenüber. BEWUSST breiter als
+// die zentrale Warenkostenquote (src/lib/warenkosten-quote.ts, nur Food+Beverage)
+// — Systemvergleich, nie mit der offiziellen Quote gleichsetzen.
 function pct(cost: number, revenue: number): string {
   if (revenue <= 0) return '–';
   return ((cost / revenue) * 100).toFixed(1) + ' %';

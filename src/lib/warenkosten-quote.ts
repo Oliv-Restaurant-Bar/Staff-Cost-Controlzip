@@ -135,6 +135,27 @@ export function warenkostenQuote(
   return (relevantNet / revenue) * 100;
 }
 
+/**
+ * VERKAUFSBASIERTE WES-Quote in PROZENT (unrundiert): Stammdaten-WES der
+ * VERKAUFTEN Artikel ÷ Verkaufsumsatz (Verkaufs-Dashboard, Produkt-Sichten).
+ *
+ * BEWUSST eine ANDERE Kennzahl als die operative `warenkostenQuote`
+ * (erfasste Rechnungen Food+Beverage ÷ Umsatz) — nie gleichsetzen, nie
+ * quer-mappen. Zentral hier definiert, damit alle Verkaufsansichten
+ * (KPI-Karten, Tabellen, Excel-/PDF-Export) IDENTISCH rechnen.
+ *
+ * `null`, wenn keine gültige Basis vorliegt (Umsatz ≤ 0 oder WES ≤ 0) —
+ * NIE 0 % als Ersatz (fehlend ≠ 0).
+ */
+export function verkaufsWesQuote(
+  wes: number | null | undefined,
+  revenue: number | null | undefined,
+): number | null {
+  if (revenue == null || !Number.isFinite(revenue) || revenue <= 0) return null;
+  if (wes == null || !Number.isFinite(wes) || wes <= 0) return null;
+  return (wes / revenue) * 100;
+}
+
 // ─── Vergleich Warenkosten vs. Erfolgsrechnung ────────────────────────────────
 
 /**

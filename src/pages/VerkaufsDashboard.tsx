@@ -19,6 +19,7 @@ import {
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { verkaufsWesQuote } from '@/lib/warenkosten-quote';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -478,7 +479,8 @@ export default function VerkaufsDashboard() {
   );
 
   const totalRevenueB    = showNetRevenue ? grossToNet(totalRevenue) : totalRevenue;
-  const wesPercent       = totalRevenueB > 0 ? (totalWes / totalRevenueB) * 100 : 0;
+  // Verkaufsbasierte WES-Quote — zentrale Funktion (verkaufsWesQuote), null statt 0 bei fehlender Basis
+  const wesPercent       = verkaufsWesQuote(totalWes, totalRevenueB);
   const deckungsbeitrag  = totalRevenueB - totalWes;
   const hasWes           = totalWes > 0;
 
@@ -493,7 +495,7 @@ export default function VerkaufsDashboard() {
     const qty     = filteredTop.reduce((s, p) => s + p.qty, 0);
     const revenue = filteredTop.reduce((s, p) => s + p.revenue, 0);
     const wes     = filteredTop.reduce((s, p) => s + p.wes, 0);
-    const wesP    = revenue > 0 ? (wes / revenue) * 100 : 0;
+    const wesP    = verkaufsWesQuote(wes, revenue);
     return { qty, revenue, wes, wesP };
   }, [filteredTop]);
 
@@ -535,14 +537,14 @@ export default function VerkaufsDashboard() {
   function buildExportRows() {
     const header = ['#', 'Produkt', 'Quelle', 'Absatz', 'Umsatz CHF', ...(hasWes ? ['WES CHF', 'WES %'] : [])];
     const data = filteredTop.map((p, i) => {
-      const wesP = p.revenue > 0 ? (p.wes / p.revenue) * 100 : 0;
+      const wesP = verkaufsWesQuote(p.wes, p.revenue);
       return [
         i + 1,
         p.product_name,
         sourceLabel(p.source),
         p.qty,
         p.revenue,
-        ...(hasWes ? [p.wes, wesP] : []),
+        ...(hasWes ? [p.wes, wesP ?? '–'] : []),
       ];
     });
     const total = [
@@ -551,7 +553,7 @@ export default function VerkaufsDashboard() {
       '–',
       topTotals.qty,
       topTotals.revenue,
-      ...(hasWes ? [topTotals.wes, topTotals.wesP] : []),
+      ...(hasWes ? [topTotals.wes, topTotals.wesP ?? '–'] : []),
     ];
     return { header, data, total };
   }
@@ -759,10 +761,10 @@ export default function VerkaufsDashboard() {
               />
               <KpiCard
                 label="WES %"
-                value={`${wesPercent.toFixed(1)} %`}
+                value={wesPercent !== null ? `${wesPercent.toFixed(1)} %` : '–'}
                 icon={TrendingUp}
                 sub={`von ${fmtChf(totalRevenueB)} Umsatz`}
-                color={wesPercent > 35 ? 'muted' : 'default'}
+                color={wesPercent !== null && wesPercent > 35 ? 'muted' : 'default'}
               />
               <KpiCard
                 label="Deckungsbeitrag CHF"
@@ -1045,7 +1047,7 @@ export default function VerkaufsDashboard() {
               <tbody className="divide-y divide-border/40">
                 {bySource.map(s => {
                   const share    = totalRevenueB > 0 ? (s.revenue / totalRevenueB) * 100 : 0;
-                  const srcWesP  = s.revenue > 0 ? (s.wes / s.revenue) * 100 : 0;
+                  const srcWesP  = verkaufsWesQuote(s.wes, s.revenue);
                   return (
                     <tr key={s.label} className="hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-2.5">
@@ -1063,7 +1065,7 @@ export default function VerkaufsDashboard() {
                       {hasWes && <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{s.wes > 0 ? fmtChf(s.wes) : '–'}</td>}
                       {hasWes && (
                         <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
-                          {s.wes > 0 ? `${srcWesP.toFixed(1)} %` : '–'}
+                          {srcWesP !== null ? `${srcWesP.toFixed(1)} %` : '–'}
                         </td>
                       )}
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
@@ -1161,7 +1163,7 @@ export default function VerkaufsDashboard() {
                       </tr>
                     )}
                     {filteredTop.map((p, i) => {
-                      const pWesP = p.revenue > 0 ? (p.wes / p.revenue) * 100 : 0;
+                      const pWesP = verkaufsWesQuote(p.wes, p.revenue);
                       return (
                         <tr key={`${p.product_name}-${i}`} className="hover:bg-muted/30 transition-colors">
                           <td className="px-4 py-2 text-muted-foreground tabular-nums text-xs">{i + 1}</td>
@@ -1179,7 +1181,7 @@ export default function VerkaufsDashboard() {
                             </td>
                           )}
                           <td className="px-4 py-2 text-right">
-                            <WesAmpel wesP={p.wes > 0 ? pWesP : null} />
+                            <WesAmpel wesP={pWesP} />
                           </td>
                         </tr>
                       );

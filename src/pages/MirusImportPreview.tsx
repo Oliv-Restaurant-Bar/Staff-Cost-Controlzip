@@ -222,6 +222,8 @@ function buildPreviewSession(parsed: ExcelParsedDocument, file: File): PreviewIm
     const warnings = buildWarnings(safeEmp, idx);
     // check nur bei echten Problemen (warning/error), nicht bei info-Hinweisen
     const hasWarn  = warnings.some(w => w.severity === 'warning' || w.severity === 'error');
+    // Zeilen-VALIDIERUNGSSTATUS vor dem Import (Datenqualität der Excel-Zeile).
+    // NICHT die zentrale Import-Frische-Ampel (src/lib/import-center.ts) — anderes Konzept.
     const importStatus: PreviewEmployee['importStatus'] =
       !emp.name ? 'excluded' : hasWarn || quality < 80 ? 'check' : 'ready';
 

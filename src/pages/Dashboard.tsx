@@ -32,7 +32,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { GuestLinkGenerator } from '@/components/GuestLinkGenerator';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { getDailyBudgetMap } from '@/lib/budget-day';
-import { loadMonth, loadYear } from '@/lib/reporting-store';
+import { loadMonth, calcAnnualSummary } from '@/lib/reporting-store';
 import {
   loadEmployees,
   loadScheduleForMonth,
@@ -523,10 +523,11 @@ const Dashboard = () => {
       return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
     }
     if (period === 'year') {
-      const currentYearRecs = loadYear(currentYear);
-      const directPYSum = currentYearRecs.reduce((s, m) => s + (m.revenuePreviousYear ?? 0), 0);
-      if (directPYSum > 0) return directPYSum;
-      return loadYear(currentYear - 1).reduce((s, m) => s + (m.revenueActual ?? 0), 0);
+      // SSoT: Jahresaggregation zentral über calcAnnualSummary (reporting-store) —
+      // keine eigene reduce-Zweitberechnung (identische Semantik: fehlende Monate = 0).
+      const cur = calcAnnualSummary(currentYear);
+      if (cur.totalRevenuePreviousYear > 0) return cur.totalRevenuePreviousYear;
+      return calcAnnualSummary(currentYear - 1).totalRevenueActual;
     }
     return 0;
   }, [period, currentYear, currentMonth, reportingTick]); // eslint-disable-line react-hooks/exhaustive-deps

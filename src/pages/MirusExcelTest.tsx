@@ -213,6 +213,8 @@ function validateEmployee(emp: ExcelEmployee, idx: number, _all: ExcelEmployee[]
   }
 
   // ── Import-Status ─────────────────────────────────────────────────────────
+  // Zeilen-VALIDIERUNGSSTATUS vor dem Import (Datenqualität der Excel-Zeile).
+  // NICHT die zentrale Import-Frische-Ampel (src/lib/import-center.ts) — anderes Konzept.
   // Blocked: nur wenn kein Name ODER gar keine verwertbaren Daten
   const hasData        = emp.days.length > 0 || !!emp.totals.totalHours;
   const hasErrors      = issues.some(i => i.severity === 'error');

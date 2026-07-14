@@ -1060,7 +1060,9 @@ export default function ProdukteSeite() {
                         : sortBy === 'count' ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400';
                       const cost = costMap.get(r.name.toLowerCase());
                       const warenaufwand = cost && r.count > 0 ? cost.wes * r.count : 0;
-                      // WES-Q berechnen: Warenaufwand / Umsatz × 100
+                      // PRODUKTBEZOGENE WES-Quote (theoretischer Warenaufwand je Artikel ÷ Artikel-Umsatz),
+                      // Fallback = Stammdaten-WES-Q. BEWUSST eine ANDERE Kennzahl als die zentrale
+                      // Warenkostenquote (src/lib/warenkosten-quote.ts) — nie gleichsetzen.
                       const wesQEffektiv = cost && r.revenue > 0 && warenaufwand > 0
                         ? (warenaufwand / r.revenue) * 100
                         : (cost?.wesQ ?? 0);

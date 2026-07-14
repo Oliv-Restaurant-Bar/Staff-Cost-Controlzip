@@ -428,7 +428,7 @@ export function yearSelectOptions(available: number[], current: number): number[
  * Nur Monate mit tatsächlichen Daten werden einbezogen.
  */
 export function calcAnnualSummary(year: number, storeKey: string = STORAGE_KEY): AnnualSummary {
-  const months = loadYear(year);
+  const months = loadYear(year, storeKey);
   let totalRevenueActual      = 0;
   let totalRevenueBudget      = 0;
   let totalRevenuePreviousYear = 0;

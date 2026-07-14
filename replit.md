@@ -44,7 +44,7 @@ Detail-Lehren und Historie liegen in `.agents/memory/` — diese Datei beschreib
 ## 5. Aktueller Funktionsumfang
 
 ### Startseite und Dashboard
-Startübersicht (admin, read-only): Heute-Statuskarten, Warnungen nur bei Status „Handlung nötig", Schnellaktionen; Frische-Regeln 1:1 aus der zentralen Import-Statusberechnung (§2). „Heute wichtig"-Banner im Dashboard nutzt dieselbe Quelle, nur Admin. KPI-Dashboard unter `/dashboard`.
+Startübersicht (admin, read-only): Heute-Statuskarten, Warnungen nur bei Status „Handlung nötig", Schnellaktionen; Frische-Regeln 1:1 aus der zentralen Import-Statusberechnung (§2). „Heute wichtig"-Banner im Dashboard nutzt dieselbe Quelle, nur Admin. KPI-Dashboard unter `/dashboard`; Jahres-Umsatz/Vorjahr dort über die zentrale Jahresaggregation `calcAnnualSummary` (reporting-store) — keine eigene Monats-Summierung.
 
 ### Import-System
 - **Checklisten-Engine** (reine Logik) — 9 Aufgabentypen: täglich/zeitraum (Z-Bericht, Reservationen, Umsatz, Verkaufsdaten, Mirus, Marketing), monatlich (Erfolgsrechnung, Istkosten), jährlich (Budget). Stabile Aufgaben-IDs; Coverage-Fehler → sichtbare error-Aufgabe; Coverage-Abfragen read-only (keine Store-Loader). Priorisierung/Fälligkeit in eigener reiner Logik (Fortschritts-Nenner nur fällige Aufgaben; complete nur wenn alles done UND Monat vorbei). Erwarteter Zeitraum immer auf min(Monatsende, gestern) gedeckelt; laufender Monat/Jahr neutral „läuft noch". Teilimporte erzeugen Restaufgaben nur für Lücken. Prefill advisory, nie harte Einschränkung.
@@ -53,6 +53,7 @@ Startübersicht (admin, read-only): Heute-Statuskarten, Warnungen nur bei Status
 - **Z-Bericht/Gastronovi** (`gn_*`): Tagesimporte nur bei identischem Von-/Bis-Datum; nie Multi-Tage auto-splitten. **Produkt-CSV** → `product_sales`: gleiche Produktnamen je Datum (auch mit verschiedenen Preisen) werden unvermeidlich zu EINEM Record summiert — bewusste fachliche Grenze, die Quelle ist eine flache CSV ohne Artikelnummer.
 - **Reservations-Import (Foratable):** idempotent via UNIQUE-Schlüssel (Betrieb + externe Reservations-ID); Gast-Match Telefon → E-Mail, nie Name; Name-only dedupliziert über einen stabilen Match-Schlüssel. Gästeexport-Import füllt NUR leere manuelle CRM-Felder, überschreibt nie.
 - **Import-Historie:** Audit-Tabelle `import_runs`; Logging best-effort/wirft nie, additiv, keine PII, Zeitstempel = DB-Serverzeit.
+- **Mirus-Vorschau:** Zeilen-Status (gültig/Warnung/Fehler) = Vor-Import-Validierung einzelner Zeilen — bewusst getrennt von der zentralen Frische-Ampel der Import-Statusberechnung (§2).
 
 ### Tagesabschlüsse und Umsatzabstimmung
 - `/tagesabschluesse` (admin bzw. beaulieu_manager; Gäste lesend). Monatsübersicht mit 14 Spalten in 5 Gruppen (kompakt 10); Zahlungsarten-Breakdown-Popovers (unklassifizierte Zahlarten zählen nirgends); Bargeld Soll + Kassensaldo Soll berechnet/read-only („—" solange Anfangsbestand unbekannt); Cash Ist manuell; Inline-Buchungswerte editierbar (KK-Adyen-Override, Saldo-Anker re-based die Kette, Gutscheine, Barausgaben als EINE generische Inline-Ausgabe Konto 1001).
@@ -96,6 +97,7 @@ Startübersicht (admin, read-only): Heute-Statuskarten, Warnungen nur bei Status
 ### Warenkosten und Produktanalyse
 - **Produkt-Analyse:** reine Analyse-Logik; Perioden Tag/Woche/Monat/Jahr (ISO-Wochen mit 52/53-Rollover), Filter URL-gespiegelt.
 - **Warenkostenquote (SSoT):** operatives Konto-Mapping (4000/4030→Food, 4020→Beverage, Rest→Sonstiges) — bewusst anders als der FIBU-Kontenplan, nie quer-mappen. Quote (%) basiert IMMER nur auf Food+Beverage, «Diverses/Sonstiges» ausgeschlossen; CHF-Beträge zeigen den vollen Aufwand. `null` bei fehlendem/0-Umsatz — nie 0. ALLE Quoten laufen über diese eine Logik.
+- **Verkaufsbasierte WES-Quote (`verkaufsWesQuote`, gleiche Lib):** Stammdaten-WES ÷ Verkaufsumsatz — BEWUSST andere Kennzahl als die operative Warenkostenquote; `null` bei Umsatz ≤ 0 ODER WES ≤ 0 (WES nicht gepflegt ≠ 0). Einzige Formel im Verkaufs-Dashboard (KPI, Tabellen, Excel/PDF-Export). Ebenfalls bewusst getrennt bleiben: produktbezogene WES-Quote (Produkte-Seite, Produkt-Marge) und WES-Analyse-Vergleichsquote (Systemvergleich inkl. Übriger Warenaufwand).
 - **FIBU-Abgleich (Warenkosten vs. ER):** FIBU-Seite read-only aus der P&L-Engine; Ganzmonats-Regel gemäss §6 — bei Teilperiode neutrale HintBox statt Scheindifferenz; fehlende ER → Hinweis + Link, nie stille 0.
 - **Stammdaten/WES:** Artikel-/Produktstammdaten, WES-Analyse, Artikel-Tracking (Vergleich Rezept/Lieferant/Buchhaltung); Lieferantendokumente mit Vergleich.
 

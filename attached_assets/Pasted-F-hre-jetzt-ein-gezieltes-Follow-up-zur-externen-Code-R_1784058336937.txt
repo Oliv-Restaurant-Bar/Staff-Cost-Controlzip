@@ -1,0 +1,184 @@
+Führe jetzt ein gezieltes Follow-up zur externen Code-Review durch.
+
+WICHTIG:
+
+Die Review basierte auf einer Patch-Datei und nicht auf allen vollständigen Dateien. Prüfe deshalb jeden Befund zuerst gegen den aktuellen Gesamtcode und alle Call-Sites.
+
+Keine neuen Funktionen.
+Keine UI-Überarbeitung.
+Nur die vier gemeldeten Risiken verifizieren, beheben und absichern.
+
+==================================================
+1. saveAll ohne action prüfen
+==================================================
+
+Externer Review-Befund:
+
+In budget-store.ts überspringt saveAll das Supabase-Backup, wenn kein action-Objekt übergeben wird:
+
+if (!action) {
+  console.warn(...);
+  return;
+}
+
+Dadurch könnten Aufrufer wie eine Jahr-Kopie nur lokal speichern und beim Gerätewechsel verloren gehen.
+
+Auftrag:
+
+- Suche projektweit nach allen Aufrufen von saveAll(...).
+- Prüfe insbesondere copyBudgetYear und alle Seed-, Reset-, Copy-, Delete- und Save-Pfade.
+- Jeder echte mutierende Aufruf muss eine eindeutige action mit Zieljahr und Vorgang übergeben.
+- Kein Budget-Speichervorgang darf unbemerkt nur lokal bleiben.
+- Falls ein Aufruf bewusst nur lokal sein soll, muss dies explizit benannt und begründet sein.
+- Keine künstliche Default-action erfinden, die das falsche Jahr sichert.
+
+Regressionstests:
+
+- Jahr kopieren sichert das neue Jahr auch im KV-Backup.
+- Jahr kopieren verändert andere Jahre nicht.
+- Kein mutierender saveAll-Aufruf läuft ohne action.
+- Gerätewechsel verliert ein kopiertes Budgetjahr nicht.
+
+==================================================
+2. Supabase nicht verfügbar korrekt behandeln
+==================================================
+
+Externer Review-Befund:
+
+kvGetStrict und kvSetStrict werfen auch dann einen Fehler, wenn Supabase nur nicht konfiguriert oder offline ist. Dadurch können bei jedem lokalen Speichern rote Fehler-Toasts erscheinen, obwohl lokal korrekt gespeichert wurde.
+
+Auftrag:
+
+Unterscheide sauber zwischen:
+
+A. Supabase nicht konfiguriert oder aktuell nicht verfügbar
+B. echter Lese- oder Schreibfehler trotz verfügbarer Supabase-Verbindung
+
+Verhalten:
+
+- Fall A: lokales Speichern bleibt erfolgreich; nur dezenter Hinweis oder stiller Offline-Status gemäss bestehendem UX-Muster.
+- Fall B: sichtbare Backup-Fehlermeldung mit Möglichkeit zum erneuten Versuch.
+- Niemals behaupten, das Backup sei erfolgreich gewesen, wenn es nicht bestätigt wurde.
+- Niemals einen Netzwerk-/Konfigurationszustand als leeren Remote-Speicher behandeln.
+- Bestehende Datenintegritätsregeln beibehalten.
+
+Prüfe die Auswirkungen auf:
+
+- backupBudgetsToKV
+- saveJournalEntries
+- Reporting-Backup
+- weitere Nutzer von kvGetStrict/kvSetStrict
+
+Regressionstests:
+
+- Supabase nicht konfiguriert: lokal gespeichert, kein roter Fehler-Toast.
+- Supabase offline: lokale Daten bleiben erhalten, passender Hinweis.
+- echter Remote-Schreibfehler: sichtbare Warnung.
+- echter Remote-Lesefehler: Remote-Daten werden nicht als leer interpretiert.
+
+==================================================
+3. Auto-Seed 2026 gegen Remote-Daten absichern
+==================================================
+
+Externer Review-Befund:
+
+loadBudgetYear kann bei leerem localStorage ein 2026-Seed erzeugen und dieses speichern, obwohl remote bereits ein bearbeitetes Budget 2026 existiert.
+
+Auftrag:
+
+- Prüfe den vollständigen Ablauf von loadBudgetYear und Auto-Seed.
+- Vor einem Seed muss der Remote-Stand geprüft oder der bereits geladene Merge-Stand berücksichtigt werden.
+- Seed nur erzeugen, wenn 2026 weder lokal noch remote existiert.
+- Ein frischer Browser oder neues Gerät darf kein bestehendes Remote-Budget 2026 überschreiben.
+- Bei Remote-Lesefehler darf kein Seed geschrieben werden.
+- Bestehende Seed-Regeln fachlich unverändert lassen.
+
+Regressionstests:
+
+- lokaler Speicher leer, remote 2026 vorhanden: remote gewinnt, kein Seed-Overwrite.
+- lokal und remote leer: Seed wird einmal erzeugt.
+- Remote-Lesefehler: kein Seed-Schreibvorgang.
+- wiederholtes Laden erzeugt keine Dubletten.
+
+==================================================
+4. Gelöschte Budgetjahre gegen Wiederbelebung schützen
+==================================================
+
+Externer Review-Befund:
+
+Ohne Jahr-Tombstones kann ein auf Gerät A gelöschtes Budgetjahr von Gerät B mit veraltetem localStorage wieder hochgeladen und wiederbelebt werden.
+
+Auftrag:
+
+- Verifiziere dieses Risiko im aktuellen Merge- und Löschpfad.
+- Falls bestätigt, implementiere rückwärtskompatible Tombstones für gelöschte Budgetjahre.
+- Tombstone mindestens mit Jahr, deleted=true und updatedAt.
+- Neuere Tombstones müssen ältere Budgetdaten verdrängen.
+- Leser dürfen gelöschte Jahre nicht als aktive Budgets anzeigen.
+- Ein älteres Gerät darf ein neueres Löschen nicht wiederbeleben.
+- Ein bewusst neu angelegtes Budgetjahr nach einer Löschung muss mit neuerem updatedAt wieder möglich sein.
+- Keine bestehenden Reporting-Tombstones duplizieren; bestehendes Muster übernehmen.
+
+Regressionstests:
+
+- Gerät A löscht 2025, Gerät B hat alten Stand: 2025 bleibt gelöscht.
+- Reload und Gerätewechsel behalten Löschung.
+- älterer Tombstone verdrängt neuere Neuanlage nicht.
+- neuere bewusste Neuanlage kann ein altes Tombstone ersetzen.
+- Löschen eines Jahres verändert andere Jahre nicht.
+
+==================================================
+5. Verifikation
+==================================================
+
+Nach der Korrektur:
+
+- projektweite Suche nach allen saveAll-Aufrufen dokumentieren
+- fokussierte Budget- und KV-Tests ausführen
+- betroffene bestehende Tests ausführen
+- projektspezifischen TypeScript-Typecheck ausführen
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff durchführen
+
+Wichtig:
+
+Die externen Befunde nicht blind übernehmen.
+
+Für jeden Punkt im Abschlussbericht angeben:
+
+- bestätigt
+- teilweise bestätigt
+- nicht bestätigt
+
+Falls nicht bestätigt, mit konkreter Code-Stelle und Test begründen.
+
+==================================================
+6. Dokumentation
+==================================================
+
+replit.md nur aktualisieren, wenn sich eine dauerhaft gültige Architekturregel tatsächlich ändert:
+
+- jeder Budget-Schreibvorgang enthält eine explizite Zieljahres-Action
+- Offline-/nicht konfigurierte Backups werden von echten Fehlern unterschieden
+- Auto-Seeds überschreiben nie vorhandene Remote-Daten
+- Budgetjahr-Löschungen sind geräteübergreifend gegen Wiederbelebung geschützt
+
+Keine Testzahlen und kein Entwicklungsprotokoll dokumentieren.
+
+==================================================
+Abschlussbericht
+==================================================
+
+Am Ende ausgeben:
+
+1. Ergebnis zu saveAll ohne action.
+2. Vollständige Liste der gefundenen mutierenden saveAll-Call-Sites.
+3. Ergebnis zur Offline-/Fehler-Unterscheidung.
+4. Ergebnis zum Auto-Seed-Risiko.
+5. Ergebnis zu Budgetjahr-Tombstones.
+6. Welche Fehler tatsächlich behoben wurden.
+7. Welche Tests ergänzt wurden.
+8. Typecheck-Ergebnis.
+9. Architect-Review-Ergebnis.
+10. Liste aller geänderten Dateien.
+
+Keine anderen Bereiche verändern.

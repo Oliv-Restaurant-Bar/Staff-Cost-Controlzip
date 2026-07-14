@@ -1,0 +1,240 @@
+Ab sofort beginnt Stabilisierungsrunde 2.
+
+WICHTIG:
+
+Keine neuen Funktionen entwickeln.
+
+Keine neuen Seiten erstellen.
+
+Keine UI-Erweiterungen.
+
+Ziel dieser Runde:
+
+Das gesamte System muss für jede fachliche Kennzahl genau EINE Berechnungsquelle (Single Source of Truth) besitzen.
+
+==================================================
+T001 – Vollständiger SSoT-Audit
+==================================================
+
+Durchsuche das gesamte Projekt nach mehrfachen Berechnungen derselben Kennzahl.
+
+Prüfe insbesondere:
+
+- Erfolgsrechnung
+- Mehrjahresanalyse
+- Management Report
+- Bankenbericht
+- Produktanalyse
+- Warenkosten
+- WES-Analyse
+- Verkaufsdashboard
+- Personalcontrolling
+- Personal FIX + VARIABEL
+- Personalbedarf
+- Tagesabschlüsse
+- Umsatzabstimmung
+- Dashboard
+- Kennzahlenbericht
+- Import-Cockpit
+- Gäste- und Reservationsanalyse
+
+Suche nach:
+
+- eigener Quoteberechnung
+- eigener Umsatzberechnung
+- eigener Kostenberechnung
+- eigener Stundenberechnung
+- eigener Personalquote
+- eigener Warenquote
+- eigener EBIT-Berechnung
+- eigener Margenberechnung
+- eigener Statuslogik
+- eigener Monatsaggregation
+
+==================================================
+T002 – Kennzahlen vereinheitlichen
+==================================================
+
+Für folgende Kennzahlen darf es im gesamten Projekt nur noch genau eine Berechnungsquelle geben:
+
+- Umsatz
+- Warenertrag
+- Direkter Warenaufwand
+- Übriger Warenaufwand
+- Warenaufwand total
+- Warenquote
+- Bruttogewinn
+- Personalaufwand
+- Personalquote
+- EBITDA
+- EBIT
+- EBIT-Marge
+- Überstunden
+- Arbeitsstunden
+- Nettostunden
+- AG-Kosten
+- Importstatus
+
+Falls mehrere Berechnungen existieren:
+
+- zentrale Berechnung beibehalten
+- doppelte Berechnung entfernen
+- alle Konsumenten auf die zentrale Berechnung umstellen
+
+Keine fachliche Änderung.
+
+Nur Vereinheitlichung.
+
+==================================================
+T003 – Produkt- und Warenkostenprüfung
+==================================================
+
+Prüfe insbesondere:
+
+- WES
+- Produktanalyse
+- Verkaufsdashboard
+- Warenkostenquote
+
+Stelle fest:
+
+Handelt es sich fachlich um dieselbe Kennzahl?
+
+Oder bewusst um unterschiedliche Kennzahlen?
+
+Nur wenn es dieselbe Kennzahl ist:
+
+vereinheitlichen.
+
+Falls unterschiedliche Fachlogik gewollt ist:
+
+deutlich dokumentieren.
+
+==================================================
+T004 – Importstatus vereinheitlichen
+==================================================
+
+Alle Importanzeigen müssen dieselbe zentrale Statuslogik verwenden.
+
+Import-Cockpit bleibt Referenz.
+
+Andere Seiten dürfen keine eigene Ampellogik besitzen.
+
+==================================================
+T005 – Drilldown-Konsistenz
+==================================================
+
+Prüfe alle Drilldowns.
+
+Für jede Kennzahl gilt:
+
+Kachel
+
+=
+
+Drilldown
+
+=
+
+Export
+
+=
+
+PDF
+
+=
+
+Excel
+
+Summen müssen exakt übereinstimmen.
+
+Keine stillen Rundungs- oder Filterabweichungen.
+
+==================================================
+T006 – Datenintegrität
+==================================================
+
+Prüfe zusätzlich:
+
+- Race Conditions
+- doppelte States
+- doppelte Stores
+- doppelte useEffects
+- doppelte Caches
+- unnötige Berechnungen
+
+Nur dort optimieren, wo echte Probleme bestehen.
+
+==================================================
+T007 – UI
+
+Keine neuen Funktionen.
+
+Nur kleine Korrekturen:
+
+- widersprüchliche Bezeichnungen vereinheitlichen
+- gleiche Kennzahl überall gleich benennen
+- gleiche Farben
+- gleiche Formate
+- gleiche Prozentdarstellung
+- gleiche CHF-Darstellung
+
+==================================================
+T008 – Regression
+
+Ergänze gezielte Tests:
+
+- jede zentrale Kennzahl liefert überall denselben Wert
+- Dashboard = Erfolgsrechnung
+- Mehrjahresanalyse = Bankenbericht
+- Bankenbericht = Export
+- Produktanalyse = Warenkostenquote (falls identisch)
+- Importstatus überall identisch
+- Drilldown = Kachel
+- Export = UI
+
+Führe danach aus:
+
+- fokussierte Tests
+- projektspezifischen TypeScript-Typecheck
+- Architect-Review ausschliesslich über den Task-Diff
+
+==================================================
+T009 – Dokumentation
+
+Aktualisiere replit.md nur mit tatsächlich umgesetzten Änderungen.
+
+Dokumentiere ausschliesslich:
+
+- welche Kennzahlen jetzt zentral berechnet werden
+- welche Doppelberechnungen entfernt wurden
+- welche Kennzahlen bewusst unterschiedlich bleiben und weshalb
+
+Keine Testzahlen.
+
+Keine Entwicklungsprotokolle.
+
+==================================================
+Abschlussbericht
+
+Am Ende ausgeben:
+
+1. Welche Doppelberechnungen gefunden wurden.
+2. Welche Kennzahlen vereinheitlicht wurden.
+3. Welche Kennzahlen bewusst unterschiedlich bleiben.
+4. Welche Seiten jetzt dieselbe Berechnung verwenden.
+5. Welche Regressionstests ergänzt wurden.
+6. Typecheck-Ergebnis.
+7. Architect-Review-Ergebnis.
+8. Liste aller geänderten Dateien.
+
+WICHTIG:
+
+Die fachlichen Werte dürfen sich durch diese Arbeiten nicht verändern.
+
+Ziel ist ausschliesslich:
+
+- höhere Stabilität
+- höhere Konsistenz
+- bessere Wartbarkeit
+- identische Kennzahlen in allen Auswertungen, Drilldowns und Exporten.
