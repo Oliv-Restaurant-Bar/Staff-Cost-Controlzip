@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, subDays, addDays } from 'date-fns';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -62,7 +62,11 @@ export interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
-  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  /** Manuelle Pause 1. Einsatz in Minuten (0/30/60); null/undefined = keine manuelle Angabe */
+  fruehBreakMinutes?: number | null;
+  /** Manuelle Pause 2. Einsatz in Minuten (0/30/60); null/undefined = keine manuelle Angabe */
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback in resolveDayBreakHours */
   breakMinutes?: number | null;
 }
 
@@ -130,6 +134,10 @@ interface UseSupabaseScheduleOptions {
 export const useSupabaseSchedule = ({ token, department, currentMonth, restaurantId }: UseSupabaseScheduleOptions) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [scheduleData, setScheduleData] = useState<Record<string, DaySchedule>>({});
+  // Ref-Spiegel: schnelle Slot-Folge-Edits (Split-Schicht) lesen SYNCHRON den
+  // letzten Stand — der State-Closure allein wäre stale und würde den 1. Slot verlieren.
+  const scheduleDataRef = useRef(scheduleData);
+  useEffect(() => { scheduleDataRef.current = scheduleData; }, [scheduleData]);
   const [isLoading, setIsLoading] = useState(true);
   const [tokenAccess, setTokenAccess] = useState<TokenAccess | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -412,28 +420,35 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
     slotType: 'früh' | 'spät',
     value: TimeSlot | null,
     absenceType?: string | null,
-    // Pause pro TAG: undefined = unverändert, number = manuell, null = Automatik
+    // Pause pro EINSATZ (für den übergebenen slotType): undefined = unverändert,
+    // number = manuell (0/30/60), null = Automatik
     breakMinutes?: number | null
   ): Promise<boolean> => {
     try {
       const cellKey = `${employeeId}-${date}`;
-      const current = scheduleData[cellKey] || {};
+      // SYNCHRON aus dem Ref lesen — nie aus dem (potenziell stale) State-Closure
+      const current = scheduleDataRef.current[cellKey] || {};
       
       // Build updated schedule
       const updated = { ...current };
       if (slotType === 'früh') {
         updated.früh = value;
         updated.frühAbsence = absenceType || null;
+        if (breakMinutes !== undefined) updated.fruehBreakMinutes = breakMinutes;
       } else {
         updated.spät = value;
         updated.spätAbsence = absenceType || null;
-      }
-      if (breakMinutes !== undefined) {
-        updated.breakMinutes = breakMinutes;
+        if (breakMinutes !== undefined) updated.spaetBreakMinutes = breakMinutes;
       }
       
       // Check if we should delete or upsert
       const isEmpty = !updated.früh && !updated.spät && !updated.frühAbsence && !updated.spätAbsence;
+
+      // Ref sofort aktualisieren, damit der nächste Aufruf (2. Slot) diesen Stand sieht
+      const nextState = { ...scheduleDataRef.current };
+      if (isEmpty) delete nextState[cellKey];
+      else nextState[cellKey] = updated;
+      scheduleDataRef.current = nextState;
       
       if (isEmpty) {
         // Delete the entry
@@ -464,13 +479,17 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
         };
         let { error } = await supabase
           .from('schedule_entries')
-          .upsert({ ...basePayload, break_minutes: updated.breakMinutes ?? null }, {
+          .upsert({
+            ...basePayload,
+            frueh_break_minutes: updated.fruehBreakMinutes ?? null,
+            spaet_break_minutes: updated.spaetBreakMinutes ?? null,
+          }, {
             onConflict: 'employee_id,date'
           });
 
-        // Fallback: Spalte break_minutes existiert noch nicht (Migration ausstehend)
+        // Fallback: Pausen-Spalten existieren noch nicht (Migration 20260714 ausstehend)
         if (error && /break_minutes/i.test(error.message || '')) {
-          console.warn('[SCHEDULE] break_minutes-Spalte fehlt — speichere ohne Pause (Migration ausführen!)');
+          console.warn('[SCHEDULE] Pausen-Spalten fehlen — speichere ohne Pause (Migration 20260714 ausführen!)');
           ({ error } = await supabase
             .from('schedule_entries')
             .upsert(basePayload, { onConflict: 'employee_id,date' }));

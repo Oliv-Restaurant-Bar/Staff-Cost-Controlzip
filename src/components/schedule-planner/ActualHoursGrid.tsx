@@ -30,6 +30,8 @@ export interface ActualHoursEntry {
   absenceType?: AbsenceCode;
   /** Markiert als Zusatzkosten-Tag: Stunden eines Fixlohn-MA die als variable Flex-Kosten gezählt werden sollen */
   isAdditionalCost?: boolean;
+  /** Herkunft: 'plan_sync' = automatisch aus Plan-Absenz übernommen (idempotent), 'manual' | 'import' = echte Ist-Daten */
+  source?: 'plan_sync' | 'manual' | 'import';
 }
 
 interface ActualHoursGridProps {

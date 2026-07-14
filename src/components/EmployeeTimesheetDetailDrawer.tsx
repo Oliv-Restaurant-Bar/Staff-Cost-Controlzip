@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+
 import { RefreshCw, AlertTriangle, CheckCircle2, XCircle, Info } from 'lucide-react';
 import {
   loadEmployeeMonthDetail,
+  planPauseMinutes,
   MONTH_NAMES_DE,
   type DayComparisonEntry,
 } from '@/lib/timesheet-store';
@@ -100,10 +101,9 @@ function PlanCell({ entry }: { entry: DayComparisonEntry }) {
         <div className="text-[11px] font-semibold tabular-nums">{fmtH(entry.plan_hours)}</div>
       )}
       {(() => {
-        // Pause aus zentraler Auflösung (manuelle Tages-Pause hat Vorrang vor Automatik);
+        // Pause aus zentraler Auflösung (manuelle Einsatz-Pausen haben Vorrang vor Automatik);
         // nur bei geplanter Arbeitszeit — Pause nie auf reine Absenztage
-        const pauseMin = entry.plan_gross != null && entry.plan_gross > 0
-          ? Math.round(resolveBreakHours(entry.plan_gross, entry.break_minutes) * 60) : 0;
+        const pauseMin = planPauseMinutes(entry);
         return pauseMin > 0 ? (
           <div className="text-[10px] text-muted-foreground">{pauseMin} min Pause</div>
         ) : null;

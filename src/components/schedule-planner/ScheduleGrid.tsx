@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useShiftConfig, resolveBreakHours } from '@/hooks/useShiftConfig';
+import { useShiftConfig, resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { PatternWarning, PatternType } from '@/lib/pattern-warnings';
@@ -45,10 +45,14 @@ export interface DaySchedule {
   /** Geplanter Zusatzkosten-Tag: Plan-Stunden dieses Fixlohn-MA als variable Kosten zählen */
   isAdditionalCostPlan?: boolean;
   /**
-   * Manuelle Pause in Minuten für den TAG (0 = explizit keine, 30, 60).
-   * null/undefined = automatische Pausenregel (>9h → 30 Min) gilt.
-   * Reduziert NUR die Arbeitszeit, nie Start/Ende. SSoT: resolveBreakHours().
+   * Manuelle Pause PRO EINSATZ in Minuten (0 = explizit keine, 30, 60).
+   * null/undefined = keine manuelle Angabe. Sind beide leer, gilt die
+   * automatische Tagesregel (>9h → 30 Min) bzw. Legacy breakMinutes.
+   * Reduziert NUR die Arbeitszeit, nie Start/Ende. SSoT: resolveDayBreakHours().
    */
+  fruehBreakMinutes?: number | null;
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback in resolveDayBreakHours */
   breakMinutes?: number | null;
 }
 
@@ -342,7 +346,7 @@ export const ScheduleGrid = ({
       const frühHours = calculateSlotHours(daySchedule.früh);
       const spätHours = calculateSlotHours(daySchedule.spät);
       const grossWorkHours = frühHours + spätHours;
-      const breakDeduction = resolveBreakHours(grossWorkHours, daySchedule.breakMinutes);
+      const breakDeduction = resolveDayBreakHours(daySchedule, grossWorkHours);
       const netWorkHours = Math.max(0, grossWorkHours - breakDeduction);
 
       // Absence hours (only if countsToTarget)
@@ -627,7 +631,7 @@ export const ScheduleGrid = ({
           return h;
         };
         const gross = calcSlot(daySchedule.früh) + calcSlot(daySchedule.spät);
-        const breakDeduction = resolveBreakHours(gross, daySchedule.breakMinutes);
+        const breakDeduction = resolveDayBreakHours(daySchedule, gross);
         hours = Math.max(0, gross - breakDeduction);
       }
 
@@ -1183,11 +1187,26 @@ export const ScheduleGrid = ({
                                   onChange={(val, absence, breakMin) => handleCellChange(employee.id, dateStr, primarySlot, val, absence, breakMin)}
                                   slotType={primarySlot}
                                   secondaryValue={daySchedule[secondarySlot] || null}
-                                  breakMinutes={daySchedule.breakMinutes ?? null}
+                                  breakMinutes={
+                                    (primarySlot === 'früh'
+                                      ? daySchedule.fruehBreakMinutes ?? daySchedule.breakMinutes
+                                      : daySchedule.spaetBreakMinutes) ?? null
+                                  }
                                   onBreakMinutesChange={(v) => onSlotChange(
                                     employee.id, dateStr, primarySlot,
                                     daySchedule[primarySlot] || null,
                                     (primarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
+                                    v,
+                                  )}
+                                  secondaryBreakMinutes={
+                                    (secondarySlot === 'früh'
+                                      ? daySchedule.fruehBreakMinutes ?? daySchedule.breakMinutes
+                                      : daySchedule.spaetBreakMinutes) ?? null
+                                  }
+                                  onSecondaryBreakMinutesChange={(v) => onSlotChange(
+                                    employee.id, dateStr, secondarySlot,
+                                    daySchedule[secondarySlot] || null,
+                                    (secondarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
                                     v,
                                   )}
                                   onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, secondarySlot, sec, null)}

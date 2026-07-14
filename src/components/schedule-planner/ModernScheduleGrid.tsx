@@ -40,8 +40,10 @@ export interface CopiedCell {
   primary: { start: string; end: string } | null;
   secondary: { start: string; end: string } | null;
   absence: string | null;
-  /** Manuelle Tages-Pause in Minuten (null = Automatik) — wird mitkopiert */
-  breakMinutes?: number | null;
+  /** Manuelle Pause der Früh-Schicht in Minuten (null = Automatik) — wird mitkopiert */
+  fruehBreakMinutes?: number | null;
+  /** Manuelle Pause der Spät-Schicht in Minuten (null = Automatik) — wird mitkopiert */
+  spaetBreakMinutes?: number | null;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -632,12 +634,29 @@ export function ModernScheduleGrid({
                             }
                             slotType={primarySlot}
                             secondaryValue={daySchedule[secondarySlot] ?? null}
-                            breakMinutes={daySchedule.breakMinutes ?? null}
+                            breakMinutes={
+                              (primarySlot === 'früh'
+                                ? daySchedule.fruehBreakMinutes ?? daySchedule.breakMinutes
+                                : daySchedule.spaetBreakMinutes) ?? null
+                            }
                             onBreakMinutesChange={(v) =>
                               onSlotChange(
                                 employee.id, dateStr, primarySlot,
                                 daySchedule[primarySlot] ?? null,
                                 (primarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
+                                v,
+                              )
+                            }
+                            secondaryBreakMinutes={
+                              (secondarySlot === 'früh'
+                                ? daySchedule.fruehBreakMinutes ?? daySchedule.breakMinutes
+                                : daySchedule.spaetBreakMinutes) ?? null
+                            }
+                            onSecondaryBreakMinutesChange={(v) =>
+                              onSlotChange(
+                                employee.id, dateStr, secondarySlot,
+                                daySchedule[secondarySlot] ?? null,
+                                (secondarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
                                 v,
                               )
                             }

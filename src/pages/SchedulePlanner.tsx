@@ -20,6 +20,10 @@ import {
   insertSchedulePublicationSnapshot,
   type ScheduleChangeLogEntry,
 } from '@/lib/supabase-db';
+import {
+  ScheduleSaveQueue, planSaveKey, istSaveKey, parseSaveKey,
+  type SaveQueueSnapshot,
+} from '@/lib/schedule-save-queue';
 import { supabase } from '@/integrations/supabase/client';
 import {
   saveMonthAbsences, loadMonthAbsences,
@@ -97,7 +101,7 @@ import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useQuickTimes } from '@/hooks/useQuickTimes';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -282,7 +286,7 @@ const SchedulePlanner = () => {
   const [copiedCell, setCopiedCell] = useState<CopiedCell | null>(null);
   const [copiedWeek, setCopiedWeek] = useState<{
     empId: string;
-    data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null; breakMinutes: number | null }>;
+    data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null; fruehBreakMinutes: number | null; spaetBreakMinutes: number | null }>;
   } | null>(null);
 
   // ── Phase 1B: multi-plan stamp mode ───────────────────────────────────────
@@ -327,7 +331,7 @@ const SchedulePlanner = () => {
   
   // New state for Plan/Ist toggle
   const [scheduleMode, setScheduleMode] = useState<'plan' | 'ist' | 'compare'>('plan');
-  const [actualHoursData, setActualHoursData] = useState<Record<string, { hours: number; start?: string; end?: string; start2?: string; end2?: string; absenceType?: 'FE' | 'FT' | 'K' | 'U' | 'F'; isAdditionalCost?: boolean }>>({});
+  const [actualHoursData, setActualHoursData] = useState<Record<string, ActualHoursEntry>>({});
   const [paintTool, setPaintTool] = useState<string | null>(null);
   const [planningAssistantOpen, setPlanningAssistantOpen]     = useState(false);
   const [bulkActionsOpen, setBulkActionsOpen]                 = useState(false);
@@ -386,6 +390,59 @@ const SchedulePlanner = () => {
   const [isSaving,      setIsSaving]      = useState(false);
   const [saveError,     setSaveError]     = useState<string | null>(null);
   const [lastSaveTime,  setLastSaveTime]  = useState<Date | null>(null);
+
+  // ── Tages-atomarer Schreibpfad: Save-Queue + synchroner Daten-Ref ─────────
+  // scheduleDataRef spiegelt scheduleData SYNCHRON für alle Schreibpfade —
+  // zwei schnell aufeinanderfolgende Zell-Updates (Split-Schicht!) sehen so
+  // immer den jeweils neuesten Stand, nie einen stale React-State.
+  const scheduleDataRef = useRef<{[key: string]: DaySchedule}>({});
+  useEffect(() => { scheduleDataRef.current = scheduleData; }, [scheduleData]);
+  const actualHoursRef = useRef<typeof actualHoursData>({});
+  useEffect(() => { actualHoursRef.current = actualHoursData; }, [actualHoursData]);
+
+  // Queue: pro Zelle läuft höchstens EIN Save; neuere Payloads ersetzen
+  // wartende (last-writer-wins). Speicherstatus erst nach Backend-Ack.
+  type QueuedSave =
+    | { kind: 'plan'; entry: DaySchedule | null }
+    | { kind: 'ist';  entry: ActualHoursEntry | null };
+  const [queueSnap, setQueueSnap] = useState<SaveQueueSnapshot | null>(null);
+  const saveQueueRef = useRef<ScheduleSaveQueue<QueuedSave> | null>(null);
+  if (!saveQueueRef.current) {
+    saveQueueRef.current = new ScheduleSaveQueue<QueuedSave>(async (key, payload) => {
+      const parsed = parseSaveKey(key);
+      if (!parsed) throw new Error(`Ungültiger Save-Key: ${key}`);
+      if (payload.kind === 'plan') {
+        await saveScheduleEntry(parsed.employeeId, parsed.date, payload.entry);
+      } else {
+        const res = await saveActualHourEntry(parsed.employeeId, parsed.date, payload.entry);
+        if (!res.ok) throw new Error(res.error || 'Ist-Eintrag konnte nicht gespeichert werden');
+      }
+    });
+  }
+  useEffect(() => {
+    const q = saveQueueRef.current!;
+    const unsub = q.subscribe(snap => setQueueSnap(snap));
+    setQueueSnap(q.getSnapshot());
+    return unsub;
+  }, []);
+  // Dirty-Flag zurücksetzen sobald alle Saves erfolgreich bestätigt sind
+  useEffect(() => {
+    if (queueSnap && !queueSnap.isSaving && queueSnap.errorCount === 0 && queueSnap.lastSavedAt) {
+      setIsDirty(false);
+    }
+  }, [queueSnap]);
+  // Wechsel-Warnung: Seite nicht verlassen solange Saves laufen oder fehlschlugen
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      const q = saveQueueRef.current!;
+      if (q.hasPending() || q.hasErrors()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
   // ── Debug panel ──────────────────────────────────────────────────────────
   const [scheduleSource,    setScheduleSource]    = useState<'supabase' | 'cache' | 'loading'>('loading');
   const [loadedEntryCount,  setLoadedEntryCount]  = useState(0);
@@ -1095,7 +1152,8 @@ const SchedulePlanner = () => {
         ? `actual-hours-source-${mk}`
         : `${tenantId}:actual-hours-source-${mk}`;
       const stored = JSON.parse(localStorage.getItem(storageKey) || '{}');
-      const keys = Object.keys(stored).filter(k => stored[k] === 'plan_auto_copy');
+      // 'plan_auto_copy' = Alt-Marker vor der plan_sync-Umstellung — weiter anerkennen
+      const keys = Object.keys(stored).filter(k => stored[k] === 'plan_sync' || stored[k] === 'plan_auto_copy');
       setPlanCopiedKeys(new Set(keys));
     } catch {
       setPlanCopiedKeys(new Set());
@@ -1284,7 +1342,7 @@ const SchedulePlanner = () => {
     const totalGross = frühHours + spätHours;
     
     // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
-    const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
+    const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
     return Math.round((totalGross - breakDeduction) * 100) / 100;
   };
 
@@ -1491,107 +1549,96 @@ const SchedulePlanner = () => {
     return { valid: true };
   };
 
-  const handleSlotChange = (
-    employeeId: string, 
-    date: string, 
-    slotType: 'früh' | 'spät', 
-    value: TimeSlot | null, 
-    absenceType?: string | null,
-    // Pause pro TAG: undefined = unverändert, number = manuell setzen, null = Automatik
-    breakMinutes?: number | null
-  ) => {
+  // ── Tages-atomarer Schreibpfad (SSoT für ALLE Plan-Zelländerungen) ────────
+  // Liest den aktuellen Tag SYNCHRON aus scheduleDataRef (nie stale State),
+  // merged den Patch, schreibt State + Ref + localStorage und reiht GENAU
+  // EINEN Save für den ganzen Tag in die Queue ein (last-writer-wins).
+  // Rückgabe: neuer Tageswert (null = Zelle geleert), undefined = Validierung
+  // abgebrochen. Speicherstatus (✓/Fehler) kommt erst mit dem Backend-Ack.
+  const applyDayPatch = (
+    employeeId: string,
+    date: string,
+    patch: Partial<DaySchedule>,
+    opts?: { replace?: boolean },
+  ): DaySchedule | null | undefined => {
     const cellKey = `${employeeId}-${date}`;
+    const current = opts?.replace ? {} : (scheduleDataRef.current[cellKey] || {});
+    const updated: DaySchedule = { ...current, ...patch };
 
-    // Pre-check: will this change empty the entire cell?
-    const currentEntry = scheduleData[cellKey] || {};
-    const futureEntry = {
-      ...currentEntry,
-      ...(slotType === 'früh'
-        ? { früh: value, frühAbsence: absenceType || null }
-        : { spät: value, spätAbsence: absenceType || null }),
-    };
-    const willBeEmpty =
-      !futureEntry.früh && !futureEntry.spät &&
-      !futureEntry.frühAbsence && !futureEntry.spätAbsence;
-    
+    // Schichtzeiten nur validieren wenn beide Slots echte Zeiten sind
+    if (updated.früh && updated.spät && !updated.frühAbsence && !updated.spätAbsence) {
+      const validation = validateShiftTimes(updated.früh, updated.spät);
+      if (!validation.valid) {
+        toast.error(validation.message);
+        return undefined;
+      }
+      if (validation.message) toast.warning(validation.message);
+    }
+
+    const isEmpty = !updated.früh && !updated.spät && !updated.frühAbsence && !updated.spätAbsence;
+    const newState = { ...scheduleDataRef.current };
+    if (isEmpty) delete newState[cellKey];
+    else newState[cellKey] = updated;
+
+    // Ref SYNCHRON aktualisieren — der nächste Patch (z. B. 2. Slot einer
+    // Split-Schicht) sieht diesen Stand sofort, kein Race mehr.
+    scheduleDataRef.current = newState;
     setScheduleData(prev => {
-      const current = prev[cellKey] || {};
-      const updated = { ...current };
-      
-      if (slotType === 'früh') {
-        updated.früh = value;
-        updated.frühAbsence = absenceType || null;
-      } else {
-        updated.spät = value;
-        updated.spätAbsence = absenceType || null;
-      }
-
-      // Pause pro TAG (undefined = unverändert lassen)
-      if (breakMinutes !== undefined) {
-        updated.breakMinutes = breakMinutes;
-      }
-      
-      // Validate shift times only when both are time slots (not absences)
-      if (updated.früh && updated.spät && !updated.frühAbsence && !updated.spätAbsence) {
-        const validation = validateShiftTimes(updated.früh, updated.spät);
-        if (!validation.valid) {
-          toast.error(validation.message);
-          // Don't update - return previous state
-          return prev;
-        }
-        if (validation.message) {
-          // Show warning but allow the change
-          toast.warning(validation.message);
-        }
-      }
-      
-      // Remove entry if completely empty
-      if (!updated.früh && !updated.spät && !updated.frühAbsence && !updated.spätAbsence) {
-        const newState = { ...prev };
-        delete newState[cellKey];
-
-        const date = cellKey.slice(-10);
-        const employeeId = cellKey.slice(0, -11);
-        saveScheduleEntry(employeeId, date, null).catch(err =>
-          console.error('[SCHEDULE] saveScheduleEntry (delete) error:', err)
-        );
-
-        const monthKey = format(currentMonth, 'yyyy-MM');
-        localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newState));
-        console.log(`[SCHEDULE] cell cleared – key=${cellKey}`);
-
-        window.dispatchEvent(new CustomEvent('schedule-updated'));
-        return newState;
-      }
-
-      const newState = { ...prev, [cellKey]: updated };
-
-      const entryDate = cellKey.slice(-10);
-      const entryEmpId = cellKey.slice(0, -11);
-      saveScheduleEntry(entryEmpId, entryDate, updated).catch(err => {
-        console.error('[SCHEDULE] saveScheduleEntry error:', err);
-        setSaveError('Eintrag konnte nicht gespeichert werden');
-      });
-
-      const monthKey = format(currentMonth, 'yyyy-MM');
-      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newState));
-      setLastSaveTime(new Date());
-      setSaveError(null);
-      console.log(`[SCHEDULE] cell saved – key=${cellKey}`);
-
-      window.dispatchEvent(new CustomEvent('schedule-updated'));
-      return newState;
+      const next = { ...prev };
+      if (isEmpty) delete next[cellKey];
+      else next[cellKey] = updated;
+      return next;
     });
+    setIsDirty(true);
 
-    // ── Auto-Kopie Abwesenheit → Ist-Stunden ───────────────────────────────
-    // Normalisierung: alle Sick/Accident/Vacation-Codes → kanonischen Wert
-    // (SICK_CODES → 'K', ACCIDENT_CODES → 'U', VACATION_CODES → 'FE', 'F' → 'F')
+    const monthKey = format(currentMonth, 'yyyy-MM');
+    localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(newState));
+
+    saveQueueRef.current!.enqueue(
+      planSaveKey(employeeId, date),
+      { kind: 'plan', entry: isEmpty ? null : updated },
+    );
+    console.log(`[SCHEDULE] day ${isEmpty ? 'cleared' : 'queued'} – key=${cellKey}`);
+    window.dispatchEvent(new CustomEvent('schedule-updated'));
+    return isEmpty ? null : updated;
+  };
+
+  // ── Plan→Ist-Absenz-Sync (idempotent, day-atomar) ─────────────────────────
+  // Leitet die effektive Plan-Absenz aus dem FINALEN Tageszustand ab (nie aus
+  // einem einzelnen Slot-Argument) und spiegelt sie in die Ist-Stunden:
+  //  - Absenz gesetzt  → Ist-Eintrag mit source:'plan_sync' (Upsert, idempotent)
+  //  - Absenz entfernt → nur den plan-synchronisierten Ist-Eintrag löschen
+  //  - Konflikt mit echten Ist-Daten → sichtbarer Dialog, nie stilles Skippen
+  const syncPlanAbsenceToIst = (employeeId: string, date: string, day: DaySchedule | null) => {
+    const cellKey = `${employeeId}-${date}`;
+    const absenceType = day?.frühAbsence || day?.spätAbsence || null;
+
+    // Normalisierung: alle Sick/Accident/Vacation-Codes → kanonischer Wert
     const canonicalAbsence = !absenceType ? null
       : SICK_CODES.has(absenceType)     ? 'K'
       : ACCIDENT_CODES.has(absenceType) ? 'U'
       : VACATION_CODES.has(absenceType) ? 'FE'
       : absenceType === 'F'             ? 'F'
       : absenceType;
+
+    const writeIstEntry = (newEntry: ActualHoursEntry) => {
+      setActualHoursData(prevActual => ({ ...prevActual, [cellKey]: newEntry }));
+      actualHoursRef.current = { ...actualHoursRef.current, [cellKey]: newEntry };
+      saveQueueRef.current!.enqueue(istSaveKey(employeeId, date), { kind: 'ist', entry: newEntry });
+      const mk = format(currentMonth, 'yyyy-MM');
+      const stored: Record<string, unknown> = (() => {
+        try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}'); }
+        catch { return {}; }
+      })();
+      localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify({ ...stored, [cellKey]: newEntry }));
+      setPlanCopiedKeys(prev => new Set([...prev, cellKey]));
+      try {
+        const srcKey = tenantKey(`actual-hours-source-${format(currentMonth, 'yyyy-MM')}`);
+        const src = JSON.parse(localStorage.getItem(srcKey) || '{}');
+        src[cellKey] = 'plan_sync';
+        localStorage.setItem(srcKey, JSON.stringify(src));
+      } catch { /* ignore */ }
+    };
 
     if (canonicalAbsence) {
       const isFE = canonicalAbsence === 'FE';
@@ -1601,65 +1648,113 @@ const SchedulePlanner = () => {
       const absHours = absShiftCfg?.hours ?? 0;
       // FE/K/U/F immer kopieren; andere Abwesenheiten nur wenn konfigurierte Stunden > 0
       const shouldCopy = isFE || isKU || isF || (absHours > 0 && absShiftCfg?.countsToTarget !== false);
+      if (!shouldCopy) return;
 
-      if (shouldCopy) {
-        setActualHoursData(prevActual => {
-          const existing = prevActual[cellKey];
-          // Echte importierte Arbeitsstunden (Uhrzeit) nicht überschreiben
-          if (existing?.start && existing?.end) return prevActual;
-          // Echten Ist-Import (hours > 0, kein absenceType) nicht überschreiben
-          if (existing && existing.hours > 0 && !existing.absenceType) return prevActual;
+      // FE/F: 0h + absenceType; K/U: konfigurierte Stunden + absenceType; andere: nur Stunden
+      const newEntry: ActualHoursEntry = (isFE || isF)
+        ? { hours: 0, absenceType: canonicalAbsence as 'FE' | 'F', source: 'plan_sync' }
+        : isKU
+        ? { hours: absHours, absenceType: canonicalAbsence as 'K' | 'U', source: 'plan_sync' }
+        : { hours: absHours, source: 'plan_sync' };
 
-          // FE/F: 0h + absenceType; K/U: konfigurierte Stunden + absenceType; andere: nur Stunden
-          const newEntry: ActualHoursEntry = (isFE || isF)
-            ? { hours: 0, absenceType: canonicalAbsence as 'FE' | 'F' }
-            : isKU
-            ? { hours: absHours, absenceType: canonicalAbsence as 'K' | 'U' }
-            : { hours: absHours };
+      const existing = actualHoursRef.current[cellKey];
+      const isPlanSynced = existing &&
+        (existing.source === 'plan_sync' || planCopiedKeys.has(cellKey));
 
-          if (absenceType !== canonicalAbsence) {
-            console.log(`[PLAN-IST] normalisiert: ${absenceType} → ${canonicalAbsence}`);
-          }
-          console.log(`[PLAN-IST] plan->ist übernommen: ${employeeId} ${date} absenceType=${canonicalAbsence} → Ist hours=${newEntry.hours}`);
-
-          // FE/F: kein Supabase-Save (keine absenceType-Spalte).
-          // K/U: Stunden nach Supabase; absenceType nur lokal.
-          if (!isFE && !isF) {
-            saveActualHourEntry(employeeId, date, newEntry).catch(err =>
-              console.error('[SCHEDULE] auto-absence actualHours error:', err)
-            );
-          }
-          const mk = format(currentMonth, 'yyyy-MM');
-          const stored: Record<string, unknown> = (() => {
-            try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}'); }
-            catch { return {}; }
-          })();
-          localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify({ ...stored, [cellKey]: newEntry }));
-          return { ...prevActual, [cellKey]: newEntry };
-        });
+      // Idempotenz: identischer plan-synchronisierter Eintrag → nichts tun
+      if (existing && isPlanSynced &&
+          existing.hours === newEntry.hours &&
+          (existing.absenceType ?? null) === (newEntry.absenceType ?? null)) {
+        return;
       }
-    } else if (absenceType === null) {
-      // Plan-Absenz gelöscht → auto-kopierten Ist-Eintrag (hours=0 + absenceType) entfernen
+
+      // Konflikt: echte Ist-Daten (Import/manuell) vorhanden → sichtbarer Dialog
+      const hasRealIst = existing && !isPlanSynced &&
+        ((existing.start && existing.end) || existing.hours > 0 || existing.absenceType);
+      if (hasRealIst) {
+        toast('Ist-Eintrag existiert bereits', {
+          description: `Für diesen Tag gibt es bereits echte Ist-Stunden (${existing.hours} h). Mit der Plan-Absenz «${canonicalAbsence}» überschreiben?`,
+          duration: 10000,
+          action: {
+            label: 'Überschreiben',
+            onClick: () => writeIstEntry(newEntry),
+          },
+        });
+        return;
+      }
+
+      if (absenceType !== canonicalAbsence) {
+        console.log(`[PLAN-IST] normalisiert: ${absenceType} → ${canonicalAbsence}`);
+      }
+      console.log(`[PLAN-IST] plan->ist übernommen: ${employeeId} ${date} absenceType=${canonicalAbsence} → Ist hours=${newEntry.hours} (source=plan_sync)`);
+      writeIstEntry(newEntry);
+    } else {
+      // Keine Plan-Absenz (mehr) → nur den plan-synchronisierten Ist-Eintrag entfernen
+      const existing = actualHoursRef.current[cellKey];
+      if (!existing) return;
+      const isPlanSynced = existing.source === 'plan_sync' || planCopiedKeys.has(cellKey)
+        || (!!existing.absenceType && existing.hours === 0);
+      if (!isPlanSynced || (!existing.absenceType && existing.hours > 0)) return;
+
+      const nextActual = { ...actualHoursRef.current };
+      delete nextActual[cellKey];
+      actualHoursRef.current = nextActual;
       setActualHoursData(prevActual => {
-        const existing = prevActual[cellKey];
-        if (!existing?.absenceType || existing.hours > 0) return prevActual;
-        const newState = { ...prevActual };
-        delete newState[cellKey];
-        const mk = format(currentMonth, 'yyyy-MM');
-        const stored: Record<string, unknown> = (() => {
-          try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}'); }
-          catch { return {}; }
-        })();
-        delete (stored as Record<string, unknown>)[cellKey];
-        localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(stored));
-        console.log(`[PLAN-IST] plan absence entfernt → auto-kopierten Ist-Eintrag gelöscht: ${cellKey}`);
-        return newState;
+        const next = { ...prevActual };
+        delete next[cellKey];
+        return next;
       });
+      saveQueueRef.current!.enqueue(istSaveKey(employeeId, date), { kind: 'ist', entry: null });
+      const mk = format(currentMonth, 'yyyy-MM');
+      const stored: Record<string, unknown> = (() => {
+        try { return JSON.parse(localStorage.getItem(tenantKey(`actual-hours-${mk}`)) || '{}'); }
+        catch { return {}; }
+      })();
+      delete stored[cellKey];
+      localStorage.setItem(tenantKey(`actual-hours-${mk}`), JSON.stringify(stored));
+      setPlanCopiedKeys(prev => {
+        const next = new Set(prev);
+        next.delete(cellKey);
+        return next;
+      });
+      console.log(`[PLAN-IST] plan absence entfernt → plan-synchronisierten Ist-Eintrag gelöscht: ${cellKey}`);
     }
-    // ── Ende Auto-Kopie ────────────────────────────────────────────────────
+  };
+
+  const handleSlotChange = (
+    employeeId: string, 
+    date: string, 
+    slotType: 'früh' | 'spät', 
+    value: TimeSlot | null, 
+    absenceType?: string | null,
+    // Pause pro EINSATZ: undefined = unverändert, number = manuell, null = keine Angabe
+    breakMinutes?: number | null
+  ) => {
+    const cellKey = `${employeeId}-${date}`;
+    const hadAbsence = !!(scheduleDataRef.current[cellKey]?.frühAbsence
+      || scheduleDataRef.current[cellKey]?.spätAbsence);
+
+    const patch: Partial<DaySchedule> = slotType === 'früh'
+      ? { früh: value, frühAbsence: absenceType || null }
+      : { spät: value, spätAbsence: absenceType || null };
+    if (breakMinutes !== undefined) {
+      if (slotType === 'früh') patch.fruehBreakMinutes = breakMinutes;
+      else patch.spaetBreakMinutes = breakMinutes;
+    }
+
+    const result = applyDayPatch(employeeId, date, patch);
+    if (result === undefined) return; // Validierung abgebrochen
+
+    // Plan→Ist-Absenz-Sync auf Basis des FINALEN Tageszustands (nie pro Slot).
+    // Nur wenn sich am Absenz-Zustand etwas geändert haben kann — sonst würde
+    // jeder reine Zeit-Edit den Sync (inkl. Konflikt-Dialogen) neu anstossen.
+    const hasAbsenceNow = !!(result?.frühAbsence || result?.spätAbsence);
+    if (absenceType || hasAbsenceNow || hadAbsence) {
+      syncPlanAbsenceToIst(employeeId, date, result);
+    }
 
     // ── Angebot: IST-Eintrag löschen wenn er aus Plan übernommen wurde ──────
-    _offerDeleteIst(willBeEmpty, cellKey);
+    _offerDeleteIst(result === null, cellKey);
   };
 
   // ── Zusatzkosten-Plan: toggle isAdditionalCostPlan auf einem DaySchedule ─
@@ -1725,22 +1820,39 @@ const SchedulePlanner = () => {
 
   // ── Phase 1B: Cell + Week clipboard handlers ────────────────────────────
 
+  // Tages-atomarer Ersatz einer Zelle (Paste/Stempel/Leeren): EIN Save für den
+  // ganzen Tag statt zwei racender Slot-Saves — die 2. Schicht geht nie verloren.
+  const applyDayReplace = (empId: string, dateStr: string, day: Partial<DaySchedule> | null) => {
+    const result = applyDayPatch(empId, dateStr, day ?? {}, { replace: true });
+    if (result === undefined) return;
+    syncPlanAbsenceToIst(empId, dateStr, result);
+    _offerDeleteIst(result === null, `${empId}-${dateStr}`);
+  };
+
   const handleCopyCell = (empId: string, dateStr: string) => {
     const ds = scheduleData[`${empId}-${dateStr}`] || {};
     if (!ds.früh && !ds.frühAbsence && !ds.spät && !ds.spätAbsence) { toast('Zelle ist leer'); return; }
-    setCopiedCell({ primary: ds.früh || null, secondary: ds.spät || null, absence: ds.frühAbsence || ds.spätAbsence || null, breakMinutes: ds.breakMinutes ?? null });
+    setCopiedCell({
+      primary: ds.früh || null,
+      secondary: ds.spät || null,
+      absence: ds.frühAbsence || ds.spätAbsence || null,
+      fruehBreakMinutes: ds.fruehBreakMinutes ?? ds.breakMinutes ?? null,
+      spaetBreakMinutes: ds.spaetBreakMinutes ?? null,
+    });
     toast.success('Zelle kopiert');
   };
 
   const handlePasteCell = (empId: string, dateStr: string) => {
     if (!copiedCell) return;
     if (copiedCell.absence) {
-      handleSlotChange(empId, dateStr, 'früh', null, copiedCell.absence);
-      handleSlotChange(empId, dateStr, 'spät', null, null);
+      applyDayReplace(empId, dateStr, { früh: null, frühAbsence: copiedCell.absence, spät: null, spätAbsence: null });
     } else {
-      // Pause EINMAL (auf dem ersten Call) mitgeben — Tag wird komplett ersetzt
-      handleSlotChange(empId, dateStr, 'früh', copiedCell.primary, null, copiedCell.breakMinutes ?? null);
-      handleSlotChange(empId, dateStr, 'spät', copiedCell.secondary, null);
+      applyDayReplace(empId, dateStr, {
+        früh: copiedCell.primary, frühAbsence: null,
+        spät: copiedCell.secondary, spätAbsence: null,
+        fruehBreakMinutes: copiedCell.fruehBreakMinutes ?? null,
+        spaetBreakMinutes: copiedCell.spaetBreakMinutes ?? null,
+      });
     }
   };
 
@@ -1750,20 +1862,22 @@ const SchedulePlanner = () => {
     toast('Zelle leeren?', {
       action: {
         label: 'Leeren',
-        onClick: () => {
-          handleSlotChange(empId, dateStr, 'früh', null, null);
-          handleSlotChange(empId, dateStr, 'spät', null, null);
-        },
+        onClick: () => applyDayReplace(empId, dateStr, null),
       },
     });
   };
 
   const handleCopyWeek = (empId: string) => {
-    const data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null; breakMinutes: number | null }> = {};
+    const data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null; fruehBreakMinutes: number | null; spaetBreakMinutes: number | null }> = {};
     displayDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
       const ds = scheduleData[`${empId}-${dateStr}`] || {};
-      data[dateStr] = { früh: ds.früh || null, frühAbsence: ds.frühAbsence || null, spät: ds.spät || null, spätAbsence: ds.spätAbsence || null, breakMinutes: ds.breakMinutes ?? null };
+      data[dateStr] = {
+        früh: ds.früh || null, frühAbsence: ds.frühAbsence || null,
+        spät: ds.spät || null, spätAbsence: ds.spätAbsence || null,
+        fruehBreakMinutes: ds.fruehBreakMinutes ?? ds.breakMinutes ?? null,
+        spaetBreakMinutes: ds.spaetBreakMinutes ?? null,
+      };
     });
     const empName = employees.find(e => e.id === empId)?.name || empId;
     setCopiedWeek({ empId, data });
@@ -1779,9 +1893,12 @@ const SchedulePlanner = () => {
       const srcDate = srcDates[idx];
       const src = srcDate ? copiedWeek.data[srcDate] : null;
       if (!src) return;
-      // Pause EINMAL (auf dem ersten Call) mitgeben — Tag wird komplett ersetzt
-      handleSlotChange(empId, dateStr, 'früh', src.früh, src.frühAbsence, src.breakMinutes ?? null);
-      handleSlotChange(empId, dateStr, 'spät', src.spät, src.spätAbsence);
+      applyDayReplace(empId, dateStr, {
+        früh: src.früh, frühAbsence: src.frühAbsence,
+        spät: src.spät, spätAbsence: src.spätAbsence,
+        fruehBreakMinutes: src.fruehBreakMinutes ?? null,
+        spaetBreakMinutes: src.spaetBreakMinutes ?? null,
+      });
     });
     toast.success('Woche eingefügt');
   };
@@ -1789,15 +1906,16 @@ const SchedulePlanner = () => {
   const handleMultiPlanCell = (empId: string, dateStr: string) => {
     if (!multiPlanPreset) return;
     if (multiPlanPreset.absenceCode) {
-      handleSlotChange(empId, dateStr, 'früh', null, multiPlanPreset.absenceCode);
-      handleSlotChange(empId, dateStr, 'spät', null, null);
+      applyDayReplace(empId, dateStr, { früh: null, frühAbsence: multiPlanPreset.absenceCode, spät: null, spätAbsence: null });
     } else {
-      handleSlotChange(empId, dateStr, 'früh', { start: multiPlanPreset.start, end: multiPlanPreset.end }, null);
-      if (multiPlanPreset.start2 && multiPlanPreset.end2) {
-        handleSlotChange(empId, dateStr, 'spät', { start: multiPlanPreset.start2, end: multiPlanPreset.end2 }, null);
-      } else {
-        handleSlotChange(empId, dateStr, 'spät', null, null);
-      }
+      applyDayReplace(empId, dateStr, {
+        früh: { start: multiPlanPreset.start, end: multiPlanPreset.end },
+        frühAbsence: null,
+        spät: (multiPlanPreset.start2 && multiPlanPreset.end2)
+          ? { start: multiPlanPreset.start2, end: multiPlanPreset.end2 }
+          : null,
+        spätAbsence: null,
+      });
     }
   };
 
@@ -1809,22 +1927,22 @@ const SchedulePlanner = () => {
     cellKey: string,
     entry: ActualHoursEntry,
   ) => {
-    setActualHoursData(prev => ({ ...prev, [cellKey]: entry }));
-    saveActualHourEntry(employeeId, date, entry).catch(err =>
-      console.error('[PLAN→IST] saveActualHourEntry error:', err)
-    );
+    const entryWithSource: ActualHoursEntry = { ...entry, source: 'plan_sync' };
+    setActualHoursData(prev => ({ ...prev, [cellKey]: entryWithSource }));
+    actualHoursRef.current = { ...actualHoursRef.current, [cellKey]: entryWithSource };
+    saveQueueRef.current!.enqueue(istSaveKey(employeeId, date), { kind: 'ist', entry: entryWithSource });
     const mk = format(currentMonth, 'yyyy-MM');
     const prefix = tenantId === 'oliv' ? '' : `${tenantId}:`;
     const sourceKey = `${prefix}actual-hours-source-${mk}`;
     const hoursKey  = `${prefix}actual-hours-${mk}`;
     try {
       const stored = JSON.parse(localStorage.getItem(sourceKey) || '{}');
-      stored[cellKey] = 'plan_auto_copy';
+      stored[cellKey] = 'plan_sync';
       localStorage.setItem(sourceKey, JSON.stringify(stored));
     } catch { /* ignore */ }
     try {
       const prev = JSON.parse(localStorage.getItem(hoursKey) || '{}');
-      localStorage.setItem(hoursKey, JSON.stringify({ ...prev, [cellKey]: entry }));
+      localStorage.setItem(hoursKey, JSON.stringify({ ...prev, [cellKey]: entryWithSource }));
     } catch { /* ignore */ }
     setPlanCopiedKeys(prev => new Set([...prev, cellKey]));
     toast.success('Schicht auch im IST gespeichert');
@@ -2478,8 +2596,7 @@ const SchedulePlanner = () => {
     
     selectedDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
-      handleSlotChange(selectedEmployeeFor8Hours.id, dateStr, 'früh', null, '8.5');
-      handleSlotChange(selectedEmployeeFor8Hours.id, dateStr, 'spät', null, null);
+      applyDayReplace(selectedEmployeeFor8Hours.id, dateStr, { früh: null, frühAbsence: '8.5', spät: null, spätAbsence: null });
     });
     
     // Save preferred days if requested
@@ -3106,10 +3223,34 @@ const SchedulePlanner = () => {
     return '';
   }, [calendarView, currentMonth, displayDays]);
 
+  // ── Wechsel-Warnung: Monat erst wechseln wenn alle Saves bestätigt sind ──
+  // (Monatswechsel lädt scheduleData neu — laufende/fehlgeschlagene Saves des
+  //  alten Monats würden sonst kommentarlos verloren gehen.)
+  const guardUnsavedThen = (proceed: () => void) => {
+    const q = saveQueueRef.current!;
+    if (q.hasErrors()) {
+      toast.error('Es gibt nicht gespeicherte Änderungen', {
+        description: 'Einige Einträge konnten nicht gespeichert werden. Erneut versuchen oder trotzdem wechseln?',
+        duration: 10000,
+        action: { label: 'Trotzdem wechseln', onClick: proceed },
+      });
+      return;
+    }
+    if (q.hasPending()) {
+      toast.info('Speichert noch … Wechsel folgt automatisch nach Abschluss');
+      void q.flush(8000).then(ok => {
+        if (ok && !q.hasErrors()) proceed();
+        else toast.error('Speichern nicht abgeschlossen — bitte erneut wechseln');
+      });
+      return;
+    }
+    proceed();
+  };
+
   // Navigations-Handler für den Card-Header (◀ / ▶)
   const handlePrevPeriod = () => {
     if (calendarView === 'month') {
-      setCurrentMonth(prev => subMonths(prev, 1));
+      guardUnsavedThen(() => setCurrentMonth(prev => subMonths(prev, 1)));
     } else if (calendarView === 'week') {
       if (selectedWeekIndex > 0) {
         setSelectedWeekIndex(prev => prev - 1);
@@ -3120,8 +3261,10 @@ const SchedulePlanner = () => {
           { start: startOfMonth(prevMonth), end: endOfMonth(prevMonth) },
           { weekStartsOn: 1 },
         );
-        setCurrentMonth(prevMonth);
-        setSelectedWeekIndex(prevWeeks.length - 1);
+        guardUnsavedThen(() => {
+          setCurrentMonth(prevMonth);
+          setSelectedWeekIndex(prevWeeks.length - 1);
+        });
       }
     } else {
       setSelectedDayOffset(prev => Math.max(0, prev - 1));
@@ -3129,14 +3272,16 @@ const SchedulePlanner = () => {
   };
   const handleNextPeriod = () => {
     if (calendarView === 'month') {
-      setCurrentMonth(prev => addMonths(prev, 1));
+      guardUnsavedThen(() => setCurrentMonth(prev => addMonths(prev, 1)));
     } else if (calendarView === 'week') {
       if (selectedWeekIndex < weeksInMonth.length - 1) {
         setSelectedWeekIndex(prev => prev + 1);
       } else {
         // Monatsübergreifend: springe zur ersten Woche des Folgemonats
-        setCurrentMonth(prev => addMonths(prev, 1));
-        setSelectedWeekIndex(0);
+        guardUnsavedThen(() => {
+          setCurrentMonth(prev => addMonths(prev, 1));
+          setSelectedWeekIndex(0);
+        });
       }
     } else {
       setSelectedDayOffset(prev => Math.min(daysInMonth.length - 1, prev + 1));
@@ -3146,10 +3291,12 @@ const SchedulePlanner = () => {
   const isNextDisabled = calendarView === 'day' ? selectedDayOffset >= daysInMonth.length - 1 : false;
 
   const handleNavigateToday = () => {
-    const today = new Date();
-    setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
-    setSelectedWeekIndex(0);
-    setSelectedDayOffset(0);
+    guardUnsavedThen(() => {
+      const today = new Date();
+      setCurrentMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+      setSelectedWeekIndex(0);
+      setSelectedDayOffset(0);
+    });
   };
 
   // Für Rückwärtskompatibilität (wird noch an anderen Stellen referenziert)
@@ -3640,17 +3787,47 @@ const SchedulePlanner = () => {
             </div>
 
             <div className="flex items-center gap-1 shrink-0">
-              {/* ── Save-Status Pill ───────────────────────────────── */}
-              {saveError && (
-                <span className="hidden sm:flex items-center gap-1 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5" title={saveError}>
-                  <span>⚠ Fehler</span>
-                </span>
-              )}
-              {!saveError && lastSaveTime && (
-                <span className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">
-                  ✓ {lastSaveTime.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              )}
+              {/* ── Save-Status Pill (Queue-basiert: ✓ erst nach Backend-Ack) ── */}
+              {(() => {
+                const queueErrors = queueSnap?.errorCount ?? 0;
+                const queueSaving = queueSnap?.isSaving ?? false;
+                const errText = saveError
+                  || (queueErrors > 0
+                    ? `${queueErrors} ${queueErrors === 1 ? 'Eintrag' : 'Einträge'} nicht gespeichert — klicken zum Wiederholen`
+                    : null);
+                if (errText) {
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => saveQueueRef.current!.retryFailed()}
+                      className="hidden sm:flex items-center gap-1 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded px-1.5 py-0.5 hover:bg-red-100"
+                      title={errText}
+                    >
+                      <span>⚠ Nicht gespeichert{queueErrors > 0 ? ` (${queueErrors})` : ''} — erneut versuchen</span>
+                    </button>
+                  );
+                }
+                if (queueSaving || isSaving) {
+                  return (
+                    <span className="hidden sm:flex items-center gap-1 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>Speichert…</span>
+                    </span>
+                  );
+                }
+                const savedAt = [queueSnap?.lastSavedAt ?? null, lastSaveTime]
+                  .filter((d): d is Date => !!d)
+                  .sort((a, b) => a.getTime() - b.getTime())
+                  .pop();
+                if (savedAt) {
+                  return (
+                    <span className="hidden sm:flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5" title="Vom Server bestätigt">
+                      ✓ {savedAt.toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  );
+                }
+                return null;
+              })()}
               {/* ── Debug Pill ─────────────────────────────────────── */}
               <span
                 title={`Quelle: ${scheduleSource} | Geladen: ${loadedEntryCount} | Im State: ${Object.keys(scheduleData).length}`}

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
-import { calculateBreakDeduction, resolveBreakHours } from '@/hooks/useShiftConfig';
+import { calculateBreakDeduction, resolveBreakHours, resolveDayBreakHours } from '@/hooks/useShiftConfig';
 
 describe('calculateBreakDeduction (automatische Pausenregel, Regression)', () => {
   it('bis und mit 9h → keine Pause', () => {
@@ -49,6 +49,36 @@ describe('resolveBreakHours (SSoT Pausenauflösung)', () => {
     expect(resolveBreakHours(4, 60)).toBe(1);
     expect(resolveBreakHours(9, 60)).toBe(1);
     expect(resolveBreakHours(11, 60)).toBe(1);
+  });
+});
+
+describe('resolveDayBreakHours (SSoT Pause pro EINSATZ, Migration 20260714)', () => {
+  it('keine Felder / leeres Objekt → Automatik-Regel (>9h → 30 Min)', () => {
+    expect(resolveDayBreakHours(null, 8)).toBe(0);
+    expect(resolveDayBreakHours(undefined, 10)).toBe(0.5);
+    expect(resolveDayBreakHours({}, 8)).toBe(0);
+    expect(resolveDayBreakHours({}, 10)).toBe(0.5);
+  });
+
+  it('eine Einsatz-Pause manuell → Summe, nicht gesetzter Einsatz = 0; ERSETZT Automatik', () => {
+    // 10h Brutto: Automatik wäre 30 Min — manuell 0 im 1. Einsatz unterdrückt sie
+    expect(resolveDayBreakHours({ fruehBreakMinutes: 0 }, 10)).toBe(0);
+    expect(resolveDayBreakHours({ spaetBreakMinutes: 0 }, 10)).toBe(0);
+    expect(resolveDayBreakHours({ fruehBreakMinutes: 30 }, 6)).toBe(0.5);
+    expect(resolveDayBreakHours({ spaetBreakMinutes: 60 }, 6)).toBe(1);
+  });
+
+  it('beide Einsatz-Pausen gesetzt → Summe (nie zusätzlich Automatik addieren)', () => {
+    expect(resolveDayBreakHours({ fruehBreakMinutes: 30, spaetBreakMinutes: 30 }, 12)).toBe(1);
+    expect(resolveDayBreakHours({ fruehBreakMinutes: 60, spaetBreakMinutes: 30 }, 12)).toBe(1.5);
+    expect(resolveDayBreakHours({ fruehBreakMinutes: 0, spaetBreakMinutes: 0 }, 12)).toBe(0);
+  });
+
+  it('Legacy-Tages-Pause breakMinutes bleibt Lese-Fallback (alte Daten)', () => {
+    expect(resolveDayBreakHours({ breakMinutes: 60 }, 8)).toBe(1);
+    expect(resolveDayBreakHours({ breakMinutes: 0 }, 10)).toBe(0);
+    // Einsatz-Pause gewinnt gegen Legacy-Wert
+    expect(resolveDayBreakHours({ fruehBreakMinutes: 30, breakMinutes: 60 }, 8)).toBe(0.5);
   });
 });
 

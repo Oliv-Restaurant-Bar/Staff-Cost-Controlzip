@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ function dayTotalHours(ds: DaySchedule | null): number {
   const gross = (ds.frühAbsence ? 0 : slotGrossHours(ds.früh)) +
                 (ds.spätAbsence ? 0 : slotGrossHours(ds.spät));
   if (gross <= 0) return 0;
-  return Math.max(0, gross - resolveBreakHours(gross, ds.breakMinutes));
+  return Math.max(0, gross - resolveDayBreakHours(ds, gross));
 }
 
 function isWorking(ds: DaySchedule | null): boolean {

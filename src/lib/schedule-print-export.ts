@@ -11,7 +11,7 @@ import autoTable from 'jspdf-autotable';
 import { Employee } from '@/types/personnel';
 import { format, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { getShiftConfig, getShiftConfigMap, resolveBreakHours } from '@/hooks/useShiftConfig';
+import { getShiftConfig, getShiftConfigMap, resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
@@ -44,11 +44,11 @@ function calculateSlotHours(slot: TimeSlot | null | undefined): number {
 }
 
 // Netto-Arbeitsstunden eines Plan-Tags: Brutto beider Slots minus Pause
-// (SSoT resolveBreakHours) — Pause NIE auf Absenzstunden anwenden.
+// (SSoT resolveDayBreakHours) — Pause NIE auf Absenzstunden anwenden.
 function workedNetHours(ds: DaySchedule): number {
   const gross = calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
   if (gross <= 0) return 0;
-  return Math.max(0, Math.round((gross - resolveBreakHours(gross, ds.breakMinutes)) * 100) / 100);
+  return Math.max(0, Math.round((gross - resolveDayBreakHours(ds, gross)) * 100) / 100);
 }
 
 function formatTimeSlot(slot: TimeSlot | null | undefined): string {

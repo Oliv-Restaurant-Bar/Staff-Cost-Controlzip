@@ -163,7 +163,11 @@ export interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
-  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  /** Manuelle Pause 1. Einsatz in Minuten (0/30/60); null/undefined = keine manuelle Angabe */
+  fruehBreakMinutes?: number | null;
+  /** Manuelle Pause 2. Einsatz in Minuten (0/30/60); null/undefined = keine manuelle Angabe */
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback in resolveDayBreakHours */
   breakMinutes?: number | null;
 }
 

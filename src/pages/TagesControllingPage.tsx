@@ -39,7 +39,7 @@ import { grossToNet } from '@/types/personnel';
 import { safeUpsertDailyBudgets, kvGet } from '@/lib/supabase-kv';
 import { computeMonthlyIstNet } from '@/lib/revenue-sync';
 import { loadMonthInvoices, kategorieFromKonto, type WarenKategorie } from '@/lib/waren-db';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import {
   loadScheduleForMonth,
   loadActualHoursForMonth,
@@ -156,7 +156,7 @@ function slotHours(slot: { start?: string; end?: string } | null | undefined): n
 
 function dayNetHours(ds: DaySchedule): number {
   const gross = slotHours(ds.früh) + slotHours(ds.spät);
-  const deduction = resolveBreakHours(gross, ds.breakMinutes);
+  const deduction = resolveDayBreakHours(ds, gross);
   return Math.max(0, Math.round((gross - deduction) * 100) / 100);
 }
 

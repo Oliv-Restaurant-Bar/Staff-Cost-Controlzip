@@ -15,7 +15,7 @@ import { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 import { format, getISOWeek, startOfISOWeek, isWeekend } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
 
 // ─── Interne Slot-Berechnung (identisch zu PlanningAssistant) ─────────────────
 
@@ -30,7 +30,7 @@ function calcSlotHours(slot: { start?: string | null; end?: string | null } | nu
 
 function netHours(ds: DaySchedule): number {
   const gross = calcSlotHours(ds.früh) + calcSlotHours(ds.spät);
-  return Math.max(0, gross - resolveBreakHours(gross, ds.breakMinutes));
+  return Math.max(0, gross - resolveDayBreakHours(ds, gross));
 }
 
 // ─── Typen ────────────────────────────────────────────────────────────────────

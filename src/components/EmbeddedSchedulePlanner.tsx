@@ -33,7 +33,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMont
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { useShiftConfig, ShiftConfigItem, resolveBreakHours } from '@/hooks/useShiftConfig';
+import { useShiftConfig, ShiftConfigItem, resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
 import { useTenant } from '@/contexts/TenantContext';
@@ -257,7 +257,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     const frühHours = calculateSlotHours(daySchedule.früh);
     const spätHours = calculateSlotHours(daySchedule.spät);
     const totalGross = frühHours + spätHours;
-    const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
+    const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
     return Math.round((totalGross - breakDeduction) * 100) / 100;
   };
 

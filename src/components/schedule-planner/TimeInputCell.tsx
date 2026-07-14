@@ -61,10 +61,14 @@ interface TimeInputCellProps {
   isFixedEmployee?: boolean;
   isAdditionalCostPlan?: boolean;
   onAdditionalCostPlanChange?: (v: boolean) => void;
-  /** Gespeicherte manuelle Pause des TAGES in Minuten (0/30/60); null/undefined = Automatik-Regel */
+  /** Gespeicherte manuelle Pause DIESES Einsatzes (Slot) in Minuten (0/30/60); null/undefined = Automatik-Regel */
   breakMinutes?: number | null;
   /** Nur-Pause-Änderung beim Schliessen ohne Zeit-Commit (Flush, analog Zusatzkosten-Flag) */
   onBreakMinutesChange?: (v: number | null) => void;
+  /** Gespeicherte manuelle Pause des ANDEREN Einsatzes (2. Einsatz / secondary slot) */
+  secondaryBreakMinutes?: number | null;
+  /** Pause-Änderung des 2. Einsatzes — wird beim Schliessen geflusht */
+  onSecondaryBreakMinutesChange?: (v: number | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +593,8 @@ export const TimeInputCell = ({
   onAdditionalCostPlanChange,
   breakMinutes,
   onBreakMinutesChange,
+  secondaryBreakMinutes,
+  onSecondaryBreakMinutesChange,
 }: TimeInputCellProps) => {
   const [blockedOverride, setBlockedOverride] = useState(false);
   const [copyToIst, setCopyToIst] = useState(false);
@@ -607,10 +613,12 @@ export const TimeInputCell = ({
   // Track whether row 2 was pre-filled when popover opened (for smart clear)
   const secondaryWasPreFilled = useRef(false);
 
-  // ── Pause (pro TAG): null = Automatik-Regel, 0/30/60 = manuell ──
-  const [selBreak, setSelBreak] = useState<number | null>(null);
+  // ── Pause (pro EINSATZ): null = Automatik-Regel, 0/30/60 = manuell ──
+  const [selBreak, setSelBreak] = useState<number | null>(null);   // dieser Einsatz (Slot)
   const breakDirty = useRef(false);      // user actively changed the break in this session
   const breakCommitted = useRef(false);  // break was already sent via onChange (no double flush)
+  const [selBreak2, setSelBreak2] = useState<number | null>(null); // 2. Einsatz (anderer Slot)
+  const break2Dirty = useRef(false);
 
   // Inline clock picker
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
@@ -646,10 +654,12 @@ export const TimeInputCell = ({
       setSelStart2(s2);
       setSelEnd2(e2);
       secondaryWasPreFilled.current = !!(s2 && e2);
-      // Pause: gespeicherten Wert übernehmen (null = Automatik)
+      // Pause: gespeicherte Werte je Einsatz übernehmen (null = Automatik)
       setSelBreak(breakMinutes ?? null);
       breakDirty.current = false;
       breakCommitted.current = false;
+      setSelBreak2(secondaryBreakMinutes ?? null);
+      break2Dirty.current = false;
     }
   }, [open]);
 
@@ -676,6 +686,11 @@ export const TimeInputCell = ({
         && (value?.start || secondaryValue?.start)) {
       breakCommitted.current = true;
       onBreakMinutesChange(selBreak);
+    }
+    // Pause des 2. Einsatzes separat flushen (geht in den ANDEREN Slot)
+    if (break2Dirty.current && onSecondaryBreakMinutesChange && secondaryValue?.start) {
+      break2Dirty.current = false;
+      onSecondaryBreakMinutesChange(selBreak2);
     }
   };
 
@@ -825,6 +840,7 @@ export const TimeInputCell = ({
     // Absenz-Tag: Pause irrelevant → Änderung verwerfen (kein Flush)
     breakDirty.current = false;
     breakCommitted.current = false;
+    break2Dirty.current = false;
     onChange(null, abbrev);
     closePopover();
   };
@@ -833,6 +849,7 @@ export const TimeInputCell = ({
     // Eintrag wird gelöscht → Pause-Änderung verwerfen (kein Flush)
     breakDirty.current = false;
     breakCommitted.current = false;
+    break2Dirty.current = false;
     onChange(null, null);
     onClearSecondary?.();
     // Clearing the shift → also clear the additional cost flag
@@ -1111,32 +1128,31 @@ export const TimeInputCell = ({
                   Schnellwahl bearbeiten
                 </button>
 
-                {/* ════ PAUSE (pro Tag) ════════════════════════════════ */}
+                {/* ════ PAUSE (pro Einsatz) ═══════════════════════════ */}
                 {!absenceType && (() => {
+                  const hasSecond = !!(secondaryValue?.start && secondaryValue?.end);
                   const dayGross = slotGrossHours(value) + slotGrossHours(secondaryValue);
-                  // Radio-Vorauswahl aus der RESOLVED effektiven Pause:
-                  // manuell gesetzt → dieser Wert; sonst Automatik (>9h → 30 Min)
-                  const effectiveBreak = selBreak != null ? selBreak : (dayGross > 9 ? 30 : 0);
-                  return (
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-widest">Pause</div>
-                        <span className="text-[9px] text-muted-foreground/50">
-                          {selBreak == null ? 'Automatik: über 9 Std → 30 Min' : 'manuell'}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Pause">
+                  // Automatik gilt pro TAG (>9h → 30 Min) und wird dem 1. Einsatz
+                  // zugerechnet, solange KEINE Einsatz-Pause manuell gesetzt ist
+                  // (spiegelt resolveDayBreakHours: manuell ersetzt Automatik komplett).
+                  const anyManual = selBreak != null || selBreak2 != null;
+                  const effectiveBreak1 = selBreak != null ? selBreak : (anyManual ? 0 : (dayGross > 9 ? 30 : 0));
+                  const effectiveBreak2 = selBreak2 ?? 0;
+                  const renderRadios = (
+                    label: string,
+                    effective: number,
+                    onPick: (m: number) => void,
+                  ) => (
+                    <div className="space-y-1">
+                      <div className="text-[9px] text-muted-foreground/50">{label}</div>
+                      <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label={`Pause ${label}`}>
                         {[{ m: 0, label: 'Keine' }, { m: 30, label: '30 Min' }, { m: 60, label: '60 Min' }].map(o => {
-                          const active = effectiveBreak === o.m;
+                          const active = effective === o.m;
                           return (
                             <button key={o.m}
                               role="radio"
                               aria-checked={active}
-                              onClick={() => {
-                                setSelBreak(o.m);
-                                breakDirty.current = true;
-                                breakCommitted.current = false;
-                              }}
+                              onClick={() => onPick(o.m)}
                               className={cn(
                                 "px-1.5 py-1.5 text-[11px] rounded-lg border transition-all font-semibold text-center leading-tight tabular-nums active:scale-95",
                                 active
@@ -1148,6 +1164,27 @@ export const TimeInputCell = ({
                           );
                         })}
                       </div>
+                    </div>
+                  );
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-widest">
+                          Pause{hasSecond ? ' (pro Einsatz)' : ''}
+                        </div>
+                        <span className="text-[9px] text-muted-foreground/50">
+                          {anyManual ? 'manuell' : 'Automatik: über 9 Std → 30 Min'}
+                        </span>
+                      </div>
+                      {renderRadios(hasSecond ? '1. Einsatz' : '', effectiveBreak1, (m) => {
+                        setSelBreak(m);
+                        breakDirty.current = true;
+                        breakCommitted.current = false;
+                      })}
+                      {hasSecond && renderRadios('2. Einsatz', effectiveBreak2, (m) => {
+                        setSelBreak2(m);
+                        break2Dirty.current = true;
+                      })}
                     </div>
                   );
                 })()}

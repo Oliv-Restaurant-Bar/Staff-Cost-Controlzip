@@ -52,6 +52,37 @@ export function resolveBreakHours(grossHours: number, manualBreakMinutes?: numbe
   return calculateBreakDeduction(grossHours);
 }
 
+/**
+ * ZENTRALE Tages-Pausenauflösung PRO EINSATZ (SSoT, seit Migration 20260714).
+ *
+ * Prioritäten:
+ * 1. Mindestens EINE Einsatz-Pause manuell gesetzt (fruehBreakMinutes bzw.
+ *    spaetBreakMinutes, 0/30/60) → Tagespause = Summe der gesetzten Werte
+ *    (nicht gesetzter Einsatz = 0). ERSETZT die Automatik vollständig.
+ * 2. Nur Legacy-Tages-Pause `breakMinutes` gesetzt (alte Daten vor der
+ *    Umstellung) → dieser Wert gilt (Lese-Fallback).
+ * 3. Nichts manuell gesetzt → automatische Regel (>9h Tages-Brutto → 30 Min).
+ *
+ * Rückgabe: Pausenabzug in Stunden. Gilt nur für gearbeitete Brutto-Stunden,
+ * nie für Absenzstunden.
+ */
+export interface DayBreakFields {
+  fruehBreakMinutes?: number | null;
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback */
+  breakMinutes?: number | null;
+}
+
+export function resolveDayBreakHours(
+  ds: DayBreakFields | null | undefined,
+  grossHours: number
+): number {
+  if (ds && (ds.fruehBreakMinutes != null || ds.spaetBreakMinutes != null)) {
+    return ((ds.fruehBreakMinutes ?? 0) + (ds.spaetBreakMinutes ?? 0)) / 60;
+  }
+  return resolveBreakHours(grossHours, ds?.breakMinutes ?? null);
+}
+
 // Calculate effective hours with break deduction
 export function calculateEffectiveHours(start: string, end: string, start2?: string, end2?: string): number {
   const parseTime = (time: string): number => {

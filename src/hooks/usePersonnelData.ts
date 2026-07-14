@@ -5,7 +5,7 @@ import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { toast } from 'sonner';
 import { upsertAllEmployees } from '@/lib/supabase-db';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, eachMonthOfInterval, subMonths, addMonths } from 'date-fns';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/contexts/TenantContext';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -34,7 +34,11 @@ interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
-  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  /** Manuelle Pause 1. Einsatz in Minuten (0/30/60); null/undefined = keine manuelle Angabe */
+  fruehBreakMinutes?: number | null;
+  /** Manuelle Pause 2. Einsatz in Minuten (0/30/60); null/undefined = keine manuelle Angabe */
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback in resolveDayBreakHours */
   breakMinutes?: number | null;
 }
 
@@ -274,7 +278,7 @@ const calculateDayHoursInternal = (daySchedule: DaySchedule): { total: number; f
   const totalGross = frühHours + spätHours;
   
   // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
-  const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
+  const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
   const total = Math.round((totalGross - breakDeduction) * 100) / 100;
   
   return {
@@ -343,7 +347,7 @@ const calculateDayHours = (daySchedule: DaySchedule): { total: number; frühStar
   const totalGross = frühHours + spätHours;
   
   // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
-  const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
+  const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
   const total = Math.round((totalGross - breakDeduction) * 100) / 100;
   
   return {

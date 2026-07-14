@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveBreakHours } from '@/hooks/useShiftConfig';
+import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
 import { Euro, TrendingUp, TrendingDown, Users, Clock, Download, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
@@ -78,7 +78,7 @@ export const MonthlyCostSummary = ({
           const frühHours = calculateSlotHours(daySchedule.früh);
           const spätHours = calculateSlotHours(daySchedule.spät);
           const dayHours = frühHours + spätHours;
-          const breakDeduction = resolveBreakHours(dayHours, daySchedule.breakMinutes);
+          const breakDeduction = resolveDayBreakHours(daySchedule, dayHours);
           const netHours = dayHours - breakDeduction;
           
           totalHours += netHours;
@@ -135,7 +135,7 @@ export const MonthlyCostSummary = ({
             const frühHours = calculateSlotHours(daySchedule.früh);
             const spätHours = calculateSlotHours(daySchedule.spät);
             const dayHours = frühHours + spätHours;
-            const breakDeduction = resolveBreakHours(dayHours, daySchedule.breakMinutes);
+            const breakDeduction = resolveDayBreakHours(daySchedule, dayHours);
             const netHours = dayHours - breakDeduction;
             
             weekHours += netHours;
@@ -240,7 +240,7 @@ export const MonthlyCostSummary = ({
           const frühHours = calculateSlotHours(daySchedule.früh);
           const spätHours = calculateSlotHours(daySchedule.spät);
           const gross = frühHours + spätHours;
-          const net = gross - resolveBreakHours(gross, daySchedule.breakMinutes);
+          const net = gross - resolveDayBreakHours(daySchedule, gross);
           
           dayHours += net;
           const rate = rateById.get(emp.id);
