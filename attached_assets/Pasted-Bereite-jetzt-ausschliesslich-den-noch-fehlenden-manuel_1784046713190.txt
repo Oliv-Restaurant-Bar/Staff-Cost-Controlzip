@@ -1,0 +1,67 @@
+Bereite jetzt ausschliesslich den noch fehlenden manuellen Supabase-Migrationsschritt für die neue Pausen- und Abwesenheitslogik vor.
+
+Wichtig:
+
+Keine weitere Implementierung.
+Keine neue Migration erstellen.
+Keine bestehende Migration verändern.
+Keine Anwendungscodes ändern.
+
+1. Finde die bereits erstellte Migration vom 14.07.2026, welche mindestens folgende Felder ergänzt:
+
+- schedule_entries.frueh_break_minutes
+- schedule_entries.spaet_break_minutes
+- actual_hours.source
+
+2. Prüfe die vollständige Migration auf Sicherheit und Rückwärtskompatibilität:
+
+- nur additive Änderungen
+- keine Tabelle löschen
+- keine Spalte löschen
+- keine bestehenden Werte überschreiben
+- bestehende Schichten ohne Pausen bleiben gültig
+- Pausenfelder erlauben bestehende Datensätze ohne Wert
+- sinnvolle Defaults beziehungsweise NULL-Fallbacks
+- source ist rückwärtskompatibel
+- mehrfaches versehentliches Ausführen verursacht möglichst keinen Fehler, bevorzugt durch IF NOT EXISTS
+- bestehende RLS-Policies und Berechtigungen bleiben unverändert, sofern keine Anpassung zwingend erforderlich ist
+
+3. Gib mir danach den EXAKTEN vollständigen SQL-Inhalt aus, den ich im Supabase SQL-Editor einfügen muss.
+
+Der SQL-Block muss direkt kopierbar sein.
+
+4. Gib direkt darunter eine sehr kurze manuelle Anleitung:
+
+- Supabase öffnen
+- richtiges Projekt auswählen
+- SQL Editor öffnen
+- New query
+- SQL einfügen
+- Run
+- erwartete Erfolgsmeldung
+
+5. Gib zusätzlich ein direkt kopierbares Prüf-SQL aus, mit dem ich danach kontrollieren kann, ob diese Spalten tatsächlich existieren:
+
+- public.schedule_entries.frueh_break_minutes
+- public.schedule_entries.spaet_break_minutes
+- public.actual_hours.source
+
+6. Gib danach einen kurzen Funktionstest an:
+
+- Dienstplan öffnen
+- zwei Einsätze erfassen
+- beim zweiten Einsatz 30 Minuten Pause setzen
+- speichern
+- Seite vollständig neu laden
+- Zelle erneut öffnen
+- prüfen, ob beide Einsätze und die korrekte Pause erhalten sind
+- prüfen, ob das Tagestotal weiterhin 9.0 Stunden beträgt
+
+7. Prüfe zusätzlich, ob noch weitere Migrationen für denselben Dienstplan-Auftrag offen oder nicht ausgeführt sind. Nenne sie nur, führe sie nicht aus und kombiniere keine fachfremden Migrationen.
+
+Am Ende ausdrücklich bestätigen:
+
+- welche vorhandene Migrationsdatei verwendet wurde
+- dass nichts am Code geändert wurde
+- dass keine neue Migration erzeugt wurde
+- ob die Migration nach Prüfung sicher ausgeführt werden kann
