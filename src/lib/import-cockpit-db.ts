@@ -441,13 +441,17 @@ function buchhaltungsExportSignal(ctx: CockpitFetchContext): CockpitSignal {
   }
 }
 
-/** Jahresbudget: budget_v1-Blob (localStorage, mandantengeprefixt) — read-only, NIEMALS loadBudgetYear. */
-function jahresbudgetSignal(ctx: CockpitFetchContext): CockpitSignal {
+/** Jahresbudget: budget_v1-Blob (localStorage, mandantengeprefixt) — read-only, NIEMALS loadBudgetYear. Export nur für Tests. */
+export function jahresbudgetSignal(ctx: CockpitFetchContext): CockpitSignal {
   try {
     const key = ctx.tenantKey('budget_v1');
-    const all = JSON.parse(localStorage.getItem(key) || '{}') as Record<string, { updatedAt?: string }>;
+    const all = JSON.parse(localStorage.getItem(key) || '{}') as Record<
+      string,
+      { updatedAt?: string; deleted?: boolean }
+    >;
+    // Tombstones (gelöschte Jahre) zählen nicht als Datenbestand
     const years = Object.keys(all)
-      .filter((k) => /^\d{4}$/.test(k))
+      .filter((k) => /^\d{4}$/.test(k) && !all[k]?.deleted)
       .sort();
     if (!years.length) return EMPTY;
     const latestYear = years.at(-1)!;

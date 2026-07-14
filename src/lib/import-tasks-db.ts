@@ -340,17 +340,19 @@ async function istkostenCoverage(year: number, month: number): Promise<TypeCover
   }
 }
 
-/** Budget: budget_v1-Blob — Jahr erledigt, wenn der Jahres-Key existiert. NIEMALS loadBudgetYear (seedet). */
-function budgetCoverage(ctx: ImportTasksFetchContext, year: number): TypeCoverage {
+/** Budget: budget_v1-Blob — Jahr erledigt, wenn der Jahres-Key existiert. NIEMALS loadBudgetYear (seedet). Export nur für Tests. */
+export function budgetCoverage(ctx: ImportTasksFetchContext, year: number): TypeCoverage {
   try {
     const all = JSON.parse(localStorage.getItem(ctx.tenantKey('budget_v1')) || '{}') as Record<
       string,
-      { updatedAt?: string }
+      { updatedAt?: string; deleted?: boolean }
     >;
     const rec = all[String(year)];
+    // Tombstones (gelöschte Jahre) zählen NICHT als erledigt
+    if (rec == null || rec.deleted) return { yearDone: false };
     return {
-      yearDone: rec != null,
-      lastImportAt: rec?.updatedAt ?? null,
+      yearDone: true,
+      lastImportAt: rec.updatedAt ?? null,
     };
   } catch {
     return { yearDone: false };

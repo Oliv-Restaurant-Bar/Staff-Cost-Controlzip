@@ -454,7 +454,7 @@ function BudgetContent() {
   };
 
   const handleRestoreDefaults = () => {
-    const { budget: upd, added } = restoreMissingDefaultPLItems(selectedYear);
+    const { budget: upd, added } = restoreMissingDefaultPLItems(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     if (added === 0) {
       toast.info('Alle Standardkonten sind bereits vorhanden.');
@@ -464,7 +464,7 @@ function BudgetContent() {
   };
 
   const handleResetPL = () => {
-    const upd = resetPLToDefaults(selectedYear);
+    const upd = resetPLToDefaults(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
     setBudget(upd);
     setResetPLDialog(false);
     toast.success('Konten wurden vollständig zurückgesetzt — Struktur entspricht jetzt 1:1 der Erfolgsrechnung.');
@@ -838,7 +838,7 @@ function BudgetContent() {
                                   title="Position löschen"
                                   onClick={() => {
                                     try {
-                                      setBudget(removeCustomPLLineItem(selectedYear, item.id));
+                                      setBudget(removeCustomPLLineItem(selectedYear, item.id, tenantKey(BUDGET_STORAGE_KEY)));
                                       toast.success('Position entfernt');
                                     } catch { toast.error('Standard-Positionen können nicht gelöscht werden'); }
                                   }}
@@ -942,7 +942,7 @@ function BudgetContent() {
                         {rule.type === 'monthly_fixed_override' ? `CHF ${CHF(rule.value)}` : `${rule.value}%`}
                       </Badge>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500 hover:bg-red-50"
-                        onClick={() => { setBudget(removeBudgetRule(selectedYear, rule.id)); toast.success('Regel entfernt'); }}>
+                        onClick={() => { setBudget(removeBudgetRule(selectedYear, rule.id, tenantKey(BUDGET_STORAGE_KEY))); toast.success('Regel entfernt'); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -1254,7 +1254,7 @@ function BudgetContent() {
         open={copyDialog} onClose={() => setCopyDialog(false)}
         currentYear={selectedYear} savedYears={savedYears}
         onCopy={(from, to, ar) => {
-          copyBudgetYear(from, to, ar);
+          copyBudgetYear(from, to, ar, tenantKey(BUDGET_STORAGE_KEY));
           setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
           setSelectedYear(to); reload(to);
           setCopyDialog(false);
@@ -1265,7 +1265,7 @@ function BudgetContent() {
       <AddRuleDialog
         open={ruleDialog} onClose={() => setRuleDialog(false)}
         positions={budget.positions}
-        onAdd={rule => { setBudget(addBudgetRule(selectedYear, rule)); setRuleDialog(false); toast.success('Regel hinzugefügt'); }}
+        onAdd={rule => { setBudget(addBudgetRule(selectedYear, rule, tenantKey(BUDGET_STORAGE_KEY))); setRuleDialog(false); toast.success('Regel hinzugefügt'); }}
       />
 
       {addItemDialog && (
@@ -1555,7 +1555,7 @@ function BudgetContent() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialog(false)}>Abbrechen</Button>
             <Button variant="destructive" onClick={() => {
-              deleteBudgetYear(selectedYear);
+              deleteBudgetYear(selectedYear, tenantKey(BUDGET_STORAGE_KEY));
               setSavedYears(availableBudgetYears(tenantKey(BUDGET_STORAGE_KEY)));
               reload(selectedYear);
               setDeleteDialog(false);

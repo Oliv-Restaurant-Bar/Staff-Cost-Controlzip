@@ -40,7 +40,7 @@ import {
   SageJournalEntry,
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
-import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth } from './supabase-kv';
+import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth, notifyKVBackupProblem } from './supabase-kv';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -511,15 +511,13 @@ export function saveJournalEntries(
   }
   localStorage.setItem(key, JSON.stringify(final));
   // kvSetStrict statt kvSet: Backup-Fehler dürfen nie still verschluckt werden (T007).
-  kvSetStrict(key, final).catch(async err => {
+  // Offline/nicht konfiguriert → dezenter Hinweis; echter Fehler → Fehler-Toast + Retry.
+  kvSetStrict(key, final).catch(err => {
     console.error(`[Journal] KV-Backup fehlgeschlagen: ${key}`, err);
-    try {
-      const { toast } = await import('sonner');
-      toast.error(
-        'Buchungszeilen: Backup nach Supabase fehlgeschlagen — lokal gespeichert. Bitte Verbindung prüfen.',
-        { duration: 10000, id: 'journal-kv-failed' },
-      );
-    } catch { /* Sonner nicht verfügbar */ }
+    void notifyKVBackupProblem(err, 'Buchungszeilen', {
+      toastId: 'journal-kv-failed',
+      retry: () => kvSetStrict(key, final),
+    });
   });
   console.log(`[Journal] Gespeichert: ${key} (${final.length} Einträge) → localStorage + Supabase`);
 }

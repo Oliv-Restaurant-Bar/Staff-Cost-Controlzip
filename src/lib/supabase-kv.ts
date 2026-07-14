@@ -16,6 +16,92 @@ type Listener = () => void;
 
 const _listeners = new Map<string, Set<Listener>>();
 let _available: boolean | null = null;
+let _unavailableUntil = 0;
+
+/**
+ * Typisierter Fehler: Supabase ist nicht konfiguriert oder aktuell nicht
+ * erreichbar (offline). Konsumenten unterscheiden damit «kein Backup möglich»
+ * (dezenter Hinweis) von einem echten Lese-/Schreibfehler (sichtbarer Fehler).
+ */
+export class KVUnavailableError extends Error {
+  constructor(message = 'Supabase nicht verfügbar') {
+    super(message);
+    this.name = 'KVUnavailableError';
+  }
+}
+
+const NETWORK_ERROR_RE =
+  /failed to fetch|networkerror|network request failed|fetch failed|load failed|err_internet_disconnected|err_network/i;
+
+/**
+ * Klassifiziert einen Fehler als «Supabase nicht verfügbar» (Fall A: offline /
+ * nicht konfiguriert / Netzwerkausfall) — alles andere ist ein echter
+ * Lese-/Schreibfehler trotz Verbindung (Fall B).
+ */
+export function isKvUnavailable(err: unknown): boolean {
+  if (err instanceof KVUnavailableError) return true;
+  const msg =
+    err instanceof Error
+      ? err.message
+      : err && typeof err === 'object' && 'message' in err
+        ? String((err as { message: unknown }).message)
+        : String(err);
+  return NETWORK_ERROR_RE.test(msg);
+}
+
+/**
+ * Setzt den Verfügbarkeits-Cache zurück (für «Erneut versuchen» und Tests):
+ * die nächste KV-Operation prüft die Verbindung neu.
+ */
+export function resetKVAvailabilityCache(): void {
+  _available = null;
+  _unavailableUntil = 0;
+}
+
+/**
+ * Zentraler Backup-Problem-Hinweis (Fall A/B-Unterscheidung, Befund 2):
+ * - Fall A «nicht verfügbar» (offline / nicht konfiguriert): dezenter
+ *   Info-Hinweis — Daten sind lokal gespeichert, kein Backup möglich.
+ * - Fall B «echter Fehler trotz Verbindung»: roter Fehler-Toast mit
+ *   optionalem «Erneut versuchen» (setzt den Verfügbarkeits-Cache zurück).
+ * Es wird NIE Erfolg gemeldet, wenn das Backup nicht bestätigt wurde.
+ */
+export async function notifyKVBackupProblem(
+  err: unknown,
+  label: string,
+  opts?: { toastId?: string; retry?: () => void | Promise<void> },
+): Promise<void> {
+  try {
+    const { toast } = await import('sonner');
+    if (isKvUnavailable(err)) {
+      toast.info(
+        `${label}: lokal gespeichert — Supabase ist offline oder nicht konfiguriert (noch kein Backup).`,
+        { duration: 6000, id: `${opts?.toastId ?? 'kv-backup'}-offline` },
+      );
+      return;
+    }
+    toast.error(
+      `${label}: Backup nach Supabase fehlgeschlagen — lokal gespeichert. Bitte Verbindung prüfen.`,
+      {
+        duration: 10000,
+        id: opts?.toastId ?? 'kv-backup-failed',
+        ...(opts?.retry
+          ? {
+              action: {
+                label: 'Erneut versuchen',
+                onClick: () => {
+                  resetKVAvailabilityCache();
+                  void Promise.resolve()
+                    .then(opts.retry)
+                    .catch(e => notifyKVBackupProblem(e, label, opts));
+                },
+              },
+            }
+          : {}),
+      },
+    );
+  } catch { /* Sonner nicht verfügbar */ }
+}
 
 export function subscribeKV(key: string, fn: Listener): () => void {
   if (!_listeners.has(key)) _listeners.set(key, new Set());
@@ -28,7 +114,10 @@ function notifyKV(key: string) {
 }
 
 async function isAvailable(): Promise<boolean> {
-  if (_available !== null) return _available;
+  // «verfügbar» wird dauerhaft gecacht; «nicht verfügbar» nur 30 s —
+  // damit sich die App nach einem transienten Ausfall wieder erholt.
+  if (_available === true) return true;
+  if (_available === false && Date.now() < _unavailableUntil) return false;
   try {
     const { error } = await (supabase as any)
       .from('app_settings')
@@ -38,6 +127,7 @@ async function isAvailable(): Promise<boolean> {
   } catch {
     _available = false;
   }
+  if (_available === false) _unavailableUntil = Date.now() + 30_000;
   return _available;
 }
 
@@ -63,7 +153,7 @@ export async function kvGet(key: string): Promise<unknown | null> {
  */
 export async function kvGetStrict(key: string): Promise<unknown | null> {
   if (!(await isAvailable())) {
-    throw new Error('Supabase nicht verfügbar');
+    throw new KVUnavailableError();
   }
   const { data, error } = await (supabase as any)
     .from('app_settings')
@@ -93,7 +183,7 @@ export async function kvSet(key: string, value: unknown): Promise<void> {
  */
 export async function kvSetStrict(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) {
-    throw new Error('Supabase nicht verfügbar');
+    throw new KVUnavailableError();
   }
   const { error } = await (supabase as any)
     .from('app_settings')
@@ -138,14 +228,20 @@ export async function safeUpsertDailyBudgets(
     if (raw) local = JSON.parse(raw) as Blob;
   } catch { /* ignore */ }
 
-  // 2. KV (Master-Stand)
+  // 2. KV (Master-Stand) — STRIKT lesen: ein Lesefehler darf NIE wie
+  //    «Remote ist leer» aussehen, sonst würden remote-only Tage beim
+  //    Zurückschreiben gelöscht. Bei Lesefehler wird der KV-Write übersprungen
+  //    (localStorage bleibt Primärspeicher).
   let remote: Blob = {};
+  let remoteReadError: unknown = null;
   try {
-    const kv = await kvGet(storageKey);
+    const kv = await kvGetStrict(storageKey);
     if (kv && typeof kv === 'object' && !Array.isArray(kv)) {
       remote = kv as Blob;
     }
-  } catch { /* ignore – localStorage bleibt Fallback */ }
+  } catch (err) {
+    remoteReadError = err;
+  }
 
   // 3. Merge: KV als Basis, Local-Werte > 0 gewinnen
   const base = mergeDailyBudgets(local, remote);
@@ -175,6 +271,17 @@ export async function safeUpsertDailyBudgets(
     window.dispatchEvent(new Event('store-synced'));
   } catch { /* ignore */ }
 
+  if (remoteReadError !== null) {
+    // Remote-Basis fehlt → KV-Write überspringen (nie Blob ohne Remote-Basis
+    // ersetzen). Retry führt den kompletten sicheren Upsert erneut aus.
+    console.error(`[SAFE-UPSERT] KV-Lesefehler für ${storageKey} — KV-Write übersprungen:`, remoteReadError);
+    await notifyKVBackupProblem(remoteReadError, 'Umsatz', {
+      toastId: 'kv-write-failed',
+      retry: () => safeUpsertDailyBudgets(storageKey, updates, onlyIfZero),
+    });
+    return merged;
+  }
+
   try {
     await kvSetStrict(storageKey, merged);
     console.log(
@@ -183,14 +290,10 @@ export async function safeUpsertDailyBudgets(
     );
   } catch (kvError) {
     console.error(`[SAFE-UPSERT] KV-Schreibfehler für ${storageKey}:`, kvError);
-    // Toast über dynamischen Import — verhindert Kreisabhängigkeit (UI → lib → UI)
-    try {
-      const { toast } = await import('sonner');
-      toast.error(
-        'Umsatz konnte nicht dauerhaft gespeichert werden. Bitte Verbindung prüfen.',
-        { duration: 10000, id: 'kv-write-failed' },
-      );
-    } catch { /* Sonner nicht verfügbar */ }
+    await notifyKVBackupProblem(kvError, 'Umsatz', {
+      toastId: 'kv-write-failed',
+      retry: () => safeUpsertDailyBudgets(storageKey, updates, onlyIfZero),
+    });
   }
 
   return merged;
@@ -673,12 +776,9 @@ export async function saveOvertimeDisabledIds(tenantId: TenantId, ids: string[])
     await kvSetStrict(key, clean);
   } catch (err) {
     console.error(`[OVERTIME-DISABLED] KV-Schreibfehler für ${key}:`, err);
-    try {
-      const { toast } = await import('sonner');
-      toast.error(
-        'Überstunden-Einstellung konnte nicht dauerhaft gespeichert werden. Bitte Verbindung prüfen.',
-        { duration: 8000, id: 'overtime-disabled-write-failed' },
-      );
-    } catch { /* Sonner nicht verfügbar */ }
+    await notifyKVBackupProblem(err, 'Überstunden-Einstellung', {
+      toastId: 'overtime-disabled-write-failed',
+      retry: () => kvSetStrict(key, clean),
+    });
   }
 }
