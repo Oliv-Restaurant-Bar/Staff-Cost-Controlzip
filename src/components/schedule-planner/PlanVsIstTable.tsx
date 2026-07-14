@@ -3,7 +3,7 @@ import { format, isWeekend } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveDayBreakHours, useShiftConfig } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours, useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
 import {
   ChevronDown, ChevronUp, FileText, FileSpreadsheet,
@@ -97,7 +97,8 @@ export const PlanVsIstTable: React.FC<PlanVsIstTableProps> = ({
       const key = Object.keys(shiftMap).find(k => shiftMap[k]?.abbrev === ds.frühAbsence);
       if (key && shiftMap[key].countsToTarget) return shiftMap[key].hours;
     }
-    return Math.max(0, gross - resolveDayBreakHours(ds, gross));
+    // Netto via SSoT (Pause pro Einsatz abgezogen)
+    return calculateDayNetHours(ds);
   };
 
   const getIstHours = (empId: string, dateStr: string): number => {

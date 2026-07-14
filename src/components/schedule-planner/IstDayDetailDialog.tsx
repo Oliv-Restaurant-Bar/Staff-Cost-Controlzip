@@ -27,7 +27,7 @@ import {
   Clock, Minus, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { DaySchedule } from './ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { getEffectiveHourlyRate, ABSENCE_CODES } from './ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import type { SocialCostRates } from '@/lib/social-costs';
@@ -103,8 +103,8 @@ function computeStats(
   const planRows = scheduleData
     ? emps.map(e => {
         const ds = scheduleData[`${e.id}-${dateStr}`];
-        const gross = ds ? calcSlotHours(ds.früh) + calcSlotHours(ds.spät) : 0;
-        const planHours = gross > 0 ? Math.max(0, gross - resolveDayBreakHours(ds, gross)) : 0;
+        // Netto via SSoT (Pause pro Einsatz abgezogen)
+        const planHours = ds ? calculateDayNetHours(ds) : 0;
         const istHours = actualHoursData[`${e.id}-${dateStr}`]?.hours ?? 0;
         return { emp: e, planHours, istHours };
       }).filter(r => r.planHours > 0 || r.istHours > 0)

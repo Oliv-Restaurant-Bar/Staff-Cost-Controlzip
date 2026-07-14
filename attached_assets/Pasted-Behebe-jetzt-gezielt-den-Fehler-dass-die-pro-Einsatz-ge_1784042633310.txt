@@ -1,0 +1,273 @@
+Behebe jetzt gezielt den Fehler, dass die pro Einsatz gespeicherte Pause nicht von den Tages-, Wochen- und Gesamttotalstunden abgezogen wird.
+
+Aktueller Stand:
+
+- Pausen können je Einsatz erfasst werden.
+- Die Pausenwerte werden offenbar gespeichert.
+- Die angezeigten Totalstunden verwenden aber weiterhin Bruttozeit von Beginn bis Ende.
+- Dadurch sind Tagesstunden, Wochenstunden, Planstunden, Iststunden und möglicherweise Personalkosten falsch.
+
+Ziel:
+
+Jede Schicht muss zentral als Nettostunden berechnet werden:
+
+Nettostunden = Endzeit − Startzeit − Pause
+
+Beispiele:
+
+10:00–14:00, keine Pause = 4.0 h
+
+10:00–14:00, 30 Minuten Pause = 3.5 h
+
+17:30–23:00, 60 Minuten Pause = 4.5 h
+
+Bei zwei Einsätzen:
+
+10:00–14:00, keine Pause = 4.0 h
+
+17:30–23:00, 30 Minuten Pause = 5.0 h
+
+Tagestotal = 9.0 h
+
+Nicht 9.5 h.
+
+## 1. Ursache vollständig finden
+
+Prüfe alle Stellen, an denen Stunden aus Schichten berechnet oder summiert werden.
+
+Insbesondere:
+
+- TimeInputCell
+- SchedulePlanner
+- Plan-Tageszellen
+- Ist-Tageszellen
+- Tagesstunden
+- Wochenstunden
+- Mitarbeiter-Gesamttotal rechts
+- Monatsansicht
+- Kostenansicht
+- Plan/Ist/Vergleich
+- Personalbedarf-Abgleich
+- timesheet-store
+- Exporte
+- Überstunden
+- Personalcontrolling
+- allfällige Helper wie duration, calculateHours, shiftHours, totalHours oder ähnliche
+
+Suche nach alten Berechnungen wie:
+
+end - start
+
+oder
+
+calculateDuration(start, end)
+
+ohne Berücksichtigung der Pause.
+
+Dokumentiere am Ende die konkrete Ursache.
+
+## 2. Eine zentrale Nettostundenfunktion verwenden
+
+Erstelle oder verwende genau eine zentrale reine Funktion für die Schichtstunden.
+
+Beispiel-Signatur sinngemäss:
+
+calculateNetShiftHours({
+  startTime,
+  endTime,
+  breakMinutes
+})
+
+Regeln:
+
+- Pause standardmässig 0
+- 30 Minuten = 0.5 Stunden
+- 60 Minuten = 1.0 Stunde
+- negative Ergebnisse niemals zulassen
+- Ergebnis mindestens 0
+- Schichten über Mitternacht korrekt behandeln, falls dies bereits unterstützt wird
+- ungültige oder unvollständige Zeiten ergeben null beziehungsweise keine berechenbaren Stunden, nicht still 0
+- keine zweite oder parallele Berechnungslogik
+
+Alle Summen müssen aus dieser zentralen Nettostundenfunktion stammen.
+
+## 3. Beide Einsätze separat berechnen
+
+Bei zwei Einsätzen muss jede Schicht ihre eigene Pause verwenden.
+
+Beispiel:
+
+Einsatz 1:
+start
+end
+breakMinutes
+
+Einsatz 2:
+start
+end
+breakMinutes
+
+Tagestotal:
+
+netHours(Einsatz 1) + netHours(Einsatz 2)
+
+Die Pause des zweiten Einsatzes darf nicht auf den ersten angewendet werden und umgekehrt.
+
+## 4. Plan und Ist
+
+Die Nettostundenberechnung muss getrennt und korrekt gelten für:
+
+- Planstunden
+- Iststunden
+
+Planpause reduziert nur die Planstunden.
+
+Istpause reduziert nur die Iststunden.
+
+Die Pause darf nicht zwischen Plan und Ist kopiert werden, ausser dies ist ausdrücklich über bestehende Übernahmelogik vorgesehen.
+
+Abwesenheiten Frei, Ferien, Krank und Unfall dürfen keine Pausenberechnung auslösen.
+
+## 5. Alle sichtbaren Totale korrigieren
+
+Prüfe und korrigiere mindestens:
+
+- Stunden direkt unter dem Mitarbeiternamen
+- Tagesstunden in der Zelle
+- Wochenstunden
+- Monatsstunden
+- Totalspalte rechts
+- Plan/Ist/Vergleich
+- Soll-Abweichung
+- Überstunden
+- Kosten
+- Personalcontrolling
+- Personalbedarf-Abgleich
+- Exporte
+
+Es darf nirgends Bruttozeit angezeigt werden, wenn eine Pause gesetzt ist.
+
+## 6. Personalkosten
+
+Personalkosten müssen auf Nettostunden basieren.
+
+Beispiel:
+
+Schicht 8.0 Stunden brutto
+Pause 60 Minuten
+Stundenlohn CHF 30
+
+Kostenbasis = 7.0 Stunden
+
+Nicht 8.0 Stunden.
+
+Bestehende zentrale Arbeitgeberkostenlogik weiterverwenden.
+
+## 7. Rundung
+
+Verwende die bestehende projektweite Rundungslogik.
+
+Keine unterschiedlichen Rundungen zwischen:
+
+- Zelle
+- Tag
+- Woche
+- Kosten
+- Export
+
+Falls noch keine zentrale Rundung existiert:
+
+- intern mit präzisen Minuten rechnen
+- erst bei der Anzeige formatieren
+- keine kumulierten Rundungsfehler erzeugen
+
+## 8. Rückwärtskompatibilität
+
+Bestehende Schichten ohne Pausenfeld müssen behandelt werden als:
+
+breakMinutes = 0
+
+Keine bestehenden Schichten dürfen verschwinden oder fehlerhaft werden.
+
+## 9. Tests
+
+Ergänze fokussierte Regressionstests mindestens für:
+
+- 10:00–14:00 ohne Pause = 4.0 h
+- 10:00–14:00 mit 30 Minuten Pause = 3.5 h
+- 10:00–14:00 mit 60 Minuten Pause = 3.0 h
+- zwei Einsätze mit unterschiedlichen Pausen ergeben korrektes Tagestotal
+- Planstunden ziehen Planpause ab
+- Iststunden ziehen Istpause ab
+- Planpause verändert Iststunden nicht
+- Istpause verändert Planstunden nicht
+- Wochenstunden ziehen alle Einsatzpausen korrekt ab
+- Totalspalte rechts zeigt Nettostunden
+- Personalkosten basieren auf Nettostunden
+- Überstunden basieren auf Nettostunden
+- Personalcontrolling basiert auf Nettostunden
+- Export verwendet Nettostunden
+- Schicht ohne breakMinutes bleibt unverändert
+- Abwesenheit wird nicht als Schicht mit Pause berechnet
+
+Führe danach aus:
+
+- fokussierte betroffene Tests
+- projektspezifisch korrekten TypeScript-Typecheck
+- Architect-Review nur über den tatsächlichen Task-Diff
+
+## 10. UI-Prüfung
+
+Teste in der laufenden App mindestens diesen konkreten Fall:
+
+Mitarbeiter mit:
+
+1. Einsatz 10:00–14:00 ohne Pause
+2. Einsatz 17:30–23:00 mit 30 Minuten Pause
+
+Erwartetes Tagestotal:
+
+9.0 Stunden
+
+Prüfe danach:
+
+- Zelle
+- Mitarbeitendenzeile
+- Wochentotal
+- Planansicht
+- Istansicht
+- Kostenansicht
+- Reload
+
+Alle müssen denselben Nettowert anzeigen.
+
+## 11. Dokumentation
+
+Aktualisiere replit.md nur, falls dort die Pausenlogik bereits dokumentiert ist oder durch die Korrektur präzisiert werden muss:
+
+- Pausen werden je Einsatz gespeichert
+- alle Stunden- und Kostenberechnungen verwenden Nettostunden
+- bestehende Einträge ohne Pause gelten als 0 Minuten Pause
+
+Keine Testzahlen und kein Entwicklungsprotokoll aufnehmen.
+
+## Abschluss
+
+Gib am Ende aus:
+
+1. Wo die Pause bisher nicht berücksichtigt wurde.
+2. Welche zentrale Nettostundenfunktion jetzt verwendet wird.
+3. Welche Totale korrigiert wurden.
+4. Ob Plan und Ist getrennt korrekt rechnen.
+5. Ob Kosten und Überstunden korrigiert wurden.
+6. Ergebnis des konkreten 9.0-Stunden-UI-Tests.
+7. Testergebnis.
+8. Typecheck-Ergebnis.
+9. Architect-Review-Ergebnis.
+10. Tatsächlich geänderte Dateien.
+
+Wichtig:
+
+Nicht nur die Anzeige korrigieren.
+
+Die zentrale Stundenbasis muss fachlich korrekt sein, damit alle nachgelagerten Auswertungen und Exporte automatisch stimmen.

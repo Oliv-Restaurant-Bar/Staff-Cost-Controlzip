@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useShiftConfig, resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { useShiftConfig, calculateDayNetHours, calculateDaySlotNetHours } from '@/hooks/useShiftConfig';
 import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { PatternWarning, PatternType } from '@/lib/pattern-warnings';
@@ -342,12 +342,8 @@ export const ScheduleGrid = ({
 
       if (!daySchedule) return;
 
-      // Work hours (with break deduction)
-      const frühHours = calculateSlotHours(daySchedule.früh);
-      const spätHours = calculateSlotHours(daySchedule.spät);
-      const grossWorkHours = frühHours + spätHours;
-      const breakDeduction = resolveDayBreakHours(daySchedule, grossWorkHours);
-      const netWorkHours = Math.max(0, grossWorkHours - breakDeduction);
+      // Work hours (net, SSoT: Pause pro Einsatz abgezogen)
+      const netWorkHours = calculateDayNetHours(daySchedule);
 
       // Absence hours (only if countsToTarget)
       let absenceCountedHours = 0;
@@ -380,16 +376,15 @@ export const ScheduleGrid = ({
         const agRate = rateById.get(emp.id) ?? 0;
         totalCosts += (netWorkHours + absencePaidHours) * agRate;
 
-        // Slot-level cost split (break deduction distributed proportionally)
-        if (grossWorkHours > 0 && emp.hourlyWage) {
-          const frühNetH  = frühHours  > 0 ? frühHours  - breakDeduction * (frühHours  / grossWorkHours) : 0;
-          const spätNetH  = spätHours  > 0 ? spätHours  - breakDeduction * (spätHours  / grossWorkHours) : 0;
+        // Slot-level cost split (SSoT: Netto je Einsatz, Pause pro Einsatz bzw. proportional)
+        if (netWorkHours > 0 && emp.hourlyWage) {
+          const { frühNet, spätNet } = calculateDaySlotNetHours(daySchedule);
           const dept = emp.department === 'küche' ? 'küche' : 'service';
           if (!slotCosts[dept]) slotCosts[dept] = { früh: 0, spät: 0, frühHours: 0, spätHours: 0 };
-          slotCosts[dept].früh      += Math.max(0, frühNetH)  * agRate;
-          slotCosts[dept].spät      += Math.max(0, spätNetH)  * agRate;
-          slotCosts[dept].frühHours += Math.max(0, frühNetH);
-          slotCosts[dept].spätHours += Math.max(0, spätNetH);
+          slotCosts[dept].früh      += frühNet * agRate;
+          slotCosts[dept].spät      += spätNet * agRate;
+          slotCosts[dept].frühHours += frühNet;
+          slotCosts[dept].spätHours += spätNet;
         }
       }
     });
@@ -622,17 +617,8 @@ export const ScheduleGrid = ({
       if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
         hours = 0;
       } else {
-        const calcSlot = (slot: TimeSlot | null | undefined) => {
-          if (!slot?.start || !slot?.end) return 0;
-          const [sh, sm] = slot.start.split(':').map(Number);
-          const [eh, em] = slot.end.split(':').map(Number);
-          let h = eh - sh + (em - sm) / 60;
-          if (h < 0) h += 24;
-          return h;
-        };
-        const gross = calcSlot(daySchedule.früh) + calcSlot(daySchedule.spät);
-        const breakDeduction = resolveDayBreakHours(daySchedule, gross);
-        hours = Math.max(0, gross - breakDeduction);
+        // Netto via SSoT (Pause pro Einsatz abgezogen)
+        hours = calculateDayNetHours(daySchedule);
       }
 
       const cost = hours * (rateById.get(emp.id) ?? 0);
@@ -1209,7 +1195,7 @@ export const ScheduleGrid = ({
                                     (secondarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
                                     v,
                                   )}
-                                  onSplitTimeSelect={(sec) => onSlotChange(employee.id, dateStr, secondarySlot, sec, null)}
+                                  onSplitTimeSelect={(sec, breakMin) => onSlotChange(employee.id, dateStr, secondarySlot, sec, null, breakMin)}
                                   onClearSecondary={() => onSlotChange(employee.id, dateStr, secondarySlot, null, null)}
                                   isWeekend={isWeekendDay}
                                   isDayOff={isConfiguredDayOff}

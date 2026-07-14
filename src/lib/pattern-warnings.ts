@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -55,10 +55,12 @@ function slotGrossHours(
 
 function dayTotalHours(ds: DaySchedule | null): number {
   if (!ds) return 0;
-  const gross = (ds.frühAbsence ? 0 : slotGrossHours(ds.früh)) +
-                (ds.spätAbsence ? 0 : slotGrossHours(ds.spät));
-  if (gross <= 0) return 0;
-  return Math.max(0, gross - resolveDayBreakHours(ds, gross));
+  // Netto via SSoT: Absenz-Slots nicht mitzählen (Pause nie auf Absenzstunden)
+  return calculateDayNetHours({
+    ...ds,
+    früh: ds.frühAbsence ? null : ds.früh,
+    spät: ds.spätAbsence ? null : ds.spät,
+  });
 }
 
 function isWorking(ds: DaySchedule | null): boolean {

@@ -5,7 +5,7 @@ import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { toast } from 'sonner';
 import { upsertAllEmployees } from '@/lib/supabase-db';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, eachMonthOfInterval, subMonths, addMonths } from 'date-fns';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/contexts/TenantContext';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -271,15 +271,9 @@ const loadScheduleEntriesFromSupabase = async (employees: Employee[]): Promise<T
   }
 };
 
-// Helper to calculate day hours (internal version for Supabase loading)
+// Helper to calculate day NET hours (internal version for Supabase loading) — SSoT
 const calculateDayHoursInternal = (daySchedule: DaySchedule): { total: number; frühStart?: string; frühEnd?: string; spätStart?: string; spätEnd?: string } => {
-  const frühHours = calculateSlotHoursInternal(daySchedule.früh);
-  const spätHours = calculateSlotHoursInternal(daySchedule.spät);
-  const totalGross = frühHours + spätHours;
-  
-  // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
-  const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
-  const total = Math.round((totalGross - breakDeduction) * 100) / 100;
+  const total = calculateDayNetHours(daySchedule);
   
   return {
     total,
@@ -340,15 +334,9 @@ const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
   return Math.round(hours * 100) / 100;
 };
 
-// Calculate total hours for a day (früh + spät) with break deduction
+// Calculate total NET hours for a day (früh + spät) — SSoT calculateDayNetHours
 const calculateDayHours = (daySchedule: DaySchedule): { total: number; frühStart?: string; frühEnd?: string; spätStart?: string; spätEnd?: string } => {
-  const frühHours = calculateSlotHours(daySchedule.früh);
-  const spätHours = calculateSlotHours(daySchedule.spät);
-  const totalGross = frühHours + spätHours;
-  
-  // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
-  const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
-  const total = Math.round((totalGross - breakDeduction) * 100) / 100;
+  const total = calculateDayNetHours(daySchedule);
   
   return {
     total,

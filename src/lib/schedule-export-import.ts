@@ -6,7 +6,7 @@ import { Employee } from '@/types/personnel';
 
 import { format, eachWeekOfInterval, startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isWithinInterval, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { getShiftConfig, getShiftConfigMap, resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { getShiftConfig, getShiftConfigMap, calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { getBranding, renderLogoDataUrl } from '@/lib/pl-branding';
 import { selectEmployeesForDepartment } from '@/lib/schedule-export-department';
@@ -99,12 +99,10 @@ function calculateSlotHours(slot: TimeSlot | null | undefined): number {
   return Math.round(hours * 100) / 100;
 }
 
-// Netto-Arbeitsstunden eines Plan-Tags: Brutto beider Slots minus Pause
-// (SSoT resolveDayBreakHours) — Pause NIE auf Absenzstunden anwenden.
+// Netto-Arbeitsstunden eines Plan-Tags (SSoT calculateDayNetHours,
+// Pause pro Einsatz) — Pause NIE auf Absenzstunden anwenden.
 function workedNetHours(ds: DaySchedule): number {
-  const gross = calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
-  if (gross <= 0) return 0;
-  return Math.max(0, Math.round((gross - resolveDayBreakHours(ds, gross)) * 100) / 100);
+  return calculateDayNetHours(ds);
 }
 
 function buildCompactLegendLine(

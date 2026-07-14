@@ -3,7 +3,7 @@ import { format, isWeekend, isSunday } from 'date-fns';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
-import { resolveDayBreakHours, useShiftConfig } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours, useShiftConfig } from '@/hooks/useShiftConfig';
 import { cn } from '@/lib/utils';
 
 const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -111,7 +111,8 @@ export const PlanVsIstGrid = ({
     }
 
     const gross = calcSlotHours(ds.früh) + calcSlotHours(ds.spät);
-    const net = Math.max(0, gross - resolveDayBreakHours(ds, gross));
+    // Netto via SSoT (Pause pro Einsatz abgezogen)
+    const net = calculateDayNetHours(ds);
 
     // Abwesenheitscodes die zu Sollstunden zählen (z.B. Krank mit Lohnfortzahlung)
     if (gross === 0 && ds.frühAbsence) {

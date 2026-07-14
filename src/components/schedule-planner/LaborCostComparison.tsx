@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Line, Area, AreaChart } from 'recharts';
 import { TrendingUp, TrendingDown, BarChart3, FileDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -80,11 +80,8 @@ export const LaborCostComparison = ({
         const daySchedule = scheduleData[cellKey];
         
         if (daySchedule) {
-          const frühHours = calculateSlotHours(daySchedule.früh);
-          const spätHours = calculateSlotHours(daySchedule.spät);
-          const dayHours = frühHours + spätHours;
-          const breakDeduction = resolveDayBreakHours(daySchedule, dayHours);
-          const netHours = dayHours - breakDeduction;
+          // Netto via SSoT (Pause pro Einsatz abgezogen)
+          const netHours = calculateDayNetHours(daySchedule);
           
           actualHours += netHours;
           const rate = rateById.get(emp.id);
@@ -136,11 +133,8 @@ export const LaborCostComparison = ({
           const daySchedule = scheduleData[cellKey];
           
           if (daySchedule) {
-            const frühHours = calculateSlotHours(daySchedule.früh);
-            const spätHours = calculateSlotHours(daySchedule.spät);
-            const dayHours = frühHours + spätHours;
-            const breakDeduction = resolveDayBreakHours(daySchedule, dayHours);
-            const netHours = dayHours - breakDeduction;
+            // Netto via SSoT (Pause pro Einsatz abgezogen)
+            const netHours = calculateDayNetHours(daySchedule);
             
             weekHours += netHours;
             const rate = rateById.get(emp.id);

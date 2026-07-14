@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { format, getDay, startOfWeek, endOfWeek, eachWeekOfInterval, isSameWeek, startOfMonth, endOfMonth, eachDayOfInterval, isWithinInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { useShiftConfig, resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { useShiftConfig, calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { Employee, Department } from '@/types/personnel';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -72,13 +72,9 @@ export const PrintScheduleDialog = ({
     return Math.round(hours * 100) / 100;
   };
 
-  const calculateDayHours = (daySchedule: DaySchedule): number => {
-    const frühHours = calculateSlotHours(daySchedule.früh);
-    const spätHours = calculateSlotHours(daySchedule.spät);
-    const totalGross = frühHours + spätHours;
-    const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
-    return Math.round((totalGross - breakDeduction) * 100) / 100;
-  };
+  // SSoT: zentrale Tages-Nettostunden (Pause pro Einsatz)
+  const calculateDayHours = (daySchedule: DaySchedule): number =>
+    calculateDayNetHours(daySchedule);
 
   const getAbsenceHours = (abbrev: string | null | undefined): number => {
     if (!abbrev) return 0;

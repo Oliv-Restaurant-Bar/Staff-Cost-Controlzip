@@ -1,6 +1,9 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
-import { calculateBreakDeduction, resolveBreakHours, resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import {
+  calculateBreakDeduction, resolveBreakHours, resolveDayBreakHours,
+  slotGrossHours, calculateNetShiftHours, calculateDayNetHours, calculateDaySlotNetHours,
+} from '@/hooks/useShiftConfig';
 
 describe('calculateBreakDeduction (automatische Pausenregel, Regression)', () => {
   it('bis und mit 9h → keine Pause', () => {
@@ -108,5 +111,122 @@ describe('Tages-Netto-Formel (UI ≡ Export): net = max(0, gross − resolveBrea
   it('kein Arbeits-Brutto → 0 (Pause nie auf Absenzstunden)', () => {
     expect(dayNet(0, 30)).toBe(0);
     expect(dayNet(0, 60)).toBe(0);
+  });
+});
+
+describe('slotGrossHours (Brutto EINES Einsatzes)', () => {
+  it('normale Zeiten, Mitternachts-Überlauf, leere/ungültige Slots', () => {
+    expect(slotGrossHours({ start: '10:00', end: '14:00' })).toBe(4);
+    expect(slotGrossHours({ start: '17:30', end: '23:00' })).toBe(5.5);
+    expect(slotGrossHours({ start: '22:00', end: '02:00' })).toBe(4); // über Mitternacht
+    expect(slotGrossHours(null)).toBe(0);
+    expect(slotGrossHours({})).toBe(0);
+    expect(slotGrossHours({ start: '10:00', end: null })).toBe(0);
+    expect(slotGrossHours({ start: 'abc', end: '14:00' })).toBe(0);
+  });
+});
+
+describe('calculateNetShiftHours (Netto EINES Einsatzes, null bei ungültig)', () => {
+  it('Ende − Start − Pause, nie unter 0', () => {
+    expect(calculateNetShiftHours({ startTime: '10:00', endTime: '14:00', breakMinutes: 0 })).toBe(4);
+    expect(calculateNetShiftHours({ startTime: '17:30', endTime: '23:00', breakMinutes: 30 })).toBe(5);
+    expect(calculateNetShiftHours({ startTime: '10:00', endTime: '10:15', breakMinutes: 60 })).toBe(0); // Clamping
+  });
+
+  it('fehlende/ungültige Zeiten → null (nie stillschweigend 0)', () => {
+    expect(calculateNetShiftHours({ startTime: null, endTime: '14:00' })).toBeNull();
+    expect(calculateNetShiftHours({ startTime: '10:00', endTime: undefined })).toBeNull();
+    expect(calculateNetShiftHours({ startTime: 'x', endTime: '14:00' })).toBeNull();
+  });
+});
+
+describe('calculateDayNetHours (SSoT Tages-Netto, Pause pro Einsatz)', () => {
+  it('SPEC-Fall: 10–14 ohne Pause + 17:30–23 mit 30 Min → 9.0h (nicht 9.5)', () => {
+    expect(calculateDayNetHours({
+      früh: { start: '10:00', end: '14:00' },
+      spät: { start: '17:30', end: '23:00' },
+      fruehBreakMinutes: 0,
+      spaetBreakMinutes: 30,
+    })).toBe(9);
+  });
+
+  it('manuelle Einsatz-Pausen: 4.0 / 3.5 / 3.0 je nach Pausensumme', () => {
+    const day = {
+      früh: { start: '10:00', end: '12:00' },
+      spät: { start: '18:00', end: '20:00' },
+    };
+    expect(calculateDayNetHours({ ...day, fruehBreakMinutes: 0, spaetBreakMinutes: 0 })).toBe(4);
+    expect(calculateDayNetHours({ ...day, fruehBreakMinutes: 30, spaetBreakMinutes: 0 })).toBe(3.5);
+    expect(calculateDayNetHours({ ...day, fruehBreakMinutes: 30, spaetBreakMinutes: 30 })).toBe(3);
+  });
+
+  it('Clamping PRO EINSATZ: Pause > Slot-Brutto zieht nie vom anderen Einsatz ab', () => {
+    // früh 0.5h mit 60 Min Pause → 0 (nicht −0.5); spät 4h ohne Pause → 4
+    expect(calculateDayNetHours({
+      früh: { start: '10:00', end: '10:30' },
+      spät: { start: '18:00', end: '22:00' },
+      fruehBreakMinutes: 60,
+      spaetBreakMinutes: 0,
+    })).toBe(4);
+  });
+
+  it('ohne manuelle Pausen: Automatik (>9h → 30 Min) bzw. Legacy-Tagespause', () => {
+    // 10h Brutto → Automatik 30 Min
+    expect(calculateDayNetHours({
+      früh: { start: '08:00', end: '13:00' },
+      spät: { start: '17:00', end: '22:00' },
+    })).toBe(9.5);
+    // 8h Brutto → keine Automatik
+    expect(calculateDayNetHours({ früh: { start: '08:00', end: '16:00' } })).toBe(8);
+    // Legacy-Tagespause als Lese-Fallback
+    expect(calculateDayNetHours({
+      früh: { start: '08:00', end: '16:00' },
+      breakMinutes: 60,
+    })).toBe(7);
+  });
+
+  it('leer/null → 0', () => {
+    expect(calculateDayNetHours(null)).toBe(0);
+    expect(calculateDayNetHours(undefined)).toBe(0);
+    expect(calculateDayNetHours({})).toBe(0);
+    expect(calculateDayNetHours({ fruehBreakMinutes: 30 })).toBe(0); // Pause ohne Arbeitszeit
+  });
+});
+
+describe('calculateDaySlotNetHours (Netto-Aufteilung pro Einsatz)', () => {
+  it('manuelle Pausen: jede Pause von IHREM Einsatz, pro Einsatz geclampt', () => {
+    const r = calculateDaySlotNetHours({
+      früh: { start: '10:00', end: '14:00' },
+      spät: { start: '17:30', end: '23:00' },
+      fruehBreakMinutes: 0,
+      spaetBreakMinutes: 30,
+    });
+    expect(r.frühNet).toBe(4);
+    expect(r.spätNet).toBe(5);
+    // Clamping: Pause > Slot-Brutto
+    const c = calculateDaySlotNetHours({
+      früh: { start: '10:00', end: '10:30' },
+      spät: { start: '18:00', end: '22:00' },
+      fruehBreakMinutes: 60,
+      spaetBreakMinutes: 0,
+    });
+    expect(c.frühNet).toBe(0);
+    expect(c.spätNet).toBe(4);
+  });
+
+  it('ohne manuelle Pausen: Tagespause proportional aufgeteilt, Summe ≡ Tages-Netto', () => {
+    const day = {
+      früh: { start: '08:00', end: '13:00' }, // 5h
+      spät: { start: '17:00', end: '22:00' }, // 5h → 10h Brutto, Automatik 30 Min
+    };
+    const r = calculateDaySlotNetHours(day);
+    expect(r.frühNet).toBe(4.75);
+    expect(r.spätNet).toBe(4.75);
+    expect(Math.round((r.frühNet + r.spätNet) * 100) / 100).toBe(calculateDayNetHours(day));
+  });
+
+  it('leer → {0, 0}', () => {
+    expect(calculateDaySlotNetHours(null)).toEqual({ frühNet: 0, spätNet: 0 });
+    expect(calculateDaySlotNetHours({})).toEqual({ frühNet: 0, spätNet: 0 });
   });
 });

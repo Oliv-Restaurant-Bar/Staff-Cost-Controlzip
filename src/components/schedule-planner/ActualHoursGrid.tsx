@@ -15,6 +15,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Check, X, Clock, AlertTriangle, TrendingDown, Lightbulb, Zap, CheckCircle2, Minus as MinusIcon } from 'lucide-react';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 
 export type AbsenceCode = 'FE' | 'FT' | 'K' | 'U' | 'F';
 export const ABSENCE_CODES: ReadonlySet<AbsenceCode> = new Set(['FE', 'FT', 'K', 'U', 'F']);
@@ -176,9 +177,11 @@ const ActualHoursCell = ({
       }
     } else {
       if (startInput && endInput) {
-        const hours1 = calculateHoursFromTimes(startInput, endInput);
-        const hours2 = (startInput2 && endInput2) ? calculateHoursFromTimes(startInput2, endInput2) : 0;
-        const totalHours = Math.round((hours1 + hours2) * 100) / 100;
+        // Nettostunden via SSoT (Pause pro Einsatz bzw. Automatik >9h → 30 Min)
+        const totalHours = calculateDayNetHours({
+          früh: { start: startInput, end: endInput },
+          spät: (startInput2 && endInput2) ? { start: startInput2, end: endInput2 } : null,
+        });
         onSave({
           hours: totalHours,
           start: startInput,
@@ -544,15 +547,28 @@ const ActualHoursCell = ({
                 )}
               </div>
 
-              {/* Gesamtanzeige */}
-              {startInput && endInput && (
-                <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-center font-medium">
-                  Total: {(
-                    calculateHoursFromTimes(startInput, endInput) +
-                    (startInput2 && endInput2 ? calculateHoursFromTimes(startInput2, endInput2) : 0)
-                  ).toFixed(1)} Stunden
-                </div>
-              )}
+              {/* Gesamtanzeige (netto via SSoT, Pause abgezogen) */}
+              {startInput && endInput && (() => {
+                const gross = Math.round((
+                  calculateHoursFromTimes(startInput, endInput) +
+                  (startInput2 && endInput2 ? calculateHoursFromTimes(startInput2, endInput2) : 0)
+                ) * 100) / 100;
+                const net = calculateDayNetHours({
+                  früh: { start: startInput, end: endInput },
+                  spät: (startInput2 && endInput2) ? { start: startInput2, end: endInput2 } : null,
+                });
+                const breakMin = Math.max(0, Math.round((gross - net) * 60));
+                return (
+                  <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-center font-medium">
+                    Total: {net.toFixed(1)} Stunden
+                    {breakMin > 0 && (
+                      <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                        {gross.toFixed(1)} h − {breakMin} Min Pause
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

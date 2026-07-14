@@ -33,7 +33,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMont
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { useShiftConfig, ShiftConfigItem, resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { useShiftConfig, ShiftConfigItem, calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
 import { useTenant } from '@/contexts/TenantContext';
@@ -253,13 +253,9 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     return Math.round(hours * 100) / 100;
   };
 
-  const calculateDayHours = (daySchedule: DaySchedule): number => {
-    const frühHours = calculateSlotHours(daySchedule.früh);
-    const spätHours = calculateSlotHours(daySchedule.spät);
-    const totalGross = frühHours + spätHours;
-    const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
-    return Math.round((totalGross - breakDeduction) * 100) / 100;
-  };
+  // SSoT: zentrale Tages-Nettostunden (Pause pro Einsatz, je Einsatz geclampt)
+  const calculateDayHours = (daySchedule: DaySchedule): number =>
+    calculateDayNetHours(daySchedule);
 
   const calculateEmployeeHours = (employeeId: string): number => {
     let totalHours = 0;

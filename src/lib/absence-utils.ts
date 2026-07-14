@@ -4,7 +4,7 @@
  * Used by: AbsenzKosten, DayDetailDialog, Dashboard, Reporting.
  */
 
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import type { Employee } from '@/types/personnel';
 import type { DaySchedule } from '@/lib/supabase-db';
 
@@ -118,8 +118,8 @@ export function slotHours(slot: { start: string; end: string } | null | undefine
 }
 
 export function netHoursFromSchedule(ds: DaySchedule): number {
-  const gross = slotHours(ds.früh) + slotHours(ds.spät);
-  return gross > 0 ? Math.max(0, gross - resolveDayBreakHours(ds, gross)) : 0;
+  // Netto via SSoT (Pause pro Einsatz abgezogen)
+  return calculateDayNetHours(ds);
 }
 
 export function plannedHoursFor(emp: Employee): number {

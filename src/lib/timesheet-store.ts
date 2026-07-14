@@ -1,5 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 
 export type TimesheetStatus = 'open' | 'link_created' | 'sent' | 'confirmed' | 'rejected' | 'expired' | 'question_open' | 'finalized';
 
@@ -591,15 +591,14 @@ export async function loadDienstplanHoursForMonth(
 
   const result: Record<string, number> = {};
   for (const row of (data as unknown as SchedHourRow[] | null) ?? []) {
-    const frühH  = schedSlotHours(row.frueh_start, row.frueh_end);
-    const spätH  = schedSlotHours(row.spaet_start, row.spaet_end);
-    const gross  = frühH + spätH;
-    const breakH = resolveDayBreakHours({
+    // Netto via SSoT (Pause pro Einsatz abgezogen, je Einsatz geclampt)
+    const net = calculateDayNetHours({
+      früh: { start: row.frueh_start, end: row.frueh_end },
+      spät: { start: row.spaet_start, end: row.spaet_end },
       fruehBreakMinutes: row.frueh_break_minutes ?? null,
       spaetBreakMinutes: row.spaet_break_minutes ?? null,
       breakMinutes:      row.break_minutes ?? null,
-    }, gross);
-    const net    = Math.round((gross - breakH) * 100) / 100;
+    });
     if (net <= 0) continue;
     result[row.employee_id] = Math.round(((result[row.employee_id] ?? 0) + net) * 100) / 100;
   }
@@ -635,17 +634,14 @@ export interface DayComparisonEntry {
 }
 
 /**
- * Geplante Pausenminuten eines Tages (zentrale Auflösung, SSoT resolveDayBreakHours):
- * manuelle Einsatz-Pausen haben Vorrang, dann Legacy-Tages-Pause, sonst Automatik.
+ * Geplante Pausenminuten eines Tages: EFFEKTIVE Pause = Brutto − Netto,
+ * damit die Anzeige immer exakt zu den SSoT-Nettostunden (plan_hours aus
+ * calculateDayNetHours, Pause pro Einsatz geclampt) abstimmt.
  * Nur bei geplanter Arbeitszeit — Pause nie auf reine Absenztage.
  */
-export function planPauseMinutes(e: Pick<DayComparisonEntry, 'plan_gross' | 'frueh_break_minutes' | 'spaet_break_minutes' | 'break_minutes'>): number {
+export function planPauseMinutes(e: Pick<DayComparisonEntry, 'plan_gross' | 'plan_hours'>): number {
   if (e.plan_gross == null || e.plan_gross <= 0) return 0;
-  return Math.round(resolveDayBreakHours({
-    fruehBreakMinutes: e.frueh_break_minutes,
-    spaetBreakMinutes: e.spaet_break_minutes,
-    breakMinutes:      e.break_minutes,
-  }, e.plan_gross) * 60);
+  return Math.max(0, Math.round((e.plan_gross - (e.plan_hours ?? 0)) * 60));
 }
 
 const VACATION_CODES  = new Set(['FE', 'FW', 'FERIEN', 'FERI', 'URLAUB', 'U', 'FER', 'VACATION']);
@@ -739,12 +735,14 @@ export async function loadEmployeeMonthDetail(
       const frühH  = schedSlotHours(sched.frueh_start, sched.frueh_end);
       const spätH  = schedSlotHours(sched.spaet_start, sched.spaet_end);
       const gross  = Math.round((frühH + spätH) * 100) / 100;
-      const breakH = resolveDayBreakHours({
+      // Netto via SSoT (Pause pro Einsatz abgezogen, je Einsatz geclampt)
+      const net = calculateDayNetHours({
+        früh: { start: sched.frueh_start, end: sched.frueh_end },
+        spät: { start: sched.spaet_start, end: sched.spaet_end },
         fruehBreakMinutes: sched.frueh_break_minutes ?? null,
         spaetBreakMinutes: sched.spaet_break_minutes ?? null,
         breakMinutes:      sched.break_minutes ?? null,
-      }, gross);
-      const net    = Math.round((gross - breakH) * 100) / 100;
+      });
       planGross    = gross > 0 ? gross : null;
       planHours    = net   > 0 ? net   : null;
       absCode      = sched.frueh_absence || sched.spaet_absence || null;

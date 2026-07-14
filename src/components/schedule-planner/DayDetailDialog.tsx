@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb, Palmtree, Stethoscope, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours, calculateDaySlotNetHours } from '@/hooks/useShiftConfig';
 import {
   isFixedEmployee, isVariableEmployee, absenceKind, SKIP_CODES, netHoursFromSchedule,
 } from '@/lib/absence-utils';
@@ -45,14 +45,9 @@ const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
   return Math.round(hours * 100) / 100;
 };
 
-// Calculate total hours for a day (früh + spät) with break deduction
-const calculateDayHours = (daySchedule: DaySchedule): number => {
-  const frühHours = calculateSlotHours(daySchedule.früh);
-  const spätHours = calculateSlotHours(daySchedule.spät);
-  const totalGross = frühHours + spätHours;
-  const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
-  return Math.round((totalGross - breakDeduction) * 100) / 100;
-};
+// Calculate total NET hours for a day (früh + spät) — SSoT calculateDayNetHours
+const calculateDayHours = (daySchedule: DaySchedule): number =>
+  calculateDayNetHours(daySchedule);
 
 export const DayDetailDialog = ({
   open,
@@ -166,13 +161,11 @@ export const DayDetailDialog = ({
     const spätH = calculateSlotHours(ds.spät);
     const gross = frühH + spätH;
     if (gross === 0) return;
-    const breakDeduction = resolveDayBreakHours(ds, gross);
-    const net = Math.max(0, gross - breakDeduction);
+    // Netto via SSoT (Pause pro Einsatz; Legacy/Automatik proportional)
+    const net = calculateDayNetHours(ds);
     totalPlannedCost += net * agRate(emp);
 
-    // Split break deduction proportionally
-    const frühNet = Math.max(0, frühH - breakDeduction * (frühH / gross));
-    const spätNet = Math.max(0, spätH - breakDeduction * (spätH / gross));
+    const { frühNet, spätNet } = calculateDaySlotNetHours(ds);
     frühPlannedCost += frühNet * agRate(emp);
     spätPlannedCost += spätNet * agRate(emp);
 

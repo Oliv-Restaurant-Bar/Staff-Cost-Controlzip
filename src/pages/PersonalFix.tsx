@@ -59,7 +59,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { useMaison } from '@/contexts/MaisonContext';
 import { getMaisonEnabledSync } from '@/lib/maison-store';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { SICK_CODES, ACCIDENT_CODES, VACATION_CODES } from '@/lib/absence-utils';
 import { loadWeekdayWeights, computeProRataBudget, logBudgetDayDebug } from '@/lib/budget-day';
 import {
@@ -388,10 +388,8 @@ function loadPlanHoursFromStorage(year: number, month: number, keyFn: (k: string
       if (!empId) continue;
       // FE-markierte Einträge überspringen — konsistent mit loadDailyPlanDetails
       if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
-      const früh = calcSlotHours(ds?.früh);
-      const spät = calcSlotHours(ds?.spät);
-      const gross = früh + spät;
-      const net = Math.max(0, gross - resolveDayBreakHours(ds, gross));
+      // Netto via SSoT (Pause pro Einsatz abgezogen)
+      const net = calculateDayNetHours(ds);
       if (net > 0) out[empId] = (out[empId] ?? 0) + Math.round(net * 100) / 100;
     }
     return out;
@@ -1149,8 +1147,8 @@ function loadZusatzPlanDetails(
       if (typeof ds !== 'object' || !ds?.isAdditionalCostPlan) continue;
       const day = parseInt(date.slice(-2), 10);
       if (cutoffDay !== null && day > cutoffDay) continue;
-      const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
-      const net = Math.max(0, gross - resolveDayBreakHours(ds, gross));
+      // Netto via SSoT (Pause pro Einsatz abgezogen)
+      const net = calculateDayNetHours(ds);
       if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
     }
     return entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -1177,8 +1175,8 @@ function loadDailyPlanDetails(
       if (cutoffDay !== null && day > cutoffDay) continue;
       // Skip vacation-tagged entries — these are counted in ferien, not work
       if (ds?.frühAbsence === 'FE' || ds?.spätAbsence === 'FE') continue;
-      const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
-      const net   = Math.max(0, gross - resolveDayBreakHours(ds, gross));
+      // Netto via SSoT (Pause pro Einsatz abgezogen)
+      const net   = calculateDayNetHours(ds);
       if (net > 0) entries.push({ date, hours: Math.round(net * 100) / 100, cost: Math.round(net * wage * 100) / 100 });
     }
     return entries.sort((a, b) => a.date.localeCompare(b.date));
@@ -3343,7 +3341,8 @@ export default function PersonalFixPage() {
           const gross = calcSlotHours(ds?.früh) + calcSlotHours(ds?.spät);
           const st = shiftTimesAt(empId, date);
           st.planSlots = slots;
-          st.planBreakH = Math.round(resolveDayBreakHours(ds, gross) * 100) / 100;
+          // Effektive Pause = Brutto − Netto (SSoT, konsistent zu den Stunden)
+          st.planBreakH = Math.max(0, Math.round((gross - calculateDayNetHours(ds)) * 100) / 100);
         }
       }
     } catch { /* defekter Blob → keine Zeiten, nie raten */ }

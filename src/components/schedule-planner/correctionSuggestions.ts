@@ -1,6 +1,6 @@
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import type { SocialCostRates } from '@/lib/social-costs';
 
@@ -83,9 +83,12 @@ export function computeSuggestions(
     const hasS = sH > 0 && !ds.spätAbsence;
     if (!hasF && !hasS) return;
 
-    const gross = (hasF ? fH : 0) + (hasS ? sH : 0);
-    const breakD = resolveDayBreakHours(ds, gross);
-    const netH = Math.max(0, gross - breakD);
+    // Netto via SSoT: Absenz-Slots nicht mitzählen (Pause nie auf Absenzstunden)
+    const netH = calculateDayNetHours({
+      ...ds,
+      früh: hasF ? ds.früh : null,
+      spät: hasS ? ds.spät : null,
+    });
     // Kosten = Total Arbeitgeberkosten, nie roher hourlyWage
     const wage = getEffectiveHourlyRate(emp, rates) ?? 0;
     const cost = netH * wage;

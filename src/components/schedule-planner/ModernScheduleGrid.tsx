@@ -27,6 +27,7 @@ import { Employee } from '@/types/personnel';
 import { getEmployeeDisplayName } from '@/lib/personnel-utils';
 import { TimeInputCell } from './TimeInputCell';
 import { TimeSlot, DaySchedule } from './ScheduleGrid';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { PatternWarning } from '@/lib/pattern-warnings';
 import { buildAvailabilityMap } from '@/lib/availability-store';
 import { cn } from '@/lib/utils';
@@ -184,20 +185,13 @@ export function ModernScheduleGrid({
     weekdayIdx: getDay(day),
   })), [days, today]);
 
-  // Pre-compute total planned hours per day for header display
+  // Pre-compute total planned NET hours per day for header display
+  // (SSoT calculateDayNetHours — Pause pro Einsatz abgezogen, nie Brutto).
   const dayTotals = useMemo(() => {
-    const slotHours = (slot: TimeSlot | undefined): number => {
-      if (!slot?.start || !slot?.end) return 0;
-      const [sh, sm] = slot.start.split(':').map(Number);
-      const [eh, em] = slot.end.split(':').map(Number);
-      let diff = (eh * 60 + em) - (sh * 60 + sm);
-      if (diff < 0) diff += 1440;
-      return diff / 60;
-    };
     return dayMeta.reduce<Record<string, number>>((acc, { dateStr }) => {
       acc[dateStr] = employees.reduce((sum, emp) => {
         const ds: DaySchedule = scheduleData[`${emp.id}-${dateStr}`] || {};
-        return sum + slotHours(ds.früh ?? undefined) + slotHours(ds.spät ?? undefined);
+        return sum + calculateDayNetHours(ds);
       }, 0);
       return acc;
     }, {});
@@ -660,8 +654,8 @@ export function ModernScheduleGrid({
                                 v,
                               )
                             }
-                            onSplitTimeSelect={(sec) =>
-                              onSlotChange(employee.id, dateStr, secondarySlot, sec, null)
+                            onSplitTimeSelect={(sec, breakMin) =>
+                              onSlotChange(employee.id, dateStr, secondarySlot, sec, null, breakMin)
                             }
                             onClearSecondary={() =>
                               onSlotChange(employee.id, dateStr, secondarySlot, null, null)
@@ -788,18 +782,8 @@ export function ModernScheduleGrid({
 
               {/* Day totals */}
               {dayMeta.map(({ day, dateStr, isWknd, isSun, isToday }, idx) => {
-                const dayTotal = employees.reduce((sum, emp) => {
-                  const ds: DaySchedule = scheduleData[`${emp.id}-${dateStr}`] || {};
-                  const slotHours = (slot: TimeSlot | undefined): number => {
-                    if (!slot?.start || !slot?.end) return 0;
-                    const [sh, sm] = slot.start.split(':').map(Number);
-                    const [eh, em] = slot.end.split(':').map(Number);
-                    let diff = (eh * 60 + em) - (sh * 60 + sm);
-                    if (diff < 0) diff += 1440;
-                    return diff / 60;
-                  };
-                  return sum + slotHours(ds.früh ?? undefined) + slotHours(ds.spät ?? undefined);
-                }, 0);
+                // Netto-Tagestotal (SSoT calculateDayNetHours) — identisch zum Header
+                const dayTotal = dayTotals[dateStr] ?? 0;
 
                 return (
                   <td

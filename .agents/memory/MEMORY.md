@@ -41,3 +41,5 @@
 - [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.
 - [de-CH currency NBSP](de-ch-currency-nbsp.md) — locale currency output uses U+00A0 after "CHF"; strip the prefix with /CHF\s*/u, never a plain-space string replace.
 - [Schedule day-atomic saves](schedule-day-atomic-saves.md) — cell writes must send the WHOLE day via the per-key save queue; single-slot upserts race and lose the 2nd shift; coalescence only safe with full-day payloads.
+- [Split-Zellen primary/secondary swap](schedule-split-slot-swap.md) — leere Zelle rendert primarySlot='spät'; per-Slot-Payloads im Popover müssen der chronologischen Zeile folgen (Row 1→früh), nie dem primary-Mapping.
+- [UI-Tests auf geteilter Dev-DB](ui-test-shared-db.md) — Dienstplan-UI-Tests nur in Zukunftswochen mit wirklich leeren Zellen; Tester editieren sonst echte Plandaten; Cleanup als Verify-Schritt.

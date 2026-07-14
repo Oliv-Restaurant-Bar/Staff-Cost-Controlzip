@@ -101,7 +101,7 @@ import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useQuickTimes } from '@/hooks/useQuickTimes';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -1335,16 +1335,10 @@ const SchedulePlanner = () => {
     return Math.round(hours * 100) / 100;
   };
 
-  // Calculate total hours for a day (früh + spät) with break deduction
-  const calculateDayHours = (daySchedule: DaySchedule): number => {
-    const frühHours = calculateSlotHours(daySchedule.früh);
-    const spätHours = calculateSlotHours(daySchedule.spät);
-    const totalGross = frühHours + spätHours;
-    
-    // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
-    const breakDeduction = resolveDayBreakHours(daySchedule, totalGross);
-    return Math.round((totalGross - breakDeduction) * 100) / 100;
-  };
+  // Calculate total NET hours for a day (früh + spät) — SSoT calculateDayNetHours
+  // (Pause pro Einsatz abgezogen und je Einsatz auf 0 geclampt, sonst Legacy/Automatik).
+  const calculateDayHours = (daySchedule: DaySchedule): number =>
+    calculateDayNetHours(daySchedule);
 
   // Calculate hours per employee
   const calculateEmployeeHours = (employeeId: string): number => {
@@ -1980,12 +1974,9 @@ const SchedulePlanner = () => {
         end   = daySchedule.spät.end;
       }
     } else {
-      // Fallback: only the passed slot is available (should rarely happen)
-      const [sh, sm] = slot.start.split(':').map(Number);
-      const [eh, em] = slot.end.split(':').map(Number);
-      let h = eh - sh + (em - sm) / 60;
-      if (h < 0) h += 24;
-      hours = Math.round(h * 100) / 100;
+      // Fallback: only the passed slot is available (should rarely happen).
+      // Netto via SSoT (Automatik-Pausenregel, keine manuellen Pausen bekannt).
+      hours = calculateDayNetHours({ früh: slot });
       start = slot.start;
       end   = slot.end;
     }

@@ -83,6 +83,115 @@ export function resolveDayBreakHours(
   return resolveBreakHours(grossHours, ds?.breakMinutes ?? null);
 }
 
+// ── ZENTRALE Nettostunden-Berechnung (SSoT) ──────────────────────────────────
+//
+// ALLE Stunden- und Kostenpfade (Zellen, Tages-/Wochen-/Monatstotale, Kosten,
+// Exporte) müssen aus diesen Funktionen stammen — keine parallelen
+// Brutto-Berechnungen (Ende − Start ohne Pausenabzug) in Komponenten.
+
+/** Minimaler TimeSlot-Shape (Plan-Einsatz). */
+export interface TimeSlotLike {
+  start?: string | null;
+  end?: string | null;
+}
+
+/** Tagesplan-Shape für die Nettostunden-Berechnung. */
+export interface DayNetFields extends DayBreakFields {
+  früh?: TimeSlotLike | null;
+  spät?: TimeSlotLike | null;
+}
+
+const TIME_RE = /^\d{1,2}:\d{2}$/;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Bruttostunden EINES Einsatzes (Ende − Start, Mitternachts-Überlauf +24h).
+ * Leerer/unvollständiger Slot → 0. Ungültiges Zeitformat → 0 (defensiv).
+ */
+export function slotGrossHours(slot: TimeSlotLike | null | undefined): number {
+  if (!slot?.start || !slot?.end) return 0;
+  if (!TIME_RE.test(slot.start) || !TIME_RE.test(slot.end)) return 0;
+  const [sh, sm] = slot.start.split(':').map(Number);
+  const [eh, em] = slot.end.split(':').map(Number);
+  let hours = eh - sh + (em - sm) / 60;
+  if (hours < 0) hours += 24;
+  return round2(hours);
+}
+
+/**
+ * Nettostunden EINES Einsatzes: Ende − Start − Pause (nie unter 0).
+ * Ungültige oder unvollständige Zeitwerte → null (nie stillschweigend 0
+ * als „gearbeitete 0 Stunden" interpretieren).
+ */
+export function calculateNetShiftHours(args: {
+  startTime?: string | null;
+  endTime?: string | null;
+  breakMinutes?: number | null;
+}): number | null {
+  const { startTime, endTime, breakMinutes } = args;
+  if (!startTime || !endTime) return null;
+  if (!TIME_RE.test(startTime) || !TIME_RE.test(endTime)) return null;
+  const gross = slotGrossHours({ start: startTime, end: endTime });
+  return round2(Math.max(0, gross - (breakMinutes ?? 0) / 60));
+}
+
+/**
+ * ZENTRALE Tages-Nettostunden (SSoT): Summe der Netto-Einsatzstunden.
+ *
+ * - Mindestens EINE Einsatz-Pause manuell gesetzt → jede Pause wird von
+ *   IHREM Einsatz abgezogen und PRO EINSATZ auf 0 geclampt
+ *   (netto = max(0, brutto1 − p1) + max(0, brutto2 − p2)).
+ * - Sonst Legacy-Tages-Pause bzw. Automatik (>9h Tages-Brutto → 30 Min)
+ *   über resolveDayBreakHours, auf Tagesebene abgezogen (nie unter 0).
+ *
+ * Gilt NUR für gearbeitete Stunden — Absenzstunden laufen nicht hier durch.
+ */
+export function calculateDayNetHours(ds: DayNetFields | null | undefined): number {
+  if (!ds) return 0;
+  const g1 = slotGrossHours(ds.früh);
+  const g2 = slotGrossHours(ds.spät);
+  if (ds.fruehBreakMinutes != null || ds.spaetBreakMinutes != null) {
+    const n1 = Math.max(0, g1 - (ds.fruehBreakMinutes ?? 0) / 60);
+    const n2 = Math.max(0, g2 - (ds.spaetBreakMinutes ?? 0) / 60);
+    return round2(n1 + n2);
+  }
+  const gross = g1 + g2;
+  if (gross <= 0) return 0;
+  return round2(Math.max(0, gross - resolveDayBreakHours(ds, gross)));
+}
+
+/**
+ * ZENTRALE Netto-Aufteilung pro Einsatz (SSoT-Ergänzung zu calculateDayNetHours):
+ * liefert die Nettostunden je Einsatz, so dass frühNet + spätNet exakt dem
+ * Tages-Netto aus calculateDayNetHours entspricht.
+ *
+ * - Manuelle Einsatz-Pausen → jede Pause von IHREM Einsatz, pro Einsatz geclampt.
+ * - Sonst Legacy/Automatik-Tagespause proportional zum Brutto aufgeteilt.
+ */
+export function calculateDaySlotNetHours(
+  ds: DayNetFields | null | undefined,
+): { frühNet: number; spätNet: number } {
+  if (!ds) return { frühNet: 0, spätNet: 0 };
+  const g1 = slotGrossHours(ds.früh);
+  const g2 = slotGrossHours(ds.spät);
+  if (ds.fruehBreakMinutes != null || ds.spaetBreakMinutes != null) {
+    return {
+      frühNet: round2(Math.max(0, g1 - (ds.fruehBreakMinutes ?? 0) / 60)),
+      spätNet: round2(Math.max(0, g2 - (ds.spaetBreakMinutes ?? 0) / 60)),
+    };
+  }
+  const gross = g1 + g2;
+  if (gross <= 0) return { frühNet: 0, spätNet: 0 };
+  const breakDeduction = resolveDayBreakHours(ds, gross);
+  return {
+    frühNet: round2(Math.max(0, g1 - breakDeduction * (g1 / gross))),
+    spätNet: round2(Math.max(0, g2 - breakDeduction * (g2 / gross))),
+  };
+}
+
 // Calculate effective hours with break deduction
 export function calculateEffectiveHours(start: string, end: string, start2?: string, end2?: string): number {
   const parseTime = (time: string): number => {

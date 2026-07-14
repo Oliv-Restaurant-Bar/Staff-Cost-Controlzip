@@ -54,7 +54,10 @@ interface TimeInputCellProps {
   onCellColorChange?: (color: string | null) => void;
   onCopyToIst?: (slot: TimeSlot) => void;
   /** Called when user sets a 2nd shift — writes into the OTHER slot (null = clear it) */
-  onSplitTimeSelect?: (secondary: TimeSlot | null) => void;
+  // breakMinutes: undefined = Pause unverändert, number = manueller Wert für den
+  // sekundären Slot (2. Einsatz) — reitet auf dem Zeit-Commit mit, damit die Pause
+  // nicht über einen separaten Flush mit veralteten Props verloren geht.
+  onSplitTimeSelect?: (secondary: TimeSlot | null, breakMinutes?: number | null) => void;
   /** Called when the primary "Löschen" should also clear the secondary slot */
   onClearSecondary?: () => void;
   /** Fixlohn-MA (Vollzeit/Teilzeit mit Monatslohn): zeigt Zusatzkosten-Checkbox */
@@ -702,6 +705,15 @@ export const TimeInputCell = ({
     return selBreak;
   };
 
+  // Analog für die Pause des 2. Einsatzes: wird dem onSplitTimeSelect-Commit
+  // mitgegeben (der Close-Flush prüft secondaryValue?.start — bei einem frisch
+  // angelegten Split-Eintrag ist die Prop noch leer und die Pause ginge verloren).
+  const takeBreak2Arg = (): number | null | undefined => {
+    if (!break2Dirty.current) return undefined;
+    break2Dirty.current = false;
+    return selBreak2;
+  };
+
   // Drop-in replacement for setOpen(false) that also flushes the flag.
   const closePopover = () => {
     flushAdditionalCostPlan();
@@ -752,11 +764,13 @@ export const TimeInputCell = ({
       // müssen die Blöcke getauscht werden: secondary-Callback → früh, onChange → spät.
       if (slotType === 'früh') {
         onChange({ start: preset.start, end: preset.end }, null, takeBreakArg());
-        onSplitTimeSelect?.({ start: preset.start2, end: preset.end2 });
+        onSplitTimeSelect?.({ start: preset.start2, end: preset.end2 }, takeBreak2Arg());
       } else {
         // primarySlot ist 'spät' → secondary (früh) bekommt den 1. Block, primary (spät) den 2.
-        onSplitTimeSelect?.({ start: preset.start, end: preset.end });
-        onChange({ start: preset.start2, end: preset.end2 }, null, takeBreakArg());
+        // Pausen folgen den ZEITEN (Row 1 → früh, Row 2 → spät), nicht dem Slot-Mapping:
+        // "Pause 1. Einsatz" (selBreak) gehört zu Row 1 → hier zum secondary/früh-Commit.
+        onSplitTimeSelect?.({ start: preset.start, end: preset.end }, takeBreakArg());
+        onChange({ start: preset.start2, end: preset.end2 }, null, takeBreak2Arg());
       }
     } else {
       onChange({ start: preset.start, end: preset.end }, null, takeBreakArg());
@@ -811,10 +825,12 @@ export const TimeInputCell = ({
       // secondary-Callback (→ früh) bekommt Row 1, onChange (→ spät) bekommt Row 2.
       if (slotType === 'früh') {
         onChange({ start: ns, end: ne }, null, takeBreakArg());
-        if (onSplitTimeSelect) onSplitTimeSelect({ start: ns2, end: ne2 });
+        if (onSplitTimeSelect) onSplitTimeSelect({ start: ns2, end: ne2 }, takeBreak2Arg());
       } else {
-        if (onSplitTimeSelect) onSplitTimeSelect({ start: ns, end: ne });
-        onChange({ start: ns2, end: ne2 }, null, takeBreakArg());
+        // Pausen folgen den ZEITEN: Row 1 ("Pause 1. Einsatz", selBreak) → früh/secondary,
+        // Row 2 ("Pause 2. Einsatz", selBreak2) → spät/primary — sonst kreuzweise vertauscht.
+        if (onSplitTimeSelect) onSplitTimeSelect({ start: ns, end: ne }, takeBreakArg());
+        onChange({ start: ns2, end: ne2 }, null, takeBreak2Arg());
       }
       if (copyToIst && onCopyToIst) {
         onCopyToIst({ start: ns, end: ne });
@@ -1130,8 +1146,15 @@ export const TimeInputCell = ({
 
                 {/* ════ PAUSE (pro Einsatz) ═══════════════════════════ */}
                 {!absenceType && (() => {
-                  const hasSecond = !!(secondaryValue?.start && secondaryValue?.end);
-                  const dayGross = slotGrossHours(value) + slotGrossHours(secondaryValue);
+                  // Lokale (noch nicht committete) Zeiten bevorzugen — sonst erscheint
+                  // die Radiogruppe "2. Einsatz" bei einem frisch eingetippten Split
+                  // erst nach dem Speichern/Wiederöffnen (Props sind noch leer).
+                  const l1s = parseTimeStr(selStart), l1e = parseTimeStr(selEnd);
+                  const l2s = parseTimeStr(selStart2), l2e = parseTimeStr(selEnd2);
+                  const slot1 = l1s && l1e ? { start: l1s, end: l1e } : value;
+                  const slot2 = l2s && l2e ? { start: l2s, end: l2e } : secondaryValue;
+                  const hasSecond = !!(slot2?.start && slot2?.end);
+                  const dayGross = slotGrossHours(slot1) + slotGrossHours(slot2);
                   // Automatik gilt pro TAG (>9h → 30 Min) und wird dem 1. Einsatz
                   // zugerechnet, solange KEINE Einsatz-Pause manuell gesetzt ist
                   // (spiegelt resolveDayBreakHours: manuell ersetzt Automatik komplett).

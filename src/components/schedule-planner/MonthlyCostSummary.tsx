@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { Euro, TrendingUp, TrendingDown, Users, Clock, Download, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
@@ -75,11 +75,8 @@ export const MonthlyCostSummary = ({
         const daySchedule = scheduleData[cellKey];
         
         if (daySchedule) {
-          const frühHours = calculateSlotHours(daySchedule.früh);
-          const spätHours = calculateSlotHours(daySchedule.spät);
-          const dayHours = frühHours + spätHours;
-          const breakDeduction = resolveDayBreakHours(daySchedule, dayHours);
-          const netHours = dayHours - breakDeduction;
+          // Netto via SSoT (Pause pro Einsatz abgezogen)
+          const netHours = calculateDayNetHours(daySchedule);
           
           totalHours += netHours;
           const rate = rateById.get(emp.id);
@@ -132,11 +129,8 @@ export const MonthlyCostSummary = ({
           const daySchedule = scheduleData[cellKey];
           
           if (daySchedule) {
-            const frühHours = calculateSlotHours(daySchedule.früh);
-            const spätHours = calculateSlotHours(daySchedule.spät);
-            const dayHours = frühHours + spätHours;
-            const breakDeduction = resolveDayBreakHours(daySchedule, dayHours);
-            const netHours = dayHours - breakDeduction;
+            // Netto via SSoT (Pause pro Einsatz abgezogen)
+            const netHours = calculateDayNetHours(daySchedule);
             
             weekHours += netHours;
             const rate = rateById.get(emp.id);
@@ -237,10 +231,8 @@ export const MonthlyCostSummary = ({
         const daySchedule = scheduleData[cellKey];
         
         if (daySchedule) {
-          const frühHours = calculateSlotHours(daySchedule.früh);
-          const spätHours = calculateSlotHours(daySchedule.spät);
-          const gross = frühHours + spätHours;
-          const net = gross - resolveDayBreakHours(daySchedule, gross);
+          // Netto via SSoT (Pause pro Einsatz abgezogen)
+          const net = calculateDayNetHours(daySchedule);
           
           dayHours += net;
           const rate = rateById.get(emp.id);

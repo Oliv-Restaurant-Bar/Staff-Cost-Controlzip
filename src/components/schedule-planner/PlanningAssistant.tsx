@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { resolveDayBreakHours } from '@/hooks/useShiftConfig';
+import { calculateDayNetHours, calculateDaySlotNetHours } from '@/hooks/useShiftConfig';
 import {
   buildHourBalances,
   fmtBalanceHours,
@@ -93,8 +93,8 @@ function getMonthHours(empId: string, days: Date[], data: Record<string, DaySche
   return days.reduce((s, day) => {
     const ds = data[`${empId}-${format(day, 'yyyy-MM-dd')}`];
     if (!ds) return s;
-    const gross = calcSlotHours(ds.früh) + calcSlotHours(ds.spät);
-    return s + Math.max(0, gross - resolveDayBreakHours(ds, gross));
+    // Netto via SSoT (Pause pro Einsatz abgezogen)
+    return s + calculateDayNetHours(ds);
   }, 0);
 }
 
@@ -705,9 +705,8 @@ export default function PlanningAssistant({
         const sh = slotHours(ds.spät);
         const gross = fh + sh;
         if (gross === 0) continue;
-        const br = resolveDayBreakHours(ds, gross);
-        const fNet = Math.max(0, fh - br * (fh / gross));
-        const sNet = Math.max(0, sh - br * (sh / gross));
+        // Netto-Aufteilung pro Einsatz via SSoT
+        const { frühNet: fNet, spätNet: sNet } = calculateDaySlotNetHours(ds);
         const fCost = fNet * (rateById.get(emp.id) ?? 0);
         const sCost = sNet * (rateById.get(emp.id) ?? 0);
         frühTotal += fCost;
