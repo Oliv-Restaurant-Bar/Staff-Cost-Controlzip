@@ -1,0 +1,288 @@
+Führe jetzt Stabilisierungsrunde 2.4 durch:
+
+Teste die kritischen Budget-, Reporting- und Persistenzpfade über die echten App-Einstiege und nicht nur über isolierte Store-Funktionen.
+
+WICHTIG:
+
+Keine neue Funktion entwickeln.
+Keine UI-Neugestaltung.
+Keine Rundungsänderung.
+Kein generischer safeBlobUpsert.
+Keine Änderung der fachlichen Berechnungen.
+
+Ziel:
+
+Die bereits implementierten Sicherheitsregeln müssen über dieselben Komponenten, Hooks und Seiten getestet werden, welche die Anwendung tatsächlich verwendet.
+
+==================================================
+T001 – Echte Einstiegspfade bestimmen
+==================================================
+
+Identifiziere für Budget und angrenzende Finanzansichten die echten Einstiegspfade:
+
+- Budget-Seite
+- loadBudgetWithPL
+- zugehörige Hooks
+- Reporting-Seite
+- Erfolgsrechnung
+- Management Report
+- Bankenbericht
+- Dashboard-Konsumenten
+- Import-Cockpit und Import-Checkliste
+- TenantContext
+- Auth-/Rollen-Kontext, soweit für das Laden relevant
+
+Dokumentiere intern:
+
+- welche Komponente oder welcher Hook den Store tatsächlich aufruft
+- welche Ladeeffekte beim Mounten laufen
+- welche Persistenzpfade durch Benutzeraktionen ausgelöst werden
+- welche Seiten denselben Budget-Ladepfad indirekt verwenden
+
+==================================================
+T002 – App-Level-Tests Budget laden
+==================================================
+
+Ergänze Komponenten- oder Hook-Tests über den echten App-Einstieg.
+
+Mindestens:
+
+1. Budget-Seite öffnen, lokal und remote leer:
+   - View-Seed sichtbar
+   - Hinweis „noch nicht gespeichert“
+   - kein localStorage-Write
+   - kein Supabase-Write
+   - kein Importstatus „vorhanden“
+
+2. Budget-Seite öffnen, remote echtes Budget vorhanden:
+   - Remote-Werte sichtbar
+   - kein Seed
+   - kein Re-Save
+   - updatedAt unverändert
+
+3. Seite mehrfach mounten oder zwischen Tabs wechseln:
+   - keine zusätzlichen Writes
+   - keine Zeitstempeländerung
+   - keine Dubletten
+
+4. Budget öffnen und ohne Änderung auf Speichern klicken:
+   - kein KV-Write
+   - neutraler Hinweis statt falscher Erfolgsmeldung
+
+5. Budgetwert ändern und speichern:
+   - genau ein Write
+   - updatedAt genau einmal neu
+   - richtige Tenant-ID
+   - andere Jahre unverändert
+
+==================================================
+T003 – Zwei-Geräte-Szenarien auf App-Ebene
+==================================================
+
+Simuliere über den echten Einstieg:
+
+### Gerät A
+
+- lädt Budget
+- ändert 2027
+- speichert erfolgreich remote
+
+### Gerät B
+
+- besitzt veralteten localStorage-Stand
+- öffnet Budget nur
+- wechselt auf Reporting und zurück
+- speichert nicht
+
+Erwartung:
+
+- kein Write von Gerät B
+- Remote-Stand von Gerät A bleibt byte-identisch
+- Gerät B zeigt nach Sync den neueren Stand
+- updatedAt bleibt unverändert
+
+Zusätzlich:
+
+- Gerät B klickt ohne Änderung auf Speichern
+- auch dann darf der neuere Remote-Stand nicht überschrieben werden
+
+==================================================
+T004 – Tenant-Interleaving Oliv und Beaulieu
+==================================================
+
+Teste reale Wechsel zwischen den Mandanten:
+
+1. Oliv öffnen und Budget laden.
+2. Während ein Lese- oder Speicherprozess läuft, auf Beaulieu wechseln.
+3. Beaulieu-Werte ändern und speichern.
+4. Zurück zu Oliv wechseln.
+
+Erwartung:
+
+- kein Cross-Tenant-Write
+- keine veraltete Antwort überschreibt den neuen Tenant-State
+- Oliv- und Beaulieu-Keys bleiben getrennt
+- Warteschlangen oder Caches dürfen Mandanten nicht vermischen
+- UI zeigt nach Tenant-Wechsel keine Werte des vorherigen Betriebs
+
+Teste auch die umgekehrte Reihenfolge.
+
+==================================================
+T005 – Tombstone-Szenarien auf App-Ebene
+==================================================
+
+Teste:
+
+1. Gerät A löscht ein Budgetjahr.
+2. Gerät B besitzt einen alten aktiven Stand.
+3. Gerät B öffnet die Budget-Seite.
+
+Erwartung:
+
+- Jahr bleibt gelöscht
+- kein Auto-Seed persistiert
+- kein alter Stand wird hochgeladen
+- Import-Cockpit und Checkliste zeigen das Jahr als nicht vorhanden
+
+Danach:
+
+4. Benutzer legt das Jahr bewusst neu an und speichert.
+
+Erwartung:
+
+- neue aktive Version erhält neueres updatedAt
+- alter Tombstone wird korrekt verdrängt
+- andere Jahre bleiben unverändert
+
+==================================================
+T006 – Navigation und ungespeicherte Änderungen
+==================================================
+
+Prüfe den echten Ablauf:
+
+- Budgetwert ändern
+- Seite oder Tenant wechseln
+- zurück navigieren
+- Browser-Reload
+- Tab schliessen, soweit testbar
+
+Sicherstellen:
+
+- bestehender Dirty-State funktioniert korrekt
+- keine Änderung wird automatisch gespeichert
+- keine Änderung wird still verworfen, falls die UI bereits einen Schutz vorsieht
+- ein View-Seed ohne Bearbeitung erzeugt keinen Dirty-State
+- nach erfolgreichem Save ist der Dirty-State sauber zurückgesetzt
+
+Keine neue Warnlogik erfinden, wenn dafür bereits ein bestehendes Muster vorhanden ist.
+
+==================================================
+T007 – Importstatus und Leser über echte Seiten
+==================================================
+
+Teste über die echten Komponenten:
+
+- Import-Cockpit
+- Import-Checkliste
+- Dashboard-/Startübersicht, sofern Budgetstatus dort sichtbar ist
+
+Fälle:
+
+- nur View-Seed vorhanden → Budget gilt nicht als importiert
+- echtes Budget vorhanden → Status korrekt
+- Tombstone vorhanden → Budget gilt nicht als vorhanden
+- bewusste Neuanlage → Status aktualisiert sich korrekt
+- Tenant-Wechsel → richtiger Status pro Betrieb
+
+==================================================
+T008 – Race- und Stale-Response-Tests
+==================================================
+
+Ergänze kontrollierte Tests für:
+
+- langsamer Oliv-Load, danach Wechsel zu Beaulieu
+- verspätete Oliv-Antwort darf Beaulieu-State nicht überschreiben
+- zwei schnelle Save-Klicks erzeugen keine widersprüchlichen Writes
+- älterer Save-Response darf neueren bestätigten Stand nicht zurücksetzen
+- Retry liest immer den aktuellsten lokalen Stand
+- globale oder geteilte Queue vermischt keine Tenant-Keys
+
+Verwende deterministische Mocks und kontrollierbare Promises.
+
+Keine zeitabhängigen, instabilen Tests.
+
+==================================================
+T009 – Bestehende Store-Tests beibehalten
+==================================================
+
+Die neuen App-Level-Tests ergänzen die bestehenden Store-Tests.
+
+Sie ersetzen sie nicht.
+
+Weiterhin absichern:
+
+- Dirty-Check
+- Tombstones
+- updatedAt
+- View-Seed
+- KV-Merge
+- Cross-Jahr-Schutz
+- Tenant-Trennung
+
+==================================================
+T010 – Verifikation
+==================================================
+
+Führe aus:
+
+- neue Komponenten-/Hook-Tests
+- bestehende Budget-Load-Path-Tests
+- Budget-KV-Tests
+- Tombstone-Tests
+- Tenant-Tests
+- Importstatus-Tests
+- projektspezifischen TypeScript-Typecheck
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+Prüfe zusätzlich:
+
+- keine produktive Logik wurde nur für die Tests verändert
+- Tests verwenden dieselben öffentlichen Einstiegspunkte wie die App
+- keine Assertions greifen direkt auf interne Implementierungsdetails zu, wenn öffentliches Verhalten geprüft werden kann
+
+==================================================
+T011 – Dokumentation
+==================================================
+
+replit.md nur aktualisieren, falls eine dauerhaft gültige Test- oder Architekturregel ergänzt werden muss:
+
+- kritische Persistenzpfade werden auch über echte App-Einstiege getestet
+- Zwei-Geräte-, Tenant-Wechsel- und stale-response-Szenarien sind Regressionen
+- reine Store-Tests allein gelten nicht als ausreichende Absicherung
+
+Keine Testzahlen.
+Kein Entwicklungsprotokoll.
+
+==================================================
+Abschlussbericht
+==================================================
+
+Am Ende ausgeben:
+
+1. Welche echten Einstiegspfade identifiziert wurden.
+2. Welche Seiten und Hooks jetzt getestet sind.
+3. Ergebnis des Gerät-A/Gerät-B-App-Tests.
+4. Ergebnis der Tenant-Interleaving-Tests.
+5. Ergebnis der Tombstone-App-Tests.
+6. Ergebnis der Race-/stale-response-Tests.
+7. Ob Import-Cockpit und Checkliste korrekt reagieren.
+8. Welche bisherige Testlücke geschlossen wurde.
+9. Typecheck-Ergebnis.
+10. Architect-Review-Ergebnis.
+11. Tatsächlich geänderte Dateien.
+
+WICHTIG:
+
+Diese Runde soll keine neue Fachlogik erzeugen.
+
+Sie soll beweisen, dass die bereits implementierte Datensicherheit auch über die tatsächlichen App-Einstiege funktioniert.

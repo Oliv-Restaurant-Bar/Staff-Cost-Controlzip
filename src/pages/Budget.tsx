@@ -244,7 +244,15 @@ function BudgetContent() {
       && budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
     if (hasData) return;
     console.log(`[BUDGET-SYNC] localStorage leer für storeKey="${storeKey}" – versuche Supabase-Sync`);
+    // Stale-Guard (replit.md §2): Nach Tenant-/Jahr-Wechsel läuft dieser Effekt
+    // neu — eine verspätete Antwort des ALTEN Laufs darf den State nicht mehr
+    // setzen, sonst landen z. B. Oliv-Daten im Beaulieu-UI.
+    let cancelled = false;
     syncBudgetFromSupabase(selectedYear, storeKey).then(remoteBudget => {
+      if (cancelled) {
+        console.log(`[BUDGET-SYNC] Verspätete Antwort für storeKey="${storeKey}" verworfen (Tenant/Jahr gewechselt)`);
+        return;
+      }
       if (remoteBudget) {
         console.log(`[BUDGET-SYNC] Supabase-Daten geladen – Budget wird neu gerendert`);
         reload(selectedYear);
@@ -252,6 +260,7 @@ function BudgetContent() {
         console.log(`[BUDGET-SYNC] Keine Daten in Supabase – Budget bleibt leer (seedBeaulieuBudget2026 ausführen)`);
       }
     });
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, selectedYear]);
 
