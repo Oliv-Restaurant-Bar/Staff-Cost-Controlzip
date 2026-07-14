@@ -40,6 +40,8 @@ export interface CopiedCell {
   primary: { start: string; end: string } | null;
   secondary: { start: string; end: string } | null;
   absence: string | null;
+  /** Manuelle Tages-Pause in Minuten (null = Automatik) — wird mitkopiert */
+  breakMinutes?: number | null;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -63,6 +65,7 @@ export interface ModernScheduleGridProps {
     slotType: 'früh' | 'spät',
     value: TimeSlot | null,
     absenceType?: string | null,
+    breakMinutes?: number | null,
   ) => void;
   getEmployeeHours: (employeeId: string) => number;
   getTargetHours: (employee: Employee) => number;
@@ -624,11 +627,20 @@ export function ModernScheduleGrid({
                           <TimeInputCell
                             value={daySchedule[primarySlot] ?? null}
                             absenceType={primaryAbsence}
-                            onChange={(val, absence) =>
-                              onSlotChange(employee.id, dateStr, primarySlot, val, absence)
+                            onChange={(val, absence, breakMin) =>
+                              onSlotChange(employee.id, dateStr, primarySlot, val, absence, breakMin)
                             }
                             slotType={primarySlot}
                             secondaryValue={daySchedule[secondarySlot] ?? null}
+                            breakMinutes={daySchedule.breakMinutes ?? null}
+                            onBreakMinutesChange={(v) =>
+                              onSlotChange(
+                                employee.id, dateStr, primarySlot,
+                                daySchedule[primarySlot] ?? null,
+                                (primarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
+                                v,
+                              )
+                            }
                             onSplitTimeSelect={(sec) =>
                               onSlotChange(employee.id, dateStr, secondarySlot, sec, null)
                             }

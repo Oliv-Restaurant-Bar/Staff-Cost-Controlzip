@@ -14,7 +14,7 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,19 +45,20 @@ function timeToMin(t: string): number {
   return h * 60 + (m || 0);
 }
 
-function slotNetHours(
+function slotGrossHours(
   slot: { start: string; end: string } | null | undefined,
 ): number {
   if (!slot?.start || !slot?.end) return 0;
   const gross = (timeToMin(slot.end) - timeToMin(slot.start)) / 60;
-  if (gross <= 0) return 0;
-  return gross - calculateBreakDeduction(gross);
+  return gross > 0 ? gross : 0;
 }
 
 function dayTotalHours(ds: DaySchedule | null): number {
   if (!ds) return 0;
-  return (ds.frühAbsence ? 0 : slotNetHours(ds.früh)) +
-         (ds.spätAbsence ? 0 : slotNetHours(ds.spät));
+  const gross = (ds.frühAbsence ? 0 : slotGrossHours(ds.früh)) +
+                (ds.spätAbsence ? 0 : slotGrossHours(ds.spät));
+  if (gross <= 0) return 0;
+  return Math.max(0, gross - resolveBreakHours(gross, ds.breakMinutes));
 }
 
 function isWorking(ds: DaySchedule | null): boolean {
@@ -66,18 +67,18 @@ function isWorking(ds: DaySchedule | null): boolean {
 
 function hasLate(ds: DaySchedule | null): boolean {
   if (!ds || ds.spätAbsence) return false;
-  return slotNetHours(ds.spät) > 0;
+  return slotGrossHours(ds.spät) > 0;
 }
 
 function lastEnd(ds: DaySchedule | null): string | null {
   if (!ds) return null;
   let latestMin = -1;
   let result: string | null = null;
-  if (!ds.spätAbsence && ds.spät?.end && slotNetHours(ds.spät) > 0) {
+  if (!ds.spätAbsence && ds.spät?.end && slotGrossHours(ds.spät) > 0) {
     const m = timeToMin(ds.spät.end);
     if (m > latestMin) { latestMin = m; result = ds.spät.end; }
   }
-  if (!ds.frühAbsence && ds.früh?.end && slotNetHours(ds.früh) > 0) {
+  if (!ds.frühAbsence && ds.früh?.end && slotGrossHours(ds.früh) > 0) {
     const m = timeToMin(ds.früh.end);
     if (m > latestMin) { latestMin = m; result = ds.früh.end; }
   }
@@ -88,11 +89,11 @@ function firstStart(ds: DaySchedule | null): string | null {
   if (!ds) return null;
   let earliestMin = Infinity;
   let result: string | null = null;
-  if (!ds.frühAbsence && ds.früh?.start && slotNetHours(ds.früh) > 0) {
+  if (!ds.frühAbsence && ds.früh?.start && slotGrossHours(ds.früh) > 0) {
     const m = timeToMin(ds.früh.start);
     if (m < earliestMin) { earliestMin = m; result = ds.früh.start; }
   }
-  if (!ds.spätAbsence && ds.spät?.start && slotNetHours(ds.spät) > 0) {
+  if (!ds.spätAbsence && ds.spät?.start && slotGrossHours(ds.spät) > 0) {
     const m = timeToMin(ds.spät.start);
     if (m < earliestMin) { earliestMin = m; result = ds.spät.start; }
   }

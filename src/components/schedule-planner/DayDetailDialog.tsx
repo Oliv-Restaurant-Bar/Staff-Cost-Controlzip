@@ -11,7 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Clock, Users, TrendingUp, Pencil, RotateCcw, Check, X, AlertTriangle, Lightbulb, Palmtree, Stethoscope, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import {
   isFixedEmployee, isVariableEmployee, absenceKind, SKIP_CODES, netHoursFromSchedule,
 } from '@/lib/absence-utils';
@@ -50,7 +50,7 @@ const calculateDayHours = (daySchedule: DaySchedule): number => {
   const frühHours = calculateSlotHours(daySchedule.früh);
   const spätHours = calculateSlotHours(daySchedule.spät);
   const totalGross = frühHours + spätHours;
-  const breakDeduction = calculateBreakDeduction(totalGross);
+  const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
   return Math.round((totalGross - breakDeduction) * 100) / 100;
 };
 
@@ -166,7 +166,7 @@ export const DayDetailDialog = ({
     const spätH = calculateSlotHours(ds.spät);
     const gross = frühH + spätH;
     if (gross === 0) return;
-    const breakDeduction = calculateBreakDeduction(gross);
+    const breakDeduction = resolveBreakHours(gross, ds.breakMinutes);
     const net = Math.max(0, gross - breakDeduction);
     totalPlannedCost += net * agRate(emp);
 

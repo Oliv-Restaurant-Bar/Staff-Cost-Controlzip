@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { format, getDay, startOfWeek, endOfWeek, eachWeekOfInterval, isSameWeek, startOfMonth, endOfMonth, eachDayOfInterval, isWithinInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { useShiftConfig, calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { useShiftConfig, resolveBreakHours } from '@/hooks/useShiftConfig';
 import { Employee, Department } from '@/types/personnel';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -76,7 +76,7 @@ export const PrintScheduleDialog = ({
     const frühHours = calculateSlotHours(daySchedule.früh);
     const spätHours = calculateSlotHours(daySchedule.spät);
     const totalGross = frühHours + spätHours;
-    const breakDeduction = calculateBreakDeduction(totalGross);
+    const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
     return Math.round((totalGross - breakDeduction) * 100) / 100;
   };
 

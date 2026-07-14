@@ -4,7 +4,7 @@
  * Used by: AbsenzKosten, DayDetailDialog, Dashboard, Reporting.
  */
 
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import type { Employee } from '@/types/personnel';
 import type { DaySchedule } from '@/lib/supabase-db';
 
@@ -119,7 +119,7 @@ export function slotHours(slot: { start: string; end: string } | null | undefine
 
 export function netHoursFromSchedule(ds: DaySchedule): number {
   const gross = slotHours(ds.früh) + slotHours(ds.spät);
-  return gross > 0 ? Math.max(0, gross - calculateBreakDeduction(gross)) : 0;
+  return gross > 0 ? Math.max(0, gross - resolveBreakHours(gross, ds.breakMinutes)) : 0;
 }
 
 export function plannedHoursFor(emp: Employee): number {

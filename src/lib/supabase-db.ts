@@ -15,6 +15,8 @@ export interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
+  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  breakMinutes?: number | null;
 }
 
 export interface ActualHourEntry {
@@ -811,6 +813,7 @@ export async function loadScheduleForMonth(month: Date, tenantId?: TenantId): Pr
         frühAbsence: row.frueh_absence ?? null,
         spätAbsence: row.spaet_absence ?? null,
         ...(row.is_additional_cost_plan ? { isAdditionalCostPlan: true } : {}),
+        ...(row.break_minutes != null ? { breakMinutes: row.break_minutes } : {}),
       };
     }
     return result;
@@ -846,18 +849,27 @@ export async function saveScheduleEntry(
         spaet_end: schedule?.spät?.end ?? null,
         spaet_absence: schedule?.spätAbsence ?? null,
       };
+      const withZk = { ...basePayload, is_additional_cost_plan: schedule?.isAdditionalCostPlan ?? false };
       const { error } = await supabase.from('schedule_entries').upsert(
-        { ...basePayload, is_additional_cost_plan: schedule?.isAdditionalCostPlan ?? false },
+        { ...withZk, break_minutes: schedule?.breakMinutes ?? null },
         { onConflict: 'employee_id,date' },
       );
       if (error) {
-        // Migration 20260604 evtl. noch nicht ausgeführt → Retry ohne Spalte
-        console.warn('[supabase-db] saveScheduleEntry mit is_additional_cost_plan fehlgeschlagen, retry ohne Spalte:', error.message);
-        const { error: err2 } = await supabase.from('schedule_entries').upsert(
-          basePayload,
+        // Migration 20260714 (break_minutes) evtl. noch nicht ausgeführt → Retry ohne Spalte
+        console.warn('[supabase-db] saveScheduleEntry mit break_minutes fehlgeschlagen, retry ohne Spalte:', error.message);
+        const { error: errZk } = await supabase.from('schedule_entries').upsert(
+          withZk,
           { onConflict: 'employee_id,date' },
         );
-        if (err2) console.error('[supabase-db] saveScheduleEntry retry fehlgeschlagen:', err2.message);
+        if (errZk) {
+          // Migration 20260604 (is_additional_cost_plan) evtl. auch nicht ausgeführt → Retry nur Basis
+          console.warn('[supabase-db] saveScheduleEntry mit is_additional_cost_plan fehlgeschlagen, retry ohne Spalte:', errZk.message);
+          const { error: err2 } = await supabase.from('schedule_entries').upsert(
+            basePayload,
+            { onConflict: 'employee_id,date' },
+          );
+          if (err2) console.error('[supabase-db] saveScheduleEntry retry fehlgeschlagen:', err2.message);
+        }
       }
     }
   } catch (e) {
@@ -901,6 +913,7 @@ export async function saveFullScheduleForMonth(
       spaet_end:    s.spät?.end     ?? null,
       spaet_absence: s.spätAbsence  ?? null,
       is_additional_cost_plan: s.isAdditionalCostPlan ?? false,
+      break_minutes: s.breakMinutes ?? null,
     }));
 
   console.log(`[SCHEDULE] save start – month=${monthKey} payload=${rows.length} rows`);
@@ -911,9 +924,19 @@ export async function saveFullScheduleForMonth(
   }
 
   try {
-    const { error } = await supabase
+    let { error } = await supabase
       .from('schedule_entries')
       .upsert(rows, { onConflict: 'employee_id,date' });
+
+    if (error && /break_minutes/i.test(error.message)) {
+      // Migration 20260714 (break_minutes) evtl. noch nicht ausgeführt → Retry ohne Spalte.
+      // Bewusst NUR bei Spalten-Fehler — sonst würde ein transienter Fehler still Pausen verwerfen.
+      console.warn(`[SCHEDULE] bulk save mit break_minutes fehlgeschlagen, retry ohne Spalte: ${error.message}`);
+      const rowsWithoutBreak = rows.map(({ break_minutes: _bm, ...rest }) => rest);
+      ({ error } = await supabase
+        .from('schedule_entries')
+        .upsert(rowsWithoutBreak, { onConflict: 'employee_id,date' }));
+    }
 
     if (error) {
       console.error(`[SCHEDULE] save error – ${error.message}`, error);

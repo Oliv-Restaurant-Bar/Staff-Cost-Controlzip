@@ -5,7 +5,7 @@ import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { toast } from 'sonner';
 import { upsertAllEmployees } from '@/lib/supabase-db';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, eachMonthOfInterval, subMonths, addMonths } from 'date-fns';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import { supabase } from '@/integrations/supabase/client';
 import { useTenant } from '@/contexts/TenantContext';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -34,6 +34,8 @@ interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
+  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  breakMinutes?: number | null;
 }
 
 // Supabase DB employee type
@@ -271,8 +273,8 @@ const calculateDayHoursInternal = (daySchedule: DaySchedule): { total: number; f
   const spätHours = calculateSlotHoursInternal(daySchedule.spät);
   const totalGross = frühHours + spätHours;
   
-  // Apply break deduction based on total hours
-  const breakDeduction = calculateBreakDeduction(totalGross);
+  // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
+  const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
   const total = Math.round((totalGross - breakDeduction) * 100) / 100;
   
   return {
@@ -340,8 +342,8 @@ const calculateDayHours = (daySchedule: DaySchedule): { total: number; frühStar
   const spätHours = calculateSlotHours(daySchedule.spät);
   const totalGross = frühHours + spätHours;
   
-  // Apply break deduction based on total hours
-  const breakDeduction = calculateBreakDeduction(totalGross);
+  // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
+  const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
   const total = Math.round((totalGross - breakDeduction) * 100) / 100;
   
   return {

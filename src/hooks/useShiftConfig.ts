@@ -34,6 +34,24 @@ export function calculateBreakDeduction(grossHours: number): number {
   return 0;
 }
 
+/**
+ * ZENTRALE Pausenauflösung für den Dienstplan (SSoT).
+ *
+ * - `manualBreakMinutes == null` (undefined/null) → automatische Regel gilt
+ *   (calculateBreakDeduction: >9h → 30 Min), identisch zum Altverhalten.
+ * - `manualBreakMinutes` gesetzt (0/30/60) → ERSETZT die automatische Regel
+ *   vollständig (nie addieren). 0 = explizit „Keine Pause".
+ *
+ * Rückgabe: Pausenabzug in Stunden. Gilt nur für gearbeitete Brutto-Stunden,
+ * nie für Absenzstunden.
+ */
+export function resolveBreakHours(grossHours: number, manualBreakMinutes?: number | null): number {
+  if (manualBreakMinutes != null) {
+    return manualBreakMinutes / 60;
+  }
+  return calculateBreakDeduction(grossHours);
+}
+
 // Calculate effective hours with break deduction
 export function calculateEffectiveHours(start: string, end: string, start2?: string, end2?: string): number {
   const parseTime = (time: string): number => {

@@ -6,7 +6,7 @@ import { Employee } from '@/types/personnel';
 
 import { format, eachWeekOfInterval, startOfMonth, endOfMonth, endOfWeek, eachDayOfInterval, isWithinInterval, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
+import { getShiftConfig, getShiftConfigMap, resolveBreakHours } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { getBranding, renderLogoDataUrl } from '@/lib/pl-branding';
 import { selectEmployeesForDepartment } from '@/lib/schedule-export-department';
@@ -97,6 +97,14 @@ function calculateSlotHours(slot: TimeSlot | null | undefined): number {
   let hours = endH - startH + (endM - startM) / 60;
   if (hours < 0) hours += 24;
   return Math.round(hours * 100) / 100;
+}
+
+// Netto-Arbeitsstunden eines Plan-Tags: Brutto beider Slots minus Pause
+// (SSoT resolveBreakHours) — Pause NIE auf Absenzstunden anwenden.
+function workedNetHours(ds: DaySchedule): number {
+  const gross = calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+  if (gross <= 0) return 0;
+  return Math.max(0, Math.round((gross - resolveBreakHours(gross, ds.breakMinutes)) * 100) / 100);
 }
 
 function buildCompactLegendLine(
@@ -331,9 +339,7 @@ export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise
       const daySchedule = scheduleData[cellKey];
       
       if (daySchedule) {
-        const frühHours = calculateSlotHours(daySchedule.früh);
-        const spätHours = calculateSlotHours(daySchedule.spät);
-        let dayHours = frühHours + spätHours;
+        let dayHours = workedNetHours(daySchedule);
         
         // Add absence hours if countsToTarget
         if (daySchedule.frühAbsence) {
@@ -500,10 +506,9 @@ export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise
         }
         rowData.push(spätContent);
         
-        // Calculate hours
-        const frühHours = calculateSlotHours(daySchedule.früh);
-        const spätHours = calculateSlotHours(daySchedule.spät);
-        plannedHours += frühHours + spätHours;
+        // Calculate hours (netto, inkl. Pausenabzug)
+        const dayNetHours = workedNetHours(daySchedule);
+        plannedHours += dayNetHours;
         
         // Add absence hours if counts to target
         if (daySchedule.frühAbsence) {
@@ -520,7 +525,7 @@ export async function exportScheduleToExcelV2(options: ExportOptionsV2): Promise
         }
         
         // Cost calculation (Total Arbeitgeberkosten)
-        empCost += (frühHours + spätHours) * (getEffectiveHourlyRate(emp, rates) ?? 0);
+        empCost += dayNetHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       });
       
       // Hours and difference columns
@@ -897,9 +902,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
       const daySchedule = scheduleData[cellKey];
       
       if (daySchedule) {
-        const frühHours = calculateSlotHours(daySchedule.früh);
-        const spätHours = calculateSlotHours(daySchedule.spät);
-        let dayHours = frühHours + spätHours;
+        let dayHours = workedNetHours(daySchedule);
         
         // Add absence hours if countsToTarget
         if (daySchedule.frühAbsence) {
@@ -1157,8 +1160,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
         const daySchedule = scheduleData[cellKey];
         
         if (daySchedule) {
-          plannedHours += calculateSlotHours(daySchedule.früh);
-          plannedHours += calculateSlotHours(daySchedule.spät);
+          plannedHours += workedNetHours(daySchedule);
           
           // Add absence hours
           if (daySchedule.frühAbsence) {
@@ -1420,8 +1422,7 @@ export async function exportScheduleTemplate(options: TemplateExportOptions): Pr
         const daySchedule = scheduleData[cellKey];
         
         if (daySchedule) {
-          planHours += calculateSlotHours(daySchedule.früh);
-          planHours += calculateSlotHours(daySchedule.spät);
+          planHours += workedNetHours(daySchedule);
           
           if (daySchedule.frühAbsence) {
             const shift = absenceShifts.find(s => s.abbrev === daySchedule.frühAbsence);
@@ -1641,7 +1642,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
     let h = 0;
     weekDays.forEach(day => {
       const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
-      h += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+      h += workedNetHours(ds);
       if (ds.frühAbsence) {
         const s = absenceShifts.find(a => a.abbrev === ds.frühAbsence);
         if (s && shiftMap[s.name]?.countsToTarget) h += shiftMap[s.name].hours || 0;
@@ -1778,7 +1779,7 @@ export async function exportScheduleToPDF(options: ExportOptionsV2): Promise<voi
         let dayH = 0;
         deptEmployees.forEach(emp => {
           const ds = scheduleData[`${emp.id}-${format(day, 'yyyy-MM-dd')}`] || {} as DaySchedule;
-          dayH += calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+          dayH += workedNetHours(ds);
         });
         sumRow.push(dayH > 0 ? `${dayH.toFixed(0)}h` : '');
         grandTotal += dayH;

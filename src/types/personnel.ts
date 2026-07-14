@@ -163,6 +163,8 @@ export interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
+  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  breakMinutes?: number | null;
 }
 
 export interface DailySummary {

@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, Line, Area, AreaChart } from 'recharts';
 import { TrendingUp, TrendingDown, BarChart3, FileDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -83,7 +83,7 @@ export const LaborCostComparison = ({
           const frühHours = calculateSlotHours(daySchedule.früh);
           const spätHours = calculateSlotHours(daySchedule.spät);
           const dayHours = frühHours + spätHours;
-          const breakDeduction = calculateBreakDeduction(dayHours);
+          const breakDeduction = resolveBreakHours(dayHours, daySchedule.breakMinutes);
           const netHours = dayHours - breakDeduction;
           
           actualHours += netHours;
@@ -139,7 +139,7 @@ export const LaborCostComparison = ({
             const frühHours = calculateSlotHours(daySchedule.früh);
             const spätHours = calculateSlotHours(daySchedule.spät);
             const dayHours = frühHours + spätHours;
-            const breakDeduction = calculateBreakDeduction(dayHours);
+            const breakDeduction = resolveBreakHours(dayHours, daySchedule.breakMinutes);
             const netHours = dayHours - breakDeduction;
             
             weekHours += netHours;

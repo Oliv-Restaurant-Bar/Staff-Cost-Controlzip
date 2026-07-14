@@ -33,7 +33,12 @@ interface TimeSlot {
 interface TimeInputCellProps {
   value: TimeSlot | null;
   absenceType?: string | null;
-  onChange: (value: TimeSlot | null, absenceType?: string | null) => void;
+  /**
+   * breakMinutes (3. Argument): undefined = Pause unverändert lassen;
+   * number (0/30/60) = manuelle Pause setzen (0 = explizit keine);
+   * null = manuelle Pause entfernen → Automatik-Regel gilt.
+   */
+  onChange: (value: TimeSlot | null, absenceType?: string | null, breakMinutes?: number | null) => void;
   slotType: 'früh' | 'spät';
   /** Value of the OTHER slot (früh ↔ spät) for stacked cell display */
   secondaryValue?: TimeSlot | null;
@@ -56,6 +61,10 @@ interface TimeInputCellProps {
   isFixedEmployee?: boolean;
   isAdditionalCostPlan?: boolean;
   onAdditionalCostPlanChange?: (v: boolean) => void;
+  /** Gespeicherte manuelle Pause des TAGES in Minuten (0/30/60); null/undefined = Automatik-Regel */
+  breakMinutes?: number | null;
+  /** Nur-Pause-Änderung beim Schliessen ohne Zeit-Commit (Flush, analog Zusatzkosten-Flag) */
+  onBreakMinutesChange?: (v: number | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +105,12 @@ function timeToOrdinal(t: string): number {
   const [h, m] = t.split(':').map(Number);
   const total = h * 60 + m;
   return total < 360 ? total + 1440 : total;
+}
+
+/** Brutto-Stunden eines Slots (0 wenn leer); Übernacht via timeToOrdinal */
+function slotGrossHours(s?: { start: string; end: string } | null): number {
+  if (!s?.start || !s?.end) return 0;
+  return Math.max(0, (timeToOrdinal(s.end) - timeToOrdinal(s.start)) / 60);
 }
 
 const TIME_OPTIONS = generateTimeOptions();
@@ -572,6 +587,8 @@ export const TimeInputCell = ({
   isFixedEmployee,
   isAdditionalCostPlan,
   onAdditionalCostPlanChange,
+  breakMinutes,
+  onBreakMinutesChange,
 }: TimeInputCellProps) => {
   const [blockedOverride, setBlockedOverride] = useState(false);
   const [copyToIst, setCopyToIst] = useState(false);
@@ -589,6 +606,11 @@ export const TimeInputCell = ({
 
   // Track whether row 2 was pre-filled when popover opened (for smart clear)
   const secondaryWasPreFilled = useRef(false);
+
+  // ── Pause (pro TAG): null = Automatik-Regel, 0/30/60 = manuell ──
+  const [selBreak, setSelBreak] = useState<number | null>(null);
+  const breakDirty = useRef(false);      // user actively changed the break in this session
+  const breakCommitted = useRef(false);  // break was already sent via onChange (no double flush)
 
   // Inline clock picker
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
@@ -624,6 +646,10 @@ export const TimeInputCell = ({
       setSelStart2(s2);
       setSelEnd2(e2);
       secondaryWasPreFilled.current = !!(s2 && e2);
+      // Pause: gespeicherten Wert übernehmen (null = Automatik)
+      setSelBreak(breakMinutes ?? null);
+      breakDirty.current = false;
+      breakCommitted.current = false;
     }
   }, [open]);
 
@@ -643,9 +669,28 @@ export const TimeInputCell = ({
     }
   };
 
+  // Nur-Pause-Änderung (ohne Zeit-Commit) beim Schliessen flushen — nur wenn
+  // bereits eine Schicht existiert (Pause allein erzeugt keinen Eintrag).
+  const flushBreakMinutes = () => {
+    if (breakDirty.current && !breakCommitted.current && onBreakMinutesChange
+        && (value?.start || secondaryValue?.start)) {
+      breakCommitted.current = true;
+      onBreakMinutesChange(selBreak);
+    }
+  };
+
+  // Liefert das dritte onChange-Argument: undefined = Pause unverändert,
+  // sonst der neue manuelle Wert. Markiert den Wert als committed.
+  const takeBreakArg = (): number | null | undefined => {
+    if (!breakDirty.current) return undefined;
+    breakCommitted.current = true;
+    return selBreak;
+  };
+
   // Drop-in replacement for setOpen(false) that also flushes the flag.
   const closePopover = () => {
     flushAdditionalCostPlan();
+    flushBreakMinutes();
     setBlockedOverride(false);
     setPickerTarget(null);
     setOpen(false);
@@ -659,6 +704,7 @@ export const TimeInputCell = ({
     }
     if (!nextOpen) {
       flushAdditionalCostPlan();
+      flushBreakMinutes();
       setBlockedOverride(false);
       setPickerTarget(null);
       if (copyToIst && onCopyToIst && value?.start && value?.end && !copiedInSession.current) {
@@ -690,15 +736,15 @@ export const TimeInputCell = ({
       // Wenn slotType === 'spät' (leere Zelle, weil noch kein früh vorhanden),
       // müssen die Blöcke getauscht werden: secondary-Callback → früh, onChange → spät.
       if (slotType === 'früh') {
-        onChange({ start: preset.start, end: preset.end }, null);
+        onChange({ start: preset.start, end: preset.end }, null, takeBreakArg());
         onSplitTimeSelect?.({ start: preset.start2, end: preset.end2 });
       } else {
         // primarySlot ist 'spät' → secondary (früh) bekommt den 1. Block, primary (spät) den 2.
         onSplitTimeSelect?.({ start: preset.start, end: preset.end });
-        onChange({ start: preset.start2, end: preset.end2 }, null);
+        onChange({ start: preset.start2, end: preset.end2 }, null, takeBreakArg());
       }
     } else {
-      onChange({ start: preset.start, end: preset.end }, null);
+      onChange({ start: preset.start, end: preset.end }, null, takeBreakArg());
     }
     if (copyToIst && onCopyToIst) {
       onCopyToIst({ start: preset.start, end: preset.end });
@@ -749,11 +795,11 @@ export const TimeInputCell = ({
       // Wenn slotType === 'spät' (leere Zelle), sind primary/secondary vertauscht →
       // secondary-Callback (→ früh) bekommt Row 1, onChange (→ spät) bekommt Row 2.
       if (slotType === 'früh') {
-        onChange({ start: ns, end: ne }, null);
+        onChange({ start: ns, end: ne }, null, takeBreakArg());
         if (onSplitTimeSelect) onSplitTimeSelect({ start: ns2, end: ne2 });
       } else {
         if (onSplitTimeSelect) onSplitTimeSelect({ start: ns, end: ne });
-        onChange({ start: ns2, end: ne2 }, null);
+        onChange({ start: ns2, end: ne2 }, null, takeBreakArg());
       }
       if (copyToIst && onCopyToIst) {
         onCopyToIst({ start: ns, end: ne });
@@ -766,7 +812,7 @@ export const TimeInputCell = ({
         if (onSplitTimeSelect) onSplitTimeSelect(null);
       }
       setSelError('');
-      onChange({ start: ns, end: ne }, null);
+      onChange({ start: ns, end: ne }, null, takeBreakArg());
       if (copyToIst && onCopyToIst) {
         onCopyToIst({ start: ns, end: ne });
         copiedInSession.current = true;
@@ -776,11 +822,17 @@ export const TimeInputCell = ({
   };
 
   const handleAbsenceSelect = (abbrev: string) => {
+    // Absenz-Tag: Pause irrelevant → Änderung verwerfen (kein Flush)
+    breakDirty.current = false;
+    breakCommitted.current = false;
     onChange(null, abbrev);
     closePopover();
   };
 
   const handleClear = () => {
+    // Eintrag wird gelöscht → Pause-Änderung verwerfen (kein Flush)
+    breakDirty.current = false;
+    breakCommitted.current = false;
     onChange(null, null);
     onClearSecondary?.();
     // Clearing the shift → also clear the additional cost flag
@@ -1058,6 +1110,47 @@ export const TimeInputCell = ({
                   <Settings2 className="h-3 w-3" />
                   Schnellwahl bearbeiten
                 </button>
+
+                {/* ════ PAUSE (pro Tag) ════════════════════════════════ */}
+                {!absenceType && (() => {
+                  const dayGross = slotGrossHours(value) + slotGrossHours(secondaryValue);
+                  // Radio-Vorauswahl aus der RESOLVED effektiven Pause:
+                  // manuell gesetzt → dieser Wert; sonst Automatik (>9h → 30 Min)
+                  const effectiveBreak = selBreak != null ? selBreak : (dayGross > 9 ? 30 : 0);
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[9px] font-semibold text-muted-foreground/60 uppercase tracking-widest">Pause</div>
+                        <span className="text-[9px] text-muted-foreground/50">
+                          {selBreak == null ? 'Automatik: über 9 Std → 30 Min' : 'manuell'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1" role="radiogroup" aria-label="Pause">
+                        {[{ m: 0, label: 'Keine' }, { m: 30, label: '30 Min' }, { m: 60, label: '60 Min' }].map(o => {
+                          const active = effectiveBreak === o.m;
+                          return (
+                            <button key={o.m}
+                              role="radio"
+                              aria-checked={active}
+                              onClick={() => {
+                                setSelBreak(o.m);
+                                breakDirty.current = true;
+                                breakCommitted.current = false;
+                              }}
+                              className={cn(
+                                "px-1.5 py-1.5 text-[11px] rounded-lg border transition-all font-semibold text-center leading-tight tabular-nums active:scale-95",
+                                active
+                                  ? "bg-primary/10 border-primary/40 text-primary"
+                                  : "bg-slate-50 dark:bg-slate-800/60 border-border/40 text-foreground/75 hover:bg-primary/10 hover:border-primary/30 hover:text-primary"
+                              )}>
+                              {o.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* ════ EINSATZZEITEN ══════════════════════════════════ */}
                 <div className="border-t pt-2.5 space-y-3">

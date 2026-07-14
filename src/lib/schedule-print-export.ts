@@ -11,7 +11,7 @@ import autoTable from 'jspdf-autotable';
 import { Employee } from '@/types/personnel';
 import { format, getISOWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { getShiftConfig, getShiftConfigMap } from '@/hooks/useShiftConfig';
+import { getShiftConfig, getShiftConfigMap, resolveBreakHours } from '@/hooks/useShiftConfig';
 import { DaySchedule, TimeSlot } from '@/components/schedule-planner/ScheduleGrid';
 import { ActualHoursEntry } from '@/components/schedule-planner/ActualHoursGrid';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
@@ -41,6 +41,14 @@ function calculateSlotHours(slot: TimeSlot | null | undefined): number {
   let hours = endH - startH + (endM - startM) / 60;
   if (hours < 0) hours += 24;
   return Math.round(hours * 100) / 100;
+}
+
+// Netto-Arbeitsstunden eines Plan-Tags: Brutto beider Slots minus Pause
+// (SSoT resolveBreakHours) — Pause NIE auf Absenzstunden anwenden.
+function workedNetHours(ds: DaySchedule): number {
+  const gross = calculateSlotHours(ds.früh) + calculateSlotHours(ds.spät);
+  if (gross <= 0) return 0;
+  return Math.max(0, Math.round((gross - resolveBreakHours(gross, ds.breakMinutes)) * 100) / 100);
 }
 
 function formatTimeSlot(slot: TimeSlot | null | undefined): string {
@@ -113,8 +121,7 @@ export async function exportScheduleToExcelPrint(options: PrintExportOptions): P
       const actualEntry = actualHoursData[cellKey];
       
       if (daySchedule) {
-        planHours += calculateSlotHours(daySchedule.früh);
-        planHours += calculateSlotHours(daySchedule.spät);
+        planHours += workedNetHours(daySchedule);
         
         if (daySchedule.frühAbsence) {
           const shift = absenceShifts.find(s => s.abbrev === daySchedule.frühAbsence);
@@ -159,7 +166,7 @@ export async function exportScheduleToExcelPrint(options: PrintExportOptions): P
       const actualEntry = actualHoursData[cellKey];
 
       if (daySchedule) {
-        const dayPlanHours = calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
+        const dayPlanHours = workedNetHours(daySchedule);
         planHours += dayPlanHours;
         planCost += dayPlanHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }
@@ -568,7 +575,7 @@ function createSummarySheet(
       const actualEntry = actualHoursData[cellKey];
       
       if (daySchedule) {
-        planHours += calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
+        planHours += workedNetHours(daySchedule);
         
         if (daySchedule.frühAbsence) {
           const shift = absenceShifts.find(s => s.abbrev === daySchedule.frühAbsence);
@@ -828,7 +835,7 @@ export async function exportScheduleToPDFPrint(options: PrintExportOptions): Pro
       const actualEntry = actualHoursData[cellKey];
       
       if (daySchedule) {
-        planHours += calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
+        planHours += workedNetHours(daySchedule);
         if (daySchedule.frühAbsence) {
           const shift = absenceShifts.find(s => s.abbrev === daySchedule.frühAbsence);
           if (shift && shiftMap[shift.name]?.countsToTarget) planHours += shift.hours;
@@ -862,7 +869,7 @@ export async function exportScheduleToPDFPrint(options: PrintExportOptions): Pro
       const actualEntry = actualHoursData[cellKey];
 
       if (daySchedule) {
-        const dayPlanHours = calculateSlotHours(daySchedule.früh) + calculateSlotHours(daySchedule.spät);
+        const dayPlanHours = workedNetHours(daySchedule);
         planHours += dayPlanHours;
         planCost += dayPlanHours * (getEffectiveHourlyRate(emp, rates) ?? 0);
       }

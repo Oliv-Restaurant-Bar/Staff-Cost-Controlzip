@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 
 export type TimesheetStatus = 'open' | 'link_created' | 'sent' | 'confirmed' | 'rejected' | 'expired' | 'question_open' | 'finalized';
 
@@ -554,10 +555,6 @@ function schedSlotHours(start: string | null, end: string | null): number {
   return Math.round(h * 100) / 100;
 }
 
-function schedBreak(grossHours: number): number {
-  return grossHours > 9 ? 0.5 : 0;
-}
-
 export async function loadDienstplanHoursForMonth(
   employeeIds: string[],
   year: number,
@@ -568,9 +565,18 @@ export async function loadDienstplanHoursForMonth(
   const endDay   = new Date(year, month, 0).getDate();
   const endStr   = `${year}-${String(month).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
 
+  // select('*'): funktioniert vor UND nach Migration 20260714 — break_minutes fehlt
+  // pre-Migration einfach in den Rows (→ Automatik), Cast weil generierte Typen die
+  // Spalte noch nicht kennen.
+  type SchedHourRow = {
+    employee_id: string;
+    frueh_start: string | null; frueh_end: string | null;
+    spaet_start: string | null; spaet_end: string | null;
+    break_minutes?: number | null;
+  };
   const { data, error } = await supabase
     .from('schedule_entries')
-    .select('employee_id, frueh_start, frueh_end, spaet_start, spaet_end')
+    .select('*')
     .in('employee_id', employeeIds)
     .gte('date', startStr)
     .lte('date', endStr);
@@ -582,11 +588,12 @@ export async function loadDienstplanHoursForMonth(
   }
 
   const result: Record<string, number> = {};
-  for (const row of data ?? []) {
+  for (const row of (data as unknown as SchedHourRow[] | null) ?? []) {
     const frühH  = schedSlotHours(row.frueh_start, row.frueh_end);
     const spätH  = schedSlotHours(row.spaet_start, row.spaet_end);
     const gross  = frühH + spätH;
-    const net    = Math.round((gross - schedBreak(gross)) * 100) / 100;
+    const breakH = resolveBreakHours(gross, row.break_minutes ?? null);
+    const net    = Math.round((gross - breakH) * 100) / 100;
     if (net <= 0) continue;
     result[row.employee_id] = Math.round(((result[row.employee_id] ?? 0) + net) * 100) / 100;
   }
@@ -609,6 +616,7 @@ export interface DayComparisonEntry {
   spaet_absence:  string | null;
   plan_hours:     number | null;   // Nettostunden (inkl. Pausenabzug)
   plan_gross:     number | null;   // Bruttostunden (ohne Pause)
+  break_minutes:  number | null;   // manuelle Tages-Pause (null = Automatik >9h→30 Min)
   // AZB (actual_hours)
   azb_hours:      number | null;
   azb_start:      string | null;
@@ -652,10 +660,19 @@ export async function loadEmployeeMonthDetail(
   const lastDay  = new Date(year, month, 0).getDate();
   const toDate   = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
+  // select('*'): funktioniert vor UND nach Migration 20260714 (break_minutes);
+  // Cast weil generierte Supabase-Typen die Spalte noch nicht kennen.
+  type SchedDetailRow = {
+    date: string;
+    frueh_start: string | null; frueh_end: string | null; frueh_absence: string | null;
+    spaet_start: string | null; spaet_end: string | null; spaet_absence: string | null;
+    break_minutes?: number | null;
+  };
+
   const [schedRes, azbRes] = await Promise.all([
     supabase
       .from('schedule_entries')
-      .select('date, frueh_start, frueh_end, frueh_absence, spaet_start, spaet_end, spaet_absence')
+      .select('*')
       .eq('employee_id', employeeId)
       .gte('date', fromDate)
       .lte('date', toDate)
@@ -669,11 +686,8 @@ export async function loadEmployeeMonthDetail(
       .order('date'),
   ]);
 
-  const schedMap: Record<string, {
-    frueh_start: string | null; frueh_end: string | null; frueh_absence: string | null;
-    spaet_start: string | null; spaet_end: string | null; spaet_absence: string | null;
-  }> = {};
-  for (const row of schedRes.data ?? []) schedMap[row.date] = row;
+  const schedMap: Record<string, SchedDetailRow> = {};
+  for (const row of (schedRes.data as unknown as SchedDetailRow[] | null) ?? []) schedMap[row.date] = row;
 
   const azbMap: Record<string, {
     hours: number; start_time: string | null; end_time: string | null; absence_type: string | null;
@@ -701,7 +715,8 @@ export async function loadEmployeeMonthDetail(
       const frühH  = schedSlotHours(sched.frueh_start, sched.frueh_end);
       const spätH  = schedSlotHours(sched.spaet_start, sched.spaet_end);
       const gross  = Math.round((frühH + spätH) * 100) / 100;
-      const net    = Math.round((gross - schedBreak(gross)) * 100) / 100;
+      const breakH = resolveBreakHours(gross, sched.break_minutes ?? null);
+      const net    = Math.round((gross - breakH) * 100) / 100;
       planGross    = gross > 0 ? gross : null;
       planHours    = net   > 0 ? net   : null;
       absCode      = sched.frueh_absence || sched.spaet_absence || null;
@@ -723,6 +738,7 @@ export async function loadEmployeeMonthDetail(
       spaet_absence: sched?.spaet_absence ?? null,
       plan_hours:    planHours,
       plan_gross:    planGross,
+      break_minutes: sched?.break_minutes ?? null,
       azb_hours:     azb?.hours     ?? null,
       azb_start:     azb?.start_time ?? null,
       azb_end:       azb?.end_time   ?? null,

@@ -33,7 +33,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, addMonths, subMont
 import { getMonthlyBudgetRevenue, distributeBudgetByWeekday } from '@/lib/budgetDistribution';
 import { de } from 'date-fns/locale';
 import { cn } from '@/lib/utils';
-import { useShiftConfig, ShiftConfigItem, calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { useShiftConfig, ShiftConfigItem, resolveBreakHours } from '@/hooks/useShiftConfig';
 import { useWeekSync } from '@/hooks/useWeekSync';
 import { useSupabaseSchedule, Employee as SupabaseEmployee } from '@/hooks/useSupabaseSchedule';
 import { useTenant } from '@/contexts/TenantContext';
@@ -257,7 +257,7 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     const frühHours = calculateSlotHours(daySchedule.früh);
     const spätHours = calculateSlotHours(daySchedule.spät);
     const totalGross = frühHours + spätHours;
-    const breakDeduction = calculateBreakDeduction(totalGross);
+    const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
     return Math.round((totalGross - breakDeduction) * 100) / 100;
   };
 
@@ -407,10 +407,11 @@ export const EmbeddedSchedulePlanner = ({ selectedDate }: EmbeddedSchedulePlanne
     date: string, 
     slotType: 'früh' | 'spät', 
     value: TimeSlot | null, 
-    absenceType?: string | null
+    absenceType?: string | null,
+    breakMinutes?: number | null
   ) => {
     // Use Supabase to update the schedule entry
-    await updateScheduleEntry(employeeId, date, slotType, value, absenceType);
+    await updateScheduleEntry(employeeId, date, slotType, value, absenceType, breakMinutes);
   };
 
   const handleAddAushilfe = async (employee: Omit<Employee, 'id'>) => {

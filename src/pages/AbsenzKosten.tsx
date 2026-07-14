@@ -21,7 +21,7 @@ import {
 import { toast } from 'sonner';
 import type { Employee } from '@/types/personnel';
 import { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import { loadActualHoursForMonth } from '@/lib/supabase-db';
 import { useTenant } from '@/contexts/TenantContext';
 
@@ -99,7 +99,7 @@ function slotHours(slot: { start: string; end: string } | null | undefined): num
 
 function netHoursFromSchedule(ds: DaySchedule): number {
   const gross = slotHours(ds.früh) + slotHours(ds.spät);
-  return gross > 0 ? Math.max(0, gross - calculateBreakDeduction(gross)) : 0;
+  return gross > 0 ? Math.max(0, gross - resolveBreakHours(gross, ds.breakMinutes)) : 0;
 }
 
 function formatCHF(v: number): string {

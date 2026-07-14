@@ -1,6 +1,6 @@
 import { Employee } from '@/types/personnel';
 import { DaySchedule, TimeSlot } from './ScheduleGrid';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import type { SocialCostRates } from '@/lib/social-costs';
 
@@ -84,7 +84,7 @@ export function computeSuggestions(
     if (!hasF && !hasS) return;
 
     const gross = (hasF ? fH : 0) + (hasS ? sH : 0);
-    const breakD = calculateBreakDeduction(gross);
+    const breakD = resolveBreakHours(gross, ds.breakMinutes);
     const netH = Math.max(0, gross - breakD);
     // Kosten = Total Arbeitgeberkosten, nie roher hourlyWage
     const wage = getEffectiveHourlyRate(emp, rates) ?? 0;

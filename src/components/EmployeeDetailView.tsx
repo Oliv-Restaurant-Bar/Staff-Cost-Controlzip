@@ -17,6 +17,7 @@ import {
   type ActualHourEntriesResult,
 } from '@/lib/supabase-db';
 import DayDetailDrawer from '@/components/DayDetailDrawer';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -455,8 +456,11 @@ function TableContent({
   const totalAzbHours  = entries.reduce((s, e) => s + (e.azb_hours  ?? 0), 0);
   const totalDiff      = totalAzbHours - totalPlanHours;
 
-  // Gesamtpause: 30 min pro Tag mit plan_gross > 9h
-  const totalPauseMin  = entries.filter(e => e.plan_gross != null && e.plan_gross > 9).length * 30;
+  // Gesamtpause: zentrale Auflösung (manuelle Tages-Pause hat Vorrang, sonst Automatik >9h→30 Min);
+  // nur Tage mit geplanter Arbeitszeit — Pause nie auf reine Absenztage
+  const totalPauseMin  = entries.reduce(
+    (s, e) => s + (e.plan_gross != null && e.plan_gross > 0
+      ? Math.round(resolveBreakHours(e.plan_gross, e.break_minutes) * 60) : 0), 0);
 
   // Abweichungstage: |diff| > 0.5h, kein Leertag, keine Abwesenheit
   const deviationDays  = entries.filter(e => {
@@ -499,7 +503,9 @@ function TableContent({
             const status  = getDayStatus(e);
             const diff    = e.azb_hours != null && e.plan_hours != null
               ? e.azb_hours - e.plan_hours : null;
-            const pause   = e.plan_gross != null && e.plan_gross > 9 ? '30 min' : null;
+            const pauseMin = e.plan_gross != null && e.plan_gross > 0
+              ? Math.round(resolveBreakHours(e.plan_gross, e.break_minutes) * 60) : 0;
+            const pause   = pauseMin > 0 ? `${pauseMin} min` : null;
             const absM    = e.absence_type ? ABSENCE_META[e.absence_type] : null;
             const weekend = isWeekend(e.date);
             const wday    = weekday(e.date);

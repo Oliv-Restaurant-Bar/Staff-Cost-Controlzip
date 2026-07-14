@@ -1,0 +1,429 @@
+Behebe jetzt die Speicher- und Synchronisationsfehler im Dienstplan vollständig und erweitere gleichzeitig die Schnellauswahl um die Pausenoption.
+
+Ziel:
+
+Der Dienstplan muss jede Änderung zuverlässig und verlustfrei speichern.
+
+Insbesondere müssen funktionieren:
+
+1. Zwei Schichten am selben Tag speichern
+2. Änderungen in Plan und Ist sicher speichern
+3. Keine bestehende Schicht versehentlich überschreiben oder löschen
+4. Abwesenheiten aus der Planansicht automatisch korrekt in die Istansicht übernehmen
+5. 30 oder 60 Minuten Pause direkt bei der Schnellauswahl setzen
+
+Dies ist eine fachlich kritische Funktion. Keine oberflächliche UI-Korrektur durchführen. Prüfe zuerst den kompletten Datenfluss vom Formular bis zur Persistenz und zurück.
+
+## 1. Aktuellen Datenfluss vollständig prüfen
+
+Lies zuerst die bestehende Implementierung für:
+
+- Dienstplan-Tageszelle
+- Schnellauswahl
+- Schnellwahl bearbeiten
+- erster und zweiter Einsatz
+- Planansicht
+- Istansicht
+- Abwesenheiten
+- Speichern-Button
+- Autosave oder lokale Zwischenspeicherung
+- Supabase-/KV-/Store-Schreibpfade
+- Laden und Zusammenführen bestehender Einträge
+- Kopieren und Mehrfachbearbeitung
+- Stunden- und Kostenberechnung
+- Dienstplan-Exporte
+
+Identifiziere konkret, warum beim Speichern einer zweiten Schicht die erste oder zweite Schicht gelöscht wird.
+
+Prüfe insbesondere auf:
+
+- ein Objekt statt eines Schicht-Arrays
+- Überschreiben über Mitarbeiter + Datum ohne eindeutige Schicht-ID
+- Replace statt Merge
+- falsche Array-Filter
+- zweiter Einsatz wird bei leerem oder unverändertem Feld entfernt
+- veralteter React-State beim Speichern
+- mehrere State-Updates auf Basis eines alten Snapshots
+- unvollständiger Upsert-Key
+- Race Condition zwischen lokalem Speichern und Backend-Speichern
+- spätere Antwort überschreibt einen neueren Stand
+- Plan- und Ist-Schichten verwenden dieselbe ID und überschreiben sich
+- Abwesenheit löscht ungewollt vorhandene Einsätze
+- Parser oder Normalisierung verwirft den zweiten Einsatz
+
+Dokumentiere die gefundene Ursache am Ende knapp.
+
+## 2. Zwei Schichten zuverlässig unterstützen
+
+Ein Mitarbeitender muss am selben Tag mindestens zwei getrennte Einsätze speichern können.
+
+Beispiel:
+
+1. Einsatz: 10:00–14:00
+2. Einsatz: 17:30–23:00
+
+Beide Einsätze müssen:
+
+- nach dem Übernehmen sofort sichtbar bleiben
+- nach dem Speichern erhalten bleiben
+- nach einem Seiten-Reload erhalten bleiben
+- beim Wechsel zwischen Woche, Monat und Tag erhalten bleiben
+- beim Wechsel zwischen Plan und Ist korrekt erhalten bleiben
+- beim erneuten Öffnen der Bearbeitung vollständig geladen werden
+- unabhängig voneinander bearbeitet werden können
+- unabhängig voneinander gelöscht werden können
+- beim Ändern des ersten Einsatzes den zweiten nicht verändern
+- beim Ändern des zweiten Einsatzes den ersten nicht verändern
+
+Jeder Einsatz benötigt eine stabile Identität.
+
+Bestehende Datenmodelle und Schreibpfade bevorzugen. Keine parallele Sonderlösung erstellen.
+
+Falls aktuell keine stabile Schicht-ID existiert, ergänze eine rückwärtskompatible stabile ID pro Einsatz, ohne bestehende Dienstplandaten zu verlieren.
+
+## 3. Verlustfreies Speichern
+
+Stelle sicher, dass jede Änderung als Merge gegen den aktuellsten vorhandenen Tagesstand gespeichert wird.
+
+Verboten:
+
+- vollständiges Ersetzen eines Tagesobjekts mit einem unvollständigen Formularzustand
+- Speichern nur des gerade sichtbaren Einsatzes
+- Entfernen des zweiten Einsatzes, weil ein Feld kurzfristig leer ist
+- Speichern auf Basis eines veralteten State-Snapshots
+- stiller Fallback bei einem Fehler
+- UI zeigt „gespeichert“, obwohl das Backend den Stand nicht bestätigt hat
+- Plan- und Ist-Daten gegenseitig überschreiben
+
+Erforderlich:
+
+- bestehende Tagesdaten zuerst berücksichtigen
+- nur gezielt geänderte Felder ersetzen
+- unveränderte Einsätze und Abwesenheiten beibehalten
+- Schreibvorgänge eindeutig dem Mitarbeitenden, Datum, Modus und Einsatz zuordnen
+- spätere Änderungen dürfen nicht durch ältere Antworten überschrieben werden
+- Backend-Fehler sichtbar anzeigen
+- bei Fehler den letzten bestätigten Stand beibehalten oder sauber wiederherstellen
+- keine Daten still verlieren
+- nach erfolgreichem Speichern den bestätigten Stand erneut laden oder mit dem Backend-Ergebnis abgleichen
+
+Der sichtbare Status „Gespeichert“ darf erst erscheinen, wenn die Persistenz bestätigt wurde.
+
+## 4. Sichere Speicheranzeige
+
+Ergänze eine kompakte und eindeutige Speicheranzeige im bestehenden Dienstplan-Header:
+
+- Ungespeicherte Änderungen
+- Wird gespeichert …
+- Gespeichert
+- Speichern fehlgeschlagen
+
+Bei einem Fehler:
+
+- klare deutsche Meldung
+- Änderung nicht still verwerfen
+- erneutes Speichern ermöglichen
+- bestehende bestätigte Daten nicht überschreiben
+- Benutzer nicht aus dem Bearbeitungsdialog werfen
+
+Der bestehende Speichern-Button bleibt die zentrale manuelle Sicherung.
+
+Falls Autosave besteht, darf es den manuellen Speicherprozess nicht überholen oder mit veraltetem Stand überschreiben.
+
+## 5. Plan- und Istansicht strikt trennen
+
+Plan und Ist dürfen sich bei normalen Arbeitszeiten nicht gegenseitig überschreiben.
+
+Für jeden Tag und Mitarbeitenden müssen Plan und Ist getrennt gespeichert und geladen werden.
+
+Beispiel:
+
+Plan:
+10:00–14:00 und 17:30–23:00
+
+Ist:
+10:12–14:05 und 17:42–23:18
+
+Beide Stände bleiben getrennt erhalten.
+
+Änderungen in Ist dürfen Plan nicht verändern.
+
+Änderungen an Planzeiten dürfen bereits vorhandene Istzeiten nicht löschen.
+
+Nur die ausdrücklich definierte Abwesenheitssynchronisation aus Abschnitt 6 darf automatisch von Plan nach Ist wirken.
+
+## 6. Abwesenheiten von Plan nach Ist übernehmen
+
+Wenn in der Planansicht eine der folgenden Abwesenheiten erfasst wird:
+
+- Frei
+- Ferien
+- Krank
+- Unfall
+
+muss die Istansicht für denselben Mitarbeitenden und denselben Tag automatisch dieselbe Abwesenheit übernehmen.
+
+Beispiel:
+
+Plan = Ferien
+Ist = Ferien
+
+Plan = Krank
+Ist = Krank
+
+Plan = Unfall
+Ist = Unfall
+
+Plan = Frei
+Ist = Frei
+
+Dabei gelten folgende Regeln:
+
+- Synchronisation erfolgt beim erfolgreichen Speichern des Planstands
+- Plan bleibt die Ausgangsquelle für diese Abwesenheitsarten
+- Synchronisation muss idempotent sein
+- wiederholtes Speichern erzeugt keine Duplikate
+- Abwesenheit darf nicht als 0-Stunden-Schicht gespeichert werden
+- Abwesenheit und Arbeitszeit dürfen nicht unbemerkt gleichzeitig aktiv bleiben
+- bei bestehender Ist-Arbeitszeit muss eine sichere Konfliktbehandlung erfolgen
+
+Konfliktregel:
+
+Falls in Ist bereits echte Arbeitszeiten vorhanden sind und Plan nachträglich auf Frei, Ferien, Krank oder Unfall gesetzt wird, dürfen die Istzeiten nicht still gelöscht werden.
+
+Zeige einen kompakten Bestätigungsdialog:
+
+„Für diesen Tag sind bereits Ist-Arbeitszeiten vorhanden. Soll die Abwesenheit aus dem Plan übernommen und die Ist-Arbeitszeit ersetzt werden?“
+
+Optionen:
+
+- Abwesenheit übernehmen
+- Ist-Arbeitszeit behalten
+- Abbrechen
+
+Ohne ausdrückliche Auswahl keine vorhandenen Istzeiten löschen.
+
+Falls in Ist noch keine Arbeitszeiten vorhanden sind, die Plan-Abwesenheit direkt übernehmen.
+
+## 7. Änderung oder Entfernung einer Plan-Abwesenheit
+
+Wenn eine aus Plan synchronisierte Abwesenheit später geändert oder entfernt wird, darf die Istansicht nicht blind überschrieben werden.
+
+Regeln:
+
+- Nur automatisch angelegte, eindeutig als Plan-Synchronisation markierte Ist-Abwesenheiten automatisch aktualisieren
+- manuell in Ist erfasste oder veränderte Abwesenheiten nicht still überschreiben
+- beim Wechsel von Ferien auf Krank die automatisch synchronisierte Ist-Abwesenheit aktualisieren
+- beim Entfernen einer Plan-Abwesenheit die automatisch synchronisierte Ist-Abwesenheit entfernen, sofern sie in Ist nicht manuell verändert wurde
+- bei Konflikt einen Bestätigungsdialog anzeigen
+
+Nutze dafür bestehende Metadaten, falls vorhanden. Falls nötig, ergänze eine rückwärtskompatible Herkunftsmarkierung wie `source: plan_sync`, ohne ein paralleles Datenmodell einzuführen.
+
+## 8. Pause in der Schnellauswahl
+
+Ergänze im bestehenden Schnellauswahl-Dialog einen kompakten Bereich „Pause“.
+
+Optionen:
+
+- Keine Pause
+- 30 Minuten
+- 60 Minuten
+
+Es darf nur eine Option aktiv sein.
+
+Standard ist „Keine Pause“, sofern die Vorlage oder bestehende Schicht keine Pause enthält.
+
+Die gewählte Pause gilt für den jeweils bearbeiteten Einsatz.
+
+Bei zwei Einsätzen kann jeder Einsatz eine eigene Pause besitzen.
+
+Beispiel:
+
+1. Einsatz 10:00–14:00, keine Pause
+2. Einsatz 17:30–23:00, 30 Minuten Pause
+
+Die Pause reduziert nur die anrechenbare Arbeitszeit.
+
+Beginn und Ende bleiben unverändert.
+
+Die Pause muss in der bestehenden zentralen Stunden- und Kostenberechnung berücksichtigt werden:
+
+- Planstunden
+- Iststunden
+- Tagesstunden
+- Wochenstunden
+- Personalkosten
+- Soll-/Ist-Abgleich
+- Überstunden
+- Personalcontrolling
+- Exporte
+
+Keine neue oder doppelte Berechnungslogik erstellen.
+
+## 9. Mehrere Änderungen vor dem Speichern
+
+Folgender Ablauf muss zuverlässig funktionieren:
+
+1. ersten Einsatz hinzufügen
+2. zweiten Einsatz hinzufügen
+3. Pause beim zweiten Einsatz setzen
+4. Abwesenheit an einem anderen Tag eintragen
+5. Plan-/Istansicht wechseln
+6. weitere Zeit ändern
+7. Speichern klicken
+8. Seite neu laden
+
+Danach müssen alle Änderungen vollständig und korrekt vorhanden sein.
+
+Keine Änderung darf eine andere noch nicht gespeicherte Änderung aus dem State entfernen.
+
+Nutze funktionale State-Updates oder eine gleichwertig sichere Lösung, sodass jede Änderung immer auf dem aktuellsten Stand basiert.
+
+## 10. Lade- und Wechselverhalten
+
+Prüfe Wechsel zwischen:
+
+- Plan und Ist
+- Woche, Monat und Tag
+- Mitarbeitendenfilter
+- Service und Küche
+- verschiedenen Kalenderwochen
+- Oliv und Beaulieu
+- Bearbeitungsdialog öffnen und schliessen
+
+Ungespeicherte Änderungen dürfen dabei nicht unbemerkt verloren gehen.
+
+Falls ein Wechsel Datenverlust verursachen könnte, zeige eine Warnung:
+
+„Es gibt ungespeicherte Änderungen. Möchten Sie sie speichern, verwerfen oder hierbleiben?“
+
+Optionen:
+
+- Speichern und wechseln
+- Änderungen verwerfen
+- Hierbleiben
+
+## 11. Mandanten- und Rollenregeln
+
+Die bestehende Trennung von Oliv und Beaulieu muss erhalten bleiben.
+
+Ein Speichervorgang darf niemals Daten des anderen Betriebs verändern.
+
+Bestehende Rollen und Lohnsichtbarkeit unverändert lassen.
+
+Küchen-Manager dürfen weiterhin keine vertraulichen Lohnwerte oder Personalkosten im DOM sehen, falls dies aktuell so vorgesehen ist.
+
+## 12. Design
+
+Die Änderungen müssen sich in die bestehende Dienstplanoberfläche integrieren.
+
+Vorgaben:
+
+- bestehendes Designsystem verwenden
+- kompakt
+- schlicht
+- modern
+- lesefreundlich
+- keine zusätzliche grosse Dialogebene
+- Pausenauswahl direkt bei den Einsatzzeiten
+- Speicherstatus gut sichtbar, aber nicht dominant
+- Konfliktdialoge kurz und eindeutig
+- bestehende Abstände, Typografie und Buttons verwenden
+- keine unnötigen Texte oder Leerflächen
+- Desktop-first und responsive
+
+## 13. Regressionstests
+
+Ergänze fokussierte Tests mindestens für:
+
+### Zwei Schichten
+
+- erster und zweiter Einsatz werden gemeinsam gespeichert
+- zweiter Einsatz bleibt nach Reload erhalten
+- Änderung des ersten Einsatzes verändert den zweiten nicht
+- Änderung des zweiten Einsatzes verändert den ersten nicht
+- Löschen des ersten Einsatzes behält den zweiten
+- Löschen des zweiten Einsatzes behält den ersten
+
+### Speichersicherheit
+
+- Merge erhält nicht bearbeitete Tagesdaten
+- veraltete Speicherantwort überschreibt keinen neueren Stand
+- Backend-Fehler zeigt Fehlerstatus
+- bei Fehler bleiben bestätigte Daten erhalten
+- „Gespeichert“ erscheint erst nach bestätigtem Speichern
+- mehrere Änderungen vor einem Save bleiben vollständig erhalten
+
+### Plan und Ist
+
+- Planzeit und Istzeit bleiben getrennt
+- Änderung in Plan löscht Istzeit nicht
+- Änderung in Ist löscht Planzeit nicht
+
+### Abwesenheiten
+
+- Frei in Plan wird nach Ist übernommen
+- Ferien in Plan wird nach Ist übernommen
+- Krank in Plan wird nach Ist übernommen
+- Unfall in Plan wird nach Ist übernommen
+- wiederholtes Speichern erzeugt keine Duplikate
+- bestehende Istzeiten werden ohne Bestätigung nicht gelöscht
+- automatisch synchronisierte Abwesenheit wird bei Änderung aktualisiert
+- manuell veränderte Ist-Abwesenheit wird nicht still überschrieben
+- Entfernen der Plan-Abwesenheit behandelt die Istseite korrekt
+
+### Pausen
+
+- keine Pause verändert Arbeitszeit nicht
+- 30 Minuten reduzieren die korrekte Schicht
+- 60 Minuten reduzieren die korrekte Schicht
+- zwei Einsätze können verschiedene Pausen haben
+- Pause bleibt nach Reload erhalten
+- Plan-, Ist-, Kosten- und Überstundenberechnung verwenden dieselbe Pausenlogik
+- Exporte zeigen die korrekten Nettostunden
+
+### Mandanten
+
+- Oliv-Änderung verändert Beaulieu nicht
+- Beaulieu-Änderung verändert Oliv nicht
+
+Führe danach aus:
+
+- fokussierte betroffene Tests
+- projektspezifisch korrekten TypeScript-Typecheck
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+## 14. Dokumentation
+
+Aktualisiere `replit.md` kompakt und nur mit dem tatsächlich umgesetzten Verhalten:
+
+- bis zu zwei Einsätze pro Mitarbeitendem und Tag werden verlustfrei gespeichert
+- Plan und Ist bleiben getrennt
+- Frei, Ferien, Krank und Unfall werden kontrolliert von Plan nach Ist synchronisiert
+- bestehende Istzeiten werden niemals ohne Bestätigung gelöscht
+- Pausen von 30 oder 60 Minuten je Einsatz
+- bestätigter Speicherstatus und sichtbare Fehler
+- ungespeicherte Änderungen werden bei Ansichtswechsel geschützt
+- keine Datenverluste und keine stillen Fallbacks
+
+Keine Testzahlen und kein Entwicklungsprotokoll aufnehmen.
+
+## Abschluss
+
+Gib am Ende eine klare Zusammenfassung aus:
+
+1. Was die Ursache für das Löschen der zweiten Schicht war.
+2. Wie zwei Einsätze jetzt gespeichert werden.
+3. Wie Datenverluste beim Speichern verhindert werden.
+4. Wie Plan und Ist getrennt bleiben.
+5. Wie Abwesenheiten von Plan nach Ist synchronisiert werden.
+6. Wie Konflikte mit vorhandenen Istzeiten behandelt werden.
+7. Wie Pausen gespeichert und berechnet werden.
+8. Welche Tests ergänzt wurden.
+9. Ergebnis des Typechecks.
+10. Ergebnis des Architect-Reviews.
+11. Liste aller tatsächlich geänderten Dateien.
+
+Arbeite direkt und vollständig.
+
+Keine bestehende Dienstplandaten löschen oder migrieren, ohne die Rückwärtskompatibilität nachweislich sicherzustellen.

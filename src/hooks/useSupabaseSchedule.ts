@@ -30,6 +30,8 @@ export interface DbScheduleEntry {
   spaet_start: string | null;
   spaet_end: string | null;
   spaet_absence: string | null;
+  /** Manuelle Pause in Minuten; null = automatische Regel (Spalte evtl. noch nicht migriert) */
+  break_minutes?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -60,6 +62,8 @@ export interface DaySchedule {
   spätAbsence?: string | null;
   isAdditionalCostPlan?: boolean;
   isAdditionalCost?: boolean;
+  /** Manuelle Pause in Minuten (0/30/60); null/undefined = automatische Regel */
+  breakMinutes?: number | null;
 }
 
 // Conversion helpers
@@ -102,6 +106,7 @@ const dbToScheduleData = (entries: DbScheduleEntry[]): Record<string, DaySchedul
         : null,
       frühAbsence: entry.frueh_absence,
       spätAbsence: entry.spaet_absence,
+      ...(entry.break_minutes != null ? { breakMinutes: entry.break_minutes } : {}),
     };
   });
   
@@ -406,7 +411,9 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
     date: string,
     slotType: 'früh' | 'spät',
     value: TimeSlot | null,
-    absenceType?: string | null
+    absenceType?: string | null,
+    // Pause pro TAG: undefined = unverändert, number = manuell, null = Automatik
+    breakMinutes?: number | null
   ): Promise<boolean> => {
     try {
       const cellKey = `${employeeId}-${date}`;
@@ -420,6 +427,9 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
       } else {
         updated.spät = value;
         updated.spätAbsence = absenceType || null;
+      }
+      if (breakMinutes !== undefined) {
+        updated.breakMinutes = breakMinutes;
       }
       
       // Check if we should delete or upsert
@@ -442,21 +452,30 @@ export const useSupabaseSchedule = ({ token, department, currentMonth, restauran
         });
       } else {
         // Upsert the entry
-        const { error } = await supabase
+        const basePayload = {
+          employee_id: employeeId,
+          date: date,
+          frueh_start: updated.früh?.start || null,
+          frueh_end: updated.früh?.end || null,
+          frueh_absence: updated.frühAbsence || null,
+          spaet_start: updated.spät?.start || null,
+          spaet_end: updated.spät?.end || null,
+          spaet_absence: updated.spätAbsence || null,
+        };
+        let { error } = await supabase
           .from('schedule_entries')
-          .upsert({
-            employee_id: employeeId,
-            date: date,
-            frueh_start: updated.früh?.start || null,
-            frueh_end: updated.früh?.end || null,
-            frueh_absence: updated.frühAbsence || null,
-            spaet_start: updated.spät?.start || null,
-            spaet_end: updated.spät?.end || null,
-            spaet_absence: updated.spätAbsence || null,
-          }, {
+          .upsert({ ...basePayload, break_minutes: updated.breakMinutes ?? null }, {
             onConflict: 'employee_id,date'
           });
-        
+
+        // Fallback: Spalte break_minutes existiert noch nicht (Migration ausstehend)
+        if (error && /break_minutes/i.test(error.message || '')) {
+          console.warn('[SCHEDULE] break_minutes-Spalte fehlt — speichere ohne Pause (Migration ausführen!)');
+          ({ error } = await supabase
+            .from('schedule_entries')
+            .upsert(basePayload, { onConflict: 'employee_id,date' }));
+        }
+
         if (error) throw error;
         
         setScheduleData(prev => ({ ...prev, [cellKey]: updated }));

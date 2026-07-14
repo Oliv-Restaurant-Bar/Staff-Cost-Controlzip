@@ -97,7 +97,7 @@ import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useQuickTimes } from '@/hooks/useQuickTimes';
-import { calculateBreakDeduction } from '@/hooks/useShiftConfig';
+import { resolveBreakHours } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -282,7 +282,7 @@ const SchedulePlanner = () => {
   const [copiedCell, setCopiedCell] = useState<CopiedCell | null>(null);
   const [copiedWeek, setCopiedWeek] = useState<{
     empId: string;
-    data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null }>;
+    data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null; breakMinutes: number | null }>;
   } | null>(null);
 
   // ── Phase 1B: multi-plan stamp mode ───────────────────────────────────────
@@ -695,6 +695,12 @@ const SchedulePlanner = () => {
               }
               if (val?.isAdditionalCost) {
                 merged[cellKey] = { ...(merged[cellKey] ?? {}), isAdditionalCost: true };
+              }
+              // breakMinutes: solange Migration 20260714 nicht gelaufen ist, lebt die
+              // manuelle Pause nur in localStorage — beim Supabase-Reload erhalten.
+              // Hat Supabase bereits einen Wert, gewinnt Supabase.
+              if (typeof val?.breakMinutes === 'number' && merged[cellKey]?.breakMinutes == null) {
+                merged[cellKey] = { ...(merged[cellKey] ?? {}), breakMinutes: val.breakMinutes as number };
               }
             }
             localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
@@ -1277,8 +1283,8 @@ const SchedulePlanner = () => {
     const spätHours = calculateSlotHours(daySchedule.spät);
     const totalGross = frühHours + spätHours;
     
-    // Apply break deduction based on total hours
-    const breakDeduction = calculateBreakDeduction(totalGross);
+    // Apply break deduction based on total hours (manuelle Tages-Pause hat Vorrang)
+    const breakDeduction = resolveBreakHours(totalGross, daySchedule.breakMinutes);
     return Math.round((totalGross - breakDeduction) * 100) / 100;
   };
 
@@ -1490,7 +1496,9 @@ const SchedulePlanner = () => {
     date: string, 
     slotType: 'früh' | 'spät', 
     value: TimeSlot | null, 
-    absenceType?: string | null
+    absenceType?: string | null,
+    // Pause pro TAG: undefined = unverändert, number = manuell setzen, null = Automatik
+    breakMinutes?: number | null
   ) => {
     const cellKey = `${employeeId}-${date}`;
 
@@ -1516,6 +1524,11 @@ const SchedulePlanner = () => {
       } else {
         updated.spät = value;
         updated.spätAbsence = absenceType || null;
+      }
+
+      // Pause pro TAG (undefined = unverändert lassen)
+      if (breakMinutes !== undefined) {
+        updated.breakMinutes = breakMinutes;
       }
       
       // Validate shift times only when both are time slots (not absences)
@@ -1715,7 +1728,7 @@ const SchedulePlanner = () => {
   const handleCopyCell = (empId: string, dateStr: string) => {
     const ds = scheduleData[`${empId}-${dateStr}`] || {};
     if (!ds.früh && !ds.frühAbsence && !ds.spät && !ds.spätAbsence) { toast('Zelle ist leer'); return; }
-    setCopiedCell({ primary: ds.früh || null, secondary: ds.spät || null, absence: ds.frühAbsence || ds.spätAbsence || null });
+    setCopiedCell({ primary: ds.früh || null, secondary: ds.spät || null, absence: ds.frühAbsence || ds.spätAbsence || null, breakMinutes: ds.breakMinutes ?? null });
     toast.success('Zelle kopiert');
   };
 
@@ -1725,7 +1738,8 @@ const SchedulePlanner = () => {
       handleSlotChange(empId, dateStr, 'früh', null, copiedCell.absence);
       handleSlotChange(empId, dateStr, 'spät', null, null);
     } else {
-      handleSlotChange(empId, dateStr, 'früh', copiedCell.primary, null);
+      // Pause EINMAL (auf dem ersten Call) mitgeben — Tag wird komplett ersetzt
+      handleSlotChange(empId, dateStr, 'früh', copiedCell.primary, null, copiedCell.breakMinutes ?? null);
       handleSlotChange(empId, dateStr, 'spät', copiedCell.secondary, null);
     }
   };
@@ -1745,11 +1759,11 @@ const SchedulePlanner = () => {
   };
 
   const handleCopyWeek = (empId: string) => {
-    const data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null }> = {};
+    const data: Record<string, { früh: TimeSlot | null; frühAbsence: string | null; spät: TimeSlot | null; spätAbsence: string | null; breakMinutes: number | null }> = {};
     displayDays.forEach(day => {
       const dateStr = format(day, 'yyyy-MM-dd');
       const ds = scheduleData[`${empId}-${dateStr}`] || {};
-      data[dateStr] = { früh: ds.früh || null, frühAbsence: ds.frühAbsence || null, spät: ds.spät || null, spätAbsence: ds.spätAbsence || null };
+      data[dateStr] = { früh: ds.früh || null, frühAbsence: ds.frühAbsence || null, spät: ds.spät || null, spätAbsence: ds.spätAbsence || null, breakMinutes: ds.breakMinutes ?? null };
     });
     const empName = employees.find(e => e.id === empId)?.name || empId;
     setCopiedWeek({ empId, data });
@@ -1765,7 +1779,8 @@ const SchedulePlanner = () => {
       const srcDate = srcDates[idx];
       const src = srcDate ? copiedWeek.data[srcDate] : null;
       if (!src) return;
-      handleSlotChange(empId, dateStr, 'früh', src.früh, src.frühAbsence);
+      // Pause EINMAL (auf dem ersten Call) mitgeben — Tag wird komplett ersetzt
+      handleSlotChange(empId, dateStr, 'früh', src.früh, src.frühAbsence, src.breakMinutes ?? null);
       handleSlotChange(empId, dateStr, 'spät', src.spät, src.spätAbsence);
     });
     toast.success('Woche eingefügt');
