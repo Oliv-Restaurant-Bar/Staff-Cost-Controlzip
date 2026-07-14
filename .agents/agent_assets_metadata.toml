@@ -18,3 +18,9 @@ id = "Nz5d_p5_x5C9s92ugcYAt"
 uri = "file://last-task-patch.zip"
 type = "unspecified"
 title = "Git-Patch: Speichersicherheits-Fixes (letzter Task)"
+
+[[outputs]]
+id = "fkumhNp21ZakiPyElt1Oe"
+uri = "file://review-package.zip"
+type = "unspecified"
+title = "Review-Paket für Claude (3.6 MB)"

@@ -1,0 +1,689 @@
+import { useState, useEffect, useCallback } from 'react';
+import { kvGet, kvSet } from '@/lib/supabase-kv';
+
+export interface ShiftConfigItem {
+  name: string;
+  start: string;
+  end: string;
+  start2?: string;
+  end2?: string;
+  hours: number;
+  color: string;
+  isPaid: boolean;
+  countsToTarget: boolean;
+  abbrev: string;
+  excelColor: string;
+  textColor: string;
+  department?: 'service' | 'küche' | 'all';
+  fixedHours?: boolean;
+  displayMode?: 'default' | 'code-in-cell';
+  showInQuickSelect?: boolean; // If false, hidden from the quick-access legend bar
+}
+
+export interface ShiftConfigMap {
+  [key: string]: Omit<ShiftConfigItem, 'name'>;
+}
+
+// Break deduction rules (Pausenregelung)
+// - bis und mit 9:00 Stunden → keine automatische Pause
+// - über 9:00 Stunden → 30 Minuten Pause
+export function calculateBreakDeduction(grossHours: number): number {
+  if (grossHours > 9) {
+    return 0.5; // 30 minutes
+  }
+  return 0;
+}
+
+/**
+ * ZENTRALE Pausenauflösung für den Dienstplan (SSoT).
+ *
+ * - `manualBreakMinutes == null` (undefined/null) → automatische Regel gilt
+ *   (calculateBreakDeduction: >9h → 30 Min), identisch zum Altverhalten.
+ * - `manualBreakMinutes` gesetzt (0/30/60) → ERSETZT die automatische Regel
+ *   vollständig (nie addieren). 0 = explizit „Keine Pause".
+ *
+ * Rückgabe: Pausenabzug in Stunden. Gilt nur für gearbeitete Brutto-Stunden,
+ * nie für Absenzstunden.
+ */
+export function resolveBreakHours(grossHours: number, manualBreakMinutes?: number | null): number {
+  if (manualBreakMinutes != null) {
+    return manualBreakMinutes / 60;
+  }
+  return calculateBreakDeduction(grossHours);
+}
+
+/**
+ * ZENTRALE Tages-Pausenauflösung PRO EINSATZ (SSoT, seit Migration 20260714).
+ *
+ * Prioritäten:
+ * 1. Mindestens EINE Einsatz-Pause manuell gesetzt (fruehBreakMinutes bzw.
+ *    spaetBreakMinutes, 0/30/60) → Tagespause = Summe der gesetzten Werte
+ *    (nicht gesetzter Einsatz = 0). ERSETZT die Automatik vollständig.
+ * 2. Nur Legacy-Tages-Pause `breakMinutes` gesetzt (alte Daten vor der
+ *    Umstellung) → dieser Wert gilt (Lese-Fallback).
+ * 3. Nichts manuell gesetzt → automatische Regel (>9h Tages-Brutto → 30 Min).
+ *
+ * Rückgabe: Pausenabzug in Stunden. Gilt nur für gearbeitete Brutto-Stunden,
+ * nie für Absenzstunden.
+ */
+export interface DayBreakFields {
+  fruehBreakMinutes?: number | null;
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback */
+  breakMinutes?: number | null;
+}
+
+export function resolveDayBreakHours(
+  ds: DayBreakFields | null | undefined,
+  grossHours: number
+): number {
+  if (ds && (ds.fruehBreakMinutes != null || ds.spaetBreakMinutes != null)) {
+    return ((ds.fruehBreakMinutes ?? 0) + (ds.spaetBreakMinutes ?? 0)) / 60;
+  }
+  return resolveBreakHours(grossHours, ds?.breakMinutes ?? null);
+}
+
+// ── ZENTRALE Nettostunden-Berechnung (SSoT) ──────────────────────────────────
+//
+// ALLE Stunden- und Kostenpfade (Zellen, Tages-/Wochen-/Monatstotale, Kosten,
+// Exporte) müssen aus diesen Funktionen stammen — keine parallelen
+// Brutto-Berechnungen (Ende − Start ohne Pausenabzug) in Komponenten.
+
+/** Minimaler TimeSlot-Shape (Plan-Einsatz). */
+export interface TimeSlotLike {
+  start?: string | null;
+  end?: string | null;
+}
+
+/** Tagesplan-Shape für die Nettostunden-Berechnung. */
+export interface DayNetFields extends DayBreakFields {
+  früh?: TimeSlotLike | null;
+  spät?: TimeSlotLike | null;
+}
+
+const TIME_RE = /^\d{1,2}:\d{2}$/;
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Bruttostunden EINES Einsatzes (Ende − Start, Mitternachts-Überlauf +24h).
+ * Leerer/unvollständiger Slot → 0. Ungültiges Zeitformat → 0 (defensiv).
+ */
+export function slotGrossHours(slot: TimeSlotLike | null | undefined): number {
+  if (!slot?.start || !slot?.end) return 0;
+  if (!TIME_RE.test(slot.start) || !TIME_RE.test(slot.end)) return 0;
+  const [sh, sm] = slot.start.split(':').map(Number);
+  const [eh, em] = slot.end.split(':').map(Number);
+  let hours = eh - sh + (em - sm) / 60;
+  if (hours < 0) hours += 24;
+  return round2(hours);
+}
+
+/**
+ * Nettostunden EINES Einsatzes: Ende − Start − Pause (nie unter 0).
+ * Ungültige oder unvollständige Zeitwerte → null (nie stillschweigend 0
+ * als „gearbeitete 0 Stunden" interpretieren).
+ */
+export function calculateNetShiftHours(args: {
+  startTime?: string | null;
+  endTime?: string | null;
+  breakMinutes?: number | null;
+}): number | null {
+  const { startTime, endTime, breakMinutes } = args;
+  if (!startTime || !endTime) return null;
+  if (!TIME_RE.test(startTime) || !TIME_RE.test(endTime)) return null;
+  const gross = slotGrossHours({ start: startTime, end: endTime });
+  return round2(Math.max(0, gross - (breakMinutes ?? 0) / 60));
+}
+
+/**
+ * ZENTRALE Tages-Nettostunden (SSoT): Summe der Netto-Einsatzstunden.
+ *
+ * - Mindestens EINE Einsatz-Pause manuell gesetzt → jede Pause wird von
+ *   IHREM Einsatz abgezogen und PRO EINSATZ auf 0 geclampt
+ *   (netto = max(0, brutto1 − p1) + max(0, brutto2 − p2)).
+ * - Sonst Legacy-Tages-Pause bzw. Automatik (>9h Tages-Brutto → 30 Min)
+ *   über resolveDayBreakHours, auf Tagesebene abgezogen (nie unter 0).
+ *
+ * Gilt NUR für gearbeitete Stunden — Absenzstunden laufen nicht hier durch.
+ */
+export function calculateDayNetHours(ds: DayNetFields | null | undefined): number {
+  if (!ds) return 0;
+  const g1 = slotGrossHours(ds.früh);
+  const g2 = slotGrossHours(ds.spät);
+  if (ds.fruehBreakMinutes != null || ds.spaetBreakMinutes != null) {
+    const n1 = Math.max(0, g1 - (ds.fruehBreakMinutes ?? 0) / 60);
+    const n2 = Math.max(0, g2 - (ds.spaetBreakMinutes ?? 0) / 60);
+    return round2(n1 + n2);
+  }
+  const gross = g1 + g2;
+  if (gross <= 0) return 0;
+  return round2(Math.max(0, gross - resolveDayBreakHours(ds, gross)));
+}
+
+/**
+ * ZENTRALE Netto-Aufteilung pro Einsatz (SSoT-Ergänzung zu calculateDayNetHours):
+ * liefert die Nettostunden je Einsatz, so dass frühNet + spätNet exakt dem
+ * Tages-Netto aus calculateDayNetHours entspricht.
+ *
+ * - Manuelle Einsatz-Pausen → jede Pause von IHREM Einsatz, pro Einsatz geclampt.
+ * - Sonst Legacy/Automatik-Tagespause proportional zum Brutto aufgeteilt.
+ */
+export function calculateDaySlotNetHours(
+  ds: DayNetFields | null | undefined,
+): { frühNet: number; spätNet: number } {
+  if (!ds) return { frühNet: 0, spätNet: 0 };
+  const g1 = slotGrossHours(ds.früh);
+  const g2 = slotGrossHours(ds.spät);
+  if (ds.fruehBreakMinutes != null || ds.spaetBreakMinutes != null) {
+    return {
+      frühNet: round2(Math.max(0, g1 - (ds.fruehBreakMinutes ?? 0) / 60)),
+      spätNet: round2(Math.max(0, g2 - (ds.spaetBreakMinutes ?? 0) / 60)),
+    };
+  }
+  const gross = g1 + g2;
+  if (gross <= 0) return { frühNet: 0, spätNet: 0 };
+  const breakDeduction = resolveDayBreakHours(ds, gross);
+  return {
+    frühNet: round2(Math.max(0, g1 - breakDeduction * (g1 / gross))),
+    spätNet: round2(Math.max(0, g2 - breakDeduction * (g2 / gross))),
+  };
+}
+
+// Calculate effective hours with break deduction
+export function calculateEffectiveHours(start: string, end: string, start2?: string, end2?: string): number {
+  const parseTime = (time: string): number => {
+    const [hours, minutes] = time.split(':').map(Number);
+    return hours + minutes / 60;
+  };
+
+  let grossHours = 0;
+
+  if (start && end) {
+    const startTime = parseTime(start);
+    let endTime = parseTime(end);
+    
+    // Handle overnight shifts (e.g., 14:00-02:00)
+    if (endTime < startTime) {
+      endTime += 24;
+    }
+    
+    grossHours += endTime - startTime;
+  }
+
+  // Add second shift part if exists (split shift)
+  if (start2 && end2) {
+    const startTime2 = parseTime(start2);
+    let endTime2 = parseTime(end2);
+    
+    if (endTime2 < startTime2) {
+      endTime2 += 24;
+    }
+    
+    grossHours += endTime2 - startTime2;
+  }
+
+  const breakDeduction = calculateBreakDeduction(grossHours);
+  return Math.round((grossHours - breakDeduction) * 100) / 100;
+}
+
+// Default shift configuration
+const DEFAULT_SHIFTS: ShiftConfigItem[] = [
+  // === SERVICE Shifts ===
+  { 
+    name: 'Früh', 
+    start: '11:00', 
+    end: '15:00', 
+    hours: 4, // 4h gross - no break (under 5.5h)
+    color: 'bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'FR',
+    excelColor: 'FFFEF3C7',
+    textColor: 'FF92400E',
+    department: 'service'
+  },
+  { 
+    name: 'Spät', 
+    start: '17:00', 
+    end: '23:00', 
+    hours: 6, // 6h gross - no break (≤9h)
+    color: 'bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'SP',
+    excelColor: 'FFDBEAFE',
+    textColor: 'FF1E40AF',
+    department: 'service'
+  },
+  { 
+    name: '11-14 / 17-23:30', 
+    start: '11:00', 
+    end: '14:00', 
+    start2: '17:00',
+    end2: '23:30',
+    hours: 9, // 9.5h gross - 30min break (>9h) = 9.0h
+    color: 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-800 dark:text-cyan-200 border-cyan-300 dark:border-cyan-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'ZI',
+    excelColor: 'FFCFFAFE',
+    textColor: 'FF155E75',
+    department: 'service'
+  },
+
+  // === KÜCHE Shifts ===
+  { 
+    name: '10-14 / 17:30-23', 
+    start: '10:00', 
+    end: '14:00', 
+    start2: '17:30',
+    end2: '23:00',
+    hours: 9, // 9.5h gross - 30min break (>9h) = 9.0h
+    color: 'bg-pink-100 dark:bg-pink-900/40 text-pink-800 dark:text-pink-200 border-pink-300 dark:border-pink-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'GT',
+    excelColor: 'FFFCE7F3',
+    textColor: 'FF9D174D',
+    department: 'küche'
+  },
+  { 
+    name: 'Durchgehend', 
+    start: '11:30', 
+    end: '21:30', 
+    hours: 9.5, // 10h gross - 30min break (>9h) = 9.5h
+    color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-200 border-orange-300 dark:border-orange-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'DG',
+    excelColor: 'FFFFEDD5',
+    textColor: 'FFC2410C',
+    department: 'küche'
+  },
+  { 
+    name: 'Küche Früh', 
+    start: '10:00', 
+    end: '14:00', 
+    hours: 4, // 4h gross - no break
+    color: 'bg-lime-100 dark:bg-lime-900/40 text-lime-800 dark:text-lime-200 border-lime-300 dark:border-lime-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'KF',
+    excelColor: 'FFECFCCB',
+    textColor: 'FF4D7C0F',
+    department: 'küche'
+  },
+  { 
+    name: 'Küche Spät', 
+    start: '17:30', 
+    end: '23:00', 
+    hours: 5.5, // 5.5h gross - no break (≤9h)
+    color: 'bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'KS',
+    excelColor: 'FFCCFBF1',
+    textColor: 'FF115E59',
+    department: 'küche'
+  },
+  { 
+    name: 'Küche Lang', 
+    start: '14:00', 
+    end: '23:00', 
+    hours: 9, // 9h gross - no break (≤9h, not >9h)
+    color: 'bg-rose-100 dark:bg-rose-900/40 text-rose-800 dark:text-rose-200 border-rose-300 dark:border-rose-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'KL',
+    excelColor: 'FFFFE4E6',
+    textColor: 'FF9F1239',
+    department: 'küche'
+  },
+  { 
+    name: 'Küche Mittag', 
+    start: '11:00', 
+    end: '14:00', 
+    hours: 3, // 3h gross - no break
+    color: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-800 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'KM',
+    excelColor: 'FFD1FAE5',
+    textColor: 'FF065F46',
+    department: 'küche'
+  },
+  { 
+    name: 'Küche Abend', 
+    start: '18:30', 
+    end: '23:30', 
+    hours: 5, // 5h gross - no break (under 5.5h)
+    color: 'bg-violet-100 dark:bg-violet-900/40 text-violet-800 dark:text-violet-200 border-violet-300 dark:border-violet-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: 'KA',
+    excelColor: 'FFEDE9FE',
+    textColor: 'FF5B21B6',
+    department: 'küche'
+  },
+
+  // === SHARED Shifts (both departments) ===
+  { 
+    name: '8.5h Fest', 
+    start: '', 
+    end: '', 
+    hours: 8.5,
+    color: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-800 dark:text-indigo-200 border-indigo-300 dark:border-indigo-700', 
+    isPaid: true, 
+    countsToTarget: true, 
+    abbrev: '8.5',
+    excelColor: 'FFE0E7FF',
+    textColor: 'FF3730A3',
+    department: 'all',
+    fixedHours: true
+  },
+  {
+    name: 'Ferien', 
+    start: '', 
+    end: '', 
+    hours: 8.4, 
+    color: 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500', 
+    isPaid: false, 
+    countsToTarget: false, 
+    abbrev: 'FE',
+    excelColor: 'FFE5E7EB',
+    textColor: 'FF374151',
+    department: 'all'
+  },
+  { 
+    name: 'Krank', 
+    start: '', 
+    end: '', 
+    hours: 8.4, 
+    color: 'bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-200 border-gray-400 dark:border-gray-500', 
+    isPaid: false, 
+    countsToTarget: false, 
+    abbrev: 'K',
+    excelColor: 'FFD1D5DB',
+    textColor: 'FF374151',
+    department: 'all'
+  },
+  {
+    name: 'Unfall',
+    start: '',
+    end: '',
+    hours: 8.4,
+    color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-200 border-orange-300 dark:border-orange-600',
+    isPaid: false,
+    countsToTarget: false,
+    abbrev: 'U',
+    excelColor: 'FFFFEDD5',
+    textColor: 'FFC2410C',
+    department: 'all'
+  },
+  { 
+    name: 'Frei', 
+    start: '', 
+    end: '', 
+    hours: 0, 
+    color: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-200 border-green-300 dark:border-green-600', 
+    isPaid: false, 
+    countsToTarget: false, 
+    abbrev: 'F',
+    excelColor: 'FFDCFCE7',
+    textColor: 'FF15803D',
+    department: 'all'
+  },
+];
+
+const STORAGE_KEY = 'shift-config';
+const SHIFT_CONFIG_CHANGED = 'shift-config-changed';
+
+// Color mapping for excelColor based on tailwind color
+const COLOR_TO_EXCEL: Record<string, { excelColor: string; textColor: string }> = {
+  'bg-amber-100': { excelColor: 'FFFEF3C7', textColor: 'FF92400E' },
+  'bg-blue-100': { excelColor: 'FFDBEAFE', textColor: 'FF1E40AF' },
+  'bg-purple-100': { excelColor: 'FFF3E8FF', textColor: 'FF6B21A8' },
+  'bg-indigo-100': { excelColor: 'FFE0E7FF', textColor: 'FF3730A3' },
+  'bg-green-100': { excelColor: 'FFDCFCE7', textColor: 'FF15803D' },
+  'bg-gray-200': { excelColor: 'FFE5E7EB', textColor: 'FF374151' },
+  'bg-gray-300': { excelColor: 'FFD1D5DB', textColor: 'FF374151' },
+  'bg-red-100': { excelColor: 'FFFEE2E2', textColor: 'FF991B1B' },
+  'bg-teal-100': { excelColor: 'FFCCFBF1', textColor: 'FF115E59' },
+  'bg-pink-100': { excelColor: 'FFFCE7F3', textColor: 'FF9D174D' },
+  'bg-cyan-100': { excelColor: 'FFCFFAFE', textColor: 'FF155E75' },
+  'bg-sky-100': { excelColor: 'FFE0F2FE', textColor: 'FF0369A1' },
+  'bg-orange-100': { excelColor: 'FFFFEDD5', textColor: 'FFC2410C' },
+  'bg-lime-100': { excelColor: 'FFECFCCB', textColor: 'FF4D7C0F' },
+};
+
+function getExcelColorsFromTailwind(tailwindColor: string): { excelColor: string; textColor: string } {
+  // Extract the base color class (e.g., 'bg-amber-100' from the full color string)
+  const match = tailwindColor.match(/bg-(\w+)-(\d+)/);
+  if (match) {
+    const colorKey = `bg-${match[1]}-${match[2]}`;
+    if (COLOR_TO_EXCEL[colorKey]) {
+      return COLOR_TO_EXCEL[colorKey];
+    }
+  }
+  // Default fallback
+  return { excelColor: 'FFFFFFFF', textColor: 'FF000000' };
+}
+
+/**
+ * Migration: Ferien (FE), Frei (F) und Krank (K) dürfen niemals zu den Sollstunden zählen.
+ * Korrigiert alte gespeicherte Configs, die countsToTarget: true hatten.
+ */
+function applyMandatoryMigrations(items: ShiftConfigItem[]): { items: ShiftConfigItem[]; changed: boolean } {
+  let changed = false;
+  const migrated = items.map(item => {
+    // Ferien (FE), Frei (F), Krank (K) und Unfall (U) müssen immer countsToTarget: false haben
+    if ((item.abbrev === 'FE' || item.abbrev === 'F' || item.abbrev === 'K' || item.abbrev === 'U') && item.countsToTarget) {
+      changed = true;
+      return { ...item, countsToTarget: false };
+    }
+    return item;
+  });
+  return { items: migrated, changed };
+}
+
+function loadShiftsFromStorage(): ShiftConfigItem[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as ShiftConfigItem[];
+      // Ensure all items have excelColor and textColor
+      const enriched = parsed.map(item => {
+        if (!item.excelColor || !item.textColor) {
+          const colors = getExcelColorsFromTailwind(item.color);
+          return { ...item, ...colors };
+        }
+        return item;
+      });
+      
+      // Merge in any new default shifts that don't exist in storage
+      const storedNames = new Set(enriched.map(s => s.name));
+      const newDefaults = DEFAULT_SHIFTS.filter(d => !storedNames.has(d.name));
+      const merged = newDefaults.length > 0 ? [...enriched, ...newDefaults] : enriched;
+
+      // Apply mandatory migrations (Ferien/Frei countsToTarget: false)
+      const { items: final, changed } = applyMandatoryMigrations(merged);
+
+      if (newDefaults.length > 0 || changed) {
+        // Save migrated config back to storage (no broadcast – internal migration)
+        saveShiftsToStorage(final, false);
+      }
+      
+      return final;
+    }
+  } catch (e) {
+    console.error('Failed to load shift config from localStorage:', e);
+  }
+  return DEFAULT_SHIFTS;
+}
+
+function saveShiftsToStorage(shifts: ShiftConfigItem[], broadcast = true): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
+    if (broadcast) {
+      window.dispatchEvent(new CustomEvent(SHIFT_CONFIG_CHANGED));
+    }
+    // Supabase sync (fire-and-forget)
+    kvSet(STORAGE_KEY, shifts).catch(() => {});
+  } catch (e) {
+    console.error('Failed to save shift config to localStorage:', e);
+  }
+}
+
+/**
+ * Schichtkonfiguration aus Supabase laden (async).
+ * Auto-Migration: wenn Supabase leer aber localStorage hat Daten → sync.
+ * Gibt null zurück wenn nichts Neues geladen wurde.
+ */
+async function loadShiftsFromDB(): Promise<ShiftConfigItem[] | null> {
+  try {
+    const remote = await kvGet(STORAGE_KEY);
+    if (remote !== null && Array.isArray(remote) && (remote as ShiftConfigItem[]).length > 0) {
+      let shifts = remote as ShiftConfigItem[];
+      // Apply mandatory migrations (Ferien/Frei countsToTarget: false)
+      const { items: migrated, changed } = applyMandatoryMigrations(shifts);
+      if (changed) {
+        shifts = migrated;
+        // Persist corrected config back to Supabase (fire-and-forget)
+        kvSet(STORAGE_KEY, shifts).catch(() => {});
+        console.log('[Schichten] Migration: FE/F/K countsToTarget korrigiert und in Supabase gespeichert');
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
+      console.log(`[Schichten] Aus Supabase geladen: ${shifts.length} Schichttypen`);
+      return shifts;
+    }
+    const local = loadShiftsFromStorage();
+    const isDefault = local === DEFAULT_SHIFTS;
+    if (!isDefault && local.length > 0) {
+      console.log(`[Schichten] Supabase leer – sync localStorage→Supabase: ${local.length} Schichttypen`);
+      kvSet(STORAGE_KEY, local).catch(() => {});
+    } else {
+      console.log('[Schichten] Standard-Schichtkonfiguration aktiv, kein Supabase-Sync nötig');
+    }
+    return null;
+  } catch (err) {
+    console.error('[Schichten] loadShiftsFromDB Fehler:', err);
+    return null;
+  }
+}
+
+// Convert array to map for easy lookup
+function shiftsToMap(shifts: ShiftConfigItem[]): ShiftConfigMap {
+  const map: ShiftConfigMap = {};
+  for (const shift of shifts) {
+    map[shift.name] = {
+      start: shift.start,
+      end: shift.end,
+      start2: shift.start2,
+      end2: shift.end2,
+      hours: shift.hours,
+      color: shift.color,
+      isPaid: shift.isPaid,
+      countsToTarget: shift.countsToTarget,
+      abbrev: shift.abbrev,
+      excelColor: shift.excelColor,
+      textColor: shift.textColor,
+      department: shift.department,
+      fixedHours: shift.fixedHours,
+    };
+  }
+  return map;
+}
+
+// Get shift names (work shifts first, then absence shifts)
+function getShiftNames(shifts: ShiftConfigItem[]): { workShifts: string[]; absenceShifts: string[] } {
+  const workShifts = shifts.filter(s => s.start && s.end).map(s => s.name);
+  const absenceShifts = shifts.filter(s => !s.start || !s.end).map(s => s.name);
+  return { workShifts, absenceShifts };
+}
+
+// Get shifts filtered by department
+export function getShiftsByDepartment(shifts: ShiftConfigItem[], department: 'service' | 'küche' | 'all'): ShiftConfigItem[] {
+  return shifts.filter(s => 
+    s.department === 'all' || s.department === department || !s.department
+  );
+}
+
+export function useShiftConfig() {
+  const [shifts, setShifts] = useState<ShiftConfigItem[]>(loadShiftsFromStorage);
+  const [shiftMap, setShiftMap] = useState<ShiftConfigMap>(() => shiftsToMap(loadShiftsFromStorage()));
+
+  useEffect(() => {
+    // Sync localStorage initial state
+    const loaded = loadShiftsFromStorage();
+    setShifts(loaded);
+    setShiftMap(shiftsToMap(loaded));
+    // Dann aus Supabase laden (überschreibt lokalen Stand wenn Supabase neuere Daten hat)
+    loadShiftsFromDB().then(dbShifts => {
+      if (dbShifts) {
+        // Merge in any new defaults that don't exist in stored config
+        const storedNames = new Set(dbShifts.map(s => s.name));
+        const newDefaults = DEFAULT_SHIFTS.filter(d => !storedNames.has(d.name));
+        const merged = newDefaults.length > 0 ? [...dbShifts, ...newDefaults] : dbShifts;
+        setShifts(merged);
+        setShiftMap(shiftsToMap(merged));
+      }
+    });
+
+    // Listen for changes made by OTHER hook instances in the same tab
+    const handleExternalChange = () => {
+      const fresh = loadShiftsFromStorage();
+      setShifts(fresh);
+      setShiftMap(shiftsToMap(fresh));
+    };
+    window.addEventListener(SHIFT_CONFIG_CHANGED, handleExternalChange);
+    return () => window.removeEventListener(SHIFT_CONFIG_CHANGED, handleExternalChange);
+  }, []);
+
+  const updateShifts = useCallback((newShifts: ShiftConfigItem[]) => {
+    // Ensure excelColor and textColor
+    const enriched = newShifts.map(shift => {
+      if (!shift.excelColor || !shift.textColor) {
+        const colors = getExcelColorsFromTailwind(shift.color);
+        return { ...shift, ...colors };
+      }
+      return shift;
+    });
+    
+    setShifts(enriched);
+    setShiftMap(shiftsToMap(enriched));
+    saveShiftsToStorage(enriched);
+  }, []);
+
+  const resetToDefaults = useCallback(() => {
+    setShifts(DEFAULT_SHIFTS);
+    setShiftMap(shiftsToMap(DEFAULT_SHIFTS));
+    saveShiftsToStorage(DEFAULT_SHIFTS);
+  }, []);
+
+  const { workShifts, absenceShifts } = getShiftNames(shifts);
+
+  return {
+    shifts,
+    shiftMap,
+    workShifts,
+    absenceShifts,
+    allShiftNames: [...workShifts, ...absenceShifts],
+    updateShifts,
+    resetToDefaults,
+    getShiftsByDepartment: (dept: 'service' | 'küche' | 'all') => getShiftsByDepartment(shifts, dept),
+  };
+}
+
+// Static function to get shifts (for use outside React components)
+export function getShiftConfig(): ShiftConfigItem[] {
+  return loadShiftsFromStorage();
+}
+
+export function getShiftConfigMap(): ShiftConfigMap {
+  return shiftsToMap(loadShiftsFromStorage());
+}
+
+export { DEFAULT_SHIFTS };

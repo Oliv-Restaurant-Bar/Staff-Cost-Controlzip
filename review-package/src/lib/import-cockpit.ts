@@ -1,0 +1,1346 @@
+/**
+ * import-cockpit.ts — Reine Deskriptor- + Statuslogik für das Import-Cockpit.
+ * =========================================================================
+ * KEIN React / Supabase / DOM hier (nur `import type` + date-fns). Dieses Modul
+ * ist die Single Source of Truth für:
+ *   - WELCHE Datenquellen das Cockpit überwacht (COCKPIT_SOURCES)
+ *   - WIE oft jede Quelle erwartet wird (interval) und WOHIN verlinkt wird (route)
+ *   - WIE ein roher Frische-Signal (letztes Datendatum + letzter Importlauf) auf
+ *     einen Anzeige-Status abgebildet wird (computeSourceStatus)
+ *   - WIE Datenlücken erkannt (findMissingDays), KPIs summiert (summarizeCockpit)
+ *     und die Checkliste gruppiert werden (groupChecklist)
+ *
+ * READ-ONLY-POSTUR: Dieses Modul (und das gesamte Cockpit) verändert KEINE
+ * Importprozesse, keine Business-Logik, keine Tabellen. Es liest nur bestehende
+ * Signale und stellt sie dar. Es werden NIE Zeitstempel erfunden: fehlt ein
+ * Signal, ist der Status `never` (nie importiert) bzw. `uncheckable` (keine
+ * automatisch ableitbare Historie).
+ */
+
+import {
+  parseISO,
+  endOfMonth,
+  addDays,
+  addMonths,
+  addYears,
+  differenceInCalendarDays,
+  format,
+} from 'date-fns';
+import type { BuchhaltungsExportStatus } from './buchhaltungs-export';
+
+// ─── Grundtypen ────────────────────────────────────────────────────────────────
+
+export type ImportInterval = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+/**
+ * Anzeige-Status einer Datenquelle.
+ * - current      → grün:  Import aktuell
+ * - due_soon     → gelb:  bald fällig ODER einzelne Tage fehlen (Datenlücke)
+ * - overdue      → rot:   überfällig ODER letzter Import fehlgeschlagen
+ * - never        → grau:  noch nie importiert (Quelle prüfbar, aber leer)
+ * - uncheckable  → grau:  keine automatisch ableitbare Historie / nicht eingerichtet
+ */
+export type CockpitStatus = 'current' | 'due_soon' | 'overdue' | 'never' | 'uncheckable';
+
+/** Checklisten-Zustand eines Punkts (abgeleitet aus dem Status). */
+export type ChecklistState = 'done' | 'open' | 'overdue' | 'unknown';
+
+export type CockpitSourceId =
+  | 'reservationen'
+  | 'gaeste_crm'
+  | 'zbericht'
+  | 'tagesumsatz'
+  | 'produktverkaeufe'
+  | 'mirus'
+  | 'forecast'
+  | 'personalkosten'
+  | 'dienstplanung'
+  | 'warenrechnungen'
+  | 'umsatzabstimmung'
+  | 'adyen'
+  | 'budgetkontrolle'
+  | 'monatsabschluss'
+  | 'buchhaltungs_export'
+  | 'inventur'
+  | 'jahresbudget'
+  | 'vorjahresvergleich';
+
+/**
+ * Fachliche Kategorie einer Datenquelle (Domänen-Achse für Filter/Gruppierung).
+ * Unabhängig von der `importType`-Achse (WIE die Daten hereinkommen).
+ */
+export type CockpitCategory =
+  | 'reservationen_gaeste'
+  | 'umsatz_gastronovi'
+  | 'produkte'
+  | 'personal'
+  | 'waren_rechnungen'
+  | 'finanzen_budget'
+  | 'planung_kontrolle';
+
+/**
+ * Art des Imports (WIE die Daten hereinkommen) — reine Anzeige/Filter-Achse,
+ * KEINE Prozesslogik. `not_configured` = es existiert (noch) kein eingerichteter
+ * Import-/Erfassungsweg.
+ */
+export type CockpitImportType =
+  | 'file_upload' // Datei-Upload
+  | 'manual_entry' // Manuelle Eingabe
+  | 'control' // Kontrolle
+  | 'system' // Automatisch / Systemdaten
+  | 'not_configured'; // Nicht eingerichtet
+
+/**
+ * Tab-Zuordnung im 3-Tab-Cockpit:
+ * - 'import'  → echte Datenimporte/-erfassung (Tab „Datenimporte")
+ * - 'control' → wiederkehrende organisatorische Kontrollen (Tab „Kontrollen")
+ * Der Tab „Aufgaben" führt offene Punkte aus BEIDEN Sektionen zusammen.
+ */
+export type CockpitSection = 'import' | 'control';
+
+/**
+ * Tab-spezifische Kategorie („Bereich") gemäss 3-Tab-Konzept. `personal` kommt
+ * bewusst in beiden Sektionen vor — die `section` disambiguiert. Zwei
+ * Reihenfolge-Arrays (IMPORT_CATEGORY_ORDER / CONTROL_CATEGORY_ORDER in
+ * import-cockpit-tabs.ts) steuern die Anzeige je Tab.
+ */
+export type CockpitTabCategory =
+  // Datenimporte
+  | 'reservationen'
+  | 'gaeste_crm'
+  | 'umsatz'
+  | 'produkte'
+  | 'personal'
+  | 'warenwirtschaft'
+  | 'finanzen'
+  // Kontrollen
+  | 'forecast'
+  | 'dienstplanung'
+  | 'controlling'
+  | 'budget'
+  | 'inventur'
+  | 'monatsabschluss';
+
+/** Statischer Deskriptor einer überwachten Datenquelle. */
+export interface CockpitSourceDef {
+  id: CockpitSourceId;
+  /** Anzeigename der Datenquelle. */
+  label: string;
+  /** Bereich / Modul (Kontext-Spalte). */
+  module: string;
+  /**
+   * @deprecated Alte Domänen-Kategorie (7 Werte) — nur noch für Rückwärts-
+   * kompatibilität & bestehende Tests. Das 3-Tab-Cockpit nutzt `section` +
+   * `tabCategory`; für neue Anzeigen NICHT mehr verwenden.
+   */
+  category: CockpitCategory;
+  /** Tab-Zuordnung: 'import' = Datenimport, 'control' = wiederkehrende Kontrolle. */
+  section: CockpitSection;
+  /** Tab-spezifische Kategorie / „Bereich" (3-Tab-Konzept). */
+  tabCategory: CockpitTabCategory;
+  /** Art des Imports (Filter + Anzeige). */
+  importType: CockpitImportType;
+  /** „Was hochladen?" — was muss hochgeladen/erfasst/geprüft werden. */
+  uploadLabel: string;
+  /** Quelle der Datei/Daten (z. B. „Export aus Foratable → Reservationen"). */
+  sourceHint?: string;
+  /** Beispiel-Dateiname oder Format (nur bei Datei-Uploads sinnvoll). */
+  exampleFormat?: string;
+  /** Erwartetes Import-/Kontrollintervall. */
+  interval: ImportInterval;
+  /** Kurzbeschreibung (Detail-Drawer). */
+  description: string;
+  /** Aufgabentext in der Checklisten-Ansicht. */
+  checklistLabel: string;
+  /** Zielroute für „Aktion" / „Zur Importseite" (falls vorhanden). */
+  route?: string;
+  /** Sprechendes Aktions-Label für Button/Link (z. B. „Zur Gastronovi-Importseite"). */
+  actionLabel?: string;
+  /**
+   * true → es gibt ein automatisch ableitbares Frische-Signal (Datenlücken/
+   * Freshness werden berechnet). false → reine Kontroll-/Erinnerungsaufgabe ohne
+   * ableitbares Signal → Status `uncheckable`.
+   */
+  checkable: boolean;
+  /** true → tägliche Quelle, für die Datenlücken (fehlende Tage) sinnvoll sind. */
+  detectGaps?: boolean;
+  /**
+   * true → Signal ist mandantenübergreifend (z. B. `product_sales` ohne
+   * `restaurant_id`); die UI kennzeichnet das, damit die Frische nicht
+   * fälschlich als mandantenspezifisch gelesen wird.
+   */
+  tenantNeutral?: boolean;
+  /** Nur Kontrollen: Verantwortliche(r) (Drawer „Verantwortlich"). */
+  responsible?: string;
+  /** Nur Kontrollen: Warum ist diese Kontrolle wichtig? (Drawer). */
+  importance?: string;
+  /** Nur Kontrollen: Empfohlener Ablauf (Drawer). */
+  procedure?: string;
+}
+
+/** Rohes Frische-Signal einer Quelle (vom read-only DB-Aggregator gefüllt). */
+export interface CockpitSignal {
+  /**
+   * Frische-treibendes Datum (yyyy-MM-dd | yyyy-MM | yyyy) oder null. Fehlt es,
+   * fällt `computeSourceStatus` auf das Datum des letzten Importlaufs zurück.
+   */
+  latestDataDate: string | null;
+  /** Anzeige „Daten von" (frühester Datenstand). */
+  dataFrom?: string | null;
+  /** Anzeige „Daten bis" (spätester Datenstand; Default = latestDataDate). */
+  dataUntil?: string | null;
+  /** Anzahl Datensätze/Tage, falls verfügbar. */
+  recordCount?: number | null;
+  /** Letzter protokollierter Importlauf (nur wenn eine Historie existiert). */
+  lastImport?: { at: string | null; status: 'success' | 'failed'; by?: string | null } | null;
+  /** Abgedeckte Tage (nur für detectGaps-Quellen, Fenster-begrenzt). */
+  coveredDates?: string[];
+  /**
+   * Spätestes Datum ZUKÜNFTIGER Zeilen (> heute), das der DB-Aggregator für
+   * tägliche Ist-Quellen gefunden hat (z. B. Plan-/Ferien-/Zukunftszeilen in
+   * `actual_hours`). Reiner Hinweis für den Drawer — fliesst NIE in „Ist-Daten
+   * bis" oder den Status ein (Zukunft zählt nie als vollständig importiert).
+   */
+  futureDataDate?: string | null;
+  /** Dateiname des zugrunde liegenden Imports (falls aus der Historie bekannt). */
+  fileName?: string | null;
+  /**
+   * Spätester ECHTER Ist-Tagesdatensatz (≤ heute), UNABHÄNGIG von der
+   * importierten Periode. Reiner Drawer-Hinweis („Letzter gefundener
+   * Tagesdatensatz"): Für periodenbasierte Quellen wie Mirus zählt NICHT dieser
+   * MAX-Tag, sondern die importierte Periode (`latestDataDate`/`dataUntil` =
+   * Perioden-Ende). Weicht dieser Tag vom Perioden-Ende ab, deutet das auf
+   * spätere Einzel-Tageszeilen hin, die NICHT als vollständige Periode gelten.
+   */
+  latestRecordDate?: string | null;
+  /**
+   * Harter Status-Override MIT Begründung — für Quellen, deren Zustand nicht
+   * über Frische-Schwellen abbildbar ist (z. B. Buchhaltungs-Export §11:
+   * offen/bereit/exportiert/veraltet). Gewinnt in computeSourceStatus über die
+   * Frische-Berechnung; Datums-/Anzeige-Felder des Signals bleiben erhalten.
+   */
+  statusOverride?: { status: CockpitStatus; reason: string } | null;
+}
+
+/** Ergebnis der Statusberechnung einer Quelle. */
+export interface CockpitStatusResult {
+  status: CockpitStatus;
+  latestDataDate: string | null;
+  /** Kalendertage zwischen `now` und dem normalisierten Datenstand (null = kein Datum). */
+  daysBehind: number | null;
+  /** Nächste erwartete Fälligkeit (yyyy-MM-dd) oder null. */
+  nextDue: string | null;
+  /** Fehlende Tage im Prüffenster (nur detectGaps-Quellen). */
+  missingDays: string[];
+  /**
+   * Letzter LÜCKENLOS verfügbarer Tag (≤ heute) — „Vollständig importiert bis".
+   * Für detectGaps-Quellen aus den abgedeckten Tagen berechnet (bricht beim
+   * ersten fehlenden Tag ab); sonst = kappte letzter Ist-Datenstand.
+   */
+  completeUntil: string | null;
+  /**
+   * Spätestes ignoriertes Zukunftsdatum (> heute), falls die Quelle solche
+   * Zeilen enthält — nur Anzeige-Hinweis (Drawer), nie statusrelevant.
+   */
+  ignoredFutureDate: string | null;
+  /** true → letzter Import ist fehlgeschlagen. */
+  failed: boolean;
+  /** Menschenlesbare Begründung. */
+  reason: string;
+}
+
+/** Zusammengesetzte Zeile (Deskriptor + Signal + berechneter Status). */
+export interface CockpitRow {
+  def: CockpitSourceDef;
+  signal: CockpitSignal;
+  result: CockpitStatusResult;
+}
+
+// ─── Buchhaltungs-Export-Kontrollaufgabe (§11) ─────────────────────────────────
+
+/**
+ * Bildet den fachlichen Export-Status (offen/bereit/exportiert/veraltet) auf
+ * einen Cockpit-Status-Override MIT deutscher Begründung ab. Rein + zentral,
+ * damit UI, DB-Signal und Tests exakt dieselbe Abbildung verwenden:
+ *  - exportiert → current  (grün)
+ *  - bereit     → due_soon (gelb: Monat abgeschlossen, Export ausstehend)
+ *  - offen      → due_soon (gelb: Erinnerung, Monat noch in Arbeit)
+ *  - veraltet   → overdue  (rot: Monat nach dem letzten Export geändert, §10)
+ */
+export function buchhaltungsExportOverride(
+  status: BuchhaltungsExportStatus,
+  monthKey: string,
+  latestVersion: number | null,
+): { status: CockpitStatus; reason: string } {
+  switch (status) {
+    case 'exportiert':
+      return {
+        status: 'current',
+        reason: `Buchhaltungs-Export ${monthKey} aktuell (Export ${latestVersion ?? '?'}).`,
+      };
+    case 'veraltet':
+      return {
+        status: 'overdue',
+        reason: `Der Monat ${monthKey} wurde nach dem letzten Export geändert. Bitte neuen Export erstellen.`,
+      };
+    case 'bereit':
+      return {
+        status: 'due_soon',
+        reason: `Monat ${monthKey} abgeschlossen — Buchhaltungs-Export kann erstellt werden.`,
+      };
+    case 'offen':
+      return {
+        status: 'due_soon',
+        reason: `Monat ${monthKey} noch nicht abgeschlossen — Buchhaltungs-Export offen.`,
+      };
+  }
+}
+
+// ─── Schwellenwerte ─────────────────────────────────────────────────────────────
+
+interface IntervalThreshold {
+  /** ≤ diese Kalendertage „hinter" → current. */
+  currentMaxDaysBehind: number;
+  /** ≤ diese Kalendertage „hinter" → due_soon, darüber → overdue. */
+  dueSoonMaxDaysBehind: number;
+}
+
+/**
+ * Frische-Schwellen je Intervall (in Kalendertagen). Zentral, damit Tests sie
+ * fixieren und spätere Anpassungen einfach bleiben. „yearly" wird separat über
+ * den Jahresvergleich behandelt (siehe statusFromDaysBehind).
+ */
+export const INTERVAL_THRESHOLDS: Record<ImportInterval, IntervalThreshold> = {
+  daily: { currentMaxDaysBehind: 1, dueSoonMaxDaysBehind: 3 },
+  weekly: { currentMaxDaysBehind: 7, dueSoonMaxDaysBehind: 10 },
+  monthly: { currentMaxDaysBehind: 31, dueSoonMaxDaysBehind: 62 },
+  yearly: { currentMaxDaysBehind: 365, dueSoonMaxDaysBehind: 400 },
+};
+
+/** Fenster (Tage) rückwärts ab dem letzten Datenstand für die Lücken-Prüfung. */
+export const GAP_WINDOW_DAYS = 30;
+
+// ─── Deskriptoren ───────────────────────────────────────────────────────────────
+
+/**
+ * Alle überwachten Datenquellen in kanonischer Reihenfolge (täglich → jährlich).
+ * `checkable: true` = automatisch ableitbares Signal; `checkable: false` = reine
+ * Kontroll-/Erinnerungsaufgabe (Status `uncheckable`, in Tabelle UND Checkliste
+ * sichtbar, damit die „Nicht prüfbar"-KPI und der „Nur nicht prüfbare"-Filter
+ * greifen).
+ */
+export const COCKPIT_SOURCES: CockpitSourceDef[] = [
+  // ── Täglich ──
+  {
+    id: 'reservationen',
+    label: 'Foratable Reservationen',
+    module: 'Foratable / Reservationen',
+    category: 'reservationen_gaeste',
+    section: 'import',
+    tabCategory: 'reservationen',
+    importType: 'file_upload',
+    uploadLabel: 'Foratable Reservations-CSV',
+    sourceHint: 'Export aus Foratable → Reservationen',
+    exampleFormat: 'reservationen_export.csv',
+    interval: 'daily',
+    description:
+      'Reservationen aus Foratable. Frische = spätestes Reservationsdatum; letzter Lauf aus der Import-Historie.',
+    checklistLabel: 'Reservationen importieren',
+    route: '/foratable-import',
+    actionLabel: 'Zur Foratable-Importseite',
+    checkable: true,
+  },
+  {
+    id: 'gaeste_crm',
+    label: 'Foratable Gäste / CRM',
+    module: 'Foratable / Gäste-CRM',
+    category: 'reservationen_gaeste',
+    section: 'import',
+    tabCategory: 'gaeste_crm',
+    importType: 'file_upload',
+    uploadLabel: 'Foratable Gäste-/Kontakt-CSV',
+    sourceHint: 'Export aus Foratable → Gäste/Kontakte',
+    exampleFormat: 'gaeste_export.csv',
+    interval: 'daily',
+    description:
+      'Gästeexport für die CRM-Anreicherung. Frische = spätester Gäste-Datenstand; letzter Lauf aus der Import-Historie.',
+    checklistLabel: 'Gäste-CRM aktualisieren',
+    route: '/gaeste-import',
+    actionLabel: 'Zur Foratable-Importseite',
+    checkable: true,
+  },
+  {
+    id: 'zbericht',
+    label: 'Gastronovi Z-Bericht',
+    module: 'Umsatz / Gastronovi',
+    category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
+    importType: 'file_upload',
+    uploadLabel: 'Gastronovi Z-Bericht CSV/PDF',
+    sourceHint: 'Export aus Gastronovi → Z-Bericht',
+    exampleFormat: 'z-bericht_2026-07-06.csv / .pdf',
+    interval: 'daily',
+    description: 'Tages- und Perioden-Z-Berichte (Umsatz) aus Gastronovi. Frische = spätestes Berichtsende.',
+    checklistLabel: 'Z-Bericht importieren',
+    route: '/gastronovi-import',
+    actionLabel: 'Zur Gastronovi-Importseite',
+    checkable: true,
+  },
+  {
+    id: 'tagesumsatz',
+    label: 'Tagesumsatz',
+    module: 'Umsatz / Tagesansicht',
+    category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
+    importType: 'manual_entry',
+    uploadLabel: 'Tagesumsatz-Import oder Tagesabschluss',
+    sourceHint: 'Manuelle Erfassung in der Tagesansicht oder Tagesabschluss',
+    interval: 'daily',
+    description: 'Erfasste Ist-Tagesumsätze. Frische = spätester Tag mit Umsatz; fehlende Tage werden erkannt.',
+    checklistLabel: 'Tagesumsatz erfassen / importieren',
+    route: '/tagesansicht',
+    actionLabel: 'Zur Tagesansicht',
+    checkable: true,
+    detectGaps: true,
+  },
+  {
+    id: 'produktverkaeufe',
+    label: 'Produktverkäufe',
+    module: 'Produkte / Verkauf',
+    category: 'produkte',
+    section: 'import',
+    tabCategory: 'produkte',
+    importType: 'file_upload',
+    uploadLabel: 'Gastronovi Produktverkaufs-CSV',
+    sourceHint: 'Export aus Gastronovi → Produktverkauf',
+    exampleFormat: 'produktverkauf.csv',
+    interval: 'daily',
+    description:
+      'Artikel-/Produktverkäufe (Gastronovi CSV). Frische = spätestes Verkaufsdatum. Hinweis: Datenquelle ist mandantenübergreifend.',
+    checklistLabel: 'Produktverkäufe importieren',
+    route: '/sales-upload',
+    actionLabel: 'Zur Produktverkauf-Importseite',
+    checkable: true,
+    tenantNeutral: true,
+  },
+  {
+    id: 'mirus',
+    label: 'Mirus Arbeitszeiten',
+    module: 'Personal / Ist-Stunden',
+    category: 'personal',
+    section: 'import',
+    tabCategory: 'personal',
+    importType: 'file_upload',
+    uploadLabel: 'Mirus Arbeitszeitblatt Excel',
+    sourceHint: 'Export aus Mirus → Arbeitszeitblatt',
+    exampleFormat: 'arbeitszeiten.xls / .xlsx',
+    interval: 'daily',
+    description:
+      'Ist-Arbeitszeiten aus Mirus. Frische = Ende der zuletzt erfolgreich importierten Periode (Monat) aus der Import-Historie — nicht einzelne, verirrte Tageszeilen.',
+    checklistLabel: 'Arbeitszeiten Mirus importieren',
+    route: '/import',
+    actionLabel: 'Zur Arbeitszeit-Importseite',
+    checkable: true,
+    detectGaps: false,
+  },
+  // ── Wöchentlich ──
+  {
+    id: 'dienstplanung',
+    label: 'Dienstplanung Folgewochen',
+    module: 'Personal / Dienstplan',
+    category: 'personal',
+    section: 'control',
+    tabCategory: 'dienstplanung',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Dienstplan prüfen',
+    sourceHint: 'Dienstplan im Planer prüfen (kein externer Export)',
+    interval: 'weekly',
+    description: 'Geplante Schichten. Frische = spätester geplanter Tag (wie weit reicht der Plan in die Zukunft?).',
+    checklistLabel: 'Dienstplanung Folgewochen prüfen',
+    importance:
+      'Ein früh geplanter Dienstplan sichert ausreichende Besetzung, vermeidet kurzfristige Überstunden und gibt dem Team Planungssicherheit.',
+    procedure:
+      'Im Dienstplaner prüfen, wie weit die geplanten Schichten reichen, und mindestens die kommenden 2–3 Wochen vollständig planen.',
+    responsible: 'Betriebsleitung / Schichtleitung',
+    route: '/schedule-planner',
+    actionLabel: 'Zum Dienstplan',
+    checkable: true,
+  },
+  {
+    id: 'forecast',
+    label: 'Forecast-Kontrolle',
+    module: 'Umsatz / Forecast',
+    category: 'planung_kontrolle',
+    section: 'control',
+    tabCategory: 'forecast',
+    importType: 'manual_entry',
+    uploadLabel: 'Kein Upload – Forecast aktualisieren',
+    sourceHint: 'Manuelle Pflege im Forecast-Modul',
+    interval: 'weekly',
+    description: 'Wöchentliche Kontrolle der Umsatz-Forecasts. Reine Kontrollaufgabe ohne automatisches Signal.',
+    checklistLabel: 'Forecast aktualisieren',
+    importance:
+      'Ein aktueller Umsatz-Forecast ist die Basis für Personal-, Waren- und Budgetentscheidungen.',
+    procedure:
+      'Forecast-Zahlen mit den aktuellen Reservationen und Ist-Umsätzen abgleichen und wöchentlich fortschreiben.',
+    responsible: 'Betriebsleitung',
+    route: '/forecast',
+    actionLabel: 'Zur Forecast-Seite',
+    checkable: false,
+  },
+  {
+    id: 'personalkosten',
+    label: 'Personalkosten-Kontrolle',
+    module: 'Personal / Controlling',
+    category: 'planung_kontrolle',
+    section: 'control',
+    tabCategory: 'personal',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Kontrolle durchführen',
+    sourceHint: 'Kontrolle im Personal-Controlling',
+    interval: 'weekly',
+    description: 'Wöchentliche Kontrolle der Personalkosten. Reine Kontrollaufgabe ohne automatisches Signal.',
+    checklistLabel: 'Personalkosten kontrollieren',
+    importance:
+      'Frühzeitig erkannte Abweichungen bei den Personalkosten verhindern Budgetüberschreitungen.',
+    procedure:
+      'Ist-Personalkosten gegen Budget/Soll prüfen und auffällige Abweichungen im Personal-Controlling klären.',
+    responsible: 'Betriebsleitung / Controlling',
+    route: '/personal-fix',
+    actionLabel: 'Zum Personal-Controlling',
+    checkable: false,
+  },
+  // ── Monatlich ──
+  {
+    id: 'warenrechnungen',
+    label: 'Warenrechnungen',
+    module: 'Warenkosten / Rechnungen',
+    category: 'waren_rechnungen',
+    section: 'import',
+    tabCategory: 'warenwirtschaft',
+    importType: 'file_upload',
+    uploadLabel: 'Lieferantenrechnungen PDF',
+    sourceHint: 'PDF-Rechnungen von Lieferanten',
+    exampleFormat: 'rechnung_*.pdf',
+    interval: 'monthly',
+    description: 'Lieferanten-Rechnungen / Warenkosten. Keine automatisch ableitbare Import-Historie vorhanden.',
+    checklistLabel: 'Warenrechnungen importieren',
+    route: '/warenrechnungen',
+    actionLabel: 'Zu den Warenrechnungen',
+    checkable: false,
+  },
+  {
+    id: 'umsatzabstimmung',
+    label: 'Umsatzabstimmung',
+    module: 'Umsatz / Tagesabschluss',
+    category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
+    importType: 'manual_entry',
+    uploadLabel: 'Umsatzabstimmung manuell pflegen',
+    sourceHint: 'Manuelle Pflege in der monatlichen Umsatzabstimmung',
+    interval: 'monthly',
+    description:
+      'Monatliche manuelle Abstimmung von Bruttoumsatz, Take-Away und Tagesumsätzen. Frische = letzter Monat mit gepflegten Werten.',
+    checklistLabel: 'Umsatzabstimmung durchführen',
+    route: '/umsatzabstimmung',
+    actionLabel: 'Zur Umsatzabstimmung',
+    checkable: true,
+  },
+  {
+    id: 'adyen',
+    label: 'Adyen Zahlungen',
+    module: 'Umsatz / Tagesabschluss',
+    category: 'umsatz_gastronovi',
+    section: 'import',
+    tabCategory: 'umsatz',
+    importType: 'file_upload',
+    uploadLabel: 'Adyen „Received Payment Details" CSV',
+    sourceHint: 'Adyen Customer Area → Reports → Received Payment Details',
+    exampleFormat: 'received_payments_*.csv',
+    interval: 'monthly',
+    description:
+      'Adyen Received Payment Details für Tagesabschluss-Abgleich Karten/TWINT. Frische = letzter importierter Adyen-Tag.',
+    checklistLabel: 'Adyen-Zahlungen importieren',
+    route: '/tagesabschluesse',
+    actionLabel: 'Zu den Tagesabschlüssen',
+    checkable: true,
+  },
+  {
+    id: 'monatsabschluss',
+    label: 'Monatsabschluss / Kosten',
+    module: 'Finanzen / Erfolgsrechnung',
+    category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'monatsabschluss',
+    importType: 'control',
+    uploadLabel: 'Monatszahlen / Kosten prüfen',
+    sourceHint: 'Monatszahlen/Kosten in der Erfolgsrechnung',
+    interval: 'monthly',
+    description: 'Kontoblätter/Kosten je Monat (Erfolgsrechnung). Frische = spätester Monat mit erfassten Kosten.',
+    checklistLabel: 'Monatsabschluss prüfen',
+    importance:
+      'Ein vollständiger Monatsabschluss stellt korrekte Kosten- und Ergebniszahlen für das Reporting sicher.',
+    procedure:
+      'Alle Kosten und Umsätze des Vormonats in der Erfolgsrechnung prüfen und den Monat abschliessen.',
+    responsible: 'Buchhaltung / Controlling',
+    route: '/erfolgsrechnung',
+    actionLabel: 'Zur Erfolgsrechnung',
+    checkable: true,
+  },
+  {
+    id: 'buchhaltungs_export',
+    label: 'Buchhaltungs-Export',
+    module: 'Umsatz / Tagesabschluss',
+    category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'monatsabschluss',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Buchhaltungs-CSV erzeugen',
+    sourceHint: 'Export-Assistent auf der Tagesabschluss-Seite',
+    interval: 'monthly',
+    description:
+      'Monatlicher Buchhaltungs-Export (Tabelle2-CSV) aus den abgeschlossenen Tagesabschlüssen. ' +
+      'Status: offen (Monat nicht abgeschlossen) → bereit (abgeschlossen, Export fehlt) → ' +
+      'exportiert (aktuell) → veraltet (Monat nach dem Export geändert).',
+    checklistLabel: 'Buchhaltungs-Export erstellen',
+    importance:
+      'Die Finanzbuchhaltung erhält nur so die geprüften Monatszahlen; ein veralteter Export führt zu falschen Buchungen.',
+    procedure:
+      'Monat auf der Tagesabschluss-Seite abschliessen, Checkliste im Export-Assistenten prüfen, CSV exportieren und an die Buchhaltung übergeben.',
+    responsible: 'Buchhaltung / Administration',
+    route: '/tagesabschluesse',
+    actionLabel: 'Zum Export-Assistenten',
+    checkable: true,
+  },
+  {
+    id: 'budgetkontrolle',
+    label: 'Budgetkontrolle',
+    module: 'Finanzen / Budget',
+    category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'budget',
+    importType: 'control',
+    uploadLabel: 'Kein Upload – Budget prüfen',
+    sourceHint: 'Soll/Ist-Abgleich im Budget-Modul',
+    interval: 'monthly',
+    description: 'Monatlicher Soll/Ist-Abgleich gegen das Budget. Reine Kontrollaufgabe ohne automatisches Signal.',
+    checklistLabel: 'Budgetkontrolle durchführen',
+    importance:
+      'Der regelmässige Soll/Ist-Abgleich zeigt frühzeitig, ob das Budget eingehalten wird.',
+    procedure:
+      'Ist-Zahlen im Budget-Modul mit dem hinterlegten Budget vergleichen und Abweichungen dokumentieren.',
+    responsible: 'Controlling',
+    route: '/budget',
+    actionLabel: 'Zum Budget',
+    checkable: false,
+  },
+  {
+    id: 'inventur',
+    label: 'Inventur / Warenbestand',
+    module: 'Warenkosten / Inventur',
+    category: 'waren_rechnungen',
+    section: 'control',
+    tabCategory: 'inventur',
+    importType: 'not_configured',
+    uploadLabel: 'Inventurdatei oder Bestand prüfen',
+    sourceHint: 'Inventurdatei oder manuelle Bestandsprüfung',
+    exampleFormat: 'inventur.csv / .xlsx',
+    interval: 'monthly',
+    description: 'Monatliche Inventur / Warenbestand. Optional; keine automatisch ableitbare Historie vorhanden.',
+    checklistLabel: 'Inventur / Warenbestand prüfen',
+    importance:
+      'Eine regelmässige Inventur ist Voraussetzung für korrekte Warenkosten und WES-Kennzahlen.',
+    procedure:
+      'Warenbestand aufnehmen bzw. Inventurdatei erfassen und mit dem System abgleichen.',
+    responsible: 'Küchenleitung / Einkauf',
+    route: '/wes-analyse',
+    actionLabel: 'Zur WES-Analyse',
+    checkable: false,
+  },
+  // ── Jährlich ──
+  {
+    id: 'jahresbudget',
+    label: 'Jahresbudget',
+    module: 'Finanzen / Budget',
+    category: 'finanzen_budget',
+    section: 'import',
+    tabCategory: 'finanzen',
+    importType: 'manual_entry',
+    uploadLabel: 'Jahresbudget erfassen / prüfen',
+    sourceHint: 'Jahresbudget im Budget-Modul erfassen',
+    interval: 'yearly',
+    description: 'Erfasstes Jahresbudget. Frische = spätestes Budgetjahr, für das Daten hinterlegt sind.',
+    checklistLabel: 'Jahresbudget erfassen / prüfen',
+    route: '/budget',
+    actionLabel: 'Zum Budget',
+    checkable: true,
+  },
+  {
+    id: 'vorjahresvergleich',
+    label: 'Vorjahresvergleich',
+    module: 'Finanzen / Reporting',
+    category: 'finanzen_budget',
+    section: 'control',
+    tabCategory: 'controlling',
+    importType: 'control',
+    uploadLabel: 'Vorjahresdaten prüfen / importieren',
+    sourceHint: 'Vorjahres-/Jahresabschlussdaten',
+    exampleFormat: 'vorjahr_*.csv',
+    interval: 'yearly',
+    description: 'Vorjahres-/Jahresabschlussdaten für den P&L-Vergleich. Kontrollaufgabe ohne automatisches Signal.',
+    checklistLabel: 'Vorjahresvergleich aktualisieren',
+    importance:
+      'Vollständige Vorjahresdaten ermöglichen aussagekräftige Jahresvergleiche in der Erfolgsrechnung.',
+    procedure:
+      'Vorjahres-/Jahresabschlussdaten prüfen und – falls nötig – im Import-Center nachpflegen.',
+    responsible: 'Controlling',
+    route: '/import',
+    actionLabel: 'Zum Import-Center',
+    checkable: false,
+  },
+];
+
+export function getCockpitSource(id: CockpitSourceId): CockpitSourceDef | undefined {
+  return COCKPIT_SOURCES.find((s) => s.id === id);
+}
+
+// ─── Datum-Normalisierung ───────────────────────────────────────────────────────
+
+const RE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const RE_MONTH = /^\d{4}-\d{2}$/;
+const RE_YEAR = /^\d{4}$/;
+
+/**
+ * Normalisiert einen Datenstand (yyyy-MM-dd | yyyy-MM | yyyy) auf ein konkretes
+ * Datum: Tag → selber Tag, Monat → Monatsende, Jahr → 31.12. Ungültig → null.
+ */
+export function normalizeDataDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const v = value.trim();
+  if (RE_DAY.test(v)) {
+    const d = parseISO(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (RE_MONTH.test(v)) {
+    const [y, m] = v.split('-').map(Number);
+    return endOfMonth(new Date(y, m - 1, 1));
+  }
+  if (RE_YEAR.test(v)) {
+    return new Date(Number(v), 11, 31);
+  }
+  const d = parseISO(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+// ─── Statusberechnung ────────────────────────────────────────────────────────────
+
+function statusFromDaysBehind(
+  interval: ImportInterval,
+  daysBehind: number,
+  latestYear: number,
+  nowYear: number,
+): CockpitStatus {
+  if (interval === 'yearly') {
+    if (latestYear >= nowYear) return 'current';
+    if (latestYear === nowYear - 1) return 'due_soon';
+    return 'overdue';
+  }
+  const t = INTERVAL_THRESHOLDS[interval];
+  if (daysBehind <= t.currentMaxDaysBehind) return 'current';
+  if (daysBehind <= t.dueSoonMaxDaysBehind) return 'due_soon';
+  return 'overdue';
+}
+
+function computeNextDue(interval: ImportInterval, normalized: Date): string {
+  let next: Date;
+  switch (interval) {
+    case 'daily':
+      next = addDays(normalized, 1);
+      break;
+    case 'weekly':
+      next = addDays(normalized, 7);
+      break;
+    case 'monthly':
+      next = addMonths(normalized, 1);
+      break;
+    case 'yearly':
+      next = addYears(normalized, 1);
+      break;
+  }
+  return format(next, 'yyyy-MM-dd');
+}
+
+// ─── Mirus-Periode (Arbeitszeiten) ────────────────────────────────────────────
+
+/**
+ * Ein Eintrag der Mirus-Import-Historie (Ausschnitt aus `timesheet_import_history`).
+ * Rein für die Perioden-Ableitung — keine PII, keine DB-Kopplung.
+ */
+export interface MirusHistoryEntry {
+  year: number;
+  month: number; // 1–12
+  source?: string | null; // 'mirus' (Default beim Import)
+  fileName?: string | null;
+  importedAt?: string | null; // created_at (ISO)
+  importedCount?: number | null;
+}
+
+/** Abgeleitete Mirus-Periode für die Cockpit-Anzeige. */
+export interface MirusPeriod {
+  periodFrom: string; // yyyy-MM-01
+  periodTo: string; // yyyy-MM-<letzterTag>
+  importedAt: string | null;
+  fileName: string | null;
+}
+
+/** Erster/letzter Tag eines Monats als ISO (yyyy-MM-dd). */
+function monthBounds(year: number, month: number): { from: string; to: string } {
+  const first = new Date(year, month - 1, 1);
+  return { from: format(first, 'yyyy-MM-dd'), to: format(endOfMonth(first), 'yyyy-MM-dd') };
+}
+
+/**
+ * PRIMÄRE Quelle: leitet aus der Mirus-Import-Historie die zuletzt vollständig
+ * importierte Periode ab. „Ist-Daten bis" = LETZTER TAG des am weitesten
+ * fortgeschrittenen importierten Monats (bewusst NICHT MAX(date) über einzelne
+ * Tageszeilen!).
+ *
+ * Auswahl: höchstes (Jahr, Monat) unter den verwertbaren Läufen
+ * (`importedCount` null oder > 0); bei gleichem Monat gewinnt der jüngste
+ * `importedAt`. Damit „gewinnt" die am weitesten reichende Periode — robust
+ * gegen eine spätere Korrektur-Re-Import eines früheren Monats.
+ *
+ * Reine Funktion — keine DB-/DOM-Kopplung. Gibt null zurück, wenn keine
+ * verwertbare Historie vorliegt.
+ */
+export function deriveMirusPeriodFromHistory(entries: readonly MirusHistoryEntry[]): MirusPeriod | null {
+  const usable = entries.filter(
+    (e) =>
+      (e.source == null || e.source === 'mirus') &&
+      Number.isFinite(e.year) &&
+      Number.isFinite(e.month) &&
+      e.month >= 1 &&
+      e.month <= 12 &&
+      (e.importedCount == null || e.importedCount > 0),
+  );
+  if (usable.length === 0) return null;
+
+  const best = usable.reduce((a, b) => {
+    const aKey = a.year * 12 + a.month;
+    const bKey = b.year * 12 + b.month;
+    if (bKey > aKey) return b;
+    if (bKey < aKey) return a;
+    // gleicher Monat → jüngerer Import gewinnt
+    return (b.importedAt ?? '') > (a.importedAt ?? '') ? b : a;
+  });
+
+  const { from, to } = monthBounds(best.year, best.month);
+  return {
+    periodFrom: from,
+    periodTo: to,
+    importedAt: best.importedAt ?? null,
+    fileName: best.fileName ?? null,
+  };
+}
+
+/**
+ * FALLBACK (nur wenn keine Import-Historie vorliegt): leitet das Perioden-Ende
+ * aus vorhandenen ECHTEN Ist-Tagen ab — bewusst NICHT über MAX(date), sondern
+ * über den letzten Tag des zuletzt verfügbaren Monats, der VOR dem laufenden
+ * Monat liegt. Einzelne Tage im laufenden Monat (typische „verirrte" Zukunfts-/
+ * Teilzeilen) zählen dadurch NICHT als vollständig importierte Periode.
+ *
+ * Reine Funktion. `today` = yyyy-MM-dd. Gibt null zurück, wenn es keinen
+ * Ist-Tag in einem Monat vor dem laufenden Monat gibt.
+ */
+export function deriveMirusPeriodEndFromDays(days: readonly string[], today: string): string | null {
+  const currentMonth = today.slice(0, 7); // yyyy-MM
+  const monthsBefore = days.filter((d) => RE_DAY.test(d) && d.slice(0, 7) < currentMonth).map((d) => d.slice(0, 7));
+  if (monthsBefore.length === 0) return null;
+  const latestMonth = monthsBefore.reduce((a, b) => (b > a ? b : a));
+  const [y, m] = latestMonth.split('-').map(Number);
+  return monthBounds(y, m).to;
+}
+
+// ─── Umsatzabstimmung (manuelle Monats-Erfassung) ───────────────────────────────
+
+/** Minimale Sicht auf einen Reporting-Monatsdatensatz für die Umsatzabstimmung. */
+export interface UmsatzabstimmungMonthRecord {
+  grossRevenueManual?: number;
+  takeAwayGrossManual?: number;
+}
+
+/**
+ * Leitet aus dem Reporting-Blob (`reporting_v1`, Schlüssel 'yyyy-MM') die
+ * Monate ab, für die die Umsatzabstimmung GEPFLEGT ist. Ein Monat gilt als
+ * erledigt, sobald mindestens ein manueller Wert (> 0) erfasst wurde
+ * (Bruttoumsatz ODER Take-Away). Reine Funktion — kein Store-Aufruf, kein
+ * Schreibzugriff; Rückgabe aufsteigend sortiert.
+ */
+export function umsatzabstimmungMonthsFromBlob(
+  blob: Record<string, UmsatzabstimmungMonthRecord | null | undefined> | null | undefined,
+): string[] {
+  if (!blob || typeof blob !== 'object') return [];
+  return Object.entries(blob)
+    .filter(
+      ([k, v]) =>
+        RE_MONTH.test(k) &&
+        !!v &&
+        ((v.grossRevenueManual ?? 0) > 0 || (v.takeAwayGrossManual ?? 0) > 0),
+    )
+    .map(([k]) => k)
+    .sort();
+}
+
+/**
+ * Bildet ein Frische-Signal auf einen Anzeige-Status ab.
+ * Reihenfolge: uncheckable → fehlgeschlagen → kein Datum (never) → Frische +
+ * (nur bei detectGaps) Datenlücken-Downgrade. Datenlücken können den Status
+ * HÖCHSTENS auf `due_soon` senken, NIE auf `overdue` (Ruhetage/Betriebsferien
+ * erzeugen legitime Lücken).
+ */
+export function computeSourceStatus(
+  def: Pick<CockpitSourceDef, 'interval' | 'checkable' | 'detectGaps'>,
+  signal: CockpitSignal,
+  now: Date = new Date(),
+): CockpitStatusResult {
+  // 1) Nicht prüfbar (reine Kontrollaufgabe / keine ableitbare Historie).
+  if (!def.checkable) {
+    return {
+      status: 'uncheckable',
+      latestDataDate: null,
+      daysBehind: null,
+      nextDue: null,
+      missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate: null,
+      failed: false,
+      reason: 'Nicht automatisch prüfbar – manuelle Kontrolle',
+    };
+  }
+
+  const todayIso = format(now, 'yyyy-MM-dd');
+  const failed = signal.lastImport?.status === 'failed';
+
+  // 1b) Harter Status-Override (z. B. Buchhaltungs-Export §11): Status + Grund
+  //     kommen fertig vom Signal, Datums-Anzeigen bleiben erhalten.
+  if (signal.statusOverride) {
+    const overrideRef = normalizeDataDate(signal.latestDataDate);
+    return {
+      status: signal.statusOverride.status,
+      latestDataDate: signal.latestDataDate,
+      daysBehind: overrideRef ? differenceInCalendarDays(now, overrideRef) : null,
+      nextDue: null,
+      missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate: null,
+      failed: false,
+      reason: signal.statusOverride.reason,
+    };
+  }
+
+  // Zukunfts-Hinweis: nur für tägliche Ist-Quellen (detectGaps) relevant. Der
+  // DB-Aggregator liefert dafür `futureDataDate`; zusätzlich fangen wir hier
+  // defensiv ein zukünftiges Bezugsdatum ab (falls doch eines durchrutscht).
+  let ignoredFutureDate: string | null = def.detectGaps ? signal.futureDataDate ?? null : null;
+
+  // Frische-Bezugsdatum: bevorzugt der Datenstand, sonst der letzte Importlauf.
+  let refRaw = signal.latestDataDate ?? (signal.lastImport?.at ? signal.lastImport.at.slice(0, 10) : null);
+  // Zukunft zählt nie als „Ist-Daten bis": bei detectGaps-Quellen wird ein
+  // zukünftiges Tages-Bezugsdatum auf heute begrenzt und als ignoriert vermerkt.
+  if (def.detectGaps && refRaw && RE_DAY.test(refRaw) && refRaw > todayIso) {
+    if (!ignoredFutureDate || refRaw > ignoredFutureDate) ignoredFutureDate = refRaw;
+    refRaw = todayIso;
+  }
+  const normalized = normalizeDataDate(refRaw);
+
+  // 2) Letzter Import fehlgeschlagen → overdue (rot), unabhängig vom Datenstand.
+  if (failed) {
+    return {
+      status: 'overdue',
+      latestDataDate: signal.latestDataDate,
+      daysBehind: normalized ? differenceInCalendarDays(now, normalized) : null,
+      nextDue: null,
+      missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate,
+      failed: true,
+      reason: 'Letzter Import fehlgeschlagen',
+    };
+  }
+
+  // 3) Kein Datum ableitbar → noch nie importiert.
+  if (!normalized) {
+    return {
+      status: 'never',
+      latestDataDate: null,
+      daysBehind: null,
+      nextDue: null,
+      missingDays: [],
+      completeUntil: null,
+      ignoredFutureDate,
+      failed: false,
+      reason: 'Noch nie importiert',
+    };
+  }
+
+  const daysBehind = differenceInCalendarDays(now, normalized);
+  let status = statusFromDaysBehind(def.interval, daysBehind, normalized.getFullYear(), now.getFullYear());
+
+  // 4) Datenlücken (nur tägliche detectGaps-Quellen) — senken höchstens auf due_soon.
+  // `refRaw` ist bereits auf ≤ heute begrenzt (Zukunft wurde oben abgefangen).
+  let missingDays: string[] = [];
+  let completeUntil: string | null = refRaw;
+  if (def.detectGaps && signal.coveredDates && signal.coveredDates.length > 0) {
+    const to = format(normalized, 'yyyy-MM-dd');
+    const from = format(addDays(normalized, -GAP_WINDOW_DAYS), 'yyyy-MM-dd');
+    missingDays = findMissingDays(signal.coveredDates, from, to);
+    // „Vollständig importiert bis" = letzter lückenlos verfügbarer Tag (≤ heute).
+    completeUntil = lastGaplessDay(signal.coveredDates, todayIso) ?? completeUntil;
+    if (missingDays.length > 0 && status === 'current') {
+      status = 'due_soon';
+    }
+  }
+
+  const nextDue = computeNextDue(def.interval, normalized);
+  const dateLabel = formatCockpitDate(refRaw);
+  let reason: string;
+  if (missingDays.length > 0) {
+    reason = `Datenlücke: ${missingDays.length} fehlende ${missingDays.length === 1 ? 'Tag' : 'Tage'} (Ist-Daten bis ${dateLabel})`;
+  } else if (status === 'current') {
+    reason = `Aktuell – Ist-Daten bis ${dateLabel}`;
+  } else if (status === 'due_soon') {
+    reason = `Bald fällig – Ist-Daten bis ${dateLabel}`;
+  } else {
+    reason = `Überfällig – Ist-Daten nur bis ${dateLabel}`;
+  }
+
+  return {
+    status,
+    latestDataDate: refRaw,
+    daysBehind,
+    nextDue,
+    missingDays,
+    completeUntil,
+    ignoredFutureDate,
+    failed: false,
+    reason,
+  };
+}
+
+/**
+ * Findet fehlende Tage ZWISCHEN dem ersten und letzten abgedeckten Tag im
+ * Fenster [from, to] (nur „innere" Löcher). Führende/abschliessende Staleness
+ * wird bewusst NICHT als Lücke gewertet (dafür ist der Frische-Status zuständig).
+ */
+export function findMissingDays(covered: string[], from: string, to: string): string[] {
+  const set = new Set(covered.filter((d) => RE_DAY.test(d)));
+  if (set.size === 0) return [];
+  const inRange = [...set].filter((d) => d >= from && d <= to).sort();
+  if (inRange.length < 2) return [];
+  const start = parseISO(inRange[0]);
+  const end = parseISO(inRange[inRange.length - 1]);
+  const missing: string[] = [];
+  for (let d = addDays(start, 1); d < end; d = addDays(d, 1)) {
+    const iso = format(d, 'yyyy-MM-dd');
+    if (!set.has(iso)) missing.push(iso);
+  }
+  return missing;
+}
+
+/**
+ * Letzter LÜCKENLOS verfügbarer Tag: läuft vom frühesten abgedeckten Tag (≤ heute)
+ * vorwärts und stoppt beim ERSTEN fehlenden Tag. Beispiel:
+ *   [01,02,03,05] → 03 (der 04. fehlt) — 05 ist NICHT „vollständig".
+ * Zukünftige abgedeckte Tage (> today) werden ignoriert (Zukunft zählt nie als
+ * vollständig importiert). Gibt null zurück, wenn es keinen abgedeckten Tag
+ * ≤ today gibt.
+ */
+export function lastGaplessDay(covered: string[], today: string): string | null {
+  const days = Array.from(new Set(covered.filter((d) => RE_DAY.test(d) && d <= today))).sort();
+  if (days.length === 0) return null;
+  let last = days[0];
+  for (let i = 1; i < days.length; i++) {
+    const expected = format(addDays(parseISO(last), 1), 'yyyy-MM-dd');
+    if (days[i] === expected) {
+      last = days[i];
+    } else if (days[i] > expected) {
+      break; // erste Lücke → Vollständigkeit endet beim vorherigen Tag
+    }
+    // days[i] === last (Duplikat kann durch Set nicht auftreten) → ignorieren
+  }
+  return last;
+}
+
+// ─── KPIs ────────────────────────────────────────────────────────────────────────
+
+export interface CockpitKpis {
+  current: number;
+  dueSoon: number;
+  overdue: number;
+  never: number;
+  uncheckable: number;
+  dataGaps: number;
+}
+
+/** Zählt die Statusverteilung + Anzahl Quellen mit Datenlücken für die KPI-Karten. */
+export function summarizeCockpit(rows: Array<Pick<CockpitRow, 'result'>>): CockpitKpis {
+  const kpis: CockpitKpis = { current: 0, dueSoon: 0, overdue: 0, never: 0, uncheckable: 0, dataGaps: 0 };
+  for (const { result } of rows) {
+    switch (result.status) {
+      case 'current':
+        kpis.current++;
+        break;
+      case 'due_soon':
+        kpis.dueSoon++;
+        break;
+      case 'overdue':
+        kpis.overdue++;
+        break;
+      case 'never':
+        kpis.never++;
+        break;
+      case 'uncheckable':
+        kpis.uncheckable++;
+        break;
+    }
+    if (result.missingDays.length > 0) kpis.dataGaps++;
+  }
+  return kpis;
+}
+
+// ─── Checkliste ────────────────────────────────────────────────────────────────
+
+export interface ChecklistItem {
+  id: CockpitSourceId;
+  label: string;
+  state: ChecklistState;
+  route?: string;
+  /** „Was hochladen?" / was ist zu tun (für die Checklisten-Detailzeile). */
+  uploadLabel: string;
+  /** Art des Imports (Datei-Upload / Manuelle Eingabe / Kontrolle …). */
+  importType: CockpitImportType;
+  /** Sprechendes Aktions-Label („Zur Gastronovi-Importseite" …). */
+  actionLabel?: string;
+}
+
+export interface ChecklistGroups {
+  daily: ChecklistItem[];
+  weekly: ChecklistItem[];
+  monthly: ChecklistItem[];
+  yearly: ChecklistItem[];
+}
+
+/** Bildet den Anzeige-Status auf einen Checklisten-Zustand ab. */
+export function checklistStateFromStatus(status: CockpitStatus): ChecklistState {
+  switch (status) {
+    case 'current':
+      return 'done';
+    case 'overdue':
+      return 'overdue';
+    case 'uncheckable':
+      return 'unknown';
+    case 'due_soon':
+    case 'never':
+    default:
+      return 'open';
+  }
+}
+
+/** Gruppiert die Zeilen nach Intervall in die Checklisten-Ansicht (Heute/Woche/Monat/Jahr). */
+export function groupChecklist(rows: CockpitRow[]): ChecklistGroups {
+  const groups: ChecklistGroups = { daily: [], weekly: [], monthly: [], yearly: [] };
+  for (const row of rows) {
+    const item: ChecklistItem = {
+      id: row.def.id,
+      label: row.def.checklistLabel,
+      state: checklistStateFromStatus(row.result.status),
+      route: row.def.route,
+      uploadLabel: row.def.uploadLabel,
+      importType: row.def.importType,
+      actionLabel: row.def.actionLabel,
+    };
+    groups[row.def.interval].push(item);
+  }
+  return groups;
+}
+
+// ─── Filter (rein, testbar) ──────────────────────────────────────────────────────
+
+/** Aktive Filterachsen der Übersicht. `'all'` = keine Einschränkung. */
+export interface CockpitFilterState {
+  category: 'all' | CockpitCategory;
+  importType: 'all' | CockpitImportType;
+  interval: 'all' | ImportInterval;
+  status: 'all' | CockpitStatus;
+  search: string;
+}
+
+export const EMPTY_COCKPIT_FILTER: CockpitFilterState = {
+  category: 'all',
+  importType: 'all',
+  interval: 'all',
+  status: 'all',
+  search: '',
+};
+
+/** Freitextsuche über Name, Bereich, Aufgabentext und „Was hochladen?". */
+export function matchesCockpitSearch(def: CockpitSourceDef, search: string): boolean {
+  const q = search.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    def.label.toLowerCase().includes(q) ||
+    def.module.toLowerCase().includes(q) ||
+    def.checklistLabel.toLowerCase().includes(q) ||
+    def.uploadLabel.toLowerCase().includes(q) ||
+    (def.sourceHint?.toLowerCase().includes(q) ?? false)
+  );
+}
+
+/** Prüft eine Zeile gegen ALLE aktiven Filterachsen (UND-Verknüpfung). */
+export function rowMatchesFilters(row: CockpitRow, f: CockpitFilterState): boolean {
+  if (f.category !== 'all' && row.def.category !== f.category) return false;
+  if (f.importType !== 'all' && row.def.importType !== f.importType) return false;
+  if (f.interval !== 'all' && row.def.interval !== f.interval) return false;
+  if (f.status !== 'all' && row.result.status !== f.status) return false;
+  return matchesCockpitSearch(row.def, f.search);
+}
+
+// ─── Anzeige-Konstanten & Formatter ──────────────────────────────────────────────
+
+export const INTERVAL_LABEL: Record<ImportInterval, string> = {
+  daily: 'Täglich',
+  weekly: 'Wöchentlich',
+  monthly: 'Monatlich',
+  yearly: 'Jährlich',
+};
+
+/** Anzeigename je Kategorie. */
+export const CATEGORY_LABEL: Record<CockpitCategory, string> = {
+  reservationen_gaeste: 'Reservationen / Gäste',
+  umsatz_gastronovi: 'Umsatz / Gastronovi',
+  produkte: 'Produkte',
+  personal: 'Personal',
+  waren_rechnungen: 'Waren / Rechnungen',
+  finanzen_budget: 'Finanzen / Budget',
+  planung_kontrolle: 'Planung / Kontrolle',
+};
+
+/** Kanonische Reihenfolge der Kategorien für Gruppierung/Filter-Dropdown. */
+export const CATEGORY_ORDER: CockpitCategory[] = [
+  'reservationen_gaeste',
+  'umsatz_gastronovi',
+  'produkte',
+  'personal',
+  'waren_rechnungen',
+  'finanzen_budget',
+  'planung_kontrolle',
+];
+
+/** Anzeigename je Import-Art. */
+export const IMPORT_TYPE_LABEL: Record<CockpitImportType, string> = {
+  file_upload: 'Datei-Upload',
+  manual_entry: 'Manuelle Eingabe',
+  control: 'Kontrolle',
+  system: 'Automatisch / Systemdaten',
+  not_configured: 'Nicht eingerichtet',
+};
+
+/** Kanonische Reihenfolge der Import-Arten für das Filter-Dropdown. */
+export const IMPORT_TYPE_ORDER: CockpitImportType[] = [
+  'file_upload',
+  'manual_entry',
+  'control',
+  'system',
+  'not_configured',
+];
+
+/** Dezente Badge-Stile je Import-Art (unabhängig von den Status-Farben). */
+export const IMPORT_TYPE_BADGE_CLASS: Record<CockpitImportType, string> = {
+  file_upload:
+    'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800',
+  manual_entry:
+    'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-800',
+  control:
+    'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700',
+  system:
+    'bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-300 dark:border-teal-800',
+  not_configured: 'bg-muted text-muted-foreground border-border',
+};
+
+/** Erklärender Tooltip-Text je Status (nur für unklare Status gefüllt). */
+export const STATUS_HINT: Partial<Record<CockpitStatus, string>> = {
+  never:
+    'Für diese Datenquelle wurde noch kein Importlauf oder kein Datenbestand gefunden.',
+  uncheckable:
+    'Für diese Datenquelle gibt es noch keine auswertbare Import-Historie oder kein Datumsfeld zur Prüfung.',
+};
+
+/** Checklisten-Überschrift je Intervall. */
+export const CHECKLIST_GROUP_LABEL: Record<ImportInterval, string> = {
+  daily: 'Heute zu erledigen',
+  weekly: 'Diese Woche',
+  monthly: 'Diesen Monat',
+  yearly: 'Dieses Jahr',
+};
+
+export const STATUS_LABEL: Record<CockpitStatus, string> = {
+  current: 'Aktuell',
+  due_soon: 'Bald fällig',
+  overdue: 'Überfällig',
+  never: 'Nie importiert',
+  uncheckable: 'Nicht prüfbar',
+};
+
+export const STATUS_BADGE_CLASS: Record<CockpitStatus, string> = {
+  current:
+    'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+  due_soon:
+    'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
+  overdue: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800',
+  never: 'bg-muted text-muted-foreground border-border',
+  uncheckable: 'bg-muted text-muted-foreground border-border',
+};
+
+export const STATUS_DOT_CLASS: Record<CockpitStatus, string> = {
+  current: 'bg-emerald-500',
+  due_soon: 'bg-amber-400',
+  overdue: 'bg-red-500',
+  never: 'bg-muted-foreground/40',
+  uncheckable: 'bg-muted-foreground/30',
+};
+
+export const CHECKLIST_LABEL: Record<ChecklistState, string> = {
+  done: 'Erledigt',
+  open: 'Offen',
+  overdue: 'Überfällig',
+  unknown: 'Nicht prüfbar',
+};
+
+export const CHECKLIST_BADGE_CLASS: Record<ChecklistState, string> = {
+  done: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800',
+  open: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
+  overdue: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800',
+  unknown: 'bg-muted text-muted-foreground border-border',
+};
+
+/** Formatiert einen Datenstand (yyyy-MM-dd | yyyy-MM | yyyy) als dd.MM.yyyy / MM.yyyy / yyyy. */
+export function formatCockpitDate(value: string | null | undefined): string {
+  if (!value) return 'Keine Daten';
+  const v = value.trim();
+  try {
+    if (RE_DAY.test(v)) return format(parseISO(v), 'dd.MM.yyyy');
+    if (RE_MONTH.test(v)) {
+      const [y, m] = v.split('-').map(Number);
+      return format(new Date(y, m - 1, 1), 'MM.yyyy');
+    }
+    if (RE_YEAR.test(v)) return v;
+    const d = parseISO(v);
+    return Number.isNaN(d.getTime()) ? v : format(d, 'dd.MM.yyyy');
+  } catch {
+    return v;
+  }
+}

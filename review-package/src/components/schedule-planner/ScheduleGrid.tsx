@@ -1,0 +1,1781 @@
+// Schedule Grid Component - Updated to use onOpen8HoursDialog
+import React, { useState, useMemo, useRef } from 'react';
+import { format, isWeekend, getDay, isSunday, parseISO, isAfter, isSameDay } from 'date-fns';
+import { de } from 'date-fns/locale';
+import { Employee } from '@/types/personnel';
+import { getEmployeeDisplayName } from '@/lib/personnel-utils';
+import { TimeInputCell } from './TimeInputCell';
+import { cn } from '@/lib/utils';
+import { Progress } from '@/components/ui/progress';
+import { Button } from '@/components/ui/button';
+import { Trash2, CalendarOff, Clock, X, AlertTriangle, Lightbulb, CheckCircle2, EyeOff, Clock3, ChevronUp, ChevronDown } from 'lucide-react';
+import { computeSuggestions, CorrectionSuggestion } from './correctionSuggestions';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { useShiftConfig, calculateDayNetHours, calculateDaySlotNetHours } from '@/hooks/useShiftConfig';
+import { useEmployerRateMap } from '@/hooks/useEmployerRateMap';
+import { buildAvailabilityMap } from '@/lib/availability-store';
+import { PatternWarning, PatternType } from '@/lib/pattern-warnings';
+
+export interface TimeSlot {
+  start: string;
+  end: string;
+  secondary?: { start: string; end: string } | null;
+}
+
+export interface DaySchedule {
+  früh?: TimeSlot | null;
+  spät?: TimeSlot | null;
+  frühAbsence?: string | null;
+  spätAbsence?: string | null;
+  /** Geplanter Zusatzkosten-Tag: Plan-Stunden dieses Fixlohn-MA als variable Kosten zählen */
+  isAdditionalCostPlan?: boolean;
+  /**
+   * Manuelle Pause PRO EINSATZ in Minuten (0 = explizit keine, 30, 60).
+   * null/undefined = keine manuelle Angabe. Sind beide leer, gilt die
+   * automatische Tagesregel (>9h → 30 Min) bzw. Legacy breakMinutes.
+   * Reduziert NUR die Arbeitszeit, nie Start/Ende. SSoT: resolveDayBreakHours().
+   */
+  fruehBreakMinutes?: number | null;
+  spaetBreakMinutes?: number | null;
+  /** @deprecated Legacy-Tages-Pause; nur Lese-Fallback in resolveDayBreakHours */
+  breakMinutes?: number | null;
+}
+
+interface ScheduleGridProps {
+  employees: Employee[];
+  days: Date[];
+  scheduleData: Record<string, DaySchedule>;
+  onSlotChange: (employeeId: string, date: string, slotType: 'früh' | 'spät', value: TimeSlot | null, absenceType?: string | null, breakMinutes?: number | null) => void;
+  onRemoveEmployee: (employeeId: string) => void;
+  onConfigureDaysOff: (employee: Employee) => void;
+  onOpen8HoursDialog?: (employee: Employee) => void;
+  getEmployeeHours: (employeeId: string) => number;
+  getTargetHours: (employee: Employee) => number;
+  getWeeklyHours?: (employeeId: string, weekEndDate: Date) => number;
+  getWeeklyTargetHours?: (employee: Employee) => number;
+  onDayClick?: (day: Date) => void;
+  showFooter?: boolean;
+  showCosts?: boolean;
+  dailyBudgets?: Record<string, { plannedRevenue?: number; actualRevenue?: number }>;
+  laborCostThreshold?: number;
+  /** 'ist' → use actualRevenue from POS; 'plan' → use plannedRevenue from budget */
+  scheduleMode?: 'plan' | 'ist';
+  /** External paint-tool controlled by parent (activates paint mode from ShiftLegend) */
+  externalActiveTool?: string | null;
+  /** Notifies parent when internal tool bar changes the active tool */
+  onExternalToolChange?: (tool: string | null) => void;
+  /** Employee ID to visually highlight (from Planungshilfe jump) */
+  highlightedEmployeeId?: string | null;
+  /** Pre-computed pattern warnings to show as chips in the employee name column */
+  patternWarnings?: PatternWarning[];
+  /** Clipboard slot for copy/paste within TimeInputCell */
+  copiedShift?: TimeSlot | null;
+  onCopyShift?: (slot: TimeSlot) => void;
+  /**
+   * When provided, ▲/▼ sort buttons appear in the employee name column.
+   * Only pass this when sort mode is active in the parent.
+   */
+  onMoveEmployee?: (empId: string, direction: 'up' | 'down') => void;
+  /**
+   * Per-cell color map for manual time entries.
+   * Key format: `${empId}-${yyyy-MM-dd}-früh` or `…-spät`
+   */
+  cellColors?: Record<string, string>;
+  onCellColorChange?: (key: string, color: string | null) => void;
+  /** Show a coloured dept dot next to each employee name (blue=Service, orange=Küche) */
+  showDepartmentBadge?: boolean;
+  /**
+   * When provided, "Auch ins IST übernehmen" checkbox appears in each TimeInputCell popover.
+   * Called with employeeId, date (yyyy-MM-dd), slotType, and the selected TimeSlot.
+   */
+  onCopyToIst?: (employeeId: string, date: string, slotType: 'früh' | 'spät', slot: TimeSlot) => void;
+  /** Callback when user clicks on an employee name to view a detail panel */
+  onEmployeeClick?: (employee: Employee) => void;
+}
+
+function patternShortLabel(type: PatternType): string {
+  switch (type) {
+    case 'consecutive-days': return 'Tage';
+    case 'consecutive-late': return 'Spät';
+    case 'short-recovery':   return 'Pause';
+    case 'weekly-overload':  return 'Std.';
+  }
+}
+
+const WEEKDAY_NAMES = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+const WEEKDAY_MAP: Record<string, number> = {
+  'sonntag': 0,
+  'montag': 1,
+  'dienstag': 2,
+  'mittwoch': 3,
+  'donnerstag': 4,
+  'freitag': 5,
+  'samstag': 6,
+};
+
+// Helper to check if a day is a configured day off for an employee
+const isDayOff = (employee: Employee, day: Date): boolean => {
+  if (!employee.daysOff || employee.daysOff.length === 0) return false;
+  const dayOfWeek = getDay(day);
+  return employee.daysOff.some(dayName => WEEKDAY_MAP[dayName] === dayOfWeek);
+};
+
+// Get indices of Sundays in the days array for weekly sum columns
+const getSundayIndices = (days: Date[]): number[] => {
+  return days.map((day, idx) => isSunday(day) ? idx : -1).filter(idx => idx !== -1);
+};
+
+// Calculate hours for a single time slot
+const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
+  if (!slot?.start || !slot?.end) return 0;
+  const [startH, startM] = slot.start.split(':').map(Number);
+  const [endH, endM] = slot.end.split(':').map(Number);
+  let hours = endH - startH + (endM - startM) / 60;
+  if (hours < 0) hours += 24;
+  return Math.round(hours * 100) / 100;
+};
+
+// Helper to parse time string to minutes since midnight
+const timeToMinutes = (time: string): number => {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + (m || 0);
+};
+
+// Short label shown on the orange suggestion strip inside a cell
+const getSuggestionLabel = (s: CorrectionSuggestion): string => {
+  if (s.badge === 'Aushilfe') return 'Aushilfe';
+  if (s.actionType === 'remove_spat') return 'Spät';
+  if (s.actionType === 'remove_frueh') return 'Früh';
+  return 'Streichen';
+};
+
+// Suggestion strip rendered at the bottom of an overplanned cell — full width, clearly visible
+interface SuggestionStripProps {
+  s: CorrectionSuggestion;
+  inlineKey: string;
+  dateStr: string;
+  openInlineId: string | null;
+  onOpenChange: (id: string | null) => void;
+  onApply: (s: CorrectionSuggestion, dateStr: string) => void;
+  onDismiss: (id: string) => void;
+  onSnooze: (id: string) => void;
+}
+
+const SuggestionStrip = ({
+  s, inlineKey, dateStr, openInlineId, onOpenChange, onApply, onDismiss, onSnooze,
+}: SuggestionStripProps) => (
+  <Popover
+    open={openInlineId === inlineKey}
+    onOpenChange={(open) => onOpenChange(open ? inlineKey : null)}
+  >
+    <PopoverTrigger asChild>
+      <button
+        className="w-full bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white flex items-center justify-center gap-0.5 py-[3px] border-t border-orange-600 transition-colors cursor-pointer"
+        onClick={(e) => { e.stopPropagation(); }}
+        title={s.description}
+      >
+        <span className="text-[8px] font-bold leading-none">✂</span>
+        <span className="text-[8px] font-bold leading-none ml-0.5">{getSuggestionLabel(s)}</span>
+      </button>
+    </PopoverTrigger>
+    <PopoverContent className="w-64 p-3 space-y-2" align="end" side="bottom">
+      <div>
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300">
+            {s.badge}
+          </span>
+          <span className="text-xs font-semibold truncate">{s.employeeName}</span>
+        </div>
+        <p className="text-[10px] text-muted-foreground">{s.slotDisplay || s.description}</p>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−{s.savingHours.toFixed(1)} h</span>
+          {s.savingCost > 0 && (
+            <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">−CHF {s.savingCost.toFixed(0)}</span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 pt-1.5 border-t border-border/40">
+        <Button
+          size="sm"
+          className="h-7 px-2.5 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white flex-1"
+          onClick={() => { onApply(s, dateStr); onOpenChange(null); }}
+        >
+          <CheckCircle2 className="h-3 w-3" />
+          Übernehmen
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-xs gap-1"
+          onClick={() => { onDismiss(s.id); onOpenChange(null); }}
+        >
+          <EyeOff className="h-3 w-3" />
+          Ignorieren
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs gap-1 text-muted-foreground"
+          onClick={() => { onSnooze(s.id); onOpenChange(null); }}
+        >
+          <Clock3 className="h-3 w-3" />
+          Später
+        </Button>
+      </div>
+    </PopoverContent>
+  </Popover>
+);
+
+// Check if shifts overlap (Spät starts before Früh ends)
+const hasShiftOverlap = (daySchedule: DaySchedule | undefined): boolean => {
+  if (!daySchedule?.früh?.end || !daySchedule?.spät?.start) return false;
+  if (daySchedule.frühAbsence || daySchedule.spätAbsence) return false;
+  
+  const frühEnd = timeToMinutes(daySchedule.früh.end);
+  const spätStart = timeToMinutes(daySchedule.spät.start);
+  
+  return spätStart < frühEnd;
+};
+
+// Check if break between shifts is very short (less than 30 min)
+const hasShortBreak = (daySchedule: DaySchedule | undefined): boolean => {
+  if (!daySchedule?.früh?.end || !daySchedule?.spät?.start) return false;
+  if (daySchedule.frühAbsence || daySchedule.spätAbsence) return false;
+  
+  const frühEnd = timeToMinutes(daySchedule.früh.end);
+  const spätStart = timeToMinutes(daySchedule.spät.start);
+  
+  const gap = spätStart - frühEnd;
+  return gap >= 0 && gap < 30;
+};
+
+export const ScheduleGrid = ({
+  employees,
+  days,
+  scheduleData,
+  onSlotChange,
+  onRemoveEmployee,
+  onConfigureDaysOff,
+  onOpen8HoursDialog,
+  getEmployeeHours,
+  getTargetHours,
+  getWeeklyHours,
+  getWeeklyTargetHours,
+  onDayClick,
+  showFooter = true,
+  showCosts = false,
+  dailyBudgets = {},
+  laborCostThreshold: laborCostThresholdProp,
+  scheduleMode = 'plan',
+  externalActiveTool,
+  onExternalToolChange,
+  highlightedEmployeeId,
+  patternWarnings = [],
+  copiedShift,
+  onCopyShift,
+  onMoveEmployee,
+  cellColors = {},
+  onCellColorChange,
+  showDepartmentBadge = false,
+  onCopyToIst,
+  onEmployeeClick,
+}: ScheduleGridProps) => {
+  const { shiftMap, absenceShifts } = useShiftConfig();
+  // Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten), nie roher hourlyWage.
+  const { rateById, rates } = useEmployerRateMap(employees);
+  
+  // Use prop if provided (allows per-department threshold), else fall back to localStorage
+  const LABOR_COST_THRESHOLD_KEY = 'labor_cost_threshold';
+  const DEFAULT_LABOR_COST_THRESHOLD = 40;
+  const laborCostThreshold = laborCostThresholdProp ?? parseFloat(localStorage.getItem(LABOR_COST_THRESHOLD_KEY) || String(DEFAULT_LABOR_COST_THRESHOLD));
+  const sundayIndices = getSundayIndices(days);
+
+  // Build availability map for all displayed employees × days (loaded once per render cycle)
+  const availabilityMap = useMemo(() => {
+    const empIds  = employees.map(e => e.id);
+    const dateStrs = days.map(d => format(d, 'yyyy-MM-dd'));
+    return buildAvailabilityMap(empIds, dateStrs);
+  }, [employees, days]);
+
+  // Calculate daily totals including costs and budget comparison
+  const getDailyStats = (day: Date) => {
+    const dateStr = format(day, 'yyyy-MM-dd');
+    let totalHours = 0;
+    let totalCosts = 0;
+    let employeeCount = 0;
+
+    // Slot-level cost accumulators per dept
+    const slotCosts = {
+      service: { früh: 0, spät: 0, frühHours: 0, spätHours: 0 },
+      küche:   { früh: 0, spät: 0, frühHours: 0, spätHours: 0 },
+    } as Record<string, { früh: number; spät: number; frühHours: number; spätHours: number }>;
+
+    const getAbsenceMeta = (abbrev: string | null | undefined) => {
+      if (!abbrev) return null;
+      const shiftName = Object.keys(shiftMap).find((k) => shiftMap[k]?.abbrev === abbrev);
+      if (!shiftName) return null;
+      return {
+        hours: shiftMap[shiftName].hours,
+        countsToTarget: shiftMap[shiftName].countsToTarget,
+        isPaid: shiftMap[shiftName].isPaid,
+      };
+    };
+
+    employees.forEach((emp) => {
+      const cellKey = `${emp.id}-${dateStr}`;
+      const daySchedule = scheduleData[cellKey];
+
+      if (!daySchedule) return;
+
+      // Work hours (net, SSoT: Pause pro Einsatz abgezogen)
+      const netWorkHours = calculateDayNetHours(daySchedule);
+
+      // Absence hours (only if countsToTarget)
+      let absenceCountedHours = 0;
+      let absencePaidHours = 0;
+
+      const frühAbs = getAbsenceMeta(daySchedule.frühAbsence);
+      const spätAbs = getAbsenceMeta(daySchedule.spätAbsence);
+
+      if (frühAbs?.countsToTarget) {
+        absenceCountedHours += frühAbs.hours;
+        if (frühAbs.isPaid) absencePaidHours += frühAbs.hours;
+      }
+      if (spätAbs?.countsToTarget) {
+        if (daySchedule.spätAbsence !== daySchedule.frühAbsence) {
+          absenceCountedHours += spätAbs.hours;
+          if (spätAbs.isPaid) absencePaidHours += spätAbs.hours;
+        }
+      }
+
+      const dayTotalHours = netWorkHours + absenceCountedHours;
+
+      if (dayTotalHours > 0 || daySchedule.frühAbsence || daySchedule.spätAbsence) {
+        employeeCount++;
+      }
+
+      totalHours += dayTotalHours;
+
+      // Calculate costs (work hours + paid absences)
+      if (emp.hourlyWage) {
+        const agRate = rateById.get(emp.id) ?? 0;
+        totalCosts += (netWorkHours + absencePaidHours) * agRate;
+
+        // Slot-level cost split (SSoT: Netto je Einsatz, Pause pro Einsatz bzw. proportional)
+        if (netWorkHours > 0 && emp.hourlyWage) {
+          const { frühNet, spätNet } = calculateDaySlotNetHours(daySchedule);
+          const dept = emp.department === 'küche' ? 'küche' : 'service';
+          if (!slotCosts[dept]) slotCosts[dept] = { früh: 0, spät: 0, frühHours: 0, spätHours: 0 };
+          slotCosts[dept].früh      += frühNet * agRate;
+          slotCosts[dept].spät      += spätNet * agRate;
+          slotCosts[dept].frühHours += frühNet;
+          slotCosts[dept].spätHours += spätNet;
+        }
+      }
+    });
+
+    // Get revenue for this day
+    const budget = dailyBudgets[dateStr];
+    const plannedRevenue = budget?.plannedRevenue || 0;
+    const rawActualRevenue = budget?.actualRevenue;
+
+    // IST mode: use real POS revenue when available — NEVER fall back to budget/dummy values
+    const effectiveRevenue: number =
+      scheduleMode === 'ist' && rawActualRevenue != null && rawActualRevenue > 0
+        ? rawActualRevenue
+        : plannedRevenue;
+    const revenueSource: 'actual' | 'planned' | 'none' =
+      scheduleMode === 'ist' && rawActualRevenue != null && rawActualRevenue > 0
+        ? 'actual'
+        : plannedRevenue > 0
+          ? 'planned'
+          : 'none';
+
+    // Calculate labor cost percentage using the correct revenue base
+    const laborCostPercentage = effectiveRevenue > 0 ? (totalCosts / effectiveRevenue) * 100 : 0;
+    const isOverBudget = effectiveRevenue > 0 && laborCostPercentage > laborCostThreshold;
+
+    // Consistency guard: warn if quote looks impossible (likely stale budget value used as revenue)
+    if (laborCostPercentage > 80 && rawActualRevenue != null && rawActualRevenue > 15000) {
+      console.warn(`[DIENSTPLAN] Wahrscheinlich falscher Umsatzwert: date=${dateStr} quote=${laborCostPercentage.toFixed(1)}% umsatzIst=${rawActualRevenue}`);
+    }
+
+    // Calculate how many hours are over budget
+    const maxCostsAllowed = effectiveRevenue * (laborCostThreshold / 100);
+    const excessCosts = totalCosts - maxCostsAllowed;
+
+    // Estimate excess hours based on average employer cost rate (AG-Basis wie totalCosts)
+    const avgHourlyWage = employees.length > 0
+      ? employees.reduce((sum, e) => sum + (e.hourlyWage ? (rateById.get(e.id) ?? 0) : 0), 0) / employees.filter(e => e.hourlyWage).length
+      : 30;
+    const excessHours = avgHourlyWage > 0 ? excessCosts / avgHourlyWage : 0;
+
+    // Aggregated slot totals (both depts combined)
+    const totalFrühCosts  = (slotCosts.service?.früh  ?? 0) + (slotCosts.küche?.früh  ?? 0);
+    const totalSpätCosts  = (slotCosts.service?.spät  ?? 0) + (slotCosts.küche?.spät  ?? 0);
+    const totalFrühHours  = (slotCosts.service?.frühHours ?? 0) + (slotCosts.küche?.frühHours ?? 0);
+    const totalSpätHours  = (slotCosts.service?.spätHours ?? 0) + (slotCosts.küche?.spätHours ?? 0);
+
+    return {
+      totalHours,
+      totalCosts,
+      employeeCount,
+      plannedRevenue,
+      actualRevenue: rawActualRevenue ?? undefined,
+      effectiveRevenue,
+      revenueSource,
+      laborCostPercentage,
+      isOverBudget,
+      excessHours: Math.max(0, excessHours),
+      excessCosts: Math.max(0, excessCosts),
+      // Slot-level breakdowns
+      slotCosts,
+      totalFrühCosts,
+      totalSpätCosts,
+      totalFrühHours,
+      totalSpätHours,
+    };
+  };
+
+  // Calculate weekly totals including costs and PKQ
+  const getWeeklyStats = (weekEndDate: Date) => {
+    // Get all days in this week (Monday to Sunday)
+    const weekDays = days.filter(d => {
+      const dayIndex = days.indexOf(d);
+      const sundayIndex = days.indexOf(weekEndDate);
+      // Days from 6 before Sunday up to Sunday
+      return dayIndex >= sundayIndex - 6 && dayIndex <= sundayIndex;
+    });
+
+    let totalCosts = 0;
+    let totalRevenue = 0;
+
+    weekDays.forEach(day => {
+      const stats = getDailyStats(day);
+      totalCosts += stats.totalCosts;
+      totalRevenue += stats.effectiveRevenue;
+    });
+
+    const laborCostPercentage = totalRevenue > 0 ? (totalCosts / totalRevenue) * 100 : null;
+    const isOverBudget = laborCostPercentage !== null && laborCostPercentage > laborCostThreshold;
+
+    return {
+      totalCosts,
+      totalRevenue,
+      laborCostPercentage,
+      isOverBudget
+    };
+  };
+
+  // Determine if this is week view (7 or fewer days) for compact styling
+  const isWeekView = days.length <= 7;
+
+  // Absence paint-tool state (internal; overridden by externalActiveTool when provided)
+  const [activeTool, setActiveTool] = useState<string | null>(null);
+
+  // Resolved tool: external takes priority when it is explicitly provided (not undefined)
+  const resolvedActiveTool = externalActiveTool !== undefined ? externalActiveTool : activeTool;
+
+  const setResolvedTool = (tool: string | null) => {
+    if (externalActiveTool !== undefined) {
+      onExternalToolChange?.(tool);
+    } else {
+      setActiveTool(tool);
+    }
+  };
+
+  // Over-budget dialog state
+  const [openDialogDay, setOpenDialogDay] = useState<string | null>(null);
+
+  // Resizable name column
+  const [nameColWidth, setNameColWidth] = useState(140);
+  const resizingRef = useRef(false);
+  const resizeStartXRef = useRef(0);
+  const resizeStartWidthRef = useRef(0);
+
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    resizeStartXRef.current = e.clientX;
+    resizeStartWidthRef.current = nameColWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const delta = ev.clientX - resizeStartXRef.current;
+      const newWidth = Math.max(80, Math.min(320, resizeStartWidthRef.current + delta));
+      setNameColWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      resizingRef.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  };
+  const [whatIfRevenue, setWhatIfRevenue] = useState<string>('');
+
+  // Correction suggestion state
+  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  const [snoozedIds, setSnoozedIds] = useState<string[]>([]);
+
+  // Pre-compute which cells are top correction candidates across ALL overbudget days.
+  // Used to render orange suggestion rings in the grid even before the dialog is opened.
+  // Stores the full CorrectionSuggestion so the inline popover can show actions.
+  // NOTE: intentionally NOT gated on showCosts — overplanning markers are useful regardless.
+  const gridSuggestionMap = useMemo(() => {
+    const result = new Map<string, CorrectionSuggestion>();
+    days.forEach(day => {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const stats = getDailyStats(day);
+      if (!stats.isOverBudget) return;
+      const suggestions = computeSuggestions(
+        dateStr, employees, scheduleData, dismissedIds, stats.excessCosts, rates,
+      );
+      // Mark the TOP priority suggestions (tier 1+2: aushilfe + double-shifts first)
+      const topSuggestions = suggestions.slice(0, 4);
+      topSuggestions.forEach(s => {
+        if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
+          result.set(`${s.employeeId}-${dateStr}-früh`, s);
+        }
+        if (s.actionType === 'remove_all' || s.actionType === 'remove_spat') {
+          result.set(`${s.employeeId}-${dateStr}-spät`, s);
+        }
+      });
+    });
+    return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, employees, scheduleData, dismissedIds, laborCostThreshold, dailyBudgets, rates]);
+
+  // Track which inline suggestion popover is currently open (key = cellKey-slot)
+  const [openInlineId, setOpenInlineId] = useState<string | null>(null);
+
+  // Drag-over tracking for shift drop highlighting
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+
+  const handleDropShift = (
+    e: React.DragEvent<HTMLTableCellElement>,
+    employeeId: string,
+    dateStr: string,
+  ) => {
+    e.preventDefault();
+    setDragOverKey(null);
+    const tool = e.dataTransfer.getData('application/shift-tool');
+    if (!tool) return;
+    if (tool.startsWith('shift:')) {
+      const shiftName = tool.slice(6);
+      const config = shiftMap[shiftName];
+      if (!config) return;
+      const startHour = config.start ? parseInt(config.start.split(':')[0], 10) : 0;
+      const primarySlot: 'früh' | 'spät' = startHour >= 16 ? 'spät' : 'früh';
+      const secondarySlot: 'früh' | 'spät' = primarySlot === 'früh' ? 'spät' : 'früh';
+      onSlotChange(employeeId, dateStr, primarySlot, { start: config.start, end: config.end }, null);
+      if (config.start2 && config.end2) {
+        // Split shift: automatically fill the secondary slot with the second time block
+        onSlotChange(employeeId, dateStr, secondarySlot, { start: config.start2, end: config.end2 }, null);
+      } else {
+        // Single shift: clear the other slot so no stale data remains
+        onSlotChange(employeeId, dateStr, secondarySlot, null, null);
+      }
+    } else {
+      onSlotChange(employeeId, dateStr, 'früh', null, tool as 'FE' | 'K' | 'F' | null);
+      onSlotChange(employeeId, dateStr, 'spät', null, tool as 'FE' | 'K' | 'F' | null);
+    }
+  };
+
+  const handleApplySuggestion = (s: CorrectionSuggestion, dateStr: string) => {
+    if (s.actionType === 'remove_all' || s.actionType === 'remove_frueh') {
+      onSlotChange(s.employeeId, dateStr, 'früh', null, null);
+    }
+    if (s.actionType === 'remove_all' || s.actionType === 'remove_spat') {
+      onSlotChange(s.employeeId, dateStr, 'spät', null, null);
+    }
+    setDismissedIds(prev => [...prev, s.id]);
+  };
+
+  // Per-employee cost breakdown for a specific day (for the dialog)
+  const getDayEmployeeBreakdown = (dateStr: string) => {
+    return employees.map(emp => {
+      const cellKey = `${emp.id}-${dateStr}`;
+      const daySchedule = scheduleData[cellKey] || {};
+      let hours = 0;
+
+      if (daySchedule.frühAbsence || daySchedule.spätAbsence) {
+        hours = 0;
+      } else {
+        // Netto via SSoT (Pause pro Einsatz abgezogen)
+        hours = calculateDayNetHours(daySchedule);
+      }
+
+      const cost = hours * (rateById.get(emp.id) ?? 0);
+
+      // Build human-readable shift display for the dialog
+      const parts: string[] = [];
+      if (daySchedule.früh?.start && daySchedule.früh?.end && !daySchedule.frühAbsence) {
+        parts.push(`F: ${daySchedule.früh.start}–${daySchedule.früh.end}`);
+      } else if (daySchedule.frühAbsence) {
+        parts.push(daySchedule.frühAbsence);
+      }
+      if (daySchedule.spät?.start && daySchedule.spät?.end && !daySchedule.spätAbsence) {
+        parts.push(`S: ${daySchedule.spät.start}–${daySchedule.spät.end}`);
+      } else if (daySchedule.spätAbsence && daySchedule.spätAbsence !== daySchedule.frühAbsence) {
+        parts.push(daySchedule.spätAbsence);
+      }
+      const shiftDisplay = parts.join(' | ');
+
+      return { employee: emp, hours, cost, shiftDisplay };
+    }).filter(e => e.hours > 0).sort((a, b) => b.cost - a.cost);
+  };
+
+  // Apply paint-tool (absence or work shift) when active; fall through to normal edit otherwise
+  const handleCellChange = (
+    employeeId: string,
+    dateStr: string,
+    slotType: 'früh' | 'spät',
+    val: TimeSlot | null,
+    absence?: string | null,
+    breakMinutes?: number | null
+  ) => {
+    if (resolvedActiveTool) {
+      const cellKey = `${employeeId}-${dateStr}`;
+      const current = scheduleData[cellKey] || {};
+
+      if (resolvedActiveTool.startsWith('shift:')) {
+        // Work-shift paint mode
+        const shiftName = resolvedActiveTool.slice(6);
+        const config = shiftMap[shiftName];
+        if (!config) return;
+
+        // Auto-assign to Früh (start < 16:00) or Spät (start >= 16:00)
+        const startHour = config.start ? parseInt(config.start.split(':')[0], 10) : 0;
+        const primarySlot: 'früh' | 'spät' = startHour >= 16 ? 'spät' : 'früh';
+        const secondarySlot: 'früh' | 'spät' = primarySlot === 'früh' ? 'spät' : 'früh';
+
+        const alreadySet =
+          primarySlot === 'früh'
+            ? current.früh?.start === config.start && current.früh?.end === config.end && !current.frühAbsence
+            : current.spät?.start === config.start && current.spät?.end === config.end && !current.spätAbsence;
+
+        if (alreadySet) {
+          // Toggle off both slots
+          onSlotChange(employeeId, dateStr, 'früh', null, null);
+          onSlotChange(employeeId, dateStr, 'spät', null, null);
+        } else {
+          // Apply to auto-determined primary slot
+          onSlotChange(employeeId, dateStr, primarySlot, { start: config.start, end: config.end }, null);
+          if (config.start2 && config.end2) {
+            // Split shift: fill the secondary slot with the second part
+            onSlotChange(employeeId, dateStr, secondarySlot, { start: config.start2, end: config.end2 }, null);
+          } else {
+            // Single shift: clear the other slot
+            onSlotChange(employeeId, dateStr, secondarySlot, null, null);
+          }
+        }
+      } else {
+        // Absence paint mode
+        const alreadySet = current.frühAbsence === resolvedActiveTool;
+        if (alreadySet) {
+          // Toggle off
+          onSlotChange(employeeId, dateStr, 'früh', null, null);
+          onSlotChange(employeeId, dateStr, 'spät', null, null);
+        } else {
+          // Apply absence to both slots (full-day absence)
+          onSlotChange(employeeId, dateStr, 'früh', null, resolvedActiveTool);
+          onSlotChange(employeeId, dateStr, 'spät', null, resolvedActiveTool);
+        }
+      }
+    } else {
+      onSlotChange(employeeId, dateStr, slotType, val, absence, breakMinutes);
+    }
+  };
+
+  return (
+    <div>
+      {/* Absence paint-tool bar — only shown when no external tool controller */}
+      {externalActiveTool === undefined && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-2 p-2 bg-muted/30 rounded-md border border-border/50">
+          <span className="text-[10px] font-medium text-muted-foreground shrink-0">Abwesenheit:</span>
+          {absenceShifts.map(shift => {
+            const config = shiftMap[shift];
+            if (!config) return null;
+            const isActive = resolvedActiveTool === config.abbrev;
+            return (
+              <button
+                key={shift}
+                onClick={() => setResolvedTool(isActive ? null : config.abbrev)}
+                title={`${config.abbrev} – Klicken zum Aktivieren, dann auf Mitarbeiterzellen klicken`}
+                className={cn(
+                  "px-2 py-0.5 text-xs rounded border transition-all font-medium",
+                  config.color,
+                  isActive && "ring-2 ring-offset-1 ring-foreground scale-105",
+                  !isActive && "opacity-70 hover:opacity-100"
+                )}
+              >
+                {config.abbrev}
+              </button>
+            );
+          })}
+          {resolvedActiveTool && (
+            <button
+              onClick={() => setResolvedTool(null)}
+              className="ml-auto flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-destructive/50 text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <X className="h-3 w-3" />
+              Beenden
+            </button>
+          )}
+          {resolvedActiveTool && (
+            <span className="text-[10px] text-muted-foreground italic">
+              Aktiv: <strong>{resolvedActiveTool}</strong> — auf Mitarbeiterzelle klicken zum Eintragen
+            </span>
+          )}
+        </div>
+      )}
+
+    <div className="overflow-auto max-h-[calc(100vh-280px)]">
+      <div className={cn("min-w-max", isWeekView && "min-w-0")}>
+        <table className={cn("w-full border-collapse", isWeekView && "table-fixed")}>
+          <thead className="sticky top-0 z-30 bg-card">
+            {/* Date row */}
+            <tr className="bg-card">
+              <th 
+                className="sticky left-0 z-20 bg-card px-2 py-1 text-left text-xs font-semibold border-b border-r-2 border-border shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)] relative select-none overflow-visible"
+                style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
+              >
+                Mitarbeiter
+                <div
+                  className="absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/60 z-30 transition-colors"
+                  onMouseDown={handleResizeMouseDown}
+                  title="Spaltenbreite anpassen"
+                />
+              </th>
+              {days.map((day, idx) => {
+                const isWeekendDay = isWeekend(day);
+                const isSundayDay = isSunday(day);
+                const isLastDay = idx === days.length - 1;
+                const showWeekSum = sundayIndices.includes(idx) && getWeeklyHours;
+                return (
+                  <React.Fragment key={day.toISOString()}>
+                    {(() => {
+                      const dateStr = format(day, 'yyyy-MM-dd');
+                      const stats = getDailyStats(day);
+                      const laborCostQuote = stats.effectiveRevenue > 0
+                        ? (stats.totalCosts / stats.effectiveRevenue * 100)
+                        : null;
+                      const isToday = isSameDay(day, new Date());
+                      return (
+                        <th
+                          className={cn(
+                            "px-1 py-2 text-center font-medium border-b cursor-pointer transition-colors",
+                            "border-r border-border/30",
+                            stats.isOverBudget
+                              ? "bg-red-50 dark:bg-red-950/60 hover:bg-red-100 dark:hover:bg-red-900/60 border-b-2 border-b-red-400 dark:border-b-red-600"
+                              : isWeekendDay
+                                ? "bg-amber-50/60 dark:bg-amber-900/20 hover:bg-amber-100/60 dark:hover:bg-amber-900/30"
+                                : "hover:bg-muted/40",
+                            isSundayDay && !stats.isOverBudget && "bg-amber-100/60 dark:bg-amber-900/30 border-r-2 border-r-border/50",
+                            isToday && !stats.isOverBudget && "bg-blue-50/70 dark:bg-blue-950/30",
+                            isWeekView ? "min-w-[110px]" : "min-w-[90px]"
+                          )}
+                          onClick={() => {
+                            if (stats.isOverBudget && showCosts) {
+                              setWhatIfRevenue('');
+                              setOpenDialogDay(dateStr);
+                            } else {
+                              onDayClick?.(day);
+                            }
+                          }}
+                          title={stats.isOverBudget ? "⚠️ Ziel überschritten – Klicken für Details" : "Klicken für Tagesdetails"}
+                        >
+                          {/* Weekday name */}
+                          <div className={cn(
+                            "text-[9px] font-semibold uppercase tracking-widest",
+                            isWeekendDay && !stats.isOverBudget && "text-amber-600 dark:text-amber-400",
+                            stats.isOverBudget && "text-red-600 dark:text-red-400",
+                            isToday && !stats.isOverBudget && !isWeekendDay && "text-blue-600 dark:text-blue-400",
+                            !isWeekendDay && !stats.isOverBudget && !isToday && "text-muted-foreground/70"
+                          )}>
+                            {WEEKDAY_NAMES[day.getDay()]}
+                          </div>
+                          {/* Day number */}
+                          <div className={cn(
+                            "font-bold leading-tight mt-0.5",
+                            isWeekView ? "text-lg" : "text-sm",
+                            isWeekendDay && !stats.isOverBudget && "text-amber-700 dark:text-amber-300",
+                            stats.isOverBudget && "text-red-700 dark:text-red-300",
+                            isToday && !stats.isOverBudget && !isWeekendDay && "text-blue-700 dark:text-blue-300",
+                            !isWeekendDay && !stats.isOverBudget && !isToday && "text-foreground"
+                          )}>
+                            {format(day, 'd')}
+                            {isToday && (
+                              <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400 align-middle mb-0.5" />
+                            )}
+                          </div>
+                          {/* Month name */}
+                          <div className={cn(
+                            "text-[8px] leading-tight",
+                            isWeekendDay && !stats.isOverBudget ? "text-amber-500/70 dark:text-amber-500/60" : "text-muted-foreground/50"
+                          )}>
+                            {format(day, 'MMM', { locale: de })}
+                          </div>
+                          {/* Hours summary */}
+                          <div className={cn(
+                            "text-[8px] font-medium mt-1 tabular-nums",
+                            stats.totalHours === 0
+                              ? "text-muted-foreground/30"
+                              : stats.isOverBudget
+                                ? "text-red-500 dark:text-red-400 font-bold"
+                                : "text-blue-500/70 dark:text-blue-400/70"
+                          )}>
+                            {stats.totalHours > 0 ? `${stats.totalHours.toFixed(1)}h` : ''}
+                          </div>
+                          {showCosts && (
+                            <div className="flex flex-col items-center mt-0.5">
+                              {stats.isOverBudget ? (
+                                <div className="flex items-center gap-0.5 rounded px-1 py-0.5">
+                                  <AlertTriangle className="h-2.5 w-2.5 text-red-500 dark:text-red-400 shrink-0" />
+                                  <span className="text-[8px] font-bold text-red-500 dark:text-red-400">
+                                    +{stats.excessCosts.toFixed(0)}
+                                  </span>
+                                </div>
+                              ) : (
+                                <>
+                                  {stats.totalCosts > 0 && (
+                                    <div className="text-[7px] text-emerald-600/70 dark:text-emerald-400/60 tabular-nums">
+                                      {stats.totalCosts.toFixed(0)}
+                                    </div>
+                                  )}
+                                  {laborCostQuote !== null && (
+                                    <div className="text-[7px] text-emerald-600/70 dark:text-emerald-400/60">
+                                      {laborCostQuote.toFixed(0)}%
+                                    </div>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </th>
+                      );
+                    })()}
+                    {/* Weekly sum header after Sunday */}
+                    {showWeekSum && (
+                      <th
+                        className="min-w-[50px] px-0.5 py-1 text-center text-[8px] font-semibold border-b border-r-4 border-r-primary/30 bg-primary/10 text-primary"
+                      >
+                        <div>ΣW</div>
+                        {showCosts && (() => {
+                          const weekStats = getWeeklyStats(day);
+                          return (
+                            <div className="flex flex-col items-center mt-0.5">
+                              {weekStats.totalCosts > 0 && (
+                                <div className={cn(
+                                  "text-[7px] font-medium",
+                                  weekStats.isOverBudget 
+                                    ? "text-red-600 dark:text-red-400" 
+                                    : "text-emerald-600 dark:text-emerald-400"
+                                )}>
+                                  {weekStats.totalCosts.toFixed(0)} CHF
+                                </div>
+                              )}
+                              {weekStats.laborCostPercentage !== null && (
+                                <div className={cn(
+                                  "text-[7px] font-medium",
+                                  weekStats.isOverBudget 
+                                    ? "text-red-600 dark:text-red-400" 
+                                    : "text-emerald-600 dark:text-emerald-400"
+                                )}>
+                                  {weekStats.laborCostPercentage.toFixed(1)}%
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </th>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((employee, empIdx) => {
+              const plannedHours = getEmployeeHours(employee.id);
+              const targetHours = getTargetHours(employee);
+              const percentage = Math.min((plannedHours / targetHours) * 100, 100);
+              const isInRange = percentage >= 90 && percentage <= 110;
+              const isUnder = percentage < 90;
+              const canRemove = employee.id.startsWith('aush_');
+              const empPatternWarnings = patternWarnings.filter(w => w.empId === employee.id);
+
+              return (
+                <tr key={employee.id} className={cn(
+                  "group hover:bg-muted/20 transition-colors",
+                  highlightedEmployeeId === employee.id && "ring-1 ring-inset ring-indigo-300 dark:ring-indigo-600 bg-indigo-50/30 dark:bg-indigo-950/15",
+                  highlightedEmployeeId !== employee.id && empPatternWarnings.some(w => w.severity === 'critical') && "bg-red-50/20 dark:bg-red-950/10",
+                  highlightedEmployeeId !== employee.id && !empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && "bg-amber-50/20 dark:bg-amber-950/10",
+                )}>
+                  {/* Employee name cell */}
+                  <td
+                    className="sticky left-0 z-10 bg-card group-hover:bg-muted/60 px-2 py-2 border-b border-r border-border/40 overflow-hidden shadow-[2px_0_6px_-2px_rgba(0,0,0,0.10)] dark:shadow-[2px_0_6px_-2px_rgba(0,0,0,0.35)]"
+                    style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
+                  >
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="flex items-center justify-between gap-0.5 w-full">
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                              <div className="flex items-center gap-1 font-semibold text-[13px] min-w-0">
+                                {showDepartmentBadge && (
+                                  <span className={cn(
+                                    "w-2 h-2 rounded-full shrink-0 opacity-70",
+                                    employee.department === 'service' ? "bg-blue-500" : "bg-orange-500"
+                                  )} />
+                                )}
+                                <span
+                                  className="truncate min-w-0 text-foreground/90"
+                                  onClick={onEmployeeClick ? (e) => { e.stopPropagation(); onEmployeeClick(employee); } : undefined}
+                                  title={onEmployeeClick ? "Details anzeigen" : undefined}
+                                  style={onEmployeeClick ? { cursor: 'pointer' } : undefined}
+                                >
+                                  {getEmployeeDisplayName(employee)}
+                                </span>
+                                {empPatternWarnings.some(w => w.severity === 'critical') && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-400/70 dark:bg-red-500/60 shrink-0" title="Kritische Warnung" />
+                                )}
+                                {!empPatternWarnings.some(w => w.severity === 'critical') && empPatternWarnings.length > 0 && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 dark:bg-amber-500/60 shrink-0" title="Warnung" />
+                                )}
+                              </div>
+                              <div className={cn(
+                                "text-[9px] tabular-nums leading-tight mt-0.5",
+                                isInRange ? "text-emerald-500/70 dark:text-emerald-400/60"
+                                : isUnder ? "text-amber-500/70 dark:text-amber-400/60"
+                                : "text-red-500/70 dark:text-red-400/60"
+                              )}>
+                                {(() => { const d = plannedHours - targetHours; return d >= 0 ? `+${d.toFixed(1)}h` : `${d.toFixed(1)}h`; })()}
+                              </div>
+                            </div>
+                            <div className="flex items-center shrink-0">
+                              {onOpen8HoursDialog && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-5 w-5 text-primary hover:text-primary/80"
+                                  title="8.4h Schicht eintragen"
+                                  onClick={(e) => { e.stopPropagation(); onOpen8HoursDialog(employee); }}
+                                >
+                                  <Clock className="h-3 w-3" />
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className={cn(
+                                  "h-5 w-5 opacity-0 group-hover:opacity-100",
+                                  employee.daysOff && employee.daysOff.length > 0 && "opacity-50 text-primary"
+                                )}
+                                title="Freie Tage"
+                                onClick={(e) => { e.stopPropagation(); onConfigureDaysOff(employee); }}
+                              >
+                                <CalendarOff className="h-3 w-3" />
+                              </Button>
+                              {canRemove && (
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Mitarbeiter entfernen?</AlertDialogTitle>
+                                      <AlertDialogDescription>
+                                        Möchten Sie {employee.name} wirklich aus dem Dienstplan entfernen?
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => onRemoveEmployee(employee.id)}
+                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                      >
+                                        Entfernen
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              )}
+                              {onMoveEmployee && (
+                                <div className="flex flex-col shrink-0">
+                                  <button
+                                    title="Nach oben"
+                                    disabled={empIdx === 0}
+                                    onClick={() => onMoveEmployee(employee.id, 'up')}
+                                    className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
+                                  >
+                                    <ChevronUp className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    title="Nach unten"
+                                    disabled={empIdx === employees.length - 1}
+                                    onClick={() => onMoveEmployee(employee.id, 'down')}
+                                    className="h-3.5 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:cursor-not-allowed"
+                                  >
+                                    <ChevronDown className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="max-w-[240px] p-2.5">
+                          <p className="font-semibold text-xs mb-1.5">{getEmployeeDisplayName(employee)}</p>
+                          <div className="text-[11px] space-y-0.5 text-muted-foreground">
+                            <div>
+                              {employee.employmentType === 'vollzeit' ? 'Vollzeit'
+                                : employee.employmentType === 'teilzeit' ? 'Teilzeit'
+                                : employee.employmentType === 'minijob' ? 'Minijob'
+                                : 'Aushilfe'}
+                              {employee.weeklyHours ? ` · ${employee.weeklyHours} h/Woche` : ''}
+                            </div>
+                            {employee.hourlyWage ? <div>CHF {employee.hourlyWage.toFixed(2)}/h</div> : null}
+                            {employee.monthlySalary ? <div>CHF {employee.monthlySalary.toLocaleString('de-CH', { maximumFractionDigits: 0 })}/Mon.</div> : null}
+                            <div className={cn(
+                              isInRange ? "text-emerald-500" : isUnder ? "text-amber-500" : "text-red-500"
+                            )}>
+                              Plan: {plannedHours.toFixed(1)} / {targetHours.toFixed(1)} h
+                            </div>
+                            {employee.daysOff && employee.daysOff.length > 0 && (
+                              <div>{employee.daysOff.length} Ruhetag{employee.daysOff.length !== 1 ? 'e' : ''}/Wo.</div>
+                            )}
+                          </div>
+                          {empPatternWarnings.length > 0 && (
+                            <div className="border-t mt-1.5 pt-1.5 space-y-1">
+                              {empPatternWarnings.map((w, wi) => (
+                                <div key={wi} className={cn(
+                                  "text-[10px] leading-snug",
+                                  w.severity === 'critical' ? "text-red-400" : "text-amber-400"
+                                )}>
+                                  {w.message}
+                                  {w.detail && <span className="block text-muted-foreground/70 text-[9px]">{w.detail}</span>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </td>
+                  {/* Shift cells for each day - Früh and Spät */}
+                  {days.map((day, dayIdx) => {
+                    const dateStr = format(day, 'yyyy-MM-dd');
+                    const cellKey = `${employee.id}-${dateStr}`;
+                    const daySchedule = scheduleData[cellKey] || {};
+                    const isWeekendDay = isWeekend(day);
+                    const isSundayDay = isSunday(day);
+                    const isConfiguredDayOff = isDayOff(employee, day);
+                    const showWeekSum = sundayIndices.includes(dayIdx) && getWeeklyHours;
+                    
+                    // Check for shift overlap or short break
+                    const isOverlapping = hasShiftOverlap(daySchedule);
+                    const hasShortBreakWarning = hasShortBreak(daySchedule);
+                    
+                    const frühSuggestion = gridSuggestionMap.get(`${employee.id}-${dateStr}-früh`);
+                    const spätSuggestion = gridSuggestionMap.get(`${employee.id}-${dateStr}-spät`);
+                    const isSuggestedFrüh = !!frühSuggestion;
+                    const isSuggestedSpät = !!spätSuggestion;
+
+                    // Availability overlay
+                    const availStatus = availabilityMap[`${employee.id}-${dateStr}`] ?? 'normal';
+                    const cellIsRequestedFree = availStatus === 'requested-free';
+                    const cellIsBlocked       = availStatus === 'blocked';
+                    const frühInlineKey = `${employee.id}-${dateStr}-früh`;
+                    const spätInlineKey = `${employee.id}-${dateStr}-spät`;
+                    const frühCellColor = cellColors[frühInlineKey] ?? null;
+                    const spätCellColor = cellColors[spätInlineKey] ?? null;
+
+                    // Block cells after the employee's employment end date
+                    const exitDate = employee.employmentEndDate ? parseISO(employee.employmentEndDate) : null;
+                    const isAfterExitDate = exitDate ? isAfter(day, exitDate) : false;
+
+                    return (
+                      <React.Fragment key={dateStr}>
+                        {/* Merged day cell — single column, shows both shifts stacked */}
+                        <td
+                          className={cn(
+                            "px-1 py-1.5 border-b border-border/30 text-center relative align-top transition-colors",
+                            "border-r border-border/20",
+                            isWeekendDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-50/40 dark:bg-amber-900/10",
+                            isSundayDay && !isConfiguredDayOff && !isAfterExitDate && "bg-amber-100/50 dark:bg-amber-900/20 border-r border-r-border/40",
+                            isConfiguredDayOff && !isAfterExitDate && "bg-slate-300 dark:bg-slate-600",
+                            isAfterExitDate && "bg-zinc-800 dark:bg-zinc-900",
+                            isOverlapping && !isAfterExitDate && "bg-red-100 dark:bg-red-900/30 ring-2 ring-red-500 ring-inset",
+                            hasShortBreakWarning && !isOverlapping && !isAfterExitDate && "bg-amber-100 dark:bg-amber-900/30 ring-1 ring-amber-500 ring-inset",
+                            (isSuggestedFrüh || isSuggestedSpät) && !isOverlapping && !isAfterExitDate && "ring-2 ring-orange-400 dark:ring-orange-500 ring-inset",
+                            dragOverKey === `${employee.id}-${dateStr}-f` && !isAfterExitDate && !isConfiguredDayOff && "bg-primary/15 ring-2 ring-primary ring-inset"
+                          )}
+                          title={
+                            isAfterExitDate ? `Nach Austritt gesperrt (${employee.employmentEndDate})` :
+                            isOverlapping ? "⚠️ Schichten überlappen sich!" :
+                            hasShortBreakWarning ? "⚠️ Kurze Pause (<30 Min.)" :
+                            isConfiguredDayOff ? "📅 Konfigurierter wöchentlicher Ruhetag" :
+                            undefined
+                          }
+                          onDragOver={(e) => {
+                            if (!isAfterExitDate && !isConfiguredDayOff && e.dataTransfer.types.includes('application/shift-tool')) {
+                              e.preventDefault();
+                              setDragOverKey(`${employee.id}-${dateStr}-f`);
+                            }
+                          }}
+                          onDragLeave={() => setDragOverKey(null)}
+                          onDrop={(e) => handleDropShift(e, employee.id, dateStr)}
+                        >
+                          {isAfterExitDate ? (
+                            <div className="flex items-center justify-center min-h-[28px] h-full">
+                              <span className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold select-none">✕</span>
+                            </div>
+                          ) : (() => {
+                            // Always show the slot that has data in row 1 of the editor.
+                            // If only spät is set (früh is null), treat spät as primary so
+                            // old data is never stranded in the invisible "row 2".
+                            const primarySlot: 'früh' | 'spät' =
+                              daySchedule.früh || daySchedule.frühAbsence ? 'früh' : 'spät';
+                            const secondarySlot: 'früh' | 'spät' =
+                              primarySlot === 'früh' ? 'spät' : 'früh';
+                            const primaryAbsence =
+                              (primarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ||
+                              (secondarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ||
+                              null;
+                            return (
+                            <div className="flex flex-col">
+                              <div className="py-0.5">
+                                <TimeInputCell
+                                  value={daySchedule[primarySlot] || null}
+                                  absenceType={primaryAbsence}
+                                  onChange={(val, absence, breakMin) => handleCellChange(employee.id, dateStr, primarySlot, val, absence, breakMin)}
+                                  slotType={primarySlot}
+                                  secondaryValue={daySchedule[secondarySlot] || null}
+                                  breakMinutes={
+                                    (primarySlot === 'früh'
+                                      ? daySchedule.fruehBreakMinutes ?? daySchedule.breakMinutes
+                                      : daySchedule.spaetBreakMinutes) ?? null
+                                  }
+                                  onBreakMinutesChange={(v) => onSlotChange(
+                                    employee.id, dateStr, primarySlot,
+                                    daySchedule[primarySlot] || null,
+                                    (primarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
+                                    v,
+                                  )}
+                                  secondaryBreakMinutes={
+                                    (secondarySlot === 'früh'
+                                      ? daySchedule.fruehBreakMinutes ?? daySchedule.breakMinutes
+                                      : daySchedule.spaetBreakMinutes) ?? null
+                                  }
+                                  onSecondaryBreakMinutesChange={(v) => onSlotChange(
+                                    employee.id, dateStr, secondarySlot,
+                                    daySchedule[secondarySlot] || null,
+                                    (secondarySlot === 'früh' ? daySchedule.frühAbsence : daySchedule.spätAbsence) ?? null,
+                                    v,
+                                  )}
+                                  onSplitTimeSelect={(sec, breakMin) => onSlotChange(employee.id, dateStr, secondarySlot, sec, null, breakMin)}
+                                  onClearSecondary={() => onSlotChange(employee.id, dateStr, secondarySlot, null, null)}
+                                  isWeekend={isWeekendDay}
+                                  isDayOff={isConfiguredDayOff}
+                                  isRequestedFree={cellIsRequestedFree}
+                                  isBlocked={cellIsBlocked}
+                                  activeTool={resolvedActiveTool}
+                                  copiedShift={copiedShift}
+                                  onCopyShift={onCopyShift}
+                                  cellColor={frühCellColor || spätCellColor}
+                                  onCellColorChange={onCellColorChange ? (c) => onCellColorChange(frühInlineKey, c) : undefined}
+                                  onCopyToIst={onCopyToIst ? (slot) => onCopyToIst(employee.id, dateStr, primarySlot, slot) : undefined}
+                                />
+                              </div>
+                              {(isSuggestedFrüh || isSuggestedSpät) && !isOverlapping && (
+                                <>
+                                  {isSuggestedFrüh && frühSuggestion && (
+                                    <SuggestionStrip
+                                      s={frühSuggestion}
+                                      inlineKey={frühInlineKey}
+                                      dateStr={dateStr}
+                                      openInlineId={openInlineId}
+                                      onOpenChange={setOpenInlineId}
+                                      onApply={handleApplySuggestion}
+                                      onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
+                                      onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
+                                    />
+                                  )}
+                                  {isSuggestedSpät && spätSuggestion && (
+                                    <SuggestionStrip
+                                      s={spätSuggestion}
+                                      inlineKey={spätInlineKey}
+                                      dateStr={dateStr}
+                                      openInlineId={openInlineId}
+                                      onOpenChange={setOpenInlineId}
+                                      onApply={handleApplySuggestion}
+                                      onDismiss={(id) => setDismissedIds(prev => [...prev, id])}
+                                      onSnooze={(id) => setSnoozedIds(prev => [...prev, id])}
+                                    />
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          ); })()}
+                          {isOverlapping && !isAfterExitDate && (
+                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full flex items-center justify-center" title="Schichten überlappen sich!">
+                              <span className="text-white text-[8px] font-bold">!</span>
+                            </div>
+                          )}
+                        </td>
+                        {/* Weekly sum cell after Sunday - planned vs target with colour coding */}
+                        {showWeekSum && (
+                          <td className="px-0.5 py-0.5 border-b border-r-4 border-r-primary/30 bg-primary/5 text-center min-w-[42px]">
+                            {(() => {
+                              const weekHours = getWeeklyHours!(employee.id, day);
+                              const weekTarget = getWeeklyTargetHours ? getWeeklyTargetHours(employee) : (employee.weeklyHours || 42);
+                              const diff = weekHours - weekTarget;
+                              const isOver = diff > 2;
+                              const isUnder = diff < -2;
+                              const isOnTarget = !isOver && !isUnder;
+                              const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+
+                              return (
+                                <div className="flex flex-col items-center gap-0">
+                                  {/* Planned hours */}
+                                  <span className={cn(
+                                    'text-[10px] font-bold block leading-tight',
+                                    isOnTarget && 'text-emerald-600 dark:text-emerald-400',
+                                    isUnder    && 'text-amber-600 dark:text-amber-400',
+                                    isOver     && 'text-red-600 dark:text-red-500',
+                                  )}>
+                                    {weekHours.toFixed(1)}h
+                                  </span>
+                                  {/* Target */}
+                                  <span className="text-[8px] text-muted-foreground leading-tight">
+                                    / {weekTarget}h
+                                  </span>
+                                  {/* Deviation badge */}
+                                  <span className={cn(
+                                    'text-[8px] font-semibold leading-tight',
+                                    isOnTarget && 'text-emerald-600 dark:text-emerald-400',
+                                    isUnder    && 'text-amber-600 dark:text-amber-400',
+                                    isOver     && 'text-red-600 dark:text-red-500',
+                                  )}>
+                                    {diffStr}
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                          </td>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+          {/* Footer with daily totals */}
+          {showFooter && (
+            <tfoot>
+              <tr className="bg-muted/50 border-t-2 border-border">
+                <td
+                  className="sticky left-0 z-10 bg-muted px-1.5 py-1.5 border-b border-r-2 border-border font-semibold text-xs shadow-[3px_0_8px_-2px_rgba(0,0,0,0.18)] dark:shadow-[3px_0_8px_-2px_rgba(0,0,0,0.45)]"
+                  style={{ width: nameColWidth, minWidth: nameColWidth, maxWidth: nameColWidth }}
+                >
+                  Tages-Σ
+                  <span className="ml-1 text-[9px] font-normal text-muted-foreground">{employees.length} MA</span>
+                </td>
+                {days.map((day, dayIdx) => {
+                  const isWeekendDay = isWeekend(day);
+                  const isSundayDay = isSunday(day);
+                  const stats = getDailyStats(day);
+                  const { totalHours, totalCosts, employeeCount, isOverBudget, laborCostPercentage, excessHours, effectiveRevenue: footerRevenue } = stats;
+                  const showWeekSum = sundayIndices.includes(dayIdx) && getWeeklyHours;
+                  
+                  return (
+                    <React.Fragment key={`footer-${day.toISOString()}`}>
+                      <td
+                        className={cn(
+                          "px-0.5 py-1 border-b text-center",
+                          "border-r-4 border-r-primary/30",
+                          isWeekendDay && "bg-amber-100/50 dark:bg-amber-900/20",
+                          isSundayDay && "bg-amber-200/50 dark:bg-amber-900/30 border-r-primary/50",
+                          isOverBudget && showCosts && "bg-red-100 dark:bg-red-900/30"
+                        )}
+                      >
+                        <div className="text-[10px] font-semibold text-primary">
+                          {totalHours.toFixed(1)}h
+                        </div>
+                        <div className="text-[8px] text-muted-foreground">
+                          {employeeCount} MA
+                        </div>
+                        {showCosts && (
+                          <>
+                            <div className={cn(
+                              "text-[8px] font-medium",
+                              isOverBudget ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"
+                            )}>
+                              CHF {totalCosts.toFixed(0)}
+                            </div>
+                            {footerRevenue > 0 && (
+                              <div className={cn(
+                                "text-[7px]",
+                                isOverBudget ? "text-red-600 dark:text-red-400 font-semibold" : "text-muted-foreground"
+                              )}>
+                                {laborCostPercentage.toFixed(0)}%
+                              </div>
+                            )}
+                            {isOverBudget && excessHours > 0 && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="text-[7px] text-red-600 dark:text-red-400 font-bold cursor-help">
+                                      -{excessHours.toFixed(1)}h
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="text-xs">
+                                      {excessHours.toFixed(1)} Stunden über dem {laborCostThreshold}%-Ziel
+                                      <br />
+                                      ({stats.revenueSource === 'actual' ? 'Ist-Umsatz' : 'Budget'}: CHF {footerRevenue.toFixed(0)})
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </>
+                        )}
+                      </td>
+                      {showWeekSum && (
+                        <td className="px-0.5 py-1 border-b border-r-4 border-r-primary/30 bg-primary/10 text-center">
+                          {showCosts && (() => {
+                            const weekStats = getWeeklyStats(day);
+                            return (
+                              <div className="flex flex-col items-center">
+                                {weekStats.totalCosts > 0 && (
+                                  <div className={cn(
+                                    "text-[8px] font-semibold",
+                                    weekStats.isOverBudget 
+                                      ? "text-red-600 dark:text-red-400" 
+                                      : "text-emerald-600 dark:text-emerald-400"
+                                  )}>
+                                    CHF {weekStats.totalCosts.toFixed(0)}
+                                  </div>
+                                )}
+                                {weekStats.laborCostPercentage !== null && (
+                                  <div className={cn(
+                                    "text-[7px] font-medium",
+                                    weekStats.isOverBudget 
+                                      ? "text-red-600 dark:text-red-400" 
+                                      : "text-emerald-600 dark:text-emerald-400"
+                                  )}>
+                                    {weekStats.laborCostPercentage.toFixed(1)}%
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+
+    {/* ── Over-budget Plan Dialog ─────────────────────────────────────── */}
+    {openDialogDay && showCosts && (() => {
+      const stats = getDailyStats(new Date(openDialogDay));
+      const maxAllowed = stats.effectiveRevenue * (laborCostThreshold / 100);
+      const excessCosts = Math.max(0, stats.totalCosts - maxAllowed);
+      const breakdown = getDayEmployeeBreakdown(openDialogDay);
+      const whatIfRev = parseFloat(whatIfRevenue);
+      const whatIfPkq = whatIfRev > 0 ? (stats.totalCosts / whatIfRev * 100) : null;
+      const revenueNeeded = stats.totalCosts / (laborCostThreshold / 100);
+      const parsedDate = new Date(openDialogDay);
+      const dateLabel = format(parsedDate, 'EEEE, d. MMMM yyyy', { locale: de });
+
+      // Build a map from employeeId → suggestion for this day
+      const allSuggestions = computeSuggestions(openDialogDay, employees, scheduleData, dismissedIds, excessCosts, rates);
+      const suggestionByEmpId = new Map(allSuggestions.map(s => [s.employeeId, s]));
+      const pendingCount = allSuggestions.filter(s => !snoozedIds.includes(s.id) && !dismissedIds.includes(s.id)).length;
+      const totalSaving = allSuggestions.reduce((sum, s) => sum + s.savingCost, 0);
+
+      // DEBUG: log what we have so we can trace issues in the console
+      console.log('[DIALOG] openDialogDay:', openDialogDay);
+      console.log('[DIALOG] breakdown count:', breakdown.length, breakdown.map(b => ({ id: b.employee.id, name: b.employee.name, hours: b.hours, cost: b.cost, shiftDisplay: b.shiftDisplay })));
+      console.log('[DIALOG] allSuggestions count:', allSuggestions.length, allSuggestions.map(s => ({ empId: s.employeeId, name: s.employeeName, action: s.actionType, savingH: s.savingHours, savingCHF: s.savingCost })));
+      console.log('[DIALOG] scheduleData keys for day:', Object.keys(scheduleData).filter(k => k.endsWith(openDialogDay)));
+      console.log('[DIALOG] employees with wage:', employees.map(e => ({ id: e.id, name: e.name, wage: e.hourlyWage, type: e.employmentType })));
+
+      // Human-readable suggestion action label
+      const getSuggestionActionLabel = (s: CorrectionSuggestion) => {
+        if (s.actionType === 'remove_all') return 'Einsatz streichen';
+        if (s.actionType === 'remove_spat') return 'Spätschicht entfernen';
+        if (s.actionType === 'remove_frueh') return 'Frühschicht entfernen';
+        return 'Schicht entfernen';
+      };
+
+      return (
+        <Dialog open={true} onOpenChange={() => setOpenDialogDay(null)}>
+          <DialogContent className="max-w-3xl p-0 gap-0 overflow-hidden">
+            {/* ── Inner flex wrapper owns all layout — avoids fighting DialogContent base grid/padding ── */}
+            <div style={{ display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden' }}>
+
+              {/* ── Fixed header ───────────────────────────────────── */}
+              <div style={{ flexShrink: 0, padding: '16px 20px 12px', borderBottom: '1px solid var(--border)' }}>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
+                  <span className="text-base font-semibold text-red-600">Kostenwarnung — {dateLabel}</span>
+                </div>
+                <span className="sr-only">Überplanungsdetails und Korrekturvorschläge für diesen Tag</span>
+              </div>
+
+              {/* ── Fixed KPI strip ────────────────────────────────── */}
+              <div style={{ flexShrink: 0, padding: '10px 20px', borderBottom: '1px solid var(--border)' }}
+                className="bg-muted/30 space-y-2">
+                {/* Row 1: overall KPIs */}
+                <div className="grid grid-cols-6 gap-x-4 gap-y-1">
+                  {[
+                    {
+                      label: stats.revenueSource === 'actual' ? 'Umsatz Netto (Ist)' : 'Umsatz (Budget)',
+                      value: stats.effectiveRevenue > 0 ? `CHF ${stats.effectiveRevenue.toFixed(0)}` : 'Kein Umsatz',
+                      red: false,
+                    },
+                    { label: 'Kosten plan', value: `CHF ${stats.totalCosts.toFixed(0)}`, red: false },
+                    { label: 'Stunden plan', value: `${stats.totalHours.toFixed(1)} h`, red: false },
+                    {
+                      label: 'PKQ aktuell',
+                      value: stats.effectiveRevenue > 0
+                        ? `${(stats.totalCosts / stats.effectiveRevenue * 100).toFixed(1)}% / ${laborCostThreshold}%`
+                        : `– / ${laborCostThreshold}%`,
+                      red: true,
+                    },
+                    { label: 'Zu viel CHF', value: `+CHF ${excessCosts.toFixed(0)}`, red: true },
+                    { label: 'Zu viel Std.', value: `+${stats.excessHours.toFixed(1)} h`, red: true },
+                  ].map(({ label, value, red }) => (
+                    <div key={label} className="space-y-0.5 min-w-0">
+                      <div className="text-[10px] text-muted-foreground truncate">{label}</div>
+                      <div className={cn("text-sm font-bold", red ? "text-red-600 dark:text-red-400" : "text-foreground")}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Formula + source row */}
+                <div className="border-t border-border/40 pt-1.5 flex items-center gap-4 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground">
+                    <span className="font-semibold">Berechnung:</span>{' '}
+                    CHF {stats.totalCosts.toFixed(0)} ÷ {stats.effectiveRevenue > 0 ? `CHF ${stats.effectiveRevenue.toFixed(0)}` : '–'}{' '}
+                    = {stats.effectiveRevenue > 0 ? `${(stats.totalCosts / stats.effectiveRevenue * 100).toFixed(1)} %` : '–'}
+                  </span>
+                  <span className={cn(
+                    "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                    stats.revenueSource === 'actual'
+                      ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400"
+                      : stats.revenueSource === 'planned'
+                        ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400"
+                        : "bg-slate-100 text-slate-500"
+                  )}>
+                    Quelle: {stats.revenueSource === 'actual' ? 'Tages-Ist-Umsatz' : stats.revenueSource === 'planned' ? 'Budgetwert' : 'kein Umsatz'}
+                  </span>
+                </div>
+                {/* Row 2: Früh / Spät slot breakdown */}
+                {(stats.totalFrühCosts > 0 || stats.totalSpätCosts > 0) && (() => {
+                  const sc = stats.slotCosts;
+                  const driverLabel = (() => {
+                    const frühTotal = stats.totalFrühCosts;
+                    const spätTotal = stats.totalSpätCosts;
+                    if (frühTotal === 0 && spätTotal === 0) return null;
+                    const driver = frühTotal > spätTotal ? 'Frühdienst' : 'Spätdienst';
+                    const ratio = Math.max(frühTotal, spätTotal) / stats.totalCosts * 100;
+                    return `${driver} verursacht ${ratio.toFixed(0)} % der Kosten`;
+                  })();
+                  return (
+                    <div className="border-t border-border/40 pt-2">
+                      <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
+                        Kosten nach Schicht
+                        {driverLabel && (
+                          <span className="ml-2 normal-case font-normal text-amber-700 dark:text-amber-400">
+                            · {driverLabel}
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-4 gap-x-4 gap-y-0.5">
+                        {/* Total Früh */}
+                        <div className="space-y-0.5">
+                          <div className="text-[9px] text-muted-foreground">☀ Früh gesamt</div>
+                          <div className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+                            CHF {stats.totalFrühCosts.toFixed(0)}
+                            <span className="font-normal text-muted-foreground ml-1">({stats.totalFrühHours.toFixed(1)} h)</span>
+                          </div>
+                        </div>
+                        {/* Total Spät */}
+                        <div className="space-y-0.5">
+                          <div className="text-[9px] text-muted-foreground">🌙 Spät gesamt</div>
+                          <div className="text-xs font-semibold text-blue-700 dark:text-blue-400">
+                            CHF {stats.totalSpätCosts.toFixed(0)}
+                            <span className="font-normal text-muted-foreground ml-1">({stats.totalSpätHours.toFixed(1)} h)</span>
+                          </div>
+                        </div>
+                        {/* Service Früh/Spät */}
+                        {(sc.service?.früh > 0 || sc.service?.spät > 0) && (
+                          <div className="space-y-0.5">
+                            <div className="text-[9px] text-muted-foreground">Service F/S</div>
+                            <div className="text-xs font-semibold text-blue-600 dark:text-blue-400">
+                              {sc.service.früh.toFixed(0)} / {sc.service.spät.toFixed(0)}
+                            </div>
+                          </div>
+                        )}
+                        {/* Küche Früh/Spät */}
+                        {(sc.küche?.früh > 0 || sc.küche?.spät > 0) && (
+                          <div className="space-y-0.5">
+                            <div className="text-[9px] text-muted-foreground">Küche F/S</div>
+                            <div className="text-xs font-semibold text-orange-600 dark:text-orange-400">
+                              {sc.küche.früh.toFixed(0)} / {sc.küche.spät.toFixed(0)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ── Section header: count + savings ────────────────── */}
+              {(breakdown.length > 0 || allSuggestions.length > 0) && (
+                <div style={{ flexShrink: 0, padding: '8px 20px 6px' }} className="flex items-center justify-between border-b border-border/40 bg-background">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Mitarbeiter &amp; Korrekturvorschläge
+                  </span>
+                  {pendingCount > 0 && (
+                    <span className="flex items-center gap-1 text-[11px] font-medium text-orange-600 dark:text-orange-400">
+                      <Lightbulb className="h-3.5 w-3.5" />
+                      {pendingCount} Vorschlag{pendingCount !== 1 ? 'schläge' : ''} offen
+                      {totalSaving > 0 && (
+                        <span className="text-emerald-700 dark:text-emerald-400 ml-0.5">
+                          (−CHF {totalSaving.toFixed(0)})
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* ── Scrollable employee + suggestion list ───────────── */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px', minHeight: 0 }}>
+
+                {/* DEBUG BANNER — remove after verification */}
+                <div style={{ background: '#1e3a5f', color: '#fff', padding: '6px 10px', borderRadius: 6, marginBottom: 10, fontSize: 11, fontFamily: 'monospace', lineHeight: 1.5 }}>
+                  <div>🔍 DEBUG: breakdown={breakdown.length} | suggestions={allSuggestions.length} | map={suggestionByEmpId.size} | dismissed={dismissedIds.length}</div>
+                  {allSuggestions.map(s => (
+                    <div key={s.id} style={{ color: '#7dd3fc' }}>
+                      ✂ {s.employeeName} → {s.actionType} | {s.savingHours.toFixed(1)}h / CHF {s.savingCost.toFixed(0)} | id: {s.employeeId}
+                    </div>
+                  ))}
+                  {allSuggestions.length === 0 && (
+                    <div style={{ color: '#fca5a5' }}>⚠ Kein konkreter Kandidat gefunden — Prüfe hourlyWage &gt; 0 und Schichtzeiten</div>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {breakdown.length === 0 && (
+                    <div style={{ background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 8, padding: '12px 16px', textAlign: 'center', color: '#92400e', fontSize: 13 }}>
+                      ⚠ Kein konkreter Kandidat gefunden — keine Mitarbeiter mit geplanten Arbeitsstunden für diesen Tag.
+                      <div style={{ fontSize: 11, marginTop: 4, color: '#a16207' }}>Prüfe ob Schichtzeiten (nicht Abwesenheiten) eingetragen sind und hourlyWage &gt; 0.</div>
+                    </div>
+                  )}
+                  {breakdown.map(({ employee, hours, cost, shiftDisplay }) => {
+                    const suggestion = suggestionByEmpId.get(employee.id);
+                    const isSnoozed = suggestion ? snoozedIds.includes(suggestion.id) : false;
+                    const isDismissed = suggestion ? dismissedIds.includes(suggestion.id) : false;
+                    const showSuggestion = !!suggestion && !isDismissed;
+
+                    return (
+                      <div
+                        key={employee.id}
+                        style={{
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: showSuggestion && !isSnoozed ? '2px solid #f97316' : '1px solid #e2e8f0',
+                        }}
+                      >
+                        {/* ── Employee row ── */}
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          background: showSuggestion && !isSnoozed ? '#fff7ed' : '#f8fafc',
+                        }}>
+                          <span style={{
+                            fontSize: 9,
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            flexShrink: 0,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            background: employee.employmentType === 'aushilfe' ? '#ede9fe' : employee.employmentType === 'vollzeit' ? '#dbeafe' : '#f1f5f9',
+                            color: employee.employmentType === 'aushilfe' ? '#7c3aed' : employee.employmentType === 'vollzeit' ? '#1d4ed8' : '#64748b',
+                          }}>
+                            {employee.employmentType === 'aushilfe' ? 'AH' : employee.employmentType === 'vollzeit' ? 'VZ' : employee.employmentType === 'teilzeit' ? 'TZ' : 'MJ'}
+                          </span>
+                          <span style={{ fontWeight: 600, fontSize: 14, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getEmployeeDisplayName(employee)}</span>
+                          {shiftDisplay && (
+                            <span style={{ fontSize: 11, color: '#64748b', flexShrink: 0, fontFamily: 'monospace', background: '#f1f5f9', padding: '2px 6px', borderRadius: 4 }}>
+                              {shiftDisplay}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 11, color: '#64748b', flexShrink: 0 }}>{hours.toFixed(1)} h</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, flexShrink: 0, width: 72, textAlign: 'right' }}>CHF {cost.toFixed(0)}</span>
+                        </div>
+
+                        {/* ── No suggestion fallback ── */}
+                        {!suggestion && (
+                          <div style={{ padding: '6px 12px', fontSize: 11, color: '#94a3b8', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
+                            Kein konkreter Kandidat — kein Vorschlag für diesen Mitarbeiter
+                          </div>
+                        )}
+
+                        {/* ── KORREKTURVORSCHLAG AKTIV ── */}
+                        {showSuggestion && (
+                          <div style={{
+                            borderTop: isSnoozed ? '1px solid #e2e8f0' : '2px solid #f97316',
+                            background: isSnoozed ? '#f8fafc' : '#fff7ed',
+                            padding: '10px 12px',
+                            opacity: isSnoozed ? 0.7 : 1,
+                          }}>
+                            {/* Marker label */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                              <span style={{ background: '#f97316', color: '#fff', fontSize: 9, fontWeight: 800, padding: '2px 8px', borderRadius: 4, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                                KORREKTURVORSCHLAG AKTIV
+                              </span>
+                            </div>
+                            {/* Suggestion details */}
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
+                              <div style={{ flex: 1, minWidth: 200 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: '#c2410c', marginBottom: 2 }}>
+                                  {getSuggestionActionLabel(suggestion)}
+                                  {suggestion.slotDisplay && (
+                                    <span style={{ fontFamily: 'monospace', fontWeight: 400, color: '#64748b', marginLeft: 8, fontSize: 11 }}>
+                                      ({suggestion.slotDisplay})
+                                    </span>
+                                  )}
+                                </div>
+                                {suggestion.savingHours > 0 && (
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: '#15803d' }}>
+                                    Ersparnis: −{suggestion.savingHours.toFixed(1)} h
+                                    {suggestion.savingCost > 0 && ` / −CHF ${suggestion.savingCost.toFixed(0)}`}
+                                  </div>
+                                )}
+                              </div>
+                              {/* Action buttons */}
+                              <div style={{ display: 'flex', gap: 6, flexShrink: 0, alignItems: 'center' }}>
+                                <Button
+                                  size="sm"
+                                  className="h-8 px-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                                  onClick={() => handleApplySuggestion(suggestion, openDialogDay)}
+                                >
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                  Übernehmen
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-3 text-xs gap-1.5"
+                                  onClick={() => setDismissedIds(prev => [...prev, suggestion.id])}
+                                >
+                                  <EyeOff className="h-3.5 w-3.5" />
+                                  Ignorieren
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-8 px-3 text-xs gap-1.5 text-muted-foreground"
+                                  onClick={() =>
+                                    isSnoozed
+                                      ? setSnoozedIds(prev => prev.filter(x => x !== suggestion.id))
+                                      : setSnoozedIds(prev => [...prev, suggestion.id])
+                                  }
+                                >
+                                  <Clock3 className="h-3.5 w-3.5" />
+                                  {isSnoozed ? 'Reaktivieren' : 'Später'}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* ── What-if revenue calculator ───────────────────── */}
+                <div className="mt-4 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-3">
+                  <div className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-2">
+                    Umsatz-Szenario
+                  </div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-xs text-muted-foreground shrink-0">
+                      Nötig für {laborCostThreshold}% PKQ:{' '}
+                      <span className="font-semibold text-foreground">CHF {revenueNeeded.toFixed(0)}</span>
+                    </p>
+                    <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                      <Label htmlFor="whatif" className="text-xs shrink-0 text-muted-foreground">Hypothetisch:</Label>
+                      <div className="relative flex-1">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground">CHF</span>
+                        <Input
+                          id="whatif"
+                          type="number"
+                          placeholder={revenueNeeded.toFixed(0)}
+                          value={whatIfRevenue}
+                          onChange={e => setWhatIfRevenue(e.target.value)}
+                          className="pl-9 h-8 text-xs"
+                        />
+                      </div>
+                      {whatIfPkq !== null && (
+                        <div className={cn(
+                          "text-xs font-bold px-2 py-1 rounded shrink-0",
+                          whatIfPkq <= laborCostThreshold
+                            ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400"
+                            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
+                        )}>
+                          PKQ: {whatIfPkq.toFixed(1)}%
+                          {whatIfPkq <= laborCostThreshold ? ' ✓' : ' ✗'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </DialogContent>
+        </Dialog>
+      );
+    })()}
+    </div>
+  );
+};

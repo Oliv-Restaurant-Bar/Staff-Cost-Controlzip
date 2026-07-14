@@ -1,0 +1,29 @@
+-- =============================================================
+-- VJ-Tagesumsätze in Supabase
+-- =============================================================
+-- Vorjahres-Tagesumsätze werden NICHT in einer eigenen Tabelle
+-- gespeichert, sondern in der bestehenden `app_settings`-Tabelle
+-- als individuelle Zeilen mit folgendem Key-Format:
+--
+--   key   = "vj_daily:2025-04-03"
+--   value = {
+--     "date":            "2025-04-03",
+--     "year":            2025,
+--     "actualRevenue":   7118.50,
+--     "foodRevenue":     3245.00,      (optional)
+--     "beverageRevenue": 3873.50,      (optional)
+--     "source":          "vorjahr_import"
+--   }
+--
+-- Pro Datum = eine Zeile → Upsert via `onConflict: 'key'`
+-- Zugriff: SELECT * FROM app_settings WHERE key LIKE 'vj_daily:2025-04-%'
+--
+-- Kein separates Schema/Migration nötig, da app_settings bereits
+-- existiert und mit RLS für authentifizierte User offen ist.
+-- =============================================================
+
+-- Beispiel-Query um VJ-Daten zu prüfen:
+-- SELECT key, value FROM app_settings
+-- WHERE key LIKE 'vj_daily:2025-%'
+-- ORDER BY key
+-- LIMIT 10;

@@ -1,0 +1,2775 @@
+/**
+ * Reservationen nach Wochentag — reine Auswertungslogik (ohne DB/DOM)
+ * ====================================================================
+ * Berechnet aus den bestehenden Reservationen (`reservation_records`, schlanke
+ * Form `ReservationAggRow`) Wochentags-Kennzahlen für einen frei wählbaren
+ * Zeitraum:
+ *
+ *  - je Wochentag (Mo–So): Anzahl Reservationen, Anzahl Personen,
+ *    Ø Personen/Reservation und Anteil am Gesamtzeitraum in %.
+ *  - Matrix „Wochentage nach Monat" (Zeile = Monat, Spalte = Wochentag) mit
+ *    Reservationen + Personen je Zelle sowie Zeilen-/Spalten-/Gesamtsummen.
+ *  - Zusammenfassung: stärkster/schwächster Wochentag sowie bester/schwächster
+ *    Monat für einen Fokus-Wochentag.
+ *  - Schnell-Auswahl / Saison-Zeiträume (frei anpassbar, ohne neue DB-Tabelle).
+ *
+ * Frei von Supabase/DOM (nur `import type` + die reinen Status-Prädikate aus
+ * `reservation-dashboard`), damit es als Unit ohne Datenbank getestet werden
+ * kann. Datumswerte sind durchgehend ISO-Strings „yyyy-MM-dd" und werden
+ * lexikografisch verglichen (für dieses Format korrekt).
+ *
+ * KEINE neue Tabelle, KEINE Migration, KEINE Schreiboperation — reine Anzeige.
+ */
+
+import { isActiveStatus, isExcludedStatus } from './reservation-dashboard';
+import type { ReservationAggRow } from './reservation-dashboard';
+
+// ── Wochentage (ISO Mo=1 … So=7) ─────────────────────────────────────────────
+
+export type IsoWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export const ISO_WEEKDAYS: IsoWeekday[] = [1, 2, 3, 4, 5, 6, 7];
+
+export const WEEKDAY_LABEL: Record<IsoWeekday, string> = {
+  1: 'Montag',
+  2: 'Dienstag',
+  3: 'Mittwoch',
+  4: 'Donnerstag',
+  5: 'Freitag',
+  6: 'Samstag',
+  7: 'Sonntag',
+};
+
+export const WEEKDAY_SHORT: Record<IsoWeekday, string> = {
+  1: 'Mo',
+  2: 'Di',
+  3: 'Mi',
+  4: 'Do',
+  5: 'Fr',
+  6: 'Sa',
+  7: 'So',
+};
+
+const MONTH_SHORT = [
+  'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
+];
+const MONTH_LONG = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
+
+// ── Datums-Helfer (rein, UTC-basiert → keine Zeitzonen-Verschiebung) ──────────
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function ymd(y: number, m: number, d: number): string {
+  return `${y}-${pad2(m)}-${pad2(d)}`;
+}
+
+/** Letzter Tag eines Monats (m = 1..12). */
+export function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * ISO-Wochentag (1=Mo … 7=So) eines „yyyy-MM-dd"-Datums oder `null` bei
+ * fehlendem/ungültigem Datum (inkl. nicht existierender Tage wie 2025-02-30).
+ */
+export function isoWeekdayOf(dateStr: string | null | undefined): IsoWeekday | null {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if (!m) return null;
+  const y = +m[1];
+  const mo = +m[2];
+  const d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
+    return null;
+  }
+  const dow = dt.getUTCDay(); // 0=So … 6=Sa
+  return (dow === 0 ? 7 : dow) as IsoWeekday;
+}
+
+/** Monatsschlüssel „yyyy-MM" eines Datums oder `null`. */
+export function monthKeyOf(dateStr: string | null | undefined): string | null {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})/.exec(dateStr);
+  return m ? `${m[1]}-${m[2]}` : null;
+}
+
+/** Kurzes Monatslabel, z. B. „Okt 2025". */
+export function monthLabel(monthKey: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return monthKey;
+  const idx = +m[2] - 1;
+  return `${MONTH_SHORT[idx] ?? m[2]} ${m[1]}`;
+}
+
+/** Langes Monatslabel, z. B. „Oktober 2025". */
+export function monthLongLabel(monthKey: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return monthKey;
+  const idx = +m[2] - 1;
+  return `${MONTH_LONG[idx] ?? m[2]} ${m[1]}`;
+}
+
+// ── Wochentags-Vorkommen im Zeitraum ─────────────────────────────────────────
+
+/** Parst „yyyy-MM-dd" (optionaler Zeitanhang) als UTC-`Date` oder `null`. */
+function parseYmdToUtc(dateStr: string | null | undefined): Date | null {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if (!m) return null;
+  const y = +m[1];
+  const mo = +m[2];
+  const d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) {
+    return null;
+  }
+  return dt;
+}
+
+function zeroWeekdayCounts(): Record<IsoWeekday, number> {
+  return { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Zählt, wie oft jeder ISO-Wochentag (Mo=1 … So=7) im Zeitraum [from, to]
+ * (inklusive) vorkommt — z. B. „wie viele Montage liegen im Juni?".  Liefert bei
+ * ungültigem/leerem Bereich (oder from > to) alle 0.  Rein UTC-basiert (keine
+ * Zeitzonen-/DST-Verschiebung), iteriert tageweise.
+ */
+export function countWeekdayOccurrences(from: string, to: string): Record<IsoWeekday, number> {
+  const counts = zeroWeekdayCounts();
+  const start = parseYmdToUtc(from);
+  const end = parseYmdToUtc(to);
+  if (!start || !end) return counts;
+  const startT = start.getTime();
+  const endT = end.getTime();
+  if (startT > endT) return counts;
+  for (let t = startT; t <= endT; t += MS_PER_DAY) {
+    const dow = new Date(t).getUTCDay(); // 0=So … 6=Sa
+    const iso = (dow === 0 ? 7 : dow) as IsoWeekday;
+    counts[iso] += 1;
+  }
+  return counts;
+}
+
+/**
+ * Wie `countWeekdayOccurrences`, aber begrenzt auf die Schnittmenge eines Monats
+ * („yyyy-MM") mit dem Zeitraum [from, to].  So werden bei einem Zeitraum, der
+ * mitten im Monat beginnt/endet, nur die tatsächlich enthaltenen Wochentage
+ * gezählt.  Ungültiger Monatsschlüssel → alle 0.
+ */
+export function countWeekdayOccurrencesInMonth(
+  monthKey: string,
+  from: string,
+  to: string,
+): Record<IsoWeekday, number> {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return zeroWeekdayCounts();
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return zeroWeekdayCounts();
+  const monthStart = ymd(y, mo, 1);
+  const monthEnd = ymd(y, mo, lastDayOfMonth(y, mo));
+  // Schnittmenge mit [from, to] (lexikografischer Vergleich für „yyyy-MM-dd").
+  const clampStart = monthStart > from ? monthStart : from;
+  const clampEnd = monthEnd < to ? monthEnd : to;
+  return countWeekdayOccurrences(clampStart, clampEnd);
+}
+
+// ── Status-Auswahl ───────────────────────────────────────────────────────────
+
+/**
+ * Welche Reservationen in die Auswertung einfliessen:
+ *  - `booked`  : alle ausser Storno/No-Show/abgelehnt (Standard — gebuchte Gäste)
+ *  - `active`  : nur aktive (confirmed/completed/seated/arrived)
+ *  - `all`     : alle (inkl. Storno/No-Show)
+ */
+export type StatusScope = 'booked' | 'active' | 'all';
+
+export const STATUS_SCOPE_LABEL: Record<StatusScope, string> = {
+  booked: 'Ohne Storno / No-Show',
+  active: 'Nur aktive',
+  all: 'Alle',
+};
+
+export function statusPredicate(scope: StatusScope): (status: string) => boolean {
+  switch (scope) {
+    case 'active':
+      return isActiveStatus;
+    case 'all':
+      return () => true;
+    case 'booked':
+    default:
+      return (s) => !isExcludedStatus(s);
+  }
+}
+
+// ── Auswertungs-Kennzahl (Umschalter) ────────────────────────────────────────
+
+/**
+ * Nach welcher Kennzahl die Matrix/Zusammenfassung primär ausgewertet wird:
+ *  - `reservations`  : Anzahl Reservationen
+ *  - `persons`       : Anzahl Personen
+ *  - `avgPersons`    : Ø Personen pro Reservation
+ *
+ * Die Anzahl Reservationen bleibt in JEDEM Modus sichtbar (als kleine Sekundär-
+ * zahl), damit sie nie ganz verschwindet.
+ */
+export type MetricKey = 'reservations' | 'persons' | 'avgPersons';
+
+export const METRIC_LABEL: Record<MetricKey, string> = {
+  reservations: 'Reservationen',
+  persons: 'Personen',
+  avgPersons: 'Personen pro Reservation',
+};
+
+export const METRICS: MetricKey[] = ['reservations', 'persons', 'avgPersons'];
+
+/** Ø Personen pro Reservation einer Zelle (null wenn keine Reservation). */
+export function cellAverage(cell: Cell): number | null {
+  return cell.reservations > 0 ? cell.persons / cell.reservations : null;
+}
+
+/**
+ * Vergleichswert einer Reservations-/Personen-Zelle für die gewählte Kennzahl.
+ * Für `avgPersons` ohne Reservationen → 0 (die Aufrufer überspringen leere Eimer
+ * ohnehin, daher fliesst dieser Fall nie in eine Rangbildung ein).
+ */
+export function metricValue(reservations: number, persons: number, metric: MetricKey): number {
+  switch (metric) {
+    case 'persons':
+      return persons;
+    case 'avgPersons':
+      return reservations > 0 ? persons / reservations : 0;
+    case 'reservations':
+    default:
+      return reservations;
+  }
+}
+
+/** Wie eine Matrix-Zelle je Kennzahl darzustellen ist (reine Werte, ohne Format). */
+export interface CellDisplay {
+  /** Grosse Zahl der Zelle (null = leere Zelle, nichts zu zeigen). */
+  primary: number | null;
+  /** true → die grosse Zahl ist ein Ø (mit Nachkommastelle anzeigen). */
+  primaryIsAverage: boolean;
+  /** Anzahl Reservationen — wird IN JEDEM Modus mitgeführt (verschwindet nie). */
+  reservations: number;
+  /** Anzahl Personen. */
+  persons: number;
+}
+
+/**
+ * Liefert die Anzeigewerte einer Matrix-Zelle für die gewählte Kennzahl.  Die
+ * grosse Zahl wechselt je Modus; die Anzahl Reservationen (und Personen) bleibt
+ * IMMER erhalten, damit die Reservationen nie ganz verschwinden.
+ */
+export function matrixCellDisplay(cell: Cell, metric: MetricKey): CellDisplay {
+  const base = { reservations: cell.reservations, persons: cell.persons };
+  if (cell.reservations === 0) {
+    return { primary: null, primaryIsAverage: false, ...base };
+  }
+  switch (metric) {
+    case 'persons':
+      return { primary: cell.persons, primaryIsAverage: false, ...base };
+    case 'avgPersons':
+      return { primary: cell.persons / cell.reservations, primaryIsAverage: true, ...base };
+    case 'reservations':
+    default:
+      return { primary: cell.reservations, primaryIsAverage: false, ...base };
+  }
+}
+
+// ── Interne Filterung ────────────────────────────────────────────────────────
+
+interface PreparedRow {
+  weekday: IsoWeekday;
+  monthKey: string;
+  persons: number;
+}
+
+/**
+ * Filtert Rohzeilen auf [from, to] (inklusive) + Status-Prädikat und liefert die
+ * für die Aggregation nötigen Felder. Zeilen ohne/ungültiges Datum werden
+ * verworfen; eine unbekannte Personenzahl zählt als 0 Personen (aber als 1
+ * Reservation).
+ */
+function prepareRows(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  include: (status: string) => boolean,
+): PreparedRow[] {
+  const out: PreparedRow[] = [];
+  for (const r of rows) {
+    if (!r.date) continue;
+    const d = r.date.slice(0, 10);
+    if (d < from || d > to) continue;
+    if (!include(r.status)) continue;
+    const weekday = isoWeekdayOf(d);
+    const monthKey = monthKeyOf(d);
+    if (weekday === null || monthKey === null) continue;
+    out.push({ weekday, monthKey, persons: r.partySize ?? 0 });
+  }
+  return out;
+}
+
+// ── Wochentags-Kennzahlen ────────────────────────────────────────────────────
+
+export interface WeekdayStat {
+  weekday: IsoWeekday;
+  reservations: number;
+  persons: number;
+  /** Ø Personen pro Reservation (null wenn keine Reservation). */
+  avgPersons: number | null;
+  /** Anteil der Reservationen am Gesamtzeitraum in Prozent (0..100). */
+  sharePct: number;
+  /** Anzahl Vorkommen dieses Wochentags im Zeitraum (z. B. 5 Montage). */
+  occurrences: number;
+  /** Ø Reservationen pro Vorkommen dieses Wochentags (null wenn 0 Vorkommen). */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen dieses Wochentags (null wenn 0 Vorkommen). */
+  avgPersonsPerDay: number | null;
+}
+
+export interface WeekdayAggregate {
+  /** Immer alle 7 Wochentage Mo→So (auch leere). */
+  weekdays: WeekdayStat[];
+  totalReservations: number;
+  totalPersons: number;
+  /** Summe der Wochentags-Vorkommen = Anzahl Kalendertage im Zeitraum. */
+  totalOccurrences: number;
+  /** Ø Reservationen pro Tag im Zeitraum (totalReservations / totalOccurrences). */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Reservation im Zeitraum (totalPersons / totalReservations). */
+  avgPersonsPerReservation: number | null;
+}
+
+/**
+ * Kennzahlen je Wochentag über den gesamten Zeitraum.  Liefert IMMER alle 7
+ * Wochentage (Mo→So), damit fehlende Tage als 0 sichtbar bleiben.
+ */
+export function aggregateByWeekday(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  scope: StatusScope = 'booked',
+): WeekdayAggregate {
+  const prepared = prepareRows(rows, from, to, statusPredicate(scope));
+  const occ = countWeekdayOccurrences(from, to);
+  const res: Record<IsoWeekday, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
+  const per: Record<IsoWeekday, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
+  let totalReservations = 0;
+  let totalPersons = 0;
+  for (const p of prepared) {
+    res[p.weekday] += 1;
+    per[p.weekday] += p.persons;
+    totalReservations += 1;
+    totalPersons += p.persons;
+  }
+  const weekdays = ISO_WEEKDAYS.map<WeekdayStat>((wd) => ({
+    weekday: wd,
+    reservations: res[wd],
+    persons: per[wd],
+    avgPersons: res[wd] > 0 ? per[wd] / res[wd] : null,
+    sharePct: totalReservations > 0 ? (res[wd] / totalReservations) * 100 : 0,
+    occurrences: occ[wd],
+    avgReservationsPerDay: occ[wd] > 0 ? res[wd] / occ[wd] : null,
+    avgPersonsPerDay: occ[wd] > 0 ? per[wd] / occ[wd] : null,
+  }));
+  const totalOccurrences = ISO_WEEKDAYS.reduce((s, wd) => s + occ[wd], 0);
+  return {
+    weekdays,
+    totalReservations,
+    totalPersons,
+    totalOccurrences,
+    avgReservationsPerDay: totalOccurrences > 0 ? totalReservations / totalOccurrences : null,
+    avgPersonsPerReservation: totalReservations > 0 ? totalPersons / totalReservations : null,
+  };
+}
+
+// ── Matrix „Wochentage nach Monat" ───────────────────────────────────────────
+
+export interface Cell {
+  reservations: number;
+  persons: number;
+}
+
+export interface MonthWeekdayRow {
+  monthKey: string; // "yyyy-MM"
+  /** Zellen je Wochentag (Mo→So). */
+  cells: Record<IsoWeekday, Cell>;
+  /** Zeilensumme (alle Wochentage des Monats). */
+  total: Cell;
+}
+
+export interface MonthWeekdayMatrix {
+  /** Monate chronologisch aufsteigend. */
+  months: MonthWeekdayRow[];
+  /** Spaltensummen je Wochentag (über alle Monate). */
+  weekdayTotals: Record<IsoWeekday, Cell>;
+  /** Gesamtsumme. */
+  grandTotal: Cell;
+}
+
+function emptyCellRecord(): Record<IsoWeekday, Cell> {
+  return {
+    1: { reservations: 0, persons: 0 },
+    2: { reservations: 0, persons: 0 },
+    3: { reservations: 0, persons: 0 },
+    4: { reservations: 0, persons: 0 },
+    5: { reservations: 0, persons: 0 },
+    6: { reservations: 0, persons: 0 },
+    7: { reservations: 0, persons: 0 },
+  };
+}
+
+/**
+ * Matrix Monat × Wochentag.  Jede Zelle enthält Reservationen + Personen; pro
+ * Monat eine Zeilensumme, je Wochentag eine Spaltensumme, plus Gesamtsumme.
+ * Es erscheinen nur Monate, in denen mindestens eine (gefilterte) Reservation
+ * liegt — chronologisch sortiert.
+ */
+export function buildMonthWeekdayMatrix(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  scope: StatusScope = 'booked',
+): MonthWeekdayMatrix {
+  const prepared = prepareRows(rows, from, to, statusPredicate(scope));
+  const byMonth = new Map<string, MonthWeekdayRow>();
+  const weekdayTotals = emptyCellRecord();
+  const grandTotal: Cell = { reservations: 0, persons: 0 };
+
+  for (const p of prepared) {
+    let row = byMonth.get(p.monthKey);
+    if (!row) {
+      row = { monthKey: p.monthKey, cells: emptyCellRecord(), total: { reservations: 0, persons: 0 } };
+      byMonth.set(p.monthKey, row);
+    }
+    const cell = row.cells[p.weekday];
+    cell.reservations += 1;
+    cell.persons += p.persons;
+    row.total.reservations += 1;
+    row.total.persons += p.persons;
+    weekdayTotals[p.weekday].reservations += 1;
+    weekdayTotals[p.weekday].persons += p.persons;
+    grandTotal.reservations += 1;
+    grandTotal.persons += p.persons;
+  }
+
+  const months = [...byMonth.values()].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+  return { months, weekdayTotals, grandTotal };
+}
+
+// ── Monats-Wochentag-Aufschlüsselung (vereinfachte Monatsauswertung) ──────────
+
+export interface MonthWeekdayBreakdownRow {
+  monthKey: string; // "yyyy-MM"
+  weekday: IsoWeekday;
+  /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
+  occurrences: number;
+  reservations: number;
+  persons: number;
+  /** Ø Reservationen pro Vorkommen (null wenn 0 Vorkommen). */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen (null wenn 0 Vorkommen). */
+  avgPersonsPerDay: number | null;
+  /** Ø Personen pro Reservation (null wenn 0 Reservationen). */
+  avgPersons: number | null;
+}
+
+/**
+ * Flache Aufschlüsselung „pro Monat × Wochentag" als Ersatz für die grosse
+ * Matrix.  Eine Zeile je (Monat, Wochentag) mit Vorkommen, Reservationen,
+ * Personen sowie den Durchschnitten.  Es erscheinen nur Monate mit mindestens
+ * einer Reservation (wie in der Matrix) und je Monat nur Wochentage, die im
+ * Zeitraum tatsächlich vorkommen (`occurrences > 0`) — chronologisch, Mo→So.
+ */
+export function buildMonthWeekdayBreakdown(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  scope: StatusScope = 'booked',
+): MonthWeekdayBreakdownRow[] {
+  const matrix = buildMonthWeekdayMatrix(rows, from, to, scope);
+  const out: MonthWeekdayBreakdownRow[] = [];
+  for (const month of matrix.months) {
+    const occ = countWeekdayOccurrencesInMonth(month.monthKey, from, to);
+    for (const wd of ISO_WEEKDAYS) {
+      const occurrences = occ[wd];
+      if (occurrences <= 0) continue;
+      const cell = month.cells[wd];
+      out.push({
+        monthKey: month.monthKey,
+        weekday: wd,
+        occurrences,
+        reservations: cell.reservations,
+        persons: cell.persons,
+        avgReservationsPerDay: occurrences > 0 ? cell.reservations / occurrences : null,
+        avgPersonsPerDay: occurrences > 0 ? cell.persons / occurrences : null,
+        avgPersons: cell.reservations > 0 ? cell.persons / cell.reservations : null,
+      });
+    }
+  }
+  return out;
+}
+
+// ── Zusammenfassung ──────────────────────────────────────────────────────────
+
+export interface WeekdayExtreme {
+  weekday: IsoWeekday;
+  reservations: number;
+  persons: number;
+  /** Ø Personen pro Reservation (null wenn keine Reservation). */
+  avgPersons: number | null;
+  /** Wert der gewählten Kennzahl, nach dem rangiert wurde. */
+  value: number;
+}
+
+export interface MonthExtreme {
+  monthKey: string;
+  reservations: number;
+  persons: number;
+  /** Ø Personen pro Reservation (null wenn keine Reservation). */
+  avgPersons: number | null;
+  /** Wert der gewählten Kennzahl, nach dem rangiert wurde. */
+  value: number;
+}
+
+export interface WeekdaySummary {
+  /** Kennzahl, nach der die Zusammenfassung gebildet wurde. */
+  metric: MetricKey;
+  /** Stärkster Wochentag (höchster Kennzahl-Wert). */
+  strongestWeekday: WeekdayExtreme | null;
+  /** Schwächster Wochentag (niedrigster Wert, nur Tage mit >0 Reservationen). */
+  weakestWeekday: WeekdayExtreme | null;
+  /** Fokus-Wochentag für den Monatsvergleich. */
+  focusWeekday: IsoWeekday;
+  /** Bester Monat für den Fokus-Wochentag (höchster Kennzahl-Wert). */
+  bestMonthForWeekday: MonthExtreme | null;
+  /** Schwächster Monat für den Fokus-Wochentag (nur Monate mit >0). */
+  worstMonthForWeekday: MonthExtreme | null;
+}
+
+/**
+ * Leitet die Kennzahlen-Zusammenfassung für die gewählte `metric` ab
+ * (`reservations` | `persons` | `avgPersons`).
+ *
+ * Vergleichsregel (bewusst, in den Tests fixiert): leere Eimer werden ignoriert.
+ * Stärkster/schwächster Wochentag werden NUR über Wochentage mit mindestens
+ * einer Reservation bestimmt; bester/schwächster Monat NUR über Monate, in denen
+ * der Fokus-Wochentag mindestens eine Reservation hat.  Rangiert wird nach dem
+ * `metricValue` der jeweiligen Kennzahl; bei Gleichstand gewinnt der frühere
+ * Wochentag bzw. der frühere Monat (Iterationsreihenfolge Mo→So / chronologisch).
+ */
+export function buildWeekdaySummary(
+  agg: WeekdayAggregate,
+  matrix: MonthWeekdayMatrix,
+  focusWeekday: IsoWeekday,
+  metric: MetricKey = 'reservations',
+): WeekdaySummary {
+  let strongest: WeekdayExtreme | null = null;
+  let weakest: WeekdayExtreme | null = null;
+  for (const w of agg.weekdays) {
+    if (w.reservations <= 0) continue;
+    const e: WeekdayExtreme = {
+      weekday: w.weekday,
+      reservations: w.reservations,
+      persons: w.persons,
+      avgPersons: w.avgPersons,
+      value: metricValue(w.reservations, w.persons, metric),
+    };
+    if (!strongest || e.value > strongest.value) strongest = e;
+    if (!weakest || e.value < weakest.value) weakest = e;
+  }
+
+  let best: MonthExtreme | null = null;
+  let worst: MonthExtreme | null = null;
+  for (const row of matrix.months) {
+    const cell = row.cells[focusWeekday];
+    if (cell.reservations <= 0) continue;
+    const e: MonthExtreme = {
+      monthKey: row.monthKey,
+      reservations: cell.reservations,
+      persons: cell.persons,
+      avgPersons: cellAverage(cell),
+      value: metricValue(cell.reservations, cell.persons, metric),
+    };
+    if (!best || e.value > best.value) best = e;
+    if (!worst || e.value < worst.value) worst = e;
+  }
+
+  return {
+    metric,
+    strongestWeekday: strongest,
+    weakestWeekday: weakest,
+    focusWeekday,
+    bestMonthForWeekday: best,
+    worstMonthForWeekday: worst,
+  };
+}
+
+// ── Kompakte Hauptansicht je Wochentag (Karten) ──────────────────────────────
+//
+// Die neue Hauptauswertung zeigt je Wochentag EINE grosse Zahl — und zwar IMMER
+// einen Durchschnitt, der sich auf den jeweiligen Wochentag bezieht:
+//   - Modus „Reservationen"            → Ø Reservationen pro <Wochentag>
+//   - Modus „Personen"                 → Ø Personen pro <Wochentag>
+//   - Modus „Personen pro Reservation" → Ø Personen pro Reservation
+// So ist sofort klar: „4 Montage, 47 Reservationen → Ø 11.8 pro Montag".
+
+/** Pluralform je Wochentag (für „Anzahl Montage im Zeitraum"). */
+export const WEEKDAY_PLURAL: Record<IsoWeekday, string> = {
+  1: 'Montage',
+  2: 'Dienstage',
+  3: 'Mittwoche',
+  4: 'Donnerstage',
+  5: 'Freitage',
+  6: 'Samstage',
+  7: 'Sonntage',
+};
+
+/** „Anzahl Montage im Zeitraum" (ersetzt das technische „Vorkommen"). */
+export function weekdayOccurrenceLabel(wd: IsoWeekday): string {
+  return `Anzahl ${WEEKDAY_PLURAL[wd]} im Zeitraum`;
+}
+
+/** „Ø Reservationen pro Montag". */
+export function avgReservationsPerWeekdayLabel(wd: IsoWeekday): string {
+  return `Ø Reservationen pro ${WEEKDAY_LABEL[wd]}`;
+}
+
+/** „Ø Personen pro Montag". */
+export function avgPersonsPerWeekdayLabel(wd: IsoWeekday): string {
+  return `Ø Personen pro ${WEEKDAY_LABEL[wd]}`;
+}
+
+/** Festes Label für die Ø-Personen-pro-Reservation-Kennzahl (wochentagsunabhängig). */
+export const AVG_PERSONS_PER_RESERVATION_LABEL = 'Ø Personen pro Reservation';
+
+/** Label der grossen Hauptzahl je Modus + Wochentag. */
+export function headlineLabel(wd: IsoWeekday, metric: MetricKey): string {
+  switch (metric) {
+    case 'persons':
+      return avgPersonsPerWeekdayLabel(wd);
+    case 'avgPersons':
+      return AVG_PERSONS_PER_RESERVATION_LABEL;
+    case 'reservations':
+    default:
+      return avgReservationsPerWeekdayLabel(wd);
+  }
+}
+
+/**
+ * Wert der grossen Hauptzahl je Modus — IMMER ein Durchschnitt:
+ *  - `reservations` → Ø Reservationen pro Vorkommen dieses Wochentags
+ *  - `persons`      → Ø Personen pro Vorkommen dieses Wochentags
+ *  - `avgPersons`   → Ø Personen pro Reservation
+ * `null`, wenn nicht berechenbar (keine Vorkommen bzw. keine Reservation).
+ */
+export function weekdayHeadlineValue(stat: WeekdayStat, metric: MetricKey): number | null {
+  switch (metric) {
+    case 'persons':
+      return stat.avgPersonsPerDay;
+    case 'avgPersons':
+      return stat.avgPersons;
+    case 'reservations':
+    default:
+      return stat.avgReservationsPerDay;
+  }
+}
+
+/** Einordnung eines Wochentags relativ zum Durchschnitt der aktiven Wochentage. */
+export type WeekdayRank = 'strongest' | 'weakest' | 'above' | 'below' | 'average' | 'none';
+
+export const WEEKDAY_RANK_LABEL: Record<WeekdayRank, string> = {
+  strongest: 'stärkster Wochentag',
+  weakest: 'schwächster Wochentag',
+  above: 'über Durchschnitt',
+  below: 'unter Durchschnitt',
+  average: 'im Durchschnitt',
+  none: 'keine Reservationen',
+};
+
+export interface WeekdayHeadline {
+  weekday: IsoWeekday;
+  /** Grosse Zahl (Durchschnitt je Modus) — `null` wenn nicht berechenbar. */
+  value: number | null;
+  reservations: number;
+  persons: number;
+  occurrences: number;
+  /** Ø Personen pro Reservation. */
+  avgPersons: number | null;
+  /** Ø Reservationen pro Vorkommen dieses Wochentags. */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen dieses Wochentags. */
+  avgPersonsPerDay: number | null;
+  /** Einordnung über/unter Durchschnitt bzw. stärkster/schwächster Wochentag. */
+  rank: WeekdayRank;
+  /** true, wenn der Wochentag mindestens eine Reservation hat. */
+  isActive: boolean;
+}
+
+export interface WeekdayHeadlineSummary {
+  metric: MetricKey;
+  /** Immer alle 7 Wochentage (Mo→So). */
+  headlines: WeekdayHeadline[];
+  /** Referenz-Durchschnitt der Hauptkennzahl über alle AKTIVEN Wochentage (für über/unter). */
+  average: number | null;
+  /** Stärkster aktiver Wochentag (höchster Hauptwert) oder `null`. */
+  strongest: IsoWeekday | null;
+  /** Schwächster aktiver Wochentag (niedrigster Hauptwert) oder `null`. */
+  weakest: IsoWeekday | null;
+}
+
+/**
+ * Baut die kompakte Hauptansicht je Wochentag für die gewählte Kennzahl.
+ *
+ * Vergleichsregel (in den Tests fixiert): leere Wochentage (0 Reservationen)
+ * fliessen NICHT in Durchschnitt/Extreme ein und erhalten den Rang `none`.
+ * Stärkster/schwächster Wochentag sowie der Referenz-Durchschnitt werden NUR
+ * über aktive Wochentage gebildet; bei Gleichstand gewinnt der frühere
+ * Wochentag (Mo→So). Der stärkste Wochentag hat Vorrang vor dem schwächsten
+ * (relevant, wenn nur ein Wochentag aktiv ist).
+ */
+export function buildWeekdayHeadlines(
+  agg: WeekdayAggregate,
+  metric: MetricKey = 'reservations',
+): WeekdayHeadlineSummary {
+  let strongest: IsoWeekday | null = null;
+  let weakest: IsoWeekday | null = null;
+  let strongestVal = -Infinity;
+  let weakestVal = Infinity;
+  let sum = 0;
+  let count = 0;
+  for (const w of agg.weekdays) {
+    if (w.reservations <= 0) continue;
+    const v = weekdayHeadlineValue(w, metric) ?? 0;
+    sum += v;
+    count += 1;
+    if (v > strongestVal) {
+      strongestVal = v;
+      strongest = w.weekday;
+    }
+    if (v < weakestVal) {
+      weakestVal = v;
+      weakest = w.weekday;
+    }
+  }
+  const average = count > 0 ? sum / count : null;
+  const eps = 1e-9;
+
+  const headlines = agg.weekdays.map<WeekdayHeadline>((w) => {
+    const value = weekdayHeadlineValue(w, metric);
+    let rank: WeekdayRank;
+    if (w.reservations <= 0) {
+      rank = 'none';
+    } else if (w.weekday === strongest) {
+      rank = 'strongest';
+    } else if (w.weekday === weakest) {
+      rank = 'weakest';
+    } else if (average !== null && (value ?? 0) > average + eps) {
+      rank = 'above';
+    } else if (average !== null && (value ?? 0) < average - eps) {
+      rank = 'below';
+    } else {
+      rank = 'average';
+    }
+    return {
+      weekday: w.weekday,
+      value,
+      reservations: w.reservations,
+      persons: w.persons,
+      occurrences: w.occurrences,
+      avgPersons: w.avgPersons,
+      avgReservationsPerDay: w.avgReservationsPerDay,
+      avgPersonsPerDay: w.avgPersonsPerDay,
+      rank,
+      isActive: w.reservations > 0,
+    };
+  });
+
+  return { metric, headlines, average, strongest, weakest };
+}
+
+/**
+ * Standardzustand des Monatsvergleichs in der UI: eingeklappt.  Als Konstante
+ * exportiert, damit „standardmässig eingeklappt" testbar an EINER Stelle
+ * verankert ist und die Komponente denselben Wert als `useState`-Initialwert
+ * nutzt.
+ */
+export const MONTH_COMPARISON_DEFAULT_OPEN = false;
+
+// ── Monatsvergleich-Matrix (Monate × Wochentage, kompakt + interpretiert) ─────
+//
+// Kompakte Vergleichsansicht: Zeilen = Monate des Zeitraums, Spalten = Mo→So.
+// Jede Zelle trägt EINE grosse, modusabhängige Ø-Zahl + eine kleine Sekundär-
+// zeile.  Zusätzlich wird je Zelle relativ zum SPALTEN-Durchschnitt (also diesem
+// Wochentag über alle Monate) eingeordnet (über/unter/ungefähr Durchschnitt) und
+// der beste/schwächste Wert je Wochentag markiert (Top/Tief).  So ist sofort
+// sichtbar, ob z. B. der Montag in einem Monat besser oder schlechter war als in
+// den anderen Monaten.  KEINE neue Tabelle, KEINE Migration — reine Anzeige.
+
+export type ComparisonRank = 'above' | 'below' | 'average' | 'none';
+
+export interface ComparisonCell {
+  monthKey: string; // "yyyy-MM"
+  weekday: IsoWeekday;
+  /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
+  occurrences: number;
+  reservations: number;
+  persons: number;
+  /** Grosse, modusabhängige Ø-Zahl (null = leer / nicht berechenbar). */
+  value: number | null;
+  /** Einordnung relativ zum Spalten-Durchschnitt (dieser Wochentag über alle Monate). */
+  rank: ComparisonRank;
+  /** Bester Wert dieses Wochentags über alle Monate (nur bei echter Spreizung). */
+  isTop: boolean;
+  /** Schwächster Wert dieses Wochentags über alle Monate (nur bei echter Spreizung). */
+  isLow: boolean;
+}
+
+export interface ComparisonMonthRow {
+  monthKey: string; // "yyyy-MM"
+  /** Zellen je Wochentag (Mo→So), immer alle 7. */
+  cells: Record<IsoWeekday, ComparisonCell>;
+  /** Monatszusammenfassung (für Zeilenkopf / Tooltip). */
+  totalReservations: number;
+  totalPersons: number;
+  avgPersons: number | null;
+  /** Stärkster/schwächster Wochentag DIESES Monats (nach Modus-Wert). */
+  strongestWeekday: IsoWeekday | null;
+  weakestWeekday: IsoWeekday | null;
+}
+
+export interface ComparisonColumn {
+  weekday: IsoWeekday;
+  /** Ø der Monatswerte dieses Wochentags (nur Monate mit Wert). */
+  average: number | null;
+  /** Bester Monat dieses Wochentags (höchster Wert; bei Gleichstand früher). */
+  best: { monthKey: string; value: number } | null;
+  /** Schwächster Monat dieses Wochentags (niedrigster Wert; bei Gleichstand früher). */
+  worst: { monthKey: string; value: number } | null;
+}
+
+export interface MonthComparison {
+  metric: MetricKey;
+  /** Monate chronologisch aufsteigend (nur Monate mit mindestens einer Reservation). */
+  months: ComparisonMonthRow[];
+  /** Spalten-Statistik je Wochentag (über alle Monate). */
+  columns: Record<IsoWeekday, ComparisonColumn>;
+}
+
+/**
+ * Grosse Ø-Zahl einer Vergleichszelle je Modus:
+ *  - `reservations` → Ø Reservationen pro Vorkommen dieses Wochentags (R / Vorkommen)
+ *  - `persons`      → Ø Personen pro Vorkommen dieses Wochentags (P / Vorkommen)
+ *  - `avgPersons`   → Ø Personen pro Reservation (P / R)
+ * `null`, wenn nicht berechenbar (keine Vorkommen bzw. keine Reservation).
+ */
+export function comparisonCellValue(
+  reservations: number,
+  persons: number,
+  occurrences: number,
+  metric: MetricKey,
+): number | null {
+  switch (metric) {
+    case 'persons':
+      return occurrences > 0 ? persons / occurrences : null;
+    case 'avgPersons':
+      return reservations > 0 ? persons / reservations : null;
+    case 'reservations':
+    default:
+      return occurrences > 0 ? reservations / occurrences : null;
+  }
+}
+
+/**
+ * Kleine Sekundärzeile einer Vergleichszelle je Modus:
+ *  - `reservations` → „205 Res. / 5 Fr." (Reservationen total / Anzahl Wochentage)
+ *  - `persons`      → „808 Pers. / 5 Fr." (Personen total / Anzahl Wochentage)
+ *  - `avgPersons`   → „808 Pers. / 205 Res." (Personen total / Reservationen total)
+ * Leerer String, wenn nichts anzuzeigen ist (keine Vorkommen bzw. keine Reservation).
+ */
+export function comparisonCellSubLabel(cell: ComparisonCell, metric: MetricKey): string {
+  switch (metric) {
+    case 'persons':
+      return cell.occurrences > 0
+        ? `${cell.persons} Pers. / ${cell.occurrences} ${WEEKDAY_SHORT[cell.weekday]}.`
+        : '';
+    case 'avgPersons':
+      return cell.reservations > 0
+        ? `${cell.persons} Pers. / ${cell.reservations} Res.`
+        : '';
+    case 'reservations':
+    default:
+      return cell.occurrences > 0
+        ? `${cell.reservations} Res. / ${cell.occurrences} ${WEEKDAY_SHORT[cell.weekday]}.`
+        : '';
+  }
+}
+
+const COMPARISON_EPS = 1e-9;
+
+/**
+ * Baut die kompakte Vergleichsmatrix (Monate × Wochentage) für die gewählte
+ * Kennzahl.  Pro Monat eine Zeile mit allen 7 Wochentagen, je Wochentag eine
+ * Spalten-Statistik (Ø + bester/schwächster Monat), je Zelle eine Einordnung
+ * relativ zum Spalten-Durchschnitt sowie Top/Tief-Markierung.
+ *
+ * Vergleichsregel (in den Tests fixiert):
+ *  - Eine Zelle „zählt" (für Spalten-Ø/Extreme/Top/Tief), wenn ihr Wert ≠ null
+ *    ist (Reservationen/Personen: Vorkommen > 0; Ø Personen/Res.: Reservationen > 0).
+ *  - Bei Gleichstand gewinnt der frühere Monat (chronologisch) für `best`/`worst`
+ *    (diese Objekte sind einwertig und speisen die Insight-Sätze).
+ *  - Top/Tief werden nur gesetzt, wenn die Spalte ≥ 2 Werte UND eine echte
+ *    Spreizung (best > worst) hat — sonst bliebe jede Zelle gleichzeitig Top/Tief.
+ *  - Bei Gleichstand AM Extremwert werden bewusst ALLE betroffenen Monatszellen
+ *    markiert (Heatmap-Logik: jede beste/schwächste Zelle einer Spalte wird
+ *    hervorgehoben), auch wenn `best`/`worst` nur den früheren Monat nennen.
+ */
+export function buildMonthComparison(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  scope: StatusScope = 'booked',
+  metric: MetricKey = 'reservations',
+): MonthComparison {
+  const matrix = buildMonthWeekdayMatrix(rows, from, to, scope);
+
+  // 1) Monatszeilen mit Roh-Zellen (rank/Top/Tief folgen in Schritt 3).
+  const months: ComparisonMonthRow[] = matrix.months.map((m) => {
+    const occ = countWeekdayOccurrencesInMonth(m.monthKey, from, to);
+    const cells = {} as Record<IsoWeekday, ComparisonCell>;
+    let strongest: IsoWeekday | null = null;
+    let weakest: IsoWeekday | null = null;
+    let strongestVal = -Infinity;
+    let weakestVal = Infinity;
+    for (const wd of ISO_WEEKDAYS) {
+      const c = m.cells[wd];
+      const value = comparisonCellValue(c.reservations, c.persons, occ[wd], metric);
+      cells[wd] = {
+        monthKey: m.monthKey,
+        weekday: wd,
+        occurrences: occ[wd],
+        reservations: c.reservations,
+        persons: c.persons,
+        value,
+        rank: 'none',
+        isTop: false,
+        isLow: false,
+      };
+      if (value !== null) {
+        if (value > strongestVal + COMPARISON_EPS) { strongestVal = value; strongest = wd; }
+        if (value < weakestVal - COMPARISON_EPS) { weakestVal = value; weakest = wd; }
+      }
+    }
+    return {
+      monthKey: m.monthKey,
+      cells,
+      totalReservations: m.total.reservations,
+      totalPersons: m.total.persons,
+      avgPersons: m.total.reservations > 0 ? m.total.persons / m.total.reservations : null,
+      strongestWeekday: strongest,
+      weakestWeekday: weakest,
+    };
+  });
+
+  return finalizeMonthComparison(months, metric);
+}
+
+/**
+ * Schritte 2 + 3 des Monatsvergleichs (Spalten-Statistik + Rang/Top/Tief je
+ * Zelle) — aus `buildMonthComparison` herausgezogen, damit auch die Ferien-
+ * Variante (`buildHolidayMonthComparison`, mehrere Perioden) dieselbe fixierte
+ * Vergleichssemantik nutzt.  Die übergebenen Monatszeilen tragen bereits fertige
+ * Zellenwerte (`value`); diese Funktion setzt nur noch Spalten-Ø, best/worst und
+ * die Zell-Ränge/Top/Tief (mutiert die Zellen der übergebenen Zeilen).
+ */
+function finalizeMonthComparison(
+  months: ComparisonMonthRow[],
+  metric: MetricKey,
+): MonthComparison {
+  // 2) Spalten-Statistik je Wochentag (Ø, bester/schwächster Monat).
+  const columns = {} as Record<IsoWeekday, ComparisonColumn>;
+  for (const wd of ISO_WEEKDAYS) {
+    const valued = months
+      .map((m) => m.cells[wd])
+      .filter((c): c is ComparisonCell & { value: number } => c.value !== null);
+    if (valued.length === 0) {
+      columns[wd] = { weekday: wd, average: null, best: null, worst: null };
+      continue;
+    }
+    let sum = 0;
+    let best = valued[0];
+    let worst = valued[0];
+    for (const c of valued) {
+      sum += c.value;
+      if (c.value > best.value + COMPARISON_EPS) best = c; // bei Gleichstand bleibt der frühere
+      if (c.value < worst.value - COMPARISON_EPS) worst = c;
+    }
+    columns[wd] = {
+      weekday: wd,
+      average: sum / valued.length,
+      best: { monthKey: best.monthKey, value: best.value },
+      worst: { monthKey: worst.monthKey, value: worst.value },
+    };
+  }
+
+  // 3) Rang (relativ zum Spalten-Ø) + Top/Tief je Zelle setzen.
+  for (const m of months) {
+    for (const wd of ISO_WEEKDAYS) {
+      const cell = m.cells[wd];
+      const col = columns[wd];
+      if (cell.value === null || col.average === null) {
+        cell.rank = 'none';
+        continue;
+      }
+      if (cell.value > col.average + COMPARISON_EPS) cell.rank = 'above';
+      else if (cell.value < col.average - COMPARISON_EPS) cell.rank = 'below';
+      else cell.rank = 'average';
+
+      if (col.best && col.worst && col.best.value - col.worst.value > COMPARISON_EPS) {
+        // Heatmap-Logik: ALLE am Extremwert liegenden Zellen markieren (bei
+        // Gleichstand also ggf. mehrere Monate), während best/worst nur den
+        // früheren Monat für die Insight-Sätze festhalten.
+        if (Math.abs(cell.value - col.best.value) <= COMPARISON_EPS) cell.isTop = true;
+        if (Math.abs(cell.value - col.worst.value) <= COMPARISON_EPS) cell.isLow = true;
+      }
+    }
+  }
+
+  return { metric, months, columns };
+}
+
+// ── Insights (lesbare Interpretation über dem Monatsvergleich) ────────────────
+
+/** Einstellige Nachkommazahl, z. B. 34 → „34.0" (de-CH Dezimaltrennzeichen „."). */
+function fmt1(n: number): string {
+  return n.toFixed(1);
+}
+
+/** Einheit der Hauptkennzahl im Insight-Satz, z. B. „Reservationen pro Samstag". */
+export function headlineUnit(wd: IsoWeekday, metric: MetricKey): string {
+  switch (metric) {
+    case 'persons':
+      return `Personen pro ${WEEKDAY_LABEL[wd]}`;
+    case 'avgPersons':
+      return 'Personen pro Reservation';
+    case 'reservations':
+    default:
+      return `Reservationen pro ${WEEKDAY_LABEL[wd]}`;
+  }
+}
+
+/** Deutsche Aufzählung: ["a"]→"a"; ["a","b"]→"a und b"; ["a","b","c"]→"a, b und c". */
+function germanList(items: string[]): string {
+  if (items.length === 0) return '';
+  if (items.length === 1) return items[0];
+  return `${items.slice(0, -1).join(', ')} und ${items[items.length - 1]}`;
+}
+
+/**
+ * Insight „X liegt/liegen in (fast) allen Monaten über dem Durchschnitt".
+ * Referenz ist der Perioden-Durchschnitt der Hauptkennzahl (`headlines.average`).
+ * Ein Wochentag qualifiziert sich, wenn er in ALLEN seiner Monate (≥ 2) über der
+ * Referenz liegt („allen") oder in allen bis auf einen (≥ 3 Monate, „fast allen").
+ * `null`, wenn kein Wochentag qualifiziert.
+ */
+function consistencyInsight(comparison: MonthComparison, reference: number | null): string | null {
+  if (reference === null) return null;
+  const qualifying: { weekday: IsoWeekday; all: boolean }[] = [];
+  for (const wd of ISO_WEEKDAYS) {
+    const valued = comparison.months
+      .map((m) => m.cells[wd])
+      .filter((c): c is ComparisonCell & { value: number } => c.value !== null);
+    const active = valued.length;
+    if (active < 2) continue;
+    const above = valued.filter((c) => c.value > reference + COMPARISON_EPS).length;
+    if (above === active) qualifying.push({ weekday: wd, all: true });
+    else if (active >= 3 && above === active - 1) qualifying.push({ weekday: wd, all: false });
+  }
+  if (qualifying.length === 0) return null;
+  const list = qualifying.slice(0, 3);
+  const allTrue = list.every((q) => q.all);
+  const names = list.map((q) => WEEKDAY_LABEL[q.weekday]);
+  const verb = list.length === 1 ? 'liegt' : 'liegen';
+  const phrase = allTrue ? 'allen' : 'fast allen';
+  return `${germanList(names)} ${verb} in ${phrase} Monaten über dem Durchschnitt.`;
+}
+
+/**
+ * Baut 3–5 kurze, modusabhängige Insight-Sätze über dem Monatsvergleich:
+ *  1. Stärkster Wochentag im Zeitraum (aus `headlines`).
+ *  2. Schwächster Wochentag im Zeitraum (nur falls ≠ stärkster).
+ *  3. Bester Monat für den Fokus-Wochentag (nur bei ≥ 2 Monaten mit Werten).
+ *  4. Schlechtester Monat für den Fokus-Wochentag (nur bei ≥ 2 Monaten + Spreizung).
+ *  5. Wochentage, die in (fast) allen Monaten über dem Durchschnitt liegen.
+ *
+ * Die Sätze wechseln je Modus (Reservationen / Personen / Personen pro Reservation),
+ * weil sowohl `headlines` als auch `comparison` modusabhängig gebildet werden.
+ */
+export function buildMonthComparisonInsights(
+  headlines: WeekdayHeadlineSummary,
+  comparison: MonthComparison,
+  focusWeekday: IsoWeekday,
+  metric: MetricKey = 'reservations',
+): string[] {
+  const out: string[] = [];
+
+  if (headlines.strongest !== null) {
+    const h = headlines.headlines.find((x) => x.weekday === headlines.strongest);
+    if (h && h.value !== null) {
+      out.push(
+        `Stärkster Wochentag im Zeitraum: ${WEEKDAY_LABEL[headlines.strongest]} mit Ø ${fmt1(h.value)} ${headlineUnit(headlines.strongest, metric)}.`,
+      );
+    }
+  }
+
+  if (headlines.weakest !== null && headlines.weakest !== headlines.strongest) {
+    const h = headlines.headlines.find((x) => x.weekday === headlines.weakest);
+    if (h && h.value !== null) {
+      out.push(
+        `Schwächster Wochentag im Zeitraum: ${WEEKDAY_LABEL[headlines.weakest]} mit Ø ${fmt1(h.value)} ${headlineUnit(headlines.weakest, metric)}.`,
+      );
+    }
+  }
+
+  const col = comparison.columns[focusWeekday];
+  const valuedMonths = comparison.months.filter((m) => m.cells[focusWeekday].value !== null).length;
+  if (col.best && col.worst && valuedMonths >= 2 && col.best.monthKey !== col.worst.monthKey) {
+    out.push(
+      `Bester ${WEEKDAY_LABEL[focusWeekday]} war im ${monthLongLabel(col.best.monthKey)} mit Ø ${fmt1(col.best.value)} ${headlineUnit(focusWeekday, metric)}.`,
+    );
+    out.push(
+      `Schlechtester ${WEEKDAY_LABEL[focusWeekday]} war im ${monthLongLabel(col.worst.monthKey)} mit Ø ${fmt1(col.worst.value)} ${headlineUnit(focusWeekday, metric)}.`,
+    );
+  }
+
+  const consistency = consistencyInsight(comparison, headlines.average);
+  if (consistency) out.push(consistency);
+
+  // Fallback: 3–5 Sätze garantieren, solange überhaupt Daten vorhanden sind.
+  // Einzelne Monate oder gleichförmige Werte liefern sonst < 3 Insights. Die
+  // Zusatzsätze sind rein deskriptiv und wechseln ebenfalls mit dem Modus.
+  if (comparison.months.length > 0) {
+    if (out.length < 3) {
+      // Fokus-Wochentag-Schnitt; hat der Fokus keine Werte, auf den stärksten
+      // Wochentag ausweichen, damit immer ein aussagekräftiger Satz entsteht.
+      const fbWd = valuedMonths > 0 && col.average !== null ? focusWeekday : headlines.strongest;
+      const fbCol = fbWd !== null ? comparison.columns[fbWd] : null;
+      const fbCount = fbWd !== null
+        ? comparison.months.filter((m) => m.cells[fbWd].value !== null).length
+        : 0;
+      if (fbWd !== null && fbCol && fbCol.average !== null && fbCount > 0) {
+        const line = `Ø ${WEEKDAY_LABEL[fbWd]} im Zeitraum: ${fmt1(fbCol.average)} ${headlineUnit(fbWd, metric)} über ${fbCount} ${fbCount === 1 ? 'Monat' : 'Monate'}.`;
+        if (!out.includes(line)) out.push(line);
+      }
+    }
+    if (out.length < 3) {
+      const n = comparison.months.length;
+      const first = monthLongLabel(comparison.months[0].monthKey);
+      const last = monthLongLabel(comparison.months[n - 1].monthKey);
+      const line = n === 1
+        ? `Verglichen wird 1 Monat (${first}).`
+        : `Verglichen werden ${n} Monate (${first} – ${last}).`;
+      if (!out.includes(line)) out.push(line);
+    }
+  }
+
+  return out.slice(0, 5);
+}
+
+// ── Kurze automatische Zeitraum-Interpretation ───────────────────────────────
+//
+// Kompakte, deterministische Auswertung für den GESAMTEN gewählten Zeitraum:
+// bester/schwächster Wochentag, auffällige Monate (stärkster + schwächster
+// Monat nach Modus) und eine kurze Handlungsempfehlung.  Rein aus den bereits
+// berechneten Strukturen (`WeekdayHeadlineSummary` + `MonthComparison`) —
+// KEINE neue Datenquelle, KEINE Berechnung von Rohdaten, KEINE Migration.
+
+/** Auffälliger Monat (stärkster/schwächster nach Modus) für die Interpretation. */
+export interface NotableMonth {
+  monthKey: string;
+  /** Modusabhängiger Monatswert: Total (Reservationen/Personen) bzw. Ø Pers./Res. */
+  value: number;
+  kind: 'best' | 'weak';
+}
+
+export interface PeriodInterpretation {
+  metric: MetricKey;
+  /** Stärkster Wochentag im Zeitraum (aus den Headlines) oder null. */
+  bestWeekday: WeekdayHeadline | null;
+  /** Schwächster Wochentag im Zeitraum oder null. */
+  worstWeekday: WeekdayHeadline | null;
+  /** Auffällige Monate: stärkster + schwächster Monat nach Modus (0 oder 2 Einträge). */
+  notableMonths: NotableMonth[];
+  /** Kurze, deterministische Handlungsempfehlung (immer gesetzt). */
+  recommendation: string;
+  /** true, wenn überhaupt auswertbare Daten (aktive Wochentage) vorliegen. */
+  hasData: boolean;
+}
+
+/** Modusabhängiger Monatswert für den „auffällige Monate"-Vergleich. */
+function monthMetricValue(m: ComparisonMonthRow, metric: MetricKey): number | null {
+  if (metric === 'persons') return m.totalPersons;
+  if (metric === 'avgPersons') return m.avgPersons;
+  return m.totalReservations;
+}
+
+/**
+ * Baut die kurze Zeitraum-Interpretation.  Stärkster/schwächster Wochentag
+ * kommen aus `headlines` (peer-to-peer über aktive Wochentage); auffällige
+ * Monate aus `comparison.months` (nur wenn ≥2 Monate mit Wert UND echte
+ * Spreizung, sonst leer).  Bei Gleichstand gewinnt der frühere Monat
+ * (chronologische Reihenfolge der Monate wird beibehalten).
+ */
+export function buildPeriodInterpretation(
+  headlines: WeekdayHeadlineSummary,
+  comparison: MonthComparison,
+  metric: MetricKey,
+): PeriodInterpretation {
+  const bestWeekday =
+    headlines.strongest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null
+      : null;
+  const worstWeekday =
+    headlines.weakest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null
+      : null;
+
+  // Auffällige Monate: stärkster + schwächster Monat nach Modus.
+  const valued = comparison.months
+    .map((m) => ({ monthKey: m.monthKey, value: monthMetricValue(m, metric) }))
+    .filter((x): x is { monthKey: string; value: number } => x.value !== null);
+
+  const notableMonths: NotableMonth[] = [];
+  if (valued.length >= 2) {
+    let best = valued[0];
+    let weak = valued[0];
+    for (const x of valued) {
+      if (x.value > best.value) best = x; // strikt „>" → früherer Monat gewinnt bei Gleichstand
+      if (x.value < weak.value) weak = x; // strikt „<" → früherer Monat gewinnt bei Gleichstand
+    }
+    // Nur bei echter Spreizung (verschiedene Monate UND verschiedene Werte).
+    if (best.monthKey !== weak.monthKey && best.value !== weak.value) {
+      notableMonths.push({ monthKey: best.monthKey, value: best.value, kind: 'best' });
+      notableMonths.push({ monthKey: weak.monthKey, value: weak.value, kind: 'weak' });
+    }
+  }
+
+  const hasData = bestWeekday !== null;
+
+  let recommendation: string;
+  if (!hasData || bestWeekday === null) {
+    recommendation =
+      'Für den gewählten Zeitraum liegen keine auswertbaren Reservationen vor — bitte Zeitraum anpassen.';
+  } else if (worstWeekday === null || worstWeekday.weekday === bestWeekday.weekday) {
+    // Nur ein aktiver Wochentag im Zeitraum.
+    recommendation = `Die Nachfrage konzentriert sich auf ${WEEKDAY_LABEL[bestWeekday.weekday]}; an den übrigen Wochentagen gab es im Zeitraum keine Reservationen.`;
+  } else {
+    recommendation = `Planen Sie Personal und Aktionen schwerpunktmässig auf ${WEEKDAY_LABEL[bestWeekday.weekday]} und prüfen Sie gezielte Massnahmen, um ${WEEKDAY_LABEL[worstWeekday.weekday]} zu beleben.`;
+    const bestMonth = notableMonths.find((n) => n.kind === 'best');
+    if (bestMonth) {
+      recommendation += ` Am stärksten war ${monthLongLabel(bestMonth.monthKey)}.`;
+    }
+  }
+
+  return { metric, bestWeekday, worstWeekday, notableMonths, recommendation, hasData };
+}
+
+// ── Detail einer Vergleichszelle (Monat × Wochentag) für das Popup ───────────
+//
+// Für das Detail-Popup im Monatsvergleich: erklärt, wie sich die grosse Zahl
+// einer Zelle (z. B. „Montag im Oktober 2025") zusammensetzt. Enumeriert ALLE
+// konkreten Kalendertage dieses Wochentags im Monat (auf den Zeitraum geklemmt) —
+// auch Tage OHNE Reservationen —, damit `days.length === occurrences` gilt und die
+// Summen exakt zu den Formel-Nennern (und zur Matrix-Zelle) passen. Reine
+// Anzeige — KEINE neue Tabelle, KEINE Migration, KEINE Schreiboperation.
+
+/** „yyyy-MM-dd" → „dd.MM.yyyy" (ungültig → unverändert). */
+export function formatIsoDateDe(dateStr: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return dateStr;
+  return `${m[3]}.${m[2]}.${m[1]}`;
+}
+
+/** Dativ-Plural eines Wochentags („an Montagen", „an Dienstagen"). */
+function weekdayPluralDative(wd: IsoWeekday): string {
+  return `${WEEKDAY_PLURAL[wd]}n`;
+}
+
+export interface WeekdayDayDetail {
+  /** Konkretes Datum „yyyy-MM-dd". */
+  date: string;
+  reservations: number;
+  persons: number;
+  /** Ø Personen pro Reservation an diesem Tag (null wenn keine Reservation). */
+  avgPersonsPerReservation: number | null;
+}
+
+export interface MonthWeekdayDetail {
+  monthKey: string; // "yyyy-MM"
+  /**
+   * Optionaler Anzeige-Titel des Zeitraums (z. B. „Sommerferien 2026").  Wenn
+   * gesetzt, nutzt das Popup diesen statt `monthLongLabel(monthKey)`.  So kann
+   * dieselbe Detail-Ansicht für Perioden verwendet werden, die mehrere Monate
+   * umspannen (Ferien/Saisons).  Für reine Monats-Details bleibt es undefined.
+   */
+  label?: string;
+  /**
+   * Optionaler, bereits formatierter Datumsbereich des Zeitraums (z. B.
+   * „01.10.2026 – 31.12.2026").  Wenn gesetzt, zeigt das Popup ihn unter dem
+   * Titel an — so ist bei Saisons der exakte Zeitraum sichtbar.  Reine Anzeige.
+   */
+  rangeLabel?: string;
+  weekday: IsoWeekday;
+  /** Vorkommen dieses Wochentags im Monat (auf den Zeitraum geklemmt). */
+  occurrences: number;
+  reservations: number;
+  persons: number;
+  /** Ø Reservationen pro Vorkommen (reservations / occurrences); null wenn 0 Vorkommen. */
+  avgReservationsPerDay: number | null;
+  /** Ø Personen pro Vorkommen (persons / occurrences); null wenn 0 Vorkommen. */
+  avgPersonsPerDay: number | null;
+  /** Ø Personen pro Reservation (persons / reservations); null wenn keine Reservation. */
+  avgPersonsPerReservation: number | null;
+  /** Ein Eintrag je Kalendertag dieses Wochentags (aufsteigend), length === occurrences. */
+  days: WeekdayDayDetail[];
+}
+
+/**
+ * Baut die Detail-Aufschlüsselung eines Wochentags über einen BELIEBIGEN
+ * Datumsbereich [from, to] (nicht auf einen Monat begrenzt).  Enumeriert alle
+ * konkreten Kalendertage dieses Wochentags im Bereich und summiert je Tag
+ * Reservationen/Personen nach dem Status-Prädikat des Scopes.  Dient sowohl dem
+ * Monats-Detail (siehe `buildMonthWeekdayDetail`, das hierher delegiert) als
+ * auch dem Perioden-Detail des Wochentagsvergleichs (Ferien/Saisons, die
+ * mehrere Monate umspannen können).
+ *
+ * `opts.monthKey` steuert nur das (abwärtskompatible) `monthKey`-Feld des
+ * Ergebnisses; fehlt es, wird der Monat des `from`-Datums genutzt.  `opts.label`
+ * setzt den optionalen Anzeige-Titel (z. B. „Sommerferien 2026").
+ */
+export function buildRangeWeekdayDetail(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  weekday: IsoWeekday,
+  scope: StatusScope = 'booked',
+  opts?: { monthKey?: string; label?: string; rangeLabel?: string },
+): MonthWeekdayDetail {
+  const monthKey = opts?.monthKey ?? (from.length >= 7 ? from.slice(0, 7) : from);
+  const label = opts?.label;
+  const rangeLabel = opts?.rangeLabel;
+  const empty: MonthWeekdayDetail = {
+    monthKey,
+    label,
+    rangeLabel,
+    weekday,
+    occurrences: 0,
+    reservations: 0,
+    persons: 0,
+    avgReservationsPerDay: null,
+    avgPersonsPerDay: null,
+    avgPersonsPerReservation: null,
+    days: [],
+  };
+
+  // 1) Alle konkreten Kalendertage dieses Wochentags im Bereich [from, to].
+  const dayMap = new Map<string, { reservations: number; persons: number }>();
+  const start = parseYmdToUtc(from);
+  const end = parseYmdToUtc(to);
+  if (!start || !end || start.getTime() > end.getTime()) return empty;
+  for (let t = start.getTime(); t <= end.getTime(); t += MS_PER_DAY) {
+    const dt = new Date(t);
+    const dow = dt.getUTCDay(); // 0=So … 6=Sa
+    const iso = (dow === 0 ? 7 : dow) as IsoWeekday;
+    if (iso !== weekday) continue;
+    dayMap.set(ymd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate()), {
+      reservations: 0,
+      persons: 0,
+    });
+  }
+
+  // 2) Reservationen/Personen je Tag summieren (Status-Prädikat beachten).
+  const include = statusPredicate(scope);
+  for (const row of rows) {
+    if (!row.date) continue;
+    const d = row.date.slice(0, 10);
+    const bucket = dayMap.get(d); // nur Tage dieses Wochentags im Bereich
+    if (!bucket) continue;
+    if (!include(row.status)) continue;
+    bucket.reservations += 1;
+    bucket.persons += row.partySize ?? 0;
+  }
+
+  const days: WeekdayDayDetail[] = [...dayMap.keys()].sort().map((date) => {
+    const b = dayMap.get(date)!;
+    return {
+      date,
+      reservations: b.reservations,
+      persons: b.persons,
+      avgPersonsPerReservation: b.reservations > 0 ? b.persons / b.reservations : null,
+    };
+  });
+
+  const occurrences = days.length;
+  const reservations = days.reduce((s, d) => s + d.reservations, 0);
+  const persons = days.reduce((s, d) => s + d.persons, 0);
+
+  return {
+    monthKey,
+    label,
+    rangeLabel,
+    weekday,
+    occurrences,
+    reservations,
+    persons,
+    avgReservationsPerDay: occurrences > 0 ? reservations / occurrences : null,
+    avgPersonsPerDay: occurrences > 0 ? persons / occurrences : null,
+    avgPersonsPerReservation: reservations > 0 ? persons / reservations : null,
+    days,
+  };
+}
+
+/**
+ * Baut die Detail-Aufschlüsselung einer Vergleichszelle (ein Wochentag in einem
+ * Monat). Enumeriert alle konkreten Kalendertage dieses Wochentags im Monat
+ * (auf [from, to] geklemmt) und summiert je Tag Reservationen/Personen nach dem
+ * Status-Prädikat des Scopes. Die Summen entsprechen exakt der Matrix-Zelle.
+ * Delegiert an `buildRangeWeekdayDetail` mit den Monat∩Zeitraum-Grenzen.
+ */
+export function buildMonthWeekdayDetail(
+  rows: ReservationAggRow[],
+  from: string,
+  to: string,
+  monthKey: string,
+  weekday: IsoWeekday,
+  scope: StatusScope = 'booked',
+): MonthWeekdayDetail {
+  const empty: MonthWeekdayDetail = {
+    monthKey,
+    weekday,
+    occurrences: 0,
+    reservations: 0,
+    persons: 0,
+    avgReservationsPerDay: null,
+    avgPersonsPerDay: null,
+    avgPersonsPerReservation: null,
+    days: [],
+  };
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return empty;
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return empty;
+
+  const monthStart = ymd(y, mo, 1);
+  const monthEnd = ymd(y, mo, lastDayOfMonth(y, mo));
+  const clampStart = monthStart > from ? monthStart : from;
+  const clampEnd = monthEnd < to ? monthEnd : to;
+
+  return buildRangeWeekdayDetail(rows, clampStart, clampEnd, weekday, scope, { monthKey });
+}
+
+/** Grosse Ø-Zahl dieser Detail-Zelle je Modus (= Wert der Matrix-Zelle). */
+export function detailCellValue(detail: MonthWeekdayDetail, metric: MetricKey): number | null {
+  return comparisonCellValue(detail.reservations, detail.persons, detail.occurrences, metric);
+}
+
+export interface DetailFormula {
+  /** Bereits formatierte Zeilen der Kennzahl-Zusammensetzung. */
+  lines: string[];
+  /** Ergebniswert (Ø) je Modus; null wenn nicht berechenbar. */
+  result: number | null;
+  /** Ergebniszeile, z. B. „Ø 18.3 Reservationen pro Montag". */
+  resultLabel: string;
+}
+
+/**
+ * Baut die textuelle Kennzahl-Zusammensetzung (Formel mit Zahlen) je Modus.
+ * de-CH: Dezimaltrennzeichen „.", einstellige Nachkommastelle.
+ */
+export function buildDetailFormula(detail: MonthWeekdayDetail, metric: MetricKey): DetailFormula {
+  const wd = detail.weekday;
+  const wdLabel = WEEKDAY_LABEL[wd];
+  const plural = WEEKDAY_PLURAL[wd];
+  const dative = weekdayPluralDative(wd);
+  const month = detail.label ?? monthLongLabel(detail.monthKey);
+  const occLine = `${wdLabel} kam im ${month} ${detail.occurrences}× vor.`;
+
+  switch (metric) {
+    case 'persons': {
+      const result = detail.avgPersonsPerDay;
+      const resultLabel =
+        result !== null ? `Ø ${fmt1(result)} Personen pro ${wdLabel}` : `Ø Personen pro ${wdLabel}`;
+      const calc =
+        result !== null
+          ? `Rechnung: ${detail.persons} Personen ÷ ${detail.occurrences} ${plural} = ${resultLabel}`
+          : 'Rechnung: keine Vorkommen im Zeitraum.';
+      return { lines: [occLine, `Total Personen an ${dative}: ${detail.persons}`, calc], result, resultLabel };
+    }
+    case 'avgPersons': {
+      const result = detail.avgPersonsPerReservation;
+      const resultLabel =
+        result !== null ? `Ø ${fmt1(result)} Personen pro Reservation` : AVG_PERSONS_PER_RESERVATION_LABEL;
+      const calc =
+        result !== null
+          ? `Rechnung: ${detail.persons} Personen ÷ ${detail.reservations} Reservationen = ${resultLabel}`
+          : 'Rechnung: keine Reservationen vorhanden.';
+      return {
+        lines: [
+          `Total Personen an ${dative}: ${detail.persons}`,
+          `Total Reservationen an ${dative}: ${detail.reservations}`,
+          calc,
+        ],
+        result,
+        resultLabel,
+      };
+    }
+    case 'reservations':
+    default: {
+      const result = detail.avgReservationsPerDay;
+      const resultLabel =
+        result !== null
+          ? `Ø ${fmt1(result)} Reservationen pro ${wdLabel}`
+          : `Ø Reservationen pro ${wdLabel}`;
+      const calc =
+        result !== null
+          ? `Rechnung: ${detail.reservations} Reservationen ÷ ${detail.occurrences} ${plural} = ${resultLabel}`
+          : 'Rechnung: keine Vorkommen im Zeitraum.';
+      return { lines: [occLine, `Total Reservationen an ${dative}: ${detail.reservations}`, calc], result, resultLabel };
+    }
+  }
+}
+
+export type DetailDirection = 'above' | 'below' | 'equal';
+
+export interface DetailComparison {
+  /** Wert dieser Zelle (Ø je Modus) — entspricht der grossen Matrix-Zahl. */
+  cellValue: number | null;
+  /** Ø dieses Wochentags über alle Monate im Zeitraum (Spalten-Ø). */
+  columnAverage: number | null;
+  /** cellValue − columnAverage (null wenn eines fehlt). */
+  difference: number | null;
+  /** Einordnung relativ zum Spalten-Ø (null wenn nicht vergleichbar). */
+  direction: DetailDirection | null;
+}
+
+/**
+ * Vergleicht die Detail-Zelle mit dem Durchschnitt dieses Wochentags über alle
+ * Monate (`columnAverage` = `MonthComparison.columns[weekday].average`).
+ */
+export function buildDetailComparison(
+  detail: MonthWeekdayDetail,
+  metric: MetricKey,
+  columnAverage: number | null,
+): DetailComparison {
+  const cellValue = detailCellValue(detail, metric);
+  if (cellValue === null || columnAverage === null) {
+    return { cellValue, columnAverage, difference: null, direction: null };
+  }
+  const difference = cellValue - columnAverage;
+  let direction: DetailDirection;
+  if (difference > COMPARISON_EPS) direction = 'above';
+  else if (difference < -COMPARISON_EPS) direction = 'below';
+  else direction = 'equal';
+  return { cellValue, columnAverage, difference, direction };
+}
+
+/** Stärkster konkreter Tag der Detail-Zelle nach Modus-Kennzahl (null wenn keiner). */
+function strongestDetailDay(detail: MonthWeekdayDetail, metric: MetricKey): WeekdayDayDetail | null {
+  let best: WeekdayDayDetail | null = null;
+  let bestVal = -Infinity;
+  for (const d of detail.days) {
+    if (d.reservations <= 0) continue; // ohne Reservationen kein „stärkster" Tag
+    const v =
+      metric === 'persons'
+        ? d.persons
+        : metric === 'avgPersons'
+          ? d.avgPersonsPerReservation ?? 0
+          : d.reservations;
+    if (v > bestVal + COMPARISON_EPS) {
+      bestVal = v;
+      best = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * 2–3 kurze, automatische Hinweise für das Detail-Popup:
+ *  1. Vergleich zum Spalten-Ø (über/unter/gleich dem Schnitt aller <Wochentage>).
+ *  2. Stärkster konkreter Tag dieses Monats (nach Modus-Kennzahl).
+ *  3. Ø Personen pro Reservation qualitativ (niedrig/mittel/hoch).
+ * Fällt auf einen deskriptiven Satz zurück, falls die Zelle keine Reservationen hat.
+ */
+export function buildDetailInsights(
+  detail: MonthWeekdayDetail,
+  metric: MetricKey,
+  columnAverage: number | null,
+): string[] {
+  const wd = detail.weekday;
+  const wdLabel = WEEKDAY_LABEL[wd];
+  const plural = WEEKDAY_PLURAL[wd];
+  const out: string[] = [];
+
+  // 1) Vergleich zum Spalten-Durchschnitt (dieser Wochentag über alle Monate).
+  const cmp = buildDetailComparison(detail, metric, columnAverage);
+  if (cmp.direction === 'above') {
+    out.push(`Dieser ${wdLabel} liegt über dem Durchschnitt aller ${plural} im Zeitraum.`);
+  } else if (cmp.direction === 'below') {
+    out.push(`Dieser ${wdLabel} liegt unter dem Durchschnitt aller ${plural} im Zeitraum.`);
+  } else if (cmp.direction === 'equal') {
+    out.push(`Dieser ${wdLabel} entspricht dem Durchschnitt aller ${plural} im Zeitraum.`);
+  }
+
+  // 2) Stärkster konkreter Tag dieses Monats.
+  const best = strongestDetailDay(detail, metric);
+  if (best) {
+    const suffix =
+      metric === 'persons'
+        ? `mit ${best.persons} Personen`
+        : metric === 'avgPersons'
+          ? `mit Ø ${fmt1(best.avgPersonsPerReservation ?? 0)} Personen pro Reservation`
+          : `mit ${best.reservations} Reservationen`;
+    out.push(`Der stärkste ${wdLabel} in diesem Monat war der ${formatIsoDateDe(best.date)} ${suffix}.`);
+  }
+
+  // 3) Ø Personen pro Reservation qualitativ einordnen.
+  if (detail.avgPersonsPerReservation !== null) {
+    const app = detail.avgPersonsPerReservation;
+    const bucket = app < 2 ? 'niedrig' : app <= 4 ? 'mittel' : 'hoch';
+    out.push(`Ø Personen pro Reservation liegt bei ${fmt1(app)} und ist damit eher ${bucket}.`);
+  }
+
+  // Fallback: mindestens eine Aussage, wenn die Zelle keine Reservationen hat.
+  if (out.length === 0) {
+    const periodLabel = detail.label ?? monthLongLabel(detail.monthKey);
+    out.push(
+      `${wdLabel} kam im ${periodLabel} ${detail.occurrences}× vor, hatte aber keine Reservationen.`,
+    );
+  }
+
+  return out.slice(0, 3);
+}
+
+export interface DetailDayExtremes {
+  /** Daten (yyyy-MM-dd) der stärksten Tage nach Modus-Kennzahl (Gleichstand → mehrere). */
+  strongestDates: string[];
+  /** Daten (yyyy-MM-dd) der schwächsten Tage nach Modus-Kennzahl (Gleichstand → mehrere). */
+  weakestDates: string[];
+}
+
+/**
+ * Markiert die stärksten und schwächsten konkreten Tage einer Detail-Zelle
+ * nach der aktiven Kennzahl (für die visuelle Hervorhebung in der Tagesliste
+ * des Detail-Popups).  Regeln:
+ *  - Kennzahl je Tag: reservations → Anzahl Reservationen, persons → Personen,
+ *    avgPersons → Ø Personen/Reservation (Tage OHNE Reservationen haben dort
+ *    keinen Wert und werden bei dieser Kennzahl ausgeschlossen).
+ *  - Mindestens 2 vergleichbare Tage nötig, sonst keine Markierung.
+ *  - Sind ALLE Werte gleich (inkl. alle 0), wird nichts markiert — eine
+ *    Hervorhebung wäre irreführend.
+ *  - Gleichstand am Maximum/Minimum markiert alle betroffenen Tage.
+ * Reine Funktion, keine Seiteneffekte.
+ */
+export function detailDayExtremes(days: WeekdayDayDetail[], metric: MetricKey): DetailDayExtremes {
+  const none: DetailDayExtremes = { strongestDates: [], weakestDates: [] };
+  const vals: { date: string; v: number }[] = [];
+  for (const d of days) {
+    if (metric === 'avgPersons') {
+      if (d.avgPersonsPerReservation === null) continue;
+      vals.push({ date: d.date, v: d.avgPersonsPerReservation });
+    } else if (metric === 'persons') {
+      vals.push({ date: d.date, v: d.persons });
+    } else {
+      vals.push({ date: d.date, v: d.reservations });
+    }
+  }
+  if (vals.length < 2) return none;
+  let max = -Infinity;
+  let min = Infinity;
+  for (const x of vals) {
+    if (x.v > max) max = x.v;
+    if (x.v < min) min = x.v;
+  }
+  if (max - min <= COMPARISON_EPS) return none; // alle gleich → keine Markierung
+  return {
+    strongestDates: vals.filter((x) => Math.abs(x.v - max) <= COMPARISON_EPS).map((x) => x.date),
+    weakestDates: vals.filter((x) => Math.abs(x.v - min) <= COMPARISON_EPS).map((x) => x.date),
+  };
+}
+
+// ── Schnell-Auswahl / Saison-Zeiträume ───────────────────────────────────────
+
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
+// ── Monatsnavigation (Pfeile vor/zurück) ─────────────────────────────────────
+
+/**
+ * Verschiebt einen Monatsschlüssel „yyyy-MM" um `delta` Monate (auch über
+ * Jahresgrenzen, z. B. „2026-01" −1 → „2025-12").  Ungültiger Schlüssel wird
+ * unverändert zurückgegeben.
+ */
+export function shiftMonthKey(monthKey: string, delta: number): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return monthKey;
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return monthKey;
+  const zeroBased = y * 12 + (mo - 1) + Math.trunc(delta);
+  const ny = Math.floor(zeroBased / 12);
+  const nmo = ((zeroBased % 12) + 12) % 12 + 1;
+  return `${ny}-${pad2(nmo)}`;
+}
+
+/**
+ * Datumsbereich (erster bis letzter Tag) eines Monats „yyyy-MM".  Setzt Von/Bis
+ * auf Monatsanfang/-ende.  Ungültiger Schlüssel → `{ from: '', to: '' }`.
+ */
+export function monthRange(monthKey: string): DateRange {
+  const m = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!m) return { from: '', to: '' };
+  const y = +m[1];
+  const mo = +m[2];
+  if (mo < 1 || mo > 12) return { from: '', to: '' };
+  return { from: ymd(y, mo, 1), to: ymd(y, mo, lastDayOfMonth(y, mo)) };
+}
+
+/**
+ * Datumsbereich aus einem Start- und Endmonat („yyyy-MM"): erster Tag des
+ * Startmonats bis letzter Tag des Endmonats — für die Startmonat/Endmonat-
+ * Auswahl der Zeitraumsteuerung.  Ungültige Schlüssel liefern leere Grenzen
+ * (die aufrufende Seite erkennt das über ihre Zeitraum-Validierung).  Ein
+ * Endmonat vor dem Startmonat wird NICHT getauscht — der ungültige Bereich
+ * bleibt sichtbar, damit die Warnung greift.
+ */
+export function rangeFromMonthKeys(startKey: string, endKey: string): DateRange {
+  return { from: monthRange(startKey).from, to: monthRange(endKey).to };
+}
+
+/** Frei anpassbarer Saison-Zeitraum (Monat/Tag, jährlich wiederkehrend). */
+export interface SeasonRange {
+  startMonth: number; // 1..12
+  startDay: number; // 1..31
+  endMonth: number; // 1..12
+  endDay: number; // 1..31
+}
+
+export interface SeasonSettings {
+  winter: SeasonRange;
+  summer: SeasonRange;
+}
+
+/** Standard-Saisons (anpassbar): Winter Okt–Mär (überschlägt), Sommer Apr–Sep. */
+export const DEFAULT_SEASON_SETTINGS: SeasonSettings = {
+  winter: { startMonth: 10, startDay: 1, endMonth: 3, endDay: 31 },
+  summer: { startMonth: 4, startDay: 1, endMonth: 9, endDay: 30 },
+};
+
+export type PresetKey =
+  | 'thisMonth'
+  | 'last3Months'
+  | 'lastMonth'
+  | 'octDec'
+  | 'winter'
+  | 'summer'
+  | 'custom';
+
+export const PRESET_LABEL: Record<PresetKey, string> = {
+  thisMonth: 'Aktueller Monat',
+  last3Months: 'Letzte 3 Monate',
+  lastMonth: 'Letzter Monat',
+  octDec: 'Oktober bis Dezember',
+  winter: 'Wintersaison',
+  summer: 'Sommersaison',
+  custom: 'Individuell',
+};
+
+/**
+ * Löst einen Saison-Zeitraum gegen ein Referenzjahr auf.  Liegt das Ende
+ * (Monat/Tag) vor dem Beginn, überschlägt die Saison ins Folgejahr
+ * (z. B. Winter Nov→Feb). Tage werden an die Monatslänge geklemmt.
+ */
+export function seasonRange(s: SeasonRange, year: number): DateRange {
+  const startMonth = clampInt(s.startMonth, 1, 12);
+  const endMonth = clampInt(s.endMonth, 1, 12);
+  const wraps =
+    endMonth < startMonth || (endMonth === startMonth && s.endDay < s.startDay);
+  const startY = year;
+  const endY = wraps ? year + 1 : year;
+  const startDay = clampInt(s.startDay, 1, lastDayOfMonth(startY, startMonth));
+  const endDay = clampInt(s.endDay, 1, lastDayOfMonth(endY, endMonth));
+  return { from: ymd(startY, startMonth, startDay), to: ymd(endY, endMonth, endDay) };
+}
+
+/**
+ * Datumsbereich einer Schnell-Auswahl.  `thisMonth`/`lastMonth` beziehen sich
+ * auf `today` (ISO „yyyy-MM-dd"); `octDec`/`winter`/`summer` auf das `year`.
+ * `custom` liefert `null` (der Bereich bleibt frei wählbar).
+ */
+export function presetRange(
+  key: PresetKey,
+  opts: { today: string; year: number; seasons: SeasonSettings },
+): DateRange | null {
+  const { today, year, seasons } = opts;
+  switch (key) {
+    case 'thisMonth': {
+      const ty = +today.slice(0, 4);
+      const tm = +today.slice(5, 7);
+      return { from: ymd(ty, tm, 1), to: ymd(ty, tm, lastDayOfMonth(ty, tm)) };
+    }
+    case 'last3Months': {
+      // Rollierendes 3-Monats-Fenster INKLUSIVE des aktuellen Monats:
+      // erster Tag des Monats (heute − 2 Monate) bis letzter Tag des aktuellen
+      // Monats (z. B. heute Juli → Mai, Juni, Juli).
+      const ty = +today.slice(0, 4);
+      const tm = +today.slice(5, 7);
+      const startKey = shiftMonthKey(`${ty}-${pad2(tm)}`, -2);
+      const start = monthRange(startKey);
+      return { from: start.from, to: ymd(ty, tm, lastDayOfMonth(ty, tm)) };
+    }
+    case 'lastMonth': {
+      let ty = +today.slice(0, 4);
+      let tm = +today.slice(5, 7) - 1;
+      if (tm < 1) {
+        tm = 12;
+        ty -= 1;
+      }
+      return { from: ymd(ty, tm, 1), to: ymd(ty, tm, lastDayOfMonth(ty, tm)) };
+    }
+    case 'octDec':
+      return { from: ymd(year, 10, 1), to: ymd(year, 12, 31) };
+    case 'winter':
+      return seasonRange(seasons.winter, year);
+    case 'summer':
+      return seasonRange(seasons.summer, year);
+    case 'custom':
+    default:
+      return null;
+  }
+}
+
+function clampInt(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n)) return lo;
+  return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+function isValidSeasonRange(s: unknown): s is SeasonRange {
+  if (!s || typeof s !== 'object') return false;
+  const r = s as Record<string, unknown>;
+  return (
+    typeof r.startMonth === 'number' &&
+    typeof r.startDay === 'number' &&
+    typeof r.endMonth === 'number' &&
+    typeof r.endDay === 'number'
+  );
+}
+
+/** Klemmt eine Saison-Range auf gültige Bereiche (Monat 1..12, Tag 1..31). */
+export function normalizeSeasonRange(s: SeasonRange): SeasonRange {
+  return {
+    startMonth: clampInt(s.startMonth, 1, 12),
+    startDay: clampInt(s.startDay, 1, 31),
+    endMonth: clampInt(s.endMonth, 1, 12),
+    endDay: clampInt(s.endDay, 1, 31),
+  };
+}
+
+/**
+ * Parst gespeicherte Saison-Einstellungen (z. B. aus localStorage).  Liefert bei
+ * fehlendem/ungültigem Inhalt die Standard-Saisons (kein Wurf).
+ */
+export function parseSeasonSettings(raw: string | null | undefined): SeasonSettings {
+  if (!raw) return DEFAULT_SEASON_SETTINGS;
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    const winter = isValidSeasonRange(obj.winter)
+      ? normalizeSeasonRange(obj.winter)
+      : DEFAULT_SEASON_SETTINGS.winter;
+    const summer = isValidSeasonRange(obj.summer)
+      ? normalizeSeasonRange(obj.summer)
+      : DEFAULT_SEASON_SETTINGS.summer;
+    return { winter, summer };
+  } catch {
+    return DEFAULT_SEASON_SETTINGS;
+  }
+}
+
+export function serializeSeasonSettings(s: SeasonSettings): string {
+  return JSON.stringify({
+    winter: normalizeSeasonRange(s.winter),
+    summer: normalizeSeasonRange(s.summer),
+  });
+}
+
+// ── Schulferien Kanton Bern (DIN-Kalenderwochen) ─────────────────────────────
+//
+// Reine Helfer für die Ferien-Analyse auf /gaeste/wochentag.  KEINE Datenbank,
+// KEIN DOM — nur Datums-/Aggregationslogik über die bereits geladenen Zeilen.
+// Die Ferienwochen (DIN-Kalenderwochen) sind fix hinterlegt:
+//   Sportferien      → KW 6
+//   Frühlingsferien  → KW 15–16
+//   Sommerferien     → KW 28–32 (Ausnahme 2027: KW 27–32)
+//   Herbstferien     → KW 39–41
+//   Winterferien     → letzte KW des Jahres (52 oder 53) + KW 1 des Folgejahres
+//                       (ein zusammenhängender Block über den Jahreswechsel)
+
+/** Montag (UTC) der ISO-Woche `week` im ISO-Jahr `isoYear`. */
+function isoWeekMondayUtc(isoYear: number, week: number): Date {
+  // Der 4. Januar liegt per ISO-Definition immer in KW 1.
+  const jan4 = Date.UTC(isoYear, 0, 4);
+  const jan4Dow = new Date(jan4).getUTCDay() || 7; // Mo=1 … So=7
+  const week1Monday = jan4 - (jan4Dow - 1) * MS_PER_DAY;
+  return new Date(week1Monday + (week - 1) * 7 * MS_PER_DAY);
+}
+
+/** Sonntag (UTC) der ISO-Woche `week` im ISO-Jahr `isoYear`. */
+function isoWeekSundayUtc(isoYear: number, week: number): Date {
+  return new Date(isoWeekMondayUtc(isoYear, week).getTime() + 6 * MS_PER_DAY);
+}
+
+/** ISO-Wochennummer (1..53) eines UTC-Datums. */
+function isoWeekNumberOfUtc(d: Date): number {
+  // Auf den Donnerstag derselben ISO-Woche verschieben (die ISO-Woche ist die
+  // Woche, in der ihr Donnerstag liegt).
+  const thursday = new Date(d.getTime());
+  const dow = thursday.getUTCDay() || 7;
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - dow);
+  const yearStart = Date.UTC(thursday.getUTCFullYear(), 0, 1);
+  return Math.ceil(((thursday.getTime() - yearStart) / MS_PER_DAY + 1) / 7);
+}
+
+/** Anzahl ISO-Wochen (52 oder 53) eines ISO-Jahres. */
+export function isoWeeksInYear(isoYear: number): number {
+  // Der 28. Dezember liegt immer in der letzten ISO-Woche des Jahres.
+  return isoWeekNumberOfUtc(new Date(Date.UTC(isoYear, 11, 28)));
+}
+
+/** „yyyy-MM-dd" eines UTC-Datums. */
+function utcToYmd(d: Date): string {
+  return ymd(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+}
+
+export type BernHolidayKind = 'sport' | 'spring' | 'summer' | 'autumn' | 'winter';
+export type BernHolidaySelection = 'all' | BernHolidayKind;
+
+/** Reihenfolge der Ferienarten im Jahr (für „Alle" + Auswahl-Buttons). */
+export const BERN_HOLIDAY_KINDS: BernHolidayKind[] = [
+  'sport',
+  'spring',
+  'summer',
+  'autumn',
+  'winter',
+];
+
+export const BERN_HOLIDAY_LABEL: Record<BernHolidayKind, string> = {
+  sport: 'Sportferien',
+  spring: 'Frühlingsferien',
+  summer: 'Sommerferien',
+  autumn: 'Herbstferien',
+  winter: 'Winterferien',
+};
+
+export const BERN_HOLIDAY_SELECTION_LABEL: Record<BernHolidaySelection, string> = {
+  all: 'Alle Schulferien',
+  sport: 'Sportferien',
+  spring: 'Frühlingsferien',
+  summer: 'Sommerferien',
+  autumn: 'Herbstferien',
+  winter: 'Winterferien',
+};
+
+/** Prüft, ob ein String eine gültige Ferien-Auswahl ist (für URL/State). */
+export function isBernHolidaySelection(
+  v: string | null | undefined,
+): v is BernHolidaySelection {
+  return v === 'all' || (typeof v === 'string' && (BERN_HOLIDAY_KINDS as string[]).includes(v));
+}
+
+export interface BernHolidayWeek {
+  isoYear: number;
+  week: number;
+}
+
+/**
+ * Die ISO-Wochen (mit ihrem ISO-Jahr) einer Ferienart im gewählten Jahr.  Die
+ * Wochen sind fortlaufend; die Winterferien überschreiten den Jahreswechsel
+ * (letzte KW des Jahres + KW 1 des Folgejahres).
+ */
+export function bernHolidayWeeks(year: number, kind: BernHolidayKind): BernHolidayWeek[] {
+  switch (kind) {
+    case 'sport':
+      return [{ isoYear: year, week: 6 }];
+    case 'spring':
+      return [15, 16].map((week) => ({ isoYear: year, week }));
+    case 'summer': {
+      // Ausnahme 2027: Sommerferien beginnen bereits in KW 27 (sonst KW 28).
+      const weeks = year === 2027 ? [27, 28, 29, 30, 31, 32] : [28, 29, 30, 31, 32];
+      return weeks.map((week) => ({ isoYear: year, week }));
+    }
+    case 'autumn':
+      return [39, 40, 41].map((week) => ({ isoYear: year, week }));
+    case 'winter':
+      return [
+        { isoYear: year, week: isoWeeksInYear(year) },
+        { isoYear: year + 1, week: 1 },
+      ];
+  }
+}
+
+export interface BernHolidayPeriod {
+  kind: BernHolidayKind;
+  label: string;
+  /** Bezugsjahr der Auswahl (bei Winterferien das Startjahr). */
+  year: number;
+  /** Erster Tag (Montag der ersten Woche), „yyyy-MM-dd". */
+  from: string;
+  /** Letzter Tag (Sonntag der letzten Woche), „yyyy-MM-dd". */
+  to: string;
+  /** Anzahl Kalendertage inklusive `from`..`to`. */
+  days: number;
+  /** Enthaltene ISO-Wochennummern (nur Anzeige). */
+  weeks: number[];
+}
+
+/**
+ * Zusammenhängender Ferien-Zeitraum: Montag der ersten bis Sonntag der letzten
+ * Ferienwoche.  Für die Winterferien ergibt das einen Block über den
+ * Jahreswechsel (z. B. 22.12.–04.01.).
+ */
+export function bernHolidayPeriod(year: number, kind: BernHolidayKind): BernHolidayPeriod {
+  const weeks = bernHolidayWeeks(year, kind);
+  const first = weeks[0];
+  const last = weeks[weeks.length - 1];
+  const fromDate = isoWeekMondayUtc(first.isoYear, first.week);
+  const toDate = isoWeekSundayUtc(last.isoYear, last.week);
+  const from = utcToYmd(fromDate);
+  const to = utcToYmd(toDate);
+  const days = Math.round((toDate.getTime() - fromDate.getTime()) / MS_PER_DAY) + 1;
+  return {
+    kind,
+    label: BERN_HOLIDAY_LABEL[kind],
+    year,
+    from,
+    to,
+    days,
+    weeks: weeks.map((w) => w.week),
+  };
+}
+
+/** Alle Ferien-Zeiträume einer Auswahl im Jahr, chronologisch (nach `from`). */
+export function bernHolidayPeriods(
+  year: number,
+  selection: BernHolidaySelection,
+): BernHolidayPeriod[] {
+  const kinds = selection === 'all' ? BERN_HOLIDAY_KINDS : [selection];
+  return kinds
+    .map((kind) => bernHolidayPeriod(year, kind))
+    .sort((a, b) => a.from.localeCompare(b.from));
+}
+
+/** Minimaler Datumsbereich (from/to inklusiv, „yyyy-MM-dd"). Basis für alle
+ *  perioden-basierten Helfer (Ferien UND frei definierte Saisons). */
+export interface DateSpan {
+  from: string;
+  to: string;
+}
+
+/** Umschliessender Datumsbereich aller Perioden (für EINEN Superset-Fetch). */
+export function holidayBounds(periods: readonly DateSpan[]): DateRange | null {
+  if (periods.length === 0) return null;
+  let from = periods[0].from;
+  let to = periods[0].to;
+  for (const p of periods) {
+    if (p.from < from) from = p.from;
+    if (p.to > to) to = p.to;
+  }
+  return { from, to };
+}
+
+/** Generischer Alias von `holidayBounds` für frei definierte Saisons (identische
+ *  Logik — nur ein sprechender Name für den Saison-Superset-Fetch). */
+export const periodBounds = holidayBounds;
+
+/** Die Ferienperiode, die einen Monat „yyyy-MM" überschneidet (oder `null`). */
+export function holidayPeriodForMonth(
+  periods: BernHolidayPeriod[],
+  monthKey: string,
+): BernHolidayPeriod | null {
+  const r = monthRange(monthKey);
+  if (!r.from) return null;
+  for (const p of periods) {
+    if (p.from <= r.to && p.to >= r.from) return p;
+  }
+  return null;
+}
+
+/**
+ * Wochentags-Kennzahlen über MEHRERE (disjunkte) Ferienperioden.  Faltet
+ * `aggregateByWeekday` je zusammenhängender Periode und summiert je Wochentag
+ * Reservationen/Personen/Vorkommen (die Perioden überschneiden sich nicht);
+ * abgeleitete Durchschnitte werden danach neu berechnet.  Liefert dieselbe
+ * `WeekdayAggregate`-Struktur wie `aggregateByWeekday`, damit dieselbe Anzeige
+ * (Kennzahlen-Karten, `buildWeekdayHeadlines`) genutzt werden kann.
+ */
+export function aggregateHolidayWeekday(
+  rows: ReservationAggRow[],
+  periods: readonly DateSpan[],
+  scope: StatusScope = 'booked',
+): WeekdayAggregate {
+  const res = zeroWeekdayCounts();
+  const per = zeroWeekdayCounts();
+  const occ = zeroWeekdayCounts();
+  for (const p of periods) {
+    const a = aggregateByWeekday(rows, p.from, p.to, scope);
+    for (const w of a.weekdays) {
+      res[w.weekday] += w.reservations;
+      per[w.weekday] += w.persons;
+      occ[w.weekday] += w.occurrences;
+    }
+  }
+  const totalReservations = ISO_WEEKDAYS.reduce((s, wd) => s + res[wd], 0);
+  const totalPersons = ISO_WEEKDAYS.reduce((s, wd) => s + per[wd], 0);
+  const totalOccurrences = ISO_WEEKDAYS.reduce((s, wd) => s + occ[wd], 0);
+  const weekdays = ISO_WEEKDAYS.map<WeekdayStat>((wd) => ({
+    weekday: wd,
+    reservations: res[wd],
+    persons: per[wd],
+    avgPersons: res[wd] > 0 ? per[wd] / res[wd] : null,
+    sharePct: totalReservations > 0 ? (res[wd] / totalReservations) * 100 : 0,
+    occurrences: occ[wd],
+    avgReservationsPerDay: occ[wd] > 0 ? res[wd] / occ[wd] : null,
+    avgPersonsPerDay: occ[wd] > 0 ? per[wd] / occ[wd] : null,
+  }));
+  return {
+    weekdays,
+    totalReservations,
+    totalPersons,
+    totalOccurrences,
+    avgReservationsPerDay: totalOccurrences > 0 ? totalReservations / totalOccurrences : null,
+    avgPersonsPerReservation: totalReservations > 0 ? totalPersons / totalReservations : null,
+  };
+}
+
+/**
+ * Monatsvergleich (Monate × Wochentage) über MEHRERE Ferienperioden.  Die
+ * Monatszeilen der einzelnen Perioden werden per Monatsschlüssel zusammengeführt
+ * (nicht nur aneinandergehängt — z. B. teilen Sommerferien Juli und August),
+ * und die Wochentags-Vorkommen zählen NUR die Ferientage (Summe der auf jede
+ * Periode geklemmten Monatsvorkommen).  Ergebnis ist dieselbe `MonthComparison`-
+ * Struktur wie `buildMonthComparison` → dieselbe Matrix-Anzeige + Detail-Dialog.
+ */
+export function buildHolidayMonthComparison(
+  rows: ReservationAggRow[],
+  periods: readonly DateSpan[],
+  scope: StatusScope = 'booked',
+  metric: MetricKey = 'reservations',
+): MonthComparison {
+  // 1) Roh-Zellen (Reservationen/Personen) je Monat×Wochentag über alle
+  //    Perioden mergen (nur Monate mit mindestens einer Reservation entstehen).
+  const cellsByMonth = new Map<string, Record<IsoWeekday, Cell>>();
+  const totalsByMonth = new Map<string, Cell>();
+  for (const p of periods) {
+    const matrix = buildMonthWeekdayMatrix(rows, p.from, p.to, scope);
+    for (const row of matrix.months) {
+      let cells = cellsByMonth.get(row.monthKey);
+      let total = totalsByMonth.get(row.monthKey);
+      if (!cells || !total) {
+        cells = emptyCellRecord();
+        total = { reservations: 0, persons: 0 };
+        cellsByMonth.set(row.monthKey, cells);
+        totalsByMonth.set(row.monthKey, total);
+      }
+      for (const wd of ISO_WEEKDAYS) {
+        cells[wd].reservations += row.cells[wd].reservations;
+        cells[wd].persons += row.cells[wd].persons;
+      }
+      total.reservations += row.total.reservations;
+      total.persons += row.total.persons;
+    }
+  }
+
+  // 2) Monatszeilen bauen; Vorkommen ferien-genau (Summe über die Perioden, je
+  //    Periode auf den Monat geklemmt → nur Ferientage zählen).
+  const monthKeys = [...cellsByMonth.keys()].sort((a, b) => a.localeCompare(b));
+  const months: ComparisonMonthRow[] = monthKeys.map((monthKey) => {
+    const occ = zeroWeekdayCounts();
+    for (const p of periods) {
+      const add = countWeekdayOccurrencesInMonth(monthKey, p.from, p.to);
+      for (const wd of ISO_WEEKDAYS) occ[wd] += add[wd];
+    }
+    const cellsSrc = cellsByMonth.get(monthKey)!;
+    const total = totalsByMonth.get(monthKey)!;
+    const cells = {} as Record<IsoWeekday, ComparisonCell>;
+    let strongest: IsoWeekday | null = null;
+    let weakest: IsoWeekday | null = null;
+    let strongestVal = -Infinity;
+    let weakestVal = Infinity;
+    for (const wd of ISO_WEEKDAYS) {
+      const c = cellsSrc[wd];
+      const value = comparisonCellValue(c.reservations, c.persons, occ[wd], metric);
+      cells[wd] = {
+        monthKey,
+        weekday: wd,
+        occurrences: occ[wd],
+        reservations: c.reservations,
+        persons: c.persons,
+        value,
+        rank: 'none',
+        isTop: false,
+        isLow: false,
+      };
+      if (value !== null) {
+        if (value > strongestVal + COMPARISON_EPS) { strongestVal = value; strongest = wd; }
+        if (value < weakestVal - COMPARISON_EPS) { weakestVal = value; weakest = wd; }
+      }
+    }
+    return {
+      monthKey,
+      cells,
+      totalReservations: total.reservations,
+      totalPersons: total.persons,
+      avgPersons: total.reservations > 0 ? total.persons / total.reservations : null,
+      strongestWeekday: strongest,
+      weakestWeekday: weakest,
+    };
+  });
+
+  return finalizeMonthComparison(months, metric);
+}
+
+export interface HolidayPeriodSummary {
+  period: BernHolidayPeriod;
+  aggregate: WeekdayAggregate;
+  headlines: WeekdayHeadlineSummary;
+  totalReservations: number;
+  totalPersons: number;
+  avgPersonsPerReservation: number | null;
+  /** Ø Reservationen pro Ferientag (totalReservations / Ferientage). */
+  avgReservationsPerDay: number | null;
+  strongest: WeekdayHeadline | null;
+  weakest: WeekdayHeadline | null;
+  hasReservations: boolean;
+  /** true, wenn die Periode vollständig in der Zukunft liegt (from > today). */
+  isFuture: boolean;
+  interpretation: string;
+}
+
+/**
+ * Zusammenfassung EINER Ferienperiode: Kennzahlen + stärkster/schwächster
+ * Wochentag + kurze automatische Interpretation.  `today` („yyyy-MM-dd") dient
+ * nur der Zukunfts-Erkennung für den Leerzustand.
+ */
+export function buildHolidayPeriodSummary(
+  rows: ReservationAggRow[],
+  period: BernHolidayPeriod,
+  scope: StatusScope,
+  metric: MetricKey,
+  today: string,
+): HolidayPeriodSummary {
+  const aggregate = aggregateByWeekday(rows, period.from, period.to, scope);
+  const headlines = buildWeekdayHeadlines(aggregate, metric);
+  const strongest =
+    headlines.strongest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.strongest) ?? null
+      : null;
+  const weakest =
+    headlines.weakest !== null
+      ? headlines.headlines.find((h) => h.weekday === headlines.weakest) ?? null
+      : null;
+  return {
+    period,
+    aggregate,
+    headlines,
+    totalReservations: aggregate.totalReservations,
+    totalPersons: aggregate.totalPersons,
+    avgPersonsPerReservation: aggregate.avgPersonsPerReservation,
+    avgReservationsPerDay: aggregate.avgReservationsPerDay,
+    strongest,
+    weakest,
+    hasReservations: aggregate.totalReservations > 0,
+    isFuture: period.from > today,
+    interpretation: buildHolidayInterpretation(period, headlines),
+  };
+}
+
+/** Schwellenwert für „gleichmässig verteilt" (stärkster ≤ Faktor × schwächster). */
+export const HOLIDAY_EVEN_RATIO = 1.25;
+
+/**
+ * Kurze, deterministische Interpretation einer Ferienperiode (die Hauptzahl der
+ * Wochentage steckt bereits in `headlines`, daher metrik-unabhängig):
+ *  - keine Reservationen        → Hinweis, dass keine Reservationen vorliegen
+ *  - nur ein aktiver Wochentag  → Konzentration auf diesen Wochentag
+ *  - gleichmässig verteilt      → „… verteilen sich gleichmässiger auf die Woche"
+ *    (stärkster ≤ HOLIDAY_EVEN_RATIO × schwächster)
+ *  - sonst                      → „… ist der {stärkste} stärker als der {schwächste}"
+ */
+export function buildHolidayInterpretation(
+  period: BernHolidayPeriod,
+  headlines: WeekdayHeadlineSummary,
+): string {
+  const name = period.label;
+  const s = headlines.strongest;
+  const w = headlines.weakest;
+  if (s === null) {
+    return `Während der ${name} liegen keine Reservationen vor.`;
+  }
+  const strongestH = headlines.headlines.find((h) => h.weekday === s) ?? null;
+  const weakestH = w !== null ? headlines.headlines.find((h) => h.weekday === w) ?? null : null;
+  if (w === null || w === s || !strongestH || !weakestH) {
+    return `Während der ${name} konzentrieren sich die Reservationen auf ${WEEKDAY_LABEL[s]}.`;
+  }
+  const sv = strongestH.value ?? 0;
+  const wv = weakestH.value ?? 0;
+  if (wv > 0 && sv / wv <= HOLIDAY_EVEN_RATIO) {
+    return `In den ${name} verteilen sich die Reservationen gleichmässiger auf die Woche.`;
+  }
+  return `Während der ${name} ist der ${WEEKDAY_LABEL[s]} stärker als der ${WEEKDAY_LABEL[w]}.`;
+}
+
+// ── Wochentagsvergleich (generisch: Zeiträume × Wochentage, ZEILEN-Heatmap) ───
+//
+// Eine generische Vergleichstabelle: je Zeile ein „Zeitraum" (Monat, Ferien-
+// periode ODER später eine frei definierte Saison), je Spalte ein Wochentag mit
+// dem Wert der gewählten Kennzahl. Die Heatmap bewertet jede Zelle RELATIV ZUM
+// Durchschnitt IHRER ZEILE (nicht der Spalte). Damit beantwortet die Tabelle
+// „welcher Wochentag ist innerhalb dieses Zeitraums stark/schwach?" — unabhängig
+// davon, wie viele Reservationen ein Zeitraum insgesamt hat.
+//
+// Bewusst getrennt vom `MonthComparison` (der spaltenrelativ rankt und im
+// Ferien-Modus je MONAT gruppiert): dieser Vergleich gruppiert je PERIODE und
+// funktioniert für beliebige Datumsbereiche. Er nutzt dieselbe kanonische
+// Aggregation (`aggregateByWeekday`) je Periode — keine zweite Rechen-Pipeline.
+
+/** Ein generischer Vergleichs-Zeitraum (Monat, Ferienperiode, Saison …). */
+export interface ComparisonPeriod {
+  /** Stabiler Schlüssel (React-Key + Detail-Zuordnung), z. B. „2026-07" oder „sommer-2026". */
+  key: string;
+  /** Anzeige-Titel, z. B. „Juli 2026" oder „Sommerferien 2026". */
+  label: string;
+  /** Bereichsbeginn „yyyy-MM-dd" (inklusiv). */
+  from: string;
+  /** Bereichsende „yyyy-MM-dd" (inklusiv). */
+  to: string;
+}
+
+/** Heatmap-Stufe einer Zelle relativ zum Zeilendurchschnitt. */
+export type WeekdayHeat =
+  | 'veryStrong'    // dunkelgrün (deutlich über Ø)
+  | 'aboveAverage'  // hellgrün (über Ø)
+  | 'average'       // neutral (um den Ø)
+  | 'belowAverage'  // orange (unter Ø)
+  | 'veryWeak'      // rot (deutlich unter Ø)
+  | 'none';         // kein Wert / kein Ø berechenbar
+
+// Verhältnis-Schwellen (Zellwert ÷ Zeilendurchschnitt). Bewusst symmetrisch um
+// 1.0 und als Konstanten exportiert (Tests + evtl. Legende).
+export const HEAT_VERY_STRONG_RATIO = 1.2;
+export const HEAT_ABOVE_RATIO = 1.05;
+export const HEAT_BELOW_RATIO = 0.95;
+export const HEAT_VERY_WEAK_RATIO = 0.8;
+
+/**
+ * Stuft einen Zellwert relativ zum Zeilendurchschnitt ein.
+ *  - `value === null`            → 'none' (kein Vorkommen/Reservation)
+ *  - `rowAverage === null` / ≤ 0 → 'none' (kein sinnvoller Bezug)
+ *  - Verhältnis r = value / rowAverage:
+ *      r ≥ 1.20 'veryStrong' · r ≥ 1.05 'aboveAverage' ·
+ *      r ≤ 0.80 'veryWeak'   · r ≤ 0.95 'belowAverage' · sonst 'average'
+ * Ist nur EIN Wochentag gesetzt, gilt rowAverage = dieser Wert → r = 1 → 'average'.
+ * Sind alle Werte gleich, ist jedes r = 1 → 'average'.
+ */
+export function classifyWeekdayHeat(value: number | null, rowAverage: number | null): WeekdayHeat {
+  if (value === null || rowAverage === null || rowAverage <= 0) return 'none';
+  const r = value / rowAverage;
+  if (r >= HEAT_VERY_STRONG_RATIO) return 'veryStrong';
+  if (r >= HEAT_ABOVE_RATIO) return 'aboveAverage';
+  if (r <= HEAT_VERY_WEAK_RATIO) return 'veryWeak';
+  if (r <= HEAT_BELOW_RATIO) return 'belowAverage';
+  return 'average';
+}
+
+/** Eine Zelle des Wochentagsvergleichs (ein Wochentag in einem Zeitraum). */
+export interface WeekdayComparisonCell {
+  weekday: IsoWeekday;
+  /** Wert der gewählten Kennzahl (Ø je Wochentag) oder null. */
+  value: number | null;
+  reservations: number;
+  persons: number;
+  occurrences: number;
+  /** Heatmap-Stufe relativ zum Zeilendurchschnitt. */
+  heat: WeekdayHeat;
+}
+
+/** Eine Zeile des Wochentagsvergleichs (ein Zeitraum × 7 Wochentage + Summen). */
+export interface WeekdayComparisonRow {
+  period: ComparisonPeriod;
+  /** Zellen je Wochentag (Mo→So). */
+  cells: Record<IsoWeekday, WeekdayComparisonCell>;
+  /** Gleichgewichteter Mittelwert der 7 NICHT-null-Zellwerte (Bezug der Heatmap). */
+  rowAverage: number | null;
+  /** Reservationen total im Zeitraum. */
+  totalReservations: number;
+  /** Personen total im Zeitraum. */
+  totalPersons: number;
+  /** Ø Personen pro Reservation im Zeitraum (persons / reservations). */
+  avgPersons: number | null;
+}
+
+export interface WeekdayComparison {
+  metric: MetricKey;
+  /** Zeilen in der übergebenen Reihenfolge (Aufrufer sortiert chronologisch). */
+  rows: WeekdayComparisonRow[];
+  /**
+   * Ø je Wochentag ÜBER ALLE Zeilen (nur Zeilen mit Wert), gleichgewichtet.
+   * Speist das wiederverwendete Detail-Popup (Spalten-Ø-Vergleich).
+   */
+  weekdayAverages: Record<IsoWeekday, number | null>;
+}
+
+/**
+ * Baut den generischen Wochentagsvergleich für eine Liste von Zeiträumen.
+ * Ruft je Zeitraum die kanonische `aggregateByWeekday` auf, bildet den Zellwert
+ * über `comparisonCellValue`, berechnet den ZEILEN-Durchschnitt (gleichgewichtet
+ * über die vorhandenen Wochentage) und stuft jede Zelle relativ dazu ein.
+ * Vollständig generisch — Saisons übergeben einfach eine andere Perioden-Liste.
+ */
+export function buildWeekdayComparison(
+  rows: ReservationAggRow[],
+  periods: ComparisonPeriod[],
+  scope: StatusScope = 'booked',
+  metric: MetricKey = 'reservations',
+): WeekdayComparison {
+  const compRows: WeekdayComparisonRow[] = periods.map((period) => {
+    const a = aggregateByWeekday(rows, period.from, period.to, scope);
+    const byWeekday = {} as Record<
+      IsoWeekday,
+      { reservations: number; persons: number; occurrences: number; value: number | null }
+    >;
+    let sum = 0;
+    let valued = 0;
+    for (const w of a.weekdays) {
+      const value = comparisonCellValue(w.reservations, w.persons, w.occurrences, metric);
+      byWeekday[w.weekday] = {
+        reservations: w.reservations,
+        persons: w.persons,
+        occurrences: w.occurrences,
+        value,
+      };
+      if (value !== null) {
+        sum += value;
+        valued += 1;
+      }
+    }
+    const rowAverage = valued > 0 ? sum / valued : null;
+    const cells = {} as Record<IsoWeekday, WeekdayComparisonCell>;
+    for (const wd of ISO_WEEKDAYS) {
+      const c = byWeekday[wd];
+      cells[wd] = {
+        weekday: wd,
+        value: c.value,
+        reservations: c.reservations,
+        persons: c.persons,
+        occurrences: c.occurrences,
+        heat: classifyWeekdayHeat(c.value, rowAverage),
+      };
+    }
+    return {
+      period,
+      cells,
+      rowAverage,
+      totalReservations: a.totalReservations,
+      totalPersons: a.totalPersons,
+      avgPersons: a.avgPersonsPerReservation,
+    };
+  });
+
+  // Spalten-Ø je Wochentag über alle Zeilen (für das wiederverwendete Popup).
+  const weekdayAverages = {} as Record<IsoWeekday, number | null>;
+  for (const wd of ISO_WEEKDAYS) {
+    let sum = 0;
+    let n = 0;
+    for (const r of compRows) {
+      const v = r.cells[wd].value;
+      if (v !== null) {
+        sum += v;
+        n += 1;
+      }
+    }
+    weekdayAverages[wd] = n > 0 ? sum / n : null;
+  }
+
+  return { metric, rows: compRows, weekdayAverages };
+}
+
+// ── Saisonvergleich (frei definierte, datumsfixe Saisons) ─────────────────────
+//
+// Eine „Saison" ist ein FREI benannter, datumsfixer Zeitraum (z. B. „Herbst
+// 2026" = 01.10.2026–31.12.2026) — NICHT die jährlich wiederkehrenden Winter/
+// Sommer-Presets (`SeasonRange`/`SeasonSettings`). Mehrere Saisons lassen sich
+// als generische `ComparisonPeriod[]` in DENSELBEN Wochentagsvergleich
+// (`buildWeekdayComparison`) einspeisen — keine zweite Rechen-Pipeline. Diese
+// Helfer ergänzen nur: Validierung, Perioden-Umwandlung, Rangliste je Wochentag,
+// Diagramm-Serien und automatische Empfehlungen. Alles rein (kein Supabase/DOM).
+
+/** Eine frei definierte, datumsfixe Saison (pro Mandant gespeichert). */
+export interface SeasonDefinition {
+  /** Stabiler Schlüssel (crypto.randomUUID) — React-Key + Auswahl-/Detail-Bezug. */
+  id: string;
+  /** Anzeigename, z. B. „Herbst 2026". */
+  name: string;
+  /** Beginn „yyyy-MM-dd" (inklusiv). */
+  from: string;
+  /** Ende „yyyy-MM-dd" (inklusiv). */
+  to: string;
+  /** Optionale Farbe (Hex, z. B. „#2563eb") für Diagramm/Badge. */
+  color?: string;
+  /** Nur aktive Saisons erscheinen in Auswahl/Vergleich. */
+  active: boolean;
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** true, wenn `s` ein echtes Kalenderdatum „yyyy-MM-dd" ist (kein 2026-02-31). */
+export function isValidIsoDate(s: string): boolean {
+  if (typeof s !== 'string' || !ISO_DATE_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+/** Ergebnis der Saison-Eingabeprüfung (deutsche Meldungen für die UI). */
+export interface SeasonValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+/** Prüft Name (nicht leer), gültige Daten und `from <= to`. */
+export function validateSeasonDefinition(
+  draft: { name: string; from: string; to: string },
+): SeasonValidationResult {
+  const errors: string[] = [];
+  if (!draft.name || !draft.name.trim()) errors.push('Name ist erforderlich.');
+  const fromOk = isValidIsoDate(draft.from);
+  const toOk = isValidIsoDate(draft.to);
+  if (!fromOk) errors.push('Startdatum ist ungültig.');
+  if (!toOk) errors.push('Enddatum ist ungültig.');
+  if (fromOk && toOk && draft.from > draft.to) {
+    errors.push('Das Enddatum darf nicht vor dem Startdatum liegen.');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+/** Ein überlappendes Saison-Paar (nur IDs; reine Warnung, nicht blockierend). */
+export interface SeasonOverlap {
+  a: string;
+  b: string;
+}
+
+/**
+ * Findet Paare sich überschneidender Saisons (nur gültige Datumsbereiche).
+ * Rein informativ — Überschneidungen sind erlaubt (der Vergleich klemmt jede
+ * Saison ohnehin auf ihren eigenen Bereich). Inklusive Berührung an den Rändern.
+ */
+export function findOverlappingSeasons(defs: readonly SeasonDefinition[]): SeasonOverlap[] {
+  const valid = defs.filter(
+    (d) => isValidIsoDate(d.from) && isValidIsoDate(d.to) && d.from <= d.to,
+  );
+  const out: SeasonOverlap[] = [];
+  for (let i = 0; i < valid.length; i++) {
+    for (let j = i + 1; j < valid.length; j++) {
+      const a = valid[i];
+      const b = valid[j];
+      if (a.from <= b.to && b.from <= a.to) out.push({ a: a.id, b: b.id });
+    }
+  }
+  return out;
+}
+
+/**
+ * Die fünf Beispiel-Saisons aus der Spezifikation (feste Datumsbereiche 2026)
+ * zum Ausprobieren des Saisonvergleichs.  Stabile, sprechende IDs (Slugs statt
+ * UUIDs), damit ein erneutes Einfügen dieselben IDs ergibt und URL-Auswahlen
+ * (`seasons=`) reproduzierbar bleiben.  Rein — die Seite speichert sie über den
+ * normalen KV-Pfad, hier wird NICHTS persistiert.
+ */
+export function exampleSeasonDefinitions(): SeasonDefinition[] {
+  return [
+    { id: 'winter-2026', name: 'Wintersaison 2026', from: '2026-10-01', to: '2026-12-31', color: '#2563eb', active: true },
+    { id: 'fruehling-2026', name: 'Frühlingssaison 2026', from: '2026-03-01', to: '2026-05-31', color: '#16a34a', active: true },
+    { id: 'terrassen-2026', name: 'Terrassensaison 2026', from: '2026-05-01', to: '2026-09-30', color: '#d97706', active: true },
+    { id: 'sommerferien-2026', name: 'Sommerferien 2026', from: '2026-07-01', to: '2026-08-15', color: '#dc2626', active: true },
+    { id: 'weihnachten-2026', name: 'Weihnachtsgeschäft 2026', from: '2026-11-15', to: '2026-12-31', color: '#7c3aed', active: true },
+  ];
+}
+
+/**
+ * Wandelt (bereits ausgewählte, i. d. R. aktive) Saisons in generische
+ * `ComparisonPeriod[]` um: nur gültige Bereiche, chronologisch nach `from`
+ * (Tie-Break Name) sortiert — damit die Vergleichszeilen stabil geordnet sind.
+ * key = Saison-ID (Detail-/React-Bezug), label = Saison-Name.
+ */
+export function seasonsToComparisonPeriods(
+  defs: readonly SeasonDefinition[],
+): ComparisonPeriod[] {
+  return defs
+    .filter((d) => isValidIsoDate(d.from) && isValidIsoDate(d.to) && d.from <= d.to)
+    .slice()
+    .sort((a, b) => a.from.localeCompare(b.from) || a.name.localeCompare(b.name))
+    .map((d) => ({ key: d.id, label: d.name, from: d.from, to: d.to }));
+}
+
+/** Ein Ranglisten-Eintrag (eine Saison an einem Wochentag). */
+export interface SeasonRankingEntry {
+  seasonKey: string;
+  label: string;
+  value: number;
+}
+
+/** Rangliste der Saisons für EINEN Wochentag (absteigend nach Kennzahl). */
+export interface SeasonWeekdayRanking {
+  weekday: IsoWeekday;
+  /** Nur Saisons mit Wert (≠ null), absteigend; Tie-Break: Name (a→z). */
+  entries: SeasonRankingEntry[];
+}
+
+/**
+ * Baut je Wochentag (Mo→So) die nach Kennzahl absteigende Saison-Rangliste aus
+ * einem bestehenden `WeekdayComparison` (keine Neuberechnung). Zellen ohne Wert
+ * werden weggelassen; bei Gleichstand entscheidet der Saison-Name (stabil).
+ */
+export function buildSeasonWeekdayRanking(
+  comparison: WeekdayComparison,
+): SeasonWeekdayRanking[] {
+  return ISO_WEEKDAYS.map((wd) => {
+    const entries: SeasonRankingEntry[] = [];
+    for (const row of comparison.rows) {
+      const v = row.cells[wd].value;
+      if (v !== null) {
+        entries.push({ seasonKey: row.period.key, label: row.period.label, value: v });
+      }
+    }
+    entries.sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
+    return { weekday: wd, entries };
+  });
+}
+
+/** Ein Datenpunkt (ein Wochentag) für das Saison-Liniendiagramm. */
+export interface SeasonChartPoint {
+  weekday: IsoWeekday;
+  /** Kurzlabel „Mo".."So" (X-Achse). */
+  label: string;
+  /** Kennzahlwert je Saison-ID (null → Lücke, `connectNulls=false`). */
+  values: Record<string, number | null>;
+}
+
+/** Serien-Metadaten (eine Linie je Saison). */
+export interface SeasonChartSeries {
+  key: string;
+  label: string;
+}
+
+/**
+ * Diagramm-Daten für ein Liniendiagramm (X = Mo→So, eine Linie je Saison, Y =
+ * gewählte Kennzahl) aus einem bestehenden `WeekdayComparison`. Farben liegen im
+ * UI (aus den `SeasonDefinition`s), damit dieser Helfer rein bleibt.
+ */
+export function buildSeasonChartSeries(comparison: WeekdayComparison): {
+  points: SeasonChartPoint[];
+  series: SeasonChartSeries[];
+} {
+  const series: SeasonChartSeries[] = comparison.rows.map((r) => ({
+    key: r.period.key,
+    label: r.period.label,
+  }));
+  const points: SeasonChartPoint[] = ISO_WEEKDAYS.map((wd) => {
+    const values: Record<string, number | null> = {};
+    for (const r of comparison.rows) values[r.period.key] = r.cells[wd].value;
+    return { weekday: wd, label: WEEKDAY_SHORT[wd], values };
+  });
+  return { points, series };
+}
+
+/**
+ * Automatische, deterministische Empfehlungen (deutsche Sätze) aus dem Saison-
+ * Vergleich — rein datengetrieben, KEINE Fantasiewerte:
+ *  1. Stärkster Wochentag insgesamt → welche Saison ihn hält.
+ *  2. Schwächster Wochentag insgesamt → welche Saison ihn hält.
+ *  3. Konstantester Wochentag  = niedrigster Variationskoeffizient (σ/µ) über
+ *     ≥ 2 Nicht-null-Werte.
+ *  4. Grösste Abweichung        = höchster Variationskoeffizient.
+ * Liefert `[]` bei < 2 Saisons (Vergleich braucht mindestens zwei Zeilen).
+ */
+export function buildSeasonRecommendations(
+  comparison: WeekdayComparison,
+  ranking?: SeasonWeekdayRanking[],
+): string[] {
+  const rows = comparison.rows;
+  if (rows.length < 2) return [];
+  const rank = ranking ?? buildSeasonWeekdayRanking(comparison);
+  const out: string[] = [];
+
+  // 1 + 2: global stärkste/schwächste (Wochentag, Saison)-Kombination.
+  let maxWd: IsoWeekday | null = null;
+  let maxLabel = '';
+  let maxVal = -Infinity;
+  let minWd: IsoWeekday | null = null;
+  let minLabel = '';
+  let minVal = Infinity;
+  for (const r of rank) {
+    if (r.entries.length === 0) continue;
+    const top = r.entries[0];
+    const bottom = r.entries[r.entries.length - 1];
+    if (top.value > maxVal) { maxVal = top.value; maxWd = r.weekday; maxLabel = top.label; }
+    if (bottom.value < minVal) { minVal = bottom.value; minWd = r.weekday; minLabel = bottom.label; }
+  }
+  if (maxWd !== null) {
+    out.push(`Die Saison „${maxLabel}" erzielt den stärksten ${WEEKDAY_LABEL[maxWd]}.`);
+  }
+  if (minWd !== null && !(minWd === maxWd && minLabel === maxLabel)) {
+    out.push(`Die Saison „${minLabel}" zeigt den schwächsten ${WEEKDAY_LABEL[minWd]}.`);
+  }
+
+  // 3 + 4: Variationskoeffizient je Wochentag über die Saisons (≥ 2 Werte).
+  let bestCvWd: IsoWeekday | null = null;
+  let bestCv = Infinity;
+  let worstCvWd: IsoWeekday | null = null;
+  let worstCv = -Infinity;
+  for (const wd of ISO_WEEKDAYS) {
+    const vals = rows
+      .map((r) => r.cells[wd].value)
+      .filter((v): v is number => v !== null);
+    if (vals.length < 2) continue;
+    const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+    if (mean <= 0) continue;
+    const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / vals.length;
+    const cv = Math.sqrt(variance) / mean;
+    if (cv < bestCv) { bestCv = cv; bestCvWd = wd; }
+    if (cv > worstCv) { worstCv = cv; worstCvWd = wd; }
+  }
+  if (bestCvWd !== null) {
+    out.push(`Der ${WEEKDAY_LABEL[bestCvWd]} ist über alle Saisons am konstantesten.`);
+  }
+  if (worstCvWd !== null && worstCvWd !== bestCvWd) {
+    out.push(`Die grösste Abweichung zwischen den Saisons besteht am ${WEEKDAY_LABEL[worstCvWd]}.`);
+  }
+
+  return out;
+}
