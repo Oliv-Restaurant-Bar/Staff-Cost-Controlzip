@@ -1,0 +1,308 @@
+Führe jetzt Stabilisierungsrunde 2.3 durch:
+
+updatedAt darf ausschliesslich bei einer tatsächlichen fachlichen Datenänderung aktualisiert werden.
+
+WICHTIG:
+
+Die bereits abgeschlossenen Regeln bleiben unverändert:
+
+- Reine Ladevorgänge schreiben nie.
+- Auto-Seed ist nur ein nicht persistierter View-Default.
+- Persistierung erfolgt erst nach echter Benutzeraktion.
+- Tombstones und Tenant-Trennung bleiben erhalten.
+
+Keine Rundungsänderungen.
+Kein generischer safeBlobUpsert.
+Keine UI-Neugestaltung.
+Keine neuen Funktionen.
+
+==================================================
+T001 – Vollständiger updatedAt-Audit
+==================================================
+
+Durchsuche den vollständigen Budget- und KV-Persistenzpfad nach allen Stellen, die:
+
+- updatedAt setzen
+- updatedAt erneuern
+- Date.now() verwenden
+- new Date().toISOString() verwenden
+- Objekte beim Lesen neu erzeugen
+- Migrationen oder Normalisierungen ausführen
+- Daten speichern, obwohl sich fachlich nichts geändert hat
+
+Prüfe insbesondere:
+
+- budget-store.ts
+- supabase-kv.ts
+- loadBudgetYear
+- loadBudgetWithPL
+- saveBudgetYear
+- copyBudgetYear
+- deleteBudgetYear
+- resetBudget2026ToSeed
+- syncPLToLegacyPositions
+- Migrationen und Normalisierungen
+- Tombstones
+- Tenant-Merges
+- lokale und Remote-Synchronisation
+
+Erstelle intern eine Liste aller updatedAt-Schreibstellen und klassifiziere sie:
+
+1. echte Benutzeränderung
+2. bewusster Reset/Kopie/Löschung
+3. Migration mit tatsächlicher Datenänderung
+4. reiner Lade-/Normalisierungspfad
+5. unnötiger Zeitstempel-Bump
+
+==================================================
+T002 – Dirty-Check als verbindliche Regel
+==================================================
+
+Vor jedem updatedAt-Bump muss geprüft werden, ob sich die fachlichen Daten tatsächlich verändert haben.
+
+Regel:
+
+Kein Unterschied in den fachlichen Werten
+→ gleiches Objekt beziehungsweise gleicher Zeitstempel
+→ kein Save
+→ kein KV-Write
+
+Tatsächlicher Unterschied
+→ updatedAt neu setzen
+→ normaler sicherer Save-Pfad
+
+Der Dirty-Check muss die relevanten Budgetfelder berücksichtigen, insbesondere:
+
+- Jahr
+- Monatswerte
+- Budgetpositionen
+- Prozentsätze
+- PL-Zuordnungen
+- Metadaten, sofern fachlich relevant
+- Tombstone-Status
+
+Nicht als fachliche Änderung zählen:
+
+- blosses Öffnen
+- Sortierung
+- Darstellung
+- View-Default-Flag
+- temporäre UI-Felder
+- unveränderte Migration
+- erneute Normalisierung auf denselben Wert
+- identischer Save-Klick ohne Änderung
+
+==================================================
+T003 – updatedAt-Semantik festlegen
+==================================================
+
+updatedAt bedeutet künftig ausschliesslich:
+
+„Dieser persistierte fachliche Datensatz wurde tatsächlich geändert.“
+
+updatedAt darf nicht bedeuten:
+
+- zuletzt angesehen
+- zuletzt geladen
+- zuletzt normalisiert
+- zuletzt synchronisiert
+- zuletzt gerendert
+
+Falls für Sync- oder Ladeinformationen ein Zeitstempel benötigt wird, darf dafür nicht updatedAt missbraucht werden.
+
+Keine neue Metadatenstruktur einführen, sofern sie für diesen Task nicht zwingend nötig ist.
+
+==================================================
+T004 – Mutationstypen prüfen
+==================================================
+
+Prüfe folgende Vorgänge einzeln:
+
+### Normales Speichern ohne Änderung
+
+- kein updatedAt-Bump
+- kein Remote-Write
+- kein unnötiger Toast „gespeichert“, falls nichts geändert wurde
+- optional neutraler Hinweis „Keine Änderungen“
+
+### Normales Speichern mit Änderung
+
+- updatedAt genau einmal neu setzen
+- genau ein persistierter Write
+- korrektes Tenant-Key
+- andere Jahre unverändert
+
+### Jahr kopieren
+
+- neues Zieljahr erhält neues updatedAt
+- Quelljahr bleibt unverändert
+- keine fremden Jahre betroffen
+
+### Jahr löschen
+
+- Tombstone erhält neues updatedAt
+- andere Jahre bleiben byte-identisch
+- wiederholtes Löschen ohne neue Änderung erzeugt keinen unnötigen Zeitstempel-Bump, sofern fachlich sinnvoll
+
+### Expliziter Seed-Reset
+
+- echte Mutation
+- updatedAt neu
+- genau ein Write
+
+### Migration
+
+- nur bei effektiver Wertänderung
+- unveränderte Migration lässt updatedAt bestehen
+- kein Remote-Write im Ladepfad
+
+### Tombstone-Wiederanlage
+
+- bewusste Neuanlage mit neuerem updatedAt darf alten Tombstone ersetzen
+- blosses Laden darf dies niemals tun
+
+==================================================
+T005 – Konfliktlogik prüfen
+==================================================
+
+Prüfe alle Stellen, an denen updatedAt als Konfliktkriterium verwendet wird.
+
+Sicherstellen:
+
+- neuerer echter Datensatz gewinnt gegen älteren Datensatz
+- neuerer Tombstone gewinnt gegen ältere aktive Daten
+- neuere bewusste Neuanlage gewinnt gegen älteren Tombstone
+- blosses Laden kann niemals einen Konflikt gewinnen
+- identische Datensätze erzeugen keine künstliche Konfliktentscheidung
+- Uhrzeitvergleich funktioniert konsistent
+
+Falls updatedAt irgendwo durch einen Ladepfad verfälscht wird, beheben.
+
+==================================================
+T006 – Regressionstests
+==================================================
+
+Ergänze fokussierte Tests mindestens für:
+
+1. Budget öffnen:
+   - updatedAt unverändert
+   - kein Write
+
+2. Budget mehrfach öffnen:
+   - updatedAt unverändert
+   - keine Writes
+
+3. Speichern ohne Änderung:
+   - updatedAt unverändert
+   - kein KV-Write
+
+4. Einen Monatswert ändern:
+   - updatedAt ändert sich genau einmal
+   - genau ein KV-Write
+
+5. Wert ändern und wieder auf Ursprungswert zurücksetzen, bevor gespeichert wird:
+   - keine fachliche Änderung
+   - kein updatedAt-Bump
+   - kein Write
+
+6. Migration ohne effektive Änderung:
+   - updatedAt bleibt unverändert
+
+7. Migration mit effektiver Änderung:
+   - lokale Daten werden korrekt angepasst
+   - updatedAt-Semantik bleibt korrekt
+   - Ladepfad schreibt nicht remote
+
+8. Jahr kopieren:
+   - Zieljahr neuer Zeitstempel
+   - Quelle unverändert
+
+9. Löschen:
+   - Tombstone neuer Zeitstempel
+   - andere Jahre unverändert
+
+10. Stale-Gerät:
+   - blosses Öffnen erzeugt keinen neueren Zeitstempel
+   - Remote-Stand bleibt erhalten
+
+11. Oliv und Beaulieu:
+   - Zeitstempeländerung betrifft nur den richtigen Tenant
+
+12. View-Seed:
+   - besitzt keinen persistierten updatedAt
+   - erste echte Änderung erzeugt den ersten gültigen updatedAt
+
+==================================================
+T007 – Projektweite Prüfung
+==================================================
+
+Suche zusätzlich projektweit nach vergleichbaren Mustern in angrenzenden Finanzpfaden:
+
+- Reporting
+- Tagesumsätze
+- Buchungszeilen
+
+In diesem Task keine grossen Umbauten durchführen.
+
+Falls dort dieselbe fehlerhafte updatedAt-Semantik besteht:
+
+- als konkreten Folgepunkt dokumentieren
+- nur dann direkt beheben, wenn dieselbe zentrale Funktion betroffen ist und keine zusätzliche Architekturänderung nötig ist
+
+==================================================
+T008 – Verifikation
+==================================================
+
+Führe aus:
+
+- neue Dirty-Check-Tests
+- bestehende Budget-Load-Path-Tests
+- Budget-KV- und Tombstone-Tests
+- Tenant-Tests
+- projektspezifischen TypeScript-Typecheck
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+Führe zusätzlich eine projektweite Suche durch und bestätige:
+
+- kein Ladepfad aktualisiert updatedAt
+- kein identischer Save aktualisiert updatedAt
+- jeder echte updatedAt-Bump entspricht einer fachlichen Mutation
+
+==================================================
+T009 – Dokumentation
+==================================================
+
+Aktualisiere replit.md kompakt:
+
+- updatedAt steht ausschliesslich für eine echte persistierte Datenänderung
+- Lesen, Anzeigen und unveränderte Migrationen verändern updatedAt nicht
+- identisches Speichern erzeugt keinen Write
+- Tombstones und bewusste Neuanlagen verwenden updatedAt zur Konfliktauflösung
+
+Keine Testzahlen.
+Kein Entwicklungsprotokoll.
+
+==================================================
+Abschlussbericht
+==================================================
+
+Am Ende ausgeben:
+
+1. Alle gefundenen updatedAt-Schreibstellen.
+2. Welche davon korrekt waren.
+3. Welche unnötigen Zeitstempel-Bumps entfernt wurden.
+4. Wie der Dirty-Check funktioniert.
+5. Verhalten bei Speichern ohne Änderung.
+6. Verhalten bei Migrationen.
+7. Verhalten bei Tombstones und Neuanlagen.
+8. Ergebnis des Stale-Gerät-Tests.
+9. Tenant-Test Oliv/Beaulieu.
+10. Typecheck-Ergebnis.
+11. Architect-Review-Ergebnis.
+12. Tatsächlich geänderte Dateien.
+
+WICHTIG:
+
+updatedAt ist ein Konflikt- und Änderungszeitstempel.
+
+Er darf niemals durch blosses Laden, Anzeigen oder unveränderte Normalisierung aktualisiert werden.

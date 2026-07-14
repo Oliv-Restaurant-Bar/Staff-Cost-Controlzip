@@ -204,16 +204,29 @@ describe('C1: loadBudgetWithPL ist ein reiner Ladevorgang (kein Supabase-Write)'
     expect(state.writeCount).toBe(writesBefore);
   });
 
-  it('explizites Speichern nach dem Laden erreicht das KV-Backup weiterhin', async () => {
+  it('explizites Speichern nach dem Laden erreicht das KV-Backup weiterhin (bei echter Änderung)', async () => {
     localStorageStore[KEY] = JSON.stringify({ 2027: realYear(2027, '2027-01-01T12:00:00.000Z', 111) });
 
+    // Runde 2.3: Speichern OHNE fachliche Änderung ist ein No-op (Dirty-Check)
+    const unchanged = loadBudgetWithPL(2027, KEY);
+    saveBudgetYear(unchanged, KEY);
+    await flushBudgetKVBackups();
+    expect(state.writeCount).toBe(0);
+
+    // Echte Benutzeränderung erreicht das KV-Backup weiterhin
     const budget = loadBudgetWithPL(2027, KEY);
-    saveBudgetYear(budget, KEY); // echte Benutzer-Speicheraktion
+    const item = budget.plLineItems!.find(i => i.id === 'pli_test')!;
+    const vals = [...item.monthlyValues] as BudgetPLLineItem['monthlyValues'];
+    vals[1] = 4242;
+    saveBudgetYear({
+      ...budget,
+      plLineItems: budget.plLineItems!.map(i => i.id === 'pli_test' ? { ...i, monthlyValues: vals } : i),
+    }, KEY);
     await flushBudgetKVBackups();
 
     expect(state.writeCount).toBe(1);
     const remote = state.rows[KEY] as Record<string, StoredBudgetYear>;
-    expect(remote['2027'].plLineItems?.some(i => i.id === 'pli_test')).toBe(true);
+    expect(remote['2027'].plLineItems?.find(i => i.id === 'pli_test')?.monthlyValues[1]).toBe(4242);
   });
 });
 
@@ -228,7 +241,7 @@ describe('syncPLToLegacyPositions: Dirty Check', () => {
     expect(second.updatedAt).toBe(first.updatedAt);
   });
 
-  it('geänderte P&L-Werte ⇒ neue Positionen und neues updatedAt', () => {
+  it('geänderte P&L-Werte ⇒ neue Positionen, aber KEIN updatedAt-Bump (setzt nur der Save-Pfad)', () => {
     const first = syncPLToLegacyPositions(realYear(2027, '2027-01-01T12:00:00.000Z', 111));
     // Umsatzposition ergänzen — fliesst in budget_revenue ein und ändert
     // damit die Legacy-Positionen effektiv.
@@ -250,7 +263,9 @@ describe('syncPLToLegacyPositions: Dirty Check', () => {
     const second = syncPLToLegacyPositions(modified);
     expect(second).not.toBe(modified);
     expect(second.positions.find(p => p.id === 'budget_revenue')?.monthlyValues[0]).toBe(500);
-    expect(second.updatedAt).not.toBe('2027-01-01T12:00:00.000Z');
+    // Runde 2.3: Der Legacy-Sync ist eine Ableitung — updatedAt stempelt
+    // ausschliesslich saveBudgetYear (und nur bei echter fachlicher Änderung).
+    expect(second.updatedAt).toBe('2027-01-01T12:00:00.000Z');
   });
 });
 

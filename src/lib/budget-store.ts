@@ -55,6 +55,43 @@ function hasRealBudgetValues(b: StoredBudgetYear | undefined | null): boolean {
   return !!b && !b.deleted && !!b.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
 }
 
+/**
+ * Deterministische Serialisierung (Schlüssel sortiert, `undefined`-Felder wie
+ * bei JSON ausgelassen) — Grundlage des fachlichen Dirty-Checks.
+ */
+function stableStringify(v: unknown): string {
+  if (Array.isArray(v)) return '[' + v.map(stableStringify).join(',') + ']';
+  if (v && typeof v === 'object') {
+    const obj = v as Record<string, unknown>;
+    const parts = Object.keys(obj)
+      .filter(k => obj[k] !== undefined)
+      .sort()
+      .map(k => JSON.stringify(k) + ':' + stableStringify(obj[k]));
+    return '{' + parts.join(',') + '}';
+  }
+  return JSON.stringify(v);
+}
+
+/**
+ * Fachlicher Vergleich zweier Budgetjahre (Dirty-Check).
+ *
+ * `updatedAt` bedeutet ausschliesslich: «Dieser persistierte fachliche
+ * Datensatz wurde tatsächlich geändert.» Deshalb zählen NICHT zum Vergleich:
+ *  - createdAt/updatedAt (Zeitstempel sind Folge, nicht Teil der Änderung)
+ *  - viewDefault (transientes UI-Flag, nie persistiert)
+ *  - deleted (Tombstone-Status wird im Save-/Delete-Pfad separat behandelt)
+ * Alles andere ist fachlich: Jahr, Monatswerte, Positionen, Regeln,
+ * Prozentsätze, P&L-Kategorien/-Zuordnungen, copiedFromYear, wasAutoCalculated.
+ */
+function budgetBusinessEqual(a: StoredBudgetYear, b: StoredBudgetYear): boolean {
+  const strip = (x: StoredBudgetYear): Record<string, unknown> => {
+    const { createdAt: _c, updatedAt: _u, viewDefault: _v, deleted: _d, ...rest } =
+      x as StoredBudgetYear & Record<string, unknown>;
+    return rest;
+  };
+  return stableStringify(strip(a)) === stableStringify(strip(b));
+}
+
 function loadAll(storeKey: string = STORAGE_KEY): Record<number, StoredBudgetYear> {
   try {
     return JSON.parse(localStorage.getItem(storeKey) || '{}');
@@ -211,27 +248,43 @@ export function resetBudget2026ToSeed(storeKey: string = STORAGE_KEY): BudgetYea
   const seeded = storeKey === 'beaulieu:budget_v1'
     ? createSeededBeaulieuBudget2026()
     : createSeededBudget2026();
-  saveBudgetYear(seeded, storeKey);
-  return seeded;
+  return saveBudgetYear(seeded, storeKey);
 }
 
 /**
  * Budgetjahr speichern.
  * Überschreibt das bestehende Jahr komplett.
+ *
+ * Dirty-Check (verbindliche Regel): `updatedAt` wird NUR neu gesetzt, wenn
+ * sich die fachlichen Daten tatsächlich geändert haben. Ein identischer Save
+ * (gleiche Werte, gleiche Struktur) erzeugt weder einen updatedAt-Bump noch
+ * einen localStorage-/KV-Write — sonst würde ein wirkungsloser Klick in
+ * newer-wins-Merges fälschlich gegen echte Remote-Änderungen gewinnen.
+ * Ausnahmen, die IMMER speichern: Jahr existiert noch nicht, oder es liegt
+ * ein Tombstone vor (bewusste Neuanlage ersetzt ihn mit neuerem updatedAt).
+ *
+ * @returns den tatsächlich persistierten Datensatz — bei unverändertem
+ *          Inhalt der bestehende Record (alter updatedAt bleibt gültig).
  */
-export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): void {
+export function saveBudgetYear(data: BudgetYear, storeKey: string = STORAGE_KEY): BudgetYear {
   const all = loadAll(storeKey);
-  const rec: StoredBudgetYear = {
-    ...data,
-    updatedAt: new Date().toISOString(),
-  };
+  const rec: StoredBudgetYear = { ...data };
   // Explizites Speichern ersetzt einen allfälligen Tombstone (Jahr-Neuanlage)
   delete rec.deleted;
   // Erste echte Benutzeraktion auf einem View-Default (2026-Seed) macht daraus
   // ein reguläres Budget — das transiente Flag wird nie mitpersistiert.
   delete rec.viewDefault;
+
+  const existing = all[data.year];
+  if (existing && !existing.deleted && budgetBusinessEqual(existing, rec)) {
+    // Keine fachliche Änderung → kein updatedAt-Bump, kein Write.
+    return existing;
+  }
+
+  rec.updatedAt = new Date().toISOString();
   all[data.year] = rec;
   saveAll(all, storeKey, { year: data.year });
+  return rec;
 }
 
 /**
@@ -251,6 +304,10 @@ export function availableBudgetYears(storeKey: string = STORAGE_KEY): number[] {
  */
 export function deleteBudgetYear(year: number, storeKey: string = STORAGE_KEY): void {
   const all = loadAll(storeKey);
+  // Wiederholtes Löschen eines bereits getilgten Jahres ist keine fachliche
+  // Änderung: der bestehende Tombstone (samt updatedAt) bleibt unangetastet,
+  // es gibt keinen weiteren Write.
+  if (all[year]?.deleted) return;
   const now = new Date().toISOString();
   // Tombstone statt Hard-Delete: ein stales Gerät mit altem localStorage darf
   // das Jahr beim nächsten Backup-Merge nicht wiederbeleben (newer-wins gegen
@@ -323,8 +380,7 @@ export function copyBudgetYear(
     newBudget = applyRulesToBudget(newBudget);
   }
 
-  saveBudgetYear(newBudget, storeKey);
-  return newBudget;
+  return saveBudgetYear(newBudget, storeKey);
 }
 
 // ─── Regel-Engine ─────────────────────────────────────────────────────────────
@@ -418,11 +474,13 @@ export function applyRulesToBudget(budget: BudgetYear): BudgetYear {
     }
   }
 
+  // Kein updatedAt-Bump: applyRulesToBudget ist eine reine Funktion — den
+  // Änderungszeitstempel setzt ausschliesslich der Save-Pfad (saveBudgetYear),
+  // und nur wenn sich fachlich etwas geändert hat.
   return {
     ...budget,
     positions,
     wasAutoCalculated: budget.rules.length > 0,
-    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -488,9 +546,7 @@ export function updateBudgetPosition(
   const positions = budget.positions.map(p =>
     p.id === updatedPosition.id ? updatedPosition : p,
   );
-  const updated = { ...budget, positions, updatedAt: new Date().toISOString() };
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear({ ...budget, positions }, storeKey);
 }
 
 // ─── Regeln-Verwaltung ────────────────────────────────────────────────────────
@@ -505,13 +561,7 @@ export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'creat
     id: uuidv4(),
     createdAt: new Date().toISOString(),
   };
-  const updated = {
-    ...budget,
-    rules:     [...budget.rules, newRule],
-    updatedAt: new Date().toISOString(),
-  };
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear({ ...budget, rules: [...budget.rules, newRule] }, storeKey);
 }
 
 /**
@@ -519,13 +569,7 @@ export function addBudgetRule(year: number, rule: Omit<BudgetRule, 'id' | 'creat
  */
 export function removeBudgetRule(year: number, ruleId: string, storeKey: string = STORAGE_KEY): BudgetYear {
   const budget = loadBudgetYear(year, storeKey);
-  const updated = {
-    ...budget,
-    rules:     budget.rules.filter(r => r.id !== ruleId),
-    updatedAt: new Date().toISOString(),
-  };
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear({ ...budget, rules: budget.rules.filter(r => r.id !== ruleId) }, storeKey);
 }
 
 // ─── P&L Struktur (neue Budget-Erfolgsrechnung) ───────────────────────────────
@@ -809,8 +853,7 @@ export function restoreMissingDefaultPLItems(year: number, storeKey: string = ST
     ...budget,
     plLineItems: [...items, ...missing.map(createDefaultPLLineItem)],
   };
-  saveBudgetYear(updated, storeKey);
-  return { budget: updated, added: missing.length };
+  return { budget: saveBudgetYear(updated, storeKey), added: missing.length };
 }
 
 /**
@@ -825,8 +868,7 @@ export function resetPLToDefaults(year: number, storeKey: string = STORAGE_KEY):
     plCategories: DEFAULT_PL_CATEGORIES.map(c => ({ ...c })),
     plLineItems: DEFAULT_PL_LINE_ITEMS.map(createDefaultPLLineItem),
   };
-  saveBudgetYear(reset, storeKey);
-  return reset;
+  return saveBudgetYear(reset, storeKey);
 }
 
 /**
@@ -838,8 +880,7 @@ export function deletePLLineItem(year: number, itemId: string, storeKey: string 
     ...budget,
     plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
   });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -920,8 +961,7 @@ export function savePLLineItem(year: number, item: BudgetPLLineItem, storeKey: s
     : [...budget.plLineItems!, item];
 
   const updated = syncPLToLegacyPositions({ ...budget, plLineItems: lineItems });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -943,8 +983,7 @@ export function addCustomPLLineItem(
     ...budget,
     plLineItems: [...budget.plLineItems!, newItem],
   });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -960,8 +999,7 @@ export function removeCustomPLLineItem(year: number, itemId: string, storeKey: s
     ...budget,
     plLineItems: budget.plLineItems!.filter(i => i.id !== itemId),
   });
-  saveBudgetYear(updated, storeKey);
-  return updated;
+  return saveBudgetYear(updated, storeKey);
 }
 
 /**
@@ -1047,10 +1085,9 @@ export function syncPLToLegacyPositions(budget: BudgetYear): BudgetYear {
   });
   setPos('budget_insurance', adminTotal);
 
-  // Dirty Check: updatedAt (und Objektidentität) nur ändern, wenn sich die
-  // Legacy-Positionen effektiv geändert haben — sonst würde jeder reine
-  // Ladevorgang das Budget als «geändert» stempeln (Write-Amplification und
-  // stale Daten, die in newer-wins-Merges fälschlich gewinnen).
+  // Dirty Check (Objektidentität): Nur wenn sich die Legacy-Positionen
+  // effektiv geändert haben, entsteht ein neues Objekt — sonst würde jeder
+  // reine Ladevorgang das Budget als «geändert» behandeln.
   if (
     budget.positions.length > 0 &&
     JSON.stringify(budget.positions) === JSON.stringify(positions)
@@ -1058,5 +1095,9 @@ export function syncPLToLegacyPositions(budget: BudgetYear): BudgetYear {
     return budget;
   }
 
-  return { ...budget, positions, updatedAt: new Date().toISOString() };
+  // Kein updatedAt-Bump: der Legacy-Sync ist eine Ableitung, keine
+  // Benutzeränderung. Den Änderungszeitstempel setzt ausschliesslich
+  // saveBudgetYear — im reinen Ladepfad bleibt updatedAt unverändert
+  // (persistMigratedBudgetLocally übernimmt den bestehenden Wert).
+  return { ...budget, positions };
 }

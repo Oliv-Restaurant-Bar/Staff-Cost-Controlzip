@@ -461,10 +461,15 @@ function BudgetContent() {
 
   const handleApplyRules = () => {
     if (budget.rules.length === 0) { toast.info('Keine Regeln definiert.'); return; }
-    const upd = applyRulesToBudget(budget);
-    saveBudgetYear(upd, tenantKey(BUDGET_STORAGE_KEY));
-    setBudget(upd);
-    toast.success(`${budget.rules.length} Regel(n) angewendet`);
+    // saveBudgetYear liefert den tatsächlich persistierten Stand zurück —
+    // ohne fachliche Änderung bleibt updatedAt unverändert (kein Write).
+    const saved = saveBudgetYear(applyRulesToBudget(budget), tenantKey(BUDGET_STORAGE_KEY));
+    setBudget(saved);
+    if (saved.updatedAt === budget.updatedAt) {
+      toast.info('Keine Änderungen — Regeln ergaben dieselben Werte.');
+    } else {
+      toast.success(`${budget.rules.length} Regel(n) angewendet`);
+    }
   };
 
   const handleRestoreDefaults = () => {
