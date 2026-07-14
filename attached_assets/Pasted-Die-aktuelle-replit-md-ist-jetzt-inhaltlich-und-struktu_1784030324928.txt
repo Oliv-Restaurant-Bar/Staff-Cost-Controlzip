@@ -1,0 +1,112 @@
+Die aktuelle replit.md ist jetzt inhaltlich und strukturell gut. Führe KEINE weitere grosse Umstrukturierung mehr durch.
+
+Ziel dieser Runde:
+
+Die Datei nur noch qualitativ verbessern, ohne ihren Aufbau zu verändern.
+
+WICHTIG:
+
+- Keine Kapitel verschieben.
+- Keine Kapitel löschen.
+- Keine neuen grossen Abschnitte einfügen.
+- Keine Architekturentscheidungen ändern.
+- Keine fachlichen Regeln verändern.
+- Keine Codeänderungen.
+- Keine Tests.
+- Keine Build- oder TypeScript-Läufe.
+
+Arbeite ausschliesslich an replit.md.
+
+Verbesserungen:
+
+1. Entwicklungsprinzipien ergänzen
+
+Füge direkt nach den UI-/UX-Richtlinien einen neuen kompakten Abschnitt ein:
+
+## Entwicklungsprinzipien
+
+Dokumentiere die dauerhaft gültigen Projektregeln kompakt:
+
+- Bestehende Komponenten, Hooks und Utilities wiederverwenden.
+- Keine parallelen Berechnungen oder Datenquellen.
+- Neue Funktionen müssen sich in bestehende Seiten und Workflows integrieren.
+- Bestehende Dialoge und Drilldowns bevorzugen.
+- Neue UI muss dem bestehenden Designsystem folgen.
+- Desktop-first.
+- Responsive ohne Informationsverlust.
+- Wichtige Kennzahlen möglichst oberhalb des sichtbaren Bereichs.
+- Scrollen und Leerraum minimieren.
+- Filter müssen klar auf alle Auswertungen wirken.
+- Exporte müssen dieselbe Logik wie die UI verwenden.
+- Neue Features dürfen bestehende Architekturprinzipien nicht umgehen.
+
+Nur kompakt formulieren.
+
+2. Zu technische Implementierungsdetails reduzieren
+
+Die replit.md ist eine Architektur- und Projektdokumentation.
+
+Ersetze deshalb übermässig technische Implementierungsdetails durch allgemein verständliche Architekturregeln.
+
+Beispiele:
+
+statt
+
+safeUpsertReportingMonth
+
+→ sichere Merge-Schreibpfade für Reportingdaten
+
+statt
+
+computeSourceStatus
+
+→ zentrale Statusberechnung
+
+statt
+
+employee-rate.ts
+
+→ zentrale Arbeitgeberkostenberechnung
+
+statt
+
+reservation-crm.ts
+
+→ zentrale CRM-Berechnungslogik
+
+WICHTIG:
+
+Keine Informationen entfernen.
+
+Nur die Formulierung allgemeiner machen.
+
+3. Keine Dateiliste als Dokumentation
+
+Vermeide lange Aufzählungen einzelner Dateien oder Funktionen, wenn dieselbe Aussage auch architektonisch beschrieben werden kann.
+
+Die Datei soll erklären:
+
+- WAS existiert.
+- WARUM es so aufgebaut ist.
+- WELCHE Regeln gelten.
+
+Nicht jede interne Datei dokumentieren.
+
+4. Konsistenzprüfung
+
+Kontrolliere zum Schluss:
+
+- keine doppelten Regeln entstanden
+- keine Kapitel verschoben
+- keine Architekturentscheidung verändert
+- EBIT-Regel unverändert vorhanden
+- Warenaufwand-Regel unverändert vorhanden
+- Exportregeln unverändert vorhanden
+- Roadmap unverändert vorhanden
+
+Abschlussausgabe:
+
+- Welche Formulierungen wurden vereinfacht?
+- Wurde der neue Abschnitt "Entwicklungsprinzipien" ergänzt?
+- Wurden nur Dokumentationsänderungen vorgenommen?
+- Bestätigung, dass ausschliesslich replit.md geändert wurde.

@@ -1,0 +1,356 @@
+Erweitere jetzt die Erfolgsrechnung und die Mehrjahresanalyse so, dass auch das Geschäftsjahr 2024 vollständig importiert, gespeichert, angezeigt, verglichen und exportiert werden kann.
+
+Ziel:
+
+Ich möchte die Jahre 2024, 2025 und 2026 in der Erfolgsrechnung gegenüberstellen können, damit insbesondere folgende Entwicklung nachvollziehbar wird:
+
+- Umsatzentwicklung
+- Personalkostenentwicklung
+- Personalquote
+- Warenaufwand
+- EBIT
+- absolute Veränderung
+- prozentuale Veränderung
+
+Wichtig:
+
+Es dürfen keine Werte geschätzt, hochgerechnet oder aus anderen Jahren übernommen werden.
+
+2024 darf nur Werte anzeigen, die tatsächlich importiert und fachlich korrekt zugeordnet wurden.
+
+Fehlende Werte bleiben null beziehungsweise „—“ und dürfen niemals stillschweigend als 0 dargestellt werden.
+
+## 1. Bestehende Architektur zuerst prüfen
+
+Lies zuerst die aktuelle Implementierung für:
+
+- Erfolgsrechnung
+- P&L-Engine
+- Reporting-Store
+- Jahres-Kosten-Import
+- Tagesumsatz- beziehungsweise Umsatzimporte
+- Mehrjahresanalyse
+- Management Report
+- Banken- und Investorenbericht
+- Excel- und PDF-Exporte
+- Import-Registry
+- bestehende Daten für 2025 und 2026
+
+Nutze zwingend die bestehende zentrale Berechnungslogik.
+
+Keine parallele P&L-Berechnung und keine separate Sonderlogik nur für 2024 erstellen.
+
+## 2. Geschäftsjahr 2024 unterstützen
+
+Prüfe alle Stellen auf fest codierte Jahresgrenzen wie:
+
+- nur 2025 und 2026
+- aktuelles Jahr und Vorjahr
+- Mindestjahr 2025
+- fix definierte Jahresauswahl
+- begrenzte Import-Auswahl
+- begrenzte Export-Auswahl
+
+Entferne solche Einschränkungen nur dort, wo sie die Nutzung von 2024 verhindern.
+
+2024 muss als reguläres Geschäftsjahr behandelt werden.
+
+Die bestehende Mandantentrennung für Oliv und Beaulieu muss vollständig erhalten bleiben.
+
+## 3. Import für 2024
+
+Erweitere den bestehenden Importweg so, dass beim Import eines Sage-Kontoblatts beziehungsweise der vorhandenen Erfolgsrechnungsdaten das Zieljahr 2024 gewählt oder automatisch korrekt erkannt werden kann.
+
+Dabei gelten dieselben Regeln wie bei 2025:
+
+- Perioden und Monate korrekt erkennen
+- Umsätze und Kosten den richtigen Monaten zuordnen
+- nur tatsächlich enthaltene Werte übernehmen
+- bestehende sichere Merge-Schreibpfade verwenden
+- andere Jahre nicht überschreiben
+- andere Datenfelder desselben Monats nicht unbeabsichtigt löschen
+- wiederholter identischer Import muss idempotent sein
+- Importstatus für 2024 in der bestehenden Import-Registry speichern
+- Löschen beziehungsweise Zurücksetzen nach bestehender Tombstone-Logik
+- sichtbare Fehlermeldung bei nicht erkennbarer Jahres- oder Periodenstruktur
+- kein stiller Fallback auf 2025 oder 2026
+
+Falls Umsätze und Kosten aus getrennten Datenquellen stammen, dokumentiere dies im Importdialog klar und führe beide Quellen in der Erfolgsrechnung korrekt zusammen.
+
+## 4. Erfolgsrechnung
+
+In der Erfolgsrechnung muss das Jahr 2024 auswählbar sein.
+
+Für jeden Monat sowie das Gesamtjahr müssen mindestens dieselben Positionen wie für 2025 und 2026 dargestellt werden:
+
+- Umsatz
+- direkter Warenaufwand
+- übriger Warenaufwand
+- Warenaufwand total
+- Bruttogewinn
+- Personalaufwand
+- übrige betriebliche Kosten
+- EBITDA, sofern heute vorhanden
+- Abschreibungen
+- EBIT
+
+Der Bericht endet weiterhin bewusst bei EBIT.
+
+Keine Jahresgewinn-Zeile ergänzen.
+
+Der bestehende Hinweis bleibt unverändert:
+
+„Finanzergebnis und Steuern sind in dieser Auswertung nicht enthalten. Der Bericht endet daher bei EBIT.“
+
+Fehlende Monate und fehlende Konten müssen als „—“ beziehungsweise fehlend erscheinen und dürfen nicht zu 0 werden.
+
+## 5. Vergleich 2024, 2025 und 2026
+
+Erweitere die bestehende Mehrjahresanalyse so, dass standardmässig die letzten drei vorhandenen Jahre angezeigt werden können:
+
+- 2024
+- 2025
+- 2026
+
+Die Auswahl soll weiterhin flexibel bleiben.
+
+Zeige pro Kennzahl:
+
+- Wert 2024
+- Wert 2025
+- Wert 2026
+- Veränderung 2025 gegenüber 2024 in CHF
+- Veränderung 2025 gegenüber 2024 in %
+- Veränderung 2026 gegenüber 2025 in CHF
+- Veränderung 2026 gegenüber 2025 in %
+- optional Veränderung 2026 gegenüber 2024, falls dies bereits in die bestehende Analyse passt
+
+Mindestens folgende Kennzahlen müssen vergleichbar sein:
+
+### Umsatz
+
+- Umsatz total
+- absolute Veränderung
+- prozentuale Veränderung
+
+### Personal
+
+- Personalaufwand total
+- Personalaufwand absolute Veränderung
+- Personalaufwand prozentuale Veränderung
+- Personalquote = Personalaufwand / Umsatz
+- Veränderung der Personalquote in Prozentpunkten
+
+### Ergebnis
+
+- Bruttogewinn
+- EBITDA, sofern vorhanden
+- EBIT
+- EBIT-Marge
+- Veränderung in CHF, Prozent und Prozentpunkten
+
+## 6. Teiljahresvergleich
+
+2026 kann ein noch nicht abgeschlossenes Jahr sein.
+
+Deshalb dürfen keine irreführenden Ganzjahresvergleiche entstehen.
+
+Nutze die bestehende Common-Month-Logik:
+
+Beispiel:
+
+Wenn 2026 nur Daten bis Juni enthält, vergleiche:
+
+- Januar bis Juni 2024
+- Januar bis Juni 2025
+- Januar bis Juni 2026
+
+Zeige klar an:
+
+„Vergleich bis gleicher Monat“
+
+Volle Jahressummen dürfen nur dann direkt miteinander verglichen werden, wenn die betreffenden Jahre vollständig sind.
+
+Teiljahre müssen sichtbar als Teiljahr gekennzeichnet werden.
+
+Keine Hochrechnung auf zwölf Monate.
+
+## 7. Spezifische Personalkostenanalyse
+
+Ergänze innerhalb der bestehenden Mehrjahresanalyse einen klaren, kompakten Analyseblock für die Personalentwicklung.
+
+Darstellung:
+
+- Umsatz
+- Personalaufwand
+- Personalquote
+- Umsatzveränderung
+- Personalkostenveränderung
+- Veränderung Personalquote
+
+Ergänze eine sachliche regelbasierte Aussage, zum Beispiel:
+
+- „Der Umsatz ist stärker gestiegen als die Personalkosten.“
+- „Die Personalkosten sind stärker gestiegen als der Umsatz.“
+- „Die Personalquote hat sich verbessert.“
+- „Die Personalquote hat sich verschlechtert.“
+- „Ein Vergleich ist aufgrund fehlender Daten nicht möglich.“
+
+Diese Aussagen dürfen ausschliesslich aus vorhandenen Werten abgeleitet werden.
+
+Keine KI-Schätzungen und keine erfundenen Begründungen.
+
+## 8. Drilldown
+
+Ein Klick auf Umsatz oder Personalaufwand soll, sofern das bestehende Drilldown-Muster dies bereits unterstützt, die Zusammensetzung zeigen:
+
+- nach Jahr
+- nach Monat
+- Plan beziehungsweise Budget, falls vorhanden
+- Ist
+- Vorjahr
+- absolute Abweichung
+- prozentuale Abweichung
+
+Für Personalaufwand zusätzlich:
+
+- Löhne
+- Sozialleistungen
+- übriger Personalaufwand, sofern in der Erfolgsrechnung separat vorhanden
+
+Die Summe des Drilldowns muss sichtbar mit der übergeordneten Kennzahl abgestimmt werden.
+
+Keine neue Datenquelle und keine zusätzliche Berechnungslogik.
+
+## 9. Banken- und Investorenbericht
+
+2024 muss auch im bestehenden Banken- und Investorenbericht auswählbar sein.
+
+Unterstütze insbesondere:
+
+- 2024 gegenüber 2025
+- 2025 gegenüber 2026
+- 2024 bis 2026 als Dreijahresentwicklung
+
+Die Scorecard, Historie, Waterfall- und Treiberanalyse müssen weiterhin auf der bestehenden P&L-Engine basieren.
+
+Der Bericht endet unverändert bei EBIT.
+
+## 10. Export
+
+Erweitere die bestehenden Exporte, sodass 2024 in allen relevanten Ausgaben enthalten sein kann:
+
+- Erfolgsrechnung Excel
+- Erfolgsrechnung PDF, sofern vorhanden
+- Mehrjahresanalyse Excel
+- Management Report PDF
+- Banken- und Investorenbericht PDF
+- Banken- und Investorenbericht Excel
+
+Export und UI müssen dieselben Datenobjekte verwenden.
+
+Keine separate Exportberechnung.
+
+Im Mehrjahres-Export müssen mindestens enthalten sein:
+
+- 2024
+- 2025
+- 2026
+- Umsatz
+- Personalaufwand
+- Personalquote
+- Warenaufwand
+- EBIT
+- absolute Veränderungen
+- prozentuale Veränderungen
+- Veränderung der Quoten in Prozentpunkten
+- Hinweis bei Teiljahresvergleich
+- Datenqualitäts- beziehungsweise Fehlend-Hinweise
+
+Der bestehende EBIT-Hinweis muss in UI, PDF und Excel identisch bleiben.
+
+## 11. UI und Design
+
+Die Erweiterung muss sich vollständig in das bestehende Designsystem integrieren.
+
+Vorgaben:
+
+- schlicht, modern und professionell
+- bestehende Komponenten wiederverwenden
+- keine neue optische Sonderlösung nur für 2024
+- Jahre kompakt auswählbar
+- standardmässig nicht mehr als vier wichtige KPI-Karten gleichzeitig
+- Umsatz- und Personalentwicklung früh sichtbar
+- Tabellen mit Sticky Header
+- Zahlen rechtsbündig und mit tabular-nums
+- CHF und Prozentwerte im de-CH-Format
+- positive und negative Entwicklung fachlich korrekt färben
+- bei Kosten ist tiefer grundsätzlich positiv, sofern der Umsatzbezug dies fachlich bestätigt
+- neutrale Darstellung bei fehlender Vergleichsbasis
+- keine unnötigen Texte oder grossen Leerflächen
+- responsive ohne Informationsverlust
+
+## 12. Tests
+
+Ergänze fokussierte Regressionstests für mindestens:
+
+- 2024 ist auswählbar
+- Import speichert Werte im Jahr 2024 und nicht in 2025 oder 2026
+- wiederholter identischer 2024-Import erzeugt keine Doppelwerte
+- bestehende Monatsdaten anderer Jahre bleiben unverändert
+- fehlende 2024-Werte bleiben null beziehungsweise „—“
+- Umsatzvergleich 2024 zu 2025 korrekt
+- Personalkostenvergleich 2024 zu 2025 korrekt
+- Personalquote korrekt
+- Veränderung der Personalquote in Prozentpunkten korrekt
+- Common-Month-Vergleich 2024/2025/2026 korrekt
+- kein Hochrechnen eines Teiljahres
+- Drilldown-Summe stimmt mit der übergeordneten Kennzahl überein
+- UI und Export verwenden dieselben Werte
+- Bankenbericht endet weiterhin bei EBIT
+- keine Jahresgewinn-Zeile
+- Warenaufwand-Zuordnung 4000–4070 und 4071–4900 unverändert
+- Tenant-Trennung Oliv/Beaulieu bleibt korrekt
+
+Führe danach aus:
+
+- fokussierte betroffene Tests
+- TypeScript-Typecheck mit dem projektspezifisch korrekten Befehl
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+## 13. Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit dem tatsächlich umgesetzten Verhalten:
+
+- Erfolgsrechnung unterstützt 2024 als reguläres Jahr
+- Mehrjahresanalyse 2024–2026
+- Umsatz- und Personalkostenentwicklung
+- Personalquote und Veränderung in Prozentpunkten
+- Common-Month-Vergleich bei Teiljahren
+- 2024 in relevanten Exporten
+- keine Schätzungen
+- fehlend ≠ 0
+- Bericht endet bei EBIT
+
+Keine Testzahlen und kein Entwicklungsprotokoll in replit.md aufnehmen.
+
+## Abschluss
+
+Gib am Ende eine klare Zusammenfassung aus:
+
+1. Welche bisherigen Jahresbegrenzungen gefunden wurden.
+2. Wie 2024 importiert und gespeichert wird.
+3. Welche Ansichten jetzt 2024 unterstützen.
+4. Wie Umsatz und Personalkosten verglichen werden.
+5. Wie Teiljahre behandelt werden.
+6. Welche Exporte erweitert wurden.
+7. Welche Tests ergänzt wurden.
+8. Ergebnis des Typechecks.
+9. Ergebnis des Architect-Reviews.
+10. Liste der tatsächlich geänderten Dateien.
+
+Arbeite direkt und vollständig.
+
+Keine Werte für 2024 erfinden.
+
+Falls noch keine echte 2024-Datei importiert wurde, muss die Anwendung nach der Umsetzung 2024 korrekt anbieten, aber die Werte bis zum tatsächlichen Import als „—“ anzeigen.
