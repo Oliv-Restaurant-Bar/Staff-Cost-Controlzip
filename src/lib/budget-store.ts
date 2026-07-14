@@ -731,7 +731,8 @@ function migrateSeedZeroValues2026(budget: BudgetYear, storeKey: string = STORAG
  * Budgetjahr laden und P&L-Struktur sicherstellen.
  */
 export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): BudgetYear {
-  let budget = loadBudgetYear(year, storeKey);
+  const original = loadBudgetYear(year, storeKey);
+  let budget = original;
   if (!budget.plCategories || !budget.plLineItems) {
     budget = initPLStructure(budget);
   }
@@ -742,15 +743,42 @@ export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): 
   budget = migrateSeedZeroValues2026(budget, storeKey);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);
-  // Nur zurückschreiben wenn echte Daten vorhanden.
-  // Ein leeres Budget NICHT nach Supabase schreiben — das würde dort gespeicherte
-  // Seed-Daten (z.B. von seedBeaulieuBudget2026) überschreiben, bevor sie in
-  // localStorage geladen wurden (race condition beim ersten Seitenaufruf).
-  const hasRealData = budget.plLineItems?.some(i => i.monthlyValues.some(v => v !== 0));
-  if (hasRealData) {
-    saveBudgetYear(budget, storeKey);
+  // Reiner Ladepfad: schreibt NIE nach Supabase (kein saveBudgetYear, kein
+  // KV-Backup). Der frühere saveBudgetYear-Aufruf hier stempelte updatedAt neu
+  // und liess ein Gerät mit stalem localStorage beim blossen ÖFFNEN den
+  // neueren Remote-Stand überschreiben (das Aktionsjahr gewinnt im Merge).
+  // Migrations-/Sync-Ergebnisse werden nur LOKAL persistiert — und nur, wenn
+  // eine Migration effektiv etwas geändert hat (alle Migrationsschritte geben
+  // bei «keine Änderung» dieselbe Objektreferenz zurück).
+  if (budget !== original) {
+    persistMigratedBudgetLocally(budget, storeKey);
   }
   return budget;
+}
+
+/**
+ * Persistiert ein beim Laden migriertes Budget NUR in localStorage:
+ *  - nie nach Supabase (ein reiner Ladevorgang löst kein KV-Backup aus),
+ *  - nie ein neues Jahr anlegen (nur bestehende Records werden migriert),
+ *  - nie einen Tombstone überschreiben (gelöschte Jahre bleiben gelöscht),
+ *  - createdAt/updatedAt bleiben unverändert — eine Migration ist keine
+ *    Benutzeränderung; ein updatedAt-Bump würde stale Daten in
+ *    newer-wins-Merges fälschlich gewinnen lassen.
+ */
+function persistMigratedBudgetLocally(budget: BudgetYear, storeKey: string): void {
+  try {
+    const all = loadAll(storeKey);
+    const existing = all[budget.year];
+    if (!existing || existing.deleted) return;
+    all[budget.year] = {
+      ...budget,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt,
+    };
+    localStorage.setItem(storeKey, JSON.stringify(all));
+  } catch {
+    /* localStorage nicht verfügbar — Migration bleibt in-memory */
+  }
 }
 
 /**
@@ -1041,6 +1069,17 @@ export function syncPLToLegacyPositions(budget: BudgetYear): BudgetYear {
     i.monthlyValues.forEach((v, m) => { adminTotal[m] += v; });
   });
   setPos('budget_insurance', adminTotal);
+
+  // Dirty Check: updatedAt (und Objektidentität) nur ändern, wenn sich die
+  // Legacy-Positionen effektiv geändert haben — sonst würde jeder reine
+  // Ladevorgang das Budget als «geändert» stempeln (Write-Amplification und
+  // stale Daten, die in newer-wins-Merges fälschlich gewinnen).
+  if (
+    budget.positions.length > 0 &&
+    JSON.stringify(budget.positions) === JSON.stringify(positions)
+  ) {
+    return budget;
+  }
 
   return { ...budget, positions, updatedAt: new Date().toISOString() };
 }
