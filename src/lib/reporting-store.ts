@@ -321,6 +321,17 @@ export function availableYears(storeKey: string = STORAGE_KEY): number[] {
   return Array.from(years).sort((a, b) => b - a); // Neueste zuerst
 }
 
+/**
+ * Optionen für Jahr-Selektoren: Jahre mit Daten ∪ [aktuell−2 … aktuell+1],
+ * aufsteigend sortiert. Macht abgeschlossene Geschäftsjahre (z. B. 2024)
+ * wählbar, auch bevor Daten importiert wurden — ohne harte Jahreszahlen.
+ */
+export function yearSelectOptions(available: number[], current: number): number[] {
+  const years = new Set<number>(available);
+  for (let y = current - 2; y <= current + 1; y++) years.add(y);
+  return Array.from(years).sort((a, b) => a - b);
+}
+
 // ─── Aggregationen ────────────────────────────────────────────────────────────
 
 /**

@@ -159,6 +159,29 @@ describe('parseAnnualSageKontoblattByMonth — synthetisch', () => {
     expect(res.byMonth.size).toBe(2);
   });
 
+  it('2024-Kontoblatt: Jahr 2024 aus dem Zeitraum-Kopf, kein stiller Fallback auf 2025', async () => {
+    const buf = wbBuffer([
+      ['Kontoblatt', null, null, null, null, 'Oliv Gastro AG', null, null],
+      ['vom:', null, null, '01.01.24 bis 31.12.24', null, null, null, null],
+      [null, null, null, null, null, null, null, null],
+      ['Datum', 'Blg', null, 'Text', null, 'G-Konto', 'Soll', 'Haben'],
+      [null, null, null, null, null, null, null, null],
+      [4000, null, null, 'Wareneinsatz Küche', null, null, null, null],
+      ['15.03.24', 1, null, 'Einkauf A', null, 1020, 700, null],
+      ['20.11.24', 2, null, 'Einkauf B', null, 1020, 250, null],
+      ['05.01.25', 3, null, 'Folgejahr-Streuner', null, 1020, 999, null],
+    ]);
+    const res = await parseAnnualSageKontoblattByMonth(buf);
+
+    expect(res.failureReason).toBeUndefined();
+    expect(res.detectedYear).toBe(2024);
+    expect(res.yearSource).toBe('period');
+    expect(res.bookingCount).toBe(2);
+    expect(res.skippedOutOfYear).toBe(1);
+    expect(monthTotal(res.byMonth.get(3))).toBe(700);
+    expect(monthTotal(res.byMonth.get(11))).toBe(250);
+  });
+
   it('Konto-Header als TEXT ("4000") wird genauso erkannt wie als Zahl', async () => {
     const buf = wbBuffer([
       ...HEADER_25,
@@ -359,6 +382,57 @@ describe('replaceAnnualCostYear', () => {
 
     expect(loadMonth(2024, 6, TEST_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(999);
     expect(loadMonth(2025, 6, TEST_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(111);
+  });
+
+  it('2024: Import schreibt NUR ins Jahr 2024 — 2025/2026 bleiben unverändert (§12)', () => {
+    // Bestehende Daten in 2025 und 2026 seeden
+    replaceAnnualCostYear(2025, new Map([[3, [cat('4000', 'W', 500)]]]), {}, TEST_KEY);
+    replaceAnnualCostYear(2026, new Map([[3, [cat('4000', 'W', 600)]]]), {}, TEST_KEY);
+
+    const res = replaceAnnualCostYear(2024, new Map([
+      [3, [cat('4000', 'Wareneinsatz', 450), cat('5000', 'Löhne FIBU', 18000)]],
+      [11, [cat('4000', 'Wareneinsatz', 470)]],
+    ]), { fileName: 'kosten_2024.xlsx' }, TEST_KEY);
+
+    expect(res.monthsWritten).toBe(2);
+    expect(loadMonth(2024, 3, TEST_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(450);
+    expect(loadMonth(2024, 11, TEST_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(470);
+    // Andere Jahre unberührt
+    expect(loadMonth(2025, 3, TEST_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(500);
+    expect(loadMonth(2026, 3, TEST_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(600);
+    // Fehlende 2024-Monate bleiben leer (fehlend ≠ 0)
+    expect(loadMonth(2024, 4, TEST_KEY).expenseCategories.filter(c => /^\d{3,5}$/.test(c.categoryId))).toHaveLength(0);
+  });
+
+  it('2024: wiederholter identischer Import ist idempotent (keine Doppelwerte)', () => {
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [1, [cat('4000', 'Wareneinsatz', 400)]],
+      [12, [cat('4000', 'Wareneinsatz', 420)]],
+    ]);
+    replaceAnnualCostYear(2024, byMonth, {}, TEST_KEY);
+    const first = loadMonth(2024, 1, TEST_KEY).expenseCategories;
+
+    replaceAnnualCostYear(2024, byMonth, {}, TEST_KEY);
+    const second = loadMonth(2024, 1, TEST_KEY).expenseCategories;
+
+    expect(second).toEqual(first);
+    expect(second.filter(c => c.categoryId === '4000')).toHaveLength(1);
+    expect(second.find(c => c.categoryId === '4000')?.amount).toBe(400);
+  });
+
+  it('2024: Tenant-Trennung — Import unter einem Storage-Key berührt den anderen nie', () => {
+    const OLIV_KEY = TEST_KEY;
+    const BEAULIEU_KEY = `b-${TEST_KEY}`;
+
+    replaceAnnualCostYear(2024, new Map([[5, [cat('4000', 'W Oliv', 1000)]]]), {}, OLIV_KEY);
+    replaceAnnualCostYear(2024, new Map([[5, [cat('4000', 'W Beaulieu', 2000)]]]), {}, BEAULIEU_KEY);
+
+    expect(loadMonth(2024, 5, OLIV_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(1000);
+    expect(loadMonth(2024, 5, BEAULIEU_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(2000);
+
+    removeAnnualCostYear(2024, {}, BEAULIEU_KEY);
+    expect(loadMonth(2024, 5, OLIV_KEY).expenseCategories.find(c => c.categoryId === '4000')?.amount).toBe(1000);
+    expect(loadMonth(2024, 5, BEAULIEU_KEY).expenseCategories.filter(c => /^\d{3,5}$/.test(c.categoryId))).toHaveLength(0);
   });
 
   it('removeAnnualCostYear entfernt alle numerischen Kategorien des Jahres', () => {

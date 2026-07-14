@@ -37,7 +37,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
-import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableYears, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableYears, yearSelectOptions, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
@@ -2349,7 +2349,6 @@ const AddKontoDialog = ({ open, onClose, year, categories, existingItems, onSave
 
 const currentYear  = new Date().getFullYear();
 const currentMonth = new Date().getMonth() + 1;
-const years = [currentYear - 1, currentYear, currentYear + 1];
 
 type ViewMode = 'monthly' | 'yearly' | 'budget_pl' | 'multi_year' | 'mgmt_report' | 'bank_investor';
 
@@ -2472,6 +2471,15 @@ const PLViewPage = () => {
   const records = useMemo(() => loadYear(year, tenantKey(REPORTING_STORAGE_KEY)), [year, month, refreshKey, tenantId]);
   const prevYearRecords = useMemo(() => loadYear(year - 1, tenantKey(REPORTING_STORAGE_KEY)), [year, tenantId]);
 
+  // Jahr-Selector: Jahre mit Daten ∪ [aktuell−2 … aktuell+1] — macht 2024 als
+  // reguläres Geschäftsjahr wählbar (auch vor dem ersten Import), tenant-bewusst.
+  // refreshKey: nach einem Jahres-Import erscheint das neue Jahr sofort.
+  const years = useMemo(
+    () => yearSelectOptions(availableYears(tenantKey(REPORTING_STORAGE_KEY)), currentYear),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tenantId, tenantKey, refreshKey],
+  );
+
   // ── Mehrjahresanalyse: Roh-Serien je Jahr (loadYear → computePLForMonth) ────
   // BEWUSST dieselbe SSOT wie die Erfolgsrechnung, OHNE Maison-/Exclude-Effekte
   // (Roh-Reporting-Daten aller Jahre; Einschränkungen erklärt die Sektion selbst).
@@ -2483,6 +2491,9 @@ const PLViewPage = () => {
     const positionIds = Array.from(new Set([
       ...MULTI_YEAR_POSITIONS.map(p => p.id),
       ...BANK_ROW_IDS,
+      // Personal-Komponenten für den Jahresvergleichs-Drilldown (§8):
+      // Löhne + Sozialleistungen + übriger Personalaufwand = Total Personal.
+      'personnel_wages', 'personnel_social', 'personnel_other',
     ]));
     return availableYears(storeKey).map(y => {
       const recs = loadYear(y, storeKey);

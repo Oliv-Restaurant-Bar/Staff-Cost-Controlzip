@@ -493,7 +493,7 @@ const AnnualRevenueImportSection = () => {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {[currentYear - 2, currentYear - 1, currentYear].map(y => (
+            {[currentYear - 3, currentYear - 2, currentYear - 1, currentYear].map(y => (
               <SelectItem key={y} value={String(y)}>{y}</SelectItem>
             ))}
           </SelectContent>
@@ -1917,7 +1917,7 @@ const AnnualPersonnelCostImportSection = () => {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {[currentYear - 2, currentYear - 1, currentYear].map(y => (
+            {[currentYear - 3, currentYear - 2, currentYear - 1, currentYear].map(y => (
               <SelectItem key={y} value={String(y)}>{y}</SelectItem>
             ))}
           </SelectContent>

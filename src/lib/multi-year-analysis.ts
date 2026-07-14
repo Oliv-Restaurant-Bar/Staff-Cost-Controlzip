@@ -63,6 +63,7 @@ export const MULTI_YEAR_POSITIONS: MultiYearPosition[] = [
   { id: 'total_personnel', label: 'Personalaufwand', summarySubject: 'Der Personalaufwand', semantics: 'expense' },
   { id: 'total_opex', label: 'Übriger Betriebsaufwand', summarySubject: 'Der übrige Betriebsaufwand', semantics: 'expense' },
   { id: 'ebitda', label: 'EBITDA', summarySubject: 'Das EBITDA', semantics: 'result' },
+  { id: 'ebit', label: 'EBIT', summarySubject: 'Das EBIT', semantics: 'result' },
 ];
 
 export const DEFAULT_POSITION: MultiYearPosition = MULTI_YEAR_POSITIONS[0];
@@ -795,5 +796,467 @@ export function buildMonthDetail(analysis: MultiYearAnalysis, monthIdx: number):
     perYear: row.cells,
     avgValue: values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null,
     yearsWithValue: values.length,
+  };
+}
+
+// ─── Jahresvergleich (KPI × Jahre) + Personalkosten-Analyse (§5–§8) ──────────
+//
+// EINE Vergleichsbasis für die ganze Tabelle: die Schnittmenge der Datenmonate
+// ALLER ausgewählten Jahre („Vergleich bis gleicher Monat", keine Hochrechnung).
+// Paarweise Common-Months würden je Jahr mehrere widersprüchliche Werte erzeugen
+// und die Δ-Kette (Δ25−24 + Δ26−25 = Δ26−24) bräche — bewusster Trade-off.
+// Fehlend ≠ 0: ist ein Zeilenwert in einem Vergleichsmonat null, wird der
+// Jahreswert der Zeile null (nie still untersummiert) + Datenqualitätshinweis.
+
+export type ComparisonBetterWhen = 'up' | 'down' | 'neutral';
+
+export interface YearComparisonRowDef {
+  /** P&L-Zeilen-ID (pl-engine) bzw. abgeleitete Quote-ID */
+  id: string;
+  label: string;
+  kind: 'chf' | 'quote';
+  /** Farb-Richtung: up=mehr ist gut, down=weniger ist gut, neutral=Aufwand (§9-Regel) */
+  betterWhen: ComparisonBetterWhen;
+  /** Nur Quoten: Zähler/Nenner-Zeilen-IDs */
+  quoteOf?: { numerator: string; denominator: string };
+}
+
+/** Kennzahlen-Set des Jahresvergleichs (§5) — endet bei EBIT, kein Jahresgewinn (§6-Entscheid). */
+export const YEAR_COMPARISON_ROWS: YearComparisonRowDef[] = [
+  { id: 'net_revenue', label: 'Umsatz (netto)', kind: 'chf', betterWhen: 'up' },
+  { id: 'total_cogs', label: 'Warenaufwand', kind: 'chf', betterWhen: 'neutral' },
+  { id: 'gross_profit_1', label: 'Bruttogewinn 1', kind: 'chf', betterWhen: 'up' },
+  { id: 'total_personnel', label: 'Personalaufwand', kind: 'chf', betterWhen: 'neutral' },
+  { id: 'personnel_quote', label: 'Personalquote', kind: 'quote', betterWhen: 'down', quoteOf: { numerator: 'total_personnel', denominator: 'net_revenue' } },
+  { id: 'ebitda', label: 'EBITDA', kind: 'chf', betterWhen: 'up' },
+  { id: 'ebit', label: 'EBIT', kind: 'chf', betterWhen: 'up' },
+  { id: 'ebit_margin', label: 'EBIT-Marge', kind: 'quote', betterWhen: 'up', quoteOf: { numerator: 'ebit', denominator: 'net_revenue' } },
+];
+
+export interface YearComparisonDelta {
+  fromYear: number;
+  toYear: number;
+  /** CHF-Differenz (bei Quoten null) */
+  chf: number | null;
+  /** Veränderung in % — (neu − alt) / |alt|, Basis 0/fehlend → null (EBIT kann negativ sein) */
+  pct: number | null;
+  /** Veränderung in Prozentpunkten (nur Quoten) */
+  pp: number | null;
+}
+
+export interface YearComparisonRow {
+  def: YearComparisonRowDef;
+  /** Wert je Jahr (Reihenfolge = years) über die gemeinsamen Monate; fehlend = null */
+  valueByYear: (number | null)[];
+  /** Δ je konsekutivem Jahrespaar (years.length − 1 Einträge) */
+  deltas: YearComparisonDelta[];
+  /** Δ erstes → letztes Jahr (nur bei ≥3 Jahren, sonst null) */
+  firstToLast: YearComparisonDelta | null;
+}
+
+export interface YearKpiComparison {
+  /** Ausgewählte Jahre mit Daten, aufsteigend */
+  years: number[];
+  /** Gemeinsame Datenmonats-Indizes ALLER Jahre (Basis sämtlicher Werte) */
+  commonMonths: number[];
+  /** "Januar–Juni" bzw. null bei vollem Jahr / keiner Schnittmenge */
+  commonMonthsLabel: string | null;
+  /** true = alle Jahre haben 12 Datenmonate (echte Ganzjahressummen) */
+  isFullYears: boolean;
+  /** Jahre mit weniger als 12 Datenmonaten (sichtbare Teiljahr-Kennzeichnung) */
+  partialYears: number[];
+  rows: YearComparisonRow[];
+  dataQuality: DataQualityItem[];
+  hasAnyData: boolean;
+}
+
+/** Monatswerte einer P&L-Zeile aus einer YearSeries (values = net_revenue-Fallback). */
+function rowMonthValues(s: YearSeries, rowId: string): (number | null)[] {
+  const fromByPosition = s.byPosition?.[rowId];
+  if (fromByPosition) return normalize12(fromByPosition);
+  if (rowId === DEFAULT_POSITION.id) return normalize12(s.values);
+  return Array(12).fill(null);
+}
+
+/**
+ * Jahresauswahl für den Vergleich — bewusst NICHT nonEmptyYears: das filtert
+ * nach Umsatzmonaten und würde ein reines Kosten-Jahr (Jahres-Kontoblatt ohne
+ * Umsatzdaten) still verschwinden lassen. Hier zählt jede Vergleichszeile.
+ */
+function dedupeComparisonYears(series: YearSeries[], wanted: Set<number>): YearSeries[] {
+  const seen = new Set<number>();
+  const clean: YearSeries[] = [];
+  for (const s of series) {
+    if (!wanted.has(s.year) || seen.has(s.year)) continue;
+    seen.add(s.year);
+    clean.push({ ...s, values: normalize12(s.values) });
+  }
+  return clean.sort((a, b) => a.year - b.year);
+}
+
+function comparisonDelta(
+  def: YearComparisonRowDef,
+  fromYear: number, toYear: number,
+  from: number | null, to: number | null,
+): YearComparisonDelta {
+  if (def.kind === 'quote') {
+    return {
+      fromYear, toYear, chf: null, pct: null,
+      pp: from != null && to != null ? to - from : null,
+    };
+  }
+  return {
+    fromYear, toYear,
+    chf: from != null && to != null ? to - from : null,
+    pct: safeDeltaPct(to, from),
+    pp: null,
+  };
+}
+
+/**
+ * Jahresvergleichs-Tabelle (§5/§6): Kennzahlen × Jahre + Δ je Jahrespaar.
+ * `series` = Roh-Serien mit byPosition (PLView), `years` = gewählte Jahre.
+ */
+export function buildYearKpiComparison(series: YearSeries[], years: number[]): YearKpiComparison {
+  const dataQuality: DataQualityItem[] = [];
+  const wanted = new Set(years);
+  const chfRowIds = YEAR_COMPARISON_ROWS.filter((r) => r.kind === 'chf').map((r) => r.id);
+
+  // Datenmonate je Jahr = Monate, in denen MINDESTENS eine Vergleichszeile
+  // einen Wert hat (reine Kosten-Monate aus dem Jahres-Kontoblatt zählen mit).
+  const dataMonthsByYear = new Map<number, number[]>();
+  const clean = dedupeComparisonYears(series, wanted).filter((s) => {
+    const idx: number[] = [];
+    for (let m = 0; m < 12; m++) {
+      if (chfRowIds.some((id) => rowMonthValues(s, id)[m] != null)) idx.push(m);
+    }
+    if (idx.length === 0) {
+      dataQuality.push({ severity: 'warnung', text: `${s.year}: keine Erfolgsrechnungs-Daten vorhanden — Jahr wird im Vergleich nicht angezeigt.` });
+      return false;
+    }
+    dataMonthsByYear.set(s.year, idx);
+    return true;
+  });
+  const selYears = clean.map((s) => s.year);
+
+  const empty: YearKpiComparison = {
+    years: selYears, commonMonths: [], commonMonthsLabel: null,
+    isFullYears: false, partialYears: [], rows: [], dataQuality, hasAnyData: false,
+  };
+  if (clean.length === 0) {
+    dataQuality.push({ severity: 'fehler', text: 'Keine Erfolgsrechnungs-Daten für den Jahresvergleich vorhanden.' });
+    return empty;
+  }
+
+  // Schnittmenge über ALLE Jahre
+  let common: number[] = dataMonthsByYear.get(selYears[0]) ?? [];
+  for (const y of selYears.slice(1)) {
+    const set = new Set(dataMonthsByYear.get(y) ?? []);
+    common = common.filter((m) => set.has(m));
+  }
+
+  const partialYears = selYears.filter((y) => (dataMonthsByYear.get(y) ?? []).length < 12);
+  const isFullYears = partialYears.length === 0;
+
+  if (common.length === 0) {
+    dataQuality.push({
+      severity: 'fehler',
+      text: 'Die ausgewählten Jahre haben keine gemeinsamen Datenmonate — ein Vergleich ist aufgrund fehlender Daten nicht möglich.',
+    });
+    return { ...empty, partialYears, hasAnyData: false };
+  }
+
+  if (!isFullYears) {
+    dataQuality.push({
+      severity: 'hinweis',
+      text: `Teiljahr(e) ${partialYears.join(', ')} — Vergleich bis gleicher Monat (${partialRangeLabel(common) ?? `${common.length} Monate`}), keine Hochrechnung auf zwölf Monate.`,
+    });
+  }
+
+  // CHF-Zeilen: Summe über die gemeinsamen Monate; ein null-Monat macht den
+  // Jahreswert null (fehlend ≠ 0, nie still untersummieren).
+  const chfValue = (s: YearSeries, rowId: string): number | null => {
+    const vals = rowMonthValues(s, rowId);
+    let sum = 0;
+    for (const m of common) {
+      const v = vals[m];
+      if (v == null) return null;
+      sum += v;
+    }
+    return sum;
+  };
+
+  const chfByRow = new Map<string, (number | null)[]>();
+  for (const id of chfRowIds) {
+    const perYear = clean.map((s) => chfValue(s, id));
+    chfByRow.set(id, perYear);
+    perYear.forEach((v, i) => {
+      if (v == null) {
+        const label = YEAR_COMPARISON_ROWS.find((r) => r.id === id)?.label ?? id;
+        dataQuality.push({
+          severity: 'warnung',
+          text: `${label} ${selYears[i]}: Wert fehlt in mindestens einem Vergleichsmonat — Zeile wird als «—» ausgewiesen (kein Vergleich möglich).`,
+        });
+      }
+    });
+  }
+
+  const rows: YearComparisonRow[] = YEAR_COMPARISON_ROWS.map((def) => {
+    let valueByYear: (number | null)[];
+    if (def.kind === 'quote' && def.quoteOf) {
+      const nums = chfByRow.get(def.quoteOf.numerator) ?? [];
+      const dens = chfByRow.get(def.quoteOf.denominator) ?? [];
+      valueByYear = clean.map((_, i) => {
+        const n = nums[i];
+        const d = dens[i];
+        if (n == null || d == null || d === 0) return null;
+        const q = (n / d) * 100;
+        return Number.isFinite(q) ? q : null;
+      });
+    } else {
+      valueByYear = chfByRow.get(def.id) ?? clean.map(() => null);
+    }
+
+    const deltas: YearComparisonDelta[] = [];
+    for (let i = 1; i < selYears.length; i++) {
+      deltas.push(comparisonDelta(def, selYears[i - 1], selYears[i], valueByYear[i - 1], valueByYear[i]));
+    }
+    const firstToLast = selYears.length >= 3
+      ? comparisonDelta(def, selYears[0], selYears[selYears.length - 1], valueByYear[0], valueByYear[selYears.length - 1])
+      : null;
+
+    return { def, valueByYear, deltas, firstToLast };
+  });
+
+  return {
+    years: selYears,
+    commonMonths: common,
+    commonMonthsLabel: partialRangeLabel(common),
+    isFullYears,
+    partialYears,
+    rows,
+    dataQuality,
+    hasAnyData: rows.some((r) => r.valueByYear.some((v) => v != null)),
+  };
+}
+
+// ─── Personalkosten-Analyseblock (§7): regelbasierte Aussagen ─────────────────
+
+/** ±Toleranz in %-Punkten der Wachstumsraten, innerhalb derer «ähnlich» gilt */
+const INSIGHT_EQUAL_EPS_PCT = 0.05;
+/** ±Toleranz in Prozentpunkten, innerhalb derer die Personalquote als stabil gilt */
+const INSIGHT_QUOTE_EPS_PP = 0.1;
+
+/** Prozentpunkte mit Vorzeichen, de-CH, 1 Dezimalstelle (zentral für UI + Exporte). */
+export function fmtPpSigned(pp: number | null): string {
+  if (pp == null || !Number.isFinite(pp)) return '—';
+  const s = Math.abs(pp).toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return `${pp < 0 ? '−' : '+'}${s} pp`;
+}
+
+/** Quotenwert ohne Vorzeichen, de-CH, 1 Dezimalstelle (zentral für UI + Exporte). */
+export function fmtQuotePct(v: number | null): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  return `${v.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+}
+
+/**
+ * Sachliche, ausschliesslich aus vorhandenen Werten abgeleitete Aussagen zur
+ * Personalentwicklung — je konsekutivem Jahrespaar. Keine Schätzungen.
+ */
+export function buildPersonnelInsights(cmp: YearKpiComparison): string[] {
+  const revenue = cmp.rows.find((r) => r.def.id === 'net_revenue');
+  const personnel = cmp.rows.find((r) => r.def.id === 'total_personnel');
+  const quote = cmp.rows.find((r) => r.def.id === 'personnel_quote');
+  if (!revenue || !personnel || cmp.years.length < 2) {
+    return ['Ein Vergleich ist aufgrund fehlender Daten nicht möglich.'];
+  }
+
+  const lines: string[] = [];
+  for (let i = 1; i < cmp.years.length; i++) {
+    const fromYear = cmp.years[i - 1];
+    const toYear = cmp.years[i];
+    const prefix = `${toYear} vs. ${fromYear}: `;
+    const revPct = revenue.deltas[i - 1]?.pct ?? null;
+    const persPct = personnel.deltas[i - 1]?.pct ?? null;
+    const quotePp = quote?.deltas[i - 1]?.pp ?? null;
+
+    if (revPct == null || persPct == null) {
+      lines.push(`${prefix}Ein Vergleich ist aufgrund fehlender Daten nicht möglich.`);
+      continue;
+    }
+
+    let s: string;
+    if (Math.abs(revPct - persPct) <= INSIGHT_EQUAL_EPS_PCT) {
+      s = 'Umsatz und Personalkosten haben sich ähnlich entwickelt.';
+    } else if (revPct > persPct) {
+      if (persPct < 0 && revPct >= 0) s = 'Der Umsatz ist gestiegen, während die Personalkosten gesunken sind.';
+      else if (revPct < 0) s = 'Die Personalkosten sind stärker gesunken als der Umsatz.';
+      else s = 'Der Umsatz ist stärker gestiegen als die Personalkosten.';
+    } else {
+      if (revPct < 0 && persPct >= 0) s = 'Die Personalkosten sind gestiegen, während der Umsatz gesunken ist.';
+      else if (persPct < 0) s = 'Der Umsatz ist stärker gesunken als die Personalkosten.';
+      else s = 'Die Personalkosten sind stärker gestiegen als der Umsatz.';
+    }
+    lines.push(prefix + s);
+
+    if (quotePp != null) {
+      if (quotePp <= -INSIGHT_QUOTE_EPS_PP) {
+        lines.push(`${prefix}Die Personalquote hat sich verbessert (${fmtPpSigned(quotePp)}).`);
+      } else if (quotePp >= INSIGHT_QUOTE_EPS_PP) {
+        lines.push(`${prefix}Die Personalquote hat sich verschlechtert (${fmtPpSigned(quotePp)}).`);
+      } else {
+        lines.push(`${prefix}Die Personalquote ist nahezu unverändert (${fmtPpSigned(quotePp)}).`);
+      }
+    }
+  }
+  return lines;
+}
+
+// ─── Drilldown des Jahresvergleichs (§8) ──────────────────────────────────────
+
+/** Personal-Komponenten der P&L-Engine (Löhne + Sozialleistungen + übriger PA = Total Personal). */
+export const PERSONNEL_COMPONENT_ROWS = [
+  { id: 'personnel_wages', label: 'Löhne (Total)' },
+  { id: 'personnel_social', label: 'Sozialleistungen' },
+  { id: 'personnel_other', label: 'Übriger Personalaufwand' },
+] as const;
+
+export interface DrilldownComponent {
+  id: string;
+  label: string;
+  /** Summe über die gemeinsamen Vergleichsmonate; fehlend = null */
+  total: number | null;
+}
+
+export interface ComparisonDrilldownYearColumn {
+  year: number;
+  isPartial: boolean;
+  partialLabel: string | null;
+  /** Wert der Kennzahl über die gemeinsamen Monate (≡ Vergleichstabelle) */
+  commonTotal: number | null;
+  /** Nur Personalaufwand: Komponenten + sichtbare Summenabstimmung */
+  components: DrilldownComponent[] | null;
+  /** Summe der Komponenten (null sobald eine Komponente fehlt) */
+  componentSum: number | null;
+  /** componentSum − commonTotal (nur wenn beide vorhanden) — sichtbare Abstimmung */
+  reconciliationDiff: number | null;
+}
+
+export interface ComparisonDrilldownMonthRow {
+  monthIdx: number;
+  label: string;
+  /** Wert je Jahr (Reihenfolge = years) */
+  valueByYear: (number | null)[];
+  /** Δ zum direkten Vorjahr in der Auswahl (Index i vergleicht Jahr i mit i−1) */
+  deltaPrev: DeltaValue[];
+}
+
+export interface ComparisonDrilldown {
+  rowId: string;
+  label: string;
+  years: number[];
+  commonMonths: number[];
+  commonMonthsLabel: string | null;
+  perYear: ComparisonDrilldownYearColumn[];
+  monthRows: ComparisonDrilldownMonthRow[];
+  dataQuality: DataQualityItem[];
+}
+
+/**
+ * Drilldown einer Vergleichszeile: Zusammensetzung nach Jahr und Monat aus
+ * DENSELBEN byPosition-Serien (keine neue Datenquelle, keine Zweitberechnung).
+ * Die Summenabstimmung (Komponenten vs. Kennzahl) ist im Ergebnis sichtbar.
+ */
+export function buildComparisonDrilldown(
+  series: YearSeries[],
+  years: number[],
+  rowId: string,
+): ComparisonDrilldown | null {
+  const def = YEAR_COMPARISON_ROWS.find((r) => r.id === rowId && r.kind === 'chf');
+  if (!def) return null;
+
+  const cmp = buildYearKpiComparison(series, years);
+  const clean = dedupeComparisonYears(series, new Set(cmp.years));
+  const row = cmp.rows.find((r) => r.def.id === rowId);
+  if (!row || clean.length === 0) return null;
+
+  const dataQuality: DataQualityItem[] = [...cmp.dataQuality];
+  const commonSet = new Set(cmp.commonMonths);
+  const isPersonnel = rowId === 'total_personnel';
+
+  const perYear: ComparisonDrilldownYearColumn[] = clean.map((s, i) => {
+    const commonTotal = row.valueByYear[i];
+
+    let components: DrilldownComponent[] | null = null;
+    let componentSum: number | null = null;
+    let reconciliationDiff: number | null = null;
+    if (isPersonnel) {
+      components = PERSONNEL_COMPONENT_ROWS.map((c) => {
+        const vals = rowMonthValues(s, c.id);
+        let sum = 0;
+        let missing = false;
+        for (const m of cmp.commonMonths) {
+          const v = vals[m];
+          if (v == null) { missing = true; break; }
+          sum += v;
+        }
+        return { id: c.id, label: c.label, total: missing ? null : sum };
+      });
+      if (components.every((c) => c.total != null)) {
+        componentSum = components.reduce((acc, c) => acc + (c.total as number), 0);
+        if (commonTotal != null) {
+          reconciliationDiff = componentSum - commonTotal;
+          if (Math.abs(reconciliationDiff) > 0.5) {
+            dataQuality.push({
+              severity: 'warnung',
+              text: `Summenabstimmung ${s.year}: Komponenten (${fmtChf(componentSum)}) weichen um ${fmtDeltaChf(reconciliationDiff)} CHF vom Personalaufwand (${fmtChf(commonTotal)}) ab.`,
+            });
+          }
+        }
+      }
+    }
+
+    const dataMonths = monthIndices(rowMonthValues(s, rowId));
+    return {
+      year: s.year,
+      isPartial: cmp.partialYears.includes(s.year),
+      partialLabel: partialRangeLabel(dataMonths),
+      commonTotal,
+      components,
+      componentSum,
+      reconciliationDiff,
+    };
+  });
+
+  const monthRows: ComparisonDrilldownMonthRow[] = [];
+  for (let m = 0; m < 12; m++) {
+    const valueByYear = clean.map((s) => rowMonthValues(s, rowId)[m]);
+    if (valueByYear.every((v) => v == null)) continue;
+    const deltaPrev: DeltaValue[] = valueByYear.map((v, i) => {
+      if (i === 0) return { chf: null, pct: null };
+      const prev = valueByYear[i - 1];
+      return {
+        chf: v != null && prev != null ? v - prev : null,
+        pct: safeDeltaPct(v, prev),
+      };
+    });
+    monthRows.push({
+      monthIdx: m,
+      label: `${MONTH_LABELS_LONG[m]}${commonSet.has(m) ? '' : ' (ausserhalb Vergleich)'}`,
+      valueByYear,
+      deltaPrev,
+    });
+  }
+
+  return {
+    rowId,
+    label: def.label,
+    years: cmp.years,
+    commonMonths: cmp.commonMonths,
+    commonMonthsLabel: cmp.commonMonthsLabel,
+    perYear,
+    monthRows,
+    dataQuality,
   };
 }

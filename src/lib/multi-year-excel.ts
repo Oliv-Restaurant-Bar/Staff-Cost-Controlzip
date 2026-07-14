@@ -22,7 +22,10 @@ import {
   type MultiYearAnalysis,
   type MultiYearPosition,
   type YearTotalCell,
+  type YearKpiComparison,
+  type YearComparisonDelta,
 } from './multi-year-analysis';
+import { EBIT_REPORT_NOTE } from './bank-investor-analysis';
 
 /** Zeile der ER-Positionen-Übersicht (aus buildPositionsOverview). */
 export interface PositionsOverviewEntry {
@@ -38,7 +41,7 @@ const SEVERITY_LABEL: Record<string, string> = {
 
 // ─── Aufbereitete Daten (rein) ────────────────────────────────────────────────
 
-export type ExcelCellFmt = 'chf' | 'pct';
+export type ExcelCellFmt = 'chf' | 'pct' | 'pp';
 
 export interface ExcelCell {
   v: string | number | null;
@@ -56,6 +59,18 @@ export interface ExcelSheetData {
   head: string[];
   rows: ExcelCell[][];
   widths: number[];
+  /** Autofilter nur über die ersten N Zeilen (z. B. vor angehängten Hinweisen) */
+  filterRows?: number;
+}
+
+/** Gemeinsame Export-Optionen (Aufbereitung UND IO-Wrapper). */
+export interface MultiYearExcelOpts {
+  restaurantName?: string;
+  positionsOverview?: PositionsOverviewEntry[];
+  /** Jahresvergleich (§5–§7) — DASSELBE cmp-Objekt wie die UI (UI ≡ Export). */
+  yearComparison?: YearKpiComparison;
+  /** Personalkosten-Aussagen (§7) — identisch zur UI-HintBox. */
+  personnelInsights?: string[];
 }
 
 export interface MultiYearExcelData {
@@ -72,11 +87,12 @@ export function multiYearExcelFileName(years: number[], restaurantName?: string)
 const t = (v: string, strong = false): ExcelCell => ({ v, strong });
 const chf = (v: number | null, strong = false): ExcelCell => ({ v, fmt: 'chf', strong });
 const pct = (v: number | null, strong = false): ExcelCell => ({ v, fmt: 'pct', strong });
+const pp = (v: number | null, strong = false): ExcelCell => ({ v, fmt: 'pp', strong });
 
-/** REINE Aufbereitung aller 5 Blätter aus dem Analysis-Objekt. */
+/** REINE Aufbereitung aller Blätter aus dem Analysis-Objekt. */
 export function buildMultiYearExcelData(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string; positionsOverview?: PositionsOverviewEntry[] } = {},
+  opts: MultiYearExcelOpts = {},
 ): MultiYearExcelData {
   const { years, baseYear, kpis, totals, monthRows, yearSummaries, chart, position } = analysis;
   const isRevenue = position.semantics === 'revenue';
@@ -103,6 +119,63 @@ export function buildMultiYearExcelData(
     [t('Hinweise zur Datenbasis', true)],
     ...analysis.dataQuality.map(d => [t(`• [${SEVERITY_LABEL[d.severity] ?? d.severity}] ${d.text}`)]),
   ];
+
+  // ── Blatt „Jahresvergleich" (§5–§7): DASSELBE cmp-Objekt wie die UI ─────────
+  const cmp = opts.yearComparison;
+  let cmpSheet: ExcelSheetData | null = null;
+  if (cmp && cmp.hasAnyData) {
+    const pairs = cmp.years.slice(1).map((y, i) => ({ from: cmp.years[i], to: y }));
+    const showFirstLast = cmp.years.length >= 3;
+    const flPair = showFirstLast ? { from: cmp.years[0], to: cmp.years[cmp.years.length - 1] } : null;
+
+    const cmpHead = [
+      'Kennzahl',
+      ...cmp.years.map(y => `${y}${cmp.partialYears.includes(y) ? ' *' : ''}`),
+      ...pairs.flatMap(p => [`Δ ${p.to} vs. ${p.from} CHF`, `Δ ${p.to} vs. ${p.from} % / pp`]),
+      ...(flPair ? [`Δ ${flPair.to} vs. ${flPair.from} CHF`, `Δ ${flPair.to} vs. ${flPair.from} % / pp`] : []),
+    ];
+
+    const deltaCells = (kind: 'chf' | 'quote', d: YearComparisonDelta | null): ExcelCell[] =>
+      kind === 'quote'
+        ? [chf(null), pp(d?.pp ?? null)]
+        : [chf(d?.chf ?? null), pct(d?.pct ?? null)];
+
+    const cmpRows: ExcelCell[][] = cmp.rows.map(r => {
+      const isQuote = r.def.kind === 'quote';
+      const cells: ExcelCell[] = [t(r.def.label)];
+      r.valueByYear.forEach(v => cells.push(isQuote ? pct(v) : chf(v)));
+      r.deltas.forEach(d => cells.push(...deltaCells(r.def.kind, d)));
+      if (flPair) cells.push(...deltaCells(r.def.kind, r.firstToLast));
+      return cells;
+    });
+    const cmpFilterRows = cmpRows.length;
+
+    cmpRows.push([]);
+    cmpRows.push([t('Hinweise', true)]);
+    if (cmp.partialYears.length > 0) {
+      cmpRows.push([t(`• * Teiljahr — alle Werte über die gemeinsamen Monate (${cmp.commonMonthsLabel ?? '—'}), keine Hochrechnung.`)]);
+    }
+    cmpRows.push([t(`• ${EBIT_REPORT_NOTE}`)]);
+    for (const d of cmp.dataQuality) {
+      cmpRows.push([t(`• [${SEVERITY_LABEL[d.severity] ?? d.severity}] ${d.text}`)]);
+    }
+    const insights = opts.personnelInsights ?? [];
+    if (insights.length > 0) {
+      cmpRows.push([]);
+      cmpRows.push([t('Personalkosten-Entwicklung', true)]);
+      insights.forEach(s => cmpRows.push([t(`• ${s}`)]));
+    }
+
+    cmpSheet = {
+      name: 'Jahresvergleich',
+      title: `Jahresvergleich ${cmp.years.join(' · ')} — Kennzahlen bis EBIT`,
+      subtitle,
+      head: cmpHead,
+      rows: cmpRows,
+      widths: [24, ...cmp.years.map(() => 16), ...pairs.flatMap(() => [16, 14]), ...(flPair ? [16, 14] : [])],
+      filterRows: cmpFilterRows,
+    };
+  }
 
   // ── Blatt 2: Monatsvergleich ────────────────────────────────────────────────
   const lastIdx = years.length - 1;
@@ -272,6 +345,8 @@ export function buildMultiYearExcelData(
     },
   ];
 
+  if (cmpSheet) sheets.splice(1, 0, cmpSheet);
+
   return {
     sheets,
     fileName: multiYearExcelFileName(years, opts.restaurantName),
@@ -287,6 +362,7 @@ const ALT_BG = 'FAFBFC';
 
 const CHF_FMT = '#,##0.00';
 const PCT_FMT = '0.0"%"';
+const PP_FMT = '+0.0" pp";-0.0" pp";0.0" pp"';
 
 /**
  * Baut die Excel-Datei (5 Blätter) und stösst den Download an.
@@ -294,7 +370,7 @@ const PCT_FMT = '0.0"%"';
  */
 export async function exportMultiYearToExcel(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string } = {},
+  opts: MultiYearExcelOpts = {},
 ): Promise<void> {
   const data = buildMultiYearExcelData(analysis, opts);
   const ExcelJS = (await import('exceljs')).default;
@@ -339,6 +415,7 @@ export async function exportMultiYearToExcel(
           cell.alignment = { horizontal: 'right' };
           if (c.fmt === 'chf') cell.numFmt = CHF_FMT;
           if (c.fmt === 'pct') cell.numFmt = PCT_FMT;
+          if (c.fmt === 'pp') cell.numFmt = PP_FMT;
         } else if (c.fmt) {
           // Platzhalter „—" für fehlende Zahl: rechtsbündig lassen
           cell.alignment = { horizontal: 'right' };
@@ -350,7 +427,7 @@ export async function exportMultiYearToExcel(
     if (hasHead && headerRowNumber != null) {
       ws.autoFilter = {
         from: { row: headerRowNumber, column: 1 },
-        to: { row: headerRowNumber + sheet.rows.length, column: sheet.head.length },
+        to: { row: headerRowNumber + (sheet.filterRows ?? sheet.rows.length), column: sheet.head.length },
       };
     }
 

@@ -54,7 +54,7 @@ import {
   calcCompleteness,
 } from '@/types/reporting';
 import {
-  loadYear, saveMonth, availableYears,
+  loadYear, saveMonth, availableYears, yearSelectOptions,
   calcAnnualSummary, formatCHF, formatMonthLabel,
 } from '@/lib/reporting-store';
 import { loadBudgetWithPL, resolveBudgetYear } from '@/lib/budget-store';
@@ -2014,7 +2014,8 @@ const Reporting = () => {
 
   const { isInScope, isActive: stichtagActive } = useStichtag();
   const { showMarketingCol: maisonColPref } = useMaison();
-  const years = availableYears();
+  // Tenant-bewusst (Beaulieu sah zuvor Oliv-Jahre) + 2024 wählbar (§ Jahresauswahl)
+  const years = yearSelectOptions(availableYears(tenantKey('reporting_v1')), currentYear);
   const [year,        setYear]        = useState(currentYear);
   const [months,      setMonths]      = useState<MonthlyFinancialRecord[]>(() => loadYear(year, tenantKey('reporting_v1')));
   const [editRecord,  setEditRecord]  = useState<MonthlyFinancialRecord | null>(null);

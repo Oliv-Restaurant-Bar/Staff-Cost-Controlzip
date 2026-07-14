@@ -36,12 +36,15 @@ import { toast } from 'sonner';
 
 import {
   buildMultiYearAnalysis, buildMonthDetail, buildPositionsOverview, nonEmptyYears, selectYears, seriesForPosition,
-  fmtChf, fmtMio, fmtPct, fmtDeltaChf,
+  buildYearKpiComparison, buildPersonnelInsights, buildComparisonDrilldown,
+  fmtChf, fmtMio, fmtPct, fmtDeltaChf, fmtPpSigned, fmtQuotePct,
   MONTH_LABELS_LONG, MULTI_YEAR_POSITIONS, DEFAULT_POSITION,
   MIN_YEAR_SELECTION, MAX_YEAR_SELECTION,
   type DataQualityItem, type DataQualitySeverity,
   type GrowthTone, type MultiYearAnalysis, type YearSeries,
+  type YearKpiComparison, type YearComparisonRowDef, type YearComparisonDelta,
 } from '@/lib/multi-year-analysis';
+import { EBIT_REPORT_NOTE } from '@/lib/bank-investor-analysis';
 
 // ─── Hilfen (nur Darstellung) ─────────────────────────────────────────────────
 
@@ -72,6 +75,22 @@ const TREND_TONE: Record<string, Tone> = {
 function deltaCellText(chf: number | null, pct: number | null): string {
   if (chf == null) return '—';
   return `${fmtDeltaChf(chf)} (${fmtPct(pct)})`;
+}
+
+// Quoten-/pp-Formatierung: zentrale Helfer fmtQuotePct/fmtPpSigned (UI ≡ Export)
+
+/**
+ * Farb-Richtung einer Δ-Zelle (§11): Aufwand-CHF neutral, Quote-runter=grün
+ * (Umsatzbezug ist in der Quote enthalten), fehlende Basis neutral.
+ */
+function cmpDeltaTone(def: YearComparisonRowDef, d: YearComparisonDelta): Tone {
+  const v = def.kind === 'quote' ? d.pp : d.chf;
+  if (v == null || v === 0 || def.betterWhen === 'neutral') return 'neutral';
+  return (def.betterWhen === 'up') === v > 0 ? 'good' : 'critical';
+}
+
+function cmpDeltaText(def: YearComparisonRowDef, d: YearComparisonDelta): string {
+  return def.kind === 'quote' ? fmtPpSigned(d.pp) : deltaCellText(d.chf, d.pct);
 }
 
 // ─── Sektion ──────────────────────────────────────────────────────────────────
@@ -134,6 +153,21 @@ export function MultiYearAnalysisSection({
     [analysis, detailMonthIdx],
   );
 
+  // Jahresvergleich (§5–§8): rohe Serien mit byPosition — NICHT seriesForPosition,
+  // sonst fehlen die übrigen Vergleichszeilen. Dasselbe cmp-Objekt geht an die
+  // Exporte (UI ≡ Export, §10).
+  const [cmpDrillRowId, setCmpDrillRowId] = useState<string | null>(null);
+  const cmp: YearKpiComparison = useMemo(
+    () => buildYearKpiComparison(series, effectiveYears),
+    [series, effectiveYears],
+  );
+  const cmpInsights = useMemo(() => buildPersonnelInsights(cmp), [cmp]);
+  const cmpDrill = useMemo(
+    () => (cmpDrillRowId == null ? null : buildComparisonDrilldown(series, effectiveYears, cmpDrillRowId)),
+    [series, effectiveYears, cmpDrillRowId],
+  );
+  const cmpDrillHasComponents = cmpDrill?.perYear.some((y) => y.components != null) ?? false;
+
   const { kpis, monthRows, totals, years, baseYear, chart, yearSummaries } = analysis;
 
   // §16: Datenqualität nach Schweregrad gruppiert (Fehler nie stillschweigend).
@@ -147,7 +181,10 @@ export function MultiYearAnalysisSection({
     setExporting('pdf');
     try {
       const { exportManagementReportPDF } = await import('@/lib/management-report-pdf');
-      exportManagementReportPDF(analysis, { restaurantName, dataSourceHints });
+      exportManagementReportPDF(analysis, {
+        restaurantName, dataSourceHints,
+        yearComparison: cmp, personnelInsights: cmpInsights,
+      });
       toast.success('Management-Report (PDF) erstellt');
     } catch (e) {
       console.error('Management-Report PDF fehlgeschlagen:', e);
@@ -164,6 +201,8 @@ export function MultiYearAnalysisSection({
       await exportMultiYearToExcel(analysis, {
         restaurantName,
         positionsOverview: buildPositionsOverview(series, effectiveYears),
+        yearComparison: cmp,
+        personnelInsights: cmpInsights,
       });
       toast.success('Mehrjahresanalyse (Excel) erstellt');
     } catch (e) {
@@ -376,6 +415,116 @@ export function MultiYearAnalysisSection({
           <HintBox tone="neutral" title="Executive Summary">
             <ul className="list-disc space-y-0.5 pl-4">
               {analysis.executiveSummary.map((s, i) => <li key={i}>{s}</li>)}
+            </ul>
+          </HintBox>
+        </div>
+      )}
+
+      {/* Jahresvergleich (§5–§7): Kennzahlen × Jahre + Δ je Jahrespaar — endet bei EBIT */}
+      {cmp.hasAnyData ? (
+        <div className={TABLE_WRAP} data-testid="mya-cmp">
+          <div className="flex flex-wrap items-center gap-2 bg-slate-900 px-4 py-3 text-white">
+            <div>
+              <h3 className="text-sm font-bold">Jahresvergleich {cmp.years.join(' · ')}</h3>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Umsatz-, Kosten- und Ergebnisentwicklung über alle gewählten Jahre.
+                Klick auf eine CHF-Zeile zeigt die Zusammensetzung nach Monat.
+              </p>
+            </div>
+            {!cmp.isFullYears && cmp.commonMonthsLabel && (
+              <div className="ml-auto" data-testid="mya-cmp-partial-pill">
+                <StatusPill tone="info" size="xs" showDot={false}>
+                  Vergleich bis gleicher Monat: {cmp.commonMonthsLabel}
+                </StatusPill>
+              </div>
+            )}
+          </div>
+          <div className={TABLE_SCROLL}>
+            <table className={TABLE}>
+              <thead>
+                <tr>
+                  <th className={cn(TH, TH_STICKY, 'left-0 z-20 sticky bg-muted')}>Kennzahl</th>
+                  {cmp.years.map((y) => (
+                    <th key={y} className={cn(TH, TH_NUM, TH_STICKY)}>
+                      {y}{cmp.partialYears.includes(y) ? ' *' : ''}
+                    </th>
+                  ))}
+                  {cmp.years.slice(1).map((y, i) => (
+                    <th key={`d-${y}`} className={cn(TH, TH_NUM, TH_STICKY)}>Δ {y} vs. {cmp.years[i]}</th>
+                  ))}
+                  {cmp.years.length >= 3 && (
+                    <th className={cn(TH, TH_NUM, TH_STICKY)}>
+                      Δ {cmp.years[cmp.years.length - 1]} vs. {cmp.years[0]}
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {cmp.rows.map((r) => {
+                  const clickable = r.def.kind === 'chf';
+                  return (
+                    <tr
+                      key={r.def.id}
+                      className={clickable ? ROW_CLICKABLE : undefined}
+                      onClick={clickable ? () => setCmpDrillRowId(r.def.id) : undefined}
+                      data-testid={`mya-cmp-row-${r.def.id}`}
+                    >
+                      <td className={cn(TD, 'sticky left-0 z-[5] bg-card font-medium')}>{r.def.label}</td>
+                      {r.valueByYear.map((v, i) => (
+                        <td key={cmp.years[i]} className={cn(TD, TD_NUM)}>
+                          {r.def.kind === 'quote' ? fmtQuotePct(v) : fmtChf(v)}
+                        </td>
+                      ))}
+                      {r.deltas.map((d) => (
+                        <td
+                          key={`${d.fromYear}-${d.toYear}`}
+                          className={cn(TD, TD_NUM, 'text-xs', TONE_TEXT[cmpDeltaTone(r.def, d)])}
+                        >
+                          {cmpDeltaText(r.def, d)}
+                        </td>
+                      ))}
+                      {cmp.years.length >= 3 && (
+                        <td className={cn(TD, TD_NUM, 'text-xs',
+                          r.firstToLast ? TONE_TEXT[cmpDeltaTone(r.def, r.firstToLast)] : 'text-muted-foreground')}>
+                          {r.firstToLast ? cmpDeltaText(r.def, r.firstToLast) : '—'}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="border-t border-border bg-muted/40 px-4 py-2 text-[11px] text-muted-foreground" data-testid="mya-cmp-dq">
+              <ul className="list-disc space-y-0.5 pl-4">
+                {cmp.partialYears.length > 0 && (
+                  <li>* Teiljahr — alle Werte über die gemeinsamen Monate ({cmp.commonMonthsLabel ?? '—'}), keine Hochrechnung.</li>
+                )}
+                <li>{EBIT_REPORT_NOTE}</li>
+                {cmp.dataQuality.map((d, i) => (
+                  <li key={i} className={d.severity === 'fehler' ? TONE_TEXT.critical : d.severity === 'warnung' ? TONE_TEXT.warn : undefined}>
+                    {d.text}
+                  </li>
+                ))}
+              </ul>
+          </div>
+        </div>
+      ) : cmp.dataQuality.length > 0 && (
+        <div data-testid="mya-cmp-empty">
+          <HintBox tone="critical" title="Jahresvergleich nicht möglich">
+            <ul className="list-disc space-y-0.5 pl-4">
+              {cmp.dataQuality.map((d, i) => <li key={i}>{d.text}</li>)}
+            </ul>
+          </HintBox>
+        </div>
+      )}
+
+      {/* Personalkosten-Entwicklung (§7) — regelbasierte Aussagen, keine Schätzungen */}
+      {cmp.hasAnyData && cmpInsights.length > 0 && (
+        <div data-testid="mya-cmp-insights">
+          <HintBox tone="info" title="Personalkosten-Entwicklung">
+            <ul className="list-disc space-y-0.5 pl-4">
+              {cmpInsights.map((l, i) => <li key={i}>{l}</li>)}
             </ul>
           </HintBox>
         </div>
@@ -678,6 +827,126 @@ export function MultiYearAnalysisSection({
                   </tbody>
                 </table>
               </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Drilldown des Jahresvergleichs (§8) — Zusammensetzung + sichtbare Summenabstimmung */}
+      <Dialog open={cmpDrill != null} onOpenChange={(open) => { if (!open) setCmpDrillRowId(null); }}>
+        <DialogContent className={DIALOG_LG} data-testid="mya-cmp-drill-dialog">
+          {cmpDrill && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{cmpDrill.label} — Zusammensetzung {cmpDrill.years.join(' · ')}</DialogTitle>
+                <DialogDescription>
+                  Werte über die gemeinsamen Vergleichsmonate
+                  {cmpDrill.commonMonthsLabel ? ` (${cmpDrill.commonMonthsLabel})` : ''} — dieselbe Datenbasis
+                  wie die Vergleichstabelle. Budgetwerte sind in der Mehrjahres-Datenbasis nicht enthalten.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="overflow-x-auto">
+                <table className={TABLE}>
+                  <thead>
+                    <tr>
+                      <th className={TH}>{cmpDrillHasComponents ? 'Komponente' : 'Kennzahl'}</th>
+                      {cmpDrill.perYear.map((y) => (
+                        <th key={y.year} className={cn(TH, TH_NUM)}>
+                          {y.year}
+                          {y.isPartial && y.partialLabel && (
+                            <span className="ml-1 font-normal text-[10px] text-muted-foreground">({y.partialLabel})</span>
+                          )}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cmpDrillHasComponents && (
+                      <>
+                        {(cmpDrill.perYear[0].components ?? []).map((c, ci) => (
+                          <tr key={c.id} data-testid={`mya-cmp-drill-comp-${c.id}`}>
+                            <td className={cn(TD)}>{c.label}</td>
+                            {cmpDrill.perYear.map((y) => (
+                              <td key={y.year} className={cn(TD, TD_NUM)}>{fmtChf(y.components?.[ci]?.total ?? null)}</td>
+                            ))}
+                          </tr>
+                        ))}
+                        <tr className="border-t border-border bg-muted/40 font-medium" data-testid="mya-cmp-drill-compsum">
+                          <td className={TD}>Summe Komponenten</td>
+                          {cmpDrill.perYear.map((y) => (
+                            <td key={y.year} className={cn(TD, TD_NUM)}>{fmtChf(y.componentSum)}</td>
+                          ))}
+                        </tr>
+                      </>
+                    )}
+                    <tr className="border-t-2 border-border bg-muted/60 font-semibold" data-testid="mya-cmp-drill-total">
+                      <td className={TD}>{cmpDrill.label} (Vergleichsmonate)</td>
+                      {cmpDrill.perYear.map((y) => (
+                        <td key={y.year} className={cn(TD, TD_NUM)}>{fmtChf(y.commonTotal)}</td>
+                      ))}
+                    </tr>
+                    {cmpDrillHasComponents && (
+                      <tr data-testid="mya-cmp-drill-reconciliation">
+                        <td className={cn(TD, 'text-xs text-muted-foreground')}>Summenabstimmung</td>
+                        {cmpDrill.perYear.map((y) => (
+                          <td key={y.year} className={cn(TD, TD_NUM, 'text-xs')}>
+                            {y.reconciliationDiff == null ? (
+                              <span className="text-muted-foreground">— (unvollständig)</span>
+                            ) : Math.abs(y.reconciliationDiff) <= 0.5 ? (
+                              <span className="inline-flex justify-end">
+                                <StatusPill tone="good" size="xs">stimmt überein</StatusPill>
+                              </span>
+                            ) : (
+                              <span className={TONE_TEXT.warn}>Abweichung {fmtDeltaChf(y.reconciliationDiff)} CHF</span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <h4 className="mb-1 text-xs font-semibold text-muted-foreground">Monatswerte</h4>
+                <div className="max-h-[40vh] overflow-auto rounded border border-border">
+                  <table className={TABLE}>
+                    <thead>
+                      <tr>
+                        <th className={cn(TH, TH_STICKY)}>Monat</th>
+                        {cmpDrill.years.map((y) => (
+                          <th key={y} className={cn(TH, TH_NUM, TH_STICKY)}>{y}</th>
+                        ))}
+                        {cmpDrill.years.slice(1).map((y, i) => (
+                          <th key={`d-${y}`} className={cn(TH, TH_NUM, TH_STICKY)}>Δ {y} vs. {cmpDrill.years[i]}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cmpDrill.monthRows.map((m) => (
+                        <tr key={m.monthIdx} data-testid={`mya-cmp-drill-month-${m.monthIdx}`}>
+                          <td className={cn(TD, 'font-medium')}>{m.label}</td>
+                          {m.valueByYear.map((v, i) => (
+                            <td key={cmpDrill.years[i]} className={cn(TD, TD_NUM)}>{fmtChf(v)}</td>
+                          ))}
+                          {m.deltaPrev.slice(1).map((d, i) => (
+                            <td key={`d-${cmpDrill.years[i + 1]}`} className={cn(TD, TD_NUM, 'text-xs text-muted-foreground')}>
+                              {deltaCellText(d.chf, d.pct)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {cmpDrill.dataQuality.length > 0 && (
+                <p className="text-[11px] text-muted-foreground" data-testid="mya-cmp-drill-dq">
+                  {cmpDrill.dataQuality.map((d) => d.text).join(' · ')}
+                </p>
+              )}
             </>
           )}
         </DialogContent>

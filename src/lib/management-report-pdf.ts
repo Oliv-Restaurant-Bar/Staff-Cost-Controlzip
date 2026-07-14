@@ -15,9 +15,10 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import {
-  fmtChf, fmtMio, fmtPct, fmtDeltaChf, buildMethodikNotes,
-  type MultiYearAnalysis,
+  fmtChf, fmtMio, fmtPct, fmtDeltaChf, fmtPpSigned, fmtQuotePct, buildMethodikNotes,
+  type MultiYearAnalysis, type YearKpiComparison, type YearComparisonDelta,
 } from './multi-year-analysis';
+import { EBIT_REPORT_NOTE } from './bank-investor-analysis';
 
 const SEVERITY_LABEL: Record<string, string> = {
   fehler: 'Fehler',
@@ -67,13 +68,25 @@ export interface ManagementReportData {
   datenqualitaet: ReportKeyValue[];
   /** §14: Methodik-Hinweise (buildMethodikNotes + Datenquellen-Hinweise) */
   methodik: string[];
+  /** Jahresvergleich (§5–§7): Kennzahlen × Jahre + Δ — leer, wenn kein cmp übergeben */
+  jahresvergleichHead: string[];
+  jahresvergleich: string[][];
+  /** Teiljahr-/EBIT-/Datenqualitäts-Hinweise zum Jahresvergleich */
+  jahresvergleichHinweise: string[];
+  /** Personalkosten-Aussagen (§7) — identisch zur UI-HintBox */
+  personalEntwicklung: string[];
   fileName: string;
 }
 
 /** REINE Aufbereitung — leitet alles aus dem Analysis-Objekt ab. */
 export function buildManagementReportData(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string; generatedAt?: string; dataSourceHints?: string[] } = {},
+  opts: {
+    restaurantName?: string; generatedAt?: string; dataSourceHints?: string[];
+    /** DASSELBE cmp-Objekt wie die UI (UI ≡ Export, §10) */
+    yearComparison?: YearKpiComparison;
+    personnelInsights?: string[];
+  } = {},
 ): ManagementReportData {
   const { years, baseYear, kpis, totals, monthRows, yearSummaries, position } = analysis;
   const isRevenue = position.semantics === 'revenue';
@@ -168,6 +181,45 @@ export function buildManagementReportData(
     .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity])
     .map(d => ({ label: SEVERITY_LABEL[d.severity] ?? d.severity, value: d.text }));
 
+  // Jahresvergleich (§5–§7): reine Formatierung des übergebenen cmp-Objekts —
+  // keine Zweitberechnung (UI ≡ Export).
+  const cmp = opts.yearComparison;
+  let jahresvergleichHead: string[] = [];
+  let jahresvergleich: string[][] = [];
+  const jahresvergleichHinweise: string[] = [];
+  let personalEntwicklung: string[] = [];
+  if (cmp && cmp.hasAnyData) {
+    const pairs = cmp.years.slice(1).map((y, i) => ({ from: cmp.years[i], to: y }));
+    const flPair = cmp.years.length >= 3
+      ? { from: cmp.years[0], to: cmp.years[cmp.years.length - 1] }
+      : null;
+    jahresvergleichHead = [
+      'Kennzahl',
+      ...cmp.years.map(y => `${y}${cmp.partialYears.includes(y) ? ' *' : ''}`),
+      ...pairs.map(p => `Δ ${p.to} vs. ${p.from}`),
+      ...(flPair ? [`Δ ${flPair.to} vs. ${flPair.from}`] : []),
+    ];
+    const dText = (kind: 'chf' | 'quote', d: YearComparisonDelta | null): string => {
+      if (!d) return '—';
+      if (kind === 'quote') return fmtPpSigned(d.pp);
+      return d.chf == null ? '—' : `${fmtDeltaChf(d.chf)} (${fmtPct(d.pct)})`;
+    };
+    jahresvergleich = cmp.rows.map(r => [
+      r.def.label,
+      ...r.valueByYear.map(v => (r.def.kind === 'quote' ? fmtQuotePct(v) : fmtChf(v))),
+      ...r.deltas.map(d => dText(r.def.kind, d)),
+      ...(flPair ? [dText(r.def.kind, r.firstToLast)] : []),
+    ]);
+    if (cmp.partialYears.length > 0) {
+      jahresvergleichHinweise.push(`* Teiljahr — alle Werte über die gemeinsamen Monate (${cmp.commonMonthsLabel ?? '—'}), keine Hochrechnung.`);
+    }
+    jahresvergleichHinweise.push(EBIT_REPORT_NOTE);
+    for (const d of cmp.dataQuality) {
+      jahresvergleichHinweise.push(`[${SEVERITY_LABEL[d.severity] ?? d.severity}] ${d.text}`);
+    }
+    personalEntwicklung = opts.personnelInsights ?? [];
+  }
+
   return {
     titel: `Management-Report — Mehrjahresanalyse ${isRevenue ? 'Umsatz' : position.label}`,
     untertitel: years.length > 0 ? `Vergleichszeitraum ${years[0]}–${years[years.length - 1]}` : 'Keine Daten',
@@ -184,6 +236,10 @@ export function buildManagementReportData(
     monatsTitel: isRevenue ? 'Monatsumsätze im Vergleich (CHF netto)' : `${position.label} pro Monat im Vergleich (CHF)`,
     datenqualitaet,
     methodik: buildMethodikNotes({ dataSourceHints: opts.dataSourceHints }),
+    jahresvergleichHead,
+    jahresvergleich,
+    jahresvergleichHinweise,
+    personalEntwicklung,
     fileName: managementReportFileName(years, opts.restaurantName),
   };
 }
@@ -293,6 +349,37 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
   sectionTitle('Jahresübersicht');
   table([data.jahresUebersichtHead], data.jahresUebersicht, { numericFrom: 1 });
 
+  // Jahresvergleich (§5–§7) — Kennzahlen bis EBIT, dieselbe Datenbasis wie die UI
+  if (data.jahresvergleich.length > 0) {
+    sectionTitle('Jahresvergleich (Kennzahlen bis EBIT)');
+    table([data.jahresvergleichHead], data.jahresvergleich, { numericFrom: 1 });
+    if (data.jahresvergleichHinweise.length > 0) {
+      doc.setFontSize(8);
+      doc.setTextColor(...MUTED);
+      for (const h of data.jahresvergleichHinweise) {
+        const lines = doc.splitTextToSize(pdfSafe(`• ${h}`), pageW - margin * 2) as string[];
+        ensureSpace(lines.length * 4 + 2);
+        y += 4;
+        doc.text(lines, margin, y);
+        y += (lines.length - 1) * 4;
+      }
+      y += 1;
+    }
+    if (data.personalEntwicklung.length > 0) {
+      sectionTitle('Personalkosten-Entwicklung');
+      doc.setFontSize(9.5);
+      doc.setTextColor(...NAVY);
+      for (const s of data.personalEntwicklung) {
+        const lines = doc.splitTextToSize(pdfSafe(`• ${s}`), pageW - margin * 2) as string[];
+        ensureSpace(lines.length * 4.6 + 2);
+        y += 4.6;
+        doc.text(lines, margin, y);
+        y += (lines.length - 1) * 4.6;
+      }
+      y += 2;
+    }
+  }
+
   // Monatstabelle
   sectionTitle(data.monatsTitel);
   table([data.monatsTabelleHead], data.monatsTabelle, { numericFrom: 1 });
@@ -350,7 +437,10 @@ export function renderManagementReportPdf(data: ManagementReportData): jsPDF {
 /** Komfort: aufbereiten, rendern und Download anstossen. */
 export function exportManagementReportPDF(
   analysis: MultiYearAnalysis,
-  opts: { restaurantName?: string; generatedAt?: string; dataSourceHints?: string[] } = {},
+  opts: {
+    restaurantName?: string; generatedAt?: string; dataSourceHints?: string[];
+    yearComparison?: YearKpiComparison; personnelInsights?: string[];
+  } = {},
 ): void {
   const data = buildManagementReportData(analysis, opts);
   const doc = renderManagementReportPdf(data);
