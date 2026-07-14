@@ -1,0 +1,224 @@
+Straffe und reorganisiere jetzt die bestehende replit.md, ohne fachliche Informationen zu erfinden und ohne aktuell gültige Architekturentscheidungen zu verlieren.
+
+Ziel:
+
+Die Datei soll deutlich kürzer, klarer und für künftige Agenten schneller erfassbar werden. Reduziere sie nach Möglichkeit von über 300 Zeilen auf ungefähr 120 bis 180 gut strukturierte Zeilen. Entscheidend ist jedoch die inhaltliche Qualität, nicht die exakte Zeilenzahl.
+
+Wichtige Regeln:
+
+1. Lies zuerst die komplette aktuelle replit.md.
+2. Verändere ausschliesslich die Dokumentation. Nimm keine Änderungen am Anwendungscode, an Tests, Datenbankmigrationen oder Konfigurationen vor.
+3. Dokumentiere nur das aktuell tatsächlich umgesetzte Verhalten.
+4. Erfinde keine Funktionen, Tabellen, Regeln oder Roadmap-Punkte.
+5. Entferne keine weiterhin relevanten Architekturentscheidungen.
+6. Entferne historische Entwicklungsprotokolle, alte Zwischenstände, Commit-Beschreibungen, Testzahlen und wiederholte Umsetzungsdetails.
+7. Falls sich zwei bestehende Aussagen widersprechen, prüfe den aktuellen Code und übernimm nur das heute gültige Verhalten.
+8. Fehlende Werte dürfen in der Dokumentation nicht als 0 beschrieben werden, wenn sie tatsächlich null, undefined oder — bleiben.
+9. Bestehende bewusste Produktentscheide müssen ausdrücklich erhalten bleiben.
+10. Ändere keine Bedeutung nur zur Verkürzung.
+
+Baue die neue replit.md ungefähr in dieser Struktur auf:
+
+1. Projektüberblick
+
+Kurz und kompakt dokumentieren:
+
+* Zweck der Anwendung
+* wichtigste Benutzerrollen
+* eingesetzter Tech-Stack
+* zentrale Datenquellen
+* wichtigste Grundprinzipien
+
+Dieser Abschnitt soll maximal etwa 20 bis 30 Zeilen umfassen.
+
+2. Globale Architektur- und Datenregeln
+
+Fasse die übergreifenden Regeln kompakt zusammen, insbesondere soweit aktuell vorhanden:
+
+* bestehende Datenquellen und Tabellen bevorzugen
+* keine neuen Tabellen oder parallelen Datenmodelle ohne zwingenden Grund
+* Berechnungslogik nicht mehrfach oder widersprüchlich implementieren
+* fehlend ist nicht gleich null oder null ist nicht gleich 0
+* keine geschätzten Finanzwerte
+* importierte Daten idempotent verarbeiten
+* manuelle Werte nicht unbemerkt überschreiben
+* Tombstone-Logik für gelöschte Overrides, Saldoanker oder andere bestehende Fälle
+* Rollen- und Berechtigungsregeln
+* Datenschutz und keine unnötigen personenbezogenen Daten in State, Logs oder Auswertungen
+* Abgleich von Drilldowns und Detailwerten gegen die übergeordnete Summe
+* bestehende Performance- und Caching-Regeln
+
+Nur Regeln aufnehmen, die im aktuellen Projekt tatsächlich gelten.
+
+3. Globale UI- und UX-Richtlinien
+
+Dokumentiere die verbindlichen Gestaltungsregeln kompakt:
+
+* schlicht, modern und professionell
+* synchron mit bestehenden App-Mustern
+* benutzerfreundlich und lesefreundlich
+* konsistente Karten, Tabellen, Dialoge, Abstände, Typografie, Farben und Statusdarstellungen
+* wichtige Kennzahlen früh sichtbar
+* unnötigen Leerraum und übermässiges Scrollen vermeiden
+* Filter und Zeitraum müssen klar erkennbar auf die angezeigten Auswertungen wirken
+* Drilldowns innerhalb bestehender Dialoge bevorzugen, sofern bereits so umgesetzt
+* klare Zurück-Navigation
+* verständliche deutsche Bezeichnungen
+* Desktop übersichtlich, responsive Darstellung ohne Informationsverlust
+* Exporte müssen dieselben fachlichen Werte und Hinweise wie die UI verwenden
+
+Keine neuen Designsysteme erfinden.
+
+4. Aktueller Funktionsumfang
+
+Erstelle pro bestehendem Hauptmodul einen kompakten Unterabschnitt. Beschreibe jeweils nur:
+
+* Zweck
+* wichtigste Ansichten
+* zentrale Berechnungen oder Regeln
+* Import- oder Exportverhalten
+* wichtige Rollen- oder Bearbeitungsregeln
+* bewusst gesetzte fachliche Grenzen
+
+Berücksichtige nur Module, die aktuell wirklich existieren, insbesondere soweit in der bestehenden Datei vorhanden:
+
+* Import-Cockpit
+* Tagesabschlüsse
+* Umsatzabstimmung
+* Reservationsanalyse
+* Gäste-CRM
+* Personalbedarf und Personalcontrolling
+* Erfolgsrechnung und Mehrjahresanalyse
+* Banken- und Investorenbericht
+* Warenaufwand
+* Produktanalyse
+* weitere tatsächlich bestehende Admin- oder Importmodule
+
+Vermeide lange technische Implementierungsdetails wie einzelne Komponenten-, Hook-, Test-ID- oder Dateinamen, ausser sie sind für eine zentrale Architekturregel zwingend notwendig.
+
+5. Bewusste fachliche Entscheidungen
+
+Führe die wichtigen, absichtlich gesetzten Grenzen kompakt auf.
+
+Unbedingt erhalten, sofern der aktuelle Code dies bestätigt:
+
+Banken- und Investorenbericht
+
+* Der Bericht endet aktuell bei EBIT.
+* Es gibt keine Jahresgewinn-Zeile.
+* EBIT wird nicht mit Jahresgewinn gleichgesetzt.
+* Finanzergebnis und Steuern sind nicht enthalten.
+* Der identische Hinweis lautet:
+
+Finanzergebnis und Steuern sind in dieser Auswertung nicht enthalten. Der Bericht endet daher bei EBIT.
+
+* Dieser Hinweis wird in UI, PDF und Excel konsistent verwendet.
+* Fehlende Finanzwerte werden nicht geschätzt und nicht als 0 dargestellt.
+* Eine spätere Jahresgewinn-Phase ist erst vorgesehen, wenn Finanzaufwand, Finanzertrag und Steuern vollständig importiert und gemappt sind.
+
+Warenaufwand
+
+* Direkter Warenaufwand: Konten 4000 bis 4070.
+* Übriger Warenaufwand: Konten 4071 bis 4900.
+* Nur übernehmen, wenn diese Logik im aktuellen Code weiterhin exakt so umgesetzt ist.
+
+Erhalte daneben weitere bewusste Entscheide aus der bestehenden Datei, zum Beispiel zu:
+
+* Import-Überschreibungen
+* Buchhaltungsexport
+* Bankeinzahlungen
+* Reservationsimporten
+* Personalbedarf
+* Datenschutz
+* Rollen
+* Tombstones
+* abgeschlossenen oder wieder geöffneten Tagesabschlüssen
+
+Fasse sie knapp zusammen und entferne Wiederholungen.
+
+6. Exporte und Konsistenz
+
+Dokumentiere modulübergreifend:
+
+* Excel-, PDF- und CSV-Exporte müssen auf derselben fachlichen Logik wie die UI basieren.
+* Hinweise, Zwischentotale, Filter und Zeitraumbezüge müssen zwischen UI und Export konsistent sein.
+* Keine zusätzlichen Schätzungen oder abweichenden Summen nur für Exporte.
+* Fehlende Werte dürfen im Export nicht stillschweigend zu 0 werden.
+* Dokumentiere nur tatsächlich vorhandene Exportarten.
+
+7. Tests und Verifikation
+
+Keine laufenden Testzahlen wie „61 Tests grün“ dokumentieren.
+
+Stattdessen nur kompakt festhalten:
+
+* Fachlogik soll mit fokussierten Tests abgesichert werden.
+* Kritische Summen, Abgleiche, Importregeln und Exportkonsistenz benötigen Regressionstests.
+* TypeScript-Typecheck und betroffene Tests müssen bei Änderungen erfolgreich sein.
+* Reviews müssen auf den tatsächlichen Task-Diff begrenzt werden und dürfen keine fremden Altänderungen als Teil des aktuellen Tasks behandeln.
+
+Nur übernehmen, wenn dies mit den bestehenden Projektregeln übereinstimmt.
+
+8. Aktuelle Roadmap
+
+Übernimm nur offene Themen, die in der bestehenden replit.md tatsächlich als noch nicht umgesetzt oder als nächste Phase gekennzeichnet sind.
+
+Roadmap nur als kurze Stichwortliste, zum Beispiel:
+
+* Banken und Investoren nächste Phase
+* Jahresgewinn erst nach vollständigem Finanzkonten-Mapping
+* Personal-Simulation
+* Forecast-Erweiterungen
+* CRM-Kampagnen
+* weitere Szenarioanalysen
+
+Keine bereits umgesetzten Punkte erneut als Roadmap aufführen.
+
+Aufräumregeln:
+
+Entferne insbesondere:
+
+* chronologische Entwicklungsberichte
+* „wurde umgesetzt“-Erzählungen
+* alte Phasenbeschreibungen, wenn nur der aktuelle Stand relevant ist
+* wiederholte Erklärungen derselben Funktion
+* frühere Testanzahlen
+* einzelne Commit- oder Checkpoint-Hinweise
+* lange Listen einzelner Komponenten oder Test-IDs
+* überholte TODOs
+* erledigte Roadmap-Punkte
+* widersprüchliche Altbeschreibungen
+* unnötige Beispiele, wenn die Regel bereits eindeutig beschrieben ist
+
+Behalte insbesondere:
+
+* zentrale Architekturentscheidungen
+* fachliche Formeln
+* Kontobereiche
+* Berechtigungen
+* Datenquellen
+* Import- und Überschreibungsregeln
+* Exportregeln
+* Datenschutzregeln
+* bewusste fachliche Grenzen
+* wichtige UI- und UX-Grundsätze
+* aktuell offene Roadmap-Themen
+
+Vorgehen:
+
+1. Lies die vollständige bestehende replit.md.
+2. Identifiziere Wiederholungen, veraltete Aussagen und historische Details.
+3. Prüfe widersprüchliche oder unklare Aussagen gezielt gegen den aktuellen Code.
+4. Ersetze die Datei durch eine kompakte, sauber gegliederte Fassung.
+5. Prüfe danach mit einem Diff, dass keine wichtigen gültigen Regeln verloren gegangen sind.
+6. Führe keine Anwendungstests aus, wenn ausschliesslich die Markdown-Datei geändert wurde. Prüfe stattdessen Format, Überschriften, interne Konsistenz und Git-Diff.
+7. Gib am Ende eine kurze Zusammenfassung aus:
+    * alte und neue ungefähre Zeilenzahl
+    * neu geschaffene Hauptstruktur
+    * welche Arten von Informationen entfernt wurden
+    * welche wichtigen Architektur- und Fachentscheide ausdrücklich erhalten blieben
+    * Bestätigung, dass ausschliesslich replit.md geändert wurde
+
+Wichtig:
+
+Arbeite direkt und vollständig. Stelle keine Rückfrage. Ändere keine Dateien ausser replit.md.
