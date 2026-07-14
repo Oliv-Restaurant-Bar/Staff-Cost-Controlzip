@@ -1,0 +1,322 @@
+Führe jetzt Stabilisierungsrunde 2.5 durch:
+
+Supabase-Verfügbarkeit muss nach Netzwerk-, Timeout- und Unavailable-Fehlern zuverlässig zurückgesetzt und später neu geprüft werden.
+
+WICHTIG:
+
+Keine neue Funktion entwickeln.
+Keine UI-Neugestaltung.
+Keine Rundungsänderung.
+Kein generischer safeBlobUpsert.
+Keine Änderung der fachlichen Datenlogik.
+
+Ziel:
+
+Die Anwendung darf Supabase nicht dauerhaft als verfügbar behandeln, wenn die Verbindung während der Sitzung ausfällt.
+
+Ebenso darf sie Supabase nicht dauerhaft als nicht verfügbar behandeln, wenn die Verbindung später wiederhergestellt ist.
+
+==================================================
+T001 – Availability-Logik vollständig prüfen
+==================================================
+
+Prüfe projektweit alle Stellen rund um:
+
+- isAvailable()
+- _available
+- Availability-Cache
+- Negativ-Cache
+- kvGetStrict
+- kvSetStrict
+- Netzwerkfehlerklassifikation
+- Timeout-Fehler
+- Offline-Erkennung
+- Retry
+- notifyKVBackupProblem
+- Supabase-Client-Initialisierung
+- app_settings-Zugriffe
+- Budget-, Reporting-, Tagesumsatz- und Journal-Backups
+
+Dokumentiere intern:
+
+- wann _available auf true gesetzt wird
+- wann _available auf false gesetzt wird
+- wann erneut geprüft wird
+- welche Fehler aktuell den Cache invalidieren
+- welche Fehler nur einen Toast auslösen
+- ob ein einmaliges true dauerhaft bestehen bleibt
+
+==================================================
+T002 – Zustandsmodell klar definieren
+==================================================
+
+Verwende intern eine klare Semantik:
+
+- unknown: noch nicht geprüft
+- available: Supabase erreichbar
+- unavailable: aktuell nicht erreichbar
+
+Falls die bestehende Implementierung nur boolean verwendet, darf sie minimal erweitert werden, aber kein grosses neues Subsystem erstellen.
+
+Regeln:
+
+- Erfolg setzt available
+- Netzwerk-/Timeout-/DNS-/Offline-/Fetch-Fehler setzen unavailable
+- echter fachlicher DB-Fehler setzt nicht automatisch unavailable, sofern die Verbindung selbst erreichbar ist
+- nach Ablauf des bestehenden Retry-/Negativ-Cache-Fensters wird neu geprüft
+- ein erfolgreicher Retry setzt wieder available
+- ein unavailable-Zustand darf nicht dauerhaft eingefroren bleiben
+
+==================================================
+T003 – Fehlerklassifikation prüfen
+==================================================
+
+Unterscheide mindestens:
+
+### Verbindung nicht verfügbar
+
+Beispiele:
+
+- Browser offline
+- Failed to fetch
+- NetworkError
+- Timeout
+- DNS-/Verbindungsfehler
+- Supabase nicht konfiguriert
+
+Verhalten:
+
+- Availability auf unavailable
+- lokale Speicherung bleibt erhalten
+- kein destruktiver Remote-Write
+- dezenter Offline-/Backup-Hinweis
+- späterer Retry möglich
+
+### Supabase erreichbar, aber Operation fehlerhaft
+
+Beispiele:
+
+- RLS-/Permission-Fehler
+- ungültige Spalte
+- Constraint-Verletzung
+- SQL-/PostgREST-Fehler
+
+Verhalten:
+
+- Availability bleibt grundsätzlich available
+- sichtbarer Fehler-Toast
+- Fehler nicht als Offline klassifizieren
+- keine Daten still verwerfen
+
+==================================================
+T004 – Cache-Invalidierung
+==================================================
+
+Behebe die bekannte Schwachstelle:
+
+Wenn _available bereits true ist und danach ein Netzwerkfehler auftritt, muss der Cache zurückgesetzt werden.
+
+Nach einem als unavailable klassifizierten Fehler:
+
+- _available = unavailable bzw. false/unknown gemäss gewähltem Modell
+- Zeitpunkt des Fehlers speichern
+- innerhalb des bestehenden kurzen Negativ-Cache-Fensters nicht bei jedem Aufruf erneut testen
+- nach Ablauf des Fensters erneute Prüfung erlauben
+
+Nach erfolgreicher Prüfung oder erfolgreichem KV-Zugriff:
+
+- _available = available
+- Fehlerzeitpunkt zurücksetzen
+
+==================================================
+T005 – Retry muss frischen Stand verwenden
+==================================================
+
+Prüfe alle Retry-Aktionen.
+
+Regeln:
+
+- Retry liest immer den aktuellsten lokalen Stand
+- keine alten Closures oder Snapshots erneut senden
+- Retry prüft die Verfügbarkeit neu
+- erfolgreicher Retry bestätigt das Backup
+- fehlgeschlagener Retry hält lokale Daten unverändert
+- Tenant-Key beim Retry muss dem aktuellen betroffenen Datensatz entsprechen und darf nicht durch einen späteren Tenant-Wechsel verwechselt werden
+
+==================================================
+T006 – Tenant- und Queue-Sicherheit
+==================================================
+
+Teste die Availability- und Retry-Logik mit Oliv und Beaulieu:
+
+- Oliv-Backup scheitert offline
+- Wechsel zu Beaulieu
+- Verbindung kommt zurück
+- Retry für Oliv darf nur Oliv schreiben
+- Beaulieu-Stand bleibt unverändert
+
+Umgekehrt ebenfalls testen.
+
+Falls es eine globale Queue gibt:
+
+- Availability darf global sein, wenn technisch sinnvoll
+- Datenoperationen und Retry-Payloads müssen tenant-spezifisch bleiben
+- keine Queue-Aufgabe darf durch einen Tenant-Wechsel auf den falschen Key schreiben
+
+==================================================
+T007 – Relevante Stores prüfen
+==================================================
+
+Prüfe mindestens:
+
+- Budget
+- Reporting
+- Tagesumsätze
+- Buchungszeilen/Journal
+- Import-Registry, falls KV-basiert
+- weitere Nutzer von kvGetStrict/kvSetStrict
+
+Alle müssen dieselbe zentrale Availability- und Fehlerklassifikation verwenden.
+
+Keine eigenen Offline-Sonderlogiken pro Store, sofern vermeidbar.
+
+==================================================
+T008 – Regressionstests
+==================================================
+
+Ergänze deterministische Tests mindestens für:
+
+1. Startzustand unknown:
+   - erster erfolgreicher Check → available
+
+2. available, danach Netzwerkfehler:
+   - Status wird unavailable
+   - kein weiterer Remote-Write im Negativ-Cache-Fenster
+
+3. unavailable, Cache-Fenster abgelaufen:
+   - erneuter Check wird ausgeführt
+   - Erfolg setzt wieder available
+
+4. RLS-/Permission-Fehler:
+   - bleibt available
+   - sichtbarer echter Fehler
+   - nicht als Offline behandelt
+
+5. Supabase nicht konfiguriert:
+   - lokale Speicherung erfolgreich
+   - kein roter Fehler-Toast
+   - kein Remote-Write
+
+6. Timeout:
+   - als unavailable klassifiziert
+   - lokaler Stand bleibt erhalten
+
+7. Retry:
+   - verwendet aktuellen lokalen Stand
+   - nicht den alten Snapshot
+
+8. Tenant-Wechsel:
+   - Retry schreibt auf den ursprünglichen Tenant-Key
+   - kein Cross-Tenant-Write
+
+9. Zwei schnelle Fehler:
+   - keine Toast-Flut
+   - Negativ-Cache greift
+
+10. Verbindung wiederhergestellt:
+   - nächster zulässiger Versuch funktioniert
+   - Availability wird available
+   - Backup wird bestätigt
+
+==================================================
+T009 – App-Level-Verifikation
+==================================================
+
+Teste mindestens einen echten App-Einstieg:
+
+- Budgetwert ändern
+- Supabase-Verbindung im Mock ausfallen lassen
+- lokaler Stand bleibt gespeichert
+- dezenter Offline-Hinweis
+- Verbindung wiederherstellen
+- Retry auslösen
+- Remote erhält den aktuellen Stand
+- kein doppelter oder veralteter Write
+
+Wenn möglich zusätzlich für Reporting oder Tagesumsätze einen realen Einstieg testen.
+
+==================================================
+T010 – Projektweite Suche
+==================================================
+
+Suche nach:
+
+- eigenen Offline-Checks
+- direktem navigator.onLine ohne zentrale Klassifikation
+- lokalen _available-Kopien
+- stillen catch-Blöcken
+- Remote-Reads, die bei Fehler leeren Bestand zurückgeben
+- Retry-Funktionen mit eingefrorenem Snapshot
+
+Behebe nur direkt betroffene, klar bestätigte Probleme.
+
+Grössere Architekturthemen als Folgepunkt dokumentieren.
+
+==================================================
+T011 – Verifikation
+==================================================
+
+Führe aus:
+
+- neue Availability-/Retry-Tests
+- bestehende KV-Tests
+- Budget-App-Level-Tests
+- Tenant-Tests
+- betroffene Reporting-/Tagesumsatz-Tests
+- projektspezifischen TypeScript-Typecheck
+- Architect-Review nur über den tatsächlichen Task-Diff
+
+Bestätige zusätzlich:
+
+- available wird nach Netzwerkfehler invalidiert
+- unavailable wird später erneut geprüft
+- echte DB-Fehler werden nicht als Offline maskiert
+- Retry verwendet aktuelle Daten
+- keine Cross-Tenant-Writes
+
+==================================================
+T012 – Dokumentation
+==================================================
+
+Aktualisiere replit.md kompakt:
+
+- Supabase-Verfügbarkeit wird als flüchtiger Zustand behandelt
+- Netzwerkfehler invalidieren den Availability-Cache
+- nach kurzer Sperrfrist wird neu geprüft
+- echte DB-Fehler bleiben sichtbare Fehler und gelten nicht als Offline
+- Retry liest den aktuellsten lokalen Stand und bleibt tenant-spezifisch
+
+Keine Testzahlen.
+Kein Entwicklungsprotokoll.
+
+==================================================
+Abschlussbericht
+==================================================
+
+Am Ende ausgeben:
+
+1. Bisheriges Availability-Verhalten.
+2. Bestätigte Schwachstellen.
+3. Neues Zustands- und Cache-Verhalten.
+4. Fehlerklassifikation Offline vs. echter DB-Fehler.
+5. Retry-Verhalten.
+6. Tenant-/Queue-Ergebnis.
+7. Welche Stores vereinheitlicht wurden.
+8. Ergebnis der App-Level-Verifikation.
+9. Typecheck-Ergebnis.
+10. Architect-Review-Ergebnis.
+11. Tatsächlich geänderte Dateien.
+
+WICHTIG:
+
+Ein temporärer Netzwerkausfall darf weder zu Datenverlust noch zu einem dauerhaft falschen Availability-Zustand führen.

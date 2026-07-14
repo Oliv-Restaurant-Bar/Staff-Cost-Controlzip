@@ -516,7 +516,16 @@ export function saveJournalEntries(
     console.error(`[Journal] KV-Backup fehlgeschlagen: ${key}`, err);
     void notifyKVBackupProblem(err, 'Buchungszeilen', {
       toastId: 'journal-kv-failed',
-      retry: () => kvSetStrict(key, final),
+      // Beim Retry FRISCH aus localStorage lesen — kein eingefrorener Snapshot,
+      // sonst würde ein inzwischen neuerer Save zurückgedreht. Der Key ist zur
+      // Save-Zeit gebunden und bleibt nach Tenant-/Monatswechsel korrekt.
+      retry: () => {
+        let fresh: SageJournalEntry[] = final;
+        try {
+          fresh = JSON.parse(localStorage.getItem(key) ?? '[]') as SageJournalEntry[];
+        } catch { /* localStorage unlesbar → Snapshot als letzter Fallback */ }
+        return kvSetStrict(key, fresh);
+      },
     });
   });
   console.log(`[Journal] Gespeichert: ${key} (${final.length} Einträge) → localStorage + Supabase`);

@@ -31,21 +31,30 @@ export class KVUnavailableError extends Error {
 }
 
 const NETWORK_ERROR_RE =
-  /failed to fetch|networkerror|network request failed|fetch failed|load failed|err_internet_disconnected|err_network/i;
+  /failed to fetch|networkerror|network request failed|fetch failed|load failed|err_internet_disconnected|err_network|err_name_not_resolved|err_connection|err_timed_out|econnrefused|econnreset|etimedout|enotfound|timed out|timeout|abort|dns|socket hang up|supabaseurl is required|supabasekey is required/i;
+
+// Server-seitige Timeouts (Postgres statement timeout) bedeuten: Verbindung
+// steht, die OPERATION war zu langsam — das ist ein echter DB-Fehler (Fall B),
+// kein Offline-Signal.
+const SERVER_SIDE_TIMEOUT_RE =
+  /statement timeout|canceling statement|transaction is aborted|idle.?in.?transaction/i;
 
 /**
  * Klassifiziert einen Fehler als «Supabase nicht verfügbar» (Fall A: offline /
- * nicht konfiguriert / Netzwerkausfall) — alles andere ist ein echter
+ * nicht konfiguriert / Netzwerkausfall / Timeout) — alles andere ist ein echter
  * Lese-/Schreibfehler trotz Verbindung (Fall B).
  */
 export function isKvUnavailable(err: unknown): boolean {
   if (err instanceof KVUnavailableError) return true;
+  // Browser meldet explizit offline → jede fehlgeschlagene Operation ist Fall A.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
   const msg =
     err instanceof Error
       ? err.message
       : err && typeof err === 'object' && 'message' in err
         ? String((err as { message: unknown }).message)
         : String(err);
+  if (SERVER_SIDE_TIMEOUT_RE.test(msg)) return false;
   return NETWORK_ERROR_RE.test(msg);
 }
 
@@ -56,6 +65,41 @@ export function isKvUnavailable(err: unknown): boolean {
 export function resetKVAvailabilityCache(): void {
   _available = null;
   _unavailableUntil = 0;
+}
+
+/**
+ * Aktueller Verfügbarkeits-Zustand (T002-Semantik) — read-only, für Tests
+ * und Diagnose. 'unknown' = noch nie geprüft, 'available' = erreichbar,
+ * 'unavailable' = zuletzt nicht erreichbar (Negativ-Cache-Fenster aktiv oder
+ * abgelaufen — der nächste Zugriff prüft nach Ablauf neu).
+ */
+export function getKVAvailabilityState(): 'unknown' | 'available' | 'unavailable' {
+  if (_available === null) return 'unknown';
+  return _available ? 'available' : 'unavailable';
+}
+
+/**
+ * Erfolgreicher Supabase-Zugriff → Verfügbarkeit bestätigen.
+ * Verfügbarkeit ist FLÜCHTIG: sie gilt nur bis zum nächsten Netzwerkfehler.
+ */
+function markKVSuccess(): void {
+  _available = true;
+  _unavailableUntil = 0;
+}
+
+/**
+ * Fehlgeschlagener Supabase-Zugriff klassifizieren:
+ * - Netzwerk-/Timeout-/Offline-Fehler (Fall A) → Cache invalidieren
+ *   (unavailable + 30s-Negativ-Fenster), damit ein einmal gesetztes
+ *   «verfügbar» NIE dauerhaft eingefroren bleibt.
+ * - Echter DB-Fehler (Fall B, z. B. RLS/Constraint): Verbindung steht —
+ *   Verfügbarkeit bleibt unangetastet, der Fehler bleibt sichtbar.
+ */
+function markKVFailure(err: unknown): void {
+  if (isKvUnavailable(err)) {
+    _available = false;
+    _unavailableUntil = Date.now() + 30_000;
+  }
 }
 
 /**
@@ -114,7 +158,9 @@ function notifyKV(key: string) {
 }
 
 async function isAvailable(): Promise<boolean> {
-  // «verfügbar» wird dauerhaft gecacht; «nicht verfügbar» nur 30 s —
+  // Verfügbarkeit ist FLÜCHTIG: «verfügbar» gilt nur, bis eine spätere
+  // Operation an einem Netzwerkfehler scheitert (markKVFailure invalidiert);
+  // «nicht verfügbar» wird nur 30 s gecacht — danach wird neu geprüft,
   // damit sich die App nach einem transienten Ausfall wieder erholt.
   if (_available === true) return true;
   if (_available === false && Date.now() < _unavailableUntil) return false;
@@ -123,8 +169,15 @@ async function isAvailable(): Promise<boolean> {
       .from('app_settings')
       .select('key')
       .limit(1);
-    _available = !error;
+    if (!error || !isKvUnavailable(error)) {
+      // Kein Fehler ODER echter DB-Fehler (z. B. RLS): Verbindung steht —
+      // Supabase ist erreichbar, der fachliche Fehler bleibt Sache der Operation.
+      markKVSuccess();
+    } else {
+      _available = false;
+    }
   } catch {
+    // Geworfene Fehler im Probe-Pfad sind praktisch immer Netzwerk-/Fetch-Fehler.
     _available = false;
   }
   if (_available === false) _unavailableUntil = Date.now() + 30_000;
@@ -139,12 +192,18 @@ export async function kvGet(key: string): Promise<unknown | null> {
       .select('value')
       .eq('key', key)
       .maybeSingle();
-    if (error) return null;
+    if (error) {
+      markKVFailure(error);
+      return null;
+    }
+    markKVSuccess();
     return data?.value ?? null;
-  } catch {
+  } catch (err) {
+    markKVFailure(err);
     return null;
   }
 }
+
 
 /**
  * Wie kvGet, wirft aber bei Nichtverfügbarkeit oder Lesefehler statt still
@@ -155,24 +214,41 @@ export async function kvGetStrict(key: string): Promise<unknown | null> {
   if (!(await isAvailable())) {
     throw new KVUnavailableError();
   }
-  const { data, error } = await (supabase as any)
-    .from('app_settings')
-    .select('value')
-    .eq('key', key)
-    .maybeSingle();
-  if (error) throw error;
-  return data?.value ?? null;
+  let res: { data: { value: unknown } | null; error: unknown };
+  try {
+    res = await (supabase as any)
+      .from('app_settings')
+      .select('value')
+      .eq('key', key)
+      .maybeSingle();
+  } catch (err) {
+    markKVFailure(err);
+    throw err;
+  }
+  if (res.error) {
+    markKVFailure(res.error);
+    throw res.error;
+  }
+  markKVSuccess();
+  return res.data?.value ?? null;
 }
 
 export async function kvSet(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) return;
   try {
-    await (supabase as any)
+    const { error } = await (supabase as any)
       .from('app_settings')
       .upsert({ key, value }, { onConflict: 'key' });
+    if (error) {
+      markKVFailure(error);
+      return;
+    }
+    markKVSuccess();
     notifyKV(key);
-  } catch {
-    // silently fail – localStorage bleibt primärer Speicher
+  } catch (err) {
+    // still scheitern (localStorage bleibt Primärspeicher) — aber Netzwerkfehler
+    // invalidieren den Availability-Cache, damit «verfügbar» nie einfriert.
+    markKVFailure(err);
   }
 }
 
@@ -185,10 +261,20 @@ export async function kvSetStrict(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) {
     throw new KVUnavailableError();
   }
-  const { error } = await (supabase as any)
-    .from('app_settings')
-    .upsert({ key, value }, { onConflict: 'key' });
-  if (error) throw error;
+  let res: { error: unknown };
+  try {
+    res = await (supabase as any)
+      .from('app_settings')
+      .upsert({ key, value }, { onConflict: 'key' });
+  } catch (err) {
+    markKVFailure(err);
+    throw err;
+  }
+  if (res.error) {
+    markKVFailure(res.error);
+    throw res.error;
+  }
+  markKVSuccess();
   notifyKV(key);
 }
 
@@ -277,7 +363,7 @@ export async function safeUpsertDailyBudgets(
     console.error(`[SAFE-UPSERT] KV-Lesefehler für ${storageKey} — KV-Write übersprungen:`, remoteReadError);
     await notifyKVBackupProblem(remoteReadError, 'Umsatz', {
       toastId: 'kv-write-failed',
-      retry: () => safeUpsertDailyBudgets(storageKey, updates, onlyIfZero),
+      retry: async () => { await safeUpsertDailyBudgets(storageKey, updates, onlyIfZero); },
     });
     return merged;
   }
@@ -292,7 +378,7 @@ export async function safeUpsertDailyBudgets(
     console.error(`[SAFE-UPSERT] KV-Schreibfehler für ${storageKey}:`, kvError);
     await notifyKVBackupProblem(kvError, 'Umsatz', {
       toastId: 'kv-write-failed',
-      retry: () => safeUpsertDailyBudgets(storageKey, updates, onlyIfZero),
+      retry: async () => { await safeUpsertDailyBudgets(storageKey, updates, onlyIfZero); },
     });
   }
 
@@ -388,11 +474,13 @@ export async function safeUpsertReportingMonth(
       .from('app_settings')
       .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
     if (error) throw error;
+    markKVSuccess();
     // 4. localStorage mit dem vollständigen Stand synchronisieren
     localStorage.setItem(storeKey, JSON.stringify(merged));
     notifyKV(storeKey);
     console.log(`[REPORTING] safeUpsertReportingMonth: ${storeKey} / ${monthId} ✓`);
   } catch (err) {
+    markKVFailure(err);
     console.error(`[REPORTING] safeUpsertReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
     // KEIN Fallback-kvSet: Ein direkter Blob-Write mit nur EINEM Monat würde
     // alle anderen Monate/Jahre in Supabase löschen (verbotener kompletter
@@ -426,10 +514,12 @@ export async function safeDeleteReportingMonth(
       .from('app_settings')
       .upsert({ key: storeKey, value: rest }, { onConflict: 'key' });
     if (error) throw error;
+    markKVSuccess();
     localStorage.setItem(storeKey, JSON.stringify(rest));
     notifyKV(storeKey);
     console.log(`[REPORTING] safeDeleteReportingMonth: ${storeKey} / ${monthId} ✓`);
   } catch (err) {
+    markKVFailure(err);
     console.error(`[REPORTING] safeDeleteReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
     // Fehler weiterreichen — der Aufrufer muss ihn sichtbar machen (nie still scheitern).
     throw err;
@@ -778,7 +868,17 @@ export async function saveOvertimeDisabledIds(tenantId: TenantId, ids: string[])
     console.error(`[OVERTIME-DISABLED] KV-Schreibfehler für ${key}:`, err);
     await notifyKVBackupProblem(err, 'Überstunden-Einstellung', {
       toastId: 'overtime-disabled-write-failed',
-      retry: () => kvSetStrict(key, clean),
+      retry: () => {
+        // Beim Retry FRISCH aus localStorage lesen — kein eingefrorener
+        // Snapshot, sonst würde ein inzwischen neuerer Stand zurückgedreht.
+        // Der Key ist zur Save-Zeit gebunden (tenant-spezifisch) und bleibt
+        // auch nach einem späteren Tenant-Wechsel korrekt.
+        let fresh = clean;
+        try {
+          fresh = toStringIds(JSON.parse(localStorage.getItem(key) ?? '[]'));
+        } catch { /* localStorage unlesbar → Snapshot als letzter Fallback */ }
+        return kvSetStrict(key, fresh);
+      },
     });
   }
 }

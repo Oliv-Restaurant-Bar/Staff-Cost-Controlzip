@@ -41,8 +41,11 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (_table: string) => ({
       select: (_cols: string) => ({
+        // Offline-Simulation mit ECHTER Netzwerkfehlermeldung: seit Runde 2.5
+        // klassifiziert die Probe Fehler — nur Netzwerk-/Timeout-Fehler gelten
+        // als «nicht verfügbar», fachliche DB-Fehler nicht.
         limit: async (_n: number) =>
-          state.failProbe ? { data: null, error: { message: 'probe fail' } } : { data: [], error: null },
+          state.failProbe ? { data: null, error: { message: 'Failed to fetch' } } : { data: [], error: null },
         eq: (_col: string, key: string) => ({
           maybeSingle: async () => {
             if (state.failRead) return { data: null, error: { message: 'read fail' } };
