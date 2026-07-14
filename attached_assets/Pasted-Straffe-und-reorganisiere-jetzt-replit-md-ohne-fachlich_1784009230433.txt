@@ -1,0 +1,210 @@
+Straffe und reorganisiere jetzt replit.md, ohne fachliche Informationen zu verlieren.
+
+Ziel:
+
+replit.md soll wieder als kompakte technische und fachliche Referenz für die aktuelle Anwendung dienen.
+
+Die Datei darf keine chronologische Entwicklungshistorie, keine erledigten Task-Protokolle und keine redundanten Detailbeschreibungen enthalten.
+
+Wichtig:
+
+Keine Anwendungscode-Änderungen vornehmen.
+
+Keine Funktionen entfernen.
+
+Nur replit.md überarbeiten.
+
+Vorgehen:
+
+1. Bestehende Inhalte vollständig lesen
+
+Identifiziere:
+
+- aktuelle Architektur
+- aktive Module
+- zentrale Datenmodelle
+- fachliche Regeln
+- Importlogik
+- Exportlogik
+- Rollen und Berechtigungen
+- wichtige technische Einschränkungen
+- aktuell gültige Benutzerentscheidungen
+
+2. Redundanzen entfernen
+
+Entferne beziehungsweise konsolidiere:
+
+- doppelte Beschreibungen derselben Funktion
+- alte Testzahlen
+- alte Commit-Hinweise
+- erledigte Task-Phasen
+- historische Zwischenstände
+- alte Review-Ergebnisse
+- Formulierungen wie „neu umgesetzt“, wenn die Funktion inzwischen regulärer Bestandteil ist
+- wiederholte Designvorgaben
+- wiederholte Hinweise auf Typecheck oder Architect-Review
+
+3. Klare neue Struktur erstellen
+
+Verwende eine kompakte Gliederung:
+
+# Projektübersicht
+
+# Architektur und Datenfluss
+
+# Rollen und Berechtigungen
+
+# Navigation und Hauptmodule
+
+# Reporting und Erfolgsrechnung
+
+# Banken- und Investorenbericht
+
+# Import-System
+
+# Tagesabschlüsse
+
+# Reservationen und Gäste-CRM
+
+# Personal und Personalbedarf
+
+# Warenkosten und Produktanalyse
+
+# Exporte
+
+# Fachliche Kernregeln
+
+# Technische Konventionen
+
+# Bekannte Einschränkungen
+
+4. Erfolgsrechnung korrekt dokumentieren
+
+Behalte kompakt und eindeutig:
+
+- Mehrjahresdaten nach Geschäftsjahr getrennt
+- Jahres-Kosten-Import aus Sage-Kontoblatt
+- Direkter Warenaufwand Konten 4000–4070
+- Übriger Warenaufwand Konten 4071–4900
+- Gesamtwarenaufwand als Summe beider Zwischentotale
+- Bruttogewinn 1
+- gemeinsame zentrale P&L-Struktur für UI, PDF und Excel
+- fehlende Werte sind nicht automatisch CHF 0
+
+5. Banken- und Investorenbericht korrekt dokumentieren
+
+Behalte kompakt:
+
+- Vergleich Basisjahr und aktuelles Jahr
+- Vergleich bis gleicher Monat
+- Executive-KPIs
+- Umsatz-, Waren- und Personalkostenanalyse
+- Quoten und Margen
+- Scorecard
+- Waterfall
+- EBIT-Treiberanalyse
+- Heatmap und Mehrjahresanalyse, sofern tatsächlich umgesetzt
+- regelbasierte Kernaussagen
+- Datenqualitätshinweise
+- gemeinsame Analysedaten für UI, PDF und Excel
+
+Benutzerentscheid eindeutig dokumentieren:
+
+Der Bericht endet aktuell bei EBIT.
+
+Die Zeile „Jahresgewinn“ wird nicht angezeigt.
+
+Zentraler Hinweis:
+
+„Finanzergebnis und Steuern sind in dieser Auswertung nicht enthalten. Der Bericht endet daher bei EBIT.“
+
+Der Hinweis wird identisch in UI, PDF und Excel verwendet.
+
+6. Importe kompakt dokumentieren
+
+Pro Importtyp nur festhalten:
+
+- Quelle
+- Zweck
+- Persistenz beziehungsweise Replace-Scope
+- Idempotenz
+- wichtigste Validierungen
+- fachliche Besonderheiten
+
+Keine zeilenlange Beschreibung einzelner erledigter Importfehler.
+
+7. Designvorgaben konsolidieren
+
+Nur einmal zentral dokumentieren:
+
+Die Oberfläche ist:
+
+- schlicht
+- modern
+- kompakt
+- lesefreundlich
+- konsistent mit bestehenden Komponenten
+- Desktop-orientiert
+- responsive ohne Funktionsverlust
+
+Nicht bei jedem Modul erneut wiederholen.
+
+8. Testdokumentation reduzieren
+
+Keine laufend veraltenden Testzahlen dokumentieren.
+
+Nur festhalten:
+
+- zentrale Logik ist durch Unit- und Regressionstests abgesichert
+- Exporte verwenden dieselben zentralen Datenmodelle
+- kritische Grenzwerte und Idempotenz werden getestet
+
+Konkrete Testzahlen nur behalten, falls sie technisch dauerhaft relevant sind.
+
+9. Keine Informationen erfinden
+
+Dokumentiere nur tatsächlich im Code vorhandenes Verhalten.
+
+Falls ein Abschnitt unklar ist:
+
+- Code prüfen
+- bestehende Implementierung als Quelle verwenden
+- keine geplanten Funktionen als umgesetzt beschreiben
+
+10. Ergebnis prüfen
+
+Am Ende kontrollieren:
+
+- keine widersprüchlichen Regeln
+- keine doppelte Modulbeschreibung
+- keine veralteten Dateinamen
+- keine alten Tasknummern
+- keine alten Review-Berichte
+- keine unnötigen Commit-Hinweise
+- keine falschen Testzahlen
+- keine entfernten fachlichen Kernregeln
+
+Zielumfang:
+
+replit.md deutlich kürzer als heute.
+
+Ideal ungefähr 150 bis 220 Zeilen, sofern alle wesentlichen Informationen darin Platz finden.
+
+11. Abschlussbericht
+
+Gib danach kurz aus:
+
+- vorherige Zeilenanzahl
+- neue Zeilenanzahl
+- entfernte Redundanzen
+- neue Hauptstruktur
+- bestätigte Kernregeln
+- Hinweis, dass kein Anwendungscode geändert wurde
+
+Wichtig:
+
+Keine alten Inhalte in eine neue Memory-Datei verschieben, ausser es gibt bereits eine klar etablierte Projektdokumentationsstruktur dafür.
+
+Keine neue Dokumentationsarchitektur erfinden.
+
+replit.md soll selbst kompakt, aktuell und zuverlässig bleiben.
