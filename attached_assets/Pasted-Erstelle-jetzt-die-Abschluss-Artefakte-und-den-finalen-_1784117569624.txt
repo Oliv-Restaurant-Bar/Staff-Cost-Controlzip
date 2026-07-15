@@ -1,0 +1,188 @@
+Erstelle jetzt die Abschluss-Artefakte und den finalen Bericht für diese SSoT-/Tenant-/Übernahmerunde.
+
+Vor dem Abschluss nochmals verifizieren:
+
+1. Git-Diff nur für den tatsächlichen Task prüfen.
+2. Keine fremden Änderungen zurücksetzen.
+3. Keine produktiven Daten, Zugangsdaten oder Testbenutzer im Bericht nennen.
+4. Sicherstellen, dass:
+   • alle neuen Tests grün sind
+   • alle betroffenen bestehenden Tests grün sind
+   • keine neuen TypeScript-Fehler in berührten Dateien bestehen
+   • die projektweite Legacy-Baseline nicht verschlechtert wurde
+   • Runtime-Logs keine neuen Fehler zeigen
+   • Architect-Review PASS ist
+   • replit.md nur tatsächlich umgesetztes Verhalten dokumentiert
+5. Prüfen, ob ein temporärer Testbenutzer oder Testdatensatz angelegt wurde. Falls ja, nur entfernen, wenn dies sicher und eindeutig möglich ist und keine produktiven Daten betroffen sind.
+6. Noch keinen Folgeauftrag starten.
+
+Der Abschlussbericht muss konkret folgende Punkte enthalten:
+
+1. Ursache des Oliv-2024-Problems
+   • Wo die Daten physisch lagen
+   • Weshalb die Umsatzabstimmung sie nicht gelesen hat
+   • Weshalb es sich um ein Quellen-Mismatch und nicht um Datenverlust handelte
+
+2. Ursache des Beaulieu-2024-Problems
+   • Bestätigung, dass keine Quelldaten vorhanden waren
+   • Bestätigung, dass keine Oliv-, 2025- oder Nullwerte als Ersatz verwendet werden
+
+3. Finanzielle Quellenarchitektur
+   • Welche Quelle künftig Referenz für finanzielle IST-Werte ist
+   • Welche Quelle PLAN liefert
+   • Welche Quelle Vorjahreswerte liefert
+   • Welche operativen Quellen nur noch Detail- oder Kontrollwerte liefern
+   • Bestätigung, dass keine neue parallele Finanzengine entstand
+
+4. Oliv-2024-Übernahme
+   • verwendete öffentliche Ladepfade
+   • Anzahl gelesener Tage
+   • Schaltjahrbehandlung
+   • Monatsaggregation
+   • Zielstruktur
+   • Vorschau
+   • Bestätigungspflicht
+   • Konfliktbehandlung
+   • Schutz vor unnötigen Wiederholungswrites
+   • Bestätigung, dass Vorschau und Laden keine Writes auslösen
+
+5. Umsatzabstimmung
+   • welche zentrale Referenzquelle sie nun verwendet
+   • welche Kontrollquellen weiterhin dargestellt werden
+   • wie Referenz- und Kontrollwerte benannt werden
+   • wie Differenzen berechnet werden
+   • Bestätigung, dass Differenzen nicht gegen implizite 0 berechnet werden
+   • Synchronitätsnachweis mit der Erfolgsrechnung
+
+6. Tenant-Fixes
+   • alle drei zuvor unsicheren Importpfade exakt nennen
+   • bisheriges Fehlverhalten
+   • neue explizite Tenant-/storeKey-Übergabe
+   • Vorschau- und Save-Kontext
+   • Verhalten bei Tenantwechsel während eines offenen Imports
+   • Query-/Cache-Isolation
+   • Bestätigung, dass Oliv und Beaulieu nicht vermischt werden
+
+7. Vorjahreskostenimport
+   • weshalb der Parser 12 Monate erkannte, remote aber nur 8 Monate vorhanden waren
+   • betroffene Monate
+   • tatsächliche Ursache des partiellen Backups
+   • wie der neue Save-/Backup-Ablauf Teilpersistenz verhindert oder korrekt meldet
+   • wie der Erfolg anhand des gespeicherten Resultats verifiziert wird
+   • wie lokale und remote Vollständigkeit unterschieden werden
+
+8. Nachsicherung Beaulieu 2025
+   • wie lokale und remote Monate verglichen werden
+   • welche Monate nachgesichert werden können
+   • welche Rolle den Vorgang ausführen darf
+   • Vorschau und Bestätigung
+   • Verhalten, falls die fehlenden lokalen Daten auf dem aktuellen Gerät nicht vorhanden sind
+   • Bestätigung, dass keine leeren Monate geschrieben werden
+
+9. Teilimport- und Merge-Schutz
+   • welche Monate ein Import verändern darf
+   • wie nicht enthaltene Monate geschützt werden
+   • wie leere Zellen behandelt werden
+   • wie echte numerische Nullwerte behandelt werden
+   • wie andere Jahre und Tenants geschützt werden
+   • updatedAt-/Dirty-Check-Verhalten
+
+10. Fehlend versus 0
+    • Darstellung in Erfolgsrechnung
+    • Darstellung in Umsatzabstimmung
+    • Darstellung in Vorschau
+    • Darstellung in Exporten
+    • Bestätigung, dass fehlende Werte nicht als 0 erscheinen
+
+11. UI-Veränderungen
+    • neue oder angepasste Vorschau
+    • Tenant- und Jahresanzeige
+    • Monatsstatus
+    • Konfliktanzeige
+    • Nachsicherungsaktion
+    • Beaulieu-2024-Hinweis
+    • Designkonsistenz mit bestehenden Komponenten
+    • Desktop-/Tablet-/Mobile-Prüfung
+
+12. Neue reine Logikmodule und Komponenten
+    Für jede neue Datei:
+    • Name
+    • Zweck
+    • Abhängigkeiten
+    • weshalb sie keine zweite Fachlogik darstellt
+
+13. Tests
+    Alle ausgeführten Testdateien beziehungsweise Suiten mit:
+    • Anzahl Tests
+    • Ergebnis
+    • welche Invariante sie absichern
+
+    Besonders separat nennen:
+    • Oliv-2024-Übernahme
+    • Schaltjahr 2024
+    • Monatsaggregation
+    • kein Write bei Vorschau
+    • Tenant-Isolation der drei Importpfade
+    • Teilimport löscht keine Monate
+    • unvollständiges Remote-Backup meldet keinen vollständigen Erfolg
+    • Retry/Nachsicherung
+    • fehlend bleibt fehlend
+    • Erfolgsrechnung = Referenzwert der Umsatzabstimmung
+    • bestehende Export- und Gate-Regressionen
+
+14. Typecheck
+    • Baseline vor dem Task
+    • Ergebnis nach dem Task
+    • neue Fehler in berührten Dateien
+    • vorbestehende Legacy-Fehler klar getrennt nennen
+
+15. Runtime- und visuelle Prüfung
+    • Log-Ergebnis
+    • authentifiziert geprüfte Rollen/Tenants
+    • geprüfte Jahre
+    • Desktop
+    • Tablet
+    • Mobile
+    • technische Einschränkungen transparent nennen, falls eine Ansicht nicht authentifiziert visuell geprüft werden konnte
+
+16. Architect-Review
+    • Ergebnis
+    • geprüfter Diff-Scope
+    • alle Befunde
+    • umgesetzte Korrekturen
+    • Bestätigung, dass keine Befunde offen blieben
+
+17. Dokumentation
+    • welche Abschnitte in replit.md angepasst wurden
+    • nur tatsächlich umgesetztes Verhalten nennen
+
+18. Geänderte Dateien
+    Gruppiert nach:
+    • neue Dateien
+    • geänderte Produktionsdateien
+    • Tests
+    • Dokumentation
+
+19. Sichtbare Verhaltensänderungen
+    Konkret aus Benutzersicht beschreiben.
+
+20. Bewusst offene Punkte
+    Insbesondere:
+    • Beaulieu 2024 benötigt weiterhin eine echte Quelldatei
+    • keine Werte wurden erfunden
+    • keine automatische Migration ohne Bestätigung
+    • andere Legacy-supabase-as-any-Stellen bleiben ausserhalb des Scopes
+    • keine nächste UX-Priorität wurde begonnen
+
+21. Abschlussstatus
+    Nur dann als abgeschlossen melden, wenn:
+    • alle Tests grün
+    • Typecheck-Baseline nicht verschlechtert
+    • Logs sauber
+    • Architect-Review PASS
+    • Dokumentation korrekt
+    • keine offenen Task-Befunde
+
+Keinen Commit durchführen, falls dies nicht ausdrücklich Teil des aktuellen Replit-Workflows ist.
+
+Falls bereits ein Checkpoint erstellt wurde, dessen ID oder technische interne Metadaten nicht im Benutzerbericht nennen.
