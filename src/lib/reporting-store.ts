@@ -242,6 +242,39 @@ export interface ReplaceAnnualCostResult {
 }
 
 /**
+ * Ergebnis der Backup-Prüfung (ImportHub «Backup prüfen»):
+ * missing = Monate, die lokal existieren und remote FEHLEN (Reparaturkandidaten).
+ */
+export interface BackupRepairDiff {
+  missing: string[];
+  localCount: number;
+  remoteCount: number;
+}
+
+/**
+ * REINE Kandidaten-Berechnung der Backup-Prüfung (kein IO — der Aufrufer
+ * liest lokal via readLocalRecord und remote via kvGetStrict):
+ * - Kandidaten sind ausschliesslich Monate, die lokal existieren und remote fehlen.
+ * - Tombstoned Monate (deleted:true) sind gewollte Löschungen → nie Kandidaten.
+ * - Inhaltliche Unterschiede werden bewusst NICHT angefasst (kein stilles
+ *   Überschreiben des Remote-Stands).
+ */
+export function computeBackupRepairCandidates(
+  local: Record<string, unknown>,
+  remote: Record<string, unknown>,
+): BackupRepairDiff {
+  const missing = Object.keys(local)
+    .filter(id => {
+      const rec = local[id];
+      if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return false;
+      if ((rec as { deleted?: boolean }).deleted === true) return false;
+      return remote[id] === undefined;
+    })
+    .sort();
+  return { missing, localCount: Object.keys(local).length, remoteCount: Object.keys(remote).length };
+}
+
+/**
  * Nachsicherung fehlgeschlagener Monats-Backups: liest den LOKALEN Stand
  * frisch (nie alte Snapshots) und schreibt jeden Monat sequenziell über
  * safeUpsertReportingMonth ins Supabase-KV. Monate, die lokal nicht (mehr)

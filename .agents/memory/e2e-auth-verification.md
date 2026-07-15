@@ -15,5 +15,6 @@ description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Tes
 **Stolperfallen:**
 - `.env`-Werte sind QUOTED — beim Parsen im Sandbox-Script Anführungszeichen strippen, sonst „Invalid supabaseUrl".
 - `runTest` gab `screenshotPaths: []` zurück (Screenshots nicht persistiert) — visuelle Beurteilung steckt nur im Text-Report des Agents.
+- Import-Center-Sektionen sind standardmässig ZUGEKLAPPT — der Testagent findet innere Buttons nicht. Lösung: Deep-Link mit URL-Hash `/import#<sektions-id>` (klappt automatisch auf) in den Testplan schreiben, plus Fallback «Sektions-Karte anklicken».
 
 **Anwendung:** Vor visuellen UX-Checks hinter dem Login kein Credentials-Raten; Test-Admin-Konto anlegen, testen, Rolle herabstufen, User über das Konto informieren.

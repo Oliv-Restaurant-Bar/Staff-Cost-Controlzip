@@ -1,0 +1,60 @@
+Führe jetzt eine kurze, reine Abschlussverifikation der SSoT-/Tenant-/Übernahmerunde durch.
+
+Keine neue Funktion entwickeln und kein Refactoring starten.
+
+Ziele
+
+1. Die neuen Benutzerabläufe authentifiziert für Oliv und Beaulieu prüfen.
+2. Den partiellen Remote-Backup- und Nachsicherungsablauf durch echte Regressionstests absichern.
+3. Erst danach die Runde endgültig als abgeschlossen markieren.
+
+V001 – Dedizierte Backup-Regressionstests
+
+Ergänze gezielte Tests am tatsächlich verwendeten öffentlichen Backup-/Save-Pfad.
+
+Mindestens:
+
+1. Zwölf erfolgreich importierte Monate werden vollständig remote gesichert.
+2. Ein fehlschlagender Remote-Monat führt nicht zum Status „vollständig erfolgreich“.
+3. Der genaue fehlgeschlagene Monat wird zurückgegeben beziehungsweise angezeigt.
+4. Mehrere fehlgeschlagene Monate werden vollständig gesammelt.
+5. Ein Retry schreibt nur die fehlenden beziehungsweise bestätigten Monate.
+6. Bereits remote vorhandene Monate werden beim Retry nicht gelöscht.
+7. Bereits remote vorhandene Monate werden nicht unnötig überschrieben.
+8. Tombstoned Monate werden nicht als Nachsicherungskandidaten angeboten.
+9. Lokal fehlende Monate werden nicht als leere Daten remote geschrieben.
+10. Ein Remote-Lesefehler wird nicht als „Remote ist leer“ behandelt.
+11. Zwei aufeinanderfolgende Monatswrites verlieren keinen zuvor geschriebenen Monat.
+12. Parallele beziehungsweise veraltete Blob-Basen können keinen Last-Writer-Wipe mehr verursachen.
+13. Ein Teilimport schützt alle nicht enthaltenen Monate.
+14. Identisches erneutes Sichern erzeugt keinen unnötigen Write.
+15. Reines Prüfen des Backup-Status löst keinen Write aus.
+16. Oliv-Nachsicherung kann Beaulieu nicht verändern.
+17. Beaulieu-Nachsicherung kann Oliv nicht verändern.
+18. Ein Tenantwechsel während der Prüfung führt nicht zu einem Save im falschen Tenant.
+
+Mocke nur die unterste Supabase-/KV-Schicht. Der getestete Einstiegspfad muss derselbe sein, den ImportHub und die Nachsicherungsaktion tatsächlich verwenden.
+
+V002 – Expliziter Schaltjahrtest
+
+Ergänze einen klar benannten Test für Oliv 2024:
+
+• 366 Tagesrecords
+• Februar enthält 29 Tage
+• alle zwölf Monate werden erkannt
+• Februar-Summe enthält den 29. Februar
+• keine fixe Monatslängenannahme
+• keine Daten aus 2023 oder 2025
+
+Nicht nur implizit über datumsgeschlüsselte Aggregation absichern.
+
+V003 – Synchronitätstest Erfolgsrechnung und Umsatzabstimmung
+
+Ergänze einen expliziten Test über die gemeinsamen öffentlichen Reader:
+
+Für denselben Tenant, dasselbe Jahr und denselben Monat gilt:
+
+```text
+Umsatz der Erfolgsrechnung
+=
+Referenz-Umsatz der Umsatzabstimmung

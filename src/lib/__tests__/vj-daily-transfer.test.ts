@@ -107,6 +107,63 @@ describe('selectTransferMonths', () => {
   });
 });
 
+describe('V002 — Schaltjahr Oliv 2024 (366 Tagesrecords)', () => {
+  /** Alle Kalendertage 2024 (UTC-Iteration, KEINE fixe Monatslänge). */
+  const build2024Days = (): Record<string, VjDayRecord> => {
+    const entries: [string, VjDayRecord][] = [];
+    for (let t = Date.UTC(2024, 0, 1); t < Date.UTC(2025, 0, 1); t += 86_400_000) {
+      const date = new Date(t).toISOString().slice(0, 10);
+      // deterministischer, tages-eindeutiger Bruttowert (krumm, nie 0)
+      const gross = 500 + (t - Date.UTC(2024, 0, 1)) / 86_400_000 * 13.37 + 0.55;
+      entries.push(day(date, date === '2024-02-29' ? 9999.29 : gross));
+    }
+    return Object.fromEntries(entries);
+  };
+
+  it('erkennt alle 366 Tage, Februar hat 29 Tage — Monatslängen aus dem Kalender, nicht fix', () => {
+    const vjDays = build2024Days();
+    expect(Object.keys(vjDays)).toHaveLength(366);
+
+    const plan = buildVjTransferPlan(2024, vjDays, []);
+    expect(plan).toHaveLength(12);
+
+    // Jeder Monat: Tageszahl exakt gemäss Kalender (Schaltjahr-bewusst berechnet)
+    for (let m = 1; m <= 12; m++) {
+      const expectedDays = new Date(Date.UTC(2024, m, 0)).getUTCDate();
+      expect(plan[m - 1].dayCount, `Monat ${m}`).toBe(expectedDays);
+      expect(plan[m - 1].transferable, `Monat ${m}`).toBe(true);
+    }
+    expect(plan[1].dayCount).toBe(29); // Februar im Schaltjahr
+    expect(plan.reduce((s, p) => s + p.dayCount, 0)).toBe(366);
+  });
+
+  it('Februar-Summe enthält den 29. Februar', () => {
+    const vjDays = build2024Days();
+    const plan = buildVjTransferPlan(2024, vjDays, []);
+
+    const feb1to28 = Object.entries(vjDays)
+      .filter(([d]) => d.startsWith('2024-02-') && d !== '2024-02-29')
+      .reduce((s, [, r]) => s + (r.actualRevenue ?? 0), 0);
+    expect(plan[1].grossTotal - feb1to28).toBeCloseTo(9999.29, 8);
+  });
+
+  it('Daten aus 2023/2025 kontaminieren das Jahr 2024 nicht', () => {
+    const vjDays = {
+      ...build2024Days(),
+      ...Object.fromEntries([day('2023-12-31', 55555.55), day('2025-01-01', 66666.66)]),
+    };
+    const plan = buildVjTransferPlan(2024, vjDays, []);
+
+    // Unabhängige Kontrollsumme NUR über 2024-Keys
+    const expectedTotal = Object.entries(vjDays)
+      .filter(([d]) => d.startsWith('2024-'))
+      .reduce((s, [, r]) => s + (r.actualRevenue ?? 0), 0);
+    const planTotal = plan.reduce((s, p) => s + p.grossTotal, 0);
+    expect(planTotal).toBeCloseTo(expectedTotal, 6);
+    expect(plan.reduce((s, p) => s + p.dayCount, 0)).toBe(366); // Fremdjahres-Tage nie mitgezählt
+  });
+});
+
 describe('buildVjTransferPayload', () => {
   it('liefert nur Umsatzfelder — takeAwayGrossManual bleibt undefined', () => {
     const vjDays = Object.fromEntries([day('2024-07-01', 1081)]);

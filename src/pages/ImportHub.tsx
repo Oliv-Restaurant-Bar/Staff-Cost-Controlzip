@@ -47,6 +47,7 @@ import {
   replaceAnnualCostYear,
   removeAnnualCostYear,
   retryReportingMonthsBackup,
+  computeBackupRepairCandidates,
   yearsWithData,
   STORAGE_KEY as REPORTING_STORAGE_KEY,
 } from '@/lib/reporting-store';
@@ -836,15 +837,8 @@ const AnnualCostImportSection = () => {
     try {
       const remote = asRecordBlob(await kvGetStrict(reportingKey));
       const local = readLocalRecord(reportingKey);
-      const missing = Object.keys(local)
-        .filter(id => {
-          const rec = local[id];
-          if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return false;
-          if ((rec as { deleted?: boolean }).deleted === true) return false;
-          return remote[id] === undefined;
-        })
-        .sort();
-      setBackupDiff({ missing, localCount: Object.keys(local).length, remoteCount: Object.keys(remote).length });
+      // Kandidaten-Berechnung zentral (reine Logik, identisch getestet):
+      setBackupDiff(computeBackupRepairCandidates(local, remote));
     } catch (e: unknown) {
       setBackupCheckError(
         e instanceof Error && e.message
