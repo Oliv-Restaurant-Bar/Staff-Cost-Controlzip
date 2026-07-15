@@ -432,6 +432,71 @@ export function buildCogsBudgetSplitForMonth(
   return any ? { direct, uebrig } : undefined;
 }
 
+/**
+ * Baut die `prevYearByRow`-Map (PL-Zeilen-ID → Vorjahreswert-CHF) für EINEN
+ * Monat — EXAKT die VJ-Logik der Erfolgsrechnung (extrahiert aus PLView,
+ * Single Source of Truth). Alle VJ-Konsumenten (PLView-Monatssicht,
+ * Financial-Metrics-Registry/Dashboard) leiten die VJ-Spalte hierüber ab,
+ * damit überall dieselben Vorjahreszahlen erscheinen.
+ *
+ * Prioritäten:
+ *   1. VJ-Umsatz: `effRec.revenuePreviousYear` (Tagesansicht-VJ-Netto, wird
+ *      vorgängig auf den effektiven Record gesetzt) schlägt
+ *      `prevRec.revenueActual` (reporting_v1 des Vorjahres).
+ *   2. Kosten: Konto-Kategorien (3-5-stellig) des Vorjahres-Records per
+ *      Kontenzuordnung auf PL-Zeilen; personnelCostActual des Vorjahres
+ *      → personnel_wages.
+ *   3. Fallbacks aus dem effektiven Record: personnelCostPreviousYear bzw.
+ *      (nur ohne Vorjahres-Record) expenseCategoriesPreviousYear.
+ *
+ * `lookupFn` ist injizierbar (Default = `lookupAccount`), damit die Funktion
+ * ohne localStorage rein getestet werden kann.
+ */
+export function buildPrevYearByRowForMonth(
+  prevRec: MonthlyFinancialRecord | undefined,
+  effRec:  MonthlyFinancialRecord | undefined,
+  lookupFn: (accountNumber: string) => { mapping?: { plCategory: string } | null } = lookupAccount,
+): Map<string, number> {
+  const prevYearByRow = new Map<string, number>();
+
+  // ── VJ-Umsatz: Tagesansicht hat höchste Priorität ─────────────────────────
+  if (effRec?.revenuePreviousYear) {
+    prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
+  } else if (prevRec?.revenueActual) {
+    prevYearByRow.set('revenue_total', prevRec.revenueActual);
+  }
+
+  const addAccountCategories = (cats: { categoryId?: string; amount?: number }[]) => {
+    for (const cat of cats) {
+      if (!cat.categoryId || !cat.amount) continue;
+      if (/^\d{3,5}$/.test(cat.categoryId)) {
+        const res = lookupFn(cat.categoryId);
+        if (res.mapping) {
+          const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory as keyof typeof PL_CATEGORY_TO_ROW_ID] ?? null;
+          if (rowId && rowId !== 'revenue_total') {
+            prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
+          }
+        }
+      }
+    }
+  };
+
+  if (prevRec) {
+    if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
+    addAccountCategories(prevRec.expenseCategories ?? []);
+  }
+  // Fallback: personnelCostPreviousYear aus den effektiven Records
+  if (!prevYearByRow.has('personnel_wages') && effRec?.personnelCostPreviousYear) {
+    prevYearByRow.set('personnel_wages', effRec.personnelCostPreviousYear);
+  }
+  // Fallback: expenseCategoriesPreviousYear aus den effektiven Records
+  if (!prevRec) {
+    addAccountCategories(effRec?.expenseCategoriesPreviousYear ?? []);
+  }
+
+  return prevYearByRow;
+}
+
 // ─── Haupt-Berechnungslogik ───────────────────────────────────────────────────
 
 /**

@@ -41,9 +41,8 @@ import { loadYear, saveMonth, loadJournalYear, syncJournalYearFromDB, availableY
 import type { SageJournalEntry } from '@/types/reporting';
 import { lookupAccount, saveMappingCustom } from '@/lib/account-mapping-store';
 import { AccountMapping } from '@/types/account-mapping';
-import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth, buildCogsBudgetSplitForMonth } from '@/lib/pl-engine';
+import { computePLForMonth, computePLForYear, getDrilldown, PL_STRUCTURE, PLMonthOverrides, buildBudgetByRowForMonth, buildCogsBudgetSplitForMonth, buildPrevYearByRowForMonth } from '@/lib/pl-engine';
 import { gruppiereWarenaufwandKonten, WARENAUFWAND_GRUPPE_LABEL, type WarenaufwandGruppe } from '@/lib/warenaufwand-gruppierung';
-import { PL_CATEGORY_TO_ROW_ID } from '@/lib/csv-import-engine';
 import { PLComputedRow, PLDrilldown, PLMonthResult } from '@/types/pl';
 import { MONTH_NAMES_DE, MONTH_NAMES_SHORT_DE, MonthlyFinancialRecord } from '@/types/reporting';
 import { loadBudgetWithPL, deletePLLineItem, addCustomPLLineItem, savePLLineItem, STORAGE_KEY as BUDGET_STORAGE_KEY } from '@/lib/budget-store';
@@ -57,8 +56,7 @@ import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
 import { computePriorYearDiagnostics } from '@/lib/pl-prior-year-diagnostics';
-import { computeMonthlyVjNet } from '@/lib/revenue-sync';
-import { applyEffectiveMonthRules, applyEffectiveYearRules } from '@/lib/effective-records';
+import { applyEffectiveMonthRules, applyEffectiveYearRules, applyVjRevenueRule } from '@/lib/effective-records';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -2629,20 +2627,14 @@ const PLViewPage = () => {
         net: showNetRevenue,
       });
 
-      // ── VJ-Umsatz ─────────────────────────────────────────────────────────
-      const hasIndivPYRev = (r.expenseCategoriesPreviousYear ?? []).some(c => {
-        const n = parseInt(c.categoryId);
-        return !isNaN(n) && n >= 3000 && n <= 3999;
+      // ── VJ-Umsatz: zentrale Regel aus effective-records (SSoT — dieselbe
+      // Quelle nutzt die Financial-Metrics-Registry für das Dashboard) ──────
+      r = applyVjRevenueRule(r, m, {
+        year,
+        dailyBudgets: dailyBudgetsData,
+        vjDaily: vjDailyData,
+        prevYearRecord: prevYearRecords[idx],
       });
-      if (!hasIndivPYRev) {
-        const tagesansichtVj = computeMonthlyVjNet(year, m, dailyBudgetsData, vjDailyData);
-        if (tagesansichtVj > 0) {
-          r = { ...r, revenuePreviousYear: tagesansichtVj };
-        } else if (!r.revenuePreviousYear) {
-          const prevActual = prevYearRecords[idx]?.revenueActual;
-          if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
-        }
-      }
 
       return r;
     });
@@ -2660,54 +2652,15 @@ const PLViewPage = () => {
       // Budget-Overrides zentral aus pl-engine (Single Source of Truth — dieselbe
       // Quelle nutzt PersonalFix für „Planung vs. Erfolgsrechnung").
       const budgetByRow = buildBudgetByRowForMonth(budgetData, idx, lookupAccount);
-      const prevYearByRow = new Map<string, number>();
-      const prevRec = prevYearRecords[idx];
-      const effRec  = effectiveAllRecords[idx];
-
-      // ── VJ-Umsatz: Tagesansicht hat höchste Priorität (Klassisch-Ansicht) ─
-      // effRec.revenuePreviousYear wurde bereits in effectiveAllRecords auf
-      // Tagesansicht-Netto gesetzt (computeMonthlyVjNet). Daher hat dieser Wert
-      // Vorrang vor prevRec.revenueActual (reporting_v1 für das Vorjahr).
-      if (effRec?.revenuePreviousYear) {
-        prevYearByRow.set('revenue_total', effRec.revenuePreviousYear);
-      } else if (prevRec?.revenueActual) {
-        prevYearByRow.set('revenue_total', prevRec.revenueActual);
-      }
-
-      if (prevRec) {
-        if (prevRec.personnelCostActual) prevYearByRow.set('personnel_wages', prevRec.personnelCostActual);
-        for (const cat of (prevRec.expenseCategories ?? [])) {
-          if (!cat.categoryId || !cat.amount) continue;
-          if (/^\d{3,5}$/.test(cat.categoryId)) {
-            const res = lookupAccount(cat.categoryId);
-            if (res.mapping) {
-              const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-              if (rowId && rowId !== 'revenue_total') {
-                prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
-              }
-            }
-          }
-        }
-      }
-      // Fallback: personnelCostPreviousYear aus den effektiven Records
-      if (!prevYearByRow.has('personnel_wages') && effRec?.personnelCostPreviousYear) {
-        prevYearByRow.set('personnel_wages', effRec.personnelCostPreviousYear);
-      }
-      // Fallback: expenseCategoriesPreviousYear aus den effektiven Records
-      if (!prevRec) {
-        for (const cat of (effRec?.expenseCategoriesPreviousYear ?? [])) {
-          if (!cat.categoryId || !cat.amount) continue;
-          if (/^\d{3,5}$/.test(cat.categoryId)) {
-            const res = lookupAccount(cat.categoryId);
-            if (res.mapping) {
-              const rowId = PL_CATEGORY_TO_ROW_ID[res.mapping.plCategory] ?? null;
-              if (rowId && rowId !== 'revenue_total') {
-                prevYearByRow.set(rowId, (prevYearByRow.get(rowId) ?? 0) + cat.amount);
-              }
-            }
-          }
-        }
-      }
+      // VJ-Overrides zentral aus pl-engine (Single Source of Truth — dieselbe
+      // Quelle nutzt die Financial-Metrics-Registry für das Dashboard).
+      // Priorität: effRec.revenuePreviousYear (Tagesansicht-VJ, vorgängig in
+      // effectiveAllRecords gesetzt) > prevYearRecords (reporting_v1 Vorjahr).
+      const prevYearByRow = buildPrevYearByRowForMonth(
+        prevYearRecords[idx],
+        effectiveAllRecords[idx],
+        lookupAccount,
+      );
       return {
         budgetByRow:   budgetByRow.size   > 0 ? budgetByRow   : undefined,
         prevYearByRow: prevYearByRow.size > 0 ? prevYearByRow : undefined,

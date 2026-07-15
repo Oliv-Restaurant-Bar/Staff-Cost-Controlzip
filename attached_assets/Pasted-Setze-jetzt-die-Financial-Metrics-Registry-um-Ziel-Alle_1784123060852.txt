@@ -1,0 +1,101 @@
+Setze jetzt die Financial Metrics Registry um.
+
+Ziel:
+Alle finanziellen Kennzahlen sollen überall aus denselben Quellen stammen.
+
+Verbindliche Quellen:
+• IST = Erfolgsrechnung / P&L
+• PLAN = Budget
+• Vorjahr = P&L des tatsächlichen Vorjahres
+• Operative Kennzahlen bleiben in ihren Fachquellen
+
+Wichtig:
+• Keine zweite Finanzengine bauen
+• Keine Formeln verändern
+• EBIT und EBITDA unverändert lassen
+• Keine Persistenz-, Supabase- oder Importlogik anfassen
+• Fehlend bleibt null/„—“, niemals automatisch 0
+• Rundung erst bei der Anzeige
+• Keine operativen Werte als Fallback für finanzielle Kennzahlen
+
+Erstelle eine kleine zentrale Registry, z. B.:
+src/lib/financial-metrics.ts
+
+Die Registry soll mindestens diese Kennzahlen enthalten:
+• net_revenue
+• total_cogs
+• gross_profit_1
+• total_personnel
+• gross_profit_2
+• total_opex
+• ebitda
+• total_depreciation
+• ebit
+• cogs_ratio
+• personnel_ratio
+• ebitda_margin
+• ebit_margin
+
+Öffentliche API:
+• getFinancialMetricDefinition(id)
+• getFinancialMetricValues(id, input)
+• getAllFinancialMetricDefinitions()
+
+Die Registry erhält bereits berechnete P&L-Ergebnisse als Input.
+Sie darf keine Konten selbst summieren und keine Budgetlogik nachbauen.
+
+Vorgaben:
+• Betragskennzahlen direkt aus bestehenden P&L-Feldern lesen
+• Quoten nur aus zentralen Rohwerten berechnen
+• Nenner 0 oder fehlender Wert = null
+• echter 0-Wert bleibt 0
+• keine Formatierung in der Registry
+• keine React-, Supabase- oder localStorage-Abhängigkeit
+• keine any-Casts
+• vollständige typisierte Record-Struktur
+
+Passe danach nur die Bereiche an, die finanzielle Kennzahlen aktuell aus anderen Quellen beziehen:
+• Dashboard
+• Kennzahlen-Bericht
+• Umsatzabstimmung als Referenzwert
+• PersonalFix nur beim ER-Abgleich
+• Warenkosten nur beim ER-Abgleich
+
+Bereits saubere Bereiche nicht unnötig umbauen:
+• Erfolgsrechnung
+• Mehrjahresanalyse
+• Management Report
+• Banken-/Investorenbericht
+
+Dashboard:
+• finanzielle Kennzahlen aus Registry
+• operative Tageskennzahlen getrennt und klar benannt
+• kein Fallback von P&L auf Tagesdaten
+
+Bezeichnungen eindeutig machen, z. B.:
+• Umsatz gemäss Erfolgsrechnung
+• Tagesumsatz gemäss Z-Bericht
+• Personalkosten gemäss Erfolgsrechnung
+• Geplante Personalkosten gemäss Dienstplan
+• Warenkosten gemäss Rechnungen
+
+Tests:
+• jede Kennzahl hat genau eine Definition
+• IST = P&L
+• PLAN = Budget
+• Vorjahr = Vorjahres-P&L
+• fehlend ≠ 0
+• Quoten aus Rohwerten
+• keine Rundung in Registry
+• Dashboard nutzt Registry
+• Umsatzabstimmung nutzt denselben Referenzrohwert wie Erfolgsrechnung
+• operative Werte verändern finanzielle Werte nicht
+• Tenant-Isolation für Oliv und Beaulieu
+
+Führe alle betroffenen Tests sequenziell aus.
+Danach LSP/TypeScript, Runtime-Logs und Architect-Review über den tatsächlichen Task-Diff.
+
+Dokumentiere replit.md nur mit tatsächlich umgesetztem Verhalten.
+
+Keinen Commit durchführen, bevor Tests, Typecheck und Architect-Review abgeschlossen sind.
+Keine fremden Änderungen zurücksetzen.

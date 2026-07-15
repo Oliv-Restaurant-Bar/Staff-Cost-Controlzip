@@ -14,15 +14,19 @@
  *   2. Personalkosten: Buchhaltung (5000–5009) hat Vorrang vor dem
  *      Dienstplan-Wert (personnelCostActual wird entfernt).
  *
- * Die VJ-Umsatz-Regel (revenuePreviousYear) bleibt bewusst in der
- * Erfolgsrechnung: sie betrifft nur die VJ-Spalte der Monatssicht, nicht
- * die IST-Serien der Mehrjahresanalyse.
+ * Zusätzlich zentral (für Monatssicht-VJ-Konsumenten — PLView UND
+ * Financial-Metrics-Registry/Dashboard):
+ *   3. VJ-Umsatz (`applyVjRevenueRule`): Tagesansicht-VJ-NETTO schlägt
+ *      reporting_v1, AUSSER wenn Sage 3xxx-PY-Konten vorhanden sind;
+ *      Fallback auf revenueActual des Vorjahres-Records.
+ *      (Die IST-Serien der Mehrjahresanalyse brauchen diese Regel nicht.)
  *
  * Rein: kein DOM, kein Supabase, keine Seiteneffekte (nur Typ-Importe).
  */
 
 import type { MonthlyFinancialRecord } from '@/types/reporting';
-import { computeMonthlyIstNet, computeMonthlyIstGross } from './revenue-sync';
+import type { VjDayRecord } from './vj-daily-supabase';
+import { computeMonthlyIstNet, computeMonthlyIstGross, computeMonthlyVjNet } from './revenue-sync';
 
 interface DailyEntry {
   actualRevenue?:       number;
@@ -113,6 +117,50 @@ export function applyEffectiveMonthRules(
     r = { ...r, personnelCostActual: undefined };
   }
 
+  return r;
+}
+
+/** Hat der Record individuelle Sage-Umsatzkonten (3xxx) im VORJAHR (PY-Spalte)? */
+export function hasIndividualPYRevenueAccounts(rec: MonthlyFinancialRecord): boolean {
+  return (rec.expenseCategoriesPreviousYear ?? []).some(c => {
+    const n = parseInt(c.categoryId);
+    return !isNaN(n) && n >= 3000 && n <= 3999;
+  });
+}
+
+export interface VjRevenueDeps {
+  /** Geschäftsjahr des Records (VJ = year − 1) */
+  year: number;
+  /** Tagesumsätze (tenant-Blob "dailyBudgets", jahresübergreifend) */
+  dailyBudgets: Record<string, DailyEntry>;
+  /** Exakte VJ-Tageswerte aus Supabase (loadVjDailyYear(year−1)); leer = nur Blob-Fallbacks */
+  vjDaily: Record<string, VjDayRecord>;
+  /** reporting_v1-Record des ECHTEN Vorjahres (loadMonth(year−1, month)) — Fallback-Quelle */
+  prevYearRecord?: MonthlyFinancialRecord;
+}
+
+/**
+ * VJ-Umsatz-Regel der Erfolgsrechnung (extrahiert aus PLView.effectiveAllRecords):
+ * setzt `revenuePreviousYear` auf den Tagesansicht-VJ-NETTO-Wert
+ * (computeMonthlyVjNet), AUSSER es sind individuelle 3xxx-PY-Konten vorhanden.
+ * Fallback: revenueActual des Vorjahres-Records, wenn weder Tagesansicht-VJ
+ * noch ein bestehender revenuePreviousYear-Wert existiert.
+ */
+export function applyVjRevenueRule(
+  rec: MonthlyFinancialRecord,
+  month: number,
+  deps: VjRevenueDeps,
+): MonthlyFinancialRecord {
+  let r = rec;
+  if (!hasIndividualPYRevenueAccounts(r)) {
+    const tagesansichtVj = computeMonthlyVjNet(deps.year, month, deps.dailyBudgets, deps.vjDaily);
+    if (tagesansichtVj > 0) {
+      r = { ...r, revenuePreviousYear: tagesansichtVj };
+    } else if (!r.revenuePreviousYear) {
+      const prevActual = deps.prevYearRecord?.revenueActual;
+      if (prevActual) r = { ...r, revenuePreviousYear: prevActual };
+    }
+  }
   return r;
 }
 

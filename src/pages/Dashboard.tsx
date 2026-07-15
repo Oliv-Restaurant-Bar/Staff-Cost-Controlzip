@@ -53,6 +53,9 @@ import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
 import { kvGet } from '@/lib/supabase-kv';
 import { computeMonthlyIstNet } from '@/lib/revenue-sync';
+import { buildFinancialMetricInput } from '@/lib/financial-metrics-input';
+import { getFinancialMetricValues } from '@/lib/financial-metrics';
+import { loadVjDailyYear, type VjDayRecord } from '@/lib/vj-daily-supabase';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -427,19 +430,72 @@ const Dashboard = () => {
   const currentMonth = referenceDate.getMonth() + 1;
 
   // ── Monatliches Take-Away (Kto. 3010 Netto) – für Umsatz-Korrektur ──────────
+  // Wird unabhängig von der gewählten Periode geladen, damit die monatlichen
+  // Finanzkarten (Registry) und revenueMonthB in allen Perioden identisch sind.
   const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
   useEffect(() => {
-    if (period !== 'month') { setMonthlyTakeaway(0); return; }
     const mm = String(currentMonth).padStart(2, '0');
     kvGet(tenantKey(`takeaway-monthly-${currentYear}`)).then(raw => {
       const val = (raw as Record<string, number> | null)?.[`${currentYear}-${mm}`] ?? 0;
       setMonthlyTakeaway(val);
     }).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, currentYear, currentMonth, tenantId]);
+  }, [currentYear, currentMonth, tenantId]);
 
   const laborCostThreshold = resolveZielwert(currentYear, currentMonth).targetPercent;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
+
+  // ── VJ-Tagesumsätze (Vorjahr) — für die VJ-Spalte der Finanzkarten ──────────
+  // Identische Quelle wie die Erfolgsrechnung (applyVjRevenueRule im Builder).
+  const [vjDailyData, setVjDailyData] = useState<Record<string, VjDayRecord>>({});
+  useEffect(() => {
+    let alive = true;
+    loadVjDailyYear(currentYear - 1, tenantId)
+      .then(data => { if (alive) setVjDailyData(data); })
+      .catch(() => { if (alive) setVjDailyData({}); });
+    return () => { alive = false; };
+  }, [currentYear, tenantId]);
+
+  // ── Financial Metrics Registry (Monat) ──────────────────────────────────────
+  // Finanzkarten kommen aus der Erfolgsrechnung: IST = P&L-Engine, PLAN =
+  // Budget-Spalte, VORJAHR = P&L des Vorjahres — EIN computePLForMonth,
+  // immer NETTO, Quoten aus Rohwerten (Nenner fehlt/0 ⇒ null). Rein lesend.
+  const financialInput = useMemo(() => {
+    try {
+      return buildFinancialMetricInput(currentYear, currentMonth, {
+        reportingStoreKey: tenantKey('reporting_v1'),
+        budgetStoreKey:    tenantKey('budget_v1'),
+        dailyBudgets,
+        vjDaily:           vjDailyData,
+        maisonDaily:       maisonOn && !maisonExclude ? maisonDaily : undefined,
+        takeawayMonthly:   monthlyTakeaway > 0
+          ? { [`${currentYear}-${String(currentMonth).padStart(2, '0')}`]: monthlyTakeaway }
+          : undefined,
+      });
+    } catch (e) {
+      console.error('[FINANZKARTEN] Registry-Input fehlgeschlagen:', e);
+      return null;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentYear, currentMonth, dailyBudgets, vjDailyData, maisonOn, maisonExclude, maisonDaily, monthlyTakeaway, reportingTick, tenantId]);
+
+  const finRevenue        = financialInput ? getFinancialMetricValues('net_revenue',     financialInput) : null;
+  const finPersonnel      = financialInput ? getFinancialMetricValues('total_personnel', financialInput) : null;
+  const finPersonnelRatio = financialInput ? getFinancialMetricValues('personnel_ratio', financialInput) : null;
+
+  // Abweichungen der Finanzkarten — aus DENSELBEN Registry-Rohwerten
+  const finRevVsBudgetAbs = finRevenue && finRevenue.actual !== null && finRevenue.budget !== null && finRevenue.budget > 0
+    ? finRevenue.actual - finRevenue.budget
+    : null;
+  const finRevVsBudgetPct = finRevVsBudgetAbs !== null && finRevenue?.budget
+    ? (finRevVsBudgetAbs / finRevenue.budget) * 100
+    : null;
+  const finRevVsPrevYearPct = finRevenue && finRevenue.actual !== null && finRevenue.priorYear !== null && finRevenue.priorYear > 0
+    ? ((finRevenue.actual - finRevenue.priorYear) / finRevenue.priorYear) * 100
+    : null;
+  const finPkVsBudgetPct = finPersonnel && finPersonnel.actual !== null && finPersonnel.budget !== null && finPersonnel.budget > 0
+    ? ((finPersonnel.actual - finPersonnel.budget) / finPersonnel.budget) * 100
+    : null;
 
   // ── Mitarbeiter nach Abteilung UND aktivem Monat filtern ────────────────────
   const visibleEmployees = useMemo(() => {
@@ -490,8 +546,8 @@ const Dashboard = () => {
   // Fallback: wenn keine Gastronovi-Tagesdaten, lese Ist-Umsatz aus Reporting-Modul
   // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird
   const reportingActualRevenue = useMemo(
-    () => loadMonth(currentYear, currentMonth).revenueActual ?? 0,
-    [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
+    () => loadMonth(currentYear, currentMonth, tenantKey('reporting_v1')).revenueActual ?? 0,
+    [currentYear, currentMonth, reportingTick, tenantId] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const revenueMonthBase = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
 
@@ -513,24 +569,21 @@ const Dashboard = () => {
   // dann Vorjahres-Ist aus reporting_v1 des Vorjahres.
   // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird.
   const reportingPrevYearRevenue = useMemo(() => {
+    const storeKey = tenantKey('reporting_v1');
     if (period === 'month') {
-      const rec = loadMonth(currentYear, currentMonth);
-      const directPY = rec.revenuePreviousYear;
-      console.log('[DASH] reportingPrevYearRevenue (month)',
-        { currentYear, currentMonth, reportingTick, directPY,
-          prevYearActual: loadMonth(currentYear - 1, currentMonth).revenueActual });
-      if (directPY) return directPY;
-      return loadMonth(currentYear - 1, currentMonth).revenueActual ?? 0;
+      const rec = loadMonth(currentYear, currentMonth, storeKey);
+      if (rec.revenuePreviousYear) return rec.revenuePreviousYear;
+      return loadMonth(currentYear - 1, currentMonth, storeKey).revenueActual ?? 0;
     }
     if (period === 'year') {
       // SSoT: Jahresaggregation zentral über calcAnnualSummary (reporting-store) —
       // keine eigene reduce-Zweitberechnung (identische Semantik: fehlende Monate = 0).
-      const cur = calcAnnualSummary(currentYear);
+      const cur = calcAnnualSummary(currentYear, storeKey);
       if (cur.totalRevenuePreviousYear > 0) return cur.totalRevenuePreviousYear;
-      return calcAnnualSummary(currentYear - 1).totalRevenueActual;
+      return calcAnnualSummary(currentYear - 1, storeKey).totalRevenueActual;
     }
     return 0;
-  }, [period, currentYear, currentMonth, reportingTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [period, currentYear, currentMonth, reportingTick, tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Periodenspezifische Umsatz-Werte
   // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
@@ -691,8 +744,8 @@ const Dashboard = () => {
 
   // ── Buchhaltungs-Personalkosten (aus P&L-Import, 5xxx Konten) ───────────────
   const accountingMonthRecord = useMemo(
-    () => loadMonth(currentYear, currentMonth),
-    [currentYear, currentMonth, reportingTick] // eslint-disable-line react-hooks/exhaustive-deps
+    () => loadMonth(currentYear, currentMonth, tenantKey('reporting_v1')),
+    [currentYear, currentMonth, reportingTick, tenantId] // eslint-disable-line react-hooks/exhaustive-deps
   );
   const accountingPersonnelCost = useMemo(() => {
     const fromCategories = accountingMonthRecord.expenseCategories
@@ -736,27 +789,10 @@ const Dashboard = () => {
         : `${referenceDate.getFullYear()}`;
 
   // ── Budget-Vergleichs-Berechnungen ───────────────────────────────────────────
-  // Abweichung Umsatz: Ist (aus dailyBudgets) vs. Jahresbudget
-  const budgetMonthB = budgetData.revenueBudget > 0 ? toBase(budgetData.revenueBudget) : 0;
-  const revVsBudgetAbs = budgetMonthB > 0
-    ? revenueMonthB - budgetMonthB
-    : null;
-  const revVsBudgetPct = budgetMonthB > 0
-    ? ((revenueMonthB - budgetMonthB) / budgetMonthB) * 100
-    : null;
-
-  // Abweichung Personalkosten: Ist vs. Jahresbudget
-  const laborVsBudgetAbs = budgetData.personnelBudget > 0
-    ? actualLaborCost - budgetData.personnelBudget
-    : null;
-  const laborVsBudgetPct = budgetData.personnelBudget > 0
-    ? ((actualLaborCost - budgetData.personnelBudget) / budgetData.personnelBudget) * 100
-    : null;
-
-  // Ist-Personalkostenquote (vs. budgetiertem Umsatz)
-  const actualRatioVsBudgetRevenue = budgetData.revenueBudget > 0 && actualLaborCost > 0
-    ? (actualLaborCost / budgetData.revenueBudget) * 100
-    : null;
+  // Die monatlichen Finanzkarten (Umsatz/Personalkosten vs. Budget/Vorjahr)
+  // beziehen ihre Werte und Abweichungen aus der Financial Metrics Registry
+  // (finRevenue/finPersonnel/finPersonnelRatio, siehe oben) — keine eigene
+  // Budget-Zweitberechnung mehr an dieser Stelle.
 
   // Hilfsfunktion: Ratio-Statusfarbe (Budget-Target als Basis)
   const budgetRatioColor = (ratio: number | null, target: number | null): 'green' | 'yellow' | 'red' | 'default' => {
@@ -1137,7 +1173,7 @@ const Dashboard = () => {
                   <KpiCard
                     title={`Umsatz Ist · ${PERIOD_LABELS[period]}`}
                     value={revenueActiveB > 0 ? formatCHF(revenueActiveB) : '–'}
-                    subtitle="Tatsächlicher Umsatz"
+                    subtitle="Tagesumsatz gemäss Z-Bericht"
                     icon={<TrendingUp className="h-5 w-5" />}
                     color={revenueActiveB > 0 ? 'green' : 'default'}
                   />
@@ -1153,7 +1189,7 @@ const Dashboard = () => {
                   <KpiCard
                     title={`Vorjahr · ${PERIOD_LABELS[period]}`}
                     value={revenuePrevYearActiveB > 0 ? formatCHF(revenuePrevYearActiveB) : '–'}
-                    subtitle="Vergleich Vorjahr"
+                    subtitle="Tagesumsatz Vorjahr gemäss Z-Bericht"
                     delta={revenuePrevYearActiveB > 0 ? ((revenueActiveB - revenuePrevYearActiveB) / revenuePrevYearActiveB) * 100 : null}
                     deltaLabel="% vs. Vorjahr"
                     icon={<TrendingUp className="h-5 w-5" />}
@@ -1246,39 +1282,52 @@ const Dashboard = () => {
                   Jahresbudget-Vergleich · {monthName}
                 </SectionTitle>
 
-                {/* Umsatz: Budget vs. Ist (nur Admin) */}
+                {/* Umsatz-Finanzkarten (nur Admin) — Financial Metrics Registry:
+                    IST = Erfolgsrechnung, PLAN = Budget, VJ = P&L Vorjahr, immer NETTO */}
                 {isAdmin && (
                   <>
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                       <KpiCard
-                        title="Ist Umsatz"
-                        value={revenueMonthB > 0 ? formatCHF(revenueMonthB) : '–'}
-                        subtitle="Tatsächlich erfasst"
+                        title="Umsatz gemäss Erfolgsrechnung"
+                        value={finRevenue?.actual != null ? formatCHF(finRevenue.actual) : '–'}
+                        subtitle="Monat · netto"
                         icon={<TrendingUp className="h-5 w-5" />}
                         color={
-                          revVsBudgetPct === null ? 'default' :
-                          revVsBudgetPct >= 0 ? 'green' : 'red'
+                          finRevVsBudgetPct === null ? 'default' :
+                          finRevVsBudgetPct >= 0 ? 'green' : 'red'
                         }
-                        delta={revVsBudgetPct}
+                        delta={finRevVsBudgetPct}
                         deltaLabel="% vs. Budget"
                       />
                       <KpiCard
                         title="Budget Umsatz"
-                        value={formatCHF(budgetData.revenueBudget)}
-                        subtitle={`Monatsbudget ${currentYear}`}
+                        value={finRevenue?.budget != null ? formatCHF(finRevenue.budget) : '–'}
+                        subtitle={`Monatsbudget ${currentYear} · netto`}
                         icon={<BookOpen className="h-5 w-5" />}
                         color="blue"
                       />
-                      {revVsBudgetAbs !== null && (
+                      <KpiCard
+                        title="Vorjahr gemäss Erfolgsrechnung"
+                        value={finRevenue?.priorYear != null ? formatCHF(finRevenue.priorYear) : '–'}
+                        subtitle="P&L Vorjahresmonat · netto"
+                        icon={<TrendingUp className="h-5 w-5" />}
+                        color={
+                          finRevVsPrevYearPct === null ? 'default' :
+                          finRevVsPrevYearPct >= 0 ? 'green' : 'red'
+                        }
+                        delta={finRevVsPrevYearPct}
+                        deltaLabel="% vs. Vorjahr"
+                      />
+                      {finRevVsBudgetAbs !== null && (
                         <KpiCard
                           title="Abweichung CHF"
-                          value={`${revVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(revVsBudgetAbs)}`}
-                          subtitle={revVsBudgetAbs >= 0 ? 'Über Budget' : 'Unter Budget'}
-                          icon={revVsBudgetAbs >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
-                          color={revVsBudgetAbs >= 0 ? 'green' : 'red'}
-                          badge={revVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
+                          value={`${finRevVsBudgetAbs >= 0 ? '+' : ''}${formatCHF(finRevVsBudgetAbs)}`}
+                          subtitle={finRevVsBudgetAbs >= 0 ? 'Über Budget' : 'Unter Budget'}
+                          icon={finRevVsBudgetAbs >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
+                          color={finRevVsBudgetAbs >= 0 ? 'green' : 'red'}
+                          badge={finRevVsBudgetAbs >= 0 ? '✓ Über Budget' : '↓ Unter Budget'}
                           badgeColor={
-                            revVsBudgetAbs >= 0
+                            finRevVsBudgetAbs >= 0
                               ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
                               : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
                           }
@@ -1474,65 +1523,67 @@ const Dashboard = () => {
                   </div>
                 )}
 
-                {/* Personalkosten: Ist vs. Plan vs. Budget */}
+                {/* Personalkosten: Erfolgsrechnung vs. Dienstplan vs. Budget —
+                    Finanzwerte (Ist/Budget/Quote) aus der Registry, Dienstplan bleibt operativ */}
                 {canSeePersonnelCostTotals && budgetData.personnelBudget > 0 && (
                   <div className="mt-3">
-                    {/* Zeile 1: Dreiweg-Vergleich Ist · Plan · Budget */}
+                    {/* Zeile 1: Dreiweg-Vergleich Erfolgsrechnung · Dienstplan · Budget */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                      {actualLaborCost > 0 && (
-                        <KpiCard
-                          title="Ist Personalkosten"
-                          value={formatCHF(actualLaborCost)}
-                          subtitle={actualCostRatio !== null
-                            ? `${actualCostRatio.toFixed(1)} % v. Ist-Umsatz`
-                            : 'Effektive Kosten'}
-                          icon={<Users className="h-5 w-5" />}
-                          color={laborVsBudgetAbs !== null && laborVsBudgetAbs <= 0 ? 'green' : 'red'}
-                          delta={laborVsBudgetPct}
-                          deltaLabel="% vs. Budget"
-                        />
-                      )}
+                      <KpiCard
+                        title="Personalkosten gemäss Erfolgsrechnung"
+                        value={finPersonnel?.actual != null ? formatCHF(finPersonnel.actual) : '–'}
+                        subtitle={finPersonnelRatio?.actual != null
+                          ? `${finPersonnelRatio.actual.toFixed(1)} % v. Umsatz (netto)`
+                          : 'Noch kein Lohn-/Buchhaltungswert'}
+                        icon={<Users className="h-5 w-5" />}
+                        color={
+                          finPkVsBudgetPct === null ? 'default' :
+                          finPkVsBudgetPct <= 0 ? 'green' : 'red'
+                        }
+                        delta={finPkVsBudgetPct}
+                        deltaLabel="% vs. Budget"
+                      />
                       {plannedLaborCost > 0 && (
                         <KpiCard
-                          title="Plan-Kosten"
+                          title="Geplante Personalkosten"
                           value={formatCHF(plannedLaborCost)}
-                          subtitle="Aus Dienstplanung"
+                          subtitle="gemäss Dienstplan"
                           icon={<CalendarDays className="h-5 w-5" />}
                           color="default"
                           delta={actualLaborCost > 0 && plannedLaborCost > 0
                             ? ((actualLaborCost - plannedLaborCost) / plannedLaborCost) * 100
                             : null}
-                          deltaLabel="% Ist vs. Plan"
+                          deltaLabel="% Ist (Dienstplan) vs. Plan"
                         />
                       )}
                       <KpiCard
                         title="Budget Personalkosten"
-                        value={formatCHF(budgetData.personnelBudget)}
-                        subtitle="Aus Jahresplanung"
+                        value={finPersonnel?.budget != null ? formatCHF(finPersonnel.budget) : '–'}
+                        subtitle="Budget-Spalte der Erfolgsrechnung"
                         icon={<BookOpen className="h-5 w-5" />}
                         color="blue"
                       />
-                      {actualRatioVsBudgetRevenue !== null && budgetData.personnelRatioTarget !== null && (
+                      {finPersonnelRatio?.actual != null && budgetData.personnelRatioTarget !== null && (
                         <KpiCard
                           title="Ist-Quote vs. Ziel"
-                          value={`${actualCostRatio !== null ? actualCostRatio.toFixed(1) : actualRatioVsBudgetRevenue.toFixed(1)} %`}
+                          value={`${finPersonnelRatio.actual.toFixed(1)} %`}
                           subtitle={`Ziel: ≤ ${budgetData.personnelRatioTarget.toFixed(1)} % v. Umsatz`}
                           icon={<Target className="h-5 w-5" />}
                           color={budgetRatioColor(
-                            actualCostRatio ?? actualRatioVsBudgetRevenue,
+                            finPersonnelRatio.actual,
                             budgetData.personnelRatioTarget,
                           )}
                           badge={
-                            (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget
+                            finPersonnelRatio.actual <= budgetData.personnelRatioTarget
                               ? '✓ Im Ziel'
-                              : (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget + 5
+                              : finPersonnelRatio.actual <= budgetData.personnelRatioTarget + 5
                               ? '~ Grenzwertig'
                               : '↑ Über Ziel'
                           }
                           badgeColor={
-                            (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget
+                            finPersonnelRatio.actual <= budgetData.personnelRatioTarget
                               ? 'bg-green-50 text-green-700 border-green-300 dark:bg-green-950/30'
-                              : (actualCostRatio ?? actualRatioVsBudgetRevenue) <= budgetData.personnelRatioTarget + 5
+                              : finPersonnelRatio.actual <= budgetData.personnelRatioTarget + 5
                               ? 'bg-yellow-50 text-yellow-700 border-yellow-300 dark:bg-yellow-950/30'
                               : 'bg-red-50 text-red-700 border-red-300 dark:bg-red-950/30'
                           }
@@ -1627,7 +1678,7 @@ const Dashboard = () => {
                   <KpiCard
                     title="Geplante Kosten"
                     value={plannedLaborCost > 0 ? formatCHF(plannedLaborCost) : '–'}
-                    subtitle={`${visibleEmployees.length} Mitarbeiter`}
+                    subtitle={`gemäss Dienstplan · ${visibleEmployees.length} Mitarbeiter`}
                     icon={<Users className="h-5 w-5" />}
                     color="blue"
                   />
@@ -1635,7 +1686,7 @@ const Dashboard = () => {
                     <KpiCard
                       title="Ist-Kosten"
                       value={formatCHF(actualLaborCost)}
-                      subtitle="Effektive Kosten"
+                      subtitle="gemäss Ist-Stunden (Dienstplan)"
                       delta={plannedLaborCost > 0 ? actualLaborCost - plannedLaborCost : null}
                       deltaLabel="CHF"
                       icon={<Users className="h-5 w-5" />}
@@ -1665,7 +1716,7 @@ const Dashboard = () => {
                     <KpiCard
                       title="Kostenquote (Ist)"
                       value={`${actualCostRatio.toFixed(1)} %`}
-                      subtitle="Effektive Quote"
+                      subtitle="Dienstplan-Kosten / Umsatz"
                       icon={<TrendingUp className="h-5 w-5" />}
                       color={ratioStatus(actualCostRatio) === 'good' ? 'green' : ratioStatus(actualCostRatio) === 'ok' ? 'yellow' : 'red'}
                     />
@@ -1687,7 +1738,7 @@ const Dashboard = () => {
                         <KpiCard
                           title="Plan pro rata"
                           value={formatCHF(plannedLaborCostEffective)}
-                          subtitle="Aus Dienstplanung"
+                          subtitle="gemäss Dienstplan"
                           icon={<Users className="h-5 w-5" />}
                           color="blue"
                           small
@@ -1821,7 +1872,7 @@ const Dashboard = () => {
                   <KpiCard
                     title="Ist-Stunden"
                     value={actualHours > 0 ? formatHours(actualHours) : '–'}
-                    subtitle="Erfasste Stunden"
+                    subtitle="Arbeitsstunden gemäss Mirus"
                     delta={hoursVariance}
                     deltaLabel="h vs. Plan"
                     icon={<Clock className="h-5 w-5" />}
@@ -1849,14 +1900,14 @@ const Dashboard = () => {
                 </SectionTitle>
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                   <KpiCard
-                    title="Ist-Dienstplan"
+                    title="Personalkosten gemäss Dienstplan"
                     value={actualLaborCost > 0 ? formatCHF(actualLaborCost) : '–'}
                     subtitle="Aus Ist-Stunden × Lohn"
                     icon={<Users className="h-5 w-5" />}
                     color="blue"
                   />
                   <KpiCard
-                    title="Buchhaltung Ist"
+                    title="Personalkosten gemäss Erfolgsrechnung"
                     value={accountingPersonnelCost > 0 ? formatCHF(accountingPersonnelCost) : '–'}
                     subtitle="Total Personalaufwand (5xxx)"
                     icon={<BookOpen className="h-5 w-5" />}
@@ -1866,7 +1917,7 @@ const Dashboard = () => {
                     <KpiCard
                       title="Abweichung CHF"
                       value={`${pkDiff >= 0 ? '+' : ''}${formatCHF(pkDiff)}`}
-                      subtitle="Buchhaltung − Dienstplan"
+                      subtitle="Erfolgsrechnung − Dienstplan"
                       icon={pkDiff >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
                       color={Math.abs(pkDiff) / Math.max(actualLaborCost, 1) < 0.05 ? 'green' : Math.abs(pkDiff) / Math.max(actualLaborCost, 1) < 0.15 ? 'yellow' : 'red'}
                     />
