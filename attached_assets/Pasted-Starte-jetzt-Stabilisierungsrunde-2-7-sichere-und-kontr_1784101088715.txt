@@ -1,0 +1,306 @@
+Starte jetzt Stabilisierungsrunde 2.7: sichere und kontrollierte Prüfung einer gemeinsamen safeBlobUpsert-Abstraktion.
+
+Ziel:
+Duplizierte technische Supabase-/KV-Upsert-Abläufe für Budget, Daily Revenues und Reporting sollen zentralisiert werden, aber nur soweit dies ohne Veränderung der jeweiligen fachlichen Merge-, Konflikt-, Tombstone- und Persistenzregeln möglich ist.
+
+Wichtige Leitplanken:
+
+1. Keine fachliche Formel, Merge-Regel, Priorität oder Benutzerfunktion verändern.
+2. Keine Datenmigration und keine Änderung bestehender gespeicherter Datenstrukturen.
+3. Reine Lesevorgänge dürfen niemals Schreibvorgänge auslösen.
+4. Auto-Seeding oder Default-Werte dürfen durch die neue Abstraktion nicht automatisch persistiert werden.
+5. updatedAt darf weiterhin nur bei einer tatsächlichen fachlichen Datenänderung geändert werden.
+6. Bestehende Tombstone-, Konflikt- und Zwei-Geräte-Regeln müssen unverändert erhalten bleiben.
+7. Budget, Daily Revenues und Reporting dürfen ausdrücklich unterschiedliche Domain-Merge-Regeln behalten.
+8. Nicht mit einer generischen Abstraktion erzwingen, was fachlich unterschiedlich ist.
+9. Supabase-Verfügbarkeit und Netzwerkfehler müssen weiterhin korrekt behandelt werden.
+10. Keine stillen Fallback-Schreibvorgänge und kein automatisches Überschreiben neuerer Daten.
+
+Arbeitsweise:
+
+T201 – Vollständige Bestandsaufnahme
+
+Lies zuerst vollständig alle Dateien, die folgende Abläufe enthalten:
+
+• Laden der gespeicherten Blob-Daten
+• lokaler Cache oder localStorage
+• Supabase-Read
+• Supabase-Upsert
+• Merge lokaler und entfernter Daten
+• updatedAt
+• Dirty-Checks
+• Tombstones
+• Konfliktbehandlung
+• Retry- oder Availability-State
+• Mandanten-/Tenant-Zuordnung
+
+Untersuche mindestens:
+
+• Budget
+• Daily Revenues beziehungsweise Tagesumsätze
+• Reporting
+
+Erstelle vor jeder Änderung eine kompakte Vergleichsmatrix:
+
+| Bereich | Tabellen-/KV-Schlüssel | Read-Pfad | Write-Pfad | Merge-Regel | Tombstones | updatedAt-Regel | Offline-Verhalten | Konfliktregel |
+
+Dokumentiere ausdrücklich alle fachlichen Unterschiede.
+
+T202 – Gemeinsamen technischen Kern bestimmen
+
+Identifiziere nur die tatsächlich identischen technischen Schritte, beispielsweise:
+
+• Prüfung, ob Supabase verfügbar ist
+• Laden eines vorhandenen Records
+• Fehlerklassifikation
+• sicherer Upsert mit Tenant-Schlüssel
+• unveränderte Daten nicht erneut schreiben
+• konsistente Behandlung von updatedAt
+• Rückgabe eines strukturierten Ergebnisses
+• Reset oder Neubewertung des Availability-State nach Netzwerkfehlern
+
+Die Abstraktion darf keine Domain-Merge-Logik enthalten.
+
+Bevorzugte Richtung:
+
+type SafeBlobUpsertResult<T> =
+  | {
+      status: "unchanged";
+      data: T;
+    }
+  | {
+      status: "saved";
+      data: T;
+      updatedAt: string;
+    }
+  | {
+      status: "offline";
+      data: T;
+      error?: unknown;
+    }
+  | {
+      status: "failed";
+      data: T;
+      error: unknown;
+    };
+
+Die genaue Signatur soll aus dem bestehenden Code abgeleitet werden. Keine unnötige neue Architektur einführen.
+
+Die Abstraktion soll sinngemäss nur Folgendes übernehmen:
+
+safeBlobUpsert({
+  tenantId,
+  storageKey,
+  currentRemoteValue,
+  nextValue,
+  hasActualChanges,
+  serialize,
+  executeUpsert,
+});
+
+Domain-spezifische Entscheidungen müssen vor dem Aufruf erfolgen.
+
+T203 – Dirty-Check zwingend erhalten
+
+Vor jedem Upsert muss eindeutig festgestellt werden, ob eine tatsächliche Datenänderung vorliegt.
+
+Nicht als Änderung zählen:
+
+• reines Laden
+• Öffnen einer Seite
+• Wechseln eines Tabs
+• Auto-Seeding im UI
+• Neuformatierung
+• andere Reihenfolge technisch gleichwertiger Daten
+• Aktualisierung eines Runtime- oder Availability-State
+• erneutes Einlesen derselben Daten
+
+Nur tatsächliche fachliche Änderungen dürfen:
+
+• einen Upsert auslösen
+• updatedAt verändern
+• lokale persistierte Daten überschreiben
+
+Nutze vorhandene Domain-Vergleiche weiter. Ersetze sie nicht ungeprüft durch ein generisches JSON.stringify, falls Reihenfolge oder nicht persistierte Felder eine Rolle spielen.
+
+T204 – Domain-Regeln getrennt halten
+
+Für jeden Bereich muss vor der gemeinsamen Abstraktion weiterhin ein eigener Adapter beziehungsweise eine eigene Prepare-Funktion bestehen.
+
+Beispielhafte Struktur:
+
+const preparedBudgetWrite = prepareBudgetWrite(...);
+const preparedDailyRevenueWrite = prepareDailyRevenueWrite(...);
+const preparedReportingWrite = prepareReportingWrite(...);
+return safeBlobUpsert(preparedBudgetWrite);
+
+Die Prepare-Funktionen bleiben verantwortlich für:
+
+• fachliches Merge-Verhalten
+• Konfliktauflösung
+• Tombstones
+• Normalisierung
+• erlaubte Felder
+• Dirty-Check
+• Tenant-Zuordnung
+• fachliche Validierung
+
+Keine generische „one size fits all“-Merge-Funktion erstellen.
+
+T205 – Fehler- und Availability-Verhalten
+
+Prüfe insbesondere:
+
+• Netzwerkfehler
+• Supabase temporär nicht erreichbar
+• Session- oder Auth-Fehler
+• leere Antwort
+• vorhandener Remote-Datensatz
+• nicht vorhandener Remote-Datensatz
+• Upsert-Fehler nach erfolgreichem Read
+• Wiederherstellung nach vorherigem Fehler
+
+Nach einem unavailable- oder Netzwerkfehler darf Supabase nicht dauerhaft als nicht verfügbar gelten.
+
+Eine spätere Aktion oder ein erneuter Ladevorgang muss den Availability-State neu prüfen beziehungsweise zurücksetzen.
+
+Keine Endlosschleifen und keine automatischen Schreib-Retries ohne echte Benutzeränderung.
+
+T206 – Regressionstests
+
+Ergänze Tests am realen App- beziehungsweise Persistenz-Einstiegspfad.
+
+Mindestens folgende Fälle:
+
+1. Reines Laden löst keinen Upsert aus.
+2. Identische Daten lösen keinen Upsert aus.
+3. Auto-Seed ohne Benutzeränderung löst keinen Upsert aus.
+4. Eine echte Benutzeränderung löst genau einen Upsert aus.
+5. updatedAt bleibt bei unveränderten Daten identisch.
+6. updatedAt ändert sich bei einer echten Änderung.
+7. Netzwerkfehler liefert ein kontrolliertes Ergebnis.
+8. Nach Netzwerkfehler kann Supabase beim nächsten Versuch wieder verwendet werden.
+9. Staler localStorage überschreibt keine neueren Remote-Daten.
+10. Zwei-Geräte-Szenario mit neuerem Remote-Stand.
+11. Zwei-Geräte-Szenario mit einer echten lokalen Änderung.
+12. Tenant A kann Tenant B niemals lesen oder überschreiben.
+13. Tombstones bleiben erhalten.
+14. Entfernte beziehungsweise gelöschte Werte werden nicht durch alte lokale Daten reaktiviert.
+15. Budget behält seine bestehende Merge-Regel.
+16. Daily Revenues behält seine bestehende Merge-Regel.
+17. Reporting behält seine bestehende Merge-Regel.
+18. Fehler nach Read, aber vor Upsert, erzeugt keine Teilpersistenz.
+19. Mehrfaches Speichern derselben Änderung erzeugt keinen weiteren unnötigen Write.
+20. Die Abstraktion verändert keine bestehenden Datenformate.
+
+Bestehende Tests nicht nur mocken, sondern mindestens je einen Test über den tatsächlich verwendeten öffentlichen Lade-/Speicherpfad pro Domain ergänzen.
+
+T207 – Umsetzung nur bei echter Eignung
+
+Nach der Bestandsaufnahme entscheide:
+
+A. Eine gemeinsame Abstraktion ist sicher möglich.
+
+Dann:
+
+• implementiere sie klein und technisch
+• migriere Budget, Daily Revenues und Reporting schrittweise
+• führe nach jeder Domain alle betroffenen Tests aus
+• vermeide einen grossen gleichzeitigen Umbau
+
+Oder:
+
+B. Die Abläufe sind fachlich oder technisch zu unterschiedlich.
+
+Dann:
+
+• keine erzwungene Abstraktion erstellen
+• stattdessen nur klar identische Hilfsfunktionen extrahieren
+• Unterschiede dokumentieren
+• begründen, weshalb eine vollständige safeBlobUpsert-Abstraktion aktuell nicht sicher wäre
+
+Die Entscheidung muss durch den tatsächlichen Code begründet sein.
+
+T208 – Design und Benutzerverhalten
+
+Diese Runde ist primär technisch.
+
+Falls sichtbare Meldungen, Ladeindikatoren oder Fehlermeldungen betroffen sind:
+
+• bestehende App-Muster verwenden
+• schlicht, modern und kompakt bleiben
+• keine neuen grossen Banner oder unnötigen Textblöcke
+• Fehlermeldungen verständlich auf Deutsch
+• keine technischen Supabase-Begriffe für normale Benutzer anzeigen
+• bestehende Abstände, Typografie, Farben und Komponenten beibehalten
+• mobile und Desktop-Darstellung prüfen
+• keine Layout-Verschlechterung verursachen
+
+T209 – Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit dem tatsächlich umgesetzten Verhalten.
+
+Dokumentiere:
+
+• welche technischen Schritte zentralisiert wurden
+• welche Domain-Regeln absichtlich getrennt bleiben
+• Dirty-Check-Regel
+• updatedAt-Regel
+• Read-never-writes-Regel
+• Availability-Recovery
+• Tombstone- und Zwei-Geräte-Schutz
+• abgedeckte Domains
+• relevante Regressionstests
+
+Keine geplanten oder nicht umgesetzten Funktionen dokumentieren.
+
+T210 – Abschlussprüfung
+
+Führe aus:
+
+• TypeScript-Prüfung
+• alle neuen Persistenztests
+• bestehende Budgettests
+• bestehende Daily-Revenues-Tests
+• bestehende Reportingtests
+• relevante Zwei-Geräte-, Tenant- und Tombstone-Tests
+• projektweite Suche nach direkten duplizierten Upserts in den drei Bereichen
+• Architect-Review über den tatsächlichen Task-Diff
+
+Beim Architect-Review besonders prüfen:
+
+• kein Write beim Read
+• Dirty-Check vor dem Upsert
+• updatedAt nur bei echter Änderung
+• keine Vermischung der Domain-Merge-Regeln
+• Tenant-Isolation
+• Tombstone-Sicherheit
+• keine stale-localStorage-Überschreibung
+• Recovery nach Supabase-/Netzwerkfehler
+• keine unnötige generische Architektur
+
+Behebe alle Befunde innerhalb dieses Tasks.
+
+Abschlussbericht
+
+Liefere abschliessend:
+
+1. Welche Upsert-Abläufe untersucht wurden.
+2. Welche Unterschiede zwischen Budget, Daily Revenues und Reporting gefunden wurden.
+3. Ob eine vollständige gemeinsame Abstraktion sicher war.
+4. Welche technische Logik zentralisiert wurde.
+5. Welche Domain-Logik bewusst getrennt blieb.
+6. Wie der Dirty-Check funktioniert.
+7. Wie updatedAt geschützt wird.
+8. Wie Netzwerk- und Availability-Recovery funktionieren.
+9. Wie Tenant-, Tombstone- und Zwei-Geräte-Schutz erhalten wurden.
+10. Welche realen Einstiegspfade getestet wurden.
+11. Alle ausgeführten Tests und Resultate.
+12. Typecheck-Ergebnis.
+13. Architect-Review-Ergebnis.
+14. Geänderte Dateien.
+15. Sichtbare Verhaltensänderungen.
+
+Keinen Commit durchführen, bevor Typecheck, relevante Tests und Architect-Review abgeschlossen sind.
+
+Keine fremden oder bereits bestehenden Änderungen zurücksetzen. Beim Review ausschliesslich den tatsächlichen Task-Diff bewerten.

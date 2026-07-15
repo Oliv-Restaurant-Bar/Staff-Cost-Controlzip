@@ -41,6 +41,7 @@ import {
 } from '@/types/reporting';
 import { v4 as uuidv4 } from 'uuid';
 import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth, notifyKVBackupProblem } from './supabase-kv';
+import { readLocalRecord } from './kv-blob-utils';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -49,11 +50,8 @@ export const STORAGE_KEY = 'reporting_v1';
 // ─── Interne Hilfsfunktionen ──────────────────────────────────────────────────
 
 function loadAll(storeKey: string = STORAGE_KEY): Record<string, MonthlyFinancialRecord> {
-  try {
-    return JSON.parse(localStorage.getItem(storeKey) || '{}');
-  } catch {
-    return {};
-  }
+  // Parse-/Shape-Guard zentral (kv-blob-utils)
+  return readLocalRecord(storeKey) as unknown as Record<string, MonthlyFinancialRecord>;
 }
 
 function saveAll(data: Record<string, MonthlyFinancialRecord>, storeKey: string = STORAGE_KEY): void {

@@ -11,6 +11,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import type { TenantId } from '@/contexts/TenantContext';
+import { asRecordBlob, readLocalRecord } from './kv-blob-utils';
 
 type Listener = () => void;
 
@@ -307,12 +308,8 @@ export async function safeUpsertDailyBudgets(
 ): Promise<Record<string, Record<string, unknown>>> {
   type Blob = Record<string, Record<string, unknown>>;
 
-  // 1. localStorage (Schnellpfad)
-  let local: Blob = {};
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (raw) local = JSON.parse(raw) as Blob;
-  } catch { /* ignore */ }
+  // 1. localStorage (Schnellpfad) — Parse-/Shape-Guard zentral (kv-blob-utils)
+  const local = readLocalRecord(storageKey) as Blob;
 
   // 2. KV (Master-Stand) — STRIKT lesen: ein Lesefehler darf NIE wie
   //    «Remote ist leer» aussehen, sonst würden remote-only Tage beim
@@ -321,10 +318,7 @@ export async function safeUpsertDailyBudgets(
   let remote: Blob = {};
   let remoteReadError: unknown = null;
   try {
-    const kv = await kvGetStrict(storageKey);
-    if (kv && typeof kv === 'object' && !Array.isArray(kv)) {
-      remote = kv as Blob;
-    }
+    remote = asRecordBlob(await kvGetStrict(storageKey)) as Blob;
   } catch (err) {
     remoteReadError = err;
   }
@@ -448,80 +442,88 @@ export async function safeUpsertReportingMonth(
   monthRecord: unknown,
   storeKey: string,
 ): Promise<void> {
-  if (!(await isAvailable())) return;
-  try {
-    // 1. Aktuellen Supabase-Stand laden (Master)
-    const remote = await kvGet(storeKey);
-    const base: Record<string, unknown> =
-      remote && typeof remote === 'object' && !Array.isArray(remote)
-        ? (remote as Record<string, unknown>)
-        : {};
-    // 1b. Schutz: kvGet liefert bei Lese-Fehlern null (nicht unterscheidbar von
-    //     «noch kein Blob»). Damit ein fehlgeschlagener Remote-Read nie Monate
-    //     verwirft, werden lokale Monate als Basis-Union ergänzt (remote gewinnt
-    //     pro Monat — nur der Ziel-Monat wird ersetzt).
-    let localBase: Record<string, unknown> = {};
-    try {
-      const rawLocal = JSON.parse(localStorage.getItem(storeKey) || '{}');
-      if (rawLocal && typeof rawLocal === 'object' && !Array.isArray(rawLocal)) {
-        localBase = rawLocal as Record<string, unknown>;
-      }
-    } catch { /* localStorage unlesbar → nur remote als Basis */ }
-    // 2. Nur den einen Monat aktualisieren — alle anderen Monate bleiben erhalten
-    const merged = { ...localBase, ...base, [monthId]: monthRecord };
-    // 3. Nach Supabase schreiben — Fehler explizit prüfen (Supabase wirft nicht)
-    const { error } = await (supabase as any)
-      .from('app_settings')
-      .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
-    if (error) throw error;
-    markKVSuccess();
-    // 4. localStorage mit dem vollständigen Stand synchronisieren
-    localStorage.setItem(storeKey, JSON.stringify(merged));
-    notifyKV(storeKey);
-    console.log(`[REPORTING] safeUpsertReportingMonth: ${storeKey} / ${monthId} ✓`);
-  } catch (err) {
-    markKVFailure(err);
-    console.error(`[REPORTING] safeUpsertReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
-    // KEIN Fallback-kvSet: Ein direkter Blob-Write mit nur EINEM Monat würde
-    // alle anderen Monate/Jahre in Supabase löschen (verbotener kompletter
-    // Blob-Replace). localStorage bleibt Primärspeicher — der Fehler wird
-    // weitergereicht, damit der Aufrufer ihn sichtbar machen kann.
-    throw err;
-  }
+  return mergeAndWriteReportingBlob(
+    storeKey,
+    `safeUpsertReportingMonth`,
+    monthId,
+    base => ({ ...base, [monthId]: monthRecord }),
+  );
 }
 
 /**
  * Sicheres Löschen eines Monats aus reporting_v1.
- * Liest Supabase-Stand, entfernt NUR den angegebenen Monat, schreibt zurück.
- * Verhindert, dass andere Monate verschwinden.
+ * Gleicher Kern wie der Upsert: Basis = Remote-Stand ∪ lokale Monate,
+ * dann wird NUR der angegebene Monat entfernt. Verhindert, dass andere
+ * Monate verschwinden — auch wenn der Remote-Read still fehlschlägt
+ * (kvGet → null): ohne die Basis-Union würde dann ein leerer Blob
+ * geschrieben und ALLE übrigen Monate remote gelöscht (Befund Runde 2.7).
  */
 export async function safeDeleteReportingMonth(
   monthId: string,
   storeKey: string,
 ): Promise<void> {
+  return mergeAndWriteReportingBlob(
+    storeKey,
+    `safeDeleteReportingMonth`,
+    monthId,
+    base => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [monthId]: _removed, ...rest } = base;
+      return rest;
+    },
+  );
+}
+
+/**
+ * Gemeinsamer technischer Kern von safeUpsertReportingMonth und
+ * safeDeleteReportingMonth (Runde 2.7). Kapselt NUR den identischen Ablauf —
+ * die fachliche Mutation (Monat ersetzen bzw. entfernen) liefert der Aufrufer:
+ *
+ *   1. Verfügbarkeits-Gate (offline → no-op, localStorage bleibt Primärspeicher)
+ *   2. Remote-Stand laden (kvGet) + Shape-Guard
+ *   3. Basis-Union mit lokalen Monaten: kvGet liefert bei Lese-Fehlern null
+ *      (nicht unterscheidbar von «noch kein Blob») — damit ein fehlgeschlagener
+ *      Remote-Read nie Monate verwirft, ergänzen lokale Monate die Basis
+ *      (remote gewinnt pro Monat); erst DANACH wirkt die Mutation auf den
+ *      Ziel-Monat.
+ *   4. Nach Supabase schreiben — Fehler explizit prüfen (Supabase wirft nicht;
+ *      sonst gälte ein fehlgeschlagener Write still als Erfolg, T007)
+ *   5. Erst NACH Remote-Erfolg: localStorage synchronisieren + Listener
+ *      benachrichtigen (Reihenfolge verbindlich — notifyKV nie vor setItem)
+ *   6. Fehler: markKVFailure + weiterwerfen (kein destruktiver Fallback-Write;
+ *      der Aufrufer macht den Fehler sichtbar)
+ */
+async function mergeAndWriteReportingBlob(
+  storeKey: string,
+  label: string,
+  monthId: string,
+  mutate: (base: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
   if (!(await isAvailable())) return;
   try {
-    const remote = await kvGet(storeKey);
-    const base: Record<string, unknown> =
-      remote && typeof remote === 'object' && !Array.isArray(remote)
-        ? (remote as Record<string, unknown>)
-        : {};
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { [monthId]: _removed, ...rest } = base;
-    // WICHTIG: Supabase wirft bei Schreibfehlern NICHT — { error } explizit prüfen,
-    // sonst gilt ein fehlgeschlagenes Löschen still als Erfolg (T007).
+    // 1. Aktuellen Supabase-Stand laden (Master) + Shape-Guard
+    const base = asRecordBlob(await kvGet(storeKey));
+    // 2. Basis-Union: lokale Monate ergänzen, remote gewinnt pro Monat
+    const localBase = readLocalRecord(storeKey);
+    // 3. Fachliche Mutation NUR auf dem Ziel-Monat
+    const merged = mutate({ ...localBase, ...base });
+    // 4. Nach Supabase schreiben — Fehler explizit prüfen
     const { error } = await (supabase as any)
       .from('app_settings')
-      .upsert({ key: storeKey, value: rest }, { onConflict: 'key' });
+      .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
     if (error) throw error;
     markKVSuccess();
-    localStorage.setItem(storeKey, JSON.stringify(rest));
+    // 5. localStorage mit dem vollständigen Stand synchronisieren
+    localStorage.setItem(storeKey, JSON.stringify(merged));
     notifyKV(storeKey);
-    console.log(`[REPORTING] safeDeleteReportingMonth: ${storeKey} / ${monthId} ✓`);
+    console.log(`[REPORTING] ${label}: ${storeKey} / ${monthId} ✓`);
   } catch (err) {
     markKVFailure(err);
-    console.error(`[REPORTING] safeDeleteReportingMonth Fehler für ${storeKey}/${monthId}:`, err);
-    // Fehler weiterreichen — der Aufrufer muss ihn sichtbar machen (nie still scheitern).
+    console.error(`[REPORTING] ${label} Fehler für ${storeKey}/${monthId}:`, err);
+    // KEIN Fallback-kvSet: Ein direkter Blob-Write mit nur EINEM Monat würde
+    // alle anderen Monate/Jahre in Supabase löschen (verbotener kompletter
+    // Blob-Replace). localStorage bleibt Primärspeicher — der Fehler wird
+    // weitergereicht, damit der Aufrufer ihn sichtbar machen kann.
     throw err;
   }
 }

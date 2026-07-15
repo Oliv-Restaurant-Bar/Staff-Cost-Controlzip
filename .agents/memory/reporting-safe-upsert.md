@@ -42,3 +42,22 @@ This is the same root cause as the `dailyBudgets` bug that was fixed earlier wit
   aborts if any foreign-year record would change; KV backup runs SEQUENTIALLY
   (parallel safeUpserts on the same blob race last-writer-wins) and reports
   `failedMonths` for a visible user warning.
+
+## Runde 2.7: Delete braucht dieselbe Basis-Union wie der Upsert
+- The DELETE path lacked the local base-union: a silently failed `kvGet` (→ null)
+  made the base `{}`, and writing `rest` of `{}` wiped ALL months remotely.
+  Upsert and delete now share one internal merge core so the invariants
+  (base-union, explicit `{error}` check, localStorage AFTER remote success,
+  notifyKV AFTER setItem, throw without destructive fallback) can never diverge
+  again. **Rule:** any scoped mutation of a shared blob (add OR remove) needs the
+  identical read→union→mutate→verify write pipeline — deletes are not exempt.
+- Decision (Entscheid B, Runde 2.7): NO generic cross-domain `safeBlobUpsert`.
+  Merge granularity/ordering/error policy are domain-critical and differ
+  (Budget year-merge newer-wins+tombstones; Daily field-merge remote>0-wins,
+  localStorage BEFORE remote; Reporting month-replace, localStorage AFTER remote;
+  Budget/Daily notify+retry vs. Reporting throws). Only dependency-free technical
+  guards live centrally in `kv-blob-utils` (`asRecordBlob`, `readLocalRecord` —
+  Supabase-free so load paths don't pull a static Supabase import).
+- Documented limit (pre-existing, accepted): reporting has NO tombstones — a
+  stale device's localStorage can re-add a month deleted elsewhere via the union.
+  Correct tradeoff vs. the remote-wipe alternative; don't "fix" by dropping the union.

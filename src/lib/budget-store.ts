@@ -32,6 +32,7 @@ import {
 } from '@/types/budget';
 import { createSeededBudget2026, SEED_2026_LINE_ITEMS } from '@/lib/budget-seed-2026';
 import { createSeededBeaulieuBudget2026, SEED_BEAULIEU_2026_LINE_ITEMS } from '@/lib/budget-seed-beaulieu-2026';
+import { asRecordBlob, readLocalRecord } from '@/lib/kv-blob-utils';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -93,11 +94,9 @@ function budgetBusinessEqual(a: StoredBudgetYear, b: StoredBudgetYear): boolean 
 }
 
 function loadAll(storeKey: string = STORAGE_KEY): Record<number, StoredBudgetYear> {
-  try {
-    return JSON.parse(localStorage.getItem(storeKey) || '{}');
-  } catch {
-    return {};
-  }
+  // Parse-/Shape-Guard zentral (kv-blob-utils, Supabase-frei — Load-Pfade
+  // ziehen weiterhin keinen Supabase-Client).
+  return readLocalRecord(storeKey) as unknown as Record<number, StoredBudgetYear>;
 }
 
 /**
@@ -146,11 +145,7 @@ async function backupBudgetsToKV(
     // kvGetStrict statt kvGet: Ein Lesefehler darf nicht wie «Remote ist leer»
     // aussehen — sonst würde der Merge remote-only Jahre verlieren. Bei
     // Lesefehler bricht das Backup sichtbar ab (localStorage bleibt intakt).
-    const remote = await kvGetStrict(storeKey);
-    const remoteMap: Record<string, StoredBudgetYear> =
-      remote && typeof remote === 'object' && !Array.isArray(remote)
-        ? (remote as Record<string, StoredBudgetYear>)
-        : {};
+    const remoteMap = asRecordBlob(await kvGetStrict(storeKey)) as Record<string, StoredBudgetYear>;
     const localMap = data as unknown as Record<string, StoredBudgetYear>;
 
     const merged: Record<string, StoredBudgetYear> = {};
