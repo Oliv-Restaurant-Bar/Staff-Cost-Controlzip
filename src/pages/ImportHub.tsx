@@ -46,9 +46,12 @@ import {
   saveMonth,
   replaceAnnualCostYear,
   removeAnnualCostYear,
+  retryReportingMonthsBackup,
   yearsWithData,
   STORAGE_KEY as REPORTING_STORAGE_KEY,
 } from '@/lib/reporting-store';
+import { notifyKVBackupProblem, kvGetStrict } from '@/lib/supabase-kv';
+import { asRecordBlob, readLocalRecord } from '@/lib/kv-blob-utils';
 import { HintBox } from '@/components/ui/hint-box';
 import {
   loadAnnualCostImports,
@@ -378,7 +381,7 @@ const Section = ({ id, title, subtitle, icon, color, badge, badgeColor, children
 // ─── Vorjahr-Umsatz importieren ───────────────────────────────────────────────
 
 const AnnualRevenueImportSection = () => {
-  const { tenantId } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const { isAdmin }  = usePermissions();
   const fileRef = useRef<HTMLInputElement>(null);
   const [importYear, setImportYear] = useState(currentYear - 1);
@@ -447,6 +450,7 @@ const AnnualRevenueImportSection = () => {
         'annual_xlsx_import',
         'update',
         { note: `Vorjahr-Import ${importYear} → erscheint in P&L ${saveYear}` },
+        tenantKey('reporting_v1'),
       );
       saved++;
     }
@@ -642,6 +646,8 @@ const MONTH_LABELS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Ok
 
 const AnnualCostImportSection = () => {
   const { tenantKey } = useTenant();
+  const { isAdmin } = usePermissions();
+  const { isGuest } = useGuestSession();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsing, setParsing]     = useState(false);
   const [result, setResult]       = useState<AnnualKostenResult | null>(null);
@@ -652,6 +658,11 @@ const AnnualCostImportSection = () => {
   const [entries, setEntries]     = useState<AnnualCostImportEntry[]>([]);
   const [deleteYear, setDeleteYear] = useState<number | null>(null);
   const [deleting, setDeleting]   = useState(false);
+  // Backup-Nachsicherung (nur auf Klick — reines Öffnen liest/schreibt nie)
+  const [backupChecking, setBackupChecking] = useState(false);
+  const [backupCheckError, setBackupCheckError] = useState('');
+  const [backupDiff, setBackupDiff] = useState<{ missing: string[]; localCount: number; remoteCount: number } | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
 
   const registryKey  = tenantKey(ANNUAL_COST_IMPORTS_KEY);
   const reportingKey = tenantKey(REPORTING_STORAGE_KEY);
@@ -662,6 +673,8 @@ const AnnualCostImportSection = () => {
     });
   };
   useEffect(() => { refreshEntries(registryKey); }, [registryKey]);
+  // Tenant-Wechsel: Prüfergebnis verwerfen (gehört zum alten reportingKey)
+  useEffect(() => { setBackupDiff(null); setBackupCheckError(''); }, [reportingKey]);
 
   /**
    * Vorschau-Aufbereitung: Matching gegen den Kontenplan + Kategorie-Listen
@@ -759,10 +772,17 @@ const AnnualCostImportSection = () => {
       );
       const backup = await kvBackup;
       if (backup.failedMonths.length > 0) {
-        toast.warning(
-          `Supabase-Backup unvollständig: ${backup.failedMonths.length} Monat(e) nicht hochgeladen ` +
-          `(lokal gespeichert). Import später erneut ausführen, um das Backup zu vervollständigen.`,
-        );
+        const failed = backup.failedMonths;
+        void notifyKVBackupProblem(backup.lastError, `Kosten-Import ${year} (${failed.length} Monat(e))`, {
+          toastId: `annual-cost-backup-${year}`,
+          retry: async () => {
+            const res = await retryReportingMonthsBackup(failed, reportingKey);
+            if (res.failedMonths.length > 0) {
+              throw res.lastError ?? new Error(`${res.failedMonths.length} Monat(e) weiterhin nicht gesichert`);
+            }
+            toast.success(`Supabase-Backup vervollständigt (${failed.length} Monat(e) nachgesichert).`);
+          },
+        });
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Speichern fehlgeschlagen.');
@@ -781,16 +801,87 @@ const AnnualCostImportSection = () => {
       toast.success(`Jahr ${deleteYear}: Kontodaten aus ${res.monthsCleared} Monaten entfernt`);
       const backup = await res.kvBackup;
       if (backup.failedMonths.length > 0) {
-        toast.warning(
-          `Supabase-Backup unvollständig: ${backup.failedMonths.length} Monat(e) nicht aktualisiert ` +
-          `(lokal entfernt). Löschung später erneut ausführen, um das Backup zu vervollständigen.`,
-        );
+        const failed = backup.failedMonths;
+        void notifyKVBackupProblem(backup.lastError, `Kosten-Löschung ${deleteYear} (${failed.length} Monat(e))`, {
+          toastId: `annual-cost-delete-backup-${deleteYear}`,
+          retry: async () => {
+            const retryRes = await retryReportingMonthsBackup(failed, reportingKey);
+            if (retryRes.failedMonths.length > 0) {
+              throw retryRes.lastError ?? new Error(`${retryRes.failedMonths.length} Monat(e) weiterhin nicht aktualisiert`);
+            }
+            toast.success(`Supabase-Backup vervollständigt (${failed.length} Monat(e) aktualisiert).`);
+          },
+        });
       }
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Löschen fehlgeschlagen.');
     } finally {
       setDeleting(false);
       setDeleteYear(null);
+    }
+  };
+
+  /**
+   * Backup-Prüfung (E): NUR auf Klick — vergleicht den lokalen reporting_v1-Stand
+   * mit dem Supabase-KV (strict read: Lesefehler sieht NIE wie «Remote leer» aus).
+   * Reparaturkandidaten sind ausschliesslich Monate, die lokal existieren und
+   * remote FEHLEN; tombstoned Monate (deleted:true) sind gewollte Löschungen und
+   * werden nie gelistet. Inhaltliche Unterschiede werden bewusst NICHT angefasst
+   * (kein stilles Überschreiben des Remote-Stands).
+   */
+  const handleBackupCheck = async () => {
+    setBackupChecking(true);
+    setBackupCheckError('');
+    setBackupDiff(null);
+    try {
+      const remote = asRecordBlob(await kvGetStrict(reportingKey));
+      const local = readLocalRecord(reportingKey);
+      const missing = Object.keys(local)
+        .filter(id => {
+          const rec = local[id];
+          if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return false;
+          if ((rec as { deleted?: boolean }).deleted === true) return false;
+          return remote[id] === undefined;
+        })
+        .sort();
+      setBackupDiff({ missing, localCount: Object.keys(local).length, remoteCount: Object.keys(remote).length });
+    } catch (e: unknown) {
+      setBackupCheckError(
+        e instanceof Error && e.message
+          ? `Supabase-Stand konnte nicht gelesen werden: ${e.message}`
+          : 'Supabase-Stand konnte nicht gelesen werden (offline oder nicht konfiguriert).',
+      );
+    } finally {
+      setBackupChecking(false);
+    }
+  };
+
+  /** Nachsicherung: schreibt NUR die bestätigten, remote fehlenden Monate (sequenziell, read→merge→write). */
+  const handleBackupRepair = async () => {
+    if (!backupDiff || backupDiff.missing.length === 0) return;
+    const toRepair = backupDiff.missing;
+    setBackingUp(true);
+    try {
+      const res = await retryReportingMonthsBackup(toRepair, reportingKey);
+      if (res.failedMonths.length > 0) {
+        setBackupDiff({ ...backupDiff, missing: res.failedMonths });
+        void notifyKVBackupProblem(res.lastError, `Nachsicherung (${res.failedMonths.length} Monat(e))`, {
+          toastId: 'reporting-backup-repair',
+          retry: async () => {
+            const again = await retryReportingMonthsBackup(res.failedMonths, reportingKey);
+            if (again.failedMonths.length > 0) {
+              throw again.lastError ?? new Error(`${again.failedMonths.length} Monat(e) weiterhin nicht gesichert`);
+            }
+            setBackupDiff(prev => (prev ? { ...prev, missing: [] } : prev));
+            toast.success('Supabase-Backup vervollständigt.');
+          },
+        });
+      } else {
+        setBackupDiff({ ...backupDiff, missing: [] });
+        toast.success(`${toRepair.length} Monat(e) ins Supabase-Backup nachgesichert.`);
+      }
+    } finally {
+      setBackingUp(false);
     }
   };
 
@@ -1036,6 +1127,60 @@ const AnnualCostImportSection = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* ── Backup-Prüfung & Nachsicherung (E): nur Admin, nie Gast, nur auf Klick ── */}
+      {isAdmin && !isGuest && (
+        <div className="space-y-2 pt-1" data-testid="reporting-backup-check">
+          <div className="flex items-center gap-2">
+            <p className="text-[11px] font-medium text-muted-foreground">Supabase-Backup der Erfolgsrechnung</p>
+            <Button
+              size="sm" variant="outline" className="h-7 text-[11px]"
+              onClick={handleBackupCheck} disabled={backupChecking || backingUp}
+              data-testid="reporting-backup-check-button"
+            >
+              {backupChecking
+                ? <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                : <RefreshCw className="h-3 w-3 mr-1" />}
+              Backup prüfen
+            </Button>
+          </div>
+          {backupCheckError && (
+            <div className="flex items-start gap-2 text-xs text-red-600 dark:text-red-400" data-testid="reporting-backup-check-error">
+              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <span>{backupCheckError}</span>
+            </div>
+          )}
+          {backupDiff && backupDiff.missing.length === 0 && (
+            <p className="text-xs text-green-700 dark:text-green-400 flex items-center gap-1.5" data-testid="reporting-backup-check-ok">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Backup vollständig: alle {backupDiff.localCount} lokalen Monate sind im Supabase-KV vorhanden
+              ({backupDiff.remoteCount} Monate remote).
+            </p>
+          )}
+          {backupDiff && backupDiff.missing.length > 0 && (
+            <div className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-950/20 p-2 space-y-2" data-testid="reporting-backup-diff">
+              <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                <span className="font-medium">{backupDiff.missing.length} Monat(e) lokal vorhanden, aber nicht im Supabase-Backup:</span>{' '}
+                <span className="tabular-nums">{backupDiff.missing.join(', ')}</span>
+              </p>
+              <p className="text-[10px] text-amber-800/80 dark:text-amber-300/80">
+                Die Nachsicherung schreibt ausschliesslich diese fehlenden Monate ins Backup
+                (read→merge→write pro Monat). Bereits vorhandene Remote-Monate werden nicht verändert.
+              </p>
+              <Button
+                size="sm" className="h-7 text-[11px]"
+                onClick={handleBackupRepair} disabled={backingUp}
+                data-testid="reporting-backup-repair-button"
+              >
+                {backingUp
+                  ? <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  : <CheckCircle2 className="h-3 w-3 mr-1" />}
+                {backupDiff.missing.length} Monat(e) nachsichern
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1823,7 +1968,7 @@ function BeaulieuBudgetImportSection() {
 const MONTH_LABELS_SHORT = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
 const AnnualPersonnelCostImportSection = () => {
-  const { tenantId } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const { isAdmin }  = usePermissions();
   const fileRef = useRef<HTMLInputElement>(null);
   const [importYear, setImportYear]   = useState(currentYear - 1);
@@ -1897,6 +2042,7 @@ const AnnualPersonnelCostImportSection = () => {
         'csv_previous_year',
         'update',
         { fileName, note: `Personalkosten-Vorjahr-Import ${importYear} → P&L ${saveYear}` },
+        tenantKey('reporting_v1'),
       );
       savedCount++;
     }

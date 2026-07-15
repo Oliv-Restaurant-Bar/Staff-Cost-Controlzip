@@ -94,12 +94,18 @@ export function loadMonth(year: number, month: number, storeKey: string = STORAG
  *               (undefined-Felder im neuen Objekt werden ignoriert)
  *
  * In beiden Fällen wird ein ImportRecord angelegt.
+ *
+ * opts.skipKvBackup: NUR für Mehrmonats-Schleifen — parallele fire-and-forget
+ * safeUpserts desselben Blobs können sich gegenseitig mit veralteten Monats-
+ * werten überschreiben (Basis-Union bevorzugt remote pro Monat). Der Aufrufer
+ * MUSS danach selbst sequenziell sichern (retryReportingMonthsBackup) und
+ * Fehler sichtbar machen — nie still weglassen.
  */
 export function saveMonth(
   incoming: Partial<MonthlyFinancialRecord> & { year: number; month: number },
   source: ImportSource,
   mode: ImportMode,
-  opts?: { fileName?: string; note?: string },
+  opts?: { fileName?: string; note?: string; skipKvBackup?: boolean },
   storeKey: string = STORAGE_KEY,
 ): MonthlyFinancialRecord {
   const all      = loadAll(storeKey);
@@ -178,10 +184,15 @@ export function saveMonth(
   all[id] = saved;
   saveAll(all, storeKey);
   // Sicher nach Supabase schreiben: erst KV-Stand lesen, nur diesen Monat mergen,
-  // dann zurückschreiben — verhindert Datenverlust bei stale localStorage
-  safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
-    console.error('[REPORTING] saveMonth: safeUpsertReportingMonth fehlgeschlagen', err);
-  });
+  // dann zurückschreiben — verhindert Datenverlust bei stale localStorage.
+  // skipKvBackup: Mehrmonats-Schleifen sichern danach selbst SEQUENZIELL
+  // (retryReportingMonthsBackup) — parallele Upserts desselben Blobs würden
+  // sich gegenseitig mit veralteten Monatswerten überschreiben.
+  if (!opts?.skipKvBackup) {
+    safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
+      console.error('[REPORTING] saveMonth: safeUpsertReportingMonth fehlgeschlagen', err);
+    });
+  }
   return saved;
 }
 
@@ -224,9 +235,37 @@ export interface ReplaceAnnualCostResult {
   monthsCleared: number;
   /**
    * Supabase-Backup-Ergebnis (localStorage ist bereits geschrieben).
-   * failedMonths ≠ [] → Backup unvollständig, Aufrufer muss es sichtbar machen.
+   * failedMonths ≠ [] → Backup unvollständig (nach 1 automatischem Retry),
+   * Aufrufer muss es actionable sichtbar machen (notifyKVBackupProblem + Retry).
    */
-  kvBackup: Promise<{ failedMonths: string[] }>;
+  kvBackup: Promise<{ failedMonths: string[]; lastError?: unknown }>;
+}
+
+/**
+ * Nachsicherung fehlgeschlagener Monats-Backups: liest den LOKALEN Stand
+ * frisch (nie alte Snapshots) und schreibt jeden Monat sequenziell über
+ * safeUpsertReportingMonth ins Supabase-KV. Monate, die lokal nicht (mehr)
+ * existieren, werden übersprungen — Nachsicherung erfindet nie Daten.
+ */
+export async function retryReportingMonthsBackup(
+  monthIds: string[],
+  storeKey: string = STORAGE_KEY,
+): Promise<{ failedMonths: string[]; lastError?: unknown }> {
+  const current = loadAll(storeKey);
+  const failedMonths: string[] = [];
+  let lastError: unknown;
+  for (const id of monthIds) {
+    const rec = current[id];
+    if (!rec) continue;
+    try {
+      await safeUpsertReportingMonth(id, rec, storeKey);
+    } catch (err) {
+      console.error('[REPORTING] retryReportingMonthsBackup: Monat fehlgeschlagen', id, err);
+      failedMonths.push(id);
+      lastError = err;
+    }
+  }
+  return { failedMonths, lastError };
 }
 
 /**
@@ -332,12 +371,14 @@ export function replaceAnnualCostYear(
   // überschreiben (last-writer-wins → Monatsverlust im KV-Backup).
   const kvBackup = (async () => {
     const failedMonths: string[] = [];
+    let lastError: unknown;
     for (const id of touchedIds) {
       try {
         await safeUpsertReportingMonth(id, next[id], storeKey);
       } catch (err) {
         console.error('[REPORTING] replaceAnnualCostYear: safeUpsertReportingMonth fehlgeschlagen', id, err);
         failedMonths.push(id);
+        lastError = err;
       }
     }
     // Fehlgeschlagene Monate lokal re-schreiben: nachfolgende erfolgreiche
@@ -352,8 +393,15 @@ export function replaceAnnualCostYear(
       } catch (err) {
         console.error('[REPORTING] replaceAnnualCostYear: lokales Re-Write fehlgeschlagen', err);
       }
+      // EIN automatischer Retry (sequenziell, liest den lokalen Stand frisch):
+      // transiente Netzwerkfehler sollen nicht sofort beim User landen.
+      const retry = await retryReportingMonthsBackup(failedMonths, storeKey);
+      return {
+        failedMonths: retry.failedMonths,
+        lastError: retry.failedMonths.length > 0 ? (retry.lastError ?? lastError) : undefined,
+      };
     }
-    return { failedMonths };
+    return { failedMonths, lastError };
   })();
 
   return { monthsWritten, monthsCleared, kvBackup };

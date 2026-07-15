@@ -41,6 +41,7 @@
 - [OP-Liste Gesamtsaldo priority](op-liste-total-priority.md) — resolve footer total AFTER loop by priority (Posten>Währung>generic), exclude Rechnungen/Gutschriften subtotals; keep null not silent 0.00.
 - [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.
 - [de-CH currency NBSP](de-ch-currency-nbsp.md) — locale currency output uses U+00A0 after "CHF"; strip the prefix with /CHF\s*/u, never a plain-space string replace.
+- [Reporting multi-month KV race](reporting-multimonth-kv-race.md) — parallel saveMonth blob backups overwrite each other with stale months; use skipKvBackup + sequential retryReportingMonthsBackup.
 - [Umsatzabstimmung Quellen-Mismatch](umsatzabstimmung-source-mismatch.md) — UA liest nur 3 Quellen (Manual/dailyBudgets/gn); vj_daily+revenueActual unsichtbar; saveMonth ohne storeKey → immer Oliv; KV-Backup kann partiell fehlen.
 - [app_settings typed wrapper](app-settings-typed-wrapper.md) — all app_settings access via appSettingsTable(); never edit generated types.ts, one isolated cast; Supabase builders are PromiseLike, not Promise.
 - [KV-Verfügbarkeit flüchtig](kv-availability-volatile.md) — «available» nie dauerhaft cachen; Netzwerk invalidiert, DB-Fehler nicht; Offline-Test-Mocks brauchen echte Netzwerkfehlermeldungen.

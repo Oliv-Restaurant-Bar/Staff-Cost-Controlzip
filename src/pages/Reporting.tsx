@@ -1772,7 +1772,7 @@ const ImportModeInfo = () => (
 
 // ─── Jahres-Umsatz-Import ─────────────────────────────────────────────────────
 
-const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => {
+const AnnualRevenueImportCard = ({ onImported, storeKey }: { onImported: () => void; storeKey: string }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [importYear, setImportYear] = useState(currentYear - 1);
   const [parsing,  setParsing]  = useState(false);
@@ -1802,7 +1802,7 @@ const AnnualRevenueImportCard = ({ onImported }: { onImported: () => void }) => 
     let saved = 0;
     for (const row of result.months) {
       if (row.revenue === 0) continue;
-      saveMonth({ year: importYear, month: row.month, revenueActual: row.revenue }, 'annual_xlsx_import', 'update', { note: `Jahres-Import ${fileName}` });
+      saveMonth({ year: importYear, month: row.month, revenueActual: row.revenue }, 'annual_xlsx_import', 'update', { note: `Jahres-Import ${fileName}` }, storeKey);
       saved++;
     }
     setSaving(false); setSaved(true); onImported();
@@ -2879,7 +2879,7 @@ const Reporting = () => {
               </Link>
             </CardContent>
           </Card>
-          <AnnualRevenueImportCard onImported={reload} />
+          <AnnualRevenueImportCard onImported={reload} storeKey={tenantKey('reporting_v1')} />
         </section>
 
       </div>

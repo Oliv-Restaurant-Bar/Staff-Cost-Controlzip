@@ -33,6 +33,7 @@ import { Upload, CheckCircle2, Loader2, AlertCircle, Database, Lock, LockOpen, S
 import {
   upsertVjDailyBatch,
   countVjDailyYear,
+  loadVjDailyYear,
   type VjDayRecord,
 } from '@/lib/vj-daily-supabase';
 import { useTenant } from '@/contexts/TenantContext';
@@ -44,6 +45,20 @@ import {
   formatLockedAt,
   type PriorYearLockState,
 } from '@/lib/prior-year-lock';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  saveMonth,
+  loadYear,
+  retryReportingMonthsBackup,
+  STORAGE_KEY as REPORTING_STORAGE_KEY,
+} from '@/lib/reporting-store';
+import { notifyKVBackupProblem } from '@/lib/supabase-kv';
+import {
+  buildVjTransferPlan,
+  buildVjTransferPayload,
+  selectTransferMonths,
+  type VjTransferMonthPlan,
+} from '@/lib/vj-daily-transfer';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -248,8 +263,8 @@ function fmtDate(iso: string): string {
 const currentYear = new Date().getFullYear();
 
 export function VjDailyImportSection() {
-  const { tenantId } = useTenant();
-  const { isAdmin }  = usePermissions();
+  const { tenantId, tenantKey } = useTenant();
+  const { isAdmin, isGuest } = usePermissions();
   const fileRef   = useRef<HTMLInputElement>(null);
   const [year,    setYear]    = useState(currentYear - 1);
   const [parsing, setParsing] = useState(false);
@@ -260,12 +275,24 @@ export function VjDailyImportSection() {
   const [existingCount, setExistingCount]   = useState<number | null>(null);
   const [lockState,     setLockState]       = useState<PriorYearLockState>({ locked: false });
   const [lockLoading,   setLockLoading]     = useState(false);
+  // Übernahme in die Erfolgsrechnung (A/B): NUR auf Klick — reines Öffnen löst keine Reads/Writes aus
+  const [transferPlan,     setTransferPlan]     = useState<VjTransferMonthPlan[] | null>(null);
+  const [transferChecking, setTransferChecking] = useState(false);
+  const [transferError,    setTransferError]    = useState<string | null>(null);
+  const [overwriteMonths,  setOverwriteMonths]  = useState<Set<number>>(new Set());
+  const [transferring,     setTransferring]     = useState(false);
+  const [transferDone,     setTransferDone]     = useState<string | null>(null);
 
   // Beim Laden: Datenzähler + Lock-Status laden
   useEffect(() => {
     const tid = tenantId ?? 'oliv';
     countVjDailyYear(year, tid).then(n => setExistingCount(n));
     getLockState(tid, year).then(s => setLockState(s));
+    // Jahr-/Tenant-Wechsel: Übernahme-Vorschau verwerfen (gehört zum alten Kontext)
+    setTransferPlan(null);
+    setTransferError(null);
+    setTransferDone(null);
+    setOverwriteMonths(new Set());
   }, [year, tenantId]);
 
   const handleFile = async (file: File) => {
@@ -358,6 +385,95 @@ export function VjDailyImportSection() {
       toast.success(`VJ ${year} entsperrt — Import wieder möglich`);
     } finally {
       setLockLoading(false);
+    }
+  };
+
+  /**
+   * Übernahme-Vorschau (A): liest die vj_daily-Tageswerte des Jahres (read-only)
+   * und gleicht sie gegen die bestehenden Erfolgsrechnungs-Monate ab.
+   * Die Jahres-Sperre blockiert nur vj_daily-WRITES — die Übernahme liest nur
+   * vj_daily und schreibt ausschliesslich in die Erfolgsrechnung.
+   */
+  const handleTransferCheck = async () => {
+    setTransferChecking(true);
+    setTransferError(null);
+    setTransferPlan(null);
+    setTransferDone(null);
+    setOverwriteMonths(new Set());
+    try {
+      const days = await loadVjDailyYear(year, tenantId);
+      if (Object.keys(days).filter(d => d.startsWith(`${year}-`)).length === 0) {
+        setTransferError(
+          `Keine vj_daily-Tageswerte für ${year} gefunden (oder Supabase nicht erreichbar). ` +
+          'Es wird nichts übernommen — fehlende Daten werden nie als 0 interpretiert.',
+        );
+        return;
+      }
+      const existing = loadYear(year, tenantKey(REPORTING_STORAGE_KEY));
+      setTransferPlan(buildVjTransferPlan(year, days, existing));
+    } catch (e) {
+      setTransferError('Übernahme-Prüfung fehlgeschlagen: ' + String(e));
+    } finally {
+      setTransferChecking(false);
+    }
+  };
+
+  /**
+   * Übernahme bestätigen: schreibt NUR die gewählten Monate via saveMonth
+   * (update-Merge, skipKvBackup) und sichert danach SEQUENZIELL nach Supabase
+   * (retryReportingMonthsBackup) — parallele Blob-Upserts würden sich sonst
+   * gegenseitig mit veralteten Monatswerten überschreiben. Backup-Fehler
+   * werden sichtbar gemeldet (notifyKVBackupProblem mit «Erneut versuchen»).
+   */
+  const handleTransferConfirm = async () => {
+    if (!transferPlan) return;
+    const toTransfer = selectTransferMonths(transferPlan, overwriteMonths);
+    if (toTransfer.length === 0) return;
+    setTransferring(true);
+    try {
+      const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+      const monthIds: string[] = [];
+      for (const p of toTransfer) {
+        saveMonth(
+          buildVjTransferPayload(year, p),
+          'vj_daily_transfer',
+          'update',
+          {
+            note: `Übernahme aus vj_daily (${p.dayCount} Tage, Brutto ${NUM.format(Math.round(p.grossTotal))} CHF)`,
+            skipKvBackup: true,
+          },
+          storeKey,
+        );
+        monthIds.push(p.monthId);
+      }
+      const skippedConflicts = transferPlan.filter(p => p.transferable && p.conflict && !overwriteMonths.has(p.month)).length;
+      setTransferDone(
+        `${toTransfer.length} Monat(e) in die Erfolgsrechnung übernommen` +
+        (skippedConflicts > 0 ? ` — ${skippedConflicts} Konflikt-Monat(e) unverändert gelassen` : ''),
+      );
+      setTransferPlan(null);
+      setOverwriteMonths(new Set());
+      toast.success(`${toTransfer.length} Monat(e) für ${year} in die Erfolgsrechnung übernommen`);
+
+      // Sequenzielle Supabase-Sicherung der übernommenen Monate — Fehler sichtbar
+      const backup = await retryReportingMonthsBackup(monthIds, storeKey);
+      if (backup.failedMonths.length > 0) {
+        const failed = backup.failedMonths;
+        void notifyKVBackupProblem(backup.lastError, `Übernahme ${year} (${failed.length} Monat(e))`, {
+          toastId: `vj-transfer-backup-${year}`,
+          retry: async () => {
+            const res = await retryReportingMonthsBackup(failed, storeKey);
+            if (res.failedMonths.length > 0) {
+              throw res.lastError ?? new Error(`${res.failedMonths.length} Monat(e) weiterhin nicht gesichert`);
+            }
+            toast.success(`Supabase-Backup vervollständigt (${failed.length} Monat(e) nachgesichert).`);
+          },
+        });
+      }
+    } catch (e) {
+      toast.error('Übernahme fehlgeschlagen: ' + String(e));
+    } finally {
+      setTransferring(false);
     }
   };
 
@@ -573,6 +689,148 @@ export function VjDailyImportSection() {
           <p>• Werte: <span className="font-mono bg-muted px-1 rounded">CHF 7'118.00</span> oder <span className="font-mono bg-muted px-1 rounded">CHF 7118,75</span></p>
           <p>• Monatsexport möglich: Nur die Tage des gewählten Monats werden importiert</p>
           <p>• Supabase ist die primäre Datenquelle — Daten werden dauerhaft gespeichert</p>
+        </div>
+      )}
+
+      {/* Übernahme in die Erfolgsrechnung ────────────────────────────────── */}
+      {isAdmin && !isGuest && (
+        <div className="border-t border-border pt-3 space-y-2" data-testid="vj-transfer-section">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Übernahme in die Erfolgsrechnung ({year})
+            </p>
+            <Button
+              size="sm" variant="outline" className="h-7 text-[11px] gap-1"
+              onClick={handleTransferCheck}
+              disabled={transferChecking || transferring}
+              data-testid="vj-transfer-check-button"
+            >
+              {transferChecking
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : <Database className="h-3 w-3" />}
+              Übernahme prüfen
+            </Button>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Überträgt die Monatssummen der importierten Tageswerte als Umsatz in die Erfolgsrechnung:
+            Brutto = Summe der Tage, Netto = Brutto ÷ 1.081 (8.1 % MwSt, ohne Take-Away-Split).
+            Monate ohne Tageswerte werden nie angelegt. Eine Jahres-Sperre blockiert nur den
+            Tageswerte-Import — die Übernahme bleibt möglich.
+          </p>
+
+          {transferError && (
+            <div className="flex items-start gap-2 text-xs text-red-600 dark:text-red-400" data-testid="vj-transfer-error">
+              <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+              <span>{transferError}</span>
+            </div>
+          )}
+
+          {transferDone && (
+            <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400" data-testid="vj-transfer-done">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+              <span>{transferDone}</span>
+            </div>
+          )}
+
+          {transferPlan && (() => {
+            const transferable   = transferPlan.filter(p => p.transferable);
+            const freeMonths     = transferable.filter(p => !p.conflict);
+            const conflictMonths = transferable.filter(p => p.conflict);
+            const selected       = selectTransferMonths(transferPlan, overwriteMonths);
+            return (
+              <div className="space-y-2" data-testid="vj-transfer-preview">
+                <div className="rounded border text-[11px] overflow-auto">
+                  <table className="w-full min-w-[520px]">
+                    <thead className="bg-muted">
+                      <tr>
+                        <th className="text-left py-1 px-2 font-medium">Monat</th>
+                        <th className="text-right py-1 px-2 font-medium">Tage</th>
+                        <th className="text-right py-1 px-2 font-medium">Brutto CHF</th>
+                        <th className="text-right py-1 px-2 font-medium">Netto CHF</th>
+                        <th className="text-left py-1 px-2 font-medium">Ziel (Erfolgsrechnung)</th>
+                        <th className="text-center py-1 px-2 font-medium">Überschreiben</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transferPlan.map(p => (
+                        <tr key={p.month} className="border-t" data-testid={`vj-transfer-row-${p.month}`}>
+                          <td className="py-1 px-2 font-mono">{p.monthId}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">{p.dayCount > 0 ? p.dayCount : '—'}</td>
+                          <td className="py-1 px-2 text-right tabular-nums">
+                            {p.transferable ? NUM.format(Math.round(p.grossTotal)) : '—'}
+                          </td>
+                          <td className="py-1 px-2 text-right tabular-nums">
+                            {p.transferable ? NUM.format(Math.round(p.netTotal)) : '—'}
+                          </td>
+                          <td className="py-1 px-2">
+                            {!p.transferable ? (
+                              <span className="text-muted-foreground">
+                                {p.dayCount === 0 ? 'keine Tageswerte — wird nicht angelegt' : 'Summe 0 — wird nicht angelegt'}
+                              </span>
+                            ) : p.conflict ? (
+                              <span className="text-amber-700 dark:text-amber-400">
+                                belegt{p.existingGross !== undefined && <> · Brutto {NUM.format(Math.round(p.existingGross))}</>}
+                                {p.existingNet !== undefined && <> · Netto {NUM.format(Math.round(p.existingNet))}</>}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-700 dark:text-emerald-400">frei</span>
+                            )}
+                          </td>
+                          <td className="py-1 px-2 text-center">
+                            {p.transferable && p.conflict && (
+                              <Checkbox
+                                checked={overwriteMonths.has(p.month)}
+                                onCheckedChange={checked => {
+                                  setOverwriteMonths(prev => {
+                                    const next = new Set(prev);
+                                    if (checked === true) next.add(p.month); else next.delete(p.month);
+                                    return next;
+                                  });
+                                }}
+                                data-testid={`vj-transfer-overwrite-${p.month}`}
+                              />
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <p className="text-[10px] text-muted-foreground">
+                  {freeMonths.length} freie Monat(e) werden übernommen
+                  {conflictMonths.length > 0 && (
+                    <> · {conflictMonths.length} Monat(e) mit bestehenden Umsatzwerten werden nur
+                    überschrieben, wenn oben explizit markiert</>
+                  )}.
+                  Übrige Monatsfelder (Kosten, Kategorien, Budget) bleiben unangetastet.
+                  Hinweis: Die Tagesansicht und VJ-Vergleiche lesen weiterhin die Tageswerte
+                  (vj_daily) — spätere manuelle Änderungen an diesen Erfolgsrechnungs-Monaten
+                  erscheinen dort nicht.
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm" className="h-8 text-xs gap-1.5"
+                    onClick={handleTransferConfirm}
+                    disabled={transferring || selected.length === 0}
+                    data-testid="vj-transfer-confirm"
+                  >
+                    {transferring
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird übernommen…</>
+                      : <><CheckCircle2 className="h-3.5 w-3.5" />{selected.length} Monat(e) übernehmen</>}
+                  </Button>
+                  <Button
+                    size="sm" variant="outline" className="h-8 text-xs"
+                    onClick={() => { setTransferPlan(null); setOverwriteMonths(new Set()); }}
+                    disabled={transferring}
+                  >
+                    Abbrechen
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

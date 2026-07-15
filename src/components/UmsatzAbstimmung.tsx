@@ -11,6 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 // Monatsübersicht read-only konsumiert) — hier KEINE eigene Zweitberechnung.
 import { getUmsatzRowStatus, sumDailyGrossForMonth } from '@/lib/umsatzabstimmung-status';
 import { readLocalRecord } from '@/lib/kv-blob-utils';
+import { countVjDailyYear } from '@/lib/vj-daily-supabase';
+import { useTenant } from '@/contexts/TenantContext';
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
 const VAT_TAKEAWAY = 1.026; // 2.6 % MwSt (Takeout/Lieferung)
@@ -59,12 +61,22 @@ type EditField = 'gross' | 'takeAway';
 export function UmsatzAbstimmung({
   year, months, dailyBudgetsKey, storeKey, onRefresh, gnRevenueByMonth,
 }: UmsatzAbstimmungProps) {
+  const { tenantId } = useTenant();
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [saving,  setSaving]  = useState<Record<string, boolean>>({});
   // Leeres Jahr: Tabelle erst nach explizitem Klick zeigen (kein irreführender
   // leerer Bericht, aber manuelle Ersterfassung bleibt möglich, T506).
   const [showEmptyTable, setShowEmptyTable] = useState(false);
   useEffect(() => { setShowEmptyTable(false); }, [year]);
+  // T805: Im Leerzustand darauf hinweisen, wenn vj_daily-Tageswerte für das
+  // Jahr existieren (read-only Count, Stale-Guard bei Jahr-/Tenant-Wechsel).
+  const [vjDayCount, setVjDayCount] = useState<number | null>(null);
+  useEffect(() => {
+    let stale = false;
+    setVjDayCount(null);
+    countVjDailyYear(year, tenantId).then(n => { if (!stale) setVjDayCount(n); });
+    return () => { stale = true; };
+  }, [year, tenantId]);
   const [dailySums, setDailySums] = useState<number[]>(() =>
     Array.from({ length: 12 }, (_, i) => getDailyGrossForMonth(year, i + 1, dailyBudgetsKey)),
   );
@@ -176,6 +188,20 @@ export function UmsatzAbstimmung({
               </span>
             </li>
           </ul>
+          {(vjDayCount ?? 0) > 0 && (
+            <p
+              className="text-xs text-muted-foreground rounded border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/20 px-3 py-2"
+              data-testid="umsatzabstimmung-vj-hint"
+            >
+              Hinweis: Für {year} sind <strong>{vjDayCount} Vorjahres-Tageswerte</strong> (vj_daily)
+              vorhanden. Diese zählen hier nicht als Abstimmungsquelle, können aber im{' '}
+              <Link to="/import" className="text-primary hover:underline inline-flex items-center gap-0.5">
+                Import-Center <ArrowRight className="h-3 w-3" />
+              </Link>{' '}
+              unter «Vorjahres-Tagesumsatz» kontrolliert als Monats-Umsatz in die Erfolgsrechnung
+              übernommen werden.
+            </p>
+          )}
           <Button
             variant="outline"
             size="sm"

@@ -1,0 +1,87 @@
+Die Datenflussanalyse ist bestätigt. Setze jetzt die Korrekturen auf Grundlage der tatsächlichen Befunde um.
+
+Verbindliche Architekturentscheidung
+
+Keine neue vierte dauerhafte Quelle direkt in der Umsatzabstimmung ergänzen.
+
+Insbesondere soll die Umsatzabstimmung nicht dauerhaft zusätzlich direkt aus `vj_daily` lesen.
+
+Stattdessen gilt künftig:
+
+1. Finanzielle IST-Werte:
+   zentrale Erfolgsrechnung beziehungsweise P&L-Datenquelle
+
+2. Finanzielle Vorjahreswerte:
+   P&L-Datensatz des tatsächlichen Vorjahres
+
+3. Finanzielle Planwerte:
+   zentraler Budget-Datenbestand
+
+4. Operative Detail- und Kontrollquellen:
+   • `vj_daily`
+   • `dailyBudgets`
+   • Gastronomi-Z-Berichte
+   • Tagesansicht
+   • Adyen
+   • Mirus
+   • Foratable
+
+Operative Quellen dürfen zur Übernahme, Detailansicht oder Abstimmung verwendet werden, aber nicht als konkurrierende dauerhafte SSoT für dieselbe finanzielle Monatskennzahl.
+
+Ziele dieser Runde
+
+A. Oliv 2024 aus den vorhandenen 366 `vj_daily`-Tageswerten kontrolliert in die zentrale P&L-/Reporting-Quelle übernehmen.
+
+B. Beaulieu 2024 weiterhin transparent als fehlend anzeigen, weil physisch keine Quelldaten vorhanden sind.
+
+C. Die drei gefundenen mandantenunsicheren Importpfade korrigieren.
+
+D. Den unvollständigen Supabase-Backup-Pfad des Vorjahreskostenimports reparieren, sodass künftig immer alle zwölf erfolgreich importierten Monate remote gesichert werden.
+
+E. Bestehende Beaulieu-2025-Daten nicht automatisch aus unbestätigtem localStorage rekonstruieren. Stattdessen einen kontrollierten Reparatur-/Nachsicherungsweg bereitstellen.
+
+F. Danach die finanzielle Quellenverwendung in Umsatzabstimmung und Erfolgsrechnung synchronisieren.
+
+Wichtige Grenzen
+
+• Keine Werte erfinden.
+• Keine automatische Übernahme ohne Vorschau und Bestätigung.
+• Kein stilles Überschreiben vorhandener P&L-Monate.
+• Fehlende Werte niemals als 0 darstellen.
+• Keine neue Tabelle.
+• Keine neue parallele Finanzengine.
+• Reine Lesevorgänge lösen keine Writes aus.
+• Tenant-, Jahres-, Tombstone-, Merge- und updatedAt-Regeln erhalten.
+• Keine fremden Änderungen zurücksetzen.
+• Kein allgemeines Refactoring ausserhalb dieser Befunde.
+• Die bestehende UI schlicht, modern, kompakt und einheitlich halten.
+
+T621 – Reale Datenmodelle und Zielpfade nochmals festnageln
+
+Lies vollständig:
+
+• `vj_daily`-Import, Speicherung und Reader
+• zentrale Erfolgsrechnungs-/P&L-Engine
+• `reporting_v1`
+• Umsatzabstimmung
+• Jahres-Umsatzimport im Import-Center
+• Jahres-Umsatzimport auf der Reporting-Seite
+• Personalkosten-Vorjahr-Import
+• Vorjahreskosten-/Kontoblattimport
+• KV-/Supabase-Backup der Reporting-Monate
+• Mandanten-Key-Helper
+• alle öffentlichen Save-/Load-Einstiegspfade
+
+Erstelle vor Änderungen eine konkrete Mapping-Tabelle:
+
+| Herkunft | Tenant | Jahr | Granularität | Ziel-P&L-Feld/Kategorie | bestehendes Ziel vorhanden | Konfliktregel |
+|---|---|---|---|---|---|---|
+
+Keine neue Zuordnung erfinden. Vorhandene fachliche Umsatz- und Kontenlogik verwenden.
+
+T622 – Oliv 2024 kontrolliert in die zentrale P&L-Quelle übernehmen
+
+Für Oliv existieren 366 Tagesdatensätze unter:
+
+```text
+vj_daily:2024-*
