@@ -1,10 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { saveMonth } from '@/lib/reporting-store';
 import type { MonthlyFinancialRecord } from '@/types/reporting';
 import { MONTH_NAMES_DE } from '@/types/reporting';
 import { cn } from '@/lib/utils';
-import { CheckCircle2, AlertTriangle, XCircle, Scale } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Scale, ArrowRight, PencilLine } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+// Zeilenstatus + Tagessumme: zentrale SSoT-Logik (auch von der Startseiten-
+// Monatsübersicht read-only konsumiert) — hier KEINE eigene Zweitberechnung.
+import { getUmsatzRowStatus, sumDailyGrossForMonth } from '@/lib/umsatzabstimmung-status';
+import { readLocalRecord } from '@/lib/kv-blob-utils';
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
 const VAT_TAKEAWAY = 1.026; // 2.6 % MwSt (Takeout/Lieferung)
@@ -12,26 +18,7 @@ const VAT_TAKEAWAY = 1.026; // 2.6 % MwSt (Takeout/Lieferung)
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
 function getDailyGrossForMonth(year: number, month: number, storageKey: string): number {
-  try {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) return 0;
-    const data = JSON.parse(raw) as Record<string, { actualRevenue?: number }>;
-    const prefix = `${year}-${String(month).padStart(2, '0')}-`;
-    return Object.entries(data)
-      .filter(([k]) => k.startsWith(prefix))
-      .reduce((sum, [, v]) => sum + (v?.actualRevenue ?? 0), 0);
-  } catch { return 0; }
-}
-
-type RowStatus = 'ok' | 'warning' | 'error' | 'missing';
-
-function getRowStatus(manual: number | undefined, daily: number): RowStatus {
-  if (!manual || manual <= 0) return daily > 0 ? 'warning' : 'missing';
-  if (daily <= 0) return 'warning';
-  const pct = Math.abs(manual - daily) / manual;
-  if (pct < 0.01) return 'ok';
-  if (pct < 0.03) return 'warning';
-  return 'error';
+  return sumDailyGrossForMonth(readLocalRecord(storageKey), year, month);
 }
 
 function fmt(n: number): string {
@@ -74,6 +61,10 @@ export function UmsatzAbstimmung({
 }: UmsatzAbstimmungProps) {
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [saving,  setSaving]  = useState<Record<string, boolean>>({});
+  // Leeres Jahr: Tabelle erst nach explizitem Klick zeigen (kein irreführender
+  // leerer Bericht, aber manuelle Ersterfassung bleibt möglich, T506).
+  const [showEmptyTable, setShowEmptyTable] = useState(false);
+  useEffect(() => { setShowEmptyTable(false); }, [year]);
   const [dailySums, setDailySums] = useState<number[]>(() =>
     Array.from({ length: 12 }, (_, i) => getDailyGrossForMonth(year, i + 1, dailyBudgetsKey)),
   );
@@ -132,14 +123,72 @@ export function UmsatzAbstimmung({
     if (e.key === 'Escape') setEditing(ed => { const n = { ...ed }; delete n[key]; return n; });
   };
 
+  const hasGn = gnRevenueByMonth && gnRevenueByMonth.some(v => v > 0);
+
+  // Datenlage des Jahres — GN-Z-Berichte zählen mit (vorher wurde ein Jahr mit
+  // NUR Gastronovi-Daten fälschlich als komplett leer behandelt).
   const hasAnyData = months.some(m =>
     (m.grossRevenueManual ?? 0) > 0 ||
     (m.takeAwayGrossManual ?? 0) > 0 ||
     dailySums[m.month - 1] > 0,
-  );
-  if (!hasAnyData) return null;
+  ) || !!hasGn;
 
-  const hasGn = gnRevenueByMonth && gnRevenueByMonth.some(v => v > 0);
+  // Kein stiller Leerzustand mehr (T506): Ohne jede Quelle zeigt die Seite
+  // sichtbar an, WELCHE Datenquellen fehlen — inkl. Aktionen. Die manuelle
+  // Eingabe bleibt per explizitem Klick möglich (kein Auto-Seeding: blosses
+  // Öffnen/Anzeigen schreibt nichts, erst echte Eingaben speichern).
+  if (!hasAnyData && !showEmptyTable) {
+    return (
+      <Card className="border-blue-200 dark:border-blue-800" data-testid="umsatzabstimmung-empty">
+        <CardHeader className="pb-2 pt-4">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Scale className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            Monatsabstimmung Umsatz {year}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Für {year} liegen noch keine Abstimmungsdaten vor. Es fehlen alle drei Quellen:
+          </p>
+          <ul className="space-y-1.5 text-sm">
+            <li className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/50 flex-shrink-0" />
+              <span>
+                <strong>Manuelle Monatswerte</strong> (Bruttoumsatz / Take-Away) — hier unten erfassbar
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/50 flex-shrink-0" />
+              <span>
+                <strong>Tageseinträge</strong> aus der Tagesansicht —{' '}
+                <Link to="/tagesansicht" className="text-primary hover:underline inline-flex items-center gap-0.5">
+                  Tagesansicht öffnen <ArrowRight className="h-3 w-3" />
+                </Link>
+              </span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/50 flex-shrink-0" />
+              <span>
+                <strong>Gastronovi Z-Berichte</strong> —{' '}
+                <Link to="/gastronovi-import" className="text-primary hover:underline inline-flex items-center gap-0.5">
+                  Z-Bericht importieren <ArrowRight className="h-3 w-3" />
+                </Link>
+              </span>
+            </li>
+          </ul>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowEmptyTable(true)}
+            data-testid="umsatzabstimmung-start-manual"
+          >
+            <PencilLine className="h-3.5 w-3.5 mr-1.5" />
+            Manuelle Monatswerte für {year} erfassen
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // Jahressummen
   const totalManual   = months.reduce((s, m) => s + (m.grossRevenueManual   ?? 0), 0);
@@ -212,7 +261,7 @@ export function UmsatzAbstimmung({
               const taNet  = hasTakeAway ? (takeAway! / VAT_TAKEAWAY) : 0;
               const taMwSt = hasTakeAway ? (takeAway! - taNet)        : 0;
 
-              const status  = getRowStatus(manual ?? undefined, daily);
+              const status  = getUmsatzRowStatus(manual ?? undefined, daily);
               const diff    = hasManual && hasDaily ? (manual! - daily) : undefined;
               const diffPct = diff !== undefined && manual! > 0 ? Math.abs(diff) / manual! : undefined;
 

@@ -1,0 +1,398 @@
+Setze jetzt die folgenden Erweiterungen auf der Startübersicht um.
+
+Ziel
+
+1. Im Bereich „Datenstand“ soll jede Zeile direkt anklickbar sein und zum fachlich richtigen Import beziehungsweise zur richtigen Arbeitsseite führen.
+2. Zusätzlich soll auf der Startübersicht eine kompakte Monatsübersicht mit Monats- und Jahresauswahl verfügbar sein.
+3. Die fehlende Umsatzabstimmung für das Jahr 2024 muss für beide Mandanten Oliv und Beaulieu untersucht und korrekt verfügbar gemacht werden.
+
+Wichtig
+
+• Keine neue parallele Status-, Coverage- oder Persistenzlogik erstellen.
+• Bestehende Import-, Coverage-, Rollen-, Tenant- und Berechtigungslogik wiederverwenden.
+• Keine fachlichen Formeln verändern.
+• Keine Datenmigration ohne nachgewiesene Notwendigkeit durchführen.
+• Keine fremden Änderungen zurücksetzen.
+• Design synchron mit der bestehenden App halten: schlicht, modern, kompakt, lesefreundlich und einheitlich.
+• Keine Bilder oder Mockups erstellen.
+
+T501 – Bestehenden Stand vollständig lesen
+
+Lies zuerst vollständig:
+
+• StartOverview.tsx
+• den neuen Hook beziehungsweise die neue Logik für den Tagesleitstand
+• ImportChecklistTab.tsx
+• ImportCockpitPage.tsx
+• ImportHub.tsx
+• die zentrale Import-Status- und Coverage-Logik
+• import-tasks-priority
+• AppNav.tsx und die zentrale Routenkonfiguration
+• Umsatzabstimmungsseite und alle zugehörigen Hooks, Stores und Datenquellen
+• Tenant-/Betriebslogik für Oliv und Beaulieu
+• vorhandene Jahres- und Monatsfilter der Umsatzabstimmung
+
+Erstelle vor Änderungen eine kompakte interne Zuordnung:
+
+| Datenstand-Zeile | bestehende Datenquelle | Zielroute | möglicher Tab/Query-Parameter | Rollen | Tenant-Abhängigkeit |
+
+T502 – Datenstand-Zeilen vollständig klickbar machen
+
+Der gesamte sichtbare Bereich jeder Datenstand-Zeile soll klickbar sein, nicht nur ein kleiner Textlink.
+
+Das gilt mindestens für:
+
+• Z-Bericht
+• Foratable / Reservationen
+• Umsatz
+• Verkaufsdaten
+• Mirus Stunden
+• Marketing Umsatz
+• Erfolgsrechnung / Kontoblätter beziehungsweise Istkosten
+• Budget
+
+Verwende die bestehenden fachlich richtigen Zielseiten.
+
+Beispiele sinngemäss:
+
+• Z-Bericht → bestehender Gastronomi-/Z-Bericht-Import
+• Foratable / Reservationen → bestehender Reservationen-Import
+• Umsatz → bestehender Umsatzimport
+• Verkaufsdaten → bestehender Produkt-/Verkaufsdatenimport
+• Mirus Stunden → bestehender Arbeitszeitimport
+• Marketing Umsatz → bestehender Marketing-Umsatzimport
+• Erfolgsrechnung / Istkosten → bestehender Erfolgsrechnungs-/Istkostenimport
+• Budget → bestehende Budgetseite oder Budgetimportseite
+
+Falls für eine Zeile kein direkter Import existiert, verlinke auf die fachlich richtige Arbeitsseite.
+
+Anforderungen:
+
+• gesamte Zeile erhält Pointer-/Hover-Zustand
+• Tastaturbedienung mit Enter und Space
+• klarer Fokuszustand
+• keine verschachtelten klickbaren Buttons oder Links
+• bestehender „Öffnen“-Text kann als visuelles Element bestehen bleiben
+• keine Aktion anzeigen, wenn die Rolle keinen Zugriff hat
+• Read-only-Rollen dürfen nur erlaubte Zielseiten öffnen
+• Tenant-Isolation unverändert
+
+T503 – Monatsübersicht auf der Startseite
+
+Ergänze neben oder unmittelbar unter dem Datenstand eine kompakte Monatsübersicht.
+
+Die Monatsübersicht soll nicht einfach die Tagesansicht duplizieren, sondern den gewählten Monat zusammenfassen.
+
+Bedienung:
+
+• Jahr auswählbar
+• Monat auswählbar
+• Pfeile für vorherigen und nächsten Monat
+• Standard ist der aktuelle Monat
+• Zukunftsmonate dürfen nicht fälschlich als fehlend bewertet werden
+• Auswahl bleibt beim Navigieren innerhalb der Startseite stabil, aber keine neue Persistenz erforderlich
+
+Pro Datenquelle anzeigen:
+
+• fachlicher Name
+• Status
+• vorhandene Coverage beziehungsweise Fortschritt
+• fehlende Tage oder fehlender Monatsimport
+• letzter vorhandener Datenstand
+• direkte Aktion zur richtigen Import- oder Arbeitsseite
+
+Beispiele:
+
+• „14 von 31 erwarteten Tagen vorhanden“
+• „Fehlend: 3.–5., 8. Juli“
+• „Vollständig“
+• „Noch nicht fällig“
+• „Monatsimport fehlt“
+• „Nicht eingerichtet“
+
+Für monatliche Quellen wie Erfolgsrechnung oder Istkosten keine künstlichen Tageslücken erzeugen.
+
+Die bestehenden fachlichen Coverage-Regeln bestimmen weiterhin:
+
+• erwartete Tage
+• geschlossene Tage
+• zukünftige Tage
+• optionale Quellen
+• noch nicht fällige Monatsimporte
+
+Keine neue Berechnung direkt in StartOverview.tsx erstellen.
+
+T504 – Darstellung der Monatsübersicht
+
+Die Monatsübersicht soll kompakt und ruhig bleiben.
+
+Bevorzugte Darstellung:
+
+• eigene kompakte Card oder Panel
+• Kopfzeile mit Monat/Jahr und Navigation
+• darunter schlanke Zeilen
+• Statuspunkt oder kleines Badge
+• kurzer Fortschritt
+• kurze Lückenangabe
+• direkte Aktion
+
+Keine grosse zusätzliche Tabelle mit vielen Spalten.
+
+Auf kleineren Screens:
+
+• Zeilen untereinander
+• keine horizontale Scrollbar
+• Monat/Jahr-Auswahl umbrechen oder kompakt stapeln
+• Aktionen eindeutig anklickbar
+
+T505 – Umsatzabstimmung 2024 analysieren
+
+Untersuche konkret, weshalb für:
+
+• Mandant Oliv
+• Mandant Beaulieu
+
+keine Umsatzabstimmung für das Jahr 2024 verfügbar ist.
+
+Prüfe mindestens:
+
+• ob die Umsatzabstimmung nur das aktuelle Jahr oder 2025+ lädt
+• ob Jahresfilter hart begrenzt sind
+• ob 2024 in Dropdowns oder Navigation ausgefiltert wird
+• ob Datenquellen 2024 grundsätzlich vorhanden sind
+• ob Tenant-Key oder Tenant-Präfix 2024 falsch gebildet wird
+• ob Oliv und Beaulieu unterschiedliche Datenpfade verwenden
+• ob ein Import-, Mapping- oder Coverage-Status 2024 fälschlich als „nicht vorhanden“ interpretiert wird
+• ob localStorage, Supabase oder importierte Quelldaten für 2024 vorhanden sind
+• ob die Umsatzabstimmung historische Jahre absichtlich oder unbeabsichtigt ausschliesst
+
+Keine Werte erfinden.
+
+T506 – 2024 korrekt verfügbar machen
+
+Falls die Quelldaten für 2024 vorhanden sind:
+
+• ermögliche die Auswahl und Anzeige von 2024
+• für Oliv und Beaulieu getrennt
+• gleiche fachliche Berechnung wie für andere Jahre
+• gleiche Monatsnavigation
+• gleiche Differenz-, Status- und Exportlogik
+• keine Vermischung der Mandantendaten
+• keine Sonderformel nur für 2024
+
+Falls Quelldaten teilweise fehlen:
+
+• 2024 trotzdem auswählbar machen
+• vorhandene Monate korrekt anzeigen
+• fehlende Monate klar als fehlend darstellen
+• fehlend niemals als 0 ausgeben
+• direkte Aktion zum richtigen Import oder zur Datenprüfung anbieten
+
+Falls keine Quelldaten vorhanden sind:
+
+• klar und fachlich verständlich anzeigen, welche Datenquelle fehlt
+• keinen leeren oder irreführenden Bericht anzeigen
+• keine automatische Datenanlage und kein Auto-Seeding durchführen
+
+T507 – Umsatzabstimmung auf der Startübersicht
+
+Ergänze den Status der Umsatzabstimmung in der Monatsübersicht nur dann, wenn dafür bereits eine zuverlässige bestehende Statusquelle vorhanden ist oder diese aus der bestehenden Umsatzabstimmungslogik rein lesend bereitgestellt werden kann.
+
+Mögliche Anzeige:
+
+• „Umsatzabstimmung vollständig“
+• „3 Monate ungeprüft“
+• „2024: Quelldaten fehlen“
+• „Abstimmung noch nicht durchgeführt“
+
+Die Zeile führt direkt zur Umsatzabstimmung mit gewähltem Tenant, Jahr und möglichst Monat.
+
+Keine neue parallele Abstimmungsberechnung in der Startübersicht erstellen.
+
+T508 – Deep-Link-Kontext
+
+Wo die Zielseiten es unterstützen, übergebe:
+
+• Tenant beziehungsweise Betrieb
+• Jahr
+• Monat
+• Datenquelle oder aktiven Import-Tab
+
+Nutze bestehende Query-Parameter oder Route-State.
+
+Falls der Zielkontext aktuell nicht unterstützt wird, darf eine kleine, gezielte Erweiterung der Zielseite erfolgen.
+
+Dabei:
+
+• bestehende Aufrufe ohne Parameter müssen unverändert funktionieren
+• ungültige Parameter sicher ignorieren
+• keine neue Route erstellen, wenn Query-Parameter genügen
+• Browser-Zurück-Navigation muss funktionieren
+
+T509 – UI und Design
+
+Die bestehende Startübersicht ist grundsätzlich gelungen und darf nicht unnötig wieder umgebaut werden.
+
+Beibehalten:
+
+• kompakter Seitenkopf
+• vier Statuskarten
+• „Als Nächstes“ mit maximal drei Aufgaben
+• Datenstand
+• Schnellaktionen
+
+Verbessern:
+
+• Datenstand-Zeilen als eindeutig interaktive Zeilen
+• klare Hover- und Fokuszustände
+• Monatsübersicht visuell gleichwertig, aber nicht dominant
+• keine doppelten Informationen zwischen „Heute“, „Als Nächstes“, Datenstand und Monatsübersicht
+• Fachbegriff zuerst, Quellsystem ergänzend
+• einheitliche Badges, Farben, Abstände und Typografie
+
+Keine neue isolierte Designsprache.
+
+T510 – Tests Datenstand und Deep-Links
+
+Ergänze Tests mindestens für:
+
+1. Klick auf Z-Bericht öffnet den richtigen Import.
+2. Klick auf Reservationen öffnet den richtigen Import.
+3. Klick auf Umsatz öffnet den richtigen Import.
+4. Klick auf Verkaufsdaten öffnet den richtigen Import.
+5. Klick auf Mirus Stunden öffnet den richtigen Import.
+6. Klick auf Marketing Umsatz öffnet den richtigen Import.
+7. Klick auf Erfolgsrechnung/Istkosten öffnet die richtige Seite.
+8. Klick auf Budget öffnet die richtige Seite.
+9. Ganze Zeile ist interaktiv.
+10. Enter und Space lösen die Navigation aus.
+11. Nicht erlaubte Zeilen sind nicht interaktiv beziehungsweise nicht sichtbar.
+12. Tenant-Daten werden nicht vermischt.
+13. Zielparameter für Jahr und Monat werden korrekt übergeben.
+14. Startübersicht löst weiterhin keine Writes aus.
+
+T511 – Tests Monatsübersicht
+
+Ergänze Tests mindestens für:
+
+1. Aktueller Monat ist Standard.
+2. Vorheriger Monat funktioniert über Jahresgrenze.
+3. Nächster Monat funktioniert über Jahresgrenze.
+4. Direkte Monatswahl funktioniert.
+5. Direkte Jahreswahl funktioniert.
+6. Einzeltage werden korrekt angezeigt.
+7. Zusammenhängende Tage werden als Bereich formatiert.
+8. Viele Lücken werden kompakt gekürzt.
+9. Zukunftstage werden nicht als fehlend bewertet.
+10. Geschlossene oder nicht erwartete Tage werden nicht als fehlend bewertet.
+11. Monatliche Quellen zeigen Monatsstatus statt künstlicher Tageslücken.
+12. Teilfehler einer Quelle blendet andere Quellen nicht aus.
+13. Fehlende Werte werden nicht als 0 dargestellt.
+14. Deep-Link übernimmt Jahr und Monat.
+
+T512 – Tests Umsatzabstimmung 2024
+
+Ergänze reale Regressionstests für:
+
+1. Oliv kann 2024 auswählen.
+2. Beaulieu kann 2024 auswählen.
+3. Daten der beiden Mandanten bleiben strikt getrennt.
+4. Vorhandene Monate 2024 werden angezeigt.
+5. Fehlende Monate 2024 erscheinen als fehlend, nicht als 0.
+6. Auswahl 2024 lädt keine Daten aus 2025 oder 2026.
+7. Monatsnavigation innerhalb 2024 funktioniert.
+8. Jahreswechsel Dezember 2024 → Januar 2025 funktioniert.
+9. Deep-Link von der Startübersicht öffnet Umsatzabstimmung 2024.
+10. Reines Öffnen von 2024 löst keinen Write aus.
+11. Bestehende Export- und Gate-Logik bleibt unverändert.
+12. Oliv-Daten können Beaulieu niemals überschreiben und umgekehrt.
+
+Tests möglichst am realen öffentlichen Einstiegspfad ausführen.
+
+T513 – Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit tatsächlich umgesetztem Verhalten.
+
+Dokumentiere:
+
+• Datenstand-Zeilen führen direkt zur richtigen Arbeitsfläche
+• vollständige Zeilen sind tastaturbedienbar
+• Startübersicht besitzt eine Monatsübersicht mit Jahr/Monat
+• Monatsübersicht verwendet bestehende Coverage-Regeln
+• monatliche Quellen erhalten keine erfundenen Tageslücken
+• Umsatzabstimmung 2024 ist für Oliv und Beaulieu korrekt verfügbar oder zeigt transparent fehlende Quelldaten
+• Tenant-Isolation
+• keine neue Status-, Coverage- oder Persistenzlogik
+• relevante Regressionstests
+
+Keine geplanten Funktionen dokumentieren.
+
+T514 – Verifikation
+
+Führe aus:
+
+• TypeScript-Prüfung auf allen geänderten Dateien
+• projektweiter Typecheck gegen die bestehende Baseline
+• Startübersichts-Tests
+• Deep-Link-Tests
+• Coverage-Tests
+• Import-Priorisierungs-Tests
+• Rollen- und Tenant-Tests
+• Umsatzabstimmungs-Tests
+• Tests für Oliv 2024
+• Tests für Beaulieu 2024
+• Export-/Gate-Regressionstests der Umsatzabstimmung
+• Log-Check der laufenden App
+• visuelle Prüfung in authentifizierter Session
+• Desktop-, Tablet- und Mobile-Prüfung
+• Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+Beim Architect-Review besonders prüfen:
+
+• keine zweite Coverage- oder Statuslogik
+• Datenstand-Zeilen führen zur fachlich korrekten Route
+• Tastaturbedienung korrekt
+• keine verschachtelten interaktiven Elemente
+• Jahr/Monat korrekt und stabil
+• Zukunfts- und geschlossene Tage korrekt
+• Umsatzabstimmung 2024 tatsächlich für beide Mandanten geprüft
+• keine Tenant-Vermischung
+• fehlend bleibt fehlend und wird nicht 0
+• kein Write beim Öffnen
+• bestehende Export- und Gate-Logik unverändert
+• kompakte, konsistente UI ohne Informationsdopplung
+
+Alle Befunde innerhalb dieses Tasks beheben.
+
+T515 – Abschlussbericht
+
+Liefere abschliessend:
+
+1. Welche Datenstand-Zeilen anklickbar gemacht wurden.
+2. Welche Zielrouten und Parameter verwendet werden.
+3. Wie Tastaturbedienung umgesetzt wurde.
+4. Wie die Monatsübersicht aufgebaut ist.
+5. Welche bestehenden Coverage-Quellen verwendet werden.
+6. Wie Monat und Jahr ausgewählt werden.
+7. Wie fehlende Tage formatiert und gekürzt werden.
+8. Wie monatliche Datenquellen behandelt werden.
+9. Ursache der fehlenden Umsatzabstimmung 2024 bei Oliv.
+10. Ursache der fehlenden Umsatzabstimmung 2024 bei Beaulieu.
+11. Welche Korrektur für 2024 umgesetzt wurde.
+12. Wie Tenant-Isolation verifiziert wurde.
+13. Bestätigung, dass fehlende Daten nicht als 0 dargestellt werden.
+14. Bestätigung, dass keine neue Status- oder Persistenzlogik entstand.
+15. Bestätigung, dass die Startübersicht keine Writes auslöst.
+16. Ausgeführte Tests und Resultate.
+17. Typecheck-Ergebnis gegenüber der Legacy-Baseline.
+18. Log-Check.
+19. Architect-Review.
+20. Geänderte Dateien.
+21. Sichtbare Verhaltensänderungen.
+22. Bewusst nicht umgesetzte Restpunkte.
+
+Keinen Commit durchführen, bevor Typecheck, relevante Tests und Architect-Review abgeschlossen sind.
+
+Keine fremden oder bereits bestehenden Änderungen zurücksetzen.
+
+Beim Review ausschliesslich den tatsächlichen Task-Diff bewerten.

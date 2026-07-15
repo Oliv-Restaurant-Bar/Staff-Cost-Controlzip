@@ -39,6 +39,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useStartOverview } from '@/hooks/useStartOverview';
+import { StartMonthOverview } from '@/components/StartMonthOverview';
 import {
   buildDatenstandRows,
   buildNextActions,
@@ -193,9 +194,15 @@ export default function StartOverviewPage() {
           isGuest,
         })
       : null;
+  // Datenstand zeigt IMMER den aktuellen Monat (useStartOverview lädt dessen
+  // Coverage) — der Monats-Kontext dient nur den advisory Deep-Link-Params.
+  const now = new Date();
   const datenstand =
     state.status === 'ready' && state.typeCompletions
-      ? buildDatenstandRows(state.typeCompletions)
+      ? buildDatenstandRows(state.typeCompletions, {
+          period: { year: now.getFullYear(), month: now.getMonth() + 1 },
+          isGuest,
+        })
       : null;
 
   return (
@@ -323,37 +330,75 @@ export default function StartOverviewPage() {
           <Card>
             <CardContent className="p-0" data-testid="start-datenstand">
               <ul className="divide-y">
-                {datenstand.map((row) => (
-                  <li
-                    key={row.type}
-                    data-testid={`start-datenstand-${row.type}`}
-                    className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-sm"
-                  >
-                    <span className="flex items-center gap-2 font-medium">
-                      <span
-                        className={cn(
-                          'h-2 w-2 rounded-full flex-shrink-0',
-                          TONE_DOT[DATENSTAND_TONE[row.status]],
+                {datenstand.map((row) => {
+                  const content = (
+                    <>
+                      <span className="flex items-center gap-2 font-medium">
+                        <span
+                          className={cn(
+                            'h-2 w-2 rounded-full flex-shrink-0',
+                            TONE_DOT[DATENSTAND_TONE[row.status]],
+                          )}
+                        />
+                        {row.label}
+                      </span>
+                      <span className="flex items-center gap-2 text-xs">
+                        <span
+                          className={cn(
+                            row.status === 'open' || row.status === 'error'
+                              ? 'text-foreground'
+                              : 'text-muted-foreground',
+                          )}
+                        >
+                          {row.text}
+                        </span>
+                        {row.href && (
+                          <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
                         )}
-                      />
-                      {row.label}
-                    </span>
-                    <span
-                      className={cn(
-                        'text-xs',
-                        row.status === 'open' || row.status === 'error'
-                          ? 'text-foreground'
-                          : 'text-muted-foreground',
+                      </span>
+                    </>
+                  );
+                  const rowClass =
+                    'flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-sm';
+                  return (
+                    <li key={row.type} data-testid={`start-datenstand-${row.type}`}>
+                      {row.href ? (
+                        // Ganze Zeile klickbar: EIN Link, Enter nativ + Space via
+                        // onKeyDown, sichtbarer Fokusring, keine verschachtelten
+                        // Interaktiva (Pfeil ist rein visuell).
+                        <Link
+                          to={row.href}
+                          onKeyDown={(e) => {
+                            if (e.key === ' ') {
+                              e.preventDefault();
+                              e.currentTarget.click();
+                            }
+                          }}
+                          className={cn(
+                            rowClass,
+                            'transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
+                          )}
+                        >
+                          {content}
+                        </Link>
+                      ) : (
+                        <div className={rowClass}>{content}</div>
                       )}
-                    >
-                      {row.text}
-                    </span>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </CardContent>
           </Card>
         )}
+      </section>
+
+      {/* 3b. Monatsübersicht (T503/T504) — kompakt, direkt unter dem Datenstand */}
+      <section aria-labelledby="start-monatsuebersicht" className="space-y-3">
+        <h2 id="start-monatsuebersicht" className="sr-only">
+          Monatsübersicht
+        </h2>
+        <StartMonthOverview enabled={isAdmin} isGuest={isGuest} />
       </section>
 
       {/* 4. Schnellaktionen */}

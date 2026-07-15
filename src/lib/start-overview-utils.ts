@@ -28,12 +28,16 @@ import {
   type CockpitStatus,
 } from './import-cockpit';
 import {
+  buildFullMonthTask,
   buildImportTarget,
   rangeDayCount,
+  TASK_TYPE_DEFS,
   type DateRange,
+  type ImportTask,
   type ImportTaskType,
 } from './import-tasks-engine';
 import type { PrioritizedTask, TypeCompletion } from './import-tasks-priority';
+import { UMSATZ_MONTH_TONE, type UmsatzMonthSummary } from './umsatzabstimmung-status';
 
 // ─── Typen ───────────────────────────────────────────────────────────────────
 
@@ -434,6 +438,20 @@ export interface DatenstandRow {
   status: TypeCompletion['status'];
   /** Kompakter deutscher Anzeigetext (nie „0" für fehlende Daten). */
   text: string;
+  /**
+   * Deep-Link der GANZEN Zeile zur fachlich richtigen Import-/Arbeitsfläche
+   * (bestehende Routen + advisory Params via buildImportTarget). null =
+   * Zeile nicht interaktiv (Gast-Session: Import-/Schreibflächen gesperrt,
+   * oder kein Zeitraum-Kontext übergeben).
+   */
+  href: string | null;
+}
+
+export interface DatenstandRowOptions {
+  /** Monats-Kontext für die Deep-Links (advisory Prefill: Jahr/Monat). */
+  period?: { year: number; month: number };
+  /** Gast-Session: Import-/Schreibflächen nie verlinken. */
+  isGuest?: boolean;
 }
 
 /** Ton je Typ-Status — identische Semantik wie die Checklisten-Zusammenfassung. */
@@ -445,11 +463,29 @@ export const DATENSTAND_TONE: Record<TypeCompletion['status'], 'good' | 'warn' |
 };
 
 /**
+ * Deep-Link einer Datenstand-/Monatsübersichts-Zeile: bestehende Zielrouten via
+ * buildImportTarget (advisory Monats-Prefill), Fehlerzeilen → Import-Checkliste.
+ * Gast-Sessions: null (alle Ziele sind Import-/Schreib- bzw. gastgesperrte Flächen).
+ */
+function rowHref(
+  type: ImportTaskType,
+  status: TypeCompletion['status'],
+  opts: DatenstandRowOptions,
+): string | null {
+  if (opts.isGuest || !opts.period) return null;
+  if (status === 'error') return '/import-cockpit';
+  return buildImportTarget(buildFullMonthTask(type, opts.period)).href;
+}
+
+/**
  * Kompakte Datenstand-Zeilen aus summarizeTypeCompletion — reine Umformatierung,
  * KEINE eigene Statusberechnung. Monats-/Jahresaufgaben bleiben Monats-/Jahres-
  * status („Fehlt noch"), NIE eine künstliche Tagesliste.
  */
-export function buildDatenstandRows(completions: readonly TypeCompletion[]): DatenstandRow[] {
+export function buildDatenstandRows(
+  completions: readonly TypeCompletion[],
+  opts: DatenstandRowOptions = {},
+): DatenstandRow[] {
   return completions.map((c) => {
     let text: string;
     switch (c.status) {
@@ -470,8 +506,175 @@ export function buildDatenstandRows(completions: readonly TypeCompletion[]): Dat
             : 'Fehlt noch';
         break;
     }
-    return { type: c.type, label: c.label, status: c.status, text };
+    return { type: c.type, label: c.label, status: c.status, text, href: rowHref(c.type, c.status, opts) };
   });
+}
+
+// ─── Monatsübersicht (T503/T504) — reine Ableitung aus dem SSoT-Aufgabenstand ─
+
+export interface MonthPeriod {
+  year: number;
+  /** 1–12 */
+  month: number;
+}
+
+/** Monat verschieben (±n), Jahresgrenzen inklusive (Dez → Jan usw.). */
+export function shiftMonth(p: MonthPeriod, delta: number): MonthPeriod {
+  const idx = p.year * 12 + (p.month - 1) + delta;
+  return { year: Math.floor(idx / 12), month: ((idx % 12) + 12) % 12 + 1 };
+}
+
+/** Liegt der Monat NACH dem Monat von todayIso? (Zukunft nie als fehlend bewerten.) */
+export function isFutureMonthPeriod(p: MonthPeriod, todayIso: string): boolean {
+  const y = Number(todayIso.slice(0, 4));
+  const m = Number(todayIso.slice(5, 7));
+  return p.year * 12 + p.month > y * 12 + m;
+}
+
+export interface MonthOverviewRow {
+  type: ImportTaskType | 'umsatzabstimmung';
+  label: string;
+  tone: 'good' | 'warn' | 'neutral' | 'critical';
+  /** z. B. „14 von 31 erwarteten Tagen vorhanden" — null wenn nicht sinnvoll (monatlich/jährlich). */
+  progress: string | null;
+  /** Kompakter Statustext („Vollständig", „Fehlend: …", „Monatsimport fehlt", „Noch nicht fällig"). */
+  text: string;
+  /** Letzter bekannter Importlauf (dd.MM.yyyy) oder null. */
+  lastImport: string | null;
+  /** Deep-Link zur Import-/Arbeitsfläche; null = keine Aktion (Gast). */
+  href: string | null;
+}
+
+export interface MonthOverviewInput {
+  period: MonthPeriod;
+  /**
+   * Aufgaben des gewählten Monats (buildImportTasks) und deren Typ-Zusammenfassung
+   * (summarizeTypeCompletion) — DERSELBE SSoT-Stand wie Import-Checkliste/Cockpit.
+   * null = Zukunftsmonat: Coverage wird NIE für die Zukunft geladen, alle Zeilen
+   * erscheinen als „Noch nicht fällig".
+   */
+  tasks: readonly ImportTask[] | null;
+  completions: readonly TypeCompletion[] | null;
+  /** Umsatzabstimmungs-Kurzstatus (read-only aus bestehender Logik, T507); optional. */
+  umsatzabstimmung?: UmsatzMonthSummary | null;
+  /** Gast-Session: keine Aktionen/Links anzeigen. */
+  isGuest: boolean;
+}
+
+/** Jüngster lastImportAt der eigenen Aufgaben, formatiert (dd.MM.yyyy) oder null. */
+function latestImportLabel(own: readonly ImportTask[]): string | null {
+  let latest: string | null = null;
+  for (const t of own) {
+    if (t.lastImportAt && (!latest || t.lastImportAt > latest)) latest = t.lastImportAt;
+  }
+  return latest ? formatCockpitDate(latest.slice(0, 10)) : null;
+}
+
+/**
+ * Eine kompakte Zeile pro Importtyp für den GEWÄHLTEN Monat — reine
+ * Umformatierung des SSoT-Aufgabenstands (buildImportTasks +
+ * summarizeTypeCompletion), KEINE eigene Coverage-/Statusberechnung:
+ *  - daily/range: Fortschritt „X von Y erwarteten Tagen vorhanden" direkt aus
+ *    den Aufgaben (erwartete Tage sind bereits auf min(Monatsende, gestern)
+ *    gedeckelt — Zukunft erzeugt NIE fehlende Tage).
+ *  - monthly/yearly: nur Monats-/Jahresstatus, NIE künstliche Tageslücken.
+ *  - Fehlerzeilen bleiben sichtbar, verdrängen aber keine anderen Quellen.
+ *  - fehlend ≠ 0: ohne Aufgaben/„nicht fällig" gibt es keinen „0 von …"-Text.
+ */
+export function buildMonthOverviewRows(input: MonthOverviewInput): MonthOverviewRow[] {
+  const opts: DatenstandRowOptions = { period: input.period, isGuest: input.isGuest };
+  const rows: MonthOverviewRow[] = [];
+
+  for (const def of TASK_TYPE_DEFS) {
+    const base = {
+      type: def.type,
+      label: def.label,
+      href: rowHref(def.type, 'open', opts),
+    };
+    if (input.tasks === null || input.completions === null) {
+      // Zukunftsmonat: nichts geladen, nichts fällig — nie „fehlend".
+      rows.push({ ...base, tone: 'neutral', progress: null, text: 'Noch nicht fällig', lastImport: null });
+      continue;
+    }
+    const completion = input.completions.find((c) => c.type === def.type);
+    const own = input.tasks.filter((t) => t.type === def.type);
+    if (!completion || own.length === 0) {
+      // Engine hat (noch) keine Aufgaben erzeugt (z. B. Monatsanfang: erwarteter
+      // Zeitraum leer) → nicht fällig, NIE als fehlend bewerten.
+      rows.push({ ...base, tone: 'neutral', progress: null, text: 'Noch nicht fällig', lastImport: null });
+      continue;
+    }
+    if (completion.status === 'error') {
+      rows.push({
+        ...base,
+        href: rowHref(def.type, 'error', opts),
+        tone: 'critical',
+        progress: null,
+        text: 'Status konnte nicht ermittelt werden',
+        lastImport: latestImportLabel(own),
+      });
+      continue;
+    }
+
+    let progress: string | null = null;
+    if (def.frequency === 'daily') {
+      const expected = own.length;
+      const done = own.filter((t) => t.status === 'done').length;
+      progress = `${done} von ${expected} erwarteten Tagen vorhanden`;
+    } else if (def.frequency === 'range') {
+      const t0 = own[0];
+      if (t0?.expectedDayCount !== undefined && t0.expectedDayCount > 0) {
+        progress = `${t0.coveredDayCount ?? 0} von ${t0.expectedDayCount} erwarteten Tagen vorhanden`;
+      }
+    }
+
+    let text: string;
+    switch (completion.status) {
+      case 'done':
+        text = 'Vollständig';
+        break;
+      case 'later':
+        text = 'Noch nicht fällig';
+        break;
+      case 'open':
+      default:
+        if (def.frequency === 'monthly') text = 'Monatsimport fehlt';
+        else if (def.frequency === 'yearly') text = 'Jahresbudget fehlt';
+        else {
+          text =
+            completion.openRanges && completion.openRanges.length > 0
+              ? `Fehlend: ${formatMissingDays(completion.openRanges)}`
+              : 'Fehlt noch';
+        }
+        break;
+    }
+
+    rows.push({
+      ...base,
+      tone: DATENSTAND_TONE[completion.status],
+      progress,
+      text,
+      lastImport: latestImportLabel(own),
+    });
+  }
+
+  // Umsatzabstimmung (T507): read-only Kurzstatus aus der bestehenden
+  // Abstimmungslogik — Deep-Link mit Jahr + Monat auf die bestehende Seite.
+  if (input.umsatzabstimmung) {
+    rows.push({
+      type: 'umsatzabstimmung',
+      label: 'Umsatzabstimmung',
+      tone: UMSATZ_MONTH_TONE[input.umsatzabstimmung.status],
+      progress: null,
+      text: input.umsatzabstimmung.text,
+      lastImport: null,
+      href: input.isGuest
+        ? null
+        : `/umsatzabstimmung?year=${input.period.year}&month=${input.period.month}`,
+    });
+  }
+
+  return rows;
 }
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────
