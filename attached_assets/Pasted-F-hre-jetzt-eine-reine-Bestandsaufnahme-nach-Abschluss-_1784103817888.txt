@@ -1,0 +1,131 @@
+Führe jetzt eine reine Bestandsaufnahme nach Abschluss der technischen Stabilisierungsrunden durch.
+
+Ziel
+
+Bewerte den aktuellen Stand der Anwendung aus Sicht eines täglichen Benutzers und leite daraus die nächsten fachlichen und UX-Prioritäten ab.
+
+In diesem Auftrag noch keine grossen Funktionen implementieren und kein weiteres Infrastruktur-Refactoring starten.
+
+Arbeitsweise
+
+Lies zuerst replit.md vollständig und verschaffe dir einen Überblick über:
+
+• Navigation
+• Dashboard und Einstiegsseiten
+• Import-Cockpit
+• Tagesabschlüsse
+• Umsatz- und Erfolgsrechnung
+• Reporting und Bankexporte
+• Budget
+• Personalplanung und Personalcontrolling
+• Reservationen-Analyse
+• Gäste-CRM
+• Produktanalyse
+• Warenkosten
+• Admin- und Einstellungen
+
+Prüfe danach die tatsächlichen Seiten und Komponenten im aktuellen Code.
+
+Bewerte insbesondere folgende Fragen:
+
+1. Wo weiss ein Benutzer beim Öffnen der App nicht sofort, was er als Nächstes tun soll?
+2. Welche Seiten zeigen zu viele Kennzahlen oder Auswertungen gleichzeitig?
+3. Wo wird zu viel Platz durch Titel, Einleitungstexte, Hinweise oder grosse Karten verbraucht?
+4. Welche Funktionen sind doppelt oder in mehreren Navigationspunkten verteilt?
+5. Welche Importe sind unklar, technisch formuliert oder schwer auffindbar?
+6. Wo fehlt eine klare Reihenfolge von:
+    Daten importieren
+    Daten prüfen
+    Fehler korrigieren
+    Abschluss durchführen
+    Report exportieren
+7. Welche Warnungen oder Aufgaben sind wichtig, gehen aber visuell unter?
+8. Wo fehlen klare Statusanzeigen wie:
+    Daten fehlen
+    Import aktuell
+    Prüfung erforderlich
+    abgeschlossen
+    Fehler
+9. Welche Tabellen sind zu breit oder enthalten standardmässig zu viele Spalten?
+10. Wo fehlen sinnvolle Drilldowns, obwohl auf der Hauptseite zu viele Details angezeigt werden?
+11. Welche Filter oder Zeitraumwahlen sind unklar?
+12. Wo ist nicht eindeutig, auf welche Kennzahlen ein Zeitraumfilter wirkt?
+13. Welche Exporte sind schwer auffindbar oder nicht eindeutig benannt?
+14. Wo unterscheiden sich gleiche UI-Muster unnötig zwischen den Modulen?
+15. Welche mobilen oder kleineren Bildschirmansichten sind problematisch?
+
+Design-Leitlinien
+
+Alle späteren Vorschläge müssen:
+
+• mit den bestehenden App-Mustern synchron sein
+• schlicht und modern wirken
+• kompakt bleiben
+• gut lesbar sein
+• klare visuelle Hierarchien verwenden
+• unnötige Karten und Textblöcke vermeiden
+• wichtige Kennzahlen früh sichtbar machen
+• Detailinformationen in Drilldowns verschieben
+• konsistente Abstände, Farben und Typografie verwenden
+• auf Desktop und Mobile funktionieren
+• keine dekorativen Elemente ohne funktionalen Nutzen hinzufügen
+
+Priorisierung
+
+Erstelle am Ende eine priorisierte Liste mit maximal zehn Punkten.
+
+Verwende diese Einteilung:
+
+P0 – blockiert tägliche Arbeit oder birgt Fehlerrisiko
+P1 – verursacht regelmässig Verwirrung oder unnötigen Aufwand
+P2 – verbessert Übersicht, Geschwindigkeit oder Bedienkomfort
+P3 – optionale spätere Verbesserung
+
+Für jeden Punkt angeben:
+
+• Modul oder Seite
+• konkretes Problem
+• Auswirkung im Alltag
+• vorgeschlagene Lösung
+• erwarteter Nutzen
+• geschätzter Umfang: klein, mittel oder gross
+• relevante Dateien oder Komponenten
+• Abhängigkeiten zu anderen Punkten
+
+Zusätzlich erstellen
+
+1. Empfohlener täglicher Hauptworkflow der App
+2. Empfohlene Reihenfolge der nächsten drei Entwicklungsschritte
+3. Funktionen oder Auswertungen, die eher entfernt, zusammengelegt oder in Drilldowns verschoben werden sollten
+4. Bereiche, die bereits gut gelöst sind und nicht erneut umgebaut werden sollten
+5. Technische Reststellen, die bewusst nicht priorisiert werden sollten, obwohl dort noch Legacy-TypeScript-Fehler oder supabase as any existieren
+
+Wichtige Grenzen
+
+• Noch keine Umsetzung
+• Keine neuen Tabellen
+• Keine Datenmigration
+• Keine Änderung fachlicher Formeln
+• Keine erneute Persistenz- oder Supabase-Stabilisierungsrunde
+• Keine pauschale Bereinigung aller TypeScript-Legacy-Fehler
+• Keine Arbeit an anderen supabase as any-Tabellen ohne konkreten fachlichen Bedarf
+• Keine Mockup-Bilder erstellen
+• Keine fremden Änderungen zurücksetzen
+• Keine Commit-Erstellung
+
+Abschlussbericht
+
+Liefere:
+
+1. Kurze Gesamtbewertung der aktuellen Bedienbarkeit
+2. Die zehn wichtigsten Probleme oder Chancen
+3. Priorisierte P0–P3-Liste
+4. Empfohlenen täglichen Benutzerworkflow
+5. Empfohlene nächsten drei Entwicklungsschritte
+6. Bereiche, die zusammengelegt oder vereinfacht werden sollten
+7. Bereiche, die bewusst unverändert bleiben sollten
+8. Relevante Dateien und Komponenten
+9. Offene Unsicherheiten oder fehlende Informationen
+10. Klare Empfehlung, mit welchem einzigen Punkt als Nächstes begonnen werden soll
+
+Der Bericht muss konkret auf dem tatsächlichen aktuellen Code und replit.md basieren und darf keine hypothetischen oder bereits erledigten Funktionen als offen darstellen.
