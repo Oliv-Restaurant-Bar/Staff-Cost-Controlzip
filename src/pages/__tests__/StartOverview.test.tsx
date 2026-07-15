@@ -1,10 +1,13 @@
 // @vitest-environment happy-dom
 /**
- * Tests für die vereinfachte Startseite (StartOverview). Der Lade-Hook wird
- * gemockt (Fetch/Gating stecken im Hook bzw. in der Route). Fixiert:
- *   - 3 Bereiche (Heute / Warnungen / Schnellaktionen)
- *   - Warnungen nur bei echtem Handlungsbedarf, sonst ruhiger Leer-Zustand
- *   - Gast-Sessions sehen keine schreib-orientierten Schnellaktionen
+ * Tests für die Startübersicht als Tagesleitstand (StartOverview). Der
+ * Lade-Hook wird gemockt (Fetch/Gating stecken im Hook bzw. in der Route).
+ * Fixiert:
+ *   - 4 Bereiche in fester Reihenfolge (Heute / Als Nächstes / Datenstand /
+ *     Schnellaktionen) — die frühere „Warnungen"-Sektion existiert nicht mehr
+ *   - «Als Nächstes»: max. 3 Aufgaben mit Deep-Link, positiver Leer-Zustand
+ *   - Datenstand kompakt mit fehlenden Tagen; Teilfehler sichtbar, Karten bleiben
+ *   - Gast-Sessions sehen keine schreib-orientierten Aktionen/Checklisten-Links
  *   - sichtbarer Fehlerzustand statt stiller Anzeige
  */
 
@@ -12,6 +15,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { StartOverviewState } from '@/hooks/useStartOverview';
+import type { PrioritizedTask, TypeCompletion } from '@/lib/import-tasks-priority';
 import type { StartOverviewResult } from '@/lib/start-overview-utils';
 
 const mockState: { value: StartOverviewState } = { value: { status: 'loading' } };
@@ -40,17 +44,48 @@ const READY_OK: StartOverviewResult = {
   warnings: [],
 };
 
-const READY_WARN: StartOverviewResult = {
-  cards: [
-    { ...READY_OK.cards[0], status: 'action', statusLabel: 'Handlungsbedarf', detail: 'Überfällig – Ist-Daten nur bis 03.07.2026' },
-    READY_OK.cards[1],
-    READY_OK.cards[2],
-    READY_OK.cards[3],
-  ],
-  warnings: [
-    { id: 'umsatz', text: 'Umsatzimport: Überfällig – Ist-Daten nur bis 03.07.2026', route: '/gastronovi-import' },
-  ],
+const DONE_COMPLETIONS: TypeCompletion[] = [
+  { type: 'zbericht', label: 'Z-Bericht', status: 'done', detail: null },
+  { type: 'reservationen', label: 'Foratable / Reservationen', status: 'done', detail: null },
+  { type: 'erfolgsrechnung', label: 'Erfolgsrechnung / Kontoblätter', status: 'later', detail: null },
+];
+
+const OPEN_TASK: PrioritizedTask = {
+  task: {
+    id: 'zbericht:2026-07-10',
+    type: 'zbericht',
+    frequency: 'daily',
+    label: 'Z-Bericht 10.07.2026',
+    from: '2026-07-10',
+    to: '2026-07-10',
+    status: 'open',
+  },
+  due: { urgency: 'overdue', dueLabel: '4 Tage überfällig', daysOverdue: 4 },
 };
+
+const OPEN_COMPLETIONS: TypeCompletion[] = [
+  {
+    type: 'zbericht',
+    label: 'Z-Bericht',
+    status: 'open',
+    detail: '10.07.–12.07.2026',
+    openRanges: [{ from: '2026-07-10', to: '2026-07-12' }],
+    openDayCount: 3,
+  },
+  { type: 'reservationen', label: 'Foratable / Reservationen', status: 'done', detail: null },
+];
+
+function ready(over: Partial<Extract<StartOverviewState, { status: 'ready' }>> = {}): StartOverviewState {
+  return {
+    status: 'ready',
+    data: READY_OK,
+    todayTasks: [],
+    typeCompletions: DONE_COMPLETIONS,
+    coverageError: null,
+    loadedAt: new Date(),
+    ...over,
+  };
+}
 
 function renderPage() {
   return render(
@@ -67,16 +102,18 @@ afterEach(() => {
 });
 
 describe('StartOverview — Struktur', () => {
-  it('zeigt die drei Bereiche Heute / Warnungen / Schnellaktionen', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+  it('zeigt die vier Bereiche Heute / Als Nächstes / Datenstand / Schnellaktionen', () => {
+    mockState.value = ready();
     renderPage();
     expect(screen.getByRole('heading', { name: 'Heute' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Warnungen' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Als Nächstes' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Datenstand' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Schnellaktionen' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Warnungen' })).toBeNull();
   });
 
   it('rendert 4 Statuskarten mit deutschen Labels und Detailtext', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = ready();
     renderPage();
     for (const id of ['umsatz', 'reservationen', 'dienstplan', 'tagesabschluss']) {
       expect(screen.getByTestId(`start-card-${id}`)).toBeTruthy();
@@ -85,27 +122,73 @@ describe('StartOverview — Struktur', () => {
   });
 
   it('verlinkt auf das ausführliche Dashboard (/dashboard)', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = ready();
     renderPage();
     const link = screen.getByRole('link', { name: /Ausführliches Dashboard/ });
     expect(link.getAttribute('href')).toBe('/dashboard');
   });
 });
 
-describe('StartOverview — Warnungen', () => {
-  it('ohne Handlungsbedarf → ruhiger Leer-Zustand, keine Warnliste', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+describe('StartOverview — Als Nächstes', () => {
+  it('(4) keine fälligen Aufgaben → positiver Leer-Zustand', () => {
+    mockState.value = ready();
     renderPage();
-    expect(screen.getByTestId('start-no-warnings').textContent).toContain('Keine offenen Handlungsbedarfe');
-    expect(screen.queryByTestId('start-warnings')).toBeNull();
+    expect(screen.getByTestId('start-next-empty').textContent).toContain('keine dringenden Aufgaben');
+    expect(screen.queryByTestId('start-next-actions')).toBeNull();
   });
 
-  it('mit Handlungsbedarf → Warnung mit Text und Link zur Detailseite', () => {
-    mockState.value = { status: 'ready', data: READY_WARN, loadedAt: new Date() };
+  it('(5) offene Aufgabe → Zeile mit Titel, Begründung, Urgenz-Badge und Deep-Link', () => {
+    mockState.value = ready({ todayTasks: [OPEN_TASK], typeCompletions: OPEN_COMPLETIONS });
     renderPage();
-    const list = screen.getByTestId('start-warnings');
-    expect(list.textContent).toContain('Umsatzimport: Überfällig');
-    expect(screen.queryByTestId('start-no-warnings')).toBeNull();
+    const row = screen.getByTestId('start-next-task-zbericht');
+    expect(row.textContent).toContain('Z-Bericht importieren');
+    expect(row.textContent).toContain('Fehlend: 10.–12.07.');
+    expect(row.textContent).toContain('4 Tage überfällig');
+    const link = row.querySelector('a')!;
+    expect(link.getAttribute('href')).toBe('/gastronovi-import?from=2026-07-10&to=2026-07-10&scope=day');
+    expect(screen.queryByTestId('start-next-empty')).toBeNull();
+  });
+
+  it('(16) Gast-Session: Import-Aktion wird nicht angezeigt (read-only, keine Bearbeitung)', () => {
+    mockGuest.isGuest = true;
+    mockState.value = ready({ todayTasks: [OPEN_TASK], typeCompletions: OPEN_COMPLETIONS });
+    renderPage();
+    expect(screen.queryByTestId('start-next-task-zbericht')).toBeNull();
+    expect(screen.getByTestId('start-next-empty')).toBeTruthy();
+  });
+});
+
+describe('StartOverview — Datenstand', () => {
+  it('zeigt kompakte Zeilen pro Importtyp inkl. fehlender Tage', () => {
+    mockState.value = ready({ todayTasks: [OPEN_TASK], typeCompletions: OPEN_COMPLETIONS });
+    renderPage();
+    expect(screen.getByTestId('start-datenstand-zbericht').textContent).toContain('Fehlend: 10.–12.07.');
+    expect(screen.getByTestId('start-datenstand-reservationen').textContent).toContain('Vollständig');
+  });
+
+  it('(13) monatlicher Typ im laufenden Monat → „Noch nicht fällig" (Monatsstatus)', () => {
+    mockState.value = ready();
+    renderPage();
+    expect(screen.getByTestId('start-datenstand-erfolgsrechnung').textContent).toContain('Noch nicht fällig');
+  });
+
+  it('Admin sieht den Link zur Import-Checkliste, Gast NICHT (gesperrte Fläche)', () => {
+    mockState.value = ready();
+    renderPage();
+    expect(screen.getByRole('link', { name: /Import-Checkliste öffnen/ })).toBeTruthy();
+    cleanup();
+    mockGuest.isGuest = true;
+    renderPage();
+    expect(screen.queryByRole('link', { name: /Import-Checkliste öffnen/ })).toBeNull();
+  });
+
+  it('(14) Teilfehler: coverageError → sichtbarer Hinweis mit Retry, Karten bleiben', () => {
+    mockState.value = ready({ todayTasks: null, typeCompletions: null, coverageError: 'Netzwerkfehler' });
+    renderPage();
+    expect(screen.getByTestId('start-coverage-error').textContent).toContain('konnten nicht geladen werden');
+    expect(screen.getByTestId('start-card-umsatz')).toBeTruthy();
+    expect(screen.queryByTestId('start-datenstand')).toBeNull();
+    expect(screen.queryByTestId('start-next-empty')).toBeNull();
   });
 });
 
@@ -126,7 +209,7 @@ describe('StartOverview — Zustände', () => {
 
 describe('StartOverview — Schnellaktionen & Gast-Gating', () => {
   it('Admin sieht alle 4 Schnellaktionen', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = ready();
     renderPage();
     const actions = screen.getByTestId('start-actions');
     expect(actions.textContent).toContain('Umsatz importieren');
@@ -137,7 +220,7 @@ describe('StartOverview — Schnellaktionen & Gast-Gating', () => {
 
   it('Gast-Session sieht NUR den Dienstplan-Link (keine Schreib-/PII-Aktionen)', () => {
     mockGuest.isGuest = true;
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = ready();
     renderPage();
     const actions = screen.getByTestId('start-actions');
     expect(actions.textContent).not.toContain('Umsatz importieren');
@@ -148,7 +231,7 @@ describe('StartOverview — Schnellaktionen & Gast-Gating', () => {
 
   it('Gast-Session: kein „Öffnen"-Link auf Import-Karten (Umsatz/Reservationen), wohl aber auf Dienstplan', () => {
     mockGuest.isGuest = true;
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = ready();
     renderPage();
     expect(screen.getByTestId('start-card-umsatz').textContent).not.toContain('Öffnen');
     expect(screen.getByTestId('start-card-reservationen').textContent).not.toContain('Öffnen');

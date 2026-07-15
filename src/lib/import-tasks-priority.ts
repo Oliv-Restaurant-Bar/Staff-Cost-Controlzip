@@ -24,7 +24,9 @@ import {
   monthEndIso,
   formatIsoRange,
   isOpenTask,
+  rangeDayCount,
   TASK_TYPE_DEFS,
+  type DateRange,
   type ImportTask,
   type ImportTaskType,
 } from './import-tasks-engine';
@@ -226,12 +228,24 @@ export interface TypeCompletion {
   status: TypeCompletionStatus;
   /** Offene Zeiträume kompakt („24.06.–30.06.2026") bzw. Fehlertext; null wenn nichts anzuzeigen. */
   detail: string | null;
+  /**
+   * Offene Zeiträume als Rohdaten (nur daily/range bei status 'open') — für
+   * kompakte Anzeigen (z. B. Startseite), die dieselbe Basis anders formatieren.
+   * KEINE Zweitberechnung: identische Quelle wie `detail`.
+   */
+  openRanges?: DateRange[];
+  /** Summe fehlender Kalendertage über alle openRanges (nur wenn openRanges gesetzt). */
+  openDayCount?: number;
 }
 
-/** Benachbarte/überlappende offene Zeiträume zu kompakten Bereichen mergen. */
-function mergeOpenRanges(open: readonly ImportTask[]): Array<{ from: string; to: string }> {
+/**
+ * Benachbarte/überlappende offene Zeiträume zu kompakten Bereichen mergen.
+ * Exportiert für read-only-Konsumenten (Startseite) — bleibt die EINE Quelle
+ * für „fehlende Tage als Bereiche".
+ */
+export function mergeOpenRanges(open: readonly Pick<ImportTask, 'from' | 'to'>[]): DateRange[] {
   const sorted = [...open].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
-  const out: Array<{ from: string; to: string }> = [];
+  const out: DateRange[] = [];
   for (const t of sorted) {
     const last = out[out.length - 1];
     if (last && t.from <= addDaysIso(last.to, 1)) {
@@ -279,10 +293,16 @@ export function summarizeTypeCompletion(
       result.push({ type: def.type, label: def.label, status: 'open', detail: 'fehlt' });
       continue;
     }
-    const detail = mergeOpenRanges(open)
-      .map((r) => formatIsoRange(r.from, r.to))
-      .join(', ');
-    result.push({ type: def.type, label: def.label, status: 'open', detail });
+    const openRanges = mergeOpenRanges(open);
+    const detail = openRanges.map((r) => formatIsoRange(r.from, r.to)).join(', ');
+    result.push({
+      type: def.type,
+      label: def.label,
+      status: 'open',
+      detail,
+      openRanges,
+      openDayCount: openRanges.reduce((sum, r) => sum + rangeDayCount(r.from, r.to), 0),
+    });
   }
   return result;
 }

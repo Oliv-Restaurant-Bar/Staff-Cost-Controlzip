@@ -27,6 +27,13 @@ import {
   type CockpitSourceId,
   type CockpitStatus,
 } from './import-cockpit';
+import {
+  buildImportTarget,
+  rangeDayCount,
+  type DateRange,
+  type ImportTaskType,
+} from './import-tasks-engine';
+import type { PrioritizedTask, TypeCompletion } from './import-tasks-priority';
 
 // ─── Typen ───────────────────────────────────────────────────────────────────
 
@@ -223,6 +230,248 @@ export function tagesabschlussFromConfirmations(
     yesterdayConfirmed: confirmations[yesterday]?.confirmed === true,
     lastConfirmedDate: confirmedDates.at(-1) ?? null,
   };
+}
+
+// ─── Fehlende Tage kompakt formatieren ───────────────────────────────────────
+
+/** Kompaktes Bereichs-Label ohne Jahr: „08.07." / „03.–05.07." / „28.06.–02.07.". */
+export function formatShortRange(range: DateRange): string {
+  const [fy, fm, fd] = range.from.split('-');
+  const [ty, tm, td] = range.to.split('-');
+  if (range.from === range.to) return `${fd}.${fm}.`;
+  if (fy === ty && fm === tm) return `${fd}.–${td}.${tm}.`;
+  return `${fd}.${fm}.–${td}.${tm}.`;
+}
+
+/**
+ * Fehlende Tage kompakt: höchstens `maxRanges` Bereiche ausschreiben, Rest als
+ * „+ N weitere" (N = fehlende Kalendertage in den weggekürzten Bereichen).
+ * Leere Eingabe → leerer String (fehlend ≠ 0: nie „0 Tage" erzeugen).
+ * Erwartet bereits GEMERGTE Bereiche (mergeOpenRanges) — hier wird NUR formatiert.
+ */
+export function formatMissingDays(ranges: readonly DateRange[], maxRanges = 2): string {
+  if (ranges.length === 0) return '';
+  const shown = ranges.slice(0, maxRanges).map(formatShortRange).join(', ');
+  const rest = ranges.slice(maxRanges);
+  if (rest.length === 0) return shown;
+  const restDays = rest.reduce((sum, r) => sum + rangeDayCount(r.from, r.to), 0);
+  return `${shown} + ${restDays} weitere${restDays === 1 ? 'r' : ''}`;
+}
+
+// ─── «Als Nächstes» — max. 3 priorisierte Aktionen ───────────────────────────
+
+export const MAX_NEXT_ACTIONS = 3;
+
+/**
+ * Urgenz einer Aktion (Reihenfolge = Anzeige-Priorität):
+ * error/overdue/today kommen 1:1 aus der SSoT-Priorisierung (getTodayTasks),
+ * check = Karten-Handlungsbedarf (Tagesabschluss/Dienstplan), due_soon = bald fällig.
+ */
+export type NextActionUrgency = 'error' | 'overdue' | 'today' | 'check' | 'due_soon';
+
+export interface NextAction {
+  id: string;
+  /** Fachlicher Titel, z. B. „Z-Bericht importieren". */
+  title: string;
+  /** Kurze Begründung, z. B. „Fehlend: 03.–05.07. + 4 weitere". */
+  reason: string;
+  urgency: NextActionUrgency;
+  /** Deutsches Status-Label („5 Tage überfällig", „Heute erledigen", „Prüfen"). */
+  urgencyLabel: string;
+  /** Deep-Link zur bestehenden Arbeitsfläche (bestehende Routen + advisory Params). */
+  href: string;
+  /** true = Aktion führt auf eine Schreib-/Import- oder gastgesperrte Fläche. */
+  guestHidden: boolean;
+}
+
+/** Ton je Urgenz — kompatibel zu tones.ts, ohne UI-Import (Modul bleibt rein). */
+export const NEXT_ACTION_TONE: Record<NextActionUrgency, 'critical' | 'warn' | 'info'> = {
+  error: 'critical',
+  overdue: 'critical',
+  today: 'warn',
+  check: 'warn',
+  due_soon: 'info',
+};
+
+export const NEXT_ACTION_URGENCY_FALLBACK_LABEL: Record<NextActionUrgency, string> = {
+  error: 'Fehler',
+  overdue: 'Überfällig',
+  today: 'Heute erledigen',
+  check: 'Prüfen',
+  due_soon: 'Bald fällig',
+};
+
+/** Fachlicher Aktions-Titel je Importtyp (Fachbegriff zuerst, kein Systemjargon). */
+export const NEXT_ACTION_TITLE: Record<ImportTaskType, string> = {
+  zbericht: 'Z-Bericht importieren',
+  reservationen: 'Fehlende Reservationstage ergänzen',
+  umsatz: 'Tagesumsätze importieren',
+  verkaufsdaten: 'Verkaufsdaten importieren',
+  mirus: 'Arbeitszeiten importieren',
+  marketing: 'Marketing-Umsatz importieren',
+  erfolgsrechnung: 'Erfolgsrechnung importieren',
+  istkosten: 'IST-Kosten importieren',
+  budget: 'Budget erfassen',
+};
+
+export interface NextActionsInput {
+  /**
+   * Ergebnis von getTodayTasks (Fehler → überfällig → heute) — die Reihenfolge
+   * wird UNVERÄNDERT übernommen (SSoT-Priorisierung, keine Zweitsortierung).
+   */
+  todayTasks: readonly PrioritizedTask[];
+  /**
+   * Typ-Zusammenfassung (summarizeTypeCompletion) desselben Aufgabenstands —
+   * liefert die gemergten offenen Zeiträume für den Begründungstext.
+   */
+  typeCompletions: readonly TypeCompletion[];
+  /** Statuskarten der Startseite (für Prüf-Aktionen Tagesabschluss/Dienstplan). */
+  cards: readonly StartCard[];
+  /** Gast-Session: Schreib-/Import-Aktionen ausblenden. */
+  isGuest: boolean;
+  max?: number;
+}
+
+/**
+ * Baut die «Als Nächstes»-Liste (max. 3):
+ *   1. Import-Aufgaben in der Reihenfolge von getTodayTasks, EINE Aktion pro
+ *      Importtyp (erste Nennung gewinnt — die SSoT hat bereits sortiert).
+ *   2. Prüf-Aktionen aus den Karten (Tagesabschluss/Dienstplan mit `action`).
+ *   3. Bald-fällige Karten (nur Dienstplan `due_soon`).
+ * Umsatz-/Reservations-Karten erzeugen KEINE eigene Aktion (Dopplung mit den
+ * Import-Aufgaben, T409). Fehler-Aufgaben verweisen auf die Import-Checkliste.
+ */
+export function buildNextActions(input: NextActionsInput): NextAction[] {
+  const max = input.max ?? MAX_NEXT_ACTIONS;
+  const actions: NextAction[] = [];
+  const seenTypes = new Set<ImportTaskType>();
+  const completionByType = new Map(input.typeCompletions.map((c) => [c.type, c]));
+
+  // 1. Import-Aufgaben (Reihenfolge = SSoT getTodayTasks, eine Aktion pro Typ).
+  for (const { task, due } of input.todayTasks) {
+    if (seenTypes.has(task.type)) continue;
+    seenTypes.add(task.type);
+
+    if (task.status === 'error') {
+      actions.push({
+        id: `task-${task.type}`,
+        title: NEXT_ACTION_TITLE[task.type],
+        reason: 'Status konnte nicht ermittelt werden — in der Import-Checkliste prüfen',
+        urgency: 'error',
+        urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.error,
+        href: '/import-cockpit',
+        guestHidden: true, // Import-Checkliste ist für Gast-Sessions gesperrt
+      });
+      continue;
+    }
+
+    const urgency: NextActionUrgency = due.urgency === 'overdue' ? 'overdue' : 'today';
+    const completion = completionByType.get(task.type);
+    let reason: string;
+    if (completion?.openRanges && completion.openRanges.length > 0) {
+      reason = `Fehlend: ${formatMissingDays(completion.openRanges)}`;
+    } else if (task.frequency === 'monthly' || task.frequency === 'yearly') {
+      reason = `${task.label} noch nicht importiert`;
+    } else {
+      reason = `Fehlend: ${formatShortRange({ from: task.from, to: task.to })}`;
+    }
+    actions.push({
+      id: `task-${task.type}`,
+      title: NEXT_ACTION_TITLE[task.type],
+      reason,
+      urgency,
+      urgencyLabel: due.dueLabel ?? NEXT_ACTION_URGENCY_FALLBACK_LABEL[urgency],
+      href: buildImportTarget(task).href,
+      guestHidden: true, // Import-/Schreibflächen — nicht für Gast-Sessions
+    });
+  }
+
+  // 2. Prüf-Aktionen aus den Karten (nur Nicht-Import-Karten, Dopplung vermeiden).
+  const tagesabschluss = input.cards.find((c) => c.id === 'tagesabschluss');
+  if (tagesabschluss?.status === 'action') {
+    actions.push({
+      id: 'card-tagesabschluss',
+      title: 'Tagesabschluss bestätigen',
+      reason: tagesabschluss.detail,
+      urgency: 'check',
+      urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.check,
+      href: tagesabschluss.route,
+      guestHidden: true, // Bestätigen = Schreibaktion
+    });
+  }
+  const dienstplan = input.cards.find((c) => c.id === 'dienstplan');
+  if (dienstplan?.status === 'action') {
+    actions.push({
+      id: 'card-dienstplan',
+      title: 'Dienstplan ergänzen',
+      reason: dienstplan.detail,
+      urgency: 'check',
+      urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.check,
+      href: dienstplan.route,
+      guestHidden: false, // Dienstplan ist für Gäste lesend zugänglich
+    });
+  } else if (dienstplan?.status === 'due_soon') {
+    // 3. Bald fällig — nur anhängen, nie offene Aufgaben verdrängen (Kappung unten).
+    actions.push({
+      id: 'card-dienstplan',
+      title: 'Dienstplan erweitern',
+      reason: dienstplan.detail,
+      urgency: 'due_soon',
+      urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.due_soon,
+      href: dienstplan.route,
+      guestHidden: false,
+    });
+  }
+
+  return actions.filter((a) => !input.isGuest || !a.guestHidden).slice(0, max);
+}
+
+// ─── Datenstand-Zeilen (kompakt, aus der Typ-Zusammenfassung) ────────────────
+
+export interface DatenstandRow {
+  type: ImportTaskType;
+  label: string;
+  status: TypeCompletion['status'];
+  /** Kompakter deutscher Anzeigetext (nie „0" für fehlende Daten). */
+  text: string;
+}
+
+/** Ton je Typ-Status — identische Semantik wie die Checklisten-Zusammenfassung. */
+export const DATENSTAND_TONE: Record<TypeCompletion['status'], 'good' | 'warn' | 'neutral' | 'critical'> = {
+  done: 'good',
+  open: 'warn',
+  later: 'neutral',
+  error: 'critical',
+};
+
+/**
+ * Kompakte Datenstand-Zeilen aus summarizeTypeCompletion — reine Umformatierung,
+ * KEINE eigene Statusberechnung. Monats-/Jahresaufgaben bleiben Monats-/Jahres-
+ * status („Fehlt noch"), NIE eine künstliche Tagesliste.
+ */
+export function buildDatenstandRows(completions: readonly TypeCompletion[]): DatenstandRow[] {
+  return completions.map((c) => {
+    let text: string;
+    switch (c.status) {
+      case 'done':
+        text = 'Vollständig';
+        break;
+      case 'later':
+        text = 'Noch nicht fällig';
+        break;
+      case 'error':
+        text = 'Status konnte nicht ermittelt werden';
+        break;
+      case 'open':
+      default:
+        text =
+          c.openRanges && c.openRanges.length > 0
+            ? `Fehlend: ${formatMissingDays(c.openRanges)}`
+            : 'Fehlt noch';
+        break;
+    }
+    return { type: c.type, label: c.label, status: c.status, text };
+  });
 }
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────

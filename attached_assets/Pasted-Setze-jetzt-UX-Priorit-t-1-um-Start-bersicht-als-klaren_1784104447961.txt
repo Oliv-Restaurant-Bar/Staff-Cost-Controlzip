@@ -1,0 +1,485 @@
+Setze jetzt UX-Priorität 1 um: Startübersicht als klaren Tagesleitstand ausbauen und fehlende Tage direkt sichtbar machen.
+
+Ziel
+
+Die Startübersicht soll zum zentralen Einstiegspunkt für die tägliche Arbeit werden.
+
+Ein Benutzer soll nach dem Öffnen der App sofort erkennen:
+
+• was aktuell fehlt
+• was geprüft werden muss
+• was bereits erledigt ist
+• welcher nächste konkrete Schritt sinnvoll ist
+• auf welcher Seite dieser Schritt ausgeführt wird
+
+Die bestehende zentrale Import-, Coverage- und Aufgabenlogik muss wiederverwendet werden.
+
+Keine neue parallele Statusberechnung erstellen.
+
+Scope
+
+In diesem Task nur:
+
+1. Startübersicht als Tagesleitstand verbessern
+2. konkrete nächste Aktionen mit Deep-Links ergänzen
+3. fehlende Tage direkt anzeigen
+4. bestehende fällige Import-/Prüfaufgaben kompakt einblenden
+5. Rollen- und Berechtigungslogik vollständig erhalten
+
+Noch nicht umsetzen:
+
+• Reporting-Seiten zusammenlegen
+• Tagesabschlüsse-Spalten umbauen
+• Importnamen appweit ändern
+• Produktanalyse konsolidieren
+• neue Tabellen oder Persistenzlogik
+• neue Status- oder Aufgabenmodelle
+• weitere technische Refactorings
+
+T401 – Bestehende Logik vollständig prüfen
+
+Lies zuerst vollständig:
+
+• StartOverview.tsx
+• ImportCockpitPage.tsx
+• ImportChecklistTab.tsx
+• die zentrale Import-Statusberechnung
+• die zentrale Aufgabenpriorisierung, insbesondere import-tasks-priority
+• relevante Coverage- und Datenstands-Helper
+• ImportHub.tsx, insbesondere die bestehende DatenstandCard
+• Navigation und Routen der verlinkten Zielseiten
+• Rollen- und Berechtigungsprüfungen der Startübersicht
+
+Erstelle vor Änderungen eine kompakte Zuordnung:
+
+Status/Aufgabe	bestehende Quelle	aktuell angezeigt in	Zielseite	erlaubte Rollen	verfügbare Tages-Lücken
+
+Keine Statuswerte aus sichtbaren Texten oder UI-Komponenten rekonstruieren.
+
+Die bestehende zentrale fachliche Berechnung ist die Single Source of Truth.
+
+T402 – Informationsarchitektur der Startübersicht
+
+Die Startübersicht soll oben einen kompakten Tagesleitstand erhalten.
+
+Empfohlene Reihenfolge:
+
+1. Seitentitel und sehr kurze Datums-/Betriebsinformation
+2. zentrale Statuszusammenfassung
+3. «Als Nächstes» mit maximal drei priorisierten Aktionen
+4. Datenstand und fehlende Tage
+5. bestehende weitere Inhalte der Startübersicht
+
+Keine lange Einleitung und keine grossen erklärenden Textblöcke.
+
+Die wichtigsten Aktionen und Statusinformationen müssen ohne langes Scrollen sichtbar sein.
+
+Bestehende sinnvolle Inhalte nicht entfernen, sondern bei Bedarf kompakter anordnen.
+
+T403 – Komponente «Als Nächstes»
+
+Erstelle einen kompakten Bereich mit maximal drei konkreten nächsten Aktionen.
+
+Jede Aktion zeigt:
+
+• klaren fachlichen Titel
+• sehr kurze Begründung oder Statusinformation
+• Status oder Priorität
+• konkreten Aktionsbutton beziehungsweise klickbare Zeile
+• Deep-Link zur richtigen bestehenden Seite
+
+Beispiele für fachliche Titel:
+
+• «Z-Bericht importieren»
+• «Fehlende Reservationstage ergänzen»
+• «Adyen-Differenzen prüfen»
+• «Tagesabschluss bestätigen»
+• «Arbeitszeiten importieren»
+• «Monatsabschluss prüfen»
+
+Nicht anzeigen:
+
+• technische Funktions- oder Tabellennamen
+• interne Statuscodes
+• Supabase-Begriffe
+• generische Texte wie «Mehr anzeigen», wenn eine konkrete Aktion möglich ist
+
+Priorisierung
+
+Nutze die vorhandene Aufgabenpriorisierung.
+
+Keine neue unabhängige Sortierlogik entwickeln.
+
+Bevorzugte Reihenfolge sinngemäss:
+
+1. fehlerhaft oder überfällig
+2. heute erforderlich
+3. Daten fehlen
+4. Prüfung erforderlich
+5. bald fällig
+6. erledigt
+
+Nur Aufgaben anzeigen, welche die aktuelle Rolle öffnen und bearbeiten beziehungsweise sinnvoll einsehen darf.
+
+Wenn keine Aufgabe offen ist:
+
+Zeige einen kompakten positiven Zustand wie:
+
+«Für heute sind keine dringenden Aufgaben offen.»
+
+Keine leere Card und keine grossflächige Erfolgsmeldung.
+
+T404 – Deep-Links
+
+Jede Aktion muss direkt zur passenden bestehenden Arbeitsfläche führen.
+
+Verwende vorhandene Routen.
+
+Beispiele:
+
+• Z-Bericht → vorhandene Z-Bericht-Importseite
+• Reservationen → vorhandener Foratable-Import
+• Adyen → vorhandene Adyen-/Umsatzabstimmung
+• Tagesabschluss → Tagesabschlüsse, möglichst mit bestehendem Datumskontext
+• Arbeitszeiten → Mirus-/Arbeitszeitimport
+• Monatskontrolle → Import-Cockpit beziehungsweise bestehende Monatskontrolle
+
+Falls eine Zielseite bereits Query-Parameter, Tabs oder Datumsparameter unterstützt, nutze diese.
+
+Keine neue Route erstellen, wenn ein bestehender Deep-Link genügt.
+
+Keine Links zu Seiten anzeigen, für welche die Rolle keinen Zugriff besitzt.
+
+T405 – Fehlende Tage direkt sichtbar machen
+
+Erweitere den Datenstand beziehungsweise die relevanten Statuskarten um konkrete fehlende Tage.
+
+Beispiele:
+
+• «3.–5. Mai fehlen»
+• «Fehlend: 3., 7. und 12. Mai»
+• «5 Tage ohne Z-Bericht»
+• «Reservationen fehlen am 8. und 9. Mai»
+
+Nutze ausschliesslich bestehende Coverage- oder Datenstandsabfragen.
+
+Keine neue Persistenz und keine Duplikation der Coverage-Logik.
+
+Darstellung
+
+Bei wenigen Tagen:
+
+• einzelne Daten kompakt nennen
+
+Bei zusammenhängenden Tagen:
+
+• als Bereich zusammenfassen
+
+Bei vielen fehlenden Tagen:
+
+• maximal eine kompakte Vorschau anzeigen
+• danach beispielsweise «+ 8 weitere»
+
+Beispiel:
+
+«Fehlend: 3.–5., 8. Mai + 4 weitere»
+
+Die vollständige Liste kann über:
+
+• bestehenden Dialog
+• Popover
+• aufklappbare Detailzeile
+• oder Deep-Link zur Detailseite
+
+zugänglich sein.
+
+Keine neue grosse Tabelle auf der Startübersicht.
+
+T406 – Monats- und Tageskontext
+
+Stelle sicher, dass die angezeigten Lücken fachlich zum jeweiligen Import passen.
+
+Beispiele:
+
+• Tagesumsätze: erwartete Betriebstage beziehungsweise tatsächliche fachliche Coverage-Regel verwenden
+• Reservationen: bestehende Coverage-Regel verwenden
+• Adyen: vorhandene relevante Importtage
+• Arbeitszeiten: vorhandene Wochen- oder Monatslogik
+• Erfolgsrechnung/Istkosten: Monatsstatus statt künstlicher Tagesliste
+
+Nicht pauschal jeden Kalendertag als fehlend behandeln.
+
+Bestehende Regeln zu:
+
+• Zukunftstagen
+• geschlossenen Tagen
+• nicht erwarteten Importen
+• noch nicht fälligen Perioden
+• optionalen Imports
+
+müssen erhalten bleiben.
+
+T407 – Kompakte Statusdarstellung
+
+Verwende bestehende Designsystem-Komponenten und App-Muster.
+
+Status visuell konsistent darstellen:
+
+• Fehler oder überfällig
+• Warnung oder Prüfung erforderlich
+• offen
+• vollständig
+• nicht fällig
+• nicht eingerichtet
+
+Keine neue Farbsemantik erfinden.
+
+Keine grossen farbigen Flächen.
+
+Bevorzugt:
+
+• kompakte Cards
+• Statuspunkt oder kleines Badge
+• klare Überschrift
+• kurze Statuszeile
+• eindeutiger Aktionslink
+
+Die Seite soll schlicht, modern und ruhig wirken.
+
+T408 – Rollen und Personalisierung
+
+Prüfe alle bestehenden Rollen.
+
+Mindestens:
+
+• Admin
+• Manager
+• Küchenrolle
+• Gast-/Read-only-Rolle, falls diese Zugriff auf die Startübersicht besitzt
+• Beaulieu-/Oliv-Mandantenlogik, soweit vorhanden
+
+Jede Rolle sieht nur:
+
+• relevante Status
+• erlaubte Aufgaben
+• erlaubte Deep-Links
+• für ihren Betrieb geltende Daten
+
+Keine neue Berechtigung einführen.
+
+Keine Berechtigungsprüfung nur in der UI vornehmen, falls die bestehende Logik zentral verfügbar ist.
+
+Tenant- und Betriebsisolation unverändert lassen.
+
+T409 – Bestehende Inhalte integrieren
+
+Prüfe, welche Inhalte auf der Startübersicht bereits existieren.
+
+Vermeide Doppelungen zwischen:
+
+• bestehender Statusübersicht
+• neuem «Als Nächstes»
+• Datenstand
+• Import-Aufgaben
+• Warnungen
+
+Prinzip:
+
+• «Als Nächstes» zeigt priorisierte Handlungen
+• «Datenstand» zeigt Vollständigkeit und fehlende Perioden
+• bestehende Kennzahlen zeigen Zustand oder Ergebnis
+• Details bleiben auf den Zielseiten
+
+Die gleiche Information nicht dreimal in unterschiedlichen Cards anzeigen.
+
+T410 – Loading-, Empty- und Error-States
+
+Die Startübersicht aggregiert mehrere bestehende Quellen.
+
+Deshalb sauber behandeln:
+
+Loading:
+
+• bestehende Skeleton- oder Loading-Muster verwenden
+• Seite nicht komplett blockieren, wenn nur ein Teilstatus lädt
+
+Teilweiser Fehler:
+
+• andere verfügbare Status weiterhin anzeigen
+• kompakter verständlicher Hinweis
+• keine technischen Fehlermeldungen
+• Deep-Links weiterhin anbieten, wenn möglich
+
+Keine Daten:
+
+• klar unterscheiden zwischen «noch nicht importiert», «nicht fällig», «nicht eingerichtet» und echtem Fehler
+• niemals fehlende Daten als 0 darstellen
+
+Erfolgszustand:
+
+• kompakt
+• keine übergrosse grüne Fläche
+
+T411 – Designvorgaben
+
+Die Umsetzung muss mit allen bestehenden App-Bereichen synchron bleiben.
+
+Verbindliche Vorgaben:
+
+• bestehende Typografie verwenden
+• bestehende Card-, Badge-, Button- und Spacing-Muster verwenden
+• keine neue isolierte Designsprache
+• keine unnötigen Icons
+• keine langen Erklärungstexte
+• Aktionen klar und direkt benennen
+• wichtige Informationen oberhalb des Folds
+• Cards nicht unnötig hoch machen
+• keine verschachtelten Cards in Cards, sofern vermeidbar
+• Desktop und Tablet sauber prüfen
+• mobile Darstellung ohne horizontales Scrollen
+• Aktionszeilen auf kleinen Screens untereinander darstellen
+• Touch-Ziele ausreichend gross halten
+• Texte in gut lesbarem Deutsch
+• Fachbegriff zuerst, Quellsystem höchstens ergänzend
+
+T412 – Keine Veränderung der Fachlogik
+
+Explizit unverändert lassen:
+
+• Importregeln
+• Coverage-Regeln
+• Fälligkeitslogik
+• Abschluss-Gates
+• Export-Gates
+• Persistenz
+• Supabase-Zugriffe
+• Merge-Regeln
+• Tombstones
+• updatedAt
+• Rundungslogik
+• Berechtigungen
+• bestehende Aufgabenstatus
+
+Nur bestehende Ergebnisse neu und besser darstellen.
+
+Falls die zentrale Statuslogik eine benötigte Information bereits berechnet, diese direkt konsumieren.
+
+Falls eine fehlende Tagesliste fachlich bereits vorhanden, aber intern nicht exportiert ist, darf sie gezielt lesend zugänglich gemacht werden.
+
+Keine zweite Berechnung in StartOverview.tsx erstellen.
+
+T413 – Tests
+
+Ergänze gezielte Tests für den echten Einstiegspfad der Startübersicht.
+
+Mindestens:
+
+1. Höchste offene Priorität erscheint zuerst.
+2. Maximal drei nächste Aktionen werden angezeigt.
+3. Erledigte Aufgaben verdrängen keine offenen Aufgaben.
+4. Keine offenen Aufgaben zeigt kompakten Erfolgszustand.
+5. Deep-Link verweist auf die korrekte bestehende Route.
+6. Nicht erlaubte Aktion wird für eine Rolle nicht angezeigt.
+7. Tenant-/Betriebsdaten werden nicht vermischt.
+8. Fehlende Einzeltage werden korrekt dargestellt.
+9. Zusammenhängende fehlende Tage werden als Bereich dargestellt.
+10. Viele fehlende Tage werden kompakt gekürzt.
+11. Zukunftstage werden nicht fälschlich als fehlend angezeigt.
+12. Nicht erwartete beziehungsweise geschlossene Tage werden nicht fälschlich als Lücke angezeigt.
+13. Fehlende Monatsdaten werden als Monatsstatus und nicht als erfundene Tagesliste angezeigt.
+14. Teilweiser Datenfehler blendet andere Status nicht aus.
+15. Fehlende Daten werden nicht als 0 dargestellt.
+16. Read-only-Rolle erhält keine unerlaubte Bearbeitungsaktion.
+17. Bestehende Aufgabenpriorisierung bleibt die Single Source of Truth.
+18. Startübersicht löst keine Schreiboperation aus.
+
+Wenn die Formatierung fehlender Tage als Helper umgesetzt wird, diesen Helper separat mit Grenzfällen testen.
+
+Zusätzlich alle bestehenden Tests ausführen für:
+
+• Import-Aufgabenpriorisierung
+• Import-Checkliste
+• Coverage-Logik
+• Rollen-/Berechtigungslogik
+• Startübersicht
+• ImportHub-Datenstand
+• relevante Navigation
+
+T414 – Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit dem tatsächlich umgesetzten Verhalten.
+
+Dokumentiere:
+
+• Startübersicht ist der tägliche Leitstand
+• Bereich «Als Nächstes» mit maximal drei priorisierten Aktionen
+• Aufgaben stammen aus der bestehenden zentralen Priorisierungslogik
+• Deep-Links führen zu bestehenden Arbeitsflächen
+• fehlende Tage werden direkt kompakt angezeigt
+• Rollen- und Tenant-Gating
+• keine neue Status-, Coverage- oder Persistenzlogik
+• relevante Regressionstests
+
+Keine geplanten Folgeschritte dokumentieren.
+
+T415 – Verifikation
+
+Führe aus:
+
+• TypeScript-Prüfung auf allen geänderten Dateien
+• relevante Startübersichts-Tests
+• Import-Priorisierungs-Tests
+• Coverage-Tests
+• Rollen-/Berechtigungs-Tests
+• relevante Navigationstests
+• bestehende Import-Cockpit-/Checklisten-Tests
+• Log-Check der laufenden App
+• visuelle Prüfung der authentifizierten Startübersicht, soweit technisch möglich
+• Desktop-, Tablet- und Mobile-Prüfung
+• Architect-Review über den tatsächlichen Task-Diff
+
+Beim Architect-Review besonders prüfen:
+
+• keine neue parallele Statuslogik
+• keine neue Coverage-Berechnung in der UI
+• keine Writes beim Laden der Startübersicht
+• korrekte Rollen- und Tenant-Isolation
+• korrekte Deep-Links
+• maximal drei Aktionen
+• sinnvolle Priorisierung
+• fehlende Tage fachlich korrekt
+• Zukunfts- und geschlossene Tage korrekt behandelt
+• keine Informationsdopplung
+• kompakte und konsistente UI
+• keine Änderung an Import-, Gate- oder Persistenzlogik
+
+Alle Befunde innerhalb dieses Tasks beheben.
+
+T416 – Abschlussbericht
+
+Liefere abschliessend:
+
+1. Welche bestehenden Status- und Coverage-Quellen verwendet wurden.
+2. Wie die Aufgaben priorisiert werden.
+3. Welche Aktionen auf der Startübersicht erscheinen können.
+4. Welche Deep-Links verwendet werden.
+5. Wie fehlende Tage formatiert und gekürzt werden.
+6. Wie Zukunftstage, geschlossene Tage und nicht fällige Importe behandelt werden.
+7. Wie Rollen und Tenants geschützt werden.
+8. Welche bestehenden Inhalte kompakter angeordnet oder entfernt wurden.
+9. Welche neue Komponenten oder Helper erstellt wurden.
+10. Bestätigung, dass keine neue Status- oder Persistenzlogik entstanden ist.
+11. Bestätigung, dass die Startübersicht keine Writes auslöst.
+12. Ausgeführte Tests und Resultate.
+13. Typecheck-Ergebnis im Vergleich zur Legacy-Baseline.
+14. Log-Check-Ergebnis.
+15. Architect-Review-Ergebnis.
+16. Geänderte Dateien.
+17. Sichtbare Verhaltensänderungen.
+18. Offene Restpunkte, die bewusst nicht Teil dieses Tasks waren.
+
+Keinen Commit durchführen, bevor Typecheck, relevante Tests und Architect-Review abgeschlossen sind.
+
+Keine fremden oder bereits bestehenden Änderungen zurücksetzen.
+
+Beim Review ausschliesslich den tatsächlichen Task-Diff bewerten.

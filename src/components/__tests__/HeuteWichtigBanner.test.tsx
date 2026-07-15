@@ -72,7 +72,7 @@ describe('HeuteWichtigBanner — Sichtbarkeit', () => {
   });
 
   it('Admin sieht Titel „Heute wichtig"', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = { status: 'ready', data: READY_OK, todayTasks: [], typeCompletions: [], coverageError: null, loadedAt: new Date() };
     renderBanner();
     expect(screen.getByTestId('heute-wichtig').textContent).toContain('Heute wichtig');
   });
@@ -80,14 +80,14 @@ describe('HeuteWichtigBanner — Sichtbarkeit', () => {
 
 describe('HeuteWichtigBanner — Warnungen', () => {
   it('ohne Handlungsbedarf → grüne Ein-Zeilen-Bestätigung, keine Warnliste', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = { status: 'ready', data: READY_OK, todayTasks: [], typeCompletions: [], coverageError: null, loadedAt: new Date() };
     renderBanner();
     expect(screen.getByTestId('heute-wichtig-ok').textContent).toContain('Keine offenen Handlungsbedarfe');
     expect(screen.queryByTestId('heute-wichtig-warnings')).toBeNull();
   });
 
   it('mit Handlungsbedarf → NUR die action-Warnungen mit Link zur Detailseite', () => {
-    mockState.value = { status: 'ready', data: READY_WARN, loadedAt: new Date() };
+    mockState.value = { status: 'ready', data: READY_WARN, todayTasks: [], typeCompletions: [], coverageError: null, loadedAt: new Date() };
     renderBanner();
     const list = screen.getByTestId('heute-wichtig-warnings');
     expect(list.textContent).toContain('Umsatzimport: Überfällig');
@@ -116,7 +116,7 @@ describe('HeuteWichtigBanner — Zustände', () => {
 
 describe('HeuteWichtigBanner — Schnellaktionen & Gast-Gating', () => {
   it('Admin sieht alle 4 Schnellaktionen mit korrekten Routen', () => {
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = { status: 'ready', data: READY_OK, todayTasks: [], typeCompletions: [], coverageError: null, loadedAt: new Date() };
     renderBanner();
     const actions = screen.getByTestId('heute-wichtig-actions');
     const links = Array.from(actions.querySelectorAll('a')).map((a) => a.getAttribute('href'));
@@ -125,7 +125,7 @@ describe('HeuteWichtigBanner — Schnellaktionen & Gast-Gating', () => {
 
   it('Gast-Session sieht NUR den Dienstplan-Link (keine Schreib-/PII-Aktionen)', () => {
     mockGuest.isGuest = true;
-    mockState.value = { status: 'ready', data: READY_OK, loadedAt: new Date() };
+    mockState.value = { status: 'ready', data: READY_OK, todayTasks: [], typeCompletions: [], coverageError: null, loadedAt: new Date() };
     renderBanner();
     const actions = screen.getByTestId('heute-wichtig-actions');
     const links = Array.from(actions.querySelectorAll('a')).map((a) => a.getAttribute('href'));

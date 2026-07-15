@@ -180,7 +180,7 @@ export function monthLabel(year: number, month: number): string {
 }
 
 /** Anzahl Kalendertage in [from, to] (beide inklusive). */
-function rangeDayCount(from: string, to: string): number {
+export function rangeDayCount(from: string, to: string): number {
   const [fy, fm, fd] = from.split('-').map(Number);
   const [ty, tm, td] = to.split('-').map(Number);
   const ms = Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd);
