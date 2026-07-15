@@ -1,0 +1,265 @@
+Setze jetzt die nächste UX-Runde um: Produktanalyse konsolidieren.
+
+Ziel
+
+Lunch, Take-away, Kategorien und allgemeine Produktanalyse sollen in einer einzigen übersichtlichen Analyse-Seite zusammengeführt werden.
+
+Die bestehende fachliche Logik, Datenquellen, Kennzahlen und Exporte bleiben unverändert.
+
+Es geht um:
+
+• weniger Navigationspunkte
+• gemeinsame Filter
+• einheitliche Tabellen und Diagramme
+• klare Drilldowns
+• bessere Übersicht
+• keine doppelte Berechnung
+
+P001 – Bestehende Seiten analysieren
+
+Lies zuerst vollständig:
+
+• Produkte.tsx
+• ProduktAnalyse
+• KategorienAnalyse
+• LunchAnalyse
+• TakeAwayAnalyse
+• VerkaufsDashboard
+• ArtikelTracking
+• AppNav
+• Routen
+• gemeinsame Produkt-/Verkaufs-Helper und Stores
+• bestehende Exportfunktionen
+
+Erstelle vor Änderungen eine kompakte Matrix:
+
+| Seite | Datenquelle | Filter | Kennzahlen | Tabellen | Diagramme | Drilldowns | Export | Navigation |
+
+Dokumentiere insbesondere:
+
+• doppelte Filter
+• doppelte Tabellenstrukturen
+• identische Kennzahlen
+• unterschiedliche Berechnungen
+• Seiten ohne Navigationseintrag
+• bewusst fachlich unterschiedliche Auswertungen
+
+Keine Änderung vor Abschluss der Analyse.
+
+P002 – Eine zentrale Produktanalyse-Seite
+
+Verwende die bestehende Hauptseite der Produktanalyse als zentrale Arbeitsfläche.
+
+Keine neue parallele Seite bauen, falls eine bestehende Seite geeignet ist.
+
+Die zentrale Seite erhält Tabs:
+
+1. Übersicht
+2. Produkte
+3. Kategorien
+4. Lunch
+5. Take-away
+6. Artikelverlauf, falls fachlich passend
+
+Bestehende fachliche Sonderlogik darf innerhalb des jeweiligen Tabs bestehen bleiben.
+
+Keine Kennzahlen künstlich vereinheitlichen, wenn sie fachlich unterschiedlich definiert sind.
+
+P003 – Gemeinsame Filterleiste
+
+Oben eine gemeinsame kompakte Filterleiste:
+
+• Betrieb / Tenant
+• Zeitraum
+• Von / Bis
+• Schnellwahl:
+  – Heute
+  – Diese Woche
+  – Letzte 7 Tage
+  – Dieser Monat
+  – Vorheriger Monat
+• Vergleich:
+  – kein Vergleich
+  – Vorperiode
+  – Vorjahr
+• Suche
+• optional Kategorie
+• optional Produkt
+
+Die Filter gelten für alle Tabs, soweit fachlich sinnvoll.
+
+Tab-spezifische Filter nur innerhalb des betroffenen Tabs anzeigen.
+
+Keine Filter doppelt oberhalb und innerhalb der Tabs darstellen.
+
+P004 – Übersicht-Tab
+
+Der Übersicht-Tab zeigt nur die wichtigsten Kennzahlen:
+
+• Nettoumsatz Produkte
+• verkaufte Menge
+• durchschnittlicher Verkaufspreis
+• Warenkosten
+• Deckungsbeitrag
+• Wareneinsatzquote
+• stärkstes Produkt
+• schwächstes Produkt
+• stärkste Kategorie
+
+Nur Kennzahlen anzeigen, die aus bestehenden Quellen zuverlässig berechnet werden.
+
+Keine fehlenden Daten als 0 darstellen.
+
+Unter den KPI-Karten:
+
+• Umsatzentwicklung
+• Kategorienanteile
+• Top-Produkte
+• auffällige Veränderungen
+
+Keine überladene Startansicht.
+
+Details bleiben in den anderen Tabs oder Drilldowns.
+
+P005 – Produkte-Tab
+
+Zeige eine kompakte Produkttabelle.
+
+Default-Spalten:
+
+• Produkt
+• Kategorie
+• Menge
+• Nettoumsatz
+• Ø Preis
+• Warenkosten
+• Deckungsbeitrag
+• Wareneinsatzquote
+• Veränderung zur Vergleichsperiode
+
+Selten benötigte Spalten über Spaltenauswahl zuschaltbar.
+
+Funktionen:
+
+• Sortierung
+• Suche
+• Filter
+• Top-/Flop-Auswahl
+• Export
+• Klick auf Produkt öffnet bestehenden Produkt-Drilldown
+
+Keine neue Produktberechnung.
+
+Bestehende Produktdetail- und Tagesdetail-Logik wiederverwenden.
+
+P006 – Kategorien-Tab
+
+Zeige:
+
+• Kategorie
+• Menge
+• Nettoumsatz
+• Umsatzanteil
+• Warenkosten
+• Deckungsbeitrag
+• Wareneinsatzquote
+• Vergleich zur Vorperiode oder zum Vorjahr
+
+Klick auf Kategorie öffnet die enthaltenen Produkte innerhalb derselben Seite oder in einem kompakten Dialog.
+
+Keine separate Kategorienseite mehr nötig, sobald alle Funktionen vollständig übernommen sind.
+
+P007 – Lunch- und Take-away-Tabs
+
+Lunch und Take-away sollen dieselben gemeinsamen UI-Muster verwenden:
+
+• gleiche KPI-Karten
+• gleiche Tabellenstruktur
+• gleiche Filter
+• gleiche Vergleichsdarstellung
+• gleiche Exportposition
+• gleiche Drilldown-Komponenten
+
+Die fachliche Filterung bleibt unterschiedlich:
+
+• Lunch zeigt nur Lunch-relevante Produkte/Zeiten/Kategorien
+• Take-away zeigt nur Take-away-relevante Verkäufe
+
+Keine Copy-paste-Doppelkomponenten behalten, wenn dieselbe reine Darstellung gemeinsam genutzt werden kann.
+
+Gemeinsame technische Komponenten extrahieren, aber keine übergrosse generische Analyse-Engine bauen.
+
+P008 – Drilldowns
+
+Klick auf Produkt oder Kategorie öffnet Details innerhalb der bestehenden Seite oder in einem einheitlichen Dialog.
+
+Produkt-Drilldown mindestens:
+
+• Umsatz
+• Menge
+• Ø Preis
+• Warenkosten
+• Deckungsbeitrag
+• Wareneinsatzquote
+• Tagesverlauf
+• Vergleichsperiode
+• stärkste und schwächste Tage
+
+Kategorie-Drilldown mindestens:
+
+• enthaltene Produkte
+• Umsatzanteile
+• Entwicklung
+• Top-/Flop-Produkte
+
+Nur bestehende Daten verwenden.
+
+Keine neue Persistenz.
+
+P009 – Navigation bereinigen
+
+Nach vollständiger Übernahme:
+
+• nur einen sichtbaren Hauptnavigationseintrag „Produktanalyse“
+• Lunch, Take-away und Kategorien nicht mehr als separate sichtbare Hauptnavigationseinträge
+• alte Routen vorerst als Redirect auf den passenden Tab erhalten, sofern externe Links oder Bookmarks existieren
+
+Beispiele:
+
+• alte Lunch-Route → Produktanalyse mit Tab Lunch
+• alte Take-away-Route → Produktanalyse mit Tab Take-away
+• alte Kategorien-Route → Produktanalyse mit Tab Kategorien
+
+Keine Route sofort löschen, wenn sie noch verwendet werden könnte.
+
+Browser-Zurück und direkte Links müssen funktionieren.
+
+P010 – Tenant- und Rollenlogik
+
+Prüfe:
+
+• Oliv
+• Beaulieu
+• Admin
+• Manager
+• Küchenrolle
+• Read-only
+
+Jede Rolle sieht nur erlaubte Daten und Funktionen.
+
+Tenantwechsel muss:
+
+• Filterkontext korrekt wechseln
+• alte Daten ausblenden
+• laufende Requests verwerfen
+• keine Werte des vorherigen Betriebs anzeigen
+• Drilldowns schliessen oder neu laden
+
+Keine Rollen- oder Tenantlogik in einzelnen Tabs duplizieren.
+
+P011 – Exporte vereinheitlichen
+
+Ein einheitlicher Button:
+
+```text
+Exportieren
