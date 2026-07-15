@@ -153,8 +153,12 @@ export const LaborCostComparison = ({
         ziel: Math.round(weekTarget),
         umsatz: Math.round(weekRevenue),
         quote: Math.round(weekPercentage),
+        // Rohwerte für Ampel-/Vorzeichenentscheide im PDF-Export (T007):
+        // Schwellen prüfen auf ungerundeten Werten, Anzeige bleibt gerundet.
+        quoteRaw: weekPercentage,
         stunden: Math.round(weekHours * 10) / 10,
         differenz: Math.round(weekTarget - weekPlanned),
+        differenzRaw: weekTarget - weekPlanned,
       };
     });
   }, [weeksInMonth, employees, scheduleData, dailyBudgets, laborCostThreshold, monthStart, monthEnd, rateById]);

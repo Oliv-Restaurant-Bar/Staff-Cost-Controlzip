@@ -1,0 +1,392 @@
+Führe jetzt Stabilisierungsrunde 2.6 durch:
+
+Vereinheitliche die Rundungslogik für Geldbeträge, Stunden, Quoten und Veränderungen in allen relevanten Auswertungen und Exporten.
+
+WICHTIG:
+
+Dies ist eine fachliche Konsistenzprüfung, keine UI-Neugestaltung.
+
+Keine neuen Funktionen.
+Kein generischer safeBlobUpsert.
+Keine Änderung der Persistenzarchitektur.
+Keine Veränderung fachlicher Formeln ausser dort, wo unterschiedliche Rundungszeitpunkte aktuell zu Abweichungen führen.
+
+Ziel:
+
+Dieselbe Kennzahl muss in:
+
+- UI
+- KPI-Karte
+- Tabelle
+- Drilldown
+- PDF
+- Excel
+- CSV
+- Jahres- und Monatssumme
+
+denselben fachlichen Wert besitzen.
+
+==================================================
+T001 – Vollständiger Rundungs-Audit
+==================================================
+
+Durchsuche das gesamte Projekt nach:
+
+- Math.round
+- Math.floor
+- Math.ceil
+- toFixed
+- parseFloat nach Formatierung
+- Number(...toFixed(...))
+- Rundung auf Rappen
+- Rundung auf ganze CHF
+- Rundung auf Zehntelstunden
+- Rundung von Prozentwerten
+- Summierung bereits gerundeter Monatswerte
+- unterschiedliche Rundung in UI und Export
+
+Prüfe insbesondere:
+
+- budget-store.ts
+- P&L-Engine
+- Erfolgsrechnung
+- Mehrjahresanalyse
+- Management Report
+- Banken-/Investorenbericht
+- Warenaufwand und Warenkostenquote
+- Personalaufwand und Personalquote
+- Dienstplanung und Nettostunden
+- Personalcontrolling
+- Tagesabschlüsse
+- Umsatzabstimmung
+- Produktanalyse
+- Excel-, PDF- und CSV-Exporte
+
+Erstelle intern eine Bestandsliste:
+
+1. Geldbeträge
+2. Prozentwerte
+3. Prozentpunkte
+4. Stunden
+5. Mengen
+6. nur visuelle Formatierung
+7. fachliche Rundung vor Berechnung oder Summierung
+
+==================================================
+T002 – Fachliche Grundregeln festlegen
+==================================================
+
+Verbindliche Regeln:
+
+### Geldbeträge
+
+- intern möglichst mit ungerundeten beziehungsweise rappen-genauen Werten rechnen
+- nicht jeden Monat auf ganze CHF runden und danach zum Jahr summieren
+- Jahreswerte aus der fachlichen Rohbasis berechnen
+- Rundung grundsätzlich erst an einer klar definierten fachlichen Grenze oder bei der Anzeige
+- keine Umwandlung formatierter Strings zurück in Berechnungen
+
+### Prozentwerte
+
+- intern als präziser numerischer Wert weitergeben
+- erst bei der Anzeige formatieren
+- Quoten nicht aus bereits gerundeten Teilwerten berechnen
+- Personalquote = tatsächlicher Personalaufwand / tatsächlicher Umsatz
+- EBIT-Marge = tatsächlicher EBIT / tatsächlicher Umsatz
+
+### Prozentpunkte
+
+- Differenz der ungerundeten Quoten berechnen
+- erst danach für die Anzeige runden
+
+### Stunden
+
+- intern bevorzugt in Minuten oder präzisen Dezimalstunden rechnen
+- Pausen vor der Summierung abziehen
+- keine Rundung jeder einzelnen Schicht, wenn dadurch Wochen- oder Monatssummen abweichen
+- erst die Anzeige nach dem bestehenden Stundenformat runden
+
+### Fehlende Werte
+
+- null beziehungsweise „—“ bleibt fehlend
+- fehlend darf nie durch Rundung zu 0 werden
+- kein NaN oder Infinity
+
+==================================================
+T003 – Zentrale Rundungs- und Formatierungshelfer
+==================================================
+
+Prüfe zuerst, welche zentralen Helfer bereits existieren.
+
+Bevorzuge bestehende Utilities.
+
+Falls nötig, ergänze einen kleinen zentralen, reinen Helfer für fachliche Rundungsgrenzen, sinngemäss:
+
+- roundMoney
+- roundHours
+- roundPercentForDisplay
+- roundPercentagePointsForDisplay
+
+WICHTIG:
+
+Nicht überall neue Rundungsfunktionen einführen.
+
+Trenne klar:
+
+- fachlicher numerischer Wert
+- Anzeigeformatierung
+
+Bestehende de-CH-Formatierungshelfer weiterverwenden.
+
+Keine Speicherung bereits formatierter Werte.
+
+==================================================
+T004 – Monats- versus Jahressummen korrigieren
+==================================================
+
+Prüfe insbesondere den von Claude genannten Fall:
+
+Wenn ein Monatswert aus einem Prozentsatz berechnet wird, darf nicht zwingend gelten:
+
+Summe von 12 einzeln auf ganze CHF gerundeten Monatswerten
+
+als Ersatz für:
+
+Summe der präzisen Monatswerte beziehungsweise fachlich berechneter Jahreswert
+
+Untersuche mindestens:
+
+- resolveBudgetYear
+- computePLCategoryTotals
+- Budgetpositionen mit Prozent vom Umsatz
+- Jahresbudget
+- Monatsmatrix
+- Mehrjahresanalyse
+
+Definiere anhand der bestehenden Fachlogik, welche Basis verbindlich ist.
+
+Ziel:
+
+- Monatswerte bleiben nachvollziehbar
+- Jahressumme stimmt mit der Summe der zentralen fachlichen Monatswerte überein
+- UI, Drilldown und Export verwenden dieselbe Summe
+- keine stillen CHF-1- bis CHF-12-Abweichungen durch wiederholte Rundung
+
+Falls eine gesetzliche oder fachlich bewusst monatliche Rundung existiert, nicht ändern, sondern ausdrücklich dokumentieren und überall gleich anwenden.
+
+==================================================
+T005 – UI, Drilldown und Export abstimmen
+==================================================
+
+Für jede zentrale Kennzahl prüfen:
+
+- Umsatz
+- Warenaufwand
+- Bruttogewinn
+- Personalaufwand
+- Personalquote
+- EBITDA
+- EBIT
+- EBIT-Marge
+- Budgetabweichung
+- Nettostunden
+- Personalkosten
+
+Verbindliche Gleichung:
+
+KPI-Karte
+=
+Tabelle
+=
+Drilldown-Total
+=
+PDF
+=
+Excel
+=
+CSV
+
+Die angezeigte Formatierung darf unterschiedlich detailliert sein, die fachliche Rohbasis nicht.
+
+Beispiel:
+
+UI zeigt CHF 123’457
+
+Excel enthält als echte Zahl 123456.72
+
+Das ist zulässig, sofern UI bewusst auf ganze CHF formatiert und keine weitere Berechnung mit dem angezeigten Wert erfolgt.
+
+Nicht zulässig:
+
+UI-Rohwert 123456.72
+
+Export-Rohwert 123457.00
+
+aufgrund unterschiedlicher Berechnungswege.
+
+==================================================
+T006 – Excel- und PDF-Regeln
+==================================================
+
+Excel:
+
+- echte numerische Zellen verwenden
+- keine bereits formatierten CHF-Strings als Zahlenbasis
+- Prozentwerte als korrekte Excel-Prozentwerte speichern
+- Rundung über Zellformat, sofern fachlich kein gerundeter Wert gespeichert werden muss
+
+PDF:
+
+- aus demselben numerischen View-/Exportmodell wie UI und Excel
+- nur für die Darstellung formatieren
+- keine eigene Summierung gerundeter Textwerte
+
+CSV:
+
+- numerische Exportwerte nach bestehender Buchhaltungsanforderung
+- fachlich notwendige Rappen-Rundung zentral und konsistent
+- keine Ableitung aus UI-Strings
+
+==================================================
+T007 – Differenzen und Ampeln
+==================================================
+
+Prüfe, ob Ampeln oder Statuswerte vor oder nach Rundung berechnet werden.
+
+Regel:
+
+- Schwellen grundsätzlich auf der fachlichen Rohzahl prüfen
+- Anzeige danach runden
+- keine grüne Anzeige bei fachlich überschrittener Grenze nur wegen Anzeige-Rundung
+
+Beispiele:
+
+- Differenz CHF 0.054 darf bei Schwelle CHF 0.05 nicht durch Anzeige 0.05 als grün gelten
+- Quote 35.04 % darf nicht allein durch Anzeige 35.0 % eine falsche Benchmark-Ampel erhalten
+
+Bestehende fachliche Toleranzen unverändert lassen.
+
+==================================================
+T008 – Regressionstests
+==================================================
+
+Ergänze fokussierte Tests mindestens für:
+
+1. Zwölf Monatswerte mit Dezimalanteilen:
+   - keine kumulierte Rundungsabweichung
+   - Jahressumme fachlich korrekt
+
+2. Prozent-vom-Umsatz-Budget:
+   - Monatswerte und Jahressumme nachvollziehbar
+   - UI und Export gleiche Rohbasis
+
+3. Personalquote:
+   - aus ungerundeten Beträgen
+   - Anzeige korrekt gerundet
+
+4. Veränderung in Prozentpunkten:
+   - Differenz vor Rundung berechnet
+
+5. EBIT-Marge:
+   - UI, Bankenbericht und Export identisch
+
+6. Drilldown:
+   - Summe entspricht übergeordneter Kennzahl innerhalb der definierten fachlichen Genauigkeit
+   - keine versteckte Rundungsdifferenz
+
+7. Excel:
+   - echte Zahlen
+   - korrekte Prozentwerte
+   - keine String-Rückberechnung
+
+8. PDF:
+   - dieselbe Rohbasis wie UI
+
+9. Stunden:
+   - mehrere Schichten mit Pausen
+   - Tages-, Wochen- und Monatssumme ohne kumulierte Rundungsabweichung
+
+10. Fehlende Werte:
+   - bleiben null/„—“
+   - werden nicht zu 0 gerundet
+
+11. Ampelschwellen:
+   - Rohwert entscheidet, nicht der gerundete Anzeigewert
+
+12. de-CH-Formatierung:
+   - Formatänderung beeinflusst nie die Berechnungsbasis
+
+==================================================
+T009 – Bestehendes Verhalten schützen
+==================================================
+
+Vor Änderungen relevante bestehende Werte mit Fixtures festhalten.
+
+Falls sich sichtbare Zahlen verändern:
+
+- exakt dokumentieren, warum
+- belegen, dass die bisherige Zahl durch inkonsistente Rundung entstand
+- sicherstellen, dass keine fachliche Formel unbeabsichtigt geändert wurde
+
+Keine grossflächige Änderung nur zur mathematischen Eleganz.
+
+Nur bestätigte Inkonsistenzen beheben.
+
+==================================================
+T010 – Verifikation
+==================================================
+
+Führe aus:
+
+- neue Rundungstests
+- betroffene P&L- und Budgettests
+- Mehrjahres- und Bankenberichtstests
+- Exporttests für Excel/PDF/CSV
+- Dienstplan-/Stundentests, soweit betroffen
+- projektspezifischen TypeScript-Typecheck
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+Führe zusätzlich eine projektweite Suche durch und bestätige:
+
+- keine fachliche Berechnung verwendet formatierte Strings
+- keine unnötige Rundung vor Summierung
+- UI und Exporte konsumieren dieselben Rohwerte
+- null bleibt null
+
+==================================================
+T011 – Dokumentation
+==================================================
+
+Aktualisiere replit.md kompakt:
+
+- intern wird mit präzisen numerischen Werten gerechnet
+- Rundung erfolgt an zentral definierten fachlichen Grenzen oder bei der Anzeige
+- Quoten und Prozentpunkt-Veränderungen werden vor Anzeige-Rundung berechnet
+- UI, Drilldown und Exporte verwenden dieselbe Rohbasis
+- fehlend bleibt fehlend
+
+Keine Testzahlen.
+Kein Entwicklungsprotokoll.
+
+==================================================
+Abschlussbericht
+==================================================
+
+Am Ende ausgeben:
+
+1. Welche unterschiedlichen Rundungsregeln gefunden wurden.
+2. Welche davon bewusst fachlich verschieden bleiben.
+3. Welche Inkonsistenzen behoben wurden.
+4. Ob und warum sich sichtbare Werte verändert haben.
+5. Neue zentrale Rundungsregeln.
+6. Ergebnis Monats- versus Jahressumme.
+7. Ergebnis UI = Drilldown = Export.
+8. Ergebnis bei Quoten und Prozentpunkten.
+9. Ergebnis bei Stunden und Personalkosten.
+10. Typecheck-Ergebnis.
+11. Architect-Review-Ergebnis.
+12. Tatsächlich geänderte Dateien.
+
+WICHTIG:
+
+Keine Kennzahl darf allein wegen unterschiedlicher Rundungszeitpunkte in UI, Drilldown oder Export einen anderen fachlichen Wert zeigen.
