@@ -1,0 +1,195 @@
+Setze jetzt die nächste UX-Runde um: Executive Cockpit.
+
+Ziel
+
+Die Startseite wird zum zentralen Management-Cockpit.
+
+Der Geschäftsführer soll morgens nur noch diese Seite öffnen müssen.
+
+Keine neue Berechnungslogik.
+
+Keine neue Datenquelle.
+
+Keine neue Persistenz.
+
+Nur bestehende Kennzahlen und SSoT-Quellen verwenden.
+
+────────────────────────
+
+1. Executive Dashboard
+
+Die Startseite erhält fünf klar getrennte Bereiche:
+
+• Heute
+• Diese Woche
+• Dieser Monat
+• Risiken
+• Aktionen
+
+Keine langen Tabellen.
+
+────────────────────────
+
+2. Finanzblock
+
+Immer oben:
+
+• Umsatz
+• Warenquote
+• Personalquote
+• EBITDA
+• EBIT
+
+IST
+Budget
+Vorjahr
+Abweichung
+
+Alle Werte ausschliesslich aus der Financial Metrics Registry.
+
+────────────────────────
+
+3. Operativer Block
+
+Darunter:
+
+• Reservationen
+• Gäste
+• Tagesabschluss
+• Importstatus
+• Dienstplan
+• Personalkosten heute
+• offene Aufgaben
+
+Keine neue Berechnung.
+
+────────────────────────
+
+4. Warncenter
+
+Eine kompakte Liste:
+
+🔴 Kritisch
+
+🟠 Aufmerksamkeit
+
+🟢 Alles OK
+
+Beispiele:
+
+• Import fehlt
+• Tagesabschluss offen
+• Warenquote zu hoch
+• Personalquote zu hoch
+• Budgetabweichung
+• offene Reservationsimporte
+
+Nur bestehende Regeln verwenden.
+
+────────────────────────
+
+5. KPI-Klick
+
+Jede Kennzahl öffnet den passenden Drilldown:
+
+Umsatz → Erfolgsrechnung
+
+Warenquote → Erfolgsrechnung
+
+Personalquote → Personalcontrolling
+
+Reservationen → Reservationsanalyse
+
+Produkte → Produktanalyse
+
+Tagesabschluss → Tagesabschlüsse
+
+Import → Importcenter
+
+Keine neuen Dialoge.
+
+────────────────────────
+
+6. Design
+
+Sehr kompakt.
+
+Keine grossen leeren Flächen.
+
+Keine doppelten KPI-Karten.
+
+Desktop:
+
+alles Wesentliche ohne Scrollen sichtbar.
+
+Tablet und Mobile entsprechend reduziert.
+
+────────────────────────
+
+7. Tests
+
+Ergänze Tests für:
+
+• Registry bleibt Quelle
+
+• Klick öffnet richtigen Bereich
+
+• Warnungen korrekt
+
+• Tenantwechsel
+
+• Rollen
+
+• Read never writes
+
+• Mobile
+
+• Desktop
+
+────────────────────────
+
+8. Verifikation
+
+Sequenzielle Tests
+
+TypeScript
+
+Runtime
+
+Desktop
+
+Tablet
+
+Mobile
+
+Oliv
+
+Beaulieu
+
+Architect Review
+
+────────────────────────
+
+9. Abschlussbericht
+
+Dokumentiere:
+
+• neue Dashboard-Struktur
+
+• verwendete SSoT-Quellen
+
+• neue Drilldowns
+
+• Warncenter
+
+• Tests
+
+• Runtime
+
+• Architect Review
+
+Keinen Commit durchführen.
+
+Keine fremden Änderungen zurücksetzen.
+
+Keine neue Berechnungslogik einführen.

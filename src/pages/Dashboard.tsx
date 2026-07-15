@@ -43,7 +43,6 @@ import {
 import { Employee, grossToNet } from '@/types/personnel';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
-import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { socialCostFactorFromRates } from '@/lib/social-costs';
 import { useStichtag } from '@/contexts/StichtagContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
@@ -55,35 +54,18 @@ import { useStartOverview } from '@/hooks/useStartOverview';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
-import { kvGet } from '@/lib/supabase-kv';
 import { computeMonthlyIstNet } from '@/lib/revenue-sync';
-import { buildFinancialMetricInput } from '@/lib/financial-metrics-input';
-import { loadVjDailyYear, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { useFinancialMonthInput } from '@/hooks/useFinancialMonthInput';
+import {
+  calcDayHours,
+  calcDayHoursForEmployees,
+  calcPlannedCostForDay,
+  agHourlyRate,
+  agMonthlySalary,
+  sumDailyRevenue,
+} from '@/lib/operational-day';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
-
-function parseTimeToHours(time: string): number {
-  const [h, m] = time.split(':').map(Number);
-  return h + m / 60;
-}
-
-function shiftHours(start: string, end: string): number {
-  const s = parseTimeToHours(start);
-  let e = parseTimeToHours(end);
-  if (e < s) e += 24;
-  return Math.max(0, e - s);
-}
-
-function calcDayHours(schedule: DaySchedule): number {
-  let total = 0;
-  if (schedule.früh && !schedule.frühAbsence) {
-    total += shiftHours(schedule.früh.start, schedule.früh.end);
-  }
-  if (schedule.spät && !schedule.spätAbsence) {
-    total += shiftHours(schedule.spät.start, schedule.spät.end);
-  }
-  return total;
-}
 
 function formatCHF(value: number, decimals = 0): string {
   return new Intl.NumberFormat('de-CH', {
@@ -441,55 +423,21 @@ const Dashboard = () => {
   const currentYear  = referenceDate.getFullYear();
   const currentMonth = referenceDate.getMonth() + 1;
 
-  // ── Monatliches Take-Away (Kto. 3010 Netto) – für Umsatz-Korrektur ──────────
-  // Wird unabhängig von der gewählten Periode geladen, damit die monatlichen
-  // Finanzkarten (Registry) und revenueMonthB in allen Perioden identisch sind.
-  const [monthlyTakeaway, setMonthlyTakeaway] = useState(0);
-  useEffect(() => {
-    const mm = String(currentMonth).padStart(2, '0');
-    kvGet(tenantKey(`takeaway-monthly-${currentYear}`)).then(raw => {
-      const val = (raw as Record<string, number> | null)?.[`${currentYear}-${mm}`] ?? 0;
-      setMonthlyTakeaway(val);
-    }).catch(() => {});
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentYear, currentMonth, tenantId]);
-
   const laborCostThreshold = resolveZielwert(currentYear, currentMonth).targetPercent;
   const budgetData   = useBudgetMonth(currentYear, currentMonth);
 
-  // ── VJ-Tagesumsätze (Vorjahr) — für die VJ-Spalte der Finanzkarten ──────────
-  // Identische Quelle wie die Erfolgsrechnung (applyVjRevenueRule im Builder).
-  const [vjDailyData, setVjDailyData] = useState<Record<string, VjDayRecord>>({});
-  useEffect(() => {
-    let alive = true;
-    loadVjDailyYear(currentYear - 1, tenantId)
-      .then(data => { if (alive) setVjDailyData(data); })
-      .catch(() => { if (alive) setVjDailyData({}); });
-    return () => { alive = false; };
-  }, [currentYear, tenantId]);
-
-  // ── Financial Metrics Registry (Monat) ──────────────────────────────────────
+  // ── Financial Metrics Registry (Monat) — gemeinsames Wiring (Hook) ──────────
   // Finanzkarten kommen aus der Erfolgsrechnung: IST = P&L-Engine, PLAN =
   // Budget-Spalte, VORJAHR = P&L des Vorjahres — EIN computePLForMonth,
   // immer NETTO, Quoten aus Rohwerten (Nenner fehlt/0 ⇒ null). Rein lesend.
-  const financialInput = useMemo(() => {
-    try {
-      return buildFinancialMetricInput(currentYear, currentMonth, {
-        reportingStoreKey: tenantKey('reporting_v1'),
-        budgetStoreKey:    tenantKey('budget_v1'),
-        dailyBudgets,
-        vjDaily:           vjDailyData,
-        maisonDaily:       maisonOn && !maisonExclude ? maisonDaily : undefined,
-        takeawayMonthly:   monthlyTakeaway > 0
-          ? { [`${currentYear}-${String(currentMonth).padStart(2, '0')}`]: monthlyTakeaway }
-          : undefined,
-      });
-    } catch (e) {
-      console.error('[FINANZKARTEN] Registry-Input fehlgeschlagen:', e);
-      return null;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentYear, currentMonth, dailyBudgets, vjDailyData, maisonOn, maisonExclude, maisonDaily, monthlyTakeaway, reportingTick, tenantId]);
+  // Take-Away-Monatswert + VJ-Tageswerte lädt der Hook (verbatim extrahiert).
+  const { financialInput, monthlyTakeaway } = useFinancialMonthInput(currentYear, currentMonth, {
+    dailyBudgets,
+    maisonDaily,
+    maisonOn,
+    maisonExclude,
+    reportingTick,
+  });
 
   // Die Registry-Werte/-Abweichungen (Umsatz/Personalkosten/Quoten IST/Budget/VJ)
   // konsumiert ausschliesslich die FinancialMonthSection — keine lokalen Ableitungen.
@@ -525,7 +473,7 @@ const Dashboard = () => {
 
   // ── Umsatz-Berechnungen ─────────────────────────────────────────────────────
   const sumRevenue = (days: string[], field: keyof DailyBudget) =>
-    days.reduce((s, d) => s + (dailyBudgets[d]?.[field] ?? 0), 0);
+    sumDailyRevenue(dailyBudgets, days, field);
 
   // Vorjahr-Umsatz: erst 'previousYearRevenue' des aktuellen Datums prüfen,
   // Fallback: 'actualRevenue' vom gleichen Tag im Vorjahr (z.B. 2025-02-15)
@@ -649,11 +597,11 @@ const Dashboard = () => {
   const monthDateSet = new Set(monthDays);
   const agFactor = useMemo(() => socialCostFactorFromRates(socialCostRates), [socialCostRates]);
   const agRate = useCallback(
-    (emp: Employee) => getEffectiveHourlyRate(emp, socialCostRates) ?? 0,
+    (emp: Employee) => agHourlyRate(emp, socialCostRates),
     [socialCostRates]
   );
   const agMonthly = useCallback(
-    (emp: Employee) => (emp.monthlySalaryWith13th ?? emp.monthlySalary ?? 0) * agFactor,
+    (emp: Employee) => agMonthlySalary(emp, agFactor),
     [agFactor]
   );
 
@@ -711,21 +659,7 @@ const Dashboard = () => {
   // Geplante/Ist-Stunden heute: null wenn keine Einträge existieren (nicht erfasst ≠ 0 h).
   const todayHours = useMemo(() => {
     if (!todayInLoadedMonth) return { planned: null as number | null, actual: null as number | null };
-    let planned: number | null = null;
-    let actual: number | null = null;
-    for (const [key, day] of Object.entries(scheduleData)) {
-      const date = key.slice(-10);
-      const empId = key.slice(0, key.length - 11);
-      if (date !== todayStr || !visibleIds.has(empId)) continue;
-      planned = (planned ?? 0) + calcDayHours(day);
-    }
-    for (const [key, e] of Object.entries(actualData)) {
-      const date = key.slice(-10);
-      const empId = key.slice(0, key.length - 11);
-      if (date !== todayStr || !visibleIds.has(empId)) continue;
-      actual = (actual ?? 0) + e.hours;
-    }
-    return { planned, actual };
+    return calcDayHoursForEmployees({ scheduleData, actualData, visibleIds, dateStr: todayStr });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todayInLoadedMonth, scheduleData, actualData, visibleIds, todayStr]);
 
@@ -733,21 +667,15 @@ const Dashboard = () => {
   // Tagesanteil der Fixlöhne (dieselbe AG-Kostenlogik wie die Monats-Memos).
   const plannedCostToday = useMemo(() => {
     if (!todayInLoadedMonth || todayHours.planned === null) return null;
-    return visibleEmployees.reduce((sum, emp) => {
-      if ((emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit') && emp.monthlySalary) {
-        return sum + agMonthly(emp) / daysInRefMonth;
-      }
-      const hrs = Object.entries(scheduleData)
-        .filter(([key]) => {
-          const date = key.slice(-10);
-          const empId = key.slice(0, key.length - 11);
-          return empId === emp.id && date === todayStr;
-        })
-        .reduce((s, [, day]) => s + calcDayHours(day), 0);
-      return sum + hrs * agRate(emp);
-    }, 0);
+    return calcPlannedCostForDay({
+      employees: visibleEmployees,
+      scheduleData,
+      dateStr: todayStr,
+      daysInMonth: daysInRefMonth,
+      rates: socialCostRates,
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [todayInLoadedMonth, todayHours.planned, visibleEmployees, scheduleData, agRate, agMonthly, daysInRefMonth, todayStr]);
+  }, [todayInLoadedMonth, todayHours.planned, visibleEmployees, scheduleData, socialCostRates, daysInRefMonth, todayStr]);
 
   // ── Absenzen-KPIs (admin only) ────────────────────────────────────────────
   const absenceData = useMemo(() => {
