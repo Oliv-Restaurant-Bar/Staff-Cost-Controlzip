@@ -1,0 +1,66 @@
+1. Mobile-E2E-Test anpassen:
+   • Für Oliv Juli 2026 den deaktivierten Export korrekt erwarten.
+   • Keinen Export erzwingen.
+   • Zusätzlich einen Monat mit vorhandenen Tagesabschlussdaten verwenden und dort prüfen, dass „Exportieren“ aktiv ist und den bestehenden Excel-Handler öffnet.
+
+2. Testkonto:
+   • Nur für die E2E-Verifikation temporär auf Admin setzen.
+   • Nach Abschluss wieder auf die restriktive Ausgangsrolle zurücksetzen.
+   • Keine Zugangsdaten in Tests, Logs oder Dokumentation speichern.
+
+3. Alle betroffenen Tests strikt sequenziell ausführen:
+   • UnifiedExportButton
+   • Tagesabschluss-Excel
+   • Reporting
+   • Erfolgsrechnung
+   • Mehrjahresanalyse
+   • Banken-/Investorenbericht
+   • PersonalFix
+   • Kennzahlen-Bericht
+   • Gäste-CRM
+   • CRM-Auswertung
+   • Rollen-/Tenant-Tests
+   • Read-never-writes
+
+4. Danach:
+   • LSP/TypeScript aller berührten Dateien
+   • projektweiter Typecheck gegen die bekannte Baseline, soweit möglich
+   • Runtime- und Browser-Logs
+   • Desktop-, Tablet- und Mobile-Prüfung
+   • Oliv und Beaulieu
+   • PDF-, Excel- und CSV-Einstiege
+   • dialogbasierte Exporte
+   • Tenant- und Zeitraumwechsel
+
+5. Architect-Review ausschliesslich über den tatsächlichen Export-Diff.
+
+Besonders prüfen:
+• bestehende Export-Builder und Handler unverändert
+• keine neue Export-Engine
+• keine zusätzliche Disabled-Logik
+• kein doppelter Export
+• kein Kontextverlust
+• keine Tenant-Leaks
+• keine alten Einzelbuttons übrig
+• Buchhaltungs-Export unverändert
+• Seiten ohne bisherigen Export weiterhin ohne Export
+• keine Formel-, Rundungs- oder Persistenzänderung
+
+6. Alle Review-Befunde innerhalb dieses Tasks beheben.
+
+7. Danach den Abschlussbericht erstellen mit:
+   • gemeinsamer Komponente
+   • migrierten Seiten
+   • Formaten je Seite
+   • weiterverwendeten Dialogen
+   • Disabled-/Loading-Verhalten
+   • Testergebnissen
+   • Typecheck
+   • Runtime/E2E
+   • Architect-Review
+   • geänderten Dateien
+   • sichtbaren Änderungen
+   • bewusst unveränderten Exportprozessen
+
+Keinen Commit vor vollständigem Abschluss.
+Keine fremden Änderungen zurücksetzen.

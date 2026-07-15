@@ -48,11 +48,13 @@ function renderPage() {
 }
 
 describe('KennzahlenBerichtPage (Design-System-Pilot)', () => {
-  it('rendert sticky PageHeader mit Titel, Info-Tip und PDF-Aktion', async () => {
+  it('rendert sticky PageHeader mit Titel, Info-Tip und Export-Aktion', async () => {
     const { container } = renderPage();
     expect(screen.getByRole('heading', { name: 'Kennzahlen Bericht' })).toBeTruthy();
     expect(screen.getByLabelText('Info')).toBeTruthy();
-    expect(screen.getByText('PDF exportieren')).toBeTruthy();
+    // Einheitlicher Export-Einstieg (UnifiedExportButton) statt Einzelbutton «PDF exportieren».
+    expect(screen.getByTestId('kb-export')).toBeTruthy();
+    expect(screen.getByText('Exportieren')).toBeTruthy();
 
     const header = container.querySelector('header');
     expect(header?.className).toContain('sticky');
