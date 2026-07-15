@@ -316,7 +316,7 @@ function aggregateManagementDashboard(rows: ProductSalesRow[]): ManagementDashbo
   };
 }
 
-function aggregateCategoryKpis(rows: ProductSalesRow[]): CategoryKpi[] {
+export function aggregateCategoryKpis(rows: ProductSalesRow[]): CategoryKpi[] {
   const map = new Map<string, CategoryKpi>();
   const prodPerSource = new Map<string, Set<string>>();
   for (const r of rows) {

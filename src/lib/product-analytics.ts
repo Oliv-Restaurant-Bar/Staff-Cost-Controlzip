@@ -24,16 +24,17 @@ import type { ProductSalesRow } from './sales-db';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
-export type PeriodKind = 'day' | 'week' | 'month' | 'year';
+export type PeriodKind = 'day' | 'week' | 'month' | 'year' | 'range';
 export type CategoryFilter = 'all' | 'food' | 'beverage';
 export type Metric = 'revenue' | 'qty';
 
-/** Discriminated union — erweiterbar (range/comparison) ohne Bruch. */
+/** Discriminated union — erweiterbar (comparison) ohne Bruch. */
 export type PeriodSelection =
   | { kind: 'day'; date: string }                  // date = YYYY-MM-DD
   | { kind: 'week'; year: number; week: number }   // ISO-Jahr + ISO-Kalenderwoche
   | { kind: 'month'; year: number; month: number } // month = 1..12
-  | { kind: 'year'; year: number };
+  | { kind: 'year'; year: number }
+  | { kind: 'range'; from: string; to: string };   // inklusive, YYYY-MM-DD
 
 export interface AnalysisFilters {
   period: PeriodSelection;
@@ -112,6 +113,7 @@ export const PERIOD_KIND_LABEL: Record<PeriodKind, string> = {
   week: 'Woche',
   month: 'Monat',
   year: 'Jahr',
+  range: 'Von–Bis',
 };
 
 export const MONTH_NAMES = [
@@ -244,6 +246,11 @@ export function periodBounds(sel: PeriodSelection): { from: string; to: string }
       sunday.setUTCDate(monday.getUTCDate() + 6);
       return { from: toISO(monday), to: toISO(sunday) };
     }
+    case 'range':
+      // Normalisiert: from <= to, auch wenn verkehrt herum übergeben.
+      return sel.from <= sel.to
+        ? { from: sel.from, to: sel.to }
+        : { from: sel.to, to: sel.from };
   }
 }
 
@@ -261,6 +268,10 @@ export function periodLabel(sel: PeriodSelection): string {
       return `${MONTH_NAMES[sel.month - 1]} ${sel.year}`;
     case 'year':
       return String(sel.year);
+    case 'range': {
+      const { from, to } = periodBounds(sel);
+      return `${formatDayLabel(from)} – ${formatDayLabel(to)}`;
+    }
   }
 }
 
@@ -415,6 +426,29 @@ function monthDayBuckets(
   return out;
 }
 
+/**
+ * Von–Bis-Bereich: eine Zeile pro Tag (inkl. Null-Tage).
+ * Sicherheitsgrenze 1000 Tage gegen absurde URL-Eingaben.
+ */
+function rangeDayBuckets(
+  scoped: ProductSalesRow[], from: string, to: string, denom: number, metric: Metric,
+): BreakdownRow[] {
+  const byDate = aggregateByDate(scoped);
+  const out: BreakdownRow[] = [];
+  const end = parseISO(to).getTime();
+  const cursor = parseISO(from);
+  while (cursor.getTime() <= end && out.length < 1000) {
+    const dateStr = toISO(cursor);
+    const a = byDate.get(dateStr) ?? { qty: 0, rev: 0 };
+    out.push(mkRow(dateStr, formatDayLabel(dateStr), a.qty, a.rev, denom, metric, {
+      date: dateStr,
+      subLabel: WEEKDAY_SHORT[weekdayIndexMonday(dateStr)],
+    }));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
 function weekdayBuckets(
   scoped: ProductSalesRow[], year: number, week: number, denom: number, metric: Metric,
 ): BreakdownRow[] {
@@ -510,6 +544,11 @@ export function buildBreakdown(
     case 'day':
       breakdownRows = dayEntryBuckets(scoped, denom, metric);
       break;
+    case 'range': {
+      const { from, to } = periodBounds(sel);
+      breakdownRows = rangeDayBuckets(scoped, from, to, denom, metric);
+      break;
+    }
   }
 
   return {
@@ -528,7 +567,7 @@ export function buildBreakdown(
 // ─── URL-Serialisierung (gemeinsam Rangliste ↔ Detailseite) ─────────────────────
 
 function isPeriodKind(v: string | null): v is PeriodKind {
-  return v === 'day' || v === 'week' || v === 'month' || v === 'year';
+  return v === 'day' || v === 'week' || v === 'month' || v === 'year' || v === 'range';
 }
 function isCategory(v: string | null): v is CategoryFilter {
   return v === 'all' || v === 'food' || v === 'beverage';
@@ -558,6 +597,10 @@ export function filtersToParams(f: AnalysisFilters): Record<string, string> {
       break;
     case 'year':
       p.year = String(f.period.year);
+      break;
+    case 'range':
+      p.from = f.period.from;
+      p.to = f.period.to;
       break;
   }
   return p;
@@ -603,6 +646,19 @@ export function filtersFromParams(
     case 'year':
       period = { kind: 'year', year: Number.isFinite(yearN) && yearN > 0 ? yearN : curYear };
       break;
+    case 'range': {
+      const fromRaw = get('from');
+      const toRaw = get('to');
+      if (isValidISODate(fromRaw) && isValidISODate(toRaw)) {
+        period = fromRaw <= toRaw
+          ? { kind: 'range', from: fromRaw, to: toRaw }
+          : { kind: 'range', from: toRaw, to: fromRaw };
+      } else {
+        // Unvollständiger/ungültiger Bereich → robuster Monats-Default
+        period = { kind: 'month', year: curYear, month: curMonth };
+      }
+      break;
+    }
     default:
       period = {
         kind: 'month',

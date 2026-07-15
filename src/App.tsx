@@ -48,15 +48,12 @@ import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
 import ArtikelPage from "./pages/Artikel";
 import WesAnalysePage from "./pages/WesAnalyse";
-import LunchAnalysePage from "./pages/LunchAnalyse";
-import TakeAwayAnalysePage from "./pages/TakeAwayAnalyse";
 import ArtikelTrackingPage from "./pages/ArtikelTracking";
 import GuestAccess from "./pages/GuestAccess";
 import VerkaufsDashboard from "./pages/VerkaufsDashboard";
 import SalesUpload from "./pages/SalesUpload";
 import ProduktAnalyse from "./pages/ProduktAnalyse";
 import ProduktDetail from "./pages/ProduktDetail";
-import KategorienAnalyse from "./pages/KategorienAnalyse";
 import ProduktStamm from "./pages/ProduktStamm";
 import TagesansichtPage from "./pages/TagesansichtPage";
 import TagesControllingPage from "./pages/TagesControllingPage";
@@ -370,8 +367,9 @@ const AppContent = () => {
             <Route path="/wes-analyse"
               element={<WesAnalysePage />}
             />
-            <Route path="/lunch-analyse"    element={<LunchAnalysePage />} />
-            <Route path="/takeaway-analyse" element={<TakeAwayAnalysePage />} />
+            {/* Konsolidiert in die Produktanalyse — alte Routen als Redirect auf den Tab */}
+            <Route path="/lunch-analyse"    element={<Navigate to="/produkt-analyse?tab=lunch" replace />} />
+            <Route path="/takeaway-analyse" element={<Navigate to="/produkt-analyse?tab=takeaway" replace />} />
             <Route path="/absenzen"         element={<AbsenzKostenPage />} />
 
             {/* Verkaufsdaten & Produktanalyse */}
@@ -394,7 +392,7 @@ const AppContent = () => {
             />
             <Route path="/produkt-analyse"   element={<ProduktAnalyse />} />
             <Route path="/produkt-analyse/produkt" element={<ProduktDetail />} />
-            <Route path="/kategorien"        element={<KategorienAnalyse />} />
+            <Route path="/kategorien"        element={<Navigate to="/produkt-analyse?tab=kategorien" replace />} />
             <Route path="/produkt-stamm"
               element={<ProduktStamm />}
             />

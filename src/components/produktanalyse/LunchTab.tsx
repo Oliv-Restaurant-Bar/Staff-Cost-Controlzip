@@ -1,6 +1,6 @@
 /**
- * Lunch-WES-Analyse – Mittagsmenu Kostenvergleich
- * =================================================
+ * LunchTab – Lunch-WES-Analyse (Tab der konsolidierten Produktanalyse)
+ * =====================================================================
  * Vergleicht geplante vs. tatsächliche Warenkosten für Lunch/Mittagsmenu.
  *
  * Soll-WES  = Verkaufte Portionen × Pauschalkosten (aus Produktkalkulation)
@@ -8,6 +8,9 @@
  *
  * Produkte werden über den Lunch-Pool in der Rezeptur zugeordnet.
  * Einkäufe werden über die Kostenzuordnung im Lieferantenbeleg zugeordnet.
+ *
+ * Periode (Jahr/Monat) kommt als Props aus der gemeinsamen Filterleiste des
+ * Containers; das Rollen-Gating übernimmt der Container zentral.
  */
 
 import { useState, useEffect, useMemo } from 'react';
@@ -15,9 +18,6 @@ import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -27,9 +27,8 @@ import {
   BarChart2, ArrowRight, Sparkles, ShieldCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { usePermissions } from '@/hooks/usePermissions';
 import {
-  getAllocationTotals, availableYears,
+  getAllocationTotals,
   getLunchDocumentsForMonth, getDocumentAllocationAmount,
   type AllocationTotals,
 } from '@/lib/supplier-documents-store';
@@ -305,21 +304,13 @@ function HelpSection() {
 
 // ─── Hauptseite ───────────────────────────────────────────────────────────────
 
-export default function LunchAnalysePage() {
-  const { canAccessModule } = usePermissions();
-
-  const currentDate = new Date();
-  const [year,  setYear]  = useState(currentDate.getFullYear());
-  const [month, setMonth] = useState(currentDate.getMonth() + 1);
-
+export default function LunchTab({ year, month }: { year: number; month: number }) {
   const [recipes,   setRecipes]   = useState<RezepturenMap>({});
   const [prodData,  setProdData]  = useState<ProdukteData | null>(null);
   const [costs,     setCosts]     = useState<ProductCostEntry[]>([]);
   const [alloc,     setAlloc]     = useState<AllocationTotals | null>(null);
   const [lunchDocs, setLunchDocs] = useState<SupplierDocument[]>([]);
   const [loading,   setLoading]   = useState(true);
-
-  const years = availableYears();
 
   useEffect(() => {
     setLoading(true);
@@ -539,53 +530,8 @@ export default function LunchAnalysePage() {
     return allocatable > 0 && (alloc.unassigned / allocatable) > 0.20;
   }, [alloc]);
 
-  if (!canAccessModule('dashboard')) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <p className="text-muted-foreground text-sm">Kein Zugriff auf diese Seite.</p>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6 p-6">
-
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Utensils className="h-6 w-6 text-orange-600" />
-            Lunch-WES-Analyse
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Geplanter vs. tatsächlicher Wareneinsatz Mittagsmenu
-          </p>
-        </div>
-
-        {/* Monats-Wähler */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-            <SelectTrigger className="w-24 h-8 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {years.map(y => (
-                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
-            <SelectTrigger className="w-36 h-8 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MONTHS.map((m, i) => (
-                <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+    <div className="space-y-5" data-testid="tab-panel-lunch">
 
       {/* Hilfe */}
       <HelpSection />

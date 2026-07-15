@@ -182,7 +182,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/produkt-analyse',
-        label: 'Produkteanalyse',
+        label: 'Produktanalyse',
         shortLabel: 'Produkte',
         icon: BarChart3,
         adminOnly: true,

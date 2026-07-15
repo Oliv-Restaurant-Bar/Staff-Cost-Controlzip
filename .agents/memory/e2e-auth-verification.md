@@ -13,6 +13,7 @@ description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Tes
 - Gast-Zugang ist rein CLIENT-seitig: Token `{exp, hash}` = base64-JSON, hash = sha256 des frei wählbaren Passworts → `/gast?t=…` ohne Server-Secret generierbar. Aber: Gäste sehen keine `isAdmin && !isGuest`-Flächen (Import-Center-Adminblöcke etc.) — für Admin-UX unbrauchbar.
 
 **Stolperfallen:**
+- Test-Konto kann nach Anlage `kueche_manager` statt admin sein (Self-Upsert-Default) — VOR Tests auf Admin-Flächen die Rolle per `get_my_role` verifizieren, sonst wird ein korrektes Rollen-Gate (z. B. /produkte → /personal) als Regression fehlgedeutet.
 - `.env`-Werte sind QUOTED — beim Parsen im Sandbox-Script Anführungszeichen strippen, sonst „Invalid supabaseUrl".
 - `runTest` gab `screenshotPaths: []` zurück (Screenshots nicht persistiert) — visuelle Beurteilung steckt nur im Text-Report des Agents.
 - Import-Center-Sektionen sind standardmässig ZUGEKLAPPT — der Testagent findet innere Buttons nicht. Lösung: Deep-Link mit URL-Hash `/import#<sektions-id>` (klappt automatisch auf) in den Testplan schreiben, plus Fallback «Sektions-Karte anklicken».

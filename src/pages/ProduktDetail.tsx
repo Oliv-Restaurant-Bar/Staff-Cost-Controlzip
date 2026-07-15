@@ -59,6 +59,7 @@ const FIRST_COL_LABEL: Record<PeriodKind, string> = {
   week: 'Wochentag',
   month: 'Tag',
   year: 'Monat',
+  range: 'Tag', // Von–Bis: eine Zeile pro Tag (rangeDayBuckets)
 };
 
 // ─── Komponente ─────────────────────────────────────────────────────────────────

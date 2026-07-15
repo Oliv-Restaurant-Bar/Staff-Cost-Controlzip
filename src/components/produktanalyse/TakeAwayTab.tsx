@@ -1,6 +1,6 @@
 /**
- * Take-Away-WES-Analyse (erweitert)
- * ===================================
+ * TakeAwayTab – Take-Away-WES-Analyse (Tab der konsolidierten Produktanalyse)
+ * ===========================================================================
  * Vergleicht geplante vs. tatsächliche Warenkosten für den Take-Away-Kanal.
  *
  * Soll-WES  = Verkaufte Portionen × Plankosten (aus Produktkalkulation)
@@ -13,15 +13,15 @@
  *
  * Produkte: Vertriebskanal «Take Away» in der Rezeptur.
  * Farb-Ampel: grün ≤28%, amber 28–35%, rot >35% (WES-Systemschwellen).
+ *
+ * Periode (Jahr/Monat) kommt als Props aus der gemeinsamen Filterleiste des
+ * Containers; das Rollen-Gating übernimmt der Container zentral.
  */
 
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -31,9 +31,8 @@ import {
   BarChart2, ArrowRight, Sparkles, ShieldCheck, Utensils, Coffee,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { usePermissions } from '@/hooks/usePermissions';
 import {
-  getAllocationTotals, availableYears,
+  getAllocationTotals,
   getTakeAwayDocumentsForMonth, getDocumentAllocationAmount,
 } from '@/lib/supplier-documents-store';
 import { type SupplierDocument } from '@/types/supplier-documents';
@@ -324,17 +323,7 @@ function HelpSection() {
 
 // ─── Hauptkomponente ──────────────────────────────────────────────────────────
 
-export default function TakeAwayAnalysePage() {
-  const { isAdmin } = usePermissions();
-  void isAdmin;
-
-  const now       = new Date();
-  const thisYear  = now.getFullYear();
-  const thisMonth = now.getMonth() + 1;
-  const years     = availableYears();
-
-  const [year,  setYear]  = useState(thisYear);
-  const [month, setMonth] = useState(thisMonth);
+export default function TakeAwayTab({ year, month }: { year: number; month: number }) {
   const [productGroupMode, setProductGroupMode] = useState<'account' | 'category'>('account');
 
   const [rezepturen,   setRezepturen]   = useState<RezepturenMap>({});
@@ -532,44 +521,7 @@ export default function TakeAwayAnalysePage() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6 p-4 md:p-6 max-w-5xl mx-auto">
-
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <ShoppingBag className="h-6 w-6 text-teal-600" />
-            Take-Away-Analyse
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Warenkosten-Vergleich (Soll / Ist) für den Take-Away-Kanal.
-            Drei Kostenpools: Speisen, Getränke, Allgemein.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <Select value={String(month)} onValueChange={v => setMonth(Number(v))}>
-            <SelectTrigger className="w-[130px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MONTHS.map((m, i) => (
-                <SelectItem key={i + 1} value={String(i + 1)} className="text-xs">{m}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-            <SelectTrigger className="w-[80px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {years.map(y => (
-                <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
+    <div className="space-y-5" data-testid="tab-panel-takeaway">
 
       {/* Hilfe */}
       <HelpSection />
