@@ -24,7 +24,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useStartOverview } from '@/hooks/useStartOverview';
+import { useStartOverview, type StartOverviewState } from '@/hooks/useStartOverview';
 
 interface QuickAction {
   label: string;
@@ -41,10 +41,21 @@ const QUICK_ACTIONS: QuickAction[] = [
   { label: 'Reservationen öffnen', route: '/gaeste', icon: Contact, hiddenForGuest: true },
 ];
 
+/**
+ * Eigenständige Variante mit eigenem Lade-Hook (bestehende Verwendungen).
+ * Auf dem Dashboard stattdessen `HeuteWichtigBannerView` mit dem EINEN
+ * gemeinsamen useStartOverview-State verwenden (kein Doppel-Fetch).
+ */
 export function HeuteWichtigBanner() {
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { state } = useStartOverview(isAdmin);
+  return <HeuteWichtigBannerView state={state} />;
+}
+
+/** Reine Darstellung — der Overview-State kommt vom Aufrufer (EIN Fetch pro Seite). */
+export function HeuteWichtigBannerView({ state }: { state: StartOverviewState }) {
+  const { isAdmin } = usePermissions();
+  const { isGuest } = useGuestSession();
 
   // Nur für Admins (inkl. Gast-Lesezugriff) — Manager sehen das Dashboard ohne Banner.
   if (!isAdmin) return null;

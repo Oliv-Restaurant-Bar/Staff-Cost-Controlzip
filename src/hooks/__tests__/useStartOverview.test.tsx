@@ -11,12 +11,14 @@ import { renderHook, waitFor } from '@testing-library/react';
 
 const tenantKey = (key: string) => `b_${key}`;
 const mockTenant = { tenantId: 'beaulieu', tenantKey };
+// Mutabel, damit der Stale-Guard-Test einen Tenant-Wechsel simulieren kann.
+let currentTenant: { tenantId: string; tenantKey: (k: string) => string } = mockTenant;
 
 const fetchCockpitSignals = vi.fn();
 const fetchMonthCoverage = vi.fn();
 
 vi.mock('@/contexts/TenantContext', () => ({
-  useTenant: () => mockTenant,
+  useTenant: () => currentTenant,
 }));
 vi.mock('@/lib/import-cockpit-db', () => ({
   fetchCockpitSignals: (...args: unknown[]) => fetchCockpitSignals(...args),
@@ -36,6 +38,7 @@ const SIGNALS = {
 beforeEach(() => {
   fetchCockpitSignals.mockReset().mockResolvedValue(SIGNALS);
   fetchMonthCoverage.mockReset().mockResolvedValue({});
+  currentTenant = mockTenant;
   localStorage.clear();
 });
 
@@ -104,5 +107,30 @@ describe('useStartOverview', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchCockpitSignals).not.toHaveBeenCalled();
     expect(fetchMonthCoverage).not.toHaveBeenCalled();
+  });
+
+  it('Stale-Guard: nach Tenant-Wechsel überschreibt ein veralteter Request den Zustand NICHT', async () => {
+    // Erster Request (oliv) bleibt hängen und scheitert erst später.
+    let rejectOld: ((e: Error) => void) | null = null;
+    fetchCockpitSignals.mockImplementationOnce(
+      () => new Promise((_resolve, reject) => { rejectOld = reject; }),
+    );
+    currentTenant = { tenantId: 'oliv', tenantKey: (k: string) => k };
+
+    const { result, rerender } = renderHook(() => useStartOverview(true));
+    expect(result.current.state.status).toBe('loading');
+
+    // Tenant-Wechsel → neue Generation, zweiter Fetch löst normal auf.
+    currentTenant = mockTenant;
+    rerender();
+    await waitFor(() => expect(result.current.state.status).toBe('ready'));
+
+    // Der ALTE Request scheitert verspätet — Zustand darf NICHT auf error kippen.
+    rejectOld!(new Error('veralteter Tenant-Request'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(result.current.state.status).toBe('ready');
+    const state = result.current.state;
+    if (state.status !== 'ready') throw new Error('unerwarteter Status');
+    expect(state.coverageError).toBeNull();
   });
 });

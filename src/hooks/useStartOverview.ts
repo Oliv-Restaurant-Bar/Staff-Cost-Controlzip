@@ -19,7 +19,7 @@
  * nur für Admins inkl. Gast-Lesezugriff — Gäste sehen nur PII-freie Aggregate).
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { useTenant } from '@/contexts/TenantContext';
 import { fetchCockpitSignals } from '@/lib/import-cockpit-db';
@@ -59,8 +59,13 @@ export function useStartOverview(enabled: boolean): {
 } {
   const { tenantId, tenantKey } = useTenant();
   const [state, setState] = useState<StartOverviewState>({ status: 'loading' });
+  // Stale-Guard: nach Tenant-/Userwechsel dürfen noch laufende alte Requests
+  // den neuen Zustand NICHT überschreiben (D007) — nur die jüngste Generation
+  // darf setState aufrufen.
+  const generation = useRef(0);
 
   const refresh = useCallback(async () => {
+    const gen = ++generation.current;
     setState({ status: 'loading' });
     const todayIso = format(new Date(), 'yyyy-MM-dd');
     try {
@@ -115,6 +120,7 @@ export function useStartOverview(enabled: boolean): {
             : 'Import-Aufgaben konnten nicht geladen werden.';
       }
 
+      if (gen !== generation.current) return; // veralteter Request → verwerfen
       setState({
         status: 'ready',
         data,
@@ -124,6 +130,7 @@ export function useStartOverview(enabled: boolean): {
         loadedAt: new Date(),
       });
     } catch (e) {
+      if (gen !== generation.current) return; // veralteter Request → verwerfen
       setState({
         status: 'error',
         message: e instanceof Error ? e.message : 'Unbekannter Fehler beim Laden der Übersicht.',

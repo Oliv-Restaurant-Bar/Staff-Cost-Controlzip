@@ -1,0 +1,341 @@
+Setze jetzt die nächste UX-Runde um: Dashboard vereinfachen und bestehende Logins, Rollen und Mandanten zuverlässig synchronisieren.
+
+Ziel
+
+Das Dashboard soll im Alltag schneller verständlich sein und finanzielle sowie operative Kennzahlen klar trennen.
+
+Gleichzeitig müssen alle bereits vorhandenen Benutzerkonten und Rollen nach dem Login zuverlässig den richtigen Mandanten, die richtigen Daten, Navigationen und Berechtigungen erhalten.
+
+Keine neuen Login-Systeme und keine neue Auth-Architektur bauen.
+
+Verbindliche Grundlagen
+
+Finanzielle Kennzahlen:
+• IST aus Financial Metrics Registry / Erfolgsrechnung
+• PLAN aus Budget
+• Vorjahr aus Vorjahres-P&L
+
+Operative Kennzahlen:
+• Tagesumsatz aus Z-Bericht beziehungsweise Tageserfassung
+• Stunden aus Mirus/Dienstplan
+• Reservationen aus Foratable
+• Warenkosten aus Rechnungen
+• Zahlungsabgleich aus Adyen
+
+Keine operativen Werte als stillen Ersatz für fehlende finanzielle Werte verwenden.
+
+D001 – Bestehende Logins und Rollen vollständig erfassen
+
+Lies zuerst vollständig:
+
+• AuthContext
+• User-Profile- und Rollenlogik
+• TenantContext beziehungsweise Betriebswahl
+• AppNav
+• Route Guards
+• Dashboard
+• StartOverview
+• ImportHub
+• relevante Admin-/User-Management-Komponenten
+• Supabase-Session- und Profile-Ladevorgänge
+
+Erstelle vor Änderungen eine Matrix:
+
+| Login/Rolle | erlaubter Mandant | Startseite | sichtbare Navigation | Schreibrechte | Read-only-Bereiche |
+
+Prüfe mindestens:
+
+• Admin
+• Manager
+• Küchen-Login
+• Gast/Read-only
+• Oliv-Benutzer
+• Beaulieu-Benutzer
+• Benutzer mit Zugriff auf beide Betriebe
+
+Keine Rolle oder Berechtigung erfinden.
+
+D002 – Dashboard vereinfachen
+
+Teile das Dashboard klar in zwei kompakte Bereiche:
+
+1. Finanzielle Monatsübersicht
+   Quelle: Erfolgsrechnung und Budget
+
+   Mindestens:
+   • Nettoumsatz IST
+   • Budget
+   • Vorjahr
+   • Warenaufwand
+   • Warenquote
+   • Personalkosten
+   • Personalquote
+   • EBITDA
+   • EBIT
+
+2. Operativer Tagesstand
+
+   Mindestens:
+   • Tagesumsatz
+   • Reservationen/Personen
+   • Arbeitsstunden
+   • geplante operative Personalkosten
+   • Adyen-/Tagesabschlussstatus
+   • wichtige offene Aufgaben
+
+Die wichtigsten Kennzahlen müssen ohne langes Scrollen sichtbar sein.
+
+Keine doppelte Kennzahl mit identischer Bezeichnung und unterschiedlicher Quelle anzeigen.
+
+Bezeichnungen eindeutig machen:
+
+• „Umsatz gemäss Erfolgsrechnung“
+• „Tagesumsatz gemäss Z-Bericht“
+• „Personalkosten gemäss Erfolgsrechnung“
+• „Geplante Personalkosten gemäss Dienstplan“
+• „Warenkosten gemäss Rechnungen“
+
+Fehlende finanzielle Werte bleiben „—“ und werden nicht mit operativen Werten ersetzt.
+
+D003 – Dashboard-Design
+
+Verwende bestehende KpiCard-, Card-, Badge-, Button- und Typografie-Komponenten.
+
+Vorgaben:
+
+• schlicht und modern
+• kompakte Karten
+• klare visuelle Hierarchie
+• keine langen Einführungstexte
+• keine unnötigen Icons
+• keine grossen farbigen Flächen
+• gleiche Abstände und Grössen wie in der übrigen App
+• Desktop und Tablet ohne unnötiges Scrollen
+• Mobile ohne horizontale Überläufe
+• Details über bestehende Drilldowns oder Deep-Links öffnen
+
+Bestehende funktionierende Inhalte nicht löschen, sondern sinnvoll gruppieren oder in Details verschieben.
+
+D004 – Login- und Tenant-Synchronisierung
+
+Stelle sicher, dass nach Login, Logout, Session-Refresh und Tenantwechsel immer der korrekte Zustand geladen wird.
+
+Prüfe und korrigiere:
+
+• Rolle wird aus dem aktuellen Benutzerprofil geladen
+• Tenant wird aus dem erlaubten Benutzerprofil geladen
+• Benutzer mit nur einem Tenant landen automatisch im erlaubten Betrieb
+• Benutzer mit mehreren Tenants behalten eine gültige Auswahl
+• eine nicht erlaubte alte Tenant-Auswahl wird verworfen
+• Logout leert Tenant-, Rollen-, Query- und UI-State
+• Login mit anderem Benutzer übernimmt keine Daten des vorherigen Benutzers
+• Session-Refresh überschreibt keine gültige Auswahl mit einem Default
+• Tenantwechsel invalidiert tenantabhängige Queries und Memos
+• Dashboard, Startübersicht, Importe, Reporting und Navigation wechseln gemeinsam
+• keine Oliv-Werte bleiben sichtbar, wenn Beaulieu aktiv ist
+• keine Beaulieu-Werte bleiben sichtbar, wenn Oliv aktiv ist
+
+Keine Rolle nur anhand einer E-Mail-Adresse ableiten, wenn bereits ein zentrales Profil-/Rollenmodell existiert.
+
+D005 – Bestehende Logins synchron halten
+
+Alle vorhandenen Logins müssen dieselbe zentrale Rollen-, Tenant- und Navigationslogik verwenden.
+
+Nicht erlaubt:
+
+• eigene Rollenprüfung direkt in einzelnen Seiten
+• eigene Tenant-Erkennung pro Modul
+• unterschiedliche Default-Tenants je Seite
+• veraltete localStorage-Auswahl ohne Berechtigungsprüfung
+• Navigationseinträge, deren Zielseite danach „kein Zugriff“ meldet
+• sichtbare Bearbeitungsbuttons für Read-only-Benutzer
+
+Falls Seiten heute eigene Prüfungen besitzen, auf bestehende zentrale Helper beziehungsweise Guards umstellen.
+
+Keine unnötige neue Permission-Engine bauen.
+
+D006 – Küchen- und eingeschränkte Logins
+
+Prüfe insbesondere bestehende eingeschränkte Logins.
+
+Diese sollen:
+
+• nur relevante Navigation sehen
+• keine Finanz- oder Admin-Bereiche sehen, falls nicht erlaubt
+• keine versteckten Schreibaktionen über Deep-Links ausführen können
+• beim direkten URL-Aufruf sauber abgefangen werden
+• eine verständliche Startseite erhalten
+• den korrekten Betrieb sehen
+• keine Daten eines anderen Tenants laden
+
+UI-Ausblendung allein genügt nicht. Bestehende Route- und Action-Gates müssen ebenfalls greifen.
+
+D007 – Lade- und Wechselzustände
+
+Bei Login oder Tenantwechsel:
+
+• keine alten Kennzahlen kurz anzeigen
+• vorhandene Skeleton-/Loading-Muster verwenden
+• tenantabhängige Inhalte erst nach geklärtem Tenant anzeigen
+• keine leere 0-Anzeige während des Ladens
+• Teilfehler verständlich anzeigen
+• keine technischen Supabase-Meldungen ausgeben
+
+Verhindere Race Conditions:
+
+• veraltete Requests nach Benutzer- oder Tenantwechsel ignorieren
+• Query-Keys enthalten Benutzer/Tenant/Jahr, wo erforderlich
+• Memos und Effects besitzen vollständige Abhängigkeiten
+
+D008 – Deep-Links und Navigation
+
+Prüfe alle Dashboard-Aktionen:
+
+• Erfolgsrechnung
+• Budget
+• Tagesabschluss
+• Umsatzabstimmung
+• Importe
+• Dienstplan
+• Reservationen
+• Warenkosten
+
+Nur erlaubte Deep-Links anzeigen.
+
+Nach Tenantwechsel muss der Link den aktiven Tenant verwenden.
+
+Browser-Zurück darf keine Daten des vorherigen Tenants anzeigen.
+
+D009 – Tests Dashboard
+
+Ergänze Tests mindestens für:
+
+1. Finanzielle Karten verwenden die Registry.
+2. IST kommt aus P&L.
+3. PLAN kommt aus Budget.
+4. Vorjahr kommt aus Vorjahres-P&L.
+5. Fehlende P&L-Werte bleiben null/„—“.
+6. Kein Fallback auf Tagesumsatz.
+7. Operative Tageskennzahlen bleiben verfügbar.
+8. Finanzielle und operative Kennzahlen sind eindeutig benannt.
+9. Tenant Oliv zeigt nur Oliv-Werte.
+10. Tenant Beaulieu zeigt nur Beaulieu-Werte.
+11. Tenantwechsel entfernt alte Dashboard-Werte.
+12. Dashboard-Laden löst keine Writes aus.
+
+D010 – Tests Login, Rollen und Tenant
+
+Ergänze reale Regressionstests für:
+
+1. Admin sieht erlaubte Admin-Bereiche.
+2. Manager sieht nur erlaubte Bereiche.
+3. Küchen-Login sieht nur erlaubte Bereiche.
+4. Read-only sieht keine Schreibaktionen.
+5. Direkter URL-Aufruf respektiert Route Guards.
+6. Benutzer mit nur Oliv kann Beaulieu nicht auswählen.
+7. Benutzer mit nur Beaulieu kann Oliv nicht auswählen.
+8. Benutzer mit beiden Betrieben kann sicher wechseln.
+9. Ungültiger gespeicherter Tenant wird verworfen.
+10. Logout leert Benutzer- und Tenant-State.
+11. Login als anderer Benutzer übernimmt keinen alten Tenant.
+12. Session-Refresh behält eine gültige Auswahl.
+13. Session-Refresh korrigiert eine nicht mehr erlaubte Auswahl.
+14. Tenantwechsel invalidiert relevante Daten.
+15. Veraltete Requests werden nicht angezeigt.
+16. Navigation und Seitenrechte stimmen überein.
+17. Kein Tenant kann Daten des anderen Tenants lesen oder überschreiben.
+18. Reines Login und Laden lösen keine fachlichen Writes aus.
+
+D011 – Bestehende Login-Daten nicht verändern
+
+Keine produktiven Benutzerprofile, Rollen oder E-Mail-Adressen automatisch ändern.
+
+Falls inkonsistente Benutzerprofile gefunden werden:
+
+• im Abschlussbericht nennen
+• eine sichere Reparaturvorschau erstellen
+• keine automatische Massenkorrektur durchführen
+
+Neue Testbenutzer nur in der Testumgebung erstellen und nach Abschluss wieder entfernen.
+
+Keine Zugangsdaten in Code, Logs, Tests oder replit.md speichern.
+
+D012 – Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit tatsächlich umgesetztem Verhalten:
+
+• Dashboard trennt finanzielle und operative Kennzahlen
+• Finanzkarten verwenden die Financial Metrics Registry
+• Rollen und Tenant werden zentral synchronisiert
+• Login-, Logout-, Session-Refresh- und Tenantwechsel-Verhalten
+• eingeschränkte Logins und Route Guards
+• keine operativen Fallbacks für finanzielle Werte
+• relevante Tests
+
+Keine historische Detailanalyse einfügen.
+
+D013 – Verifikation
+
+Führe alle betroffenen Tests streng sequenziell aus:
+
+• Financial-Metrics-Tests
+• Dashboard-Tests
+• AuthContext-Tests
+• Rollen- und Permission-Tests
+• Tenant-Isolationstests
+• Navigation- und Route-Guard-Tests
+• Login-/Logout-/Session-Refresh-Tests
+• Read-never-writes-Tests
+• P&L- und Budgettests
+• relevante Startübersichts- und Importtests
+
+Danach:
+
+• LSP/TypeScript aller berührten Dateien
+• projektweiter Typecheck gegen die bestehende Baseline, soweit möglich
+• Runtime-Logs
+• authentifizierte Prüfung aller verfügbaren Rollen
+• Oliv und Beaulieu prüfen
+• Login, Logout, Refresh und Tenantwechsel prüfen
+• Desktop, Tablet und Mobile prüfen
+• Architect-Review nur über den tatsächlichen Task-Diff
+
+Beim Review besonders prüfen:
+
+• keine neue Auth- oder Finanzengine
+• kein Tenant-Leak
+• keine alten Daten nach Login- oder Tenantwechsel
+• Rollen und Navigation synchron
+• Route Guards korrekt
+• Read-only wirklich ohne Writes
+• Financial Metrics Registry bleibt SSoT
+• keine operativen Fallbacks
+• keine produktiven Benutzer verändert
+• kompakte und einheitliche Dashboard-UI
+
+D014 – Abschlussbericht
+
+Liefere:
+
+1. Neue Dashboard-Struktur.
+2. Finanzielle und operative Kennzahlen.
+3. Alle geprüften bestehenden Rollen.
+4. Rollen-/Navigationsmatrix.
+5. Login- und Session-Synchronisierung.
+6. Tenantwechsel und Cache-Invalidierung.
+7. Verhalten bei Logout und Benutzerwechsel.
+8. Korrekturen an Route Guards.
+9. Gefundene inkonsistente Benutzerprofile, ohne Zugangsdaten.
+10. Neue Tests und Resultate.
+11. Typecheck-Ergebnis.
+12. Runtime- und visuelle Prüfung.
+13. Architect-Review.
+14. Geänderte Dateien.
+15. Sichtbare Verhaltensänderungen.
+16. Bewusst offene Punkte.
+
+Keinen Commit durchführen, bevor Tests, Typecheck und Architect-Review abgeschlossen sind.
+
+Keine fremden Änderungen zurücksetzen.
+
+Keine neue Auth-, Persistenz- oder Supabase-Architektur einführen.

@@ -80,6 +80,12 @@ interface TenantContextValue {
   unlockTenant: () => void;
   /** true wenn der aktuelle User auf einen Mandanten fest gebunden ist */
   tenantLocked: boolean;
+  /**
+   * Setzt den Tenant-State vollständig zurück (Logout/Benutzerwechsel):
+   * entfernt die persistierte Auswahl, hebt den Lock auf, State → 'oliv'.
+   * Ein neuer Login übernimmt so nie die Tenant-Auswahl des vorherigen Benutzers.
+   */
+  resetTenant: () => void;
 }
 
 const TenantContext = createContext<TenantContextValue | null>(null);
@@ -114,6 +120,13 @@ export const TenantProvider = ({ children }: { children: ReactNode }) => {
     console.log('[AUTH] tenant lock released – Mandantenwechsel freigegeben');
   };
 
+  const resetTenant = () => {
+    try { localStorage.removeItem(TENANT_STORAGE_KEY); } catch { /* ignore */ }
+    setTenantLocked(false);
+    setTenantId('oliv');
+    console.log('[TENANT] tenant state reset (Logout/Benutzerwechsel) → oliv');
+  };
+
   const tenantKey = (key: string): string =>
     tenantId === 'oliv' ? key : `${tenantId}:${key}`;
 
@@ -122,7 +135,7 @@ export const TenantProvider = ({ children }: { children: ReactNode }) => {
   }, [tenantId, tenantLocked]);
 
   return (
-    <TenantContext.Provider value={{ tenantId, tenant: TENANTS[tenantId], setTenant, tenantKey, lockTenant, unlockTenant, tenantLocked }}>
+    <TenantContext.Provider value={{ tenantId, tenant: TENANTS[tenantId], setTenant, tenantKey, lockTenant, unlockTenant, tenantLocked, resetTenant }}>
       {children}
     </TenantContext.Provider>
   );

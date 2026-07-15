@@ -1,9 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useSyncStore } from "@/hooks/useSyncStore";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { RevenueDisplayProvider } from "@/contexts/RevenueDisplayContext";
 import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useTenant } from "@/contexts/TenantContext";
 import { LoginPage } from "@/components/LoginPage";
+import { RequireAdmin } from "@/components/RequireAdmin";
 import { GuestBanner } from "@/components/GuestBanner";
 import { Loader2 } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
@@ -105,6 +106,39 @@ const TenantLockEnforcer = () => {
   return null;
 };
 
+// ─── LogoutStateBridge ───────────────────────────────────────────────────────
+// Immer gemountet (auch auf der LoginPage). Leert bei Logout oder direktem
+// Benutzerwechsel den Tenant-State und den React-Query-Cache, damit ein
+// neuer Login keine Auswahl/Daten des vorherigen Benutzers übernimmt.
+// Läuft NICHT bei Token-Refresh (user.id bleibt gleich) und nicht beim Boot.
+
+const LogoutStateBridge = () => {
+  const { user } = useAuth();
+  const { resetTenant } = useTenant();
+  const queryClient = useQueryClient();
+  // undefined = noch kein Beobachtungswert (Boot), null = ausgeloggt
+  const prevUserIdRef = useRef<string | null | undefined>(undefined);
+
+  useEffect(() => {
+    const curr = user?.id ?? null;
+    const prev = prevUserIdRef.current;
+    prevUserIdRef.current = curr;
+
+    if (prev === undefined) return;          // Boot: keine Transition
+    if (prev === curr) return;               // kein Wechsel (inkl. Token-Refresh)
+
+    if (prev !== null) {
+      // Logout (curr=null) ODER direkter Benutzerwechsel (curr=andere ID)
+      resetTenant();
+      queryClient.clear();
+      console.log(`[AUTH] LogoutStateBridge: ${curr === null ? 'Logout' : 'Benutzerwechsel'} → Tenant-State + Query-Cache geleert`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  return null;
+};
+
 // ─── BlockedRoute ─────────────────────────────────────────────────────────────
 // Wrapper für Navigate-Redirects: loggt [AUTH] blocked route to oliv bevor
 // es weiterleitet. Nur aktiv wenn isBeaulieuManager = true.
@@ -116,10 +150,14 @@ const BlockedRoute = ({ path, to = '/' }: { path: string; to?: string }) => {
   return <Navigate to={to} replace />;
 };
 
+// ─── RequireAdmin ─────────────────────────────────────────────────────────────
+// Zentraler Route-Guard für admin-only Flächen — ausgelagert nach
+// src/components/RequireAdmin.tsx (isoliert testbar), hier nur re-importiert.
+
 // ─── Private App (requires authentication) ──────────────────────────────────
 
 const AppContent = () => {
-  const { user, loading } = useAuth();
+  const { user, loading, roleResolved } = useAuth();
   const { canAccessSettings, canAccessModule, isBeaulieuManager, isAdmin } = usePermissions();
   const { tenantId } = useTenant();
 
@@ -169,6 +207,18 @@ const AppContent = () => {
 
   if (!user && !hasGuestSession) {
     return <LoginPage />;
+  }
+
+  // Rollen-Gate: Solange die Rolle des eingeloggten Users nicht verbindlich
+  // feststeht (erster Login in diesem Browser, keine persistierte Rolle),
+  // KEINE rollen-gegateten Routen rendern — sonst kurzzeitig falsche
+  // Navigation/Berechtigungen und fehlgeleitete Redirects.
+  if (user && !roleResolved) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
   }
 
   return (
@@ -227,18 +277,20 @@ const AppContent = () => {
               element={canAccessSettings ? <Settings /> : <Navigate to="/personal" replace />}
             />
 
-            {/* Reporting + Finanzen: nur Admin – beaulieu_manager wird umgeleitet */}
+            {/* Reporting + Finanzen: nur Admin (inkl. Gast-Lesezugriff) —
+                beaulieu_manager und service/kueche_manager werden umgeleitet */}
             <Route path="/reporting"
-              element={isBeaulieuManager ? <BlockedRoute path="/reporting" /> : <Reporting />}
+              element={<RequireAdmin path="/reporting"><Reporting /></RequireAdmin>}
             />
             <Route path="/kontenplan"
-              element={isBeaulieuManager ? <BlockedRoute path="/kontenplan" /> : <AccountMappingPage />}
+              element={<RequireAdmin path="/kontenplan"><AccountMappingPage /></RequireAdmin>}
             />
             <Route path="/erfolgsrechnung"
-              element={isBeaulieuManager ? <BlockedRoute path="/erfolgsrechnung" /> : <PLViewPage />}
+              element={<RequireAdmin path="/erfolgsrechnung"><PLViewPage /></RequireAdmin>}
             />
+            {/* Import-Flächen (Schreibaktionen): nur Admin, keine Gast-Sessions */}
             <Route path="/csv-import"
-              element={<CSVImportPage />}
+              element={<RequireAdmin path="/csv-import" allowGuest={false}><CSVImportPage /></RequireAdmin>}
             />
             <Route path="/import"
               element={<ImportHub />}
@@ -254,34 +306,59 @@ const AppContent = () => {
               element={<SupplierComparisonPage />}
             />
             <Route path="/budget"
-              element={isBeaulieuManager ? <BlockedRoute path="/budget" /> : <BudgetPage />}
+              element={<RequireAdmin path="/budget"><BudgetPage /></RequireAdmin>}
             />
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
             />
-            <Route path="/integrity-test" element={<DataIntegrityTest />} />
-            <Route path="/employee-integrity" element={<EmployeeIntegrityPanel />} />
+            {/* Integritäts-/Admin-Werkzeuge: nur Admin, keine Gast-Sessions */}
+            <Route path="/integrity-test"
+              element={<RequireAdmin path="/integrity-test" allowGuest={false}><DataIntegrityTest /></RequireAdmin>}
+            />
+            <Route path="/employee-integrity"
+              element={<RequireAdmin path="/employee-integrity" allowGuest={false} redirectTo="/personal"><EmployeeIntegrityPanel /></RequireAdmin>}
+            />
             <Route path="/umsatzabstimmung"
-              element={isBeaulieuManager ? <BlockedRoute path="/umsatzabstimmung" /> : <UmsatzAbstimmungPage />}
+              element={<RequireAdmin path="/umsatzabstimmung"><UmsatzAbstimmungPage /></RequireAdmin>}
             />
             <Route path="/tagesabschluesse"
-              element={isBeaulieuManager ? <BlockedRoute path="/tagesabschluesse" /> : <TagesabschluessePage />}
+              element={<RequireAdmin path="/tagesabschluesse"><TagesabschluessePage /></RequireAdmin>}
             />
             <Route path="/op-liste"
-              element={isBeaulieuManager ? <BlockedRoute path="/op-liste" /> : <OpListePage />}
+              element={<RequireAdmin path="/op-liste"><OpListePage /></RequireAdmin>}
             />
-            <Route path="/gastronovi-import" element={<GastronoviZBerichtPage />} />
-            <Route path="/foratable-import" element={<ForatableImportPage />} />
+            <Route path="/gastronovi-import"
+              element={<RequireAdmin path="/gastronovi-import" allowGuest={false}><GastronoviZBerichtPage /></RequireAdmin>}
+            />
+            <Route path="/foratable-import"
+              element={<RequireAdmin path="/foratable-import" allowGuest={false}><ForatableImportPage /></RequireAdmin>}
+            />
             <Route path="/reservationen-import" element={<Navigate to="/foratable-import" replace />} />
             <Route path="/gaeste-import" element={<Navigate to="/foratable-import?tab=gaeste" replace />} />
             <Route path="/foratable-report" element={<Navigate to="/gaeste/auswertung" replace />} />
-            <Route path="/gaeste" element={<GaesteCrmPage />} />
-            <Route path="/gaeste/auswertung" element={<CrmAuswertungPage />} />
-            <Route path="/gaeste/analyse" element={<ReservationAnalysePage />} />
-            <Route path="/gaeste/wochentag" element={<ReservationWochentagPage />} />
-            <Route path="/gaeste/vorjahr" element={<ReservationVorjahrPage />} />
-            <Route path="/gaeste/duplikate" element={<GaesteDuplikatePage />} />
-            <Route path="/gaeste/:guestId" element={<GaesteDetailPage />} />
+            {/* Gäste-CRM (PII): nur Admin UND keine Gast-Session — spiegelt die
+                seiteninternen Gates (isAdmin && !isGuest) als Route-Guard */}
+            <Route path="/gaeste"
+              element={<RequireAdmin path="/gaeste" allowGuest={false}><GaesteCrmPage /></RequireAdmin>}
+            />
+            <Route path="/gaeste/auswertung"
+              element={<RequireAdmin path="/gaeste/auswertung" allowGuest={false}><CrmAuswertungPage /></RequireAdmin>}
+            />
+            <Route path="/gaeste/analyse"
+              element={<RequireAdmin path="/gaeste/analyse" allowGuest={false}><ReservationAnalysePage /></RequireAdmin>}
+            />
+            <Route path="/gaeste/wochentag"
+              element={<RequireAdmin path="/gaeste/wochentag" allowGuest={false}><ReservationWochentagPage /></RequireAdmin>}
+            />
+            <Route path="/gaeste/vorjahr"
+              element={<RequireAdmin path="/gaeste/vorjahr" allowGuest={false}><ReservationVorjahrPage /></RequireAdmin>}
+            />
+            <Route path="/gaeste/duplikate"
+              element={<RequireAdmin path="/gaeste/duplikate" allowGuest={false}><GaesteDuplikatePage /></RequireAdmin>}
+            />
+            <Route path="/gaeste/:guestId"
+              element={<RequireAdmin path="/gaeste/:guestId" allowGuest={false}><GaesteDetailPage /></RequireAdmin>}
+            />
             <Route path="/produkte"
               element={<ProdukteSeite />}
             />
@@ -304,7 +381,10 @@ const AppContent = () => {
             <Route path="/tages-controlling"
               element={canAccessModule('tages_controlling') ? <TagesControllingPage /> : <Navigate to="/personal" replace />}
             />
-            <Route path="/kennzahlen-bericht" element={<KennzahlenBerichtPage />} />
+            {/* Kennzahlen-Bericht: Admin (inkl. Gast) + beaulieu_manager (wie Nav) */}
+            <Route path="/kennzahlen-bericht"
+              element={<RequireAdmin path="/kennzahlen-bericht" allowBeaulieu><KennzahlenBerichtPage /></RequireAdmin>}
+            />
             <Route path="/forecast" element={<ForecastPlanung />} />
             <Route path="/verkauf-dashboard"
               element={<VerkaufsDashboard />}
@@ -368,6 +448,7 @@ const App = () => {
             <GuestSessionProvider>
               <Sonner />
               <AuthProvider>
+                <LogoutStateBridge />
                 <BrowserRouter>
                   <Routes>
                     {/* ── Öffentliche Routen — kein Login erforderlich ── */}
