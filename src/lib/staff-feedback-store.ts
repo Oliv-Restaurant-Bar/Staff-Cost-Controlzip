@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 export interface StaffFeedbackEntry {
   id: string;
@@ -22,8 +22,7 @@ export async function loadStaffFeedback(tenantId: string): Promise<{
 }> {
   const prefix = `staff-feedback:${tenantId}-`;
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('key, value')
       .like('key', `${prefix}%`);
     if (error || !data) return { entries: [], keys: {} };
@@ -57,8 +56,7 @@ export async function updateFeedbackStatus(
   newStatus: StaffFeedbackEntry['status'],
 ): Promise<void> {
   const updated: StaffFeedbackEntry = { ...currentEntry, status: newStatus };
-  await (supabase as any)
-    .from('app_settings')
+  await appSettingsTable()
     .update({ value: updated })
     .eq('key', rowKey);
 }

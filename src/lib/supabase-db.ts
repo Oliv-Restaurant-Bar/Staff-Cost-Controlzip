@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 import { Employee } from '@/types/personnel';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -1463,8 +1464,7 @@ export async function deleteMonthDataForEmployees(
 
 export async function loadSetting<T>(key: string): Promise<T | null> {
   try {
-    const { data, error } = await supabase
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', key)
       .maybeSingle();
@@ -1478,7 +1478,7 @@ export async function loadSetting<T>(key: string): Promise<T | null> {
 
 export async function saveSetting<T>(key: string, value: T): Promise<void> {
   try {
-    await supabase.from('app_settings').upsert(
+    await appSettingsTable().upsert(
       { key, value: value as object },
       { onConflict: 'key' }
     );

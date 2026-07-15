@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 export interface ProductEntry {
   name: string;
@@ -220,15 +221,15 @@ export function saveIgnoredProducts(list: string[]): void {
 // Datenbank vorhanden ist. value-Spalte ist JSONB → kein JSON.stringify nötig.
 
 async function settingsGet<T>(key: string): Promise<{ found: true; value: T } | { found: false; error?: string }> {
-  const { data, error } = await supabase
-    .from('app_settings').select('value').eq('key', key).maybeSingle();
+  const { data, error } = await appSettingsTable()
+    .select('value').eq('key', key).maybeSingle();
   if (error) return { found: false, error: `${error.code}: ${error.message}` };
   if (!data?.value) return { found: false };
   return { found: true, value: data.value as T };
 }
 
 async function settingsSave(key: string, value: unknown): Promise<string | null> {
-  const { error } = await supabase.from('app_settings')
+  const { error } = await appSettingsTable()
     .upsert({ key, value: value as object }, { onConflict: 'key' });
   return error ? `${error.code}: ${error.message}` : null;
 }

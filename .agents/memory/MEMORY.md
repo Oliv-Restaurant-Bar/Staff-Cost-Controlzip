@@ -41,6 +41,7 @@
 - [OP-Liste Gesamtsaldo priority](op-liste-total-priority.md) — resolve footer total AFTER loop by priority (Posten>Währung>generic), exclude Rechnungen/Gutschriften subtotals; keep null not silent 0.00.
 - [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.
 - [de-CH currency NBSP](de-ch-currency-nbsp.md) — locale currency output uses U+00A0 after "CHF"; strip the prefix with /CHF\s*/u, never a plain-space string replace.
+- [app_settings typed wrapper](app-settings-typed-wrapper.md) — all app_settings access via appSettingsTable(); never edit generated types.ts, one isolated cast; Supabase builders are PromiseLike, not Promise.
 - [KV-Verfügbarkeit flüchtig](kv-availability-volatile.md) — «available» nie dauerhaft cachen; Netzwerk invalidiert, DB-Fehler nicht; Offline-Test-Mocks brauchen echte Netzwerkfehlermeldungen.
 - [Budget-App-Level-Test-Harness](budget-app-level-tests.md) — Fixtures brauchen Default-PL-IDs (Migration orphaned Custom-IDs), Regel-No-op braucht wasAutoCalculated-Flag, Stale-Race via holdKeys-Mock.
 - [KV backup retry & seed merge](kv-backup-retry-and-seed.md) — retry re-reads fresh state (stale snapshot regresses newer saves); seed saves flagged so remote-real wins; tombstone switch requires auditing every direct blob reader.

@@ -20,7 +20,7 @@
  *   [PRIOR-YEAR] values preserved: yes
  */
 
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 // ── Typen ──────────────────────────────────────────────────────────────────
 
@@ -47,8 +47,7 @@ export async function getLockState(
   year: number,
 ): Promise<PriorYearLockState> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', lockKey(tenantId, year))
       .maybeSingle();
@@ -78,8 +77,7 @@ export async function setLockState(
 ): Promise<{ error: string | null }> {
   const key = lockKey(tenantId, year);
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert(
         { key, value: { ...state, tenantId, year } as unknown as Record<string, unknown> },
         { onConflict: 'key' },

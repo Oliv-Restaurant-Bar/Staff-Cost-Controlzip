@@ -1,0 +1,354 @@
+Starte jetzt Stabilisierungsrunde 2.8: typisierter appSettingsTable-Wrapper und gezielte Isolation von supabase as any.
+
+Ziel
+
+Die direkten, untypisierten Zugriffe auf die Supabase-Tabelle für App-/KV-Einstellungen sollen hinter einem kleinen, typisierten Wrapper isoliert werden.
+
+Dabei dürfen keine fachlichen Speicher-, Lade-, Merge-, Konflikt-, Tombstone-, Tenant- oder Offline-Regeln verändert werden.
+
+Diese Runde ist ein reines Typisierungs- und Infrastruktur-Refactoring.
+
+Wichtige Leitplanken
+
+1. Keine fachliche Logik verändern.
+2. Keine Datenmigration durchführen.
+3. Keine Tabellen, Spalten, Keys oder gespeicherten JSON-Strukturen ändern.
+4. Keine bestehenden Merge-Regeln vereinheitlichen.
+5. Keine neuen automatischen Schreibvorgänge einführen.
+6. Reine Reads dürfen weiterhin niemals Writes auslösen.
+7. updatedAt darf nur bei echten Änderungen verändert werden.
+8. Bestehende Tenant-Isolation vollständig erhalten.
+9. Bestehende Availability-, Retry- und Offline-Regeln nicht verändern.
+10. Keine breite Supabase-Abstraktionsschicht für die gesamte App bauen.
+11. Kein Repository-Pattern, keine neue Service-Architektur und keine unnötigen Generics einführen.
+12. Nur die Tabelle beziehungsweise die Zugriffe kapseln, die aktuell supabase as any benötigen.
+
+T301 – Vollständige Bestandsaufnahme
+
+Suche projektweit nach:
+
+supabase as any
+
+sowie nach ähnlichen Konstrukten:
+
+(supabase as any)
+.from("app_settings")
+.from('app_settings')
+.from("appSettings")
+
+und nach dem tatsächlich verwendeten Tabellennamen.
+
+Lies alle betroffenen Dateien vollständig.
+
+Erstelle vor Änderungen eine kompakte Übersicht:
+
+Datei	Tabelle	Operation	select/insert/update/upsert/delete	Rückgabetyp	Warum aktuell any
+
+Kläre insbesondere:
+
+• tatsächlicher Tabellenname
+• Primär- beziehungsweise Konfliktschlüssel
+• Tenant-Spalte
+• Key-Spalte
+• JSON-/Blob-Spalte
+• updated_at-Spalte
+• optionale oder nullable Felder
+• ob unterschiedliche Stellen unterschiedliche Select-Shapes erwarten
+• ob das generierte Supabase-Datenbankschema die Tabelle bereits enthält
+• ob any nur wegen fehlender DB-Typen oder wegen dynamischer Aufrufe verwendet wird
+
+Keine Annahmen treffen. Die Signaturen aus dem realen Code und den vorhandenen Typen ableiten.
+
+T302 – Kleinsten sinnvollen Wrapper entwerfen
+
+Erstelle einen kleinen, typisierten Wrapper, beispielsweise:
+
+appSettingsTable(...)
+
+oder:
+
+getAppSettingsTable(...)
+
+Die Benennung soll zu den bestehenden Projektkonventionen passen.
+
+Bevorzugte Richtung:
+
+type AppSettingsRow = {
+  tenant_id: string;
+  key: string;
+  value: unknown;
+  updated_at: string | null;
+};
+
+Die echten Feldnamen müssen aus dem vorhandenen Code übernommen werden.
+
+Der Wrapper darf sinngemäss nur den typisierten Tabellenzugriff bereitstellen:
+
+export function appSettingsTable(client: SupabaseClient) {
+  return client.from("app_settings");
+}
+
+Falls Supabase aufgrund fehlender generierter Tabellentypen weiterhin lokal gecastet werden muss, dann den Cast genau einmal innerhalb des Wrappers isolieren.
+
+Beispiel:
+
+export function appSettingsTable(client: SupabaseClient) {
+  return (client as AppSettingsSupabaseClient).from("app_settings");
+}
+
+oder mit einer gezielten Tabellen-/Query-Typisierung.
+
+Kein any an die Aufrufer weiterreichen.
+
+T303 – Typen fachlich korrekt definieren
+
+Definiere nur die tatsächlich benötigten Typen:
+
+export type AppSettingsRow = ...
+export type AppSettingsInsert = ...
+export type AppSettingsUpdate = ...
+
+Falls Insert und Row identisch sind, keine künstlichen Duplikate erzeugen.
+
+Beachte:
+
+• updated_at kann beim Insert eventuell optional sein
+• DB-generierte Felder dürfen nicht zwingend verlangt werden
+• JSON-Werte sollen nicht unnötig auf Record<string, unknown> eingeschränkt werden, falls auch Arrays, Strings oder null technisch erlaubt sind
+• bestehende Domain-Guards wie asRecordBlob bleiben verantwortlich für die fachliche Shape-Prüfung
+• der Tabellenwrapper darf keine Domain-Validierung übernehmen
+• keine falsche Sicherheit durch zu enge Typen erzeugen
+
+Wenn ein vorhandener Supabase-Json-Typ existiert, nutze ihn.
+
+T304 – Direkte Zugriffe schrittweise ersetzen
+
+Ersetze nur die direkten supabase as any-Zugriffe auf diese Tabelle.
+
+Vorgehen:
+
+1. Wrapper erstellen.
+2. Eine betroffene Datei migrieren.
+3. Typecheck beziehungsweise gezielte Tests ausführen.
+4. Nächste Datei migrieren.
+5. Nach jeder Domain prüfen, dass kein Verhalten verändert wurde.
+
+Nicht gleichzeitig andere Supabase-Tabellen refactoren.
+
+Nicht verändern:
+
+• Reihenfolge von Local- und Remote-Writes
+• Read-/Write-Pfade
+• Merge-Regeln
+• Fehlerbehandlung
+• Retry-Verhalten
+• Availability-State
+• Notifications
+• Cache-Invalidierung
+• localStorage
+• updatedAt
+• Tombstones
+• Delete-Verhalten
+• Return-Werte der öffentlichen Funktionen
+
+T305 – Read-, Write- und Delete-Semantik erhalten
+
+Für jeden migrierten Aufruf verifizieren:
+
+Select:
+
+• gleiche Spalten
+• gleiche Filter
+• gleiche Tenant-Bedingung
+• gleiches .single(), .maybeSingle() oder Listenverhalten
+• identische Behandlung von data === null
+• identische Behandlung von Supabase-Fehlern
+
+Upsert:
+
+• identischer Payload
+• identischer onConflict
+• identische Spaltennamen
+• identische Return-/Select-Kette
+• kein zusätzlicher Write
+• kein automatisch gesetztes updatedAt, falls es vorher nicht gesetzt wurde
+
+Delete:
+
+• identische Filter
+• identische Tenant-Isolation
+• keine breitere Delete-Bedingung
+• kein Löschen nur anhand des Keys, wenn vorher zusätzlich Tenant oder User geprüft wurde
+
+T306 – Keine Vermischung mit kv-blob-utils
+
+Der neue appSettingsTable-Wrapper und kv-blob-utils.ts haben unterschiedliche Aufgaben.
+
+appSettingsTable:
+
+• typisierter Supabase-Tabellenzugriff
+• Infrastruktur
+• kennt Tabellen- und Feldtypen
+
+kv-blob-utils:
+
+• Shape-Guard
+• localStorage-Parse-Guard
+• Supabase-unabhängig
+
+Nicht zusammenführen.
+
+kv-blob-utils darf weiterhin keinen Supabase-Import erhalten.
+
+T307 – Tests
+
+Ergänze gezielte Tests nur dort, wo die Typisierungsumstellung sonst nicht ausreichend abgesichert ist.
+
+Mindestens bestehende Regressionstests erneut ausführen für:
+
+Budget:
+
+• reines Laden schreibt nicht
+• Save bei echter Änderung
+• Delete
+• Tombstones
+• newer-wins
+• Tenant-Isolation
+• Zwei-Geräte-Fälle
+
+Daily Revenues:
+
+• Load
+• Upsert
+• lokale/Remote-Reihenfolge
+• Availability-Recovery
+• Tenant-Isolation
+
+Reporting:
+
+• saveMonth
+• deleteMonth
+• Delete-Wipe-Regression
+• Monats-Union
+• Availability-Recovery
+• Fehlerpolitik
+
+Zusätzliche Wrapper-Tests nur falls der Wrapper eigene Laufzeitlogik enthält.
+
+Hat der Wrapper keine Laufzeitlogik, keine bedeutungslosen Tests erstellen, die nur prüfen, dass .from() aufgerufen wird.
+
+T308 – Typecheck und any-Audit
+
+Führe aus:
+
+• TypeScript-Prüfung auf allen geänderten Dateien
+• projektweiten Typecheck gegen die bestehende Legacy-Baseline
+• projektweite Suche nach supabase as any
+• projektweite Suche nach direkten Zugriffen auf die App-Settings-Tabelle
+
+Abschlussziel:
+
+• kein direkter supabase as any-Zugriff auf die gekapselte App-Settings-Tabelle ausserhalb des Wrappers
+• maximal ein eng begrenzter Cast innerhalb des Wrappers, falls technisch notwendig
+• keine Verschlechterung der Typecheck-Baseline
+• keine neuen @ts-ignore
+• keine neuen @ts-expect-error, ausser technisch zwingend und klar begründet
+• kein eslint-disable zur Umgehung der Typisierung
+
+Falls andere supabase as any-Stellen zu anderen Tabellen gehören:
+
+• nicht ungeprüft migrieren
+• im Abschlussbericht separat nennen
+• als ausserhalb des Scopes belassen
+
+T309 – Generated Types prüfen
+
+Prüfe, ob die sauberste Lösung eine Ergänzung der bestehenden Supabase-Datenbanktypen ist.
+
+Falls die Tabelle real existiert, aber in den generierten Typen fehlt:
+
+Option A:
+
+Die vorhandenen lokalen Datenbanktypen gezielt ergänzen, falls diese Datei im Projekt bewusst manuell gepflegt wird.
+
+Option B:
+
+Einen lokalen, eng begrenzten Client-/Tabellentyp für appSettingsTable verwenden, falls die generierten Typen nicht manuell verändert werden sollen.
+
+Keine echte Supabase-Codegenerierung vortäuschen.
+
+Keine automatisch generierte Datei manuell verändern, wenn sie laut Projektkonvention jederzeit überschrieben wird, ausser dies ist im Projekt ausdrücklich der bestehende Prozess.
+
+Begründe die gewählte Variante im Abschlussbericht.
+
+T310 – Dokumentation
+
+Aktualisiere replit.md kompakt und nur mit tatsächlich umgesetztem Verhalten.
+
+Dokumentiere:
+
+• App-Settings-Tabellenzugriff ist typisiert gekapselt
+• verbleibender notwendiger Cast ist an einer Stelle isoliert
+• Domain-Logik bleibt ausserhalb des Wrappers
+• kv-blob-utils bleibt Supabase-unabhängig
+• keine Änderung an Read-, Write-, Merge-, Tombstone- oder Tenant-Verhalten
+• welche Bereiche den Wrapper nutzen
+• relevante Regressionstests
+
+Keine geplanten Funktionen dokumentieren.
+
+T311 – Architect-Review
+
+Führe ein Architect-Review ausschliesslich über den tatsächlichen Task-Diff durch.
+
+Besonders prüfen:
+
+• Wrapper ist klein und notwendig
+• keine unnötige Architektur
+• kein any leakt an Aufrufer
+• keine veränderten Supabase-Filter
+• keine veränderten Payloads
+• keine veränderten onConflict-Regeln
+• keine veränderte Local-/Remote-Reihenfolge
+• kein Write beim Read
+• Tenant-Isolation unverändert
+• Delete-Bedingungen unverändert
+• kv-blob-utils bleibt Supabase-frei
+• keine Änderung der 2.7-Domain-Invarianten
+• Delete-Wipe-Fix bleibt erhalten
+• keine Veränderung der Legacy-Typecheck-Baseline
+
+Alle Befunde innerhalb dieses Tasks beheben.
+
+T312 – Abschlussbericht
+
+Liefere abschliessend:
+
+1. Alle gefundenen supabase as any-Stellen.
+2. Welche davon zur App-Settings-Tabelle gehörten.
+3. Welche Stellen migriert wurden.
+4. Welche Stellen bewusst ausserhalb des Scopes blieben.
+5. Tatsächliche Tabellen- und Feldtypen.
+6. Gewählte Wrapper-Signatur.
+7. Ob ein interner Cast noch nötig ist und weshalb.
+8. Wie verhindert wird, dass any an Aufrufer leakt.
+9. Ob generierte Datenbanktypen angepasst wurden oder weshalb nicht.
+10. Bestätigung, dass Read-/Write-/Delete-Semantik unverändert blieb.
+11. Bestätigung, dass Tenant-, Tombstone-, Merge- und updatedAt-Regeln unverändert blieben.
+12. Bestätigung, dass kv-blob-utils Supabase-unabhängig blieb.
+13. Ausgeführte Tests und Resultate.
+14. Typecheck-Ergebnis im Vergleich zur Legacy-Baseline.
+15. Architect-Review-Ergebnis.
+16. Projektweite Reststellen von supabase as any.
+17. Geänderte Dateien.
+18. Sichtbare Verhaltensänderungen.
+
+Erwartete sichtbare Verhaltensänderung:
+
+Keine.
+
+Keinen Commit durchführen, bevor Typecheck, relevante Tests und Architect-Review abgeschlossen sind.
+
+Keine fremden oder bereits bestehenden Änderungen zurücksetzen.
+
+Beim Review ausschliesslich den tatsächlichen Task-Diff bewerten.

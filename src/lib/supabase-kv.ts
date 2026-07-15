@@ -9,7 +9,7 @@
  * erhalten, weil sie im Supabase-Backend gespeichert werden.
  */
 
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 import type { TenantId } from '@/contexts/TenantContext';
 import { asRecordBlob, readLocalRecord } from './kv-blob-utils';
 
@@ -166,8 +166,7 @@ async function isAvailable(): Promise<boolean> {
   if (_available === true) return true;
   if (_available === false && Date.now() < _unavailableUntil) return false;
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .select('key')
       .limit(1);
     if (!error || !isKvUnavailable(error)) {
@@ -188,8 +187,7 @@ async function isAvailable(): Promise<boolean> {
 export async function kvGet(key: string): Promise<unknown | null> {
   if (!(await isAvailable())) return null;
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', key)
       .maybeSingle();
@@ -217,8 +215,7 @@ export async function kvGetStrict(key: string): Promise<unknown | null> {
   }
   let res: { data: { value: unknown } | null; error: unknown };
   try {
-    res = await (supabase as any)
-      .from('app_settings')
+    res = await appSettingsTable()
       .select('value')
       .eq('key', key)
       .maybeSingle();
@@ -237,8 +234,7 @@ export async function kvGetStrict(key: string): Promise<unknown | null> {
 export async function kvSet(key: string, value: unknown): Promise<void> {
   if (!(await isAvailable())) return;
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert({ key, value }, { onConflict: 'key' });
     if (error) {
       markKVFailure(error);
@@ -264,8 +260,7 @@ export async function kvSetStrict(key: string, value: unknown): Promise<void> {
   }
   let res: { error: unknown };
   try {
-    res = await (supabase as any)
-      .from('app_settings')
+    res = await appSettingsTable()
       .upsert({ key, value }, { onConflict: 'key' });
   } catch (err) {
     markKVFailure(err);
@@ -508,8 +503,7 @@ async function mergeAndWriteReportingBlob(
     // 3. Fachliche Mutation NUR auf dem Ziel-Monat
     const merged = mutate({ ...localBase, ...base });
     // 4. Nach Supabase schreiben — Fehler explizit prüfen
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert({ key: storeKey, value: merged }, { onConflict: 'key' });
     if (error) throw error;
     markKVSuccess();

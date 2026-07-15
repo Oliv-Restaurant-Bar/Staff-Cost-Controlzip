@@ -27,7 +27,7 @@ import {
   StaffPortalSettings,
   DEFAULT_STAFF_PORTAL_SETTINGS,
 } from '@/lib/staff-portal-settings';
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
@@ -617,7 +617,7 @@ function WunschHinweisSection({
       };
       console.log('[FEEDBACK] key:', key);
       console.log('[FEEDBACK] payload:', JSON.stringify(value));
-      const { data, error } = await supabase.from('app_settings').upsert(
+      const { data, error } = await appSettingsTable().upsert(
         { key, value },
         { onConflict: 'key' },
       );
@@ -1411,8 +1411,7 @@ const StaffSchedulePage = () => {
     setNotFound(false);
     const kvKey = `published-schedule:${token}`;
     try {
-      const { data, error } = await (supabase as any)
-        .from('app_settings')
+      const { data, error } = await appSettingsTable()
         .select('key, value')
         .eq('key', kvKey)
         .maybeSingle();

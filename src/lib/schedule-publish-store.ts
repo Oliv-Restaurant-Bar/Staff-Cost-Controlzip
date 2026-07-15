@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 export interface PublicTimeSlot {
   start: string;
@@ -113,7 +113,9 @@ function lsKey(token: string): string { return LS_PREFIX + token; }
 function kvKey(token: string): string { return KV_KEY_PREFIX + token; }
 
 /** Race a promise against a timeout. Throws if the timeout fires first. */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+// PromiseLike statt Promise: die typisierten Supabase-Query-Builder sind
+// Thenables (PromiseLike), keine echten Promises — Laufzeitverhalten identisch.
+function withTimeout<T>(promise: PromiseLike<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) =>
@@ -139,7 +141,7 @@ async function supabaseRead(key: string): Promise<unknown | null> {
   console.log(`[publish] supabaseRead key="${key}"`);
   try {
     const { data, error } = await withTimeout(
-      (supabase as any).from('app_settings').select('value').eq('key', key).maybeSingle(),
+      appSettingsTable().select('value').eq('key', key).maybeSingle(),
       READ_TIMEOUT_MS,
       'supabaseRead',
     );
@@ -167,7 +169,7 @@ async function supabaseWrite(
   console.log(`[publish] supabaseWrite key="${key}"`);
   try {
     const { error } = await withTimeout(
-      (supabase as any).from('app_settings').upsert({ key, value }, { onConflict: 'key' }),
+      appSettingsTable().upsert({ key, value }, { onConflict: 'key' }),
       WRITE_TIMEOUT_MS,
       'supabaseWrite',
     );

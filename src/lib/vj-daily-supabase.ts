@@ -31,7 +31,7 @@
  *   [VJ-SUPABASE] loaded month 2025-04: 30 rows from supabase
  */
 
-import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 
 // ── Typen ─────────────────────────────────────────────────────────────────────
 
@@ -88,8 +88,7 @@ export async function upsertVjDailyBatch(
   }));
 
   try {
-    const { error } = await (supabase as any)
-      .from('app_settings')
+    const { error } = await appSettingsTable()
       .upsert(rows, { onConflict: 'key' });
 
     if (error) {
@@ -123,8 +122,7 @@ export async function loadVjDailyMonth(
 ): Promise<Record<string, VjDayRecord>> {
   const prefix = keyOfMonth(year, month, tenantId);
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('key, value')
       .like('key', `${prefix}%`);
 
@@ -162,8 +160,7 @@ export async function loadVjDailyDate(
   tenantId?: string,
 ): Promise<VjDayRecord | null> {
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('value')
       .eq('key', keyOf(date, tenantId))
       .maybeSingle();
@@ -190,8 +187,7 @@ export async function loadVjDailyYear(
 ): Promise<Record<string, VjDayRecord>> {
   const prefix = `${tenantPrefix(tenantId)}${year}-`;
   try {
-    const { data, error } = await (supabase as any)
-      .from('app_settings')
+    const { data, error } = await appSettingsTable()
       .select('key, value')
       .like('key', `${prefix}%`);
 
@@ -228,8 +224,7 @@ export async function countVjDailyYear(
   tenantId?: string,
 ): Promise<number> {
   try {
-    const { count, error } = await (supabase as any)
-      .from('app_settings')
+    const { count, error } = await appSettingsTable()
       .select('key', { count: 'exact', head: true })
       .like('key', `${tenantPrefix(tenantId)}${year}-%`);
 

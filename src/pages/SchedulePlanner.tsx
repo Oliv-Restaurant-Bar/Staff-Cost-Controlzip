@@ -25,6 +25,7 @@ import {
   type SaveQueueSnapshot,
 } from '@/lib/schedule-save-queue';
 import { supabase } from '@/integrations/supabase/client';
+import { appSettingsTable } from '@/lib/app-settings-table';
 import {
   saveMonthAbsences, loadMonthAbsences,
   loadEmployeeSortOrder, saveEmployeeSortOrder,
@@ -3068,7 +3069,7 @@ const SchedulePlanner = () => {
     const token = stablePublishToken(tenantId, publishDept);
     const key   = `published-schedule:${token}`;
     setDiffLoading(true);
-    supabase.from('app_settings').select('value').eq('key', key).maybeSingle()
+    appSettingsTable().select('value').eq('key', key).maybeSingle()
       .then(({ data }) => {
         setExistingPublishedPayload(
           data?.value && typeof data.value === 'object'
@@ -3497,8 +3498,7 @@ const SchedulePlanner = () => {
       // ── 0. Read existing payload for change detection + revision ───────────
       let existingPayload: PublishedSchedulePayload | null = null;
       try {
-        const { data: exData } = await supabase
-          .from('app_settings')
+        const { data: exData } = await appSettingsTable()
           .select('value')
           .eq('key', kvKey)
           .maybeSingle();
@@ -3635,8 +3635,7 @@ const SchedulePlanner = () => {
         '| employees:', publicEmployees.length, '| status:', payload.status);
 
       // ── 4. Write ───────────────────────────────────────────────────────────
-      const { error: writeError } = await supabase
-        .from('app_settings')
+      const { error: writeError } = await appSettingsTable()
         .upsert({ key: kvKey, value: payload }, { onConflict: 'key' });
 
       if (writeError) {
@@ -3650,8 +3649,7 @@ const SchedulePlanner = () => {
       console.log('[publishSchedule] write OK ✓');
 
       // ── 5. Verify (read-back) ──────────────────────────────────────────────
-      const { data: rbData, error: rbError } = await supabase
-        .from('app_settings')
+      const { data: rbData, error: rbError } = await appSettingsTable()
         .select('key, value')
         .eq('key', kvKey)
         .maybeSingle();
