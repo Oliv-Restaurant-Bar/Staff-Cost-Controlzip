@@ -70,7 +70,9 @@ describe('TagesabschlussSection — kompakte Toolbar', () => {
   it('zeigt Monatsnav mit „Heute", Exporte und „+ Tagesabschluss"; Beschreibung nur als Tooltip', async () => {
     await renderSection();
     expect(screen.getByTestId('ta-heute')).toBeInTheDocument();
-    expect(screen.getByTestId('ta-excel-export')).toBeInTheDocument();
+    expect(screen.getByTestId('ta-export')).toBeInTheDocument();
+    // Leerer Monat (Mock ohne Tagesdaten) → Export korrekt deaktiviert.
+    expect(screen.getByTestId('ta-export')).toBeDisabled();
     expect(screen.getByTestId('ta-open-export')).toBeInTheDocument();
     expect(screen.getByTestId('ta-add-abschluss')).toBeInTheDocument();
     // Langer Erklärtext steht NICHT mehr im Fliesstext, nur im Info-Tooltip.
