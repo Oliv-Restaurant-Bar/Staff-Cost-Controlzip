@@ -1,0 +1,131 @@
+Starte jetzt eine gezielte SSoT- und Import-Stabilisierungsrunde für finanzielle Kennzahlen.
+
+Ziel
+
+Stelle sicher, dass finanzielle Kennzahlen in der gesamten App synchron sind und immer aus derselben fachlichen Quelle stammen.
+
+Verbindliche Zielarchitektur:
+
+1. Finanzielle IST-Werte:
+   Erfolgsrechnung beziehungsweise zentraler P&L-Datenbestand
+
+2. Finanzielle PLAN-/Budgetwerte:
+   zentraler Budget-Datenbestand
+
+3. Finanzielle Vorjahreswerte:
+   Erfolgsrechnung beziehungsweise importierter Vorjahres-P&L-Datenbestand
+
+4. Operative Kennzahlen:
+   weiterhin aus ihrer fachlich zuständigen Quelle, beispielsweise:
+   • Reservationen und Personen aus Foratable
+   • Arbeitsstunden aus Mirus beziehungsweise Dienstplan
+   • Tagesumsätze aus Z-Bericht
+   • Produktmengen und Produktumsätze aus Verkaufsdaten
+   • Zahlungsarten aus Adyen beziehungsweise Tagesabschluss
+
+Nicht jede Kennzahl künstlich aus der Erfolgsrechnung ableiten.
+
+Die Erfolgsrechnung wird Single Source of Truth für finanzielle IST- und Vorjahreswerte. Das Budget wird Single Source of Truth für finanzielle PLAN-Werte.
+
+Kritisches Problem
+
+Der Import der Vorjahreskosten hat nicht alle Monate übernommen.
+
+Untersuche und behebe vollständig:
+
+• weshalb einzelne Monate fehlen
+• ob Monate beim Import falsch erkannt werden
+• ob Monatsnamen oder Datumsformate nicht korrekt gemappt werden
+• ob 2024 und 2025 unterschiedlich behandelt werden
+• ob bestehende Monate beim Merge verloren gehen
+• ob ein Teilimport andere bereits vorhandene Monate überschreibt
+• ob leere Zellen fälschlich als 0 importiert werden
+• ob Zahlenformate mit Apostroph, Tausendertrennung, Punkt oder Komma falsch geparst werden
+• ob Excel-Formeln statt berechneter Werte gelesen werden
+• ob nur sichtbare oder nur bestimmte Tabellenblätter verarbeitet werden
+• ob Kostenkonten oder Monatswerte wegen Spaltenverschiebungen ausgelassen werden
+• ob der Import zwar korrekt speichert, die Erfolgsrechnung aber aus einer anderen Quelle liest
+
+Wichtige Grenzen
+
+• Keine neue parallele Finanzdatenquelle erstellen.
+• Keine bestehenden Werte automatisch überschreiben, ohne die bestehende Konfliktlogik zu beachten.
+• Fehlende Werte niemals als 0 interpretieren.
+• Keine automatische Persistenz beim reinen Laden.
+• Keine Formeln oder fachlichen Kontenzuordnungen verändern.
+• Tenant-Daten von Oliv und Beaulieu strikt trennen.
+• Bestehende Rundungs-, Merge-, Tombstone- und updatedAt-Regeln erhalten.
+• Keine neuen Tabellen, sofern nicht technisch zwingend und ausdrücklich begründet.
+• Keine fremden Änderungen zurücksetzen.
+• Kein grosses allgemeines Refactoring ausserhalb dieses Auftrags.
+
+T601 – Vollständige Quelleninventur
+
+Lies zuerst vollständig alle Dateien, welche finanzielle Kennzahlen laden, berechnen oder anzeigen.
+
+Mindestens:
+
+• Erfolgsrechnung
+• Budget
+• Dashboard
+• Reporting
+• Kennzahlen-Bericht
+• Soll-Ist-Analyse
+• Mehrjahresanalyse
+• Banken-/Investorenbericht
+• Management Report
+• Personalcontrolling
+• Warenkosten
+• Exporte für PDF, Excel und CSV
+• Vorjahreskosten-Import
+• P&L-/Kontoblatt-Import
+• Import-Cockpit und Import-Status
+• relevante Persistenz-Stores und Hooks
+
+Suche projektweit nach Kennzahlen wie:
+
+• Umsatz
+• Bruttogewinn
+• Warenaufwand
+• Warenquote
+• Personalaufwand
+• Personalquote
+• Betriebskosten
+• EBITDA
+• Abschreibungen
+• EBIT
+• Budget
+• Plan
+• Vorjahr
+• Abweichung
+• Differenz
+• Quote
+
+Erstelle vor Änderungen eine interne Quellenmatrix:
+
+| Kennzahl | Modul/Anzeige | aktueller IST-Ursprung | aktueller PLAN-Ursprung | aktueller VJ-Ursprung | gewünschte SSoT | Abweichung vorhanden |
+|---|---|---|---|---|---|---|
+
+Dokumentiere ausdrücklich alle Stellen, die aktuell:
+
+• eigene Summen bilden
+• andere Datenquellen verwenden
+• Fallback-Werte nutzen
+• importierte Werte kopieren
+• formatierte Strings zurück in Berechnungen umwandeln
+• gleiche Kennzahlen unterschiedlich benennen oder berechnen
+
+T602 – Verbindliche Kennzahlenquellen definieren
+
+Implementiere eine zentrale, rein lesende Finanzkennzahlen-Schicht oder verwende die bereits vorhandene zentrale P&L-Engine.
+
+Keine neue zweite Finanzengine erstellen.
+
+Die zentrale Schicht soll sinngemäss liefern:
+
+```ts
+type FinancialPeriodValues = {
+  actual: FinancialValues | null;
+  budget: FinancialValues | null;
+  priorYear: FinancialValues | null;
+};
