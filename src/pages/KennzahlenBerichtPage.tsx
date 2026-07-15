@@ -655,7 +655,7 @@ export default function KennzahlenBerichtPage() {
     <PageHeader
       icon={<BarChart2 />}
       title="Kennzahlen Bericht"
-      info="Management-Report: Umsatz, Personalkosten und Warenaufwand für den gewählten Zeitraum — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF."
+      info="Operativer Management-Report für den gewählten Zeitraum: Tagesumsatz gemäss Z-Bericht, Personalkosten gemäss Dienstplan, Warenkosten gemäss Rechnungen — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF. Finanzielle Monatswerte gemäss Erfolgsrechnung stehen in Erfolgsrechnung und Reporting."
       meta={rangeLabel}
       actions={
         <button
@@ -719,18 +719,18 @@ export default function KennzahlenBerichtPage() {
         {!loading && summary && viewMode === 'dashboard' && <>
           <KpiGrid>
             <KpiCard label="Nettoumsatz"    value={fmtChf(summary.netTotal)}
-              sub={summary.daysWithData > 0 ? `${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
+              sub={summary.daysWithData > 0 ? `gemäss Z-Bericht · ${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
             <KpiCard label="Personalkosten" value={fmtChf(summary.laborActual)}
-              sub={summary.netTotal > 0 ? `${fmtPct(pkPct)} vom Umsatz` : '—'} tone={TL_TONE[tlPk]} />
+              sub={summary.netTotal > 0 ? `gemäss Dienstplan · ${fmtPct(pkPct)} vom Umsatz` : 'gemäss Dienstplan'} tone={TL_TONE[tlPk]} />
             <KpiCard label="WES Total"      value={summary.warenTotal > 0 ? fmtChf(summary.warenTotal) : '—'}
-              sub={summary.warenTotal > 0 ? `${fmtPct(wesPct)} vom Umsatz` : 'Keine Rechnungen'} tone={TL_TONE[tlWes]} />
+              sub={summary.warenTotal > 0 ? `gemäss Rechnungen · ${fmtPct(wesPct)} vom Umsatz` : 'Keine Rechnungen'} tone={TL_TONE[tlWes]} />
             <KpiCard label="Abw. Budget"    value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
-              sub={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : 'Kein Budget'} tone={TL_TONE[tlBudg]} />
+              sub={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)} · vs. Tagesbudget` : 'Kein Budget'} tone={TL_TONE[tlBudg]} />
           </KpiGrid>
 
           <BSection title="Umsatzübersicht" icon={<DollarSign className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Nettoumsatz Total"       value={fmtChf(summary.netTotal)} bold />
+              <Row label="Nettoumsatz Total"       value={fmtChf(summary.netTotal)} bold hint="gemäss Z-Bericht" />
               <Row label="Bruttoumsatz Total"      value={fmtChf(summary.grossTotal)} />
               <Row label="Umsatz Food (netto)"     value={summary.foodNet > 0 ? fmtChf(summary.foodNet) : '—'} />
               <Row label="Umsatz Beverage (netto)" value={summary.bevNet  > 0 ? fmtChf(summary.bevNet)  : '—'} />
@@ -743,12 +743,12 @@ export default function KennzahlenBerichtPage() {
 
           <BSection title="Vergleichswerte" icon={<TrendingUp className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Budget Nettoumsatz"  value={summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'} />
+              <Row label="Budget Nettoumsatz"  value={summary.plannedNet > 0 ? fmtChf(summary.plannedNet) : '—'} hint="Tagesbudget" />
               <Row label="Abw. Budget (CHF)"   value={budDiff !== null ? `${sgn(budDiff)}${fmtChf(budDiff)}` : '—'}
                 diff={budDiff !== null ? (budDiff >= 0 ? 'pos' : 'neg') : undefined} />
               <Row label="Abw. Budget (%)"     value={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : '—'}
                 diff={budPct !== null ? (budPct >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} />
+              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} hint="Tagesumsatz Vorjahr gemäss Z-Bericht" />
               <Row label="Abw. Vorjahr (CHF)"  value={vjDiff !== null ? `${sgn(vjDiff)}${fmtChf(vjDiff)}` : '—'}
                 diff={vjDiff !== null ? (vjDiff >= 0 ? 'pos' : 'neg') : undefined} />
               <Row label="Abw. Vorjahr (%)"    value={vjPct !== null ? `${sgn(vjPct)}${fmtPct(vjPct)}` : '—'}
@@ -758,8 +758,8 @@ export default function KennzahlenBerichtPage() {
 
           <BSection title="Personal Kennzahlen" icon={<Clock className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Personalkosten Ist"  value={fmtChf(summary.laborActual)} bold />
-              <Row label="Personalkosten Plan" value={summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'} />
+              <Row label="Personalkosten Ist"  value={fmtChf(summary.laborActual)} bold hint="gemäss Dienstplan" />
+              <Row label="Personalkosten Plan" value={summary.laborPlanned > 0 ? fmtChf(summary.laborPlanned) : '—'} hint="gemäss Dienstplan" />
               <Row label="Abw. Personalkosten"
                 value={summary.laborPlanned > 0 ? `${sgn(laborDiff)}${fmtChf(laborDiff)}` : '—'}
                 diff={summary.laborPlanned > 0 ? (laborDiff <= 0 ? 'pos' : 'neg') : undefined} />
@@ -774,9 +774,9 @@ export default function KennzahlenBerichtPage() {
               <p className="text-sm text-muted-foreground py-1">Keine Warenrechnungen für diesen Zeitraum.</p>
             ) : (
               <DGrid>
-                <Row label="Warenaufwand Food"     value={summary.warenFood  > 0 ? fmtChf(summary.warenFood)  : '—'} />
+                <Row label="Warenaufwand Food"     value={summary.warenFood  > 0 ? fmtChf(summary.warenFood)  : '—'} hint="gemäss Rechnungen" />
                 <Row label="WES Food %"            value={summary.foodNet > 0 && summary.warenFood > 0 ? fmtPct(wesFoodPct) : '—'} />
-                <Row label="Warenaufwand Beverage" value={summary.warenBev   > 0 ? fmtChf(summary.warenBev)   : '—'} />
+                <Row label="Warenaufwand Beverage" value={summary.warenBev   > 0 ? fmtChf(summary.warenBev)   : '—'} hint="gemäss Rechnungen" />
                 <Row label="WES Beverage %"        value={summary.bevNet > 0 && summary.warenBev > 0 ? fmtPct(wesBevPct) : '—'} />
                 <Row label="WES Total %"           value={summary.netTotal > 0 ? fmtPct(wesPct) : '—'} bold />
               </DGrid>

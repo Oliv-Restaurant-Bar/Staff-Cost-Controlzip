@@ -153,6 +153,16 @@ export function getFinancialMetric(id: FinancialMetricId): FinancialMetricDefini
   return FINANCIAL_METRICS[id];
 }
 
+/** Öffentliche API (Spezifikation): Definition einer Kennzahl. */
+export function getFinancialMetricDefinition(id: FinancialMetricId): FinancialMetricDefinition {
+  return FINANCIAL_METRICS[id];
+}
+
+/** Öffentliche API (Spezifikation): alle Kennzahl-Definitionen (stabile Reihenfolge). */
+export function getAllFinancialMetricDefinitions(): FinancialMetricDefinition[] {
+  return FINANCIAL_METRIC_IDS.map(id => FINANCIAL_METRICS[id]);
+}
+
 /** Bequemer Direktzugriff: Werte einer Kennzahl aus dem Registry-Input. */
 export function getFinancialMetricValues(
   id: FinancialMetricId,

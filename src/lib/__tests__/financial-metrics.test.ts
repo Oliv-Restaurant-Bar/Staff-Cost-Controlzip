@@ -14,6 +14,8 @@ import {
   FINANCIAL_METRICS,
   FINANCIAL_METRIC_IDS,
   getFinancialMetricValues,
+  getFinancialMetricDefinition,
+  getAllFinancialMetricDefinitions,
   type FinancialMetricRegistryInput,
 } from '@/lib/financial-metrics';
 import {
@@ -82,6 +84,21 @@ describe('Registry-Struktur', () => {
     for (const id of FINANCIAL_METRIC_IDS) {
       if (FINANCIAL_METRICS[id].kind === 'amount') expect(plIds.has(id)).toBe(true);
     }
+  });
+
+  it('getFinancialMetricDefinition liefert je ID GENAU EINE Definition (Referenzgleichheit)', () => {
+    for (const id of FINANCIAL_METRIC_IDS) {
+      const def = getFinancialMetricDefinition(id);
+      expect(def).toBe(FINANCIAL_METRICS[id]);
+      expect(def.id).toBe(id);
+    }
+  });
+
+  it('getAllFinancialMetricDefinitions: alle 13, stabile Reihenfolge, keine Duplikate', () => {
+    const defs = getAllFinancialMetricDefinitions();
+    expect(defs).toHaveLength(13);
+    expect(defs.map(d => d.id)).toEqual(FINANCIAL_METRIC_IDS);
+    expect(new Set(defs.map(d => d.id)).size).toBe(13);
   });
 });
 
