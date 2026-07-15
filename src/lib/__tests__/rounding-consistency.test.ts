@@ -134,7 +134,7 @@ describe('exportMonatsdatenToExcel — Zahlenbasis', () => {
   it('rundet NUR über das Zellformat (z), nicht in der Zahl', () => {
     const ws = exportAndGetSheet([makeRow()]);
     expect(ws['F5'].z).toBe('0.0" %"');        // Quote: 1 Dezimalstelle
-    expect(ws['B5'].z).toBe('"CHF "#\'##0');   // CHF: ganze Franken
+    expect(ws['B5'].z).toBe('"CHF "#,##0');    // CHF: ganze Franken, Gruppierung
     expect(ws['K5'].z).toBe('0" %"');          // Vollständigkeit: ganzzahlig
   });
 

@@ -717,8 +717,9 @@ export function exportMonatsdatenToExcel(
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-  // Zellformate (Anzeige): CHF ganze Franken, Quoten 1 Dezimalstelle
-  const CHF_FMT = '"CHF "#\'##0';
+  // Zellformate (Anzeige): CHF ganze Franken, Quoten 1 Dezimalstelle.
+  // #,##0 = Gruppierungs-Platzhalter — Excel rendert das Trennzeichen lokalspezifisch.
+  const CHF_FMT = '"CHF "#,##0';
   const PCT_FMT = '0.0" %"';
   const INT_PCT_FMT = '0" %"';
   const colFmt: (string | null)[] = [
