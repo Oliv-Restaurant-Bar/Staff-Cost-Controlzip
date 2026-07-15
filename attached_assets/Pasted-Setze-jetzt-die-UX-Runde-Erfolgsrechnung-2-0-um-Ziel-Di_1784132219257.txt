@@ -1,0 +1,348 @@
+Setze jetzt die UX-Runde "Erfolgsrechnung 2.0" um.
+
+Ziel
+
+Die Erfolgsrechnung soll die wichtigste Finanzseite der Anwendung werden.
+
+Sie muss auf Desktop, Tablet und Mobile deutlich übersichtlicher, schneller lesbar und moderner sein.
+
+Dabei bleiben sämtliche Berechnungen, Formeln, Financial Metrics Registry, P&L-Engine, Budget-Engine, Vorjahreslogik und Exporte unverändert.
+
+Es geht ausschliesslich um Darstellung, Bedienbarkeit und bessere Navigation.
+
+──────────────────────────────
+E001 – Analyse
+──────────────────────────────
+
+Analysiere zuerst vollständig:
+
+• PLView
+• Reporting
+• Mehrjahresanalyse
+• Bankenbericht
+• Management Report
+
+Erstelle vor Änderungen eine kurze Matrix:
+
+• welche Informationen doppelt angezeigt werden
+• welche Spalten selten benutzt werden
+• welche Kennzahlen täglich wichtig sind
+• welche Informationen besser in Drilldowns gehören
+
+Keine Änderungen vor Abschluss der Analyse.
+
+──────────────────────────────
+E002 – Kompakte Tabellenansicht
+──────────────────────────────
+
+Die Erfolgsrechnung erhält standardmässig eine kompakte Ansicht.
+
+Default:
+
+• Konto
+• IST
+• Budget
+• Vorjahr
+• CHF-Abweichung
+• %-Abweichung
+
+Nicht standardmässig sichtbar:
+
+• Prozentspalten neben jedem Monat
+• technische Hilfsspalten
+• selten benötigte Zusatzinformationen
+
+Diese werden über einen Umschalter eingeblendet.
+
+Dadurch reduziert sich die Tabellenbreite deutlich.
+
+──────────────────────────────
+E003 – Monats-/Quartalsumschalter
+──────────────────────────────
+
+Oben rechts:
+
+Ansicht
+
+○ Monat
+
+○ Quartal
+
+○ Jahr
+
+Quartal:
+
+Q1
+Q2
+Q3
+Q4
+
+zeigt automatisch:
+
+Jan–Mär
+Apr–Jun
+Jul–Sep
+Okt–Dez
+
+inklusive Quartalssummen.
+
+Keine neue Berechnungslogik.
+
+Nur bestehende Monatswerte aggregieren.
+
+──────────────────────────────
+E004 – Sticky Navigation
+──────────────────────────────
+
+Immer sichtbar:
+
+• Kontobezeichnung
+• Tabellenkopf
+
+Beim Scrollen:
+
+erste Spalte bleibt fixiert.
+
+Keine horizontale Orientierung verlieren.
+
+──────────────────────────────
+E005 – Drilldowns
+──────────────────────────────
+
+Klick auf:
+
+Umsatz
+
+öffnet
+
+Monatszusammensetzung.
+
+Klick auf:
+
+Warenaufwand
+
+öffnet
+
+Warengruppen.
+
+Klick auf:
+
+Personal
+
+öffnet
+
+Personalaufwand nach Gruppen.
+
+Klick auf:
+
+Betriebskosten
+
+öffnet
+
+Kostenarten.
+
+Klick auf:
+
+EBITDA
+
+öffnet
+
+Zusammensetzung.
+
+Keine neuen Berechnungen.
+
+Nur bestehende Daten darstellen.
+
+──────────────────────────────
+E006 – KPI-Leiste
+──────────────────────────────
+
+Über der Tabelle:
+
+kompakte KPI-Zeile:
+
+• Umsatz
+• Warenquote
+• Personalquote
+• EBITDA
+• EBIT
+
+mit
+
+IST
+
+Budget
+
+Vorjahr
+
+Abweichung
+
+aus der Financial Metrics Registry.
+
+Keine Doppelberechnung.
+
+──────────────────────────────
+E007 – Ampeln
+──────────────────────────────
+
+Keine grossen Farben.
+
+Nur kleine Statusindikatoren.
+
+Beispiele:
+
+● gut
+
+● neutral
+
+● kritisch
+
+Rohwerte bleiben unverändert.
+
+Keine neuen Schwellen.
+
+Bestehende Logik weiterverwenden.
+
+──────────────────────────────
+E008 – Jahresvergleich
+──────────────────────────────
+
+Die Mehrjahresanalyse bleibt unverändert.
+
+In der Erfolgsrechnung genügt:
+
+kleiner Jahresvergleich
+
+2024
+
+2025
+
+2026
+
+mit
+
+Trend
+
+und
+
+Δ zum Vorjahr.
+
+Mehr Details bleiben im bestehenden Mehrjahresbericht.
+
+──────────────────────────────
+E009 – Mobile
+──────────────────────────────
+
+Keine horizontale Volltabelle.
+
+Mobile:
+
+Kartenlayout
+
+oder
+
+reduzierte Tabelle.
+
+Desktop unverändert leistungsfähig.
+
+──────────────────────────────
+E010 – Design
+──────────────────────────────
+
+Verwende ausschliesslich bestehende Komponenten.
+
+Design:
+
+• modern
+• schlicht
+• gleiche Abstände
+• gleiche Typografie
+• gleiche Karten
+• gleiche Buttons
+• gleiche Farben
+
+Keine neuen Designsysteme.
+
+──────────────────────────────
+E011 – Performance
+──────────────────────────────
+
+Keine zusätzliche Berechnung.
+
+Alle Umschalter arbeiten auf bereits berechneten Daten.
+
+Keine neuen Supabase-Queries.
+
+Keine neuen Stores.
+
+Keine doppelte Memoisierung.
+
+──────────────────────────────
+E012 – Tests
+──────────────────────────────
+
+Ergänze Tests für:
+
+• Monatsansicht
+• Quartalsansicht
+• Jahresansicht
+• Sticky Header
+• Drilldowns
+• KPI-Leiste
+• Mobile Layout
+• Registry bleibt Quelle
+• keine neue Berechnung
+• gleiche Werte wie vorher
+• fehlend ≠ 0
+
+Alle betroffenen Tests sequenziell ausführen.
+
+──────────────────────────────
+E013 – Verifikation
+──────────────────────────────
+
+Ausführen:
+
+• TypeScript
+• LSP
+• Runtime-Logs
+• Desktop
+• Tablet
+• Mobile
+• Architect-Review
+
+Architect-Review besonders prüfen:
+
+• keine Formeländerung
+• keine zweite Finanzengine
+• Registry bleibt SSoT
+• Performance unverändert
+• keine zusätzlichen Queries
+• keine Regressionen
+
+──────────────────────────────
+E014 – Abschlussbericht
+──────────────────────────────
+
+Liefere:
+
+1. Analyse.
+2. Neue Tabellenstruktur.
+3. Neue KPI-Leiste.
+4. Neue Drilldowns.
+5. Mobile-Verhalten.
+6. Performance.
+7. Tests.
+8. TypeScript.
+9. Runtime.
+10. Architect-Review.
+11. Geänderte Dateien.
+12. Sichtbare Änderungen.
+
+Keinen Commit durchführen.
+
+Keine fremden Änderungen zurücksetzen.
+
+Keine Finanzlogik verändern.
+
+Die Erfolgsrechnung soll nach dieser Runde die modernste, übersichtlichste und schnellste Finanzseite der gesamten Anwendung sein und als zentrale Arbeitsoberfläche für Management, Banken und Investoren dienen.
