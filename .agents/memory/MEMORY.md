@@ -41,6 +41,8 @@
 - [OP-Liste Gesamtsaldo priority](op-liste-total-priority.md) — resolve footer total AFTER loop by priority (Posten>Währung>generic), exclude Rechnungen/Gutschriften subtotals; keep null not silent 0.00.
 - [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.
 - [de-CH currency NBSP](de-ch-currency-nbsp.md) — locale currency output uses U+00A0 after "CHF"; strip the prefix with /CHF\s*/u, never a plain-space string replace.
+- [Parallel E2E vs Vite dev](e2e-parallel-vite.md) — zwei gleichzeitige runTest-Browser gegen den Dev-Server ⇒ leere Seite/HMR 502; Viewport-Läufe immer sequenziell.
+- [kueche_manager Dashboard gewollt](kueche-dashboard-gate.md) — Manager-Dashboard-Zugriff + canSeePersonnelCostTotals für alle sind Absicht; Kommentar-Matrix in usePermissions ist veraltet, Gate nicht verengen.
 - [Financial Metrics Registry](financial-metrics-registry.md) — Dashboard-Finanzkarten NUR aus der read-only Registry; loadMonth/loadBudget-Default-Keys sind NICHT tenant-präfixiert — immer tenantKey(...) übergeben.
 - [Reporting multi-month KV race](reporting-multimonth-kv-race.md) — parallel saveMonth blob backups overwrite each other with stale months; use skipKvBackup + sequential retryReportingMonthsBackup.
 - [Umsatzabstimmung Quellen-Mismatch](umsatzabstimmung-source-mismatch.md) — UA liest nur 3 Quellen (Manual/dailyBudgets/gn); vj_daily+revenueActual unsichtbar; saveMonth ohne storeKey → immer Oliv; KV-Backup kann partiell fehlen.
