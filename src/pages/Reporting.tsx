@@ -22,7 +22,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
   Edit3, Upload, CheckCircle2, AlertCircle, Clock,
   Info, Save, X, FileText, BarChart2, RefreshCw, Settings2, AlertTriangle,
-  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope, Sheet,
+  FileDown, FileSpreadsheet, UserX, Palmtree, Stethoscope,
 } from 'lucide-react';
 import { eachDayOfInterval, startOfMonth, endOfMonth } from 'date-fns';
 import {
@@ -69,6 +69,7 @@ import { parseAnnualRevenueXLSX, AnnualImportResult } from '@/lib/annual-revenue
 import { useStichtag } from '@/contexts/StichtagContext';
 import { StichtagBanner } from '@/components/StichtagBanner';
 import { ReportingExportDialog } from '@/components/ReportingExportDialog';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 
 // ── NEU: korrekte Netto-Umsatz-Berechnungen (identisch mit PLView) ───────────
 import {
@@ -2356,15 +2357,13 @@ const Reporting = () => {
                 <Upload className="h-3.5 w-3.5" /><span className="hidden sm:inline">Import</span>
               </Button>
             </Link>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50" onClick={handleExportPDF}>
-              <FileDown className="h-3.5 w-3.5" /><span className="hidden sm:inline">PDF</span>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-indigo-300 text-indigo-700 hover:bg-indigo-50" onClick={handleExportMonatsdaten}>
-              <Sheet className="h-3.5 w-3.5" /><span className="hidden sm:inline">Monatsdaten PDF</span>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1 border-green-300 text-green-700 hover:bg-green-50" onClick={handleExportExcel}>
-              <FileSpreadsheet className="h-3.5 w-3.5" /><span className="hidden sm:inline">Excel</span>
-            </Button>
+            <UnifiedExportButton
+              actions={[
+                { key: 'pdf', label: 'PDF-Bericht', kind: 'pdf', onSelect: handleExportPDF },
+                { key: 'monatsdaten-pdf', label: 'Monatsdaten (PDF)', kind: 'pdf', onSelect: handleExportMonatsdaten },
+                { key: 'excel', label: 'Excel', kind: 'excel', onSelect: handleExportExcel },
+              ]}
+            />
             <Link to="/kontenplan">
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
                 <Settings2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Kontenplan</span>

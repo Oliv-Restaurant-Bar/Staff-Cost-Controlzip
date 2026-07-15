@@ -6,7 +6,7 @@
  * Datenquelle: YearSeries[] aus PLView (roh loadYear → computePLForMonth).
  */
 import { useMemo, useState } from 'react';
-import { BarChart3, CalendarRange, FileDown, FileSpreadsheet, TrendingUp } from 'lucide-react';
+import { BarChart3, CalendarRange, TrendingUp } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,7 @@ import { InfoTip } from '@/components/ui/info-tip';
 import { EmptyState } from '@/components/ui/page-states';
 import { StatusPill } from '@/components/ui/status-pill';
 import { DIALOG_LG } from '@/components/ui/dialog-size';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { TONE_TEXT, type Tone } from '@/components/ui/tones';
 import {
   TABLE, TABLE_SCROLL, TABLE_WRAP, TD, TD_NUM, TH, TH_NUM, TH_STICKY, ROW_CLICKABLE,
@@ -325,24 +326,14 @@ export function MultiYearAnalysisSection({
               </p>
             </PopoverContent>
           </Popover>
-          <Button
-            variant="outline" size="sm" className="h-8 gap-1 text-xs"
-            onClick={handleExportPDF} disabled={exporting !== null}
-            data-testid="mya-export-pdf"
-            title="Management-Report als PDF (Executive Summary, KPIs, Jahresvergleich)"
-          >
-            <FileDown className="h-3.5 w-3.5" />
-            {exporting === 'pdf' ? 'Erstelle…' : 'Report (PDF)'}
-          </Button>
-          <Button
-            variant="outline" size="sm" className="h-8 gap-1 text-xs"
-            onClick={handleExportExcel} disabled={exporting !== null}
-            data-testid="mya-export-excel"
-            title="Mehrjahresanalyse als Excel-Arbeitsmappe (5 Blätter)"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            {exporting === 'excel' ? 'Erstelle…' : 'Excel'}
-          </Button>
+          <UnifiedExportButton
+            data-testid="mya-export"
+            disabled={exporting !== null}
+            actions={[
+              { key: 'pdf', label: 'Management-Report (PDF)', kind: 'pdf', onSelect: () => { void handleExportPDF(); } },
+              { key: 'excel', label: 'Mehrjahresanalyse (Excel)', kind: 'excel', onSelect: () => { void handleExportExcel(); } },
+            ]}
+          />
         </div>
       </div>
 

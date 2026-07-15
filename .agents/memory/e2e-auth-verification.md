@@ -13,6 +13,7 @@ description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Tes
 - Gast-Zugang ist rein CLIENT-seitig: Token `{exp, hash}` = base64-JSON, hash = sha256 des frei wählbaren Passworts → `/gast?t=…` ohne Server-Secret generierbar. Aber: Gäste sehen keine `isAdmin && !isGuest`-Flächen (Import-Center-Adminblöcke etc.) — für Admin-UX unbrauchbar.
 
 **Stolperfallen:**
+- `user_profiles` hat die Spalten `id` (= auth-User-ID), `email`, `role` — KEIN `user_id`. Rollen-Upsert also `{ id, email, role }` mit `onConflict: 'id'`, sonst «Could not find the 'user_id' column».
 - Test-Konto kann nach Anlage `kueche_manager` statt admin sein (Self-Upsert-Default) — VOR Tests auf Admin-Flächen die Rolle per `get_my_role` verifizieren, sonst wird ein korrektes Rollen-Gate (z. B. /produkte → /personal) als Regression fehlgedeutet.
 - `.env`-Werte sind QUOTED — beim Parsen im Sandbox-Script Anführungszeichen strippen, sonst „Invalid supabaseUrl".
 - `runTest` gab `screenshotPaths: []` zurück (Screenshots nicht persistiert) — visuelle Beurteilung steckt nur im Text-Report des Agents.

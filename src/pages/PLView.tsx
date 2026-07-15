@@ -19,7 +19,7 @@ import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
   AlertCircle, CheckCircle2, ArrowUpRight, ArrowDownRight, Trash2,
-  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle, FileDown,
+  Minus, Database, AlignJustify, List, Pencil, Check, Plus, AlertTriangle,
   Calculator, ArrowRight, FileText, Landmark, SlidersHorizontal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -66,6 +66,7 @@ import { StichtagBanner } from '@/components/StichtagBanner';
 import { exportPLToPDF, PLExportOptions } from '@/lib/pl-export';
 import { getBranding } from '@/lib/pl-branding';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
@@ -3470,16 +3471,12 @@ const PLViewPage = () => {
               </Button>
             </Link>
 
-            {/* PDF Export – alle 3 Ansichten */}
-            <Button
-              variant="outline" size="sm"
-              className="h-8 text-xs gap-1 border-rose-300 text-rose-700 hover:bg-rose-50"
-              onClick={handleExportPDF}
-              title="Alle 3 Ansichten als PDF exportieren (Budget P&L, Klassisch, Jahresübersicht)"
-            >
-              <FileDown className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">PDF</span>
-            </Button>
+            {/* PDF Export – alle 3 Ansichten (öffnet den bestehenden Export-Dialog) */}
+            <UnifiedExportButton
+              actions={[
+                { key: 'pdf', label: 'PDF (alle 3 Ansichten)', kind: 'pdf', onSelect: handleExportPDF },
+              ]}
+            />
           </div>
         </div>
       </header>

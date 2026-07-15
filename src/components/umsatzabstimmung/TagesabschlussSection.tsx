@@ -8,8 +8,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Download, FileSpreadsheet, Info, Lock, LockOpen, Plus } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, FileSpreadsheet, Info, Lock, LockOpen, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
@@ -464,14 +465,14 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 Heute
               </Button>
             </div>
-            <Button variant="outline" size="sm" className="h-7 text-xs"
-              onClick={() => exportTagesabschlussExcel(monthData, monthKey)}
+            <UnifiedExportButton
+              className="h-7 text-xs gap-1"
+              data-testid="ta-export"
               disabled={loading || !monthData.rows.some(r => r.status !== 'fehlt')}
-              title="Übersicht des Monats als Excel-Datei (.xlsx) herunterladen"
-              data-testid="ta-excel-export">
-              <Download className="h-3.5 w-3.5 mr-1" />
-              Excel
-            </Button>
+              actions={[
+                { key: 'excel', label: 'Monatsübersicht (Excel)', kind: 'excel', onSelect: () => exportTagesabschlussExcel(monthData, monthKey) },
+              ]}
+            />
             <Button variant="outline" size="sm" className="h-7 text-xs"
               onClick={() => setExportOpen(true)} data-testid="ta-open-export">
               <FileSpreadsheet className="h-3.5 w-3.5 mr-1" />

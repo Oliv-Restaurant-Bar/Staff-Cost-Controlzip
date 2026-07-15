@@ -23,7 +23,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Users, RotateCcw, Megaphone, BarChart3, Hourglass, AlertTriangle,
-  Download, FileDown, FileSpreadsheet, Eye, ArrowLeft, CalendarRange,
+  Eye, ArrowLeft, CalendarRange,
   Loader2, Printer, Clock, ChevronDown,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
@@ -41,6 +41,7 @@ import { PageShell } from '@/components/layout/PageShell';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -463,9 +464,13 @@ export default function CrmAuswertungPage() {
                   <Button variant="outline" size="sm" onClick={handlePrint} className="print:hidden">
                     <Printer className="mr-1.5 h-4 w-4" /> Drucken
                   </Button>
-                  <Button variant="outline" size="sm" onClick={handlePdf} className="print:hidden">
-                    <FileDown className="mr-1.5 h-4 w-4" /> PDF
-                  </Button>
+                  <UnifiedExportButton
+                    className="print:hidden"
+                    data-testid="crm-report-export"
+                    actions={[
+                      { key: 'pdf', label: 'Report (PDF)', kind: 'pdf', onSelect: handlePdf },
+                    ]}
+                  />
                 </>
               )}
               <Link
@@ -653,14 +658,13 @@ export default function CrmAuswertungPage() {
                     Überfällige Gäste
                   </h2>
                   {overdueList.length > 0 && (
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => downloadCsv(overdueExportTable())}>
-                        <FileDown className="mr-1.5 h-4 w-4" /> CSV
-                      </Button>
-                      <Button size="sm" onClick={() => void downloadXlsx(overdueExportTable())}>
-                        <FileSpreadsheet className="mr-1.5 h-4 w-4" /> Excel
-                      </Button>
-                    </div>
+                    <UnifiedExportButton
+                      data-testid="overdue-export"
+                      actions={[
+                        { key: 'csv', label: 'Überfällige Gäste (CSV)', kind: 'csv', onSelect: () => downloadCsv(overdueExportTable()) },
+                        { key: 'excel', label: 'Überfällige Gäste (Excel)', kind: 'excel', onSelect: () => { void downloadXlsx(overdueExportTable()); } },
+                      ]}
+                    />
                   )}
                 </div>
                 {overdueList.length === 0 ? (
@@ -726,14 +730,14 @@ export default function CrmAuswertungPage() {
                       </h2>
                       <p className="max-w-3xl text-xs text-muted-foreground">{campaignDef.description}</p>
                     </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => exportCampaignCsv(campaignDef)} disabled={campaignRows.length === 0}>
-                        <Download className="mr-1.5 h-4 w-4" /> CSV
-                      </Button>
-                      <Button size="sm" onClick={() => exportCampaignXlsx(campaignDef)} disabled={campaignRows.length === 0}>
-                        <FileSpreadsheet className="mr-1.5 h-4 w-4" /> Excel
-                      </Button>
-                    </div>
+                    <UnifiedExportButton
+                      data-testid="campaign-export"
+                      disabled={campaignRows.length === 0}
+                      actions={[
+                        { key: 'csv', label: 'Kampagnen-Gäste (CSV)', kind: 'csv', onSelect: () => exportCampaignCsv(campaignDef) },
+                        { key: 'excel', label: 'Kampagnen-Gäste (Excel)', kind: 'excel', onSelect: () => exportCampaignXlsx(campaignDef) },
+                      ]}
+                    />
                   </div>
 
                   {campaignRows.length === 0 ? (
@@ -804,12 +808,15 @@ export default function CrmAuswertungPage() {
                           <Button variant="outline" size="sm" className="flex-1" onClick={() => setActiveCampaign(def.id)} disabled={count === 0}>
                             <Eye className="mr-1.5 h-4 w-4" /> Anzeigen
                           </Button>
-                          <Button variant="outline" size="sm" className="flex-1" onClick={() => exportCampaignCsv(def)} disabled={count === 0}>
-                            <FileDown className="mr-1.5 h-4 w-4" /> CSV
-                          </Button>
-                          <Button size="sm" className="flex-1" onClick={() => exportCampaignXlsx(def)} disabled={count === 0}>
-                            <FileSpreadsheet className="mr-1.5 h-4 w-4" /> Excel
-                          </Button>
+                          <UnifiedExportButton
+                            className="flex-1 gap-1.5"
+                            data-testid={`campaign-card-export-${def.id}`}
+                            disabled={count === 0}
+                            actions={[
+                              { key: 'csv', label: 'CSV', kind: 'csv', onSelect: () => exportCampaignCsv(def) },
+                              { key: 'excel', label: 'Excel', kind: 'excel', onSelect: () => exportCampaignXlsx(def) },
+                            ]}
+                          />
                         </div>
                       </div>
                     ))}

@@ -10,7 +10,7 @@
  * dadurch exakt identisch zur Live-Ansicht). Keine Zweitberechnungen.
  */
 import { useMemo, useState } from 'react';
-import { CalendarRange, FileDown, FileText } from 'lucide-react';
+import { CalendarRange, FileText } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { InfoTip } from '@/components/ui/info-tip';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
 import { HintBox } from '@/components/ui/hint-box';
 import { EmptyState } from '@/components/ui/page-states';
@@ -285,15 +286,14 @@ export function ManagementReportView({
             </p>
           </PopoverContent>
         </Popover>
-        <Button
-          variant="outline" size="sm" className="ml-auto h-8 gap-1 text-xs"
-          onClick={handleExportPDF} disabled={exporting}
-          data-testid="mrv-export-pdf"
-          title="Diesen Bericht als PDF exportieren (identische Werte)"
-        >
-          <FileDown className="h-3.5 w-3.5" />
-          {exporting ? 'Erstelle…' : 'Management Report PDF'}
-        </Button>
+        <UnifiedExportButton
+          className="ml-auto h-8 gap-1 text-xs"
+          data-testid="mrv-export"
+          disabled={exporting}
+          actions={[
+            { key: 'pdf', label: 'Management Report (PDF)', kind: 'pdf', onSelect: () => { void handleExportPDF(); } },
+          ]}
+        />
       </div>
 
       {/* Vergleichsmodus (identische Logik wie Mehrjahresanalyse): Ganzjahr vs.

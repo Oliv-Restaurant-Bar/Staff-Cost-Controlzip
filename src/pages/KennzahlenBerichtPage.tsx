@@ -15,7 +15,7 @@ import {
 } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
-  BarChart2, Download, DollarSign, Clock, Package, Users, TrendingUp,
+  BarChart2, DollarSign, Clock, Package, Users, TrendingUp,
   Table2, LayoutDashboard,
 } from 'lucide-react';
 import {
@@ -25,6 +25,7 @@ import {
 import { cn } from '@/lib/utils';
 import { PageShell } from '@/components/layout/PageShell';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
 import { LoadingState, EmptyState } from '@/components/ui/page-states';
 import type { Tone } from '@/components/ui/tones';
@@ -658,14 +659,13 @@ export default function KennzahlenBerichtPage() {
       info="Operativer Management-Report für den gewählten Zeitraum: Tagesumsatz gemäss Z-Bericht, Personalkosten gemäss Dienstplan, Warenkosten gemäss Rechnungen — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF. Finanzielle Monatswerte gemäss Erfolgsrechnung stehen in Erfolgsrechnung und Reporting."
       meta={rangeLabel}
       actions={
-        <button
-          onClick={exportPdf}
+        <UnifiedExportButton
+          data-testid="kb-export"
           disabled={!summary || loading}
-          className="flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-40"
-        >
-          <Download className="h-3.5 w-3.5" />
-          PDF exportieren
-        </button>
+          actions={[
+            { key: 'pdf', label: 'Kennzahlen-Bericht (PDF)', kind: 'pdf', onSelect: () => { void exportPdf(); } },
+          ]}
+        />
       }
     >
       <div className="ml-2 flex items-center gap-0.5 rounded-md bg-muted p-0.5">

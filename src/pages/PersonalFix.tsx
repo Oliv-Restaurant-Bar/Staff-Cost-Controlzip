@@ -7,7 +7,7 @@ import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
   ChevronLeft, ChevronRight, ChevronDown, Calendar, BarChart2, Lightbulb, Target,
-  Repeat, FileText, Download, TrendingDown,
+  Repeat, TrendingDown,
 } from 'lucide-react';
 import {
   exportPersonalFixToPDF,
@@ -51,6 +51,7 @@ import { resolvePositionKey } from '@/lib/position-utils';
 import { fetchReservationsInRange } from '@/lib/reservation-crm-db';
 import { personsPerDay, type ReservationAnalyticsRow } from '@/lib/reservation-analytics';
 import { Button } from '@/components/ui/button';
+import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -4219,16 +4220,12 @@ export default function PersonalFixPage() {
             </Button>
           </div>
 
-          {/* PDF Export Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportPDF}
-            className="h-8 gap-1.5 text-xs border-rose-200 text-rose-700 hover:bg-rose-50 hover:border-rose-300 dark:border-rose-800 dark:text-rose-400 dark:hover:bg-rose-950/30"
-          >
-            <FileText className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">PDF Export</span>
-          </Button>
+          <UnifiedExportButton
+            data-testid="pfix-export"
+            actions={[
+              { key: 'pdf', label: 'Personal FIX (PDF)', kind: 'pdf', onSelect: handleExportPDF },
+            ]}
+          />
         </div>
       </header>
 
@@ -6091,16 +6088,14 @@ export default function PersonalFixPage() {
                   {mA.label}
                 </div>
                 <div className="flex items-center gap-1 ml-auto">
-                  <Button size="sm" variant="ghost" onClick={handleFlexExportPDF}
-                    className="h-7 px-2 text-xs gap-1 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/30"
-                    title="Flex-Auswertung als PDF exportieren">
-                    <Download className="h-3 w-3" />PDF
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={handleFlexExportExcel}
-                    className="h-7 px-2 text-xs gap-1 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/30"
-                    title="Flex-Auswertung als Excel exportieren">
-                    <Download className="h-3 w-3" />Excel
-                  </Button>
+                  <UnifiedExportButton
+                    className="h-7 px-2 text-xs gap-1"
+                    data-testid="pfix-flex-export"
+                    actions={[
+                      { key: 'pdf', label: 'Flex-Auswertung (PDF)', kind: 'pdf', onSelect: handleFlexExportPDF },
+                      { key: 'excel', label: 'Flex-Auswertung (Excel)', kind: 'excel', onSelect: () => { void handleFlexExportExcel(); } },
+                    ]}
+                  />
                 </div>
                 {proRataDay !== null && (
                   <Badge variant="secondary" className="text-xs">bis {proRataDay}. · {Math.round(proRataFactor * 100)} %</Badge>
