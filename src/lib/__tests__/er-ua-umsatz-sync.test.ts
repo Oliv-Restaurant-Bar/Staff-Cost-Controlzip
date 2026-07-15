@@ -93,6 +93,49 @@ describe('V003 — ER-Umsatz ≡ UA-Referenz über die gemeinsamen öffentlichen
     expect(effective.revenueActual!).toBeCloseTo(uaRef, 8);
   });
 
+  it('Matrix: Oliv 2024+2025, Beaulieu 2025+2026 synchron — Beaulieu 2024 bleibt fehlend (kein Rückfall auf 0)', () => {
+    // Tenant-getrennte Tages-Blobs: Beaulieu hat KEINE 2024-Daten.
+    const olivBlob: Record<string, { actualRevenue: number }> = {};
+    const beaulieuBlob: Record<string, { actualRevenue: number }> = {};
+    for (let m = 1; m <= 12; m++) {
+      Object.assign(olivBlob, buildMonthBlob(2024, m, 500 + m));
+      Object.assign(olivBlob, buildMonthBlob(2025, m, 1500 + m));
+      Object.assign(beaulieuBlob, buildMonthBlob(2025, m, 3100 + m));
+      Object.assign(beaulieuBlob, buildMonthBlob(2026, m, 5200 + m));
+    }
+    localStorageStore[OLIV_DAILY_KEY] = JSON.stringify(olivBlob);
+    localStorageStore[BEAULIEU_DAILY_KEY] = JSON.stringify(beaulieuBlob);
+
+    const cases: Array<{ key: string; year: number }> = [
+      { key: OLIV_DAILY_KEY, year: 2024 },
+      { key: OLIV_DAILY_KEY, year: 2025 },
+      { key: BEAULIEU_DAILY_KEY, year: 2025 },
+      { key: BEAULIEU_DAILY_KEY, year: 2026 },
+    ];
+    for (const { key, year } of cases) {
+      const blob = readLocalRecord(key);
+      for (let m = 1; m <= 12; m++) {
+        const ua = sumDailyGrossForMonth(blob, year, m);
+        const er = computeMonthlyIstGross(year, m, blob as Record<string, { actualRevenue?: number }>);
+        // Numerischer Vergleich der Rohwerte — nie über formatierte Strings.
+        expect(er, `${key} ${year}-${m}`).toBeCloseTo(ua, 8);
+        expect(ua, `${key} ${year}-${m} hat Daten`).toBeGreaterThan(0);
+      }
+    }
+
+    // Beaulieu 2024: keine Tagesdaten → Regel 1 greift NICHT, der leere
+    // ER-Monats-Record behält revenueActual = undefined (fehlend ≠ 0).
+    const beaulieu2024 = readLocalRecord(BEAULIEU_DAILY_KEY);
+    for (let m = 1; m <= 12; m++) {
+      const effective = applyEffectiveMonthRules(createEmptyMonth(2024, m), m, {
+        year: 2024,
+        dailyBudgets: beaulieu2024 as Record<string, { actualRevenue?: number }>,
+        net: false,
+      });
+      expect(effective.revenueActual, `Beaulieu 2024-${m} bleibt fehlend`).toBeUndefined();
+    }
+  });
+
   it('Tenant-Isolation: Oliv- und Beaulieu-Reader liefern je die EIGENE Referenz (keine Vermischung)', () => {
     const year = 2026;
     const month = 3;

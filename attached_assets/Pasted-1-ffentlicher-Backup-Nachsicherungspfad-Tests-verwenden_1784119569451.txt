@@ -1,0 +1,51 @@
+1. Öffentlicher Backup-/Nachsicherungspfad
+   • Tests verwenden denselben Einstiegspfad wie ImportHub
+   • kein Test nur gegen eine private Hilfsfunktion
+   • Remote-Lesefehler wird nicht als leerer Remote-Bestand behandelt
+   • Retry schreibt nur fehlende oder ausdrücklich bestätigte Monate
+   • bereits vorhandene Monate bleiben erhalten
+   • Tombstones werden nie reaktiviert
+   • kein Last-Writer-Wipe bei mehreren Monatswrites
+   • Backup-Prüfung bleibt read-only
+
+2. Tenant-Isolation
+   • Oliv und Beaulieu verwenden strikt getrennte Keys
+   • Tenantwechsel während Vorschau oder Prüfung kann keinen Save im falschen Tenant auslösen
+   • keine veralteten Responses nach Tenantwechsel sichtbar
+   • keine Oliv-Requests bei aktivem Beaulieu und umgekehrt
+
+3. Schaltjahr 2024
+   • expliziter Test mit 366 Tagen
+   • Februar enthält 29 Tage
+   • 29. Februar fliesst in die Monatssumme ein
+   • keine Daten aus 2023 oder 2025
+
+4. Synchronität
+   • Erfolgsrechnung und Umsatzabstimmung lesen denselben Referenzrohwert
+   • Oliv 2024, Oliv 2025, Beaulieu 2025 und Beaulieu 2026 abgedeckt
+   • Beaulieu 2024 bleibt null beziehungsweise fehlend
+   • kein Rückfall auf 0
+   • keine Vergleiche nur über formatierte Strings
+
+5. E2E-Verifikation
+   • Login/Test-Admin nur in Testumgebung
+   • keine Zugangsdaten in Tests, Logs oder Doku
+   • Test-Admin nach Abschluss entfernt oder als klarer Testnutzer dokumentiert
+   • keine produktiven Daten verändert
+   • Hash-/Deep-Links entsprechen den realen Routen
+   • data-testids sind stabil und nur dort ergänzt, wo sinnvoll
+   • Desktop-, Tablet- und Mobile-Zustände tatsächlich geprüft oder transparent als nicht prüfbar dokumentiert
+
+6. Runtime-Verhalten
+   • keine Writes beim Öffnen, Prüfen oder Wechseln des Tenants
+   • genau erwartete Writes nach expliziter Bestätigung
+   • Doppelklick erzeugt keinen doppelten Write
+   • keine React-Warnungen oder neue Console-Fehler
+   • keine fehlgeschlagenen Requests durch falsche Routen
+
+7. Scope und Qualität
+   • keine neue parallele Finanzlogik
+   • keine unnötige Architektur
+   • keine Veränderung bestehender Konten-, EBIT-, Export- oder Gate-Logik
+   • keine fremden Änderungen im Diff
+   • replit.md nur ändern, wenn die Verifikation eine tatsächliche Abweichung zeigt
