@@ -18,5 +18,7 @@ description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Tes
 - `.env`-Werte sind QUOTED — beim Parsen im Sandbox-Script Anführungszeichen strippen, sonst „Invalid supabaseUrl".
 - `runTest` gab `screenshotPaths: []` zurück (Screenshots nicht persistiert) — visuelle Beurteilung steckt nur im Text-Report des Agents.
 - Import-Center-Sektionen sind standardmässig ZUGEKLAPPT — der Testagent findet innere Buttons nicht. Lösung: Deep-Link mit URL-Hash `/import#<sektions-id>` (klappt automatisch auf) in den Testplan schreiben, plus Fallback «Sektions-Karte anklicken».
+- Datei-Uploads FUNKTIONIEREN im Testagent: Testdatei vorab nach `/tmp/…` schreiben (z. B. synthetisches XLSX per Sandbox-Script) und den absoluten Pfad im Testplan nennen — der Agent lädt sie über den File-Input/Dropzone hoch. So sind komplette Import-Flows live prüfbar, inkl. Cleanup-Schritt (Testimport wieder löschen) im selben Plan.
+- Nach Abschluss aller Runden: `user_profiles`-Selbst-Upsert wird durch die Migration `20260716_user_profiles_role_protection.sql` (Trigger, role-Änderung nur durch Admins) unterbunden, sobald sie eingespielt ist — danach braucht der Test-Admin-Weg einen echten Admin, der die Rolle setzt.
 
 **Anwendung:** Vor visuellen UX-Checks hinter dem Login kein Credentials-Raten; Test-Admin-Konto anlegen, testen, Rolle herabstufen, User über das Konto informieren.

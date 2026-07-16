@@ -15,6 +15,7 @@
  */
 
 import { kvGet, kvSet } from './supabase-kv';
+import type { AnnualCostImportMode } from './annual-cost-preview';
 
 export const ANNUAL_COST_IMPORTS_KEY = 'annualCostImports_v1';
 
@@ -38,6 +39,10 @@ export interface AnnualCostImportEntry {
   /** Summe Aufwand / Ertrag (CHF, Vorzeichen bereits normalisiert) */
   sumExpense: number;
   sumIncome: number;
+  /** Konfliktmodus des Imports (fehlt bei Alt-Einträgen = 'replace') */
+  mode?: AnnualCostImportMode;
+  /** Monate, deren Datei-Daten wegen des Modus übersprungen wurden */
+  monthsSkipped?: number;
   /** Tombstone: Import wurde gelöscht (Daten aus reporting_v1 entfernt) */
   deleted?: boolean;
   /** Für Merge-Konfliktauflösung (neuester gewinnt) */

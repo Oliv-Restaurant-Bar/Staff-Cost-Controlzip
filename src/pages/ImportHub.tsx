@@ -44,6 +44,7 @@ import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-
 import { matchCSVRows, buildMonthRecord, buildExpenseCategoriesOnly } from '@/lib/csv-import-engine';
 import {
   saveMonth,
+  loadYear,
   replaceAnnualCostYear,
   removeAnnualCostYear,
   retryReportingMonthsBackup,
@@ -51,9 +52,25 @@ import {
   yearsWithData,
   STORAGE_KEY as REPORTING_STORAGE_KEY,
 } from '@/lib/reporting-store';
+import {
+  buildAnnualCostPreview,
+  applyImportMode,
+  type AnnualCostImportMode,
+} from '@/lib/annual-cost-preview';
+import { REPORTING_DATA_CHANGED_EVENT, notifyReportingDataChanged } from '@/lib/import-events';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { notifyKVBackupProblem, kvGetStrict } from '@/lib/supabase-kv';
 import { asRecordBlob, readLocalRecord } from '@/lib/kv-blob-utils';
 import { HintBox } from '@/components/ui/hint-box';
+import { StatusPill } from '@/components/ui/status-pill';
+import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
+import {
+  summarizeEffectiveMonth,
+  type MonthActualsSummary,
+  type BlobDayEntry,
+} from '@/lib/daily-actuals';
 import {
   loadAnnualCostImports,
   upsertAnnualCostImport,
@@ -310,6 +327,269 @@ const DatenstandCard = () => {
             );
           })}
         </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+// ─── Jahres-Datenstand (Vorjahr) ─────────────────────────────────────────────
+//
+// Read-only-Übersicht je Jahr (Default 2024): Umsatz-Tagesdaten (dailyBudgets +
+// vj_daily desselben Jahres, effektiv kombiniert via daily-actuals) und
+// Kostenstand (Jahres-Import-Registry + reporting_v1-Monate). Reines Laden —
+// kein Write, kein updatedAt-Bump. Fehlend = «—»/«Keine Daten», nie 0.
+
+const JD_MONTH_LABELS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+/** Sektion aufklappen + hinscrollen (gleicher Mechanismus wie die Gruppen-Karten). */
+function openImportSection(anchor: string) {
+  window.dispatchEvent(new CustomEvent(IMPORT_SECTION_OPEN_EVENT, { detail: anchor }));
+  setTimeout(() => {
+    document.getElementById(anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
+
+interface JahresDatenstand {
+  /** Tage im vj_daily-Jahresbestand (Supabase) */
+  vjDays: number;
+  /** Effektive Tages-IST-Abdeckung je Monat (dailyBudgets + vj_daily) */
+  monthStats: MonthActualsSummary[];
+  /** ER-Monate (reporting_v1) mit gesetztem Umsatz (brutto ODER netto) */
+  erRevenueMonths: number;
+  /** ER-Monate mit mindestens einer numerischen Kostenkategorie */
+  kostenMonths: number;
+  /** Verschiedene Kostenkategorien mit numerischem Betrag im Jahr */
+  kostenCategories: number;
+  /** Registry-Eintrag des Jahres-Kostenimports (falls vorhanden) */
+  registryEntry: AnnualCostImportEntry | null;
+}
+
+const JahresDatenstandCard = () => {
+  const { tenantId, tenantKey } = useTenant();
+  const yearOptions = [currentYear - 1, currentYear - 2, currentYear - 3];
+  const [year, setYear] = useState(yearOptions.includes(2024) ? 2024 : yearOptions[0]);
+  const [loading, setLoading]   = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [data, setData] = useState<JahresDatenstand | null>(null);
+
+  const reportingKey = tenantKey(REPORTING_STORAGE_KEY);
+  const registryKey  = tenantKey(ANNUAL_COST_IMPORTS_KEY);
+  const budgetsKey   = tenantKey('dailyBudgets');
+
+  useEffect(() => {
+    let stale = false;
+    setLoading(true);
+    setLoadError(false);
+    (async () => {
+      try {
+        const [vj, registry] = await Promise.all([
+          loadVjDailyYear(year, tenantId),
+          loadAnnualCostImports(registryKey),
+        ]);
+        if (stale) return;
+
+        const blob = readLocalRecord(budgetsKey) as Record<string, BlobDayEntry>;
+        const monthStats: MonthActualsSummary[] = [];
+        for (let m = 1; m <= 12; m++) {
+          monthStats.push(summarizeEffectiveMonth(blob, vj, year, m));
+        }
+
+        const er = loadYear(year, reportingKey);
+        const erRevenueMonths = er.filter(
+          r => r.grossRevenueManual !== undefined || r.revenueActual !== undefined,
+        ).length;
+        const categoryIds = new Set<string>();
+        let kostenMonths = 0;
+        for (const r of er) {
+          const cats = (r.expenseCategories ?? []).filter(c => Number.isFinite(c.amount));
+          if (cats.length > 0) kostenMonths += 1;
+          for (const c of cats) categoryIds.add(c.categoryId);
+        }
+
+        setData({
+          vjDays: Object.keys(vj).length,
+          monthStats,
+          erRevenueMonths,
+          kostenMonths,
+          kostenCategories: categoryIds.size,
+          registryEntry: registry.find(e => e.year === year) ?? null,
+        });
+        setLoading(false);
+      } catch (e) {
+        console.warn('[JAHRES-DATENSTAND] Laden fehlgeschlagen', e);
+        if (!stale) { setLoadError(true); setLoading(false); }
+      }
+    })();
+    return () => { stale = true; };
+  }, [year, tenantId, reportingKey, registryKey, budgetsKey, refreshKey]);
+
+  // Nach Kostenimport-Speichern/-Löschen und VJ-Übernahme neu laden (reines Anzeige-Refresh)
+  useEffect(() => {
+    const onChanged = () => setRefreshKey(k => k + 1);
+    window.addEventListener(REPORTING_DATA_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(REPORTING_DATA_CHANGED_EVENT, onChanged);
+  }, []);
+
+  // Aggregierte Umsatz-Abdeckung (fehlende Tage zählen NIE als 0)
+  const daysWithData = data ? data.monthStats.reduce((s, m) => s + m.daysWithData, 0) : 0;
+  const totalDays    = data ? data.monthStats.reduce((s, m) => s + m.totalDays, 0) : 0;
+  const umsatzTone   = !data || daysWithData === 0 ? 'neutral'
+    : daysWithData === totalDays ? 'good' : 'warn';
+  const kostenTone   = !data || data.kostenMonths === 0 ? 'neutral'
+    : data.kostenMonths === 12 ? 'good' : 'warn';
+
+  return (
+    <Card className="border-border bg-card shadow-sm" data-testid="jahres-datenstand-card">
+      <CardHeader className="pb-2 pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Database className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">Datenstand Vorjahr</span>
+            <span className="text-xs font-normal text-muted-foreground">– Umsatz- und Kostendaten je Jahr</span>
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+              <SelectTrigger className="h-7 w-[88px] text-xs" data-testid="jahres-datenstand-year">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {yearOptions.map(y => (
+                  <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <button
+              onClick={() => setRefreshKey(k => k + 1)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Aktualisieren"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            </button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pb-4 pt-0 space-y-3">
+        {loadError && (
+          <HintBox tone="critical">
+            Datenstand {year} konnte nicht geladen werden.{' '}
+            <button className="underline font-medium" onClick={() => setRefreshKey(k => k + 1)}>
+              Erneut versuchen
+            </button>
+          </HintBox>
+        )}
+        {!loadError && loading && (
+          <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Datenstand {year} wird geladen …
+          </div>
+        )}
+        {!loadError && !loading && data && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* ── Umsatz (Tagesdaten) ─────────────────────────────── */}
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2" data-testid="jd-umsatz">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold flex items-center gap-1.5">
+                  <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
+                  Umsatz {year} (Tagesdaten)
+                </p>
+                <StatusPill tone={umsatzTone} size="xs">
+                  {daysWithData === 0 ? 'Keine Daten' : `${daysWithData}/${totalDays} Tage`}
+                </StatusPill>
+              </div>
+              <div className="grid grid-cols-6 gap-1">
+                {data.monthStats.map((m, i) => {
+                  const full  = m.totalDays > 0 && m.daysWithData === m.totalDays;
+                  const some  = m.daysWithData > 0 && !full;
+                  return (
+                    <div
+                      key={i}
+                      className={cn(
+                        'rounded px-1 py-0.5 text-center text-[10px] tabular-nums border',
+                        full && 'bg-green-50 border-green-200 text-green-700 dark:bg-green-950/20 dark:border-green-800 dark:text-green-400',
+                        some && 'bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400',
+                        !full && !some && 'bg-muted/40 border-border/50 text-muted-foreground',
+                      )}
+                      title={`${JD_MONTH_LABELS[i]} ${year}: ${m.daysWithData} von ${m.totalDays} Tagen`}
+                    >
+                      {JD_MONTH_LABELS[i]}
+                      <div className="font-medium">{m.daysWithData > 0 ? m.daysWithData : '—'}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="text-[11px] text-muted-foreground space-y-0.5">
+                <p>Jahres-Tagesimport (vj_daily): {data.vjDays > 0 ? `${data.vjDays} Tage` : 'keine Daten'}</p>
+                <p>Erfolgsrechnung: {data.erRevenueMonths > 0 ? `${data.erRevenueMonths}/12 Monate mit Umsatz` : 'kein Umsatz übernommen'}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Button
+                  variant="outline" size="sm" className="h-7 text-[11px]"
+                  onClick={() => openImportSection('vj-tagesumsatz')}
+                  data-testid="jd-link-vj-import"
+                >
+                  Tagesimport &amp; ER-Übernahme
+                </Button>
+                <Link to={`/umsatzabstimmung?year=${year}`}>
+                  <Button variant="ghost" size="sm" className="h-7 text-[11px] text-muted-foreground">
+                    Umsatzabstimmung {year}
+                  </Button>
+                </Link>
+              </div>
+              {data.vjDays > 0 && data.erRevenueMonths < 12 && (
+                <p className="text-[11px] text-orange-700 dark:text-orange-400">
+                  Tagesdaten vorhanden, aber erst {data.erRevenueMonths}/12 ER-Monate mit Umsatz —
+                  Übernahme über «Tagesimport &amp; ER-Übernahme» starten.
+                </p>
+              )}
+            </div>
+
+            {/* ── Kosten (Buchhaltung) ────────────────────────────── */}
+            <div className="rounded-lg border border-border/60 bg-muted/20 p-3 space-y-2" data-testid="jd-kosten">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold flex items-center gap-1.5">
+                  <BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                  Kosten {year} (Buchhaltung)
+                </p>
+                <StatusPill tone={kostenTone} size="xs">
+                  {data.kostenMonths === 0 ? 'Keine Daten' : `${data.kostenMonths}/12 Monate`}
+                </StatusPill>
+              </div>
+              <div className="text-[11px] text-muted-foreground space-y-0.5">
+                {data.registryEntry ? (
+                  <>
+                    <p>
+                      Letzter Jahres-Import:{' '}
+                      <span className="font-medium text-foreground">{data.registryEntry.fileName}</span>
+                    </p>
+                    <p>
+                      {formatDatenstandDate(data.registryEntry.importedAt.slice(0, 10))} ·{' '}
+                      {data.registryEntry.accountCount} Konten · {data.registryEntry.monthsWithData} Monate
+                      {data.registryEntry.unmappedCount > 0 && (
+                        <span className="text-orange-700 dark:text-orange-400"> · {data.registryEntry.unmappedCount} nicht zugeordnet</span>
+                      )}
+                    </p>
+                  </>
+                ) : (
+                  <p>Kein Jahres-Kostenimport für {year} registriert.</p>
+                )}
+                <p>
+                  Erfolgsrechnung: {data.kostenMonths > 0
+                    ? `${data.kostenMonths}/12 Monate mit Kosten (${data.kostenCategories} Kategorien)`
+                    : 'keine Kostendaten'}
+                </p>
+              </div>
+              <div className="pt-1">
+                <Button
+                  variant="outline" size="sm" className="h-7 text-[11px]"
+                  onClick={() => openImportSection('vorjahr-kosten-buchhaltung')}
+                  data-testid="jd-link-sage-import"
+                >
+                  Zum Sage-Jahresimport
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -664,6 +944,9 @@ const AnnualCostImportSection = () => {
   const [backupCheckError, setBackupCheckError] = useState('');
   const [backupDiff, setBackupDiff] = useState<{ missing: string[]; localCount: number; remoteCount: number } | null>(null);
   const [backingUp, setBackingUp] = useState(false);
+  // Konfliktmodus + Monatsauswahl (nur für Modus «selective»)
+  const [importMode, setImportMode] = useState<AnnualCostImportMode>('replace');
+  const [selectedMonths, setSelectedMonths] = useState<Set<number>>(new Set());
 
   const registryKey  = tenantKey(ANNUAL_COST_IMPORTS_KEY);
   const reportingKey = tenantKey(REPORTING_STORAGE_KEY);
@@ -708,6 +991,39 @@ const AnnualCostImportSection = () => {
     return { categoriesByMonth, unmapped, sumExpense, sumIncome, sumUnmapped };
   }, [result]);
 
+  /**
+   * Bestehende expenseCategories des Zieljahres (read-only aus localStorage) —
+   * Basis für die Konto×Monat-Diff-Vorschau und die Konfliktmodi.
+   * `saved` als Dependency: nach dem Speichern wäre der Bestand veraltet.
+   */
+  const existingByMonth = useMemo(() => {
+    if (!result || result.detectedYear === null) return new Map<number, ExpenseCategory[]>();
+    const map = new Map<number, ExpenseCategory[]>();
+    loadYear(result.detectedYear, reportingKey).forEach((rec, i) => {
+      map.set(i + 1, rec.expenseCategories ?? []);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, reportingKey, saved]);
+
+  /** Konto×Monat-Diff (reine Logik) — Status je Zelle + deutsche Warnungen. */
+  const diff = useMemo(() => {
+    if (!preview) return null;
+    return buildAnnualCostPreview(preview.categoriesByMonth, existingByMonth);
+  }, [preview, existingByMonth]);
+
+  /** Wirkung des gewählten Modus (Pre-Merge, geht 1:1 an den Schreib-Kern). */
+  const modeResult = useMemo(() => {
+    if (!preview) return null;
+    return applyImportMode(importMode, preview.categoriesByMonth, existingByMonth, selectedMonths);
+  }, [preview, existingByMonth, importMode, selectedMonths]);
+
+  // Neue Datei / Tenant-Wechsel: Modus + Auswahl zurücksetzen
+  useEffect(() => {
+    setImportMode('replace');
+    setSelectedMonths(new Set());
+  }, [result, reportingKey]);
+
   const handleFile = async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
       setError('Nur Excel-Dateien (.xlsx/.xls) werden unterstützt.');
@@ -741,13 +1057,17 @@ const AnnualCostImportSection = () => {
   };
 
   const handleSave = async () => {
-    if (!result || !preview || result.detectedYear === null || result.ambiguousYear) return;
+    if (!result || !preview || !modeResult || result.detectedYear === null || result.ambiguousYear) return;
+    if (importMode === 'selective' && selectedMonths.size === 0) {
+      toast.error('Modus «Nur ausgewählte Monate»: Bitte mindestens einen Monat auswählen.');
+      return;
+    }
     setSaving(true);
     try {
       const year = result.detectedYear;
-      const { monthsWritten, monthsCleared, kvBackup } = replaceAnnualCostYear(
+      const { monthsWritten, monthsCleared, monthsUnchanged, kvBackup } = replaceAnnualCostYear(
         year,
-        preview.categoriesByMonth,
+        modeResult.effective,
         { fileName },
         reportingKey,
       );
@@ -764,12 +1084,19 @@ const AnnualCostImportSection = () => {
         skippedOutOfYear: result.skippedOutOfYear,
         sumExpense: preview.sumExpense,
         sumIncome: preview.sumIncome,
+        mode: importMode,
+        monthsSkipped: modeResult.monthsSkipped.length,
       });
       refreshEntries(registryKey);
+      notifyReportingDataChanged();
       setSaved(true);
       toast.success(
         `Jahr ${year}: ${monthsWritten} Monate gespeichert` +
-        (monthsCleared > 0 ? `, ${monthsCleared} Monate von alten Kontodaten bereinigt` : ''),
+        (monthsCleared > 0 ? `, ${monthsCleared} Monate von alten Kontodaten bereinigt` : '') +
+        (monthsUnchanged > 0 ? `, ${monthsUnchanged} Monate unverändert (kein Write)` : '') +
+        (modeResult.monthsSkipped.length > 0
+          ? ` — ${modeResult.monthsSkipped.length} Datei-Monat(e) wegen Modus übersprungen`
+          : ''),
       );
       const backup = await kvBackup;
       if (backup.failedMonths.length > 0) {
@@ -799,6 +1126,7 @@ const AnnualCostImportSection = () => {
       const res = removeAnnualCostYear(deleteYear, {}, reportingKey);
       await markAnnualCostImportDeleted(registryKey, deleteYear);
       refreshEntries(registryKey);
+      notifyReportingDataChanged();
       toast.success(`Jahr ${deleteYear}: Kontodaten aus ${res.monthsCleared} Monaten entfernt`);
       const backup = await res.kvBackup;
       if (backup.failedMonths.length > 0) {
@@ -1006,10 +1334,172 @@ const AnnualCostImportSection = () => {
             </table>
           </div>
 
+          {/* Validierungshinweise aus der Diff-Vorschau (reine Logik) */}
+          {diff && diff.warnings.length > 0 && (
+            <div data-testid="annual-import-warnings">
+              <HintBox tone="warn" title="Prüfhinweise zur Datei">
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {diff.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                </ul>
+              </HintBox>
+            </div>
+          )}
+
+          {/* Konto×Monat-Diff gegen den Bestand */}
+          {diff && diff.rows.length > 0 && (
+            <div data-testid="annual-import-diff-table" className="rounded border text-[11px] overflow-auto max-h-96">
+              <table className="w-full min-w-[900px]">
+                <thead className="sticky top-0 z-10 bg-gray-100 dark:bg-gray-800">
+                  <tr>
+                    <th className="text-left py-1 px-2 font-medium whitespace-nowrap">Konto</th>
+                    {MONTH_LABELS.map(m => (
+                      <th key={m} className="text-right py-1 px-1 font-medium">{m}</th>
+                    ))}
+                    <th className="text-right py-1 px-2 font-medium">Total neu</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {diff.rows.map(row => (
+                    <tr key={row.accountNumber} className="border-t">
+                      <td className={cn(
+                        'py-0.5 px-2 whitespace-nowrap max-w-[220px] truncate',
+                        row.isRevenueAccount && 'text-orange-700 dark:text-orange-400 font-medium',
+                        row.unmapped && 'text-amber-700 dark:text-amber-400',
+                      )} title={`${row.accountNumber} ${row.label}`}>
+                        {row.accountNumber} {row.label}
+                        {row.isRevenueAccount && ' ⚠'}
+                      </td>
+                      {row.cells.map(cell => (
+                        <td key={cell.month} className={cn(
+                          'text-right py-0.5 px-1 tabular-nums whitespace-nowrap',
+                          cell.status === null && 'text-muted-foreground/40',
+                          cell.status === 'identisch' && 'text-muted-foreground',
+                          cell.status === 'neu' && 'text-green-700 dark:text-green-400',
+                          cell.status === 'ueberschreiben' && 'text-orange-700 dark:text-orange-400 font-medium',
+                          cell.status === 'entfernt' && 'text-red-600 dark:text-red-400 line-through',
+                        )}
+                          title={
+                            cell.status === 'ueberschreiben'
+                              ? `Bestand ${Math.round(cell.existingAmount ?? 0)} → neu ${Math.round(cell.newAmount ?? 0)}`
+                              : cell.status === 'entfernt'
+                                ? `Bestand ${Math.round(cell.existingAmount ?? 0)} — nicht in der Datei`
+                                : undefined
+                          }
+                        >
+                          {cell.status === 'entfernt'
+                            ? fmtChf(Math.round(cell.existingAmount ?? 0))
+                            : cell.newAmount !== null ? fmtChf(Math.round(cell.newAmount)) : '—'}
+                        </td>
+                      ))}
+                      <td className="text-right py-0.5 px-2 tabular-nums font-medium">
+                        {fmtChf(Math.round(row.newTotal))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {diff && diff.rows.length > 0 && (
+            <p className="text-[10px] text-muted-foreground">
+              Legende: <span className="text-green-700 dark:text-green-400">neu</span> ·{' '}
+              <span>identisch (grau)</span> ·{' '}
+              <span className="text-orange-700 dark:text-orange-400 font-medium">überschreibt Bestand</span> ·{' '}
+              <span className="text-red-600 dark:text-red-400 line-through">Bestand würde entfernt</span> — fehlend = «—», nie 0.
+            </p>
+          )}
+
+          {/* Konfliktmodus */}
+          {diff && (
+            <div data-testid="annual-import-mode" className="rounded border p-2 space-y-2">
+              <p className="text-xs font-medium">
+                Umgang mit bestehenden Kontodaten
+                {diff.monthsWithExistingData.length > 0 && (
+                  <span className="text-muted-foreground font-normal">
+                    {' '}({diff.monthsWithExistingData.length} Monat(e) mit Bestand)
+                  </span>
+                )}
+              </p>
+              <RadioGroup
+                value={importMode}
+                onValueChange={v => setImportMode(v as AnnualCostImportMode)}
+                className="gap-1.5"
+              >
+                <div className="flex items-start gap-2">
+                  <RadioGroupItem value="replace" id="acm-replace" className="mt-0.5" data-testid="annual-import-mode-replace" />
+                  <Label htmlFor="acm-replace" className="text-xs font-normal cursor-pointer">
+                    <span className="font-medium">Ersetzen (Standard)</span> — Datei-Stand ersetzt alle
+                    Konto-Kategorien des Jahres{diff.clearedMonths.length > 0 && (
+                      <span className="text-red-600 dark:text-red-400">
+                        ; bestehende Kontodaten in {diff.clearedMonths.length} Monat(en) ohne Datei-Daten werden entfernt
+                      </span>
+                    )}.
+                  </Label>
+                </div>
+                <div className="flex items-start gap-2">
+                  <RadioGroupItem value="keep-existing" id="acm-keep" className="mt-0.5" data-testid="annual-import-mode-keep" />
+                  <Label htmlFor="acm-keep" className="text-xs font-normal cursor-pointer">
+                    <span className="font-medium">Bestehende Werte behalten</span> — vorhandene Konto-Werte
+                    bleiben; nur bisher fehlende Konten werden aus der Datei ergänzt.
+                  </Label>
+                </div>
+                <div className="flex items-start gap-2">
+                  <RadioGroupItem value="fill-empty" id="acm-fill" className="mt-0.5" data-testid="annual-import-mode-fill" />
+                  <Label htmlFor="acm-fill" className="text-xs font-normal cursor-pointer">
+                    <span className="font-medium">Nur leere Monate füllen</span> — nur Monate ohne bestehende
+                    Kontodaten erhalten Datei-Daten; Monate mit Bestand bleiben unangetastet.
+                  </Label>
+                </div>
+                <div className="flex items-start gap-2">
+                  <RadioGroupItem value="selective" id="acm-selective" className="mt-0.5" data-testid="annual-import-mode-selective" />
+                  <Label htmlFor="acm-selective" className="text-xs font-normal cursor-pointer">
+                    <span className="font-medium">Nur ausgewählte Monate</span> — nur die gewählten Monate
+                    werden mit dem Datei-Stand ersetzt; übrige bleiben unangetastet.
+                  </Label>
+                </div>
+              </RadioGroup>
+              {importMode === 'selective' && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 pl-6" data-testid="annual-import-month-select">
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => {
+                    const inFile = diff.monthsInFile.includes(m);
+                    return (
+                      <label key={m} className={cn(
+                        'flex items-center gap-1 text-[11px] cursor-pointer',
+                        !inFile && 'text-muted-foreground/50',
+                      )}>
+                        <Checkbox
+                          checked={selectedMonths.has(m)}
+                          disabled={!inFile}
+                          onCheckedChange={checked => {
+                            setSelectedMonths(prev => {
+                              const nextSel = new Set(prev);
+                              if (checked === true) nextSel.add(m); else nextSel.delete(m);
+                              return nextSel;
+                            });
+                          }}
+                          className="h-3.5 w-3.5"
+                        />
+                        {MONTH_LABELS[m - 1]}
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+              {modeResult && modeResult.monthsSkipped.length > 0 && (
+                <p className="text-[11px] text-muted-foreground" data-testid="annual-import-mode-skipped">
+                  Wirkung: Datei-Daten von {modeResult.monthsSkipped.length} Monat(en) werden wegen des
+                  Modus nicht angewendet ({modeResult.monthsSkipped.map(m => MONTH_LABELS[m - 1]).join(', ')});
+                  unangetastete Monate bleiben ohne Änderung (kein Write, kein Zeitstempel-Bump).
+                </p>
+              )}
+            </div>
+          )}
+
           <p className="text-[10px] text-muted-foreground">
-            Beim Bestätigen werden die Konto-Kategorien des Jahres {result.detectedYear} in allen 12
-            Monaten ersetzt (wiederholbarer Import, keine Duplikate). Gastronovi-Umsatz,
-            Personalkosten-Direktwerte und manuelle Kategorien bleiben unberührt.
+            Beim Bestätigen werden die Konto-Kategorien des Jahres {result.detectedYear} gemäss dem
+            gewählten Modus geschrieben (wiederholbarer Import, keine Duplikate; unveränderte Monate
+            sind ein No-op). Gastronovi-Umsatz, Personalkosten-Direktwerte und manuelle Kategorien
+            bleiben unberührt.
           </p>
 
           {result.detectedYear !== null && (() => {
@@ -1031,7 +1521,8 @@ const AnnualCostImportSection = () => {
           <div className="flex gap-2">
             <Button
               size="sm" className="h-8 text-xs"
-              onClick={handleSave} disabled={saving}
+              onClick={handleSave}
+              disabled={saving || (importMode === 'selective' && selectedMonths.size === 0)}
               data-testid="annual-import-confirm"
             >
               {saving
@@ -2358,6 +2849,9 @@ const ImportHub = () => {
 
         {/* ── 0. Datenstand ─────────────────────────────────────────────── */}
         <DatenstandCard />
+
+        {/* ── 0b. Datenstand Vorjahr (je Jahr, Default 2024) ───────────── */}
+        <JahresDatenstandCard />
 
         {/* ── 1. Umsatz Ist ────────────────────────────────────────────── */}
         <Section

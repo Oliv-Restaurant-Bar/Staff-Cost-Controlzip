@@ -1,0 +1,299 @@
+Behebe jetzt vollständig den Import und die Anzeige der Umsatz- und Kostendaten für das Jahr 2024.
+
+Ausgangslage:
+In der Tagesansicht für Dezember 2024 wird «Kumuliert IST 0» angezeigt, obwohl Umsatzdaten für 2024 bereits hochgeladen wurden. Gleichzeitig erscheint «Keine Vorjahresdaten importiert – Vergleichsmonat Dezember 2023».
+
+Wichtig zur fachlichen Einordnung:
+• In der Ansicht Dezember 2024 ist IST = Dezember 2024.
+• Vorjahr = Dezember 2023.
+• Die Warnung zu fehlenden Vorjahresdaten 2023 kann deshalb korrekt sein.
+• Nicht korrekt ist, dass die bereits importierten Umsatzdaten 2024 als IST nicht erscheinen.
+• Zusätzlich muss ein vollständiger Kostenimport für 2024 möglich sein und anschliessend in der Erfolgsrechnung, den Monatsvergleichen sowie im Bank-/Investorenbericht erscheinen.
+
+Arbeite zuerst diagnostisch und ändere erst danach den Code.
+
+1. Tatsächlichen Importstatus von 2024 prüfen
+
+Prüfe für beide Tenants Oliv und Beaulieu:
+
+• Welche Umsatzimporte für 2024 lokal und remote vorhanden sind.
+• Welche Monate und Tage tatsächlich gespeichert wurden.
+• Welcher tenant_id beziehungsweise Maison-Schlüssel verwendet wurde.
+• Welches Datumsformat gespeichert ist.
+• Ob 2024 versehentlich als Vorjahresdaten statt als IST-Daten gespeichert wurde.
+• Ob die Tagesansicht eine andere Datenquelle oder einen anderen Schlüssel verwendet als der Import.
+• Ob der Import zwar erfolgreich meldet, die Daten aber nur in localStorage, KV oder einer falschen Supabase-Zeile speichert.
+• Ob bei erneutem Import vorhandene Monate ungewollt überschrieben, gelöscht oder mit leeren Werten ersetzt werden.
+• Ob Datums-, Zeitzonen- oder Jahresfilter den Dezember 2024 ausschliessen.
+• Ob der Import Netto- oder Bruttoumsatz liefert und welches Feld die Tagesansicht erwartet.
+
+Erstelle vor der Korrektur eine kompakte Diagnose mit:
+• gefundener Datenquelle
+• Anzahl importierter Tage pro Monat
+• fehlenden Monaten
+• Tenant-Zuordnung
+• Ursache, weshalb die Tagesansicht 0 anzeigt
+
+Keine Daten löschen und keine pauschale Migration über beide Tenants ausführen.
+
+2. Umsatzimport 2024 reparieren
+
+Stelle sicher, dass Umsatzdaten für 2024 nach dem Upload zuverlässig als IST-Daten erscheinen in:
+
+• Tagesansicht
+• Dashboard
+• Verkaufsdashboard
+• Umsatzabstimmung
+• Monatsübersichten
+• Erfolgsrechnung
+• Mehrjahresanalyse
+• Bank-/Investorenbericht
+• Exporten, sofern diese Umsatzdaten verwenden
+
+Die Tagesansicht muss für jeden Tag unterscheiden:
+
+• echter Wert vorhanden → Betrag anzeigen
+• kein Import für diesen Tag → «—»
+• echter importierter Wert von 0 → 0 anzeigen
+
+Fehlende Daten dürfen niemals automatisch als 0 interpretiert werden.
+
+Die kumulierten Werte müssen ausschliesslich aus den tatsächlich vorhandenen Tageswerten berechnet werden.
+
+3. Single Source of Truth einhalten
+
+Verwende für Umsatz-IST weiterhin die bestehende zentrale Datenquelle der Anwendung.
+
+Keine neue parallele Umsatzberechnung und keine zweite Speicherung nur für die Tagesansicht einführen.
+
+Wenn der Import aktuell in eine andere Struktur schreibt als die Tagesansicht liest:
+
+• Import und Leser auf dieselbe bestehende Datenquelle vereinheitlichen
+• bestehende Daten möglichst verlustfrei übernehmen
+• Tenant-Trennung strikt erhalten
+• identische Datensätze idempotent behandeln
+• keine Duplikate erzeugen
+
+Reine Lade- und Anzeigevorgänge dürfen keine automatischen KV- oder Supabase-Schreibvorgänge auslösen.
+
+4. Vergleichslogik verständlich korrigieren
+
+Für Dezember 2024 gilt:
+
+• IST: Dezember 2024
+• Vorjahr: Dezember 2023
+
+Falls 2023 fehlt, darf weiterhin eine sachlich korrekte Warnung erscheinen.
+
+Verbessere die Darstellung jedoch so, dass klar erkennbar ist:
+
+«Umsatzdaten für Dezember 2024»
+und separat
+«Keine Vergleichsdaten für Dezember 2023 importiert»
+
+Die bestehende Meldung darf nicht den Eindruck erwecken, dass der gesamte Upload von 2024 fehlt.
+
+Bei Auswahl «vs. Vorjahr»:
+
+• IST 2024 muss trotzdem vollständig sichtbar bleiben
+• Vorjahresspalten bleiben bei fehlendem 2023 auf «—»
+• Abweichungen bleiben ebenfalls «—»
+• keine Abweichung von 2024 gegen einen künstlichen Wert 0 berechnen
+
+5. Kostenimport für 2024 ermöglichen
+
+Erweitere beziehungsweise repariere den bestehenden Import so, dass Kosten für das Geschäftsjahr 2024 vollständig hochgeladen werden können.
+
+Unterstütze mindestens die bestehende Importstruktur für:
+
+• Personalaufwand
+• direkten Warenaufwand
+• übrigen Warenaufwand
+• Betriebsaufwand
+• Abschreibungen
+• weitere Konten bis EBIT, soweit sie in der bestehenden Erfolgsrechnung vorgesehen sind
+
+Keine geschätzten Werte erzeugen.
+
+Konten und Monatswerte müssen anhand der bestehenden Kontenlogik der Erfolgsrechnung zugeordnet werden.
+
+Bestehende fachliche Abgrenzung beibehalten:
+
+• 4000–4070 = direkter Warenaufwand
+• 4071–4999 beziehungsweise gemäss bestehender zentraler Kontenregel = übriger Warenaufwand
+• Bericht endet bei EBIT
+• Finanzergebnis und Steuern nicht ergänzen
+• kein Jahresgewinn berechnen
+
+6. Import-UX für Kosten 2024
+
+Ergänze im bestehenden Importbereich einen klaren Einstieg:
+
+«Kosten / Erfolgsrechnung importieren»
+
+Der Benutzer muss auswählen oder klar erkennen können:
+
+• Tenant
+• Geschäftsjahr, insbesondere 2024
+• importierte Datei
+• erkannte Monate
+• erkannte Konten
+• Anzahl gelesener Werte
+• nicht zuordenbare Konten
+• bereits vorhandene Daten
+
+Vor dem Speichern eine Importvorschau anzeigen:
+
+• Konto
+• Bezeichnung
+• Monat
+• bestehender Wert
+• neuer Wert
+• Veränderung
+• Status: neu, identisch, überschreiben oder nicht zugeordnet
+
+Bei bestehenden Werten darf nicht still überschrieben werden.
+
+Biete mindestens:
+
+• bestehende Werte behalten
+• nur leere Werte ergänzen
+• ausgewählte Werte überschreiben
+
+Die Entscheidung muss tenant- und jahresspezifisch gelten.
+
+7. Datenvalidierung
+
+Prüfe beim Kostenimport:
+
+• alle zwölf Monate Januar bis Dezember
+• fehlende Monate
+• doppelte Monate
+• doppelte Konten
+• negative Werte
+• Zahlenformate mit Apostroph, Punkt und Komma
+• leere Zellen
+• Formeln in Excel-Zellen
+• Kontonummern als Zahl oder Text
+• Jahresangabe im Dateinamen und in den Daten
+• versehentlich falschen Tenant
+• versehentlich falsches Geschäftsjahr
+
+Ein unvollständiger Import darf möglich sein, muss aber deutlich als unvollständig gekennzeichnet werden.
+
+8. Darstellung nach dem Kostenimport
+
+Nach erfolgreichem Import müssen die Kosten 2024 sichtbar sein in:
+
+• Erfolgsrechnung 2024 je Monat
+• Jahresansicht 2024
+• Vergleich 2025 gegen 2024
+• Vergleich 2026 gegen 2025 und 2024, sofern gewählt
+• Mehrjahresanalyse
+• Bank-/Investorenbericht
+• PDF- und Excel-Exporten dieser Berichte
+
+Fehlende Kostenwerte werden als «—» dargestellt, nicht als 0.
+
+Die Werte müssen aus derselben zentralen Reporting-/Financial-Metrics-Logik stammen. Keine separate Import-Auswertung mit eigenen Summen einführen.
+
+9. Datenstand sichtbar machen
+
+Zeige nach dem Import einen kompakten Datenstand für 2024:
+
+Umsatz 2024
+• importierte Monate
+• importierte Tage
+• letzter Upload
+• vollständig oder unvollständig
+
+Kosten 2024
+• importierte Monate
+• Anzahl Konten
+• letzter Upload
+• vollständig oder unvollständig
+
+Der Datenstand muss klickbar zum passenden Import beziehungsweise zur Fehlerkorrektur führen.
+
+10. Design und Bedienung
+
+Die Umsetzung muss mit dem bestehenden App-Design synchron sein:
+
+• schlicht
+• modern
+• kompakt
+• lesefreundlich
+• einheitliche Karten, Abstände, Radien und Typografie
+• keine grossen Erklärungstexte
+• klare Warnungen direkt beim betroffenen Jahr oder Monat
+• bestehende Komponenten und Patterns wiederverwenden
+• Desktop, Tablet und Mobile sauber
+• Tabellen auf kleinen Viewports kontrolliert horizontal scrollbar
+• keine abgeschnittenen Werte
+• keine neue parallele Import-Navigation schaffen
+
+11. Regressionstests
+
+Erstelle Tests mindestens für:
+
+• Umsatzimport Dezember 2024 erscheint als IST in Dezember 2024
+• fehlendes Dezember 2023 beeinflusst IST 2024 nicht
+• fehlendes Vorjahr wird als «—» angezeigt
+• kein Vergleich gegen künstliche 0
+• echter Umsatzwert 0 bleibt 0
+• fehlender Umsatzwert bleibt «—»
+• kumulierte Werte verwenden nur vorhandene Tage
+• Tenant Oliv und Beaulieu bleiben strikt getrennt
+• erneuter identischer Umsatzimport erzeugt keine Duplikate
+• Kostenimport 2024 mit zwölf Monaten
+• Kostenimport 2024 mit fehlenden Monaten
+• nur leere Werte ergänzen
+• selektives Überschreiben
+• nicht zuordenbare Konten werden ausgewiesen
+• Erfolgsrechnung übernimmt Kosten 2024
+• Vergleich 2025 gegen 2024 verwendet dieselben zentralen Werte
+• PDF und Excel verwenden dieselben Werte wie die UI
+• reines Laden erzeugt keine KV-/Supabase-Writes
+• updatedAt ändert sich nur bei tatsächlicher Datenänderung
+
+Teste beide Tenants.
+
+12. Abschlussprüfung
+
+Führe aus:
+
+• betroffene Unit- und Component-Tests
+• vollständigen Type-Check mit Vergleich zur dokumentierten Baseline
+• Live-Prüfung mit echtem Login
+• Umsatzimport 2024
+• Kostenimport 2024
+• Tenant-Wechsel Oliv ↔ Beaulieu
+• Dezember 2024 in der Tagesansicht
+• Erfolgsrechnung 2024
+• Vergleich 2025 gegen 2024
+• Bank-/Investorenbericht
+• PDF- und Excel-Export
+
+Führe danach ein Architect Review ausschliesslich über den tatsächlichen Task-Diff aus.
+
+13. Dokumentation und Abschlussbericht
+
+Aktualisiere replit.md kompakt und nur mit dem tatsächlich umgesetzten Verhalten.
+
+Liefere abschliessend:
+
+• genaue Ursache des Fehlers
+• tatsächlich geänderte Dateien
+• Datenquelle für Umsatz 2024
+• Datenquelle für Kosten 2024
+• Importstatus je Tenant und Monat
+• Testresultate mit Anzahl
+• TypeScript-Ergebnis
+• Live-Test-Ergebnis
+• Architect-Review-Ergebnis
+• Bestätigung, dass keine Daten gelöscht wurden
+• Bestätigung, dass keine tenantübergreifende Vermischung möglich ist
+• Bestätigung, dass reine Lesevorgänge keine Writes auslösen
+• passende Commit-Message
+
+Arbeite selbstständig bis zum vollständigen Abschluss. Nicht nach einer Diagnose oder einem einzelnen Fix anhalten.

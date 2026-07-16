@@ -53,6 +53,7 @@ import {
   STORAGE_KEY as REPORTING_STORAGE_KEY,
 } from '@/lib/reporting-store';
 import { notifyKVBackupProblem } from '@/lib/supabase-kv';
+import { notifyReportingDataChanged } from '@/lib/import-events';
 import {
   buildVjTransferPlan,
   buildVjTransferPayload,
@@ -453,6 +454,7 @@ export function VjDailyImportSection() {
       );
       setTransferPlan(null);
       setOverwriteMonths(new Set());
+      notifyReportingDataChanged();
       toast.success(`${toTransfer.length} Monat(e) für ${year} in die Erfolgsrechnung übernommen`);
 
       // Sequenzielle Supabase-Sicherung der übernommenen Monate — Fehler sichtbar

@@ -9,9 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 // Zeilenstatus + Tagessumme: zentrale SSoT-Logik (auch von der Startseiten-
 // Monatsübersicht read-only konsumiert) — hier KEINE eigene Zweitberechnung.
-import { getUmsatzRowStatus, sumDailyGrossForMonth } from '@/lib/umsatzabstimmung-status';
+import { getUmsatzRowStatus } from '@/lib/umsatzabstimmung-status';
 import { readLocalRecord } from '@/lib/kv-blob-utils';
-import { countVjDailyYear } from '@/lib/vj-daily-supabase';
+import { countVjDailyYear, loadVjDailyYear, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { summarizeEffectiveMonth, type BlobDayEntry, type MonthActualsSummary } from '@/lib/daily-actuals';
 import { useTenant } from '@/contexts/TenantContext';
 
 // ── Konstanten ─────────────────────────────────────────────────────────────────
@@ -19,8 +20,20 @@ const VAT_TAKEAWAY = 1.026; // 2.6 % MwSt (Takeout/Lieferung)
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
-function getDailyGrossForMonth(year: number, month: number, storageKey: string): number {
-  return sumDailyGrossForMonth(readLocalRecord(storageKey), year, month);
+/**
+ * Effektive Monats-Tagessummen: dailyBudgets-Blob (localStorage) kombiniert
+ * mit dem vj_daily-Jahres-Tagesimport DESSELBEN Jahres (SSoT daily-actuals:
+ * Blob > vj_daily > fehlt). Read-only — löst nie einen Write aus.
+ */
+function computeMonthStats(
+  year: number,
+  storageKey: string,
+  vjYearData: Record<string, VjDayRecord>,
+): MonthActualsSummary[] {
+  const blob = readLocalRecord(storageKey) as Record<string, BlobDayEntry>;
+  return Array.from({ length: 12 }, (_, i) =>
+    summarizeEffectiveMonth(blob, vjYearData, year, i + 1),
+  );
 }
 
 function fmt(n: number): string {
@@ -77,23 +90,32 @@ export function UmsatzAbstimmung({
     countVjDailyYear(year, tenantId).then(n => { if (!stale) setVjDayCount(n); });
     return () => { stale = true; };
   }, [year, tenantId]);
-  const [dailySums, setDailySums] = useState<number[]>(() =>
-    Array.from({ length: 12 }, (_, i) => getDailyGrossForMonth(year, i + 1, dailyBudgetsKey)),
+  // vj_daily-Jahresdaten (Jahres-Tagesimport, z. B. 2024) als IST-Fallback
+  // der Tagessummen — read-only, Stale-Guard bei Jahr-/Tenant-Wechsel.
+  const [vjYearData, setVjYearData] = useState<Record<string, VjDayRecord>>({});
+  useEffect(() => {
+    let stale = false;
+    setVjYearData({});
+    loadVjDailyYear(year, tenantId).then(d => { if (!stale) setVjYearData(d); });
+    return () => { stale = true; };
+  }, [year, tenantId]);
+
+  const [monthStats, setMonthStats] = useState<MonthActualsSummary[]>(() =>
+    computeMonthStats(year, dailyBudgetsKey, {}),
   );
 
   useEffect(() => {
-    setDailySums(Array.from({ length: 12 }, (_, i) =>
-      getDailyGrossForMonth(year, i + 1, dailyBudgetsKey),
-    ));
-  }, [year, dailyBudgetsKey, months]);
+    setMonthStats(computeMonthStats(year, dailyBudgetsKey, vjYearData));
+  }, [year, dailyBudgetsKey, months, vjYearData]);
 
   useEffect(() => {
-    const refresh = () => setDailySums(Array.from({ length: 12 }, (_, i) =>
-      getDailyGrossForMonth(year, i + 1, dailyBudgetsKey),
-    ));
+    const refresh = () => setMonthStats(computeMonthStats(year, dailyBudgetsKey, vjYearData));
     window.addEventListener('store-synced', refresh);
     return () => window.removeEventListener('store-synced', refresh);
-  }, [year, dailyBudgetsKey]);
+  }, [year, dailyBudgetsKey, vjYearData]);
+
+  const dailySums     = monthStats.map(s => s.grossSum);
+  const usesVjDaily   = monthStats.some(s => s.usesVjDaily);
 
   const editKey = (month: number, field: EditField) => `${month}:${field}`;
 
@@ -193,8 +215,8 @@ export function UmsatzAbstimmung({
               className="text-xs text-muted-foreground rounded border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/20 px-3 py-2"
               data-testid="umsatzabstimmung-vj-hint"
             >
-              Hinweis: Für {year} sind <strong>{vjDayCount} Vorjahres-Tageswerte</strong> (vj_daily)
-              vorhanden. Diese zählen hier nicht als Abstimmungsquelle, können aber im{' '}
+              Hinweis: Für {year} sind <strong>{vjDayCount} Tageswerte aus dem Jahres-Tagesimport</strong>
+              {' '}vorhanden. Sie fliessen als «Summe Tage» in die Abstimmung ein und können zusätzlich im{' '}
               <Link to="/import" className="text-primary hover:underline inline-flex items-center gap-0.5">
                 Import-Center <ArrowRight className="h-3 w-3" />
               </Link>{' '}
@@ -251,7 +273,9 @@ export function UmsatzAbstimmung({
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[120px]">
                 Summe Tage
-                <span className="block text-[10px] font-normal">Brutto, Tagesansicht</span>
+                <span className="block text-[10px] font-normal">
+                  {usesVjDaily ? 'Brutto, Tagesansicht / Jahres-Tagesimport' : 'Brutto, Tagesansicht'}
+                </span>
               </th>
               <th className="text-right py-2 px-2 font-semibold min-w-[100px]">
                 Differenz

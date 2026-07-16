@@ -360,6 +360,36 @@ describe('replaceAnnualCostYear', () => {
     expect(second.find(c => c.categoryId === '4000')?.amount).toBe(500);
   });
 
+  it('Dirty-Check: identischer Zweitimport ist ein No-op (kein updatedAt-Bump, kein Import-Protokoll)', () => {
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [1, [cat('4000', 'Wareneinsatz', 500)]],
+      [2, [cat('4000', 'Wareneinsatz', 300)]],
+    ]);
+    const first = replaceAnnualCostYear(2025, byMonth, {}, TEST_KEY);
+    expect(first.monthsWritten).toBe(2);
+    expect(first.monthsUnchanged).toBe(0);
+    const m1After1 = loadMonth(2025, 1, TEST_KEY);
+
+    const second = replaceAnnualCostYear(2025, byMonth, {}, TEST_KEY);
+    expect(second.monthsWritten).toBe(0);
+    expect(second.monthsUnchanged).toBe(2);
+    const m1After2 = loadMonth(2025, 1, TEST_KEY);
+    expect(m1After2.updatedAt).toBe(m1After1.updatedAt);
+    expect(m1After2.imports).toHaveLength(m1After1.imports.length);
+  });
+
+  it('Dirty-Check greift auch mit manuellen Kategorien im Bestand', () => {
+    seedMonthWithManualAndDirect(); // 2025-03: miete (manuell) + 4000 (123)
+    const byMonth = new Map<number, ExpenseCategory[]>([
+      [3, [cat('4000', 'Alter Import-Wert', 123)]], // exakt der Bestand
+    ]);
+    const res = replaceAnnualCostYear(2025, byMonth, {}, TEST_KEY);
+    expect(res.monthsWritten).toBe(0);
+    expect(res.monthsUnchanged).toBe(1);
+    const m3 = loadMonth(2025, 3, TEST_KEY);
+    expect(m3.expenseCategories.find(c => c.categoryId === 'miete')?.amount).toBe(9000);
+  });
+
   it('entfernt stale Kontodaten aus Monaten, die im neuen Import fehlen', () => {
     // Erster Import: Jan–Mär. Zweiter Import: nur Jan–Feb → März muss bereinigt werden.
     replaceAnnualCostYear(2025, new Map([

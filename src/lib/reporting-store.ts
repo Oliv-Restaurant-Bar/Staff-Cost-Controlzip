@@ -42,6 +42,7 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { kvGet, kvSet, kvSetStrict, safeUpsertReportingMonth, safeDeleteReportingMonth, notifyKVBackupProblem } from './supabase-kv';
 import { readLocalRecord } from './kv-blob-utils';
+import { sameCategorySet } from './annual-cost-preview';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -234,6 +235,12 @@ export interface ReplaceAnnualCostResult {
   /** Monate, in denen nur alte Kontodaten entfernt wurden */
   monthsCleared: number;
   /**
+   * Monate, deren effektive Kategorien dem Bestand entsprechen (Dirty-Check):
+   * kein Write, kein updatedAt-Bump, kein KV-Backup — identisches Speichern
+   * ist ein No-op (verbindliche updatedAt-Regel).
+   */
+  monthsUnchanged: number;
+  /**
    * Supabase-Backup-Ergebnis (localStorage ist bereits geschrieben).
    * failedMonths ≠ [] → Backup unvollständig (nach 1 automatischem Retry),
    * Aufrufer muss es actionable sichtbar machen (notifyKVBackupProblem + Retry).
@@ -360,6 +367,7 @@ export function replaceAnnualCostYear(
   const now = new Date().toISOString();
   let monthsWritten = 0;
   let monthsCleared = 0;
+  let monthsUnchanged = 0;
   const touchedIds: string[] = [];
 
   for (let month = 1; month <= 12; month++) {
@@ -373,6 +381,16 @@ export function replaceAnnualCostYear(
 
     const rec = existing ?? createEmptyMonth(year, month);
     const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+
+    // Dirty-Check (verbindliche updatedAt-Regel): entspricht das Ergebnis
+    // [manuelle + neue Konten] fachlich exakt dem Bestand, ist der Monat ein
+    // No-op — kein Write, kein updatedAt-Bump, kein KV-Backup. Damit werden
+    // «unangetastet lassen»-Monate der Konfliktmodi (Pre-Merge liefert die
+    // bestehenden Kategorien) technisch garantiert nicht angefasst.
+    if (existing && sameCategorySet(existing.expenseCategories ?? [], [...keptManual, ...newCats])) {
+      monthsUnchanged++;
+      continue;
+    }
 
     const importRecord: ImportRecord = {
       importId: uuidv4(),
@@ -437,7 +455,7 @@ export function replaceAnnualCostYear(
     return { failedMonths, lastError };
   })();
 
-  return { monthsWritten, monthsCleared, kvBackup };
+  return { monthsWritten, monthsCleared, monthsUnchanged, kvBackup };
 }
 
 /**
