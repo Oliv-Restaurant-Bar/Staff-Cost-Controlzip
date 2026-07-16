@@ -1,0 +1,68 @@
+Setze den bereits begonnenen Umbau des Executive Cockpits jetzt fort und schliesse ihn vollständig ab.
+
+Wichtig: Keine bereits umgesetzten Teile neu schreiben oder zurückbauen. Prüfe zuerst den aktuellen Git-Stand, die vorhandenen Dateien und den letzten Arbeitsfortschritt. Fahre exakt dort weiter, wo die Arbeit aufgehört hat.
+
+Noch offene Abschlussarbeiten:
+
+1. TypeScript-Prüfung abschliessen
+    Führe den vollständigen Type-Check aus.
+    Prüfe die zwei gemeldeten Dashboard-Fehler einzeln.
+    Vergleiche sie nachweisbar mit der Baseline.
+    Falls sie durch diesen Umbau entstanden sind, behebe sie.
+    Falls sie bereits vor diesem Auftrag bestanden, dokumentiere dies mit konkreten Dateien, Fehlermeldungen und Baseline-Vergleich.
+    Keine neuen TypeScript-Fehler akzeptieren.
+2. Tests vollständig ausführen
+    Alle neu hinzugefügten Tests für Tageslogik, Finanz-Input und Executive-Warnings.
+    Alle betroffenen Dashboard- und Cockpit-Tests.
+    Relevante bestehende Regressionstests.
+    Viewport-Prüfung für Desktop, Tablet und Mobile.
+    Bei Fehlern Ursache beheben, nicht Tests abschwächen.
+3. Live-Regressionsprüfung
+    Prüfe mindestens:
+    Executive Cockpit lädt ohne Runtime-Fehler.
+    Kennzahlen zeigen echte, bereits geladene Daten.
+    Keine erfundenen oder geschätzten Werte.
+    Warnungen stimmen mit den zugrunde liegenden Daten überein.
+    Klicks und Navigation zu den Detailseiten funktionieren.
+    Rollenrechte bleiben unverändert.
+    Gast- und Manager-Zugriffe erhalten keine zusätzlichen Rechte.
+    Keine Render-Loops, doppelten Requests oder unnötigen Persistenz-Schreibvorgänge.
+    Reine Lesevorgänge dürfen weiterhin keine automatischen KV- oder Supabase-Schreibvorgänge auslösen.
+4. Design- und UX-Prüfung
+    Das Executive Cockpit muss sich sichtbar in das bestehende App-Design einfügen:
+    schlicht, modern und kompakt
+    einheitliche Abstände, Karten, Typografie, Radien und Statusfarben
+    keine übergrossen Einführungstexte oder unnötig verschwendete Fläche
+    wichtigste Kennzahlen und Handlungsfelder müssen ohne langes Scrollen erkennbar sein
+    klare visuelle Hierarchie
+    Desktop, Tablet und Mobile lesbar
+    keine abgeschnittenen Texte oder horizontalen Überläufe
+    bestehende Komponenten und Designmuster wiederverwenden statt neue parallele Stile einzuführen
+5. Dokumentation
+    Aktualisiere replit.md kompakt und nur mit tatsächlich umgesetztem Verhalten:
+    neue Executive-Cockpit-Struktur
+    extrahierte Tageslogik
+    Finanz-Input-Hook
+    reine Executive-Warnlogik
+    Rollen- und Datenquellen
+    Verhalten bei fehlenden oder unvollständigen Daten
+    relevante Tests
+6. Architect Review
+    Führe das Architect Review ausschliesslich über den tatsächlichen Task-Diff dieses Executive-Cockpit-Umbaus aus.
+    Keine früheren oder fremden Branch-Änderungen in die Bewertung einbeziehen.
+    Behebe alle blockierenden Befunde und wiederhole das Review bis PASS.
+7. Abschluss
+    Erstelle erst nach erfolgreicher Prüfung eine passende Commit-Message.
+
+Liefere danach einen vollständigen Abschlussbericht mit:
+• tatsächlich geänderten Dateien
+• umgesetzten Funktionen
+• Testresultaten mit Anzahl
+• TypeScript-Ergebnis
+• Viewport-Ergebnis
+• Architect-Review-Ergebnis
+• bekannten Baseline-Fehlern, falls vorhanden
+• Bestätigung, dass keine neuen Persistenz-, Rollen- oder Datenprobleme entstanden sind
+• Commit-Message
+
+Arbeite selbstständig bis zum vollständigen Abschluss weiter. Nicht nach jedem Teilschritt anhalten und keine Rückfrage stellen, sofern keine echte technische Blockade besteht.
