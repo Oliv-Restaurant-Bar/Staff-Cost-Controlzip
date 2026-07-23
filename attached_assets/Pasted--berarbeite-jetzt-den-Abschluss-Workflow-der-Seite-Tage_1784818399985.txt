@@ -1,0 +1,350 @@
+Überarbeite jetzt den Abschluss-Workflow der Seite "Tagesabschlüsse".
+
+Wichtig:
+
+Die bisherige Umsetzung mit den beiden Radio-Buttons "Bar" und "Tag" soll vollständig ersetzt werden.
+
+Sie ist für den Benutzer nicht selbsterklärend und wirkt wie eine Auswahl, obwohl fachlich zwei unabhängige Kontrollen bestätigt werden sollen.
+
+Die eigentliche Logik des Tagesabschlusses, der Buchhaltung, der Kassensalden sowie der Berechnungen darf nicht verändert werden.
+
+──────────────────────────────────────
+1. Radio-Buttons ersetzen
+──────────────────────────────────────
+
+Ersetze
+
+○ Bar
+○ Tag
+
+durch zwei unabhängige Checkboxen.
+
+Neue Bezeichnungen:
+
+☐ Bar kontrolliert
+
+☐ Tagesabschluss geprüft
+
+Es handelt sich NICHT um eine Auswahl.
+
+Beide Checkboxen können unabhängig voneinander aktiviert werden.
+
+──────────────────────────────────────
+2. Fachliche Bedeutung
+──────────────────────────────────────
+
+Bar kontrolliert
+
+Bedeutet:
+
+Der physische Bargeldbestand wurde gezählt und mit den berechneten Werten verglichen.
+
+Es bestätigt ausdrücklich NICHT den ganzen Tagesabschluss.
+
+Tagesabschluss geprüft
+
+Bedeutet:
+
+Der komplette Tagesabschluss wurde kontrolliert.
+
+Dabei wurden insbesondere geprüft:
+
+Umsatz
+
+BAR SOLL
+
+BAR IST
+
+Kassensaldo Soll
+
+Differenz
+
+KK Adyen
+
+Debitoren
+
+Barausgaben
+
+EG-Gutscheine
+
+Einzahlung Bank (falls vorhanden)
+
+Der Benutzer bestätigt damit den gesamten Tagesabschluss.
+
+──────────────────────────────────────
+3. Freigabelogik
+──────────────────────────────────────
+
+Der Button
+
+"Abschließen"
+
+bleibt deaktiviert, solange nicht alle Voraussetzungen erfüllt sind.
+
+Mindestens erforderlich:
+
+✓ Z-Bericht vorhanden
+
+✓ BAR IST vorhanden
+
+✓ Bar kontrolliert aktiviert
+
+✓ Tagesabschluss geprüft aktiviert
+
+✓ keine offenen Pflichtfelder
+
+✓ keine blockierenden Validierungsfehler
+
+Die bestehende Validierungslogik darf weiterverwendet werden.
+
+──────────────────────────────────────
+4. Automatische Sperren
+──────────────────────────────────────
+
+Bar kontrolliert darf erst aktiviert werden wenn:
+
+BAR IST erfasst wurde.
+
+Tagesabschluss geprüft darf erst aktiviert werden wenn:
+
+alle Pflichtwerte vorhanden sind.
+
+Sind Voraussetzungen nicht erfüllt:
+
+Checkbox deaktivieren.
+
+Tooltip anzeigen.
+
+Beispiele:
+
+"BAR IST muss zuerst erfasst werden."
+
+oder
+
+"Es fehlen noch Pflichtwerte."
+
+──────────────────────────────────────
+5. Audit-Trail
+──────────────────────────────────────
+
+Beim Aktivieren speichern:
+
+Benutzer
+
+Zeitstempel
+
+Beim Entfernen ebenfalls:
+
+Benutzer
+
+Zeitstempel
+
+Keine unnötigen Writes.
+
+updatedAt nur ändern wenn sich fachlich tatsächlich etwas ändert.
+
+──────────────────────────────────────
+6. Darstellung
+──────────────────────────────────────
+
+Die beiden Checkboxen sollen deutlich kompakter werden als die bisherigen Radio-Buttons.
+
+Keine grossen Texte.
+
+Empfohlen:
+
+☑ Bar geprüft
+
+☑ Abschluss geprüft
+
+oder
+
+☑ Bar kontrolliert
+
+☑ Abschluss geprüft
+
+Die Darstellung muss sich an der übrigen App orientieren.
+
+──────────────────────────────────────
+7. Statusspalte vereinfachen
+──────────────────────────────────────
+
+Die Statusspalte soll übersichtlich bleiben.
+
+Statusbadge:
+
+Offen
+
+In Bearbeitung
+
+Abgeschlossen
+
+Wieder geöffnet
+
+Differenz
+
+Darunter:
+
+Checkbox Bar kontrolliert
+
+Checkbox Abschluss geprüft
+
+Darunter:
+
+Button Abschließen
+
+Nicht alles nebeneinander darstellen.
+
+Vertikale Anordnung spart Platz und erhöht die Lesbarkeit.
+
+──────────────────────────────────────
+8. Farben
+──────────────────────────────────────
+
+Checkboxen:
+
+neutral
+
+aktiv:
+
+grün
+
+Statusbadge:
+
+bestehende Farben beibehalten.
+
+──────────────────────────────────────
+9. Tooltips
+──────────────────────────────────────
+
+Bar kontrolliert
+
+"Bestätigt, dass der physische Bargeldbestand gezählt und kontrolliert wurde."
+
+Tagesabschluss geprüft
+
+"Bestätigt, dass der gesamte Tagesabschluss geprüft wurde."
+
+──────────────────────────────────────
+10. Historie
+──────────────────────────────────────
+
+Im Detaildialog anzeigen:
+
+Bar kontrolliert
+
+von Benutzer
+
+Datum
+
+Uhrzeit
+
+Tagesabschluss geprüft
+
+von Benutzer
+
+Datum
+
+Uhrzeit
+
+Abgeschlossen
+
+von Benutzer
+
+Datum
+
+Uhrzeit
+
+Damit ist jederzeit nachvollziehbar:
+
+wer
+
+wann
+
+welchen Schritt bestätigt hat.
+
+──────────────────────────────────────
+11. Berechtigungen
+──────────────────────────────────────
+
+Nur Benutzer mit Berechtigung für Tagesabschlüsse dürfen:
+
+Checkboxen ändern
+
+Abschließen
+
+Wieder öffnen
+
+Read-only-Rollen sehen die Informationen nur.
+
+──────────────────────────────────────
+12. Architektur
+──────────────────────────────────────
+
+Keine doppelte Statuslogik.
+
+Keine parallelen Flags.
+
+Verwende den bestehenden Tagesabschluss-Workflow.
+
+Keine Berechnungen in React-Komponenten.
+
+Pure Reads dürfen niemals Writes auslösen.
+
+──────────────────────────────────────
+13. Design
+──────────────────────────────────────
+
+Die Oberfläche muss:
+
+schlicht
+
+modern
+
+kompakt
+
+lesefreundlich
+
+einheitlich
+
+mit der gesamten App synchron
+
+sein.
+
+Die Statusspalte darf nicht unnötig breit werden.
+
+Keine Radiobuttons mehr verwenden.
+
+Checkboxen mit klarer Bedeutung.
+
+──────────────────────────────────────
+14. Tests
+──────────────────────────────────────
+
+Ergänze Tests für:
+
+Checkboxen statt Radio-Buttons
+
+Aktivierung nur bei erfüllten Voraussetzungen
+
+Button "Abschließen" erst nach beiden Bestätigungen
+
+Audit-Trail wird gespeichert
+
+Read-only kann nichts ändern
+
+Statuswechsel funktionieren weiterhin
+
+Keine Regressionen bei Tagesabschluss, Buchhaltung und Kassensaldo.
+
+Führe danach aus:
+
+TypeScript-Typecheck
+
+betroffene Tests
+
+Runtime-Check
+
+Architect-Review über den tatsächlichen Git-Diff.
+
+Aktualisiere abschliessend replit.md mit dem neuen Bestätigungsworkflow.

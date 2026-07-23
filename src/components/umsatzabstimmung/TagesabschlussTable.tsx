@@ -55,8 +55,10 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Lock, MessageSquare, Pencil, Plus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import type { DayConfirmation } from '@/lib/adyen-abstimmung';
+import type { DayConfirmationInput } from '@/lib/adyen-abstimmung';
 import {
+  canCheckAbschlussGeprueft,
+  canCheckBarKontrolliert,
   canCloseDay,
   cashDiffReasonLabel,
   type DayCell,
@@ -68,6 +70,16 @@ import { fmtChf, fmtDiffChf, diffColorClass, parseAmountInput } from './adyen-ui
 import { ADYEN_HINWEIS, ZahlungsartenBreakdown } from './ZahlungsartenBreakdown';
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+
+/** Grüner Aktiv-Zustand der Bestätigungs-Checkboxen (Spec Abschluss-Workflow). */
+export const CHECK_GREEN =
+  'data-[state=checked]:bg-green-600 data-[state=checked]:border-green-600 data-[state=checked]:text-white';
+
+/** Spec-Tooltips der beiden unabhängigen Bestätigungs-Checkboxen. */
+export const TIP_BAR_KONTROLLIERT =
+  'Bestätigt, dass der physische Bargeldbestand gezählt und kontrolliert wurde.';
+export const TIP_ABSCHLUSS_GEPRUEFT =
+  'Bestätigt, dass der gesamte Tagesabschluss geprüft wurde.';
 
 function dayLabel(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
@@ -413,8 +425,12 @@ interface TagesabschlussTableProps {
   onVoucherClick?: (date: string, kind: 'verkauft' | 'eingeloest') => void;
   /** Öffnet AUSSCHLIESSLICH den Barausgaben-Dialog — NICHT das Tagesdetail. */
   onExpensesClick?: (date: string) => void;
-  /** Bestätigung (gemeinsamer Adyen-Store), identische Semantik wie im Dialog. */
-  onConfirm?: (date: string, confirmation: DayConfirmation | null) => void;
+  /**
+   * Bestätigung (gemeinsamer Adyen-Store), identische Semantik wie im Dialog.
+   * Kinder liefern NUR den Ziel-Zustand — Audit-Stempel (Benutzer/Zeit) und
+   * Dirty-Check vergibt zentral applyDayConfirmation in der Section.
+   */
+  onConfirm?: (date: string, confirmation: DayConfirmationInput) => void;
   /** Öffnet den Differenzgrund-Dialog (Mehrfachauswahl + Notiz) für den Tag. */
   onReasonsClick?: (date: string) => void;
   /** „Tagesabschluss abschließen" — Button nur aktiv, wenn canCloseDay ok. */
@@ -503,6 +519,11 @@ export function TagesabschlussTable({
             const confirmable = !readOnly && !!onConfirm && !rowLocked;
             const reasonsEditable = !readOnly && !!onReasonsClick && !rowLocked;
             const closeCheck = !rowLocked && row.hasZbericht ? canCloseDay(row) : null;
+            // Aktivierungs-Gates der beiden UNABHÄNGIGEN Bestätigungs-Checkboxen
+            // (zentrale Helfer — keine Statuslogik in der Komponente). Ein
+            // bereits gesetztes Häkchen bleibt IMMER entfernbar (Audit).
+            const barGate = canCheckBarKontrolliert(row);
+            const geprueftGate = canCheckAbschlussGeprueft(row);
             // Override-Popup (KK Adyen Ist / Umsatz Ist) — nur mit Z-Bericht.
             const overrideEditable = !readOnly && !!onOverrideClick && !rowLocked && row.hasZbericht;
             // Inline-Korrektur weiterer Auto-Felder (KK/Gutscheine) — auch
@@ -980,10 +1001,49 @@ export function TagesabschlussTable({
                   <ValueCell cell={row.cells.gutscheinVerkauft} />
                 ))}
 
-                {/* ── Status ── */}
-                <td className={`px-2 py-1 whitespace-nowrap ${SEP} pl-3`}>
-                  <div className="flex items-center gap-2">
+                {/* ── Status ── vertikal (Spec): Badge → Checkboxen → Abschließen.
+                    Read-only-Rollen SEHEN den Zustand (disabled), nichts wird
+                    versteckt. Disabled nur fürs AKTIVIEREN — ein gesetztes
+                    Häkchen bleibt entfernbar (Audit beim Entfernen). */}
+                <td className={`px-2 py-1 whitespace-nowrap align-top ${SEP} pl-3`}>
+                  <div className="flex flex-col items-start gap-1" data-testid={`ta-status-stack-${row.date}`}>
                     <StatusBadge row={row} />
+                    {row.hasZbericht && (
+                      <div className="flex flex-col gap-0.5">
+                        <label
+                          className={`flex items-center gap-1 text-[10px] ${cashCounted ? 'text-green-700 dark:text-green-400 font-medium' : 'text-muted-foreground'}`}
+                          title={!cashCounted && !barGate.ok && barGate.reason ? barGate.reason : TIP_BAR_KONTROLLIERT}
+                        >
+                          <Checkbox
+                            className={`h-3.5 w-3.5 ${CHECK_GREEN}`}
+                            checked={cashCounted}
+                            disabled={!confirmable || (!cashCounted && !barGate.ok)}
+                            onCheckedChange={v => onConfirm?.(row.date, {
+                              confirmed,
+                              cashCounted: v === true,
+                            })}
+                            data-testid={`ta-row-check-cash-${row.date}`}
+                          />
+                          Bar kontrolliert
+                        </label>
+                        <label
+                          className={`flex items-center gap-1 text-[10px] ${confirmed ? 'text-green-700 dark:text-green-400 font-medium' : 'text-muted-foreground'}`}
+                          title={!confirmed && !geprueftGate.ok && geprueftGate.reason ? geprueftGate.reason : TIP_ABSCHLUSS_GEPRUEFT}
+                        >
+                          <Checkbox
+                            className={`h-3.5 w-3.5 ${CHECK_GREEN}`}
+                            checked={confirmed}
+                            disabled={!confirmable || (!confirmed && !geprueftGate.ok)}
+                            onCheckedChange={v => onConfirm?.(row.date, {
+                              confirmed: v === true,
+                              cashCounted,
+                            })}
+                            data-testid={`ta-row-check-confirm-${row.date}`}
+                          />
+                          Abschluss geprüft
+                        </label>
+                      </div>
+                    )}
                     {!readOnly && !!onCloseDay && closeCheck && (
                       <button
                         type="button"
@@ -1000,39 +1060,6 @@ export function TagesabschlussTable({
                         <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
                         Abschließen
                       </button>
-                    )}
-                    {confirmable && row.hasZbericht && (
-                      <span className="inline-flex items-center gap-1.5">
-                        <label className="flex items-center gap-1 text-[10px] text-muted-foreground" title="Barbestand gezählt und bestätigt">
-                          <Checkbox
-                            className="h-3.5 w-3.5"
-                            checked={cashCounted}
-                            onCheckedChange={v => onConfirm!(row.date, {
-                              confirmed: confirmed && v === true,
-                              cashCounted: v === true,
-                              ...(confirmation?.confirmedAt ? { confirmedAt: confirmation.confirmedAt } : {}),
-                              ...(confirmation?.comment ? { comment: confirmation.comment } : {}),
-                            })}
-                            data-testid={`ta-row-check-cash-${row.date}`}
-                          />
-                          Bar
-                        </label>
-                        <label className="flex items-center gap-1 text-[10px] text-muted-foreground" title="Tag bestätigt (abgeschlossen) — erst nach bestätigtem Barbestand">
-                          <Checkbox
-                            className="h-3.5 w-3.5"
-                            checked={confirmed}
-                            disabled={!cashCounted}
-                            onCheckedChange={v => onConfirm!(row.date, {
-                              confirmed: v === true,
-                              cashCounted,
-                              ...(v === true ? { confirmedAt: new Date().toISOString() } : {}),
-                              ...(confirmation?.comment ? { comment: confirmation.comment } : {}),
-                            })}
-                            data-testid={`ta-row-check-confirm-${row.date}`}
-                          />
-                          Tag
-                        </label>
-                      </span>
                     )}
                   </div>
                 </td>

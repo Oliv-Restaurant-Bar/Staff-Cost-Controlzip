@@ -14,6 +14,7 @@ import {
   setOverride,
   setComment,
   setDayConfirmation,
+  applyDayConfirmation,
   adyenDaysFromBlob,
   type AdyenAbstimmungBlob,
   type AdyenStoredDay,
@@ -285,6 +286,90 @@ describe('setOverride / setComment / setDayConfirmation', () => {
     expect(ev.value).toBe(42.5);
     expect(ev.original).toBe(40);
     expect(ev.overridden).toBe(true);
+  });
+});
+
+describe('applyDayConfirmation (zentraler Audit-Schreibpfad)', () => {
+  const T1 = '2026-06-02T09:00:00.000Z';
+  const T2 = '2026-06-03T10:00:00.000Z';
+  const USER1 = 'chef@oliv.ch';
+  const USER2 = 'admin@oliv.ch';
+
+  it('stempelt beim ERSTEN Setzen nur das geänderte Flag mit User+Zeit', () => {
+    const blob = applyDayConfirmation(emptyAdyenBlob(), DAY,
+      { confirmed: false, cashCounted: true }, USER1, T1);
+    const c = blob.confirmations[DAY];
+    expect(c).toEqual({
+      confirmed: false, cashCounted: true,
+      cashCountedAt: T1, cashCountedBy: USER1,
+    });
+    // confirmed hat sich nicht geändert (false → false) → KEIN Stempel.
+    expect(c.confirmedAt).toBeUndefined();
+    expect(c.confirmedBy).toBeUndefined();
+  });
+
+  it('unverändertes Flag behält seinen alten Stempel, geändertes bekommt einen neuen', () => {
+    let blob = applyDayConfirmation(emptyAdyenBlob(), DAY,
+      { confirmed: false, cashCounted: true }, USER1, T1);
+    blob = applyDayConfirmation(blob, DAY,
+      { confirmed: true, cashCounted: true }, USER2, T2);
+    const c = blob.confirmations[DAY];
+    expect(c.cashCountedAt).toBe(T1);
+    expect(c.cashCountedBy).toBe(USER1);
+    expect(c.confirmedAt).toBe(T2);
+    expect(c.confirmedBy).toBe(USER2);
+  });
+
+  it('AUCH das Entfernen eines Häkchens wird gestempelt (Audit beim Entfernen)', () => {
+    let blob = applyDayConfirmation(emptyAdyenBlob(), DAY,
+      { confirmed: true, cashCounted: true }, USER1, T1);
+    blob = applyDayConfirmation(blob, DAY,
+      { confirmed: true, cashCounted: false }, USER2, T2);
+    const c = blob.confirmations[DAY];
+    expect(c.cashCounted).toBe(false);
+    expect(c.cashCountedAt).toBe(T2);
+    expect(c.cashCountedBy).toBe(USER2);
+    // confirmed unverändert → alter Stempel bleibt.
+    expect(c.confirmedAt).toBe(T1);
+    expect(c.confirmedBy).toBe(USER1);
+  });
+
+  it('Dirty-Check: keine fachliche Änderung ⇒ DIESELBE Blob-Referenz (kein Write)', () => {
+    const blob = applyDayConfirmation(emptyAdyenBlob(), DAY,
+      { confirmed: true, cashCounted: true, comment: 'ok' }, USER1, T1);
+    const same = applyDayConfirmation(blob, DAY,
+      { confirmed: true, cashCounted: true, comment: 'ok' }, USER2, T2);
+    expect(same).toBe(blob);
+    // comment undefined = "unverändert lassen" → ebenfalls No-op.
+    const same2 = applyDayConfirmation(blob, DAY,
+      { confirmed: true, cashCounted: true }, USER2, T2);
+    expect(same2).toBe(blob);
+    // Komplett leerer Zielzustand auf leerem Blob = No-op.
+    const empty = emptyAdyenBlob();
+    expect(applyDayConfirmation(empty, DAY, { confirmed: false, cashCounted: false }, USER1, T1)).toBe(empty);
+  });
+
+  it('comment: undefined behält, leerer/Whitespace-String entfernt, Kommentar-only stempelt keine Flags', () => {
+    let blob = applyDayConfirmation(emptyAdyenBlob(), DAY,
+      { confirmed: true, cashCounted: true, comment: 'Alles geprüft' }, USER1, T1);
+    expect(blob.confirmations[DAY].comment).toBe('Alles geprüft');
+
+    // Kommentar-only-Änderung: Flags unverändert → Flag-Stempel bleiben alt.
+    blob = applyDayConfirmation(blob, DAY,
+      { confirmed: true, cashCounted: true, comment: 'Neuer Text' }, USER2, T2);
+    expect(blob.confirmations[DAY].comment).toBe('Neuer Text');
+    expect(blob.confirmations[DAY].confirmedAt).toBe(T1);
+    expect(blob.confirmations[DAY].cashCountedAt).toBe(T1);
+
+    // undefined = unverändert lassen.
+    blob = applyDayConfirmation(blob, DAY,
+      { confirmed: false, cashCounted: true }, USER2, T2);
+    expect(blob.confirmations[DAY].comment).toBe('Neuer Text');
+
+    // Whitespace-String entfernt den Kommentar.
+    blob = applyDayConfirmation(blob, DAY,
+      { confirmed: false, cashCounted: true, comment: '   ' }, USER2, T2);
+    expect(blob.confirmations[DAY].comment).toBeUndefined();
   });
 });
 

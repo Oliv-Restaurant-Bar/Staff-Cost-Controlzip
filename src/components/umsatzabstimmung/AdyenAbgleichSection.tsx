@@ -13,19 +13,20 @@ import { AlertTriangle, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
 import type { TenantId } from '@/contexts/TenantContext';
 import { parseAdyenPaymentsCsv } from '@/lib/adyen-csv-parser';
 import {
+  applyDayConfirmation,
   buildDayComparison,
   emptyAdyenBlob,
   mergeAdyenImport,
   setComment,
-  setDayConfirmation,
   setOverride,
   type AdyenAbstimmungBlob,
   type DayComparison,
-  type DayConfirmation,
+  type DayConfirmationInput,
 } from '@/lib/adyen-abstimmung';
 import {
   ADYEN_ABSTIMMUNG_UPDATED_EVENT,
@@ -47,7 +48,11 @@ interface AdyenAbgleichSectionProps {
 
 export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionProps) {
   const { isGuest } = usePermissions();
+  const { user } = useAuth();
   const readOnly = isGuest;
+  // Audit-Benutzer für Bestätigungs-Stempel (gemeinsamer Store mit
+  // Tagesabschlüsse — dieselbe Kennung wie dort).
+  const currentUser = user?.email ?? 'unbekannt';
 
   const today = new Date();
   const [month, setMonth] = useState<number>(() =>
@@ -187,10 +192,15 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
     void persist(setComment(loadAdyenAbstimmungLocal(tenantId), fieldKey, text, new Date().toISOString()));
   }, [readOnly, rejectLocked, tenantId, persist]);
 
-  const handleConfirm = useCallback((date: string, confirmation: DayConfirmation | null) => {
+  const handleConfirm = useCallback((date: string, confirmation: DayConfirmationInput) => {
     if (readOnly || rejectLocked(date)) return;
-    void persist(setDayConfirmation(loadAdyenAbstimmungLocal(tenantId), date, confirmation));
-  }, [readOnly, rejectLocked, tenantId, persist]);
+    // Audit-Stempel + Dirty-Check zentral in applyDayConfirmation:
+    // keine fachliche Änderung ⇒ kein Write.
+    const cur = loadAdyenAbstimmungLocal(tenantId);
+    const next = applyDayConfirmation(cur, date, confirmation, currentUser, new Date().toISOString());
+    if (next === cur) return;
+    void persist(next);
+  }, [readOnly, rejectLocked, tenantId, currentUser, persist]);
 
   // ── Tagesliste des Monats ───────────────────────────────────────────────────
 

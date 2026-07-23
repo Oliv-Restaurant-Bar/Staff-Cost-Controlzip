@@ -20,8 +20,8 @@ import {
   loadAdyenAbstimmung, loadAdyenAbstimmungLocal, saveAdyenAbstimmung,
 } from '@/lib/adyen-abstimmung-db';
 import {
-  emptyAdyenBlob, setDayConfirmation,
-  type AdyenAbstimmungBlob, type DayConfirmation,
+  applyDayConfirmation, emptyAdyenBlob,
+  type AdyenAbstimmungBlob, type DayConfirmationInput,
 } from '@/lib/adyen-abstimmung';
 import {
   buildTagesabschlussRows,
@@ -300,15 +300,19 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
 
   // ── Bestätigung (gemeinsamer Adyen-Store) ───────────────────────────────────
 
-  const handleConfirm = useCallback(async (date: string, confirmation: DayConfirmation | null) => {
+  const handleConfirm = useCallback(async (date: string, confirmation: DayConfirmationInput) => {
     if (readOnly || isDayLocked(date)) return;
     // IMMER den frischen Primärspeicher-Stand mutieren — NIE den Mount-Zeit-
     // State: sonst überschreibt diese Section stille Änderungen des
     // Adyen-Abgleichs (Importe/Overrides/Kommentare) auf derselben Seite.
-    const next = setDayConfirmation(loadAdyenAbstimmungLocal(tenantId), date, confirmation);
+    // Audit-Stempel + Dirty-Check zentral in applyDayConfirmation:
+    // keine fachliche Änderung ⇒ kein Write.
+    const cur = loadAdyenAbstimmungLocal(tenantId);
+    const next = applyDayConfirmation(cur, date, confirmation, currentUser, new Date().toISOString());
+    if (next === cur) return;
     setAdyenBlob(next);
     await saveAdyenAbstimmung(tenantId, next);
-  }, [readOnly, isDayLocked, tenantId]);
+  }, [readOnly, isDayLocked, tenantId, currentUser]);
 
   // ── Zeilen bauen ────────────────────────────────────────────────────────────
 

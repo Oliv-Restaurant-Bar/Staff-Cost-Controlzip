@@ -13,6 +13,8 @@ import {
   INLINE_EXPENSE_DEFAULT_KONTO,
   setSaldoAnker,
   upsertInlineExpense,
+  canCheckBarKontrolliert,
+  canCheckAbschlussGeprueft,
   canCloseDay,
   canCloseMonth,
   closeDay,
@@ -428,7 +430,53 @@ describe('buildTagesabschlussRows', () => {
     expect(rows[0].status).toBe('in_bearbeitung');
     const check = canCloseDay(rows[0]);
     expect(check.ok).toBe(false);
-    expect(check.blockers.join(' ')).toMatch(/Cash Ist/);
+    expect(check.blockers.join(' ')).toMatch(/BAR IST/);
+  });
+
+  it('canCheckBarKontrolliert: gesperrt ohne BAR IST bzw. bei abgeschlossenem Tag', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    // Ohne BAR IST → gesperrt mit Grund.
+    const ohne = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {}, null, 0);
+    expect(canCheckBarKontrolliert(ohne.rows[0])).toEqual(
+      { ok: false, reason: 'BAR IST muss zuerst erfasst werden.' });
+
+    // Mit BAR IST → aktivierbar. (300 = Barumsatz → Diff 0, damit der Tag
+    // unten auch abgeschlossen werden kann.)
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 300 }, NOW);
+    const mit = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(canCheckBarKontrolliert(mit.rows[0])).toEqual({ ok: true });
+
+    // Abgeschlossener Tag → gesperrt.
+    const conf = { '2026-07-01': { confirmed: true, cashCounted: true } };
+    const rowsMitConf = buildTagesabschlussRows(2026, 7, closings, blob, conf, null, 0);
+    const closed = closeDay(blob, rowsMitConf.rows[0], 'admin@oliv.ch', NOW);
+    const locked = buildTagesabschlussRows(2026, 7, closings, closed, conf, null, 0);
+    expect(canCheckBarKontrolliert(locked.rows[0]).ok).toBe(false);
+    expect(canCheckBarKontrolliert(locked.rows[0]).reason).toMatch(/abgeschlossen/);
+  });
+
+  it('canCheckAbschlussGeprueft: braucht Z-Bericht + BAR IST + bekannten Kassensaldo', () => {
+    const closings = { '2026-07-01': makeClosing('2026-07-01') };
+    // Tag ohne Z-Bericht → gesperrt.
+    const ohneZ = buildTagesabschlussRows(2026, 7, {}, emptyTagesabschlussBlob(), {}, null, 0);
+    expect(canCheckAbschlussGeprueft(ohneZ.rows[0]).ok).toBe(false);
+
+    // Z-Bericht, aber ohne BAR IST → gesperrt (Pflichtwerte fehlen).
+    const ohneIst = buildTagesabschlussRows(2026, 7, closings, emptyTagesabschlussBlob(), {}, null, 0);
+    expect(canCheckAbschlussGeprueft(ohneIst.rows[0])).toEqual(
+      { ok: false, reason: 'Es fehlen noch Pflichtwerte.' });
+
+    // Kassensaldo unbekannt (kein Anfangsbestand) → gesperrt.
+    let blob = emptyTagesabschlussBlob();
+    blob = upsertManualDay(blob, '2026-07-01', { bestandKasse: 247.5 }, NOW);
+    const ohneSaldo = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, null);
+    expect(ohneSaldo.rows[0].kassensaldoSoll).toBeNull();
+    expect(canCheckAbschlussGeprueft(ohneSaldo.rows[0]).ok).toBe(false);
+
+    // Alles vorhanden → aktivierbar.
+    const komplett = buildTagesabschlussRows(2026, 7, closings, blob, {}, null, 0);
+    expect(canCheckAbschlussGeprueft(komplett.rows[0])).toEqual({ ok: true });
   });
 
   it('nicht-grüne UND unbegründete Cash-Differenz blockiert den Abschluss', () => {

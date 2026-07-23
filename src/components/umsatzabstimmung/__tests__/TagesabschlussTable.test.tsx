@@ -105,8 +105,9 @@ describe('TagesabschlussTable', () => {
       expect(screen.queryByText(gone)).toBeNull();
     }
 
-    // Alle Kalendertage des Monats (Juli = 31 Zeilen).
-    expect(screen.getAllByTestId(/^ta-row-/)).toHaveLength(31);
+    // Alle Kalendertage des Monats (Juli = 31 Zeilen) — NUR Datumszeilen,
+    // nicht die ta-row-check-*-Checkboxen.
+    expect(screen.getAllByTestId(/^ta-row-\d{4}-\d{2}-\d{2}$/)).toHaveLength(31);
   });
 
   it('KK bündelt Karten + TWINT laut Z-Bericht (TWINT ohne eigene Spalte)', () => {
@@ -345,18 +346,31 @@ describe('TagesabschlussTable', () => {
       expect(leer.className).not.toContain('text-sky-700');
     });
 
-    it('bestätigt Tage über die Checkboxen (nur Tage mit Z-Bericht, gleiche Semantik wie Dialog)', () => {
+    it('Bestätigungs-Checkboxen: unabhängig, Aktivierungs-Gates, Entfernen immer möglich', () => {
       const { onConfirm } = renderEditable();
       // Nur 01.07./02.07. haben Z-Bericht → nur dort Checkboxen.
       expect(screen.queryByTestId('ta-row-check-cash-2026-07-03')).toBeNull();
 
-      // 02.07.: unbestätigt → "Tag" erst nach Barbestand möglich.
-      const confirmBox = screen.getByTestId('ta-row-check-confirm-2026-07-02') as HTMLButtonElement;
-      expect(confirmBox.disabled).toBe(true);
-      const cashBox = screen.getByTestId('ta-row-check-cash-2026-07-02') as HTMLButtonElement;
-      fireEvent.click(cashBox);
-      expect(onConfirm).toHaveBeenCalledWith('2026-07-02',
-        expect.objectContaining({ cashCounted: true, confirmed: false }));
+      // 02.07.: kein BAR IST erfasst → BEIDE Checkboxen deaktiviert,
+      // Sperr-Grund als Tooltip am Label.
+      const cashBox2 = screen.getByTestId('ta-row-check-cash-2026-07-02') as HTMLButtonElement;
+      expect(cashBox2.disabled).toBe(true);
+      expect(cashBox2.closest('label')?.getAttribute('title')).toContain('BAR IST muss zuerst erfasst werden.');
+      const confirmBox2 = screen.getByTestId('ta-row-check-confirm-2026-07-02') as HTMLButtonElement;
+      expect(confirmBox2.disabled).toBe(true);
+      expect(confirmBox2.closest('label')?.getAttribute('title')).toContain('Es fehlen noch Pflichtwerte.');
+
+      // 01.07.: beide gesetzt → Entfernen bleibt möglich und lässt das
+      // ANDERE Häkchen unangetastet (unabhängige Checkboxen); Payload OHNE
+      // Zeitstempel — Audit stempelt zentral applyDayConfirmation.
+      const cashBox1 = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
+      expect(cashBox1.disabled).toBe(false);
+      fireEvent.click(cashBox1);
+      expect(onConfirm).toHaveBeenCalledWith('2026-07-01', { confirmed: true, cashCounted: false });
+      const confirmBox1 = screen.getByTestId('ta-row-check-confirm-2026-07-01') as HTMLButtonElement;
+      expect(confirmBox1.disabled).toBe(false);
+      fireEvent.click(confirmBox1);
+      expect(onConfirm).toHaveBeenCalledWith('2026-07-01', { confirmed: false, cashCounted: true });
     });
 
     it('rendert im readOnly-Modus (Gast) keinerlei Eingabefelder', () => {
@@ -366,7 +380,12 @@ describe('TagesabschlussTable', () => {
         onCorrectRechnung={() => {}} onVoucherClick={() => {}} onExpensesClick={() => {}} />);
       expect(screen.queryByTestId('ta-input-bestand-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-input-einzahlung-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      // Bestätigungs-Checkboxen bleiben SICHTBAR (Zustand ablesbar), sind
+      // aber deaktiviert — read-only versteckt nichts.
+      const roCash = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
+      expect(roCash.disabled).toBe(true);
+      const roConfirm = screen.getByTestId('ta-row-check-confirm-2026-07-01') as HTMLButtonElement;
+      expect(roConfirm.disabled).toBe(true);
       // Neue Editier-Flächen ebenfalls NICHT vorhanden.
       expect(screen.queryByTestId('ta-input-rechnung-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
@@ -599,7 +618,7 @@ describe('TagesabschlussTable', () => {
       // 02.07.: unbestätigt → deaktiviert, Blocker im title.
       const btn2 = screen.getByTestId('ta-close-day-2026-07-02') as HTMLButtonElement;
       expect(btn2.disabled).toBe(true);
-      expect(btn2.getAttribute('title')).toContain('Tagesbestätigung fehlt');
+      expect(btn2.getAttribute('title')).toContain('«Tagesabschluss geprüft» nicht bestätigt.');
       btn2.click();
       expect(onCloseDay).toHaveBeenCalledTimes(1);
 
@@ -623,7 +642,9 @@ describe('TagesabschlussTable', () => {
       const row1 = screen.getByTestId('ta-row-2026-07-01');
       expect(row1.querySelectorAll('input').length).toBe(0);
       expect(screen.queryByTestId('ta-close-day-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-row-check-cash-2026-07-01')).toBeNull();
+      // Checkboxen bleiben sichtbar (Zustand ablesbar), aber gesperrt.
+      const lockedCash = screen.getByTestId('ta-row-check-cash-2026-07-01') as HTMLButtonElement;
+      expect(lockedCash.disabled).toBe(true);
       expect(screen.queryByTestId('ta-gutschein-verkauft-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-expenses-2026-07-01')).toBeNull();
 

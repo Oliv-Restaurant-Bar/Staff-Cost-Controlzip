@@ -1906,6 +1906,39 @@ export interface CloseDayCheck {
   blockers: string[];
 }
 
+/** Gate für eine Bestätigungs-Checkbox: ok oder Grund fürs Sperren (Tooltip). */
+export interface ConfirmCheckboxGate {
+  ok: boolean;
+  /** Anzeigbarer Sperr-Grund (nur bei !ok). */
+  reason?: string;
+}
+
+/**
+ * «Bar kontrolliert» darf erst AKTIVIERT werden, wenn BAR IST (gezählter
+ * Kassenbestand) erfasst ist. Reines Aktivierungs-Gate — ein bereits
+ * gesetztes Häkchen bleibt IMMER entfernbar (Audit beim Entfernen).
+ */
+export function canCheckBarKontrolliert(row: TagesabschlussRow): ConfirmCheckboxGate {
+  if (row.locked) return { ok: false, reason: 'Tag ist bereits abgeschlossen.' };
+  if (row.cashIst === null) return { ok: false, reason: 'BAR IST muss zuerst erfasst werden.' };
+  return { ok: true };
+}
+
+/**
+ * «Tagesabschluss geprüft» darf erst AKTIVIERT werden, wenn alle
+ * Pflichtwerte vorhanden sind: Z-Bericht + BAR IST + Kassensaldo bekannt.
+ * Die weitergehenden Validierungen (Differenz begründet etc.) prüft
+ * weiterhin AUSSCHLIESSLICH canCloseDay für den Abschließen-Button —
+ * keine doppelte Statuslogik.
+ */
+export function canCheckAbschlussGeprueft(row: TagesabschlussRow): ConfirmCheckboxGate {
+  if (row.locked) return { ok: false, reason: 'Tag ist bereits abgeschlossen.' };
+  if (!row.hasZbericht || row.cashIst === null || row.kassensaldoSoll === null) {
+    return { ok: false, reason: 'Es fehlen noch Pflichtwerte.' };
+  }
+  return { ok: true };
+}
+
 /**
  * Vorbedingungen für „Tagesabschluss abschließen":
  * Z-Bericht + Tagesbestätigung (Adyen geprüft/begründet via canConfirmDay)
@@ -1917,10 +1950,10 @@ export function canCloseDay(row: TagesabschlussRow): CloseDayCheck {
   if (row.locked) blockers.push('Tag ist bereits abgeschlossen.');
   if (!row.hasZbericht) blockers.push('Kein Z-Bericht vorhanden.');
   if (row.confirmation?.confirmed !== true) {
-    blockers.push('Tagesbestätigung fehlt (Adyen-Differenzen prüfen/begründen).');
+    blockers.push('«Tagesabschluss geprüft» nicht bestätigt.');
   }
-  if (row.confirmation?.cashCounted !== true) blockers.push('Barbestand nicht als gezählt bestätigt.');
-  if (row.cashIst === null) blockers.push('Cash Ist (gezählter Kassenbestand) fehlt.');
+  if (row.confirmation?.cashCounted !== true) blockers.push('«Bar kontrolliert» nicht bestätigt.');
+  if (row.cashIst === null) blockers.push('BAR IST (gezählter Kassenbestand) fehlt.');
   if (row.kassensaldoSoll === null) blockers.push('Kassensaldo unbekannt (Anfangsbestand fehlt).');
   if (row.cashDiff !== null && row.cashDiffStatus !== 'ok' && !row.cashDiffBegruendet) {
     blockers.push('Kassendifferenz weder grün noch begründet.');

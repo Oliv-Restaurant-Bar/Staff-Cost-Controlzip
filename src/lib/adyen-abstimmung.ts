@@ -60,9 +60,28 @@ export interface AdyenComment {
 }
 
 export interface DayConfirmation {
+  /** Tagesabschluss geprüft (kompletter Tag kontrolliert). */
+  confirmed: boolean;
+  /** Bar kontrolliert (physischer Bargeldbestand gezählt und verglichen). */
+  cashCounted: boolean;
+  /** Audit: letzte Änderung des confirmed-Flags (Setzen UND Entfernen). */
+  confirmedAt?: string; // ISO
+  confirmedBy?: string;
+  /** Audit: letzte Änderung des cashCounted-Flags (Setzen UND Entfernen). */
+  cashCountedAt?: string; // ISO
+  cashCountedBy?: string;
+  comment?: string;
+}
+
+/**
+ * Gewünschter Zielzustand einer Tagesbestätigung aus der UI — OHNE
+ * Zeitstempel/Benutzer: Audit-Stempel vergibt ausschliesslich
+ * applyDayConfirmation. `comment === undefined` lässt den bestehenden
+ * Kommentar unverändert; leerer String entfernt ihn.
+ */
+export interface DayConfirmationInput {
   confirmed: boolean;
   cashCounted: boolean;
-  confirmedAt?: string; // ISO
   comment?: string;
 }
 
@@ -480,6 +499,59 @@ export function setDayConfirmation(
   if (confirmation === null) delete confirmations[date];
   else confirmations[date] = confirmation;
   return { ...blob, confirmations };
+}
+
+/**
+ * ZENTRALER Schreibpfad für Tagesbestätigungen (Tagesabschlüsse UND
+ * Adyen-Abgleich) mit Audit-Trail und Dirty-Check:
+ *   - Keine fachliche Änderung ⇒ es wird DIESELBE Blob-Referenz
+ *     zurückgegeben — der Aufrufer persistiert dann NICHT (kein unnötiger
+ *     Write, kein updatedAt-Bump).
+ *   - Benutzer + Zeitstempel werden NUR für Flags gestempelt, die sich
+ *     tatsächlich ändern — beim Setzen UND beim Entfernen; unveränderte
+ *     Flags behalten ihren bisherigen Stempel.
+ *   - `next.comment === undefined` lässt den Kommentar unverändert,
+ *     leerer/whitespace-String entfernt ihn; Kommentar-only-Änderungen
+ *     stempeln keine Flag-Audits.
+ */
+export function applyDayConfirmation(
+  blob: AdyenAbstimmungBlob,
+  date: string,
+  next: DayConfirmationInput,
+  user: string,
+  now: string,
+): AdyenAbstimmungBlob {
+  const prev = blob.confirmations[date];
+  const prevConfirmed = prev?.confirmed === true;
+  const prevCashCounted = prev?.cashCounted === true;
+  const trimmed = next.comment === undefined ? undefined : next.comment.trim();
+  const nextComment = trimmed === undefined
+    ? prev?.comment
+    : (trimmed === '' ? undefined : trimmed);
+
+  const confirmedChanged = prevConfirmed !== next.confirmed;
+  const cashCountedChanged = prevCashCounted !== next.cashCounted;
+  const commentChanged = (prev?.comment ?? undefined) !== nextComment;
+  if (!confirmedChanged && !cashCountedChanged && !commentChanged) return blob;
+
+  const entry: DayConfirmation = {
+    confirmed: next.confirmed,
+    cashCounted: next.cashCounted,
+    ...(cashCountedChanged
+      ? { cashCountedAt: now, cashCountedBy: user }
+      : {
+          ...(prev?.cashCountedAt ? { cashCountedAt: prev.cashCountedAt } : {}),
+          ...(prev?.cashCountedBy ? { cashCountedBy: prev.cashCountedBy } : {}),
+        }),
+    ...(confirmedChanged
+      ? { confirmedAt: now, confirmedBy: user }
+      : {
+          ...(prev?.confirmedAt ? { confirmedAt: prev.confirmedAt } : {}),
+          ...(prev?.confirmedBy ? { confirmedBy: prev.confirmedBy } : {}),
+        }),
+    ...(nextComment !== undefined ? { comment: nextComment } : {}),
+  };
+  return { ...blob, confirmations: { ...blob.confirmations, [date]: entry } };
 }
 
 // ── Cockpit-Signal-Helfer (read-only) ─────────────────────────────────────────

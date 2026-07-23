@@ -312,7 +312,7 @@ describe('TagesabschlussDayDialog — Abschluss-Sektion', () => {
     renderDialog(rowFor(emptyTagesabschlussBlob(), {}), { onCloseDay });
     const btn2 = screen.getByTestId('ta-dialog-close-day') as HTMLButtonElement;
     expect(btn2.disabled).toBe(true);
-    expect(screen.getByTestId('ta-dialog-close-blockers').textContent).toContain('Tagesbestätigung fehlt');
+    expect(screen.getByTestId('ta-dialog-close-blockers').textContent).toContain('«Tagesabschluss geprüft» nicht bestätigt.');
     expect(onCloseDay).toHaveBeenCalledTimes(1);
   });
 
