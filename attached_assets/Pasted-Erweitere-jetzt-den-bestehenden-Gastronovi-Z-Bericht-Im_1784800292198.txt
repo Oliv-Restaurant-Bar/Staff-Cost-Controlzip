@@ -1,0 +1,391 @@
+Erweitere jetzt den bestehenden Gastronovi-Z-Bericht-Import so, dass neben dem normalen CSV-Z-Bericht auch der erweiterte CSV-Z-Bericht vollständig erkannt und verarbeitet wird.
+
+Ziel
+
+Der erweiterte Z-Bericht soll künftig gleichzeitig folgende bestehende Importzwecke abdecken:
+
+1. Tagesumsatz und Zahlungsarten
+2. Hauptwarengruppen
+3. Warengruppen
+4. Inner-Haus-/Ausser-Haus-Auswertung
+5. Produkt- und Verkaufspositionsanalyse
+
+Wenn ein erweiterter Z-Bericht importiert wurde, soll für denselben Zeitraum kein separater Import der aggregierten Gastronovi-Verkaufsdaten mehr notwendig sein.
+
+Wichtige fachliche Abgrenzung
+
+Der erweiterte Z-Bericht enthält aggregierte Produktpositionen mit Anzahl und Betrag für den gesamten Berichtszeitraum.
+
+Er ersetzt deshalb den bisherigen Verkaufsdatenimport nur für aggregierte Produktanalysen nach:
+
+Tag
+Woche
+Monat
+Jahr
+Produkt
+Warengruppe
+Hauptwarengruppe
+Inner Haus
+Ausser Haus
+Mandant
+
+Er darf nicht so behandelt werden, als enthielte er einzelne Bons oder Transaktionen.
+
+Aus dem erweiterten Z-Bericht dürfen keine erfundenen Werte für folgende Felder erzeugt werden:
+
+Bonnummer
+Rechnungsnummer
+Tisch
+Verkaufsuhrzeit
+Gastzahl
+Kellner je Produktposition
+einzelne Bestelltransaktion
+
+Falls bestehende Auswertungen solche Einzeltransaktionsdaten zwingend benötigen, müssen sie weiterhin auf der bisherigen Datenquelle beruhen oder klar als nicht verfügbar angezeigt werden.
+
+Zu unterstützende CSV-Struktur
+
+Der normale und der erweiterte Bericht beginnen mit denselben Abschnitten:
+
+Zeitraum
+Umsatz
+Steuerbericht
+Kostenstellen
+Kellner
+Bezahlarten
+Hauptwarengruppen
+Aufladung Kundenkarten
+Rabatte
+Positionsrabatte
+
+Der erweiterte Bericht enthält danach zusätzlich diese Abschnitte:
+
+Hauptwarengruppen (inner/außer Haus)
+Warengruppen
+Warengruppen (inner/außer Haus)
+Positionen
+
+Die Abschnittsüberschriften müssen robust erkannt werden.
+
+Unterstütze sowohl:
+
+außer
+ausser
+
+sowie mögliche UTF-8-, BOM-, Tabulator- und Anführungszeichenvarianten.
+
+Dateinamen dürfen nicht zur Erkennung verwendet werden.
+
+Erkenne den Bericht ausschliesslich anhand seines Inhalts.
+
+Parser
+
+Erweitere den vorhandenen Z-Bericht-Parser und erstelle keinen zweiten parallelen Importweg.
+
+Der Parser soll ein strukturiertes Resultat liefern, mindestens mit:
+
+reportType: "standard" | "extended"
+zCounter
+costCenter
+periodFrom
+periodTo
+totalGross
+totalExcludingCustomerCardTopups
+taxRows
+costCenters
+waiters
+paymentMethods
+mainCategories
+discounts
+positionDiscounts
+extendedData
+
+extendedData soll enthalten:
+
+mainCategoriesByConsumptionType
+categories
+categoriesByConsumptionType
+positions
+
+Für jede Produktposition mindestens:
+
+name
+quantity
+grossAmount
+
+Für Warengruppen und Hauptwarengruppen mindestens:
+
+name
+quantity
+grossAmount
+consumptionType: "in_house" | "takeaway" | null
+
+Normalisierung
+
+Normalisiere Produktnamen nur technisch:
+
+führende und nachfolgende Leerzeichen entfernen
+mehrfache Leerzeichen vereinheitlichen
+Zeilenumbrüche entfernen
+Unicode sauber behandeln
+
+Keine fachliche Zusammenführung unterschiedlicher Produktnamen durchführen.
+
+Beispiele wie:
+
+Pizza Royal Margherita
+Pizza Royal Margherita TA
+
+müssen getrennte Produkte bleiben, solange keine bestehende zentrale Produkt-Mapping-Regel ausdrücklich etwas anderes definiert.
+
+Positionen mit CHF 0.00
+
+Produkte und Zusatzpositionen mit Menge grösser als 0 und Umsatz 0 dürfen nicht verworfen werden.
+
+Sie können beispielsweise Beilagen, Garstufen, Modifikatoren oder kostenlose Bestandteile sein.
+
+Kennzeichne sie intern bei Bedarf als zeroRevenuePosition, aber importiere sie vollständig.
+
+Persistenz und Idempotenz
+
+Prüfe zuerst die bestehenden Tabellen, Importtabellen und Domainmodelle.
+
+Nutze bestehende Tabellen und Strukturen, sofern sie fachlich geeignet sind.
+
+Erstelle keine neue Tabelle, bevor geprüft wurde, ob die bestehende Speicherung der Verkaufs- oder Produktdaten erweitert werden kann.
+
+Der Import muss idempotent sein.
+
+Der fachliche Schlüssel soll mindestens berücksichtigen:
+
+tenant_id
+Kostenstelle
+Z-Zähler
+periodFrom
+periodTo
+Abschnitt
+normalisierter Positionsname
+
+Beim erneuten Import desselben Berichts dürfen keine Mengen oder Umsätze doppelt gezählt werden.
+
+Ein erneuter Import soll die zuvor aus diesem Bericht gespeicherten aggregierten Detaildaten atomar ersetzen.
+
+Oliv und Beaulieu müssen strikt über tenant_id getrennt bleiben.
+
+Keine tenantübergreifende Erkennung oder Zusammenführung.
+
+Zeitraumlogik
+
+Verwende den tatsächlichen Zeitraum Von/Bis aus dem Bericht.
+
+Ordne die aggregierten Produktwerte nicht stillschweigend nur anhand des Dateinamens oder Upload-Datums zu.
+
+Wenn der Bericht genau einen Geschäftstag abbildet, dürfen die Werte in Tages-, Wochen- und Monatsauswertungen verwendet werden.
+
+Wenn der Bericht mehrere Tage umfasst, müssen die Werte als Periodensumme gespeichert werden.
+
+Sie dürfen nicht künstlich gleichmässig auf einzelne Tage verteilt werden.
+
+Zeige bei einem Mehrtagesbericht in Tagesauswertungen klar an:
+
+„Nur als Periodensumme verfügbar“
+
+oder schliesse diesen Datensatz aus reinen Tagescharts aus, wenn eine korrekte Zuordnung nicht möglich ist.
+
+Produkteanalyse
+
+Stelle die bestehende Produkteanalyse so um, dass sie für aggregierte Auswertungen bevorzugt die Produktpositionen aus erweiterten Z-Berichten verwendet.
+
+Folgende bestehende Funktionen müssen weiterhin korrekt funktionieren:
+
+Top-Produkte
+Flop-Produkte
+verkaufte Menge
+Umsatz je Produkt
+Umsatzanteil
+Warengruppenanalyse
+Food-/Beverage-Mix
+Inner-Haus-/Ausser-Haus-Anteil
+Vergleich Tag, Woche, Monat und Jahr
+Mandantenfilter
+Zeitraumfilter
+Excel-Export
+PDF-Export, sofern vorhanden
+
+Keine Doppelzählung
+
+Wenn für denselben Mandanten und Zeitraum sowohl ein erweiterter Z-Bericht als auch der bisherige Verkaufsdatenimport vorhanden ist, dürfen Produktmengen und Produktumsätze nicht doppelt gezählt werden.
+
+Definiere eine klare Quellenpriorität:
+
+1. Erweiterter Z-Bericht für aggregierte Produktanalyse
+2. Bisheriger Verkaufsdatenimport nur als Fallback oder für echte Transaktionsdetails
+
+Zeige die verwendete Quelle in der Produkteanalyse klein und verständlich an:
+
+„Datenquelle: Erweiterter Z-Bericht“
+
+oder
+
+„Datenquelle: Verkaufsdatenimport“
+
+Wenn beide Quellen vorhanden sind, verwende für aggregierte Summen nur eine Quelle.
+
+Import-Cockpit
+
+Passe das Import-Cockpit an.
+
+Beim Import eines erweiterten Z-Berichts soll angezeigt werden:
+
+„Erweiterter Z-Bericht erkannt“
+
+Darunter kompakt:
+
+Zeitraum
+Z-Zähler
+Anzahl Produktpositionen
+Anzahl Warengruppen
+Inner-/Ausser-Haus-Daten vorhanden: Ja/Nein
+
+Nach erfolgreichem Import:
+
+„Umsatz-, Zahlungs- und Produktdaten wurden übernommen.“
+
+Der bisherige separate Kontrollpunkt „Verkaufsdaten importieren“ soll für vollständig durch erweiterte Z-Berichte abgedeckte Zeiträume nicht mehr als fehlend oder überfällig erscheinen.
+
+Er soll stattdessen den Status erhalten:
+
+„Durch erweiterten Z-Bericht abgedeckt“
+
+Entferne den bisherigen Verkaufsdatenimport jedoch noch nicht technisch.
+
+Er muss als Fallback für historische Daten und mögliche Einzeltransaktionsanalysen erhalten bleiben.
+
+UI und Design
+
+Die Anpassung muss sich vollständig an den bestehenden Design- und Bedienmustern der App orientieren.
+
+Keine neue isolierte Gestaltung.
+
+Die Darstellung soll:
+
+schlicht
+modern
+kompakt
+lesefreundlich
+benutzerfreundlich
+mit bestehenden Karten, Tabellen, Abständen, Typografie und Statusfarben synchron
+
+sein.
+
+Keine grossen erklärenden Textblöcke.
+
+Verwende kompakte Statushinweise, Tooltips und klare Quellenangaben.
+
+Importvorschau
+
+Zeige vor dem Speichern eine kompakte Vorschau:
+
+Berichtstyp
+Mandant
+Kostenstelle
+Zeitraum
+Z-Zähler
+Umsatz
+Produktpositionen
+Warengruppen
+Inner Haus/Ausser Haus
+
+Bei einem normalen Bericht:
+
+„Standard-Z-Bericht: keine Produktdetailpositionen enthalten.“
+
+Bei einem erweiterten Bericht:
+
+„Erweiterter Z-Bericht: Produktanalyse wird aktualisiert.“
+
+Tests
+
+Ergänze Parser- und Integrationstests mit den beiden realen Dateistrukturen:
+
+normaler Z-Bericht mit 84 Zeilen
+erweiterter Z-Bericht mit 303 Zeilen
+
+Teste mindestens:
+
+Standardbericht wird weiterhin korrekt importiert
+erweiterter Bericht wird als extended erkannt
+Abschnitt Positionen wird vollständig gelesen
+Warengruppen werden korrekt gelesen
+Inner-/Ausser-Haus-Werte werden korrekt zugeordnet
+Produkte mit Umsatz 0 bleiben erhalten
+Dezimalwerte werden korrekt gelesen
+negative Rabatte bleiben negativ
+Anzahl je Bezahlart wird beim erweiterten Bericht gelesen
+normaler Bericht ohne Anzahl je Bezahlart bleibt kompatibel
+erneuter Import erzeugt keine Duplikate
+Oliv und Beaulieu bleiben getrennt
+Standard- und Detaildaten desselben Berichts werden atomar gespeichert
+gleicher Zeitraum aus zwei Quellen wird nicht doppelt gezählt
+Mehrtagesberichte werden nicht künstlich auf Tage verteilt
+bestehende historische Verkaufsdaten funktionieren weiterhin
+
+Regressionen
+
+Verändere keine bestehende Berechnungslogik für:
+
+Tagesabschluss
+Bargeld Soll
+Kassensaldo
+Adyen-Abgleich
+Buchhaltungsexport
+Steuerbericht
+Rabatte
+Kundenkarten
+Trinkgeld
+
+Pure Reads dürfen keine automatischen Writes, Seeds oder updatedAt-Änderungen auslösen.
+
+updatedAt darf nur bei einer echten Datenänderung geändert werden.
+
+Dokumentation
+
+Aktualisiere replit.md kompakt mit:
+
+Unterstützung normaler und erweiterter Gastronovi-Z-Berichte
+zusätzliche Detailabschnitte
+Quellenpriorität
+Abgrenzung aggregierte Produktdaten versus Einzeltransaktionen
+Idempotenz
+Mandantentrennung
+Mehrtageslogik
+Status im Import-Cockpit
+
+Validierung
+
+Führe danach aus:
+
+TypeScript-Typecheck
+betroffene Parser-Tests
+Import-Integrationstests
+Produkteanalyse-Tests
+Export-Tests
+gezieltes Architect-Review nur auf dem tatsächlichen Task-Diff
+
+Prüfe abschliessend anhand der realen erweiterten Beispieldatei, dass unter anderem Produktpositionen wie:
+
+Pizza Royal Margherita
+Pizza Royal Margherita TA
+Wasser mit 100cl
+Wasser ohne 50cl
+
+mit korrekter Menge und korrektem Betrag erkannt werden.
+
+Gib am Ende eine klare Zusammenfassung:
+
+welche Dateien geändert wurden
+welche Abschnitte erkannt werden
+wie Doppelzählungen verhindert werden
+welche Produkteanalyse nun ohne separaten Verkaufsdatenimport funktioniert
+welche Auswertungen weiterhin echte Einzeltransaktionsdaten benötigen
+welche Tests erfolgreich waren
