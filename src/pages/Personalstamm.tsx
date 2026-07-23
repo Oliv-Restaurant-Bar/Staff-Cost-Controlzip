@@ -70,6 +70,19 @@ import type { HarteTestResult } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
 import { isEmployeeActiveForDate } from '@/lib/personnel-utils';
 import { getVisibleEmployeesForRole } from '@/lib/employee-visibility';
+import {
+  buildEmployeeRow,
+  buildPositionOptions,
+  buildEintrittsjahrOptions,
+  filterEmployeeRows,
+  sortEmployeeRows,
+  DEPT_LABELS,
+  TYPE_LABELS,
+  EMPLOYEE_SORT_OPTIONS,
+  isEmployeeSortKey,
+} from '@/lib/personalstamm-list';
+import { usePersonalstammPrefs } from '@/hooks/usePersonalstammPrefs';
+import { EmployeeTable, EmployeeTiles, EmployeeCompactList } from '@/components/personalstamm/EmployeeListViews';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { generateContract, detectContractTemplate } from '@/lib/generateContract';
 import { ContractDraft, defaultContractDraft } from '@/types/contract';
@@ -155,18 +168,7 @@ interface LocalEmployeeData {
 }
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
-
-const DEPT_LABELS: Record<Department, string> = {
-  service: 'Service',
-  küche:   'Küche',
-};
-
-const TYPE_LABELS: Record<EmploymentType, string> = {
-  vollzeit: 'Vollzeit',
-  teilzeit: 'Teilzeit',
-  minijob:  'Minijob',
-  aushilfe: 'Aushilfe',
-};
+// DEPT_LABELS / TYPE_LABELS kommen zentral aus personalstamm-list (eine Quelle).
 
 const DEPT_BADGE_COLOR: Record<Department, string> = {
   service: 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-300',
@@ -370,6 +372,11 @@ const Personalstamm = () => {
   const [filterDept, setFilterDept]       = useState<Department | 'all'>('all');
   const [filterType, setFilterType]       = useState<EmploymentType | 'all'>('all');
   const [filterActive, setFilterActive]   = useState<'all' | 'active' | 'inactive'>('active');
+  const [filterPosition, setFilterPosition] = useState<string>('all');
+  const [filterJahr, setFilterJahr]         = useState<string>('all');
+
+  // Ansicht (Liste/Kacheln) + Sortierung — pro Benutzer lokal gespeichert.
+  const { prefs: listPrefs, savePrefs: saveListPrefs } = usePersonalstammPrefs();
 
   // ── Detail / Bearbeiten ────────────────────────────────────────────────────
   const [selectedId, setSelectedId]       = useState<string | null>(null);
@@ -578,6 +585,26 @@ const Personalstamm = () => {
     });
   }, [visibleBase, filterActive, filterDept, filterType, search, today]);
 
+  // ── Zeilen-View-Models (EINE Ableitung für Tabelle, Kacheln UND Kompaktliste) ──
+  const baseRows = useMemo(() =>
+    filtered.map(emp => buildEmployeeRow(
+      emp, positions, today,
+      !!getLocalEntry(localData, emp.id).contractFileName,
+    )),
+  [filtered, positions, today, localData]);
+
+  // Optionen der Zusatzfilter aus den Basis-Zeilen (nur wenn Daten vorhanden).
+  const positionOptions = useMemo(() => buildPositionOptions(baseRows), [baseRows]);
+  const jahrOptions     = useMemo(() => buildEintrittsjahrOptions(baseRows), [baseRows]);
+
+  // Zusatzfilter + zentrale Sortierung (Präferenz pro Benutzer).
+  const listRows = useMemo(() =>
+    sortEmployeeRows(
+      filterEmployeeRows(baseRows, { position: filterPosition, eintrittsjahr: filterJahr }),
+      listPrefs.sort,
+    ),
+  [baseRows, filterPosition, filterJahr, listPrefs.sort]);
+
   // ── Mitarbeiter auswählen ──────────────────────────────────────────────────
   const selectEmployee = (emp: Employee) => {
     setSelectedId(emp.id);
@@ -599,6 +626,41 @@ const Personalstamm = () => {
     setShowContractEditor(true);
     setActiveDetailTab('stammdaten');
   };
+
+  /** Auswahl aus einer Listen-Zeile/Kachel (Row-View-Model → Employee). */
+  const handleSelectRow = (id: string) => {
+    const emp = employees.find(e => e.id === id);
+    if (!emp) return;
+    setSelectedSubmission(null);
+    selectEmployee(emp);
+  };
+
+  /** Detail geöffnet? Steuert adaptives Layout (Liste voll/breit vs. schmal). */
+  const detailOpen = !!(selectedId || editData || selectedSubmission);
+
+  /** Detail schliessen (Desktop-X / Escape): zurück zur vollen Listenansicht. */
+  const closeDetail = () => {
+    setSelectedId(null);
+    setEditData(null);
+    setEditMode(false);
+    setSelectedSubmission(null);
+    setShowMobile('list');
+  };
+
+  // Escape schliesst das Detail (nur Ansicht, nie im Bearbeiten-Modus; Dialoge haben Vorrang)
+  useEffect(() => {
+    if (!detailOpen || editMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
+      closeDetail();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailOpen, editMode]);
 
   const startEdit = () => {
     if (!canEditEmployees) return;
@@ -1178,8 +1240,72 @@ const Personalstamm = () => {
             ))}
           </div>
 
-          <span className="text-xs text-muted-foreground ml-auto">
-            {filtered.length} von {visibleBase.length} Mitarbeiter
+          {/* Position (nur wenn Positionsdaten vorhanden) */}
+          {positionOptions.length > 0 && (
+            <Select value={filterPosition} onValueChange={setFilterPosition}>
+              <SelectTrigger className="h-8 text-xs w-40" data-testid="filter-position">
+                <SelectValue placeholder="Position" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle Positionen</SelectItem>
+                {positionOptions.map(p => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Eintrittsjahr (nur wenn Eintrittsdaten vorhanden) */}
+          {jahrOptions.length > 0 && (
+            <Select value={filterJahr} onValueChange={setFilterJahr}>
+              <SelectTrigger className="h-8 text-xs w-32" data-testid="filter-jahr">
+                <SelectValue placeholder="Eintrittsjahr" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Alle Jahre</SelectItem>
+                {jahrOptions.map(j => (
+                  <SelectItem key={j} value={j}>{j}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {/* Sortierung (zentral) */}
+          <Select
+            value={listPrefs.sort}
+            onValueChange={v => { if (isEmployeeSortKey(v)) saveListPrefs({ sort: v }); }}
+          >
+            <SelectTrigger className="h-8 text-xs w-48" data-testid="sort-select">
+              <SelectValue placeholder="Sortierung" />
+            </SelectTrigger>
+            <SelectContent>
+              {EMPLOYEE_SORT_OPTIONS.map(o => (
+                <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Ansicht Liste/Kacheln (pro Benutzer gespeichert) */}
+          <div className="flex rounded-md overflow-hidden border border-border" role="group" aria-label="Ansicht">
+            {(['liste', 'kacheln'] as const).map(v => (
+              <button
+                key={v}
+                data-testid={`view-${v}`}
+                onClick={() => saveListPrefs({ view: v })}
+                className={cn(
+                  'px-3 py-1 text-xs font-semibold transition-colors',
+                  listPrefs.view === v
+                    ? 'bg-primary text-primary-foreground'
+                    : 'hover:bg-muted text-muted-foreground',
+                )}
+              >
+                {v === 'liste' ? 'Liste' : 'Kacheln'}
+              </button>
+            ))}
+          </div>
+
+          <span className="text-xs text-muted-foreground ml-auto" data-testid="employee-count">
+            {listRows.length} von {visibleBase.length} Mitarbeiter
           </span>
         </div>
       </div>
@@ -1432,9 +1558,11 @@ CREATE POLICY "Anon self-register new employee"
 
         {/* ── Mitarbeiterliste ───────────────────────────────────────────────── */}
         <aside className={cn(
-          'flex-shrink-0 border-r border-border bg-card overflow-y-auto',
-          'w-full md:w-80 lg:w-96',
-          showMobile === 'detail' ? 'hidden md:flex md:flex-col' : 'flex flex-col',
+          'bg-card overflow-y-auto',
+          detailOpen
+            ? 'flex-shrink-0 border-r border-border w-full md:w-80 lg:w-96'
+            : 'flex-1 w-full',
+          showMobile === 'detail' && detailOpen ? 'hidden md:flex md:flex-col' : 'flex flex-col',
         )}>
           {loading ? (
             <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -1485,7 +1613,7 @@ CREATE POLICY "Anon self-register new employee"
               )}
 
               {/* ── Reguläre Mitarbeiter ── */}
-              {filtered.length === 0 ? (
+              {listRows.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 px-6 text-center gap-2">
                   <Users className="h-8 w-8 text-muted-foreground/40" />
                   <p className="text-sm text-muted-foreground">Keine Mitarbeiter gefunden</p>
@@ -1500,86 +1628,50 @@ CREATE POLICY "Anon self-register new employee"
                     </p>
                   )}
                 </div>
+              ) : detailOpen ? (
+                /* Detail geöffnet → immer kompakte schmale Liste */
+                <EmployeeCompactList
+                  rows={listRows}
+                  selectedId={selectedId}
+                  onSelect={handleSelectRow}
+                />
+              ) : listPrefs.view === 'kacheln' ? (
+                <EmployeeTiles
+                  rows={listRows}
+                  selectedId={selectedId}
+                  onSelect={handleSelectRow}
+                />
               ) : (
-            <ul className="divide-y divide-border">
-              {filtered.map(emp => {
-                const local  = getLocalEntry(localData, emp.id);
-                const isSelected = selectedId === emp.id;
-                return (
-                  <li key={emp.id}>
-                    <button
-                      onClick={() => selectEmployee(emp)}
-                      className={cn(
-                        'w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex items-center gap-3',
-                        isSelected && 'bg-primary/5 border-l-2 border-primary',
-                        !local.active && 'opacity-50',
-                      )}
-                    >
-                      {/* Avatar */}
-                      <div className={cn(
-                        'w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center text-sm font-bold',
-                        emp.department === 'service'
-                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/50'
-                          : 'bg-orange-100 text-orange-700 dark:bg-orange-950/50',
-                      )}>
-                        {emp.name.charAt(0).toUpperCase()}
-                      </div>
-
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold truncate">{emp.name}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                          <span className={cn(
-                            'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border',
-                            DEPT_BADGE_COLOR[emp.department],
-                          )}>
-                            {DEPT_LABELS[emp.department]}
-                          </span>
-                          <span className={cn(
-                            'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border',
-                            TYPE_BADGE_COLOR[emp.employmentType],
-                          )}>
-                            {TYPE_LABELS[emp.employmentType]}
-                          </span>
-                          {!local.active && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border border-red-200 bg-red-50 text-red-600">
-                              Inaktiv
-                            </span>
-                          )}
-                          {emp.employmentEndDate && (() => {
-                            const today = new Date();
-                            const exit  = new Date(emp.employmentEndDate + 'T00:00:00');
-                            return exit < today ? (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate-300 bg-slate-100 text-slate-500">
-                                Ausgetreten
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border border-amber-200 bg-amber-50 text-amber-600">
-                                Kündigung {emp.employmentEndDate}
-                              </span>
-                            );
-                          })()}
-                          {selectedLocal.contractFileName && selectedId === emp.id && (
-                            <FileText className="h-3 w-3 text-muted-foreground" />
-                          )}
-                        </div>
-                      </div>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                <EmployeeTable
+                  rows={listRows}
+                  selectedId={selectedId}
+                  onSelect={handleSelectRow}
+                />
               )}
             </>
           )}
         </aside>
 
-        {/* ── Detailbereich ──────────────────────────────────────────────────── */}
+        {/* ── Detailbereich (nur bei geöffnetem Detail — sonst volle Listenbreite) ── */}
+        {detailOpen && (
         <main className={cn(
           'flex-1 overflow-y-auto bg-background',
           showMobile === 'list' ? 'hidden md:block' : 'block',
         )}>
+          {/* Desktop: Detail schliessen (X) — zurück zur vollen Listenbreite */}
+          <div className="hidden md:flex justify-end px-3 pt-2 -mb-9 sticky top-0 z-10 pointer-events-none">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 pointer-events-auto text-muted-foreground hover:text-foreground bg-background/80 backdrop-blur-sm"
+              onClick={closeDetail}
+              title="Detail schliessen (Esc)"
+              aria-label="Detail schliessen"
+              data-testid="close-detail"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
           {selectedSubmission && !selectedId && !editData ? (
             /* ── Submission-Detail-Panel ─────────────────────────────────── */
             <div className="max-w-2xl mx-auto p-6 space-y-5">
@@ -1656,23 +1748,6 @@ CREATE POLICY "Anon self-register new employee"
               })()}
             </div>
 
-          ) : !selectedId && !editData ? (
-            <div className="flex flex-col items-center justify-center h-full py-20 px-6 text-center gap-3">
-              <Users className="h-12 w-12 text-muted-foreground/30" />
-              <p className="text-sm text-muted-foreground">
-                Mitarbeiter aus der Liste auswählen
-              </p>
-              {canEditEmployees ? (
-                <Button variant="outline" size="sm" onClick={handleNew}>
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Neuen Mitarbeiter anlegen
-                </Button>
-              ) : (
-                <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1">
-                  <Lock className="h-3 w-3 shrink-0" />
-                  Sie haben keine Berechtigung zum Erfassen von Mitarbeitern
-                </p>
-              )}
-            </div>
           ) : (
             <div className="max-w-2xl mx-auto p-5 space-y-5 pb-20">
 
@@ -3383,6 +3458,7 @@ CREATE POLICY "Anon self-register new employee"
             </div>
           )}
         </main>
+        )}
       </div>
 
       {/* Vertragsphase löschen-Dialog */}
