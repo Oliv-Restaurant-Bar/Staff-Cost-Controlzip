@@ -59,15 +59,77 @@ vi.mock('@/contexts/GuestSessionContext', () => ({
 vi.mock('@/hooks/useCockpitFinancials', () => ({
   useCockpitFinancials: () => mockFin.value,
 }));
+// Personalisierungs-/Widget-Hooks: hier gemockt (IO steckt in den Hooks) —
+// die Seite erhält Default-Prefs und leere Info-Widget-Daten («—», nie 0).
+vi.mock('@/hooks/useStartPrefs', async () => {
+  const { defaultStartPrefs } = await import('@/lib/start-prefs');
+  return {
+    START_PREFS_UPDATED_EVENT: 'start-prefs-updated',
+    useStartPrefs: () => ({
+      prefs: defaultStartPrefs(),
+      canCustomize: !mockGuest.isGuest,
+      savePrefs: vi.fn(),
+    }),
+  };
+});
+vi.mock('@/hooks/useHeuteWidgets', () => ({
+  useHeuteWidgets: () => ({
+    reservationenHeute: { data: null, error: null },
+    personalausfaelle: { data: null, error: null },
+    warenrechnungen: { data: null, error: null },
+    kreditoren: { data: null, error: null },
+    loading: false,
+  }),
+}));
+// IO-Grenzen von useManagementKpis (Sektion rendert real): Tenant/Auth-Kontexte
+// plus Supabase-Leser gemockt — keine Netzwerkzugriffe im Test.
+vi.mock('@/contexts/TenantContext', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/contexts/TenantContext')>();
+  return {
+    ...actual,
+    useTenant: () => ({
+      tenantId: 'oliv' as const,
+      tenant: actual.TENANTS.oliv,
+      setTenant: vi.fn(),
+      tenantKey: (key: string) => key,
+      lockTenant: vi.fn(),
+      unlockTenant: vi.fn(),
+      tenantLocked: false,
+      resetTenant: vi.fn(),
+    }),
+  };
+});
+vi.mock('@/hooks/useAuth', () => ({
+  useAuth: () => ({ user: { id: 'test-user', email: 'test@example.com' } }),
+}));
+vi.mock('@/lib/gn-personen-db', () => ({
+  getGuestsForPeriod: async () => null,
+  getAvgReceiptForPeriod: async () => null,
+}));
+vi.mock('@/lib/kpi-comments-db', () => ({
+  loadKpiCommentsLocal: () => ({}),
+  loadKpiComments: async () => ({}),
+  saveKpiComments: async () => {},
+}));
+vi.mock('@/lib/kpi-targets-db', () => ({
+  loadKpiTargetsLocal: () => ({}),
+  loadKpiTargets: async () => ({}),
+  saveKpiTargets: async () => {},
+}));
 vi.mock('@/lib/financial-metrics', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/financial-metrics')>();
   return {
     ...actual,
     getFinancialMetricValues: (id: string) => mockMetricValues.value[id] ?? EMPTY_VALUES,
+    // Dependency-Gate hat eigene Unit-Tests — hier Pass-through auf die
+    // kontrollierten Registry-Werte (interner Modul-Aufruf umgeht den Mock).
+    getGatedFinancialMetricValues: (id: string) => mockMetricValues.value[id] ?? EMPTY_VALUES,
+    getFinancialMetricMissingDependencies: () => [],
   };
 });
 
 import StartOverviewPage from '@/pages/StartOverview';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 const READY_OK: StartOverviewResult = {
   cards: [
@@ -123,9 +185,14 @@ function ready(over: Partial<Extract<StartOverviewState, { status: 'ready' }>> =
 }
 
 function renderPage() {
+  // KPI-Tabelle («Alle Management-KPIs») ist standardmässig eingeklappt —
+  // für die Zeilen-Assertions aufgeklappt starten (persistierter Zustand).
+  localStorage.setItem('mgmtKpiTableOpen', '1');
   return render(
     <MemoryRouter>
-      <StartOverviewPage />
+      <TooltipProvider>
+        <StartOverviewPage />
+      </TooltipProvider>
     </MemoryRouter>,
   );
 }
@@ -147,7 +214,7 @@ describe('StartOverview — Struktur (Executive Cockpit)', () => {
   it('zeigt die Cockpit-Bereiche Finanzen / Heute / Risiken / Diese Woche / Datenstand / Als Nächstes / Schnellaktionen', () => {
     mockState.value = ready();
     renderPage();
-    expect(screen.getByRole('heading', { name: /^Finanzen ·/ })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Management-KPIs' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Heute' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Risiken' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Diese Woche' })).toBeTruthy();
@@ -176,16 +243,20 @@ describe('StartOverview — Struktur (Executive Cockpit)', () => {
   });
 });
 
-describe('StartOverview — Finanzblock (NUR Registry)', () => {
-  it('Berechnung nicht möglich (input=null) → sichtbarer Leerzustand, KEINE operativen Ersatzwerte', () => {
+describe('StartOverview — Management-KPIs (NUR Registry)', () => {
+  it('kein Registry-Input (financialInput=null) → P&L-KPIs überall «—», KEINE operativen Ersatzwerte', () => {
     mockState.value = ready();
     mockFin.value = { ...defaultFin(), financialInput: null };
+    // Registry-Mock liefert Werte — sie DÜRFEN ohne financialInput nicht erscheinen.
+    mockMetricValues.value = {
+      net_revenue: { actual: 120000, budget: 110000, priorYear: 100000 },
+    };
     renderPage();
-    expect(screen.getByTestId('cockpit-finanz-empty').textContent).toContain('keine operativen Ersatzwerte');
-    expect(screen.queryByTestId('cockpit-fin-row-net_revenue')).toBeNull();
+    expect(screen.getByTestId('mgmt-kpi-umsatz-actual').textContent).toBe('—');
+    expect(screen.getByTestId('mgmt-kpi-card-umsatz').textContent).toContain('—');
   });
 
-  it('zeigt 5 Kennzahlen mit IST/Budget/VJ/Abw. aus der Registry; fehlend = «—»', () => {
+  it('zeigt die 5 P&L-Kennzahlen mit IST/Budget/Abw. aus der Registry; fehlend = «—»', () => {
     mockState.value = ready();
     mockFin.value = {
       ...defaultFin(),
@@ -197,33 +268,34 @@ describe('StartOverview — Finanzblock (NUR Registry)', () => {
       ebit: { actual: null, budget: 5000, priorYear: null },
     };
     renderPage();
-    for (const id of ['net_revenue', 'cogs_ratio', 'personnel_ratio', 'ebitda', 'ebit']) {
-      expect(screen.getByTestId(`cockpit-fin-row-${id}`)).toBeTruthy();
+    for (const id of ['umsatz', 'warenquote', 'personalquote', 'ebitda', 'ebit']) {
+      expect(screen.getByTestId(`mgmt-kpi-row-${id}`)).toBeTruthy();
     }
-    // Beträge: Abw. = IST − Budget in CHF (Rohwerte, Anzeige gerundet)
-    expect(digits(screen.getByTestId('cockpit-fin-net_revenue-actual').textContent)).toContain('120000');
-    expect(digits(screen.getByTestId('cockpit-fin-net_revenue-abw').textContent)).toContain('+CHF10000');
-    // Quoten: Abw. in Prozentpunkten; VJ fehlt = «—»
-    expect(screen.getByTestId('cockpit-fin-cogs_ratio-actual').textContent).toBe('29.5 %');
-    expect(screen.getByTestId('cockpit-fin-cogs_ratio-abw').textContent).toContain('+1.5 pp');
-    expect(screen.getByTestId('cockpit-fin-cogs_ratio-vj').textContent).toBe('—');
-    // IST fehlt ⇒ «—» UND keine Abweichung (fehlend ≠ 0)
-    expect(screen.getByTestId('cockpit-fin-ebit-actual').textContent).toBe('—');
-    expect(screen.getByTestId('cockpit-fin-ebit-abw').textContent).toBe('—');
-    // Kennzahl ganz ohne Werte bleibt überall «—»
-    expect(screen.getByTestId('cockpit-fin-ebitda-actual').textContent).toBe('—');
+    // Beträge: IST aus der Registry; Abw. = IST − Budget in CHF (Zeilentext)
+    expect(digits(screen.getByTestId('mgmt-kpi-umsatz-actual').textContent)).toContain('120000');
+    expect(digits(screen.getByTestId('mgmt-kpi-row-umsatz').textContent)).toContain('+CHF10000');
+    // Quoten: eine Nachkommastelle, Abw. in Prozentpunkten
+    expect(screen.getByTestId('mgmt-kpi-warenquote-actual').textContent).toBe('29.5 %');
+    expect(screen.getByTestId('mgmt-kpi-row-warenquote').textContent).toContain('+1.5 pp');
+    // IST fehlt ⇒ «—» (fehlend ≠ 0); Kennzahl ganz ohne Werte bleibt «—»
+    expect(screen.getByTestId('mgmt-kpi-ebit-actual').textContent).toBe('—');
+    expect(screen.getByTestId('mgmt-kpi-ebitda-actual').textContent).toBe('—');
   });
 
-  it('Gast-Session: Kennzahlen-Zeilen ohne Drilldown-Links', () => {
-    mockGuest.isGuest = true;
+  it('Drilldown-Links: Monat als ?monat=; Gast ohne Links auf gast-gesperrte Routen (Gäste-CRM)', () => {
     mockState.value = ready();
     mockFin.value = { ...defaultFin(), financialInput: {} as CockpitFinancials['financialInput'] };
     renderPage();
-    expect(screen.getByTestId('cockpit-fin-row-net_revenue').querySelector('a')).toBeNull();
+    const monat = format(new Date(), 'yyyy-MM');
+    const umsatzLink = screen.getByTestId('mgmt-kpi-row-umsatz').querySelector('a');
+    expect(umsatzLink!.getAttribute('href')).toBe(`/erfolgsrechnung?monat=${monat}`);
+    expect(screen.getByTestId('mgmt-kpi-row-gaeste').querySelector('a')).toBeTruthy();
     cleanup();
-    mockGuest.isGuest = false;
+    mockGuest.isGuest = true;
     renderPage();
-    expect(screen.getByTestId('cockpit-fin-row-net_revenue').querySelector('a')!.getAttribute('href')).toBe('/erfolgsrechnung');
+    // Gast = read-only Admin: Erfolgsrechnung bleibt verlinkt, Gäste-CRM (PII) NICHT.
+    expect(screen.getByTestId('mgmt-kpi-row-umsatz').querySelector('a')).toBeTruthy();
+    expect(screen.getByTestId('mgmt-kpi-row-gaeste').querySelector('a')).toBeNull();
   });
 });
 

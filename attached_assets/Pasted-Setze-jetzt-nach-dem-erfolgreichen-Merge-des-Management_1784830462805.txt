@@ -1,0 +1,483 @@
+Setze jetzt nach dem erfolgreichen Merge des Management-KPI-Dashboards den zweiten geplanten Task um:
+
+Navigation und KPI-Konsolidierung.
+
+Wichtig:
+
+Das neue Management-KPI-Dashboard auf der Seite „/“ ist jetzt die zentrale Startseite.
+
+Die Navigation soll deutlich vereinfacht werden.
+
+Es dürfen keine Funktionen verloren gehen.
+
+Bestehende Fachseiten bleiben erhalten, wenn sie für Bearbeitung, Analyse oder Drilldowns benötigt werden.
+
+Es geht nicht darum, möglichst viele Seiten zu löschen, sondern doppelte Einstiege und fast identische KPI-Übersichten zu entfernen.
+
+──────────────────────────────────────
+1. Ausgangspunkt sichern
+──────────────────────────────────────
+
+Prüfe zuerst den aktuellen Stand nach dem Merge.
+
+Verifiziere:
+
+- Management-KPI-Dashboard ist auf „/“ aktiv
+- KPI-Karten und Tabelle funktionieren
+- Monatswechsel funktioniert
+- Drilldowns übernehmen den Monat
+- Kommentare funktionieren
+- Excel- und PDF-Export funktionieren
+- laufender Monat wird markiert
+- unvollständige KPIs zeigen „—“
+- bestehende operative Cockpit-Bereiche unterhalb bleiben erhalten
+
+Keine Navigation ändern, bevor dieser Stand bestätigt ist.
+
+──────────────────────────────────────
+2. Vollständiges Navigationsinventar erstellen
+──────────────────────────────────────
+
+Analysiere die gesamte aktuelle Navigation und alle erreichbaren Hauptseiten.
+
+Erstelle vor der Umsetzung eine Matrix mit:
+
+- Menübereich
+- Navigationseintrag
+- Route
+- Zweck
+- angezeigte KPIs
+- Bearbeitungsfunktionen
+- vorhandene Drilldowns
+- Überschneidungen mit anderen Seiten
+- Zielstatus
+
+Zielstatus darf nur sein:
+
+- Behalten
+- Umbenennen
+- Integrieren
+- Nur noch Drilldown
+- Aus Navigation entfernen
+- Weiterleiten
+
+Keine Route oder Seite ohne dokumentierte Entscheidung verändern.
+
+──────────────────────────────────────
+3. Zentrale Rollen der Seiten festlegen
+──────────────────────────────────────
+
+Künftig gelten diese Ebenen:
+
+Ebene 1: Management-Startseite
+
+Route:
+/
+
+Zweck:
+
+- wichtigste Management-KPIs
+- operative Hinweise
+- Risiken
+- offene Aufgaben
+- Datenstand
+- Einstieg in Analysen
+
+Ebene 2: Fachanalysen
+
+Beispiele:
+
+- Erfolgsrechnung
+- Umsatzabstimmung
+- Produktanalyse
+- Personalcontrolling
+- Warenkostenanalyse
+- Reservationsanalyse
+- Tagesabschlüsse
+- Budget
+- Forecast
+
+Zweck:
+
+- Ursachenanalyse
+- Monats- und Detailvergleich
+- fachliche Bearbeitung
+- Kontrolle
+
+Ebene 3: Detail und Originaldaten
+
+Beispiele:
+
+- Tagesdetail
+- Produktdetail
+- Mitarbeitendendetail
+- Lieferant/Rechnung
+- Z-Bericht
+- Importverlauf
+- einzelne Reservation
+- einzelner Tagesabschluss
+
+Diese Seiten sind nicht zwingend eigene Hauptnavigationseinträge.
+
+──────────────────────────────────────
+4. Doppelte Dashboard-Einstiege konsolidieren
+──────────────────────────────────────
+
+Prüfe insbesondere:
+
+- Dashboard
+- Verkaufsdashboard
+- Tagesansicht
+- Forecast Planning
+- Executive Cockpit
+- Management Report
+- Kennzahlen-Bericht
+- Bankenbericht
+- Investorenbericht
+- Startübersicht
+- Import-Cockpit-KPIs
+- Personal-KPI-Übersichten
+- Reservations-KPI-Übersichten
+- Tagesabschluss-KPI-Übersichten
+
+Regel:
+
+Wenn eine Seite hauptsächlich dieselben Management-KPIs zeigt wie „/“, soll sie nicht als paralleles Hauptdashboard bestehen bleiben.
+
+Mögliche Behandlung:
+
+- aus Hauptnavigation entfernen
+- als Drilldown behalten
+- in bestehende Fachseite integrieren
+- auf „/“ weiterleiten
+- nur über Exportprofil zugänglich machen
+
+Keine Bearbeitungs- oder Detailfunktion entfernen.
+
+──────────────────────────────────────
+5. Konkrete gewünschte Navigationsstruktur
+──────────────────────────────────────
+
+Die linke Navigation soll kompakter werden und sich an folgenden Hauptgruppen orientieren:
+
+START
+
+- Start
+
+VERKAUF
+
+- Verkaufsanalyse
+- Forecast
+
+UMSATZ & FINANZEN
+
+- Umsatzabstimmung
+- Tagesabschlüsse
+- Budget
+- Erfolgsrechnung
+
+PERSONAL
+
+- Dienstplanung
+- Personalcontrolling
+- Personalbedarf
+
+WAREN & PRODUKTE
+
+- Produktanalyse
+- Warenkosten
+- OP-Liste Kreditoren
+
+GÄSTE & RESERVATIONEN
+
+- Reservationsanalyse
+- Gäste-CRM
+- Kampagnen
+- Duplikate
+
+IMPORT & ADMIN
+
+- Import-Cockpit
+- Gastronovi Import
+- Einstellungen
+- Benutzer / Rollen, sofern vorhanden
+
+Die genaue Benennung darf an die bereits verwendeten Begriffe angepasst werden.
+
+Keine neue Parallelstruktur schaffen.
+
+──────────────────────────────────────
+6. Verkaufsseiten konsolidieren
+──────────────────────────────────────
+
+Prüfe:
+
+- Dashboard
+- Verkaufsdashboard
+- Tagesansicht
+- Forecast Planning
+
+Ziel:
+
+Nur eine klare Verkaufsanalyse als Hauptseite.
+
+Empfohlene Logik:
+
+- Verkaufsdashboard wird zur zentralen Verkaufsanalyse
+- Tagesansicht wird als Tab, Filter oder Drilldown integriert
+- Forecast bleibt eigenständig, wenn dort tatsächlich Planung/Bearbeitung erfolgt
+- ein generisches „Dashboard“ darf nicht parallel zur Management-Startseite bestehen
+
+Falls das bisherige „Dashboard“ nur Übersichtsdaten zeigt:
+
+- aus Navigation entfernen
+- auf „/“ oder Verkaufsanalyse weiterleiten
+
+──────────────────────────────────────
+7. Management-, Bank- und Investorenberichte konsolidieren
+──────────────────────────────────────
+
+Prüfe:
+
+- Management Report
+- Bankenbericht
+- Investorenbericht
+- Kennzahlen-Bericht
+
+Ziel:
+
+Keine vier fast identischen Übersichtsseiten.
+
+Bevorzugte Lösung:
+
+Eine zentrale Berichtsseite oder Exportfunktion mit Profilen:
+
+- Geschäftsleitung
+- Bank
+- Investoren
+
+Die Profile verwenden dieselben KPI- und Financial-Metrics-Quellen.
+
+Die bereits vorhandenen Exportprofile des Management-KPI-Dashboards sollen weiterverwendet werden.
+
+Wenn bestehende Berichtsseiten zusätzliche wertvolle Analysen enthalten:
+
+- als Detailansicht behalten
+- nicht als paralleles Dashboard
+- über Drilldown oder „Ausführliches Dashboard“ erreichbar machen
+
+Keine eigene KPI-Berechnung pro Bericht.
+
+──────────────────────────────────────
+8. Import-Cockpit klar abgrenzen
+──────────────────────────────────────
+
+Das Import-Cockpit bleibt bestehen.
+
+Sein Zweck ist nicht Management-Reporting, sondern:
+
+- Datenquellen
+- Importstatus
+- Fälligkeiten
+- Kontrollen
+- Aufgaben
+- Datenqualität
+- Importverlauf
+
+KPI-Karten, die nur allgemeine Management-Werte wiederholen, sollen entfernt oder durch Datenqualitätskennzahlen ersetzt werden.
+
+Geeignete Werte im Import-Cockpit:
+
+- fehlende Importe
+- überfällige Importe
+- letzter Import
+- unvollständige Monate
+- Konflikte
+- Fehler
+- offene Kontrollen
+
+Keine Umsatz-, Personal- oder Warenquote als redundante Management-KPI.
+
+──────────────────────────────────────
+9. Fachseiten nicht unnötig kürzen
+──────────────────────────────────────
+
+Diese Seiten bleiben als Fachmodule erhalten, sofern sie Bearbeitung oder tiefere Analysen enthalten:
+
+- Tagesabschlüsse
+- Umsatzabstimmung
+- Budget
+- Erfolgsrechnung
+- Produktanalyse
+- Personalcontrolling
+- Personalbedarf
+- Reservationsanalyse
+- Gäste-CRM
+- Warenkosten
+- Kreditoren
+- Import
+
+Sie dürfen aus Management-Dashboards verlinkt werden.
+
+Nicht ihre fachlichen Funktionen in die Startseite kopieren.
+
+Die Startseite zeigt nur Zusammenfassung und Einstieg.
+
+──────────────────────────────────────
+10. Alte Routen sicher behandeln
+──────────────────────────────────────
+
+Wenn Navigationseinträge entfernt werden:
+
+Bestehende URLs nicht unkontrolliert brechen.
+
+Je nach Fall:
+
+- Route intern behalten
+- auf neue Zielseite weiterleiten
+- Alias-Route einführen
+- Hinweis anzeigen, dass die Ansicht integriert wurde
+
+Bookmarks und bestehende Links sollen weiterhin sinnvoll funktionieren.
+
+Keine Redirect-Schleifen.
+
+Monatsparameter wie
+
+?monat=YYYY-MM
+
+sowie bestehende year-Parameter müssen erhalten oder korrekt übersetzt werden.
+
+──────────────────────────────────────
+11. Rollen und Berechtigungen
+──────────────────────────────────────
+
+Navigation muss rollenabhängig bleiben.
+
+Prüfe mindestens:
+
+- Admin
+- Inhaber / Geschäftsführer
+- Manager
+- Küche
+- Gast / Read-only
+
+Benutzer dürfen keine Navigationseinträge sehen, deren Ziel sie nicht öffnen dürfen.
+
+Drilldown-Links müssen dieselben Berechtigungen respektieren.
+
+Keine Rechteausweitung durch die Konsolidierung.
+
+──────────────────────────────────────
+12. Design
+──────────────────────────────────────
+
+Die neue Navigation muss:
+
+- kompakt
+- ruhig
+- klar gruppiert
+- modern
+- lesefreundlich
+- einheitlich
+- mit wenig visueller Unruhe
+
+sein.
+
+Keine zu langen Menügruppen.
+
+Nicht mehr als die wirklich wichtigen Hauptseiten direkt anzeigen.
+
+Selten verwendete Admin- oder Detailseiten unter „Mehr“ oder in einer passenden Untergruppe bündeln.
+
+Bestehende Icons, Abstände, Schriftgrössen und Hover-Zustände der App weiterverwenden.
+
+──────────────────────────────────────
+13. Technische Regeln
+──────────────────────────────────────
+
+- Keine doppelte KPI-Logik
+- Keine neuen parallelen Datenquellen
+- Financial-Metrics-Registry bleibt SSOT für P&L-KPIs
+- bestehende Fachlogik wiederverwenden
+- Pure Reads dürfen keine Writes auslösen
+- updatedAt nur bei echten Datenänderungen
+- keine Navigation anhand hart codierter Rollen duplizieren
+- zentrale Route-/Navigation-Konfiguration bevorzugen
+- keine Dateien löschen, solange sie noch importiert oder verlinkt werden
+
+──────────────────────────────────────
+14. Tests
+──────────────────────────────────────
+
+Ergänze oder aktualisiere Tests für:
+
+- Startseite bleibt zentrale Management-Seite
+- entfernte Navigationseinträge sind nicht mehr sichtbar
+- erhaltene Fachseiten bleiben erreichbar
+- alte Routen werden korrekt weitergeleitet oder bleiben erreichbar
+- Monatsparameter bleiben bei Drilldowns erhalten
+- Rollen sehen nur erlaubte Navigation
+- Gast sieht keine gesperrten Drilldown-Links
+- keine Redirect-Schleifen
+- mobile und Desktop-Navigation funktionieren
+- Management-, Bank- und Investorenexporte bleiben verfügbar
+- Import-Cockpit enthält keine redundanten Management-KPIs
+- keine Regression bei Tagesabschlüssen, Erfolgsrechnung, Personal, Produkten, Gästen und Import
+
+──────────────────────────────────────
+15. Dokumentation
+──────────────────────────────────────
+
+Aktualisiere:
+
+- docs/kpi-inventar.md
+- replit.md
+
+Dokumentiere:
+
+- finale Navigationsstruktur
+- entfernte Navigationseinträge
+- Weiterleitungen
+- integrierte Dashboard-Seiten
+- Seiten, die nur noch als Drilldown dienen
+- Rollenmodell
+- SSOT pro KPI-Gruppe
+
+──────────────────────────────────────
+16. Abschlussbericht
+──────────────────────────────────────
+
+Liefere vor Abschluss eine klare Tabelle:
+
+- Alte Seite / Navigation
+- Neue Behandlung
+- Zielroute
+- Begründung
+- Funktion erhalten: Ja/Nein
+
+Zusätzlich:
+
+- Anzahl Navigationseinträge vorher
+- Anzahl Navigationseinträge nachher
+- entfernte KPI-Doppelungen
+- erhaltene Fachfunktionen
+- eingerichtete Weiterleitungen
+- offene technische Schulden
+
+Führe danach aus:
+
+- TypeScript-Typecheck mit ausreichendem Heap
+- betroffene Unit-Tests
+- Navigationstests
+- Playwright-E2E hinter echtem Supabase-Login
+- Desktop- und Mobile-Runtime-Check
+- Architect-Review ausschliesslich über den tatsächlichen Task-Diff
+
+Erst als „Ready for review“ melden, wenn:
+
+- die Navigation sichtbar einfacher ist
+- das Management-KPI-Dashboard die einzige zentrale Startseite ist
+- keine wichtige Funktion verloren ging
+- keine KPI-Berechnung dupliziert wurde
+- alle alten wichtigen Links weiterhin sinnvoll funktionieren

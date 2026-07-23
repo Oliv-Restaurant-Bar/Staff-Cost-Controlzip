@@ -9,8 +9,9 @@
  * Regeln:
  *  - Werte AUSSCHLIESSLICH über getKpiValues (kpi-catalog) — Registry-KPIs
  *    delegieren an die Financial-Metrics-Registry (EIN computePLForMonth).
- *  - Ampeln nur über getKpiTone (bestehende zentrale Regeln); fehlend = «—»,
- *    NIE 0. Abw. Budget = reine Anzeige-Ableitung auf Rohwerten OHNE Ampel.
+ *  - Ampeln nur über getKpiToneWithTarget (bestehende zentrale Regeln;
+ *    Betriebs-Zielwert = dokumentierte Ausnahme, s. kpi-targets.ts); fehlend =
+ *    «—», NIE 0. Abw. Budget = reine Anzeige-Ableitung auf Rohwerten OHNE Ampel.
  *  - Monatswahl wirkt erkennbar auf ALLE Werte der Sektion.
  *  - Max. 4 sichtbare KPI-Karten (istKarte), Rest in der Tabelle (MoreKpis).
  *  - Gast-Sessions: keine Links auf gastgesperrte Flächen, keine Kommentare,
@@ -23,8 +24,10 @@ import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { ArrowRight, BookOpen, Download, Loader2, Pencil } from 'lucide-react';
+import { ArrowDown, ArrowRight, ArrowUp, BookOpen, Download, Loader2, Pencil, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -58,15 +61,23 @@ import { useTenant, TENANTS } from '@/contexts/TenantContext';
 import {
   KPI_CATALOG,
   KPI_QUELLE_LABEL,
+  KPI_TARGET_EXCLUDED,
   getKpiIncompleteHint,
-  getKpiTone,
+  getKpiToneWithTarget,
+  getKpiTrend,
   getKpiValues,
+  getKpiZielRichtung,
   isRunningMonth,
   type KpiDefinition,
+  type KpiId,
   type KpiTone,
+  type KpiTrend,
 } from '@/lib/kpi-catalog';
 import { buildKpiDrilldownUrl } from '@/lib/monat-param';
 import { getVisibleKpiComment } from '@/lib/kpi-comments';
+import { getVisibleKpiTarget } from '@/lib/kpi-targets';
+import { useStartPrefs } from '@/hooks/useStartPrefs';
+import { MAX_KPI_CARDS, moveItem } from '@/lib/start-prefs';
 import type { KpiExportProfile } from '@/lib/management-kpi-export';
 import { cn } from '@/lib/utils';
 
@@ -94,6 +105,21 @@ function fmtAbw(def: KpiDefinition, v: number | null): string {
   if (def.einheit === 'pct') return `${sign}${v.toFixed(1)} pp`;
   if (def.einheit === 'anzahl') return `${sign}${nf0.format(v)}`;
   return `${sign}CHF ${nf0.format(v)}`;
+}
+
+/** Trend-Anzeige: pp bei Prozent-KPIs, sonst relative % — Rundung NUR hier. */
+function fmtTrendLabel(t: KpiTrend): string {
+  const sign = t.delta > 0 ? '+' : '';
+  const unit = t.deltaKind === 'pp' ? 'pp' : '%';
+  return `${sign}${t.delta.toFixed(1)} ${unit} vs. ${t.basis === 'budget' ? 'Budget' : 'VJ'}`;
+}
+
+/** Zielwert-Eingabe (de-CH: Komma oder Punkt) → Rohwert; ''/ungültig = null. */
+function parseTargetInput(raw: string): number | null | 'invalid' {
+  const s = raw.trim();
+  if (s === '') return null;
+  const n = Number(s.replace(/['\u2019\s\u00a0]/g, '').replace(',', '.'));
+  return Number.isFinite(n) ? n : 'invalid';
 }
 
 /** KpiTone → Design-System-Tone (identische Namen, nur Typ-Brücke). */
@@ -150,8 +176,83 @@ export function ManagementKpiSection({
   const [commentError, setCommentError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  const cards = KPI_CATALOG.filter(d => d.istKarte);
-  const tableDefs = KPI_CATALOG.filter(d => !d.istKarte);
+  // Personalisierte Karten (max. 4) — alle übrigen KPIs bleiben in der Tabelle.
+  const { prefs, canCustomize, savePrefs } = useStartPrefs();
+  const cards = useMemo(
+    () =>
+      prefs.kpiCards
+        .map(id => KPI_CATALOG.find(d => d.id === id))
+        .filter((d): d is KpiDefinition => d !== undefined),
+    [prefs.kpiCards],
+  );
+  const tableDefs = useMemo(() => {
+    const cardIds = new Set(cards.map(d => d.id));
+    return KPI_CATALOG.filter(d => !cardIds.has(d.id));
+  }, [cards]);
+
+  // ── Anpassen-Dialog (Karten-Auswahl + eigene Zielwerte) ───────────────────
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [draftCards, setDraftCards] = useState<KpiId[]>([]);
+  const [draftTargets, setDraftTargets] = useState<Record<string, string>>({});
+  const [customizeSaving, setCustomizeSaving] = useState(false);
+  const [customizeError, setCustomizeError] = useState<string | null>(null);
+
+  const openCustomize = () => {
+    setDraftCards([...prefs.kpiCards]);
+    const t: Record<string, string> = {};
+    for (const def of KPI_CATALOG) {
+      if (KPI_TARGET_EXCLUDED.has(def.id)) continue;
+      const target = getVisibleKpiTarget(kpis.targets, def.id);
+      t[def.id] = target !== null ? String(target.value) : '';
+    }
+    setDraftTargets(t);
+    setCustomizeError(null);
+    setCustomizeOpen(true);
+  };
+
+  const toggleDraftCard = (id: KpiId) => {
+    setDraftCards(cur =>
+      cur.includes(id)
+        ? cur.filter(c => c !== id)
+        : cur.length >= MAX_KPI_CARDS
+          ? cur
+          : [...cur, id],
+    );
+  };
+
+  const saveCustomize = async () => {
+    if (draftCards.length === 0) {
+      setCustomizeError('Mindestens eine KPI-Karte auswählen.');
+      return;
+    }
+    // Zielwerte zuerst vollständig validieren — kein Teil-Speichern.
+    const parsed: Array<[KpiId, number | null]> = [];
+    for (const def of KPI_CATALOG) {
+      if (KPI_TARGET_EXCLUDED.has(def.id)) continue;
+      const p = parseTargetInput(draftTargets[def.id] ?? '');
+      if (p === 'invalid') {
+        setCustomizeError(`Ungültiger Zielwert bei «${def.name}» — Zahl erwartet (z. B. 28.5).`);
+        return;
+      }
+      parsed.push([def.id, p]);
+    }
+    setCustomizeSaving(true);
+    setCustomizeError(null);
+    try {
+      savePrefs({ kpiCards: draftCards });
+      for (const [id, value] of parsed) {
+        // Sequentiell (KV-Backup-Regel §2); Dirty-Check macht Unverändertes zum No-op.
+        await kpis.saveTarget(id, value);
+      }
+      setCustomizeOpen(false);
+    } catch (err) {
+      setCustomizeError(
+        err instanceof Error ? err.message : 'Zielwerte konnten nicht gesichert werden.',
+      );
+    } finally {
+      setCustomizeSaving(false);
+    }
+  };
 
   const openComment = (def: KpiDefinition) => {
     setCommentDef(def);
@@ -244,6 +345,12 @@ export function ManagementKpiSection({
           {kpis.loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
         </div>
         <div className="flex items-center gap-2">
+          {canCustomize && (
+            <Button variant="ghost" size="sm" onClick={openCustomize} data-testid="mgmt-kpi-customize-btn">
+              <Settings2 className="mr-1.5 h-4 w-4" />
+              Anpassen
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => setDefsOpen(true)} data-testid="mgmt-kpi-defs-btn">
             <BookOpen className="mr-1.5 h-4 w-4" />
             Definitionen
@@ -290,14 +397,29 @@ export function ManagementKpiSection({
         </div>
       )}
 
-      {/* 4 KPI-Karten (istKarte) */}
+      {/* Personalisierte KPI-Karten (max. 4) mit Trend + Info-Tooltip */}
       <KpiGrid>
         {cards.map(def => {
           const v = getKpiValues(def.id, kpis.input);
-          const tone = getKpiTone(def.id, v.actual, kpis.input);
-          const abw = v.actual !== null && v.budget !== null ? v.actual - v.budget : null;
+          const userTarget = KPI_TARGET_EXCLUDED.has(def.id)
+            ? null
+            : (getVisibleKpiTarget(kpis.targets, def.id)?.value ?? null);
+          const tone = getKpiToneWithTarget(def.id, v.actual, kpis.input, userTarget);
+          const trend = getKpiTrend(def.id, v);
           const cardTarget = routeAllowed(def, def.analyseRoute) ? drilldownUrl(def.analyseRoute) : null;
           const incompleteHint = v.actual === null ? getKpiIncompleteHint(def.id, kpis.input) : null;
+          const info = [
+            def.beschreibung,
+            trend
+              ? `Trend ${fmtTrendLabel(trend)} (Anzeige-Ableitung auf Rohwerten).`
+              : 'Kein Trend: Budget- und Vorjahreswert fehlen.',
+            userTarget !== null
+              ? `Betriebs-Zielwert: ${getKpiZielRichtung(def.id) === 'mindestens' ? 'mind.' : 'max.'} ${fmtValue(def, userTarget)} — Ampel: erreicht = grün, verfehlt = orange.`
+              : null,
+            incompleteHint ? `Unvollständig: ${incompleteHint}` : null,
+          ]
+            .filter(Boolean)
+            .join(' ');
           return (
             <KpiCard
               key={def.id}
@@ -312,12 +434,16 @@ export function ManagementKpiSection({
                 )
               }
               tone={toTone(tone)}
+              trend={
+                trend
+                  ? { direction: trend.direction, tone: trend.tone, label: fmtTrendLabel(trend) }
+                  : undefined
+              }
+              info={info}
               onClick={cardTarget ? () => navigate(cardTarget) : undefined}
               sub={
                 def.hatBudgetVj
-                  ? `Budget ${fmtValue(def, v.budget)} · VJ ${fmtValue(def, v.priorYear)}${
-                      abw !== null ? ` · Abw. ${fmtAbw(def, abw)}` : ''
-                    }`
+                  ? `Budget ${fmtValue(def, v.budget)} · VJ ${fmtValue(def, v.priorYear)}`
                   : `VJ ${fmtValue(def, v.priorYear)}`
               }
               data-testid={`mgmt-kpi-card-${def.id}`}
@@ -345,7 +471,10 @@ export function ManagementKpiSection({
             <tbody>
               {[...cards, ...tableDefs].map(def => {
                 const v = getKpiValues(def.id, kpis.input);
-                const tone = getKpiTone(def.id, v.actual, kpis.input);
+                const userTarget = KPI_TARGET_EXCLUDED.has(def.id)
+                  ? null
+                  : (getVisibleKpiTarget(kpis.targets, def.id)?.value ?? null);
+                const tone = getKpiToneWithTarget(def.id, v.actual, kpis.input, userTarget);
                 const abw = v.actual !== null && v.budget !== null ? v.actual - v.budget : null;
                 const comment = getVisibleKpiComment(kpis.comments, kpis.monthKey, def.id);
                 const incompleteHint = v.actual === null ? getKpiIncompleteHint(def.id, kpis.input) : null;
@@ -477,6 +606,128 @@ export function ManagementKpiSection({
             </Button>
             <Button onClick={() => void saveComment()} disabled={commentSaving} data-testid="mgmt-kpi-comment-save">
               {commentSaving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
+              Speichern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Anpassen-Dialog: KPI-Karten (max. 4, Reihenfolge) + Betriebs-Zielwerte */}
+      <Dialog open={customizeOpen} onOpenChange={open => !open && setCustomizeOpen(false)}>
+        <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Management-KPIs anpassen</DialogTitle>
+            <DialogDescription>
+              Bis zu {MAX_KPI_CARDS} KPI-Karten wählen — alle übrigen KPIs bleiben in der Tabelle
+              «Alle Management-KPIs». Zielwerte gelten für den ganzen Betrieb und wirken nur auf
+              die Ampel (erreicht = grün, verfehlt = orange); leer = Standard-Ampel.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-5">
+            <div>
+              <p className="mb-1.5 text-sm font-semibold">
+                KPI-Karten ({draftCards.length}/{MAX_KPI_CARDS})
+              </p>
+              <div className="space-y-0.5">
+                {draftCards.map((id, idx) => {
+                  const def = KPI_CATALOG.find(d => d.id === id);
+                  if (!def) return null;
+                  return (
+                    <div
+                      key={id}
+                      className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2 py-1"
+                      data-testid={`kpi-card-pick-${id}`}
+                    >
+                      <Checkbox checked onCheckedChange={() => toggleDraftCard(id)} id={`card-${id}`} />
+                      <label htmlFor={`card-${id}`} className="flex-1 cursor-pointer text-xs font-medium">
+                        {idx + 1}. {def.name}
+                      </label>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        disabled={idx === 0}
+                        onClick={() => setDraftCards(c => moveItem(c, idx, -1))}
+                        aria-label={`${def.name} nach oben`}
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6"
+                        disabled={idx === draftCards.length - 1}
+                        onClick={() => setDraftCards(c => moveItem(c, idx, 1))}
+                        aria-label={`${def.name} nach unten`}
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  );
+                })}
+                <div className="grid gap-x-4 pt-1 sm:grid-cols-2">
+                  {KPI_CATALOG.filter(d => !draftCards.includes(d.id)).map(def => (
+                    <div key={def.id} className="flex items-center gap-2 px-2 py-0.5">
+                      <Checkbox
+                        checked={false}
+                        disabled={draftCards.length >= MAX_KPI_CARDS}
+                        onCheckedChange={() => toggleDraftCard(def.id)}
+                        id={`card-${def.id}`}
+                      />
+                      <label
+                        htmlFor={`card-${def.id}`}
+                        className={cn(
+                          'flex-1 cursor-pointer text-xs',
+                          draftCards.length >= MAX_KPI_CARDS && 'cursor-default text-muted-foreground',
+                        )}
+                      >
+                        {def.name}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div>
+              <p className="mb-1 text-sm font-semibold">Zielwerte (für den ganzen Betrieb)</p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                Rohwert in der Einheit der KPI (CHF, %, Anzahl); gilt für alle Benutzer dieses
+                Betriebs. Die Ziel-Personalquote wird weiterhin zentral im Budget gepflegt und
+                ist hier bewusst nicht änderbar.
+              </p>
+              <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+                {KPI_CATALOG.filter(d => !KPI_TARGET_EXCLUDED.has(d.id)).map(def => (
+                  <div key={def.id} className="flex items-center gap-2">
+                    <span className="w-40 shrink-0 truncate text-xs" title={def.name}>
+                      {def.name}
+                    </span>
+                    <span className="w-9 shrink-0 text-right text-[10px] text-muted-foreground">
+                      {getKpiZielRichtung(def.id) === 'mindestens' ? 'mind.' : 'max.'}
+                    </span>
+                    <Input
+                      value={draftTargets[def.id] ?? ''}
+                      onChange={e => setDraftTargets(t => ({ ...t, [def.id]: e.target.value }))}
+                      className="h-7 text-right text-xs tabular-nums"
+                      placeholder={def.einheit === 'pct' ? '%' : def.einheit === 'anzahl' ? 'Anzahl' : 'CHF'}
+                      inputMode="decimal"
+                      data-testid={`kpi-target-input-${def.id}`}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {customizeError && <p className="text-xs text-red-600">{customizeError}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCustomizeOpen(false)} disabled={customizeSaving}>
+              Abbrechen
+            </Button>
+            <Button
+              onClick={() => void saveCustomize()}
+              disabled={customizeSaving}
+              data-testid="mgmt-kpi-customize-save"
+            >
+              {customizeSaving && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
               Speichern
             </Button>
           </DialogFooter>

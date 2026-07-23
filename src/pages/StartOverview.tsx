@@ -10,13 +10,17 @@
  *                          AUSSCHLIESSLICH aus der Financial-Metrics-Registry
  *                          (EIN computePLForMonth) — fehlend = «—», NIE
  *                          operative Ersatzwerte.
- *   2. Heute             → 4 Statuskarten (Umsatzimport, Reservationen,
- *                          Dienstplan, Tagesabschluss) — buildStartOverview.
+ *   2. Heute             → personalisierbare Widgets (start-prefs): die 4
+ *                          Statuskarten (buildStartOverview, Frische-SSoT)
+ *                          plus Info-Widgets aus BESTEHENDEN Quellen
+ *                          (start-widgets-Builder + useHeuteWidgets, keine
+ *                          neuen Schwellen; fehlend = «—», nie 0).
  *   3. Risiken           → WarnCenter: rot/orange NUR aus bestehenden Regeln
  *                          (buildExecutiveWarnings, keine neuen Schwellen).
  *   4. Diese Woche       → Wochenumsatz (erfasste Tage), Dienstplan-Stand,
  *                          offene Importe — nur bestehende Werte.
- *   5. Datenstand (Monat)→ kompakte Zeile pro Importtyp inkl. fehlender Tage.
+ *   5. Datenstand (Monat)→ kompakte Chips pro Importtyp inkl. fehlender Tage
+ *                          (Status weiterhin 1:1 aus buildDatenstandRows).
  *   6. Aktionen          → «Als Nächstes» (SSoT getTodayTasks, max. 3) +
  *                          Schnellaktionen.
  *
@@ -30,12 +34,14 @@
  * schreib-orientierten Aktionen/Links auf gastgesperrte Flächen.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { addDays, eachDayOfInterval, format, startOfWeek } from 'date-fns';
 import { de } from 'date-fns/locale';
 import {
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   BarChart3,
   CalendarClock,
   CheckCircle2,
@@ -43,15 +49,27 @@ import {
   Contact,
   Loader2,
   RefreshCw,
+  Settings2,
   Upload,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useStartOverview } from '@/hooks/useStartOverview';
 import { useCockpitFinancials } from '@/hooks/useCockpitFinancials';
+import { useHeuteWidgets } from '@/hooks/useHeuteWidgets';
+import { useStartPrefs } from '@/hooks/useStartPrefs';
 import { ManagementKpiSection } from '@/components/start/ManagementKpiSection';
 import { WarnCenter } from '@/components/start/WarnCenter';
 import { WocheBlock } from '@/components/start/WocheBlock';
@@ -64,9 +82,20 @@ import {
   DATENSTAND_TONE,
   NEXT_ACTION_TONE,
   type NextAction,
-  type StartCard,
   type StartCardStatus,
 } from '@/lib/start-overview-utils';
+import { filterWidgetsForGuest, moveItem } from '@/lib/start-prefs';
+import {
+  buildKreditorenWidget,
+  buildOffeneImporteWidget,
+  buildPersonalausfaelleWidget,
+  buildReservationenHeuteWidget,
+  buildWarenrechnungenWidget,
+  HEUTE_WIDGET_DEFS,
+  widgetFromStartCard,
+  type HeuteWidgetId,
+  type HeuteWidgetView,
+} from '@/lib/start-widgets';
 import { cn } from '@/lib/utils';
 
 // ─── Ruhige Status-Stile (Karten) ────────────────────────────────────────────
@@ -104,24 +133,43 @@ const TONE_BADGE: Record<'warn' | 'critical' | 'info', string> = {
 /** Import-/Schreibseiten, deren „Öffnen"-Link Gast-Sessions nicht angeboten wird. */
 const GUEST_HIDDEN_CARD_ROUTES = new Set(['/gastronovi-import', '/foratable-import']);
 
-function StatusCard({ card, isGuest }: { card: StartCard; isGuest: boolean }) {
-  const hideLink = isGuest && GUEST_HIDDEN_CARD_ROUTES.has(card.route);
+/**
+ * Einheitliche «Heute»-Widget-Karte:
+ *  - Statuskarten-Widgets: Ampel-Punkt + Status-Badge (1:1 aus der StartCard).
+ *  - Info-Widgets: grosse Kennzahl ohne Ampel (keine neuen Schwellen);
+ *    Ladefehler sichtbar (nie stilles «—»).
+ */
+function HeuteWidgetCard({ widget }: { widget: HeuteWidgetView }) {
   return (
-    <Card data-testid={`start-card-${card.id}`} className="flex flex-col">
-      <CardHeader className="pb-1.5 pt-4 space-y-0 flex flex-row items-center justify-between">
+    <Card data-testid={`start-card-${widget.id}`} className="flex flex-col">
+      <CardHeader className="pb-1 pt-3 space-y-0 flex flex-row items-center justify-between">
         <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <span className={cn('h-2 w-2 rounded-full flex-shrink-0', STATUS_DOT[card.status])} />
-          {card.title}
+          {widget.status !== null && (
+            <span className={cn('h-2 w-2 rounded-full flex-shrink-0', STATUS_DOT[widget.status])} />
+          )}
+          {widget.title}
         </CardTitle>
-        <Badge variant="outline" className={cn('text-[11px] font-medium', STATUS_BADGE[card.status])}>
-          {card.statusLabel}
-        </Badge>
+        {widget.status !== null && widget.statusLabel && (
+          <Badge variant="outline" className={cn('text-[11px] font-medium', STATUS_BADGE[widget.status])}>
+            {widget.statusLabel}
+          </Badge>
+        )}
       </CardHeader>
-      <CardContent className="flex flex-1 flex-col justify-between gap-2 pb-4 pt-0">
-        <p className="text-sm text-muted-foreground leading-snug">{card.detail}</p>
-        {!hideLink && (
+      <CardContent className="flex flex-1 flex-col justify-between gap-1.5 pb-3 pt-0">
+        <div className="min-w-0">
+          {widget.value !== null && (
+            <p className="text-xl font-semibold tabular-nums leading-tight">{widget.value}</p>
+          )}
+          <p className="text-sm text-muted-foreground leading-snug">{widget.detail}</p>
+          {widget.error && (
+            <p className="text-xs text-red-600 dark:text-red-400" data-testid={`start-card-${widget.id}-error`}>
+              {widget.error}
+            </p>
+          )}
+        </div>
+        {widget.route && (
           <Link
-            to={card.route}
+            to={widget.route}
             className="text-sm font-medium text-primary inline-flex items-center gap-1 hover:underline"
           >
             Öffnen <ArrowRight className="h-3.5 w-3.5" />
@@ -166,6 +214,35 @@ export default function StartOverviewPage() {
   const { state, refresh } = useStartOverview(isAdmin);
   // Finanz-/Umsatzdaten des laufenden Monats — read-only, Registry-Wiring.
   const fin = useCockpitFinancials(isAdmin);
+
+  // ── «Heute»-Widgets (personalisierbar; Gast = Defaults ohne Import-Widgets) ──
+  const { prefs, canCustomize, savePrefs } = useStartPrefs();
+  const visibleWidgetIds = useMemo(
+    () => filterWidgetsForGuest(prefs.heuteWidgets, isGuest),
+    [prefs.heuteWidgets, isGuest],
+  );
+  const widgetData = useHeuteWidgets(isAdmin, visibleWidgetIds);
+
+  const [widgetsOpen, setWidgetsOpen] = useState(false);
+  const [draftWidgets, setDraftWidgets] = useState<HeuteWidgetId[]>([]);
+  const [widgetsError, setWidgetsError] = useState<string | null>(null);
+
+  const openWidgetsDialog = () => {
+    setDraftWidgets(filterWidgetsForGuest(prefs.heuteWidgets, isGuest));
+    setWidgetsError(null);
+    setWidgetsOpen(true);
+  };
+  const toggleDraftWidget = (id: HeuteWidgetId) => {
+    setDraftWidgets(cur => (cur.includes(id) ? cur.filter(w => w !== id) : [...cur, id]));
+  };
+  const saveWidgets = () => {
+    if (draftWidgets.length === 0) {
+      setWidgetsError('Mindestens ein Widget auswählen.');
+      return;
+    }
+    savePrefs({ heuteWidgets: draftWidgets });
+    setWidgetsOpen(false);
+  };
 
   const quickActions: Array<{
     label: string;
@@ -262,6 +339,51 @@ export default function StartOverviewPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fin.dailyBudgets]);
 
+  // ── Widget-Views in der gewählten Reihenfolge (reine Builder, keine
+  //    eigene Statuslogik; Statuskarten 1:1 aus buildStartOverview). ──
+  const monthLabel = format(now, 'MMMM yyyy', { locale: de });
+  const widgetViews: HeuteWidgetView[] | null =
+    state.status === 'ready'
+      ? visibleWidgetIds
+          .map((id): HeuteWidgetView | null => {
+            switch (id) {
+              case 'umsatz':
+              case 'reservationen':
+              case 'dienstplan':
+              case 'tagesabschluss': {
+                const card = state.data.cards.find((c) => c.id === id);
+                return card
+                  ? widgetFromStartCard(card, {
+                      hideRoute: isGuest && GUEST_HIDDEN_CARD_ROUTES.has(card.route),
+                    })
+                  : null;
+              }
+              case 'offene_importe':
+                return buildOffeneImporteWidget(state.typeCompletions, state.coverageError);
+              case 'reservationen_heute':
+                return buildReservationenHeuteWidget(
+                  widgetData.reservationenHeute.data,
+                  widgetData.reservationenHeute.error,
+                  isGuest,
+                );
+              case 'personalausfaelle':
+                return buildPersonalausfaelleWidget(
+                  widgetData.personalausfaelle.data,
+                  widgetData.personalausfaelle.error,
+                );
+              case 'warenrechnungen':
+                return buildWarenrechnungenWidget(
+                  widgetData.warenrechnungen.data,
+                  widgetData.warenrechnungen.error,
+                  monthLabel,
+                );
+              case 'kreditoren':
+                return buildKreditorenWidget(widgetData.kreditoren.data, widgetData.kreditoren.error);
+            }
+          })
+          .filter((w): w is HeuteWidgetView => w !== null)
+      : null;
+
   const dienstplanDetail =
     state.status === 'ready'
       ? (state.data.cards.find((c) => c.id === 'dienstplan')?.detail ?? null)
@@ -331,16 +453,32 @@ export default function StartOverviewPage() {
       {/* 2.+3. Heute + Risiken nebeneinander (Desktop) */}
       <div className="grid gap-6 xl:grid-cols-2">
         <section aria-labelledby="start-heute" className="space-y-2">
-          <h2 id="start-heute" className="text-base font-semibold">
-            Heute
-          </h2>
-          {state.status !== 'ready' && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="start-heute" className="flex items-center gap-2 text-base font-semibold">
+              Heute
+              {widgetData.loading && (
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+              )}
+            </h2>
+            {canCustomize && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={openWidgetsDialog}
+                data-testid="start-widgets-customize-btn"
+              >
+                <Settings2 className="mr-1.5 h-4 w-4" />
+                Anpassen
+              </Button>
+            )}
+          </div>
+          {widgetViews === null && (
             <p className="text-sm text-muted-foreground">Status erscheint nach dem Laden.</p>
           )}
-          {state.status === 'ready' && (
+          {widgetViews !== null && (
             <div className="grid gap-3 sm:grid-cols-2">
-              {state.data.cards.map((card) => (
-                <StatusCard key={card.id} card={card} isGuest={isGuest} />
+              {widgetViews.map((widget) => (
+                <HeuteWidgetCard key={widget.id} widget={widget} />
               ))}
             </div>
           )}
@@ -380,69 +518,53 @@ export default function StartOverviewPage() {
             <p className="text-sm text-muted-foreground">Datenstand erscheint nach dem Laden.</p>
           )}
           {datenstand !== null && (
-            <Card>
-              <CardContent className="p-0" data-testid="start-datenstand">
-                <ul className="divide-y">
-                  {datenstand.map((row) => {
-                    const content = (
-                      <>
-                        <span className="flex items-center gap-2 font-medium">
-                          <span
-                            className={cn(
-                              'h-2 w-2 rounded-full flex-shrink-0',
-                              TONE_DOT[DATENSTAND_TONE[row.status]],
-                            )}
-                          />
-                          {row.label}
-                        </span>
-                        <span className="flex items-center gap-2 text-xs">
-                          <span
-                            className={cn(
-                              row.status === 'open' || row.status === 'error'
-                                ? 'text-foreground'
-                                : 'text-muted-foreground',
-                            )}
-                          >
-                            {row.text}
-                          </span>
-                          {row.href && (
-                            <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-                          )}
-                        </span>
-                      </>
-                    );
-                    const rowClass =
-                      'flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2 text-sm';
-                    return (
-                      <li key={row.type} data-testid={`start-datenstand-${row.type}`}>
-                        {row.href ? (
-                          // Ganze Zeile klickbar: EIN Link, Enter nativ + Space via
-                          // onKeyDown, sichtbarer Fokusring, keine verschachtelten
-                          // Interaktiva (Pfeil ist rein visuell).
-                          <Link
-                            to={row.href}
-                            onKeyDown={(e) => {
-                              if (e.key === ' ') {
-                                e.preventDefault();
-                                e.currentTarget.click();
-                              }
-                            }}
-                            className={cn(
-                              rowClass,
-                              'transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
-                            )}
-                          >
-                            {content}
-                          </Link>
-                        ) : (
-                          <div className={rowClass}>{content}</div>
+            // Kompakte Chips: ein Chip pro Importtyp (Status 1:1 aus
+            // buildDatenstandRows, ganze Fläche = Deep-Link wo vorhanden).
+            <ul className="flex flex-wrap gap-1.5" data-testid="start-datenstand">
+              {datenstand.map((row) => {
+                const chipClass = cn(
+                  'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs',
+                  row.status === 'open' || row.status === 'error'
+                    ? 'border-border bg-card text-foreground'
+                    : 'border-border bg-muted/40 text-muted-foreground',
+                );
+                const content = (
+                  <>
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full flex-shrink-0',
+                        TONE_DOT[DATENSTAND_TONE[row.status]],
+                      )}
+                    />
+                    <span className="font-medium text-foreground">{row.label}</span>
+                    <span className="truncate">{row.text}</span>
+                    {row.href && (
+                      <ArrowRight className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                    )}
+                  </>
+                );
+                return (
+                  <li key={row.type} data-testid={`start-datenstand-${row.type}`} className="max-w-full">
+                    {row.href ? (
+                      <Link
+                        to={row.href}
+                        title={`${row.label}: ${row.text}`}
+                        className={cn(
+                          chipClass,
+                          'transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                         )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </CardContent>
-            </Card>
+                      >
+                        {content}
+                      </Link>
+                    ) : (
+                      <span title={`${row.label}: ${row.text}`} className={chipClass}>
+                        {content}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           )}
         </section>
       </div>
@@ -516,6 +638,90 @@ export default function StartOverviewPage() {
           </div>
         </section>
       </div>
+
+      {/* Anpassen-Dialog «Heute»-Widgets (Auswahl + Reihenfolge, nur echte Quellen) */}
+      <Dialog open={widgetsOpen} onOpenChange={(open) => !open && setWidgetsOpen(false)}>
+        <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bereich «Heute» anpassen</DialogTitle>
+            <DialogDescription>
+              Widgets wählen und ordnen. Angeboten werden nur Widgets mit echter Datenquelle —
+              Google-Bewertungen und Inventur fehlen bewusst (keine Anbindung bzw. kein Datenmodell).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-0.5">
+            {draftWidgets.map((id, idx) => {
+              const def = HEUTE_WIDGET_DEFS.find((d) => d.id === id);
+              if (!def) return null;
+              return (
+                <div
+                  key={id}
+                  className="flex items-center gap-2 rounded-md border border-border bg-muted/30 px-2 py-1.5"
+                  data-testid={`start-widget-pick-${id}`}
+                >
+                  <Checkbox checked onCheckedChange={() => toggleDraftWidget(id)} id={`widget-${id}`} />
+                  <label htmlFor={`widget-${id}`} className="min-w-0 flex-1 cursor-pointer">
+                    <span className="block text-xs font-medium">
+                      {idx + 1}. {def.title}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {def.beschreibung}
+                    </span>
+                  </label>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    disabled={idx === 0}
+                    onClick={() => setDraftWidgets((c) => moveItem(c, idx, -1))}
+                    aria-label={`${def.title} nach oben`}
+                  >
+                    <ArrowUp className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    disabled={idx === draftWidgets.length - 1}
+                    onClick={() => setDraftWidgets((c) => moveItem(c, idx, 1))}
+                    aria-label={`${def.title} nach unten`}
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              );
+            })}
+            <div className="pt-1">
+              {HEUTE_WIDGET_DEFS.filter(
+                (d) => !draftWidgets.includes(d.id) && !(isGuest && d.guestHidden),
+              ).map((def) => (
+                <div key={def.id} className="flex items-center gap-2 px-2 py-1">
+                  <Checkbox
+                    checked={false}
+                    onCheckedChange={() => toggleDraftWidget(def.id)}
+                    id={`widget-${def.id}`}
+                  />
+                  <label htmlFor={`widget-${def.id}`} className="min-w-0 flex-1 cursor-pointer">
+                    <span className="block text-xs">{def.title}</span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {def.beschreibung}
+                    </span>
+                  </label>
+                </div>
+              ))}
+            </div>
+          </div>
+          {widgetsError && <p className="text-xs text-red-600">{widgetsError}</p>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWidgetsOpen(false)}>
+              Abbrechen
+            </Button>
+            <Button onClick={saveWidgets} data-testid="start-widgets-save">
+              Speichern
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

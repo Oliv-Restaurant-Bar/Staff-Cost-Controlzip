@@ -58,3 +58,4 @@
 - [Split-Zellen primary/secondary swap](schedule-split-slot-swap.md) — leere Zelle rendert primarySlot='spät'; per-Slot-Payloads im Popover müssen der chronologischen Zeile folgen (Row 1→früh), nie dem primary-Mapping.
 - [UI-Tests auf geteilter Dev-DB](ui-test-shared-db.md) — Dienstplan-UI-Tests nur in Zukunftswochen mit wirklich leeren Zellen; Tester editieren sonst echte Plandaten; Cleanup als Verify-Schritt.
 - [PostgREST unordered-query cap](postgrest-row-cap.md) — status/freshness queries need order-desc+limit or pagination; PostgREST caps ~1000 rows unordered, newest days silently drop.
+- [Partial vi.mock internal calls](partial-mock-internal-calls.md) — module-internal calls bypass mocks: mock wrapper exports too; collapsed MoreKpis: seed storageKey='1'; supabase-transitive libs need happy-dom.

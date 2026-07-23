@@ -660,6 +660,90 @@ export function getKpiValues(id: KpiId, input: KpiCatalogInput): KpiValues {
   }
 }
 
+// ─── Trend (Anzeige-Ableitung auf Rohwerten) ────────────────────────────────
+
+/**
+ * Fachliche Wirkungsrichtung der KPI (analog Jahresvergleich):
+ *  - hoch_gut   → mehr ist besser (Umsatz, Ergebnis, Produktivität …)
+ *  - runter_gut → weniger ist besser (Quoten: Warenquote, Personalquote, WES)
+ *  - neutral    → absolute Aufwand-CHF ohne Bewertung (Waren-/Personalkosten)
+ */
+export type KpiWirkung = 'hoch_gut' | 'runter_gut' | 'neutral';
+
+export const KPI_WIRKUNG: Record<KpiId, KpiWirkung> = {
+  umsatz: 'hoch_gut',
+  warenkosten: 'neutral',
+  warenquote: 'runter_gut',
+  bruttogewinn: 'hoch_gut',
+  personalkosten: 'neutral',
+  personalquote: 'runter_gut',
+  ebitda: 'hoch_gut',
+  ebitda_marge: 'hoch_gut',
+  ebit: 'hoch_gut',
+  ebit_marge: 'hoch_gut',
+  gaeste: 'hoch_gut',
+  durchschnittsbon: 'hoch_gut',
+  umsatz_pro_gast: 'hoch_gut',
+  wes_quote_verkauf: 'runter_gut',
+  produktivitaet: 'hoch_gut',
+  tagesabschluss_quote: 'hoch_gut',
+};
+
+export interface KpiTrend {
+  direction: 'up' | 'down' | 'flat';
+  /** Bewertung der Richtung nach KPI_WIRKUNG (Aufwand-CHF bleibt neutral). */
+  tone: 'good' | 'critical' | 'neutral';
+  /** Roh-Delta: pp bei Prozent-KPIs, sonst relative Veränderung in % (Basis ≠ 0). */
+  delta: number;
+  deltaKind: 'pp' | 'pct';
+  basis: 'budget' | 'vorjahr';
+}
+
+/**
+ * Trend der KPI gegen Budget (bevorzugt) bzw. Vorjahr — reine Anzeige-
+ * Ableitung auf Rohwerten (Rundung erst in der UI):
+ *  - Prozent-KPIs: Δ in pp (keine Division — bestehende Quoten-Regel).
+ *  - Übrige: relative Veränderung in %; Basis 0 ⇒ null (bestehende
+ *    «Δ% mit Basis 0 → null»-Regel), nie Scheinwerte.
+ *  - IST oder Basis fehlt ⇒ null (fehlend ≠ 0, kein Trend erfinden).
+ */
+export function getKpiTrend(id: KpiId, values: KpiValues): KpiTrend | null {
+  if (values.actual === null) return null;
+  const def = getKpiDefinition(id);
+  let basisKind: 'budget' | 'vorjahr';
+  let base: number;
+  if (values.budget !== null) {
+    basisKind = 'budget';
+    base = values.budget;
+  } else if (values.priorYear !== null) {
+    basisKind = 'vorjahr';
+    base = values.priorYear;
+  } else {
+    return null;
+  }
+
+  let delta: number;
+  let deltaKind: 'pp' | 'pct';
+  if (def.einheit === 'pct') {
+    delta = values.actual - base;
+    deltaKind = 'pp';
+  } else {
+    if (base === 0) return null;
+    delta = ((values.actual - base) / Math.abs(base)) * 100;
+    deltaKind = 'pct';
+  }
+
+  const direction: KpiTrend['direction'] = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+  const wirkung = KPI_WIRKUNG[id];
+  const tone: KpiTrend['tone'] =
+    direction === 'flat' || wirkung === 'neutral'
+      ? 'neutral'
+      : (direction === 'up') === (wirkung === 'hoch_gut')
+        ? 'good'
+        : 'critical';
+  return { direction, tone, delta, deltaKind, basis: basisKind };
+}
+
 // ─── Ampel (NUR bestehende Regeln, Rohwert entscheidet) ─────────────────────
 
 export type KpiTone = ExportTone | 'neutral';
@@ -694,6 +778,47 @@ export function getKpiTone(id: KpiId, actual: number | null, input: KpiCatalogIn
     default:
       return 'neutral';
   }
+}
+
+// ─── Eigene Zielwerte (kpi_targets_v1) — bewusste, dokumentierte Ausnahme ───
+
+/**
+ * KPIs OHNE eigenen Zielwert: Die Ziel-Personalquote wird WEITER zentral im
+ * Budget gepflegt (EINE Definition appweit) — hier kein zweites Ziel.
+ */
+export const KPI_TARGET_EXCLUDED: ReadonlySet<KpiId> = new Set<KpiId>(['personalquote']);
+
+export type KpiZielRichtung = 'mindestens' | 'hoechstens';
+
+/**
+ * Richtung des eigenen Zielwerts aus der Wirkungsrichtung:
+ * hoch_gut → «mindestens erreichen»; runter_gut/neutral (Aufwand-CHF als
+ * Kostendach) → «höchstens».
+ */
+export function getKpiZielRichtung(id: KpiId): KpiZielRichtung {
+  return KPI_WIRKUNG[id] === 'hoch_gut' ? 'mindestens' : 'hoechstens';
+}
+
+/**
+ * Ampel mit optionalem eigenem Zielwert (kpi_targets_v1): Ein explizit vom
+ * User gesetzter Zielwert ersetzt für DIESE KPI die Standard-Ampel
+ * (Ziel erreicht = good, verfehlt = warn) — bewusste, dokumentierte Ausnahme
+ * zur Regel «Ampeln nur über bestehende Ton-Helfer». Ohne Zielwert (oder für
+ * ausgeschlossene KPIs) gilt unverändert getKpiTone. Der Rohwert entscheidet;
+ * der Aufrufer löst den Zielwert auf (dieses Modul bleibt Blob-frei).
+ */
+export function getKpiToneWithTarget(
+  id: KpiId,
+  actual: number | null,
+  input: KpiCatalogInput,
+  userTarget: number | null,
+): KpiTone {
+  if (actual !== null && userTarget !== null && !KPI_TARGET_EXCLUDED.has(id)) {
+    const erreicht =
+      getKpiZielRichtung(id) === 'mindestens' ? actual >= userTarget : actual <= userTarget;
+    return erreicht ? 'good' : 'warn';
+  }
+  return getKpiTone(id, actual, input);
 }
 
 // ─── Laufender Monat + Unvollständigkeits-Hinweise (reine Anzeige-Helfer) ───

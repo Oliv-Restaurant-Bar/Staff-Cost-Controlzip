@@ -28,6 +28,8 @@ import { loadAdyenAbstimmungLocal, ADYEN_ABSTIMMUNG_UPDATED_EVENT } from '@/lib/
 import { sumProductiveHoursForMonth, type KpiCatalogInput } from '@/lib/kpi-catalog';
 import { loadKpiComments, loadKpiCommentsLocal, saveKpiComments } from '@/lib/kpi-comments-db';
 import { applyKpiComment, type KpiCommentsBlob } from '@/lib/kpi-comments';
+import { loadKpiTargets, loadKpiTargetsLocal, saveKpiTargets } from '@/lib/kpi-targets-db';
+import { applyKpiTarget, type KpiTargetsBlob } from '@/lib/kpi-targets';
 import type { TimeEntry } from '@/types/personnel';
 
 export interface ManagementKpisResult {
@@ -43,6 +45,10 @@ export interface ManagementKpisResult {
   comments: KpiCommentsBlob;
   /** Kommentar setzen/löschen (Dirty-Check: No-op ⇒ kein Write). */
   saveComment: (kpiId: string, text: string) => Promise<void>;
+  /** Eigene Zielwerte (kpi_targets_v1, Tombstones ungefiltert — Leser via getVisibleKpiTarget). */
+  targets: KpiTargetsBlob;
+  /** Zielwert setzen (null = löschen); Dirty-Check: No-op ⇒ kein Write. */
+  saveTarget: (kpiId: string, value: number | null) => Promise<void>;
 }
 
 function pad2(n: number): string {
@@ -200,6 +206,36 @@ export function useManagementKpis(
     await saveKpiComments(tenantId, result.blob);
   }, [isGuest, tenantId, monthKey, user?.email]);
 
+  // ── Eigene Zielwerte (kpi_targets_v1) — gleiches Muster wie Kommentare ────
+  const [targets, setTargets] = useState<KpiTargetsBlob>({});
+  const targetsTenantRef = useRef(tenantId);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    targetsTenantRef.current = tenantId;
+    setTargets(loadKpiTargetsLocal(tenantId));
+    loadKpiTargets(tenantId).then(blob => {
+      if (!cancelled && targetsTenantRef.current === tenantId) setTargets(blob);
+    });
+    return () => { cancelled = true; };
+  }, [enabled, tenantId]);
+
+  const saveTarget = useCallback(async (kpiId: string, value: number | null) => {
+    // Harter Schreib-Guard: Gast-Sessions sind rein lesend.
+    if (isGuest) throw new Error('Gast-Sitzungen können keine Zielwerte speichern.');
+    const current = loadKpiTargetsLocal(tenantId);
+    const result = applyKpiTarget(
+      current,
+      kpiId,
+      value,
+      new Date().toISOString(),
+      user?.email ?? undefined,
+    );
+    if (!result.changed) return; // Dirty-Check: identisch ⇒ kein Write.
+    setTargets(result.blob);
+    await saveKpiTargets(tenantId, result.blob);
+  }, [isGuest, tenantId, user?.email]);
+
   const input = useMemo<KpiCatalogInput>(() => ({
     financialInput: fin.financialInput,
     guests: gn.guests,
@@ -220,5 +256,7 @@ export function useManagementKpis(
     retry,
     comments,
     saveComment,
+    targets,
+    saveTarget,
   };
 }
