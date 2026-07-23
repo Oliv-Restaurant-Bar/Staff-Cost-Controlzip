@@ -1,0 +1,345 @@
+Überarbeite jetzt die Seite "Tagesabschlüsse" vollständig. Die Oberfläche soll kompakter, übersichtlicher und für den täglichen Kassenabschluss optimiert werden.
+
+Wichtig:
+
+Die bestehende Logik für Tagesabschlüsse, Kassensaldo, Berechnungen, Tombstones, Idempotenz und Mandantentrennung darf nicht verändert werden.
+
+Es wird ausschliesslich die Darstellung verbessert und der neue PDF-Z-Bericht vollständig integriert.
+
+──────────────────────────────────────
+1. Neue Tabellenreihenfolge
+──────────────────────────────────────
+
+Die Tagesabschlüsse-Tabelle soll künftig exakt folgende Reihenfolge haben:
+
+1. Datum
+2. Umsatz
+3. BAR SOLL
+4. BAR IST
+5. Kassensaldo Soll
+6. Differenz
+7. KK Adyen
+8. Debitoren
+9. Barausgaben
+10. EG-Gutscheine
+
+Die Reihenfolge darf nicht mehr automatisch verändert werden.
+
+──────────────────────────────────────
+2. Herkunft der Werte
+──────────────────────────────────────
+
+Datum
+→ bestehende Tageslogik
+
+Umsatz
+→ automatisch aus dem Z-Bericht PDF
+
+BAR SOLL
+→ automatisch aus der Bezahlart "Bar" des Z-Bericht-PDF
+
+BAR IST
+→ manuelle Eingabe des Benutzers (gezählter Bargeldbestand)
+
+KK Adyen
+→ automatisch aus allen Adyen-fähigen Kartenzahlungen gemäss bestehender Kartenlogik
+
+Debitoren
+→ automatisch aus der Bezahlart "Rechnung"
+
+Barausgaben
+→ manuelle Eingabe
+
+EG-Gutscheine
+→ automatisch aus den eingelösten Gutscheinen des Z-Berichts, sofern eindeutig vorhanden
+
+──────────────────────────────────────
+3. Automatische Berechnungen
+──────────────────────────────────────
+
+BAR SOLL wird NICHT berechnet.
+
+BAR SOLL entspricht ausschliesslich dem Barumsatz laut Z-Bericht.
+
+Kassensaldo Soll wird automatisch berechnet.
+
+Verwende die bestehende Logik.
+
+Falls keine zentrale Berechnungsfunktion existiert, verwende folgende Formel:
+
+Kassensaldo Soll =
+Kassensaldo Vortag
++ BAR SOLL
+− Barausgaben
+− Einzahlung Bank
+
+Einzahlung Bank bleibt Bestandteil der bestehenden Tagesabschlusslogik.
+
+Differenz wird automatisch berechnet:
+
+Differenz =
+BAR IST
+− Kassensaldo Soll
+
+Der Benutzer darf weder Kassensaldo Soll noch Differenz bearbeiten.
+
+──────────────────────────────────────
+4. Automatische Aktualisierung
+──────────────────────────────────────
+
+Nach jeder Änderung sofort neu berechnen.
+
+Das gilt bei:
+
+Import eines neuen Z-Bericht-PDF
+Änderung BAR IST
+Änderung Barausgaben
+Änderung Einzahlung Bank
+Wiederöffnung eines Tagesabschlusses
+Löschen oder Wiederherstellen von Overrides
+
+Keine manuelle Aktualisierung notwendig.
+
+──────────────────────────────────────
+5. Spaltenfarben
+──────────────────────────────────────
+
+Die Farben der Spaltenüberschriften sollen dauerhaft erhalten bleiben.
+
+Nicht zufällig aus dem Theme erzeugen.
+
+Verwende dieselben Farben in der gesamten App.
+
+Datum
+neutral
+
+Umsatz
+neutral
+
+BAR SOLL
+hellgrün
+
+BAR IST
+hellblau
+
+Kassensaldo Soll
+hellgelb
+
+Differenz
+hellrot / lachs
+
+KK Adyen
+violett
+
+Debitoren
+violett
+
+Barausgaben
+orange
+
+EG-Gutscheine
+türkis
+
+Die Farben gelten ausschliesslich für die Tabellenüberschriften.
+
+Die Tabellenzeilen bleiben neutral.
+
+──────────────────────────────────────
+6. Visuelle Hervorhebung
+──────────────────────────────────────
+
+Kassensaldo Soll ist die wichtigste Soll-Kennzahl.
+
+Diese Spalte soll sich visuell von allen anderen unterscheiden.
+
+Zusätzlich:
+
+Differenz erhält eine Ampellogik.
+
+0.00 CHF
+
+→ grün
+
+innerhalb der konfigurierbaren Toleranz
+
+→ gelb
+
+grösssere Abweichung
+
+→ rot
+
+Die bestehenden Differenzgründe bleiben unverändert.
+
+──────────────────────────────────────
+7. Import aus dem Z-Bericht PDF
+──────────────────────────────────────
+
+Beim Import des Z-Berichts werden automatisch übernommen:
+
+Umsatz
+
+BAR SOLL
+
+KK Adyen
+
+Debitoren
+
+EG-Gutscheine
+
+Keine zusätzliche Benutzeraktion erforderlich.
+
+Die Zuordnung erfolgt automatisch.
+
+Keine Doppelzählung verschachtelter Zahlarten.
+
+──────────────────────────────────────
+8. Manuelle Eingaben
+──────────────────────────────────────
+
+Manuell editierbar bleiben ausschliesslich:
+
+BAR IST
+
+Barausgaben
+
+Einzahlung Bank
+
+Kommentare
+
+Differenzgründe
+
+Alle übrigen Werte stammen aus Import oder Berechnung.
+
+──────────────────────────────────────
+9. Responsive Darstellung
+──────────────────────────────────────
+
+Die Tabelle soll auf kleineren Bildschirmen weiterhin vollständig nutzbar bleiben.
+
+Keine unnötigen Leerflächen.
+
+Keine grossen Karten.
+
+Die Tabellenhöhe soll maximal ausgenutzt werden.
+
+──────────────────────────────────────
+10. Tooltips
+──────────────────────────────────────
+
+BAR SOLL
+
+"Barumsatz gemäss Z-Bericht."
+
+BAR IST
+
+"Physisch gezählter Bargeldbestand."
+
+Kassensaldo Soll
+
+"Automatisch berechneter Sollbestand der Kasse."
+
+Differenz
+
+"BAR IST minus Kassensaldo Soll."
+
+KK Adyen
+
+"Automatisch aus den Adyen-Kartenzahlungen."
+
+Debitoren
+
+"Automatisch aus der Bezahlart Rechnung."
+
+Barausgaben
+
+"Manuell erfasste Barausgaben."
+
+EG-Gutscheine
+
+"Automatisch aus eingelösten Gutscheinen."
+
+──────────────────────────────────────
+11. Architektur
+──────────────────────────────────────
+
+Keine doppelte Berechnungslogik.
+
+Alle Berechnungen über zentrale Helper.
+
+Keine Berechnung direkt in React-Komponenten.
+
+Pure Reads dürfen niemals Writes auslösen.
+
+updatedAt nur bei echten fachlichen Änderungen.
+
+Keine Regressionen bei:
+
+Tagesabschluss
+
+Kassensaldo
+
+Buchhaltung
+
+Import
+
+PDF-Parser
+
+Z-Bericht
+
+Mandantentrennung
+
+──────────────────────────────────────
+12. Dokumentation
+──────────────────────────────────────
+
+Aktualisiere replit.md mit:
+
+Neue Spaltenreihenfolge
+
+Automatische PDF-Zuordnung
+
+BAR SOLL aus Z-Bericht
+
+BAR IST manuell
+
+Kassensaldo Soll automatisch
+
+Differenz automatisch
+
+Farbcodierung der Spalten
+
+──────────────────────────────────────
+13. Validierung
+──────────────────────────────────────
+
+Nach Abschluss ausführen:
+
+TypeScript-Typecheck
+
+alle betroffenen Tests
+
+Tagesabschluss-Tests
+
+Import-Tests
+
+PDF-Import-Tests
+
+Runtime-Check
+
+Architect-Review ausschliesslich über den tatsächlichen Git-Diff.
+
+Der Runtime-Check muss bestätigen:
+
+Import eines Z-Bericht-PDF
+
+automatische Befüllung der neuen Spalten
+
+korrekte Berechnung von Kassensaldo Soll
+
+korrekte Berechnung der Differenz
+
+keine Console Errors
+
+keine Network Errors
+
+keine Regressionen

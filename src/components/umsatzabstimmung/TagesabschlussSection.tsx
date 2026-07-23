@@ -522,7 +522,7 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                       <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
                         {saldoResolution.startSaldo === null
                           ? <>Ohne Anfangsbestand (Bargeld in der Kasse am Monatsbeginn) kann kein fortlaufender
-                              Kassensaldo berechnet werden — Kassensaldo Soll und Cash Diff bleiben leer.
+                              Kassensaldo berechnet werden — Kassensaldo Soll und Differenz bleiben leer.
                               Es wird bewusst KEINE 0 angenommen.</>
                           : <>Speichern setzt einen expliziten Anfangsbestand für diesen Monat und übersteuert
                               den aus den Vormonaten fortgeschriebenen Saldo. Alle Folgesalden werden
@@ -604,8 +604,8 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
                 className="ml-auto rounded-md border border-border px-2.5 py-1 text-xs font-medium hover:bg-accent hover:text-accent-foreground cursor-pointer"
                 onClick={() => setShowAllColumns(v => !v)}
                 title={showAllColumns
-                  ? 'Kompakte Ansicht: blendet KK, Einzahlung Bank, Cash Ist und Cash Diff aus'
-                  : 'Voll-Ansicht: zeigt zusätzlich KK, Einzahlung Bank, Cash Ist und Cash Diff'}
+                  ? 'Kompakte Ansicht: blendet Einzahlung Bank, Bargeld Soll (ber.), KK und V-Gutscheine aus'
+                  : 'Voll-Ansicht: zeigt zusätzlich Einzahlung Bank, Bargeld Soll (ber.), KK und V-Gutscheine'}
                 data-testid="ta-columns-toggle"
               >
                 {showAllColumns ? 'Kompakte Ansicht' : 'Alle Spalten anzeigen'}
@@ -703,9 +703,9 @@ export function TagesabschlussSection({ tenantId, year }: TagesabschlussSectionP
               <span className="text-sky-700 dark:text-sky-400 font-medium">manuell erfasst</span>
               <span className="text-red-600 dark:text-red-400">negative Beträge</span>
               <span>normale Werte = automatisch aus dem Z-Bericht</span>
-              <span>Adyen- und Cash-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
-              <span>Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
-              <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Cash Diff = Cash Ist − Kassensaldo Soll</span>
+              <span>Adyen- und Bar-Differenz: grün ≤ 0.05 · orange ≤ 5 · rot &gt; 5 CHF</span>
+              <span>Bargeld Soll (ber.) = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine</span>
+              <span>Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank · Differenz = BAR IST − Kassensaldo Soll</span>
               <span>Kassensaldo Soll inline überschreiben = manueller Tages-Anker (gelb; Leereingabe entfernt ihn)</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-50 border border-green-300 align-middle mr-1" />Tag abgeschlossen (gesperrt)</span>
               <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-yellow-50 border border-yellow-300 align-middle mr-1" />abgeschlossen mit Differenz</span>

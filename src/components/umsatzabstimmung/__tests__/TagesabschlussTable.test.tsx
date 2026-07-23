@@ -1,16 +1,18 @@
 // @vitest-environment happy-dom
 /**
  * TagesabschlussTable.test.tsx — Komponententest der Monats-Tabelle.
- * Prüft die gruppierte Spaltenstruktur (Umsatz · Kartenzahlungen · Kasse ·
- * Weitere Zahlungsarten · Ausgaben · Status), entfallene Spalten (Netto,
- * MWST, TWINT, Adyen-Differenz, Bemerkung), die Cash-Spalten (Soll berechnet,
- * Ist manuell, Diff mit Ampel), visuelle Marker (manuell / korrigiert /
+ * Prüft die FIXE Spaltenreihenfolge (Datum · Umsatz · BAR SOLL · BAR IST ·
+ * Kassensaldo Soll · Differenz · KK Adyen · Debitoren · Barausgaben ·
+ * EG-Gutscheine · [Detail: Einzahlung Bank · Bargeld Soll (ber.) · KK ·
+ * V-Gutscheine] · Status), entfallene Spalten (Netto, MWST, TWINT,
+ * Adyen-Differenz, Bemerkung), die Bar-Spalten (Soll aus Z-Bericht, Ist
+ * manuell, Differenz mit Ampel), visuelle Marker (manuell / korrigiert /
  * negativ / Zeilen-Tints), Barausgaben-Total und Status-Badges.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach } from 'vitest';
-import { TAGESABSCHLUSS_COLUMN_GROUPS, TagesabschlussTable, visibleColumns } from '../TagesabschlussTable';
+import { TAGESABSCHLUSS_COLUMNS, TagesabschlussTable, visibleTagesabschlussColumns } from '../TagesabschlussTable';
 import {
   buildTagesabschlussRows,
   closeDay,
@@ -79,29 +81,27 @@ function buildMonthWithClosedDay() {
 }
 
 describe('TagesabschlussTable', () => {
-  it('zeigt die neuen Spalten in gruppierter Reihenfolge — entfallene Spalten fehlen', () => {
+  it('zeigt die Spalten in der FIXEN Reihenfolge — entfallene Spalten fehlen', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
-    // Gruppenzeile.
-    const groupRow = screen.getByTestId('ta-header-groups');
-    expect(within(groupRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
-      'Umsatz', 'Kartenzahlungen', 'Kasse', 'Weitere Zahlungsarten', 'Ausgaben', 'Status',
-    ]);
-
-    // Spaltenzeile — exakte Reihenfolge (Kasse-Gruppe zusammenhängend).
+    // EINE Header-Zeile — exakte Reihenfolge (10 fixe Spalten, dann
+    // Detail-Spalten der Voll-Ansicht, zuletzt Status).
     const colRow = screen.getByTestId('ta-header-cols');
     expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
       'Datum', 'Umsatz',
-      'KK', 'KK Adyen',
-      'Bargeld Soll', 'Einzahlung Bank', 'Kassensaldo Soll', 'Cash Ist', 'Cash Diff',
-      'Debitoren', 'V-Gutscheine', 'EG-Gutscheine',
+      'BAR SOLL', 'BAR IST', 'Kassensaldo Soll', 'Differenz',
+      'KK Adyen', 'Debitoren',
       'Barausgaben',
+      'EG-Gutscheine',
+      'Einzahlung Bank', 'Bargeld Soll (ber.)', 'KK', 'V-Gutscheine',
       'Status',
     ]);
+    // Keine Gruppen-Kopfzeile mehr.
+    expect(screen.queryByTestId('ta-header-groups')).toBeNull();
 
     // Entfallene Spalten erscheinen nirgends mehr.
-    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung', 'Bargeld', 'Cash Soll']) {
+    for (const gone of ['Netto', 'MWST', 'TWINT', 'Karten/TWINT laut Adyen', 'Adyen-Differenz', 'Bemerkung', 'Bargeld', 'Cash Soll', 'Cash Ist', 'Cash Diff']) {
       expect(screen.queryByText(gone)).toBeNull();
     }
 
@@ -144,7 +144,7 @@ describe('TagesabschlussTable', () => {
     expect(screen.getAllByText('Kein Z-Bericht').length).toBe(29);
   });
 
-  it('Bargeld Soll / Kassensaldo Soll / Cash Diff: berechnete Spalten, Ampel und Totale', () => {
+  it('Bargeld Soll (ber.) / Kassensaldo Soll / Differenz: berechnete Spalten, Ampel und Totale', () => {
     const { rows, totals } = buildMonth();
     render(<TagesabschlussTable showAllColumns rows={rows} totals={totals} onDayClick={() => {}} />);
 
@@ -152,7 +152,7 @@ describe('TagesabschlussTable', () => {
     // Kassensaldo Soll = 0 + 247.50; Ist 247.50 → Diff 0 grün.
     const soll1 = screen.getByTestId('ta-bargeld-soll-2026-07-01');
     expect(soll1.textContent).toContain('247.50');
-    expect(soll1.getAttribute('title')).toContain('Bargeld Soll = Umsatz − KK − Rechnung');
+    expect(soll1.getAttribute('title')).toContain('Bargeld Soll (berechnet) = Umsatz − KK − Rechnung');
     const saldo1 = screen.getByTestId('ta-saldo-2026-07-01');
     expect(saldo1.textContent).toContain('247.50');
     expect(saldo1.getAttribute('title')).toContain('Saldo Vortag + Bargeld Soll − Einzahlung Bank');
@@ -663,54 +663,57 @@ describe('TagesabschlussTable', () => {
   });
 
   describe('Kompakte Standardansicht (ohne showAllColumns)', () => {
-    it('blendet die Detail-Spalten KK, Einzahlung Bank, Cash Ist und Cash Diff aus', () => {
+    it('blendet die Detail-Spalten Einzahlung Bank, Bargeld Soll (ber.), KK und V-Gutscheine aus', () => {
       const { rows, totals } = buildMonth();
       render(<TagesabschlussTable rows={rows} totals={totals} onDayClick={() => {}}
         onSaveManual={() => {}} />);
 
-      // Kompakte Spaltenzeile — Detail-Spalten fehlen, Reihenfolge bleibt gruppiert.
+      // Kompakte Spaltenzeile — genau die 10 fixen Spalten + Status.
       const colRow = screen.getByTestId('ta-header-cols');
       expect(within(colRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
         'Datum', 'Umsatz',
-        'KK Adyen',
-        'Bargeld Soll', 'Kassensaldo Soll',
-        'Debitoren', 'V-Gutscheine', 'EG-Gutscheine',
+        'BAR SOLL', 'BAR IST', 'Kassensaldo Soll', 'Differenz',
+        'KK Adyen', 'Debitoren',
         'Barausgaben',
+        'EG-Gutscheine',
         'Status',
-      ]);
-
-      // Gruppenzeile bleibt vollständig (colSpan schrumpft nur).
-      const groupRow = screen.getByTestId('ta-header-groups');
-      expect(within(groupRow).getAllByRole('columnheader').map(th => th.textContent)).toEqual([
-        'Umsatz', 'Kartenzahlungen', 'Kasse', 'Weitere Zahlungsarten', 'Ausgaben', 'Status',
       ]);
 
       // Detail-Zellen (Body + Footer) sind nicht im DOM.
       expect(screen.queryByTestId('ta-kk-2026-07-01')).toBeNull();
       expect(screen.queryByTestId('ta-input-einzahlung-2026-07-02')).toBeNull();
-      expect(screen.queryByTestId('ta-bestand-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-cash-diff-2026-07-01')).toBeNull();
-      expect(screen.queryByTestId('ta-total-cash-ist')).toBeNull();
-      expect(screen.queryByTestId('ta-total-cash-diff')).toBeNull();
+      expect(screen.queryByTestId('ta-bargeld-soll-2026-07-01')).toBeNull();
+      expect(screen.queryByTestId('ta-total-bargeld-soll')).toBeNull();
 
-      // Kompakte Spalten bleiben funktional: KK Adyen, Saldo, Totals.
+      // Kern-Spalten bleiben funktional: BAR SOLL/IST, Differenz, KK Adyen,
+      // Saldo, Totals.
+      expect(screen.getByTestId('ta-bar-soll-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-bestand-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-cash-diff-2026-07-01')).toBeTruthy();
       expect(screen.getByTestId('ta-adyen-2026-07-01')).toBeTruthy();
       expect(screen.getByTestId('ta-saldo-2026-07-01')).toBeTruthy();
       expect(screen.getByTestId('ta-total-adyen')).toBeTruthy();
       expect(screen.getByTestId('ta-total-saldo')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-cash-ist')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-cash-diff')).toBeTruthy();
 
-      // Jede Zeile hat exakt so viele Zellen wie kompakte Spalten (10).
+      // Jede Zeile hat exakt so viele Zellen wie kompakte Spalten (11).
       const row1 = screen.getByTestId('ta-row-2026-07-01');
-      expect(row1.querySelectorAll('td')).toHaveLength(10);
+      expect(row1.querySelectorAll('td')).toHaveLength(11);
     });
 
-    it('visibleColumns filtert detailOnly-Spalten nur in der kompakten Ansicht', () => {
-      const kasse = TAGESABSCHLUSS_COLUMN_GROUPS.find(g => g.label === 'Kasse')!;
-      expect(visibleColumns(kasse, false).map(c => c.key)).toEqual(['bargeldSoll', 'kassensaldoSoll']);
-      expect(visibleColumns(kasse, true).map(c => c.key)).toEqual(
-        ['bargeldSoll', 'einzahlungBank', 'kassensaldoSoll', 'cashIst', 'cashDiff']);
-      const karten = TAGESABSCHLUSS_COLUMN_GROUPS.find(g => g.label === 'Kartenzahlungen')!;
-      expect(visibleColumns(karten, false).map(c => c.key)).toEqual(['kkAdyen']);
+    it('visibleTagesabschlussColumns filtert detailOnly-Spalten nur in der kompakten Ansicht', () => {
+      expect(visibleTagesabschlussColumns(false).map(c => c.key)).toEqual([
+        'datum', 'umsatz', 'barSoll', 'barIst', 'kassensaldoSoll', 'differenz',
+        'kkAdyen', 'debitoren', 'barausgaben', 'gutscheinEingeloest', 'status',
+      ]);
+      expect(visibleTagesabschlussColumns(true).map(c => c.key)).toEqual(
+        TAGESABSCHLUSS_COLUMNS.map(c => c.key));
+      expect(visibleTagesabschlussColumns(true).map(c => c.key)).toEqual([
+        'datum', 'umsatz', 'barSoll', 'barIst', 'kassensaldoSoll', 'differenz',
+        'kkAdyen', 'debitoren', 'barausgaben', 'gutscheinEingeloest',
+        'einzahlungBank', 'bargeldSoll', 'kk', 'gutscheinVerkauft', 'status',
+      ]);
     });
 
     it('Voll-Ansicht zeigt dieselben Daten-Zellen wieder an (Toggle-Verhalten)', () => {
@@ -724,8 +727,8 @@ describe('TagesabschlussTable', () => {
         onSaveManual={() => {}} />);
       expect(screen.getByTestId('ta-kk-2026-07-01').textContent).toContain('700.00');
       expect(screen.getByTestId('ta-input-einzahlung-2026-07-02')).toBeTruthy();
-      expect(screen.getByTestId('ta-bestand-2026-07-01')).toBeTruthy();
-      expect(screen.getByTestId('ta-total-cash-ist')).toBeTruthy();
+      expect(screen.getByTestId('ta-bargeld-soll-2026-07-01')).toBeTruthy();
+      expect(screen.getByTestId('ta-total-bargeld-soll')).toBeTruthy();
     });
   });
 

@@ -1,20 +1,27 @@
 /**
  * TagesabschlussTable.tsx — Monats-Tabelle der Tagesabschlüsse.
  * ===========================================================================
- * Spalten nach realem Arbeitsablauf in 6 visuell getrennten Gruppen:
- *   Umsatz (Datum, Umsatz) · Kartenzahlungen (KK, KK Adyen) ·
- *   Kasse (Bargeld Soll, Einzahlung Bank, Kassensaldo Soll, Cash Ist,
- *   Cash Diff) · Weitere Zahlungsarten (Debitoren, Verkaufte/Eingelöste
- *   Gutscheine) · Ausgaben (Barausgaben) · Status.
- * Bargeld Soll = berechnet (Umsatz − KK − Rechnung − Barausgaben −
- * eingelöste Gutscheine + verkaufte Gutscheine), read-only mit Tooltip
- * (zeigt zusätzlich Bar laut Z-Bericht).
+ * FIXE Spaltenreihenfolge (wird nie automatisch verändert):
+ *   1. Datum · 2. Umsatz · 3. BAR SOLL · 4. BAR IST · 5. Kassensaldo Soll ·
+ *   6. Differenz · 7. KK Adyen · 8. Debitoren · 9. Barausgaben ·
+ *   10. EG-Gutscheine — danach NUR in der Voll-Ansicht die Detail-Spalten
+ *   (Einzahlung Bank, Bargeld Soll (berechnet), KK, V-Gutscheine) und
+ *   zuletzt Status. Header-Farben sind FEST pro Spalte definiert
+ *   (TA_HEAD_COLORS — explizite Tailwind-Klassen, nie aus dem Theme
+ *   abgeleitet); die Tabellenzeilen bleiben neutral.
+ * BAR SOLL = Barumsatz laut Z-Bericht (Auto-Feld `bar`, NICHT berechnet).
+ * Bargeld Soll (berechnet) = Umsatz − KK − Rechnung − Barausgaben −
+ * eingelöste Gutscheine + verkaufte Gutscheine — bleibt UNVERÄNDERT die
+ * Basis der Kassensaldo-Kette (nur noch Detail-Spalte).
  * Kassensaldo Soll = fortlaufend (Saldo Vortag + Bargeld Soll − Einzahlung
- * Bank); „—" solange kein Anfangsbestand-Anker bekannt ist.
- * Cash Ist = manuell gezählter Kassenbestand (inline editierbar, blau).
- * Cash Diff = Ist − Kassensaldo Soll, farbig (Ampel wie Adyen); „—" solange
- * Ist oder Saldo fehlt. Nicht-grüne Differenzen können BEGRÜNDET werden
- * (onReasonsClick → Grund-Dialog): Badge „Begründet" mit Tooltip der Gründe.
+ * Bank); „—" solange kein Anfangsbestand-Anker bekannt ist. Visuell
+ * hervorgehoben (gelber Zell-Tint) — wichtigste Soll-Kennzahl.
+ * BAR IST = manuell gezählter Kassenbestand (inline editierbar, blau).
+ * Differenz = BAR IST − Kassensaldo Soll, Ampel (grün/gelb/rot) über die
+ * ZENTRALE Klassifikation adyenDiffStatus (Toleranzen konfigurierbar in
+ * ADYEN_DIFF_THRESHOLDS); „—" solange Ist oder Saldo fehlt. Nicht-grüne
+ * Differenzen können BEGRÜNDET werden (onReasonsClick → Grund-Dialog):
+ * Badge „Begründet" mit Tooltip der Gründe.
  * TWINT wird intern weiter verarbeitet (Barumsatz/Export), erscheint aber
  * nicht mehr als eigene Spalte; die Adyen-Differenz steckt farbig in
  * „KK Adyen" (Wert + Klammer-Diff + Tooltip). Bemerkung/Gutscheinnummern
@@ -26,7 +33,7 @@
  * offen = gelb, heute = Akzent.
  *
  * Inline-Bearbeitung (nur wenn NICHT readOnly und Callbacks vorhanden):
- * Cash Ist (Bestand Kasse) und Einzahlung Bank direkt in der Zeile (persistiert
+ * BAR IST (gezählter Kassenbestand) und Einzahlung Bank direkt in der Zeile (persistiert
  * bei Blur/Enter, Escape verwirft). Debitoren ebenfalls inline — als
  * KORREKTUR des Z-Bericht-Werts (Override, gelb; Leereingabe entfernt die
  * Korrektur). Gleiches Muster (onInlineCorrect) für KK („KK Adyen Ist" →
@@ -88,69 +95,72 @@ export interface TagesabschlussColumn {
   align: 'left' | 'right';
   /** Nur in der Voll-Ansicht („Alle Spalten anzeigen") sichtbar. */
   detailOnly?: boolean;
+  /** Fixe Header-Farbe (Schlüssel in TA_HEAD_COLORS). */
+  color: keyof typeof TA_HEAD_COLORS;
+  /** Tooltip der Spaltenüberschrift. */
+  tooltip?: string;
+  /** Beginn eines visuellen Blocks — Trennlinie links (Header/Body/Footer). */
+  sep?: boolean;
 }
 
-interface ColumnGroup {
-  label: string;
-  /** Spalten; erste SICHTBARE Spalte der Gruppe erhält SEP. */
-  cols: TagesabschlussColumn[];
-  /** Header-Hintergrund der Gruppe (Gruppenzeile kräftiger, Spaltenzeile dezent). */
-  head: string;
-  sub: string;
-}
+/**
+ * FIXE Header-Farben der Tagesabschluss-Spalten — explizite, dauerhafte
+ * Tailwind-Klassen (hell + dunkel), NIE aus dem Theme abgeleitet. Opak,
+ * damit der Sticky-Header nicht durchscheint.
+ */
+export const TA_HEAD_COLORS = {
+  neutral: 'bg-muted',
+  hellgruen: 'bg-green-100 dark:bg-green-900',
+  hellblau: 'bg-sky-100 dark:bg-sky-900',
+  hellgelb: 'bg-yellow-100 dark:bg-yellow-900',
+  lachs: 'bg-rose-100 dark:bg-rose-900',
+  violett: 'bg-violet-100 dark:bg-violet-900',
+  orange: 'bg-orange-100 dark:bg-orange-900',
+  tuerkis: 'bg-teal-100 dark:bg-teal-900',
+} as const;
 
-export const TAGESABSCHLUSS_COLUMN_GROUPS: ColumnGroup[] = [
-  {
-    label: 'Umsatz',
-    cols: [
-      { key: 'datum', label: 'Datum', align: 'left' },
-      { key: 'umsatz', label: 'Umsatz', align: 'right' },
-    ],
-    head: 'bg-muted', sub: 'bg-muted',
-  },
-  {
-    label: 'Kartenzahlungen',
-    cols: [
-      { key: 'kk', label: 'KK', align: 'right', detailOnly: true },
-      { key: 'kkAdyen', label: 'KK Adyen', align: 'right' },
-    ],
-    head: 'bg-sky-100 dark:bg-sky-900', sub: 'bg-sky-50 dark:bg-sky-950',
-  },
-  {
-    label: 'Kasse',
-    cols: [
-      { key: 'bargeldSoll', label: 'Bargeld Soll', align: 'right' },
-      { key: 'einzahlungBank', label: 'Einzahlung Bank', align: 'right', detailOnly: true },
-      { key: 'kassensaldoSoll', label: 'Kassensaldo Soll', align: 'right' },
-      { key: 'cashIst', label: 'Cash Ist', align: 'right', detailOnly: true },
-      { key: 'cashDiff', label: 'Cash Diff', align: 'right', detailOnly: true },
-    ],
-    head: 'bg-emerald-100 dark:bg-emerald-900', sub: 'bg-emerald-50 dark:bg-emerald-950',
-  },
-  {
-    label: 'Weitere Zahlungsarten',
-    cols: [
-      { key: 'debitoren', label: 'Debitoren', align: 'right' },
-      { key: 'gutscheinVerkauft', label: 'V-Gutscheine', align: 'right' },
-      { key: 'gutscheinEingeloest', label: 'EG-Gutscheine', align: 'right' },
-    ],
-    head: 'bg-violet-100 dark:bg-violet-900', sub: 'bg-violet-50 dark:bg-violet-950',
-  },
-  {
-    label: 'Ausgaben',
-    cols: [{ key: 'barausgaben', label: 'Barausgaben', align: 'right' }],
-    head: 'bg-orange-100 dark:bg-orange-900', sub: 'bg-orange-50 dark:bg-orange-950',
-  },
-  {
-    label: 'Status',
-    cols: [{ key: 'status', label: 'Status', align: 'left' }],
-    head: 'bg-muted', sub: 'bg-muted',
-  },
+/**
+ * FIXE Spaltenreihenfolge (Spec): 10 Kern-Spalten, danach die Detail-Spalten
+ * der Voll-Ansicht (detailOnly), zuletzt Status. Die Reihenfolge wird nie
+ * automatisch verändert.
+ */
+export const TAGESABSCHLUSS_COLUMNS: TagesabschlussColumn[] = [
+  { key: 'datum', label: 'Datum', align: 'left', color: 'neutral' },
+  { key: 'umsatz', label: 'Umsatz', align: 'right', color: 'neutral',
+    tooltip: 'Automatisch aus dem Z-Bericht (PDF).' },
+  { key: 'barSoll', label: 'BAR SOLL', align: 'right', color: 'hellgruen', sep: true,
+    tooltip: 'Barumsatz gemäss Z-Bericht.' },
+  { key: 'barIst', label: 'BAR IST', align: 'right', color: 'hellblau',
+    tooltip: 'Physisch gezählter Bargeldbestand.' },
+  { key: 'kassensaldoSoll', label: 'Kassensaldo Soll', align: 'right', color: 'hellgelb',
+    tooltip: 'Automatisch berechneter Sollbestand der Kasse.' },
+  { key: 'differenz', label: 'Differenz', align: 'right', color: 'lachs',
+    tooltip: 'BAR IST minus Kassensaldo Soll.' },
+  { key: 'kkAdyen', label: 'KK Adyen', align: 'right', color: 'violett', sep: true,
+    tooltip: 'Automatisch aus den Adyen-Kartenzahlungen.' },
+  { key: 'debitoren', label: 'Debitoren', align: 'right', color: 'violett',
+    tooltip: 'Automatisch aus der Bezahlart Rechnung.' },
+  { key: 'barausgaben', label: 'Barausgaben', align: 'right', color: 'orange', sep: true,
+    tooltip: 'Manuell erfasste Barausgaben.' },
+  { key: 'gutscheinEingeloest', label: 'EG-Gutscheine', align: 'right', color: 'tuerkis', sep: true,
+    tooltip: 'Automatisch aus eingelösten Gutscheinen.' },
+  // ── Detail-Spalten (nur Voll-Ansicht) — NACH den 10 fixen Spalten ──
+  { key: 'einzahlungBank', label: 'Einzahlung Bank', align: 'right', color: 'neutral',
+    detailOnly: true, sep: true,
+    tooltip: 'Bareinzahlung auf die Bank (manuell) — reduziert den Kassensaldo.' },
+  { key: 'bargeldSoll', label: 'Bargeld Soll (ber.)', align: 'right', color: 'neutral',
+    detailOnly: true,
+    tooltip: 'Berechnet: Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine. Basis der Kassensaldo-Kette.' },
+  { key: 'kk', label: 'KK', align: 'right', color: 'neutral', detailOnly: true,
+    tooltip: 'Karten inkl. TWINT laut Z-Bericht.' },
+  { key: 'gutscheinVerkauft', label: 'V-Gutscheine', align: 'right', color: 'neutral',
+    detailOnly: true, tooltip: 'Verkaufte Gutscheine laut Z-Bericht.' },
+  { key: 'status', label: 'Status', align: 'left', color: 'neutral', sep: true },
 ];
 
-/** Sichtbare Spalten einer Gruppe (kompakt = ohne detailOnly-Spalten). */
-export function visibleColumns(group: ColumnGroup, showAll: boolean): TagesabschlussColumn[] {
-  return showAll ? group.cols : group.cols.filter(c => !c.detailOnly);
+/** Sichtbare Spalten (kompakt = ohne detailOnly-Spalten), in fixer Reihenfolge. */
+export function visibleTagesabschlussColumns(showAll: boolean): TagesabschlussColumn[] {
+  return showAll ? TAGESABSCHLUSS_COLUMNS : TAGESABSCHLUSS_COLUMNS.filter(c => !c.detailOnly);
 }
 
 // ── Zellen-Darstellung ───────────────────────────────────────────────────────
@@ -184,14 +194,15 @@ function ValueCell({ cell, sep = false, title }: { cell: DayCell; sep?: boolean;
  * Klickbare Gutschein-Zelle — öffnet den kleinen Gutschein-Dialog.
  * Zeigt NUR den Betrag (Nummern/Kommentar bleiben im Dialog/Tagesdetail).
  */
-function VoucherCell({ cell, label, onClick, testId }: {
+function VoucherCell({ cell, label, onClick, testId, sep = false }: {
   cell: DayCell;
   label: string;
   onClick: () => void;
   testId: string;
+  sep?: boolean;
 }) {
   return (
-    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${cellBg(cell)}`}>
+    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${cellBg(cell)}`}>
       <button
         type="button"
         className={`inline-flex items-center gap-1 rounded px-1 -mx-1 cursor-pointer underline decoration-dotted underline-offset-2 decoration-muted-foreground/60 hover:bg-accent hover:text-accent-foreground ${amountColor(cell.value, cell.source)}`}
@@ -211,7 +222,7 @@ function VoucherCell({ cell, label, onClick, testId }: {
  * Gutschein-Dialog (Nummern/Kommentar). Der Stift behält die bisherigen
  * Dialog-testids (ta-gutschein-…-DATE).
  */
-function VoucherInlineCell({ cell, label, date, onCommit, inputTestId, dialogTestId, onDialogClick }: {
+function VoucherInlineCell({ cell, label, date, onCommit, inputTestId, dialogTestId, onDialogClick, sep = false }: {
   cell: DayCell;
   label: string;
   date: string;
@@ -219,9 +230,10 @@ function VoucherInlineCell({ cell, label, date, onCommit, inputTestId, dialogTes
   inputTestId: string;
   dialogTestId: string;
   onDialogClick?: () => void;
+  sep?: boolean;
 }) {
   return (
-    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS}`}>
+    <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${sep ? `${SEP} pl-3` : ''} ${EDIT_CELL_FOCUS}`}>
       <span className="inline-flex items-center gap-1">
         {cell.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
         <InlineAmountInput
@@ -408,8 +420,9 @@ interface TagesabschlussTableProps {
   /** „Tagesabschluss abschließen" — Button nur aktiv, wenn canCloseDay ok. */
   onCloseDay?: (date: string) => void;
   /**
-   * Voll-Ansicht: zeigt zusätzlich die Detail-Spalten (KK, Einzahlung Bank,
-   * Cash Ist, Cash Diff). Default false = kompakte Standardansicht.
+   * Voll-Ansicht: zeigt zusätzlich die Detail-Spalten (Einzahlung Bank,
+   * Bargeld Soll (ber.), KK, V-Gutscheine). Default false = kompakte
+   * Standardansicht mit den 10 fixen Spalten.
    */
   showAllColumns?: boolean;
   /**
@@ -454,37 +467,21 @@ export function TagesabschlussTable({
   const showAll = showAllColumns;
 
   return (
-    <div className="overflow-auto max-h-[70vh] rounded-md border border-border">
+    <div className="overflow-auto max-h-[calc(100vh-230px)] rounded-md border border-border">
       <table className="w-full text-xs">
         <thead>
-          {/* Gruppenzeile — unterschiedliche Hintergründe je Gruppe. */}
-          <tr data-testid="ta-header-groups">
-            {TAGESABSCHLUSS_COLUMN_GROUPS.map((g, gi) => {
-              const cols = visibleColumns(g, showAll);
-              if (cols.length === 0) return null;
-              return (
-                <th
-                  key={g.label}
-                  colSpan={cols.length}
-                  className={`sticky top-0 z-20 h-6 px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ${g.head} ${gi > 0 ? SEP : ''}`}
-                >
-                  {g.label}
-                </th>
-              );
-            })}
-          </tr>
-          {/* Spaltenzeile. */}
-          <tr className="text-muted-foreground" data-testid="ta-header-cols">
-            {TAGESABSCHLUSS_COLUMN_GROUPS.flatMap((g, gi) =>
-              visibleColumns(g, showAll).map((c, ci) => (
-                <th
-                  key={c.key}
-                  className={`sticky top-6 z-10 px-2 py-1.5 font-medium whitespace-nowrap ${g.sub} ${c.align === 'left' ? 'text-left' : 'text-right'} ${gi > 0 && ci === 0 ? `${SEP} pl-3` : ''}`}
-                >
-                  {c.label}
-                </th>
-              )),
-            )}
+          {/* EINE kompakte Header-Zeile — fixe Farben je Spalte (opak, sticky). */}
+          <tr data-testid="ta-header-cols">
+            {visibleTagesabschlussColumns(showAll).map(c => (
+              <th
+                key={c.key}
+                className={`sticky top-0 z-10 px-2 py-1.5 font-semibold whitespace-nowrap text-foreground/80 ${TA_HEAD_COLORS[c.color]} ${c.align === 'left' ? 'text-left' : 'text-right'} ${c.sep ? `${SEP} pl-3` : ''}`}
+                {...(c.tooltip ? { title: c.tooltip } : {})}
+                data-testid={`ta-col-${c.key}`}
+              >
+                {c.label}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -523,7 +520,7 @@ export function TagesabschlussTable({
                 data-testid={`ta-row-${row.date}`}
                 {...(isToday ? { 'data-today': 'true' } : {})}
               >
-                {/* ── Gruppe Umsatz: Datum (Link zum Tagesdetail) + Umsatz ── */}
+                {/* ── 1. Datum (Link zum Tagesdetail) + 2. Umsatz ── */}
                 <td className={`px-2 py-1 whitespace-nowrap font-medium ${isToday ? 'border-l-2 border-l-primary' : ''}`}>
                   <span className="inline-flex items-center gap-1">
                     <button
@@ -567,52 +564,130 @@ export function TagesabschlussTable({
                   </span>
                 </td>
 
-                {/* ── Gruppe Kartenzahlungen: KK (Karten inkl. TWINT laut
-                    Z-Bericht — TWINT ohne eigene Spalte; nur Voll-Ansicht)
-                    + KK Adyen ── */}
-                {showAll && (() => {
-                  const k = row.cells.karten;
-                  const t = row.cells.twint;
-                  const kk = k.value === null && t.value === null
-                    ? null
-                    : Math.round(((k.value ?? 0) + (t.value ?? 0)) * 100) / 100;
-                  const corrected = k.source === 'corrected' || t.source === 'corrected';
+                {/* ── 3. BAR SOLL — Barumsatz laut Z-Bericht (Auto-Feld `bar`,
+                    read-only; NICHT berechnet) ── */}
+                <td
+                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${cellBg(row.cells.bar)} ${amountColor(row.cells.bar.value, row.cells.bar.source)}`}
+                  title="Barumsatz gemäss Z-Bericht."
+                  data-testid={`ta-bar-soll-${row.date}`}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    {row.cells.bar.comment && <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />}
+                    {row.cells.bar.value === null ? <span className="text-muted-foreground">—</span> : fmtChf(row.cells.bar.value)}
+                  </span>
+                </td>
+                {/* ── 4. BAR IST — manuell gezählter Kassenbestand (inline, blau) ── */}
+                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
+                    title="BAR IST = physisch gezählter Bargeldbestand"
+                    data-testid={`ta-bestand-${row.date}`}>
+                  {editable ? (
+                    <InlineAmountInput
+                      value={row.cells.bestandKasse.value}
+                      manual={row.cells.bestandKasse.source === 'manual'}
+                      onCommit={v => onSaveManual!(row.date, { bestandKasse: v })}
+                      testId={`ta-input-bestand-${row.date}`}
+                      ariaLabel={`BAR IST (gezählter Kassenbestand) ${row.date}`}
+                    />
+                  ) : (
+                    row.cells.bestandKasse.value === null
+                      ? <span className="text-muted-foreground">—</span>
+                      : fmtChf(row.cells.bestandKasse.value)
+                  )}
+                </td>
+
+                {/* ── 5. Kassensaldo Soll — fortlaufend, read-only (Formel im Tooltip).
+                    Gesperrte Tage zeigen den beim Abschluss FIXIERTEN Saldo;
+                    weicht der berechnete ab (Alt-Tag-Änderung) → Review-Marker. */}
+                {(() => {
+                  const shownSaldo = rowLocked && row.fixedKassensaldo !== null
+                    ? row.fixedKassensaldo
+                    : row.kassensaldoSoll;
+                  const anchored = row.saldoAnker !== null;
+                  const saldoTitle = rowLocked && row.fixedKassensaldo !== null
+                    ? `Beim Abschluss fixierter Kassensaldo${row.needsReview && row.kassensaldoSoll !== null ? ` — aktuell berechnet: ${fmtChf(row.kassensaldoSoll)}` : ''}`
+                    : anchored
+                      ? `Manuell gesetzter Kassensaldo (Tages-Anker) — berechnet wäre: ${row.saldoBerechnet === null ? '—' : fmtChf(row.saldoBerechnet)}. Leereingabe entfernt den Anker.`
+                      : shownSaldo === null
+                        ? saldoEditable
+                          ? 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle) oder hier den gezählten Saldo als Anker setzen'
+                          : 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle)'
+                        : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank';
                   return (
                     <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${corrected ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : ''} ${kk !== null && kk < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
-                      data-testid={`ta-kk-${row.date}`}
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium bg-yellow-50/80 dark:bg-yellow-950/30 ${saldoEditable ? EDIT_CELL_FOCUS : ''}`}
+                      title={saldoTitle}
+                      data-testid={`ta-saldo-${row.date}`}
                     >
-                      {kk === null
-                        ? <span className="text-muted-foreground">—</span>
-                        : row.kkZusammensetzung.length > 0
-                          ? (
-                            /* KK-Popover: Zusammensetzung des Totals, ohne das
-                               Tagesdetail zu öffnen (Klick auf den Betrag). */
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <button
-                                  type="button"
-                                  className="underline decoration-dotted underline-offset-2 hover:text-primary cursor-pointer"
-                                  title="Zusammensetzung KK anzeigen"
-                                  data-testid={`ta-kk-btn-${row.date}`}
-                                >
-                                  {fmtChf(kk)}
-                                </button>
-                              </PopoverTrigger>
-                              <PopoverContent align="end" className="w-auto p-3" data-testid={`ta-kk-popover-${row.date}`}>
-                                <ZahlungsartenBreakdown
-                                  items={row.kkZusammensetzung}
-                                  total={kk}
-                                  totalLabel="Total KK"
-                                  testidPrefix={`ta-kk-breakdown-${row.date}`}
-                                />
-                              </PopoverContent>
-                            </Popover>
-                          )
-                          : fmtChf(kk)}
+                      <span className="inline-flex items-center gap-1">
+                        {row.needsReview && (
+                          <span
+                            title="Kassensaldo aufgrund Änderung an früherem Tag überprüfen."
+                            data-testid={`ta-review-${row.date}`}
+                          >
+                            <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" aria-label="Kassensaldo überprüfen" />
+                          </span>
+                        )}
+                        {saldoEditable ? (
+                          <InlineAmountInput
+                            value={shownSaldo}
+                            manual={false}
+                            corrected={anchored}
+                            onCommit={v => onSetSaldoAnker!(row.date, v)}
+                            testId={`ta-input-saldo-${row.date}`}
+                            ariaLabel={`Kassensaldo Soll (manueller Tages-Anker) ${row.date}`}
+                          />
+                        ) : (
+                          shownSaldo === null ? '—' : fmtChf(shownSaldo)
+                        )}
+                      </span>
                     </td>
                   );
                 })()}
+                {/* ── 6. Differenz = BAR IST − Kassensaldo Soll (Ampel über die
+                    zentrale Klassifikation); „—" solange Ist oder Saldo fehlt.
+                    Nicht-grüne Differenzen: Begründet-Badge (Tooltip = Gründe)
+                    bzw. „Begründen"-Button (Dialog). ── */}
+                <td
+                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium ${diffColorClass(row.cashDiffStatus)}`}
+                  title={row.cashDiff !== null
+                    ? `Differenz = BAR IST − Kassensaldo Soll: ${fmtDiffChf(row.cashDiff)}`
+                    : 'Differenz erst nach Erfassung von BAR IST (und bekanntem Kassensaldo)'}
+                  data-testid={`ta-cash-diff-${row.date}`}
+                >
+                  <span className="inline-flex items-center gap-1">
+                    {row.cashDiff === null
+                      ? <span className="text-muted-foreground font-normal">—</span>
+                      : fmtDiffChf(row.cashDiff)}
+                    {row.cashDiffStatus !== null && row.cashDiffStatus !== 'ok' && (
+                      row.cashDiffBegruendet ? (
+                        <button
+                          type="button"
+                          className={`inline-block rounded px-1 py-0.5 text-[10px] font-medium bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 ${reasonsEditable ? 'cursor-pointer hover:bg-teal-200 dark:hover:bg-teal-900/60' : 'cursor-default'}`}
+                          onClick={reasonsEditable ? () => onReasonsClick!(row.date) : undefined}
+                          title={[
+                            ...row.cashDiffReasons.map(cashDiffReasonLabel),
+                            ...(row.cashDiffNote ? [`Notiz: ${row.cashDiffNote}`] : []),
+                          ].join('\n')}
+                          data-testid={`ta-diff-begruendet-${row.date}`}
+                        >
+                          Begründet
+                        </button>
+                      ) : reasonsEditable ? (
+                        <button
+                          type="button"
+                          className="inline-block rounded px-1 py-0.5 text-[10px] font-medium border border-current/40 cursor-pointer hover:bg-accent hover:text-accent-foreground"
+                          onClick={() => onReasonsClick!(row.date)}
+                          title="Differenzgrund erfassen"
+                          data-testid={`ta-diff-begruenden-${row.date}`}
+                        >
+                          Begründen
+                        </button>
+                      ) : null
+                    )}
+                  </span>
+                </td>
+
+                {/* ── 7. KK Adyen ── */}
                 {(() => {
                   /* Doppelsemantik „KK Adyen": Anzeige = KK laut Adyen-Import;
                      das Override-Popup („KK Adyen Ist") schreibt auf das
@@ -625,7 +700,7 @@ export function TagesabschlussTable({
                     : Math.round(((row.cells.karten.value ?? 0) + (row.cells.twint.value ?? 0)) * 100) / 100;
                   return (
                     <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${showAll ? '' : `${SEP} pl-3`} ${inlineCorrectable ? EDIT_CELL_FOCUS : ''} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineCorrectable ? EDIT_CELL_FOCUS : ''} ${kOv ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : row.adyenDiff !== null ? diffColorClass(row.adyenDiffStatus) : ''}`}
                       title={kOv
                         ? `Korrigierter KK-Wert (inkl. TWINT); KK laut Adyen: ${row.adyenTotal === null ? '—' : fmtChf(row.adyenTotal)}`
                         : adyenTitle}
@@ -708,153 +783,9 @@ export function TagesabschlussTable({
                   );
                 })()}
 
-                {/* ── Gruppe Kasse: Bargeld Soll (berechnet) + Einzahlung Bank
-                    + Kassensaldo Soll (fortlaufend) + Cash Ist (manuell)
-                    + Cash Diff (inkl. Begründet-Badge) ── */}
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${row.bargeldSoll !== null && row.bargeldSoll < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
-                    title={`Bargeld Soll = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine${row.cells.bar.value !== null ? ` · Bar laut Z-Bericht: ${fmtChf(row.cells.bar.value)}` : ''}`}
-                    data-testid={`ta-bargeld-soll-${row.date}`}>
-                  {row.bargeldSoll === null
-                    ? <span className="text-muted-foreground">—</span>
-                    : fmtChf(row.bargeldSoll)}
-                </td>
-                {showAll && (editable ? (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
-                    <span className="inline-flex items-center gap-1">
-                      {row.cells.einzahlungBank.comment && (
-                        <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
-                      )}
-                      <InlineAmountInput
-                        value={row.cells.einzahlungBank.value}
-                        manual={row.cells.einzahlungBank.source === 'manual'}
-                        onCommit={v => onSaveManual!(row.date, { einzahlungBank: v })}
-                        testId={`ta-input-einzahlung-${row.date}`}
-                        ariaLabel={`Einzahlung Bank ${row.date}`}
-                      />
-                    </span>
-                  </td>
-                ) : (
-                  <ValueCell cell={row.cells.einzahlungBank} />
-                ))}
-                {/* Kassensaldo Soll — fortlaufend, read-only (Formel im Tooltip).
-                    Gesperrte Tage zeigen den beim Abschluss FIXIERTEN Saldo;
-                    weicht der berechnete ab (Alt-Tag-Änderung) → Review-Marker. */}
-                {(() => {
-                  const shownSaldo = rowLocked && row.fixedKassensaldo !== null
-                    ? row.fixedKassensaldo
-                    : row.kassensaldoSoll;
-                  const anchored = row.saldoAnker !== null;
-                  const saldoTitle = rowLocked && row.fixedKassensaldo !== null
-                    ? `Beim Abschluss fixierter Kassensaldo${row.needsReview && row.kassensaldoSoll !== null ? ` — aktuell berechnet: ${fmtChf(row.kassensaldoSoll)}` : ''}`
-                    : anchored
-                      ? `Manuell gesetzter Kassensaldo (Tages-Anker) — berechnet wäre: ${row.saldoBerechnet === null ? '—' : fmtChf(row.saldoBerechnet)}. Leereingabe entfernt den Anker.`
-                      : shownSaldo === null
-                        ? saldoEditable
-                          ? 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle) oder hier den gezählten Saldo als Anker setzen'
-                          : 'Kassensaldo unbekannt — Anfangsbestand erfassen (Banner über der Tabelle)'
-                        : 'Kassensaldo Soll = Saldo Vortag + Bargeld Soll − Einzahlung Bank';
-                  return (
-                    <td
-                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap text-muted-foreground ${saldoEditable ? EDIT_CELL_FOCUS : ''}`}
-                      title={saldoTitle}
-                      data-testid={`ta-saldo-${row.date}`}
-                    >
-                      <span className="inline-flex items-center gap-1">
-                        {row.needsReview && (
-                          <span
-                            title="Kassensaldo aufgrund Änderung an früherem Tag überprüfen."
-                            data-testid={`ta-review-${row.date}`}
-                          >
-                            <AlertTriangle className="h-3 w-3 text-amber-600 dark:text-amber-400" aria-label="Kassensaldo überprüfen" />
-                          </span>
-                        )}
-                        {saldoEditable ? (
-                          <InlineAmountInput
-                            value={shownSaldo}
-                            manual={false}
-                            corrected={anchored}
-                            onCommit={v => onSetSaldoAnker!(row.date, v)}
-                            testId={`ta-input-saldo-${row.date}`}
-                            ariaLabel={`Kassensaldo Soll (manueller Tages-Anker) ${row.date}`}
-                          />
-                        ) : (
-                          shownSaldo === null ? '—' : fmtChf(shownSaldo)
-                        )}
-                      </span>
-                    </td>
-                  );
-                })()}
-                {/* Cash Ist — manuell gezählter Kassenbestand (inline, blau;
-                    nur Voll-Ansicht). */}
-                {showAll && (
-                <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${editable ? EDIT_CELL_FOCUS : cellBg(row.cells.bestandKasse) + ' ' + amountColor(row.cells.bestandKasse.value, row.cells.bestandKasse.source)}`}
-                    title="Cash Ist = manuell gezählter Kassenbestand"
-                    data-testid={`ta-bestand-${row.date}`}>
-                  {editable ? (
-                    <InlineAmountInput
-                      value={row.cells.bestandKasse.value}
-                      manual={row.cells.bestandKasse.source === 'manual'}
-                      onCommit={v => onSaveManual!(row.date, { bestandKasse: v })}
-                      testId={`ta-input-bestand-${row.date}`}
-                      ariaLabel={`Cash Ist (gezählter Kassenbestand) ${row.date}`}
-                    />
-                  ) : (
-                    row.cells.bestandKasse.value === null
-                      ? <span className="text-muted-foreground">—</span>
-                      : fmtChf(row.cells.bestandKasse.value)
-                  )}
-                </td>
-                )}
-                {/* Cash Diff = Ist − Kassensaldo Soll (Ampel); „—" solange Ist
-                    oder Saldo fehlt. Nicht-grüne Differenzen: Begründet-Badge
-                    (Tooltip = Gründe) bzw. „Begründen"-Button (Dialog).
-                    Nur Voll-Ansicht. */}
-                {showAll && (
-                <td
-                  className={`px-2 py-1 text-right tabular-nums whitespace-nowrap font-medium ${diffColorClass(row.cashDiffStatus)}`}
-                  title={row.cashDiff !== null
-                    ? `Cash Differenz = Cash Ist − Kassensaldo Soll: ${fmtDiffChf(row.cashDiff)}`
-                    : 'Cash Differenz erst nach Erfassung von Cash Ist (und bekanntem Kassensaldo)'}
-                  data-testid={`ta-cash-diff-${row.date}`}
-                >
-                  <span className="inline-flex items-center gap-1">
-                    {row.cashDiff === null
-                      ? <span className="text-muted-foreground font-normal">—</span>
-                      : fmtDiffChf(row.cashDiff)}
-                    {row.cashDiffStatus !== null && row.cashDiffStatus !== 'ok' && (
-                      row.cashDiffBegruendet ? (
-                        <button
-                          type="button"
-                          className={`inline-block rounded px-1 py-0.5 text-[10px] font-medium bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 ${reasonsEditable ? 'cursor-pointer hover:bg-teal-200 dark:hover:bg-teal-900/60' : 'cursor-default'}`}
-                          onClick={reasonsEditable ? () => onReasonsClick!(row.date) : undefined}
-                          title={[
-                            ...row.cashDiffReasons.map(cashDiffReasonLabel),
-                            ...(row.cashDiffNote ? [`Notiz: ${row.cashDiffNote}`] : []),
-                          ].join('\n')}
-                          data-testid={`ta-diff-begruendet-${row.date}`}
-                        >
-                          Begründet
-                        </button>
-                      ) : reasonsEditable ? (
-                        <button
-                          type="button"
-                          className="inline-block rounded px-1 py-0.5 text-[10px] font-medium border border-current/40 cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                          onClick={() => onReasonsClick!(row.date)}
-                          title="Differenzgrund erfassen"
-                          data-testid={`ta-diff-begruenden-${row.date}`}
-                        >
-                          Begründen
-                        </button>
-                      ) : null
-                    )}
-                  </span>
-                </td>
-                )}
-
-                {/* ── Gruppe Weitere Zahlungsarten: Debitoren inline (Korrektur
-                    des Z-Bericht-Werts), Gutscheine öffnen den Gutschein-Dialog ── */}
+                {/* ── 8. Debitoren — inline (Korrektur des Z-Bericht-Werts) ── */}
                 {correctable ? (
-                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${EDIT_CELL_FOCUS}`}
+                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${EDIT_CELL_FOCUS}`}
                       data-testid={`ta-rechnung-${row.date}`}>
                     <span className="inline-flex items-center gap-1">
                       {row.cells.rechnung.comment && (
@@ -876,62 +807,10 @@ export function TagesabschlussTable({
                     </span>
                   </td>
                 ) : (
-                  <ValueCell cell={row.cells.rechnung} sep />
+                  <ValueCell cell={row.cells.rechnung} />
                 )}
-                {inlineCorrectable ? (
-                  /* Betrag inline (Korrektur-Semantik); der Stift daneben
-                     öffnet den Gutschein-Dialog (Nummern/Kommentar) und
-                     behält die bisherigen testids. */
-                  <>
-                    <VoucherInlineCell
-                      cell={row.cells.gutscheinVerkauft}
-                      label="Verkaufte Gutscheine"
-                      date={row.date}
-                      onCommit={v => onInlineCorrect!(
-                        row.date,
-                        'gutscheinVerkauft',
-                        row.cells.gutscheinVerkauft.override?.originalValue ?? row.cells.gutscheinVerkauft.auto ?? 0,
-                        v,
-                        row.cells.gutscheinVerkauft.override?.comment,
-                      )}
-                      inputTestId={`ta-input-gutschein-verkauft-${row.date}`}
-                      dialogTestId={`ta-gutschein-verkauft-${row.date}`}
-                      onDialogClick={voucherEditable ? () => onVoucherClick!(row.date, 'verkauft') : undefined}
-                    />
-                    <VoucherInlineCell
-                      cell={row.cells.gutscheinEingeloest}
-                      label="Eingelöste Gutscheine"
-                      date={row.date}
-                      onCommit={v => onInlineCorrect!(
-                        row.date,
-                        'gutscheinEingeloest',
-                        row.cells.gutscheinEingeloest.override?.originalValue ?? row.cells.gutscheinEingeloest.auto ?? 0,
-                        v,
-                        row.cells.gutscheinEingeloest.override?.comment,
-                      )}
-                      inputTestId={`ta-input-gutschein-eingeloest-${row.date}`}
-                      dialogTestId={`ta-gutschein-eingeloest-${row.date}`}
-                      onDialogClick={voucherEditable ? () => onVoucherClick!(row.date, 'eingeloest') : undefined}
-                    />
-                  </>
-                ) : voucherEditable ? (
-                  <>
-                    <VoucherCell cell={row.cells.gutscheinVerkauft} label="Verkaufte Gutscheine"
-                      onClick={() => onVoucherClick!(row.date, 'verkauft')}
-                      testId={`ta-gutschein-verkauft-${row.date}`} />
-                    <VoucherCell cell={row.cells.gutscheinEingeloest} label="Eingelöste Gutscheine"
-                      onClick={() => onVoucherClick!(row.date, 'eingeloest')}
-                      testId={`ta-gutschein-eingeloest-${row.date}`} />
-                  </>
-                ) : (
-                  <>
-                    <ValueCell cell={row.cells.gutscheinVerkauft} />
-                    <ValueCell cell={row.cells.gutscheinEingeloest} />
-                  </>
-                )}
-
-                {/* ── Gruppe Ausgaben: Barausgaben (nur Tages-Total; Klick
-                    öffnet AUSSCHLIESSLICH den Barausgaben-Dialog) ── */}
+                {/* ── 9. Barausgaben (nur Tages-Total; Klick öffnet
+                    AUSSCHLIESSLICH den Barausgaben-Dialog) ── */}
                 <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${inlineExpenseEditable ? EDIT_CELL_FOCUS : ''}`}>
                   {inlineExpenseEditable ? (
                     /* Total inline erfassen (generische Inline-Ausgabe) —
@@ -976,7 +855,132 @@ export function TagesabschlussTable({
                   )}
                 </td>
 
-                {/* ── Gruppe Status ── */}
+                {/* ── 10. EG-Gutscheine (eingelöst) — Betrag inline (Korrektur-
+                    Semantik); der Stift daneben öffnet den Gutschein-Dialog
+                    (Nummern/Kommentar) und behält die bisherigen testids. ── */}
+                {inlineCorrectable ? (
+                  <VoucherInlineCell
+                    cell={row.cells.gutscheinEingeloest}
+                    label="Eingelöste Gutscheine"
+                    date={row.date}
+                    sep
+                    onCommit={v => onInlineCorrect!(
+                      row.date,
+                      'gutscheinEingeloest',
+                      row.cells.gutscheinEingeloest.override?.originalValue ?? row.cells.gutscheinEingeloest.auto ?? 0,
+                      v,
+                      row.cells.gutscheinEingeloest.override?.comment,
+                    )}
+                    inputTestId={`ta-input-gutschein-eingeloest-${row.date}`}
+                    dialogTestId={`ta-gutschein-eingeloest-${row.date}`}
+                    onDialogClick={voucherEditable ? () => onVoucherClick!(row.date, 'eingeloest') : undefined}
+                  />
+                ) : voucherEditable ? (
+                  <VoucherCell cell={row.cells.gutscheinEingeloest} label="Eingelöste Gutscheine" sep
+                    onClick={() => onVoucherClick!(row.date, 'eingeloest')}
+                    testId={`ta-gutschein-eingeloest-${row.date}`} />
+                ) : (
+                  <ValueCell cell={row.cells.gutscheinEingeloest} sep />
+                )}
+
+                {/* ── Detail-Spalten (nur Voll-Ansicht): Einzahlung Bank,
+                    Bargeld Soll (berechnet), KK, V-Gutscheine ── */}
+                {showAll && (editable ? (
+                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${SEP} pl-3 ${EDIT_CELL_FOCUS} ${row.cells.einzahlungBank.source === 'corrected' ? cellBg(row.cells.einzahlungBank) : ''}`}>
+                    <span className="inline-flex items-center gap-1">
+                      {row.cells.einzahlungBank.comment && (
+                        <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" aria-label="Kommentar" />
+                      )}
+                      <InlineAmountInput
+                        value={row.cells.einzahlungBank.value}
+                        manual={row.cells.einzahlungBank.source === 'manual'}
+                        onCommit={v => onSaveManual!(row.date, { einzahlungBank: v })}
+                        testId={`ta-input-einzahlung-${row.date}`}
+                        ariaLabel={`Einzahlung Bank ${row.date}`}
+                      />
+                    </span>
+                  </td>
+                ) : (
+                  <ValueCell cell={row.cells.einzahlungBank} sep />
+                ))}
+                {showAll && (
+                  <td className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${row.bargeldSoll !== null && row.bargeldSoll < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
+                      title={`Bargeld Soll (berechnet) = Umsatz − KK − Rechnung − Barausgaben − eingelöste Gutscheine + verkaufte Gutscheine${row.cells.bar.value !== null ? ` · Bar laut Z-Bericht: ${fmtChf(row.cells.bar.value)}` : ''}`}
+                      data-testid={`ta-bargeld-soll-${row.date}`}>
+                    {row.bargeldSoll === null
+                      ? <span className="text-muted-foreground">—</span>
+                      : fmtChf(row.bargeldSoll)}
+                  </td>
+                )}
+                {showAll && (() => {
+                  const k = row.cells.karten;
+                  const t = row.cells.twint;
+                  const kk = k.value === null && t.value === null
+                    ? null
+                    : Math.round(((k.value ?? 0) + (t.value ?? 0)) * 100) / 100;
+                  const corrected = k.source === 'corrected' || t.source === 'corrected';
+                  return (
+                    <td
+                      className={`px-2 py-1 text-right tabular-nums whitespace-nowrap ${corrected ? 'bg-amber-100 dark:bg-amber-900/30 font-medium' : ''} ${kk !== null && kk < 0 ? 'text-red-600 dark:text-red-400 font-medium' : ''}`}
+                      title="KK = Karten inkl. TWINT laut Z-Bericht"
+                      data-testid={`ta-kk-${row.date}`}
+                    >
+                      {kk === null
+                        ? <span className="text-muted-foreground">—</span>
+                        : row.kkZusammensetzung.length > 0
+                          ? (
+                            /* KK-Popover: Zusammensetzung des Totals, ohne das
+                               Tagesdetail zu öffnen (Klick auf den Betrag). */
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="underline decoration-dotted underline-offset-2 hover:text-primary cursor-pointer"
+                                  title="Zusammensetzung KK anzeigen"
+                                  data-testid={`ta-kk-btn-${row.date}`}
+                                >
+                                  {fmtChf(kk)}
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent align="end" className="w-auto p-3" data-testid={`ta-kk-popover-${row.date}`}>
+                                <ZahlungsartenBreakdown
+                                  items={row.kkZusammensetzung}
+                                  total={kk}
+                                  totalLabel="Total KK"
+                                  testidPrefix={`ta-kk-breakdown-${row.date}`}
+                                />
+                              </PopoverContent>
+                            </Popover>
+                          )
+                          : fmtChf(kk)}
+                    </td>
+                  );
+                })()}
+                {showAll && (inlineCorrectable ? (
+                  <VoucherInlineCell
+                    cell={row.cells.gutscheinVerkauft}
+                    label="Verkaufte Gutscheine"
+                    date={row.date}
+                    onCommit={v => onInlineCorrect!(
+                      row.date,
+                      'gutscheinVerkauft',
+                      row.cells.gutscheinVerkauft.override?.originalValue ?? row.cells.gutscheinVerkauft.auto ?? 0,
+                      v,
+                      row.cells.gutscheinVerkauft.override?.comment,
+                    )}
+                    inputTestId={`ta-input-gutschein-verkauft-${row.date}`}
+                    dialogTestId={`ta-gutschein-verkauft-${row.date}`}
+                    onDialogClick={voucherEditable ? () => onVoucherClick!(row.date, 'verkauft') : undefined}
+                  />
+                ) : voucherEditable ? (
+                  <VoucherCell cell={row.cells.gutscheinVerkauft} label="Verkaufte Gutscheine"
+                    onClick={() => onVoucherClick!(row.date, 'verkauft')}
+                    testId={`ta-gutschein-verkauft-${row.date}`} />
+                ) : (
+                  <ValueCell cell={row.cells.gutscheinVerkauft} />
+                ))}
+
+                {/* ── Status ── */}
                 <td className={`px-2 py-1 whitespace-nowrap ${SEP} pl-3`}>
                   <div className="flex items-center gap-2">
                     <StatusBadge row={row} />
@@ -1037,47 +1041,63 @@ export function TagesabschlussTable({
           })}
         </tbody>
         <tfoot>
+          {/* Fusszeile in der FIXEN Spaltenreihenfolge (Spec) — Zellen 1:1 wie
+              visibleTagesabschlussColumns(showAll). */}
           <tr className="border-t-2 border-border bg-muted/40 font-semibold">
             <td className="px-2 py-1.5">Total</td>
             <td className={`px-2 py-1.5 text-right tabular-nums ${totals.values.umsatz < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>{fmtChf(totals.values.umsatz)}</td>
-            {showAll && (
-              <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.karten + totals.values.twint)}</td>
-            )}
-            <td className={`px-2 py-1.5 text-right tabular-nums ${showAll ? '' : `${SEP} pl-3`}`} data-testid="ta-total-adyen"
+            {/* BAR SOLL — Summe Bar laut Z-Bericht. */}
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} data-testid="ta-total-bar-soll"
+                title="Summe Barumsatz laut Z-Bericht">
+              {fmtChf(totals.values.bar)}
+            </td>
+            {/* BAR IST — Summe gezählte Bestände. */}
+            <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-cash-ist"
+                title="Summe BAR IST (nur Tage mit gezähltem Bestand)">
+              {fmtChf(totals.cashIst)}
+            </td>
+            {/* Kassensaldo Soll — Stand am Monatsende. */}
+            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground" data-testid="ta-total-saldo"
+                title={'Kassensaldo (Soll) am Monatsende; „—" solange kein Anfangsbestand bekannt ist'}>
+              {totals.kassensaldoEnde === null ? '—' : fmtChf(totals.kassensaldoEnde)}
+            </td>
+            {/* Differenz — letzter Tag mit gezähltem Bestand. */}
+            <td className={`px-2 py-1.5 text-right tabular-nums ${totals.letzteCashDiff !== null ? diffColorClass(totals.letzteCashDiffStatus) : 'text-muted-foreground'}`}
+                data-testid="ta-total-cash-diff"
+                title="Differenz am letzten Tag mit gezähltem Bestand (aktueller Stand der Kasse)">
+              {totals.letzteCashDiff === null ? '—' : fmtDiffChf(totals.letzteCashDiff)}
+            </td>
+            {/* KK Adyen. */}
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} data-testid="ta-total-adyen"
                 title="Summe Karten/TWINT laut Adyen; in Klammern die Summe der Tages-Differenzen (Vorzeichen können sich aufheben)">
               {fmtChf(totals.adyenTotal)}
               <span className="ml-1 text-[10px] text-muted-foreground" data-testid="ta-total-adyen-diff">
                 ({fmtDiffChf(totals.adyenDiff)})
               </span>
             </td>
-            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} data-testid="ta-total-bargeld-soll"
-                title="Total Bargeld Soll; Bar laut Z-Bericht in Klammern">
-              {fmtChf(totals.bargeldSoll)} <span className="text-[10px] text-muted-foreground">({fmtChf(totals.values.bar)})</span>
-            </td>
-            {showAll && (
-              <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.einzahlungBank)}</td>
-            )}
-            <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground" data-testid="ta-total-saldo"
-                title={'Kassensaldo (Soll) am Monatsende; „—" solange kein Anfangsbestand bekannt ist'}>
-              {totals.kassensaldoEnde === null ? '—' : fmtChf(totals.kassensaldoEnde)}
-            </td>
-            {showAll && (
-              <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-cash-ist"
-                  title="Summe Cash Ist (nur Tage mit gezähltem Bestand)">
-                {fmtChf(totals.cashIst)}
-              </td>
-            )}
-            {showAll && (
-              <td className={`px-2 py-1.5 text-right tabular-nums ${totals.letzteCashDiff !== null ? diffColorClass(totals.letzteCashDiffStatus) : 'text-muted-foreground'}`}
-                  data-testid="ta-total-cash-diff"
-                  title="Cash-Differenz am letzten Tag mit gezähltem Bestand (aktueller Stand der Kasse)">
-                {totals.letzteCashDiff === null ? '—' : fmtDiffChf(totals.letzteCashDiff)}
-              </td>
-            )}
-            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.rechnung)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinVerkauft)}</td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinEingeloest)}</td>
+            {/* Debitoren. */}
+            <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.rechnung)}</td>
+            {/* Barausgaben. */}
             <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`} data-testid="ta-total-barausgaben">{fmtChf(totals.barausgaben)}</td>
+            {/* EG-Gutscheine. */}
+            <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.gutscheinEingeloest)}</td>
+            {/* Detail-Spalten (nur Voll-Ansicht). */}
+            {showAll && (
+              <td className={`px-2 py-1.5 text-right tabular-nums ${SEP} pl-3`}>{fmtChf(totals.values.einzahlungBank)}</td>
+            )}
+            {showAll && (
+              <td className="px-2 py-1.5 text-right tabular-nums" data-testid="ta-total-bargeld-soll"
+                  title="Total Bargeld Soll (berechnet)">
+                {fmtChf(totals.bargeldSoll)}
+              </td>
+            )}
+            {showAll && (
+              <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.karten + totals.values.twint)}</td>
+            )}
+            {showAll && (
+              <td className="px-2 py-1.5 text-right tabular-nums">{fmtChf(totals.values.gutscheinVerkauft)}</td>
+            )}
+            {/* Status. */}
             <td className={`px-2 py-1.5 text-muted-foreground ${SEP} pl-3`}>
               {totals.daysConfirmed}/{totals.daysWithZbericht} Tage abgeschlossen
             </td>
