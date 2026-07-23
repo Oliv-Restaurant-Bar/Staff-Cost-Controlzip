@@ -24,7 +24,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { kvGet } from './supabase-kv';
-import { loadGnImports } from './gn-zbericht-db';
+import { loadGnImports, fetchExtendedCoverage } from './gn-zbericht-db';
 import { getImportHistoryAll, type ImportHistoryEntry } from './timesheet-store';
 import {
   addDaysIso,
@@ -205,20 +205,38 @@ async function umsatzCoverage(
   return { coveredDays: days };
 }
 
-/** Verkaufsdaten: product_sales.sale_date im Monat (mandantenübergreifend!). */
-async function verkaufsdatenCoverage(monthStart: string, monthEnd: string): Promise<TypeCoverage> {
-  const days = await fetchDistinctDates(
-    (from, to) =>
-      sb
-        .from('product_sales')
-        .select('sale_date')
-        .gte('sale_date', monthStart)
-        .lte('sale_date', monthEnd)
-        .order('sale_date', { ascending: true })
-        .range(from, to),
-    'sale_date',
-  );
-  return { coveredDays: [...days].sort() };
+/**
+ * Verkaufsdaten: product_sales.sale_date im Monat (mandantenübergreifend!)
+ * VEREINIGT mit den Zeiträumen aktiver erweiterter Z-Bericht-PDFs des Tenants
+ * (deren Detailpositionen liefern dieselben Produktdaten) — Tage, die durch
+ * einen erweiterten Z-Bericht PDF abgedeckt sind, erscheinen nicht mehr als
+ * fehlend. Additiv/best-effort wie bei den Reservations-Importläufen: ein
+ * Fehler der Zusatzabfrage reduziert die Abdeckung nie unter den CSV-Stand.
+ */
+async function verkaufsdatenCoverage(
+  ctx: ImportTasksFetchContext,
+  monthStart: string,
+  monthEnd: string,
+): Promise<TypeCoverage> {
+  const [days, extended] = await Promise.all([
+    fetchDistinctDates(
+      (from, to) =>
+        sb
+          .from('product_sales')
+          .select('sale_date')
+          .gte('sale_date', monthStart)
+          .lte('sale_date', monthEnd)
+          .order('sale_date', { ascending: true })
+          .range(from, to),
+      'sale_date',
+    ),
+    fetchExtendedCoverage(ctx.tenantId).catch(() => ({ ranges: [], error: null })),
+  ]);
+  const covered = new Set<string>(days);
+  for (const r of extended.ranges) {
+    for (const d of rangeDaysInMonth(r.periodFrom, r.periodTo, monthStart, monthEnd)) covered.add(d);
+  }
+  return { coveredDays: [...covered].sort() };
 }
 
 /**
@@ -378,7 +396,7 @@ export async function fetchMonthCoverage(
     { type: 'zbericht', run: () => zberichtCoverage(ctx, monthStart, monthEnd) },
     { type: 'reservationen', run: () => reservationenCoverage(ctx, monthStart, monthEnd) },
     { type: 'umsatz', run: () => umsatzCoverage(ctx, monthStart, monthEnd) },
-    { type: 'verkaufsdaten', run: () => verkaufsdatenCoverage(monthStart, monthEnd) },
+    { type: 'verkaufsdaten', run: () => verkaufsdatenCoverage(ctx, monthStart, monthEnd) },
     { type: 'mirus', run: () => mirusCoverage(ctx, year, month, monthStart, monthEnd) },
     { type: 'marketing', run: () => marketingCoverage(ctx, monthStart, monthEnd) },
     { type: 'erfolgsrechnung', run: () => erfolgsrechnungCoverage(ctx, year, month) },

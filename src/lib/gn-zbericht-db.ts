@@ -6,7 +6,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
-import type { GnExtendedData, GnExtendedEntry, GnParsedZBericht } from './gn-zbericht-parser';
+import type { GnExtendedData, GnExtendedEntry, GnHourlyRevenueRow, GnParsedZBericht } from './gn-zbericht-parser';
 import type { GnDayClosing } from './tagesabschluss';
 
 const r2 = (v: number): number => Math.round(v * 100) / 100;
@@ -215,6 +215,41 @@ export async function checkOverlappingImports(
     return rows as OverlapInfo[];
   } catch {
     return [];
+  }
+}
+
+// ── Checksum-Duplikat (Idempotenz) ───────────────────────────────────────────
+
+/**
+ * Identischer Reimport (gleicher Tenant + gleiche Checksum, aktiv) = No-op:
+ * der Aufrufer prüft dies VOR jedem Write und speichert dann NICHT erneut.
+ * Fehler ⇒ { isDuplicate: false } — der Import läuft dann regulär weiter
+ * (der Perioden-Overlap-Check fängt echte Doppelimporte weiterhin ab).
+ */
+export async function checkGnChecksumDuplicate(
+  restaurantId: string,
+  checksum: string | null | undefined,
+): Promise<{ isDuplicate: boolean; existingId: string | null; existingFileName: string | null; existingImportedAt: string | null }> {
+  const none = { isDuplicate: false, existingId: null, existingFileName: null, existingImportedAt: null };
+  if (!checksum) return none;
+  try {
+    const { data, error } = await (supabase as any)
+      .from('gn_imports')
+      .select('id, file_name, created_at')
+      .eq('restaurant_id', restaurantId)
+      .eq('checksum', checksum)
+      .eq('status', 'active')
+      .limit(1);
+    if (error || !data || data.length === 0) return none;
+    const row = data[0] as { id: string; file_name: string | null; created_at: string | null };
+    return {
+      isDuplicate: true,
+      existingId: row.id,
+      existingFileName: row.file_name,
+      existingImportedAt: row.created_at,
+    };
+  } catch {
+    return none;
   }
 }
 
@@ -596,6 +631,85 @@ export async function loadGnRevenueForYear(
     return result;
   } catch {
     return new Array(12).fill(0) as number[];
+  }
+}
+
+// ── GN-Tagesumsatz für Zeitraum (für gemeinsame Tagesanalyse) ────────────────
+
+/**
+ * Bruttoumsatz pro Geschäftstag aus aktiven Tages-Z-Berichten
+ * (aggregation_level 'day').  Mehrtages-/Periodenberichte werden bewusst
+ * NICHT auf Tage verteilt.  Bei mehreren aktiven Tagesimporten für dasselbe
+ * Datum gewinnt der zuletzt importierte (Replace-Semantik der Importe).
+ */
+export async function loadGnDailyGrossRevenue(
+  restaurantId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  try {
+    const { data } = await (supabase as any)
+      .from('gn_imports')
+      .select('period_from, gross_revenue, imported_at')
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'active')
+      .eq('aggregation_level', 'day')
+      .gte('period_from', fromIso)
+      .lte('period_from', toIso)
+      .not('gross_revenue', 'is', null)
+      .order('imported_at', { ascending: true });
+
+    for (const row of (data ?? []) as Array<{ period_from: string; gross_revenue: number }>) {
+      if (!row.period_from) continue;
+      if (typeof row.gross_revenue !== 'number' || !(row.gross_revenue > 0)) continue;
+      result.set(row.period_from, row.gross_revenue); // später importierte überschreiben
+    }
+    return result;
+  } catch {
+    return result;
+  }
+}
+
+// ── GN-Stundenumsätze für Zeitraum (für Zeitabschnittsanalyse) ───────────────
+
+/**
+ * Stundenumsätze (Zeitabschnitte) pro Geschäftstag aus aktiven
+ * Tages-Z-Berichten (aggregation_level 'day').  Liest die Zeitabschnitte
+ * direkt aus dem JSON-Blob (`raw_csv_json->hourlyRevenue`) — bewusst OHNE
+ * Migration (Architektur-Entscheid).  Mehrtages-/Periodenberichte werden
+ * NICHT auf Tage verteilt.  Bei mehreren aktiven Tagesimporten für dasselbe
+ * Datum gewinnt der zuletzt importierte (Replace-Semantik der Importe).
+ */
+export async function loadGnHourlyRevenueByDay(
+  restaurantId: string,
+  fromIso: string,
+  toIso: string,
+): Promise<Map<string, GnHourlyRevenueRow[]>> {
+  const result = new Map<string, GnHourlyRevenueRow[]>();
+  try {
+    const { data } = await (supabase as any)
+      .from('gn_imports')
+      .select('period_from, imported_at, hourly:raw_csv_json->hourlyRevenue')
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'active')
+      .eq('aggregation_level', 'day')
+      .gte('period_from', fromIso)
+      .lte('period_from', toIso)
+      .order('imported_at', { ascending: true });
+
+    for (const row of (data ?? []) as Array<{ period_from: string; hourly: unknown }>) {
+      if (!row.period_from) continue;
+      if (!Array.isArray(row.hourly)) continue;
+      const rows = (row.hourly as GnHourlyRevenueRow[]).filter(
+        h => h && typeof h.totalAmount === 'number' && Number.isFinite(h.totalAmount),
+      );
+      if (rows.length === 0) continue;
+      result.set(row.period_from, rows); // später importierte überschreiben
+    }
+    return result;
+  } catch {
+    return result;
   }
 }
 

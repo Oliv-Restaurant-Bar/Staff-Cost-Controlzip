@@ -190,9 +190,9 @@ export function mergeProduktQuellen(params: {
 /** Anzeige-Label der Datenquelle («Datenquelle: …»). */
 export function produktQuellenLabel(source: ProduktDatenquelle): string | null {
   switch (source) {
-    case 'extended':      return 'Datenquelle: Erweiterter Z-Bericht';
-    case 'verkaufsdaten': return 'Datenquelle: Verkaufsdatenimport';
-    case 'gemischt':      return 'Datenquellen: Erweiterter Z-Bericht + Verkaufsdatenimport';
+    case 'extended':      return 'Datenquelle: Erweiterter Z-Bericht PDF';
+    case 'verkaufsdaten': return 'Datenquelle: Verkaufsdatenimport (Fallback)';
+    case 'gemischt':      return 'Datenquellen: Erweiterter Z-Bericht PDF + Verkaufsdatenimport';
     case 'keine':         return null;
   }
 }

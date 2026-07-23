@@ -32,7 +32,18 @@ import type { Tone } from '@/components/ui/tones';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
-import { getGuestsForPeriod, getAvgReceiptForPeriod } from '@/lib/gn-personen-db';
+import { getGuestsForPeriod, getAvgReceiptForPeriod, getPersonDayValues } from '@/lib/gn-personen-db';
+import { getAverageCheckDayValues } from '@/lib/gn-average-check-db';
+import { loadGnDailyGrossRevenue, loadGnHourlyRevenueByDay } from '@/lib/gn-zbericht-db';
+import {
+  mergeGnTagesQuellen, summarizeGnPeriode, BONS_BERECHNET_TOOLTIP,
+} from '@/lib/gn-tagesanalyse';
+import type { GnPeriodenAnalyse } from '@/lib/gn-tagesanalyse';
+import {
+  mergeGnStundenwerte, analyzeGnZeitabschnitte, GN_ZEITFENSTER,
+} from '@/lib/gn-zeitabschnitte';
+import type { GnZeitabschnittsAnalyse } from '@/lib/gn-zeitabschnitte';
+import { InfoTip } from '@/components/ui/info-tip';
 import type { DailyBudget } from '@/types/personnel';
 
 // ── Period ────────────────────────────────────────────────────────────────
@@ -94,6 +105,13 @@ interface Summary {
   vjRevPerGuest: number;
   avgReceipt: number;
   weekAvgReceipt: number;
+  /** Gemeinsame Tagesanalyse (gewichtete Periodenwerte, SSoT gn-tagesanalyse) */
+  tages: GnPeriodenAnalyse;
+  weekTages: GnPeriodenAnalyse;
+  /** Zeitabschnittsanalyse über die Tages-Z-Berichte des Zeitraums (SSoT gn-zeitabschnitte); null wenn keine Stundenumsätze vorhanden. */
+  zeit: GnZeitabschnittsAnalyse | null;
+  /** Anzahl Geschäftstage mit Stundenumsätzen im Zeitraum. */
+  zeitDayCount: number;
 }
 
 // Excel-Zeile: type 'data' oder 'empty' (Leerzeile wie in der Vorlage)
@@ -366,7 +384,7 @@ export default function KennzahlenBerichtPage() {
         const vjToIso      = format(subYears(to,   1), 'yyyy-MM-dd');
 
         const months  = [...new Set(days.map(d => format(d, 'yyyy-MM')))];
-        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek] = await Promise.all([
+        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek, personDays, avgCheckDays, zDaily, hourlyByDay] = await Promise.all([
           Promise.all(months.map(m => loadMonthInvoices(tenantId, m))).then(res => res.flat()
             .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } })),
           getGuestsForPeriod(tenantId, fromIso, toIso),
@@ -374,7 +392,35 @@ export default function KennzahlenBerichtPage() {
           getGuestsForPeriod(tenantId, vjFromIso, vjToIso),
           getAvgReceiptForPeriod(tenantId, fromIso, toIso),
           getAvgReceiptForPeriod(tenantId, weekFromIso, toIso),
+          getPersonDayValues(tenantId, fromIso, toIso),
+          getAverageCheckDayValues(tenantId, fromIso, toIso),
+          loadGnDailyGrossRevenue(tenantId, fromIso, toIso),
+          loadGnHourlyRevenueByDay(tenantId, fromIso, toIso),
         ]);
+
+        // ── Gemeinsame Tagesanalyse (SSoT gn-tagesanalyse) ──────────────
+        // Quellenpriorität Umsatz: Z-Bericht > validierter Tagesumsatz >
+        // Personen × Umsatz pro Person.  Fehlend = null, nie 0.
+        const validatedByDate = new Map<string, number>();
+        for (const day of days) {
+          const key = format(day, 'yyyy-MM-dd');
+          const v = budgets[key]?.actualRevenue;
+          if (typeof v === 'number' && v > 0) validatedByDate.set(key, v);
+        }
+        const tagesAnalysen = mergeGnTagesQuellen({
+          personsByDate:          personDays.personsByDate,
+          revenuePerPersonByDate: personDays.revenuePerPersonByDate,
+          averageReceiptByDate:   avgCheckDays,
+          zRevenueByDate:         zDaily,
+          validatedRevenueByDate: validatedByDate,
+        });
+        const tages     = summarizeGnPeriode(tagesAnalysen);
+        const weekTages = summarizeGnPeriode(tagesAnalysen.filter(d => d.date >= weekFromIso));
+
+        // ── Zeitabschnittsanalyse (SSoT gn-zeitabschnitte) ──────────────
+        // Stundenwerte über alle Geschäftstage des Zeitraums summiert;
+        // Fenster/Peak zentral definiert, negative Werte bleiben.
+        const zeit = analyzeGnZeitabschnitte(mergeGnStundenwerte([...hourlyByDay.values()]));
 
         const warenFood  = allInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
         const warenBev   = allInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
@@ -427,6 +473,10 @@ export default function KennzahlenBerichtPage() {
           revPerGuest: revPG, weekRevPerGuest: wRevPG, vjRevPerGuest: vjRevPG,
           avgReceipt: avgRcptCur.avgReceipt,
           weekAvgReceipt: avgRcptWeek.avgReceipt,
+          tages,
+          weekTages,
+          zeit,
+          zeitDayCount: hourlyByDay.size,
         });
       } catch (err) {
         console.error('[KennzahlenBericht] load error', err);
@@ -736,8 +786,12 @@ export default function KennzahlenBerichtPage() {
               <Row label="Umsatz Beverage (netto)" value={summary.bevNet  > 0 ? fmtChf(summary.bevNet)  : '—'} />
               <Row label="Tage mit Umsatz"         value={`${summary.daysWithData} / ${summary.daysTotal}`} />
               <Row label="Ø Tagesumsatz (netto)"   value={avgDaily > 0 ? fmtChf(avgDaily) : '—'} />
-              <Row label="Anzahl Bons / Gäste"     value="—" hint="gastronovi Import" />
-              <Row label="Durchschnittsbon"        value="—" hint="gastronovi Import" />
+              <Row label="Bons, berechnet"
+                value={summary.tages.derivedReceiptCount !== null ? NUM.format(Math.round(summary.tages.derivedReceiptCount)) : '—'}
+                hint="Umsatz ÷ Durchschnittsbon" tip={BONS_BERECHNET_TOOLTIP} />
+              <Row label="Durchschnittsbon"
+                value={summary.tages.averageReceipt !== null ? fmtChf(summary.tages.averageReceipt) : '—'}
+                hint="gastronovi Import, gewichtet" />
             </DGrid>
           </BSection>
 
@@ -785,11 +839,82 @@ export default function KennzahlenBerichtPage() {
 
           <BSection title="Gäste / Kunden Kennzahlen" icon={<Users className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Anzahl Gäste / Personen" value="—" hint="gastronovi Import" />
-              <Row label="Umsatz pro Gast"         value="—" hint="Gästezahlen" />
-              <Row label="Ø Gäste pro Tag"         value="—" hint="Gästezahlen" />
+              <Row label="Anzahl Gäste / Personen"
+                value={summary.tages.persons !== null ? NUM.format(Math.round(summary.tages.persons))
+                     : summary.guestCount > 0 ? NUM.format(summary.guestCount) : '—'}
+                hint="gastronovi Import" />
+              <Row label="Umsatz pro Gast"
+                value={summary.tages.revenuePerPerson !== null ? fmtChf(summary.tages.revenuePerPerson)
+                     : summary.revPerGuest > 0 ? fmtChf(summary.revPerGuest) : '—'}
+                hint="gewichtet" />
+              <Row label="Ø Gäste pro Tag"
+                value={summary.tages.persons !== null && summary.tages.personDayCount > 0
+                  ? NUM.format(Math.round(summary.tages.persons / summary.tages.personDayCount)) : '—'}
+                hint="Gästezahlen" />
+              <Row label="Personen pro Bon"
+                value={summary.tages.personsPerReceipt !== null ? summary.tages.personsPerReceipt.toFixed(1) : '—'}
+                hint="Personen ÷ Bons, berechnet" />
             </DGrid>
           </BSection>
+
+          {summary.zeit && (
+            <BSection title="Zeitabschnitte / Stundenumsätze" icon={<Clock className="h-4 w-4" />}>
+              <p className="text-xs text-muted-foreground mb-2">
+                Aus {summary.zeitDayCount} Tages-Z-Bericht{summary.zeitDayCount === 1 ? '' : 'en'} (brutto);
+                Zeitfenster zentral definiert, negative Stundenwerte bleiben erhalten.
+              </p>
+              <DGrid>
+                <Row label={GN_ZEITFENSTER.mittag.label}
+                  value={summary.zeit.mittagRevenue !== null ? fmtChf(summary.zeit.mittagRevenue) : '—'} />
+                <Row label={GN_ZEITFENSTER.abend.label}
+                  value={summary.zeit.abendRevenue !== null ? fmtChf(summary.zeit.abendRevenue) : '—'} />
+                <Row label="Umsatz vor 17:00"
+                  value={summary.zeit.vor17Revenue !== null ? fmtChf(summary.zeit.vor17Revenue) : '—'} />
+                <Row label="Umsatz ab 17:00"
+                  value={summary.zeit.ab17Revenue !== null ? fmtChf(summary.zeit.ab17Revenue) : '—'} />
+                <Row label="Stärkste Stunde"
+                  value={summary.zeit.strongestHour
+                    ? `${summary.zeit.strongestHour.label} · ${fmtChf(summary.zeit.strongestHour.totalAmount)}` : '—'} />
+                <Row label="Schwächste aktive Stunde"
+                  value={summary.zeit.weakestActiveHour
+                    ? `${summary.zeit.weakestActiveHour.label} · ${fmtChf(summary.zeit.weakestActiveHour.totalAmount)}` : '—'}
+                  hint="Stunden mit Wert ≠ 0" />
+                <Row label={`Peak-Zeitfenster (${GN_ZEITFENSTER.peakFensterStunden} Std.)`}
+                  value={summary.zeit.peakWindow
+                    ? `${summary.zeit.peakWindow.label} · ${fmtChf(summary.zeit.peakWindow.totalAmount)}` : '—'} bold />
+              </DGrid>
+              <details className="mt-2">
+                <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground"
+                  data-testid="toggle-stundenumsaetze">
+                  Umsatz je Stunde ({summary.zeit.hours.length})
+                </summary>
+                <div className="mt-2 max-h-64 overflow-y-auto rounded border border-border/50">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b bg-muted text-right sticky top-0">
+                        <th className="px-3 py-1.5 text-left font-medium">Stunde</th>
+                        <th className="px-3 py-1.5 font-medium">Umsatz</th>
+                        <th className="px-3 py-1.5 font-medium">Anteil</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.zeit.hours.map(h => (
+                        <tr key={h.hour} className="border-b border-border/40 last:border-0">
+                          <td className="px-3 py-1">{h.label}</td>
+                          <td className={cn('px-3 py-1 text-right tabular-nums', h.totalAmount < 0 && 'text-red-600 dark:text-red-400')}>
+                            {fmtChf(h.totalAmount)}
+                          </td>
+                          <td className="px-3 py-1 text-right tabular-nums text-muted-foreground">
+                            {h.sharePct !== null ? `${h.sharePct.toFixed(1)} %` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </BSection>
+          )}
 
           {summary.chart.length > 0 && summary.chart.some(d => d.net > 0) && (
             <BSection title="Umsatzverlauf" icon={<BarChart2 className="h-4 w-4" />}>
@@ -981,8 +1106,8 @@ function DGrid({ children }: { children: ReactNode }) {
   return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-x-8">{children}</div>;
 }
 
-function Row({ label, value, bold, hint, diff }: {
-  label: string; value: string; bold?: boolean; hint?: string; diff?: 'pos' | 'neg';
+function Row({ label, value, bold, hint, diff, tip }: {
+  label: string; value: string; bold?: boolean; hint?: string; diff?: 'pos' | 'neg'; tip?: string;
 }) {
   const vc = diff === 'pos' ? 'text-emerald-600 dark:text-emerald-400'
            : diff === 'neg' ? 'text-red-600 dark:text-red-400' : '';
@@ -990,6 +1115,7 @@ function Row({ label, value, bold, hint, diff }: {
     <div className="flex items-center justify-between gap-2 py-1.5 border-b border-border/30 last:border-0">
       <div className="flex items-baseline gap-1 min-w-0">
         <span className="text-xs text-muted-foreground truncate">{label}</span>
+        {tip && <InfoTip text={tip} />}
         {hint && <span className="text-[10px] text-muted-foreground/50 whitespace-nowrap shrink-0">({hint})</span>}
       </div>
       <span className={cn('text-xs font-medium whitespace-nowrap shrink-0', bold && 'font-bold text-sm', vc)}>

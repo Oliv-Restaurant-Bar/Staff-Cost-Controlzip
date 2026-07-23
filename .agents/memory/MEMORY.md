@@ -54,3 +54,4 @@
 - [Schedule day-atomic saves](schedule-day-atomic-saves.md) — cell writes must send the WHOLE day via the per-key save queue; single-slot upserts race and lose the 2nd shift; coalescence only safe with full-day payloads.
 - [Split-Zellen primary/secondary swap](schedule-split-slot-swap.md) — leere Zelle rendert primarySlot='spät'; per-Slot-Payloads im Popover müssen der chronologischen Zeile folgen (Row 1→früh), nie dem primary-Mapping.
 - [UI-Tests auf geteilter Dev-DB](ui-test-shared-db.md) — Dienstplan-UI-Tests nur in Zukunftswochen mit wirklich leeren Zellen; Tester editieren sonst echte Plandaten; Cleanup als Verify-Schritt.
+- [PostgREST unordered-query cap](postgrest-row-cap.md) — status/freshness queries need order-desc+limit or pagination; PostgREST caps ~1000 rows unordered, newest days silently drop.

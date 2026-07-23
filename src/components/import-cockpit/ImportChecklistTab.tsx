@@ -123,7 +123,7 @@ const MONTH_NAMES = [
 /** UI-Hinweise pro Typ (nur Anzeige — keine Logik). */
 const TYPE_HINT: Partial<Record<ImportTaskType, string>> = {
   verkaufsdaten:
-    'Verkaufsdaten (product_sales) haben keine Mandanten-Trennung — der Status gilt mandantenübergreifend.',
+    'Tage, die durch einen erweiterten Z-Bericht PDF abgedeckt sind, gelten als erledigt — der CSV-Import ist nur noch optionaler Fallback. Verkaufsdaten (product_sales) haben keine Mandanten-Trennung — der Status gilt mandantenübergreifend.',
   zbericht:
     'Ruhetage ohne Umsatz bleiben als offene Tagesaufgaben stehen, solange kein Z-Bericht für den Tag importiert wurde.',
   reservationen:

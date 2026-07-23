@@ -86,8 +86,51 @@ export interface GnExtendedData {
   positions: GnExtendedEntry[];
 }
 
+// ── PDF-Zusatzdaten (nur sourceFormat 'pdf', additiv-optional) ───────────────
+
+/** Eine Zeile der Zeitabschnittstabelle (Stundenumsätze, negative Werte bleiben). */
+export interface GnHourlyRevenueRow {
+  /** Anzeige-Label, z. B. «23:00» */
+  label: string;
+  /** Stunde 0–23; null wenn nicht parsebar. */
+  hour: number | null;
+  /** Gesamtumsatz des Abschnitts (kann negativ sein, z. B. Korrekturen). */
+  totalAmount: number;
+  /** Anteil in Prozent; null wenn nicht vorhanden. */
+  sharePct: number | null;
+}
+
+export type GnValidationStatus = 'plausibel' | 'rundungsdifferenz' | 'abweichung' | 'unvollstaendig';
+
+/** Eine einzelne Plausibilitätsprüfung (Summenabgleich). */
+export interface GnValidationCheck {
+  id: string;
+  label: string;
+  expected: number | null;
+  actual: number | null;
+  /** actual − expected; null wenn eine Seite fehlt. */
+  diff: number | null;
+  status: GnValidationStatus;
+  note?: string;
+}
+
+export interface GnValidationResult {
+  /** Schlechtester Einzelstatus: abweichung > unvollstaendig > rundungsdifferenz > plausibel. */
+  status: GnValidationStatus;
+  checks: GnValidationCheck[];
+}
+
+/** Kind-Zahlart (z. B. «Gastronovi Pay» unter «Visa») — rein informativ,
+ *  zählt NIE in paymentMethods (keine Doppelzählung). */
+export interface GnPaymentProvider {
+  parent: string;
+  name: string;
+  count: number;
+  amount: number;
+}
+
 export interface GnParseDebug {
-  /** Erkanntes Trennzeichen */
+  /** Erkanntes Trennzeichen (CSV) bzw. «PDF» */
   delimiter: string;
   /** Anzahl Trennzeichen im CSV */
   delimCounts: { semicolon: number; comma: number; tab: number };
@@ -169,6 +212,31 @@ export interface GnParsedZBericht {
   discountTotal: number;
   bonCount: number;
   avgBon: number;
+
+  // ── PDF-Zusatzfelder (additiv-optional; CSV-Importe lassen sie weg) ────────
+  /** Quellformat des Imports; fehlend = Legacy-CSV. */
+  sourceFormat?: 'csv' | 'pdf';
+  /** Uhrzeit «HH:mm» aus «Von»/«Bis» (nur PDF mit Zeitstempeln). */
+  periodFromTime?: string | null;
+  periodToTime?: string | null;
+  /**
+   * Geschäftstag (ISO) bei Tagesberichten über Mitternacht: Spanne ≤ 26 h ⇒
+   * EIN Geschäftstag = Kalenderdatum von «Bis», ausser Bis-Uhrzeit < 08:00 ⇒
+   * Kalenderdatum von «Von». periodFrom/periodTo werden dann auf den
+   * Geschäftstag gesetzt (Tagesdatensatz). null = echte Periode.
+   */
+  businessDay?: string | null;
+  /** Zeitabschnitte (Stundenumsätze) inkl. negativer Werte. */
+  hourlyRevenue?: GnHourlyRevenueRow[] | null;
+  /** «Gesamt»-Zeile der Zeitabschnittstabelle. */
+  hourlyRevenueTotal?: number | null;
+  /** Aufladungen Kundenkarten (Einzelkarten, ohne Total-Zeile). */
+  customerCardTopups?: GnNameCountAmount[] | null;
+  customerCardTopupTotal?: number | null;
+  /** Kind-Zahlarten (Parent/Child) — informativ, nie doppelt gezählt. */
+  paymentMethodProviders?: GnPaymentProvider[] | null;
+  /** Plausibilitätsprüfung (nur PDF). */
+  validation?: GnValidationResult | null;
 }
 
 // ── Fuzzy-Sektion-Mapping ─────────────────────────────────────────────────────
@@ -205,10 +273,14 @@ const SECTION_FUZZY: Array<[RegExp, string]> = [
   [/^storniert/i,              'Stornierte Artikel'],
   [/^buchungskont/i,           'Buchungskonten'],
   [/^zahlungskont/i,           'Zahlungskonten'],
+  // PDF «Auswertungen»: eigene Sektion, damit Stundenzeilen nie eine
+  // Vorsektion (z. B. Zahlungskonten) verschmutzen. Wird vom PDF-Parser
+  // separat ausgewertet, der Kern liest sie nicht.
+  [/^zeitabschnitt/i,          'Zeitabschnitte'],
 ];
 
-/** Liefert den kanonischen Sektionsnamen oder null */
-function matchSectionName(text: string): string | null {
+/** Liefert den kanonischen Sektionsnamen oder null (auch vom PDF-Adapter genutzt) */
+export function matchSectionName(text: string): string | null {
   const t = text.trim();
   if (!t) return null;
   for (const [re, canonical] of SECTION_FUZZY) {
@@ -518,7 +590,6 @@ const EXPECTED_SECTIONS = [
 ];
 
 export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBericht {
-  const warnings: string[] = [];
   const checksum = simpleHash(csvText);
 
   // ── Delimiter erkennen ──────────────────────────────────────────────────────
@@ -527,6 +598,41 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   // ── CSV in Zeilen aufteilen ─────────────────────────────────────────────────
   const rawLines = csvText.split(/\r?\n/);
   const allRows  = rawLines.map(l => parseCSVLine(l, delim));
+
+  return parseGnZBerichtFromRows(allRows, {
+    fileName,
+    checksum,
+    sourceFormat: 'csv',
+    delimiterLabel: delim === '\t' ? 'Tab' : delim === ';' ? 'Semikolon' : 'Komma',
+    delimCounts,
+    rawLines,
+    verboseConsole: true,
+  });
+}
+
+/** Kontext für den format-unabhängigen Sektions-Kern. */
+export interface GnParseRowsContext {
+  fileName: string;
+  checksum: string;
+  sourceFormat: 'csv' | 'pdf';
+  /** Anzeige-Label fürs Debug-Objekt («Semikolon», «Tab», «PDF»). */
+  delimiterLabel: string;
+  delimCounts: { semicolon: number; comma: number; tab: number };
+  /** Rohzeilen (CSV: Originalzeilen; PDF: rekonstruierte Zeilentexte). */
+  rawLines: string[];
+  /** Console-Debug nur für den CSV-Pfad (keine PDF-Rohtexte in Logs). */
+  verboseConsole?: boolean;
+}
+
+/**
+ * Format-unabhängiger Kern: Sektions-Erkennung, Sektions-Parsing und alle
+ * abgeleiteten KPIs auf bereits zerlegten Zeilen (string[][]).
+ * EINZIGE Berechnungsquelle für CSV UND PDF (SSoT) — der PDF-Adapter
+ * (gn-zbericht-pdf-parser.ts) liefert nur normalisierte Zeilen an.
+ */
+export function parseGnZBerichtFromRows(allRows: string[][], ctx: GnParseRowsContext): GnParsedZBericht {
+  const { fileName, checksum, rawLines, delimCounts } = ctx;
+  const warnings: string[] = [];
 
   // ── Sektionen erkennen ─────────────────────────────────────────────────────
   const { headerRows, sections, rawSectionNames } = splitIntoSections(allRows);
@@ -635,7 +741,7 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
   // ── Debug-Informationen zusammenstellen ────────────────────────────────────
 
   const debug: GnParseDebug = {
-    delimiter:     delim === '\t' ? 'Tab' : delim === ';' ? 'Semikolon' : 'Komma',
+    delimiter:     ctx.delimiterLabel,
     delimCounts,
     firstRawLines: rawLines.slice(0, 50),
     firstParsedRows: allRows.slice(0, 50),
@@ -653,22 +759,24 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
     sectionCandidates,
   };
 
-  // ── Console-Debug-Ausgabe ───────────────────────────────────────────────────
-  console.group(`[GN-PARSER] ${fileName}`);
-  console.log(`Trennzeichen: "${debug.delimiter}" — ;=${delimCounts.semicolon} ,=${delimCounts.comma} \\t=${delimCounts.tab}`);
-  console.log(`Gesamt Zeilen: ${rawLines.length}, gültige Header-Zeilen: ${headerRows.length}`);
-  console.log('Header-Zeilen:', headerRows.map(r => r.join(' | ')));
-  console.log(`Zeitraum (Zeile ${debug.periodLine ?? '?'}): "${periodRaw}" → ${periodFrom} – ${periodTo}`);
-  console.log(`Z-Zähler (Zeile ${debug.zCounterLine ?? '?'}): "${zCounterRaw}"`);
-  console.log(`Kostenstelle: "${costCenter}"`);
-  console.log('Gefundene Sektionen:', foundSections.join(', ') || '(keine)');
-  console.log('Rohe Sektionsnamen:', rawSectionNames.map(x => `"${x.raw}" → ${x.canonical}`).join(', '));
-  if (missingSections.length) console.warn('Fehlende Sektionen:', missingSections.join(', '));
-  console.log('Erste 20 geparste Zeilen:');
-  allRows.slice(0, 20).forEach((r, i) =>
-    console.log(`  Z${String(i + 1).padStart(3)}: [${r.map(c => `"${c}"`).join(', ')}]`)
-  );
-  console.groupEnd();
+  // ── Console-Debug-Ausgabe (nur CSV-Pfad — keine PDF-Rohtexte in Logs) ──────
+  if (ctx.verboseConsole) {
+    console.group(`[GN-PARSER] ${fileName}`);
+    console.log(`Trennzeichen: "${debug.delimiter}" — ;=${delimCounts.semicolon} ,=${delimCounts.comma} \\t=${delimCounts.tab}`);
+    console.log(`Gesamt Zeilen: ${rawLines.length}, gültige Header-Zeilen: ${headerRows.length}`);
+    console.log('Header-Zeilen:', headerRows.map(r => r.join(' | ')));
+    console.log(`Zeitraum (Zeile ${debug.periodLine ?? '?'}): "${periodRaw}" → ${periodFrom} – ${periodTo}`);
+    console.log(`Z-Zähler (Zeile ${debug.zCounterLine ?? '?'}): "${zCounterRaw}"`);
+    console.log(`Kostenstelle: "${costCenter}"`);
+    console.log('Gefundene Sektionen:', foundSections.join(', ') || '(keine)');
+    console.log('Rohe Sektionsnamen:', rawSectionNames.map(x => `"${x.raw}" → ${x.canonical}`).join(', '));
+    if (missingSections.length) console.warn('Fehlende Sektionen:', missingSections.join(', '));
+    console.log('Erste 20 geparste Zeilen:');
+    allRows.slice(0, 20).forEach((r, i) =>
+      console.log(`  Z${String(i + 1).padStart(3)}: [${r.map(c => `"${c}"`).join(', ')}]`)
+    );
+    console.groupEnd();
+  }
 
   // ── Warnungen ──────────────────────────────────────────────────────────────
   if (!periodFrom || !periodTo) warnings.push('Zeitraum konnte nicht erkannt werden.');
@@ -869,6 +977,7 @@ export function parseGnZBericht(csvText: string, fileName: string): GnParsedZBer
 
   return {
     fileName, checksum, warnings, debug,
+    sourceFormat: ctx.sourceFormat,
     reportType: isExtended ? 'extended' : 'standard',
     extendedData,
     periodRaw, periodFrom, periodTo,

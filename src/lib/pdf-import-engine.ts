@@ -27,15 +27,10 @@ import * as XLSX from 'xlsx';
 import type { ParsedCSVRow } from './csv-import-engine';
 import { parseAmount } from './csv-import-engine';
 import type { SageJournalEntry } from '@/types/reporting';
+import { ensurePdfWorkerConfigured } from './pdf-worker-setup';
 
-// ─── Worker-Konfiguration ─────────────────────────────────────────────────────
-
-// Wir nutzen den CDN-Worker, um Bundler-Kompatibilitätsprobleme zu vermeiden.
-// Version muss zur installierten pdfjs-dist-Version passen.
-if (typeof window !== 'undefined') {
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-}
+// ─── Worker-Konfiguration (zentral in pdf-worker-setup.ts) ────────────────────
+ensurePdfWorkerConfigured();
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 

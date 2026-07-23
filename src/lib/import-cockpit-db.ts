@@ -184,7 +184,7 @@ async function tagesumsatzSignal(ctx: CockpitFetchContext): Promise<CockpitSigna
  * Zusätzlich zählt die Abdeckung durch AKTIVE erweiterte Z-Berichte des
  * aktuellen Tenants (gn_extended_positions liefern dieselben Produktdaten).
  * Ist der erweiterte Datenstand mindestens so frisch wie der CSV-Import,
- * wird das sichtbar gemacht («Durch erweiterten Z-Bericht abgedeckt») —
+ * wird das sichtbar gemacht («Durch erweiterten Z-Bericht PDF abgedeckt») —
  * der Status kommt dabei weiterhin aus der ZENTRALEN Frische-Berechnung
  * (computeSourceStatus über den gemeinsamen Datenstand), keine Parallel-Logik.
  */
@@ -245,7 +245,7 @@ async function produktverkaeufeSignal(ctx: CockpitFetchContext): Promise<Cockpit
         ...merged,
         statusOverride: {
           status: central.status,
-          reason: `Durch erweiterten Z-Bericht abgedeckt (Detailpositionen bis ${extUntil.split('-').reverse().join('.')}). ${central.reason}`,
+          reason: `Durch erweiterten Z-Bericht PDF abgedeckt (Detailpositionen bis ${extUntil.split('-').reverse().join('.')}). ${central.reason}`,
         },
       };
     }
@@ -253,6 +253,137 @@ async function produktverkaeufeSignal(ctx: CockpitFetchContext): Promise<Cockpit
   }
 
   return base;
+}
+
+/** Gemeinsames Signal-Gerüst aus einer sortierten Liste von Tages-Daten (yyyy-MM-dd). */
+function signalFromDays(
+  days: string[],
+  lastImportAt: string | null,
+): CockpitSignal {
+  const today = todayIso();
+  const sorted = [...new Set(days)].sort();
+  const past = sorted.filter((d) => d <= today);
+  const futureLatest = sorted.filter((d) => d > today).at(-1) ?? null;
+  if (!past.length) {
+    return futureLatest ? { latestDataDate: null, futureDataDate: futureLatest } : EMPTY;
+  }
+  const latest = past.at(-1)!;
+  return {
+    latestDataDate: latest,
+    dataFrom: sorted[0] ?? null,
+    dataUntil: latest,
+    recordCount: past.length,
+    futureDataDate: futureLatest,
+    lastImport: lastImportAt ? { at: lastImportAt, status: 'success' } : null,
+  };
+}
+
+/**
+ * Zeitabschnitte / Stundenumsätze: Tages-Z-Berichte (gn_imports, aktiv,
+ * aggregation_level 'day') mit nicht-leerem hourlyRevenue-Abschnitt.
+ * Frische = spätester Tagesbericht MIT Zeitabschnittsdaten (fehlend ≠ 0):
+ * Tage ohne Abschnitt zählen bewusst nicht als abgedeckt.
+ */
+async function zeitabschnitteSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
+  const { data } = await (supabase as unknown as {
+    from: (t: string) => any;
+  })
+    .from('gn_imports')
+    .select('period_from, imported_at, hourly:raw_csv_json->hourlyRevenue')
+    .eq('restaurant_id', ctx.tenantId)
+    .eq('status', 'active')
+    .eq('aggregation_level', 'day')
+    // Frische braucht nur die NEUESTEN Tage — ohne order/limit kappt PostgREST
+    // bei ~1000 Zeilen in unbestimmter Reihenfolge (neueste könnten fehlen).
+    .order('period_from', { ascending: false })
+    .limit(1000);
+  const rows = (data ?? []) as Array<{ period_from: string | null; imported_at: string | null; hourly: unknown }>;
+  const days: string[] = [];
+  let lastImportAt: string | null = null;
+  for (const r of rows) {
+    if (!r.period_from || !Array.isArray(r.hourly) || r.hourly.length === 0) continue;
+    days.push(r.period_from.slice(0, 10));
+    if (r.imported_at && (!lastImportAt || r.imported_at > lastImportAt)) lastImportAt = r.imported_at;
+  }
+  return signalFromDays(days, lastImportAt);
+}
+
+/**
+ * Personen-Kennzahlen aus den Gastronovi-Auswertungs-PDFs (gn_person_imports →
+ * gn_person_metrics, nur AKTIVE Importe). Frische = spätester Tag mit echtem
+ * Wert (Anzahl Personen bzw. Umsatz pro Person) — leere Tageswerte zählen nie
+ * (fehlend ≠ 0). Kombi-Berichte (csv_type 'personen') decken beide Kennzahlen ab.
+ */
+async function personMetricSignal(
+  ctx: CockpitFetchContext,
+  kind: 'anzahl_personen' | 'umsatz_pro_person',
+): Promise<CockpitSignal> {
+  const sb = supabase as unknown as { from: (t: string) => any };
+  const { data: imports } = await sb
+    .from('gn_person_imports')
+    .select('id, created_at')
+    .eq('restaurant_id', ctx.tenantId)
+    .eq('status', 'active')
+    .in('csv_type', [kind, 'personen']);
+  const importRows = (imports ?? []) as Array<{ id: string; created_at: string | null }>;
+  if (!importRows.length) return EMPTY;
+  const lastImportAt = importRows
+    .map((i) => i.created_at)
+    .filter((v): v is string => !!v)
+    .sort()
+    .at(-1) ?? null;
+  const { data: metrics } = await sb
+    .from('gn_person_metrics')
+    .select('date, guests_count, revenue_per_person, metric_type')
+    .in('import_id', importRows.map((i) => i.id))
+    // Frische braucht nur die NEUESTEN Tage (PostgREST-Cap ~1000 Zeilen).
+    .order('date', { ascending: false })
+    .limit(1000);
+  const days: string[] = [];
+  for (const r of (metrics ?? []) as Array<{
+    date: string | null;
+    guests_count: number | null;
+    revenue_per_person: number | null;
+    metric_type: string | null;
+  }>) {
+    if (!r.date) continue;
+    const t = r.metric_type ?? '';
+    const hasValue =
+      kind === 'anzahl_personen'
+        ? (t === 'anzahl_personen' || t === 'personen') && typeof r.guests_count === 'number' && r.guests_count >= 0
+        : (t === 'umsatz_pro_person' || t === 'personen') && typeof r.revenue_per_person === 'number' && r.revenue_per_person > 0;
+    if (hasValue) days.push(r.date);
+  }
+  return signalFromDays(days, lastImportAt);
+}
+
+/**
+ * Durchschnittsbon: gn_average_checks (business_id = Tenant). Frische =
+ * spätester Tag mit Bonwert > 0 — leere Tageswerte zählen nie (fehlend ≠ 0).
+ */
+async function durchschnittsbonSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
+  const { data } = await (supabase as unknown as { from: (t: string) => any })
+    .from('gn_average_checks')
+    .select('report_date, average_check_chf, created_at')
+    .eq('business_id', ctx.tenantId)
+    .not('average_check_chf', 'is', null)
+    // Frische braucht nur die NEUESTEN Tage (PostgREST-Cap ~1000 Zeilen).
+    .order('report_date', { ascending: false })
+    .limit(1000);
+  const rows = (data ?? []) as Array<{
+    report_date: string | null;
+    average_check_chf: number | null;
+    created_at: string | null;
+  }>;
+  const days = rows
+    .filter((r) => !!r.report_date && typeof r.average_check_chf === 'number' && r.average_check_chf > 0)
+    .map((r) => r.report_date!);
+  const lastImportAt = rows
+    .map((r) => r.created_at)
+    .filter((v): v is string => !!v)
+    .sort()
+    .at(-1) ?? null;
+  return signalFromDays(days, lastImportAt);
 }
 
 /**
@@ -537,6 +668,10 @@ export async function fetchCockpitSignals(
     { id: 'zbericht', run: () => zberichtSignal(ctx) },
     { id: 'tagesumsatz', run: () => tagesumsatzSignal(ctx) },
     { id: 'produktverkaeufe', run: () => produktverkaeufeSignal(ctx) },
+    { id: 'zeitabschnitte', run: () => zeitabschnitteSignal(ctx) },
+    { id: 'anzahl_personen', run: () => personMetricSignal(ctx, 'anzahl_personen') },
+    { id: 'umsatz_pro_person', run: () => personMetricSignal(ctx, 'umsatz_pro_person') },
+    { id: 'durchschnittsbon', run: () => durchschnittsbonSignal(ctx) },
     { id: 'mirus', run: () => mirusSignal(ctx) },
     { id: 'dienstplanung', run: () => dienstplanungSignal(ctx) },
     { id: 'umsatzabstimmung', run: () => umsatzabstimmungSignal(ctx) },
