@@ -95,15 +95,10 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     groupLabel: 'Verkauf',
     items: [
-      {
-        // Ausführliches Dashboard (bisherige Startseite) — Startseite '/' ist
-        // jetzt die vereinfachte Übersicht (StartOverview).
-        path: '/dashboard',
-        label: 'Dashboard',
-        shortLabel: 'Dashboard',
-        icon: BarChart3,
-        adminOnly: true,
-      },
+      // '/dashboard' (Ausführliches Dashboard): Route + Guard bleiben bestehen,
+      // aber bewusst KEIN Nav-Eintrag mehr — erreichbar über den Button
+      // «Ausführliches Dashboard» auf der Startübersicht und direkt per URL;
+      // für Manager-Rollen bleibt es die Startroute «/».
       {
         path: '/verkauf-dashboard',
         label: 'Verkaufsdashboard',
@@ -111,6 +106,7 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: PieChart,
         adminOnly: true,
         beaulieuAllowed: true,
+        secondary: true,
       },
       {
         path: '/tagesansicht',

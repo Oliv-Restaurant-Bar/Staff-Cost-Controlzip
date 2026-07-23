@@ -687,9 +687,18 @@ export default function ReservationAnalysePage() {
           info={`Personen, Reservationen und Vorjahrvergleiche auf einen Blick. Klick auf Monate, Wochentage oder Heatmap-Zellen öffnet die Details. ${OCCURRENCE_NOTE}`}
           meta={rangeLabel}
           actions={(
-            <Button variant="ghost" size="sm" onClick={() => navigate('/gaeste')}>
-              <ArrowLeft className="mr-1 h-4 w-4" /> Gäste CRM
-            </Button>
+            <div className="flex flex-wrap items-center gap-1">
+              {/* Detail-Drilldowns (Routen ohne Nav-Eintrag) */}
+              <Button variant="ghost" size="sm" onClick={() => navigate('/gaeste/wochentag')}>
+                Wochentag-Detail
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/gaeste/vorjahr')}>
+                Vorjahr-Detail
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => navigate('/gaeste')}>
+                <ArrowLeft className="mr-1 h-4 w-4" /> Gäste CRM
+              </Button>
+            </div>
           )}
         >
           {/* Globaler Kennzahl-Umschalter — sichtbar, aber ruhig */}
