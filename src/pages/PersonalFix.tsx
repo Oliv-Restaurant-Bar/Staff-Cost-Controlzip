@@ -2,7 +2,8 @@ import { useState, useMemo, useEffect, useCallback, type ReactNode } from 'react
 import ManagementInsights from '@/components/personal-fix/ManagementInsights';
 import HourBalanceSection from '@/components/hour-balance/HourBalanceSection';
 import { buildHourBalances, generatePlanningHints } from '@/lib/hour-balance-utils';
-import { Navigate, Link, useNavigate } from 'react-router-dom';
+import { Navigate, Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import {
   DollarSign, Users, BookOpen, TrendingUp, ChefHat,
   Utensils, Edit2, Check, X, Info, Building2, AlertCircle, Clock,
@@ -2095,8 +2096,11 @@ export default function PersonalFixPage() {
   if (!isAdmin && !isBeaulieuManager) return <Navigate to="/personal" replace />;
 
   const today = new Date();
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM, nur Initialwert)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [selectedYear, setSelectedYear] = useState(monatParam?.year ?? today.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(monatParam?.month ?? today.getMonth() + 1);
   // Überstundenkosten in Total/PKQ einbeziehen (Toggle der Überstunden-Karte)
   const [includeOvertime, setIncludeOvertime] = useState(false);
   // Pro Mitarbeiter dauerhaft deaktivierte Überstundenberechnung (Supabase KV, mandanten-prefixed)

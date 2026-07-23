@@ -27,6 +27,10 @@ budget-position → PL-row mapping. Mapping order: account number
 (`lookupAccount`→`PL_CATEGORY_TO_ROW_ID`) first, else category (`BPL_CAT_TO_PL_ROW`);
 skip `isInternal` items and 0 values.
 
+**Fixture gotcha:** `budgetByRow` keys are PL ROW IDs (`revenue_total`, `cogs_food`,
+`personnel_wages`, `rent`, `depreciation`), NOT budget category ids (`food_cost`,
+`miete`, `abschreibungen`) — mixing them up silently yields empty budgets in tests.
+
 **Test env gotcha:** unit tests importing anything from `pl-engine.ts` need `happy-dom`
 (NOT `node`), because pl-engine transitively imports the Supabase client, which touches
 `localStorage` at module load. Keep the helper testable by injecting `lookupFn`.

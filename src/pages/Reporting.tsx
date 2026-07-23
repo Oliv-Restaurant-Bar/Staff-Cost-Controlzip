@@ -16,7 +16,8 @@
  */
 
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Plus,
@@ -2017,7 +2018,12 @@ const Reporting = () => {
   const { showMarketingCol: maisonColPref } = useMaison();
   // Tenant-bewusst (Beaulieu sah zuvor Oliv-Jahre) + 2024 wählbar (§ Jahresauswahl)
   const years = yearSelectOptions(availableYears(tenantKey('reporting_v1')), currentYear);
-  const [year,        setYear]        = useState(currentYear);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM ⇒ Jahresauswahl)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [year,        setYear]        = useState(
+    monatParam && years.includes(monatParam.year) ? monatParam.year : currentYear,
+  );
   const [months,      setMonths]      = useState<MonthlyFinancialRecord[]>(() => loadYear(year, tenantKey('reporting_v1')));
   const [editRecord,  setEditRecord]  = useState<MonthlyFinancialRecord | null>(null);
   const [highlightVariance, setHighlightVariance] = useState(false);

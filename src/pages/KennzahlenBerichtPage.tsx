@@ -8,6 +8,8 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import {
   startOfWeek, endOfMonth, startOfMonth, startOfYear,
   subDays, subMonths, subYears, eachDayOfInterval, format, parseISO,
@@ -299,10 +301,36 @@ export default function KennzahlenBerichtPage() {
   const { tenantId } = useTenant();
   const today = useMemo(() => new Date(), []);
 
-  const [period,     setPeriod]     = useState<Period>('monat');
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM, nur Initialwert):
+  // aktueller Monat ⇒ «Monat», Vormonat ⇒ «Letzter Monat», sonst Custom-Zeitraum.
+  const [searchParams] = useSearchParams();
+  const monatInit = useMemo(() => {
+    const p = parseMonatParam(searchParams.get(MONAT_PARAM));
+    if (!p) return null;
+    const start = new Date(p.year, p.month - 1, 1);
+    const lastMonth = subMonths(today, 1);
+    if (p.year === today.getFullYear() && p.month === today.getMonth() + 1) {
+      return { period: 'monat' as Period };
+    }
+    if (p.year === lastMonth.getFullYear() && p.month === lastMonth.getMonth() + 1) {
+      return { period: 'letzter_monat' as Period };
+    }
+    return {
+      period: 'custom' as Period,
+      from: format(start, 'yyyy-MM-dd'),
+      to: format(endOfMonth(start), 'yyyy-MM-dd'),
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [period,     setPeriod]     = useState<Period>(monatInit?.period ?? 'monat');
   const [viewMode,   setViewMode]   = useState<ViewMode>('dashboard');
-  const [customFrom, setCustomFrom] = useState(format(startOfMonth(today), 'yyyy-MM-dd'));
-  const [customTo,   setCustomTo]   = useState(format(today, 'yyyy-MM-dd'));
+  const [customFrom, setCustomFrom] = useState(
+    monatInit && 'from' in monatInit && monatInit.from ? monatInit.from : format(startOfMonth(today), 'yyyy-MM-dd'),
+  );
+  const [customTo,   setCustomTo]   = useState(
+    monatInit && 'to' in monatInit && monatInit.to ? monatInit.to : format(today, 'yyyy-MM-dd'),
+  );
   const [loading,    setLoading]    = useState(false);
   const [summary,    setSummary]    = useState<Summary | null>(null);
 

@@ -14,7 +14,7 @@ import { ArrowRight } from 'lucide-react';
 import { KpiCard, KpiGrid } from '@/components/ui/kpi-card';
 import type { Tone } from '@/components/ui/tones';
 import {
-  getFinancialMetricValues,
+  getGatedFinancialMetricValues,
   type FinancialMetricId,
   type FinancialMetricRegistryInput,
   type FinancialMetricValues,
@@ -120,7 +120,10 @@ export function FinancialMonthSection({
     FinancialMetricId,
     FinancialMetricValues
   >;
-  for (const row of TABLE_ROWS) values[row.id] = getFinancialMetricValues(row.id, input);
+  // Dependency-Gate (financial-metrics): Ergebnis-Kennzahlen nur, wenn ALLE
+  // erforderlichen Komponenten der Spalte vorhanden sind — fehlt z. B. der
+  // Kostenimport, ist EBIT «—» und NIE ein Scheinwert (EBIT ≡ Umsatz).
+  for (const row of TABLE_ROWS) values[row.id] = getGatedFinancialMetricValues(row.id, input);
 
   const rev  = values.net_revenue;
   const pers = values.total_personnel;

@@ -13,8 +13,12 @@ import { describe, expect, it } from 'vitest';
 import {
   FINANCIAL_METRICS,
   FINANCIAL_METRIC_IDS,
+  FINANCIAL_METRIC_DEPENDENCIES,
   getFinancialMetricValues,
   getFinancialMetricDefinition,
+  getFinancialMetricMissingDependencies,
+  getFinancialMetricLabel,
+  getGatedFinancialMetricValues,
   getAllFinancialMetricDefinitions,
   type FinancialMetricRegistryInput,
 } from '@/lib/financial-metrics';
@@ -252,6 +256,96 @@ describe('buildPrevYearByRowForMonth (extrahiert aus PLView)', () => {
     expect(getFinancialMetricValues('net_revenue', input).priorYear).toBe(80_000);
     expect(getFinancialMetricValues('total_personnel', input).priorYear).toBe(28_000);
     expect(getFinancialMetricValues('personnel_ratio', input).priorYear).toBeCloseTo(35, 10);
+  });
+});
+
+// ─── Dependency-Gate (Korrekturrunde: EBIT/Bruttogewinn nie aus Teildaten) ────
+
+describe('Dependency-Gate — getGatedFinancialMetricValues', () => {
+  /** Monat OHNE Abschreibungen (sonst voll): Roh-EBIT wäre ein Scheinwert. */
+  const recOhneAbschr = mkRec(2026, 3, {
+    revenueActual: 100_000,
+    personnelCostActual: 35_000,
+    expenseCategories: [
+      { categoryId: 'food_cost', amount: 30_000, label: 'Wareneinsatz Küche' },
+      { categoryId: 'miete', amount: 10_000, label: 'Miete' },
+    ] as never,
+  });
+  /** Monat OHNE Warenaufwand (sonst voll): Bruttogewinn wäre ≡ Umsatz. */
+  const recOhneWaren = mkRec(2026, 3, {
+    revenueActual: 100_000,
+    personnelCostActual: 35_000,
+    expenseCategories: [
+      { categoryId: 'miete', amount: 10_000, label: 'Miete' },
+      { categoryId: 'abschreibungen', amount: 5_000, label: 'Abschreibungen' },
+    ] as never,
+  });
+
+  it('jede Registry-ID hat einen Dependency-Eintrag; Komponenten sind ungegated', () => {
+    for (const id of FINANCIAL_METRIC_IDS) {
+      expect(FINANCIAL_METRIC_DEPENDENCIES[id]).toBeDefined();
+    }
+    // Basis-Komponenten haben keine Abhängigkeiten ⇒ Gate = Rohwert
+    for (const id of ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex', 'total_depreciation'] as const) {
+      expect(FINANCIAL_METRIC_DEPENDENCIES[id]).toHaveLength(0);
+    }
+    expect(FINANCIAL_METRIC_DEPENDENCIES.ebit).toEqual(
+      ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex', 'total_depreciation'],
+    );
+  });
+
+  it('EBIT bleibt «—» (null), wenn eine erforderliche Kostenposition fehlt', () => {
+    const input = inputOf(computePLForMonth(recOhneAbschr));
+    // Rohwert wäre vorhanden (Scheinwert ohne Abschreibungen) …
+    expect(getFinancialMetricValues('ebit', input).actual).not.toBeNull();
+    // … das Gate liefert null:
+    expect(getGatedFinancialMetricValues('ebit', input).actual).toBeNull();
+    expect(getGatedFinancialMetricValues('ebit_margin', input).actual).toBeNull();
+    expect(getFinancialMetricMissingDependencies('ebit', input, 'actual')).toEqual(['total_depreciation']);
+  });
+
+  it('Bruttogewinn bleibt «—» (null), wenn der Warenaufwand fehlt', () => {
+    const input = inputOf(computePLForMonth(recOhneWaren));
+    expect(getGatedFinancialMetricValues('gross_profit_1', input).actual).toBeNull();
+    expect(getGatedFinancialMetricValues('ebit', input).actual).toBeNull();
+    expect(getFinancialMetricMissingDependencies('gross_profit_1', input, 'actual')).toEqual(['total_cogs']);
+  });
+
+  it('fehlende Kosten werden NIE als 0 interpretiert (leerer Monat komplett null)', () => {
+    const input = inputOf(computePLForMonth(mkRec(2026, 4)));
+    for (const id of FINANCIAL_METRIC_IDS) {
+      const v = getGatedFinancialMetricValues(id, input);
+      expect(v.actual).toBeNull();
+      expect(v.budget).toBeNull();
+      expect(v.priorYear).toBeNull();
+    }
+  });
+
+  it('vollständiger Monat berechnet EBIT korrekt (Gate ändert nichts)', () => {
+    const input = inputOf(computePLForMonth(fullRec));
+    expect(getGatedFinancialMetricValues('ebit', input).actual).toBe(20_000);
+    expect(getGatedFinancialMetricValues('gross_profit_1', input).actual).toBe(70_000);
+    for (const id of FINANCIAL_METRIC_IDS) {
+      expect(getGatedFinancialMetricValues(id, input)).toEqual(getFinancialMetricValues(id, input));
+    }
+  });
+
+  it('Spalten unabhängig: vollständiges Budget bleibt trotz unvollständigem IST', () => {
+    const budgetByRow = new Map<string, number>([
+      ['revenue_total', 90_000],
+      ['cogs_food', 27_000],
+      ['personnel_wages', 33_000],
+      ['rent', 9_000],
+      ['depreciation', 4_000],
+    ]);
+    const input = inputOf(computePLForMonth(recOhneAbschr, { budgetByRow }));
+    const ebit = getGatedFinancialMetricValues('ebit', input);
+    expect(ebit.actual).toBeNull(); // IST unvollständig
+    expect(ebit.budget).toBe(17_000); // Budget vollständig: 90−27−33−9−4
+  });
+
+  it('getFinancialMetricLabel liefert das Registry-Label (für Fehlt-Hinweise)', () => {
+    expect(getFinancialMetricLabel('total_depreciation')).toBe(FINANCIAL_METRICS.total_depreciation.label);
   });
 });
 

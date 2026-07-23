@@ -1,0 +1,278 @@
+Führe vor dem Merge eine gezielte fachliche Korrektur- und Freigaberunde für das neue Management KPI Dashboard durch.
+
+Noch NICHT auf die Main-Version anwenden.
+
+──────────────────────────────────────
+1. EBIT auf unvollständige Daten prüfen
+──────────────────────────────────────
+
+Im aktuellen Screenshot entsprechen sich Nettoumsatz und EBIT exakt:
+
+Nettoumsatz CHF 53'051
+EBIT CHF 53'051
+
+Das ist fachlich höchstwahrscheinlich falsch.
+
+Prüfe den vollständigen Datenfluss:
+
+Financial-Metrics-Registry
+→ computePLForMonth
+→ getKpiValues
+→ Management-KPI-Karte
+→ Tabelle
+→ Excel/PDF-Export
+
+Regel:
+
+EBIT darf nur angezeigt werden, wenn alle für die bestehende EBIT-Berechnung erforderlichen Zwischensummen vollständig verfügbar sind.
+
+Fehlen insbesondere:
+
+Warenaufwand
+Personalaufwand
+übriger Betriebsaufwand
+oder andere für EBIT notwendige Werte,
+
+darf daraus nicht durch implizite Nullwerte ein scheinbares EBIT entstehen.
+
+Dann anzeigen:
+
+—
+
+Zusätzlich optional:
+
+„Noch nicht vollständig“
+
+Keine Schätzung.
+Keine fehlenden Werte als 0 behandeln.
+Keine neue EBIT-Formel einführen.
+Weiterhin dieselbe Financial-Metrics-Registry als SSOT verwenden.
+
+Prüfe auch:
+
+UI
+Tabelle
+Excel
+PDF
+
+Alle müssen identisch reagieren.
+
+──────────────────────────────────────
+2. Laufenden Monat korrekt vergleichen
+──────────────────────────────────────
+
+Der aktuell gewählte Juli 2026 ist noch nicht abgeschlossen.
+
+Der bisherige IST-Wert darf nicht kommentarlos mit dem vollständigen Monatsbudget und dem vollständigen Vorjahresmonat verglichen werden.
+
+Implementiere für laufende Monate eine fachlich klare Darstellung.
+
+Bevorzugte Lösung:
+
+IST bis heute
+
+Budget bis heute
+
+Vorjahr bis zum gleichen Kalendertag
+
+Abweichung zum anteiligen Budget
+
+Zusätzlich darf das vollständige Monatsbudget als Kontext sichtbar bleiben.
+
+Bezeichnungen müssen eindeutig sein:
+
+IST bis 23.07.
+Budget bis 23.07.
+Vorjahr bis 23.07.
+
+Alternativ, falls keine belastbare Tagesverteilung des Budgets existiert:
+
+keine lineare Hochrechnung erfinden.
+
+Dann vollständiges Monatsbudget weiterhin zeigen, aber deutlich kennzeichnen:
+
+„Laufender Monat – Vergleich mit vollständigem Monatsbudget“
+
+Die Abweichung darf in diesem Fall keine normale rote Ampel auslösen.
+
+Abgeschlossene Monate verwenden weiterhin den vollständigen Monatsvergleich.
+
+──────────────────────────────────────
+3. Warenquote und Personalquote prüfen
+──────────────────────────────────────
+
+Im Dashboard fehlen aktuell die IST-Werte für:
+
+Warenquote
+Personalquote
+
+Prüfe, ob die zugrunde liegenden IST-Werte in der Erfolgsrechnung für den gewählten Monat vorhanden sind.
+
+Prüfe insbesondere:
+
+Monatsparameter
+Tenant
+Kontenzuordnung
+Financial-Metrics-Registry
+computePLForMonth
+Unterscheidung fehlend versus 0
+
+Regeln:
+
+Warenquote =
+IST-Warenaufwand / IST-Nettoumsatz
+
+Personalquote =
+IST-Personalaufwand / IST-Nettoumsatz
+
+Aber nur berechnen, wenn beide notwendigen Werte vollständig und belastbar vorhanden sind.
+
+Fehlend bleibt —.
+
+Keine Werte aus Budget, Planung oder Vorjahr als IST-Fallback verwenden.
+
+Dokumentiere im Abschlussbericht, weshalb die Werte aktuell fehlten.
+
+──────────────────────────────────────
+4. Bruttogewinn und weitere abhängige KPIs prüfen
+──────────────────────────────────────
+
+Im Screenshot entspricht auch Bruttogewinn 1 dem Nettoumsatz.
+
+Prüfe sämtliche abhängigen P&L-KPIs auf dieselbe Fehlerklasse:
+
+fehlende Aufwendungen dürfen nicht implizit als 0 in eine Kennzahl einfliessen.
+
+Erstelle eine Dependency-Prüfung pro KPI.
+
+Beispiele:
+
+Bruttogewinn 1 benötigt Nettoumsatz und Warenaufwand.
+
+EBIT benötigt sämtliche vorgesehenen Ergebnisstufen bis EBIT.
+
+Fehlt eine Abhängigkeit:
+
+KPI = —
+
+Nicht teilweise berechnen.
+
+──────────────────────────────────────
+5. Testkonto vollständig bereinigen
+──────────────────────────────────────
+
+Das temporäre Konto
+
+kpi-test-admin-…@example.com
+
+darf nicht dauerhaft als aktiver kueche_manager bestehen bleiben.
+
+Prüfe die technisch sichere Bereinigung.
+
+Bevorzugt:
+
+Löschung über einen serverseitigen Supabase-Admin-Aufruf mit Service Role.
+
+Falls eine Löschung in dieser Umgebung nicht möglich ist:
+
+Zugriff vollständig entziehen:
+
+keine produktive Rolle
+kein Tenant-Zugriff
+keine Restaurant-Zuordnung
+keine aktiven Berechtigungen
+keine Einladung oder Session
+
+Dokumentiere den verbleibenden Auth-Datensatz ausdrücklich als technische Restschuld.
+
+Keine Service-Role-Schlüssel in Frontend-Code, Logs oder Repository aufnehmen.
+
+Ergänze künftig für E2E-Tests eine sichere Cleanup-Strategie.
+
+──────────────────────────────────────
+6. Design und Verständlichkeit
+──────────────────────────────────────
+
+Die aktuelle Seite ist grundsätzlich kompakt und soll nicht neu gestaltet werden.
+
+Verbessere nur:
+
+klare Kennzeichnung laufender Monate
+
+Hinweis bei unvollständigen KPIs
+
+verständliche Tooltips
+
+keine roten oder grünen Ampeln für fachlich nicht vergleichbare Werte
+
+„—“ konsequent statt falscher Null- oder Ergebniswerte
+
+Die Oberfläche muss weiterhin:
+
+schlicht
+modern
+kompakt
+lesefreundlich
+einheitlich mit der restlichen App
+
+bleiben.
+
+──────────────────────────────────────
+7. Tests
+──────────────────────────────────────
+
+Ergänze Regressionstests für:
+
+EBIT bleibt —, wenn eine erforderliche Kostenposition fehlt.
+
+Bruttogewinn bleibt —, wenn Warenaufwand fehlt.
+
+Fehlende Kosten werden niemals als 0 interpretiert.
+
+Vollständiger Monat berechnet EBIT korrekt.
+
+Laufender Monat wird eindeutig gekennzeichnet.
+
+Laufender Monat löst ohne anteiliges Budget keine irreführende Ampel aus.
+
+Warenquote verwendet nur IST-Werte.
+
+Personalquote verwendet nur IST-Werte.
+
+Kein Budget- oder Plan-Fallback für IST.
+
+UI, Excel und PDF liefern identische Werte und Fehlzustände.
+
+Monatsparameter und Tenant bleiben korrekt getrennt.
+
+──────────────────────────────────────
+8. Abschluss
+──────────────────────────────────────
+
+Führe danach aus:
+
+TypeScript-Typecheck mit ausreichendem Heap
+
+betroffene Unit-Tests
+
+Playwright-E2E mit echtem Login
+
+Exporttests für Excel und PDF
+
+Architect-Review nur über den tatsächlichen Task-Diff
+
+Liefere abschliessend:
+
+Ursache des falschen EBIT
+
+Ursache des falschen Bruttogewinns
+
+Ursache der fehlenden Quoten
+
+Regel für laufende Monate
+
+Status des Testkontos
+
+Liste der geänderten Dateien
+
+Erst nach erfolgreicher Korrektur wieder „Ready for review“ melden.

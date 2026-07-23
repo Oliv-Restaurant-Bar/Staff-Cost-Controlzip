@@ -14,7 +14,8 @@
 
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import {
   LayoutDashboard, TrendingUp, ChevronRight, Info,
   ChevronDown, X, BarChart2, Table2, Calendar,
@@ -2469,8 +2470,11 @@ const PLViewPage = () => {
   const { isAdmin } = usePermissions();
   if (!isAdmin) return <Navigate to="/" replace />;
 
-  const [year,   setYear]   = useState(currentYear);
-  const [month,  setMonth]  = useState(currentMonth);
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM, nur Initialwert)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [year,   setYear]   = useState(monatParam?.year ?? currentYear);
+  const [month,  setMonth]  = useState(monatParam?.month ?? currentMonth);
   const [mode,   setMode]   = useState<ViewMode>('budget_pl');
   const [drilldown,       setDrilldown]       = useState<PLDrilldown | null>(null);
   const [bplDrilldown,    setBplDrilldown]    = useState<BPLRowWithValues | null>(null);

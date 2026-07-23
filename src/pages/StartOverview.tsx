@@ -4,7 +4,9 @@
  * UX-Ziel: In wenigen Sekunden beantworten «Wie steht der Monat finanziell,
  * was ist heute wichtig, wo sind Risiken, was ist mein nächster Schritt?».
  * Bereiche (kompakt, Desktop möglichst ohne Scrollen):
- *   1. Finanzen (Monat)  → CockpitFinanzBlock: 5 Kennzahlen IST/Budget/VJ/Abw.
+ *   1. Management-KPIs   → ManagementKpiSection: fester KPI-Katalog (Ebene 1,
+ *                          ~16 KPIs) mit Monatswahl, Ebene-2/3-Links, Monats-
+ *                          kommentaren und Export-Profilen. P&L-Werte
  *                          AUSSCHLIESSLICH aus der Financial-Metrics-Registry
  *                          (EIN computePLForMonth) — fehlend = «—», NIE
  *                          operative Ersatzwerte.
@@ -50,7 +52,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useStartOverview } from '@/hooks/useStartOverview';
 import { useCockpitFinancials } from '@/hooks/useCockpitFinancials';
-import { CockpitFinanzBlock } from '@/components/start/CockpitFinanzBlock';
+import { ManagementKpiSection } from '@/components/start/ManagementKpiSection';
 import { WarnCenter } from '@/components/start/WarnCenter';
 import { WocheBlock } from '@/components/start/WocheBlock';
 import { buildExecutiveWarnings, type ExecutiveWarningsResult } from '@/lib/executive-warnings';
@@ -269,8 +271,6 @@ export default function StartOverviewPage() {
       ? state.typeCompletions.filter((t) => t.status === 'open' || t.status === 'error').length
       : null;
 
-  const monthLabel = format(now, 'LLLL yyyy', { locale: de });
-
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-5 md:py-6 space-y-6">
       {/* Kopf */}
@@ -322,13 +322,11 @@ export default function StartOverviewPage() {
         </div>
       )}
 
-      {/* 1. Finanzen (laufender Monat) — NUR Financial-Metrics-Registry */}
-      <CockpitFinanzBlock
-        input={fin.financialInput}
-        monthLabel={monthLabel}
-        personnelRatioTarget={fin.personnelRatioTarget}
-        isGuest={isGuest}
-      />
+      {/* 1. Management-KPIs (Monatswahl) — Werte NUR über den KPI-Katalog
+          (Registry-KPIs: EIN computePLForMonth; operative KPIs: bestehende
+          Quellen). Ersetzt den früheren CockpitFinanzBlock — dessen 5 Finanz-
+          zeilen sind Teil des Katalogs (keine Doppel-Anzeige). */}
+      <ManagementKpiSection enabled={isAdmin} isGuest={isGuest} />
 
       {/* 2.+3. Heute + Risiken nebeneinander (Desktop) */}
       <div className="grid gap-6 xl:grid-cols-2">

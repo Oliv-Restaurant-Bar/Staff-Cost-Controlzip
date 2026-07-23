@@ -14,7 +14,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { FinancialMonthSection } from '@/components/dashboard/FinancialMonthSection';
 import {
-  getFinancialMetricValues,
+  getGatedFinancialMetricValues,
   type FinancialMetricId,
   type FinancialMetricRegistryInput,
 } from '@/lib/financial-metrics';
@@ -88,11 +88,11 @@ afterEach(() => {
 });
 
 describe('FinancialMonthSection — Registry-Verdrahtung (D009 1–4)', () => {
-  it('(1)+(2) jede Tabellenzelle IST ≡ getFinancialMetricValues(...).actual (keine Zweitberechnung)', () => {
+  it('(1)+(2) jede Tabellenzelle IST ≡ getGatedFinancialMetricValues(...).actual (keine Zweitberechnung)', () => {
     const input = inputOf(fullRec);
     renderSection(input);
     for (const { id, kind } of TABLE_IDS) {
-      const v = getFinancialMetricValues(id, input);
+      const v = getGatedFinancialMetricValues(id, input);
       const fmt = kind === 'ratio' ? fmtPct : fmtCHF;
       expect(screen.getByTestId(`fin-${id}-actual`).textContent).toBe(fmt(v.actual));
     }
@@ -104,7 +104,7 @@ describe('FinancialMonthSection — Registry-Verdrahtung (D009 1–4)', () => {
     const input = inputOf(fullRec);
     renderSection(input);
     for (const { id, kind } of TABLE_IDS) {
-      const v = getFinancialMetricValues(id, input);
+      const v = getGatedFinancialMetricValues(id, input);
       const fmt = kind === 'ratio' ? fmtPct : fmtCHF;
       expect(screen.getByTestId(`fin-${id}-budget`).textContent).toBe(fmt(v.budget));
     }
@@ -114,7 +114,7 @@ describe('FinancialMonthSection — Registry-Verdrahtung (D009 1–4)', () => {
     const input = inputOf(fullRec);
     renderSection(input);
     for (const { id, kind } of TABLE_IDS) {
-      const v = getFinancialMetricValues(id, input);
+      const v = getGatedFinancialMetricValues(id, input);
       const fmt = kind === 'ratio' ? fmtPct : fmtCHF;
       expect(screen.getByTestId(`fin-${id}-prioryear`).textContent).toBe(fmt(v.priorYear));
     }
@@ -130,6 +130,23 @@ describe('FinancialMonthSection — fehlend ≠ 0, kein operativer Fallback (D00
         expect(text).toBe('—');
       }
     }
+  });
+
+  it('(5b) Dependency-Gate: ohne Abschreibungen bleibt EBIT „—", Umsatz sichtbar (kein Schein-EBIT)', () => {
+    const recOhneAbschr = mkRec(2026, 7, {
+      revenueActual: 100_000,
+      personnelCostActual: 35_000,
+      expenseCategories: [
+        { categoryId: 'food_cost', amount: 30_000, label: 'Wareneinsatz Küche' },
+        { categoryId: 'miete', amount: 10_000, label: 'Miete' },
+      ] as never,
+    });
+    renderSection(inputOf(recOhneAbschr));
+    expect(screen.getByTestId('fin-ebit-actual').textContent).toBe('—');
+    // EBITDA hängt NICHT an den Abschreibungen — bleibt sichtbar (100−30−35−10).
+    expect(screen.getByTestId('fin-ebitda-actual').textContent).toBe(fmtCHF(25_000));
+    expect(screen.getByTestId('fin-net_revenue-actual').textContent).toBe(fmtCHF(100_000));
+    expect(screen.getByTestId('fin-total_cogs-actual').textContent).toBe(fmtCHF(30_000));
   });
 
   it('(6) input=null: sichtbarer Hinweis, KEINE Zahlen, kein operativer Ersatzwert', () => {

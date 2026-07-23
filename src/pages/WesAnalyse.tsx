@@ -9,6 +9,7 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { TrendingDown, ChevronDown, Info, HelpCircle } from 'lucide-react';
 import { Button }        from '@/components/ui/button';
 import { Badge }         from '@/components/ui/badge';
@@ -21,9 +22,11 @@ import {
 } from '@/components/ui/select';
 
 import { loadYear, loadMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { MONAT_PARAM, parseMonatParam } from '@/lib/monat-param';
 import { useTenant } from '@/contexts/TenantContext';
 import { getMonthSummary }     from '@/lib/supplier-documents-store';
 import { loadProductCosts, loadProdukteData } from '@/lib/produkte-store';
+import { computeVerkaufsWes }  from '@/lib/wes-month';
 import { MONTH_NAMES_DE }      from '@/types/reporting';
 
 // ─── FIBU-Konten → Kategorie & Label ──────────────────────────────────────────
@@ -92,28 +95,17 @@ function buildMonthRow(year: number, monthIdx: number, storeKey: string = REPORT
   const reporting = loadMonth(year, month, storeKey);
   const revenue   = reporting.revenueActual ?? 0;
 
-  // ── Rezeptur ────────────────────────────────────────────────────────────────
+  // ── Rezeptur (SSoT: wes-month.ts — identisch im Management-Dashboard) ──────
   const costEntries = loadProductCosts();      // wes pro Einheit
   const prodData    = loadProdukteData();      // Verkaufsmengen
 
   const monthKey = `${year}-${String(month).padStart(2, '0')}`; // 'yyyy-MM'
 
-  const entriesForMonth = prodData
-    ? prodData.entries.filter(e => e.month === monthKey)
-    : [];
-
-  let rezFood     = 0;
-  let rezBeverage = 0;
-
-  for (const entry of entriesForMonth) {
-    const costEntry = costEntries.find(
-      c => c.name === entry.name && c.category === entry.category,
-    );
-    if (!costEntry || costEntry.wes <= 0) continue;
-    const contribution = costEntry.wes * (entry.count || 0);
-    if (entry.category === 'food')     rezFood     += contribution;
-    else                               rezBeverage += contribution;
-  }
+  const { rezFood, rezBeverage } = computeVerkaufsWes(
+    prodData ? prodData.entries : [],
+    costEntries,
+    monthKey,
+  );
 
   // ── Lieferanten ─────────────────────────────────────────────────────────────
   const lief = getMonthSummary(year, month);
@@ -208,12 +200,16 @@ type Tab = 'uebersicht' | 'konto' | 'erklaerung';
 export default function WesAnalyse() {
   const { tenantId, tenantKey } = useTenant();
   const currentYear = new Date().getFullYear();
-  const [year, setYear]         = useState(currentYear);
-  const [activeTab, setActiveTab] = useState<Tab>('uebersicht');
-  const [rows, setRows]         = useState<WesMonthRow[]>([]);
-
   // Verfügbare Jahre (aktuelles + 2 zurück)
   const years = [currentYear, currentYear - 1, currentYear - 2];
+  // Monats-Kontext aus dem Management-KPI-Dashboard (?monat=YYYY-MM ⇒ Jahresauswahl)
+  const [searchParams] = useSearchParams();
+  const monatParam = parseMonatParam(searchParams.get(MONAT_PARAM));
+  const [year, setYear]         = useState(
+    monatParam && years.includes(monatParam.year) ? monatParam.year : currentYear,
+  );
+  const [activeTab, setActiveTab] = useState<Tab>('uebersicht');
+  const [rows, setRows]         = useState<WesMonthRow[]>([]);
 
   useEffect(() => {
     const sk = tenantKey(REPORTING_STORAGE_KEY);

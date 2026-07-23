@@ -18,3 +18,10 @@ FE) read as 42h+ and produced phantom overtime. Caught in architect review.
 **How to apply:** filter `absenceType` both at the data-wiring layer AND inside
 the pure analysis lib (defense-in-depth). The grid already uses the same
 `hours > 0 && !absenceType` predicate for "productive" cells — match it.
+
+**Related rule — Ist never falls back to Plan:** productive *Ist*-hours
+analytics (productivity KPI etc.) must use `actualHours` only, never
+`actualHours ?? plannedHours`. A month with schedule entries but no
+Mirus/manual Ist data must yield null («—»), not a plan-derived value.
+Caught in architect review of the Management-KPI dashboard: the fallback made
+"Produktivität" report a fake IST from planned hours.

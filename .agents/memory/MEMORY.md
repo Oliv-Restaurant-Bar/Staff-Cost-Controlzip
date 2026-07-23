@@ -26,7 +26,7 @@
 - [Bare tsc --noEmit is vacuous](tsc-vacuous-check.md) — root tsconfig is solution-style (files:[]), plain tsc checks nothing; gate with `-p tsconfig.app.json` and filter for touched files (legacy errors exist).
 - [Safe ?from= return URL + URL sync](safe-return-url-and-url-sync.md) — validate redirect params against allow-listed paths; mirror view-state to useSearchParams with equality guard.
 - [Overloaded permission flag](overloaded-permission-flag.md) — widening a role gate (e.g. canEditEmployees) leaks every confidential surface it also gates; split into a narrower old-value gate instead of widening.
-- [Overtime excludes absences](overtime-absence-exclusion.md) — hours-over-threshold analytics must drop `absenceType` entries (productive = hours>0 && !absenceType) or leave days fabricate overtime.
+- [Overtime excludes absences](overtime-absence-exclusion.md) — hours-over-threshold analytics must drop `absenceType` entries; Ist-analytics use actualHours only, never plannedHours fallback.
 - [Validation code-review diff scope](validation-review-scope.md) — completion review diffs the whole branch since last checkpoint; may flag unrelated prior commits — don't revert others' work.
 - [recharts Line onClick has no payload](recharts-line-onclick-payload.md) — clickable chart points need a custom dot/activeDot render-prop (has `payload`); Line/activeDot onClick can't carry the point's data.
 - [Scope-diff save & orphans](scope-diff-save-orphans.md) — RLS-safe save = load→update→insert→delete per tenant+scope (no PK upsert); re-submit hidden rows verbatim & don't rewrite caller sort_order or orphans mutate.

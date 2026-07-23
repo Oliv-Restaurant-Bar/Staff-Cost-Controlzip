@@ -32,14 +32,18 @@ export interface CockpitFinancials {
   dailyBudgets: Record<string, DailyBudget>;
 }
 
-export function useCockpitFinancials(enabled: boolean): CockpitFinancials {
+export function useCockpitFinancials(
+  enabled: boolean,
+  /** Optionaler Monat (Management-KPI-Monatswahl); Default = laufender Monat. */
+  period?: { year: number; month: number },
+): CockpitFinancials {
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
 
-  // Aktueller Monat — die Startseite zeigt IMMER den laufenden Monat.
+  // Ohne explizite Periode zeigt die Startseite den laufenden Monat.
   const now = useMemo(() => new Date(), []);
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const year = period?.year ?? now.getFullYear();
+  const month = period?.month ?? now.getMonth() + 1;
 
   // Re-Compute-Tick nach Supabase→localStorage-Sync (bestehendes Event).
   const [tick, setTick] = useState(0);

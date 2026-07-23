@@ -170,3 +170,83 @@ export function getFinancialMetricValues(
 ): FinancialMetricValues {
   return FINANCIAL_METRICS[id].getValues(input);
 }
+
+// ─── Abhängigkeits-Vollständigkeit (Dependency-Gate) ─────────────────────────
+//
+// Die P&L-Engine berechnet Ergebniszeilen (subtract) als Kette: fehlt eine
+// Kostenkomponente, fliesst sie dort als 0 in die Zwischensumme ein — in der
+// Erfolgsrechnung ist diese Ketten-Darstellung GEWOLLT (sichtbare Zeilen).
+// Für Management-Flächen (Startseite/Dashboard/Exporte) gilt dagegen:
+// fehlt eine erforderliche Komponente, ist die Kennzahl «—», NIE ein aus
+// impliziten Nullen entstandener Scheinwert (z. B. EBIT ≡ Nettoumsatz, wenn
+// nur Tagesumsätze, aber kein Kostenimport vorliegen).
+//
+// Die Abhängigkeitsstruktur ist Kennzahl-Wissen und lebt deshalb HIER
+// (je Kennzahl GENAU EINE Definition) — `getValues` selbst bleibt unverändert
+// (Erfolgsrechnung/PLView/bpl-aggregate konsumieren weiterhin die Kette).
+
+/** Spalte der Registry-Werte. */
+export type FinancialMetricColumn = keyof FinancialMetricValues;
+
+/**
+ * Erforderliche Basis-Komponenten je Kennzahl (leere Liste = Blatt-Wert,
+ * bereits null-sicher über die hasActual-Guards der Engine-Summenzeilen).
+ */
+export const FINANCIAL_METRIC_DEPENDENCIES: Record<
+  FinancialMetricId,
+  ReadonlyArray<FinancialMetricId>
+> = {
+  net_revenue:        [],
+  total_cogs:         [],
+  total_personnel:    [],
+  total_opex:         [],
+  total_depreciation: [],
+  gross_profit_1:     ['net_revenue', 'total_cogs'],
+  gross_profit_2:     ['net_revenue', 'total_cogs', 'total_personnel'],
+  ebitda:             ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex'],
+  ebit:               ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex', 'total_depreciation'],
+  cogs_ratio:         ['total_cogs', 'net_revenue'],
+  personnel_ratio:    ['total_personnel', 'net_revenue'],
+  ebitda_margin:      ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex'],
+  ebit_margin:        ['net_revenue', 'total_cogs', 'total_personnel', 'total_opex', 'total_depreciation'],
+};
+
+/**
+ * Fehlende Abhängigkeiten einer Kennzahl für EINE Spalte (rein lesend).
+ * Leer = vollständig; die Spalte darf angezeigt werden.
+ */
+export function getFinancialMetricMissingDependencies(
+  id: FinancialMetricId,
+  input: FinancialMetricRegistryInput,
+  column: FinancialMetricColumn,
+): FinancialMetricId[] {
+  return FINANCIAL_METRIC_DEPENDENCIES[id].filter(
+    dep => getFinancialMetricValues(dep, input)[column] === null,
+  );
+}
+
+/**
+ * Registry-Werte mit Dependency-Gate, PRO SPALTE unabhängig: eine Spalte wird
+ * nur geliefert, wenn ALLE erforderlichen Komponenten dieser Spalte vorhanden
+ * sind — sonst null («—»). Keine Teilberechnung, keine impliziten Nullen.
+ * Budget bleibt sichtbar, solange die Budget-Spalte selbst vollständig ist
+ * (laufender Monat: vollständiges Monatsbudget als Kontext).
+ */
+export function getGatedFinancialMetricValues(
+  id: FinancialMetricId,
+  input: FinancialMetricRegistryInput,
+): FinancialMetricValues {
+  const raw = getFinancialMetricValues(id, input);
+  const deps = FINANCIAL_METRIC_DEPENDENCIES[id];
+  if (deps.length === 0) return raw;
+  const gate = (column: FinancialMetricColumn): number | null =>
+    deps.some(dep => getFinancialMetricValues(dep, input)[column] === null)
+      ? null
+      : raw[column];
+  return { actual: gate('actual'), budget: gate('budget'), priorYear: gate('priorYear') };
+}
+
+/** Anzeige-Label einer Kennzahl (für «Noch nicht vollständig»-Hinweise). */
+export function getFinancialMetricLabel(id: FinancialMetricId): string {
+  return FINANCIAL_METRICS[id].label;
+}
