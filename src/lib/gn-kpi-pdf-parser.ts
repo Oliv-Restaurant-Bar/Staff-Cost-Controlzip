@@ -80,7 +80,7 @@ export interface GnKpiPdfDebug {
   ignoredValueRowLabels: string[];
   detectedPeriod: string;
   usedYear: number | null;
-  usedYearSource: 'PDF-Inhalt' | 'Zeitraum' | 'Benutzerwahl' | 'Dateiname' | 'Pflichtwahl';
+  usedYearSource: 'PDF-Inhalt' | 'CSV-Inhalt' | 'Zeitraum' | 'Benutzerwahl' | 'Dateiname' | 'Pflichtwahl';
   /** Erste 25 rekonstruierten Zeilen (Diagnose der realen Struktur). */
   firstLines: string[];
   failureReason: string | null;
@@ -130,8 +130,15 @@ function extractYearFrom(...sources: Array<string | null | undefined>): number |
   return null;
 }
 
-/** Zellwert → Zahl oder null (kein Zahlwert). Explizites «0» bleibt 0. */
-function parseCellValue(text: string, kind: GnKpiKind): number | null {
+/** Zellwert → Zahl oder null (kein Zahlwert). Explizites «0» bleibt 0.
+ *  SSoT der Wert-Semantik — wird auch vom CSV-Parser (gn-kpi-csv-parser)
+ *  wiederverwendet. Personen-Werte dürfen eine «P.»-Einheit tragen. */
+export function parseGnKpiCellValue(text: string, kind: GnKpiKind): number | null {
+  const t = text.trim().replace(/\s*P\.?$/i, m => (kind === 'anzahl_personen' ? '' : m));
+  return parseCellValueInner(t, kind);
+}
+
+function parseCellValueInner(text: string, kind: GnKpiKind): number | null {
   const t = text.trim();
   if (!t) return null;
   if (t === '—' || t === '-' || t === '–') return null;
@@ -308,7 +315,9 @@ export function parseGnKpiPdf(
     if (explicitYear) break;
   }
   const periodYear = extractYearFrom(periodRaw, metaFrom, detection.titleLine);
-  const fileYearMatches = (fileName.match(/20\d{2}/g) ?? []);
+  // Nur eigenständige Jahreszahlen (nie Teil längerer Ziffernfolgen wie
+  // Upload-Zeitstempel «…1784820255774…», die zufällig «2025» enthalten).
+  const fileYearMatches = (fileName.match(/(?<!\d)20\d{2}(?!\d)/g) ?? []);
   const uniqueFileYears = [...new Set(fileYearMatches)];
   const fileYear = uniqueFileYears.length === 1 ? +uniqueFileYears[0] : null;
 
@@ -343,7 +352,7 @@ export function parseGnKpiPdf(
       const labelParts: string[] = [];
       for (const cell of line.cells) {
         const col = nearestColumn(block.dateCols, cell.x);
-        const value = parseCellValue(cell.text, kind);
+        const value = parseGnKpiCellValue(cell.text, kind);
         if (col && value !== null) {
           matches.push({ col, value, raw: cell.text });
         } else if (!col || value === null) {
@@ -387,7 +396,7 @@ export function parseGnKpiPdf(
     if (block.summaryCol && summaryValue === null) {
       for (const cell of chosen.line.cells) {
         if (Math.abs(cell.x - block.summaryCol.x) <= 12) {
-          const v = parseCellValue(cell.text, kind);
+          const v = parseGnKpiCellValue(cell.text, kind);
           if (v !== null) { summaryValue = v; summaryLabel = block.summaryCol.label; }
         }
       }

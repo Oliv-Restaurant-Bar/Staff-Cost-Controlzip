@@ -43,6 +43,7 @@ import {
   parseGnKpiPdf, kpiPdfToAverageCheck, kpiPdfToPersonReport, GN_KPI_KIND_LABELS,
 } from '@/lib/gn-kpi-pdf-parser';
 import type { GnParsedKpiPdf } from '@/lib/gn-kpi-pdf-parser';
+import { parseGnKpiCsv } from '@/lib/gn-kpi-csv-parser';
 
 import {
   savePersonImport, loadPersonImports, deletePersonImport,
@@ -104,12 +105,14 @@ type ImportType  = 'zbericht' | 'kpi';
 type WizardStep  = 'upload' | 'preview' | 'saving' | 'done';
 type Tab         = 'import' | 'history';
 
-/** Eine hochgeladene Gäste-/Bonanalyse-PDF inkl. Duplikat-Infos. */
+/** Eine hochgeladene Gäste-/Bonanalyse-Datei (PDF oder CSV) inkl. Duplikat-Infos. */
 interface KpiFileEntry {
   id: string;
   fileName: string;
-  /** Text-Items für erneutes Parsen bei manueller Jahreswahl. */
+  /** Text-Items (PDF) für erneutes Parsen bei manueller Jahreswahl. */
   pages: GnPdfPageItems[] | null;
+  /** Roher CSV-Text für erneutes Parsen bei manueller Jahreswahl. */
+  csvText: string | null;
   parsed: GnParsedKpiPdf | null;
   /** Erkennungs-/Konfliktfehler — Eintrag ist dann nicht importierbar. */
   error: string | null;
@@ -306,18 +309,18 @@ export default function GastronoviZBerichtPage() {
     return none;
   }, [tenantId]);
 
-  /** Bis zu 3 Gäste-/Bonanalyse-PDFs einlesen; Typ wird pro Datei erkannt. */
+  /** Bis zu 3 Gäste-/Bonanalyse-Dateien (PDF oder CSV) einlesen; Typ wird pro Datei erkannt. */
   const processKpiFiles = useCallback(async (files: File[]) => {
     setParseError(null);
     setKpiSaveResults(null);
     const room = 3 - kpiFiles.length;
     if (room <= 0) {
-      setParseError('Es sind bereits 3 PDFs in der Auswahl — bitte zuerst eine Datei entfernen.');
+      setParseError('Es sind bereits 3 Dateien in der Auswahl — bitte zuerst eine Datei entfernen.');
       return;
     }
     if (files.length > room) {
       setParseError(
-        `Maximal 3 PDFs pro Import — es ${room === 1 ? 'wird nur die erste Datei' : `werden nur die ersten ${room} Dateien`} übernommen.`,
+        `Maximal 3 Dateien pro Import — es ${room === 1 ? 'wird nur die erste Datei' : `werden nur die ersten ${room} Dateien`} übernommen.`,
       );
     }
     setKpiProcessing(true);
@@ -327,45 +330,60 @@ export default function GastronoviZBerichtPage() {
     );
     for (const file of files.slice(0, room)) {
       const id = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const errEntry = (error: string, pages: GnPdfPageItems[] | null = null, parsedKpi: GnParsedKpiPdf | null = null): KpiFileEntry =>
-        ({ id, fileName: file.name, pages, parsed: parsedKpi, error, dupNoop: false, replaceId: null, avgOverlapDates: [], chosenYear: null });
+      const isCsv = file.name.toLowerCase().endsWith('.csv');
+      const errEntry = (
+        error: string,
+        pages: GnPdfPageItems[] | null = null,
+        parsedKpi: GnParsedKpiPdf | null = null,
+        csvText: string | null = null,
+      ): KpiFileEntry =>
+        ({ id, fileName: file.name, pages, csvText, parsed: parsedKpi, error, dupNoop: false, replaceId: null, avgOverlapDates: [], chosenYear: null });
       try {
-        const extract = await extractGnPdfTextItems(file);
-        if (!extract.hasTextLayer) {
-          additions.push(errEntry(GN_SCAN_ERROR));
-          continue;
-        }
-        const parsedKpi = parseGnKpiPdf(extract.pages, file.name);
-        if (parsedKpi.debug.detectedKindRaw === 'zbericht') {
-          additions.push(errEntry(
-            'Diese Datei ist ein Z-Bericht. Bitte importiere sie im Bereich «Z-Bericht (PDF)».',
-            extract.pages, parsedKpi,
-          ));
-          continue;
+        let parsedKpi: GnParsedKpiPdf;
+        let pages: GnPdfPageItems[] | null = null;
+        let csvText: string | null = null;
+        if (isCsv) {
+          csvText = await file.text();
+          parsedKpi = parseGnKpiCsv(csvText, file.name);
+        } else {
+          const extract = await extractGnPdfTextItems(file);
+          if (!extract.hasTextLayer) {
+            additions.push(errEntry(GN_SCAN_ERROR));
+            continue;
+          }
+          pages = extract.pages;
+          parsedKpi = parseGnKpiPdf(extract.pages, file.name);
+          if (parsedKpi.debug.detectedKindRaw === 'zbericht') {
+            additions.push(errEntry(
+              'Diese Datei ist ein Z-Bericht. Bitte importiere sie im Bereich «Z-Bericht (PDF)».',
+              pages, parsedKpi,
+            ));
+            continue;
+          }
         }
         if (!parsedKpi.kind) {
           additions.push(errEntry(
             parsedKpi.debug.failureReason
-              ?? 'Das PDF konnte keinem Berichtstyp (Anzahl Personen, Umsatz pro Person, Durchschnittsbon) zugeordnet werden.',
-            extract.pages, parsedKpi,
+              ?? 'Die Datei konnte keinem Berichtstyp (Anzahl Personen, Umsatz pro Person, Durchschnittsbon) zugeordnet werden.',
+            pages, parsedKpi, csvText,
           ));
           continue;
         }
         if (kindsInUse.has(parsedKpi.kind)) {
           additions.push(errEntry(
-            `Berichtstyp «${parsedKpi.kindLabel}» ist bereits in der Auswahl — pro Import nur ein PDF je Berichtsart.`,
-            extract.pages, parsedKpi,
+            `Berichtstyp «${parsedKpi.kindLabel}» ist bereits in der Auswahl — pro Import nur eine Datei je Berichtsart.`,
+            pages, parsedKpi, csvText,
           ));
           continue;
         }
         kindsInUse.add(parsedKpi.kind);
         const info = await enrichKpiEntry(parsedKpi);
         additions.push({
-          id, fileName: file.name, pages: extract.pages, parsed: parsedKpi,
+          id, fileName: file.name, pages, csvText, parsed: parsedKpi,
           error: null, chosenYear: null, ...info,
         });
       } catch (e) {
-        additions.push(errEntry('Fehler beim Lesen des PDFs: ' + (e instanceof Error ? e.message : String(e))));
+        additions.push(errEntry('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e))));
       }
     }
     setKpiProcessing(false);
@@ -374,11 +392,13 @@ export default function GastronoviZBerichtPage() {
     if (next.length > 0) setStep('preview');
   }, [kpiFiles, tenantId, enrichKpiEntry]);
 
-  /** Pflicht-Jahreswahl: PDF ohne erkennbares Jahr mit Benutzerjahr neu parsen. */
+  /** Pflicht-Jahreswahl: Datei ohne erkennbares Jahr mit Benutzerjahr neu parsen. */
   const handleKpiYearChange = async (entryId: string, year: number) => {
     const entry = kpiFiles.find(e => e.id === entryId);
-    if (!entry || entry.error || !entry.pages) return;
-    const reparsed = parseGnKpiPdf(entry.pages, entry.fileName, year);
+    if (!entry || entry.error || (!entry.pages && entry.csvText == null)) return;
+    const reparsed = entry.csvText != null
+      ? parseGnKpiCsv(entry.csvText, entry.fileName, year)
+      : parseGnKpiPdf(entry.pages!, entry.fileName, year);
     const info = await enrichKpiEntry(reparsed);
     setKpiFiles(prev => prev.map(e =>
       e.id === entryId ? { ...e, chosenYear: year, parsed: reparsed, ...info } : e,
@@ -394,16 +414,27 @@ export default function GastronoviZBerichtPage() {
   };
 
   const handleFilesSelected = (files: File[]) => {
-    const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
-    if (pdfs.length === 0) {
+    if (importType === 'zbericht') {
+      const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
+      if (pdfs.length === 0) {
+        setParseError(
+          'Bitte eine PDF-Datei auswählen. Der Z-Bericht-Import unterstützt nur direkt aus '
+          + 'Gastronovi exportierte PDF-Berichte (CSV-Import ist nicht mehr verfügbar).',
+        );
+        return;
+      }
+      void processZPdf(pdfs[0]);
+      return;
+    }
+    const accepted = files.filter(f => /\.(pdf|csv)$/i.test(f.name));
+    if (accepted.length === 0) {
       setParseError(
-        'Bitte eine PDF-Datei auswählen. Der Import unterstützt nur direkt aus '
-        + 'Gastronovi exportierte PDF-Berichte (CSV-Import ist nicht mehr verfügbar).',
+        'Bitte eine PDF- oder CSV-Datei auswählen — direkt aus Gastronovi exportiert '
+        + '(Anzahl Personen, Umsatz pro Person, Durchschnittsbon).',
       );
       return;
     }
-    if (importType === 'zbericht') void processZPdf(pdfs[0]);
-    else void processKpiFiles(pdfs);
+    void processKpiFiles(accepted);
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -881,12 +912,12 @@ export default function GastronoviZBerichtPage() {
             icon={<FileText className="h-4 w-4" />} label="Z-Bericht (PDF)"
             desc="Standard & Erweitert: Tagesumsatz, Zahlarten, Zeitabschnitte, Produktpositionen" />
           <TypeBtn active={importType === 'kpi'} onClick={() => handleTypeChange('kpi')}
-            icon={<Users className="h-4 w-4" />} label="Gäste & Bonanalyse (PDF)"
-            desc="Anzahl Personen, Umsatz pro Person, Durchschnittsbon — bis zu 3 PDFs gleichzeitig" />
+            icon={<Users className="h-4 w-4" />} label="Gäste & Bonanalyse (PDF/CSV)"
+            desc="Anzahl Personen, Umsatz pro Person, Durchschnittsbon — bis zu 3 Dateien gleichzeitig" />
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Neue Importe laufen ausschliesslich über PDF-Berichte aus Gastronovi.
-          Bestehende CSV-Importe bleiben in Historie und Auswertungen erhalten.
+          Z-Berichte laufen ausschliesslich über PDF; Gäste- & Bonanalyse-Berichte
+          können als PDF oder CSV aus Gastronovi importiert werden.
         </p>
 
         {/* Wizard-Schritte */}
@@ -904,8 +935,10 @@ export default function GastronoviZBerichtPage() {
           })}
         </div>
 
-        {/* Datei-Input: auch im Preview-Schritt verfügbar («Weitere PDF hinzufügen») */}
-        <input ref={fileInputRef} type="file" accept=".pdf,application/pdf" className="hidden"
+        {/* Datei-Input: auch im Preview-Schritt verfügbar («Weitere Datei hinzufügen») */}
+        <input ref={fileInputRef} type="file"
+          accept={importType === 'kpi' ? '.pdf,.csv,application/pdf,text/csv' : '.pdf,application/pdf'}
+          className="hidden"
           multiple={importType === 'kpi'}
           onChange={e => {
             if (e.target.files && e.target.files.length) handleFilesSelected(Array.from(e.target.files));
@@ -922,16 +955,16 @@ export default function GastronoviZBerichtPage() {
             onClick={() => fileInputRef.current?.click()}
             label={importType === 'zbericht'
               ? 'Gastronovi Z-Bericht (PDF) hier ablegen'
-              : 'Gäste- & Bonanalyse-PDFs hier ablegen'}
+              : 'Gäste- & Bonanalyse-Dateien (PDF oder CSV) hier ablegen'}
             hint={importType === 'zbericht'
               ? 'Standard- oder erweiterter Z-Bericht — direkt aus Gastronovi als PDF exportiert'
-              : 'Anzahl Personen, Umsatz pro Person, Durchschnittsbon — bis zu 3 PDFs gleichzeitig'}
+              : 'Anzahl Personen, Umsatz pro Person, Durchschnittsbon — bis zu 3 Dateien gleichzeitig'}
           />
 
           {kpiProcessing && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              PDFs werden gelesen…
+              Dateien werden gelesen…
             </div>
           )}
 
@@ -1595,7 +1628,7 @@ export default function GastronoviZBerichtPage() {
                 className="flex items-center gap-2 px-4 py-2 text-sm rounded-md border border-dashed border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
                 data-testid="button-weitere-pdf">
                 {kpiProcessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                Weitere PDF hinzufügen
+                Weitere Datei hinzufügen
               </button>
             )}
 

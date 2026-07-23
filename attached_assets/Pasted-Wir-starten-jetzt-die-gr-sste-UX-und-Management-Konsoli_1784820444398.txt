@@ -1,0 +1,621 @@
+Wir starten jetzt die grösste UX- und Management-Konsolidierung der gesamten Anwendung.
+
+Ziel
+
+Die bestehende Excel-KPI-Liste wird vollständig digitalisiert und ersetzt künftig das Excel.
+
+Gleichzeitig werden doppelte, ähnliche oder unnötige KPI-Seiten entfernt oder in das neue Dashboard integriert.
+
+Die Anwendung soll weniger Menüpunkte besitzen, dafür wesentlich klarer, moderner und effizienter werden.
+
+Es darf künftig keine Situation mehr geben, in der dieselbe Kennzahl auf drei verschiedenen Seiten unterschiedlich dargestellt wird.
+
+──────────────────────────────────────
+1. Neues zentrales Dashboard
+──────────────────────────────────────
+
+Erstelle ein neues Modul:
+
+Management KPI Dashboard
+
+Dieses Dashboard wird künftig die zentrale Startseite für:
+
+Geschäftsführer
+
+Inhaber
+
+Bank
+
+Investoren
+
+Administratoren
+
+Alle wichtigen Kennzahlen werden hier zusammengeführt.
+
+Jede Kennzahl besitzt genau eine Datenquelle (Single Source of Truth).
+
+Keine KPI darf doppelt berechnet oder an mehreren Stellen unterschiedlich dargestellt werden.
+
+──────────────────────────────────────
+2. KPI-Katalog aufbauen
+──────────────────────────────────────
+
+Digitalisiere die bestehende Excel-KPI-Liste vollständig.
+
+Jede KPI erhält:
+
+Name
+
+Beschreibung
+
+Kategorie
+
+Einheit
+
+Quelle
+
+Berechnungsregel
+
+Drilldown
+
+Exportfähigkeit
+
+Budget
+
+Vorjahr
+
+Trend
+
+Ampel
+
+Kommentar
+
+Verantwortlicher
+
+Status
+
+Quellenkennzeichnung
+
+Quellen:
+
+Z-Bericht PDF
+
+KPI-PDF
+
+Erfolgsrechnung
+
+Mirus
+
+Reservationen
+
+Warenwirtschaft
+
+Tagesabschluss
+
+Manuelle Eingaben
+
+Berechnete Kennzahl
+
+──────────────────────────────────────
+3. Dashboard-Struktur
+──────────────────────────────────────
+
+Nur sechs Hauptbereiche:
+
+1 Verkauf
+
+2 Produkte
+
+3 Personal
+
+4 Warenkosten
+
+5 Gäste
+
+6 Tagesabschluss
+
+Nicht mehr.
+
+Keine weiteren KPI-Startseiten.
+
+──────────────────────────────────────
+4. Bestehende Seiten analysieren
+──────────────────────────────────────
+
+Prüfe die komplette Navigation.
+
+Erstelle eine Liste:
+
+Bleibt bestehen
+
+Wird integriert
+
+Wird entfernt
+
+Wird zum Drilldown
+
+Nicht löschen bevor geprüft wurde, ob Funktionen verloren gehen.
+
+Beispiele:
+
+Wenn eine Seite ausschliesslich dieselben KPIs zeigt wie das neue Dashboard,
+
+dann:
+
+Navigation entfernen
+
+Seite intern behalten
+
+Drilldown erhalten
+
+Links automatisch auf das neue Dashboard umleiten, sofern sinnvoll.
+
+──────────────────────────────────────
+5. KPI-Doppelungen entfernen
+──────────────────────────────────────
+
+Prüfe insbesondere:
+
+Kennzahlen
+
+Produktanalyse
+
+Management Report
+
+Bankbericht
+
+Investorenbericht
+
+Erfolgsrechnung-Übersichten
+
+Startdashboard
+
+Import-Cockpit-KPIs
+
+Personal-KPIs
+
+Reservations-KPIs
+
+Tagesabschluss-KPIs
+
+Wo identische Kennzahlen mehrfach erscheinen:
+
+nur eine Hauptdarstellung behalten.
+
+Alle übrigen Stellen verwenden dieselbe zentrale Datenquelle oder dienen ausschliesslich als Detailansicht.
+
+Keine doppelte Berechnung.
+
+──────────────────────────────────────
+6. Drilldown-Konzept
+──────────────────────────────────────
+
+Das Dashboard zeigt nur Management-Ebene.
+
+Jede KPI ist anklickbar.
+
+Drilldown:
+
+Jahr
+
+↓
+
+Monat
+
+↓
+
+Woche
+
+↓
+
+Tag
+
+↓
+
+Detail
+
+↓
+
+Originaldaten
+
+Beispiele:
+
+Umsatz
+
+↓
+
+Monat
+
+↓
+
+Tag
+
+↓
+
+Stundenumsatz
+
+↓
+
+Produkte
+
+↓
+
+Z-Bericht
+
+Personalkosten
+
+↓
+
+Monat
+
+↓
+
+Mitarbeiter
+
+↓
+
+Schichten
+
+↓
+
+Zeitbuchungen
+
+Wareneinsatz
+
+↓
+
+Lieferant
+
+↓
+
+Rechnung
+
+↓
+
+Artikel
+
+Keine Informationen doppelt darstellen.
+
+──────────────────────────────────────
+7. KPI-Kategorien
+──────────────────────────────────────
+
+Verkauf
+
+Umsatz
+
+Nettoumsatz
+
+Budget
+
+Vorjahr
+
+Abweichung
+
+Gäste
+
+Durchschnittsbon
+
+Umsatz pro Gast
+
+Take-away
+
+Produkte
+
+Food
+
+Beverage
+
+Bar
+
+Top-Produkte
+
+Flop-Produkte
+
+Warengruppen
+
+Deckungsbeitrag (zukünftig)
+
+Personal
+
+Produktivstunden
+
+Personalkosten
+
+Personalkostenquote
+
+Umsatz pro Stunde
+
+Produktivität
+
+Warenkosten
+
+Wareneinsatz
+
+Lieferanten
+
+Inventur
+
+Food
+
+Beverage
+
+Marketing
+
+Maison
+
+Rabatte
+
+Stornos
+
+Gäste
+
+Reservationen
+
+No Shows
+
+Google
+
+Tripadvisor
+
+Wiederkehrer
+
+Gruppen
+
+Tagesabschluss
+
+Umsatz
+
+BAR SOLL
+
+BAR IST
+
+Kassensaldo Soll
+
+Differenz
+
+KK Adyen
+
+Debitoren
+
+Barausgaben
+
+EG-Gutscheine
+
+──────────────────────────────────────
+8. Quellenkennzeichnung
+──────────────────────────────────────
+
+Jede KPI zeigt klein:
+
+Quelle:
+
+Z-Bericht PDF
+
+Berechnet
+
+Mirus
+
+Reservationen
+
+Erfolgsrechnung
+
+Import
+
+Manuell
+
+Keine versteckten Berechnungen.
+
+──────────────────────────────────────
+9. Kommentare
+──────────────────────────────────────
+
+Jede KPI erhält Monatskommentare.
+
+Beispiel:
+
+Wareneinsatz höher wegen Lieferantenwechsel.
+
+Nur Administratoren dürfen Kommentare ändern.
+
+──────────────────────────────────────
+10. Ziele
+──────────────────────────────────────
+
+Jede KPI erhält:
+
+Zielwert
+
+Warnschwelle
+
+kritische Schwelle
+
+Ampellogik
+
+Grün
+
+Gelb
+
+Rot
+
+Keine mehrfach unterschiedlichen Grenzwerte.
+
+──────────────────────────────────────
+11. Export
+──────────────────────────────────────
+
+Alle KPIs können exportiert werden.
+
+Profile:
+
+Geschäftsleitung
+
+Bank
+
+Investoren
+
+Excel
+
+PDF
+
+Alle Exporte verwenden dieselben zentralen Kennzahlen.
+
+Keine eigenen Exportberechnungen.
+
+──────────────────────────────────────
+12. Dashboard vereinfachen
+──────────────────────────────────────
+
+Das neue Dashboard ersetzt künftig sämtliche Management-Übersichten.
+
+Vorhandene Seiten werden wo möglich:
+
+entfernt
+
+zusammengeführt
+
+oder ausschliesslich als Drilldown verwendet.
+
+Das Ziel ist:
+
+deutlich weniger Navigation
+
+keine KPI-Doppelungen
+
+keine verwirrenden Übersichten
+
+eine zentrale Managementseite
+
+──────────────────────────────────────
+13. Design
+──────────────────────────────────────
+
+Design hat höchste Priorität.
+
+Das Dashboard soll:
+
+modern
+
+minimalistisch
+
+hochwertig
+
+ruhig
+
+kompakt
+
+lesefreundlich
+
+einheitlich
+
+responsiv
+
+sein.
+
+Keine grossen leeren Bereiche.
+
+Keine Informationsflut.
+
+Nur die wichtigsten KPIs auf der ersten Ebene.
+
+Details ausschliesslich per Drilldown.
+
+Alle Karten, Tabellen, Farben, Icons und Abstände müssen sich vollständig an den bestehenden UI-Standard anlehnen.
+
+──────────────────────────────────────
+14. Architektur
+──────────────────────────────────────
+
+Vor jeder Umsetzung prüfen:
+
+existierende Komponenten
+
+bestehende Hooks
+
+bereits vorhandene Berechnungen
+
+bereits vorhandene Tabellen
+
+bereits vorhandene Exporte
+
+Keine neue Logik erstellen, wenn bereits eine zentrale Logik existiert.
+
+Refactoring statt Duplizieren.
+
+Single Source of Truth konsequent einhalten.
+
+Pure Reads dürfen niemals Writes auslösen.
+
+updatedAt nur bei echten Datenänderungen.
+
+──────────────────────────────────────
+15. Dokumentation
+──────────────────────────────────────
+
+Aktualisiere replit.md erst nach vollständiger Umsetzung.
+
+Dokumentiere:
+
+neues Management KPI Dashboard
+
+entfernte oder integrierte Seiten
+
+neue Navigationsstruktur
+
+Drilldown-Konzept
+
+Quellenmodell
+
+Exportmodell
+
+SSOT
+
+──────────────────────────────────────
+16. Validierung
+──────────────────────────────────────
+
+Vor Abschluss:
+
+Erstelle eine Übersicht:
+
+Welche Seiten entfallen.
+
+Welche Seiten integriert wurden.
+
+Welche Seiten als Drilldown bleiben.
+
+Welche KPIs zusammengeführt wurden.
+
+Welche Doppelungen entfernt wurden.
+
+Welche Navigation vereinfacht wurde.
+
+Führe danach aus:
+
+TypeScript-Typecheck
+
+alle betroffenen Tests
+
+Regressionstests
+
+Runtime-Check
+
+Architect-Review über den vollständigen Git-Diff.
+
+Es darf keine bestehende Funktion verloren gehen.
+
+Zielzustand:
+
+Eine zentrale Management-Plattform statt vieler einzelner KPI- und Reporting-Seiten.
+
+Weniger Navigation.
+
+Weniger doppelte Auswertungen.
+
+Mehr Klarheit.
+
+Mehr Automatisierung.
+
+Bessere Entscheidungsgrundlagen.
+
+Professioneller Bank- und Investorenauftritt.
