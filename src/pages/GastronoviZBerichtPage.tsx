@@ -75,6 +75,10 @@ const NUM  = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 2, maximumF
 const NUM0 = new Intl.NumberFormat('de-CH', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
 function fc(v: number) { return v > 0 ? `CHF ${NUM.format(v)}` : '—'; }
+/** Anzeige-Label der Verzehrart aus dem erweiterten Z-Bericht. */
+function consumptionLabel(ct: 'in_house' | 'takeaway' | null) {
+  return ct === 'in_house' ? 'Inner Haus' : ct === 'takeaway' ? 'Außer Haus' : '—';
+}
 function fdate(iso: string | null | undefined) {
   if (!iso) return '—';
   try { return fmtDate(parseISO(iso.slice(0, 10)), 'dd.MM.yyyy', { locale: de }); }
@@ -409,6 +413,14 @@ export default function GastronoviZBerichtPage() {
       if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
       // Nur echte TAGES-Importe für den Tagesabschluss-Abgleich vormerken.
       if (pFrom && pTo && pFrom === pTo) importedDays = [pFrom];
+      if (parsed.reportType === 'extended') {
+        toast.success('Umsatz-, Zahlungs- und Produktdaten wurden übernommen.');
+        setStep('done');
+        setTab('history');
+        loadHistory();
+        if (importedDays.length > 0) void checkTagesabschlussConflicts(importedDays);
+        return;
+      }
     } else if (importType === 'personen' && parsedPerson) {
       const { error } = await savePersonImport(
         tenantId, parsedPerson,
@@ -992,6 +1004,11 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {f.parsed?.reportType === 'extended' && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                            Erweitert
+                          </span>
+                        )}
                         {hasOv && (
                           <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
                             Bestehende Daten
@@ -1045,10 +1062,33 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
 
           {/* ── Z-Bericht Vorschau ─────────────────────────────────────────── */}
           {importType === 'zbericht' && parsed && <>
-            <div className="rounded-lg border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <MetaCell label="Zeitraum"     value={`${fdate(effectivePeriodFrom || parsed.periodFrom)} – ${fdate(effectivePeriodTo || parsed.periodTo)}`} />
-              <MetaCell label="Z-Zähler"     value={parsed.zCounter || '—'} />
-              <MetaCell label="Kostenstelle" value={parsed.costCenter || '—'} />
+            <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <MetaCell label="Zeitraum"     value={`${fdate(effectivePeriodFrom || parsed.periodFrom)} – ${fdate(effectivePeriodTo || parsed.periodTo)}`} />
+                <MetaCell label="Z-Zähler"     value={parsed.zCounter || '—'} />
+                <MetaCell label="Kostenstelle" value={parsed.costCenter || '—'} />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap" data-testid="badge-berichtstyp">
+                {parsed.reportType === 'extended' ? (
+                  <>
+                    <span className="text-[11px] font-semibold rounded-full px-2.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+                      Erweiterter Z-Bericht
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Erweiterter Z-Bericht: Produktanalyse wird aktualisiert.
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[11px] font-semibold rounded-full px-2.5 py-0.5 bg-muted text-muted-foreground">
+                      Standard-Z-Bericht
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Standard-Z-Bericht: keine Produktdetailpositionen enthalten.
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Manueller Zeitraum (nur wenn Parser keinen Zeitraum erkennt) */}
@@ -1155,6 +1195,32 @@ const CSV_TYPE_OPTIONS: { value: PersonCsvType; label: string }[] = [
               render={r => [r.name, NUM0.format(r.count), fc(r.amount)]} />
             <SectionTable title={`Hauptwarengruppen (${pgCount})`} rows={parsed.productGroups} cols={['Name', 'Anzahl', 'Betrag']}
               render={r => [r.name, NUM0.format(r.count), fc(r.amount)]} />
+
+            {/* Detailbericht des erweiterten Z-Berichts */}
+            {parsed.extendedData && (
+              <>
+                <SectionTable
+                  title={`Detailbericht — Hauptwarengruppen inner/außer Haus (${parsed.extendedData.mainCategoriesByConsumptionType.length})`}
+                  rows={parsed.extendedData.mainCategoriesByConsumptionType}
+                  cols={['Name', 'Verzehr', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, consumptionLabel(r.consumptionType), NUM0.format(r.quantity), fc(r.grossAmount)]} />
+                <SectionTable
+                  title={`Detailbericht — Warengruppen (${parsed.extendedData.categories.length})`}
+                  rows={parsed.extendedData.categories}
+                  cols={['Name', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, NUM0.format(r.quantity), fc(r.grossAmount)]} />
+                <SectionTable
+                  title={`Detailbericht — Warengruppen inner/außer Haus (${parsed.extendedData.categoriesByConsumptionType.length})`}
+                  rows={parsed.extendedData.categoriesByConsumptionType}
+                  cols={['Name', 'Verzehr', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, consumptionLabel(r.consumptionType), NUM0.format(r.quantity), fc(r.grossAmount)]} />
+                <SectionTable
+                  title={`Detailbericht — Positionen (${parsed.extendedData.positions.length})`}
+                  rows={parsed.extendedData.positions}
+                  cols={['Name', 'Verzehr', 'Anzahl', 'Betrag']}
+                  render={r => [r.name, consumptionLabel(r.consumptionType), NUM0.format(r.quantity), fc(r.grossAmount)]} />
+              </>
+            )}
             <SectionTable title={`Rabatte & Positionsrabatte (${discCount})`} rows={parsed.discounts} cols={['Typ', 'Name', 'Betrag']}
               render={r => [r.type, r.name, fc(r.amount)]} />
             <SectionTable title={`Stornierte Artikel (${cancelCount})`} rows={parsed.cancellations} cols={['Name', 'Anzahl', 'Betrag']}

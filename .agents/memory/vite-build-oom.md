@@ -66,3 +66,9 @@ only. If even the redirect run dies, fall back to workspace LSP diagnostics
 (`getLatestLspDiagnostics` in code_execution) as the type gate. Batched `vitest run`
 of the affected files (`--pool=forks --maxWorkers=1`) still works fine for ~12 files
 per invocation.
+
+**Compound-Befehle:** Der OOM-Kill trifft die GANZE Bash-Befehlskette, nicht nur den
+tsc/vite-Prozess — `cp A B && npx tsc …; cp B A` lässt das `cp B A` nie laufen.
+Datei-Swaps (z. B. HEAD-Vergleich) nie in derselben Kette wie einen tsc-Lauf
+zurückrollen; Restore als separaten Befehl ausführen und den Dateizustand danach
+explizit prüfen (`cmp`/grep-Marker).

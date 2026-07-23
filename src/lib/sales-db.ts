@@ -109,6 +109,10 @@ export const SOURCE_LABELS: Record<string, string> = {
   food_csv_export:     'Food',
   beverage_csv_export: 'Beverage',
   manual_test:         'Testdaten',
+  // Synthetische Zeilen aus erweiterten Z-Berichten (produkt-quellen)
+  gn_extended:          'Erweiterter Z-Bericht',
+  gn_extended_food:     'Erweiterter Z-Bericht',
+  gn_extended_beverage: 'Erweiterter Z-Bericht',
 };
 
 /**

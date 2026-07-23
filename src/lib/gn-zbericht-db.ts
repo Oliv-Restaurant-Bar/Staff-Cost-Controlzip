@@ -6,10 +6,97 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
-import type { GnParsedZBericht } from './gn-zbericht-parser';
+import type { GnExtendedData, GnExtendedEntry, GnParsedZBericht } from './gn-zbericht-parser';
 import type { GnDayClosing } from './tagesabschluss';
 
 const r2 = (v: number): number => Math.round(v * 100) / 100;
+
+// ── Erweiterter Bericht: Persistenz-Helfer ───────────────────────────────────
+
+/** Abschnitts-Schlüssel in gn_extended_positions.section */
+export type GnExtSection = 'main_categories_ct' | 'categories' | 'categories_ct' | 'positions';
+
+/** Sichtbarer Hinweis, wenn die Migration noch nicht ausgeführt wurde. */
+export const GN_EXT_MIGRATION_HINT =
+  'Die Datenbank-Migration "20260723_gn_extended_positions.sql" wurde noch nicht ausgeführt. '
+  + 'Bitte im Supabase SQL-Editor ausführen und den Import danach wiederholen.';
+
+/**
+ * Erkennt "Schema fehlt"-Fehler (Tabelle gn_extended_positions bzw. Spalte
+ * gn_imports.report_type existiert noch nicht):
+ *   42P01 = relation does not exist · PGRST205 = table not in schema cache
+ *   42703 = column does not exist  · PGRST204 = column not in schema cache
+ */
+export function isMissingExtendedSchemaError(
+  err: { code?: string; message?: string } | null | undefined,
+): boolean {
+  if (!err) return false;
+  const code = err.code ?? '';
+  const msg  = err.message ?? '';
+  if (!['42P01', 'PGRST205', '42703', 'PGRST204'].includes(code)) return false;
+  return /gn_extended_positions|report_type/i.test(msg);
+}
+
+interface GnExtendedPositionInsert {
+  import_id: string;
+  restaurant_id: string;
+  period_from: string | null;
+  period_to: string | null;
+  section: GnExtSection;
+  name: string;
+  quantity: number;
+  gross_amount: number;
+  original_amount: number | null;
+  consumption_type: 'in_house' | 'takeaway' | null;
+}
+
+/**
+ * Baut die Insert-Zeilen für gn_extended_positions und dedupliziert nach dem
+ * UNIQUE-Schlüssel (section, name, consumption_type) — identische Namen im
+ * selben Abschnitt werden summiert (gleiche fachliche Grenze wie beim
+ * Produkt-CSV-Import: die Quelle ist eine flache CSV ohne Artikelnummer).
+ */
+export function buildExtendedPositionRows(
+  importId: string,
+  restaurantId: string,
+  periodFrom: string | null,
+  periodTo: string | null,
+  extendedData: GnExtendedData,
+): GnExtendedPositionInsert[] {
+  const byKey = new Map<string, GnExtendedPositionInsert>();
+  const collect = (section: GnExtSection, entries: GnExtendedEntry[]) => {
+    for (const e of entries) {
+      if (!e.name) continue;
+      const key = `${section}\u0000${e.name}\u0000${e.consumptionType ?? ''}`;
+      const prev = byKey.get(key);
+      if (prev) {
+        prev.quantity     += e.quantity;
+        prev.gross_amount  = r2(prev.gross_amount + e.grossAmount);
+        prev.original_amount = prev.original_amount === null && e.originalAmount === null
+          ? null
+          : r2((prev.original_amount ?? 0) + (e.originalAmount ?? 0));
+      } else {
+        byKey.set(key, {
+          import_id: importId,
+          restaurant_id: restaurantId,
+          period_from: periodFrom,
+          period_to: periodTo,
+          section,
+          name: e.name,
+          quantity: e.quantity,
+          gross_amount: r2(e.grossAmount),
+          original_amount: e.originalAmount === null ? null : r2(e.originalAmount),
+          consumption_type: e.consumptionType,
+        });
+      }
+    }
+  };
+  collect('main_categories_ct', extendedData.mainCategoriesByConsumptionType);
+  collect('categories',         extendedData.categories);
+  collect('categories_ct',      extendedData.categoriesByConsumptionType);
+  collect('positions',          extendedData.positions);
+  return Array.from(byKey.values());
+}
 
 // ── Typen ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +125,8 @@ export interface GnImportRow {
   checksum: string | null;
   imported_at: string;
   created_at: string;
+  /** 'extended' bei erweiterten Z-Berichten; null/fehlt = Standard (Spalte ab Migration 20260723). */
+  report_type?: string | null;
 }
 
 /** Überschneidender Import — kompakte Darstellung für die Vorschau */
@@ -170,15 +259,26 @@ export async function saveGnImport(
         status:             'active',
         raw_csv_json:       parsed as unknown,
         checksum:           parsed.checksum || null,
+        // report_type NUR bei erweiterten Berichten mitschicken: Standard-
+        // Importe bleiben so auch VOR der Migration 20260723 voll funktionsfähig.
+        ...(parsed.reportType === 'extended' ? { report_type: 'extended' } : {}),
       })
       .select('id')
       .single();
 
     if (impErr || !imp) {
+      if (isMissingExtendedSchemaError(impErr)) {
+        return { importId: '', error: GN_EXT_MIGRATION_HINT };
+      }
       return { importId: '', error: impErr?.message ?? 'Import fehlgeschlagen' };
     }
 
     const importId: string = imp.id;
+
+    // Detailpositionen des erweiterten Berichts (dedupliziert nach UNIQUE-Schlüssel)
+    const extRows = parsed.reportType === 'extended' && parsed.extendedData
+      ? buildExtendedPositionRows(importId, restaurantId, periodFrom, periodTo, parsed.extendedData)
+      : [];
 
     // Alle abhängigen Tabellen + optional gn_zbericht_daily
     const childResults = await Promise.all([
@@ -246,6 +346,14 @@ export async function saveGnImport(
             parsed.paymentAccounts.map(p => ({ import_id: importId, name: p.name, account: p.account, gross_amount: p.grossAmount })))
         : Promise.resolve({ error: null }),
 
+      // Erweiterter Bericht: aggregierte Detailpositionen (Periodensummen,
+      // KEINE Einzeltransaktionen). Atomar mit dem Import: schlägt der Insert
+      // fehl, markiert die Kind-Fehlerbehandlung unten den gesamten Import
+      // als 'deleted' — nie Standard-Daten OHNE Detaildaten.
+      extRows.length > 0
+        ? (supabase as any).from('gn_extended_positions').insert(extRows)
+        : Promise.resolve({ error: null }),
+
       // gn_zbericht_daily — nur für Tagesimporte (period_from = period_to)
       aggLevel === 'day' && periodFrom
         ? (supabase as any).from('gn_zbericht_daily').insert({
@@ -274,8 +382,11 @@ export async function saveGnImport(
       .find(r => r && (r as { error?: unknown }).error);
     if (childError) {
       await (supabase as any).from('gn_imports').update({ status: 'deleted' }).eq('id', importId);
-      const msg = (childError as { error?: { message?: string } }).error?.message
-        ?? 'Detaildaten konnten nicht gespeichert werden';
+      const errObj = (childError as { error?: { code?: string; message?: string } }).error;
+      if (isMissingExtendedSchemaError(errObj)) {
+        return { importId: '', error: GN_EXT_MIGRATION_HINT };
+      }
+      const msg = errObj?.message ?? 'Detaildaten konnten nicht gespeichert werden';
       return { importId: '', error: msg };
     }
 
@@ -695,6 +806,95 @@ export async function loadGnDayClosingsForMonth(
   } catch {
     return {};
   }
+}
+
+// ── Erweiterter Bericht: Lesepfade (strikt read-only) ────────────────────────
+
+/** Zeitraum eines aktiven erweiterten Z-Berichts (für Abdeckungs-Checks). */
+export interface GnExtendedCoverageRange {
+  importId: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+}
+
+/**
+ * Zeiträume aller AKTIVEN erweiterten Z-Berichte eines Tenants.
+ * Fehlt das Schema noch (Migration 20260723 nicht ausgeführt), können keine
+ * erweiterten Importe existieren → leere Liste ist die korrekte Antwort,
+ * kein Fehler. Alle anderen Fehler werden sichtbar zurückgegeben.
+ */
+export async function fetchExtendedCoverage(
+  restaurantId: string,
+): Promise<{ ranges: GnExtendedCoverageRange[]; error: string | null }> {
+  const { data, error } = await (supabase as any)
+    .from('gn_imports')
+    .select('id, period_from, period_to')
+    .eq('restaurant_id', restaurantId)
+    .eq('status', 'active')
+    .eq('report_type', 'extended');
+  if (error) {
+    if (isMissingExtendedSchemaError(error)) return { ranges: [], error: null };
+    return { ranges: [], error: error.message ?? 'Abdeckung konnte nicht geladen werden' };
+  }
+  const ranges = ((data ?? []) as Array<{ id: string; period_from: string | null; period_to: string | null }>)
+    .map(r => ({ importId: r.id, periodFrom: r.period_from, periodTo: r.period_to }));
+  return { ranges, error: null };
+}
+
+/** Gespeicherte Detailposition eines erweiterten Z-Berichts (Lese-Shape). */
+export interface GnExtendedPositionRow {
+  importId: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  section: GnExtSection;
+  name: string;
+  quantity: number;
+  grossAmount: number;
+  originalAmount: number | null;
+  consumptionType: 'in_house' | 'takeaway' | null;
+}
+
+/**
+ * Detailpositionen aller AKTIVEN erweiterten Z-Berichte eines Tenants, deren
+ * Zeitraum sich mit [from, to] überschneidet (Überschneidungsformel wie
+ * checkOverlappingImports). Ersetzte/gelöschte Importe zählen NIE mit —
+ * Quelle der Statusprüfung ist der Join auf gn_imports (kein Duplikat-Status).
+ * Fehlendes Schema (Migration 20260723 nicht ausgeführt) → leere Liste.
+ */
+export async function fetchExtendedPositions(
+  restaurantId: string,
+  from?: string,
+  to?: string,
+): Promise<{ rows: GnExtendedPositionRow[]; error: string | null }> {
+  let q = (supabase as any)
+    .from('gn_extended_positions')
+    .select('import_id, period_from, period_to, section, name, quantity, gross_amount, original_amount, consumption_type, gn_imports!inner(status)')
+    .eq('restaurant_id', restaurantId)
+    .eq('gn_imports.status', 'active');
+  if (to)   q = q.lte('period_from', to);
+  if (from) q = q.gte('period_to', from);
+  const { data, error } = await q;
+  if (error) {
+    if (isMissingExtendedSchemaError(error)) return { rows: [], error: null };
+    return { rows: [], error: error.message ?? 'Detailpositionen konnten nicht geladen werden' };
+  }
+  const rows = ((data ?? []) as Array<{
+    import_id: string; period_from: string | null; period_to: string | null;
+    section: GnExtSection; name: string; quantity: number | null;
+    gross_amount: number | null; original_amount: number | null;
+    consumption_type: 'in_house' | 'takeaway' | null;
+  }>).map(r => ({
+    importId: r.import_id,
+    periodFrom: r.period_from,
+    periodTo: r.period_to,
+    section: r.section,
+    name: r.name,
+    quantity: r.quantity ?? 0,
+    grossAmount: r.gross_amount ?? 0,
+    originalAmount: r.original_amount,
+    consumptionType: r.consumption_type,
+  }));
+  return { rows, error: null };
 }
 
 // ── Tabellen-Setup prüfen ────────────────────────────────────────────────────

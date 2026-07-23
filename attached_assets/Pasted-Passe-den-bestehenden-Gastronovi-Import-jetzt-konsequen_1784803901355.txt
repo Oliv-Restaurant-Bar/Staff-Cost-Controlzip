@@ -1,0 +1,1049 @@
+Passe den bestehenden Gastronovi-Import jetzt konsequent auf PDF als einzige künftige Importform um.
+
+Ziel
+
+Künftig soll der Benutzer für Gastronovi-Berichte nur noch PDF-Dateien importieren müssen.
+
+CSV bleibt höchstens technisch für bestehende historische Daten lesbar, darf aber in der Benutzeroberfläche nicht mehr als regulärer Importweg angeboten oder verlangt werden.
+
+Der PDF-Import soll alle fachlich relevanten Informationen aus den Gastronovi-Berichten erkennen, strukturiert speichern und für die bestehenden Analysen bereitstellen.
+
+Wichtige Vorgabe
+
+Der Benutzer soll nicht zweimal arbeiten müssen.
+
+Deshalb gilt künftig:
+
+1. PDF ist der einzige sichtbare und empfohlene Importweg.
+2. Ein Gastronovi-PDF soll alle darin enthaltenen Abschnitte in einem Import übernehmen.
+3. Der Import soll Umsatz, Zahlarten, Produkte, Warengruppen, Buchhaltung und Zeitabschnitte gemeinsam verarbeiten.
+4. Es darf kein zusätzlicher CSV-Import für dieselben Daten erforderlich sein.
+5. Der separate Verkaufsdatenimport soll für durch erweiterte PDF-Z-Berichte abgedeckte Zeiträume nicht mehr notwendig sein.
+
+Unterstützte PDF-Berichte
+
+Unterstütze mindestens folgende Gastronovi-PDF-Typen:
+
+1. Standard-Z-Bericht
+2. Erweiterter Z-Bericht
+3. Anzahl Personen
+4. Umsatz pro Person
+5. Durchschnittsbon
+
+Die Berichtsart muss anhand des PDF-Inhalts erkannt werden und nicht nur anhand des Dateinamens.
+
+PDF-Anforderungen
+
+Die Gastronovi-PDFs sind digital erzeugte PDFs mit Textlayer.
+
+Implementiere keinen OCR-basierten Standardprozess.
+
+OCR darf nicht als primärer Importweg verwendet werden.
+
+Wenn ein PDF keinen verwertbaren Textlayer enthält, zeige verständlich:
+
+„Dieses PDF enthält keinen auslesbaren Text. Bitte exportiere den Bericht direkt aus Gastronovi und lade nicht einen Scan oder ein Foto hoch.“
+
+Gemeinsame PDF-Verarbeitung
+
+Erstelle einen zentralen Gastronovi-PDF-Parser.
+
+Keinen separaten Parser pro Seite oder Importkarte bauen.
+
+Der Parser soll zuerst:
+
+1. den vollständigen Text des PDFs lesen
+2. Seitenumbrüche erkennen
+3. wiederholte Kopf- und Fusszeilen entfernen
+4. Berichtstyp bestimmen
+5. Abschnitte erkennen
+6. Tabellenzeilen strukturieren
+7. Summen und Plausibilität prüfen
+8. ein einheitliches Domainobjekt zurückgeben
+
+Wiederholte PDF-Elemente
+
+Entferne beziehungsweise ignoriere wiederholte Elemente wie:
+
+Gastronovi Office - www.gastronovi.com
+Seitenzahlen
+wiederholte Berichtstitel
+wiederholte Tabellenüberschriften
+Firmenkopf
+Logo-Text
+Z-Bericht - Hauptkostenstelle - ...
+Erweiterte Version
+
+Diese Elemente dürfen nicht als Produkt-, Warengruppen- oder Buchungszeilen importiert werden.
+
+Z-Bericht erkennen
+
+Ein Z-Bericht soll mindestens erkannt werden über:
+
+Z-Bericht
+Z-Zähler
+Kostenstelle
+Von
+Bis
+Total
+
+Erkenne zusätzlich:
+
+Standard-Z-Bericht
+Erweiterter Z-Bericht
+
+Ein erweiterter Z-Bericht enthält insbesondere den Abschnitt:
+
+Detailbericht
+
+sowie mindestens einen oder mehrere dieser Abschnitte:
+
+Hauptwarengruppen (inner/außer Haus)
+Warengruppen
+Warengruppen (inner/außer Haus)
+Positionen
+Buchhaltung
+Auswertungen
+Zeitabschnitte
+
+Unterstütze sowohl:
+
+außer
+ausser
+
+sowie unterschiedliche Unicode-Schreibweisen.
+
+Aus dem PDF zu übernehmende Z-Bericht-Daten
+
+Übernimm mindestens:
+
+reportType
+sourceFormat: "pdf"
+zCounter
+costCenter
+periodFrom
+periodTo
+totalGross
+totalExcludingTips, falls vorhanden
+totalExcludingRoundingDifferences, falls vorhanden
+totalExcludingCustomerCardTopups, falls vorhanden
+taxRows
+costCenters
+waiters
+paymentMethods
+mainCategories
+customerCardTopups
+discounts
+positionDiscounts
+cancelledItems
+mainCategoriesByConsumptionType
+categories
+categoriesByConsumptionType
+positions
+accountingAccounts
+paymentAccounts
+hourlyRevenue
+warnings
+validationStatus
+
+Steuerbericht
+
+Lese je Zeile:
+
+Steuersatz
+Netto
+Steuer
+Brutto
+
+Erkenne insbesondere:
+
+0
+2.6
+8.1
+Total
+
+Beträge mit:
+
+CHF
+Minuswerten
+Klammerwerten
+Dezimalpunkt
+Dezimalkomma
+Schweizer Tausendertrennzeichen
+
+müssen korrekt verarbeitet werden.
+
+Kostenstellen
+
+Lese:
+
+Bezeichnung
+Anzahl
+Betrag
+
+Beispielsweise:
+
+Hauptkostenstelle
+Terrasse
+Bar
+
+Kellner
+
+Lese:
+
+Mitarbeitername
+Anzahl
+Umsatz
+
+Personennamen dürfen nur technisch normalisiert werden:
+
+Trim
+mehrfache Leerzeichen vereinheitlichen
+Zeilenumbrüche entfernen
+
+Keine fachliche Zusammenführung ähnlicher Namen durchführen.
+
+Bezahlarten
+
+Lese:
+
+Bezeichnung
+Anzahl
+Betrag
+
+Unterstütze verschachtelte Darstellungen wie:
+
+MasterCard
+  Gastronovi Pay
+
+Visa
+  Gastronovi Pay
+
+Kartenzahlung
+  Gastronovi Pay
+
+Speichere Hauptzahlart und Unteranbieter getrennt, sofern im PDF erkennbar.
+
+Keine doppelte Summierung verschachtelter Zeilen.
+
+Beispiel:
+
+MasterCard CHF 6’824.60
+Gastronovi Pay CHF 6’824.60
+
+darf nicht als CHF 13’649.20 gezählt werden.
+
+Definiere dafür eine klare Parent-Child-Logik.
+
+Hauptwarengruppen
+
+Lese mindestens:
+
+Name
+Menge
+Bruttowert vor Rabatt, falls in Klammern vorhanden
+effektiver Bruttowert
+
+Beispiel:
+
+Beverage (Getränke) 439 (CHF 3404.90) CHF 3338.80
+
+soll ergeben:
+
+quantity: 439
+grossBeforeDiscount: 3404.90
+grossAmount: 3338.80
+
+Rabatte und Positionsrabatte
+
+Lese:
+
+Bezeichnung
+Menge
+Betrag
+
+Negative Werte müssen negativ bleiben.
+
+Klammerbeträge innerhalb einer Produktzeile dürfen nicht mit negativen Rabattwerten verwechselt werden.
+
+Stornierte Artikel
+
+Lese:
+
+Grund
+Menge
+Betrag
+
+Beispielsweise:
+
+Bedienerfehler
+Gästefehler
+Reklamation
+Verdorben
+Ausverkauft
+
+Detailbericht
+
+Übernimm vollständig:
+
+1. Hauptwarengruppen inner/ausser Haus
+2. Warengruppen
+3. Warengruppen inner/ausser Haus
+4. Positionen
+
+Consumption-Type-Normalisierung
+
+Normalisiere:
+
+Inner Haus → "in_house"
+Außer Haus → "takeaway"
+Ausser Haus → "takeaway"
+
+Wenn keine Zuordnung vorhanden ist:
+
+null
+
+Positionen
+
+Lese je Produktposition mindestens:
+
+name
+quantity
+grossBeforeDiscount, falls vorhanden
+grossAmount
+zeroRevenuePosition
+sourcePage, sofern technisch sinnvoll
+
+Produkte mit Menge grösser 0 und CHF 0.00 müssen erhalten bleiben.
+
+Das betrifft beispielsweise:
+
+Garstufen
+Glace-Aromen
+Zwänge
+Auswahl
+Beilagen
+Modifikatoren
+kostenlose Bestandteile
+Saignant
+À point
+ohne
+mit Milch
+mit Hafermilch
+
+Diese Zeilen dürfen nicht verworfen werden.
+
+Sie sollen als:
+
+zeroRevenuePosition: true
+
+gekennzeichnet werden.
+
+Produktnamen
+
+Normalisiere Produktnamen nur technisch:
+
+führende und nachfolgende Leerzeichen entfernen
+Zeilenumbrüche zusammenführen
+mehrfache Leerzeichen vereinheitlichen
+Unicode normalisieren
+
+Keine fachliche Zusammenführung verschiedener Produktnamen.
+
+Beispiele müssen getrennt bleiben:
+
+Pizza Royal Margherita
+Pizza Royal Margherita TA
+
+Pasta Pesto TA
+Die Pesto Pasta Trofie
+
+Wasser mit 100cl
+Wasser ohne 100cl
+
+PDF-Seitenumbrüche
+
+Der Parser muss Produkte und Tabellen über Seitenumbrüche hinweg korrekt fortsetzen.
+
+Beispiel:
+
+Der Abschnitt „Positionen“ beginnt auf einer Seite und läuft über mehrere Folgeseiten.
+
+Der Parser darf beim Seitenwechsel:
+
+keinen neuen Abschnitt beginnen
+keine Position verlieren
+keine Kopfzeile als Produkt importieren
+keine Position doppelt importieren
+
+Buchhaltung
+
+Lese den Abschnitt:
+
+Buchhaltung
+Buchungskonten
+
+Je Zeile:
+
+Bezeichnung
+Gegenkonto
+Steuersatz
+Brutto
+
+Speichere negative Beträge korrekt.
+
+Beispiele:
+
+Kaffee | Tee
+Mineral
+Bier
+Wein
+Cocktail
+Food
+Rabatt
+Marketing
+Maison
+Mitarbeiter Rabatt
+Aufladung Kundenkarte
+
+Zahlungskonten
+
+Lese:
+
+Bezeichnung
+Konto
+Brutto
+
+Beispiele:
+
+Bar
+Visa
+MasterCard
+TWINT
+EC-Karte
+Kartenzahlung
+
+Diese Daten sollen für Buchhaltungsprüfung und Zahlungsabgleich verfügbar sein.
+
+Zeitabschnitte
+
+Lese den Abschnitt:
+
+Auswertungen
+Zeitabschnitte
+
+Pro Stunde mindestens:
+
+hour
+segmentValues
+totalAmount
+sharePercent
+
+Die Tabelle kann mehrere Zwischenspalten mit Symbolen oder nicht benannten Zeitsegmenten enthalten.
+
+Speichere mindestens zuverlässig:
+
+Stunde
+Gesamt
+Anteil
+
+Wenn die vier Zwischenspalten eindeutig auslesbar sind, speichere sie zusätzlich als segment1 bis segment4.
+
+Wenn ihre Bedeutung im PDF nicht benannt ist, erfinde keine fachlichen Bezeichnungen.
+
+Verwende neutrale interne Namen.
+
+Beispiel:
+
+20:00
+Gesamt CHF 2’882.10
+Anteil 23.58 %
+
+Negative Stundenwerte wie um 23:00 müssen erhalten bleiben.
+
+Keine Werte auf 0 begrenzen.
+
+Zeitabschnittsanalyse
+
+Erweitere die bestehende Analyse um:
+
+Umsatz je Stunde
+Anteil je Stunde
+stärkste Umsatzstunde
+schwächste aktive Umsatzstunde
+Mittagsumsatz
+Abendumsatz
+Umsatz vor 17:00
+Umsatz ab 17:00
+Peak-Zeitfenster
+
+Definiere Zeitfenster zentral und transparent.
+
+Keine versteckten oder mehrfach unterschiedlichen Definitionen in UI und Export.
+
+Personen-, Umsatz-pro-Person- und Durchschnittsbon-PDFs
+
+Unterstütze zusätzlich die drei KPI-Berichte als PDF:
+
+Anzahl Personen
+Umsatz pro Person
+Durchschnittsbon
+
+Die Berichte können breite Tabellen mit:
+
+Bezeichnung
+Zeitraum
+Tageswerten
+
+enthalten.
+
+Erkenne Tagesüberschriften wie:
+
+01.06.
+02.06.
+03.06.
+
+Lese:
+
+Gesamt- oder Durchschnittswert für den Zeitraum
+Tageswerte
+leere Felder
+
+Leere Tageswerte sind nicht 0.
+
+Sie bedeuten:
+
+kein Wert vorhanden
+
+Jahresbestimmung
+
+Priorität:
+
+1. Jahr im PDF-Inhalt
+2. Zeitraum aus Metadaten oder Berichtstitel
+3. Benutzerwahl im Importformular
+4. Jahr aus eindeutigem Dateinamen
+5. Pflichtauswahl vor Speichern
+
+Das Jahr darf nicht stillschweigend angenommen werden.
+
+Gemeinsamer PDF-Upload
+
+Gestalte die Importseite so, dass nur noch PDF-Dateien hochgeladen werden.
+
+Bereiche:
+
+1. Z-Bericht PDF
+   Umsatz, Zahlarten, Produkte, Buchhaltung und Zeitabschnitte
+
+2. Gäste & Bonanalyse PDF
+   Anzahl Personen, Umsatz pro Person und Durchschnittsbon
+
+Erlaubte Dateiendung:
+
+.pdf
+
+Entferne .csv aus der sichtbaren Uploadaufforderung.
+
+Bestehende CSV-Daten
+
+Bestehende bereits importierte CSV-Daten dürfen nicht gelöscht werden.
+
+Historische CSV-Daten bleiben lesbar.
+
+Es soll aber keinen sichtbaren regulären CSV-Neuimport mehr geben.
+
+Falls technisch nötig, kapsle den alten CSV-Parser als Legacy-Kompatibilität.
+
+Importvorschau Z-Bericht
+
+Zeige vor dem Speichern kompakt:
+
+Berichtstyp
+Standard oder erweitert
+Mandant
+Kostenstelle
+Z-Zähler
+Von
+Bis
+Seitenanzahl
+Gesamtumsatz
+Steuerzeilen
+Kostenstellen
+Kellner
+Zahlarten
+Hauptwarengruppen
+Warengruppen
+Produktpositionen
+Buchungskonten
+Zahlungskonten
+Zeitabschnitte
+Inner-/Ausser-Haus-Daten vorhanden
+
+Beispiel:
+
+Erweiterter Z-Bericht erkannt
+
+Z-Zähler 506
+Zeitraum 30.06.2026 23:54 bis 01.07.2026 23:38
+174 Kostenstellen-Buchungen
+7 Kellner
+7 Zahlarten
+26 Warengruppen
+Produktpositionen erkannt
+Buchungskonten vorhanden
+24 Zeitabschnitte erkannt
+
+Verwende nur tatsächlich ausgelesene Werte.
+
+Keine Beispielzahlen hart codieren.
+
+Importvorschau Gäste & Bonanalyse
+
+Zeige pro PDF:
+
+Anzahl Personen erkannt
+Umsatz pro Person erkannt
+Durchschnittsbon erkannt
+Jahr
+Zeitraum
+Anzahl Tageswerte
+leere Tageswerte
+Gesamt- oder Durchschnittswert
+
+Mehrfachupload
+
+Erlaube im Bereich Gäste & Bonanalyse bis zu drei PDFs gleichzeitig:
+
+Anzahl Personen
+Umsatz pro Person
+Durchschnittsbon
+
+Erkenne die Berichtsart inhaltlich.
+
+Der Benutzer darf Dateien nacheinander ergänzen.
+
+Doppelte Berichtsarten müssen als Konflikt angezeigt werden.
+
+Gemeinsame Tagesanalyse
+
+Führe zusammen über:
+
+tenant_id
+calendar_date
+
+Werte:
+
+persons
+revenuePerPerson
+averageReceipt
+primaryRevenue
+derivedRevenue
+derivedReceiptCount
+derivedPersonsPerReceipt
+
+Quellenpriorität Umsatz
+
+1. Z-Bericht
+2. validierter Tagesumsatz
+3. Personen × Umsatz pro Person
+
+Der berechnete Umsatz darf einen vorhandenen Z-Bericht-Umsatz niemals überschreiben.
+
+Bonanzahl
+
+Bonanzahl =
+primärer Umsatz ÷ Durchschnittsbon
+
+Bezeichnung in der UI:
+
+„Bons, berechnet“
+
+Tooltip:
+
+„Aus Umsatz und Durchschnittsbon berechnet. Aufgrund gerundeter Berichtswerte kann die Anzahl leicht abweichen.“
+
+Personen pro Bon
+
+Personen pro Bon =
+Personen ÷ berechnete Bonanzahl
+
+Keine Division durch 0.
+
+Gewichtete Periodenwerte
+
+Über mehrere Tage gelten:
+
+Personen:
+Summe
+
+Umsatz:
+Summe
+
+Umsatz pro Person:
+Gesamtumsatz ÷ Gesamtpersonen
+
+Durchschnittsbon:
+Gesamtumsatz ÷ Gesamtbonanzahl
+
+Personen pro Bon:
+Gesamtpersonen ÷ Gesamtbonanzahl
+
+Keine einfachen Mittelwerte von Tagesdurchschnitten verwenden.
+
+Produkteanalyse
+
+Die bestehende Produkteanalyse soll ihre aggregierten Produktdaten künftig aus dem erweiterten Z-Bericht-PDF beziehen.
+
+Folgende Funktionen müssen weiter funktionieren:
+
+Top-Produkte
+Flop-Produkte
+Menge je Produkt
+Umsatz je Produkt
+Umsatzanteil
+Warengruppenanalyse
+Food-/Beverage-Mix
+Inner-Haus-/Ausser-Haus-Anteil
+Tagesvergleich
+Wochenvergleich
+Monatsvergleich
+Jahresvergleich
+Mandantenfilter
+Excel-Export
+PDF-Export
+
+Der separate Verkaufsdatenimport ist für vollständig durch erweiterte Z-Bericht-PDFs abgedeckte Zeiträume nicht mehr erforderlich.
+
+Er darf historisch als Fallback bestehen bleiben, aber nicht mehr als regulär notwendiger Import dargestellt werden.
+
+Keine Doppelzählung
+
+Für aggregierte Produktdaten gilt Quellenpriorität:
+
+1. erweitertes Z-Bericht-PDF
+2. historischer Verkaufsdatenimport als Fallback
+
+Wenn beide Quellen denselben Mandanten und Zeitraum abdecken, darf nur eine Quelle für Summen verwendet werden.
+
+Zeige klein:
+
+„Datenquelle: Erweiterter Z-Bericht PDF“
+
+Idempotenz
+
+Fachlicher Schlüssel Z-Bericht:
+
+tenant_id
+costCenter
+zCounter
+periodFrom
+periodTo
+
+Fachlicher Schlüssel Detailzeile mindestens:
+
+tenant_id
+zCounter
+section
+normalisierter Name
+consumptionType, falls vorhanden
+
+Ein Reimport desselben PDFs darf keine Duplikate erzeugen.
+
+Ein identischer Reimport darf:
+
+keinen unnötigen Write
+keine updatedAt-Änderung
+keine neue Importzeile mit doppelter Wirkung
+
+auslösen.
+
+Bei verändertem Inhalt desselben Berichts:
+
+bestehende Detaildaten atomar ersetzen
+Änderungen protokollieren
+keine Teilstände zurücklassen
+
+Mehrtagessituation
+
+Verwende den tatsächlichen Zeitraum Von/Bis.
+
+Wenn der Bericht einen Geschäftstag umfasst, darf er als Tagesdatensatz verwendet werden.
+
+Wenn der Bericht mehrere Geschäftstage umfasst:
+
+als Periodensumme speichern
+nicht künstlich auf Tage verteilen
+in reinen Tagescharts nicht als exakter Tageswert ausgeben
+
+Zeige:
+
+„Nur als Periodensumme verfügbar“
+
+Wichtig bei Übergang über Mitternacht:
+
+Ein Bericht von 30.06.2026 23:54 bis 01.07.2026 23:38 kann fachlich ein Geschäftstag sein.
+
+Prüfe die bestehende Gastronovi-Geschäftstagslogik.
+
+Nutze nicht nur das Kalenderdatum.
+
+Wenn die App bereits eine Business-Day-Logik besitzt, verwende diese zentral.
+
+PDF-Validierung
+
+Führe nach dem Parsen Plausibilitätsprüfungen durch.
+
+Mindestens:
+
+1. Steuer-Brutto-Total gegen Berichtstotal
+2. Summe Kostenstellen gegen Berichtstotal
+3. Summe Zahlarten gegen relevante Zahlungssumme
+4. Hauptwarengruppen gegen Produkt-/Warengruppensummen soweit fachlich vergleichbar
+5. Inner Haus plus Ausser Haus gegen Hauptwarengruppe
+6. Summe Stundenumsätze gegen Berichtstotal
+7. Zahlungskonten gegen Zahlarten soweit fachlich vergleichbar
+8. Buchungskonten gegen Steuer- und Umsatzdaten soweit fachlich vergleichbar
+
+Rundungsdifferenzen berücksichtigen.
+
+Keine harte Ablehnung bei kleiner Rundungsabweichung.
+
+Status:
+
+Plausibel
+Mit Rundungsdifferenz
+Abweichung prüfen
+Unvollständig
+
+PDF-Fehlerdiagnose
+
+Keine pauschale Meldung wie:
+
+„Datei konnte nicht erkannt werden.“
+
+Zeige konkrete Hinweise:
+
+„Z-Bericht erkannt, aber Z-Zähler fehlt.“
+„Erweiterter Z-Bericht erkannt, jedoch keine Produktpositionen gefunden.“
+„PDF enthält keinen auslesbaren Text.“
+„Abschnitt Zeitabschnitte erkannt, aber Gesamtspalte konnte nicht gelesen werden.“
+„Anzahl Personen erkannt, aber Jahr fehlt.“
+„Durchschnittsbon erkannt: 17 Tageswerte und 13 leere Felder.“
+
+Import-Cockpit
+
+Passe die Kontrollpunkte an.
+
+Zeige für Gastronovi:
+
+Z-Bericht PDF
+Produktdetails
+Zeitabschnitte
+Anzahl Personen
+Umsatz pro Person
+Durchschnittsbon
+
+Status:
+
+Vollständig
+Teilweise
+Fehlt
+Konflikt
+Plausibilitätsabweichung
+Durch erweiterten Z-Bericht PDF abgedeckt
+
+Der bisherige Kontrollpunkt „Verkaufsdaten importieren“ soll bei vorhandenen erweiterten Z-Bericht-PDFs nicht mehr als fehlend erscheinen.
+
+Stattdessen:
+
+„Durch erweiterten Z-Bericht PDF abgedeckt“
+
+Design
+
+Die Umsetzung muss vollständig mit den bestehenden App-Mustern übereinstimmen.
+
+Sie soll:
+
+schlicht
+modern
+kompakt
+lesefreundlich
+benutzerfreundlich
+einheitlich
+
+sein.
+
+Keine grossen leeren Uploadflächen.
+
+Keine langen Erklärungstexte.
+
+Zeige in kompakten Karten:
+
+Datei
+Berichtstyp
+Zeitraum
+erkannte Inhalte
+Warnungen
+Status
+
+Verwende bestehende:
+
+Karten
+Typografie
+Abstände
+Statusfarben
+Buttons
+Dialoge
+Tooltips
+Tabellenmuster
+
+Keine isolierte Sondergestaltung.
+
+Sicherheit und Datenschutz
+
+Verarbeite nur die im PDF enthaltenen betrieblichen Berichtsdaten.
+
+Keine vollständigen PDFs oder extrahierten Rohtexte in Browser-Logs oder Server-Logs schreiben.
+
+Keine Produkt-, Mitarbeiter- oder Umsatzdaten in Debug-Logs ausgeben.
+
+Fehlerlogs nur mit:
+
+Import-ID
+Berichtstyp
+Abschnitt
+technischem Fehlercode
+
+Tests
+
+Nutze die reale Struktur des erweiterten Gastronovi-PDFs als Parser-Fixture oder bilde sie exakt anonymisiert nach.
+
+Teste mindestens:
+
+1. Standard-Z-Bericht-PDF wird erkannt.
+2. Erweiterter Z-Bericht-PDF wird erkannt.
+3. Z-Zähler wird korrekt gelesen.
+4. Von/Bis werden korrekt gelesen.
+5. Steuerbericht wird vollständig gelesen.
+6. Kostenstellen werden gelesen.
+7. Kellner werden gelesen.
+8. Zahlarten mit Unteranbieter werden ohne Doppelzählung gelesen.
+9. Hauptwarengruppen mit Klammerbetrag werden korrekt gelesen.
+10. Rabatte bleiben negativ.
+11. Stornierte Artikel werden gelesen.
+12. Hauptwarengruppen inner/ausser Haus werden gelesen.
+13. Warengruppen werden gelesen.
+14. Warengruppen inner/ausser Haus werden gelesen.
+15. Positionen über mehrere Seiten werden vollständig gelesen.
+16. Produkte mit CHF 0.00 bleiben erhalten.
+17. Produktnamen mit Apostroph, Akzent und Sonderzeichen bleiben korrekt.
+18. Buchungskonten werden gelesen.
+19. Zahlungskonten werden gelesen.
+20. Zeitabschnitte werden gelesen.
+21. Negative Stundenwerte bleiben negativ.
+22. Summe Stundenumsätze wird gegen Gesamt geprüft.
+23. Wiederholte Kopf- und Fusszeilen werden nicht importiert.
+24. Seitenwechsel erzeugen keine Duplikate.
+25. PDF ohne Textlayer wird verständlich abgelehnt.
+26. Reimport erzeugt keine Duplikate.
+27. Identischer Reimport verändert updatedAt nicht.
+28. Oliv und Beaulieu bleiben strikt getrennt.
+29. Mehrtagesberichte werden nicht künstlich verteilt.
+30. Anzahl-Personen-PDF wird erkannt.
+31. Umsatz-pro-Person-PDF wird erkannt.
+32. Durchschnittsbon-PDF wird erkannt.
+33. Alle drei KPI-PDFs können gemeinsam importiert werden.
+34. Leere zukünftige Tageswerte werden nicht als 0 gespeichert.
+35. Gewichtete Monatswerte sind korrekt.
+36. Z-Bericht-Umsatz hat Vorrang vor berechnetem Umsatz.
+37. Bonanzahl wird als berechneter Wert gekennzeichnet.
+38. Bestehende historische CSV-Daten bleiben lesbar.
+39. Die Benutzeroberfläche bietet nur PDF-Neuimport an.
+40. Bestehende Tagesabschluss-, Buchhaltungs- und Produkttests bleiben grün.
+
+Regressionen
+
+Verändere keine bestehende Berechnungslogik für:
+
+Bargeld Soll
+Kassensaldo Soll
+Adyen-Abgleich
+Tagesabschluss
+Buchhaltungsexport
+Steuerlogik
+Kundenkarten
+Trinkgeld
+Rabatte
+Stornos
+
+Pure Reads dürfen keine Writes auslösen.
+
+Kein Auto-Seed beim Laden.
+
+updatedAt nur bei echter fachlicher Änderung.
+
+Dokumentation
+
+Aktualisiere replit.md kompakt mit:
+
+PDF als einzigem sichtbarem Gastronovi-Neuimport
+unterstützten PDF-Berichtstypen
+zentralem PDF-Parser
+Standard- und erweitertem Z-Bericht
+Produktdetails
+Inner-/Ausser-Haus-Daten
+Buchungskonten
+Zahlungskonten
+Zeitabschnitten
+Personen-, Umsatz-pro-Person- und Durchschnittsbon-PDF
+Quellenpriorität
+Idempotenz
+Mehrtagessituation
+historischer CSV-Kompatibilität
+Plausibilitätsprüfung
+Mandantentrennung
+
+Validierung
+
+Führe danach aus:
+
+TypeScript-Typecheck
+PDF-Parser-Unit-Tests
+Z-Bericht-Integrationstests
+KPI-PDF-Importtests
+Produkteanalyse-Tests
+Zeitabschnittsanalyse-Tests
+Persistenz- und Idempotenztests
+Mandantentests
+Exporttests
+bestehende Regressionstests
+gezieltes Architect-Review nur über den tatsächlichen Task-Diff
+
+Prüfe manuell mit dem realen erweiterten PDF unter anderem:
+
+Z-Zähler 506
+Total CHF 12’225.20
+Food und Beverage
+Inner Haus und Ausser Haus
+Warengruppen
+Produktpositionen
+CHF-0.00-Positionen
+Buchungskonten
+Zahlungskonten
+Zeitabschnitte 00:00 bis 23:00
+negative Werte um 23:00
+Summe Zeitabschnitte gegen Gesamtumsatz
+
+Gib am Ende eine klare Zusammenfassung:
+
+welche PDF-Berichte jetzt unterstützt werden
+welche Abschnitte erkannt werden
+wie Produkte über Seitenumbrüche gelesen werden
+wie Zahlarten ohne Doppelzählung verarbeitet werden
+wie Buchungskonten und Zahlungskonten übernommen werden
+wie Zeitabschnitte ausgewertet werden
+wie die drei Gäste- und Bonberichte zusammengeführt werden
+wie Reimporte und Doppelzählungen verhindert werden
+welche historischen CSV-Funktionen nur noch intern erhalten bleiben
+welche Tests erfolgreich waren

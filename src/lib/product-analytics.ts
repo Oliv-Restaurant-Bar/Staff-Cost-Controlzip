@@ -106,6 +106,11 @@ export interface ProductBreakdown {
 export const SOURCE_CATEGORY: Record<string, CategoryFilter> = {
   food_csv_export: 'food',
   beverage_csv_export: 'beverage',
+  // Erweiterter Z-Bericht: Kategorie aus der Verkaufsdaten-Historie abgeleitet
+  // (produkt-quellen). Unklassifizierte Positionen ('gn_extended') bleiben
+  // bewusst OHNE Kategorie — sie zählen in «Alle», nie in Food/Beverage.
+  gn_extended_food: 'food',
+  gn_extended_beverage: 'beverage',
 };
 
 export const PERIOD_KIND_LABEL: Record<PeriodKind, string> = {

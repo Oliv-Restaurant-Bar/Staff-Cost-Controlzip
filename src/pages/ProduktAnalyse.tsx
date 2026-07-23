@@ -27,6 +27,7 @@ import {
   Layers, Utensils, Wine,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -34,16 +35,21 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
 import { loadProductSalesRows, type ProductSalesRow } from '@/lib/sales-db';
+import { fetchExtendedPositions, type GnExtendedPositionRow } from '@/lib/gn-zbericht-db';
+import {
+  buildSalesCategoryMap, mergeProduktQuellen, produktQuellenLabel,
+} from '@/lib/produkt-quellen';
 import {
   filtersToParams, filtersFromParams, isoWeekInfo, isoWeeksInYear, localISODate,
-  weekRangeLabel, shiftIsoWeek,
+  weekRangeLabel, shiftIsoWeek, periodBounds, categoryOf, formatDayLabel,
   MONTH_NAMES, PERIOD_KIND_LABEL,
   type PeriodKind, type PeriodSelection, type CategoryFilter, type Metric,
   type AnalysisFilters,
 } from '@/lib/product-analytics';
 import {
-  addDays, quickRangeSelection, QUICK_RANGE_KEYS, QUICK_RANGE_LABEL,
+  addDays, quickRangeSelection, comparisonPeriod, QUICK_RANGE_KEYS, QUICK_RANGE_LABEL,
   COMPARE_MODE_LABEL, type QuickRangeKey, type CompareMode,
 } from '@/lib/produkt-zeitraum';
 import ProdukteTab, { isLimitMode, type LimitMode } from '@/components/produktanalyse/ProdukteTab';
@@ -90,9 +96,12 @@ function availableYears(rows: ProductSalesRow[]): number[] {
 
 export default function ProduktAnalyse() {
   const { canAccessModule } = usePermissions();
+  const { tenantId } = useTenant();
   const canSeeLunch = canAccessModule('dashboard');
 
   const [allRows, setAllRows] = useState<ProductSalesRow[]>([]);
+  const [extRows, setExtRows] = useState<GnExtendedPositionRow[]>([]);
+  const [extError, setExtError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
 
@@ -164,22 +173,37 @@ export default function ProduktAnalyse() {
   const [compareMode,    setCompareMode]    = useState<CompareMode>(seed.cmp);
 
   // ── Daten EINMAL laden (Übersicht/Produkte/Kategorien teilen sich die Rows) ──
+  // Zusätzlich: Detailpositionen aktiver erweiterter Z-Berichte des aktuellen
+  // Tenants (bevorzugte Quelle für aggregierte Produktanalysen, strikt read-only).
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setExtError(null);
     try {
-      const data = await loadProductSalesRows();
+      const [data, ext] = await Promise.all([
+        loadProductSalesRows(),
+        fetchExtendedPositions(tenantId),
+      ]);
       setAllRows(data);
+      setExtRows(ext.rows);
+      setExtError(ext.error);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => { load(); }, [load]);
 
-  const years = useMemo(() => availableYears(allRows), [allRows]);
+  const years = useMemo(() => {
+    const ys = new Set(availableYears(allRows));
+    for (const r of extRows) {
+      const y = parseInt((r.periodTo ?? r.periodFrom ?? '').slice(0, 4), 10);
+      if (!isNaN(y)) ys.add(y);
+    }
+    return Array.from(ys).sort((a, b) => b - a);
+  }, [allRows, extRows]);
   const yearOptions = years.length ? years : [currentYear];
 
   // ── Aktuelle Periode (discriminated union) ───────────────────────────────────
@@ -196,6 +220,50 @@ export default function ProduktAnalyse() {
       default:     return { kind: 'month', year, month };
     }
   }, [periodKind, day, weekYear, week, year, month, rangeFrom, rangeTo]);
+
+  // ── Quellenpriorität: erweiterter Z-Bericht > Verkaufsdatenimport ────────────
+  // Reine Logik (produkt-quellen): verwendete erweiterte Berichte verdrängen
+  // die Verkaufsdaten derselben Tage (keine Doppelzählung); Mehrtagesberichte
+  // werden NIE auf Tage verteilt. Vergleichsperioden erhalten dieselbe
+  // Quellenpriorität (eigener Merge über die Vergleichs-Bounds).
+  const categoryByProduct = useMemo(
+    () => buildSalesCategoryMap(allRows, categoryOf),
+    [allRows],
+  );
+  const extPositions = useMemo(
+    () => extRows.filter(r => r.section === 'positions'),
+    [extRows],
+  );
+  const quellen = useMemo(
+    () => mergeProduktQuellen({
+      salesRows: allRows,
+      extendedPositions: extPositions,
+      bounds: periodBounds(selection),
+      categoryByProduct,
+    }),
+    [allRows, extPositions, selection, categoryByProduct],
+  );
+  const cmpSelection = useMemo(
+    () => comparisonPeriod(selection, compareMode),
+    [selection, compareMode],
+  );
+  const cmpQuellen = useMemo(
+    () => (cmpSelection
+      ? mergeProduktQuellen({
+          salesRows: allRows,
+          extendedPositions: extPositions,
+          bounds: periodBounds(cmpSelection),
+          categoryByProduct,
+        })
+      : null),
+    [allRows, extPositions, cmpSelection, categoryByProduct],
+  );
+  /** Zeilen für Übersicht/Produkte/Kategorien: Auswahl- + Vergleichszeitraum. */
+  const sharedRows = useMemo(
+    () => (cmpQuellen ? [...quellen.rows, ...cmpQuellen.rows] : quellen.rows),
+    [quellen, cmpQuellen],
+  );
+  const quellenBadge = produktQuellenLabel(quellen.source);
 
   // ── Tab + Filter in die URL spiegeln (EINE Stelle) ───────────────────────────
   useEffect(() => {
@@ -524,10 +592,32 @@ export default function ProduktAnalyse() {
         </CardContent>
       </Card>
 
+      {/* Datenquellen-Hinweis (Quellenpriorität: erweiterter Z-Bericht zuerst) */}
+      {isSharedFilterTab && !loading && (quellenBadge || quellen.periodSumOnlyReports.length > 0 || extError) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {quellenBadge && (
+            <Badge variant="outline" className="font-normal" data-testid="badge-datenquelle">
+              {quellenBadge}
+            </Badge>
+          )}
+          {quellen.periodSumOnlyReports.map(r => (
+            <span key={r.importId} data-testid={`hint-periodensumme-${r.importId}`}>
+              Erweiterter Z-Bericht {formatDayLabel(r.periodFrom)}–{formatDayLabel(r.periodTo)}:
+              {' '}nur als Periodensumme verfügbar — in dieser Ansicht nicht enthalten.
+            </span>
+          ))}
+          {extError && (
+            <span className="text-destructive" data-testid="hint-ext-fehler">
+              Detailpositionen konnten nicht geladen werden: {extError}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Tab-Inhalte */}
       {tab === 'uebersicht' && (
         <UebersichtTab
-          rows={allRows}
+          rows={sharedRows}
           loading={loading}
           error={error}
           selection={selection}
@@ -539,7 +629,7 @@ export default function ProduktAnalyse() {
 
       {tab === 'produkte' && (
         <ProdukteTab
-          rows={allRows}
+          rows={sharedRows}
           loading={loading}
           error={error}
           selection={selection}
@@ -553,7 +643,7 @@ export default function ProduktAnalyse() {
 
       {tab === 'kategorien' && (
         <KategorienTab
-          rows={allRows}
+          rows={sharedRows}
           loading={loading}
           error={error}
           selection={selection}

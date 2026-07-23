@@ -25,7 +25,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { kvGet } from './supabase-kv';
 import { fetchLatestImportRuns } from './import-runs-db';
-import { loadGnImports } from './gn-zbericht-db';
+import { loadGnImports, fetchExtendedCoverage } from './gn-zbericht-db';
 import { getImportHistoryAll, type ImportHistoryEntry } from './timesheet-store';
 import {
   COCKPIT_SOURCES,
@@ -34,6 +34,8 @@ import {
   deriveMirusPeriodEndFromDays,
   umsatzabstimmungMonthsFromBlob,
   buchhaltungsExportOverride,
+  computeSourceStatus,
+  getCockpitSource,
   type CockpitSignal,
   type CockpitSourceId,
 } from './import-cockpit';
@@ -176,10 +178,19 @@ async function tagesumsatzSignal(ctx: CockpitFetchContext): Promise<CockpitSigna
   };
 }
 
-/** Produktverkäufe: `product_sales` (mandantenübergreifend, kein restaurant_id). */
-async function produktverkaeufeSignal(): Promise<CockpitSignal> {
+/**
+ * Produktverkäufe: `product_sales` (mandantenübergreifend, kein restaurant_id).
+ *
+ * Zusätzlich zählt die Abdeckung durch AKTIVE erweiterte Z-Berichte des
+ * aktuellen Tenants (gn_extended_positions liefern dieselben Produktdaten).
+ * Ist der erweiterte Datenstand mindestens so frisch wie der CSV-Import,
+ * wird das sichtbar gemacht («Durch erweiterten Z-Bericht abgedeckt») —
+ * der Status kommt dabei weiterhin aus der ZENTRALEN Frische-Berechnung
+ * (computeSourceStatus über den gemeinsamen Datenstand), keine Parallel-Logik.
+ */
+async function produktverkaeufeSignal(ctx: CockpitFetchContext): Promise<CockpitSignal> {
   const today = todayIso();
-  const [maxRow, minRow, futureRow] = await Promise.all([
+  const [maxRow, minRow, futureRow, coverage] = await Promise.all([
     // Zukunft zählt nie als „Ist-Daten bis": spätestes Verkaufsdatum ≤ heute.
     supabase
       .from('product_sales')
@@ -194,16 +205,54 @@ async function produktverkaeufeSignal(): Promise<CockpitSignal> {
       .gt('sale_date', today)
       .order('sale_date', { ascending: false })
       .limit(1),
+    fetchExtendedCoverage(ctx.tenantId),
   ]);
   const latest = (maxRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null;
   const futureLatest = (futureRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null;
-  if (!latest) return futureLatest ? { latestDataDate: null, futureDataDate: futureLatest } : EMPTY;
-  return {
-    latestDataDate: latest,
-    dataFrom: (minRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null,
-    dataUntil: latest,
-    futureDataDate: futureLatest,
-  };
+
+  // Spätestes Bis-Datum aktiver erweiterter Z-Berichte (≤ heute, Zukunft zählt nie).
+  const extUntil = coverage.ranges
+    .map((r) => r.periodTo)
+    .filter((d): d is string => !!d && d <= today)
+    .sort()
+    .at(-1) ?? null;
+
+  const base: CockpitSignal = latest
+    ? {
+        latestDataDate: latest,
+        dataFrom: (minRow.data?.[0] as { sale_date?: string } | undefined)?.sale_date ?? null,
+        dataUntil: latest,
+        futureDataDate: futureLatest,
+      }
+    : futureLatest
+      ? { latestDataDate: null, futureDataDate: futureLatest }
+      : EMPTY;
+
+  // Erweiterte Berichte decken den Zeitraum mindestens so weit ab wie der
+  // Verkaufsdaten-Import → Datenstand zusammenführen + Grund sichtbar machen.
+  if (extUntil && (!latest || extUntil >= latest)) {
+    const merged: CockpitSignal = {
+      ...base,
+      latestDataDate: extUntil > (latest ?? '') ? extUntil : latest,
+      dataUntil: extUntil > (latest ?? '') ? extUntil : latest,
+    };
+    const def = getCockpitSource('produktverkaeufe');
+    if (def) {
+      // Status ZENTRAL berechnen (gleiche Frische-Schwellen), nur der Grund
+      // benennt die Quelle der Abdeckung.
+      const central = computeSourceStatus(def, merged);
+      return {
+        ...merged,
+        statusOverride: {
+          status: central.status,
+          reason: `Durch erweiterten Z-Bericht abgedeckt (Detailpositionen bis ${extUntil.split('-').reverse().join('.')}). ${central.reason}`,
+        },
+      };
+    }
+    return merged;
+  }
+
+  return base;
 }
 
 /**
@@ -487,7 +536,7 @@ export async function fetchCockpitSignals(
     { id: 'gaeste_crm', run: () => guestCrmSignal(ctx) },
     { id: 'zbericht', run: () => zberichtSignal(ctx) },
     { id: 'tagesumsatz', run: () => tagesumsatzSignal(ctx) },
-    { id: 'produktverkaeufe', run: () => produktverkaeufeSignal() },
+    { id: 'produktverkaeufe', run: () => produktverkaeufeSignal(ctx) },
     { id: 'mirus', run: () => mirusSignal(ctx) },
     { id: 'dienstplanung', run: () => dienstplanungSignal(ctx) },
     { id: 'umsatzabstimmung', run: () => umsatzabstimmungSignal(ctx) },
