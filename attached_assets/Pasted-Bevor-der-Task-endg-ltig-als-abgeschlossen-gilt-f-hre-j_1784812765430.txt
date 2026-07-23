@@ -1,0 +1,165 @@
+Bevor der Task endgültig als abgeschlossen gilt, führe jetzt eine vollständige Endabnahme über den gesamten PDF-Import (T001 bis T008) durch.
+
+Wichtig:
+
+Nicht nur den zuletzt bearbeiteten T008 prüfen.
+
+Prüfe den gesamten Git-Diff dieser Feature-Entwicklung.
+
+Vergleiche den aktuellen Stand Punkt für Punkt mit dem ursprünglichen Gesamtauftrag.
+
+Erstelle zuerst eine Checkliste mit diesen Punkten:
+
+□ PDF ist der einzige sichtbare Neuimport
+□ CSV bleibt nur als interne Legacy-Kompatibilität erhalten
+□ Standard-Z-Bericht PDF funktioniert
+□ Erweiterter Z-Bericht PDF funktioniert
+□ Anzahl Personen PDF funktioniert
+□ Umsatz pro Person PDF funktioniert
+□ Durchschnittsbon PDF funktioniert
+□ Z-Bericht erkennt Standard und Detailbericht automatisch
+□ Produktpositionen werden vollständig gelesen
+□ Produktpositionen über mehrere PDF-Seiten funktionieren
+□ CHF-0.00-Positionen bleiben erhalten
+□ Hauptwarengruppen werden gelesen
+□ Warengruppen werden gelesen
+□ Inner Haus/Ausser Haus wird gelesen
+□ Buchungskonten werden gelesen
+□ Zahlungskonten werden gelesen
+□ Zeitabschnitte werden gelesen
+□ Stundenumsätze werden ausgewertet
+□ Produkteanalyse verwendet PDF als Hauptquelle
+□ Verkaufsdatenimport ist nur noch Fallback
+□ Keine Doppelzählung zwischen PDF und Legacy-CSV
+□ Gäste & Bonanalyse führt die drei KPI-Berichte zusammen
+□ Bonanzahl wird korrekt als berechneter Wert ausgewiesen
+□ Personen pro Bon wird korrekt berechnet
+□ Gewichtete Monats- und Jahreswerte sind korrekt
+□ Z-Bericht-Umsatz hat höchste Priorität
+□ Mehrtagesberichte werden korrekt behandelt
+□ Geschäftstag über Mitternacht wird korrekt behandelt
+□ Oliv und Beaulieu bleiben vollständig getrennt
+□ Identischer Reimport erzeugt keine Writes
+□ updatedAt ändert sich nur bei echten Datenänderungen
+□ Pure Reads erzeugen niemals Writes
+□ Import-Cockpit zeigt die neuen PDF-Quellen korrekt
+□ Historische CSV-Daten bleiben lesbar
+□ Alle neuen Parser-Tests bestehen
+□ Alle Integrations-Tests bestehen
+□ Alle Regressionstests bestehen
+□ replit.md entspricht exakt dem tatsächlich implementierten Verhalten
+
+Für jeden Punkt genau einen Status ausgeben:
+
+PASS
+PARTIAL
+FAIL
+
+Bei PARTIAL oder FAIL:
+
+genau benennen
+
+welche Datei betroffen ist
+
+was fehlt
+
+wie es behoben wird
+
+und erst danach beheben.
+
+Anschliessend erneut validieren.
+
+Architect-Review
+
+Danach einen vollständigen Architect-Review über den gesamten Feature-Diff durchführen.
+
+Nicht nur den letzten Commit prüfen.
+
+Prüfen insbesondere:
+
+keine parallelen Datenpfade
+
+keine doppelte Quellenlogik
+
+keine toten Parser
+
+keine ungenutzten Komponenten
+
+keine unnötigen Tabellen
+
+keine Performance-Probleme
+
+keine Race Conditions
+
+keine Tenant-Leaks
+
+keine doppelte Persistenz
+
+keine Doppelzählungen
+
+keine Business-Day-Regressions
+
+keine stillen Fallbacks
+
+keine Write-on-Read-Pfade
+
+Runtime
+
+Zusätzlich:
+
+Projekt starten
+
+Import eines echten erweiterten Z-Bericht-PDFs testen
+
+Import Anzahl Personen PDF testen
+
+Import Umsatz pro Person PDF testen
+
+Import Durchschnittsbon PDF testen
+
+Produkteanalyse öffnen
+
+Import-Cockpit öffnen
+
+Gäste- und Bonanalyse öffnen
+
+Keine Console Errors
+
+Keine Network Errors
+
+Keine Runtime Errors
+
+Migration
+
+Prüfen, ob alle benötigten Supabase-Migrationen vorhanden sind.
+
+Falls manuelle SQL-Schritte notwendig sind:
+
+am Schluss exakt angeben
+
+Dateiname
+
+Reihenfolge
+
+Zweck
+
+wie geprüft werden kann, ob sie erfolgreich ausgeführt wurden.
+
+Abschlussbericht
+
+Erstelle am Ende einen vollständigen Abschlussbericht mit:
+
+1. Welche Funktionen neu vorhanden sind.
+2. Welche PDF-Berichte unterstützt werden.
+3. Welche Daten aus jedem PDF übernommen werden.
+4. Welche Informationen zusätzlich gegenüber dem alten CSV-Import gewonnen werden (z. B. Buchungskonten, Zahlungskonten, Zeitabschnitte).
+5. Welche bisherigen CSV-Importe dadurch ersetzt werden.
+6. Welche CSV-Funktionen nur noch intern als Legacy bestehen.
+7. Welche Tabellen erweitert oder neu verwendet werden.
+8. Welche Migrationen noch manuell auszuführen sind.
+9. Welche Tests erfolgreich waren.
+10. Ergebnis des Architect-Reviews.
+11. Ergebnis des Runtime-Checks.
+12. Bestätigung, dass der gesamte PDF-only-Auftrag vollständig umgesetzt wurde oder – falls nicht – welche Restpunkte noch offen sind.
+
+Erst wenn alle Punkte PASS sind, gilt der Task als abgeschlossen.

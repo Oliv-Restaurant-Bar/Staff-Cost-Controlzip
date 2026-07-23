@@ -380,10 +380,10 @@ describe('COCKPIT_SOURCES 3-Tab-Konsistenz', () => {
     for (const s of COCKPIT_SOURCES) expect(TAB_CATEGORY_LABEL[s.tabCategory]).toBeTruthy();
   });
 
-  it('10 Datenimporte + 8 Kontrollen = 18 Quellen', () => {
+  it('14 Datenimporte + 8 Kontrollen = 22 Quellen', () => {
     const imports = COCKPIT_SOURCES.filter((s) => s.section === 'import');
     const controls = COCKPIT_SOURCES.filter((s) => s.section === 'control');
-    expect(imports).toHaveLength(10);
+    expect(imports).toHaveLength(14);
     expect(controls).toHaveLength(8);
   });
 
@@ -510,10 +510,10 @@ describe('importFileFormats', () => {
     }
   });
 
-  it('echte Quellen: Stichproben (Mirus=Excel, Z-Bericht=CSV+PDF, Rechnungen=PDF)', () => {
+  it('echte Quellen: Stichproben (Mirus=Excel, Z-Bericht=PDF-only, Rechnungen=PDF)', () => {
     const byId = new Map(COCKPIT_SOURCES.map((s) => [s.id, s]));
     expect(importFileFormats(byId.get('mirus')!)).toEqual(['Excel']);
-    expect(importFileFormats(byId.get('zbericht')!)).toEqual(['CSV', 'PDF']);
+    expect(importFileFormats(byId.get('zbericht')!)).toEqual(['PDF']);
     expect(importFileFormats(byId.get('warenrechnungen')!)).toEqual(['PDF']);
     expect(importFileFormats(byId.get('reservationen')!)).toEqual(['CSV']);
   });

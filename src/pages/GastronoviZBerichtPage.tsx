@@ -201,7 +201,8 @@ export default function GastronoviZBerichtPage() {
   const loadHistory = useCallback(async () => {
     setHistLoading(true);
     const [z, p, a] = await Promise.all([
-      loadGnImports(tenantId),
+      // Historie zeigt Details aus raw_csv_json (+ report_type-Badge) → volle Zeilen.
+      loadGnImports(tenantId, { includeRaw: true }),
       loadPersonImports(tenantId),
       loadAverageCheckImports(tenantId),
     ]);

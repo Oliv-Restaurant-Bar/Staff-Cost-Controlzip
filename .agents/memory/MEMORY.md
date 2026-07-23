@@ -41,6 +41,7 @@
 - [OP-Liste Gesamtsaldo priority](op-liste-total-priority.md) — resolve footer total AFTER loop by priority (Posten>Währung>generic), exclude Rechnungen/Gutschriften subtotals; keep null not silent 0.00.
 - [ER-Budget only via budgetByRow (SSoT)](pl-budget-by-row-ssot.md) — P&L budget vanishes unless you pass budgetByRow from buildBudgetByRowForMonth; direct-field budget is actual-gated, override path isn't.
 - [de-CH currency NBSP](de-ch-currency-nbsp.md) — locale currency output uses U+00A0 after "CHF"; strip the prefix with /CHF\s*/u, never a plain-space string replace.
+- [Pre-Migration-tolerante Queries](pre-migration-tolerant-queries.md) — explizite Spaltenlisten mit Migrations-Spalten scheitern vor dem Einspielen (42703); Insert-Payloads konditional spreaden, Leser leer zurückgeben.
 - [Lange Hintergrundjobs](background-long-jobs.md) — bash-nohup stirbt nach Tool-Ende; volle tsc-Läufe via Notebook-spawn (detached, absoluter Node-Pfad) oder Teil-Gate per tsconfig.check.json.
 - [Parallel E2E vs Vite dev](e2e-parallel-vite.md) — zwei gleichzeitige runTest-Browser gegen den Dev-Server ⇒ leere Seite/HMR 502; Viewport-Läufe immer sequenziell.
 - [kueche_manager Dashboard gewollt](kueche-dashboard-gate.md) — Manager-Dashboard-Zugriff + canSeePersonnelCostTotals für alle sind Absicht; Kommentar-Matrix in usePermissions ist veraltet, Gate nicht verengen.

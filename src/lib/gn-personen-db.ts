@@ -85,8 +85,6 @@ export async function savePersonImport(
   csvTypeOverride?: PersonCsvType,
 ): Promise<{ importId: string; error: string | null }> {
   try {
-    if (replaceId) await deletePersonImport(replaceId);
-
     const csvType = csvTypeOverride ?? parsed.detectedCsvType ?? 'personen';
 
     const { data: imp, error: impErr } = await (supabase as any)
@@ -111,8 +109,12 @@ export async function savePersonImport(
 
     const importId: string = imp.id;
 
+    // Insert-first-Muster: Tageswerte schreiben und Fehler PRÜFEN. Schlägt ein
+    // Schritt fehl, wird der neue Import kompensierend als 'deleted' markiert —
+    // der bisherige Import (replaceId) bleibt unangetastet aktiv, es entsteht
+    // nie ein Zeitraum ohne aktiven Import und nie ein stiller Teilimport.
     if (parsed.rows.length > 0) {
-      await (supabase as any).from('gn_person_metrics').insert(
+      const { error: metricsErr } = await (supabase as any).from('gn_person_metrics').insert(
         parsed.rows.map(r => ({
           import_id:       importId,
           date:            r.date || null,
@@ -125,6 +127,19 @@ export async function savePersonImport(
           source_row_json: r.sourceRowJson,
         })),
       );
+      if (metricsErr) {
+        await deletePersonImport(importId);
+        return { importId: '', error: `Tageswerte konnten nicht gespeichert werden: ${metricsErr.message}` };
+      }
+    }
+
+    // Erst NACH vollständigem Erfolg den ersetzten Import deaktivieren.
+    if (replaceId) {
+      const { error: replErr } = await deletePersonImport(replaceId);
+      if (replErr) {
+        await deletePersonImport(importId);
+        return { importId: '', error: `Bestehender Import konnte nicht ersetzt werden: ${replErr}` };
+      }
     }
 
     return { importId, error: null };

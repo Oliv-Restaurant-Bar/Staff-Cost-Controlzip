@@ -588,16 +588,41 @@ export async function saveGnZBerichtBatch(
 
 // ── Imports laden ────────────────────────────────────────────────────────────
 
-export async function loadGnImports(restaurantId: string): Promise<GnImportRow[]> {
-  const { data, error } = await (supabase as any)
-    .from('gn_imports')
-    .select('*')
-    .eq('restaurant_id', restaurantId)
-    .in('status', ['active'])
-    .order('period_from', { ascending: false });
+/**
+ * Schlanke Spaltenliste für Aggregatoren (Checkliste/Cockpit/Import-Center):
+ * bewusst OHNE raw_csv_json (grosse Parse-Blobs, dort nie gebraucht) und OHNE
+ * report_type (Spalte existiert erst ab Migration 20260723 — eine explizite
+ * Selektion würde davor fehlschlagen; `select('*')` liefert sie, wenn vorhanden).
+ */
+const GN_IMPORT_LEAN_COLUMNS =
+  'id, restaurant_id, file_name, pdf_file_name, z_counter, cost_center, ' +
+  'period_from, period_to, import_type, aggregation_level, gross_revenue, ' +
+  'net_revenue, food_revenue, bev_revenue, take_away_revenue, discount_total, ' +
+  'cancellation_total, receipts_count, avg_receipt, status, checksum, ' +
+  'imported_at, created_at';
 
-  if (error || !data) return [];
-  return data as GnImportRow[];
+export async function loadGnImports(
+  restaurantId: string,
+  opts?: { includeRaw?: boolean },
+): Promise<GnImportRow[]> {
+  const PAGE = 1000;
+  const all: GnImportRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await (supabase as any)
+      .from('gn_imports')
+      .select(opts?.includeRaw ? '*' : GN_IMPORT_LEAN_COLUMNS)
+      .eq('restaurant_id', restaurantId)
+      .in('status', ['active'])
+      .order('period_from', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error || !data) return all;
+    all.push(...(data as GnImportRow[]));
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return all;
 }
 
 // ── GN-Umsatz pro Monat (für Umsatzabstimmung) ───────────────────────────────
@@ -940,18 +965,28 @@ export interface GnExtendedCoverageRange {
 export async function fetchExtendedCoverage(
   restaurantId: string,
 ): Promise<{ ranges: GnExtendedCoverageRange[]; error: string | null }> {
-  const { data, error } = await (supabase as any)
-    .from('gn_imports')
-    .select('id, period_from, period_to')
-    .eq('restaurant_id', restaurantId)
-    .eq('status', 'active')
-    .eq('report_type', 'extended');
-  if (error) {
-    if (isMissingExtendedSchemaError(error)) return { ranges: [], error: null };
-    return { ranges: [], error: error.message ?? 'Abdeckung konnte nicht geladen werden' };
+  const PAGE = 1000;
+  const raw: Array<{ id: string; period_from: string | null; period_to: string | null }> = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await (supabase as any)
+      .from('gn_imports')
+      .select('id, period_from, period_to')
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'active')
+      .eq('report_type', 'extended')
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      if (isMissingExtendedSchemaError(error)) return { ranges: [], error: null };
+      return { ranges: [], error: error.message ?? 'Abdeckung konnte nicht geladen werden' };
+    }
+    const page = (data ?? []) as Array<{ id: string; period_from: string | null; period_to: string | null }>;
+    raw.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
   }
-  const ranges = ((data ?? []) as Array<{ id: string; period_from: string | null; period_to: string | null }>)
-    .map(r => ({ importId: r.id, periodFrom: r.period_from, periodTo: r.period_to }));
+  const ranges = raw.map(r => ({ importId: r.id, periodFrom: r.period_from, periodTo: r.period_to }));
   return { ranges, error: null };
 }
 
@@ -979,18 +1014,32 @@ export async function fetchExtendedPositions(
   restaurantId: string,
   from?: string,
   to?: string,
+  /** Serverseitiger Sektionsfilter (z. B. 'positions' für die Produkt-Analyse). */
+  section?: GnExtSection,
 ): Promise<{ rows: GnExtendedPositionRow[]; error: string | null }> {
-  let q = (supabase as any)
-    .from('gn_extended_positions')
-    .select('import_id, period_from, period_to, section, name, quantity, gross_amount, original_amount, consumption_type, gn_imports!inner(status)')
-    .eq('restaurant_id', restaurantId)
-    .eq('gn_imports.status', 'active');
-  if (to)   q = q.lte('period_from', to);
-  if (from) q = q.gte('period_to', from);
-  const { data, error } = await q;
-  if (error) {
-    if (isMissingExtendedSchemaError(error)) return { rows: [], error: null };
-    return { rows: [], error: error.message ?? 'Detailpositionen konnten nicht geladen werden' };
+  const PAGE = 1000;
+  const data: unknown[] = [];
+  let offset = 0;
+  while (true) {
+    let q = (supabase as any)
+      .from('gn_extended_positions')
+      .select('import_id, period_from, period_to, section, name, quantity, gross_amount, original_amount, consumption_type, gn_imports!inner(status)')
+      .eq('restaurant_id', restaurantId)
+      .eq('gn_imports.status', 'active');
+    if (section) q = q.eq('section', section);
+    if (to)      q = q.lte('period_from', to);
+    if (from)    q = q.gte('period_to', from);
+    const { data: page, error } = await q
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (error) {
+      if (isMissingExtendedSchemaError(error)) return { rows: [], error: null };
+      return { rows: [], error: error.message ?? 'Detailpositionen konnten nicht geladen werden' };
+    }
+    const pageRows = (page ?? []) as unknown[];
+    data.push(...pageRows);
+    if (pageRows.length < PAGE) break;
+    offset += PAGE;
   }
   const rows = ((data ?? []) as Array<{
     import_id: string; period_from: string | null; period_to: string | null;
