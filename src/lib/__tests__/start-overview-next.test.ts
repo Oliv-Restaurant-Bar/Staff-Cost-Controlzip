@@ -7,6 +7,11 @@
  * Tests brechen, sobald die Startseite eine eigene Statusberechnung erfände.
  * Nummerierte Fälle (1)–(17) = Testkatalog aus dem UX-Auftrag; (7) und (18)
  * liegen im Hook-Test (useStartOverview.test.tsx).
+ *
+ * Default-Einstellungen der neuen Import-Strategie: zbericht/gaeste_bon/
+ * tagesabschluss täglich, mirus täglich mit 2 Karenztagen, reservationen
+ * wöchentlich (Woche Mo–So, fällig nach dem Sonntag), marketing bei_bedarf
+ * (erzeugt NIE Aufgaben), erfolgsrechnung/warenrechnungen/inventur monatlich.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -16,6 +21,7 @@ import {
   type ImportTask,
   type MonthCoverage,
 } from '@/lib/import-tasks-engine';
+import { defaultImportSettings } from '@/lib/import-settings';
 import {
   getTodayTasks,
   summarizeTypeCompletion,
@@ -34,6 +40,7 @@ import {
 // Heute = 15.07.2026 → Engine deckelt Aufgaben auf gestern (14.07.).
 const TODAY = '2026-07-15';
 const PERIOD = { year: 2026, month: 7, today: TODAY };
+const SETTINGS = defaultImportSettings();
 
 /** Alle Julitage from..to als yyyy-MM-dd. */
 function julyDays(from: number, to: number): string[] {
@@ -42,19 +49,21 @@ function julyDays(from: number, to: number): string[] {
   return out;
 }
 
-/** Volle Abdeckung bis gestern; `missing` entfernt Tage aus einem Tagestyp. */
+/**
+ * Volle Abdeckung bis gestern. Reservationen (wöchentlich) brauchen zusätzlich
+ * die Vormonatstage der ersten ISO-Woche (29./30.06.) — Loader-Vertrag.
+ */
 function coverage(overrides: MonthCoverage = {}): MonthCoverage {
   const allDays = julyDays(1, 14);
   return {
     zbericht: { coveredDays: allDays },
-    reservationen: { coveredDays: allDays },
-    umsatz: { coveredDays: allDays },
-    verkaufsdaten: { coveredDays: allDays },
+    gaeste_bon: { coveredDays: allDays },
     mirus: { coveredDays: allDays },
-    marketing: { coveredDays: allDays },
+    tagesabschluss: { coveredDays: allDays },
+    reservationen: { coveredDays: ['2026-06-29', '2026-06-30', ...allDays] },
     erfolgsrechnung: { monthDone: true },
-    istkosten: { monthDone: true },
-    budget: { yearDone: true },
+    warenrechnungen: { monthDone: true },
+    inventur: { monthDone: true },
     ...overrides,
   };
 }
@@ -76,7 +85,7 @@ function derive(cov: MonthCoverage, cards: StartCard[] = OK_CARDS, isGuest = fal
   input: NextActionsInput;
   todayTasks: PrioritizedTask[];
 } {
-  const tasks = buildImportTasks(PERIOD, cov);
+  const tasks = buildImportTasks(PERIOD, cov, SETTINGS);
   const todayTasks = getTodayTasks(tasks, TODAY);
   const typeCompletions = summarizeTypeCompletion(tasks, TODAY);
   return { input: { todayTasks, typeCompletions, cards, isGuest }, todayTasks };
@@ -126,17 +135,17 @@ describe('formatShortRange / formatMissingDays', () => {
 
 describe('buildNextActions — über die echte Engine-Kette', () => {
   it('(1) höchste Priorität zuerst: überfälliger Typ vor heute-fälligem', () => {
-    // zbericht fehlt 10.–12.07. (überfällig), reservationen fehlt nur 14.07. (heute fällig)
+    // zbericht fehlt 10.–12.07. (überfällig), gaeste_bon fehlt nur 14.07. (heute fällig)
     const { input } = derive(
       coverage({
         zbericht: { coveredDays: daysExcept([10, 11, 12]) },
-        reservationen: { coveredDays: daysExcept([14]) },
+        gaeste_bon: { coveredDays: daysExcept([14]) },
       }),
     );
     const actions = buildNextActions(input);
     expect(actions[0].id).toBe('task-zbericht');
     expect(actions[0].urgency).toBe('overdue');
-    expect(actions[1].id).toBe('task-reservationen');
+    expect(actions[1].id).toBe('task-gaeste_bon');
     expect(actions[1].urgency).toBe('today');
   });
 
@@ -144,10 +153,9 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
     const { input } = derive(
       coverage({
         zbericht: { coveredDays: daysExcept([2, 3]) },
-        reservationen: { coveredDays: daysExcept([2]) },
-        umsatz: { coveredDays: daysExcept([2, 3, 4]) },
+        gaeste_bon: { coveredDays: daysExcept([2]) },
         mirus: { coveredDays: daysExcept([5]) },
-        marketing: { coveredDays: [] },
+        reservationen: { coveredDays: [] },
       }),
     );
     const actions = buildNextActions(input);
@@ -206,7 +214,7 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
     const { input } = derive(
       coverage({
         zbericht: { error: 'Supabase nicht erreichbar' },
-        reservationen: { coveredDays: daysExcept([12]) },
+        gaeste_bon: { coveredDays: daysExcept([12]) },
       }),
     );
     const actions = buildNextActions(input);
@@ -215,7 +223,7 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
     expect(actions[0].href).toBe('/import-cockpit');
     expect(actions[0].guestHidden).toBe(true);
     expect(actions[0].reason).not.toContain('Supabase'); // kein Technik-Jargon
-    expect(actions.some((a) => a.id === 'task-reservationen')).toBe(true);
+    expect(actions.some((a) => a.id === 'task-gaeste_bon')).toBe(true);
   });
 
   it('(17) Reihenfolge kommt 1:1 aus getTodayTasks — keine Zweitsortierung', () => {
@@ -230,11 +238,11 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
       status: 'open',
     });
     const todayTasks: PrioritizedTask[] = [
-      { task: mkTask('reservationen', '2026-07-14'), due: { urgency: 'today', dueLabel: 'Heute erledigen', daysOverdue: 0 } },
+      { task: mkTask('gaeste_bon', '2026-07-14'), due: { urgency: 'today', dueLabel: 'Heute erledigen', daysOverdue: 0 } },
       { task: mkTask('zbericht', '2026-07-10'), due: { urgency: 'overdue', dueLabel: '4 Tage überfällig', daysOverdue: 4 } },
     ];
     const actions = buildNextActions({ todayTasks, typeCompletions: [], cards: OK_CARDS, isGuest: false });
-    expect(actions.map((a) => a.id)).toEqual(['task-reservationen', 'task-zbericht']);
+    expect(actions.map((a) => a.id)).toEqual(['task-gaeste_bon', 'task-zbericht']);
   });
 
   it('Karten-Prüfaktionen (Tagesabschluss/Dienstplan) folgen NACH den Import-Aufgaben', () => {
@@ -273,8 +281,8 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
     const busy = derive(
       coverage({
         zbericht: { coveredDays: daysExcept([2]) },
-        reservationen: { coveredDays: daysExcept([2]) },
-        umsatz: { coveredDays: daysExcept([2]) },
+        gaeste_bon: { coveredDays: daysExcept([2]) },
+        mirus: { coveredDays: daysExcept([5]) },
       }),
       dueSoonCards,
     );
@@ -286,12 +294,13 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
 
 describe('buildDatenstandRows — über die echte Engine-Kette', () => {
   function rows(cov: MonthCoverage, period = PERIOD, today = TODAY) {
-    return buildDatenstandRows(summarizeTypeCompletion(buildImportTasks(period, cov), today));
+    return buildDatenstandRows(summarizeTypeCompletion(buildImportTasks(period, cov, SETTINGS), today));
   }
 
-  it('volle Abdeckung → alle 9 Typen „Vollständig"', () => {
+  it('volle Abdeckung → alle aktiven Typen „Vollständig" (marketing = bei_bedarf erscheint nicht)', () => {
     const all = rows(coverage());
-    expect(all).toHaveLength(9);
+    expect(all).toHaveLength(8); // 9 Typen − marketing (bei_bedarf erzeugt keine Aufgaben)
+    expect(all.some((r) => r.type === 'marketing')).toBe(false);
     expect(all.every((r) => r.status === 'done' && r.text === 'Vollständig')).toBe(true);
   });
 
@@ -306,17 +315,25 @@ describe('buildDatenstandRows — über die echte Engine-Kette', () => {
     // Abdeckung nur bis 14.07. (gestern) — 15.07.+ darf keine Lücke erzeugen.
     const all = rows(coverage());
     expect(all.find((r) => r.type === 'zbericht')!.text).toBe('Vollständig');
-    const tasks = buildImportTasks(PERIOD, coverage({ zbericht: { coveredDays: [] } }));
+    const tasks = buildImportTasks(PERIOD, coverage({ zbericht: { coveredDays: [] } }), SETTINGS);
     const lastOpen = tasks.filter((t) => t.type === 'zbericht').map((t) => t.to).sort().at(-1)!;
     expect(lastOpen).toBe(addDaysIso(TODAY, -1));
   });
 
   it('(12) durch Importlauf abgedeckte Tage (z. B. Ruhetage) gelten nicht als Lücke', () => {
     // 06.07. ist abgedeckt (Ruhetag im Importlauf enthalten) — nur 05. und 07. fehlen.
-    const all = rows(coverage({ reservationen: { coveredDays: daysExcept([5, 7]) } }));
-    const r = all.find((x) => x.type === 'reservationen')!;
+    const all = rows(coverage({ gaeste_bon: { coveredDays: daysExcept([5, 7]) } }));
+    const r = all.find((x) => x.type === 'gaeste_bon')!;
     expect(r.text).toBe('Fehlend: 05.07., 07.07.');
     expect(r.text).not.toContain('06.07.');
+  });
+
+  it('wöchentliche Reservationen: offene Woche erscheint als ganzer Wochenbereich', () => {
+    // Sonntag 12.07. fehlt → Woche 06.–12.07. offen (fällig seit Montag 13.07.).
+    const all = rows(coverage({ reservationen: { coveredDays: ['2026-06-29', '2026-06-30', ...daysExcept([12])] } }));
+    const r = all.find((x) => x.type === 'reservationen')!;
+    expect(r.status).toBe('open');
+    expect(r.text).toBe('Fehlend: 06.–12.07.');
   });
 
   it('(13) monatliche Daten → Monatsstatus, NIE eine künstliche Tagesliste', () => {
@@ -340,6 +357,6 @@ describe('buildDatenstandRows — über die echte Engine-Kette', () => {
     expect(m.status).toBe('error');
     expect(m.text).toBe('Status konnte nicht ermittelt werden');
     expect(m.text).not.toContain('0');
-    expect(all.filter((r) => r.status === 'done')).toHaveLength(8);
+    expect(all.filter((r) => r.status === 'done')).toHaveLength(7);
   });
 });

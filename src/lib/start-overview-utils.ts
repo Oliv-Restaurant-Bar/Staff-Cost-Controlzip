@@ -308,14 +308,14 @@ export const NEXT_ACTION_URGENCY_FALLBACK_LABEL: Record<NextActionUrgency, strin
 /** Fachlicher Aktions-Titel je Importtyp (Fachbegriff zuerst, kein Systemjargon). */
 export const NEXT_ACTION_TITLE: Record<ImportTaskType, string> = {
   zbericht: 'Z-Bericht importieren',
-  reservationen: 'Fehlende Reservationstage ergänzen',
-  umsatz: 'Tagesumsätze importieren',
-  verkaufsdaten: 'Verkaufsdaten importieren',
+  gaeste_bon: 'Gäste & Bonanalyse importieren',
   mirus: 'Arbeitszeiten importieren',
+  tagesabschluss: 'Tagesabschluss erfassen',
   marketing: 'Marketing-Umsatz importieren',
+  reservationen: 'Fehlende Reservationstage ergänzen',
   erfolgsrechnung: 'Erfolgsrechnung importieren',
-  istkosten: 'IST-Kosten importieren',
-  budget: 'Budget erfassen',
+  warenrechnungen: 'Warenrechnungen erfassen',
+  inventur: 'Inventur bestätigen',
 };
 
 export interface NextActionsInput {
@@ -374,7 +374,7 @@ export function buildNextActions(input: NextActionsInput): NextAction[] {
     let reason: string;
     if (completion?.openRanges && completion.openRanges.length > 0) {
       reason = `Fehlend: ${formatMissingDays(completion.openRanges)}`;
-    } else if (task.frequency === 'monthly' || task.frequency === 'yearly') {
+    } else if (task.frequency === 'monthly') {
       reason = `${task.label} noch nicht importiert`;
     } else {
       reason = `Fehlend: ${formatShortRange({ from: task.from, to: task.to })}`;
@@ -616,16 +616,23 @@ export function buildMonthOverviewRows(input: MonthOverviewInput): MonthOverview
       continue;
     }
 
+    // Fortschritt nur für Tages-Quellen: erwartete/abgedeckte Tage direkt aus
+    // den Aufgaben (daily = 1 Tag pro Aufgabe; weekly/monthly auf Tages-Quellen
+    // tragen expected-/coveredDayCount). Monats-Quellen: kein Tages-Fortschritt.
     let progress: string | null = null;
-    if (def.frequency === 'daily') {
-      const expected = own.length;
-      const done = own.filter((t) => t.status === 'done').length;
-      progress = `${done} von ${expected} erwarteten Tagen vorhanden`;
-    } else if (def.frequency === 'range') {
-      const t0 = own[0];
-      if (t0?.expectedDayCount !== undefined && t0.expectedDayCount > 0) {
-        progress = `${t0.coveredDayCount ?? 0} von ${t0.expectedDayCount} erwarteten Tagen vorhanden`;
+    if (def.coverageKind === 'days') {
+      let expected = 0;
+      let covered = 0;
+      for (const t of own) {
+        if (t.frequency === 'daily') {
+          expected += 1;
+          if (t.status === 'done') covered += 1;
+        } else if (t.expectedDayCount !== undefined && t.expectedDayCount > 0) {
+          expected += t.expectedDayCount;
+          covered += t.coveredDayCount ?? 0;
+        }
       }
+      if (expected > 0) progress = `${covered} von ${expected} erwarteten Tagen vorhanden`;
     }
 
     let text: string;
@@ -638,9 +645,9 @@ export function buildMonthOverviewRows(input: MonthOverviewInput): MonthOverview
         break;
       case 'open':
       default:
-        if (def.frequency === 'monthly') text = 'Monatsimport fehlt';
-        else if (def.frequency === 'yearly') text = 'Jahresbudget fehlt';
-        else {
+        if (def.coverageKind === 'month') {
+          text = def.type === 'inventur' ? 'Noch nicht bestätigt' : 'Monatsimport fehlt';
+        } else {
           text =
             completion.openRanges && completion.openRanges.length > 0
               ? `Fehlend: ${formatMissingDays(completion.openRanges)}`

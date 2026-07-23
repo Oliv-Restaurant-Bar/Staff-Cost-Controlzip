@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCoverageForMonths, type ImportTasksFetchContext, type MonthRef } from '@/lib/import-tasks-db';
 import { buildImportTasks, type MonthCoverage } from '@/lib/import-tasks-engine';
 import { computeMonthProgress, monthKey, type MonthProgress } from '@/lib/import-tasks-priority';
+import type { EffectiveImportSettings } from '@/lib/import-settings';
 
 /** null = Monat konnte nicht geladen werden (sichtbarer Fehlerzustand). */
 export type MonthProgressMap = Record<string, MonthProgress | null>;
@@ -26,8 +27,9 @@ function progressFromCoverage(
   month: number,
   coverage: MonthCoverage,
   today: string,
+  settings: EffectiveImportSettings,
 ): MonthProgress {
-  const tasks = buildImportTasks({ year, month, today }, coverage);
+  const tasks = buildImportTasks({ year, month, today }, coverage, settings);
   return computeMonthProgress(tasks, { year, month, today });
 }
 
@@ -35,10 +37,13 @@ export function useImportMonthProgress({
   allowed,
   tenantId,
   tenantKey,
+  settings,
 }: {
   allowed: boolean;
   tenantId: string;
   tenantKey: (key: string) => string;
+  /** Effektive Import-Einstellungen (Frequenzen/Karenz/Ruhetage) für die Aufgaben-Ableitung. */
+  settings: EffectiveImportSettings;
 }) {
   const [map, setMap] = useState<MonthProgressMap>({});
   const [loading, setLoading] = useState(false);
@@ -47,19 +52,20 @@ export function useImportMonthProgress({
   /** Generation gegen Races: laufende loadYear-Ergebnisse nach invalidate/Tenant-Wechsel verwerfen. */
   const generation = useRef(0);
 
-  // Tenant-Wechsel: Cache vollständig verwerfen.
+  // Tenant-Wechsel ODER geänderte Einstellungen: Cache vollständig verwerfen
+  // (andere Frequenzen/Ruhetage ⇒ andere Aufgaben ⇒ anderer Fortschritt).
   useEffect(() => {
     generation.current += 1;
     setMap({});
     inFlight.current = new Set();
-  }, [tenantId]);
+  }, [tenantId, settings]);
 
   /** Bereits geladene Coverage (Auswahl-Monat der Seite) in den Cache übernehmen. */
   const seed = useCallback((year: number, month: number, coverage: MonthCoverage, today: string) => {
     const key = monthKey(year, month);
     inFlight.current.add(key);
-    setMap((prev) => ({ ...prev, [key]: progressFromCoverage(year, month, coverage, today) }));
-  }, []);
+    setMap((prev) => ({ ...prev, [key]: progressFromCoverage(year, month, coverage, today, settings) }));
+  }, [settings]);
 
   /** Fehlende Monate eines Jahres nachladen (nur Vergangenheit + aktueller Monat). */
   const loadYear = useCallback(
@@ -87,7 +93,7 @@ export function useImportMonthProgress({
           for (const m of missing) {
             const key = monthKey(m.year, m.month);
             const cov = coverages[key];
-            next[key] = cov ? progressFromCoverage(m.year, m.month, cov, today) : null;
+            next[key] = cov ? progressFromCoverage(m.year, m.month, cov, today, settings) : null;
           }
           return next;
         });
@@ -100,7 +106,7 @@ export function useImportMonthProgress({
         setLoading(false);
       }
     },
-    [allowed, tenantId, tenantKey],
+    [allowed, tenantId, tenantKey, settings],
   );
 
   /** Für „Aktualisieren": Cache leeren (Auswahl-Monat wird danach neu geseedet). */

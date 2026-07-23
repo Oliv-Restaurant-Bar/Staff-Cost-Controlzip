@@ -70,9 +70,8 @@ vi.stubGlobal('ResizeObserver', class {
 
 import BudgetPage from '@/pages/Budget';
 import { TenantProvider } from '@/contexts/TenantContext';
-import { loadBudgetWithPL, STORAGE_KEY } from '@/lib/budget-store';
+import { loadBudgetWithPL, availableBudgetYears, STORAGE_KEY } from '@/lib/budget-store';
 import { resetKVAvailabilityCache } from '@/lib/supabase-kv';
-import { budgetCoverage } from '@/lib/import-tasks-db';
 import { jahresbudgetSignal } from '@/lib/import-cockpit-db';
 import type { BudgetYear, BudgetPLLineItem } from '@/types/budget';
 
@@ -155,8 +154,8 @@ describe('BudgetPage — lokal und remote leer (2026-Seed)', () => {
     // Kein Supabase-Write
     expect(state.writeCount).toBe(0);
 
-    // Importstatus: Checkliste UND Cockpit melden «nicht vorhanden»
-    expect(budgetCoverage(olivCtx, 2026)).toEqual({ yearDone: false });
+    // Importstatus: Budget-Seite UND Cockpit melden «nicht vorhanden»
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2026);
     expect(jahresbudgetSignal(olivCtx).latestDataDate).toBeNull();
   });
 
@@ -202,7 +201,8 @@ describe('BudgetPage — remote echtes Budget, lokal leer', () => {
     expect(local[2027].updatedAt).toBe(OLD);
 
     // Importstatus jetzt korrekt «vorhanden»
-    expect(budgetCoverage(olivCtx, 2027)).toEqual({ yearDone: true, lastImportAt: OLD });
+    expect(availableBudgetYears(STORAGE_KEY)).toContain(2027);
+    expect(jahresbudgetSignal(olivCtx).lastImport?.at).toBe(OLD);
   });
 });
 

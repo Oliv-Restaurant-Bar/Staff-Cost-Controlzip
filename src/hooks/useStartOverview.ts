@@ -26,6 +26,8 @@ import { fetchCockpitSignals } from '@/lib/import-cockpit-db';
 import { fetchMonthCoverage } from '@/lib/import-tasks-db';
 import { normalizeAdyenBlob } from '@/lib/adyen-abstimmung';
 import { buildImportTasks } from '@/lib/import-tasks-engine';
+import { resolveImportSettings } from '@/lib/import-settings';
+import { loadImportSettings } from '@/lib/import-settings-db';
 import {
   getTodayTasks,
   summarizeTypeCompletion,
@@ -72,9 +74,12 @@ export function useStartOverview(enabled: boolean): {
       // Karten (Pflichtteil) und Monats-Abdeckung (optionaler Teil) parallel laden;
       // ein Coverage-Fehler darf die Karten NICHT mitreissen (sichtbarer Teilfehler).
       const now = new Date();
-      const [signalsResult, coverageResult] = await Promise.allSettled([
+      const [signalsResult, coverageResult, settingsResult] = await Promise.allSettled([
         fetchCockpitSignals({ tenantId, tenantKey }),
         fetchMonthCoverage({ tenantId, tenantKey }, now.getFullYear(), now.getMonth() + 1),
+        // Effektive Import-Einstellungen (Frequenz/Karenz/Ruhetage) — wirft nie
+        // (Fallback auf localStorage), damit Aufgaben identisch zum Cockpit sind.
+        loadImportSettings(tenantId),
       ]);
       if (signalsResult.status === 'rejected') throw signalsResult.reason;
       const signals = signalsResult.value;
@@ -107,9 +112,13 @@ export function useStartOverview(enabled: boolean): {
       let coverageError: string | null = null;
       if (coverageResult.status === 'fulfilled') {
         // Reine SSoT-Ableitung — identische Bausteine wie Import-Checkliste/Cockpit.
+        const settings = resolveImportSettings(
+          settingsResult.status === 'fulfilled' ? settingsResult.value : {},
+        );
         const tasks = buildImportTasks(
           { year: now.getFullYear(), month: now.getMonth() + 1, today: todayIso },
           coverageResult.value,
+          settings,
         );
         todayTasks = getTodayTasks(tasks, todayIso);
         typeCompletions = summarizeTypeCompletion(tasks, todayIso);

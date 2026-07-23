@@ -25,6 +25,8 @@ import { useTenant } from '@/contexts/TenantContext';
 import { fetchMonthCoverage } from '@/lib/import-tasks-db';
 import { buildImportTasks, type MonthCoverage } from '@/lib/import-tasks-engine';
 import { summarizeTypeCompletion } from '@/lib/import-tasks-priority';
+import { resolveImportSettings } from '@/lib/import-settings';
+import { loadImportSettingsLocal } from '@/lib/import-settings-db';
 import { readLocalRecord } from '@/lib/kv-blob-utils';
 import {
   buildMonthOverviewRows,
@@ -104,9 +106,13 @@ export function useStartMonthOverview(
     }
 
     const buildFromCoverage = (coverage: MonthCoverage): MonthOverviewRow[] => {
+      // Einstellungen sync aus dem lokalen Primärspeicher (Cockpit/Startseite
+      // mergen das KV-Backup bereits beim Laden) — kein zusätzlicher Fetch.
+      const settings = resolveImportSettings(loadImportSettingsLocal(tenantId));
       const tasks = buildImportTasks(
         { year: period.year, month: period.month, today: todayIso },
         coverage,
+        settings,
       );
       return buildMonthOverviewRows({
         period,

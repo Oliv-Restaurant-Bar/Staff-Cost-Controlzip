@@ -4,7 +4,9 @@
  * Die Zeilen sind eine reine Umformatierung des SSoT-Aufgabenstands
  * (buildImportTasks + summarizeTypeCompletion) — die Tests laufen deshalb
  * gegen die ECHTE Engine (realer öffentlicher Einstiegspfad), nie gegen
- * nachgebaute Zwischenobjekte.
+ * nachgebaute Zwischenobjekte. Default-Einstellungen der neuen
+ * Import-Strategie (marketing = bei_bedarf, reservationen = wöchentlich,
+ * inventur = manuelles Monats-Häkchen).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -12,6 +14,7 @@ import {
   buildImportTasks,
   type MonthCoverage,
 } from '@/lib/import-tasks-engine';
+import { defaultImportSettings } from '@/lib/import-settings';
 import { summarizeTypeCompletion } from '@/lib/import-tasks-priority';
 import {
   buildMonthOverviewRows,
@@ -21,6 +24,7 @@ import {
 } from '@/lib/start-overview-utils';
 
 const TODAY = '2026-07-15';
+const SETTINGS = defaultImportSettings();
 
 function rowsFor(
   period: MonthPeriod,
@@ -30,6 +34,7 @@ function rowsFor(
   const tasks = buildImportTasks(
     { year: period.year, month: period.month, today: TODAY },
     coverage,
+    SETTINGS,
   );
   return buildMonthOverviewRows({
     period,
@@ -134,6 +139,25 @@ describe('T511 — Zeilen aus dem SSoT-Aufgabenstand', () => {
     expect(z.progress).toBe('14 von 14 erwarteten Tagen vorhanden');
   });
 
+  it('wöchentliche Reservationen: Fortschritt zählt die Tage der fälligen Wochen', () => {
+    // Juni 2026: 4 abgeschlossene ISO-Wochen (Mo 01.06.–So 28.06.) = 28 Tage.
+    const rows = rowsFor(
+      { year: 2026, month: 6 },
+      { reservationen: { coveredDays: allDays(2026, 6, 28) } },
+    );
+    const r = rows.find((x) => x.type === 'reservationen')!;
+    expect(r.text).toBe('Vollständig');
+    expect(r.progress).toBe('28 von 28 erwarteten Tagen vorhanden');
+  });
+
+  it('marketing (bei_bedarf) erzeugt keine Aufgaben → neutrale Zeile, nie „fehlend"', () => {
+    const rows = rowsFor({ year: 2026, month: 6 }, {});
+    const m = rows.find((r) => r.type === 'marketing')!;
+    expect(m.text).toBe('Noch nicht fällig');
+    expect(m.tone).toBe('neutral');
+    expect(m.progress).toBeNull();
+  });
+
   it('monatliche Quellen zeigen Monatsstatus — NIE künstliche Tageslücken', () => {
     const rows = rowsFor({ year: 2026, month: 5 }, { erfolgsrechnung: {} });
     const er = rows.find((r) => r.type === 'erfolgsrechnung')!;
@@ -142,17 +166,13 @@ describe('T511 — Zeilen aus dem SSoT-Aufgabenstand', () => {
     expect(er.text).not.toContain('Tagen');
   });
 
-  it('Jahresbudget: Jahresstatus statt Tagesliste; laufendes Jahr neutral, vergangenes Jahr offen', () => {
-    // Laufendes Jahr (2026): Budget-Jahresperiode läuft noch → neutral, nie „fehlt".
-    const running = rowsFor({ year: 2026, month: 5 }, { budget: {} });
-    expect(running.find((r) => r.type === 'budget')!.text).toBe('Noch nicht fällig');
-    // Vergangenes Jahr (2025): fehlendes Jahresbudget ist offen — als Jahresstatus, ohne Tagesliste.
-    const open = rowsFor({ year: 2025, month: 5 }, { budget: {} });
-    const b = open.find((r) => r.type === 'budget')!;
-    expect(b.text).toBe('Jahresbudget fehlt');
-    expect(b.progress).toBeNull();
-    const done = rowsFor({ year: 2025, month: 5 }, { budget: { yearDone: true } });
-    expect(done.find((r) => r.type === 'budget')!.text).toBe('Vollständig');
+  it('Inventur: offener Monat heisst „Noch nicht bestätigt", Häkchen macht ihn vollständig', () => {
+    const open = rowsFor({ year: 2026, month: 5 }, { inventur: {} });
+    const i = open.find((r) => r.type === 'inventur')!;
+    expect(i.text).toBe('Noch nicht bestätigt');
+    expect(i.progress).toBeNull();
+    const done = rowsFor({ year: 2026, month: 5 }, { inventur: { monthDone: true } });
+    expect(done.find((r) => r.type === 'inventur')!.text).toBe('Vollständig');
   });
 
   it('Teilfehler einer Quelle blendet die anderen Quellen nicht aus', () => {
@@ -172,7 +192,7 @@ describe('T511 — Zeilen aus dem SSoT-Aufgabenstand', () => {
     expect(rows.length).toBeGreaterThanOrEqual(9);
   });
 
-  it('fehlend ≠ 0: ohne Coverage-Eintrag gibt es keinen „0 von …"-Fortschritt', () => {
+  it('fehlend ≠ 0: ohne Coverage-Eintrag gibt es keinen „0 von 0"-Fortschritt', () => {
     const rows = rowsFor({ year: 2026, month: 6 }, {});
     for (const r of rows) {
       expect(r.progress ?? '').not.toMatch(/^0 von 0/);

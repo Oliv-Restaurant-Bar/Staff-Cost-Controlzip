@@ -1,7 +1,7 @@
 // @vitest-environment node
 /**
  * Stabilisierungsrunde 2.4 — T007: Budget-Importstatus über die ECHTEN
- * Reader-Funktionen der Seiten (Import-Checkliste: budgetCoverage,
+ * Reader-Funktionen der Seiten (Budget-Seite: availableBudgetYears,
  * Import-Cockpit: jahresbudgetSignal) — inklusive der echten Store-Schreibpfade
  * (loadBudgetWithPL / saveBudgetYear / deleteBudgetYear), nicht über
  * handgebaute Blobs allein:
@@ -57,9 +57,9 @@ import {
   saveBudgetYear,
   deleteBudgetYear,
   flushBudgetKVBackups,
+  availableBudgetYears,
   STORAGE_KEY,
 } from '../budget-store';
-import { budgetCoverage } from '../import-tasks-db';
 import { jahresbudgetSignal } from '../import-cockpit-db';
 import type { BudgetYear, BudgetPLLineItem } from '@/types/budget';
 
@@ -107,7 +107,7 @@ describe('T007 — Importstatus über echte Reader + echte Store-Pfade', () => {
     expect((seed as StoredBudgetYear).viewDefault).toBe(true);
     await flushBudgetKVBackups();
 
-    expect(budgetCoverage(olivCtx, 2026)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2026);
     expect(jahresbudgetSignal(olivCtx).latestDataDate).toBeNull();
     expect(state.writeCount).toBe(0);
   });
@@ -116,9 +116,8 @@ describe('T007 — Importstatus über echte Reader + echte Store-Pfade', () => {
     saveBudgetYear(realYear(2027, OLD, 111), STORAGE_KEY);
     await flushBudgetKVBackups();
 
-    const cov = budgetCoverage(olivCtx, 2027);
-    expect(cov.yearDone).toBe(true);
-    expect(cov.lastImportAt).toBeTruthy();
+    expect(availableBudgetYears(STORAGE_KEY)).toContain(2027);
+    expect(jahresbudgetSignal(olivCtx).lastImport?.at).toBeTruthy();
     expect(jahresbudgetSignal(olivCtx).recordCount).toBe(1);
   });
 
@@ -128,7 +127,7 @@ describe('T007 — Importstatus über echte Reader + echte Store-Pfade', () => {
     await flushBudgetKVBackups();
 
     // Tombstone: beide Leser melden «nicht vorhanden»
-    expect(budgetCoverage(olivCtx, 2027)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2027);
     expect(jahresbudgetSignal(olivCtx).latestDataDate).toBeNull();
 
     const tombstoneAt = JSON.parse(localStorageStore[STORAGE_KEY])[2027].updatedAt as string;
@@ -140,26 +139,25 @@ describe('T007 — Importstatus über echte Reader + echte Store-Pfade', () => {
     saveBudgetYear(realYear(2027, OLD, 222), STORAGE_KEY);
     await flushBudgetKVBackups();
 
-    const cov = budgetCoverage(olivCtx, 2027);
-    expect(cov.yearDone).toBe(true);
+    expect(availableBudgetYears(STORAGE_KEY)).toContain(2027);
     // Neuer Zeitstempel verdrängt den Tombstone
-    expect(String(cov.lastImportAt) > tombstoneAt).toBe(true);
+    expect(String(jahresbudgetSignal(olivCtx).lastImport?.at) > tombstoneAt).toBe(true);
   });
 
   it('Tenant-Wechsel → richtiger Status pro Betrieb (Oliv ≠ Beaulieu)', async () => {
     saveBudgetYear(realYear(2027, OLD, 111), STORAGE_KEY); // nur Oliv
     await flushBudgetKVBackups();
 
-    expect(budgetCoverage(olivCtx, 2027).yearDone).toBe(true);
-    expect(budgetCoverage(beaulieuCtx, 2027)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(STORAGE_KEY)).toContain(2027);
+    expect(availableBudgetYears(BEAULIEU_KEY)).not.toContain(2027);
 
     // Umgekehrt: nur Beaulieu
     delete localStorageStore[STORAGE_KEY];
     saveBudgetYear(realYear(2028, OLD, 333), BEAULIEU_KEY);
     await flushBudgetKVBackups();
 
-    expect(budgetCoverage(beaulieuCtx, 2028).yearDone).toBe(true);
-    expect(budgetCoverage(olivCtx, 2028)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(BEAULIEU_KEY)).toContain(2028);
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2028);
 
     // Cockpit-Signal je Tenant getrennt
     expect(jahresbudgetSignal(beaulieuCtx).recordCount).toBe(1);

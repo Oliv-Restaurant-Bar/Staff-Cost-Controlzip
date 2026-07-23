@@ -78,9 +78,8 @@ vi.stubGlobal('ResizeObserver', class {
 
 import BudgetPage from '@/pages/Budget';
 import { TenantProvider, useTenant } from '@/contexts/TenantContext';
-import { loadBudgetWithPL, flushBudgetKVBackups, STORAGE_KEY } from '@/lib/budget-store';
+import { loadBudgetWithPL, flushBudgetKVBackups, availableBudgetYears, STORAGE_KEY } from '@/lib/budget-store';
 import { resetKVAvailabilityCache, syncSupabaseToLocal } from '@/lib/supabase-kv';
-import { budgetCoverage } from '@/lib/import-tasks-db';
 import type { BudgetYear, BudgetPLLineItem } from '@/types/budget';
 
 const OLD = '2025-01-01T00:00:00.000Z';
@@ -110,7 +109,6 @@ function realYear(y: number, updatedAt: string, marker: number): StoredBudgetYea
   } as unknown as StoredBudgetYear;
 }
 
-const olivCtx = { tenantId: 'oliv', tenantKey: (k: string) => k };
 
 /** Test-Schalter für den Mandantenwechsel (die Seite selbst rendert keinen). */
 function TenantSwitchButton({ target }: { target: 'oliv' | 'beaulieu' }) {
@@ -246,7 +244,7 @@ describe('Zwei Geräte — Löschung propagiert (Tombstone)', () => {
     expect(localB[2027].updatedAt).toBe(tombstoneAt);
 
     // Import-Status: Budget gilt als NICHT vorhanden
-    expect(budgetCoverage(olivCtx, 2027)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2027);
 
     // Blosse Anzeige erzeugt keinen weiteren Write (Tombstone bleibt remote intakt)
     await flushBudgetKVBackups();

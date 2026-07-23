@@ -1,0 +1,289 @@
+Überarbeite jetzt die Seite „Personalstamm“ benutzerfreundlich und übersichtlich.
+
+Wichtig:
+
+Die bestehende Mitarbeitendenliste ist zu informationsarm. Aktuell sieht man im Wesentlichen nur Name, Abteilung und Anstellungsart.
+
+Die Seite soll kompakt bleiben, aber bereits in der Übersicht die wichtigsten Informationen pro Mitarbeiter zeigen.
+
+──────────────────────────────────────
+1. Standardansicht als kompakte Liste
+──────────────────────────────────────
+
+Die Standardansicht bleibt eine Liste beziehungsweise Tabelle.
+
+Zeige pro Mitarbeiter folgende Informationen:
+
+- Name
+- Hauptabteilung
+- Hauptposition
+- Anstellungsart
+- Eintrittsdatum
+- Beschäftigungsgrad, sofern vorhanden
+- aktueller Status
+- Austrittsdatum, sofern vorhanden
+
+Empfohlene Spalten:
+
+Mitarbeiter
+Abteilung / Position
+Anstellung
+Eintritt
+Pensum
+Status
+Aktion
+
+Beispiel:
+
+Doni
+Service · Servicemitarbeiter
+Aushilfe
+Eintritt 01.04.2025
+40 %
+Aktiv
+›
+
+Keine unnötig breiten Spalten.
+
+──────────────────────────────────────
+2. Ganze Zeile anklickbar
+──────────────────────────────────────
+
+Die gesamte Mitarbeiterzeile soll anklickbar sein.
+
+Beim Klick:
+
+- Mitarbeiterdetail im bestehenden rechten Bereich öffnen
+- oder bestehende Mitarbeiterdetailseite öffnen
+
+Keine separate kleine Pfeil-Schaltfläche als einziger Einstieg.
+
+Der Pfeil darf als visuelles Signal bestehen bleiben, aber die gesamte Zeile ist klickbar.
+
+Tastaturbedienung berücksichtigen:
+
+- Enter öffnet Mitarbeiter
+- sichtbarer Fokuszustand
+- korrekte Button- oder Link-Semantik
+
+──────────────────────────────────────
+3. Optionale Ansichtsumschaltung
+──────────────────────────────────────
+
+Ergänze oben eine kompakte Umschaltung:
+
+- Liste
+- Kacheln
+
+Standard bleibt „Liste“.
+
+Die Auswahl soll pro Benutzer lokal gespeichert werden.
+
+Kachelansicht:
+
+- maximal 3 bis 4 Kacheln pro Reihe auf Desktop
+- auf kleineren Bildschirmen automatisch weniger
+- keine grossen Karten
+- Name klar hervorgehoben
+- Eintrittsdatum
+- Abteilung
+- Position
+- Anstellungsart
+- Pensum
+- Status
+
+Die gesamte Kachel ist anklickbar und öffnet denselben Mitarbeiter.
+
+Keine doppelte Fachlogik für Liste und Kacheln. Beide Ansichten verwenden dieselben aufbereiteten Mitarbeiterdaten.
+
+──────────────────────────────────────
+4. Eintrittsdatum
+──────────────────────────────────────
+
+Zeige das Eintrittsdatum im Format:
+
+TT.MM.JJJJ
+
+oder kompakt:
+
+Eintritt 01.04.2025
+
+Wenn kein Eintrittsdatum vorhanden ist:
+
+—
+
+Nicht das aktuelle Datum einsetzen.
+
+Keine automatische Speicherung oder Änderung beim blossen Anzeigen.
+
+──────────────────────────────────────
+5. Statusdarstellung
+──────────────────────────────────────
+
+Status klar unterscheiden:
+
+- Aktiv
+- Eintritt geplant
+- Ausgetreten
+- Inaktiv
+
+Bestehende Logik wiederverwenden.
+
+Keine neue parallele Statusberechnung einführen.
+
+Farben dezent:
+
+- Aktiv: grün
+- Eintritt geplant: blau
+- Ausgetreten: grau
+- Inaktiv: neutral oder grau
+
+──────────────────────────────────────
+6. Filter und Suche
+──────────────────────────────────────
+
+Bestehende Filter behalten:
+
+- Suche
+- Abteilung
+- Art
+- Aktiv
+- Alle
+- Ausgetreten
+
+Ergänze nur, falls bereits Daten vorhanden:
+
+- Position
+- Eintrittsjahr
+
+Die Filterleiste soll kompakt bleiben und bei kleinen Bildschirmbreiten umbrechen.
+
+Die Mitarbeiteranzahl rechts soll weiterhin sichtbar sein.
+
+──────────────────────────────────────
+7. Sortierung
+──────────────────────────────────────
+
+Ergänze eine kompakte Sortierung:
+
+- Name A–Z
+- Eintritt neueste zuerst
+- Eintritt älteste zuerst
+- Abteilung
+- Status
+
+Standard:
+
+Name A–Z
+
+Keine neue Sortierlogik in mehreren Komponenten duplizieren.
+
+──────────────────────────────────────
+8. Detailbereich
+──────────────────────────────────────
+
+Wenn ein Mitarbeiter geöffnet wird, soll der bisher leere rechte Bereich sinnvoll genutzt werden.
+
+Zeige dort mindestens:
+
+- Name
+- Status
+- Abteilung
+- Position
+- Anstellungsart
+- Eintrittsdatum
+- Austrittsdatum
+- Pensum
+- Kontaktdaten, sofern für die Rolle erlaubt
+- Bearbeiten-Aktion für berechtigte Benutzer
+
+Auf kleineren Bildschirmen als Drawer oder eigene Detailansicht öffnen.
+
+──────────────────────────────────────
+9. Datenschutz und Berechtigungen
+──────────────────────────────────────
+
+Nur Informationen anzeigen, welche die jeweilige Rolle sehen darf.
+
+Keine Lohnwerte direkt in der allgemeinen Personalstamm-Liste anzeigen.
+
+Lohnkosten bleiben im dafür vorgesehenen geschützten Bereich.
+
+Bestehende Rollen- und Berechtigungslogik unverändert weiterverwenden.
+
+──────────────────────────────────────
+10. Design
+──────────────────────────────────────
+
+Die Seite muss:
+
+- schlicht
+- modern
+- kompakt
+- lesefreundlich
+- schnell erfassbar
+- einheitlich mit der restlichen App
+
+sein.
+
+Keine übergrossen Kacheln.
+
+Keine unnötigen Leerflächen.
+
+Liste und Detailbereich sollen den verfügbaren Platz sinnvoll nutzen.
+
+Die bestehende visuelle Sprache der App beibehalten:
+
+- Abstände
+- Badges
+- Farben
+- Schriftgrössen
+- Hover-Zustände
+- Rahmen
+
+──────────────────────────────────────
+11. Architektur
+──────────────────────────────────────
+
+Vor der Umsetzung prüfen:
+
+- bestehendes Mitarbeiterdatenmodell
+- bereits vorhandene Eintritts- und Austrittsfelder
+- bestehende Detailkomponente
+- bestehende Filterlogik
+- bestehende Rollenprüfung
+
+Keine neuen Datenfelder anlegen, wenn entsprechende Felder bereits existieren.
+
+Keine Writes beim Laden oder Öffnen eines Mitarbeiters.
+
+Pure Reads dürfen niemals Daten speichern.
+
+──────────────────────────────────────
+12. Tests
+──────────────────────────────────────
+
+Ergänze Tests für:
+
+- Eintrittsdatum wird korrekt angezeigt
+- fehlendes Eintrittsdatum zeigt —
+- ganze Zeile ist anklickbar
+- Kachel ist anklickbar
+- Liste und Kacheln öffnen denselben Mitarbeiter
+- Ansichtsumschaltung funktioniert
+- Sortierung funktioniert
+- Filter funktionieren weiterhin
+- ausgetretene Mitarbeiter werden korrekt dargestellt
+- Read-only-Rollen können nicht bearbeiten
+- keine Lohninformationen erscheinen in der allgemeinen Liste
+- mobile Ansicht funktioniert
+
+Führe danach aus:
+
+- TypeScript-Typecheck
+- betroffene Unit- und Komponententests
+- Desktop-Runtime-Check
+- Mobile-Runtime-Check
+- Architect-Review über den tatsächlichen Task-Diff
+
+Aktualisiere replit.md nur mit dem tatsächlich umgesetzten Verhalten.

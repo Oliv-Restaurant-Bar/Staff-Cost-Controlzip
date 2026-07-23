@@ -16,6 +16,7 @@ let currentTenant: { tenantId: string; tenantKey: (k: string) => string } = mock
 
 const fetchCockpitSignals = vi.fn();
 const fetchMonthCoverage = vi.fn();
+const loadImportSettings = vi.fn();
 
 vi.mock('@/contexts/TenantContext', () => ({
   useTenant: () => currentTenant,
@@ -25,6 +26,9 @@ vi.mock('@/lib/import-cockpit-db', () => ({
 }));
 vi.mock('@/lib/import-tasks-db', () => ({
   fetchMonthCoverage: (...args: unknown[]) => fetchMonthCoverage(...args),
+}));
+vi.mock('@/lib/import-settings-db', () => ({
+  loadImportSettings: (...args: unknown[]) => loadImportSettings(...args),
 }));
 
 import { useStartOverview } from '@/hooks/useStartOverview';
@@ -38,6 +42,7 @@ const SIGNALS = {
 beforeEach(() => {
   fetchCockpitSignals.mockReset().mockResolvedValue(SIGNALS);
   fetchMonthCoverage.mockReset().mockResolvedValue({});
+  loadImportSettings.mockReset().mockResolvedValue({});
   currentTenant = mockTenant;
   localStorage.clear();
 });
@@ -58,6 +63,7 @@ describe('useStartOverview', () => {
       now.getFullYear(),
       now.getMonth() + 1,
     );
+    expect(loadImportSettings).toHaveBeenCalledWith('beaulieu');
   });
 
   it('(18) reines Laden schreibt NIE (kein localStorage.setItem, nur Read-Fetches)', async () => {
@@ -77,7 +83,21 @@ describe('useStartOverview', () => {
     expect(state.coverageError).toBeNull();
     // Inhalt hängt vom realen Tagesdatum ab — hier zählt nur: SSoT-Kette lief durch.
     expect(Array.isArray(state.todayTasks)).toBe(true);
-    expect(state.typeCompletions!.length).toBe(9);
+    // Monats-Typen (Erfolgsrechnung/Warenrechnungen/Inventur) existieren immer;
+    // marketing (bei_bedarf) erzeugt NIE Aufgaben und erscheint deshalb nie.
+    expect(state.typeCompletions!.length).toBeGreaterThanOrEqual(3);
+    expect(state.typeCompletions!.some((c) => c.type === 'marketing')).toBe(false);
+    expect(state.typeCompletions!.some((c) => c.type === 'erfolgsrechnung')).toBe(true);
+  });
+
+  it('Einstellungen-Fetch scheitert → Defaults, Seite bleibt nutzbar (kein Fehlerzustand)', async () => {
+    loadImportSettings.mockRejectedValue(new Error('KV nicht erreichbar'));
+    const { result } = renderHook(() => useStartOverview(true));
+    await waitFor(() => expect(result.current.state.status).toBe('ready'));
+    const state = result.current.state;
+    if (state.status !== 'ready') throw new Error('unerwarteter Status');
+    expect(state.coverageError).toBeNull();
+    expect(state.typeCompletions).not.toBeNull();
   });
 
   it('Teilfehler: Coverage-Fetch scheitert → Karten bleiben, coverageError sichtbar', async () => {

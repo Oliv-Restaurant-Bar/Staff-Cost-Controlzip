@@ -50,15 +50,16 @@ describe('T510 — Datenstand-Deep-Links je Importtyp', () => {
     expect(row.href).toContain('from=2026-07-01');
   });
 
-  it('Umsatz führt zum Import-Center mit target=tagesumsatz', () => {
-    const row = rowFor('umsatz');
-    expect(row.href).toContain('/import?');
-    expect(row.href).toContain('target=tagesumsatz');
+  it('Gäste & Bonanalyse führt zum Gastronovi-Import mit target=kpi', () => {
+    const row = rowFor('gaeste_bon');
+    expect(row.href).toContain('/gastronovi-import?');
+    expect(row.href).toContain('target=kpi');
   });
 
-  it('Verkaufsdaten führen zum Sales-Upload', () => {
-    const row = rowFor('verkaufsdaten');
-    expect(row.href).toContain('/sales-upload?');
+  it('Tagesabschluss führt zu den Tagesabschlüssen mit Monats-Param', () => {
+    const row = rowFor('tagesabschluss');
+    expect(row.href).toContain('/tagesabschluesse?');
+    expect(row.href).toContain('monat=2026-07');
   });
 
   it('Mirus Stunden führen zum Import-Center mit target=mirus', () => {
@@ -73,21 +74,22 @@ describe('T510 — Datenstand-Deep-Links je Importtyp', () => {
     expect(row.href).toContain('target=maison');
   });
 
-  it('Erfolgsrechnung und Istkosten führen zum Reporting mit Jahr+Monat', () => {
+  it('Erfolgsrechnung führt zum Reporting mit Jahr+Monat', () => {
     const er = rowFor('erfolgsrechnung');
     expect(er.href).toContain('/reporting?');
     expect(er.href).toContain('target=erfolgsrechnung');
     expect(er.href).toContain('year=2026');
     expect(er.href).toContain('month=7');
-    const ik = rowFor('istkosten');
-    expect(ik.href).toContain('/reporting?');
-    expect(ik.href).toContain('target=istkosten');
   });
 
-  it('Budget führt zur Budget-Seite mit Jahr', () => {
-    const row = rowFor('budget');
-    expect(row.href).toContain('/budget?');
-    expect(row.href).toContain('year=2026');
+  it('Warenrechnungen führen zur Warenrechnungs-Seite mit Monats-Param', () => {
+    const row = rowFor('warenrechnungen');
+    expect(row.href).toContain('/warenrechnungen?');
+    expect(row.href).toContain('monat=2026-07');
+  });
+
+  it('Inventur führt zum Import-Cockpit (manuelles Häkchen, kein Datei-Import)', () => {
+    expect(rowFor('inventur').href).toBe('/import-cockpit');
   });
 });
 
@@ -105,7 +107,7 @@ describe('T510 — Interaktivität und Gating', () => {
 
   it('auch „Vollständig"- und „Noch nicht fällig"-Zeilen bleiben verlinkt (Nachimport möglich)', () => {
     expect(rowFor('zbericht', 'done').href).toContain('/gastronovi-import?');
-    expect(rowFor('umsatz', 'later').href).toContain('target=tagesumsatz');
+    expect(rowFor('warenrechnungen', 'later').href).toContain('/warenrechnungen?');
   });
 
   it('Fehler-Zeilen verweisen auf das Import-Cockpit', () => {

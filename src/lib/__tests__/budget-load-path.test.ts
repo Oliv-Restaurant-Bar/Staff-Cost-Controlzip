@@ -90,7 +90,6 @@ import {
   availableBudgetYears,
   STORAGE_KEY,
 } from '../budget-store';
-import { budgetCoverage } from '../import-tasks-db';
 import { jahresbudgetSignal } from '../import-cockpit-db';
 import { resetKVAvailabilityCache } from '../supabase-kv';
 import type { BudgetYear, BudgetPLLineItem } from '@/types/budget';
@@ -292,8 +291,7 @@ describe('Runde 2.2: loadBudgetWithPL(2026) — View-Default statt persistiertem
     expect(localStorageStore[STORAGE_KEY]).toBeUndefined();
     expect(state.writeCount).toBe(0);
     expect(availableBudgetYears(STORAGE_KEY)).toEqual([]);
-    // Echte Import-Leser: Checkliste + Cockpit sehen KEINEN Datenbestand
-    expect(budgetCoverage(ctxOliv, 2026)).toEqual({ yearDone: false });
+    // Echter Cockpit-Leser sieht KEINEN Datenbestand
     const signal = jahresbudgetSignal(ctxOliv);
     expect(signal.latestDataDate).toBeNull();
     expect(signal.recordCount ?? 0).toBe(0);
@@ -347,7 +345,7 @@ describe('Runde 2.2: loadBudgetWithPL(2026) — View-Default statt persistiertem
     expect(local['2026'].deleted).toBe(true);
     expect(local['2026'].updatedAt).toBe('2026-06-01T12:00:00.000Z');
     expect(state.writeCount).toBe(0);
-    expect(budgetCoverage(ctxOliv, 2026)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2026);
 
     // Bewusste Benutzeraktion (Wert ändern) ersetzt den Tombstone
     const item = loaded.plLineItems!.find(i => i.id === 'pli_ertrag_a')!;
@@ -391,7 +389,7 @@ describe('Runde 2.2: loadBudgetWithPL(2026) — View-Default statt persistiertem
     expect(remote['2025'].updatedAt).toBe('2026-01-01T12:00:00.000Z');
     expect(remote['2026'].viewDefault).toBeUndefined();
     // Import-Leser sehen das Jahr erst JETZT als vorhanden
-    expect(budgetCoverage(ctxOliv, 2026).yearDone).toBe(true);
+    expect(availableBudgetYears(STORAGE_KEY)).toContain(2026);
     expect(jahresbudgetSignal(ctxOliv).recordCount).toBeGreaterThan(0);
   });
 
@@ -431,8 +429,8 @@ describe('Runde 2.2: loadBudgetWithPL(2026) — View-Default statt persistiertem
     expect(localB['2026'].plLineItems?.find(i => i.id === 'pli_ertrag_a')?.monthlyValues[0]).toBe(121000);
     expect(state.writeCount).toBe(1);
     // Leser: Beaulieu vorhanden, Oliv weiterhin «nicht vorhanden»
-    expect(budgetCoverage(ctxBeaulieu, 2026).yearDone).toBe(true);
-    expect(budgetCoverage(ctxOliv, 2026)).toEqual({ yearDone: false });
+    expect(availableBudgetYears(BEAULIEU_KEY)).toContain(2026);
+    expect(availableBudgetYears(STORAGE_KEY)).not.toContain(2026);
   });
 
   it('S8: mehrfaches Laden — keine Writes, keine Zeitstempel, keine Dubletten', async () => {

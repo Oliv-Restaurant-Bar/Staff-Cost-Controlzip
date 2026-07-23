@@ -7,12 +7,14 @@
 import { describe, it, expect } from 'vitest';
 import type { ImportTask } from '../import-tasks-engine';
 import { buildImportTasks } from '../import-tasks-engine';
+import { defaultImportSettings } from '../import-settings';
 import {
   getTaskDueInfo,
   prioritizeTasks,
   getTodayTasks,
   computeMonthProgress,
   summarizeTypeCompletion,
+  mergeOpenRanges,
   monthKey,
   CLOSURE_LABEL,
 } from '../import-tasks-priority';
@@ -59,23 +61,21 @@ describe('getTaskDueInfo — Fälligkeits-Semantik (Tag X ab X+1 importierbar)',
     expect(due.dueLabel).toBeNull();
   });
 
-  it('Zeitraum-Aufgabe: ältester fehlender Tag bestimmt Urgenz, Label = Tage offen', () => {
-    const due = getTaskDueInfo(
-      task({ frequency: 'range', from: '2026-07-06', to: '2026-07-08', type: 'umsatz' }),
+  it('Wochen-Aufgabe: fällig ab dem Montag nach ihrem Sonntag', () => {
+    const over = getTaskDueInfo(
+      task({ frequency: 'weekly', type: 'reservationen', from: '2026-06-29', to: '2026-07-05' }),
       TODAY,
     );
-    expect(due.urgency).toBe('overdue');
-    expect(due.dueLabel).toBe('3 Tage offen');
-    expect(due.daysOverdue).toBe(2);
-  });
+    expect(over.urgency).toBe('overdue');
+    expect(over.dueLabel).toBe('3 Tage überfällig');
+    expect(over.daysOverdue).toBe(3);
 
-  it('eintägiger Zeitraum von gestern ist heute fällig', () => {
-    const due = getTaskDueInfo(
-      task({ frequency: 'range', from: '2026-07-08', to: '2026-07-08', type: 'umsatz' }),
+    const heute = getTaskDueInfo(
+      task({ frequency: 'weekly', type: 'reservationen', from: '2026-07-02', to: '2026-07-08' }),
       TODAY,
     );
-    expect(due.urgency).toBe('today');
-    expect(due.dueLabel).toBe('Heute erledigen');
+    expect(heute.urgency).toBe('today');
+    expect(heute.dueLabel).toBe('Heute erledigen');
   });
 
   it('Monatsaufgabe: im laufenden Monat später, danach „Monatsimport noch offen"', () => {
@@ -92,18 +92,14 @@ describe('getTaskDueInfo — Fälligkeits-Semantik (Tag X ab X+1 importierbar)',
     expect(vorbei.dueLabel).toBe('Monatsimport noch offen');
   });
 
-  it('Budget: im laufenden Jahr „Budget noch offen" ohne Überfälligkeit, danach überfällig', () => {
-    const laufend = getTaskDueInfo(
-      task({ frequency: 'yearly', from: '2026-01-01', to: '2026-12-31', type: 'budget' }),
+  it('unterdrückte Aufgaben mahnen NIE (Wartet auf Basis-Quelle)', () => {
+    const due = getTaskDueInfo(
+      task({ type: 'tagesabschluss', from: '2026-07-02', to: '2026-07-02', suppressedBy: 'zbericht' }),
       TODAY,
     );
-    expect(laufend.urgency).toBe('later');
-    expect(laufend.dueLabel).toBe('Budget noch offen');
-    const vorbei = getTaskDueInfo(
-      task({ frequency: 'yearly', from: '2025-01-01', to: '2025-12-31', type: 'budget' }),
-      TODAY,
-    );
-    expect(vorbei.urgency).toBe('overdue');
+    expect(due.urgency).toBe('later');
+    expect(due.dueLabel).toBe('Wartet auf Z-Bericht');
+    expect(due.daysOverdue).toBe(0);
   });
 });
 
@@ -113,9 +109,9 @@ describe('prioritizeTasks / getTodayTasks', () => {
       task({ id: 'a', from: '2026-07-08', to: '2026-07-08' }), // heute fällig
       task({ id: 'b', from: '2026-07-05', to: '2026-07-05' }), // überfällig
       task({
-        id: 'c', type: 'budget', frequency: 'yearly',
-        from: '2026-01-01', to: '2026-12-31',
-      }), // später
+        id: 'c', type: 'erfolgsrechnung', frequency: 'monthly',
+        from: '2026-07-01', to: '2026-07-31',
+      }), // später (Monat läuft)
       task({ id: 'err', status: 'error', from: '2026-07-01' }),
       task({ id: 'd', from: '2026-07-02', to: '2026-07-02' }), // am längsten überfällig
     ];
@@ -123,12 +119,13 @@ describe('prioritizeTasks / getTodayTasks', () => {
     expect(order).toEqual(['err', 'd', 'b', 'a', 'c']);
   });
 
-  it('getTodayTasks liefert nur überfällig/heute/Fehler, keine erledigten oder späteren', () => {
+  it('getTodayTasks liefert nur überfällig/heute/Fehler — keine erledigten, späteren oder unterdrückten', () => {
     const tasks = [
       task({ id: 'done', status: 'done', from: '2026-07-01' }),
-      task({ id: 'later', type: 'budget', frequency: 'yearly', from: '2026-01-01', to: '2026-12-31' }),
+      task({ id: 'later', type: 'erfolgsrechnung', frequency: 'monthly', from: '2026-07-01', to: '2026-07-31' }),
       task({ id: 'due', from: '2026-07-08', to: '2026-07-08' }),
       task({ id: 'over', from: '2026-07-03', to: '2026-07-03' }),
+      task({ id: 'wait', type: 'tagesabschluss', from: '2026-07-03', to: '2026-07-03', suppressedBy: 'zbericht' }),
     ];
     const ids = getTodayTasks(tasks, TODAY).map((p) => p.task.id);
     expect(ids).toEqual(['over', 'due']);
@@ -150,6 +147,17 @@ describe('computeMonthProgress — Nenner ohne „später"-Aufgaben', () => {
     expect(p.laterOpen).toBe(1);
     expect(p.allDone).toBe(false);
     expect(p.closure).toBe('almost');
+  });
+
+  it('unterdrückte Aufgaben zählen nicht zum Nenner (Basis-Quelle zählt bereits)', () => {
+    const tasks = [
+      task({ id: '1', status: 'done', from: '2026-07-01' }),
+      task({ id: 'wait', type: 'tagesabschluss', from: '2026-07-02', to: '2026-07-02', suppressedBy: 'zbericht' }),
+    ];
+    const p = computeMonthProgress(tasks, { year: 2026, month: 7, today: TODAY });
+    expect(p.total).toBe(1);
+    expect(p.laterOpen).toBe(1);
+    expect(p.percent).toBe(100);
   });
 
   it('abgeschlossener Monat mit allem erledigt ist complete', () => {
@@ -201,15 +209,15 @@ describe('computeMonthProgress — Nenner ohne „später"-Aufgaben', () => {
       { year: 2026, month: 6, today: TODAY },
       {
         zbericht: { coveredDays: days },
-        reservationen: { coveredDays: days },
-        umsatz: { coveredDays: days },
-        verkaufsdaten: { coveredDays: days },
+        gaeste_bon: { coveredDays: days },
         mirus: { coveredDays: days },
-        marketing: { coveredDays: days },
+        tagesabschluss: { coveredDays: days },
+        reservationen: { coveredDays: days },
         erfolgsrechnung: { monthDone: true },
-        istkosten: { monthDone: true },
-        budget: { yearDone: true },
+        warenrechnungen: { monthDone: true },
+        inventur: { monthDone: true },
       },
+      defaultImportSettings(),
     );
     const p = computeMonthProgress(tasks, { year: 2026, month: 6, today: TODAY });
     expect(p.allDone).toBe(true);
@@ -222,17 +230,18 @@ describe('summarizeTypeCompletion', () => {
   it('meldet vollständige, offene (mit gemergten Zeiträumen) und Fehler-Typen', () => {
     const tasks = [
       task({ id: 'z1', status: 'done', from: '2026-06-01' }),
-      // Umsatz: zwei benachbarte offene Tages-Zeiträume → EIN Bereich
-      task({ id: 'u1', type: 'umsatz', frequency: 'range', from: '2026-06-24', to: '2026-06-26' }),
-      task({ id: 'u2', type: 'umsatz', frequency: 'range', from: '2026-06-27', to: '2026-06-30' }),
+      // Reservationen: zwei benachbarte offene Wochen → EIN Bereich
+      task({ id: 'r1', type: 'reservationen', frequency: 'weekly', from: '2026-06-15', to: '2026-06-21' }),
+      task({ id: 'r2', type: 'reservationen', frequency: 'weekly', from: '2026-06-22', to: '2026-06-28' }),
       task({ id: 'e1', type: 'erfolgsrechnung', frequency: 'monthly', from: '2026-06-01', to: '2026-06-30' }),
       task({ id: 'm1', type: 'mirus', status: 'error', error: 'DB weg', from: '2026-06-01', to: '2026-06-30' }),
     ];
     const summary = summarizeTypeCompletion(tasks, TODAY);
     const byType = Object.fromEntries(summary.map((s) => [s.type, s]));
     expect(byType.zbericht.status).toBe('done');
-    expect(byType.umsatz.status).toBe('open');
-    expect(byType.umsatz.detail).toBe('24.06.–30.06.2026');
+    expect(byType.reservationen.status).toBe('open');
+    expect(byType.reservationen.detail).toBe('15.06.–28.06.2026');
+    expect(byType.reservationen.openDayCount).toBe(14);
     expect(byType.erfolgsrechnung.status).toBe('open');
     expect(byType.erfolgsrechnung.detail).toBe('fehlt');
     expect(byType.mirus.status).toBe('error');
@@ -245,6 +254,31 @@ describe('summarizeTypeCompletion', () => {
     ];
     const summary = summarizeTypeCompletion(tasks, TODAY);
     expect(summary[0].status).toBe('later');
+  });
+
+  it('nur unterdrückte offene Aufgaben ⇒ „later" mit Warte-Hinweis', () => {
+    const tasks = [
+      task({ id: 't1', type: 'tagesabschluss', from: '2026-07-02', to: '2026-07-02', suppressedBy: 'zbericht' }),
+    ];
+    const summary = summarizeTypeCompletion(tasks, TODAY);
+    expect(summary[0].status).toBe('later');
+    expect(summary[0].detail).toBe('Wartet auf Z-Bericht');
+  });
+
+  it('Typen ohne Aufgaben (bei_bedarf/deaktiviert) erscheinen nicht', () => {
+    const summary = summarizeTypeCompletion([task({ id: 'z1', from: '2026-07-01' })], TODAY);
+    expect(summary.map((s) => s.type)).toEqual(['zbericht']);
+  });
+
+  it('mergeOpenRanges fasst benachbarte Zeiträume zusammen', () => {
+    expect(mergeOpenRanges([
+      { from: '2026-07-01', to: '2026-07-03' },
+      { from: '2026-07-04', to: '2026-07-05' },
+      { from: '2026-07-08', to: '2026-07-08' },
+    ])).toEqual([
+      { from: '2026-07-01', to: '2026-07-05' },
+      { from: '2026-07-08', to: '2026-07-08' },
+    ]);
   });
 });
 
