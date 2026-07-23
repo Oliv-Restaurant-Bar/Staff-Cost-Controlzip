@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.import-reservations]
 verify_jwt = false
+
+[functions.gastronovi-inbound]
+verify_jwt = false

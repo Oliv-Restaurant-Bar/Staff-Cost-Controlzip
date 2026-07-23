@@ -1,0 +1,22 @@
+Baue einen automatischen E-Mail-Eingang für Gastronovi Z-Bericht-PDFs. Das bestehende Parsing/Import bleibt UNVERÄNDERT und wird wiederverwendet. Es kommt nur ein neuer Weg dazu, wie ein PDF ins System gelangt (per Webhook aus n8n), plus eine „ausstehend"-Liste, die der Nutzer mit einem Klick importiert (gleiche Logik wie der manuelle Upload). Baue KEIN serverseitiges PDF-Parsing.
+
+Kontext (bestehend, nur wo genannt anfassen):
+- Browser-Parser: parseGnZBerichtPdf(...) in src/pages/GastronoviZBerichtPage.tsx bzw. src/lib/gn-zbericht-pdf-parser.ts -> parseGnZBerichtFromRows -> speichern via src/lib/gn-zbericht-db.ts nach gn_imports (+ Kindtabellen), Idempotenz via checksum.
+- Tenant über restaurant_id ('oliv'|'beaulieu'), TenantId aus src/contexts/TenantContext.tsx.
+- Edge Functions in supabase/functions/.
+
+1) Migration:
+- Privater Storage-Bucket "zbericht-inbox".
+- Tabelle zbericht_inbox: id uuid pk default gen_random_uuid(), restaurant_id text not null check (restaurant_id in ('oliv','beaulieu')), file_name text not null, storage_path text not null, file_hash text not null (sha256 der PDF-Bytes), status text not null default 'pending' check (status in ('pending','imported','ignored')), gn_import_id uuid null references gn_imports(id), received_at timestamptz not null default now(), imported_at timestamptz null. Unique-Index auf (restaurant_id, file_hash). RLS wie bei den bestehenden gn_-Tabellen (eingeloggte Nutzer lesen ihren Tenant; Service-Role schreibt).
+
+2) Edge Function supabase/functions/gastronovi-inbound (verify_jwt = false, eigener Secret-Check):
+- POST multipart/form-data mit Feldern: file (PDF) und restaurant_id ('oliv'|'beaulieu').
+- Header x-inbound-secret muss GASTRONOVI_INBOUND_SECRET (Supabase Function Secret) entsprechen, sonst 401.
+- Nur application/pdf zulassen. sha256 über die PDF-Bytes. Wenn (restaurant_id, file_hash) schon existiert -> 200 {status:'duplicate'}.
+- PDF nach zbericht-inbox/<restaurant_id>/<file_hash>.pdf hochladen (Service-Role-Key aus SUPABASE_SERVICE_ROLE_KEY). Zeile in zbericht_inbox (status 'pending') einfügen. Antwort 200 {status:'pending', id}.
+
+3) Frontend (Import-Seite):
+- Neuer Abschnitt "Aus E-Mail eingegangen (ausstehend)": listet zbericht_inbox des aktuellen Tenants mit status='pending' (Dateiname, received_at).
+- Button "Importieren" pro Zeile: PDF per signierter URL aus zbericht-inbox laden, dann EXAKT den bestehenden Ablauf (parseGnZBerichtPdf -> Preview -> Speichern via gn-zbericht-db.ts). Nach Erfolg: Zeile auf status='imported', imported_at=now(), gn_import_id setzen. Zusätzlich Button "Ignorieren" (status='ignored'). Bestehender manueller Upload bleibt unverändert daneben.
+
+4) Generiere ein zufälliges GASTRONOVI_INBOUND_SECRET, lege es als Supabase Function Secret an, und gib mir am Ende die vollständige Function-URL und bestätige, dass das Secret gesetzt ist. Halte dich an die bestehenden Migrations- und RLS-Konventionen des Projekts.

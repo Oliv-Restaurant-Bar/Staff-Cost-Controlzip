@@ -15,7 +15,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertTriangle, Loader2,
   Trash2, ChevronDown, ChevronUp, RefreshCw,
-  Info, AlertCircle, Database, Users, Copy,
+  Info, AlertCircle, Database, Users, Copy, Mail,
 } from 'lucide-react';
 import { format as fmtDate, parseISO } from 'date-fns';
 import { de } from 'date-fns/locale';
@@ -62,6 +62,12 @@ import { runGnDiagnostic } from '@/lib/gn-diagnostic';
 import type { GnDiagnosticResult } from '@/lib/gn-diagnostic';
 
 import {
+  loadPendingZberichtInbox, downloadZberichtInboxPdf,
+  markZberichtInboxImported, markZberichtInboxIgnored,
+} from '@/lib/zbericht-inbox-db';
+import type { ZberichtInboxRow } from '@/lib/zbericht-inbox-db';
+
+import {
   mergeGnTagesQuellen, summarizeGnPeriode, BONS_BERECHNET_TOOLTIP,
 } from '@/lib/gn-tagesanalyse';
 import { analyzeGnZeitabschnitte, GN_ZEITFENSTER } from '@/lib/gn-zeitabschnitte';
@@ -96,6 +102,12 @@ function consumptionLabel(ct: 'in_house' | 'takeaway' | null) {
 function fdate(iso: string | null | undefined) {
   if (!iso) return '—';
   try { return fmtDate(parseISO(iso.slice(0, 10)), 'dd.MM.yyyy', { locale: de }); }
+  catch { return iso; }
+}
+/** Zeitstempel mit Uhrzeit (E-Mail-Eingang). */
+function fdatetime(iso: string | null | undefined) {
+  if (!iso) return '—';
+  try { return fmtDate(parseISO(iso), 'dd.MM.yyyy HH:mm', { locale: de }); }
   catch { return iso; }
 }
 
@@ -154,7 +166,7 @@ const VALIDATION_TONES: Record<GnValidationStatus, string> = {
 
 export default function GastronoviZBerichtPage() {
   const { tenantId } = useTenant();
-  const { isAdmin }  = usePermissions();
+  const { isAdmin, isGuest } = usePermissions();
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -174,6 +186,16 @@ export default function GastronoviZBerichtPage() {
   const [manualPeriodTo,   setManualPeriodTo]    = useState('');
   const [zDupInfo,         setZDupInfo]          = useState<{ fileName: string | null; importedAt: string | null } | null>(null);
   const [zHistory,         setZHistory]          = useState<GnImportRow[]>([]);
+
+  // E-Mail-Eingang (zbericht_inbox): ausstehende, per Webhook eingegangene PDFs
+  const [inboxRows,      setInboxRows]      = useState<ZberichtInboxRow[]>([]);
+  const [inboxError,     setInboxError]     = useState<string | null>(null);
+  /** false = Migration 20260723_zbericht_inbox noch nicht eingespielt → Abschnitt ausblenden. */
+  const [inboxAvailable, setInboxAvailable] = useState(true);
+  /** Zeilen-ID, für die gerade ein Download/Ignorieren läuft. */
+  const [inboxBusy,      setInboxBusy]      = useState<string | null>(null);
+  /** Inbox-Zeile, aus der der aktuelle Wizard-Durchlauf stammt (→ nach Save markieren). */
+  const [activeInboxId,  setActiveInboxId]  = useState<string | null>(null);
 
   // Gäste & Bonanalyse State (bis zu 3 KPI-PDFs gleichzeitig)
   const [kpiFiles,       setKpiFiles]       = useState<KpiFileEntry[]>([]);
@@ -227,6 +249,7 @@ export default function GastronoviZBerichtPage() {
     setZDupInfo(null);
     setKpiFiles([]); setKpiSaveResults(null); setKpiProcessing(false);
     setParseError(null); setStep('upload');
+    setActiveInboxId(null);
   }, []);
 
   const handleTypeChange = (t: ImportType) => {
@@ -279,6 +302,63 @@ export default function GastronoviZBerichtPage() {
       setParseError('Fehler beim Lesen des PDFs: ' + (e instanceof Error ? e.message : String(e)));
     }
   }, [tenantId]);
+
+  // ── E-Mail-Eingang (zbericht_inbox) ────────────────────────────────────────
+
+  /** Ausstehende Eingänge laden (read-only; fehlende Migration ⇒ Abschnitt aus). */
+  const refreshInbox = useCallback(async () => {
+    const r = await loadPendingZberichtInbox(tenantId);
+    setInboxRows(r.rows);
+    setInboxError(r.error);
+    setInboxAvailable(!r.missingSchema);
+  }, [tenantId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setActiveInboxId(null); // Tenant-Wechsel: Inbox-Kontext verwerfen
+    loadPendingZberichtInbox(tenantId).then(r => {
+      if (cancelled) return;
+      setInboxRows(r.rows);
+      setInboxError(r.error);
+      setInboxAvailable(!r.missingSchema);
+    });
+    return () => { cancelled = true; };
+  }, [tenantId]);
+
+  /**
+   * Eingang importieren: PDF per signierter URL laden und in den BESTEHENDEN
+   * Z-Bericht-Wizard geben (processZPdf → Vorschau → Bestätigen). Erst nach
+   * erfolgreichem Save (handleConfirm) wird die Zeile auf 'imported' gesetzt.
+   */
+  const handleImportFromInbox = useCallback(async (row: ZberichtInboxRow) => {
+    setInboxBusy(row.id);
+    try {
+      const { blob, error } = await downloadZberichtInboxPdf(row.storage_path);
+      if (error || !blob) {
+        toast.error('PDF konnte nicht geladen werden: ' + (error ?? 'unbekannter Fehler'));
+        return;
+      }
+      setActiveInboxId(row.id);
+      const file = new File([blob], row.file_name, { type: 'application/pdf' });
+      await processZPdf(file);
+    } finally {
+      setInboxBusy(null);
+    }
+  }, [processZPdf]);
+
+  /** Eingang ohne Import ignorieren (Status 'ignored'). */
+  const handleIgnoreInbox = useCallback(async (row: ZberichtInboxRow) => {
+    setInboxBusy(row.id);
+    const { error } = await markZberichtInboxIgnored(row.id);
+    setInboxBusy(null);
+    if (error) {
+      toast.error('Ignorieren fehlgeschlagen: ' + error);
+      return;
+    }
+    if (activeInboxId === row.id) setActiveInboxId(null);
+    toast.success(`«${row.file_name}» wird nicht importiert.`);
+    void refreshInbox();
+  }, [activeInboxId, refreshInbox]);
 
   /** Duplikat-/Überschneidungs-Infos für eine KPI-PDF ermitteln (read-only). */
   const enrichKpiEntry = useCallback(async (
@@ -414,6 +494,8 @@ export default function GastronoviZBerichtPage() {
   };
 
   const handleFilesSelected = (files: File[]) => {
+    // Manuelle Dateiauswahl ersetzt einen laufenden Inbox-Durchlauf.
+    setActiveInboxId(null);
     if (importType === 'zbericht') {
       const pdfs = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
       if (pdfs.length === 0) {
@@ -517,7 +599,9 @@ export default function GastronoviZBerichtPage() {
     if (!parsed) return;
     // Idempotenz: identischer Bericht bereits importiert ⇒ KEINE Schreiboperation.
     if (zDupInfo) {
-      toast.info('Dieser Bericht wurde bereits importiert — es wurde nichts erneut gespeichert.');
+      toast.info(activeInboxId
+        ? 'Dieser Bericht wurde bereits importiert — der E-Mail-Eingang kann mit «Ignorieren» erledigt werden.'
+        : 'Dieser Bericht wurde bereits importiert — es wurde nichts erneut gespeichert.');
       return;
     }
     setStep('saving');
@@ -525,8 +609,17 @@ export default function GastronoviZBerichtPage() {
     const pFrom  = parsed.periodFrom || manualPeriodFrom || undefined;
     const pTo    = parsed.periodTo   || manualPeriodTo   || undefined;
     const ids    = overlapInfo.map(o => o.id);
-    const { error } = await saveGnImport(tenantId, parsed, undefined, ids, pFrom, pTo);
+    const { importId, error } = await saveGnImport(tenantId, parsed, undefined, ids, pFrom, pTo);
     if (error) { toast.error('Import fehlgeschlagen: ' + error); setStep('preview'); return; }
+    // Kam das PDF aus dem E-Mail-Eingang: Zeile abschliessen (imported + Verweis).
+    if (activeInboxId && importId) {
+      const marked = await markZberichtInboxImported(activeInboxId, importId);
+      if (marked.error) {
+        toast.warning('Import gespeichert, aber der E-Mail-Eingang konnte nicht aktualisiert werden: ' + marked.error);
+      }
+      setActiveInboxId(null);
+      void refreshInbox();
+    }
     // Nur echte TAGES-Importe für den Tagesabschluss-Abgleich vormerken.
     if (pFrom && pTo && pFrom === pTo) importedDays = [pFrom];
     if (parsed.reportType === 'extended') {
@@ -965,6 +1058,59 @@ export default function GastronoviZBerichtPage() {
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               Dateien werden gelesen…
+            </div>
+          )}
+
+          {/* ── E-Mail-Eingang: per Webhook eingegangene Z-Bericht-PDFs ──── */}
+          {importType === 'zbericht' && inboxAvailable && (inboxRows.length > 0 || inboxError) && (
+            <div className="rounded-lg border p-4 space-y-3" data-testid="section-zbericht-inbox">
+              <p className="text-sm font-semibold flex items-center gap-2">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                Aus E-Mail eingegangen (ausstehend)
+              </p>
+              {inboxError && (
+                <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 dark:bg-red-950/20 p-2.5 text-xs text-red-700 dark:text-red-400" data-testid="text-inbox-error">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>E-Mail-Eingang konnte nicht geladen werden: {inboxError}</span>
+                  <button onClick={() => void refreshInbox()}
+                    className="underline shrink-0 hover:text-red-900 dark:hover:text-red-300"
+                    data-testid="button-inbox-retry">
+                    Erneut versuchen
+                  </button>
+                </div>
+              )}
+              {inboxRows.map(row => (
+                <div key={row.id}
+                  className="flex items-center justify-between gap-3 rounded border bg-muted/30 px-3 py-2"
+                  data-testid={`row-inbox-${row.id}`}>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      {row.file_name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Eingegangen am {fdatetime(row.received_at)}
+                    </p>
+                  </div>
+                  {!isGuest && (
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={() => void handleImportFromInbox(row)}
+                        disabled={inboxBusy !== null}
+                        className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+                        data-testid={`button-inbox-import-${row.id}`}>
+                        {inboxBusy === row.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                        Importieren
+                      </button>
+                      <button onClick={() => void handleIgnoreInbox(row)}
+                        disabled={inboxBusy !== null}
+                        className="px-3 py-1.5 text-xs rounded border hover:bg-muted disabled:opacity-50"
+                        data-testid={`button-inbox-ignore-${row.id}`}>
+                        Ignorieren
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
