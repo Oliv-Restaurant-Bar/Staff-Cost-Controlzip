@@ -15,6 +15,9 @@ import {
   buildPdfFillMap, formatChfPdf, formatDatumPdf, wrapZeilen,
 } from '../pdf-fill-mapping';
 import type { PersonaleintrittRecord } from '../types';
+import { betriebFromLegacyConfig } from '../betriebs-config';
+
+const OLIV = betriebFromLegacyConfig('oliv');
 
 const VORLAGEN_DIR = resolve(__dirname, '../../../assets/vertragsvorlagen');
 
@@ -67,7 +70,7 @@ describe('Formatierung', () => {
 });
 
 describe('buildPdfFillMap — SL', () => {
-  const map = buildPdfFillMap(baseRecord(), '2026-07-24');
+  const map = buildPdfFillMap(baseRecord(), OLIV, '2026-07-24');
 
   it('füllt Personalien & Eckdaten', () => {
     expect(map.text['NameVorname']).toBe('Anna Muster');
@@ -93,7 +96,7 @@ describe('buildPdfFillMap — SL', () => {
   });
 
   it('befristet ⇒ keine Checkbox a, Warnung', () => {
-    const m = buildPdfFillMap(baseRecord({ vertragsdauer: 'befristet', befristetBis: '2026-12-31' }));
+    const m = buildPdfFillMap(baseRecord({ vertragsdauer: 'befristet', befristetBis: '2026-12-31' }), OLIV);
     expect(m.checkboxes['a']).toBeUndefined();
     expect(m.warnungen.some(w => w.includes('Befristeter Vertrag'))).toBe(true);
   });
@@ -102,7 +105,7 @@ describe('buildPdfFillMap — SL', () => {
 describe('buildPdfFillMap — ML', () => {
   const map = buildPdfFillMap(baseRecord({
     vertragstyp: 'ML', pensumProzent: 100, lohnBerechnet: 4600, lohnEinheit: 'monat',
-  }), '2026-07-24');
+  }), OLIV, '2026-07-24');
 
   it('Monatslohn + 13. + Total (Referenzvertrag 4600)', () => {
     expect(map.text['Fr']).toBe('4\u2019600.00');
@@ -116,7 +119,7 @@ describe('buildPdfFillMap — ML', () => {
   });
 
   it('Teilzeit ohne Wochenstunden ⇒ Warnung, Funktion mit Pensum', () => {
-    const m = buildPdfFillMap(baseRecord({ vertragstyp: 'ML', pensumProzent: 60, lohnBerechnet: 2760 }));
+    const m = buildPdfFillMap(baseRecord({ vertragstyp: 'ML', pensumProzent: 60, lohnBerechnet: 2760 }), OLIV);
     expect(m.checkboxes['b für Teilzeitmitarbeiterin mit regelmässigem festgelegtem Arbeitspensum']).toBe(true);
     expect(m.text['Funktion']).toContain('(60%)');
     expect(m.warnungen.some(w => w.includes('Wochenstunden'))).toBe(true);
@@ -136,7 +139,7 @@ describe('Mapping-Feldnamen existieren in den echten Vorlagen', () => {
 
   it('SL: alle gesetzten Felder vorhanden und typrichtig', async () => {
     const typen = await feldTypen('SL_Arbeitsvertrag_Vorlage.pdf');
-    const map = buildPdfFillMap(baseRecord());
+    const map = buildPdfFillMap(baseRecord(), OLIV);
     for (const name of Object.keys(map.text)) {
       expect(typen.get(name), `Textfeld «${name}» fehlt in SL-Vorlage`).toBe('text');
     }
@@ -147,7 +150,7 @@ describe('Mapping-Feldnamen existieren in den echten Vorlagen', () => {
 
   it('ML: alle gesetzten Felder vorhanden und typrichtig', async () => {
     const typen = await feldTypen('ML_Arbeitsvertrag_Vorlage.pdf');
-    const map = buildPdfFillMap(baseRecord({ vertragstyp: 'ML', pensumProzent: 80, lohnBerechnet: 3680 }));
+    const map = buildPdfFillMap(baseRecord({ vertragstyp: 'ML', pensumProzent: 80, lohnBerechnet: 3680 }), OLIV);
     for (const name of Object.keys(map.text)) {
       expect(typen.get(name), `Textfeld «${name}» fehlt in ML-Vorlage`).toBe('text');
     }
@@ -173,7 +176,7 @@ describe('Standard-Bemerkungen «13 Besondere Vereinbarungen» (Anpassung 6)', (
     expect(bemerkungenFuerVertrag(rGf)).toContain(BEMERKUNG_ARBEITSBEWILLIGUNG);
   });
   it('PDF-Map: Standardsätze landen ab Zeile 1 (gewrappt, 60 Zeichen)', () => {
-    const map = buildPdfFillMap(baseRecord(), '2026-07-24');
+    const map = buildPdfFillMap(baseRecord(), OLIV, '2026-07-24');
     expect(map.text['13 Besondere Vereinbarungen 1']).toBe(STANDARD_BEMERKUNGEN[0]);
     // Satz 2 ist länger als 60 Zeichen ⇒ beginnt in Zeile 2 und wird umbrochen
     expect(map.text['13 Besondere Vereinbarungen 2']).toBe(
@@ -184,7 +187,7 @@ describe('Standard-Bemerkungen «13 Besondere Vereinbarungen» (Anpassung 6)', (
   it('Überlauf ⇒ Warnung statt stilles Abschneiden ohne Hinweis', () => {
     const r = baseRecord();
     r.maDaten!.vertrag!.besondere_vereinbarungen = 'wort '.repeat(300).trim();
-    const map = buildPdfFillMap(r, '2026-07-24');
+    const map = buildPdfFillMap(r, OLIV, '2026-07-24');
     expect(map.warnungen.some(w => w.includes('länger als der Platz'))).toBe(true);
     // SL-Vorlage: maximal 11 Zeilen gesetzt
     expect(map.text['13 Besondere Vereinbarungen 11']).toBeDefined();

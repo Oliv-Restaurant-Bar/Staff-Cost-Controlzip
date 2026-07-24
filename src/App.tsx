@@ -27,6 +27,7 @@ import Personalstamm from "./pages/Personalstamm";
 import PersonaleintrittListe from "./pages/PersonaleintrittListe";
 import PersonaleintrittNeu from "./pages/PersonaleintrittNeu";
 import PersonaleintrittDetail from "./pages/PersonaleintrittDetail";
+import Betriebe from "./pages/Betriebe";
 import MitarbeiterEintritt from "./pages/MitarbeiterEintritt";
 import Positionen from "./pages/Positionen";
 import Personalbedarf from "./pages/Personalbedarf";
@@ -272,6 +273,12 @@ const AppContent = () => {
             />
             <Route path="/personaleintritt/:id"
               element={<RequireAdmin path="/personaleintritt/:id" allowGuest={false} allowBeaulieu><PersonaleintrittDetail /></RequireAdmin>}
+            />
+
+            {/* Betriebe-Verwaltung (Datensätze für Verträge/SEM/Dossier):
+                NUR Admin OHNE Gäste — kein beaulieu_manager */}
+            <Route path="/betriebe"
+              element={<RequireAdmin path="/betriebe" allowGuest={false}><Betriebe /></RequireAdmin>}
             />
 
             {/* Positionsverwaltung: nur Admin */}

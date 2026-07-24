@@ -14,8 +14,8 @@
  */
 
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
-import type { TenantId } from '@/contexts/TenantContext';
 import type { PersonaleintrittRecord } from './types';
+import type { BetriebRecord } from './betriebs-config';
 import { buildDossierInhalt, type DossierInhalt } from './dossier-inhalt';
 import { downloadDokument } from './db';
 
@@ -61,9 +61,9 @@ export interface DossierErgebnis {
 /** Erzeugt das komplette Dossier-PDF inkl. eingebetteter Anhänge. */
 export async function erzeugeDossierPdf(
   record: PersonaleintrittRecord,
-  tenantId: TenantId,
+  betrieb: BetriebRecord,
 ): Promise<DossierErgebnis> {
-  const inhalt = buildDossierInhalt(record, tenantId);
+  const inhalt = buildDossierInhalt(record, betrieb);
   const hinweise: string[] = [];
 
   const doc = await PDFDocument.create();

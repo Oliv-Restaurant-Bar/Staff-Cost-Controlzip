@@ -17,6 +17,7 @@
  */
 
 import type { LohnEinheit, LohnModus, Lohnklasse, Vertragstyp } from './types';
+import type { WochenstundenModell } from './betriebs-config';
 
 /** SL-Zuschläge auf dem Basislohn (werden im Vertrag separat ausgewiesen). */
 export const SL_ZUSCHLAEGE = {
@@ -54,7 +55,8 @@ export function rundeLohn(wert: number): number {
 /**
  * Mindestlohn für Jahr/Klasse/Einheit aus den geladenen Tabellenzeilen.
  * monat: Monats-Basislohn (exkl. 13.) ≥ monat_x13.
- * stunde: der OFFIZIELLE Stundenwert stunde_42 (Haus-Standard 42-h-Woche) —
+ * stunde: der OFFIZIELLE Stundenwert der Spalte zum Wochenstundenmodell des
+ * Betriebs (stunde_42 / stunde_43_5 / stunde_45; Default 42-h-Woche) —
  * strikt aus der Tabelle, KEIN Formel-Fallback (fehlender Spaltenwert ⇒ null,
  * die Prüfung ist dann nicht möglich; fehlend ≠ 0).
  */
@@ -63,11 +65,15 @@ export function mindestlohnFuer(
   jahr: number,
   klasse: Lohnklasse,
   einheit: LohnEinheit,
+  wochenstundenModell: WochenstundenModell = 42,
 ): number | null {
   const row = eintraege.find(e => e.jahr === jahr && e.klasse === klasse);
   if (!row) return null;
   if (einheit === 'monat') return row.monatX13 > 0 ? row.monatX13 : null;
-  return row.stunde42 != null && row.stunde42 > 0 ? row.stunde42 : null;
+  const stunde = wochenstundenModell === 45 ? row.stunde45
+    : wochenstundenModell === 43.5 ? row.stunde435
+    : row.stunde42;
+  return stunde != null && stunde > 0 ? stunde : null;
 }
 
 /** Für ein Eintrittsdatum (ISO) das massgebliche Mindestlohn-Jahr. */
@@ -97,6 +103,8 @@ export interface LohnBerechnungInput {
   jahr: number | null;
   /** Geladene lgav_mindestlohn-Zeilen. */
   mindestloehne: MindestlohnEintrag[];
+  /** Wochenstundenmodell des Betriebs (Stundenlohn-Spalte); Default 42. */
+  wochenstundenModell?: WochenstundenModell;
 }
 
 export interface SlZuschlagAufschluesselung {
@@ -149,7 +157,7 @@ export function berechneLohn(input: LohnBerechnungInput): LohnBerechnungResult {
   const einheit = lohnEinheitFuer(input.vertragstyp);
 
   const minRegulaer = input.jahr != null && input.lohnklasse
-    ? mindestlohnFuer(input.mindestloehne, input.jahr, input.lohnklasse, einheit)
+    ? mindestlohnFuer(input.mindestloehne, input.jahr, input.lohnklasse, einheit, input.wochenstundenModell ?? 42)
     : null;
   const minGeltend = minRegulaer != null
     ? (input.einfuehrungszeit ? minRegulaer * (1 - EINFUEHRUNG_ABZUG) : minRegulaer)

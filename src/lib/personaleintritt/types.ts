@@ -113,6 +113,8 @@ export interface PersonaleintrittRecord {
 
   vertragstyp?: Vertragstyp;
   betrieb?: string;
+  /** FK auf betriebe.id (Migration 20260724f) — Alt-Datensätze/pre-migration: undefined. */
+  betriebId?: string;
   funktion?: string;
   eintritt?: string;                  // ISO-Datum
   pensumProzent?: number;             // nur ML

@@ -37,7 +37,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList, FileText, ChevronDown, UserPlus,
+  Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -217,6 +217,15 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: UserPlus,
         adminOnly: true,
         beaulieuAllowed: true,
+        hideForGuest: true,
+        secondary: true,
+      },
+      {
+        path: '/betriebe',
+        label: 'Betriebe',
+        shortLabel: 'Betriebe',
+        icon: Building2,
+        adminOnly: true,
         hideForGuest: true,
         secondary: true,
       },

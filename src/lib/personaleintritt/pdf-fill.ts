@@ -14,6 +14,7 @@ import { PDFDocument, PDFTextField, PDFCheckBox } from 'pdf-lib';
 import slVorlageUrl from '@/assets/vertragsvorlagen/SL_Arbeitsvertrag_Vorlage.pdf?url';
 import mlVorlageUrl from '@/assets/vertragsvorlagen/ML_Arbeitsvertrag_Vorlage.pdf?url';
 import type { PersonaleintrittRecord } from './types';
+import type { BetriebRecord } from './betriebs-config';
 import { buildPdfFillMap } from './pdf-fill-mapping';
 
 export interface VertragsPdfErgebnis {
@@ -33,11 +34,14 @@ async function ladeVorlage(typ: 'SL' | 'ML'): Promise<ArrayBuffer> {
 }
 
 /** Füllt die Vorlage gemäss Mapping. Wirft bei fehlender Vorlage/kaputtem PDF. */
-export async function erzeugeVertragsPdf(record: PersonaleintrittRecord): Promise<VertragsPdfErgebnis> {
+export async function erzeugeVertragsPdf(
+  record: PersonaleintrittRecord,
+  betrieb: BetriebRecord,
+): Promise<VertragsPdfErgebnis> {
   if (record.vertragstyp !== 'SL' && record.vertragstyp !== 'ML') {
     throw new Error('Vertragstyp fehlt — PDF kann nicht erstellt werden.');
   }
-  const { text, checkboxes, warnungen } = buildPdfFillMap(record);
+  const { text, checkboxes, warnungen } = buildPdfFillMap(record, betrieb);
   const vorlage = await ladeVorlage(record.vertragstyp);
 
   const doc = await PDFDocument.load(vorlage);

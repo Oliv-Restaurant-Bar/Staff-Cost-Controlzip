@@ -14,7 +14,7 @@
 import type { PersonaleintrittRecord } from './types';
 import { SL_ZUSCHLAEGE, rundeLohn } from './lohn';
 import { bewilligungErforderlichEffektiv } from './behoerden-meldung';
-import { arbeitgeberZeile } from './betriebs-config';
+import { type BetriebRecord, arbeitgeberZeile, betriebAnzeigename } from './betriebs-config';
 
 // ─── Ergebnis ────────────────────────────────────────────────────────────────
 
@@ -94,7 +94,11 @@ const VOLLZUGSKOSTEN_JAHR = '99';
 
 // ─── Hauptfunktion ───────────────────────────────────────────────────────────
 
-export function buildPdfFillMap(record: PersonaleintrittRecord, heuteIso?: string): PdfFillMap {
+export function buildPdfFillMap(
+  record: PersonaleintrittRecord,
+  betrieb: BetriebRecord,
+  heuteIso?: string,
+): PdfFillMap {
   const text: Record<string, string> = {};
   const checkboxes: Record<string, boolean> = {};
   const warnungen: string[] = [];
@@ -104,13 +108,13 @@ export function buildPdfFillMap(record: PersonaleintrittRecord, heuteIso?: strin
   const v = record.maDaten?.vertrag ?? {};
   const l = record.maDaten?.lohnprogramm ?? {};
 
-  // ── Arbeitgeber (zentrale Betriebs-Config, Auftrag Punkt 8) ──
-  const agZeile = arbeitgeberZeile(record.restaurantId);
+  // ── Arbeitgeber (Betrieb-Datensatz, Auftrag Punkt 8) ──
+  const agZeile = arbeitgeberZeile(betrieb);
   if (agZeile) {
     text['zwischen'] = agZeile;
   } else {
-    text['zwischen'] = record.betrieb ?? '';
-    warnungen.push('Arbeitgeber-Zeile («zwischen …») bitte im PDF prüfen — für diesen Betrieb ist keine juristische Adresszeile hinterlegt (betriebs-config.ts ergänzen).');
+    text['zwischen'] = record.betrieb ?? betriebAnzeigename(betrieb);
+    warnungen.push('Arbeitgeber-Zeile («zwischen …») bitte im PDF prüfen — für diesen Betrieb ist keine vollständige juristische Adresszeile hinterlegt (Betrieb unter «Betriebe» ergänzen).');
   }
 
   // ── Personalien ──

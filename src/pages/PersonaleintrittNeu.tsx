@@ -34,7 +34,7 @@ import { InviteLinkDialog } from '@/components/personaleintritt/InviteLinkDialog
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
 import { useTenant } from '@/contexts/TenantContext';
-import { createPersonaleintritt, loadLgavMindestloehne } from '@/lib/personaleintritt/db';
+import { createPersonaleintritt, loadBetriebe, loadLgavMindestloehne } from '@/lib/personaleintritt/db';
 import {
   berechneLohn, mindestlohnJahr, rundeLohn, type MindestlohnEintrag,
 } from '@/lib/personaleintritt/lohn';
@@ -44,8 +44,10 @@ import {
 } from '@/lib/personaleintritt/types';
 import { generateInviteToken, hashInviteToken, inviteExpiryIso, inviteLink } from '@/lib/personaleintritt/token';
 import { FUNKTIONEN } from '@/lib/funktionen';
-import { BETRIEBS_CONFIG } from '@/lib/personaleintritt/betriebs-config';
-import { TENANTS, type TenantId } from '@/contexts/TenantContext';
+import {
+  LEGACY_BETRIEB_ID_PREFIX, betriebAnzeigename, betriebFromLegacyConfig,
+  type BetriebRecord,
+} from '@/lib/personaleintritt/betriebs-config';
 
 /** Probezeit-Auswahl (L-GAV: 1 Monat gesetzlich, per Abrede bis max. 3 Monate; «Keine» = 0). */
 const PROBEZEIT_OPTIONEN = [
@@ -80,16 +82,31 @@ export default function PersonaleintrittNeu() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // ── Betriebe laden (Migration 20260724f; pre-migration: Legacy-Fallback) ──
+  const [betriebe, setBetriebe] = useState<BetriebRecord[]>([]);
+  const [betriebeError, setBetriebeError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!canManage) return; // Lade-Effekt ebenfalls gaten (feuert vor Redirect)
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const res = await loadLgavMindestloehne();
+      const [res, resBet] = await Promise.all([loadLgavMindestloehne(), loadBetriebe()]);
       if (cancelled) return;
       setPreMigration(res.preMigration);
       setLoadError(res.error);
       setMinLoehne(res.data ?? []);
+      if (resBet.data) {
+        setBetriebe(resBet.data.filter(b => b.aktiv));
+        setBetriebeError(null);
+      } else if (resBet.preMigration) {
+        // EINZIGER pre-migration-Fallback: die zwei Legacy-Betriebe.
+        setBetriebe([betriebFromLegacyConfig('oliv'), betriebFromLegacyConfig('beaulieu')]);
+        setBetriebeError(null);
+      } else {
+        setBetriebe([]);
+        setBetriebeError(resBet.error ?? 'Betriebe konnten nicht geladen werden.');
+      }
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -97,8 +114,33 @@ export default function PersonaleintrittNeu() {
 
   // ── Formular-State ────────────────────────────────────────────────────────
   const [vertragstyp, setVertragstyp] = useState<Vertragstyp | null>(null);
-  /** Betriebswahl (Punkt 8): bestimmt restaurant_id des Datensatzes; beaulieu_manager ist tenant-locked. */
-  const [betriebId, setBetriebId] = useState<TenantId>(isBeaulieuManager ? 'beaulieu' : tenantId);
+  /** Betriebswahl (Punkt 8): gewählter Betrieb-Datensatz; beaulieu_manager ist tenant-locked. */
+  const [betriebSelId, setBetriebSelId] = useState<string>('');
+
+  /** beaulieu_manager sieht nur den an «beaulieu» gekoppelten Betrieb. */
+  const waehlbareBetriebe = useMemo(
+    () => (isBeaulieuManager ? betriebe.filter(b => b.sccTenant === 'beaulieu') : betriebe),
+    [betriebe, isBeaulieuManager],
+  );
+
+  // Default-Auswahl, sobald die Betriebe geladen sind: Betrieb des aktiven
+  // Mandanten (bzw. beaulieu für den tenant-gesperrten Manager).
+  useEffect(() => {
+    if (waehlbareBetriebe.length === 0) return;
+    setBetriebSelId(prev => {
+      if (prev && waehlbareBetriebe.some(b => b.id === prev)) return prev;
+      const zielTenant = isBeaulieuManager ? 'beaulieu' : tenantId;
+      const match = waehlbareBetriebe.find(b => b.sccTenant === zielTenant);
+      return (match ?? waehlbareBetriebe[0]).id;
+    });
+  }, [waehlbareBetriebe, isBeaulieuManager, tenantId]);
+
+  const betrieb = useMemo(
+    () => waehlbareBetriebe.find(b => b.id === betriebSelId) ?? null,
+    [waehlbareBetriebe, betriebSelId],
+  );
+  /** Heimat-Mandant des Datensatzes: SCC-Tenant des Betriebs, Dritt-Betriebe erben den aktiven Mandanten. */
+  const zielTenantId = betrieb?.sccTenant ?? tenantId;
   const [funktion, setFunktion] = useState('');
   const [eintritt, setEintritt] = useState('');
   const [pensum, setPensum] = useState('100');
@@ -130,8 +172,9 @@ export default function PersonaleintrittNeu() {
       einfuehrungszeit,
       jahr: mindestlohnJahr(eintritt || undefined),
       mindestloehne: minLoehne ?? [],
+      wochenstundenModell: betrieb?.wochenstundenModell ?? 42,
     });
-  }, [vertragstyp, lohnModus, grundlohn, grundlohnInkl13, zielTotal, lohnklasse, einfuehrungszeit, eintritt, minLoehne]);
+  }, [vertragstyp, lohnModus, grundlohn, grundlohnInkl13, zielTotal, lohnklasse, einfuehrungszeit, eintritt, minLoehne, betrieb]);
 
   if (!canManage) {
     return (
@@ -147,6 +190,7 @@ export default function PersonaleintrittNeu() {
 
   const fehlendeFelder = (): string[] => {
     const f: string[] = [];
+    if (!betrieb) f.push('Betrieb');
     if (!vertragstyp) f.push('Vertragstyp');
     if (!funktion.trim()) f.push('Funktion');
     if (!eintritt) f.push('Eintrittsdatum');
@@ -159,7 +203,11 @@ export default function PersonaleintrittNeu() {
   const buildPatch = (status: 'entwurf' | 'eingeladen') => ({
     status,
     vertragstyp: vertragstyp ?? undefined,
-    betrieb: BETRIEBS_CONFIG[betriebId].anzeigename,
+    betrieb: betrieb ? betriebAnzeigename(betrieb) : undefined,
+    // FK nur setzen, wenn ein ECHTER Betrieb-Datensatz gewählt ist — synthetische
+    // Legacy-Fallback-IDs dürfen NIE in betrieb_id persistiert werden (42703-tolerant).
+    ...(betrieb && !betrieb.id.startsWith(LEGACY_BETRIEB_ID_PREFIX)
+      ? { betriebId: betrieb.id } : {}),
     funktion: funktion.trim() || undefined,
     eintritt: eintritt || null,
     pensumProzent: vertragstyp === 'ML' && pensum ? Number(pensum) : null,
@@ -182,18 +230,19 @@ export default function PersonaleintrittNeu() {
     ...(bewArbeitsbewilligung ? { bewilligungArbeitsbewilligung: true } : {}),
   });
 
-  /** Nach dem Speichern: Hinweis, wenn der Datensatz in einem anderen Betrieb liegt als der aktive Mandant. */
+  /** Nach dem Speichern: Hinweis, wenn der Datensatz in einem anderen Mandanten liegt als der aktive. */
   const hinweisBeiMandantAbweichung = () => {
-    if (betriebId === tenantId) return;
-    toast.info(`Der Eintritt wurde im Betrieb «${BETRIEBS_CONFIG[betriebId].anzeigename}» angelegt.`, {
+    if (zielTenantId === tenantId) return;
+    toast.info(`Der Eintritt wurde im Betrieb «${betrieb ? betriebAnzeigename(betrieb) : zielTenantId}» angelegt.`, {
       description: 'Die Übersicht zeigt den aktiven Mandanten — zum Anzeigen wechseln.',
-      action: { label: 'Wechseln', onClick: () => setTenant(betriebId) },
+      action: { label: 'Wechseln', onClick: () => setTenant(zielTenantId) },
     });
   };
 
   const saveDraft = async () => {
+    if (!betrieb) { toast.error('Bitte zuerst einen Betrieb wählen.'); return; }
     setSaving(true);
-    const res = await createPersonaleintritt(betriebId, buildPatch('entwurf'), user?.email ?? user?.id);
+    const res = await createPersonaleintritt(zielTenantId, buildPatch('entwurf'), user?.email ?? user?.id);
     setSaving(false);
     if (res.preMigration) { setPreMigration(true); return; }
     if (res.error || !res.data) { toast.error(`Speichern fehlgeschlagen: ${res.error}`); return; }
@@ -215,7 +264,7 @@ export default function PersonaleintrittNeu() {
     setSaving(true);
     const token = generateInviteToken();
     const tokenHash = await hashInviteToken(token);
-    const res = await createPersonaleintritt(betriebId, {
+    const res = await createPersonaleintritt(zielTenantId, {
       ...buildPatch('eingeladen'),
       inviteTokenHash: tokenHash,
       inviteExpires: inviteExpiryIso(),
@@ -256,6 +305,11 @@ export default function PersonaleintrittNeu() {
           {loadError} — die Mindestlohn-Prüfung ist ohne Tabelle nicht möglich.
         </HintBox>
       )}
+      {betriebeError && (
+        <HintBox tone="critical" title="Betriebe konnten nicht geladen werden">
+          {betriebeError} — ohne Betrieb kann kein Eintritt erfasst werden. Seite neu laden oder später erneut versuchen.
+        </HintBox>
+      )}
 
       {loading ? <LoadingState /> : (
         <div className="space-y-4">
@@ -289,14 +343,16 @@ export default function PersonaleintrittNeu() {
               <div className="space-y-1">
                 <Label>Betrieb *</Label>
                 <Select
-                  value={betriebId}
-                  onValueChange={v => setBetriebId(v as TenantId)}
-                  disabled={isBeaulieuManager}
+                  value={betriebSelId}
+                  onValueChange={setBetriebSelId}
+                  disabled={isBeaulieuManager || waehlbareBetriebe.length === 0}
                 >
-                  <SelectTrigger data-testid="select-betrieb"><SelectValue /></SelectTrigger>
+                  <SelectTrigger data-testid="select-betrieb">
+                    <SelectValue placeholder={waehlbareBetriebe.length === 0 ? 'Keine Betriebe verfügbar' : 'Wählen…'} />
+                  </SelectTrigger>
                   <SelectContent>
-                    {(Object.keys(TENANTS) as TenantId[]).map(id => (
-                      <SelectItem key={id} value={id}>{TENANTS[id].name}</SelectItem>
+                    {waehlbareBetriebe.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{betriebAnzeigename(b)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

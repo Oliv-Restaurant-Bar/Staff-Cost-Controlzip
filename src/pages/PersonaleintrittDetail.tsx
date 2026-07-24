@@ -8,7 +8,7 @@
  * Personalstamm (dokumentierte 2. sanktionierte employees-Schreibstelle) ·
  * Abbrechen. Skribble ist vorbereitet, aber deaktiviert.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, FileSpreadsheet, FileText, FolderArchive, PenLine, ShieldAlert, UserCheck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -35,7 +35,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { useAuth } from '@/hooks/useAuth';
 import { useTenant } from '@/contexts/TenantContext';
 import {
-  getDokumentUrl, loadPersonaleintritt, updatePersonaleintritt, uploadDokument,
+  getDokumentUrl, loadBetriebe, loadPersonaleintritt, updatePersonaleintritt, uploadDokument,
 } from '@/lib/personaleintritt/db';
 import {
   LOHNKLASSE_LABELS, MA_DOKUMENT_TYPEN, STATUS_LABELS,
@@ -49,7 +49,9 @@ import {
 import {
   erzeugeSemFormular, SemVorlageFehltError, SEM_VORLAGE_PATH,
 } from '@/lib/personaleintritt/sem-formular';
-import { SEM_KANTON_BERN, semBetreff } from '@/lib/personaleintritt/betriebs-config';
+import {
+  SEM_KANTON_BERN, betriebFromLegacyConfig, semBetreff, type BetriebRecord,
+} from '@/lib/personaleintritt/betriebs-config';
 import { erzeugeMirusExcel } from '@/lib/personaleintritt/mirus-export';
 import { erzeugeDossierPdf } from '@/lib/personaleintritt/dossier-pdf';
 import { buildEmployeeFromEintritt, findeNamensDuplikate } from '@/lib/personaleintritt/uebernahme';
@@ -94,6 +96,52 @@ export default function PersonaleintrittDetail() {
   const [loading, setLoading] = useState(true);
   const [preMigration, setPreMigration] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // ── Betriebe (Migration 20260724f): für Dokument-Erzeugung + Übernahme-Gate ──
+  // null = lädt noch / Ladefehler; die Auflösung unterscheidet danach.
+  const [betriebe, setBetriebe] = useState<BetriebRecord[] | null>(null);
+  const [betriebeError, setBetriebeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canManage) return; // Lade-Effekt gaten (feuert vor Redirect)
+    let cancelled = false;
+    (async () => {
+      const res = await loadBetriebe();
+      if (cancelled) return;
+      if (res.data) {
+        setBetriebe(res.data);
+        setBetriebeError(null);
+      } else if (res.preMigration) {
+        setBetriebe([]); // pre-migration: Alt-Datensätze lösen über den Legacy-Fallback auf
+        setBetriebeError(null);
+      } else {
+        setBetriebe(null);
+        setBetriebeError(res.error ?? 'Betriebe konnten nicht geladen werden.');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [canManage]);
+
+  /**
+   * Betrieb des Datensatzes: betrieb_id-Match (auch deaktivierte Betriebe —
+   * Alt-Datensätze bleiben auflösbar), sonst EINZIGER Fallback
+   * betriebFromLegacyConfig(Heimat-Mandant). Bei gesetzter betrieb_id und noch
+   * ladender/fehlgeschlagener Liste bewusst null (nie falscher Arbeitgeber).
+   */
+  const betrieb = useMemo<BetriebRecord | null>(() => {
+    if (!record) return null;
+    if (record.betriebId) {
+      if (betriebe === null) return null;
+      return betriebe.find(b => b.id === record.betriebId)
+        ?? betriebFromLegacyConfig(record.restaurantId ?? tenantId);
+    }
+    return betriebFromLegacyConfig(record.restaurantId ?? tenantId);
+  }, [record, betriebe, tenantId]);
+
+  /** Einheitlicher Guard für Aktionen, die den Betrieb brauchen. */
+  const betriebFehltGrund = betriebeError
+    ? `Betriebe konnten nicht geladen werden: ${betriebeError}`
+    : 'Betrieb-Daten werden noch geladen — bitte kurz warten.';
 
   const [busy, setBusy] = useState(false);
   const [pdfWarnungen, setPdfWarnungen] = useState<string[]>([]);
@@ -191,10 +239,11 @@ export default function PersonaleintrittDetail() {
 
   const createPdf = async () => {
     if (!record) return;
+    if (!betrieb) { toast.error(betriebFehltGrund); return; }
     setBusy(true);
     setPdfWarnungen([]);
     try {
-      const { editierbar, flach, warnungen } = await erzeugeVertragsPdf(record);
+      const { editierbar, flach, warnungen } = await erzeugeVertragsPdf(record, betrieb);
       const basePath = `${tenantId}/${record.id}`;
       const editPath = await uploadDokument(`${basePath}/vertrag_editierbar.pdf`, new Blob([editierbar as BlobPart], { type: 'application/pdf' }), 'application/pdf');
       const flatPath = await uploadDokument(`${basePath}/vertrag.pdf`, new Blob([flach as BlobPart], { type: 'application/pdf' }), 'application/pdf');
@@ -251,10 +300,11 @@ export default function PersonaleintrittDetail() {
 
   const dossierErstellen = async () => {
     if (!record) return;
+    if (!betrieb) { toast.error(betriebFehltGrund); return; }
     setBusy(true);
     setDossierHinweise([]);
     try {
-      const erg = await erzeugeDossierPdf(record, tenantId);
+      const erg = await erzeugeDossierPdf(record, betrieb);
       const blob = new Blob([erg.bytes as BlobPart], { type: 'application/pdf' });
       // Ablage im Bucket des Mandanten (interne Ablage) — Fehler nur als Hinweis,
       // der lokale Download funktioniert unabhängig davon.
@@ -326,10 +376,11 @@ export default function PersonaleintrittDetail() {
 
   const semFormularErstellen = async () => {
     if (!record) return;
+    if (!betrieb) { toast.error(betriebFehltGrund); return; }
     setBusy(true);
     setSemWarnungen([]);
     try {
-      const erg = await erzeugeSemFormular(record, tenantId);
+      const erg = await erzeugeSemFormular(record, betrieb);
       setSemVorlageFehlt(false);
       const blob = new Blob([erg.editierbar as BlobPart], { type: 'application/pdf' });
       const path = await uploadDokument(`${tenantId}/${record.id}/sem_meldung.pdf`, blob, 'application/pdf');
@@ -388,8 +439,19 @@ export default function PersonaleintrittDetail() {
 
   // ── Übernahme ─────────────────────────────────────────────────────────────
 
+  /**
+   * Übernahme-Gate (Betriebe-Auftrag): Nur Betriebe MIT SCC-Integration sind an
+   * den Personalstamm gekoppelt — Dritt-Betriebe haben dort keine Heimat.
+   */
+  const uebernahmeMoeglich = betrieb != null && betrieb.sccIntegration;
+
   const openUebernahme = async () => {
     if (!record) return;
+    if (!betrieb) { toast.error(betriebFehltGrund); return; }
+    if (!betrieb.sccIntegration) {
+      toast.error('Dieser Betrieb ist nicht mit dem Personalstamm gekoppelt — keine Übernahme möglich.');
+      return;
+    }
     setUebOpen(true);
     setUebDepartment('');
     setUebTrotzdem(false);
@@ -501,6 +563,11 @@ export default function PersonaleintrittDetail() {
           {loadError}
         </HintBox>
       )}
+      {betriebeError && (
+        <HintBox tone="critical" title="Betriebe konnten nicht geladen werden">
+          {betriebeError} — Vertrag, SEM-Formular, Dossier und Übernahme sind bis dahin gesperrt. Seite neu laden.
+        </HintBox>
+      )}
 
       {loading ? <LoadingState /> : !record ? (
         !preMigration && !loadError && (
@@ -558,7 +625,14 @@ export default function PersonaleintrittDetail() {
                   <PenLine className="mr-1 h-4 w-4" /> Zur Signatur senden
                 </Button>
                 {UEBERNAHME_ERLAUBT.includes(record.status) && (
-                  <Button size="sm" disabled={busy} onClick={() => void openUebernahme()} data-testid="button-uebernahme">
+                  <Button
+                    size="sm"
+                    disabled={busy || !uebernahmeMoeglich}
+                    title={uebernahmeMoeglich ? undefined
+                      : betrieb ? 'Dieser Betrieb ist nicht mit dem Personalstamm gekoppelt.' : betriebFehltGrund}
+                    onClick={() => void openUebernahme()}
+                    data-testid="button-uebernahme"
+                  >
                     <UserCheck className="mr-1 h-4 w-4" /> In Personalstamm übernehmen
                   </Button>
                 )}
@@ -642,9 +716,12 @@ export default function PersonaleintrittDetail() {
                     <p className="text-sm font-medium">SEM-Meldeverfahren (Ausweis F/S)</p>
                     <p className="text-xs text-muted-foreground">
                       Das gefüllte Formular per E-Mail an{' '}
-                      <span className="font-medium">{SEM_KANTON_BERN.empfaengerEmail}</span> senden.
+                      <span className="font-medium">
+                        {betrieb?.behoerdeEmail?.trim() || SEM_KANTON_BERN.empfaengerEmail}
+                      </span> senden.
                       Betreff: «{semBetreff(anzeigeName, record.betrieb ?? '')}».
-                      Rückfragen: {SEM_KANTON_BERN.kontaktName}, {SEM_KANTON_BERN.kontaktTelefon}.
+                      Rückfragen: {betrieb?.kontaktpersonName?.trim() || SEM_KANTON_BERN.kontaktName},{' '}
+                      {betrieb?.kontaktpersonTel?.trim() || SEM_KANTON_BERN.kontaktTelefon}.
                     </p>
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" disabled={busy}

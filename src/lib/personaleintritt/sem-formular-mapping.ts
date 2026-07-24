@@ -18,9 +18,10 @@
  * verifizieren — der Füller legt bei Nichttreffern die realen Optionen offen.
  */
 
-import type { TenantId } from '@/contexts/TenantContext';
 import type { PersonaleintrittRecord } from './types';
-import { BETRIEBS_CONFIG, SEM_KANTON_BERN, semBetreff } from './betriebs-config';
+import {
+  type BetriebRecord, betriebAnzeigename, SEM_KANTON_BERN, semBetreff,
+} from './betriebs-config';
 
 export interface SemFeld {
   /** Fachliches Label (für Warnungen). */
@@ -66,13 +67,17 @@ function datumCh(iso: string | undefined | null): string {
 
 /**
  * Wochenstunden fürs Formular (Felder Stunden/Minuten): ML aus
- * vertrag.wochenstunden, sonst 42 h × Pensum (L-GAV-Betriebe = 42-h-Woche).
- * SL = variabel ⇒ null (Felder bleiben leer, Angabe wird als fehlend benannt).
+ * vertrag.wochenstunden, sonst Wochenstundenmodell des Betriebs × Pensum
+ * (L-GAV; Default 42-h-Woche). SL = variabel ⇒ null (Felder bleiben leer,
+ * Angabe wird als fehlend benannt).
  */
-export function wochenstundenFuerSem(record: PersonaleintrittRecord): { stunden: number; minuten: number } | null {
+export function wochenstundenFuerSem(
+  record: PersonaleintrittRecord,
+  wochenstundenModell: number = 42,
+): { stunden: number; minuten: number } | null {
   if (record.vertragstyp !== 'ML') return null;
   const ws = record.maDaten?.vertrag?.wochenstunden
-    ?? (record.pensumProzent != null ? 42 * record.pensumProzent / 100 : null);
+    ?? (record.pensumProzent != null ? wochenstundenModell * record.pensumProzent / 100 : null);
   if (ws == null || !isFinite(ws) || ws <= 0) return null;
   const stunden = Math.floor(ws);
   const minuten = Math.round((ws - stunden) * 60);
@@ -85,12 +90,11 @@ export function wochenstundenFuerSem(record: PersonaleintrittRecord): { stunden:
  */
 export function buildSemFillMap(
   record: PersonaleintrittRecord,
-  tenantId: TenantId,
+  betrieb: BetriebRecord,
   heuteIso?: string,
 ): SemFillMap {
   const p = record.maDaten?.personalien ?? {};
   const l = record.maDaten?.lohnprogramm ?? {};
-  const betrieb = BETRIEBS_CONFIG[tenantId];
   const fehlend: string[] = [];
 
   const wert = (v: string | undefined | null, label: string): string => {
@@ -117,18 +121,23 @@ export function buildSemFillMap(
     ? record.lohnBerechnet.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : (fehlend.push('Bruttolohn (Basislohn)'), '');
 
-  const ws = wochenstundenFuerSem(record);
+  const ws = wochenstundenFuerSem(record, betrieb.wochenstundenModell);
   if (ws == null) {
     fehlend.push(record.vertragstyp === 'ML'
       ? 'Wochenstunden (Stunden/Minuten)'
       : 'Wochenstunden (Stundenlohn variabel — manuell prüfen)');
   }
 
-  const firmenname = wert(betrieb.firmenname, 'Firmenname (betriebs-config)');
-  const strasseB = wert(betrieb.strasse, 'Strasse Arbeitgeber (betriebs-config)');
-  const npaLocaliteB = wert(betrieb.plzOrt, 'PLZ/Ort Arbeitgeber (betriebs-config)');
-  const uid = wert(betrieb.uid, 'UID/IDE (betriebs-config)');
+  const firmenname = wert(betrieb.name, 'Firmenname (Betrieb)');
+  const strasseB = wert(betrieb.strasse, 'Strasse Arbeitgeber (Betrieb)');
+  const npaLocaliteB = wert(betrieb.plzOrt, 'PLZ/Ort Arbeitgeber (Betrieb)');
+  const uid = wert(betrieb.uid, 'UID/IDE (Betrieb)');
   const heute = datumCh(heuteIso ?? new Date().toISOString().slice(0, 10));
+
+  // Kontakt/Zustellung: Betriebs-Datensatz zuerst, kantonale Config als Fallback.
+  const kontaktName = betrieb.kontaktpersonName?.trim() || SEM_KANTON_BERN.kontaktName;
+  const kontaktTelefon = betrieb.kontaktpersonTel?.trim() || SEM_KANTON_BERN.kontaktTelefon;
+  const empfaengerEmail = betrieb.behoerdeEmail?.trim() || SEM_KANTON_BERN.empfaengerEmail;
 
   const felder: SemFeld[] = [
     // Mitarbeitende Person
@@ -155,9 +164,9 @@ export function buildSemFillMap(
     { label: 'Strasse Arbeitgeber', wert: strasseB, kandidaten: ['RueB', 'AdresseEmployeur'] },
     { label: 'PLZ/Ort Arbeitgeber', wert: npaLocaliteB, kandidaten: ['NPALocaliteB', 'NPALocalitéB'] },
     { label: 'UID/IDE', wert: uid, kandidaten: ['NuméroIDEB', 'NumeroIDEB', 'IDE', 'UID'] },
-    // Kontakt/Unterschrift (Kanton Bern, zentrale Config)
-    { label: 'Kontaktperson', wert: SEM_KANTON_BERN.kontaktName, kandidaten: ['Nom2', 'Personne de contact', 'Kontaktperson'] },
-    { label: 'Telefon Kontakt', wert: SEM_KANTON_BERN.kontaktTelefon, kandidaten: ['Téléphone2', 'Telephone2'] },
+    // Kontakt/Unterschrift (Betrieb; Kanton-Bern-Config als Fallback)
+    { label: 'Kontaktperson', wert: kontaktName, kandidaten: ['Nom2', 'Personne de contact', 'Kontaktperson'] },
+    { label: 'Telefon Kontakt', wert: kontaktTelefon, kandidaten: ['Téléphone2', 'Telephone2'] },
     { label: 'Ort (Unterschrift)', wert: SEM_KANTON_BERN.lieu, kandidaten: ['Lieu', 'Ort'] },
     { label: 'Datum (Unterschrift)', wert: heute, kandidaten: ['Date', 'Datum'] },
   ];
@@ -214,8 +223,8 @@ export function buildSemFillMap(
     checkboxen,
     radios,
     fehlend,
-    betreff: semBetreff(personName, betrieb.anzeigename),
-    empfaengerEmail: SEM_KANTON_BERN.empfaengerEmail,
+    betreff: semBetreff(personName, betriebAnzeigename(betrieb)),
+    empfaengerEmail,
     dateiname: `SEM_Meldung_${slug}.pdf`,
   };
 }

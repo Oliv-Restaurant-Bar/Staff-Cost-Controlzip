@@ -15,6 +15,11 @@
 import { supabase } from '@/integrations/supabase/client';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { MindestlohnEintrag } from './lohn';
+import {
+  LEGACY_BETRIEB_ID_PREFIX,
+  type BetriebRecord,
+  type WochenstundenModell,
+} from './betriebs-config';
 import type {
   Lohnklasse,
   MaDaten,
@@ -51,6 +56,8 @@ function rowToRecord(row: any): PersonaleintrittRecord {
     status: row.status as PersonaleintrittStatus,
     vertragstyp: row.vertragstyp ?? undefined,
     betrieb: row.betrieb ?? undefined,
+    // Spalte aus Migration 20260724f — pre-migration-tolerant (select('*')):
+    betriebId: row.betrieb_id ?? undefined,
     funktion: row.funktion ?? undefined,
     eintritt: row.eintritt ?? undefined,
     pensumProzent: row.pensum_prozent != null ? Number(row.pensum_prozent) : undefined,
@@ -96,6 +103,8 @@ export interface PersonaleintrittPatch {
   status?: PersonaleintrittStatus;
   vertragstyp?: string;
   betrieb?: string;
+  /** Migration 20260724f — nur setzen, wenn die Tabelle betriebe existiert (42703-tolerant). */
+  betriebId?: string | null;
   funktion?: string;
   eintritt?: string | null;
   pensumProzent?: number | null;
@@ -140,6 +149,7 @@ function patchToRow(patch: PersonaleintrittPatch): Record<string, any> {
   const row: Record<string, any> = {};
   const map: [keyof PersonaleintrittPatch, string][] = [
     ['status', 'status'], ['vertragstyp', 'vertragstyp'], ['betrieb', 'betrieb'],
+    ['betriebId', 'betrieb_id'],
     ['funktion', 'funktion'], ['eintritt', 'eintritt'], ['pensumProzent', 'pensum_prozent'],
     ['probezeitTage', 'probezeit_tage'], ['vertragsdauer', 'vertragsdauer'],
     ['befristetBis', 'befristet_bis'], ['lohnModus', 'lohn_modus'], ['lohnklasse', 'lohnklasse'],
@@ -208,6 +218,136 @@ export async function upsertLgavMindestlohn(eintrag: MindestlohnEintrag): Promis
     return { data: null, preMigration: false, error: error.message ?? 'Unbekannter Fehler' };
   }
   return { data: true, preMigration: false, error: null };
+}
+
+// ─── betriebe (Migration 20260724f) ──────────────────────────────────────────
+
+/** CHECK-Constraint garantiert 42/43.5/45 — Anomalie fällt sichtbar auf 42 zurück. */
+function toWochenstundenModell(v: unknown): WochenstundenModell {
+  const n = Number(v);
+  return n === 45 ? 45 : n === 43.5 ? 43.5 : 42;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function betriebRowToRecord(row: any): BetriebRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    anzeigename: row.anzeigename ?? undefined,
+    strasse: row.strasse ?? undefined,
+    plzOrt: row.plz_ort ?? undefined,
+    uid: row.uid ?? undefined,
+    land: row.land ?? 'CH',
+    wochenstundenModell: toWochenstundenModell(row.wochenstunden_modell),
+    kontaktpersonName: row.kontaktperson_name ?? undefined,
+    kontaktpersonTel: row.kontaktperson_tel ?? undefined,
+    kontaktpersonEmail: row.kontaktperson_email ?? undefined,
+    behoerdeEmail: row.behoerde_email ?? undefined,
+    sccIntegration: row.scc_integration ?? false,
+    sccTenant: row.scc_tenant === 'oliv' || row.scc_tenant === 'beaulieu' ? row.scc_tenant : undefined,
+    logo: row.logo ?? undefined,
+    aktiv: row.aktiv ?? true,
+    createdAt: row.created_at ?? undefined,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+export interface BetriebPatch {
+  name?: string;
+  anzeigename?: string | null;
+  strasse?: string | null;
+  plzOrt?: string | null;
+  uid?: string | null;
+  land?: string;
+  wochenstundenModell?: WochenstundenModell;
+  kontaktpersonName?: string | null;
+  kontaktpersonTel?: string | null;
+  kontaktpersonEmail?: string | null;
+  behoerdeEmail?: string | null;
+  sccIntegration?: boolean;
+  sccTenant?: TenantId | null;
+  logo?: string | null;
+  /** Kein Hard-Delete (FK-Ziel): Deaktivieren statt löschen. */
+  aktiv?: boolean;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function betriebPatchToRow(patch: BetriebPatch): Record<string, any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row: Record<string, any> = {};
+  const map: [keyof BetriebPatch, string][] = [
+    ['name', 'name'], ['anzeigename', 'anzeigename'], ['strasse', 'strasse'],
+    ['plzOrt', 'plz_ort'], ['uid', 'uid'], ['land', 'land'],
+    ['wochenstundenModell', 'wochenstunden_modell'],
+    ['kontaktpersonName', 'kontaktperson_name'], ['kontaktpersonTel', 'kontaktperson_tel'],
+    ['kontaktpersonEmail', 'kontaktperson_email'], ['behoerdeEmail', 'behoerde_email'],
+    ['sccIntegration', 'scc_integration'], ['sccTenant', 'scc_tenant'],
+    ['logo', 'logo'], ['aktiv', 'aktiv'],
+  ];
+  for (const [key, col] of map) {
+    if (key in patch) row[col] = patch[key];
+  }
+  return row;
+}
+
+/**
+ * Lädt ALLE Betriebe (aktive und deaktivierte; Filterung ist Sache der UI —
+ * Detailseiten müssen auch deaktivierte Betriebe eines Alt-Datensatzes noch
+ * auflösen können). preMigration=true, solange die Tabelle fehlt — der
+ * Aufrufer fällt dann auf betriebFromLegacyConfig zurück.
+ */
+export async function loadBetriebe(): Promise<DbResult<BetriebRecord[]>> {
+  const { data, error } = await sb
+    .from('betriebe')
+    .select('*')
+    .order('name', { ascending: true });
+  if (error) {
+    if (isMissingTableError(error)) return { data: null, preMigration: true, error: null };
+    return { data: null, preMigration: false, error: error.message ?? 'Unbekannter Fehler' };
+  }
+  return { data: (data ?? []).map(betriebRowToRecord), preMigration: false, error: null };
+}
+
+export async function createBetrieb(patch: BetriebPatch): Promise<DbResult<BetriebRecord>> {
+  if (!patch.name?.trim()) {
+    return { data: null, preMigration: false, error: 'Firmenname ist erforderlich.' };
+  }
+  const { data, error } = await sb
+    .from('betriebe')
+    .insert(betriebPatchToRow(patch))
+    .select()
+    .single();
+  if (error) {
+    if (isMissingTableError(error)) return { data: null, preMigration: true, error: null };
+    return { data: null, preMigration: false, error: error.message ?? 'Unbekannter Fehler' };
+  }
+  return { data: betriebRowToRecord(data), preMigration: false, error: null };
+}
+
+export async function updateBetrieb(id: string, patch: BetriebPatch): Promise<DbResult<BetriebRecord>> {
+  // Synthetische Fallback-IDs (pre-migration) dürfen NIE in die DB gelangen:
+  if (id.startsWith(LEGACY_BETRIEB_ID_PREFIX)) {
+    return {
+      data: null, preMigration: false,
+      error: 'Dieser Betrieb stammt aus dem Übergangs-Fallback und kann erst nach der Migration 20260724f bearbeitet werden.',
+    };
+  }
+  if ('name' in patch && !patch.name?.trim()) {
+    return { data: null, preMigration: false, error: 'Firmenname darf nicht leer sein.' };
+  }
+  const { data, error } = await sb
+    .from('betriebe')
+    .update({ ...betriebPatchToRow(patch), updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select();
+  if (error) {
+    if (isMissingTableError(error)) return { data: null, preMigration: true, error: null };
+    return { data: null, preMigration: false, error: error.message ?? 'Unbekannter Fehler' };
+  }
+  if (!data || data.length === 0) {
+    return { data: null, preMigration: false, error: 'Betrieb nicht gefunden — keine Zeile aktualisiert.' };
+  }
+  return { data: betriebRowToRecord(data[0]), preMigration: false, error: null };
 }
 
 // ─── personaleintritt ─────────────────────────────────────────────────────────

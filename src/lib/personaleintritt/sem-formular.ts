@@ -18,8 +18,8 @@
  */
 
 import { PDFDocument, PDFTextField, PDFCheckBox, PDFRadioGroup, PDFDropdown } from 'pdf-lib';
-import type { TenantId } from '@/contexts/TenantContext';
 import type { PersonaleintrittRecord } from './types';
+import type { BetriebRecord } from './betriebs-config';
 import { buildSemFillMap } from './sem-formular-mapping';
 import { downloadDokument } from './db';
 
@@ -55,12 +55,12 @@ export interface SemFormularErgebnis {
 /** Füllt die SEM-Vorlage. Wirft SemVorlageFehltError, wenn die Vorlage fehlt. */
 export async function erzeugeSemFormular(
   record: PersonaleintrittRecord,
-  tenantId: TenantId,
+  betrieb: BetriebRecord,
 ): Promise<SemFormularErgebnis> {
   const vorlage = await downloadDokument(SEM_VORLAGE_PATH);
   if (!vorlage) throw new SemVorlageFehltError();
 
-  const map = buildSemFillMap(record, tenantId);
+  const map = buildSemFillMap(record, betrieb);
   const warnungen: string[] = [];
 
   const doc = await PDFDocument.load(await vorlage.arrayBuffer());

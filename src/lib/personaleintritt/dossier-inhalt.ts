@@ -10,12 +10,11 @@
  * Das Rendering (pdf-lib) liegt getrennt in dossier-pdf.ts.
  */
 
-import type { TenantId } from '@/contexts/TenantContext';
 import {
   LOHNKLASSE_LABELS, MA_DOKUMENT_TYPEN, STATUS_LABELS,
   type MaDokumentTyp, type PersonaleintrittRecord,
 } from './types';
-import { BETRIEBS_CONFIG } from './betriebs-config';
+import { type BetriebRecord, betriebAnzeigename } from './betriebs-config';
 
 export interface DossierZeile {
   frage: string;
@@ -75,14 +74,13 @@ function jaNein(v: boolean | undefined | null): string {
 /** Baut den kompletten Dossier-Inhalt aus dem Datensatz (REIN, testbar). */
 export function buildDossierInhalt(
   record: PersonaleintrittRecord,
-  tenantId: TenantId,
+  betrieb: BetriebRecord,
   heuteIso?: string,
 ): DossierInhalt {
   const p = record.maDaten?.personalien ?? {};
   const v = record.maDaten?.vertrag ?? {};
   const l = record.maDaten?.lohnprogramm ?? {};
   const dok = record.maDaten?.dokumente ?? {};
-  const betrieb = BETRIEBS_CONFIG[tenantId];
 
   const personName = [p.vorname, p.name].filter(Boolean).join(' ');
   const heute = datumCh(heuteIso ?? new Date().toISOString().slice(0, 10));
@@ -110,7 +108,7 @@ export function buildDossierInhalt(
     {
       titel: 'Eintritt (Erfassung Geschäftsführung)',
       zeilen: [
-        { frage: 'Betrieb', antwort: text(record.betrieb) !== LEER ? text(record.betrieb) : betrieb.anzeigename },
+        { frage: 'Betrieb', antwort: text(record.betrieb) !== LEER ? text(record.betrieb) : betriebAnzeigename(betrieb) },
         { frage: 'Vertragstyp', antwort: vertragstyp },
         { frage: 'Funktion', antwort: text(record.funktion) },
         { frage: 'Eintrittsdatum', antwort: datumCh(record.eintritt) },
@@ -219,7 +217,7 @@ export function buildDossierInhalt(
 
   return {
     kopf: {
-      betrieb: betrieb.anzeigename,
+      betrieb: betriebAnzeigename(betrieb),
       name: personName || LEER,
       eintritt: datumCh(record.eintritt),
       erstellt: heute,

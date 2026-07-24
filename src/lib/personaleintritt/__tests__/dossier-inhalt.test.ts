@@ -8,6 +8,9 @@
 import { describe, it, expect } from 'vitest';
 import { buildDossierInhalt } from '../dossier-inhalt';
 import type { PersonaleintrittRecord } from '../types';
+import { betriebFromLegacyConfig } from '../betriebs-config';
+
+const OLIV = betriebFromLegacyConfig('oliv');
 
 function baseRecord(over: Partial<PersonaleintrittRecord> = {}): PersonaleintrittRecord {
   return {
@@ -48,7 +51,7 @@ function antwort(inhalt: ReturnType<typeof buildDossierInhalt>, sektion: string,
 
 describe('buildDossierInhalt', () => {
   it('Kopf: Betrieb, Name, Eintritt, Erstellungsdatum', () => {
-    const inhalt = buildDossierInhalt(baseRecord(), 'oliv', '2026-07-24');
+    const inhalt = buildDossierInhalt(baseRecord(), OLIV, '2026-07-24');
     expect(inhalt.kopf).toEqual({
       betrieb: 'Oliv Restaurant & Bar',
       name: 'Anna Muster',
@@ -59,7 +62,7 @@ describe('buildDossierInhalt', () => {
   });
 
   it('Q&A: GF-Phase mit Probezeit «Keine», Pensum, Lohn und Bewilligung', () => {
-    const inhalt = buildDossierInhalt(baseRecord(), 'oliv', '2026-07-24');
+    const inhalt = buildDossierInhalt(baseRecord(), OLIV, '2026-07-24');
     expect(antwort(inhalt, 'Geschäftsführung', 'Probezeit')).toBe('Keine');
     expect(antwort(inhalt, 'Geschäftsführung', 'Pensum')).toBe('80 %');
     expect(antwort(inhalt, 'Geschäftsführung', 'Lohn (berechnet)')).toBe('CHF 4’471.00 / Monat');
@@ -67,7 +70,7 @@ describe('buildDossierInhalt', () => {
   });
 
   it('Q&A: fehlende Angaben = «—», nie erfunden', () => {
-    const inhalt = buildDossierInhalt(baseRecord({ maDaten: {} }), 'oliv', '2026-07-24');
+    const inhalt = buildDossierInhalt(baseRecord({ maDaten: {} }), OLIV, '2026-07-24');
     expect(antwort(inhalt, 'Personalien', 'Name')).toBe('—');
     expect(antwort(inhalt, 'Lohnprogramm', 'AHV-Nr.')).toBe('—');
     expect(antwort(inhalt, 'Vertragsangaben', 'Wochenstunden')).toBe('—');
@@ -75,20 +78,20 @@ describe('buildDossierInhalt', () => {
   });
 
   it('Kinder werden lesbar zusammengefasst', () => {
-    const inhalt = buildDossierInhalt(baseRecord(), 'oliv', '2026-07-24');
+    const inhalt = buildDossierInhalt(baseRecord(), OLIV, '2026-07-24');
     expect(antwort(inhalt, 'Lohnprogramm', 'Kinder (Familienzulagen)'))
       .toBe('Kim, 05.01.2020, Zulage bei: Mutter');
   });
 
   it('Anhänge in Katalog-Reihenfolge; fehlende Pflicht-Dokumente benannt', () => {
-    const inhalt = buildDossierInhalt(baseRecord(), 'oliv', '2026-07-24');
+    const inhalt = buildDossierInhalt(baseRecord(), OLIV, '2026-07-24');
     expect(inhalt.anhaenge.map(a => a.typ)).toEqual(['ahv_karte', 'foto']);
     expect(inhalt.anhaenge[0]).toMatchObject({ label: 'AHV-Karte', path: 'oliv/pe-1/ahv.jpg' });
     expect(inhalt.fehlendeDokumente).toEqual(['Ausweis Vorderseite', 'Ausweis Rückseite']);
   });
 
   it('Status-Sektion nutzt die zentralen Status-Labels', () => {
-    const inhalt = buildDossierInhalt(baseRecord({ status: 'uebernommen', personalstammId: '14' }), 'oliv', '2026-07-24');
+    const inhalt = buildDossierInhalt(baseRecord({ status: 'uebernommen', personalstammId: '14' }), OLIV, '2026-07-24');
     expect(antwort(inhalt, 'Ablauf', 'Status')).toBe('Übernommen');
     expect(antwort(inhalt, 'Ablauf', 'In Personalstamm übernommen')).toBe('Ja (ID 14)');
   });

@@ -7,6 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { buildSemFillMap, wochenstundenFuerSem } from '../sem-formular-mapping';
+import { betriebFromLegacyConfig } from '../betriebs-config';
 import type { PersonaleintrittRecord } from '../types';
 
 function baseRecord(over: Partial<PersonaleintrittRecord> = {}): PersonaleintrittRecord {
@@ -34,6 +35,9 @@ function baseRecord(over: Partial<PersonaleintrittRecord> = {}): Personaleintrit
   } as PersonaleintrittRecord;
 }
 
+const OLIV = betriebFromLegacyConfig('oliv');
+const BEAULIEU = betriebFromLegacyConfig('beaulieu');
+
 type FillMap = ReturnType<typeof buildSemFillMap>;
 
 function feld(map: FillMap, label: string) {
@@ -44,7 +48,7 @@ function feld(map: FillMap, label: string) {
 
 describe('buildSemFillMap', () => {
   it('füllt Personen-/Anstellungs-/Arbeitgeber-Felder mit Spec-Feldnamen zuerst', () => {
-    const map = buildSemFillMap(baseRecord(), 'oliv', '2026-07-24');
+    const map = buildSemFillMap(baseRecord(), OLIV, '2026-07-24');
     expect(feld(map, 'Name').wert).toBe('Muster');
     expect(feld(map, 'Name').kandidaten[0]).toBe('Noms');
     expect(feld(map, 'Vorname').wert).toBe('Anna');
@@ -75,7 +79,7 @@ describe('buildSemFillMap', () => {
   });
 
   it('Radios: Geschlecht aus Anrede, GAV=Ja, Lohnart ML, Start unselbständig; Checkbox Start=an', () => {
-    const map = buildSemFillMap(baseRecord(), 'oliv');
+    const map = buildSemFillMap(baseRecord(), OLIV);
     const radio = (label: string) => map.radios.find(r => r.label.includes(label))!;
     expect(radio('Group3').aktiv).toBe(true);
     expect(radio('Group3').optionKandidaten).toContain('Weiblich');
@@ -86,15 +90,15 @@ describe('buildSemFillMap', () => {
   });
 
   it('meldet fehlende Angaben sichtbar statt Werte zu erfinden (Oliv: UID fehlt)', () => {
-    const map = buildSemFillMap(baseRecord(), 'oliv');
-    expect(map.fehlend).toContain('UID/IDE (betriebs-config)');
+    const map = buildSemFillMap(baseRecord(), OLIV);
+    expect(map.fehlend).toContain('UID/IDE (Betrieb)');
     expect(feld(map, 'UID/IDE').wert).toBe('');
   });
 
   it('leerer Datensatz: Angaben in fehlend, Felder leer, Geschlecht-Radio inaktiv', () => {
     const map = buildSemFillMap(
       baseRecord({ maDaten: {}, funktion: undefined, eintritt: undefined, lohnBerechnet: undefined, pensumProzent: undefined }),
-      'oliv',
+      OLIV,
     );
     expect(map.fehlend).toEqual(expect.arrayContaining([
       'Name', 'Vorname', 'Geburtsdatum', 'ZEMIS-/SYMIC-Nr.', 'Stellenantritt',
@@ -107,7 +111,7 @@ describe('buildSemFillMap', () => {
   it('Stundenlohn (SL): Pensum «variabel», Lohnart Stundenlohn, keine Wochenstunden', () => {
     const map = buildSemFillMap(
       baseRecord({ vertragstyp: 'SL', pensumProzent: undefined, lohnBerechnet: 28.31, lohnEinheit: 'stunde' }),
-      'oliv',
+      OLIV,
     );
     expect(feld(map, 'Beschäftigungsgrad').wert).toBe('variabel (Stundenlohn)');
     expect(feld(map, 'Bruttolohn').wert).toBe('28.31');
@@ -117,17 +121,19 @@ describe('buildSemFillMap', () => {
   });
 
   it('Betreff, Empfänger (Kanton Bern) und Dateiname', () => {
-    const map = buildSemFillMap(baseRecord(), 'oliv');
+    const map = buildSemFillMap(baseRecord(), OLIV);
     expect(map.betreff).toBe('Meldung Erwerbstätigkeit – Anna Muster – Oliv Restaurant & Bar');
     expect(map.empfaengerEmail).toBe('meldeverfahren.midi@be.ch');
     expect(map.dateiname).toBe('SEM_Meldung_Anna_Muster.pdf');
   });
 
-  it('Beaulieu ohne juristische Daten: Firmenname/Adresse/UID als fehlend gemeldet', () => {
-    const map = buildSemFillMap(baseRecord({ restaurantId: 'beaulieu' }), 'beaulieu');
+  it('Beaulieu ohne juristische Daten: Adresse/UID als fehlend gemeldet, Firmenname via Pflichtfeld', () => {
+    const map = buildSemFillMap(baseRecord({ restaurantId: 'beaulieu', betrieb: 'Restaurant Beaulieu' }), BEAULIEU);
+    // name ist im BetriebRecord Pflicht (Legacy-Fallback: Anzeigename) — nie «fehlend»:
+    expect(feld(map, 'Firmenname').wert).toBe('Restaurant Beaulieu');
     expect(map.fehlend).toEqual(expect.arrayContaining([
-      'Firmenname (betriebs-config)', 'Strasse Arbeitgeber (betriebs-config)',
-      'PLZ/Ort Arbeitgeber (betriebs-config)', 'UID/IDE (betriebs-config)',
+      'Strasse Arbeitgeber (Betrieb)',
+      'PLZ/Ort Arbeitgeber (Betrieb)', 'UID/IDE (Betrieb)',
     ]));
     expect(map.betreff).toContain('Restaurant Beaulieu');
   });
