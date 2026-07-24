@@ -12,7 +12,7 @@
  * Pre-migration-tolerant: fehlen die Tabellen (Migration 20260724 noch nicht
  * ausgeführt), erscheint eine HintBox statt eines Crashs.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Send, Save, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -123,15 +123,22 @@ export default function PersonaleintrittNeu() {
     [betriebe, isBeaulieuManager],
   );
 
-  // Default-Auswahl, sobald die Betriebe geladen sind: Betrieb des aktiven
-  // Mandanten (bzw. beaulieu für den tenant-gesperrten Manager).
+  // Default-Auswahl: Betrieb des aktiv gewählten Restaurants (SCC-Umschalter,
+  // bzw. beaulieu für den tenant-gesperrten Manager). Folgt einem Mandanten-
+  // Wechsel; eine manuelle (Dritt-)Betriebswahl bleibt bestehen, solange der
+  // Mandant unverändert ist.
+  const appliedTenantRef = useRef<string | null>(null);
   useEffect(() => {
     if (waehlbareBetriebe.length === 0) return;
+    const zielTenant = isBeaulieuManager ? 'beaulieu' : tenantId;
+    const tenantChanged = appliedTenantRef.current !== zielTenant;
+    appliedTenantRef.current = zielTenant;
     setBetriebSelId(prev => {
-      if (prev && waehlbareBetriebe.some(b => b.id === prev)) return prev;
-      const zielTenant = isBeaulieuManager ? 'beaulieu' : tenantId;
+      const prevGueltig = prev !== '' && waehlbareBetriebe.some(b => b.id === prev);
+      if (!tenantChanged && prevGueltig) return prev;
       const match = waehlbareBetriebe.find(b => b.sccTenant === zielTenant);
-      return (match ?? waehlbareBetriebe[0]).id;
+      if (match) return match.id;
+      return prevGueltig ? prev : waehlbareBetriebe[0].id;
     });
   }, [waehlbareBetriebe, isBeaulieuManager, tenantId]);
 
@@ -148,7 +155,8 @@ export default function PersonaleintrittNeu() {
   const [vertragsdauer, setVertragsdauer] = useState<'unbefristet' | 'befristet'>('unbefristet');
   const [befristetBis, setBefristetBis] = useState('');
   const [lohnModus, setLohnModus] = useState<LohnModus>('grundlohn');
-  const [lohnklasse, setLohnklasse] = useState<Lohnklasse | ''>('');
+  // Default Ia (ohne Berufslehre) — häufigster Fall; für die Mindestlohn-Prüfung anpassbar.
+  const [lohnklasse, setLohnklasse] = useState<Lohnklasse | ''>('Ia');
   const [grundlohn, setGrundlohn] = useState('');
   const [grundlohnInkl13, setGrundlohnInkl13] = useState(false);
   const [zielTotal, setZielTotal] = useState('');
@@ -242,7 +250,8 @@ export default function PersonaleintrittNeu() {
   const saveDraft = async () => {
     if (!betrieb) { toast.error('Bitte zuerst einen Betrieb wählen.'); return; }
     setSaving(true);
-    const res = await createPersonaleintritt(zielTenantId, buildPatch('entwurf'), user?.email ?? user?.id);
+    // created_by ist eine uuid-Spalte: IMMER die Auth-User-UUID, nie die E-Mail.
+    const res = await createPersonaleintritt(zielTenantId, buildPatch('entwurf'), user?.id);
     setSaving(false);
     if (res.preMigration) { setPreMigration(true); return; }
     if (res.error || !res.data) { toast.error(`Speichern fehlgeschlagen: ${res.error}`); return; }
@@ -269,7 +278,7 @@ export default function PersonaleintrittNeu() {
       inviteTokenHash: tokenHash,
       inviteExpires: inviteExpiryIso(),
       eingeladenAm: new Date().toISOString(),
-    }, user?.email ?? user?.id);
+    }, user?.id);
     setSaving(false);
     if (res.preMigration) { setPreMigration(true); return; }
     if (res.error || !res.data) { toast.error(`Einladung fehlgeschlagen: ${res.error}`); return; }
