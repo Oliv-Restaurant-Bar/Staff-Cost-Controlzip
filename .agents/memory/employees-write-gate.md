@@ -1,6 +1,6 @@
 ---
 name: Employees write gate
-description: Only Personalstamm form may write employees to Supabase — all other auto-write paths are blocked.
+description: Only Personalstamm form + sanctioned Personaleintritt-Übernahme may write employees to Supabase — all other auto-write paths are blocked.
 ---
 
 ## Rule
@@ -8,6 +8,7 @@ The `employees` table is a master record and must ONLY be written from:
 1. `Personalstamm.tsx` form (handleSave) — create/edit employee
 2. `archiveEmployee()` — deactivate employee
 3. `activateSubmissionAsEmployee()` — approve onboarding submission
+4. Personaleintritt-Übernahme (`PersonaleintrittDetail` → `buildEmployeeFromEintritt` + `upsertEmployee`) — sanctioned 2nd create path: fresh Employee object (never stale localStorage state), presence-guarded fields, central ID allocation via `employee-id.ts`, duplicate-name warning before write
 
 **All other write paths are permanently blocked/commented out.**
 

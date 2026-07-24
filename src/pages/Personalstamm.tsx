@@ -47,6 +47,7 @@ import {
   Download, RefreshCw, History, Archive, UserPlus, Euro,
 } from 'lucide-react';
 import { WageHistorySection } from '@/components/WageHistorySection';
+import { generateEmployeeId, nextBeaulieuIdFrom } from '@/lib/employee-id';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePositions } from '@/hooks/usePositions';
@@ -261,30 +262,18 @@ function noticePeriodLabel(inProb: boolean): string {
   return inProb ? '3 Arbeitstage' : '1 Monat auf Monatsende';
 }
 
-/** Extrahiert alle numerischen Anteile aus Beaulieu-IDs (b-42 → 42) */
-function beaulieuNums(existing: Employee[]): number[] {
-  return existing
-    .map(e => { const m = String(e.id).match(/^b-(\d+)$/); return m ? parseInt(m[1]) : NaN; })
-    .filter(n => !isNaN(n));
-}
+// ID-Erzeugung zentral in src/lib/employee-id.ts (reine Logik) — auch die
+// Personaleintritt-Übernahme nutzt DIESELBE Vergabe (keine parallele ID-Logik).
 
 /** Nächste freie b-ID, nur anhand der übergebenen Liste berechnet */
 function nextBeaulieuId(existing: Employee[]): string {
-  const nums = beaulieuNums(existing);
-  const highest = nums.length > 0 ? Math.max(...nums) : 0;
-  console.log(`[BEAULIEU-ID] highest existing id: b-${highest === 0 ? '(none)' : highest}`);
-  const next = `b-${highest + 1}`;
+  const next = nextBeaulieuIdFrom(existing.map(e => String(e.id)));
   console.log(`[BEAULIEU-ID] next id: ${next}`);
   return next;
 }
 
 function generateId(existing: Employee[], tenantId?: string): string {
-  if (tenantId === 'beaulieu') {
-    return nextBeaulieuId(existing);
-  }
-  const nums = existing.map(e => parseInt(e.id)).filter(n => !isNaN(n));
-  const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
-  return String(maxNum + 1);
+  return generateEmployeeId(existing.map(e => String(e.id)), tenantId);
 }
 
 // ─── Lokale Daten (aktiv/inaktiv, Notizen, Vertrag) ──────────────────────────

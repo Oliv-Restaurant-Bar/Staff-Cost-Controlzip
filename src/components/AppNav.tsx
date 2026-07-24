@@ -37,7 +37,7 @@ import {
   CalendarClock, Contact, X, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList, FileText, ChevronDown,
+  Tags, ClipboardList, FileText, ChevronDown, UserPlus,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -209,6 +209,16 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Personal',
         icon: Users,
         module: 'personalstamm' as import('@/hooks/usePermissions').AppModule,
+      },
+      {
+        path: '/personaleintritt',
+        label: 'Personaleintritt',
+        shortLabel: 'Eintritt',
+        icon: UserPlus,
+        adminOnly: true,
+        beaulieuAllowed: true,
+        hideForGuest: true,
+        secondary: true,
       },
       {
         path: '/positionen',

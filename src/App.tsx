@@ -24,6 +24,10 @@ import Dashboard from "./pages/Dashboard";
 import StartOverview from "./pages/StartOverview";
 import SollIstAnalyse from "./pages/SollIstAnalyse";
 import Personalstamm from "./pages/Personalstamm";
+import PersonaleintrittListe from "./pages/PersonaleintrittListe";
+import PersonaleintrittNeu from "./pages/PersonaleintrittNeu";
+import PersonaleintrittDetail from "./pages/PersonaleintrittDetail";
+import MitarbeiterEintritt from "./pages/MitarbeiterEintritt";
 import Positionen from "./pages/Positionen";
 import Personalbedarf from "./pages/Personalbedarf";
 import Reporting from "./pages/Reporting";
@@ -258,6 +262,18 @@ const AppContent = () => {
             {/* Personalstamm: Admin + beaulieu_manager (tenant-gefiltert) */}
             <Route path="/personal-stamm" element={<Personalstamm />} />
 
+            {/* Personaleintritt (digitaler L-GAV-Eintrittsprozess):
+                PII-/Schreibfläche — Admin OHNE Gäste + beaulieu_manager */}
+            <Route path="/personaleintritt"
+              element={<RequireAdmin path="/personaleintritt" allowGuest={false} allowBeaulieu><PersonaleintrittListe /></RequireAdmin>}
+            />
+            <Route path="/personaleintritt/neu"
+              element={<RequireAdmin path="/personaleintritt/neu" allowGuest={false} allowBeaulieu><PersonaleintrittNeu /></RequireAdmin>}
+            />
+            <Route path="/personaleintritt/:id"
+              element={<RequireAdmin path="/personaleintritt/:id" allowGuest={false} allowBeaulieu><PersonaleintrittDetail /></RequireAdmin>}
+            />
+
             {/* Positionsverwaltung: nur Admin */}
             <Route path="/positionen"
               element={canAccessModule('positionen') ? <Positionen /> : <Navigate to="/personal" replace />}
@@ -451,6 +467,9 @@ const App = () => {
                   <Routes>
                     {/* ── Öffentliche Routen — kein Login erforderlich ── */}
                     <Route path="/onboarding/:token" element={<OnboardingForm />} />
+                    {/* Personaleintritt Phase 2: Mitarbeiter füllt per Einladungs-Token aus
+                        (Edge Function personaleintritt-public, kein direkter DB-Zugriff) */}
+                    <Route path="/e/:token" element={<MitarbeiterEintritt />} />
                     <Route path="/staff-schedule/:token" element={<StaffSchedulePage />} />
                     <Route path="/timesheet-confirmation/:token" element={<TimesheetConfirmationPage />} />
                     <Route path="/gast" element={<GuestAccess />} />
