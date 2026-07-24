@@ -14,6 +14,7 @@
 import type { PersonaleintrittRecord } from './types';
 import { SL_ZUSCHLAEGE, rundeLohn } from './lohn';
 import { bewilligungErforderlichEffektiv } from './behoerden-meldung';
+import { arbeitgeberZeile } from './betriebs-config';
 
 // ─── Ergebnis ────────────────────────────────────────────────────────────────
 
@@ -84,11 +85,6 @@ export function bemerkungenFuerVertrag(record: PersonaleintrittRecord): string[]
 
 // ─── Haus-Konstanten (aus den Referenzverträgen; GF-editierbar im PDF) ───────
 
-/** Arbeitgeber-Zeile («zwischen …») je Betrieb. */
-const ARBEITGEBER_ZEILE: Record<string, string> = {
-  oliv: 'Oliv Gastro AG, Bethlehemstrasse 36, 3027 Bern',
-};
-
 /** Standard-Abzugssätze in % (Stand Referenzverträge). */
 const ABZUG_AHV = '5.3';
 const ABZUG_ALV = '1.1';
@@ -108,13 +104,13 @@ export function buildPdfFillMap(record: PersonaleintrittRecord, heuteIso?: strin
   const v = record.maDaten?.vertrag ?? {};
   const l = record.maDaten?.lohnprogramm ?? {};
 
-  // ── Arbeitgeber ──
-  const agZeile = ARBEITGEBER_ZEILE[record.restaurantId];
+  // ── Arbeitgeber (zentrale Betriebs-Config, Auftrag Punkt 8) ──
+  const agZeile = arbeitgeberZeile(record.restaurantId);
   if (agZeile) {
     text['zwischen'] = agZeile;
   } else {
     text['zwischen'] = record.betrieb ?? '';
-    warnungen.push('Arbeitgeber-Zeile («zwischen …») bitte im PDF prüfen — für diesen Betrieb ist keine juristische Adresszeile hinterlegt.');
+    warnungen.push('Arbeitgeber-Zeile («zwischen …») bitte im PDF prüfen — für diesen Betrieb ist keine juristische Adresszeile hinterlegt (betriebs-config.ts ergänzen).');
   }
 
   // ── Personalien ──
@@ -143,7 +139,11 @@ export function buildPdfFillMap(record: PersonaleintrittRecord, heuteIso?: strin
   }
 
   // ── Probezeit / Kündigungsfrist ──
-  if (record.probezeitTage != null && record.probezeitTage > 0) {
+  if (record.probezeitTage === 0) {
+    // Option «Keine» (Auftrag Punkt 3): Feld bewusst leer + sichtbarer Hinweis.
+    text['Die Probezeit beträgt'] = '';
+    warnungen.push('Keine Probezeit vereinbart — Ziffer Probezeit im PDF prüfen/streichen.');
+  } else if (record.probezeitTage != null && record.probezeitTage > 0) {
     const monate = record.probezeitTage / 30;
     if (Number.isInteger(monate)) {
       text['Die Probezeit beträgt'] = String(monate);

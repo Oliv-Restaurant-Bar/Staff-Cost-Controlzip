@@ -31,11 +31,12 @@ import {
   type MaDaten, type MaDokumentTyp, type MaKind,
 } from '@/lib/personaleintritt/types';
 import { formatAhv, formatIban, pruefePflichtfelder } from '@/lib/personaleintritt/validation';
+import { zemisPflicht } from '@/lib/personaleintritt/behoerden-meldung';
 
 const ZIVILSTAENDE = ['ledig', 'verheiratet', 'geschieden', 'verwitwet', 'eingetragene Partnerschaft'];
 const AUSWEISARTEN = ['ID', 'Pass', 'Ausländerausweis'];
 // S/F lösen die Arbeitsbewilligungs-Pflicht aus (behoerden-meldung.ts, Anpassung 5)
-const BEWILLIGUNGEN = ['CH (Schweizer/in)', 'C', 'B', 'L', 'G', 'S', 'F', 'andere'];
+const BEWILLIGUNGEN = ['CH (Schweizer/in)', 'C', 'B', 'L', 'G', 'N', 'S', 'F', 'andere'];
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—';
@@ -302,6 +303,17 @@ export default function MitarbeiterEintritt() {
                 </SelectContent>
               </Select>
             </div>
+            {zemisPflicht(l.aufenthaltsbewilligung) && (
+              <div className="space-y-1">
+                <Label htmlFor="me-zemis">ZEMIS-Nr. *</Label>
+                <Input id="me-zemis" className="h-11" value={l.zemis_nr ?? ''}
+                  onChange={e => setL({ zemis_nr: e.target.value })}
+                  placeholder="z. B. 12345678.9" data-testid="input-zemis" />
+                <p className="text-xs text-muted-foreground">
+                  Bei Ausweis F, S oder B erforderlich (steht auf dem Ausweis).
+                </p>
+              </div>
+            )}
             {field('konfession', 'Konfession', l.konfession ?? '', s => setL({ konfession: s }), { required: false })}
 
             {ehepartnerNoetig && (

@@ -7,17 +7,18 @@ import {
   rundeLohn,
   lohnEinheitFuer,
   SL_TOTAL_FAKTOR,
-  STUNDEN_PRO_JAHR,
   type MindestlohnEintrag,
 } from '../lohn';
 
+// Offizielle L-GAV-Werte 2026 (Auftrag Punkt 1): Monat ×13 + Stundenwerte je
+// Wochenmodell — die Stundenwerte sind autoritative Tabellenwerte, KEINE Formel.
 const SEED_2026: MindestlohnEintrag[] = [
-  { jahr: 2026, klasse: 'Ia', monatX13: 3713 },
-  { jahr: 2026, klasse: 'Ib', monatX13: 3943 },
-  { jahr: 2026, klasse: 'II', monatX13: 4070 },
-  { jahr: 2026, klasse: 'IIIa', monatX13: 4528 },
-  { jahr: 2026, klasse: 'IIIb', monatX13: 4635 },
-  { jahr: 2026, klasse: 'IV', monatX13: 5293 },
+  { jahr: 2026, klasse: 'Ia', monatX13: 3713, stunde42: 20.40, stunde435: 19.65, stunde45: 19.04 },
+  { jahr: 2026, klasse: 'Ib', monatX13: 3943, stunde42: 21.66, stunde435: 20.86, stunde45: 20.22 },
+  { jahr: 2026, klasse: 'II', monatX13: 4070, stunde42: 22.36, stunde435: 21.53, stunde45: 20.87 },
+  { jahr: 2026, klasse: 'IIIa', monatX13: 4528, stunde42: 24.88, stunde435: 23.96, stunde45: 23.22 },
+  { jahr: 2026, klasse: 'IIIb', monatX13: 4635, stunde42: 25.47, stunde435: 24.52, stunde45: 23.77 },
+  { jahr: 2026, klasse: 'IV', monatX13: 5293, stunde42: 29.08, stunde435: 28.01, stunde45: 27.14 },
 ];
 
 describe('mindestlohnFuer', () => {
@@ -25,12 +26,14 @@ describe('mindestlohnFuer', () => {
     expect(mindestlohnFuer(SEED_2026, 2026, 'Ia', 'monat')).toBe(3713);
     expect(mindestlohnFuer(SEED_2026, 2026, 'IV', 'monat')).toBe(5293);
   });
-  it('Stunde: monat_x13 × 13 / (52×42)', () => {
-    const erwartet = (3713 * 13) / STUNDEN_PRO_JAHR;
-    expect(mindestlohnFuer(SEED_2026, 2026, 'Ia', 'stunde')).toBeCloseTo(erwartet, 10);
-    // Plausibilität: ~22.10 CHF/h
-    expect(erwartet).toBeGreaterThan(21);
-    expect(erwartet).toBeLessThan(23);
+  it('Stunde: offizieller Tabellenwert stunde_42 (42-h-Betriebe), KEINE Formel', () => {
+    expect(mindestlohnFuer(SEED_2026, 2026, 'Ia', 'stunde')).toBe(20.40);
+    expect(mindestlohnFuer(SEED_2026, 2026, 'IV', 'stunde')).toBe(29.08);
+  });
+  it('fehlender stunde_42-Wert ⇒ null (kein Formel-Fallback, fehlend ≠ 0)', () => {
+    const ohneStunde: MindestlohnEintrag[] = [{ jahr: 2026, klasse: 'Ia', monatX13: 3713 }];
+    expect(mindestlohnFuer(ohneStunde, 2026, 'Ia', 'stunde')).toBeNull();
+    expect(mindestlohnFuer(ohneStunde, 2026, 'Ia', 'monat')).toBe(3713);
   });
   it('fehlender Tabelleneintrag ⇒ null (fehlend ≠ 0)', () => {
     expect(mindestlohnFuer(SEED_2026, 2025, 'Ia', 'monat')).toBeNull();
@@ -139,12 +142,20 @@ describe('berechneLohn — Modus B (mindestlohn)', () => {
     expect(r.lohnBerechnet).toBe(4528);
     expect(r.blockierend).toBe(false);
   });
-  it('SL: Basis = Stunden-Mindestlohn', () => {
+  it('SL: Basis = offizieller Stunden-Mindestlohn (stunde_42)', () => {
     const r = berechneLohn({
       vertragstyp: 'SL', modus: 'mindestlohn',
       lohnklasse: 'Ia', jahr: 2026, mindestloehne: SEED_2026,
     });
-    expect(r.lohnBerechnet).toBeCloseTo((3713 * 13) / STUNDEN_PRO_JAHR, 10);
+    expect(r.lohnBerechnet).toBe(20.40);
+  });
+  it('SL + Einführungszeit: 20.40 − 8 % = 18.768 → gerundet 18.77 (Spec-Prüfwert)', () => {
+    const r = berechneLohn({
+      vertragstyp: 'SL', modus: 'mindestlohn',
+      lohnklasse: 'Ia', jahr: 2026, mindestloehne: SEED_2026, einfuehrungszeit: true,
+    });
+    expect(r.lohnBerechnet).toBeCloseTo(20.40 * 0.92, 10);
+    expect(rundeLohn(r.lohnBerechnet!)).toBe(18.77);
   });
   it('mit Einführungszeit: Basis = Mindest −8 %, nicht blockierend', () => {
     const r = berechneLohn({
@@ -192,7 +203,7 @@ describe('berechneLohn — Modus C (zieltotal)', () => {
 
 describe('rundeLohn / lohnEinheitFuer', () => {
   it('rundet auf Rappen', () => {
-    expect(rundeLohn((3713 * 13) / STUNDEN_PRO_JAHR)).toBe(22.1); // 22.1012… → 22.10
+    expect(rundeLohn(20.40 * 0.92)).toBe(18.77); // 18.768 → 18.77
     expect(rundeLohn(4800.005)).toBe(4800.01);
   });
   it('SL⇒stunde, ML⇒monat', () => {

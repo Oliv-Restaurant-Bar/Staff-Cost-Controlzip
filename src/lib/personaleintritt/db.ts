@@ -63,6 +63,10 @@ function rowToRecord(row: any): PersonaleintrittRecord {
     // Spalten aus Migration 20260724b — pre-migration-tolerant (select('*')):
     grundlohnInkl13: row.grundlohn_inkl13 ?? undefined,
     bewilligungErforderlich: row.bewilligung_erforderlich ?? undefined,
+    // Spalten aus Migration 20260724c (Bewilligungs-Mehrfachauswahl):
+    bewilligungAusweisF: row.bewilligung_ausweis_f ?? undefined,
+    bewilligungAusweisS: row.bewilligung_ausweis_s ?? undefined,
+    bewilligungArbeitsbewilligung: row.bewilligung_arbeitsbewilligung ?? undefined,
     behoerdeMeldungAm: row.behoerde_meldung_am ?? undefined,
     behoerdeMeldungVon: row.behoerde_meldung_von ?? undefined,
     zielTotal: row.ziel_total != null ? Number(row.ziel_total) : undefined,
@@ -76,6 +80,10 @@ function rowToRecord(row: any): PersonaleintrittRecord {
     pdfPath: row.pdf_path ?? undefined,
     pdfFlatPath: row.pdf_flat_path ?? undefined,
     mirusExportPath: row.mirus_export_path ?? undefined,
+    // Spalte aus Migration 20260724d — pre-migration-tolerant (select('*')):
+    semFormularPath: row.sem_formular_path ?? undefined,
+    // Spalte aus Migration 20260724e — pre-migration-tolerant (select('*')):
+    dossierPath: row.dossier_path ?? undefined,
     skribbleRequestId: row.skribble_request_id ?? undefined,
     signedPdfPath: row.signed_pdf_path ?? undefined,
     personalstammId: row.personalstamm_id ?? undefined,
@@ -100,6 +108,10 @@ export interface PersonaleintrittPatch {
   /** Migration 20260724b — nur setzen, wenn fachlich relevant (42703-tolerant). */
   grundlohnInkl13?: boolean;
   bewilligungErforderlich?: boolean;
+  /** Migration 20260724c — nur setzen, wenn fachlich relevant (42703-tolerant). */
+  bewilligungAusweisF?: boolean;
+  bewilligungAusweisS?: boolean;
+  bewilligungArbeitsbewilligung?: boolean;
   behoerdeMeldungAm?: string | null;
   behoerdeMeldungVon?: string | null;
   zielTotal?: number | null;
@@ -114,6 +126,10 @@ export interface PersonaleintrittPatch {
   pdfPath?: string | null;
   pdfFlatPath?: string | null;
   mirusExportPath?: string | null;
+  /** Migration 20260724d — nur setzen, wenn fachlich relevant (42703-tolerant). */
+  semFormularPath?: string | null;
+  /** Migration 20260724e — nur setzen, wenn fachlich relevant (42703-tolerant). */
+  dossierPath?: string | null;
   skribbleRequestId?: string | null;
   personalstammId?: string | null;
 }
@@ -129,13 +145,18 @@ function patchToRow(patch: PersonaleintrittPatch): Record<string, any> {
     ['befristetBis', 'befristet_bis'], ['lohnModus', 'lohn_modus'], ['lohnklasse', 'lohnklasse'],
     ['grundlohn', 'grundlohn'], ['grundlohnInkl13', 'grundlohn_inkl13'],
     ['bewilligungErforderlich', 'bewilligung_erforderlich'],
+    ['bewilligungAusweisF', 'bewilligung_ausweis_f'],
+    ['bewilligungAusweisS', 'bewilligung_ausweis_s'],
+    ['bewilligungArbeitsbewilligung', 'bewilligung_arbeitsbewilligung'],
     ['behoerdeMeldungAm', 'behoerde_meldung_am'], ['behoerdeMeldungVon', 'behoerde_meldung_von'],
     ['zielTotal', 'ziel_total'], ['lohnBerechnet', 'lohn_berechnet'],
     ['lohnEinheit', 'lohn_einheit'], ['einfuehrungszeit', 'einfuehrungszeit'],
     ['maDaten', 'ma_daten'], ['inviteTokenHash', 'invite_token_hash'],
     ['inviteExpires', 'invite_expires'], ['eingeladenAm', 'eingeladen_am'],
     ['ausgefuelltAm', 'ausgefuellt_am'], ['pdfPath', 'pdf_path'], ['pdfFlatPath', 'pdf_flat_path'],
-    ['mirusExportPath', 'mirus_export_path'], ['skribbleRequestId', 'skribble_request_id'],
+    ['mirusExportPath', 'mirus_export_path'], ['semFormularPath', 'sem_formular_path'],
+    ['dossierPath', 'dossier_path'],
+    ['skribbleRequestId', 'skribble_request_id'],
     ['personalstammId', 'personalstamm_id'],
   ];
   for (const [key, col] of map) {
@@ -147,18 +168,25 @@ function patchToRow(patch: PersonaleintrittPatch): Record<string, any> {
 // ─── lgav_mindestlohn ─────────────────────────────────────────────────────────
 
 export async function loadLgavMindestloehne(): Promise<DbResult<MindestlohnEintrag[]>> {
+  // select('*') statt Spaltenliste: die Stunden-Spalten (Migration 20260724c)
+  // fehlen pre-migration — explizite Listen würden mit 42703 scheitern
+  // (Muster «Pre-Migration-tolerante Queries»). Fehlende Spalten ⇒ undefined.
   const { data, error } = await sb
     .from('lgav_mindestlohn')
-    .select('jahr, klasse, monat_x13')
+    .select('*')
     .order('jahr', { ascending: false });
   if (error) {
     if (isMissingTableError(error)) return { data: null, preMigration: true, error: null };
     return { data: null, preMigration: false, error: error.message ?? 'Unbekannter Fehler' };
   }
-  const rows: MindestlohnEintrag[] = (data ?? []).map((r: { jahr: number; klasse: string; monat_x13: number }) => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const rows: MindestlohnEintrag[] = (data ?? []).map((r: any) => ({
     jahr: Number(r.jahr),
     klasse: r.klasse as Lohnklasse,
     monatX13: Number(r.monat_x13),
+    stunde42: r.stunde_42 != null ? Number(r.stunde_42) : null,
+    stunde435: r.stunde_43_5 != null ? Number(r.stunde_43_5) : null,
+    stunde45: r.stunde_45 != null ? Number(r.stunde_45) : null,
   }));
   return { data: rows, preMigration: false, error: null };
 }
@@ -166,7 +194,15 @@ export async function loadLgavMindestloehne(): Promise<DbResult<MindestlohnEintr
 export async function upsertLgavMindestlohn(eintrag: MindestlohnEintrag): Promise<DbResult<true>> {
   const { error } = await sb
     .from('lgav_mindestlohn')
-    .upsert({ jahr: eintrag.jahr, klasse: eintrag.klasse, monat_x13: eintrag.monatX13 });
+    .upsert({
+      jahr: eintrag.jahr,
+      klasse: eintrag.klasse,
+      monat_x13: eintrag.monatX13,
+      // Stunden-Spalten nur mitschicken, wenn gesetzt (pre-20260724c-tolerant):
+      ...(eintrag.stunde42 != null ? { stunde_42: eintrag.stunde42 } : {}),
+      ...(eintrag.stunde435 != null ? { stunde_43_5: eintrag.stunde435 } : {}),
+      ...(eintrag.stunde45 != null ? { stunde_45: eintrag.stunde45 } : {}),
+    });
   if (error) {
     if (isMissingTableError(error)) return { data: null, preMigration: true, error: null };
     return { data: null, preMigration: false, error: error.message ?? 'Unbekannter Fehler' };

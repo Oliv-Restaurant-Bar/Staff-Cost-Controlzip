@@ -8,6 +8,7 @@
 
 import type { MaDaten, Vertragstyp } from './types';
 import { MA_DOKUMENT_TYPEN } from './types';
+import { zemisPflicht } from './behoerden-meldung';
 
 // ─── AHV-Nummer ───────────────────────────────────────────────────────────────
 
@@ -134,6 +135,10 @@ export function pruefePflichtfelder(maDaten: MaDaten, vertragstyp: Vertragstyp):
   need(l.ausweisart, 'lohnprogramm.ausweisart', 'Ausweisart');
   need(l.ausweis_nr, 'lohnprogramm.ausweis_nr', 'Ausweis-Nr.');
   need(l.aufenthaltsbewilligung, 'lohnprogramm.aufenthaltsbewilligung', 'Aufenthaltsbewilligung');
+  // ZEMIS-Nr. Pflicht bei Ausweis F/S/B (Auftrag Punkt 9)
+  if (zemisPflicht(l.aufenthaltsbewilligung)) {
+    need(l.zemis_nr, 'lohnprogramm.zemis_nr', 'ZEMIS-Nr.');
+  }
 
   // Ehepartner-Details nur bei verheiratet / eingetragener Partnerschaft
   const zivil = (l.zivilstand ?? '').toLowerCase();

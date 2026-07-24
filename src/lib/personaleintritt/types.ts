@@ -70,7 +70,9 @@ export interface MaLohnprogramm {
   bank?: string;
   ausweisart?: string;                // ID | Pass | Ausländerausweis
   ausweis_nr?: string;
-  aufenthaltsbewilligung?: string;    // CH | C | B | L | G | andere
+  aufenthaltsbewilligung?: string;    // CH | C | B | L | G | F | S | N | andere
+  /** ZEMIS-Nummer (Zentrales Migrationsinformationssystem) — Pflicht bei Ausweis F/S/B für die SEM-Meldung. */
+  zemis_nr?: string;
   konfession?: string;
   ehepartner?: { name?: string; erwerbstaetig?: boolean };
   kinder?: MaKind[];
@@ -128,8 +130,17 @@ export interface PersonaleintrittRecord {
   lohnEinheit?: LohnEinheit;
   einfuehrungszeit?: boolean;
 
-  /** GF-Kontrollfrage: Arbeitsbewilligung (z. B. Ausweis S/F) erforderlich? */
+  /**
+   * GF-Kontrollfrage ALT (Ja/Nein, Migration 20260724b) — bleibt als Legacy-Input
+   * bestehen und wird ODER-verknüpft. Neuerfassung nutzt die drei Flags unten.
+   */
   bewilligungErforderlich?: boolean;
+  /** Bewilligungs-Mehrfachauswahl (Migration 20260724c): Ausweis F (vorläufig aufgenommen). */
+  bewilligungAusweisF?: boolean;
+  /** Ausweis S (Schutzstatus). */
+  bewilligungAusweisS?: boolean;
+  /** Arbeitsbewilligung nötig (übrige Fälle, z. B. Ausweis N, Grenzgänger ohne Bewilligung). */
+  bewilligungArbeitsbewilligung?: boolean;
   /** Backoffice-Aktion «Meldung an Behörde auslösen» — wann/von wem (Audit). */
   behoerdeMeldungAm?: string;
   behoerdeMeldungVon?: string;
@@ -143,6 +154,10 @@ export interface PersonaleintrittRecord {
   pdfPath?: string;
   pdfFlatPath?: string;
   mirusExportPath?: string;
+  /** Gefülltes SEM-Meldeformular (Migration 20260724d, editierbare Variante). */
+  semFormularPath?: string;
+  /** Dossier-PDF (Migration 20260724e): Q&A aller Phasen + Anhänge, Auftrag Punkt 10. */
+  dossierPath?: string;
   skribbleRequestId?: string;
   signedPdfPath?: string;
   personalstammId?: string;           // employees.id (TEXT: '14' / 'b-169')

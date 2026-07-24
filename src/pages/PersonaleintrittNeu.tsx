@@ -44,9 +44,12 @@ import {
 } from '@/lib/personaleintritt/types';
 import { generateInviteToken, hashInviteToken, inviteExpiryIso, inviteLink } from '@/lib/personaleintritt/token';
 import { FUNKTIONEN } from '@/lib/funktionen';
+import { BETRIEBS_CONFIG } from '@/lib/personaleintritt/betriebs-config';
+import { TENANTS, type TenantId } from '@/contexts/TenantContext';
 
-/** Probezeit-Auswahl (L-GAV: 1 Monat gesetzlich, per Abrede bis max. 3 Monate). */
+/** Probezeit-Auswahl (L-GAV: 1 Monat gesetzlich, per Abrede bis max. 3 Monate; «Keine» = 0). */
 const PROBEZEIT_OPTIONEN = [
+  { tage: 0, label: 'Keine' },
   { tage: 30, label: '1 Monat' },
   { tage: 60, label: '2 Monate' },
   { tage: 90, label: '3 Monate' },
@@ -68,7 +71,7 @@ export default function PersonaleintrittNeu() {
   const navigate = useNavigate();
   const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
   const { user } = useAuth();
-  const { tenantId, tenant } = useTenant();
+  const { tenantId, setTenant } = useTenant();
   const canManage = (isAdmin && !isGuest) || isBeaulieuManager;
 
   // ── Mindestlohn-Tabelle laden (gated, read-only) ──────────────────────────
@@ -94,7 +97,8 @@ export default function PersonaleintrittNeu() {
 
   // ── Formular-State ────────────────────────────────────────────────────────
   const [vertragstyp, setVertragstyp] = useState<Vertragstyp | null>(null);
-  const [betrieb, setBetrieb] = useState('');
+  /** Betriebswahl (Punkt 8): bestimmt restaurant_id des Datensatzes; beaulieu_manager ist tenant-locked. */
+  const [betriebId, setBetriebId] = useState<TenantId>(isBeaulieuManager ? 'beaulieu' : tenantId);
   const [funktion, setFunktion] = useState('');
   const [eintritt, setEintritt] = useState('');
   const [pensum, setPensum] = useState('100');
@@ -107,11 +111,12 @@ export default function PersonaleintrittNeu() {
   const [grundlohnInkl13, setGrundlohnInkl13] = useState(false);
   const [zielTotal, setZielTotal] = useState('');
   const [einfuehrungszeit, setEinfuehrungszeit] = useState(false);
-  const [bewilligungErforderlich, setBewilligungErforderlich] = useState(false);
+  // Bewilligungs-Mehrfachauswahl (Punkt 4) — ersetzt die alte Ja/Nein-Frage:
+  const [bewAusweisF, setBewAusweisF] = useState(false);
+  const [bewAusweisS, setBewAusweisS] = useState(false);
+  const [bewArbeitsbewilligung, setBewArbeitsbewilligung] = useState(false);
   const [saving, setSaving] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
-
-  useEffect(() => { setBetrieb(tenant.name); }, [tenant.name]);
 
   const lohn = useMemo(() => {
     if (!vertragstyp) return null;
@@ -154,7 +159,7 @@ export default function PersonaleintrittNeu() {
   const buildPatch = (status: 'entwurf' | 'eingeladen') => ({
     status,
     vertragstyp: vertragstyp ?? undefined,
-    betrieb: betrieb.trim() || tenant.name,
+    betrieb: BETRIEBS_CONFIG[betriebId].anzeigename,
     funktion: funktion.trim() || undefined,
     eintritt: eintritt || null,
     pensumProzent: vertragstyp === 'ML' && pensum ? Number(pensum) : null,
@@ -168,20 +173,32 @@ export default function PersonaleintrittNeu() {
     lohnBerechnet: lohn?.lohnBerechnet != null ? rundeLohn(lohn.lohnBerechnet) : null,
     lohnEinheit: lohn?.lohnEinheit ?? null,
     einfuehrungszeit,
-    // Spalten aus Migration 20260724b: nur bei aktivem Wert mitschicken —
+    // Spalten aus Migrationen 20260724b/c: nur bei aktivem Wert mitschicken —
     // pre-migration bleibt der Standardfall (false) so weiter speicherbar (42703).
     ...(lohnModus === 'grundlohn' && vertragstyp === 'ML' && grundlohnInkl13
       ? { grundlohnInkl13: true } : {}),
-    ...(bewilligungErforderlich ? { bewilligungErforderlich: true } : {}),
+    ...(bewAusweisF ? { bewilligungAusweisF: true } : {}),
+    ...(bewAusweisS ? { bewilligungAusweisS: true } : {}),
+    ...(bewArbeitsbewilligung ? { bewilligungArbeitsbewilligung: true } : {}),
   });
+
+  /** Nach dem Speichern: Hinweis, wenn der Datensatz in einem anderen Betrieb liegt als der aktive Mandant. */
+  const hinweisBeiMandantAbweichung = () => {
+    if (betriebId === tenantId) return;
+    toast.info(`Der Eintritt wurde im Betrieb «${BETRIEBS_CONFIG[betriebId].anzeigename}» angelegt.`, {
+      description: 'Die Übersicht zeigt den aktiven Mandanten — zum Anzeigen wechseln.',
+      action: { label: 'Wechseln', onClick: () => setTenant(betriebId) },
+    });
+  };
 
   const saveDraft = async () => {
     setSaving(true);
-    const res = await createPersonaleintritt(tenantId, buildPatch('entwurf'), user?.email ?? user?.id);
+    const res = await createPersonaleintritt(betriebId, buildPatch('entwurf'), user?.email ?? user?.id);
     setSaving(false);
     if (res.preMigration) { setPreMigration(true); return; }
     if (res.error || !res.data) { toast.error(`Speichern fehlgeschlagen: ${res.error}`); return; }
     toast.success('Entwurf gespeichert');
+    hinweisBeiMandantAbweichung();
     navigate('/personaleintritt');
   };
 
@@ -198,7 +215,7 @@ export default function PersonaleintrittNeu() {
     setSaving(true);
     const token = generateInviteToken();
     const tokenHash = await hashInviteToken(token);
-    const res = await createPersonaleintritt(tenantId, {
+    const res = await createPersonaleintritt(betriebId, {
       ...buildPatch('eingeladen'),
       inviteTokenHash: tokenHash,
       inviteExpires: inviteExpiryIso(),
@@ -207,6 +224,7 @@ export default function PersonaleintrittNeu() {
     setSaving(false);
     if (res.preMigration) { setPreMigration(true); return; }
     if (res.error || !res.data) { toast.error(`Einladung fehlgeschlagen: ${res.error}`); return; }
+    hinweisBeiMandantAbweichung();
     setInviteUrl(inviteLink(window.location.origin, token));
   };
 
@@ -269,8 +287,22 @@ export default function PersonaleintrittNeu() {
             <CardHeader className="pb-2"><CardTitle className="text-sm">Eckdaten</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
-                <Label htmlFor="pe-betrieb">Betrieb</Label>
-                <Input id="pe-betrieb" value={betrieb} onChange={e => setBetrieb(e.target.value)} data-testid="input-betrieb" />
+                <Label>Betrieb *</Label>
+                <Select
+                  value={betriebId}
+                  onValueChange={v => setBetriebId(v as TenantId)}
+                  disabled={isBeaulieuManager}
+                >
+                  <SelectTrigger data-testid="select-betrieb"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(Object.keys(TENANTS) as TenantId[]).map(id => (
+                      <SelectItem key={id} value={id}>{TENANTS[id].name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Vertrag, Meldung und Personalstamm-Übernahme landen in diesem Betrieb.
+                </p>
               </div>
               <div className="space-y-1">
                 <Label>Funktion *</Label>
@@ -287,25 +319,18 @@ export default function PersonaleintrittNeu() {
               </div>
               {vertragstyp === 'ML' && (
                 <div className="space-y-1">
-                  <Label htmlFor="pe-pensum">Pensum % *</Label>
-                  <div className="flex gap-2">
-                    <Select
-                      value={PENSUM_SCHRITTE.some(s => String(s) === pensum) ? pensum : ''}
-                      onValueChange={setPensum}
-                    >
-                      <SelectTrigger className="w-28 shrink-0" data-testid="select-pensum">
-                        <SelectValue placeholder="Wahl…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PENSUM_SCHRITTE.map(s => (
-                          <SelectItem key={s} value={String(s)}>{s} %</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input id="pe-pensum" type="number" min="1" max="100" value={pensum}
-                      onChange={e => setPensum(e.target.value)} data-testid="input-pensum" />
-                  </div>
-                  <p className="text-xs text-muted-foreground">Schnellwahl in 10-%-Schritten oder Feineingabe.</p>
+                  <Label>Pensum % *</Label>
+                  <Select value={pensum} onValueChange={setPensum}>
+                    <SelectTrigger data-testid="select-pensum">
+                      <SelectValue placeholder="Wahl…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PENSUM_SCHRITTE.map(s => (
+                        <SelectItem key={s} value={String(s)}>{s} %</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Schnellwahl in 10-%-Schritten (Standard 100 %).</p>
                 </div>
               )}
               <div className="space-y-1">
@@ -337,22 +362,31 @@ export default function PersonaleintrittNeu() {
                     onChange={e => setBefristetBis(e.target.value)} data-testid="input-befristet-bis" />
                 </div>
               )}
-              <label className="flex items-start gap-2 text-sm sm:col-span-2">
-                <Checkbox
-                  checked={bewilligungErforderlich}
-                  onCheckedChange={c => setBewilligungErforderlich(c === true)}
-                  data-testid="checkbox-bewilligung"
-                  className="mt-0.5"
-                />
-                <span>
-                  Benötigt der Mitarbeiter eine Arbeitsbewilligung (z.&nbsp;B. Ausweis S oder F)?
-                  <span className="block text-xs text-muted-foreground">
-                    Wird zusätzlich automatisch angenommen, wenn der Mitarbeiter in Phase 2 Ausweis S/F angibt.
-                    Der Vertrag erhält den Gültigkeits-Zusatz; die Behörden-Meldung löst das Backoffice
-                    später auf der Detailseite aus.
-                  </span>
-                </span>
-              </label>
+              <div className="space-y-2 sm:col-span-2">
+                <Label>Arbeitsbewilligung (Mehrfachauswahl)</Label>
+                <div className="flex flex-col gap-2">
+                  <label className="flex items-start gap-2 text-sm">
+                    <Checkbox checked={bewAusweisF} onCheckedChange={c => setBewAusweisF(c === true)}
+                      data-testid="checkbox-bewilligung-f" className="mt-0.5" />
+                    <span>Ausweis F (vorläufig aufgenommen) — löst die Behörden-Meldung (SEM) aus</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm">
+                    <Checkbox checked={bewAusweisS} onCheckedChange={c => setBewAusweisS(c === true)}
+                      data-testid="checkbox-bewilligung-s" className="mt-0.5" />
+                    <span>Ausweis S (Schutzstatus) — löst die Behörden-Meldung (SEM) aus</span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm">
+                    <Checkbox checked={bewArbeitsbewilligung} onCheckedChange={c => setBewArbeitsbewilligung(c === true)}
+                      data-testid="checkbox-bewilligung-arbeitsbewilligung" className="mt-0.5" />
+                    <span>Arbeitsbewilligung nötig (übrige Fälle, z.&nbsp;B. Ausweis N) — ohne SEM-Formular</span>
+                  </label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Wird zusätzlich automatisch angenommen, wenn der Mitarbeiter in Phase 2 Ausweis S/F/N angibt.
+                  Jede Auswahl setzt den Gültigkeits-Zusatz im Vertrag; die Meldung löst das Backoffice
+                  später auf der Detailseite aus.
+                </p>
+              </div>
             </CardContent>
           </Card>
 

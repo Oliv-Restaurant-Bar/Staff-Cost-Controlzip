@@ -1,10 +1,15 @@
 /**
  * Personaleintritt — Arbeitsbewilligung & Behörden-Gesuch (REINE Logik)
  * =====================================================================
- * Anpassung 5: Kontrollfrage «Benötigt der Mitarbeiter eine Arbeitsbewilligung
- * (z. B. Ausweis S oder F)?» — effektiv erforderlich ist die Bewilligung, wenn
- * die GF die Frage mit Ja beantwortet hat ODER der Mitarbeiter in Phase 2
- * Ausweis S oder F angegeben hat (abgeleitet, KEIN Write-on-load).
+ * Bewilligungs-Mehrfachauswahl (Auftrag Punkt 4): drei GF-Flags (Ausweis F,
+ * Ausweis S, Arbeitsbewilligung) statt der alten Ja/Nein-Frage; die Alt-Spalte
+ * bewilligungErforderlich bleibt als Legacy-Input ODER-verknüpft.
+ *
+ * Routing (Auftrag Punkt 9):
+ *   – F/S (Flag ODER Phase-2-Ausweis)      → SEM-Meldeformular (sem-formular.ts)
+ *   – N (Asylbewerber, nur Phase-2-Angabe) → NICHT das SEM-Formular, aber
+ *     «Bewilligung erforderlich» (Gültigkeits-Zusatz im Vertrag + Gesuch-Text)
+ *   – Flag «Arbeitsbewilligung»            → wie N (kein SEM-Formular)
  *
  * Das Gesuch/die Meldung an die Behörde wird hier nur VORBEREITET (Text mit
  * vorausgefüllten Mitarbeiterdaten; fehlende Angaben werden benannt, nie
@@ -14,19 +19,58 @@
 
 import type { PersonaleintrittRecord } from './types';
 
-/** Ausweisarten, die eine Arbeitsbewilligung der Behörde voraussetzen. */
+/** Ausweisarten, die das SEM-Meldeverfahren auslösen (NICHT: N). */
 export const BEWILLIGUNGSPFLICHTIGE_AUSWEISE = ['S', 'F'] as const;
 
-/** Phase-2-Angabe (z. B. «S», «F — vorläufig aufgenommen») auf S/F prüfen. */
-export function istBewilligungspflichtigerAusweis(aufenthaltsbewilligung: string | undefined | null): boolean {
+/** Prüft eine Phase-2-Angabe (z. B. «S», «F — vorläufig aufgenommen») auf einen Präfix-Buchstaben. */
+function ausweisIst(aufenthaltsbewilligung: string | undefined | null, buchstabe: string): boolean {
   const wert = aufenthaltsbewilligung?.trim().toUpperCase();
   if (!wert) return false;
-  return BEWILLIGUNGSPFLICHTIGE_AUSWEISE.some(a => wert === a || wert.startsWith(`${a} `) || wert.startsWith(`${a}-`) || wert.startsWith(`${a}(`));
+  return wert === buchstabe || wert.startsWith(`${buchstabe} `) || wert.startsWith(`${buchstabe}-`) || wert.startsWith(`${buchstabe}(`);
 }
 
-/** Effektiv erforderlich = GF-Kontrollfrage Ja ODER Phase-2-Ausweis S/F. */
-export function bewilligungErforderlichEffektiv(record: Pick<PersonaleintrittRecord, 'bewilligungErforderlich' | 'maDaten'>): boolean {
-  if (record.bewilligungErforderlich === true) return true;
+/** Phase-2-Angabe auf S/F prüfen (SEM-Meldeverfahren). */
+export function istBewilligungspflichtigerAusweis(aufenthaltsbewilligung: string | undefined | null): boolean {
+  return BEWILLIGUNGSPFLICHTIGE_AUSWEISE.some(a => ausweisIst(aufenthaltsbewilligung, a));
+}
+
+/** Phase-2-Angabe auf N (Asylbewerber) prüfen — bewilligungspflichtig, aber KEIN SEM-Formular. */
+export function istAusweisN(aufenthaltsbewilligung: string | undefined | null): boolean {
+  return ausweisIst(aufenthaltsbewilligung, 'N');
+}
+
+/**
+ * ZEMIS-Nummer Pflicht? Bei Ausweis F, S und B (Auftrag Punkt 9) — die
+ * ZEMIS-Nr. identifiziert die Person im Melde-/Bewilligungsverfahren.
+ */
+export function zemisPflicht(aufenthaltsbewilligung: string | undefined | null): boolean {
+  return ['F', 'S', 'B'].some(a => ausweisIst(aufenthaltsbewilligung, a));
+}
+
+type BewilligungsFelder = Pick<
+  PersonaleintrittRecord,
+  'bewilligungErforderlich' | 'bewilligungAusweisF' | 'bewilligungAusweisS' | 'bewilligungArbeitsbewilligung' | 'maDaten'
+>;
+
+/**
+ * Effektiv «Bewilligung erforderlich» (steuert den Gültigkeits-Zusatz im
+ * Vertrag): eines der drei GF-Flags ODER Legacy-Ja ODER Phase-2-Ausweis F/S/N.
+ */
+export function bewilligungErforderlichEffektiv(record: BewilligungsFelder): boolean {
+  if (record.bewilligungAusweisF === true || record.bewilligungAusweisS === true ||
+      record.bewilligungArbeitsbewilligung === true) return true;
+  if (record.bewilligungErforderlich === true) return true; // Legacy (20260724b)
+  const ausweis = record.maDaten?.lohnprogramm?.aufenthaltsbewilligung;
+  return istBewilligungspflichtigerAusweis(ausweis) || istAusweisN(ausweis);
+}
+
+/**
+ * SEM-Meldeformular erforderlich? NUR bei Ausweis F/S (GF-Flag ODER
+ * Phase-2-Angabe). N und das generische Flag «Arbeitsbewilligung» lösen das
+ * Formular NICHT aus (Auftrag Punkt 9).
+ */
+export function semMeldungErforderlich(record: BewilligungsFelder): boolean {
+  if (record.bewilligungAusweisF === true || record.bewilligungAusweisS === true) return true;
   return istBewilligungspflichtigerAusweis(record.maDaten?.lohnprogramm?.aufenthaltsbewilligung);
 }
 

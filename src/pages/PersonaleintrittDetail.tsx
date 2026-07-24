@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, FileSpreadsheet, FileText, PenLine, ShieldAlert, UserCheck, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, FileSpreadsheet, FileText, FolderArchive, PenLine, ShieldAlert, UserCheck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageShell } from '@/components/layout/PageShell';
@@ -44,8 +44,14 @@ import {
 import { erzeugeVertragsPdf } from '@/lib/personaleintritt/pdf-fill';
 import {
   bewilligungErforderlichEffektiv, buildBehoerdenGesuch, istBewilligungspflichtigerAusweis,
+  semMeldungErforderlich,
 } from '@/lib/personaleintritt/behoerden-meldung';
+import {
+  erzeugeSemFormular, SemVorlageFehltError, SEM_VORLAGE_PATH,
+} from '@/lib/personaleintritt/sem-formular';
+import { SEM_KANTON_BERN, semBetreff } from '@/lib/personaleintritt/betriebs-config';
 import { erzeugeMirusExcel } from '@/lib/personaleintritt/mirus-export';
+import { erzeugeDossierPdf } from '@/lib/personaleintritt/dossier-pdf';
 import { buildEmployeeFromEintritt, findeNamensDuplikate } from '@/lib/personaleintritt/uebernahme';
 import { loadEmployees, loadAllBeaulieuIds, upsertEmployee } from '@/lib/supabase-db';
 import type { Department, Employee } from '@/types/personnel';
@@ -94,6 +100,11 @@ export default function PersonaleintrittDetail() {
   const [mirusHinweise, setMirusHinweise] = useState<string[]>([]);
   const [cancelOpen, setCancelOpen] = useState(false);
 
+  // SEM-Meldeformular (Auftrag Punkt 9)
+  const [semWarnungen, setSemWarnungen] = useState<string[]>([]);
+  const [semVorlageFehlt, setSemVorlageFehlt] = useState(false);
+  const [dossierHinweise, setDossierHinweise] = useState<string[]>([]);
+
   // Übernahme-Dialog
   const [uebOpen, setUebOpen] = useState(false);
   const [uebDepartment, setUebDepartment] = useState<Department | ''>('');
@@ -108,6 +119,11 @@ export default function PersonaleintrittDetail() {
     // wiederverwendet — sonst kurzzeitig fremde Personendaten sichtbar).
     setRecord(null);
     setLoadError(null);
+    setPdfWarnungen([]);
+    setMirusHinweise([]);
+    setSemWarnungen([]);
+    setDossierHinweise([]);
+    setSemVorlageFehlt(false);
     try {
       const res = await loadPersonaleintritt(id, tenantId);
       setPreMigration(res.preMigration);
@@ -231,6 +247,44 @@ export default function PersonaleintrittDetail() {
     }
   };
 
+  // ── Dossier-PDF (Q&A aller Phasen + Anhänge, Auftrag Punkt 10) ────────────
+
+  const dossierErstellen = async () => {
+    if (!record) return;
+    setBusy(true);
+    setDossierHinweise([]);
+    try {
+      const erg = await erzeugeDossierPdf(record, tenantId);
+      const blob = new Blob([erg.bytes as BlobPart], { type: 'application/pdf' });
+      // Ablage im Bucket des Mandanten (interne Ablage) — Fehler nur als Hinweis,
+      // der lokale Download funktioniert unabhängig davon.
+      const path = await uploadDokument(`${tenantId}/${record.id}/dossier.pdf`, blob, 'application/pdf');
+      if (path) {
+        const res = await updatePersonaleintritt(record.id, tenantId, { dossierPath: path });
+        if (res.data) setRecord(res.data);
+        else toast.warning('Dossier erstellt, aber der Ablage-Vermerk konnte nicht gespeichert werden.');
+      } else {
+        toast.warning('Ablage im Dokumente-Bucket fehlgeschlagen — Datei wurde nur lokal heruntergeladen.');
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = erg.dateiname;
+      a.click();
+      URL.revokeObjectURL(url);
+      const hinweise = [...erg.hinweise];
+      if (erg.inhalt.fehlendeDokumente.length > 0) {
+        hinweise.push(`Pflicht-Dokumente fehlen (im Dossier vermerkt): ${erg.inhalt.fehlendeDokumente.join(', ')}`);
+      }
+      setDossierHinweise(hinweise);
+      toast.success('Dossier-PDF erstellt (heruntergeladen + abgelegt)');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Dossier konnte nicht erstellt werden');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openDokument = async (path: string) => {
     const url = await getDokumentUrl(path);
     if (!url) { toast.error('Signierte URL konnte nicht erstellt werden.'); return; }
@@ -266,6 +320,61 @@ export default function PersonaleintrittDetail() {
       setRecord(res.data);
       toast.success('Meldung an Behörde ausgelöst (Gesuch heruntergeladen)');
     }
+  };
+
+  // ── SEM-Meldeformular (Ausweis F/S, Auftrag Punkt 9) ─────────────────────
+
+  const semFormularErstellen = async () => {
+    if (!record) return;
+    setBusy(true);
+    setSemWarnungen([]);
+    try {
+      const erg = await erzeugeSemFormular(record, tenantId);
+      setSemVorlageFehlt(false);
+      const blob = new Blob([erg.editierbar as BlobPart], { type: 'application/pdf' });
+      const path = await uploadDokument(`${tenantId}/${record.id}/sem_meldung.pdf`, blob, 'application/pdf');
+      if (path) {
+        const res = await updatePersonaleintritt(record.id, tenantId, { semFormularPath: path });
+        if (res.data) setRecord(res.data);
+        else toast.warning('Formular erstellt, aber der Ablage-Vermerk konnte nicht gespeichert werden.');
+      } else {
+        toast.warning('Ablage im Dokumente-Bucket fehlgeschlagen — Datei wurde nur lokal heruntergeladen.');
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = erg.dateiname;
+      a.click();
+      URL.revokeObjectURL(url);
+      const hinweise = [...erg.warnungen];
+      if (erg.fehlend.length > 0) {
+        hinweise.unshift(`Fehlende Angaben im Datensatz (Felder bleiben leer): ${erg.fehlend.join(', ')}`);
+      }
+      setSemWarnungen(hinweise);
+      toast.success('SEM-Meldeformular erstellt (heruntergeladen + abgelegt)');
+    } catch (e) {
+      if (e instanceof SemVorlageFehltError) {
+        setSemVorlageFehlt(true);
+        toast.error(e.message);
+      } else {
+        toast.error(e instanceof Error ? e.message : 'SEM-Formular konnte nicht erstellt werden');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const semVorlageHochladen = async (file: File) => {
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      toast.error('Bitte eine PDF-Datei wählen (amtliches SEM-Formular mit ausfüllbaren Feldern).');
+      return;
+    }
+    setBusy(true);
+    const path = await uploadDokument(SEM_VORLAGE_PATH, file, 'application/pdf');
+    setBusy(false);
+    if (!path) { toast.error('Upload der SEM-Vorlage fehlgeschlagen.'); return; }
+    setSemVorlageFehlt(false);
+    toast.success('SEM-Vorlage hochgeladen — das Formular kann jetzt erstellt werden.');
   };
 
   const abbrechen = async () => {
@@ -433,6 +542,15 @@ export default function PersonaleintrittDetail() {
                   <FileSpreadsheet className="mr-1 h-4 w-4" /> MIRUS-Export (Excel)
                 </Button>
                 <Button
+                  size="sm" variant="outline"
+                  disabled={busy}
+                  title="PDF mit allen Fragen/Antworten und den Anhängen — für die interne Ablage."
+                  onClick={() => void dossierErstellen()}
+                  data-testid="button-dossier"
+                >
+                  <FolderArchive className="mr-1 h-4 w-4" /> Dossier (PDF) erstellen
+                </Button>
+                <Button
                   size="sm" variant="outline" disabled
                   title="Skribble-Signatur ist vorbereitet, aber noch nicht aktiviert."
                   data-testid="button-skribble"
@@ -467,6 +585,16 @@ export default function PersonaleintrittDetail() {
                 {mirusHinweise.map((h, i) => <li key={i}>{h}</li>)}
               </ul>
             </HintBox>
+          )}
+
+          {dossierHinweise.length > 0 && (
+            <div data-testid="section-dossier-hinweise">
+              <HintBox tone="warn" title="Dossier erstellt — Hinweise">
+                <ul className="list-disc pl-4">
+                  {dossierHinweise.map((h, i) => <li key={i}>{h}</li>)}
+                </ul>
+              </HintBox>
+            </div>
           )}
 
           {/* Arbeitsbewilligung (Anpassung 5) — nur wenn effektiv erforderlich */}
@@ -507,22 +635,82 @@ export default function PersonaleintrittDetail() {
                   <ShieldAlert className="mr-1 h-4 w-4" />
                   {record.behoerdeMeldungAm ? 'Gesuch erneut herunterladen' : 'Meldung an Behörde auslösen'}
                 </Button>
+
+                {/* SEM-Meldeverfahren (Ausweis F/S, Auftrag Punkt 9) */}
+                {semMeldungErforderlich(record) && (
+                  <div className="space-y-2 border-t pt-3" data-testid="section-sem-meldung">
+                    <p className="text-sm font-medium">SEM-Meldeverfahren (Ausweis F/S)</p>
+                    <p className="text-xs text-muted-foreground">
+                      Das gefüllte Formular per E-Mail an{' '}
+                      <span className="font-medium">{SEM_KANTON_BERN.empfaengerEmail}</span> senden.
+                      Betreff: «{semBetreff(anzeigeName, record.betrieb ?? '')}».
+                      Rückfragen: {SEM_KANTON_BERN.kontaktName}, {SEM_KANTON_BERN.kontaktTelefon}.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" disabled={busy}
+                        onClick={() => void semFormularErstellen()} data-testid="button-sem-formular">
+                        <FileText className="mr-1 h-4 w-4" /> SEM-Meldeformular (PDF) erstellen
+                      </Button>
+                      {record.semFormularPath && (
+                        <Button size="sm" variant="outline" disabled={busy}
+                          onClick={() => void openDokument(record.semFormularPath!)} data-testid="button-open-sem-formular">
+                          <FileText className="mr-1 h-4 w-4" /> Abgelegtes Formular öffnen
+                        </Button>
+                      )}
+                    </div>
+                    {semVorlageFehlt && (
+                      <div data-testid="section-sem-vorlage-upload">
+                        <HintBox tone="warn" title="SEM-Vorlage fehlt">
+                          <p className="mb-2">
+                            Bitte das amtliche SEM-Meldeformular (ausfüllbares PDF) einmalig hochladen —
+                            es wird zentral abgelegt und für alle Meldungen wiederverwendet.
+                          </p>
+                          <input
+                            type="file"
+                            accept="application/pdf"
+                            data-testid="input-sem-vorlage"
+                            disabled={busy}
+                            onChange={e => {
+                              const f = e.target.files?.[0];
+                              if (f) void semVorlageHochladen(f);
+                              e.target.value = '';
+                            }}
+                          />
+                        </HintBox>
+                      </div>
+                    )}
+                    {semWarnungen.length > 0 && (
+                      <div data-testid="section-sem-warnungen">
+                        <HintBox tone="warn" title="SEM-Formular erstellt — bitte prüfen">
+                          <ul className="list-disc pl-4">
+                            {semWarnungen.map((w, i) => <li key={i} className="break-words">{w}</li>)}
+                          </ul>
+                        </HintBox>
+                      </div>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
 
-          {(record.pdfPath || record.pdfFlatPath) && (
+          {(record.pdfPath || record.pdfFlatPath || record.dossierPath) && (
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-base">Vertrags-PDF</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base">Erzeugte Dokumente</CardTitle></CardHeader>
               <CardContent className="flex flex-wrap gap-2">
                 {record.pdfPath && (
                   <Button size="sm" variant="outline" onClick={() => void openDokument(record.pdfPath!)} data-testid="button-open-pdf-edit">
-                    <FileText className="mr-1 h-4 w-4" /> Editierbare Version öffnen
+                    <FileText className="mr-1 h-4 w-4" /> Vertrag (editierbar) öffnen
                   </Button>
                 )}
                 {record.pdfFlatPath && (
                   <Button size="sm" variant="outline" onClick={() => void openDokument(record.pdfFlatPath!)} data-testid="button-open-pdf-flat">
-                    <FileText className="mr-1 h-4 w-4" /> Flache Version öffnen
+                    <FileText className="mr-1 h-4 w-4" /> Vertrag (flach) öffnen
+                  </Button>
+                )}
+                {record.dossierPath && (
+                  <Button size="sm" variant="outline" onClick={() => void openDokument(record.dossierPath!)} data-testid="button-open-dossier">
+                    <FolderArchive className="mr-1 h-4 w-4" /> Dossier öffnen
                   </Button>
                 )}
               </CardContent>
@@ -542,9 +730,11 @@ export default function PersonaleintrittDetail() {
                 <Row
                   label="Probezeit"
                   value={record.probezeitTage != null
-                    ? (record.probezeitTage > 0 && record.probezeitTage % 30 === 0
-                      ? `${record.probezeitTage / 30} ${record.probezeitTage === 30 ? 'Monat' : 'Monate'}`
-                      : `${record.probezeitTage} Tage`)
+                    ? (record.probezeitTage === 0
+                      ? 'Keine'
+                      : record.probezeitTage % 30 === 0
+                        ? `${record.probezeitTage / 30} ${record.probezeitTage === 30 ? 'Monat' : 'Monate'}`
+                        : `${record.probezeitTage} Tage`)
                     : '—'}
                 />
                 <Row label="Vertragsdauer" value={record.vertragsdauer === 'befristet' ? `befristet bis ${fmtDate(record.befristetBis)}` : 'unbefristet'} />

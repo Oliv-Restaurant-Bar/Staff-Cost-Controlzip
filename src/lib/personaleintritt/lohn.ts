@@ -31,14 +31,19 @@ export const SL_TOTAL_FAKTOR = 1 + SL_ZUSCHLAEGE.ferien + SL_ZUSCHLAEGE.feiertag
 /** Einführungszeit (Einarbeitung): zulässiger Abzug auf den Mindestlohn. */
 export const EINFUEHRUNG_ABZUG = 0.08;
 
-/** Jahresteiler Stundenlohn: 52 Wochen × 42 Stunden. */
-export const STUNDEN_PRO_JAHR = 52 * 42;
-
 export interface MindestlohnEintrag {
   jahr: number;
   klasse: Lohnklasse;
   /** CHF/Monat inkl. 13. (×13-Basis) gemäss L-GAV. */
   monatX13: number;
+  /**
+   * OFFIZIELLE L-GAV-Stundenwerte je Wochenmodell (autoritative Tabellenwerte,
+   * NIE aus dem Monatslohn berechnet — die publizierten Werte weichen teils
+   * von der reinen Formel ab). Fehlend ⇒ keine Stunden-Prüfung möglich (≠ 0).
+   */
+  stunde42?: number | null;
+  stunde435?: number | null;
+  stunde45?: number | null;
 }
 
 /** Fachliche Rundungsgrenze: Basislohn auf 2 Dezimalstellen (Rappen). */
@@ -49,8 +54,9 @@ export function rundeLohn(wert: number): number {
 /**
  * Mindestlohn für Jahr/Klasse/Einheit aus den geladenen Tabellenzeilen.
  * monat: Monats-Basislohn (exkl. 13.) ≥ monat_x13.
- * stunde: monat_x13 × 13 / (52 × 42).
- * Fehlender Tabelleneintrag ⇒ null (fehlend ≠ 0 — Prüfung dann nicht möglich).
+ * stunde: der OFFIZIELLE Stundenwert stunde_42 (Haus-Standard 42-h-Woche) —
+ * strikt aus der Tabelle, KEIN Formel-Fallback (fehlender Spaltenwert ⇒ null,
+ * die Prüfung ist dann nicht möglich; fehlend ≠ 0).
  */
 export function mindestlohnFuer(
   eintraege: MindestlohnEintrag[],
@@ -59,9 +65,9 @@ export function mindestlohnFuer(
   einheit: LohnEinheit,
 ): number | null {
   const row = eintraege.find(e => e.jahr === jahr && e.klasse === klasse);
-  if (!row || !(row.monatX13 > 0)) return null;
-  if (einheit === 'monat') return row.monatX13;
-  return (row.monatX13 * 13) / STUNDEN_PRO_JAHR;
+  if (!row) return null;
+  if (einheit === 'monat') return row.monatX13 > 0 ? row.monatX13 : null;
+  return row.stunde42 != null && row.stunde42 > 0 ? row.stunde42 : null;
 }
 
 /** Für ein Eintrittsdatum (ISO) das massgebliche Mindestlohn-Jahr. */

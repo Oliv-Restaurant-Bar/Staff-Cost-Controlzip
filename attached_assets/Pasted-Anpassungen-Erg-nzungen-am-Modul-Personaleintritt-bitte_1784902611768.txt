@@ -1,0 +1,31 @@
+Anpassungen & Ergänzungen am Modul «Personaleintritt» (bitte umsetzen bzw. verifizieren):
+
+1. Mindestlohn-Korrektur (wichtig). Der Basis-Stundenlohn wird mit ×12 gerechnet: Basis-Stundenlohn = Monatslohn × 12 / (52 × Wochenstunden). Der 13. Monatslohn (8.33 %) sowie Ferien-/Feiertagszuschläge kommen zusätzlich dazu und sind NICHT im Mindest-Stundenlohn enthalten. Beide Betriebe sind 42-Stunden-Betriebe. Die Mindestlohn-Config pro Jahr/Klasse muss Monatslohn + Stundenlohn je Wochenmodell (42 / 43.5 / 45 Std.) führen. Offizielle L-GAV-Werte 2026:
+
+Ia 3'713 → 20.40 / 19.65 / 19.04
+Ib 3'943 → 21.66 / 20.86 / 20.22
+II 4'070 → 22.36 / 21.53 / 20.87
+IIIa 4'528 → 24.88 / 23.96 / 23.22
+IIIb 4'635 → 25.47 / 24.52 / 23.77
+IV 5'293 → 29.08 / 28.01 / 27.14
+Einführungszeit −8 %: Ia dann 3'415.95 bzw. 18.77/Std. (42 Std.)
+
+2. Pensum: das separate Zahlenfeld (zweite Schaltfläche) ganz entfernen — nur die Dropdown-Schnellwahl in 10er-Schritten (10–100 %, Standard 100 %) behalten.
+
+3. Probezeit: Option «Keine» ergänzen → Keine / 1 / 2 / 3 Monate, Standard 3 Monate.
+
+4. Arbeitsbewilligung: statt Ja/Nein-Frage ankreuzbare Optionen (Mehrfachauswahl): Ausweis F, Ausweis S, Arbeitsbewilligung. Das Ankreuzen steuert die Behördenmeldung (nur bei F/S) und den Gültigkeits-Zusatz im Vertrag.
+
+5. Funktion: Schnellauswahl aus zentraler Positionsliste (gemeinsam mit Personalstamm): Serviceangestellte (ersetzt Service + Servicemitarbeiterin), Runner, Barista, Buffet/Office, Küchenchef, Koch, Hilfskoch, Pizzaiolo, Abwäscher, Aushilfe. Bestehende «Service»/«Servicemitarbeiterin» auf «Serviceangestellte» migrieren.
+
+6. Grundlohn: Auswahl «inkl. 13.» / «ohne 13.». Basislohn = Eingabe (ohne 13.) bzw. Eingabe × 12/13 (inkl. 13.). Ins PDF/MIRUS geht immer der Basislohn, «13. Monatslohn = ja» anhaken.
+
+7. Standard-Bemerkungen automatisch in jeden Vertrag (Feld Bemerkungen): (a) «Arztzeugnisse werden ab dem 1. Tag bei Fehlen verlangt.» (b) «Dieser Arbeitsvertrag erreicht seine Gültigkeit erst bei einer Arbeitserlaubnis.» (c) «Stundenblätter müssen nach Abgabe innerhalb von 7 Tagen unterschrieben retourniert werden, ansonsten werden die Stunden als bestätigt angenommen.»
+
+8. Mandanten-Logik: Die Betriebswahl des GF setzt restaurant_id (oliv/beaulieu). Alles (Datensatz, Vertrag, MIRUS, Meldung, Dossier, Personalstamm-Übernahme) landet im gewählten Mandanten. Betriebsabhängige Werte (Firmenname, Adresse, UID, Kontaktperson) je Mandant aus Config.
+
+9. Behördenmeldung Ausweis S/F (SEM-Formular) — als Backoffice-Aktion (nur Backoffice-Rolle). Das gelieferte PDF als AcroForm-Vorlage füllen. Routing: F/S → dieses Formular; N (Asylbewerber) → NICHT dieses Formular, nur als «Bewilligung erforderlich» flaggen. Neues Pflichtfeld bei F/S/B: ZEMIS-/SYMIC-Nr. Config Kanton Bern: Empfänger meldeverfahren.midi@be.ch, Kontaktperson Nom2=«Berat Osmani», Tel2=«076 398 67 47», Betreff «Meldung Erwerbstätigkeit – [Name] – [Betrieb]». Feld-Mapping: NrSymic←ZEMIS, Noms/Prénoms/Geburtsdatum, Nationalité/Rue/NPALocalité, Numéro de téléphone/Courriel1, NomB/RueB/NPALocaliteB/NuméroIDEB←Betrieb, ActiviteExercee←Funktion, BrancheEconomique=«Gastronomie», NAV/GAV=Ja, Kanton=Bern, Beschaeftigunsgrad←Pensum, Bruttolohn←Basislohn, Stunden/Minuten, Lohnart Group5 (ML→«monatlich (13 Monatslöhne)», SL→«Stundenlohn»), ChkBxStartTaetigkeit=On, GroupStartTaetigkeit=«Unselbstaedige», DtStartTaetigkeit←Eintritt, Lieu=«Bern». Die beiden Radio-Gruppen Group3/Group4 (Geschlecht M/W bzw. NAV/GAV) am gerenderten PDF verifizieren.
+
+10. Personaleintritt-Dossier (PDF-Export): Auf Knopfdruck ein PDF mit allen Fragen + Antworten aller Phasen erzeugen, und die hochgeladenen Anhänge (AHV-Karte, Ausweis Vorder-/Rückseite, Bankkarte, Foto) als Folgeseiten ins selbe PDF einbetten. Kopfzeile mit Betrieb, Name, Eintrittsdatum, Erstellungsdatum. Für die interne Ablage, im Bucket des Mandanten.
+
+Nach der Umsetzung bitte kurzer Testlauf (Unit + Smoke) und Bestätigung, welche Punkte neu gebaut und welche nur verifiziert wurden.
