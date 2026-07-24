@@ -60,6 +60,11 @@ function rowToRecord(row: any): PersonaleintrittRecord {
     lohnModus: row.lohn_modus ?? undefined,
     lohnklasse: (row.lohnklasse as Lohnklasse) ?? undefined,
     grundlohn: row.grundlohn != null ? Number(row.grundlohn) : undefined,
+    // Spalten aus Migration 20260724b — pre-migration-tolerant (select('*')):
+    grundlohnInkl13: row.grundlohn_inkl13 ?? undefined,
+    bewilligungErforderlich: row.bewilligung_erforderlich ?? undefined,
+    behoerdeMeldungAm: row.behoerde_meldung_am ?? undefined,
+    behoerdeMeldungVon: row.behoerde_meldung_von ?? undefined,
     zielTotal: row.ziel_total != null ? Number(row.ziel_total) : undefined,
     lohnBerechnet: row.lohn_berechnet != null ? Number(row.lohn_berechnet) : undefined,
     lohnEinheit: row.lohn_einheit ?? undefined,
@@ -92,6 +97,11 @@ export interface PersonaleintrittPatch {
   lohnModus?: string;
   lohnklasse?: string | null;
   grundlohn?: number | null;
+  /** Migration 20260724b — nur setzen, wenn fachlich relevant (42703-tolerant). */
+  grundlohnInkl13?: boolean;
+  bewilligungErforderlich?: boolean;
+  behoerdeMeldungAm?: string | null;
+  behoerdeMeldungVon?: string | null;
   zielTotal?: number | null;
   lohnBerechnet?: number | null;
   lohnEinheit?: string | null;
@@ -117,7 +127,10 @@ function patchToRow(patch: PersonaleintrittPatch): Record<string, any> {
     ['funktion', 'funktion'], ['eintritt', 'eintritt'], ['pensumProzent', 'pensum_prozent'],
     ['probezeitTage', 'probezeit_tage'], ['vertragsdauer', 'vertragsdauer'],
     ['befristetBis', 'befristet_bis'], ['lohnModus', 'lohn_modus'], ['lohnklasse', 'lohnklasse'],
-    ['grundlohn', 'grundlohn'], ['zielTotal', 'ziel_total'], ['lohnBerechnet', 'lohn_berechnet'],
+    ['grundlohn', 'grundlohn'], ['grundlohnInkl13', 'grundlohn_inkl13'],
+    ['bewilligungErforderlich', 'bewilligung_erforderlich'],
+    ['behoerdeMeldungAm', 'behoerde_meldung_am'], ['behoerdeMeldungVon', 'behoerde_meldung_von'],
+    ['zielTotal', 'ziel_total'], ['lohnBerechnet', 'lohn_berechnet'],
     ['lohnEinheit', 'lohn_einheit'], ['einfuehrungszeit', 'einfuehrungszeit'],
     ['maDaten', 'ma_daten'], ['inviteTokenHash', 'invite_token_hash'],
     ['inviteExpires', 'invite_expires'], ['eingeladenAm', 'eingeladen_am'],

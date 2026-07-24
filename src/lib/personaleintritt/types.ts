@@ -121,10 +121,18 @@ export interface PersonaleintrittRecord {
   lohnModus?: LohnModus;
   lohnklasse?: Lohnklasse;
   grundlohn?: number;
+  /** Modus «grundlohn», nur ML: Eingabe enthält den 13. bereits (Basis = Eingabe × 12/13). */
+  grundlohnInkl13?: boolean;
   zielTotal?: number;
   lohnBerechnet?: number;
   lohnEinheit?: LohnEinheit;
   einfuehrungszeit?: boolean;
+
+  /** GF-Kontrollfrage: Arbeitsbewilligung (z. B. Ausweis S/F) erforderlich? */
+  bewilligungErforderlich?: boolean;
+  /** Backoffice-Aktion «Meldung an Behörde auslösen» — wann/von wem (Audit). */
+  behoerdeMeldungAm?: string;
+  behoerdeMeldungVon?: string;
 
   maDaten: MaDaten;
 

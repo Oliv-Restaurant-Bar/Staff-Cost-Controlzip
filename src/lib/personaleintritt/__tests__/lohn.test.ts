@@ -60,6 +60,31 @@ describe('berechneLohn — Modus A (grundlohn)', () => {
     expect(r.unterMindestlohn).toBe(false);
     expect(r.blockierend).toBe(false);
   });
+  it('ML + inkl. 13.: Basis = Eingabe × 12/13 (Anpassung 2)', () => {
+    const r = berechneLohn({
+      vertragstyp: 'ML', modus: 'grundlohn', grundlohn: 5000, grundlohnInkl13: true,
+      lohnklasse: 'Ia', jahr: 2026, mindestloehne: SEED_2026,
+    });
+    expect(r.lohnBerechnet).toBeCloseTo((5000 * 12) / 13, 10);
+    expect(r.lohnEinheit).toBe('monat');
+  });
+  it('ML + inkl. 13.: Mindestlohn-Prüfung läuft auf der umgerechneten Basis', () => {
+    // 4000 inkl. 13. ⇒ Basis 3692.31 < 3713 (Ia 2026) ⇒ blockierend
+    const r = berechneLohn({
+      vertragstyp: 'ML', modus: 'grundlohn', grundlohn: 4000, grundlohnInkl13: true,
+      lohnklasse: 'Ia', jahr: 2026, mindestloehne: SEED_2026,
+    });
+    expect(r.lohnBerechnet).toBeCloseTo((4000 * 12) / 13, 10);
+    expect(r.unterMindestlohn).toBe(true);
+    expect(r.blockierend).toBe(true);
+  });
+  it('SL ignoriert inkl. 13. (der 13. steckt im 8.33-%-Zuschlag)', () => {
+    const r = berechneLohn({
+      vertragstyp: 'SL', modus: 'grundlohn', grundlohn: 24, grundlohnInkl13: true,
+      lohnklasse: 'Ia', jahr: 2026, mindestloehne: SEED_2026,
+    });
+    expect(r.lohnBerechnet).toBe(24);
+  });
   it('SL: Zuschlags-Aufschlüsselung 10.65/2.27/8.33 auf der Basis', () => {
     const r = berechneLohn({
       vertragstyp: 'SL', modus: 'grundlohn', grundlohn: 24,

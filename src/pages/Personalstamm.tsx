@@ -48,6 +48,7 @@ import {
 } from 'lucide-react';
 import { WageHistorySection } from '@/components/WageHistorySection';
 import { generateEmployeeId, nextBeaulieuIdFrom } from '@/lib/employee-id';
+import { funktionOptionen } from '@/lib/funktionen';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePositions } from '@/hooks/usePositions';
@@ -2394,9 +2395,21 @@ CREATE POLICY "Anon self-register new employee"
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">
                               <Briefcase className="h-3 w-3" /> Stellenbezeichnung
                             </Label>
-                            <Input className="h-9 text-sm" placeholder="z.B. Servicemitarbeiter"
+                            {/* Zentrale Funktionsliste (EINE Quelle mit Personaleintritt);
+                                abweichender Bestandswert bleibt als Zusatzoption sichtbar. */}
+                            <Select
                               value={editData?.positionTitle ?? ''}
-                              onChange={e => setEditData(d => d ? { ...d, positionTitle: e.target.value || undefined } : d)} />
+                              onValueChange={v => setEditData(d => d ? { ...d, positionTitle: v || undefined } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm" data-testid="select-position-title">
+                                <SelectValue placeholder="Wählen…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {funktionOptionen(editData?.positionTitle).map(f => (
+                                  <SelectItem key={f} value={f}>{f}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div>
                             <Label className="text-xs text-muted-foreground mb-1 block flex items-center gap-1">

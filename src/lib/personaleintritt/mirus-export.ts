@@ -96,6 +96,13 @@ export function buildMirusZeilen(record: PersonaleintrittRecord): MirusExport {
       wert: record.lohnBerechnet ?? null,
       zellformat: '#,##0.00',
     },
+    {
+      // ML: 13. Monatslohn wird zusätzlich zum Basislohn ausbezahlt (Anpassung 2);
+      // SL: bereits als 8.33-%-Zuschlag im Stundenlohn abgegolten.
+      feld: '13. Monatslohn',
+      wert: record.vertragstyp === 'ML' ? 'ja'
+        : record.vertragstyp === 'SL' ? 'im Zuschlag (8.33 %) enthalten' : null,
+    },
     { feld: 'Probezeit (Tage)', wert: record.probezeitTage ?? null, zellformat: '0' },
     {
       feld: 'Vertragsdauer',

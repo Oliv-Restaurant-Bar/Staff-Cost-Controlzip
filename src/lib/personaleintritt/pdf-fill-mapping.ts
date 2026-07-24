@@ -13,6 +13,7 @@
 
 import type { PersonaleintrittRecord } from './types';
 import { SL_ZUSCHLAEGE, rundeLohn } from './lohn';
+import { bewilligungErforderlichEffektiv } from './behoerden-meldung';
 
 // ─── Ergebnis ────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,27 @@ export function wrapZeilen(text: string, breite: number, maxZeilen: number): str
     if (zeilen.length < maxZeilen && rest !== '') zeilen.push(rest);
     if (zeilen.length >= maxZeilen) break;
   }
+  return zeilen;
+}
+
+// ─── Standard-Bemerkungen (Anpassung 6 — automatisch in JEDEN Vertrag) ───────
+
+/** Fixe Standard-Bemerkungen (Ziffer «13 Besondere Vereinbarungen»). */
+export const STANDARD_BEMERKUNGEN = [
+  'Arztzeugnisse werden ab dem 1. Tag bei Fehlen verlangt.',
+  'Stundenblätter müssen nach Abgabe innerhalb von 7 Tagen unterschrieben retourniert werden, ansonsten werden die Stunden als bestätigt angenommen.',
+] as const;
+
+/** Zusatz nur bei erforderlicher Arbeitsbewilligung (Anpassung 5/6). */
+export const BEMERKUNG_ARBEITSBEWILLIGUNG =
+  'Dieser Arbeitsvertrag erreicht seine Gültigkeit erst bei einer Arbeitserlaubnis.';
+
+/** Standard-Bemerkungen + Bewilligungs-Zusatz + GF-Freitext (in dieser Reihenfolge). */
+export function bemerkungenFuerVertrag(record: PersonaleintrittRecord): string[] {
+  const zeilen: string[] = [...STANDARD_BEMERKUNGEN];
+  if (bewilligungErforderlichEffektiv(record)) zeilen.push(BEMERKUNG_ARBEITSBEWILLIGUNG);
+  const frei = record.maDaten?.vertrag?.besondere_vereinbarungen?.trim();
+  if (frei) zeilen.push(frei);
   return zeilen;
 }
 
@@ -160,12 +182,15 @@ export function buildPdfFillMap(record: PersonaleintrittRecord, heuteIso?: strin
   const heute = heuteIso ?? new Date().toISOString().slice(0, 10);
   text['undefined_4'] = `Bern, ${formatDatumPdf(heute)}`;
 
-  // ── Besondere Vereinbarungen ──
+  // ── Besondere Vereinbarungen (Standard-Bemerkungen + GF-Freitext) ──
   const maxVereinbarungen = typ === 'ML' ? 13 : 11;
-  if (v.besondere_vereinbarungen) {
-    const zeilen = wrapZeilen(v.besondere_vereinbarungen, 60, maxVereinbarungen);
-    zeilen.forEach((z, i) => { text[`13 Besondere Vereinbarungen ${i + 1}`] = z; });
-    if (v.besondere_vereinbarungen.length > 60 * maxVereinbarungen) {
+  const vereinbarungsText = bemerkungenFuerVertrag(record).join('\n');
+  if (vereinbarungsText) {
+    const alleZeilen = wrapZeilen(vereinbarungsText, 60, Number.MAX_SAFE_INTEGER);
+    alleZeilen.slice(0, maxVereinbarungen).forEach((z, i) => {
+      text[`13 Besondere Vereinbarungen ${i + 1}`] = z;
+    });
+    if (alleZeilen.length > maxVereinbarungen) {
       warnungen.push('Besondere Vereinbarungen sind länger als der Platz im PDF — bitte kürzen/prüfen.');
     }
   }

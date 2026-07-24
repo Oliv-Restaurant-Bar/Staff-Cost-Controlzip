@@ -76,6 +76,11 @@ export interface LohnBerechnungInput {
   modus: LohnModus;
   /** Modus A: direkter Basislohn (Monat exkl. 13. bzw. Stunde). */
   grundlohn?: number;
+  /**
+   * Modus A, nur ML: Eingabe enthält den 13. bereits ⇒ Basis = Eingabe × 12/13.
+   * (Mindestlohn-Prüfung, PDF und MIRUS rechnen IMMER mit dem Basislohn.)
+   */
+  grundlohnInkl13?: boolean;
   /** Modus B + Mindestlohn-Prüfung: Lohnklasse. */
   lohnklasse?: Lohnklasse;
   /** Modus C: Ziel-Total inkl. allem. */
@@ -148,10 +153,17 @@ export function berechneLohn(input: LohnBerechnungInput): LohnBerechnungResult {
   let hinweis: string | null = null;
 
   switch (input.modus) {
-    case 'grundlohn':
-      basis = input.grundlohn != null && input.grundlohn > 0 ? input.grundlohn : null;
-      if (basis == null) hinweis = 'Grundlohn eingeben.';
+    case 'grundlohn': {
+      const eingabe = input.grundlohn != null && input.grundlohn > 0 ? input.grundlohn : null;
+      if (eingabe == null) {
+        hinweis = 'Grundlohn eingeben.';
+      } else if (input.grundlohnInkl13 && input.vertragstyp === 'ML') {
+        basis = (eingabe * 12) / 13; // Eingabe inkl. 13. → Monats-Basislohn
+      } else {
+        basis = eingabe;
+      }
       break;
+    }
     case 'mindestlohn':
       if (!input.lohnklasse) {
         hinweis = 'Lohnklasse wählen.';

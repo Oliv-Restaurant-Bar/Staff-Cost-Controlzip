@@ -34,7 +34,8 @@ import { formatAhv, formatIban, pruefePflichtfelder } from '@/lib/personaleintri
 
 const ZIVILSTAENDE = ['ledig', 'verheiratet', 'geschieden', 'verwitwet', 'eingetragene Partnerschaft'];
 const AUSWEISARTEN = ['ID', 'Pass', 'Ausländerausweis'];
-const BEWILLIGUNGEN = ['CH (Schweizer/in)', 'C', 'B', 'L', 'G', 'andere'];
+// S/F lösen die Arbeitsbewilligungs-Pflicht aus (behoerden-meldung.ts, Anpassung 5)
+const BEWILLIGUNGEN = ['CH (Schweizer/in)', 'C', 'B', 'L', 'G', 'S', 'F', 'andere'];
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—';

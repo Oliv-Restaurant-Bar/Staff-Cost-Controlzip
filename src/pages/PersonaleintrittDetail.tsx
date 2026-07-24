@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, CheckCircle2, FileSpreadsheet, FileText, PenLine, UserCheck, XCircle } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, FileSpreadsheet, FileText, PenLine, ShieldAlert, UserCheck, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { PageShell } from '@/components/layout/PageShell';
@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/dialog';
 import { STATUS_TONES } from '@/components/personaleintritt/status-tone';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useAuth } from '@/hooks/useAuth';
 import { useTenant } from '@/contexts/TenantContext';
 import {
   getDokumentUrl, loadPersonaleintritt, updatePersonaleintritt, uploadDokument,
@@ -41,6 +42,9 @@ import {
   type PersonaleintrittRecord, type PersonaleintrittStatus,
 } from '@/lib/personaleintritt/types';
 import { erzeugeVertragsPdf } from '@/lib/personaleintritt/pdf-fill';
+import {
+  bewilligungErforderlichEffektiv, buildBehoerdenGesuch, istBewilligungspflichtigerAusweis,
+} from '@/lib/personaleintritt/behoerden-meldung';
 import { erzeugeMirusExcel } from '@/lib/personaleintritt/mirus-export';
 import { buildEmployeeFromEintritt, findeNamensDuplikate } from '@/lib/personaleintritt/uebernahme';
 import { loadEmployees, loadAllBeaulieuIds, upsertEmployee } from '@/lib/supabase-db';
@@ -76,6 +80,7 @@ export default function PersonaleintrittDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
+  const { user } = useAuth();
   const { tenantId } = useTenant();
   const canManage = (isAdmin && !isGuest) || isBeaulieuManager;
 
@@ -230,6 +235,37 @@ export default function PersonaleintrittDetail() {
     const url = await getDokumentUrl(path);
     if (!url) { toast.error('Signierte URL konnte nicht erstellt werden.'); return; }
     window.open(url, '_blank', 'noopener');
+  };
+
+  // ── Behörden-Meldung (Arbeitsbewilligung, Backoffice-Aktion) ─────────────
+
+  const meldungAusloesen = async () => {
+    if (!record) return;
+    const gesuch = buildBehoerdenGesuch(record);
+    const blob = new Blob([gesuch.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = gesuch.dateiname;
+    a.click();
+    URL.revokeObjectURL(url);
+    if (gesuch.fehlend.length > 0) {
+      toast.warning(`Im Gesuch fehlen noch Angaben: ${gesuch.fehlend.join(', ')}`);
+    }
+    if (!record.behoerdeMeldungAm) {
+      setBusy(true);
+      const res = await updatePersonaleintritt(record.id, tenantId, {
+        behoerdeMeldungAm: new Date().toISOString(),
+        behoerdeMeldungVon: user?.email ?? user?.id ?? 'unbekannt',
+      });
+      setBusy(false);
+      if (res.error || !res.data) {
+        toast.error(`Gesuch heruntergeladen, aber der Auslöse-Vermerk konnte nicht gespeichert werden: ${res.error ?? 'unbekannter Fehler'}`);
+        return;
+      }
+      setRecord(res.data);
+      toast.success('Meldung an Behörde ausgelöst (Gesuch heruntergeladen)');
+    }
   };
 
   const abbrechen = async () => {
@@ -433,6 +469,48 @@ export default function PersonaleintrittDetail() {
             </HintBox>
           )}
 
+          {/* Arbeitsbewilligung (Anpassung 5) — nur wenn effektiv erforderlich */}
+          {bewilligungErforderlichEffektiv(record) && (
+            <Card data-testid="card-bewilligung">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <ShieldAlert className="h-4 w-4 text-amber-600" /> Arbeitsbewilligung erforderlich
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <StatusPill tone={record.behoerdeMeldungAm ? 'good' : 'warn'}>
+                    {record.behoerdeMeldungAm ? 'Meldung ausgelöst' : 'Meldung ausstehend'}
+                  </StatusPill>
+                  <span className="text-xs text-muted-foreground">
+                    {record.bewilligungErforderlich
+                      ? 'Von der GF bei den Eckdaten als erforderlich markiert.'
+                      : istBewilligungspflichtigerAusweis(l?.aufenthaltsbewilligung)
+                        ? `Automatisch erkannt: Ausweis «${l?.aufenthaltsbewilligung}» (Phase 2).`
+                        : ''}
+                  </span>
+                </div>
+                {record.behoerdeMeldungAm ? (
+                  <p className="text-sm text-muted-foreground" data-testid="text-behoerde-meldung">
+                    Ausgelöst von {record.behoerdeMeldungVon ?? 'unbekannt'} am{' '}
+                    {new Date(record.behoerdeMeldungAm).toLocaleString('de-CH', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Das Gesuch an die zuständige Behörde ist mit den Mitarbeiterdaten vorbereitet.
+                    Der Vertrag enthält automatisch den Zusatz «Dieser Arbeitsvertrag erreicht seine
+                    Gültigkeit erst bei einer Arbeitserlaubnis.»
+                  </p>
+                )}
+                <Button size="sm" variant={record.behoerdeMeldungAm ? 'outline' : 'default'}
+                  disabled={busy} onClick={() => void meldungAusloesen()} data-testid="button-behoerde-meldung">
+                  <ShieldAlert className="mr-1 h-4 w-4" />
+                  {record.behoerdeMeldungAm ? 'Gesuch erneut herunterladen' : 'Meldung an Behörde auslösen'}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {(record.pdfPath || record.pdfFlatPath) && (
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Vertrags-PDF</CardTitle></CardHeader>
@@ -461,7 +539,14 @@ export default function PersonaleintrittDetail() {
                 <Row label="Funktion" value={record.funktion ?? '—'} />
                 <Row label="Eintritt" value={fmtDate(record.eintritt)} testId="text-eintritt" />
                 {record.vertragstyp === 'ML' && <Row label="Pensum" value={record.pensumProzent != null ? `${record.pensumProzent} %` : '—'} />}
-                <Row label="Probezeit" value={record.probezeitTage != null ? `${record.probezeitTage} Tage` : '—'} />
+                <Row
+                  label="Probezeit"
+                  value={record.probezeitTage != null
+                    ? (record.probezeitTage > 0 && record.probezeitTage % 30 === 0
+                      ? `${record.probezeitTage / 30} ${record.probezeitTage === 30 ? 'Monat' : 'Monate'}`
+                      : `${record.probezeitTage} Tage`)
+                    : '—'}
+                />
                 <Row label="Vertragsdauer" value={record.vertragsdauer === 'befristet' ? `befristet bis ${fmtDate(record.befristetBis)}` : 'unbefristet'} />
                 <Row
                   label="Lohn (berechnet)"
@@ -472,6 +557,12 @@ export default function PersonaleintrittDetail() {
                 />
                 {record.lohnklasse && <Row label="Lohnklasse" value={LOHNKLASSE_LABELS[record.lohnklasse]} />}
                 {record.einfuehrungszeit && <Row label="Einführungszeit" value="ja (−8 %)" />}
+                {record.grundlohnInkl13 && (
+                  <Row label="Grundlohn-Eingabe" value="inkl. 13. (Basislohn = Eingabe × 12⁄13)" />
+                )}
+                {bewilligungErforderlichEffektiv(record) && (
+                  <Row label="Arbeitsbewilligung" value={record.behoerdeMeldungAm ? 'erforderlich · Meldung ausgelöst' : 'erforderlich · Meldung ausstehend'} />
+                )}
               </CardContent>
             </Card>
 

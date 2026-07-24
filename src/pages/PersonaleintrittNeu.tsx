@@ -43,6 +43,17 @@ import {
   type LohnModus, type Lohnklasse, type Vertragstyp,
 } from '@/lib/personaleintritt/types';
 import { generateInviteToken, hashInviteToken, inviteExpiryIso, inviteLink } from '@/lib/personaleintritt/token';
+import { FUNKTIONEN } from '@/lib/funktionen';
+
+/** Probezeit-Auswahl (L-GAV: 1 Monat gesetzlich, per Abrede bis max. 3 Monate). */
+const PROBEZEIT_OPTIONEN = [
+  { tage: 30, label: '1 Monat' },
+  { tage: 60, label: '2 Monate' },
+  { tage: 90, label: '3 Monate' },
+] as const;
+
+/** Pensum-Schnellwahl in 10er-Schritten (Standard 100 %). */
+const PENSUM_SCHRITTE = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] as const;
 
 const fmtCHF = (v: number) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -93,8 +104,10 @@ export default function PersonaleintrittNeu() {
   const [lohnModus, setLohnModus] = useState<LohnModus>('grundlohn');
   const [lohnklasse, setLohnklasse] = useState<Lohnklasse | ''>('');
   const [grundlohn, setGrundlohn] = useState('');
+  const [grundlohnInkl13, setGrundlohnInkl13] = useState(false);
   const [zielTotal, setZielTotal] = useState('');
   const [einfuehrungszeit, setEinfuehrungszeit] = useState(false);
+  const [bewilligungErforderlich, setBewilligungErforderlich] = useState(false);
   const [saving, setSaving] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
 
@@ -106,13 +119,14 @@ export default function PersonaleintrittNeu() {
       vertragstyp,
       modus: lohnModus,
       grundlohn: grundlohn ? Number(grundlohn) : undefined,
+      grundlohnInkl13,
       zielTotal: zielTotal ? Number(zielTotal) : undefined,
       lohnklasse: lohnklasse || undefined,
       einfuehrungszeit,
       jahr: mindestlohnJahr(eintritt || undefined),
       mindestloehne: minLoehne ?? [],
     });
-  }, [vertragstyp, lohnModus, grundlohn, zielTotal, lohnklasse, einfuehrungszeit, eintritt, minLoehne]);
+  }, [vertragstyp, lohnModus, grundlohn, grundlohnInkl13, zielTotal, lohnklasse, einfuehrungszeit, eintritt, minLoehne]);
 
   if (!canManage) {
     return (
@@ -154,6 +168,11 @@ export default function PersonaleintrittNeu() {
     lohnBerechnet: lohn?.lohnBerechnet != null ? rundeLohn(lohn.lohnBerechnet) : null,
     lohnEinheit: lohn?.lohnEinheit ?? null,
     einfuehrungszeit,
+    // Spalten aus Migration 20260724b: nur bei aktivem Wert mitschicken —
+    // pre-migration bleibt der Standardfall (false) so weiter speicherbar (42703).
+    ...(lohnModus === 'grundlohn' && vertragstyp === 'ML' && grundlohnInkl13
+      ? { grundlohnInkl13: true } : {}),
+    ...(bewilligungErforderlich ? { bewilligungErforderlich: true } : {}),
   });
 
   const saveDraft = async () => {
@@ -254,9 +273,13 @@ export default function PersonaleintrittNeu() {
                 <Input id="pe-betrieb" value={betrieb} onChange={e => setBetrieb(e.target.value)} data-testid="input-betrieb" />
               </div>
               <div className="space-y-1">
-                <Label htmlFor="pe-funktion">Funktion *</Label>
-                <Input id="pe-funktion" value={funktion} onChange={e => setFunktion(e.target.value)}
-                  placeholder="z. B. Servicemitarbeiter/in" data-testid="input-funktion" />
+                <Label>Funktion *</Label>
+                <Select value={funktion} onValueChange={setFunktion}>
+                  <SelectTrigger data-testid="select-funktion"><SelectValue placeholder="Wählen…" /></SelectTrigger>
+                  <SelectContent>
+                    {FUNKTIONEN.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="pe-eintritt">Eintritt (Beginn) *</Label>
@@ -265,14 +288,37 @@ export default function PersonaleintrittNeu() {
               {vertragstyp === 'ML' && (
                 <div className="space-y-1">
                   <Label htmlFor="pe-pensum">Pensum % *</Label>
-                  <Input id="pe-pensum" type="number" min="1" max="100" value={pensum}
-                    onChange={e => setPensum(e.target.value)} data-testid="input-pensum" />
+                  <div className="flex gap-2">
+                    <Select
+                      value={PENSUM_SCHRITTE.some(s => String(s) === pensum) ? pensum : ''}
+                      onValueChange={setPensum}
+                    >
+                      <SelectTrigger className="w-28 shrink-0" data-testid="select-pensum">
+                        <SelectValue placeholder="Wahl…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PENSUM_SCHRITTE.map(s => (
+                          <SelectItem key={s} value={String(s)}>{s} %</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input id="pe-pensum" type="number" min="1" max="100" value={pensum}
+                      onChange={e => setPensum(e.target.value)} data-testid="input-pensum" />
+                  </div>
+                  <p className="text-xs text-muted-foreground">Schnellwahl in 10-%-Schritten oder Feineingabe.</p>
                 </div>
               )}
               <div className="space-y-1">
-                <Label htmlFor="pe-probezeit">Probezeit (Tage)</Label>
-                <Input id="pe-probezeit" type="number" min="0" value={probezeit}
-                  onChange={e => setProbezeit(e.target.value)} data-testid="input-probezeit" />
+                <Label>Probezeit</Label>
+                <Select value={probezeit} onValueChange={setProbezeit}>
+                  <SelectTrigger data-testid="select-probezeit"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PROBEZEIT_OPTIONEN.map(o => (
+                      <SelectItem key={o.tage} value={String(o.tage)}>{o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">L-GAV: 1 Monat gesetzlich, per Abrede bis max. 3 Monate.</p>
               </div>
               <div className="space-y-1">
                 <Label>Vertragsdauer</Label>
@@ -291,6 +337,22 @@ export default function PersonaleintrittNeu() {
                     onChange={e => setBefristetBis(e.target.value)} data-testid="input-befristet-bis" />
                 </div>
               )}
+              <label className="flex items-start gap-2 text-sm sm:col-span-2">
+                <Checkbox
+                  checked={bewilligungErforderlich}
+                  onCheckedChange={c => setBewilligungErforderlich(c === true)}
+                  data-testid="checkbox-bewilligung"
+                  className="mt-0.5"
+                />
+                <span>
+                  Benötigt der Mitarbeiter eine Arbeitsbewilligung (z.&nbsp;B. Ausweis S oder F)?
+                  <span className="block text-xs text-muted-foreground">
+                    Wird zusätzlich automatisch angenommen, wenn der Mitarbeiter in Phase 2 Ausweis S/F angibt.
+                    Der Vertrag erhält den Gültigkeits-Zusatz; die Behörden-Meldung löst das Backoffice
+                    später auf der Detailseite aus.
+                  </span>
+                </span>
+              </label>
             </CardContent>
           </Card>
 
@@ -331,6 +393,28 @@ export default function PersonaleintrittNeu() {
                     <Label htmlFor="pe-grundlohn">Grundlohn ({einheitLabel}) *</Label>
                     <Input id="pe-grundlohn" type="number" min="0" step="0.05" value={grundlohn}
                       onChange={e => setGrundlohn(e.target.value)} data-testid="input-grundlohn" />
+                    {vertragstyp === 'ML' && (
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        {([false, true] as const).map(inkl => (
+                          <button
+                            key={String(inkl)}
+                            type="button"
+                            onClick={() => setGrundlohnInkl13(inkl)}
+                            data-testid={`button-grundlohn-${inkl ? 'inkl13' : 'ohne13'}`}
+                            className={`rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
+                              grundlohnInkl13 === inkl ? 'border-primary bg-primary/5 font-medium' : 'border-border hover:border-muted-foreground/40'
+                            }`}
+                          >
+                            {inkl ? 'inkl. 13. Monatslohn' : 'ohne 13. (Standard)'}
+                          </button>
+                        ))}
+                        <p className="col-span-2 text-xs text-muted-foreground">
+                          {grundlohnInkl13
+                            ? 'Eingabe enthält den 13. bereits — Basislohn = Eingabe × 12⁄13.'
+                            : 'Eingabe = Monats-Basislohn; der 13. wird zusätzlich ausbezahlt.'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
                 {lohnModus === 'zieltotal' && (

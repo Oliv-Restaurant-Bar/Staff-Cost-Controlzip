@@ -1,0 +1,39 @@
+Anpassungen am Personaleintritt-Formular (Phase 1 GF-Eckdaten):
+
+1. Funktion → Schnellauswahl (Dropdown) statt Freitext. Positionen aus dem Personalstamm verwenden, aber bereinigt. Finale Liste:
+
+Serviceangestellte (ersetzt „Service" UND „Servicemitarbeiterin" — beide zusammenführen)
+Runner (neu)
+Barista
+Buffet/Office (neu)
+Küchenchef
+Koch
+Hilfskoch (neu)
+Pizzaiolo
+Abwäscher
+Aushilfe
+
+Wichtig: Dieselbe Positionsliste als eine zentrale Quelle (Config/Tabelle) führen, die Personalstamm und Personaleintritt nutzen — sonst passen Filter/Gruppierung im Dienstplan/Auswertung nicht zusammen. Bestehende Mitarbeitende mit „Service"/„Servicemitarbeiterin" bitte auf „Serviceangestellte" migrieren.
+
+2. Grundlohn-Eingabe: Auswahl „inkl. 13." / „ohne 13. Monatslohn". Im Modus „Grundlohn direkt" einen Umschalter ergänzen:
+
+ohne 13.: eingegebener Betrag = Monats-Basislohn (13. wird zusätzlich ausbezahlt). Basislohn = Eingabe.
+inkl. 13.: eingegebener Betrag enthält den 13. bereits → Basislohn = Eingabe × 12/13.
+
+Die Mindestlohn-Prüfung immer gegen den Basislohn rechnen (L-GAV-Mindestlöhne sind ×13-Werte, z. B. Ia 3'713). Ins Vertrags-PDF und MIRUS geht immer der Basislohn, „13. Monatslohn = ja" wird angehakt.
+
+3. Probezeit: Dropdown statt Tage-Eingabe. Auswahl 1 / 2 / 3 Monate (L-GAV-konform: 1 Monat gesetzlich, per Abrede auf max. 3 Monate verlängerbar). Ins PDF entsprechend als Monate schreiben.
+
+4. Pensum: Schnellauswahl in 10er-Schritten (10 %, 20 %, … 100 %), Standard 100 %. Feineingabe weiterhin möglich.
+
+5. Arbeitsbewilligung (Ausweis S / F) — Kontrollfrage + Behörden-Gesuch:
+
+Kontrollfrage erfassen: „Benötigt der Mitarbeiter eine Arbeitsbewilligung (z. B. Ausweis S oder F)?" — zusätzlich automatisch auf ja setzen, wenn in Phase 2 als Ausweisart S oder F gewählt wird.
+Wenn ja: Das System bereitet im Hintergrund das Meldung/Gesuch an die zuständige Behörde vor (mit den Mitarbeiterdaten vorausgefüllt), aber das Auslösen/Absenden ist eine reine Backoffice-Aktion (eigener Button „Meldung an Behörde auslösen", nur für Backoffice-Rolle sichtbar) — analog zu den anderen Backoffice-Schritten.
+Zusätzlich bekommt der Vertrag automatisch den Bemerkungs-Zusatz zur Gültigkeit (siehe Punkt 6).
+
+6. Standard-Bemerkungen automatisch in jeden Vertrag (Feld „Bemerkungen" im PDF):
+
+„Arztzeugnisse werden ab dem 1. Tag bei Fehlen verlangt."
+„Stundenblätter müssen nach Abgabe innerhalb von 7 Tagen unterschrieben retourniert werden, ansonsten werden die Stunden als bestätigt angenommen."
+(nur wenn Arbeitsbewilligung erforderlich) „Dieser Arbeitsvertrag erreicht seine Gültigkeit erst bei einer Arbeitserlaubnis."

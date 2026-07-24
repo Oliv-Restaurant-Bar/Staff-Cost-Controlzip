@@ -10,7 +10,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { PDFDocument, PDFTextField, PDFCheckBox } from 'pdf-lib';
 
-import { buildPdfFillMap, formatChfPdf, formatDatumPdf, wrapZeilen } from '../pdf-fill-mapping';
+import {
+  BEMERKUNG_ARBEITSBEWILLIGUNG, STANDARD_BEMERKUNGEN, bemerkungenFuerVertrag,
+  buildPdfFillMap, formatChfPdf, formatDatumPdf, wrapZeilen,
+} from '../pdf-fill-mapping';
 import type { PersonaleintrittRecord } from '../types';
 
 const VORLAGEN_DIR = resolve(__dirname, '../../../assets/vertragsvorlagen');
@@ -151,5 +154,40 @@ describe('Mapping-Feldnamen existieren in den echten Vorlagen', () => {
     for (const name of Object.keys(map.checkboxes)) {
       expect(typen.get(name), `Checkbox «${name}» fehlt in ML-Vorlage`).toBe('checkbox');
     }
+  });
+});
+
+describe('Standard-Bemerkungen «13 Besondere Vereinbarungen» (Anpassung 6)', () => {
+  it('bemerkungenFuerVertrag: immer beide Standardsätze, GF-Freitext danach', () => {
+    const zeilen = bemerkungenFuerVertrag(baseRecord());
+    expect(zeilen[0]).toBe(STANDARD_BEMERKUNGEN[0]);
+    expect(zeilen[1]).toBe(STANDARD_BEMERKUNGEN[1]);
+    expect(zeilen[2]).toBe('Arztzeugnisse werden ab dem 1. Tag verlangt.'); // Freitext aus baseRecord
+    expect(zeilen).not.toContain(BEMERKUNG_ARBEITSBEWILLIGUNG);
+  });
+  it('Bewilligungs-Satz NUR bei effektiv erforderlicher Bewilligung', () => {
+    const r = baseRecord();
+    r.maDaten!.lohnprogramm!.aufenthaltsbewilligung = 'S';
+    expect(bemerkungenFuerVertrag(r)).toContain(BEMERKUNG_ARBEITSBEWILLIGUNG);
+    const rGf = baseRecord({ bewilligungErforderlich: true });
+    expect(bemerkungenFuerVertrag(rGf)).toContain(BEMERKUNG_ARBEITSBEWILLIGUNG);
+  });
+  it('PDF-Map: Standardsätze landen ab Zeile 1 (gewrappt, 60 Zeichen)', () => {
+    const map = buildPdfFillMap(baseRecord(), '2026-07-24');
+    expect(map.text['13 Besondere Vereinbarungen 1']).toBe(STANDARD_BEMERKUNGEN[0]);
+    // Satz 2 ist länger als 60 Zeichen ⇒ beginnt in Zeile 2 und wird umbrochen
+    expect(map.text['13 Besondere Vereinbarungen 2']).toBe(
+      wrapZeilen(STANDARD_BEMERKUNGEN[1], 60, 10)[0],
+    );
+    expect(map.warnungen.some(w => w.includes('länger als der Platz'))).toBe(false);
+  });
+  it('Überlauf ⇒ Warnung statt stilles Abschneiden ohne Hinweis', () => {
+    const r = baseRecord();
+    r.maDaten!.vertrag!.besondere_vereinbarungen = 'wort '.repeat(300).trim();
+    const map = buildPdfFillMap(r, '2026-07-24');
+    expect(map.warnungen.some(w => w.includes('länger als der Platz'))).toBe(true);
+    // SL-Vorlage: maximal 11 Zeilen gesetzt
+    expect(map.text['13 Besondere Vereinbarungen 11']).toBeDefined();
+    expect(map.text['13 Besondere Vereinbarungen 12']).toBeUndefined();
   });
 });

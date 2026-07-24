@@ -48,6 +48,12 @@ describe('buildMirusZeilen', () => {
     expect(wert(zeilen, 'Basislohn (CHF/Std., exkl. Zuschläge)')).toBe(20.65);
     expect(wert(zeilen, 'Pensum (%)')).toBeNull(); // Pensum nur bei ML
   });
+  it('13. Monatslohn: ML = «ja», SL = im Zuschlag enthalten (Anpassung 2)', () => {
+    const sl = buildMirusZeilen(baseRecord());
+    expect(wert(sl.zeilen, '13. Monatslohn')).toBe('im Zuschlag (8.33 %) enthalten');
+    const ml = buildMirusZeilen(baseRecord({ vertragstyp: 'ML', pensumProzent: 100, lohnBerechnet: 4600, lohnEinheit: 'monat' }));
+    expect(wert(ml.zeilen, '13. Monatslohn')).toBe('ja');
+  });
 
   it('ML: Pensum als Zahl, Basislohn exkl. 13.', () => {
     const { zeilen } = buildMirusZeilen(baseRecord({
