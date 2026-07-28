@@ -69,7 +69,7 @@ function saveBudgets(b: Record<string, DailyBudget>, storageKey: string) {
 
 // ─── Manual entry sub-component ──────────────────────────────────────────────
 
-function ManualEntryCard({ storageKey }: { storageKey: string }) {
+export function ManualEntryCard({ storageKey, tenantId }: { storageKey: string; tenantId?: string }) {
   const [date, setDate]         = useState(todayIso());
   const [target, setTarget]     = useState<ImportTarget>('actual');
   const [total, setTotal]       = useState('');
@@ -129,10 +129,33 @@ function ManualEntryCard({ storageKey }: { storageKey: string }) {
     }
     const foodNum = parseFloat(food.replace(',', '.')) || 0;
     const bevNum  = parseFloat(beverage.replace(',', '.')) || 0;
+    const dateLabel = format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de });
 
-    const fields: Record<string, unknown> = target === 'actual'
-      ? { actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum }
-      : { previousYearRevenue: totalNum, previousYearFood: foodNum, previousYearBeverage: bevNum };
+    if (target === 'previous_year') {
+      // Vorjahres-SSOT: über commitGastronoviDays speichern → schreibt BEIDE Ziele
+      // (dailyBudgets.previousYearRevenue + vj_daily) und prüft die Jahres-Sperre.
+      const { commitGastronoviDays } = await import('@/lib/gastronovi-daily-save');
+      const year = parseInt(date.slice(0, 4), 10);
+      const res = await commitGastronoviDays(
+        storageKey,
+        [{ date, total: totalNum, food: foodNum, beverage: bevNum, takeAway: 0, currency: 'CHF' }],
+        'previous_year',
+        { tenantId, year },
+      );
+      if (res.blocked) {
+        toast.error(`Jahr ${res.lockedYear ?? year} ist gesperrt — Vorjahresumsatz nicht gespeichert. Zum Entsperren: Sektion «Vorjahres-Tagesumsatz» (nur Admin).`);
+        return;
+      }
+      window.dispatchEvent(new Event('supabase-kv-synced'));
+      setSaved(true);
+      toast.success(`Vorjahresumsatz für ${dateLabel} gespeichert (auch nach vj_daily für den Report)`);
+      setTimeout(() => setSaved(false), 3000);
+      return;
+    }
+
+    // Aktuelles Jahr — unverändert: nur dailyBudgets.actualRevenue
+    const fields: Record<string, unknown> =
+      { actualRevenue: totalNum, actualFood: foodNum, actualBeverage: bevNum };
 
     // Sicherer Upsert: immer KV-Stand holen, dann mergen — kein Blob-Overwrite
     console.log(`[UMSATZ] safe-upsert: ${date} field=${target} total=${totalNum} key=${storageKey}`);
@@ -140,7 +163,7 @@ function ManualEntryCard({ storageKey }: { storageKey: string }) {
     console.log(`[UMSATZ] safe-upsert ok: ${storageKey} now has ${Object.keys(merged).length} Tage`);
     window.dispatchEvent(new Event('supabase-kv-synced'));
     setSaved(true);
-    toast.success(`Umsatz für ${format(parseLocalDate(date), 'dd. MMM yyyy', { locale: de })} gespeichert`);
+    toast.success(`Umsatz für ${dateLabel} gespeichert`);
     setTimeout(() => setSaved(false), 3000);
   };
 

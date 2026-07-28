@@ -239,10 +239,11 @@ const AppContent = () => {
           <ErrorBoundary label="Seite">
           <Routes>
             {/* Routen mit Rollenprüfung */}
-            {/* Startseite: Admins → Monatsreport (Meeting-Cockpit);
-                Manager behalten ihr bisheriges Dashboard-Verhalten. */}
+            {/* Startseite «Cockpit»: Admins + Beaulieu-GF → Monatsreport
+                (Beaulieu darf /monatsreport bereits sehen — keine Rechteänderung);
+                übrige Manager behalten ihr bisheriges Dashboard-Verhalten. */}
             <Route path="/"
-              element={isAdmin
+              element={isAdmin || isBeaulieuManager
                 ? <MonatsreportPage />
                 : canAccessModule('dashboard')
                   ? <Dashboard />

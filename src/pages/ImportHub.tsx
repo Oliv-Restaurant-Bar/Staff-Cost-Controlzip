@@ -7,7 +7,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
   CheckCircle2, AlertCircle, Loader2, ChevronDown,
-  ShoppingCart, Database, RefreshCw, Lock, LockOpen, ShieldCheck,
+  ShoppingCart, Database, RefreshCw, Lock, LockOpen, ShieldCheck, XCircle, PencilLine,
 } from 'lucide-react';
 import {
   getLockState,
@@ -23,8 +23,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { format, parseISO, differenceInDays, differenceInCalendarMonths, endOfMonth } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { GastronoviImportSection } from '@/components/GastronoviImportSection';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
+import { ManualEntryCard } from '@/components/GastronoviImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult, type BeaulieuBudgetVerifyRow } from '@/lib/supabase-db';
@@ -87,9 +87,12 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync } from '@/lib/maison-store';
-import { parseGaesteXlsx, parseDurchschnittXlsx, type TagesmetrikImportResult } from '@/lib/gaeste-import';
+import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
 import { saveGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily } from '@/lib/gaeste-store';
-import { ladeUmsatzTage } from '@/lib/umsatz';
+import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
+import { detectTagesdatenTypFromFile, readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
+import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
+import { parseGastronoviExcel, type GastronoviDayResult } from '@/lib/revenue-parser';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
 import { ImportGroupCards, IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
 import { visibleCategories } from '@/lib/import-center';
@@ -2404,235 +2407,290 @@ function BudgetVerifyTable({ rows }: { rows: BeaulieuBudgetVerifyRow[] }) {
 
 // ─── Marketing-Umsatz Import ──────────────────────────────────────────────────
 
-function MaisonImportSection() {
-  const { tenantKey } = useTenant();
-  const [year, setYear]       = useState(currentYear);
-  const [file, setFile]       = useState<File | null>(null);
-  const [status, setStatus]   = useState<'idle' | 'parsing' | 'done' | 'error'>('idle');
-  const [result, setResult]   = useState<import('@/lib/maison-import').MaisonImportResult | null>(null);
-  const [error, setError]     = useState('');
-  const [saving, setSaving]   = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+// ─── Kombinierter Tagesdaten-Import (Auto-Typerkennung) ──────────────────────
+//
+// EINE Upload-Zone für alle vier Tagesdaten-Excel-Typen (Umsatz, Marketing,
+// Gäste, Durchschnittsverkauf). Ablauf: Datei wählen → Auto-Erkennung + Parsen
+// mit gewähltem Jahr → VORSCHAU → Nutzer bestätigt → Speichern. Vor Bestätigung
+// wird NICHTS gespeichert. Nutzt die bestehenden Parser/Speicherpfade.
 
-  const handleFile = (f: File) => {
-    setFile(f);
-    setStatus('idle');
-    setResult(null);
-    setError('');
-  };
+const TYP_LABEL: Record<TagesdatenTyp, string> = {
+  umsatz:       'Umsatz (Ist / Vorjahr)',
+  marketing:    'Marketing-Umsatz',
+  gaeste:       'Gäste',
+  durchschnitt: 'Durchschnittsverkauf',
+};
 
-  const handleParse = async () => {
-    if (!file) return;
-    setStatus('parsing');
-    setError('');
-    try {
-      const r = await parseMaisonXlsx(file, year);
-      setResult(r);
-      setStatus('done');
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-      setStatus('error');
-    }
-  };
+const TYP_BADGE: Record<TagesdatenTyp, string> = {
+  umsatz:       'border-green-300 text-green-700 bg-green-50 dark:bg-green-950/20',
+  marketing:    'border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20',
+  gaeste:       'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20',
+  durchschnitt: 'border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20',
+};
 
-  const handleSave = async () => {
-    if (!result) return;
-    setSaving(true);
-    try {
-      await saveMaisonDaily(tenantKey, result.daily);
-      if (!getMaisonEnabledSync(tenantKey)) {
-        await saveMaisonEnabled(tenantKey, true);
-      }
-      toast.success(`Marketing-Umsatz gespeichert: ${result.daysWithData} Tage, CHF ${result.totalGross.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`);
-      setFile(null);
-      setResult(null);
-      setStatus('idle');
-      if (fileRef.current) fileRef.current.value = '';
-    } catch (e) {
-      toast.error('Fehler beim Speichern: ' + String(e instanceof Error ? e.message : e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const fmtCHF = (n: number) => `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  return (
-    <div className="space-y-3">
-      <div className="rounded-lg border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/10 p-4 space-y-3">
-
-        <p className="text-xs text-muted-foreground">
-          Lade den Gastronovi-Export (Excel) hoch. Die Zeilen <span className="font-mono bg-muted px-1 rounded">marketing</span> und{' '}
-          <span className="font-mono bg-muted px-1 rounded">Marketing</span> werden pro Tag summiert und in der Marketing-Spalte
-          des Tages-Controllings angezeigt.
-        </p>
-
-        {/* Jahr + Datei */}
-        <div className="flex flex-wrap gap-2 items-end">
-          <div className="space-y-1">
-            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Jahr</p>
-            <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
-              <SelectTrigger className="h-8 w-24 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {[currentYear - 1, currentYear, currentYear + 1].map(y => (
-                  <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="flex-1 space-y-1">
-            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Excel-Datei</p>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
-              className="block w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-violet-100 file:text-violet-700 dark:file:bg-violet-900/40 dark:file:text-violet-300 cursor-pointer"
-            />
-          </div>
-        </div>
-
-        {file && status === 'idle' && (
-          <Button size="sm" className="h-8 text-xs w-full gap-1.5" onClick={handleParse}>
-            <Upload className="h-3.5 w-3.5" />
-            Datei analysieren
-          </Button>
-        )}
-
-        {status === 'parsing' && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Wird analysiert…
-          </div>
-        )}
-
-        {status === 'error' && (
-          <div className="flex items-start gap-2 rounded bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            {error}
-          </div>
-        )}
-
-        {status === 'done' && result && (
-          <div className="space-y-2">
-            <div className="rounded border border-violet-200 dark:border-violet-700 bg-white dark:bg-violet-950/10 p-3 space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Analyse abgeschlossen
-              </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1">
-                <span className="text-muted-foreground">Monat erkannt:</span>
-                <span className="font-medium">{result.month.toString().padStart(2, '0')}.{result.year}</span>
-                <span className="text-muted-foreground">Tage mit Daten:</span>
-                <span className="font-medium">{result.daysWithData}</span>
-                <span className="text-muted-foreground">Gesamt (Brutto):</span>
-                <span className="font-medium">{fmtCHF(result.totalGross)}</span>
-                <span className="text-muted-foreground">Zeilen verarbeitet:</span>
-                <span className="font-medium">{result.rowsFound.join(', ') || '–'}</span>
-              </div>
-            </div>
-            <Button
-              size="sm"
-              className="h-8 text-xs w-full gap-1.5 bg-violet-600 hover:bg-violet-700 text-white"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              {saving ? 'Wird gespeichert…' : 'Daten übernehmen'}
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+/** Vorschau-Datenmodell (nach Parsen, vor Speichern). */
+interface TagesdatenPreview {
+  typ: TagesdatenTyp;
+  year: number;
+  daily: Record<string, number>;   // ISO → Wert (für gaeste/durchschnitt/marketing)
+  umsatzRows?: GastronoviDayResult[]; // nur für umsatz
+  dates: string[];                 // sortierte ISO-Tage mit Wert
+  from: string | null;
+  to: string | null;
+  /** Monatstotale je betroffenem Monat: 'YYYY-MM' → aufbereiteter Wert */
+  monthTotals: { month: string; value: number }[];
+  /** Info zur Zeitraum-Zelle (nur gaeste) */
+  zeitraum?: number | null;
+  tagessumme?: number;
+  /** Ungültige Datumsspalten (z.B. «29.02.» im Nicht-Schaltjahr) — vom Import ausgeschlossen. */
+  invalidDates?: string[];
 }
 
-/**
- * Manuelle Tages-Importe für den Monatsreport: GÄSTE (Zeile «Gesamt», Personen)
- * und DURCHSCHNITTSVERKAUF (Zeile «Durchschnitt», CHF). Gleiche Excel-Mechanik
- * wie der Umsatz-Import; die «Zeitraum»-Spalte ist massgeblich.
- */
-function TagesmetrikImportSection({ art }: { art: 'gaeste' | 'durchschnitt' }) {
-  const { tenantKey } = useTenant();
-  const [year, setYear]     = useState(currentYear);
-  const [file, setFile]     = useState<File | null>(null);
-  const [status, setStatus] = useState<'idle' | 'parsing' | 'done' | 'error'>('idle');
-  const [result, setResult] = useState<TagesmetrikImportResult | null>(null);
-  const [error, setError]   = useState('');
-  const [saving, setSaving] = useState(false);
+function TagesdatenImportSection() {
+  const { tenantId, tenantKey } = useTenant();
+  const [year, setYear] = useState(currentYear);
+  const [file, setFile] = useState<File | null>(null);
+  const [status, setStatus] = useState<'idle' | 'parsing' | 'preview' | 'saving' | 'error'>('idle');
+  const [preview, setPreview] = useState<TagesdatenPreview | null>(null);
+  const [error, setError] = useState('');
+  const [warn, setWarn] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const isGaeste = art === 'gaeste';
-  const fmtVal = (n: number) => isGaeste
-    ? `${n.toLocaleString('de-CH')} P.`
-    : `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const yearOptions: number[] = [];
+  for (let y = currentYear; y >= 2023; y--) yearOptions.push(y);
+
+  const isCHF = (t: TagesdatenTyp) => t === 'umsatz' || t === 'marketing' || t === 'durchschnitt';
+  const fmtValueByTyp = (t: TagesdatenTyp, n: number) =>
+    t === 'gaeste'
+      ? `${n.toLocaleString('de-CH')} P.`
+      : `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const reset = () => {
+    setFile(null);
+    setPreview(null);
+    setStatus('idle');
+    setError('');
+    setWarn('');
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const monthLabel = (ym: string) => {
+    const [y, m] = ym.split('-').map(Number);
+    return format(new Date(y, m - 1, 1), 'MMMM yyyy', { locale: de });
+  };
 
   const handleParse = async () => {
     if (!file) return;
     setStatus('parsing');
     setError('');
+    setWarn('');
     try {
-      const r = isGaeste ? await parseGaesteXlsx(file, year) : await parseDurchschnittXlsx(file, year);
-      setResult(r);
-      setStatus('done');
+      const typ = await detectTagesdatenTypFromFile(file);
+      if (typ == null) {
+        setError('Dateityp nicht erkannt — nichts importiert. Bitte prüfe das Format (Zeile «Gesamt»/«Food»/«marketing»/«Durchschnitt» + Datumsspalten «TT.MM.»).');
+        setStatus('error');
+        return;
+      }
+
+      // Datumsspalten gegen echte Kalenderdaten validieren (29.02. nur in
+      // Schaltjahren, 31.04. nie, …). Ungültige Spalten werden gelistet und vom
+      // Import ausgeschlossen (nicht stillschweigend verworfen).
+      const rawRows = await readFirstSheetRows(file);
+      const headerRow = rawRows[0] ?? [];
+      const invalidDates: string[] = [];
+      const validIsoSet = new Set<string>();
+      for (const h of headerRow) {
+        const s = String(h ?? '').trim();
+        if (!/^\d{1,2}\.\d{1,2}\.?$/.test(s)) continue; // keine TT.MM.-Spalte
+        const iso = isoFromDayMonth(s, year);
+        if (iso == null) invalidDates.push(formatInvalidDayMonth(s));
+        else validIsoSet.add(iso);
+      }
+
+      let daily: Record<string, number> = {};
+      let umsatzRows: GastronoviDayResult[] | undefined;
+      let zeitraum: number | null | undefined;
+      let tagessumme: number | undefined;
+
+      if (typ === 'gaeste') {
+        const r = await parseGaesteXlsx(file, year);
+        daily = r.daily; zeitraum = r.zeitraum; tagessumme = r.tagessumme;
+        if (r.zeitraum != null && r.zeitraum !== r.tagessumme) {
+          setWarn(`Zeitraum-Spalte der Datei: ${r.zeitraum.toLocaleString('de-CH')} P. — abweichend, Tageswerte sind massgeblich.`);
+        }
+      } else if (typ === 'durchschnitt') {
+        const r = await parseDurchschnittXlsx(file, year);
+        daily = r.daily; zeitraum = r.zeitraum;
+      } else if (typ === 'marketing') {
+        const r = await parseMaisonXlsx(file, year);
+        daily = r.daily;
+      } else {
+        // umsatz
+        const rows = await parseGastronoviExcel(file, year);
+        if (!rows || rows.length === 0) {
+          setError('Keine Umsatz-Tagesdaten erkannt. Bitte prüfe das Dateiformat (Spaltenköpfe «01.01.», «02.01.» usw.).');
+          setStatus('error');
+          return;
+        }
+        umsatzRows = rows.filter(r => r.total > 0);
+        daily = Object.fromEntries(umsatzRows.map(r => [r.date, r.total]));
+      }
+
+      // Ungültige Datumsspalten vom Import ausschliessen: nur ISO-Tage behalten,
+      // die einer gültigen «TT.MM.»-Kopfspalte im gewählten Jahr entsprechen.
+      // (Fängt auch von Parsern gerollte Daten wie 29.02.→01.03. ab.)
+      if (invalidDates.length > 0) {
+        daily = Object.fromEntries(Object.entries(daily).filter(([iso]) => validIsoSet.has(iso)));
+        if (umsatzRows) umsatzRows = umsatzRows.filter(r => validIsoSet.has(r.date));
+      }
+
+      const dates = (umsatzRows ? umsatzRows.map(r => r.date) : Object.keys(daily)).sort();
+      if (dates.length === 0) {
+        setError(
+          invalidDates.length > 0
+            ? `Keine gültigen Tage: alle Datumsspalten ungültig (${invalidDates.join(', ')}). Bitte Jahr/Datei prüfen.`
+            : 'Keine Tage mit Werten in der Datei gefunden.',
+        );
+        setStatus('error');
+        return;
+      }
+
+      if (invalidDates.length > 0) {
+        const msg = `${invalidDates.length} ungültige Datumsspalte${invalidDates.length === 1 ? '' : 'n'} übersprungen: ${invalidDates.join(', ')}`;
+        setWarn(w => (w ? `${w} · ${msg}` : msg));
+      }
+
+      // Monatstotale je betroffenem Monat
+      const monthMap = new Map<string, number>();
+      if (typ === 'umsatz' && umsatzRows) {
+        // Netto gesamt pro Monat (kanonische Umsatzformel)
+        const byMonth = new Map<string, UmsatzTag[]>();
+        for (const r of umsatzRows) {
+          const ym = r.date.slice(0, 7);
+          const tag: UmsatzTag = {
+            datum: r.date,
+            gesamtBrutto: r.total,
+            takeAwayBrutto: r.takeAway,
+            foodBrutto: r.food,
+            beverageBrutto: r.beverage,
+            marketingNetto: 0,
+          };
+          if (!byMonth.has(ym)) byMonth.set(ym, []);
+          byMonth.get(ym)!.push(tag);
+        }
+        for (const [ym, tage] of byMonth) monthMap.set(ym, summiereUmsatz(tage).netto);
+      } else if (typ === 'durchschnitt') {
+        // Ø je Monat (Mittelwert der Tageswerte)
+        const acc = new Map<string, { sum: number; n: number }>();
+        for (const d of dates) {
+          const ym = d.slice(0, 7);
+          const a = acc.get(ym) ?? { sum: 0, n: 0 };
+          a.sum += daily[d]; a.n += 1; acc.set(ym, a);
+        }
+        for (const [ym, a] of acc) monthMap.set(ym, a.n > 0 ? a.sum / a.n : 0);
+      } else {
+        // gaeste / marketing → Summe je Monat
+        for (const d of dates) {
+          const ym = d.slice(0, 7);
+          monthMap.set(ym, (monthMap.get(ym) ?? 0) + daily[d]);
+        }
+      }
+      const monthTotals = [...monthMap.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, value]) => ({ month, value }));
+
+      setPreview({
+        typ, year, daily, umsatzRows,
+        dates, from: dates[0] ?? null, to: dates.at(-1) ?? null,
+        monthTotals, zeitraum, tagessumme,
+        invalidDates: invalidDates.length > 0 ? invalidDates : undefined,
+      });
+      setStatus('preview');
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
+      setError('Fehler beim Lesen der Datei: ' + String(e instanceof Error ? e.message : e));
       setStatus('error');
     }
   };
 
-  const handleSave = async () => {
-    if (!result) return;
-    setSaving(true);
+  const handleConfirm = async () => {
+    if (!preview) return;
+    setStatus('saving');
     try {
-      if (isGaeste) {
-        await saveGaesteDaily(tenantKey, result.daily);
-        toast.success(`Gäste gespeichert: ${result.daysWithData} Tage, ${fmtVal(result.tagessumme)} gesamt`);
-      } else {
-        const monthKey = `${result.year}-${String(result.month).padStart(2, '0')}`;
+      const { typ, daily, umsatzRows } = preview;
+      if (typ === 'gaeste') {
+        await saveGaesteDaily(tenantKey, daily);
+        toast.success(`Gäste gespeichert: ${preview.dates.length} Tage, ${fmtValueByTyp('gaeste', preview.tagessumme ?? 0)} gesamt`);
+      } else if (typ === 'durchschnitt') {
+        const monthKey = preview.from ? preview.from.slice(0, 7) : `${preview.year}-01`;
         await saveAvgCheck(
           tenantKey,
-          result.daily,
-          result.zeitraum != null ? { [monthKey]: result.zeitraum } : null,
+          daily,
+          preview.zeitraum != null ? { [monthKey]: preview.zeitraum } : null,
         );
-        toast.success(`Durchschnittsverkauf gespeichert: ${result.daysWithData} Tage${result.zeitraum != null ? `, Monatswert ${fmtVal(result.zeitraum)}` : ''}`);
+        toast.success(`Durchschnittsverkauf gespeichert: ${preview.dates.length} Tage`);
+      } else if (typ === 'marketing') {
+        await saveMaisonDaily(tenantKey, daily);
+        if (!getMaisonEnabledSync(tenantKey)) await saveMaisonEnabled(tenantKey, true);
+        const total = preview.monthTotals.reduce((s, m) => s + m.value, 0);
+        toast.success(`Marketing-Umsatz gespeichert: ${preview.dates.length} Tage, CHF ${total.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`);
+      } else {
+        // umsatz — Modus anhand gewähltem Jahr (Ist vs. Vorjahr)
+        const target = targetForYear(preview.year, currentYear);
+        const storageKey = tenantKey('dailyBudgets');
+        // commitGastronoviDays prüft im Vorjahr-Modus die Jahres-Sperre (wie
+        // VjDailyImportSection) und schreibt bei Sperre nichts.
+        const res = await commitGastronoviDays(storageKey, umsatzRows ?? [], target, { tenantId, year: preview.year });
+        if (res.blocked) {
+          setError(
+            `Jahr ${res.lockedYear ?? preview.year} ist gesperrt — Import nicht ausgeführt. ` +
+            `Zum Entsperren: Sektion «Vorjahres-Tagesumsatz» (nur Admin).`,
+          );
+          setStatus('error');
+          toast.error(`Jahr ${res.lockedYear ?? preview.year} ist gesperrt — Import nicht ausgeführt.`);
+          return;
+        }
+        window.dispatchEvent(new Event('supabase-kv-synced'));
+        console.log(`[REVENUE] tenant: ${tenantId} | key: ${storageKey} | target: ${target} | ${res.count} Tage ${res.from ?? '?'}..${res.to ?? '?'} | vj_daily: ${res.vjUpserted}`);
+        toast.success(
+          target === 'actual'
+            ? `${res.count} Tage importiert als Ist-Umsätze`
+            : `${res.count} Tage importiert als Vorjahresumsätze (auch nach vj_daily für den Report)`,
+        );
       }
-      setFile(null);
-      setResult(null);
-      setStatus('idle');
-      if (fileRef.current) fileRef.current.value = '';
+      notifyReportingDataChanged();
+      reset();
     } catch (e) {
       toast.error('Fehler beim Speichern: ' + String(e instanceof Error ? e.message : e));
-    } finally {
-      setSaving(false);
+      setStatus('preview');
     }
   };
 
+  const monthTotalHeading = preview
+    ? preview.typ === 'umsatz' ? 'Netto gesamt'
+      : preview.typ === 'gaeste' ? 'Personen'
+      : preview.typ === 'durchschnitt' ? 'Ø Verkauf'
+      : 'Marketing (CHF)'
+    : '';
+
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 p-4 space-y-3">
+      <div className="rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/10 p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
-          {isGaeste ? (
-            <>Lade den Gastronovi-Export (Excel) mit der Zeile <span className="font-mono bg-muted px-1 rounded">Gesamt</span> (Personen) hoch.
-            Die <strong>Zeitraum-Spalte ist massgeblich</strong> — die Tageswerte werden darauf abgeglichen. Quelle für «Gäste IN» im Monatsreport.</>
-          ) : (
-            <>Lade den Gastronovi-Export (Excel) mit der Zeile <span className="font-mono bg-muted px-1 rounded">Durchschnitt</span> (CHF) hoch.
-            Der <strong>Zeitraum-Wert ist der massgebliche Monatswert</strong> für «Durchschnittsverkauf» im Monatsreport.</>
-          )}
+          Lade einen Gastronovi-Tagesdaten-Export (Excel) hoch. Der Dateityp wird
+          <strong> automatisch erkannt</strong> (Umsatz, Marketing, Gäste oder Durchschnittsverkauf).
+          Massgeblich für die Datumszuordnung ist ausschliesslich das <strong>gewählte Jahr</strong>.
+          Vor dem Speichern siehst du eine <strong>Vorschau</strong>.
         </p>
 
         <div className="flex flex-wrap gap-2 items-end">
           <div className="space-y-1">
-            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Jahr</p>
-            <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Jahr *</p>
+            <Select value={String(year)} onValueChange={v => { setYear(Number(v)); reset(); }}>
               <SelectTrigger className="h-8 w-24 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {[currentYear - 1, currentYear, currentYear + 1].map(y => (
+                {yearOptions.map(y => (
                   <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
                 ))}
               </SelectContent>
@@ -2647,14 +2705,14 @@ function TagesmetrikImportSection({ art }: { art: 'gaeste' | 'durchschnitt' }) {
               accept=".xlsx,.xls"
               onChange={e => {
                 const f = e.target.files?.[0];
-                if (f) { setFile(f); setStatus('idle'); setResult(null); setError(''); }
+                if (f) { setFile(f); setStatus('idle'); setPreview(null); setError(''); setWarn(''); }
               }}
-              className="block w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-amber-100 file:text-amber-700 dark:file:bg-amber-900/40 dark:file:text-amber-300 cursor-pointer"
+              className="block w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-sky-100 file:text-sky-700 dark:file:bg-sky-900/40 dark:file:text-sky-300 cursor-pointer"
             />
           </div>
         </div>
 
-        {file && status === 'idle' && (
+        {file && (status === 'idle' || status === 'error') && (
           <Button size="sm" className="h-8 text-xs w-full gap-1.5" onClick={handleParse}>
             <Upload className="h-3.5 w-3.5" />
             Datei analysieren
@@ -2675,52 +2733,95 @@ function TagesmetrikImportSection({ art }: { art: 'gaeste' | 'durchschnitt' }) {
           </div>
         )}
 
-        {status === 'done' && result && (
+        {(status === 'preview' || status === 'saving') && preview && (
           <div className="space-y-2">
-            <div className="rounded border border-amber-200 dark:border-amber-700 bg-white dark:bg-amber-950/10 p-3 space-y-1.5">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+            <div className="rounded border border-sky-200 dark:border-sky-700 bg-white dark:bg-sky-950/10 p-3 space-y-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-sky-700 dark:text-sky-300">
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Analyse abgeschlossen
+                Vorschau
+                <Badge variant="outline" className={cn('text-[9px]', TYP_BADGE[preview.typ])}>
+                  {TYP_LABEL[preview.typ]}
+                </Badge>
+                {preview.typ === 'umsatz' && (
+                  <Badge variant="outline" className="text-[9px]">
+                    {targetForYear(preview.year, currentYear) === 'actual' ? 'Ist-Umsatz' : 'Vorjahr'}
+                  </Badge>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1">
-                <span className="text-muted-foreground">Monat erkannt:</span>
-                <span className="font-medium">{result.month.toString().padStart(2, '0')}.{result.year}</span>
-                <span className="text-muted-foreground">Tage mit Daten:</span>
-                <span className="font-medium">{result.daysWithData}</span>
-                {isGaeste ? (
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                <span className="text-muted-foreground">Jahr:</span>
+                <span className="font-medium">{preview.year}</span>
+                <span className="text-muted-foreground">Datumsbereich:</span>
+                <span className="font-medium">
+                  {preview.from ? format(parseISO(preview.from), 'dd.MM.') : '–'}
+                  {' – '}
+                  {preview.to ? format(parseISO(preview.to), 'dd.MM.yyyy') : '–'}
+                </span>
+                <span className="text-muted-foreground">Anzahl Tage:</span>
+                <span className="font-medium">{preview.dates.length}</span>
+                {preview.typ === 'gaeste' && (
                   <>
                     <span className="text-muted-foreground">Tagessumme (massgeblich):</span>
-                    <span className="font-medium">{fmtVal(result.tagessumme)}</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-muted-foreground">Monatswert (Zeitraum):</span>
-                    <span className="font-medium">{result.zeitraum != null ? fmtVal(result.zeitraum) : '–'}</span>
+                    <span className="font-medium">{fmtValueByTyp('gaeste', preview.tagessumme ?? 0)}</span>
                   </>
                 )}
-                <span className="text-muted-foreground">Zeilen verarbeitet:</span>
-                <span className="font-medium">{result.rowsFound.join(', ') || '–'}</span>
               </div>
-              {isGaeste && result.zeitraum != null && result.zeitraum !== result.tagessumme && (
-                <p className="text-[11px] text-muted-foreground pt-1">
-                  Zeitraum-Spalte der Datei: {fmtVal(result.zeitraum)} — abweichend, Tageswerte sind massgeblich.
-                </p>
+
+              {/* Monatstotale je betroffenem Monat */}
+              <div className="rounded border border-border/60 bg-muted/20 divide-y divide-border/50">
+                <div className="flex items-center justify-between px-2.5 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span>Monat</span>
+                  <span>{monthTotalHeading}</span>
+                </div>
+                {preview.monthTotals.map(mt => (
+                  <div key={mt.month} className="flex items-center justify-between px-2.5 py-1 text-xs">
+                    <span>{monthLabel(mt.month)}</span>
+                    <span className="font-medium tabular-nums">
+                      {preview.typ === 'gaeste'
+                        ? `${Math.round(mt.value).toLocaleString('de-CH')} P.`
+                        : `CHF ${mt.value.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {warn && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400">{warn}</p>
               )}
             </div>
-            <Button
-              size="sm"
-              className="h-8 text-xs w-full gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-              {saving ? 'Wird gespeichert…' : 'Daten übernehmen'}
-            </Button>
+
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                className="h-8 text-xs flex-1 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white"
+                onClick={handleConfirm}
+                disabled={status === 'saving'}
+              >
+                {status === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                {status === 'saving' ? 'Wird gespeichert…' : 'Importieren'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs gap-1.5"
+                onClick={reset}
+                disabled={status === 'saving'}
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Abbrechen
+              </Button>
+            </div>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+/** Manuelle Tageserfassung (aus GastronoviImportSection) — eigene Karte. */
+function ManualEntrySection() {
+  const { tenantId, tenantKey } = useTenant();
+  return <ManualEntryCard storageKey={tenantKey('dailyBudgets')} tenantId={tenantId} />;
 }
 
 function BeaulieuBudgetImportSection() {
@@ -3127,7 +3228,7 @@ const AnnualPersonnelCostImportSection = () => {
 const PREFILL_TARGET_ANCHORS: Record<string, string> = {
   tagesumsatz: 'umsatz-ist',
   mirus: 'ist-stunden',
-  maison: 'marketing-umsatz',
+  maison: 'umsatz-ist',
 };
 
 const ImportHub = () => {
@@ -3218,56 +3319,30 @@ const ImportHub = () => {
         {/* ── 0c. Vollständigkeit Tagesdaten (Umsatz/Gäste/Durchschnitt) ─ */}
         <VollstaendigkeitCard />
 
-        {/* ── 1. Umsatz Ist ────────────────────────────────────────────── */}
+        {/* ── 1. Tagesdaten-Import (Auto-Typerkennung) ─────────────────── */}
         <Section
           id="umsatz-ist"
-          title="Umsatz Ist"
-          subtitle="Tagesumsätze aus Gastronovi importieren (laufendes Jahr)"
+          title="Tagesdaten-Import"
+          subtitle="Umsatz, Marketing, Gäste oder Durchschnittsverkauf – Typ wird automatisch erkannt, Jahr per Dropdown"
           icon={<TrendingUp className="h-4 w-4" />}
-          color="border-green-400 dark:border-green-600"
-          badge="Gastronovi"
-          badgeColor="border-green-300 text-green-700 bg-green-50 dark:bg-green-950/20"
+          color="border-sky-400 dark:border-sky-600"
+          badge="Auto-Erkennung"
+          badgeColor="border-sky-300 text-sky-700 bg-sky-50 dark:bg-sky-950/20"
         >
-          <GastronoviImportSection />
+          <TagesdatenImportSection />
         </Section>
 
-        {/* ── 1b. Marketing-Umsatz ──────────────────────────────────────── */}
+        {/* ── 1b. Manuelle Tageserfassung ──────────────────────────────── */}
         <Section
-          id="marketing-umsatz"
-          title="Marketing-Umsatz"
-          subtitle="Tägliche Marketing-Umsätze aus Gastronovi-Export importieren (Zeile «marketing»)"
-          icon={<TrendingUp className="h-4 w-4" />}
-          color="border-violet-400 dark:border-violet-600"
-          badge="Excel .xlsx"
-          badgeColor="border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20"
+          id="manuelle-tageserfassung"
+          title="Manuelle Tageserfassung"
+          subtitle="Einzelnen Tagesumsatz (Ist oder Vorjahr) von Hand erfassen"
+          icon={<PencilLine className="h-4 w-4" />}
+          color="border-slate-400 dark:border-slate-600"
+          badge="Manuell"
+          badgeColor="border-slate-300 text-slate-700 bg-slate-50 dark:bg-slate-950/20"
         >
-          <MaisonImportSection />
-        </Section>
-
-        {/* ── 1c. Gäste ─────────────────────────────────────────────────── */}
-        <Section
-          id="gaeste-import"
-          title="Gäste"
-          subtitle="Tägliche Gästezahlen aus Gastronovi-Export importieren (Zeile «Gesamt», Personen)"
-          icon={<TrendingUp className="h-4 w-4" />}
-          color="border-amber-400 dark:border-amber-600"
-          badge="Excel .xlsx"
-          badgeColor="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20"
-        >
-          <TagesmetrikImportSection art="gaeste" />
-        </Section>
-
-        {/* ── 1d. Durchschnittsverkauf ──────────────────────────────────── */}
-        <Section
-          id="durchschnitt-import"
-          title="Durchschnittsverkauf"
-          subtitle="Täglicher Durchschnittsverkauf aus Gastronovi-Export importieren (Zeile «Durchschnitt», CHF)"
-          icon={<TrendingUp className="h-4 w-4" />}
-          color="border-amber-400 dark:border-amber-600"
-          badge="Excel .xlsx"
-          badgeColor="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20"
-        >
-          <TagesmetrikImportSection art="durchschnitt" />
+          <ManualEntrySection />
         </Section>
 
         {/* ── 2. Umsatz Vorjahr ─────────────────────────────────────────── */}

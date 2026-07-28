@@ -77,90 +77,37 @@ interface NavItem {
 interface NavGroup {
   groupLabel: string;
   adminOnly?: boolean;
+  /** Gruppe standardmässig eingeklappt (z.B. «Mehr»); klappt auf, wenn eine Route darin aktiv ist. */
+  collapsedByDefault?: boolean;
   items: NavItem[];
 }
 
 // ─── Navigationsstruktur ─────────────────────────────────────────────────────
 
-// Standalone top item (kein Gruppen-Label)
+// Standalone top item unter «Cockpit» (Startroute «/» = Monatsreport für
+// Admins/Beaulieu-GF; Manager behalten dort ihr Dashboard).
 const DASHBOARD_ITEM: NavItem = {
   path: '/',
-  label: 'Start',
-  shortLabel: 'Start',
+  label: 'Cockpit',
+  shortLabel: 'Cockpit',
   icon: LayoutDashboard,
   module: 'dashboard',
 };
 
 export const NAV_GROUPS: NavGroup[] = [
+  // '/dashboard' (Ausführliches Dashboard): Route + Guard bleiben bestehen,
+  // aber bewusst KEIN Nav-Eintrag — erreichbar über den Button
+  // «Ausführliches Dashboard» auf der Startübersicht und direkt per URL.
+  // '/import-cockpit' ebenso: erreichbar über den Header-Link im Import-Center.
   {
-    groupLabel: 'Verkauf',
+    groupLabel: 'Umsatz',
     items: [
-      // '/dashboard' (Ausführliches Dashboard): Route + Guard bleiben bestehen,
-      // aber bewusst KEIN Nav-Eintrag mehr — erreichbar über den Button
-      // «Ausführliches Dashboard» auf der Startübersicht und direkt per URL;
-      // für Manager-Rollen bleibt es die Startroute «/».
-      {
-        path: '/monatsreport',
-        label: 'Monatsreport',
-        shortLabel: 'Report',
-        icon: Table2,
-        adminOnly: true,
-        beaulieuAllowed: true,
-      },
-      {
-        path: '/startuebersicht',
-        label: 'Startübersicht',
-        shortLabel: 'Start',
-        icon: PieChart,
-        adminOnly: true,
-        beaulieuAllowed: true,
-        secondary: true,
-      },
-      {
-        path: '/verkauf-dashboard',
-        label: 'Verkaufsdashboard',
-        shortLabel: 'Verkauf',
-        icon: PieChart,
-        adminOnly: true,
-        beaulieuAllowed: true,
-        secondary: true,
-      },
       {
         path: '/tagesansicht',
         label: 'Tagesansicht',
         shortLabel: 'Tage',
         icon: Table2,
         module: 'tagesansicht' as import('@/hooks/usePermissions').AppModule,
-      },
-      {
-        path: '/kennzahlen-bericht',
-        label: 'Kennzahlen Bericht',
-        shortLabel: 'KPI',
-        icon: BarChart2,
-        adminOnly: true,
-        beaulieuAllowed: true,
-        secondary: true,
-      },
-      {
-        path: '/forecast',
-        label: 'Forecast Planung',
-        shortLabel: 'Forecast',
-        icon: TrendingUp,
-        adminOnly: true,
-        beaulieuAllowed: true,
-      },
-    ],
-  },
-  {
-    groupLabel: 'Umsatz',
-    adminOnly: true,
-    items: [
-      {
-        path: '/umsatzabstimmung',
-        label: 'Umsatzabstimmung',
-        shortLabel: 'Abstimmung',
-        icon: Scale,
-        adminOnly: true,
       },
       {
         path: '/tagesabschluesse',
@@ -170,28 +117,11 @@ export const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
       },
       {
-        path: '/op-liste',
-        label: 'OP-Liste Kreditoren',
-        shortLabel: 'OP-Liste',
-        icon: FileText,
+        path: '/umsatzabstimmung',
+        label: 'Umsatzabstimmung',
+        shortLabel: 'Abstimmung',
+        icon: Scale,
         adminOnly: true,
-        // beaulieuAllowed bewusst absent: beaulieu_manager sieht die OP-Liste nicht
-      },
-      {
-        path: '/budget',
-        label: 'Budget',
-        shortLabel: 'Budget',
-        icon: Wallet,
-        adminOnly: true,
-        // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Budget nicht sehen
-      },
-      {
-        path: '/erfolgsrechnung',
-        label: 'Erfolgsrechnung',
-        shortLabel: 'ER',
-        icon: BarChart3,
-        adminOnly: true,
-        // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Erfolgsrechnung nicht sehen
       },
       {
         path: '/produkt-analyse',
@@ -228,23 +158,12 @@ export const NAV_GROUPS: NavGroup[] = [
         module: 'personalstamm' as import('@/hooks/usePermissions').AppModule,
       },
       {
-        path: '/personaleintritt',
-        label: 'Personaleintritt',
-        shortLabel: 'Eintritt',
-        icon: UserPlus,
+        path: '/personalbedarf',
+        label: 'Personalbedarf',
+        shortLabel: 'Bedarf',
+        icon: ClipboardList,
         adminOnly: true,
-        beaulieuAllowed: true,
-        hideForGuest: true,
-        secondary: true,
-      },
-      {
-        path: '/betriebe',
-        label: 'Betriebe',
-        shortLabel: 'Betriebe',
-        icon: Building2,
-        adminOnly: true,
-        hideForGuest: true,
-        secondary: true,
+        module: 'personalbedarf' as import('@/hooks/usePermissions').AppModule,
       },
       {
         path: '/positionen',
@@ -255,25 +174,18 @@ export const NAV_GROUPS: NavGroup[] = [
         module: 'positionen' as import('@/hooks/usePermissions').AppModule,
       },
       {
-        path: '/personalbedarf',
-        label: 'Personalbedarf',
-        shortLabel: 'Bedarf',
-        icon: ClipboardList,
+        path: '/personaleintritt',
+        label: 'Personaleintritt',
+        shortLabel: 'Eintritt',
+        icon: UserPlus,
         adminOnly: true,
-        module: 'personalbedarf' as import('@/hooks/usePermissions').AppModule,
-      },
-      {
-        path: '/employee-integrity',
-        label: 'Datenintegrität MA',
-        shortLabel: 'Integrität',
-        icon: ShieldAlert,
-        adminOnly: true,
-        secondary: true,
+        beaulieuAllowed: true,
+        hideForGuest: true,
       },
     ],
   },
   {
-    groupLabel: 'Warenkosten',
+    groupLabel: 'Waren',
     items: [
       {
         path: '/warenrechnungen',
@@ -284,7 +196,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/wes-analyse',
-        label: 'WES Analyse',
+        label: 'WES-Analyse',
         shortLabel: 'WES',
         icon: TrendingDown,
         adminOnly: true,
@@ -298,10 +210,56 @@ export const NAV_GROUPS: NavGroup[] = [
         adminOnly: true,
         beaulieuAllowed: true,
       },
+      {
+        path: '/op-liste',
+        label: 'Kreditoren (OP-Liste)',
+        shortLabel: 'OP-Liste',
+        icon: FileText,
+        adminOnly: true,
+        // beaulieuAllowed bewusst absent: beaulieu_manager sieht die OP-Liste nicht
+      },
     ],
   },
   {
-    groupLabel: 'Foratable',
+    groupLabel: 'Finanzen',
+    adminOnly: true,
+    items: [
+      {
+        path: '/budget',
+        label: 'Budget',
+        shortLabel: 'Budget',
+        icon: Wallet,
+        adminOnly: true,
+        // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Budget nicht sehen
+      },
+      {
+        path: '/erfolgsrechnung',
+        label: 'Erfolgsrechnung',
+        shortLabel: 'ER',
+        icon: BarChart3,
+        adminOnly: true,
+        // beaulieuAllowed: false — intentionally absent: beaulieu_manager darf Erfolgsrechnung nicht sehen
+      },
+      {
+        path: '/forecast',
+        label: 'Forecast',
+        shortLabel: 'Forecast',
+        icon: TrendingUp,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
+      {
+        path: '/kennzahlen-bericht',
+        label: 'Kennzahlen-Bericht',
+        shortLabel: 'KPI',
+        icon: BarChart2,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
+    ],
+  },
+  {
+    groupLabel: 'Gäste',
     adminOnly: true,
     items: [
       // Gäste-PII: alle Foratable-Seiten leiten Gast-Sessions um (isAdmin && !isGuest)
@@ -316,44 +274,19 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/gaeste/auswertung',
-        label: 'Gäste & Reservationen',
-        shortLabel: 'Auswertung',
+        label: 'Reservationen',
+        shortLabel: 'Reserv.',
         icon: BarChart3,
         adminOnly: true,
         hideForGuest: true,
-        secondary: true,
       },
       {
         path: '/gaeste/analyse',
-        label: 'Reservations Analyse',
+        label: 'Reservations-Analyse',
         shortLabel: 'Analyse',
         icon: TrendingUp,
         adminOnly: true,
         hideForGuest: true,
-        secondary: true,
-      },
-      {
-        path: '/gaeste/duplikate',
-        label: 'Gäste Duplikate',
-        shortLabel: 'Duplikate',
-        icon: GitMerge,
-        adminOnly: true,
-        hideForGuest: true,
-        secondary: true,
-      },
-    ],
-  },
-  {
-    groupLabel: 'Admin',
-    adminOnly: true,
-    items: [
-      {
-        path: '/settings',
-        label: 'Einstellungen',
-        shortLabel: 'Settings',
-        icon: Settings,
-        adminOnly: true,
-        beaulieuAllowed: true,
       },
     ],
   },
@@ -373,9 +306,59 @@ export const NAV_GROUPS: NavGroup[] = [
         beaulieuViewerAllowed: true,
         hideForGuest: true,
       },
-      // Import-Cockpit: Route + Guard bleiben bestehen, aber bewusst KEIN
-      // Nav-Eintrag mehr — erreichbar über den Header-Link im Import-Center
-      // („Alle Quellen & Kontrollen") und direkt per URL /import-cockpit.
+    ],
+  },
+  {
+    groupLabel: 'Mehr',
+    collapsedByDefault: true,
+    items: [
+      {
+        path: '/betriebe',
+        label: 'Betriebe',
+        shortLabel: 'Betriebe',
+        icon: Building2,
+        adminOnly: true,
+        hideForGuest: true,
+      },
+      {
+        path: '/employee-integrity',
+        label: 'Datenintegrität MA',
+        shortLabel: 'Integrität',
+        icon: ShieldAlert,
+        adminOnly: true,
+      },
+      {
+        path: '/gaeste/duplikate',
+        label: 'Gäste-Duplikate',
+        shortLabel: 'Duplikate',
+        icon: GitMerge,
+        adminOnly: true,
+        hideForGuest: true,
+      },
+      {
+        path: '/verkauf-dashboard',
+        label: 'Verkaufsdashboard',
+        shortLabel: 'Verkauf',
+        icon: PieChart,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
+      {
+        path: '/startuebersicht',
+        label: 'Startübersicht',
+        shortLabel: 'Übersicht',
+        icon: PieChart,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
+      {
+        path: '/settings',
+        label: 'Einstellungen',
+        shortLabel: 'Settings',
+        icon: Settings,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
     ],
   },
 ];
@@ -419,6 +402,46 @@ function useSecondarySplit(items: NavItem[], currentActivePath: string | null) {
   return { primary, secondary, moreOpen, toggle: () => setMoreOpen(o => !o) };
 }
 
+/**
+ * Auf/Zu-Zustand für standardmässig eingeklappte Gruppen («Mehr»).
+ * Klappt automatisch auf, wenn eine Route der Gruppe aktiv ist.
+ */
+function useGroupCollapse(group: NavGroup, items: NavItem[], currentActivePath: string | null) {
+  const collapsible = !!group.collapsedByDefault;
+  const groupActive = items.some(i => i.path === currentActivePath);
+  const [groupOpen, setGroupOpen] = useState(!collapsible || groupActive);
+  useEffect(() => {
+    if (groupActive) setGroupOpen(true);
+  }, [groupActive]);
+  return { collapsible, groupOpen: !collapsible || groupOpen, toggleGroup: () => setGroupOpen(o => !o) };
+}
+
+const NavGroupHeader = ({
+  group,
+  collapsible,
+  open,
+  onToggle,
+  className,
+}: {
+  group: NavGroup;
+  collapsible: boolean;
+  open: boolean;
+  onToggle: () => void;
+  className: string;
+}) => collapsible ? (
+  <button
+    type="button"
+    onClick={onToggle}
+    aria-expanded={open}
+    className={cn(className, 'w-full flex items-center gap-1 hover:text-foreground transition-colors')}
+  >
+    {group.groupLabel}
+    <ChevronDown className={cn('h-3 w-3 flex-shrink-0 transition-transform', !open && '-rotate-90')} />
+  </button>
+) : (
+  <p className={className}>{group.groupLabel}</p>
+);
+
 const NavMoreToggle = ({ open, onClick, count }: { open: boolean; onClick: () => void; count: number }) => (
   <button
     type="button"
@@ -442,6 +465,7 @@ const SidebarNavGroup = ({
   currentActivePath: string | null;
 }) => {
   const { primary, secondary, moreOpen, toggle } = useSecondarySplit(items, currentActivePath);
+  const { collapsible, groupOpen, toggleGroup } = useGroupCollapse(group, items, currentActivePath);
 
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
@@ -466,18 +490,24 @@ const SidebarNavGroup = ({
   return (
     <div className="mt-5">
       <div className="mx-3 mb-2 border-t border-border/50" />
-      <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
-        {group.groupLabel}
-      </p>
-      <div className="space-y-0.5">
-        {primary.map(renderItem)}
-        {secondary.length > 0 && (
-          <>
-            <NavMoreToggle open={moreOpen} onClick={toggle} count={secondary.length} />
-            {moreOpen && secondary.map(renderItem)}
-          </>
-        )}
-      </div>
+      <NavGroupHeader
+        group={group}
+        collapsible={collapsible}
+        open={groupOpen}
+        onToggle={toggleGroup}
+        className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50"
+      />
+      {groupOpen && (
+        <div className="space-y-0.5">
+          {primary.map(renderItem)}
+          {secondary.length > 0 && (
+            <>
+              <NavMoreToggle open={moreOpen} onClick={toggle} count={secondary.length} />
+              {moreOpen && secondary.map(renderItem)}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -497,6 +527,7 @@ const SheetNavGroup = ({
   onNavigate: (path: string) => void;
 }) => {
   const { primary, secondary, moreOpen, toggle } = useSecondarySplit(items, currentActivePath);
+  const { collapsible, groupOpen, toggleGroup } = useGroupCollapse(group, items, currentActivePath);
 
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
@@ -519,18 +550,24 @@ const SheetNavGroup = ({
   return (
     <div className="pt-3">
       <div className="mx-1 mb-1.5 border-t border-border/50" />
-      <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
-        {group.groupLabel}
-      </p>
-      <div className="space-y-0.5">
-        {primary.map(renderItem)}
-        {secondary.length > 0 && (
-          <>
-            <NavMoreToggle open={moreOpen} onClick={toggle} count={secondary.length} />
-            {moreOpen && secondary.map(renderItem)}
-          </>
-        )}
-      </div>
+      <NavGroupHeader
+        group={group}
+        collapsible={collapsible}
+        open={groupOpen}
+        onToggle={toggleGroup}
+        className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60"
+      />
+      {groupOpen && (
+        <div className="space-y-0.5">
+          {primary.map(renderItem)}
+          {secondary.length > 0 && (
+            <>
+              <NavMoreToggle open={moreOpen} onClick={toggle} count={secondary.length} />
+              {moreOpen && secondary.map(renderItem)}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -684,11 +721,16 @@ export const AppSidebar = () => {
       {/* Navigation */}
       <nav className="flex-1 px-2 py-3">
 
-        {/* Dashboard — standalone, kein Gruppen-Label */}
+        {/* Cockpit — standalone unter eigenem Gruppen-Label */}
         {isItemVisible(DASHBOARD_ITEM) && (() => {
           const Icon = DASHBOARD_ITEM.icon;
-          const active = location.pathname === '/';
+          // «/monatsreport» rendert dieselbe Cockpit-Seite → ebenfalls aktiv markieren
+          const active = location.pathname === '/' || location.pathname === '/monatsreport';
           return (
+            <>
+            <p className="px-3 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+              Cockpit
+            </p>
             <NavLink
               to={DASHBOARD_ITEM.path}
               end
@@ -702,6 +744,7 @@ export const AppSidebar = () => {
               <Icon className="h-4 w-4 flex-shrink-0" />
               {DASHBOARD_ITEM.label}
             </NavLink>
+            </>
           );
         })()}
 
@@ -898,7 +941,7 @@ export const AppBottomNav = () => {
             {/* Dashboard standalone */}
             {isItemVisible(DASHBOARD_ITEM) && (() => {
               const Icon = DASHBOARD_ITEM.icon;
-              const active = location.pathname === '/';
+              const active = location.pathname === '/' || location.pathname === '/monatsreport';
               return (
                 <button
                   key={DASHBOARD_ITEM.path}

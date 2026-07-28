@@ -49,6 +49,7 @@
 - [kueche_manager Dashboard gewollt](kueche-dashboard-gate.md) — Manager-Dashboard-Zugriff + canSeePersonnelCostTotals für alle sind Absicht; Kommentar-Matrix in usePermissions ist veraltet, Gate nicht verengen.
 - [Financial Metrics Registry](financial-metrics-registry.md) — Dashboard-Finanzkarten NUR aus der read-only Registry; loadMonth/loadBudget-Default-Keys sind NICHT tenant-präfixiert — immer tenantKey(...) übergeben.
 - [Reporting multi-month KV race](reporting-multimonth-kv-race.md) — parallel saveMonth blob backups overwrite each other with stale months; use skipKvBackup + sequential retryReportingMonthsBackup.
+- [Tagesdaten-Einheitsimport](tagesdaten-einheitsimport.md) — Auto-Typerkennung + Jahr-Dropdown; Vorjahr-Umsatz MUSS Doppelziel dailyBudgets+vj_daily schreiben; Lock zentral in commitGastronoviDays.
 - [Umsatzabstimmung Quellen-Mismatch](umsatzabstimmung-source-mismatch.md) — UA liest nur 3 Quellen (Manual/dailyBudgets/gn); vj_daily+revenueActual unsichtbar; saveMonth ohne storeKey → immer Oliv; KV-Backup kann partiell fehlen.
 - [app_settings typed wrapper](app-settings-typed-wrapper.md) — all app_settings access via appSettingsTable(); never edit generated types.ts, one isolated cast; Supabase builders are PromiseLike, not Promise.
 - [KV-Verfügbarkeit flüchtig](kv-availability-volatile.md) — «available» nie dauerhaft cachen; Netzwerk invalidiert, DB-Fehler nicht; Offline-Test-Mocks brauchen echte Netzwerkfehlermeldungen.
