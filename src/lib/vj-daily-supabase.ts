@@ -41,6 +41,7 @@ export interface VjDayRecord {
   actualRevenue:   number;
   foodRevenue?:    number;
   beverageRevenue?: number;
+  takeawayRevenue?: number;    // optional (brutto) — nur wenn >0; alte Records ohne Feld bleiben gültig
   source:          string;     // "vorjahr_import"
 }
 

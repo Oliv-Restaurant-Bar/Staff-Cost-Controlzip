@@ -354,11 +354,13 @@ export async function ladeMonatsreport(
   }
 
   // ── Vorjahr (vj_daily) ─────────────────────────────────────────────────────
-  let vjGross = 0, vjFoodG = 0, vjBevG = 0, hatVj = false, hatVjFood = false, hatVjBev = false;
+  let vjGross = 0, vjFoodG = 0, vjBevG = 0, vjTa = 0;
+  let hatVj = false, hatVjFood = false, hatVjBev = false, hatVjTa = false;
   for (const rec of Object.values(vjDaily)) {
     if ((rec.actualRevenue ?? 0) > 0) { vjGross += rec.actualRevenue; hatVj = true; }
     if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue!; hatVjFood = true; }
     if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue!; hatVjBev = true; }
+    if ((rec.takeawayRevenue ?? 0) > 0) { vjTa += rec.takeawayRevenue!; hatVjTa = true; }
   }
 
   // ── Produktive Stunden ─────────────────────────────────────────────────────
@@ -434,6 +436,9 @@ export async function ladeMonatsreport(
     d('Take Away Anteil', {
       month: taM != null && mGross > 0 ? r2((mTa / mGross) * 100) : null,
       week: taW != null && wGross > 0 ? r2((wTa / wGross) * 100) : null,
+      // Vorjahr: TA-Summe ÷ Gesamt-Umsatz über denselben Monat (analog Ist).
+      // Leer wenn keine VJ-TA-Daten (alte Records ohne Feld) — leer statt 0.
+      vj: hatVjTa && vjGross > 0 ? r2((vjTa / vjGross) * 100) : null,
     }, { fmt: 'pct' }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──

@@ -125,6 +125,10 @@ export async function commitGastronoviDays(
       };
       if (r.food > 0)     rec.foodRevenue     = r.food;
       if (r.beverage > 0) rec.beverageRevenue = r.beverage;
+      // Take-Away-Anteil (brutto) auch fürs Vorjahr übernehmen — Quelle der
+      // Vorjahr-Spalte «Take Away Anteil» im Monatsreport. Nur setzen wenn >0
+      // (rückwärtskompatibel: alte Records ohne Feld bleiben gültig).
+      if (r.takeAway > 0) rec.takeawayRevenue = r.takeAway;
       return rec;
     });
     const { upserted } = await upsertVjDailyBatch(records, opts.tenantId);
