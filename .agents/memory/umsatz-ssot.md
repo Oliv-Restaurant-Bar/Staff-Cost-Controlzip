@@ -8,6 +8,7 @@ Regeln:
 - Netto = TA_brutto/1.026 + (Gesamt−TA)/1.081 + Marketing (gn_discounts, Name exakt «Marketing»/«marketing», Nennwert netto; Maison/Mitarbeiter-Rabatt NICHT).
 - Quelle: gn_imports Tagesimporte (aggregation_level='day'), Replace-Semantik per imported_at; Tage ohne Import fehlen (leer, nie 0).
 - Food/Bev-Split: Direktanteile /1.081, Rest ANTEILIG nach Food/Bev-Verhältnis (basis=0 → hälftig, nie 50/50 pauschal); Invariante food+beverage === netto via `beverage = netto − food` nach Rundung.
+- «Nach Speisekarte»-Excel-Import (Import-Center, GastronoviImportSection) schreibt NUR dailyBudgets-KV, nie gn_imports → Tage ohne Z-Bericht bleiben in allen Umsatz-Views leer; post-Import-Warnung listet solche Tage (Coverage-Check exakt wie ladeUmsatzTage: gross_revenue > 0). Speisekarte-Export enthält nur Food+Bev (kein TA/Marketing/ungruppiert) und kann einen Tag nie korrekt ersetzen.
 - Achtung Datenscope: gn_imports food_revenue+bev_revenue (brutto) können > gross_revenue sein → rest pro Tag negativ; DB-basierter Food-Anteil (~70.9 %) weicht vom Kassen-Export-Anteil (~67.1 %) ab. Formel ist korrekt; Differenz kommt aus dem Spalten-Scope.
 - **Why:** dailyBudgets war brutto und eine zweite, abweichende Rechnung; Meeting-Zahlen müssen überall identisch sein.
 - Tag-Regel Personalkosten: Tag = IST nur wenn VOR heute UND Ist-Stunden; heute+Zukunft = PLAN (flexKostenProTag stichtag-Param).

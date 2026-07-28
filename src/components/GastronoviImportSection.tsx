@@ -407,6 +407,7 @@ export function GastronoviImportSection() {
   const [year, setYear]         = useState<string>(String(new Date().getFullYear()));
   const [target, setTarget]     = useState<ImportTarget>('actual');
   const [imported, setImported] = useState(false);
+  const [missingZDays, setMissingZDays] = useState<string[]>([]);
 
   const [conflictOpen, setConflictOpen]     = useState(false);
   const [conflicts, setConflicts]           = useState<ConflictRow[]>([]);
@@ -420,6 +421,7 @@ export function GastronoviImportSection() {
     setResults(null);
     setError(null);
     setImported(false);
+    setMissingZDays([]);
     if (inputRef.current) inputRef.current.value = '';
   };
 
@@ -433,6 +435,7 @@ export function GastronoviImportSection() {
     setResults(null);
     setError(null);
     setImported(false);
+    setMissingZDays([]);
     setParsing(true);
     try {
       const parsed = await parseGastronoviExcel(file, parseInt(year, 10));
@@ -551,6 +554,49 @@ export function GastronoviImportSection() {
     setImported(true);
     const label = target === 'actual' ? 'Ist-Umsätze' : 'Vorjahresumsätze';
     toast.success(`${count} Tage importiert als ${label}`);
+
+    // Hinweis: Dieser Import speist NUR die Budget-/Ist-Tageswerte (dailyBudgets).
+    // Die Tagesumsätze/Netto-Auswertungen (Tagesansicht, Erfolgsrechnung, …) lesen
+    // ausschliesslich Z-Berichte (gn_imports). Tage ohne Z-Bericht bleiben dort
+    // leer — das machen wir hier explizit sichtbar statt still zu verschweigen.
+    if (target === 'actual') {
+      void warnMissingZBerichte(Object.keys(updates));
+    }
+  };
+
+  /** Meldet importierte Tage, für die kein aktiver Tages-Z-Bericht existiert. */
+  const warnMissingZBerichte = async (importedDates: string[]) => {
+    try {
+      if (importedDates.length === 0) return;
+      const sorted = [...importedDates].sort();
+      const { supabase } = await import('@/integrations/supabase/client');
+      const { data, error } = await (supabase as any)
+        .from('gn_imports')
+        .select('period_from')
+        .eq('restaurant_id', tenantId)
+        .eq('status', 'active')
+        .eq('aggregation_level', 'day')
+        .gte('period_from', sorted[0])
+        .lte('period_from', sorted[sorted.length - 1])
+        .gt('gross_revenue', 0) // exakt wie ladeUmsatzTage: nur Tage mit Umsatz zählen als abgedeckt
+        .limit(1000);
+      if (error) { setMissingZDays([]); return; } // best-effort, Import selbst war erfolgreich
+      const covered = new Set((data ?? []).map((r: { period_from: string }) => r.period_from));
+      const missing = sorted.filter(d => !covered.has(d));
+      if (missing.length === 0) return;
+      const fmt = (iso: string) => format(new Date(`${iso}T12:00:00`), 'dd.MM.', { locale: de });
+      const list = missing.length <= 5
+        ? missing.map(fmt).join(', ')
+        : `${missing.slice(0, 5).map(fmt).join(', ')} … (+${missing.length - 5} weitere)`;
+      setMissingZDays(missing);
+      toast.warning(
+        `${missing.length === 1 ? 'Für 1 Tag fehlt' : `Für ${missing.length} Tage fehlen`} der Z-Bericht: ${list}. ` +
+        'Diese Tage erscheinen NICHT in den Tagesumsätzen/Netto-Auswertungen — bitte den Tages-Z-Bericht importieren.',
+        { duration: 12000 },
+      );
+    } catch {
+      // best-effort
+    }
   };
 
   const handleConflictConfirm = (datesToReplace: string[]) => {
@@ -674,6 +720,21 @@ export function GastronoviImportSection() {
           </Alert>
         </CardContent>
       </Card>
+
+      {/* Hinweis: Tage ohne Z-Bericht erscheinen nicht in den Tagesumsätzen */}
+      {imported && missingZDays.length > 0 && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            <span className="font-medium">
+              {missingZDays.length === 1 ? 'Für 1 importierten Tag fehlt' : `Für ${missingZDays.length} importierte Tage fehlt`} der Tages-Z-Bericht:
+            </span>{' '}
+            {missingZDays.map(d => format(parseLocalDate(d), 'dd.MM.yyyy', { locale: de })).join(', ')}.
+            {' '}Dieser Import füllt nur die Budget-/Ist-Tageswerte. Die Tagesumsätze und Netto-Auswertungen
+            (Tagesansicht, Erfolgsrechnung, Monatsreport) basieren auf den Z-Berichten — diese Tage bleiben dort leer,
+            bis der Tages-Z-Bericht importiert ist.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Preview */}
       {results && results.length > 0 && (
