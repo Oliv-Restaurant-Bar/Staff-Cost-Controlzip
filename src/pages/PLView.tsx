@@ -2615,17 +2615,23 @@ const PLViewPage = () => {
 
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
   // Gibt 0 zurück wenn "Ausblenden" (maisonColPref=false) → Marketing-Zeile verschwindet
+  // WICHTIG: maison-daily ist Netto-NENNWERT (gleiche Regel wie umsatz.ts) —
+  // KEINE /1.081-Division mehr (Juli 2026: 13'193.40, nicht 12'205).
   const maisonMonthNet = useMemo(() => {
     if (!maisonEnabled || !maisonColPref) return 0;
     const mm   = String(month).padStart(2, '0');
     const days = new Date(year, month, 0).getDate();
     let total  = 0;
     for (let d = 1; d <= days; d++) {
-      const gross = maisonDaily[`${year}-${mm}-${String(d).padStart(2, '0')}`] ?? 0;
-      if (gross > 0) total += gross / 1.081;
+      const v = Number(maisonDaily[`${year}-${mm}-${String(d).padStart(2, '0')}`] ?? 0);
+      if (v !== 0) total += Math.round(Math.abs(v) * 100) / 100;
     }
     return total;
   }, [maisonEnabled, maisonColPref, maisonDaily, year, month]);
+
+  // Marketing-Unterzeile in der Tabelle: per Default AUSGEBLENDET (nur informativ,
+  // Marketing ist bereits im Betriebsertrag-Netto enthalten). Toggle im Maison-Banner.
+  const [showMarketingRow, setShowMarketingRow] = useState(false);
 
   // Stichtag — wenn aktiv, springt die Ansicht automatisch zu Jahr/Monat des Stichtags
   const { isActive: stichtagActive, stichtagYear, stichtagMonth } = useStichtag();
@@ -3059,10 +3065,11 @@ const PLViewPage = () => {
         const mm   = String(m).padStart(2, '0');
         const days = new Date(year, m, 0).getDate();
         let net    = 0;
+        // Gleiche Regel wie maisonMonthNet/umsatz.ts: Netto-NENNWERT 1:1, kein /1.081
         for (let d = 1; d <= days; d++) {
-          const key   = `${year}-${mm}-${String(d).padStart(2, '0')}`;
-          const gross = maisonDaily[key] ?? 0;
-          if (gross > 0) net += gross / 1.081;
+          const key = `${year}-${mm}-${String(d).padStart(2, '0')}`;
+          const v   = Number(maisonDaily[key] ?? 0);
+          if (v !== 0) net += Math.round(Math.abs(v) * 100) / 100;
         }
         return net;
       };
@@ -3790,11 +3797,35 @@ const PLViewPage = () => {
             </button>
 
             {maisonEnabled ? (
-              <span className="text-xs text-violet-700 dark:text-violet-400">
-                {maisonMonthNet > 0
-                  ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
-                  : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
-              </span>
+              <>
+                <span className="text-xs text-violet-700 dark:text-violet-400">
+                  {maisonMonthNet > 0
+                    ? `${MONTH_NAMES_DE[month]} ${year}: ${Math.round(maisonMonthNet).toLocaleString('de-CH')} CHF netto — in Betriebsertrag eingerechnet`
+                    : `Keine Marketing-Tagesdaten für ${MONTH_NAMES_DE[month]} ${year} — Werte im Tages-Controlling erfassen`}
+                </span>
+                {/* Unterzeile-Toggle: Marketing-Aufschlüsselung in der Tabelle ein-/ausblenden */}
+                <button
+                  onClick={() => setShowMarketingRow(v => !v)}
+                  className="flex items-center gap-2 shrink-0 group ml-auto"
+                  title={showMarketingRow ? 'Marketing-Zeile ausblenden' : 'Marketing-Zeile in der Tabelle anzeigen'}
+                >
+                  <span className={cn(
+                    'h-5 w-9 rounded-full border-2 transition-all duration-200 relative block',
+                    showMarketingRow
+                      ? 'border-violet-500 bg-violet-500'
+                      : 'border-muted-foreground/30 bg-muted/50',
+                  )}>
+                    <span className={cn(
+                      'absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200',
+                      showMarketingRow ? 'translate-x-[14px] left-0.5' : 'translate-x-0 left-0.5',
+                    )} />
+                  </span>
+                  <span className={cn(
+                    'text-xs font-semibold',
+                    showMarketingRow ? 'text-violet-700 dark:text-violet-400' : 'text-muted-foreground',
+                  )}>Marketing anzeigen</span>
+                </button>
+              </>
             ) : (
               <span className="text-xs text-muted-foreground">
                 Aktivieren um Marketing-Umsatz in Betriebsertrag einzurechnen (Tageswerte aus Tages-Controlling)
@@ -3906,7 +3937,7 @@ const PLViewPage = () => {
                 revenuePrevYear={bplPrevYearRevenue}
                 compareMode={effectiveCompareMode}
                 pctIsBudgetBased={pctIsBudgetBased}
-                maisonEnabled={maisonEnabled && maisonColPref && period === 'month'}
+                maisonEnabled={maisonEnabled && maisonColPref && period === 'month' && showMarketingRow}
                 maisonNet={maisonMonthNet}
                 prevYearLabel={prevYearColLabel}
                 readOnly={period !== 'month'}
