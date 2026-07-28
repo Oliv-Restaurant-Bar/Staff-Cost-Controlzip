@@ -1,0 +1,63 @@
+Baue eine EINZIGE zentrale Berechnungsquelle für Personalkosten. Ziel: alle
+Ansichten sollen später dieselbe Funktion nutzen. In dieser Etappe NUR die
+Funktion + eine Prüfansicht bauen, bestehende Ansichten NICHT verändern.
+
+ZUERST INVENTUR (bitte kurz berichten, nichts löschen):
+- Finde alle Stellen im Code, an denen Personalkosten, Fix-Kosten, Flex-Kosten,
+  Budget oder Personalquote (PKQ) berechnet werden. Liste Datei + Funktion.
+- Finde die vorhandenen Datenquellen: Mitarbeiter-Stammdaten (Fix/Flex,
+  Löhne, Total AG/Mt bzw. Total AG/h), Plan-Stunden (Dienstplan),
+  Ist-Stunden (MIRUS-Import), Tagesumsatz (Z-Bericht), Budget-Modul.
+  Neue Tabellen sind NICHT nötig – vorhandene Quellen wiederverwenden.
+
+DANN eine zentrale Modul-Datei erstellen, z.B. server/personalkosten.ts, mit
+diesen kanonischen Funktionen (eine Quelle der Wahrheit):
+
+DEFINITIONEN (genau so umsetzen):
+- FIX-MA (Monatslohn): Kosten/Monat = vorhandene "Total AG/Mt"
+  (Bruttolohn inkl. amortisiertem 13. + AG-Sozialkosten). Pro rata bei
+  Ein-/Austritt im Monat (Kalendertage bis Austritt ÷ Monatstage).
+  Hängt NICHT von Stunden ab.
+- FLEX-MA (Stundenlohn): CHF/h = vorhandene "Total AG/h".
+  Kosten = Stunden × CHF/h. Plan-Stunden aus Dienstplan, Ist-Stunden aus MIRUS.
+- TAG-REGEL: Ein Tag zählt als IST, wenn für diesen Tag Ist-Stunden importiert
+  sind, sonst als PLAN. (Nicht Plan UND Ist für denselben Tag.)
+
+FUNKTIONEN:
+1. fixKosten(monat, {stichtag?}) → je Fix-MA {name, kostenMonat, kostenBisStichtag}
+   + Totale. kostenBisStichtag = kostenMonat × (vergangene Tage ÷ Monatstage).
+2. flexKostenProTag(monat) → je Tag/Flex-MA {planStd, istStd?, chfProStd,
+   planKosten, istKosten}.
+3. personalkosten(monat, modus):
+   - modus "istBisHeute" = FIX bis heute + Σ FLEX-Ist der vergangenen Tage
+     (nur Tage mit Ist).
+   - modus "hochrechnung" = FIX voller Monat + Σ pro Tag (Ist wenn Ist-Tag,
+     sonst Plan).
+   Rückgabe: {fix, flex, total} je Modus.
+4. budget(monat) → {total: 106400, proTag[]}. 106'400 = 35.5 % von 300'000.
+   Auf Tage verteilen anhand des bereits vorhandenen Tages-/Wochen-Budgets
+   (Umsatzgewichtung); Fallback: gleichmässig.
+5. umsatz(monat, {stichtag?}) → {istBisHeute: Σ Z-Bericht vergangene Tage,
+   hochrechnung: Σ(Ist vergangene Tage + Budget/Plan Resttage)}.
+6. personalquote(monat):
+   - pkqIst = personalkosten.istBisHeute.total ÷ umsatz.istBisHeute
+   - pkqHochrechnung = personalkosten.hochrechnung.total ÷ umsatz.hochrechnung
+   NIEMALS volle Kosten ÷ Teilumsatz.
+
+WICHTIG: Ferienabbau, Kranken-/Unfallkosten, Überstunden fliessen NICHT in
+diese Totale ein (sind separate Info). Kein Schein-Budget aus Ist-Umsatz.
+
+PRÜFANSICHT: Neue Route /personalkosten-neu (oder ein aufklappbarer Block ganz
+oben auf der Personalkosten-Seite, klar als "NEU – Prüfung" beschriftet), die
+NUR diese Funktion nutzt und anzeigt:
+- Kacheln: Personalkosten Hochrechnung (Fix + Flex), Budget 106'400,
+  Abweichung (HR − Budget), PKQ Hochrechnung.
+- Zeile "Ist bis heute (<Datum>)": Kosten Ist, Umsatz Ist, PKQ Ist.
+- "Stand: X von Y Tagen als Ist erfasst".
+- Aufschlüsselung: Fix-Total, Flex-Total (Ist/Plan getrennt), Gesamttotal.
+- Eine Debug-Tabelle Tag-für-Tag (Datum, Ist/Plan, Flex-Kosten, kumuliert),
+  damit die Zahlen nachvollziehbar sind.
+
+Nichts an den bestehenden Ansichten ändern. Nur neue Funktion + Prüfansicht.
+Am Ende bitte berichten: welche bestehenden Rechenstellen gefunden wurden und
+welche davon wir in Etappe 2 auf die neue Funktion umstellen.

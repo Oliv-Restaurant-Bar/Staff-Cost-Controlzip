@@ -1,0 +1,63 @@
+Baue eine neue zentrale Seite "Monatsreport" als Startseite/Cockpit fürs Meeting.
+In dieser Etappe NUR die automatisch füllbaren Zeilen + Excel-Export. Bestehende
+Seiten NICHT löschen (bleiben über das Menü erreichbar).
+
+ZUERST INVENTUR (kurz berichten): Woher kommen im Code diese Werte —
+Brutto/Netto-Umsatz, Gäste (In/Take Away), Budget-/Planwerte, Vorjahreswerte,
+Spartenumsätze (Wein/Spirituosen, Bar, Küche), produktive Stunden (Ist aus MIRUS,
+Plan aus Dienstplan)? Datei/Funktion/Tabelle je Wert nennen. Keine neuen Tabellen,
+vorhandene Quellen wiederverwenden.
+
+SEITE /monatsreport, als Standard-Startseite setzen (alte Start-Seite bleibt im
+Menü erreichbar). Oben: Monatsauswahl (Standard = laufender Monat) und ein Button
+"Export Excel".
+
+SPALTEN je Zeile (genau diese Reihenfolge):
+  Kennzahl | Budget | Vorjahr | Woche | +/- in % | Monat | +/- in %
+  - Budget = Planwert aus Budget-Modul
+  - Vorjahr = gleicher Monat Vorjahr (falls Daten vorhanden, sonst leer lassen)
+  - Woche = Ist der aktuellen Woche
+  - +/- in % (nach Woche) = Woche vs. Budget-Wochenanteil
+  - Monat = Ist des Monats bis heute
+  - +/- in % (nach Monat) = Monat vs. Budget
+
+ZEILEN in dieser Etappe (Blöcke mit Leerzeile getrennt, wie in der Vorlage):
+  Block Umsatz/Gäste:
+    - Brutto Umsatz
+    - Netto Umsatz
+    - Brutto Plan            (nur Budget-Spalte)
+    - Netto Plan zum Budget  (nur Budget-Spalte)
+    - Gäste IN
+    - Gäste Take Away
+    - Gruppen ab 20 Pax      (falls Quelle vorhanden, sonst leer)
+  Block Durchschnitt:
+    - Durchschnittsverkauf   = Netto Umsatz ÷ Gäste IN
+    - Durchschnittsverkauf TA= TA-Umsatz ÷ TA-Gäste
+    - Take Away Anteil       = TA-Umsatz ÷ Gesamtumsatz  (in %)
+  Block Vorjahr:
+    - Brutto Umsatz Vorjahr
+    - Gäste Vorjahr
+    - Gäste +/- zum Vorjahr  (berechnet)
+    - Durchschnittsverkauf Vorjahr (berechnet)
+  Block Sparten:
+    - Wein / Spirituosen
+    - Bar Umsatz
+    - Küchen Umsatz
+    - Wein/Bar/Küche Vorjahr (falls vorhanden)
+  Block Produktivität:
+    - Produktive Stunden (Ist)      = MIRUS Ist-Stunden
+    - Produktive Stunden geplant    = Dienstplan Plan-Stunden
+    - Produktivität                 = Umsatz ÷ produktive Stunden
+    - Umsatz pro Gast               = Netto Umsatz ÷ Gäste IN
+
+Fehlt für eine Zeile die Datenquelle: Zeile trotzdem anzeigen, Wert leer lassen
+(nicht 0). Zahlen im Schweizer Format (1'234.56), Prozente mit einer Nachkommastelle.
+
+EXCEL-EXPORT: Button erzeugt eine .xlsx EXAKT im Layout der Vorlage:
+  Kopfzeile "Monat <Name> | Budget | Vorjahr | Woche | +/- in % | Monat | +/- in %",
+  dieselben Zeilen/Beschriftungen und Leerzeilen zwischen den Blöcken wie oben.
+  Schweizer Zahlenformat, Prozente als %. Export nimmt den oben gewählten Monat.
+
+Nur diese neue Seite + Export bauen. Warenaufwand, Lieferanten und manuelle Felder
+kommen in einer späteren Etappe. Am Ende berichten, welche Zeilen automatisch
+gefüllt sind und welche mangels Quelle noch leer bleiben.

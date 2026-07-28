@@ -48,6 +48,7 @@ import OnboardingForm from "./pages/OnboardingForm";
 import ImportHub from "./pages/ImportHub";
 import ImportCockpitPage from "./pages/ImportCockpitPage";
 import PersonalFixPage from "./pages/PersonalFix";
+import PersonalkostenNeu from "./pages/PersonalkostenNeu";
 import DataIntegrityTest from "./pages/DataIntegrityTest";
 import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
@@ -330,6 +331,10 @@ const AppContent = () => {
             />
             <Route path="/personal-fix"
               element={canAccessModule('personal_fix') ? <PersonalFixPage /> : <Navigate to="/personal" replace />}
+            />
+            {/* NEU – Prüfung: Prüfansicht der zentralen Personalkosten-Berechnungsquelle (Etappe 1) */}
+            <Route path="/personalkosten-neu"
+              element={canAccessModule('personal_fix') ? <PersonalkostenNeu /> : <Navigate to="/personal" replace />}
             />
             {/* Integritäts-/Admin-Werkzeuge: nur Admin, keine Gast-Sessions */}
             <Route path="/integrity-test"

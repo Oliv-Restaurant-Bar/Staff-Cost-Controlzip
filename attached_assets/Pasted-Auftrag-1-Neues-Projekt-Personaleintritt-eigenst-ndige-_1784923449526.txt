@@ -1,0 +1,25 @@
+Auftrag 1 — Neues Projekt «Personaleintritt» (eigenständige Web-App)
+
+Ziel: Eigenständige, mandantenfähige Web-App für den kompletten digitalen Personaleintritt nach L-GAV GastroSuisse — ohne Abhängigkeit zu Staff Cost Control. Am Ende erzeugt sie ein Export-Paket, das andere Systeme importieren können.
+
+Stack: Vite (React/TS) + Supabase (eigenes, neues Projekt), Deploy auf Replit — gleiche Technik wie Staff Cost Control.
+
+Code wiederverwenden: Die bereits gebauten, getesteten Module aus dem Staff-Cost-Control-Projekt 1:1 portieren (nicht neu erfinden): Lohn-/Mindestlohn-Logik (lohn.ts, ×12-Stundenlohn, 42/43.5/45-Modell, Rückrechnung inkl./ohne 13.), L-GAV-PDF-Feld-Mapping (pdf-fill-mapping.ts) inkl. der SL/ML-AcroForm-Vorlagen, SEM-Meldeformular-Mapping + PDF, Dossier-Generator, Positionsliste, betriebe-Modell. Die PDF-Vorlagen (SL, ML, SEM) als Assets übernehmen.
+
+Datenmodell (Supabase): betriebe (Name, Adresse, UID, Wochenstundenmodell 42/43.5/45, Kontaktperson, Behörde-E-Mail, Logo optional, aktiv), lgav_mindestlohn (Jahr, Klasse, Monatslohn, Std. je Modell), positionen (zentrale Liste), personaleintritt (alle Eckdaten + ma_daten JSONB + Lohnwerte + Pfade zu Vertrag/Dossier/Meldung + Status), Storage-Bucket dokumente (Uploads + generierte PDFs). RLS je Betrieb.
+
+Ablauf (mobile-first):
+
+Phase 1 — GF: Betrieb wählen, Vertragstyp SL/ML, Funktion (Dropdown), Eintritt, Pensum (10er-Dropdown, Standard 100 %), Probezeit (Keine/1/2/3, Standard 3), Vertragsdauer, Arbeitsbewilligung (ankreuzbar F/S/übrige), Lohn (3 Varianten inkl./ohne 13., Mindestlohnprüfung, Standard-Lohnklasse Ia). → Einladung erzeugt persönlichen Token-Link.
+Phase 2 — Mitarbeiter: Token-Route ohne Login (14 Tage, Einmalnutzung); Personalien, restliche Vertrags- + Lohnprogramm-Felder (Zivilstand, AHV, IBAN, Konfession, Ehepartner, Kinder/Zulagen), Ausweis + ZEMIS-Nr., Uploads (AHV-Karte, Ausweis 2 Seiten, Bankkarte, Foto — Kamera).
+Phase 3 — Backoffice: L-GAV-Vertrag ausfüllen (Original-PDF), SEM-Meldung (nur F/S, Backoffice-Auslösung, Bern-Config), Dossier-PDF (alle Fragen + Anhänge), E-Signatur (Skribble, vorbereitet), und Export-Paket erzeugen (siehe unten).
+
+Standard-Bemerkungen in jedem Vertrag (Arztzeugnis / Gültigkeit erst bei Arbeitserlaubnis / Stundenblätter 7 Tage).
+
+Export-Paket (die Schnittstelle): Ein herunterladbares ZIP mit
+
+personaleintritt.json — alle Daten in dokumentiertem Schema mit schema_version, inkl. eines klar abgegrenzten Blocks personalstamm (Name, Vorname, Funktion, Anstellung, Eintritt, Wochenstunden→Pensum, Betrieb) und eines Blocks lohnprogramm (für MIRUS);
+die generierten PDFs (vertrag.pdf, dossier.pdf, ggf. meldung.pdf) und die Upload-Dokumente.
+Optional zusätzlich eine flache personalstamm.csv nur mit den Stammdaten-Feldern, falls ein Zielsystem lieber Tabellen importiert.
+
+Admin legt Betriebe manuell an (kein Self-Service). Branding vorerst nur Firmenname; Logo-Feld vorhanden, ungenutzt.
