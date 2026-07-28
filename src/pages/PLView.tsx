@@ -72,7 +72,15 @@ import { toast } from 'sonner';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
 import type { VjDayRecord } from '@/lib/vj-daily-supabase';
 import { computePriorYearDiagnostics } from '@/lib/pl-prior-year-diagnostics';
-import { applyEffectiveMonthRules, applyEffectiveYearRules, applyVjRevenueRule } from '@/lib/effective-records';
+import {
+  applyVjRevenueRule,
+  applyCanonicalIstRule,
+  type CanonicalRevenueByMonth,
+} from '@/lib/effective-records';
+// IST-Umsatz NETTO/BRUTTO des laufenden Zeitraums: kanonische Quelle (SSOT).
+// gn_imports Tages-Z-Berichte via ladeUmsatzTage/summiereUmsatz — keine eigene
+// grossToNet/1.081-Rechnung mehr. VJ + Budget + FIBU-Logik bleiben unberührt.
+import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -91,7 +99,29 @@ import { loadAnnualCostImports, ANNUAL_COST_IMPORTS_KEY, type AnnualCostImportEn
 
 /** Datenbasis-Hinweis für Mehrjahresanalyse + Management Report (gleiche Quelle). */
 const MULTI_YEAR_DATA_SOURCE_HINT =
-  'Basis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der Tagesansicht-Abgleich der Erfolgsrechnung (Tagesumsätze als massgebliche IST-Quelle, Maison-/Ausschluss-Effekte) wird hier NICHT angewendet — Werte können daher von der Monats-/Jahresansicht abweichen.';
+  'Kostenbasis sind die im Reporting erfassten Roh-Monatswerte (reporting_v1). Der IST-Umsatz stammt — wie in der Erfolgsrechnung — aus den Tages-Z-Berichten (umsatz.ts, netto); übrige Effekte (Maison-/Ausschluss) der Monats-/Jahresansicht sind hier nicht angewendet, Kostenwerte können daher abweichen.';
+
+// ─── Kanonischer IST-Umsatz (umsatz.ts) ──────────────────────────────────────
+// CanonicalMonthRevenue / CanonicalRevenueByMonth + applyCanonicalIstRule sind
+// jetzt in src/lib/effective-records.ts (gemeinsame SSoT-Regel für ER + Reporting).
+
+/** Aggregiert die kanonischen Umsatz-Tage einer Map auf Monate (1-basiert). */
+function aggregateCanonicalByMonth(tage: Map<string, UmsatzTag>): CanonicalRevenueByMonth {
+  const perMonth: Record<number, UmsatzTag[]> = {};
+  for (const [datum, tag] of tage) {
+    const m = parseInt(datum.slice(5, 7), 10);
+    if (!m) continue;
+    (perMonth[m] ??= []).push(tag);
+  }
+  const out: CanonicalRevenueByMonth = {};
+  for (let m = 1; m <= 12; m++) {
+    const list = perMonth[m] ?? [];
+    if (list.length === 0) { out[m] = { net: 0, gross: 0, hasData: false }; continue; }
+    const s = summiereUmsatz(list);
+    out[m] = { net: s.netto, gross: s.bruttoGesamt, hasData: true };
+  }
+  return out;
+}
 
 // ─── Formatierungen ───────────────────────────────────────────────────────────
 
@@ -2556,6 +2586,33 @@ const PLViewPage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, tenantId, refreshKey]);
 
+  // Kanonischer IST-Umsatz ALLER Serien-Jahre (nur Mehrjahres-/Bank-/Mgmt-Modi):
+  // damit die Mehrjahresanalyse denselben umsatz.ts-IST verwendet wie die ER.
+  const [canonicalByYear, setCanonicalByYear] = useState<Record<number, CanonicalRevenueByMonth>>({});
+  useEffect(() => {
+    if (mode !== 'multi_year' && mode !== 'mgmt_report' && mode !== 'bank_investor') return;
+    let cancelled = false;
+    const currentYr = new Date().getFullYear();
+    const yrs = Array.from(new Set([
+      ...availableYears(tenantKey(REPORTING_STORAGE_KEY)),
+      currentYr - 2, currentYr - 1, currentYr,
+    ]));
+    Promise.all(yrs.map(y =>
+      ladeUmsatzTage(tenantId, `${y}-01-01`, `${y}-12-31`)
+        .then(tage => [y, aggregateCanonicalByMonth(tage)] as const)
+        .catch(() => [y, {} as CanonicalRevenueByMonth] as const),
+    )).then(pairs => {
+      if (cancelled) return;
+      const map: Record<number, CanonicalRevenueByMonth> = {};
+      for (const [y, cr] of pairs) map[y] = cr;
+      setCanonicalByYear(map);
+    });
+    return () => { cancelled = true; };
+  // KEIN refreshKey (Supabase-Direktquelle) — sonst verwerfen häufige refreshKey-
+  // Bumps die laufende Ladung, siehe canonicalRevenue-Effekt.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, tenantId]);
+
   // Marketing-Nettobetrag für den aktuell gewählten Monat (aus Tagesdaten)
   // Gibt 0 zurück wenn "Ausblenden" (maisonColPref=false) → Marketing-Zeile verschwindet
   const maisonMonthNet = useMemo(() => {
@@ -2662,11 +2719,47 @@ const PLViewPage = () => {
     [year, prevYearRecords, vjDailyData],
   );
 
-  // Gastronovi-Tagesdaten aus localStorage laden (gecacht für alle Berechnungen)
+  // Gastronovi-Tagesdaten aus localStorage laden (nur noch für VJ-Umsatz-Regel)
   const dailyBudgetsData = useMemo<Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, [refreshKey, tenantId]);
+
+  // ── Kanonischer IST-Umsatz pro Monat (umsatz.ts, gn_imports Tages-Z-Berichte) ──
+  // SSOT für den IST-Umsatz des laufenden Jahres; ersetzt die frühere
+  // grossToNet/dailyBudgets-Herleitung. Tage ohne Import fehlen → kein 0 erfunden.
+  const [canonicalRevenue, setCanonicalRevenue] = useState<CanonicalRevenueByMonth>({});
+  useEffect(() => {
+    // WICHTIG: KEIN refreshKey in den Deps. Der Wert kommt direkt aus Supabase
+    // (gn_imports), nicht aus localStorage — refreshKey wird von mehreren anderen
+    // Effekten (store-synced, Journal-Sync, Mandantenwechsel) hochgezählt. Hinge
+    // dieser Effekt an refreshKey, würde ein solcher Bump die noch laufende
+    // ladeUmsatzTage-Promise via cancelled=true verwerfen, BEVOR sie state setzt
+    // → Erfolgsrechnung bliebe leer ("Noch keine Daten"), obwohl gn_imports Daten
+    // liefert (Dashboard funktioniert, weil dessen Effekt nicht an refreshKey hängt).
+    // Generationszähler statt cancelled-Flag; zusätzlich Nachladen bei
+    // 'store-synced': Läuft der Mount-Load, BEVOR die Auth-Session am Supabase-
+    // Client hängt, liefert RLS still 0 Zeilen (kein Fehler!) — ohne Retry
+    // bliebe die Erfolgsrechnung dauerhaft leer, obwohl gn_imports Daten hat.
+    let gen = 0;
+    const load = () => {
+      const myGen = ++gen;
+      ladeUmsatzTage(tenantId, `${year}-01-01`, `${year}-12-31`)
+        .then(tage => {
+          if (myGen !== gen) return;
+          const agg = aggregateCanonicalByMonth(tage);
+          // Leeres Ergebnis überschreibt nie ein bereits geladenes (Session-Race).
+          setCanonicalRevenue(prev =>
+            tage.size === 0 && Object.values(prev).some(m => m.hasData) ? prev : agg,
+          );
+        })
+        .catch(() => { /* Fehler bereits in ladeUmsatzTage geloggt; State behalten */ });
+    };
+    load();
+    const refresh = () => load();
+    window.addEventListener('store-synced', refresh);
+    return () => { gen++; window.removeEventListener('store-synced', refresh); };
+  }, [year, tenantId]);
 
   // ── Mehrjahresanalyse: Serien je Jahr (effektive Records → computePLForMonth)
   // Datenbasis IDENTISCH zur Erfolgsrechnung: dieselbe SSoT-Lib (effective-records)
@@ -2694,13 +2787,13 @@ const PLViewPage = () => {
       currentYr - 2, currentYr - 1, currentYr,
     ])).sort((a, b) => a - b);
     return seriesYearBasis.map(y => {
-      const recs = applyEffectiveYearRules(loadYear(y, storeKey), {
+      const canonical = canonicalByYear[y] ?? {};
+      const recs = loadYear(y, storeKey).map((rec, idx) => applyCanonicalIstRule(rec, idx + 1, {
         year: y,
-        dailyBudgets: dailyBudgetsData,
-        maisonDaily: maisonEnabled ? maisonDaily : undefined,
+        canonical,
         takeawayMonthly: takeawayAllYears,
         net: showNetRevenue,
-      });
+      }));
       const values: (number | null)[] = [];
       const byPosition: Record<string, (number | null)[]> =
         Object.fromEntries(positionIds.map(id => [id, [] as (number | null)[]]));
@@ -2724,7 +2817,7 @@ const PLViewPage = () => {
       }
       return { year: y, values, byPosition, personnelPct, wesPct };
     });
-  }, [mode, refreshKey, tenantId, tenantKey, dailyBudgetsData, maisonEnabled, maisonDaily, takeawayAllYears, showNetRevenue]);
+  }, [mode, refreshKey, tenantId, tenantKey, canonicalByYear, maisonEnabled, maisonDaily, takeawayAllYears, showNetRevenue]);
 
   // Budget P&L laden (vor den Overrides benötigt)
   const budgetData = useMemo(() => loadBudgetWithPL(year, tenantKey(BUDGET_STORAGE_KEY)), [year, refreshKey, tenantId]);
@@ -2738,13 +2831,12 @@ const PLViewPage = () => {
   const effectiveAllRecords = useMemo(() => {
     return records.map((rec, idx) => {
       const m = idx + 1;
-      // ── IST-Umsatz + Personalkosten-Buchhaltungsvorrang (SSoT-Lib) ────────
-      // "Anzeigen" (showMarketingCol) = immer inkl. Umsatz; ignoriert maisonExclude
-      // Maison wird immer eingerechnet wenn aktiviert — unabhängig von der Spalten-Anzeige
-      let r = applyEffectiveMonthRules(rec, m, {
+      // ── IST-Umsatz (kanonische Quelle umsatz.ts) + Personalkosten-Vorrang ──
+      // Maison-Zuschlag fliesst NICHT in revenueActual (kanonischer Umsatz identisch
+      // mit Dashboard/Monatsreport); Maison ist ggf. eine separate Anzeige-Spalte.
+      let r = applyCanonicalIstRule(rec, m, {
         year,
-        dailyBudgets: dailyBudgetsData,
-        maisonDaily: maisonEnabled ? maisonDaily : undefined,
+        canonical: canonicalRevenue,
         takeawayMonthly: takeawayMonthlyMap,
         net: showNetRevenue,
       });
@@ -2760,7 +2852,7 @@ const PLViewPage = () => {
 
       return r;
     });
-  }, [records, prevYearRecords, year, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
+  }, [records, prevYearRecords, year, canonicalRevenue, dailyBudgetsData, vjDailyData, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap, showNetRevenue]);
 
   // Effektiver Datensatz für den ausgewählten Monat
   const effectiveMonthRecord = useMemo(
@@ -3636,8 +3728,15 @@ const PLViewPage = () => {
           </>
         )}
 
-        {/* Datenvollständigkeit-Hinweis (monatsbezogen — bei Quartal/Jahr übernimmt der Coverage-Badge) */}
-        {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month')) && !monthResult.hasData && (
+        {/* Datenvollständigkeit-Hinweis (monatsbezogen — bei Quartal/Jahr übernimmt der Coverage-Badge)
+            Zeigt sich NUR, wenn wirklich keine Daten vorliegen: weder P&L-hasData, noch
+            ein effektiver Ist-Umsatz (revenueActual), noch kanonischer IST-Umsatz aus
+            gn_imports (canonicalRevenue) für diesen Monat. Verhindert den Banner, wenn ein
+            Ist-Wert (Tages-Z-Berichte) angezeigt wird. */}
+        {(mode === 'monthly' || (mode === 'budget_pl' && period === 'month'))
+          && !monthResult.hasData
+          && !effectiveMonthRecord?.revenueActual
+          && !canonicalRevenue[month]?.hasData && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 p-4 flex items-start gap-3">
             <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
             <div className="text-xs text-amber-800 dark:text-amber-300">

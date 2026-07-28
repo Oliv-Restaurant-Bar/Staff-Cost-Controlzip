@@ -4,7 +4,7 @@
  * Zentralisierte Analysepage — direkt gekoppelt an die Erfolgsrechnung.
  *
  * DATENBASIS (identisch mit PLView):
- *   IST-Umsatz   → computeMonthlyIstNet()  (Netto, MwSt abgezogen)
+ *   IST-Umsatz   → umsatz.ts (ladeUmsatzTage/summiereUmsatz, Netto aus gn_imports)
  *   VJ-Umsatz    → computeMonthlyVjNet()   (Netto, MwSt abgezogen)
  *   Budget        → budget_v1 (loadBudgetWithPL / resolveBudgetYear)
  *   PK Ist        → personnelCostActual oder 5xxx-Konten aus expenseCategories
@@ -72,11 +72,16 @@ import { StichtagBanner } from '@/components/StichtagBanner';
 import { ReportingExportDialog } from '@/components/ReportingExportDialog';
 import { UnifiedExportButton } from '@/components/UnifiedExportButton';
 
-// ── NEU: korrekte Netto-Umsatz-Berechnungen (identisch mit PLView) ───────────
-import {
-  computeMonthlyIstNet,
-  computeMonthlyVjNet,
-} from '@/lib/revenue-sync';
+// ── IST-Umsatz NETTO: kanonische Quelle (src/lib/umsatz.ts, SSOT) ────────────
+// Der IST-Umsatz des laufenden Zeitraums stammt ausschliesslich aus den
+// Tages-Z-Berichten (gn_imports) via ladeUmsatzTage/summiereUmsatz. VJ-Umsatz
+// bleibt bei computeMonthlyVjNet (vj_daily / reporting_v1).
+import { computeMonthlyVjNet } from '@/lib/revenue-sync';
+// Gemeinsame kanonische IST-Umsatz-Regel (SSoT) — identisch mit der Erfolgsrechnung
+// (PLView): 3xxx-Vorrang, Take-Away Kto. 3000/3010-Split, Personalkosten-Vorrang,
+// KEIN additiver Maison-Zuschlag.
+import { applyCanonicalIstRule } from '@/lib/effective-records';
+import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
 import { computePLForMonth } from '@/lib/pl-engine';
 import type { PLMonthResult } from '@/types/pl';
 import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
@@ -2066,11 +2071,41 @@ const Reporting = () => {
     return () => window.removeEventListener('store-synced', handler);
   }, [year, tenantId]);
 
-  // Tages-Daten (authoritativ für IST-Umsatz)
+  // Tages-Daten (nur noch für VJ-Umsatz — computeMonthlyVjNet)
   const dailyBudgetsData = useMemo<Record<string, { actualRevenue?: number; takeawayRevenue?: number; previousYearRevenue?: number }>>(() => {
     try { return JSON.parse(localStorage.getItem(tenantKey('dailyBudgets')) || '{}'); }
     catch { return {}; }
   }, [year, months, tenantId]);
+
+  // ── IST-Umsatz NETTO pro Monat aus der kanonischen Quelle (umsatz.ts) ─────
+  // Quelle: gn_imports Tages-Z-Berichte (+ gn_discounts Marketing) via
+  // ladeUmsatzTage → summiereUmsatz. Tage ohne Import fehlen → kein erfundenes 0.
+  // Ein Monat ohne einen einzigen Import hat hasData=false und bleibt leer.
+  const [umsatzByMonth, setUmsatzByMonth] = useState<Record<number, { net: number; gross: number; hasData: boolean }>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const fromIso = `${year}-01-01`;
+    const toIso   = `${year}-12-31`;
+    ladeUmsatzTage(tenantId, fromIso, toIso).then(tage => {
+      if (cancelled) return;
+      const byMonth: Record<number, { net: number; gross: number; hasData: boolean }> = {};
+      const perMonthTage: Record<number, UmsatzTag[]> = {};
+      for (const [datum, tag] of tage) {
+        const m = parseInt(datum.slice(5, 7), 10);
+        if (!m) continue;
+        (perMonthTage[m] ??= []).push(tag);
+      }
+      for (let m = 1; m <= 12; m++) {
+        const list = perMonthTage[m] ?? [];
+        if (list.length === 0) { byMonth[m] = { net: 0, gross: 0, hasData: false }; continue; }
+        const s = summiereUmsatz(list);
+        byMonth[m] = { net: s.netto, gross: s.bruttoGesamt, hasData: true };
+      }
+      setUmsatzByMonth(byMonth);
+    }).catch(() => { if (!cancelled) setUmsatzByMonth({}); });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, tenantId]);
 
   // Budget-Daten
   const resolvedBudget = useMemo(() => {
@@ -2092,20 +2127,19 @@ const Reporting = () => {
 
     return months.map((rec, idx) => {
       const m = idx + 1;
-      let r = rec;
 
-      // 1) IST-Umsatz: computeMonthlyIstNet (NETTO – identisch mit PLView, inkl. Maison + Takeaway)
-      const hasIndivRev = r.expenseCategories.some(c => {
-        const n = parseInt(c.categoryId);
-        return !isNaN(n) && n >= 3000 && n <= 3999;
+      // 1) IST-Umsatz NETTO: kanonische Quelle umsatz.ts (gn_imports Tages-Z-Berichte)
+      //    über die GEMEINSAME Regel applyCanonicalIstRule (SSoT mit der Erfolgsrechnung).
+      //    revenueActual = EXAKT der kanonische Netto-Wert (Take-Away-Netto steckt bereits
+      //    darin). KEIN additiver Maison-Zuschlag mehr — Maison ist ggf. eine reine
+      //    Anzeige-Spalte, fliesst aber NICHT in revenueActual. Beibehalten: 3xxx-Vorrang,
+      //    Take-Away Kto. 3000/3010-Split (Monats-Override) und Personalkosten-Vorrang.
+      let r = applyCanonicalIstRule(rec, m, {
+        year,
+        canonical: umsatzByMonth,
+        takeawayMonthly: takeawayMonthlyMap,
+        net: true,
       });
-      if (!hasIndivRev) {
-        // Maison (Marketing-Umsatzkanal): nur einrechnen wenn aktiviert und "Anzeigen" aktiv
-        const maisonArg = maisonEnabled && maisonColPref ? maisonDaily : undefined;
-        const taMonthly = takeawayMonthlyMap[`${year}-${String(m).padStart(2, '0')}`] ?? 0;
-        const net = computeMonthlyIstNet(year, m, dailyBudgetsData, undefined, maisonArg, taMonthly > 0 ? taMonthly : undefined);
-        if (net > 0) r = { ...r, revenueActual: net };
-      }
 
       // 2) VJ-Umsatz: computeMonthlyVjNet (NETTO – identisch mit PLView)
       const hasIndivPYRev = (r.expenseCategoriesPreviousYear ?? []).some(c => {
@@ -2140,7 +2174,7 @@ const Reporting = () => {
 
       return r;
     });
-  }, [months, year, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths, maisonEnabled, maisonColPref, maisonDaily, takeawayMonthlyMap]);
+  }, [months, year, umsatzByMonth, takeawayMonthlyMap, dailyBudgetsData, vjDailyData, resolvedBudget, prevYearMonths]);
 
   // ── P&L-Berechnungen pro Monat (identisch mit PLView) ───────────────────
   const plResults = useMemo<PLMonthResult[]>(

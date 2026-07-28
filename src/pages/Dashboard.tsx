@@ -54,7 +54,6 @@ import { useStartOverview } from '@/hooks/useStartOverview';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
-import { computeMonthlyIstNet } from '@/lib/revenue-sync';
 import { useFinancialMonthInput } from '@/hooks/useFinancialMonthInput';
 import {
   calcDayHours,
@@ -64,6 +63,11 @@ import {
   agMonthlySalary,
   sumDailyRevenue,
 } from '@/lib/operational-day';
+import {
+  ladeUmsatzTage,
+  nettoUmsatzTag,
+  type UmsatzTag,
+} from '@/lib/umsatz';
 
 // ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -289,6 +293,21 @@ const Dashboard = () => {
   // Dadurch re-berechnen alle useMemos die loadMonth/loadYear nutzen – auch nach dem Sync.
   const [reportingTick, setReportingTick] = useState(0);
 
+  // ── Kanonische IST-Umsätze (Single Source of Truth: src/lib/umsatz.ts) ──────
+  // Alle IST-Umsatz-Anzeigen (Netto UND Brutto) des aktuellen Zeitraums stammen
+  // aus den Tages-Z-Berichten (gn_imports). Tage ohne Import FEHLEN in der Map
+  // (→ Anzeige leer/'–', nie 0 erfinden). Geladen wird das ganze Jahr des
+  // referenceDate, damit Tag/Woche/Monat/Jahr alle abgedeckt sind.
+  const [umsatzTage, setUmsatzTage] = useState<Map<string, UmsatzTag>>(() => new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const y = referenceDate.getFullYear();
+    ladeUmsatzTage(tenantId, `${y}-01-01`, `${y}-12-31`)
+      .then(map => { if (!cancelled) setUmsatzTage(map); })
+      .catch(() => { if (!cancelled) setUmsatzTage(new Map()); });
+    return () => { cancelled = true; };
+  }, [tenantId, referenceDate]);
+
   // Mandantenwechsel: dailyBudgets + reportingTick neu laden
   useEffect(() => {
     console.log(`[TENANT] Dashboard: Mandant gewechselt → "${tenantId}", dailyBudgets neu laden`);
@@ -431,7 +450,7 @@ const Dashboard = () => {
   // Budget-Spalte, VORJAHR = P&L des Vorjahres — EIN computePLForMonth,
   // immer NETTO, Quoten aus Rohwerten (Nenner fehlt/0 ⇒ null). Rein lesend.
   // Take-Away-Monatswert + VJ-Tageswerte lädt der Hook (verbatim extrahiert).
-  const { financialInput, monthlyTakeaway } = useFinancialMonthInput(currentYear, currentMonth, {
+  const { financialInput } = useFinancialMonthInput(currentYear, currentMonth, {
     dailyBudgets,
     maisonDaily,
     maisonOn,
@@ -485,30 +504,34 @@ const Dashboard = () => {
       return s + (dailyBudgets[prevYearDate]?.actualRevenue ?? 0);
     }, 0);
 
-  const revenueMonthDaily    = sumRevenue(monthDays,  'actualRevenue');
+  // ── Kanonischer IST-Umsatz aus umsatz.ts (Netto & Brutto) ───────────────────
+  // istUmsatzForDays(): summiert die kanonischen Tages-Z-Berichte über die
+  // gewählten Tage. Tage ohne Import FEHLEN in der Map und werden übersprungen
+  // (nie als 0 gewertet). Rückgabe: netto/brutto sowie hatImport (mind. 1 Tag).
+  const istUmsatzForDays = (days: string[]): { netto: number; brutto: number; hatImport: boolean } => {
+    let netto = 0, brutto = 0, hatImport = false;
+    for (const d of days) {
+      const tag = umsatzTage.get(d);
+      if (!tag || tag.gesamtBrutto <= 0) continue;
+      netto += nettoUmsatzTag(tag);
+      brutto += tag.gesamtBrutto;
+      hatImport = true;
+    }
+    return { netto: Math.round(netto * 100) / 100, brutto: Math.round(brutto * 100) / 100, hatImport };
+  };
+  // Anzeigewert (netto oder brutto je nach globalem Switch); null wenn kein Import
+  const istUmsatzBase = (days: string[]): number | null => {
+    const { netto, brutto, hatImport } = istUmsatzForDays(days);
+    if (!hatImport) return null;
+    return showNetRevenue ? netto : brutto;
+  };
+
   const revenuePlannedMonth  = sumRevenue(monthDays,  'plannedRevenue');
 
-  // Fallback: wenn keine Gastronovi-Tagesdaten, lese Ist-Umsatz aus Reporting-Modul
-  // reportingTick als Dep damit der Memo nach Supabase-Sync neu berechnet wird
-  const reportingActualRevenue = useMemo(
-    () => loadMonth(currentYear, currentMonth, tenantKey('reporting_v1')).revenueActual ?? 0,
-    [currentYear, currentMonth, reportingTick, tenantId] // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  const revenueMonthBase = revenueMonthDaily > 0 ? revenueMonthDaily : reportingActualRevenue;
-
-  // Maison-Aufschlag: Marketing-Tageswerte werden zum Basisumsatz addiert
-  // (Das reguläre Umsatzfile enthält KEIN Marketing — es wird separat importiert)
-  const maisonSumGross = (days: string[]) =>
-    maisonOn && !maisonExclude
-      ? days.reduce((s, d) => s + (maisonDaily[d] ?? 0), 0)
-      : 0;
-  const maisonActiveGross = maisonSumGross(activeDays);
-  const maisonMonthGross  = maisonSumGross(monthDays);
-  // Marketing MWST-Satz: 8.1% (Restaurationsumsatz)
-  const maisonActiveNet = showNetRevenue ? maisonActiveGross / 1.081 : maisonActiveGross;
-  const maisonMonthNet  = showNetRevenue ? maisonMonthGross  / 1.081 : maisonMonthGross;
-
-  const revenueMonth = revenueMonthBase + maisonMonthNet;
+  // Hinweis: Maison (getrennter manueller/XLSX-Kanal, maisonDaily/maisonOn) wird
+  // NICHT mehr auf den IST-Umsatz der Dashboard-Kacheln addiert. Die IST-Anzeige
+  // ist ausschliesslich die kanonische Σ nettoUmsatzTag aus umsatz.ts. maisonDaily/
+  // maisonOn/maisonExclude bleiben nur als Input für die P&L-Registry (Hook).
 
   // Fallback Vorjahr: zuerst revenuePreviousYear im aktuellen Datensatz (manuell eingegeben),
   // dann Vorjahres-Ist aus reporting_v1 des Vorjahres.
@@ -530,13 +553,7 @@ const Dashboard = () => {
     return 0;
   }, [period, currentYear, currentMonth, reportingTick, tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Periodenspezifische Umsatz-Werte
-  // Für 'month' nutzen wir denselben Fallback; für today/week nur Tagesdaten
-  const revenueActiveDailyRaw = sumRevenue(activeDays, 'actualRevenue');
-  const revenueActiveBase = (period === 'month' && revenueActiveDailyRaw === 0)
-    ? reportingActualRevenue
-    : revenueActiveDailyRaw;
-  const revenueActive = revenueActiveBase + maisonActiveNet;
+  // Periodenspezifische Umsatz-Werte — IST kommt kanonisch aus umsatz.ts.
   const revenuePrevYearDailyRaw = sumRevenuePrevYear(activeDays);
   const revenuePrevYearActive = revenuePrevYearDailyRaw > 0
     ? revenuePrevYearDailyRaw
@@ -561,36 +578,30 @@ const Dashboard = () => {
       : budgetData.revenueBudget * 12   // Jahr: Monatsbudget × 12
     : 0;
 
-  // ── Umsatzbasis-Konvertierung ─────────────────────────────────────────────────
+  // ── Umsatzbasis-Konvertierung (nur für PLAN/BUDGET/VORJAHR) ─────────────────
   // toBase(): gibt Netto (exkl. MWST) oder Brutto zurück je nach globalem Switch.
-  // - Restaurant: ÷ 1.081  |  Take Away: ÷ 1.026
+  // NICHT mehr für IST-Umsatz — der stammt kanonisch aus umsatz.ts.
   const toBase = (gross: number, takeaway = 0): number => {
     if (!showNetRevenue) return gross;
     return grossToNet(gross, takeaway);
   };
-  const takeawayActiveSum  = sumRevenue(activeDays, 'takeawayRevenue');
-  const takeawayMonthSum   = sumRevenue(monthDays,  'takeawayRevenue');
-  console.log('[UMSATZBASIS] mode:', showNetRevenue ? 'netto' : 'brutto');
-  if (showNetRevenue && revenueActive > 0) {
-    const ta  = takeawayActiveSum;
-    const reg = revenueActive - ta;
-    console.log('[UMSATZBASIS] restaurant gross ->', reg.toFixed(0), '-> net:', (reg / 1.081).toFixed(0));
-    if (ta > 0) console.log('[UMSATZBASIS] takeaway gross ->', ta.toFixed(0), '-> net:', (ta / 1.026).toFixed(0));
-  }
-  // Monatliches Take-Away Korrektur (Kto. 3010 Netto)
-  // Wenn ein buchhaltungsseitiger Monats-Take-Away bekannt ist, überschreibt der
-  // korrekt berechnete Netto-Wert die per-Tag-Summe (identisch zu TagesansichtPage).
-  const maisonArg = maisonOn && !maisonExclude ? maisonDaily : undefined;
-  const revenueMonthCorrected = showNetRevenue && monthlyTakeaway > 0
-    ? computeMonthlyIstNet(currentYear, currentMonth, dailyBudgets as Record<string, { actualRevenue?: number; takeawayRevenue?: number }>, undefined, maisonArg, monthlyTakeaway)
-    : 0;
 
-  let revenueActiveB = toBase(revenueActive, takeawayActiveSum);
-  if (showNetRevenue && period === 'month' && revenueMonthCorrected > 0) revenueActiveB = revenueMonthCorrected;
+  // ── IST-Umsatz (kanonisch aus umsatz.ts) ─────────────────────────────────────
+  // Die IST-Umsatz-Anzeige ist EXAKT die Summe der nettoUmsatzTag-Werte aller
+  // importierten Tage (inkl. Marketing-Netto, das bereits in nettoUmsatzTag
+  // steckt). KEIN additiver Maison-Aufschlag mehr auf den Z-Bericht-IST — Maison
+  // ist ein separater manueller/XLSX-Kanal und würde die Kennzahl verfälschen
+  // (E2E Juli 2026 'oliv': Soll = 223'902.19 = Σ nettoUmsatzTag der 26 Tage).
+  // Netto/Brutto je nach Switch aus istUmsatzBase(); null (kein Import) → 0 für
+  // die bestehende '> 0 ⇒ anzeigen, sonst –'-Logik der KPI-Karten.
+  const istActiveBase = istUmsatzBase(activeDays);
+  const istMonthBase   = istUmsatzBase(monthDays);
+  const revenueActiveB = istActiveBase !== null ? istActiveBase : 0;
+  const revenueMonthB  = istMonthBase !== null ? istMonthBase : 0;
+
   const revenuePrevYearActiveB = toBase(revenuePrevYearActive);
   const budgetActiveB          = toBase(budgetActive);
-  const revenueMonthB          = revenueMonthCorrected > 0 ? revenueMonthCorrected : toBase(revenueMonth, takeawayMonthSum);
-  const revenuePlannedMonthB   = toBase(revenuePlannedMonth, takeawayMonthSum);
+  const revenuePlannedMonthB   = toBase(revenuePlannedMonth, sumRevenue(monthDays, 'takeawayRevenue'));
 
   // ── Personalkosten-Berechnungen ─────────────────────────────────────────────
   // Alle Kosten = Total Arbeitgeberkosten (Brutto inkl. anteil. 13. + AG-Sozialkosten).
@@ -651,10 +662,8 @@ const Dashboard = () => {
   const todayStr = format(today, 'yyyy-MM-dd');
   const todayInLoadedMonth = isSameMonth(referenceDate, today);
 
-  const todayBudget = dailyBudgets[todayStr];
-  const revenueTodayB = (todayBudget?.actualRevenue ?? 0) > 0
-    ? toBase(todayBudget!.actualRevenue, todayBudget?.takeawayRevenue ?? 0)
-    : null;
+  // IST-Umsatz heute kanonisch aus umsatz.ts (Z-Bericht). Kein Import → null.
+  const revenueTodayB = istUmsatzBase([todayStr]);
 
   // Geplante/Ist-Stunden heute: null wenn keine Einträge existieren (nicht erfasst ≠ 0 h).
   const todayHours = useMemo(() => {
@@ -807,19 +816,18 @@ const Dashboard = () => {
     ? Math.round(budgetData.personnelBudget * stichtagDay / daysInRefMonth)
     : null;
 
-  // Ist-Umsatz bis Stichtag
-  const revenueIstStichtag = stichtagDateStr
-    ? sumRevenue(daysUpToStichtag, 'actualRevenue')
+  // Ist-Umsatz bis Stichtag — kanonisch aus umsatz.ts (Σ nettoUmsatzTag, kein
+  // additiver Maison-Aufschlag — s. revenueActiveB/revenueMonthB oben).
+  const revenueIstStichtagB = stichtagDateStr
+    ? istUmsatzBase(daysUpToStichtag)
     : null;
+  // revenueIstStichtag: number-Alias für bestehende '!== null'-Checks im Render
+  const revenueIstStichtag = revenueIstStichtagB;
 
-  // Vorjahr bis Stichtag
+  // Vorjahr bis Stichtag (Vorjahreswerte bleiben unverändert)
   const revenuePrevYearStichtag = stichtagDateStr
     ? sumRevenuePrevYear(daysUpToStichtag)
     : null;
-
-  // Umsatzbasis-Stichtag
-  const takeawayStichtagSum    = stichtagDateStr ? sumRevenue(daysUpToStichtag, 'takeawayRevenue') : 0;
-  const revenueIstStichtagB    = revenueIstStichtag !== null ? toBase(revenueIstStichtag, takeawayStichtagSum) : null;
   const revenuePrevYearStichtagB = revenuePrevYearStichtag !== null ? toBase(revenuePrevYearStichtag) : null;
 
   // Personalkosten bis Stichtag (aus Ist-Stunden × Total-AG-Stundensatz)
@@ -840,9 +848,11 @@ const Dashboard = () => {
   }, [visibleEmployees, actualData, stichtagDateStr, agRate]);
 
   // ── Effektiver Stichtag: letzter Tag mit Ist-Umsatz (oder expliziter Stichtag) ──
-  // Für den "zweiten Budget pro rata"-Vergleich
+  // Für den "zweiten Budget pro rata"-Vergleich. Letzter Tag mit kanonischem
+  // Z-Bericht-Import (umsatz.ts) — nicht mehr dailyBudgets.actualRevenue.
   const lastRevenueDay = monthDays.reduce<string | null>((last, d) => {
-    return (dailyBudgets[d]?.actualRevenue ?? 0) > 0 ? d : last;
+    const tag = umsatzTage.get(d);
+    return (tag && tag.gesamtBrutto > 0) ? d : last;
   }, null);
 
   // Wir bevorzugen den expliziten Stichtag (wenn im aktuellen Monat), sonst letzten Ist-Tag
@@ -859,13 +869,11 @@ const Dashboard = () => {
       )
     : null;
 
-  const revenueIstEffective = effectiveCutoff
-    ? sumRevenue(effectiveDays, 'actualRevenue')
+  // IST-Umsatz pro rata bis effectiveCutoff — kanonisch aus umsatz.ts
+  // (Σ nettoUmsatzTag, kein additiver Maison-Aufschlag).
+  const revenueIstEffectiveB = effectiveCutoff
+    ? istUmsatzBase(effectiveDays)
     : null;
-
-  // Umsatzbasis-Effective
-  const takeawayEffectiveSum  = effectiveDays.length > 0 ? sumRevenue(effectiveDays, 'takeawayRevenue') : 0;
-  const revenueIstEffectiveB  = revenueIstEffective !== null ? toBase(revenueIstEffective, takeawayEffectiveSum) : null;
   const budgetEffectiveB      = budgetEffective !== null ? toBase(budgetEffective) : null;
 
   const revEffectiveVsBudgetAbs = budgetEffectiveB !== null && revenueIstEffectiveB !== null
@@ -1203,7 +1211,7 @@ const Dashboard = () => {
                 {period === 'today' && (
                   <Card className={cn(
                     'border-l-4 transition-all',
-                    revenueActive > 0
+                    revenueActiveB > 0
                       ? 'border-l-green-400 dark:border-l-green-600 bg-green-50/30 dark:bg-green-950/10'
                       : 'border-l-blue-400 dark:border-l-blue-600 bg-blue-50/30 dark:bg-blue-950/10',
                   )}>

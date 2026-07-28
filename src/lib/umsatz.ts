@@ -27,8 +27,11 @@
  *   foodDirektNetto     = Food_brutto / 1.081
  *   beverageDirektNetto = Beverage_brutto / 1.081
  *   restNetto           = nettoUmsatz − foodDirekt − beverageDirekt
- *   food = foodDirekt + restNetto/2 ; beverage = beverageDirekt + restNetto/2
- *   (food + beverage ergibt exakt nettoUmsatz.)
+ *   Rest wird ANTEILIG nach dem Food/Beverage-Verhältnis verteilt (nicht 50/50):
+ *     basis = foodDirekt + beverageDirekt
+ *     food     = foodDirekt     + restNetto * (foodDirekt / basis)
+ *     beverage = beverageDirekt + restNetto * (beverageDirekt / basis)
+ *   (basis = 0 → hälftig; food + beverage ergibt exakt nettoUmsatz.)
  *
  * VERIFIKATION Juli 2026 (Beispiel aus der Spezifikation, gegengerechnet):
  *   Gesamt 233'643.90 · TakeAway 29'746.00 · Marketing 12'196.40 + 997.00
@@ -84,8 +87,10 @@ export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
   const netto = nettoUmsatzTag(tag);
   const foodDirekt = tag.foodBrutto / MWST_NORMAL;
   const bevDirekt = tag.beverageBrutto / MWST_NORMAL;
+  const basis = foodDirekt + bevDirekt;
+  const foodAnteil = basis > 0 ? foodDirekt / basis : 0.5;
   const rest = netto - foodDirekt - bevDirekt;
-  const food = r2(foodDirekt + rest / 2);
+  const food = r2(foodDirekt + rest * foodAnteil);
   return { food, beverage: r2(netto - food) };
 }
 
@@ -133,7 +138,11 @@ export async function ladeUmsatzTage(
       .lte('period_from', toIso)
       .not('gross_revenue', 'is', null)
       .order('imported_at', { ascending: true });
-    if (error || !data_ok(imports)) return result;
+    if (error) {
+      console.warn(`[UMSATZ] ladeUmsatzTage(${tenantId}, ${fromIso}..${toIso}) Fehler:`, error.message ?? error);
+      return result;
+    }
+    if (!data_ok(imports)) return result;
 
     // Später importierte überschreiben (Replace-Semantik)
     const winner = new Map<string, { id: string; row: any }>();
@@ -170,7 +179,8 @@ export async function ladeUmsatzTage(
       });
     }
     return result;
-  } catch {
+  } catch (e) {
+    console.warn(`[UMSATZ] ladeUmsatzTage(${tenantId}, ${fromIso}..${toIso}) Exception:`, e);
     return result;
   }
 }

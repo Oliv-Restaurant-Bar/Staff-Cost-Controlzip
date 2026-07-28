@@ -120,6 +120,77 @@ export function applyEffectiveMonthRules(
   return r;
 }
 
+// ─── Kanonischer IST-Umsatz (umsatz.ts) — gemeinsame Regel für ER + Reporting ──
+/** Netto/Brutto-Summe eines Monats aus den gn-Imports (Tage ohne Import fehlen). */
+export interface CanonicalMonthRevenue { net: number; gross: number; hasData: boolean }
+export type CanonicalRevenueByMonth = Record<number, CanonicalMonthRevenue>;
+
+export interface CanonicalIstDeps {
+  /** Geschäftsjahr (für die Take-Away-Monats-Keys "YYYY-MM") */
+  year: number;
+  /** Kanonische Monats-Umsätze (1-basiert) aus umsatz.ts (ladeUmsatzTage → aggregat). */
+  canonical: CanonicalRevenueByMonth;
+  /** Monatliche Take-Away-Nettowerte (Keys "YYYY-MM"), manueller Override. */
+  takeawayMonthly?: Record<string, number>;
+  /** true = Netto-Anzeige (Standard), false = Brutto. */
+  net: boolean;
+}
+
+/**
+ * Gemeinsame IST-Umsatz-Regel für Erfolgsrechnung (PLView) UND Reporting.
+ * Setzt revenueActual = EXAKT dem kanonischen Netto/Brutto-Wert (Σ nettoUmsatzTag)
+ * — KEIN additiver Maison-Zuschlag (Maison ist ggf. eine reine Anzeige-Spalte).
+ * Regeln (identisch auf beiden Seiten):
+ *   - 3xxx-Umsatzkonten haben Vorrang: bei individuellen Konten wird nichts gesetzt.
+ *   - Take-Away Kto. 3000/3010-Split bei monatlichem Override (Netto direkt,
+ *     Brutto = Netto × 1.026).
+ *   - Personalkosten: Buchhaltung 5000–5009 schlägt Dienstplan
+ *     (personnelCostActual wird entfernt).
+ * VJ-Umsatz + Budget werden separat behandelt.
+ */
+export function applyCanonicalIstRule(
+  rec: MonthlyFinancialRecord,
+  month: number,
+  deps: CanonicalIstDeps,
+): MonthlyFinancialRecord {
+  let r = rec;
+  const { year, canonical, takeawayMonthly, net } = deps;
+
+  if (!hasIndividualRevenueAccounts(r)) {
+    const mm = String(month).padStart(2, '0');
+    const um = canonical[month];
+    if (um?.hasData) {
+      const base = net ? um.net : um.gross;
+      const istRev = Math.round(base * 100) / 100;
+      if (istRev > 0) {
+        const taMonthly = takeawayMonthly?.[`${year}-${mm}`] ?? 0;
+        if (taMonthly > 0) {
+          // Kto. 3000/3010 aufteilen: Netto = direkt; Brutto = Netto × 1.026
+          const kto3010 = net ? taMonthly : Math.round(taMonthly * 1.026 * 100) / 100;
+          const kto3000 = istRev - kto3010;
+          r = {
+            ...r,
+            revenueActual: istRev,
+            expenseCategories: [
+              ...r.expenseCategories,
+              { categoryId: '3000', amount: kto3000, label: net ? 'Betriebsertrag Netto' : 'Betriebsertrag Brutto' },
+              { categoryId: '3010', amount: kto3010, label: 'Take-Away Umsatz' },
+            ],
+          };
+        } else {
+          r = { ...r, revenueActual: istRev };
+        }
+      }
+    }
+  }
+
+  // Personalkosten: Buchhaltung (5000–5009) hat Vorrang vor Dienstplan.
+  if (hasAccountingWageAccounts(r) && r.personnelCostActual !== undefined) {
+    r = { ...r, personnelCostActual: undefined };
+  }
+  return r;
+}
+
 /** Hat der Record individuelle Sage-Umsatzkonten (3xxx) im VORJAHR (PY-Spalte)? */
 export function hasIndividualPYRevenueAccounts(rec: MonthlyFinancialRecord): boolean {
   return (rec.expenseCategoriesPreviousYear ?? []).some(c => {

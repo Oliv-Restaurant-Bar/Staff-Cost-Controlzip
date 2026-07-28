@@ -35,7 +35,7 @@ import { loadMonth } from '@/lib/reporting-store';
 import { useVj2025Import } from '@/hooks/useVj2025Import';
 import { useVj2025BeaulieuImport } from '@/hooks/useVj2025BeaulieuImport';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
-import { buildMonthActuals, summarizeMonthActuals } from '@/lib/daily-actuals';
+import { ladeUmsatzTage, nettoUmsatzTag, type UmsatzTag } from '@/lib/umsatz';
 import { getDailyBudgetMap } from '@/lib/budget-day';
 import {
   getMaisonEnabledSync, getMaisonMonthlySync,
@@ -108,10 +108,10 @@ export default function TagesansichtPage() {
   // vjSupabaseData: VJ-Tagesumsätze aus Supabase (primäre Quelle)
   const [vjSupabaseData, setVjSupabaseData] = useState<Record<string, VjDayRecord>>({});
 
-  // sameYearVjData: Tagesumsätze des ANGEZEIGTEN Jahres aus vj_daily
-  // (Jahres-Tagesimport, z. B. 2024). Dient als IST-Quelle, wenn der
-  // dailyBudgets-Blob für den Tag keinen Wert hat. Read-only, kein Write.
-  const [sameYearVjData, setSameYearVjData] = useState<Record<string, VjDayRecord>>({});
+  // umsatzTage: kanonische IST-Netto/Brutto-Quelle des ANGEZEIGTEN Monats
+  // (src/lib/umsatz.ts → gn_imports Tages-Z-Berichte). EINZIGE IST-Quelle
+  // für den aktuellen Zeitraum. Tage ohne Import fehlen in der Map («—», nie 0).
+  const [umsatzTage, setUmsatzTage] = useState<Map<string, UmsatzTag>>(() => new Map());
 
   // reportingTick: hochzählen bei Sync, damit rows-useMemo loadMonth() neu liest
   const [reportingTick, setReportingTick] = useState(0);
@@ -152,17 +152,21 @@ export default function TagesansichtPage() {
   const [editValue,   setEditValue]   = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // VJ-Supabase-Daten für den angezeigten VJ-Monat laden (mit Stale-Guard)
+  // VJ-Supabase-Daten (Vorjahres-Vergleich) + kanonische IST-Umsatz-Tage laden
   useEffect(() => {
     let cancelled = false;
     setVjSupabaseData({});
-    setSameYearVjData({});
+    setUmsatzTage(new Map());
+    // Vorjahres-Vergleich: vj_daily (Jahr − 1)
     loadVjDailyMonth(year - 1, month, tenantId).then(data => {
       if (!cancelled) setVjSupabaseData(data);
     });
-    // Tagesdaten des angezeigten Jahres (IST-Fallback, z. B. 2024)
-    loadVjDailyMonth(year, month, tenantId).then(data => {
-      if (!cancelled) setSameYearVjData(data);
+    // IST-Umsatz des angezeigten Monats aus der kanonischen Netto-Quelle
+    const mm2 = String(month).padStart(2, '0');
+    const fromIso = `${year}-${mm2}-01`;
+    const toIso   = `${year}-${mm2}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+    ladeUmsatzTage(tenantId, fromIso, toIso).then(map => {
+      if (!cancelled) setUmsatzTage(map);
     });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -200,7 +204,10 @@ export default function TagesansichtPage() {
       setDailyBudgets(readDailyBudgets(tenantKey));
       setReportingTick(t => t + 1);
       loadVjDailyMonth(year - 1, month, tenantId).then(setVjSupabaseData);
-      loadVjDailyMonth(year, month, tenantId).then(setSameYearVjData);
+      const mm2 = String(month).padStart(2, '0');
+      const fromIso = `${year}-${mm2}-01`;
+      const toIso   = `${year}-${mm2}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+      ladeUmsatzTage(tenantId, fromIso, toIso).then(setUmsatzTage);
     };
     window.addEventListener('supabase-kv-synced', onSync);
     return () => window.removeEventListener('supabase-kv-synced', onSync);
@@ -223,16 +230,16 @@ export default function TagesansichtPage() {
     [hasBud, budgetData.revenueBudget, year, month],
   );
 
-  // ── Effektive Tages-IST (SSoT daily-actuals: dailyBudgets > vj_daily > null)
-  const monthActuals = useMemo(
-    () => buildMonthActuals(
-      monthDays.map(d => format(d, 'yyyy-MM-dd')),
-      dailyBudgets,
-      sameYearVjData,
-    ),
-    [monthDays, dailyBudgets, sameYearVjData],
-  );
-  const istSummary = useMemo(() => summarizeMonthActuals(monthActuals), [monthActuals]);
+  // ── IST-Zusammenfassung aus der kanonischen Netto-Quelle (umsatz.ts) ────────
+  // Tage mit vorhandenem Import (gesamtBrutto > 0) zählen; fehlende Tage NIE 0.
+  const istSummary = useMemo(() => {
+    let daysWithData = 0;
+    for (const d of monthDays) {
+      const tag = umsatzTage.get(format(d, 'yyyy-MM-dd'));
+      if (tag && tag.gesamtBrutto > 0) daysWithData += 1;
+    }
+    return { daysWithData, totalDays: monthDays.length };
+  }, [monthDays, umsatzTage]);
 
   // ── Zeilenberechnung ──────────────────────────────────────────────────────
   const rows = useMemo(() => {
@@ -261,19 +268,19 @@ export default function TagesansichtPage() {
     return monthDays.map(day => {
       const d = format(day, 'yyyy-MM-dd');
 
-      // Ist: effektiver Tageswert (dailyBudgets > vj_daily desselben Jahres > null).
-      // Fehlend bleibt null («—»), echte 0 (z. B. Schliessungstag aus vj_daily) bleibt 0.
-      const eff         = monthActuals[d] ?? { gross: null, takeaway: 0, source: null };
+      // Ist: kanonischer Tageswert aus umsatz.ts (gn_imports Tages-Z-Berichte).
+      // Netto = nettoUmsatzTag (TA-Split + Marketing), Brutto = gesamtBrutto.
+      // Fehlender Import ⇒ null («—»), NIE eine erfundene 0.
+      const umsatzTag   = umsatzTage.get(d);
+      const hasUmsatz   = !!umsatzTag && umsatzTag.gesamtBrutto > 0;
+      // Maison NUR als eigene Anzeige-Spalte (maisonNet). Fliesst NICHT mehr
+      // in den IST-Umsatz ein — IST = ausschliesslich Σ nettoUmsatzTag/gesamtBrutto.
       const maisonGross = maisonEnabled ? (maisonDaily[d] ?? 0) : 0;
       const maisonDisp  = maisonGross > 0 ? (showNetRevenue ? maisonGross / 1.081 : maisonGross) : 0;
-      const maisonAdd   = maisonExclude ? 0 : maisonDisp;
-      const istBase     = eff.gross === null
+      // IST kommt ausschliesslich aus umsatz.ts; ohne Import bleibt IST leer («—»).
+      const ist: number | null = !hasUmsatz
         ? null
-        : (showNetRevenue ? grossToNet(eff.gross, eff.takeaway) : eff.gross);
-      const ist: number | null =
-        istBase === null
-          ? (maisonAdd > 0 ? maisonAdd : null)
-          : istBase + maisonAdd;
+        : (showNetRevenue ? nettoUmsatzTag(umsatzTag!) : umsatzTag!.gesamtBrutto);
 
       // VJ: 1. Supabase (vj_daily:YYYY-MM-DD) → 2. dailyBudgets-Blob → 3. Pro-rata aus reporting_v1
       const vjKey      = `${year - 1}-${d.slice(5)}`;
@@ -336,7 +343,7 @@ export default function TagesansichtPage() {
       return {
         day, vjDate,
         ist,                    // number | null (null = kein Import, «—»)
-        istSource: eff.source,  // 'dailyBudgets' | 'vj_daily' | null
+        istSource: hasUmsatz ? 'gn_imports' as const : null, // Quelle: umsatz.ts
         maisonNet: maisonDisp,
         vj:         vjBase,     // number | null (null = keine VJ-Daten)
         vjIsExact,              // true = Tages-Exaktwert, false = pro-rata aus reporting_v1
@@ -353,7 +360,7 @@ export default function TagesansichtPage() {
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthDays, monthActuals, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily, maisonExclude]);
+  }, [monthDays, umsatzTage, dailyBudgets, vjSupabaseData, showNetRevenue, dailyBudgetMap, year, month, reportingTick, maisonEnabled, maisonDaily, maisonExclude]);
 
   const lastRow = rows[rows.length - 1];
   const totalMaisonNet = rows.reduce((s, r) => s + r.maisonNet, 0);
@@ -556,9 +563,9 @@ export default function TagesansichtPage() {
                     ? `Umsatzdaten für ${monthLabel}: ${istSummary.daysWithData} von ${istSummary.totalDays} Tagen vorhanden`
                     : `Keine Umsatzdaten für ${monthLabel} importiert`}
                 </span>
-                {hasIstData && istSummary.usesVjDaily && (
+                {hasIstData && (
                   <span className="text-current/70">
-                    · Quelle: Tagesumsatz-Jahresimport
+                    · Quelle: Tages-Z-Berichte (gn_imports)
                   </span>
                 )}
               </div>
