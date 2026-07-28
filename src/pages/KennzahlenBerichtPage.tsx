@@ -36,7 +36,8 @@ import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
 import { getGuestsForPeriod, getAvgReceiptForPeriod, getPersonDayValues } from '@/lib/gn-personen-db';
 import { getAverageCheckDayValues } from '@/lib/gn-average-check-db';
-import { loadGnDailyGrossRevenue, loadGnHourlyRevenueByDay } from '@/lib/gn-zbericht-db';
+import { loadGnHourlyRevenueByDay } from '@/lib/gn-zbericht-db';
+import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit } from '@/lib/umsatz';
 import {
   mergeGnTagesQuellen, summarizeGnPeriode, BONS_BERECHNET_TOOLTIP,
 } from '@/lib/gn-tagesanalyse';
@@ -370,29 +371,37 @@ export default function KennzahlenBerichtPage() {
         const weekFromMs   = Math.max(from.getTime(), subDays(to, 6).getTime());
         const weekFromDate = new Date(weekFromMs);
 
-        let grossTotal = 0, netTotal = 0, foodGross = 0, bevGross = 0;
+        const fromIso = format(from, 'yyyy-MM-dd');
+        const toIso   = format(to,   'yyyy-MM-dd');
+
+        // Kanonische Umsatz-SSoT (umsatz.ts): MANUELLER Tagesumsatz-Import
+        // (dailyBudgets-KV) + Marketing (maison-daily) — KEINE Z-Berichte.
+        const tage = await ladeUmsatzTage(tenantId, fromIso, toIso);
+
+        let grossTotal = 0, netTotal = 0, foodNetSum = 0, bevNetSum = 0;
         let plannedGross = 0, vjGross = 0, laborActual = 0, laborPlanned = 0;
         let daysWithData = 0;
         let wGross = 0, wNet = 0, wVjGross = 0, wPlanGross = 0;
-        let wFoodGross = 0, wBevGross = 0, wLabor = 0;
+        let wFoodNet = 0, wBevNet = 0, wLabor = 0;
         const chartMap = new Map<string, { net: number; planned: number; vj: number }>();
 
         for (const day of days) {
           const key   = format(day, 'yyyy-MM-dd');
           const d     = budgets[key];
-          const gross = d?.actualRevenue    ?? 0;
-          const ta    = d?.takeawayRevenue  ?? 0;
-          const net   = grossToNet(gross, ta);
+          const tag   = tage.get(key);
+          const gross = tag?.gesamtBrutto ?? 0;
+          const net   = tag ? nettoUmsatzTag(tag) : 0;
+          const split = tag ? foodBeverageSplit(tag) : null;
           const planG = d?.plannedRevenue   ?? 0;
           const vjG   = d?.previousYearRevenue ?? 0;
 
           grossTotal   += gross;  netTotal     += net;
-          foodGross    += d?.actualFood     ?? 0;
-          bevGross     += d?.actualBeverage ?? 0;
+          foodNetSum   += split?.food     ?? 0;
+          bevNetSum    += split?.beverage ?? 0;
           plannedGross += planG; vjGross      += vjG;
           laborActual  += d?.actualLaborCost  ?? 0;
           laborPlanned += d?.plannedLaborCost ?? 0;
-          if (gross > 0) daysWithData++;
+          if (tag) daysWithData++;
 
           const lbl = format(day, lblFmt, { locale: de });
           const ex  = chartMap.get(lbl) ?? { net: 0, planned: 0, vj: 0 };
@@ -400,19 +409,17 @@ export default function KennzahlenBerichtPage() {
 
           if (!isBefore(day, weekFromDate)) {
             wGross += gross; wNet += net; wVjGross += vjG; wPlanGross += planG;
-            wFoodGross += d?.actualFood ?? 0; wBevGross += d?.actualBeverage ?? 0;
-            wLabor     += d?.actualLaborCost ?? 0;
+            wFoodNet += split?.food ?? 0; wBevNet += split?.beverage ?? 0;
+            wLabor   += d?.actualLaborCost ?? 0;
           }
         }
 
-        const fromIso      = format(from, 'yyyy-MM-dd');
-        const toIso        = format(to,   'yyyy-MM-dd');
         const weekFromIso  = format(weekFromDate, 'yyyy-MM-dd');
         const vjFromIso    = format(subYears(from, 1), 'yyyy-MM-dd');
         const vjToIso      = format(subYears(to,   1), 'yyyy-MM-dd');
 
         const months  = [...new Set(days.map(d => format(d, 'yyyy-MM')))];
-        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek, personDays, avgCheckDays, zDaily, hourlyByDay] = await Promise.all([
+        const [allInv, guestsCur, guestsWeek, guestsVj, avgRcptCur, avgRcptWeek, personDays, avgCheckDays, hourlyByDay] = await Promise.all([
           Promise.all(months.map(m => loadMonthInvoices(tenantId, m))).then(res => res.flat()
             .filter(inv => { try { const d = parseISO(inv.date); return !isBefore(d, from) && !isAfter(d, to); } catch { return false; } })),
           getGuestsForPeriod(tenantId, fromIso, toIso),
@@ -422,24 +429,21 @@ export default function KennzahlenBerichtPage() {
           getAvgReceiptForPeriod(tenantId, weekFromIso, toIso),
           getPersonDayValues(tenantId, fromIso, toIso),
           getAverageCheckDayValues(tenantId, fromIso, toIso),
-          loadGnDailyGrossRevenue(tenantId, fromIso, toIso),
           loadGnHourlyRevenueByDay(tenantId, fromIso, toIso),
         ]);
 
         // ── Gemeinsame Tagesanalyse (SSoT gn-tagesanalyse) ──────────────
-        // Quellenpriorität Umsatz: Z-Bericht > validierter Tagesumsatz >
-        // Personen × Umsatz pro Person.  Fehlend = null, nie 0.
+        // Umsatzquelle: MANUELLER Tagesumsatz-Import (Gesamt brutto) —
+        // Z-Berichte werden für den Umsatz NICHT mehr gelesen.
+        // Fallback: Personen × Umsatz pro Person. Fehlend = null, nie 0.
         const validatedByDate = new Map<string, number>();
-        for (const day of days) {
-          const key = format(day, 'yyyy-MM-dd');
-          const v = budgets[key]?.actualRevenue;
-          if (typeof v === 'number' && v > 0) validatedByDate.set(key, v);
+        for (const [key, tag] of tage) {
+          if (tag.gesamtBrutto > 0) validatedByDate.set(key, tag.gesamtBrutto);
         }
         const tagesAnalysen = mergeGnTagesQuellen({
           personsByDate:          personDays.personsByDate,
           revenuePerPersonByDate: personDays.revenuePerPersonByDate,
           averageReceiptByDate:   avgCheckDays,
-          zRevenueByDate:         zDaily,
           validatedRevenueByDate: validatedByDate,
         });
         const tages     = summarizeGnPeriode(tagesAnalysen);
@@ -481,7 +485,7 @@ export default function KennzahlenBerichtPage() {
         setSummary({
           daysTotal: days.length, daysWithData,
           netTotal, grossTotal,
-          foodNet: foodGross / 1.081, bevNet: bevGross / 1.081,
+          foodNet: foodNetSum, bevNet: bevNetSum,
           plannedNet: calcNet, vjNet: vjNetFinal,
           laborActual, laborPlanned,
           warenFood, warenBev, warenSonst, warenTotal: warenFood + warenBev + warenSonst,
@@ -494,7 +498,7 @@ export default function KennzahlenBerichtPage() {
             laborActual: wLabor,
             warenFood: wWarenFood, warenBev: wWarenBev, warenSonst: wWarenSonst,
             warenTotal: wWarenFood + wWarenBev + wWarenSonst,
-            foodNet: wFoodGross / 1.081, bevNet: wBevGross / 1.081,
+            foodNet: wFoodNet, bevNet: wBevNet,
           },
           chart: Array.from(chartMap.entries()).map(([label, v]) => ({ label, ...v })),
           guestCount: gCount, weekGuestCount: wGCount, vjGuestCount: vjGCount,
@@ -734,7 +738,7 @@ export default function KennzahlenBerichtPage() {
     <PageHeader
       icon={<BarChart2 />}
       title="Kennzahlen Bericht"
-      info="Operativer Management-Report für den gewählten Zeitraum: Tagesumsatz gemäss Z-Bericht, Personalkosten gemäss Dienstplan, Warenkosten gemäss Rechnungen — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF. Finanzielle Monatswerte gemäss Erfolgsrechnung stehen in Erfolgsrechnung und Reporting."
+      info="Operativer Management-Report für den gewählten Zeitraum: Tagesumsatz gemäss manuellem Umsatz-Import, Personalkosten gemäss Dienstplan, Warenkosten gemäss Rechnungen — als KPI-Dashboard oder Excel-Vorlage, exportierbar als PDF. Finanzielle Monatswerte gemäss Erfolgsrechnung stehen in Erfolgsrechnung und Reporting."
       meta={rangeLabel}
       actions={
         <UnifiedExportButton
@@ -797,7 +801,7 @@ export default function KennzahlenBerichtPage() {
         {!loading && summary && viewMode === 'dashboard' && <>
           <KpiGrid>
             <KpiCard label="Nettoumsatz"    value={fmtChf(summary.netTotal)}
-              sub={summary.daysWithData > 0 ? `gemäss Z-Bericht · ${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
+              sub={summary.daysWithData > 0 ? `gemäss Umsatz-Import · ${summary.daysWithData} Tage mit Umsatz` : 'Keine Daten'} tone={TL_TONE[tlRev]} />
             <KpiCard label="Personalkosten" value={fmtChf(summary.laborActual)}
               sub={summary.netTotal > 0 ? `gemäss Dienstplan · ${fmtPct(pkPct)} vom Umsatz` : 'gemäss Dienstplan'} tone={TL_TONE[tlPk]} />
             <KpiCard label="WES Total"      value={summary.warenTotal > 0 ? fmtChf(summary.warenTotal) : '—'}
@@ -808,7 +812,7 @@ export default function KennzahlenBerichtPage() {
 
           <BSection title="Umsatzübersicht" icon={<DollarSign className="h-4 w-4" />}>
             <DGrid>
-              <Row label="Nettoumsatz Total"       value={fmtChf(summary.netTotal)} bold hint="gemäss Z-Bericht" />
+              <Row label="Nettoumsatz Total"       value={fmtChf(summary.netTotal)} bold hint="gemäss Umsatz-Import, inkl. Marketing" />
               <Row label="Bruttoumsatz Total"      value={fmtChf(summary.grossTotal)} />
               <Row label="Umsatz Food (netto)"     value={summary.foodNet > 0 ? fmtChf(summary.foodNet) : '—'} />
               <Row label="Umsatz Beverage (netto)" value={summary.bevNet  > 0 ? fmtChf(summary.bevNet)  : '—'} />
@@ -830,7 +834,7 @@ export default function KennzahlenBerichtPage() {
                 diff={budDiff !== null ? (budDiff >= 0 ? 'pos' : 'neg') : undefined} />
               <Row label="Abw. Budget (%)"     value={budPct !== null ? `${sgn(budPct)}${fmtPct(budPct)}` : '—'}
                 diff={budPct !== null ? (budPct >= 0 ? 'pos' : 'neg') : undefined} />
-              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} hint="Tagesumsatz Vorjahr gemäss Z-Bericht" />
+              <Row label="Vorjahr Nettoumsatz" value={summary.vjNet > 0 ? fmtChf(summary.vjNet) : '—'} hint="Tagesumsatz Vorjahr" />
               <Row label="Abw. Vorjahr (CHF)"  value={vjDiff !== null ? `${sgn(vjDiff)}${fmtChf(vjDiff)}` : '—'}
                 diff={vjDiff !== null ? (vjDiff >= 0 ? 'pos' : 'neg') : undefined} />
               <Row label="Abw. Vorjahr (%)"    value={vjPct !== null ? `${sgn(vjPct)}${fmtPct(vjPct)}` : '—'}
