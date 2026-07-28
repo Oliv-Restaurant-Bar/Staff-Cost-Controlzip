@@ -804,6 +804,10 @@ export const parseGastronoviExcel = async (
         const gesamtMap: Record<string, number>    = {};
         const takeAwayMap: Record<string, number>  = {};
         const currencyMap: Record<string, 'CHF' | 'EUR'> = {};
+        // «Zeitraum»-Spalte (Spalte 1) = MASSGEBLICHES Perioden-Total pro Zeile.
+        // Die Tageszellen des Exports summieren NICHT immer exakt auf dieses
+        // Total — die Tageswerte werden deshalb proportional darauf abgeglichen.
+        let zGesamt = 0, zTakeAway = 0, zFood = 0, zBeverage = 0;
 
         dateColumns.forEach(({ date }) => {
           foodMap[date]      = 0;
@@ -826,6 +830,15 @@ export const parseGastronoviExcel = async (
           const isFood     = label.includes('food') || label.includes('speisen');
           const isBeverage = label.includes('beverage') || label.includes('getränke');
 
+          // Perioden-Total aus der «Zeitraum»-Spalte (Spalte 1)
+          const zeitraum = parseRevenueValue(row[1] ?? '').amount;
+          if (zeitraum !== 0) {
+            if (isGesamt)        zGesamt   += zeitraum;
+            else if (isTakeAway) zTakeAway += zeitraum;
+            else if (isFood)     zFood     += zeitraum;
+            else if (isBeverage) zBeverage += zeitraum;
+          }
+
           for (const { colIdx, date } of dateColumns) {
             const cell = row[colIdx];
             if (cell === '' || cell === undefined || cell === null) continue;
@@ -847,30 +860,76 @@ export const parseGastronoviExcel = async (
           }
         }
 
-        // ── 4. Apply 70/30 split and build results ──
+        // ── 4. Build results ──
+        // Mit Gesamt-Zeile: food/beverage = REINE Kategoriezeilen (keine
+        // 70/30-Umlage der übrigen Zeilen) — der Küche/Bar-Split folgt dem
+        // rohen Food/Beverage-Verhältnis; übrige Zeilen stecken im Gesamt.
+        // Ohne Gesamt-Zeile (Legacy-Fallback): total = Food+Bev+übrige (70/30).
+        const hasGesamt = zGesamt > 0
+          || dateColumns.some(({ date }) => (gesamtMap[date] ?? 0) > 0);
+
         const results: GastronoviDayResult[] = dateColumns.map(({ date }) => {
-          const other     = otherMap[date] ?? 0;
-          const food      = (foodMap[date] ?? 0) + other * 0.70;
-          const beverage  = (beverageMap[date] ?? 0) + other * 0.30;
-          const katSumme  = Math.round((food + beverage) * 100) / 100;
-          const gesamt    = Math.round((gesamtMap[date] ?? 0) * 100) / 100;
+          const other    = otherMap[date] ?? 0;
+          const foodRaw  = foodMap[date] ?? 0;
+          const bevRaw   = beverageMap[date] ?? 0;
+          const food     = hasGesamt ? foodRaw : foodRaw + other * 0.70;
+          const beverage = hasGesamt ? bevRaw  : bevRaw  + other * 0.30;
+          const katSumme = Math.round((foodRaw + bevRaw + other) * 100) / 100;
+          const gesamt   = Math.round((gesamtMap[date] ?? 0) * 100) / 100;
           // Gesamt-Zeile ist massgeblich (voller Tagesumsatz) — PRO TAG:
           // fehlt der Gesamt-Wert an einem Tag, Fallback auf die Kategoriesumme.
-          const total     = gesamt > 0 ? gesamt : katSumme;
-          // Datenqualitäts-Guard: Take Away ist Teilmenge von Gesamt.
-          const takeAway  = Math.min(Math.round((takeAwayMap[date] ?? 0) * 100) / 100, total);
+          const total    = gesamt > 0 ? gesamt : katSumme;
           return {
             date,
             food:     Math.round(food     * 100) / 100,
             beverage: Math.round(beverage * 100) / 100,
             total,
-            takeAway,
+            takeAway: Math.round((takeAwayMap[date] ?? 0) * 100) / 100,
             currency: currencyMap[date] ?? 'CHF',
           };
-        });
+        }).filter(r => r.total !== 0);
 
-        // Filter out completely empty days
-        resolve(results.filter(r => r.total !== 0));
+        // ── 5. Abgleich auf die «Zeitraum»-Totale (massgeblich) ──
+        // Die Tageszellen des Gastronovi-Exports summieren nicht immer exakt
+        // auf das Perioden-Total. Jede Serie wird proportional skaliert und
+        // der Rundungsrest auf den letzten Tag mit Wert gelegt, damit die
+        // Monatssummen EXAKT den Zeitraum-Werten entsprechen.
+        const adjustSeries = (
+          get: (r: GastronoviDayResult) => number,
+          set: (r: GastronoviDayResult, v: number) => void,
+          target: number,
+        ) => {
+          if (target === 0 || results.length === 0) return;
+          const sum = results.reduce((s, r) => s + get(r), 0);
+          if (Math.abs(sum - target) < 0.05) return;
+          let lastIdx = results.length - 1;
+          results.forEach((r, i) => { if (get(r) !== 0) lastIdx = i; });
+          if (sum !== 0 && Math.sign(sum) === Math.sign(target)) {
+            // Proportional skalieren, Rundungsrest auf letzten Tag mit Wert.
+            const factor = target / sum;
+            let acc = 0;
+            results.forEach(r => {
+              const v = Math.round(get(r) * factor * 100) / 100;
+              set(r, v); acc += v;
+            });
+            const rest = Math.round((target - acc) * 100) / 100;
+            set(results[lastIdx], Math.round((get(results[lastIdx]) + rest) * 100) / 100);
+          } else {
+            // Keine skalierbare Basis (Summe 0 oder Vorzeichenwechsel):
+            // gesamte Differenz auf den letzten Tag mit Wert legen.
+            const rest = Math.round((target - sum) * 100) / 100;
+            set(results[lastIdx], Math.round((get(results[lastIdx]) + rest) * 100) / 100);
+          }
+        };
+        adjustSeries(r => r.total,    (r, v) => { r.total    = v; }, zGesamt);
+        adjustSeries(r => r.takeAway, (r, v) => { r.takeAway = v; }, zTakeAway);
+        adjustSeries(r => r.food,     (r, v) => { r.food     = v; }, zFood);
+        adjustSeries(r => r.beverage, (r, v) => { r.beverage = v; }, zBeverage);
+
+        // Datenqualitäts-Guard: Take Away ist Teilmenge von Gesamt.
+        for (const r of results) r.takeAway = Math.min(r.takeAway, r.total);
+
+        resolve(results);
       } catch (err) {
         reject(err);
       }

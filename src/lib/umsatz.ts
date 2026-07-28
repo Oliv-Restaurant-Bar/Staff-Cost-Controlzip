@@ -64,11 +64,16 @@ export interface UmsatzTag {
   marketingNetto: number;
 }
 
-/** Kanonischer Netto-Umsatz eines Tages. */
+/**
+ * Kanonischer Netto-Umsatz eines Tages — UNGERUNDET.
+ * Gerundet wird erst bei der Summe/Anzeige: so ergibt die Monatssumme exakt
+ * die Monatsformel (Σ TA/1.026 + Σ (Gesamt−TA)/1.081 + Σ Marketing), ohne
+ * Rappen-Drift aus Tagesrundungen.
+ */
 export function nettoUmsatzTag(tag: UmsatzTag): number {
   const takeAwayNetto = tag.takeAwayBrutto / MWST_TAKEAWAY;
   const uebrigerNetto = (tag.gesamtBrutto - tag.takeAwayBrutto) / MWST_NORMAL;
-  return r2(takeAwayNetto + uebrigerNetto + tag.marketingNetto);
+  return takeAwayNetto + uebrigerNetto + tag.marketingNetto;
 }
 
 export interface FoodBeverageSplit {
@@ -78,9 +83,10 @@ export interface FoodBeverageSplit {
 
 /**
  * Food/Beverage-Aufteilung des Netto-Umsatzes: direkte Anteile netto,
- * Rest (nicht kategorisierter Umsatz, Marketing, Rundung) ANTEILIG nach
- * dem Food/Beverage-Verhältnis (basis = 0 → hälftig).
- * Invariante: food + beverage === nettoUmsatzTag(tag).
+ * Rest (nicht kategorisierter Umsatz, Marketing, Take-Away-Differenz)
+ * ANTEILIG nach dem Food/Beverage-Verhältnis (basis = 0 → hälftig).
+ * UNGERUNDET (Rundung erst bei Summe/Anzeige) — Invariante gilt exakt:
+ * food + beverage === nettoUmsatzTag(tag).
  */
 export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
   const netto = nettoUmsatzTag(tag);
@@ -89,8 +95,8 @@ export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
   const basis = foodDirekt + bevDirekt;
   const foodAnteil = basis > 0 ? foodDirekt / basis : 0.5;
   const rest = netto - foodDirekt - bevDirekt;
-  const food = r2(foodDirekt + rest * foodAnteil);
-  return { food, beverage: r2(netto - food) };
+  const food = foodDirekt + rest * foodAnteil;
+  return { food, beverage: netto - food };
 }
 
 /** Bequeme Summen über mehrere Tage. */

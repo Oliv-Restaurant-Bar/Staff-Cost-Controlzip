@@ -9,8 +9,8 @@ description: Kanonische Netto-Umsatz-Quelle (manueller Import, NICHT gn_imports)
 Regeln:
 - Quelle: dailyBudgets-KV (tenant-präfixiert; oliv OHNE Präfix): actualRevenue = Gesamt brutto («Gesamt»-Zeile), takeawayRevenue = TA brutto («Take Away»-Zeile), actualFood/actualBeverage = Kategorien brutto. Marketing pro Tag aus maison-daily-KV (Nennwert = netto). Tage ohne manuellen Import fehlen (leer, nie 0).
 - Netto = TA/1.026 + (Gesamt−TA)/1.081 + Marketing. Referenz Juli 2026: 235'219.00 / 29'898.50 / 13'193.40 → 232'269.95.
-- Food/Bev-Split: Direktanteile /1.081, Rest ANTEILIG nach Food/Bev-Verhältnis (basis=0 → hälftig); Invariante food+beverage === netto via `beverage = netto − food` nach Rundung.
-- Parser (revenue-parser.ts parseGastronoviExcel): «Gesamt»-Zeile ist massgeblich PRO TAG (Fallback Kategoriesumme), «Take Away»-Zeile separat (NICHT in otherMap, geclampt auf ≤ total); other 70/30 auf Food/Bev.
+- Food/Bev-Split: Direktanteile /1.081, Rest ANTEILIG nach Food/Bev-Verhältnis (basis=0 → hälftig); nettoUmsatzTag und foodBeverageSplit sind UNGERUNDET (Rundung erst bei Summe/Anzeige), sonst Rappen-Drift vs. Monatsformel.
+- Parser (revenue-parser.ts parseGastronoviExcel): Die «Zeitraum»-Spalte (Spalte 1) ist das MASSGEBLICHE Perioden-Total — die Tageszellen des Gastronovi-Exports summieren NICHT exakt darauf (Juli: Tage 233'288.40 vs. Zeitraum 235'219.00). Jede Serie (total/takeAway/food/bev) wird proportional auf ihr Zeitraum-Total skaliert, Rundungs-/Vorzeichenrest auf den letzten Tag mit Wert; TA-Clamp ≤ total NACH der Skalierung. Mit Gesamt-Zeile: food/beverage = ROHE Kategoriezeilen (KEINE 70/30-Umlage — nur so stimmt der Küche/Bar-Split, z. B. 155'885/76'385); Legacy-70/30 nur im Fallback ohne Gesamt-Zeile.
 - Nach Parser-/Feld-Änderungen müssen Excel + Marketing-Datei NEU importiert werden — alte KV-Stände haben kein takeawayRevenue und actualRevenue = Kategoriesumme statt Gesamt.
 - Tag-Regel Personalkosten: Tag = IST nur wenn VOR heute UND Ist-Stunden; heute+Zukunft = PLAN (flexKostenProTag stichtag-Param).
 - Achtung: umsatzIstProTag in PersonalkostenDaten ist NETTO — neue Konsumenten nicht mit brutto vergleichen.
