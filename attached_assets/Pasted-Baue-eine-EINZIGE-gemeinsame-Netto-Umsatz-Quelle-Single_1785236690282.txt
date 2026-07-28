@@ -1,0 +1,56 @@
+Baue eine EINZIGE gemeinsame Netto-Umsatz-Quelle (Single Source of Truth) und
+nutze sie überall. Zusätzlich die Tag-Regel der Personalkosten korrigieren.
+
+ZUERST INVENTUR (kurz berichten): Wo liegen die täglichen Z-Bericht-Werte
+(Gesamt, Food, Beverage, Take Away, Keine Gruppierung, Aufladung Kundenkarten)
+und die Marketing-/Rabatt-Positionen? Datei/Tabelle nennen. Keine neuen Tabellen.
+
+A) NEUE DATEI src/lib/umsatz.ts — kanonische Netto-Umsatz-Berechnung pro Tag,
+   summierbar auf Woche/Monat:
+
+   nettoUmsatzTag(tag):
+     - takeAwayNetto = TakeAway_brutto / 1.026
+     - uebrigerNetto  = (Gesamt_brutto − TakeAway_brutto) / 1.081
+       (Gesamt enthält Food, Beverage, Keine Gruppierung, Aufladung Kundenkarten
+        und ist bereits nach Rabatten – Aufladung Kundenkarten bleibt drin.)
+     - marketingNetto = Summe der Positionen, deren Kategorie/Name "Marketing"
+       bzw. "marketing" ist, zum Nennwert als netto. NICHT dazu: Maison,
+       Mitarbeiter-Rabatt, sonstige Rabatte.
+     - nettoUmsatz = takeAwayNetto + uebrigerNetto + marketingNetto
+
+   foodBeverageSplit(tag):
+     - foodDirektNetto     = Food_brutto / 1.081
+     - beverageDirektNetto = Beverage_brutto / 1.081
+     - restNetto = nettoUmsatz − foodDirektNetto − beverageDirektNetto
+     - food     = foodDirektNetto     + restNetto / 2
+     - beverage = beverageDirektNetto + restNetto / 2
+     (food + beverage muss exakt nettoUmsatz ergeben.)
+
+   Wein/Spirituosen bleibt separate Anzeige aus den Warengruppen (Teil des
+   Beverage-Totals, kein zusätzlicher Betrag).
+
+   VERIFIKATION Juli 2026 (fest gegenrechnen, im Code-Kommentar dokumentieren):
+     Gesamt 233'643.90, TakeAway 29'746.00, Marketing 12'196.40 + 997.00
+     → Netto 230'805.30; Food 149'509.08; Beverage 81'296.22.
+
+B) TAG-REGEL Personalkosten (src/lib/personalkosten.ts) korrigieren:
+   Ein Tag zählt nur dann als IST, wenn er VOR heute liegt UND Ist-Stunden
+   vorhanden sind. Heutiger Tag und alle künftigen Tage = PLAN (aus Dienstplan).
+   Also: vergangene Tage Ist, ab heute bis Monatsende Plan.
+
+C) PERSONALKOSTEN-PKQ auf die neue Netto-Quelle umstellen:
+   - Umsatz Ist bis heute = Summe nettoUmsatzTag der vergangenen Tage.
+   - Umsatz Hochrechnung = Netto vergangener Tage + Netto-Budget-Umsatz der
+     Resttage (Budget ist netto).
+   - pkqIst = KostenIst / NettoUmsatzIst ; pkqHR = KostenHR / NettoUmsatzHR.
+   Prüfansicht /personalkosten-neu entsprechend aktualisieren.
+
+D) MONATSREPORT (src/pages/... Monatsreport) auf dieselbe umsatz.ts umstellen:
+   - Netto Umsatz = nettoUmsatz (statt der bisherigen vereinfachten Rechnung).
+   - Küchen Umsatz = food, Bar Umsatz = beverage aus foodBeverageSplit.
+   - Brutto Umsatz = Gesamt inkl. MwSt.
+
+Beide Konsumenten (Report + Personalkosten) MÜSSEN dieselbe umsatz.ts nutzen –
+keine zweite Umsatzberechnung mehr. Am Ende berichten: Netto-Umsatz Juli,
+Food/Beverage-Split und die neue PKQ (Ist + Hochrechnung), damit wir es gegen
+das Beispiel prüfen können.

@@ -72,7 +72,7 @@ export default function PersonalkostenNeu() {
     const stichtag = letzterVergangenerTag(year, month);
     const fix   = fixKosten(daten, { stichtag });
     const fixHr = fixKosten(daten);
-    const tage  = flexKostenProTag(daten);
+    const tage  = flexKostenProTag(daten, { stichtag });
     const kIst  = personalkosten(daten, 'istBisHeute',  { stichtag });
     const kHr   = personalkosten(daten, 'hochrechnung', { stichtag });
     const bud   = budget(year, month, daten.gewichte);

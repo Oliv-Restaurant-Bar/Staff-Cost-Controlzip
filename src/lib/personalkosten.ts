@@ -29,6 +29,7 @@ import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import type { TenantId } from '@/contexts/TenantContext';
+import { ladeUmsatzTage, nettoUmsatzTag } from '@/lib/umsatz';
 
 // ── Budget-Konstanten (Vorgabe: 35.5 % von 300'000 = 106'400) ────────────────
 export const PK_BUDGET_UMSATZ_MONAT = 300_000;
@@ -64,7 +65,7 @@ export interface PersonalkostenDaten {
   istStdProTag:  Record<string, Record<string, number>>;
   /** Tage (Set 'YYYY-MM-DD'), für die Ist-Stunden importiert sind → TAG-REGEL */
   istTage: Set<string>;
-  /** Ist-Umsatz je 'YYYY-MM-DD' aus Z-Bericht (dailyBudgets.actualRevenue) */
+  /** Ist-NETTO-Umsatz je 'YYYY-MM-DD' aus der kanonischen Quelle umsatz.ts */
   umsatzIstProTag: Record<string, number>;
   /** Budgetierter Monatsumsatz aus dem Budget-Modul (0 = nicht vorhanden) */
   umsatzBudgetMonat: number;
@@ -194,8 +195,13 @@ export interface FlexTag {
   effektivKosten: number;
 }
 
-/** Flex-Kosten je Tag/Flex-MA (Plan aus Dienstplan, Ist aus MIRUS). */
-export function flexKostenProTag(daten: PersonalkostenDaten): FlexTag[] {
+/**
+ * Flex-Kosten je Tag/Flex-MA (Plan aus Dienstplan, Ist aus MIRUS).
+ * TAG-REGEL: Ein Tag zählt nur dann als IST, wenn er VOR heute liegt UND
+ * Ist-Stunden vorhanden sind. Heutiger Tag und alle künftigen Tage = PLAN.
+ */
+export function flexKostenProTag(daten: PersonalkostenDaten, opts?: { stichtag?: number }): FlexTag[] {
+  const stichtag = opts?.stichtag ?? letzterVergangenerTag(daten.year, daten.month);
   const mm = pad2(daten.month);
   const tage: FlexTag[] = [];
   const rateCache = new Map<string, number>();
@@ -205,7 +211,8 @@ export function flexKostenProTag(daten: PersonalkostenDaten): FlexTag[] {
   };
   for (let d = 1; d <= daten.daysInMonth; d++) {
     const date = `${daten.year}-${mm}-${pad2(d)}`;
-    const istTag = daten.istTage.has(date);
+    // TAG-REGEL: nur vergangene Tage (d <= stichtag) mit Ist-Stunden sind Ist-Tage.
+    const istTag = d <= stichtag && daten.istTage.has(date);
     const proMa: Record<string, PkFlexTagZelle> = {};
     let planKosten = 0, istKosten = 0;
     for (const emp of daten.flexEmployees) {
@@ -250,7 +257,7 @@ export type PkModus = 'istBisHeute' | 'hochrechnung';
  */
 export function personalkosten(daten: PersonalkostenDaten, modus: PkModus, opts?: { stichtag?: number }): PkSumme {
   const stichtag = opts?.stichtag ?? letzterVergangenerTag(daten.year, daten.month);
-  const tage = flexKostenProTag(daten);
+  const tage = flexKostenProTag(daten, { stichtag });
   if (modus === 'istBisHeute') {
     const fix = fixKosten(daten, { stichtag }).totalBisStichtag;
     let flex = 0;
@@ -361,7 +368,7 @@ export function letzterVergangenerTag(year: number, month: number, heute: Date =
 // - Mitarbeiter: Supabase employees + Lohnhistorie (applyEffectiveWages)
 // - Plan: Supabase schedule_entries (Fallback localStorage schedule-v2-*)
 // - Ist:  Supabase actual_hours + localStorage actual-hours-* (FE-Override lokal)
-// - Umsatz Ist: localStorage dailyBudgets (Z-Bericht-Sync)
+// - Umsatz Ist: kanonische Netto-Quelle src/lib/umsatz.ts (gn_imports + gn_discounts)
 // - Umsatzbudget: Budget-Store (P&L)
 
 type KeyFn = (k: string) => string;
@@ -438,13 +445,12 @@ export async function ladePersonalkostenDaten(
     }
   }
 
-  // ── Ist-Umsatz (Z-Bericht via dailyBudgets) ──────────────────────────────
+  // ── Ist-Umsatz NETTO (kanonische Quelle src/lib/umsatz.ts) ───────────────
   const umsatzIstProTag: Record<string, number> = {};
-  const dailyBudgets = readJson<Record<string, { actualRevenue?: number }>>(tenantKey('dailyBudgets'), {});
-  for (const [date, val] of Object.entries(dailyBudgets)) {
-    if (!date.startsWith(prefix)) continue;
-    const rev = val?.actualRevenue ?? 0;
-    if (rev > 0) umsatzIstProTag[date] = rev;
+  const umsatzTage = await ladeUmsatzTage(tenantId, `${prefix}-01`, `${prefix}-${pad2(daysInMonth)}`);
+  for (const [date, tag] of umsatzTage) {
+    const netto = nettoUmsatzTag(tag);
+    if (netto > 0) umsatzIstProTag[date] = netto;
   }
 
   // ── Umsatzbudget (Budget-Modul) ──────────────────────────────────────────

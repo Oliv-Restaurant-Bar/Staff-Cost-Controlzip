@@ -5,9 +5,9 @@
  * (werden in der UI/Excel leer dargestellt, nie als 0 erfunden).
  *
  * Quellen (alles vorhandene, keine neuen Tabellen):
- *  - Umsatz Ist (brutto/TA):  localStorage dailyBudgets (Z-Bericht-Sync), tenantKey
- *  - Netto:                   grossToNet (MwSt 8.1% / TA 2.6%)
- *  - Sparten Food/Beverage:   dailyBudgets.actualFood / actualBeverage (Gastronovi)
+ *  - Umsatz (brutto/netto/TA/Food/Beverage): kanonische Quelle src/lib/umsatz.ts
+ *    (gn_imports Tages-Z-Berichte + gn_discounts Marketing) — SSOT, identisch
+ *    mit den Personalkosten
  *  - Wein/Spirituosen:        gn_product_groups (Z-Bericht-Warengruppen, Regex)
  *  - Gäste:                   gn_person_metrics via getPersonDayValues (Import «Anzahl Personen»)
  *  - Gruppen ab 20 Pax:       reservation_records (Foratable-Import, party_size >= 20)
@@ -17,8 +17,7 @@
  *  - Stunden Ist/Plan:        ladePersonalkostenDaten (MIRUS actual_hours / Dienstplan)
  */
 import { supabase } from '@/integrations/supabase/client';
-import { grossToNet } from '@/types/personnel';
-import type { DailyBudget } from '@/types/personnel';
+import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit } from '@/lib/umsatz';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { ladeWochentagsGewichte, ladePersonalkostenDaten } from '@/lib/personalkosten';
@@ -64,13 +63,6 @@ export interface MonatsreportDaten {
 }
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────
-
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch { return fallback; }
-}
 
 /** Gruppen ab 20 Pax im Monat (Foratable-Reservationen, ohne Stornos). */
 async function countGroupsFrom20Pax(
@@ -176,20 +168,20 @@ export async function ladeMonatsreport(
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
-  // ── Umsatz Ist aus dailyBudgets ────────────────────────────────────────────
-  const budgets = readJson<Record<string, DailyBudget>>(tenantKey('dailyBudgets'), {});
-  let mGross = 0, mNet = 0, mTa = 0, mFoodG = 0, mBevG = 0, mHatUmsatz = false;
+  // ── Umsatz Ist aus der kanonischen Netto-Quelle (src/lib/umsatz.ts) ────────
+  const umsatzTage = await ladeUmsatzTage(tenantId, fromIso, toIso);
+  let mGross = 0, mNet = 0, mTa = 0, mFood = 0, mBev = 0, mHatUmsatz = false;
   let wGross = 0, wNet = 0, wTa = 0, wHatUmsatz = false;
   for (const date of istTage) {
-    const d = budgets[date];
-    const gross = d?.actualRevenue ?? 0;
-    if (gross <= 0) continue;
-    const ta = d?.takeawayRevenue ?? 0;
-    mGross += gross; mTa += ta; mNet += grossToNet(gross, ta);
-    mFoodG += d?.actualFood ?? 0; mBevG += d?.actualBeverage ?? 0;
+    const tag = umsatzTage.get(date);
+    if (!tag || tag.gesamtBrutto <= 0) continue;
+    const netto = nettoUmsatzTag(tag);
+    const split = foodBeverageSplit(tag);
+    mGross += tag.gesamtBrutto; mTa += tag.takeAwayBrutto; mNet += netto;
+    mFood += split.food; mBev += split.beverage;
     mHatUmsatz = true;
     if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) {
-      wGross += gross; wTa += ta; wNet += grossToNet(gross, ta); wHatUmsatz = true;
+      wGross += tag.gesamtBrutto; wTa += tag.takeAwayBrutto; wNet += netto; wHatUmsatz = true;
     }
   }
 
@@ -313,8 +305,8 @@ export async function ladeMonatsreport(
     e(),
     // ── Block Sparten (netto) ──
     d('Wein / Spirituosen', { month: weinMonat != null ? r2(weinMonat) : null, week: weinWoche != null ? r2(weinWoche) : null }),
-    d('Bar Umsatz', { month: mHatUmsatz && mBevG > 0 ? r2(mBevG / VAT_STD) : null }),
-    d('Küchen Umsatz', { month: mHatUmsatz && mFoodG > 0 ? r2(mFoodG / VAT_STD) : null }),
+    d('Bar Umsatz', { month: mHatUmsatz && mBev > 0 ? r2(mBev) : null }),
+    d('Küchen Umsatz', { month: mHatUmsatz && mFood > 0 ? r2(mFood) : null }),
     d('Bar Umsatz Vorjahr', { vj: hatVjBev ? r2(vjBevG / VAT_STD) : null, month: hatVjBev ? r2(vjBevG / VAT_STD) : null }),
     d('Küchen Umsatz Vorjahr', { vj: hatVjFood ? r2(vjFoodG / VAT_STD) : null, month: hatVjFood ? r2(vjFoodG / VAT_STD) : null }),
     e(),
