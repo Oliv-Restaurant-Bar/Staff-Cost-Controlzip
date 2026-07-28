@@ -5,17 +5,17 @@
  * Konsumenten: Personalkosten (PKQ) und Monatsreport — KEINE zweite
  * Umsatzberechnung mehr ausserhalb dieser Datei.
  *
- * Quellen (keine neuen Tabellen):
- *  - gn_imports (Tages-Z-Berichte, aggregation_level='day', status='active'):
- *      gross_revenue      = Gesamt brutto (inkl. Food, Beverage,
- *                           «Keine Gruppierung», «Aufladung Kundenkarten»;
- *                           bereits nach Rabatten)
- *      take_away_revenue  = Take-Away brutto
- *      food_revenue       = Food brutto (Warengruppen-Summe)
- *      bev_revenue        = Beverage brutto (Warengruppen-Summe)
- *  - gn_discounts (via import_id): Positionen mit Name «Marketing»/«marketing»
- *    → Marketing-Zuschlag, zum Nennwert als netto. NICHT dazu: Maison,
- *    Mitarbeiter-Rabatt, sonstige Rabatte.
+ * Quellen (VERBINDLICH — Z-Berichte/gn_imports werden hier NICHT gelesen,
+ * sie dienen nur den Tagesabschlüssen):
+ *  - dailyBudgets (KV, tenant-präfixiert) — MANUELLER Tagesumsatz-Import
+ *    («Nach Speisekarte»-Excel):
+ *      actualRevenue   = Gesamt brutto («Gesamt»-Zeile, inkl. Take Away,
+ *                        nach Rabatten)
+ *      takeawayRevenue = Take-Away brutto («Take Away»-Zeile, Teil von Gesamt)
+ *      actualFood      = Food brutto (Kategoriezeilen)
+ *      actualBeverage  = Beverage brutto (Kategoriezeilen)
+ *  - maison-daily (KV, tenant-präfixiert) — separater Marketing-Import:
+ *    Marketing pro Tag, Nennwert = netto.
  *
  * Formel (nettoUmsatzTag):
  *   takeAwayNetto  = TakeAway_brutto / 1.026
@@ -33,15 +33,13 @@
  *     beverage = beverageDirekt + restNetto * (beverageDirekt / basis)
  *   (basis = 0 → hälftig; food + beverage ergibt exakt nettoUmsatz.)
  *
- * VERIFIKATION Juli 2026 (Beispiel aus der Spezifikation, gegengerechnet):
- *   Gesamt 233'643.90 · TakeAway 29'746.00 · Marketing 12'196.40 + 997.00
- *   → takeAwayNetto  = 29'746.00 / 1.026              = 28'992.20
- *     uebrigerNetto  = (233'643.90 − 29'746.00)/1.081 = 188'619.70
+ * VERIFIKATION Juli 2026 (manueller 27-Tage-Import, gegengerechnet):
+ *   Gesamt 235'219.00 · TakeAway 29'898.50 · Marketing 13'193.40
+ *   → takeAwayNetto  = 29'898.50 / 1.026              = 29'140.84
+ *     uebrigerNetto  = (235'219.00 − 29'898.50)/1.081 = 189'935.71
  *     marketingNetto = 13'193.40
- *     nettoUmsatz    = 230'805.30 ✓
- *   Food 149'509.08 / Beverage 81'296.22 ergeben zusammen 230'805.30 ✓
+ *     nettoUmsatz    = 232'269.95 ✓
  */
-import { supabase } from '@/integrations/supabase/client';
 import type { TenantId } from '@/contexts/TenantContext';
 
 const r2 = (v: number): number => Math.round(v * 100) / 100;
@@ -80,7 +78,8 @@ export interface FoodBeverageSplit {
 
 /**
  * Food/Beverage-Aufteilung des Netto-Umsatzes: direkte Anteile netto,
- * Rest (Keine Gruppierung, Aufladung, Marketing, Rundung) hälftig.
+ * Rest (nicht kategorisierter Umsatz, Marketing, Rundung) ANTEILIG nach
+ * dem Food/Beverage-Verhältnis (basis = 0 → hälftig).
  * Invariante: food + beverage === nettoUmsatzTag(tag).
  */
 export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
@@ -115,11 +114,21 @@ export function summiereUmsatz(tage: Iterable<UmsatzTag>): {
 
 // ── Lader ────────────────────────────────────────────────────────────────────
 
+/** Tenant-Schlüssel wie TenantContext.tenantKey: 'oliv' ohne Präfix. */
+function tenantKvKey(tenantId: TenantId, base: string): string {
+  return tenantId === 'oliv' ? base : `${tenantId}:${base}`;
+}
+
 /**
- * Lädt die kanonischen Umsatz-Tage eines Zeitraums aus den Tages-Z-Berichten.
- * Replace-Semantik: bei mehreren aktiven Tagesimporten desselben Datums
- * gewinnt der zuletzt importierte. Tage ohne Import fehlen in der Map
- * (Konsumenten zeigen leer, NIE 0).
+ * Lädt die kanonischen Umsatz-Tage eines Zeitraums aus dem MANUELLEN
+ * Tagesumsatz-Import («Nach Speisekarte»-Excel → dailyBudgets-KV):
+ *   actualRevenue   = Gesamt brutto (inkl. Take Away, nach Rabatten)
+ *   takeawayRevenue = Take-Away brutto (Teil von actualRevenue)
+ *   actualFood/actualBeverage = Kategorien brutto
+ * Marketing pro Tag kommt aus dem separaten Marketing-Import (maison-daily,
+ * Nennwert = netto). Z-Berichte (gn_imports) werden hier NICHT gelesen —
+ * sie dienen nur den Tagesabschlüssen.
+ * Tage ohne manuellen Import fehlen in der Map (Konsumenten zeigen leer, NIE 0).
  */
 export async function ladeUmsatzTage(
   tenantId: TenantId,
@@ -128,54 +137,32 @@ export async function ladeUmsatzTage(
 ): Promise<Map<string, UmsatzTag>> {
   const result = new Map<string, UmsatzTag>();
   try {
-    const { data: imports, error } = await (supabase as any)
-      .from('gn_imports')
-      .select('id, period_from, gross_revenue, take_away_revenue, food_revenue, bev_revenue, imported_at')
-      .eq('restaurant_id', tenantId)
-      .eq('status', 'active')
-      .eq('aggregation_level', 'day')
-      .gte('period_from', fromIso)
-      .lte('period_from', toIso)
-      .not('gross_revenue', 'is', null)
-      .order('imported_at', { ascending: true });
-    if (error) {
-      console.warn(`[UMSATZ] ladeUmsatzTage(${tenantId}, ${fromIso}..${toIso}) Fehler:`, error.message ?? error);
-      return result;
-    }
-    if (!data_ok(imports)) return result;
+    const { kvGet } = await import('@/lib/supabase-kv');
+    const tk = (k: string) => tenantKvKey(tenantId, k);
 
-    // Später importierte überschreiben (Replace-Semantik)
-    const winner = new Map<string, { id: string; row: any }>();
-    for (const row of imports as any[]) {
-      if (!row.period_from || !(row.gross_revenue > 0)) continue;
-      winner.set(row.period_from, { id: row.id, row });
-    }
-    if (winner.size === 0) return result;
+    const [budgetsRaw, marketingRaw] = await Promise.all([
+      kvGet(tk('dailyBudgets')),
+      kvGet(tk('maison-daily')),
+    ]);
 
-    // Marketing-Positionen der Gewinner-Importe (Name exakt «Marketing»/«marketing»)
-    const marketingByImport = new Map<string, number>();
-    const ids = [...winner.values()].map(w => w.id);
-    const CHUNK = 200;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const { data: disc } = await (supabase as any)
-        .from('gn_discounts')
-        .select('import_id, name, amount')
-        .in('import_id', ids.slice(i, i + CHUNK));
-      for (const d of (disc ?? []) as Array<{ import_id: string; name: string | null; amount: number | null }>) {
-        if (!d.name || d.name.trim().toLowerCase() !== 'marketing') continue;
-        marketingByImport.set(d.import_id,
-          r2((marketingByImport.get(d.import_id) ?? 0) + Math.abs(d.amount ?? 0)));
-      }
-    }
+    const budgets = (budgetsRaw && typeof budgetsRaw === 'object' && !Array.isArray(budgetsRaw))
+      ? budgetsRaw as Record<string, Record<string, unknown>>
+      : {};
+    const marketing = (marketingRaw && typeof marketingRaw === 'object' && !Array.isArray(marketingRaw))
+      ? marketingRaw as Record<string, number>
+      : {};
 
-    for (const [datum, { id, row }] of winner) {
+    for (const [datum, day] of Object.entries(budgets)) {
+      if (datum < fromIso || datum > toIso) continue;
+      const gesamt = Number(day?.actualRevenue ?? 0);
+      if (!(gesamt > 0)) continue; // kein manueller Umsatz-Import für diesen Tag
       result.set(datum, {
         datum,
-        gesamtBrutto: row.gross_revenue ?? 0,
-        takeAwayBrutto: row.take_away_revenue ?? 0,
-        foodBrutto: row.food_revenue ?? 0,
-        beverageBrutto: row.bev_revenue ?? 0,
-        marketingNetto: marketingByImport.get(id) ?? 0,
+        gesamtBrutto: gesamt,
+        takeAwayBrutto: Number(day?.takeawayRevenue ?? 0),
+        foodBrutto: Number(day?.actualFood ?? 0),
+        beverageBrutto: Number(day?.actualBeverage ?? 0),
+        marketingNetto: r2(Math.abs(Number(marketing[datum] ?? 0))),
       });
     }
     return result;
@@ -183,8 +170,4 @@ export async function ladeUmsatzTage(
     console.warn(`[UMSATZ] ladeUmsatzTage(${tenantId}, ${fromIso}..${toIso}) Exception:`, e);
     return result;
   }
-}
-
-function data_ok(d: unknown): d is any[] {
-  return Array.isArray(d) && d.length > 0;
 }

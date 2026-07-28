@@ -725,7 +725,11 @@ export interface GastronoviDayResult {
   date: string;        // yyyy-MM-dd
   food: number;
   beverage: number;
+  /** Voller Tagesumsatz brutto aus der «Gesamt»-Zeile (inkl. Take Away, nach
+   *  Rabatten). Fallback: Summe der Kategoriezeilen, wenn keine Gesamt-Zeile. */
   total: number;
+  /** Take-Away-Anteil brutto aus der separaten «Take Away»-Zeile (Teil von total). */
+  takeAway: number;
   currency: 'CHF' | 'EUR';
 }
 
@@ -797,12 +801,16 @@ export const parseGastronoviExcel = async (
         const foodMap: Record<string, number>      = {};
         const beverageMap: Record<string, number>  = {};
         const otherMap: Record<string, number>     = {};
+        const gesamtMap: Record<string, number>    = {};
+        const takeAwayMap: Record<string, number>  = {};
         const currencyMap: Record<string, 'CHF' | 'EUR'> = {};
 
         dateColumns.forEach(({ date }) => {
           foodMap[date]      = 0;
           beverageMap[date]  = 0;
           otherMap[date]     = 0;
+          gesamtMap[date]    = 0;
+          takeAwayMap[date]  = 0;
           currencyMap[date]  = 'CHF';
         });
 
@@ -812,11 +820,11 @@ export const parseGastronoviExcel = async (
           if (!row || !row[0]) continue;
 
           const label = String(row[0]).trim().toLowerCase();
-          const isGesamt   = label.includes('gesamt') || label.includes('total');
+          const isTakeAway = label.includes('take away') || label.includes('take-away')
+            || label.includes('takeaway') || label.includes('ausser haus') || label.includes('außer haus');
+          const isGesamt   = !isTakeAway && (label.includes('gesamt') || label.includes('total'));
           const isFood     = label.includes('food') || label.includes('speisen');
           const isBeverage = label.includes('beverage') || label.includes('getränke');
-
-          if (isGesamt) continue; // Skip – we recompute the total
 
           for (const { colIdx, date } of dateColumns) {
             const cell = row[colIdx];
@@ -826,7 +834,14 @@ export const parseGastronoviExcel = async (
 
             currencyMap[date] = currency;
 
-            if (isFood)          foodMap[date]     += amount;
+            if (isGesamt) {
+              // «Gesamt»-Zeile = voller Tagesumsatz (inkl. Take Away, nach Rabatten)
+              gesamtMap[date] += amount;
+            } else if (isTakeAway) {
+              // Separate «Take Away»-Zeile: Teilmenge des Gesamtumsatzes,
+              // NICHT zusätzlich in Food/Beverage/Other zählen.
+              takeAwayMap[date] += amount;
+            } else if (isFood)  foodMap[date]     += amount;
             else if (isBeverage) beverageMap[date] += amount;
             else                 otherMap[date]    += amount;
           }
@@ -837,11 +852,19 @@ export const parseGastronoviExcel = async (
           const other     = otherMap[date] ?? 0;
           const food      = (foodMap[date] ?? 0) + other * 0.70;
           const beverage  = (beverageMap[date] ?? 0) + other * 0.30;
+          const katSumme  = Math.round((food + beverage) * 100) / 100;
+          const gesamt    = Math.round((gesamtMap[date] ?? 0) * 100) / 100;
+          // Gesamt-Zeile ist massgeblich (voller Tagesumsatz) — PRO TAG:
+          // fehlt der Gesamt-Wert an einem Tag, Fallback auf die Kategoriesumme.
+          const total     = gesamt > 0 ? gesamt : katSumme;
+          // Datenqualitäts-Guard: Take Away ist Teilmenge von Gesamt.
+          const takeAway  = Math.min(Math.round((takeAwayMap[date] ?? 0) * 100) / 100, total);
           return {
             date,
             food:     Math.round(food     * 100) / 100,
             beverage: Math.round(beverage * 100) / 100,
-            total:    Math.round((food + beverage) * 100) / 100,
+            total,
+            takeAway,
             currency: currencyMap[date] ?? 'CHF',
           };
         });
