@@ -8,8 +8,8 @@
  *  - Umsatz (brutto/netto/TA/Food/Beverage): kanonische Quelle src/lib/umsatz.ts
  *    (gn_imports Tages-Z-Berichte + gn_discounts Marketing) — SSOT, identisch
  *    mit den Personalkosten
- *  - Wein/Spirituosen:        gn_product_groups (Z-Bericht-Warengruppen, Regex)
- *  - Gäste:                   gn_person_metrics via getPersonDayValues (Import «Anzahl Personen»)
+ *  - Gäste:                   gaeste-daily-KV (manueller GÄSTE-Import, Zeile «Gesamt»)
+ *  - Durchschnittsverkauf:    avgcheck-monthly/-daily-KV (manueller Import, Zeile «Durchschnitt»)
  *  - Gruppen ab 20 Pax:       reservation_records (Foratable-Import, party_size >= 20)
  *  - Budget:                  budget_v1 (P&L pl_revenue, netto) via getMonthlyBudgetRevenue
  *  - Wochenanteil Budget:     Wochentagsgewichte (ladeWochentagsGewichte, Fallback gleichmässig)
@@ -21,7 +21,7 @@ import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit } from '@/lib/umsatz'
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { ladeWochentagsGewichte, ladePersonalkostenDaten } from '@/lib/personalkosten';
-import { getPersonDayValues } from '@/lib/gn-personen-db';
+import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
 import { loadVjDailyMonth } from '@/lib/vj-daily-supabase';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
@@ -82,43 +82,6 @@ async function countGroupsFrom20Pax(
   } catch { return null; }
 }
 
-/** Wein/Spirituosen-Bruttoumsatz aus gn_product_groups (Tagesimporte im Monat). */
-async function loadWeinSpirituosenGross(
-  tenantId: TenantId, fromIso: string, toIso: string,
-): Promise<{ month: Map<string, number> } | null> {
-  try {
-    const { data: imports, error } = await (supabase as any)
-      .from('gn_imports')
-      .select('id, period_from, period_to')
-      .eq('restaurant_id', tenantId)
-      .eq('status', 'active')
-      .gte('period_from', fromIso)
-      .lte('period_from', toIso);
-    if (error || !imports?.length) return null;
-    const dayByImport = new Map<string, string>();
-    for (const row of imports as Array<{ id: string; period_from: string | null; period_to: string | null }>) {
-      if (!row.period_from || row.period_from !== row.period_to) continue; // nur Tagesimporte
-      dayByImport.set(row.id, row.period_from);
-    }
-    if (dayByImport.size === 0) return null;
-    const { data: groups, error: gErr } = await (supabase as any)
-      .from('gn_product_groups')
-      .select('import_id, name, amount')
-      .in('import_id', [...dayByImport.keys()]);
-    if (gErr || !groups?.length) return null;
-    const byDay = new Map<string, number>();
-    let any = false;
-    for (const g of groups as Array<{ import_id: string; name: string | null; amount: number | null }>) {
-      const date = dayByImport.get(g.import_id);
-      if (!date || !g.name) continue;
-      if (!/wein|spirit/i.test(g.name)) continue;
-      byDay.set(date, r2((byDay.get(date) ?? 0) + (g.amount ?? 0)));
-      any = true;
-    }
-    return any ? { month: byDay } : null;
-  } catch { return null; }
-}
-
 // ── Hauptlader ───────────────────────────────────────────────────────────────
 
 export async function ladeMonatsreport(
@@ -158,13 +121,13 @@ export async function ladeMonatsreport(
 
   // ── Parallel laden ─────────────────────────────────────────────────────────
   const vjMonth = month; // gleicher Monat im Vorjahr
-  const [personen, personenVj, vjDaily, gruppen20, wein, pk] = await Promise.all([
-    getPersonDayValues(tenantId, fromIso, toIso),
-    getPersonDayValues(tenantId, `${year - 1}-${mm}-01`, `${year - 1}-${mm}-${pad2(new Date(year - 1, vjMonth, 0).getDate())}`),
+  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, gruppen20, pk] = await Promise.all([
+    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
     loadVjDailyMonth(year - 1, vjMonth, tenantId),
     // Ist-Logik wie übrige Monatswerte: laufender Monat bis heute, Zukunft leer.
     istToIso ? countGroupsFrom20Pax(tenantId, fromIso, istToIso) : Promise.resolve(null),
-    loadWeinSpirituosenGross(tenantId, fromIso, toIso),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
@@ -192,15 +155,39 @@ export async function ladeMonatsreport(
   const wBudgetNet = wocheTage.reduce((s, d) => s + (budgetProTag[d] ?? 0), 0);
   const hatBudget = budgetNet > 0;
 
-  // ── Gäste ──────────────────────────────────────────────────────────────────
-  let mGaeste = 0, wGaeste = 0, hatGaeste = false;
-  for (const [date, n] of personen.personsByDate) {
-    if (!istToIso || date > istToIso) continue;
+  // ── Gäste (manueller GÄSTE-Import, gaeste-daily-KV) ────────────────────────
+  let mGaeste = 0, wGaeste = 0, hatGaeste = false, hatWGaeste = false;
+  for (const [date, n] of Object.entries(gaesteDaily)) {
+    if (date < fromIso || !istToIso || date > istToIso) continue;
+    if (!(n > 0)) continue;
     mGaeste += n; hatGaeste = true;
-    if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) wGaeste += n;
+    if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) { wGaeste += n; hatWGaeste = true; }
   }
+  const vjFrom = `${year - 1}-${mm}-01`;
+  const vjTo = `${year - 1}-${mm}-${pad2(new Date(year - 1, vjMonth, 0).getDate())}`;
   let vjGaeste = 0, hatVjGaeste = false;
-  for (const [, n] of personenVj.personsByDate) { vjGaeste += n; hatVjGaeste = true; }
+  for (const [date, n] of Object.entries(gaesteDaily)) {
+    if (date < vjFrom || date > vjTo || !(n > 0)) continue;
+    vjGaeste += n; hatVjGaeste = true;
+  }
+
+  // ── Durchschnittsverkauf (manueller Import; Zeitraum-Wert massgeblich) ─────
+  const avgMonat: number | null = avgMonthly[`${year}-${mm}`] ?? null;
+  const avgVj: number | null = avgMonthly[`${year - 1}-${mm}`] ?? null;
+  // Woche: gäste-gewichteter Mittelwert der Tageswerte (Fallback: einfacher Mittelwert)
+  let avgWoche: number | null = null;
+  if (weekFrom && weekTo) {
+    let wSum = 0, wWeight = 0, sSum = 0, sCount = 0;
+    for (const date of wocheTage) {
+      const v = avgDaily[date];
+      if (!(v > 0)) continue;
+      const g = gaesteDaily[date] ?? 0;
+      if (g > 0) { wSum += v * g; wWeight += g; }
+      sSum += v; sCount++;
+    }
+    if (wWeight > 0) avgWoche = r2(wSum / wWeight);
+    else if (sCount > 0) avgWoche = r2(sSum / sCount);
+  }
 
   // ── Vorjahr (vj_daily) ─────────────────────────────────────────────────────
   let vjGross = 0, vjFoodG = 0, vjBevG = 0, hatVj = false, hatVjFood = false, hatVjBev = false;
@@ -208,18 +195,6 @@ export async function ladeMonatsreport(
     if ((rec.actualRevenue ?? 0) > 0) { vjGross += rec.actualRevenue; hatVj = true; }
     if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue!; hatVjFood = true; }
     if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue!; hatVjBev = true; }
-  }
-
-  // ── Sparten ────────────────────────────────────────────────────────────────
-  let weinMonat: number | null = null, weinWoche: number | null = null;
-  if (wein) {
-    let m = 0, w = 0, any = false;
-    for (const [date, amt] of wein.month) {
-      if (!istToIso || date > istToIso) continue;
-      m += amt; any = true;
-      if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) w += amt;
-    }
-    if (any) { weinMonat = m / VAT_STD; weinWoche = weekFrom ? w / VAT_STD : null; }
   }
 
   // ── Produktive Stunden ─────────────────────────────────────────────────────
@@ -266,7 +241,7 @@ export async function ladeMonatsreport(
   const vjGrossV = N(vjGross, hatVj);
   const vjNetV = hatVj ? r2(vjGross / VAT_STD) : null;
   const mGaesteV = N(mGaeste, hatGaeste);
-  const wGaesteV = weekFrom ? N(wGaeste, hatGaeste) : null;
+  const wGaesteV = weekFrom ? N(wGaeste, hatWGaeste) : null;
   const vjGaesteV = N(vjGaeste, hatVjGaeste);
   const taM = mHatUmsatz && mTa > 0 ? r2(mTa) : null;
   const taW = weekFrom && wHatUmsatz && wTa > 0 ? r2(wTa) : null;
@@ -282,10 +257,12 @@ export async function ladeMonatsreport(
     d('Gruppen ab 20 Pax', { month: gruppen20 }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
+    // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),
+    // NICHT berechnet — die berechnete Grösse ist «Umsatz pro Gast».
     d('Durchschnittsverkauf', {
-      month: mNetV != null && mGaesteV ? r2(mNet / mGaeste) : null,
-      week: wNetV != null && wGaesteV ? r2(wNet / wGaeste) : null,
-      vj: vjNetV != null && vjGaesteV ? r2((vjGross / VAT_STD) / vjGaeste) : null,
+      month: avgMonat,
+      week: avgWoche,
+      vj: avgVj,
     }),
     d('Durchschnittsverkauf TA', {}), // TA-Gäste fehlen als Quelle
     d('Take Away Anteil', {
@@ -299,12 +276,10 @@ export async function ladeMonatsreport(
     d('Gäste +/- zum Vorjahr', {
       month: mGaesteV != null && vjGaesteV != null ? mGaeste - vjGaeste : null,
     }, { fmt: 'count' }),
-    d('Durchschnittsverkauf Vorjahr', {
-      month: vjNetV != null && vjGaesteV ? r2((vjGross / VAT_STD) / vjGaeste) : null,
-    }),
+    // Gleiche Quelle wie «Durchschnittsverkauf»: importierter Zeitraum-Wert des Vorjahres
+    d('Durchschnittsverkauf Vorjahr', { vj: avgVj, month: avgVj }),
     e(),
     // ── Block Sparten (netto) ──
-    d('Wein / Spirituosen', { month: weinMonat != null ? r2(weinMonat) : null, week: weinWoche != null ? r2(weinWoche) : null }),
     d('Bar Umsatz', { month: mHatUmsatz && mBev > 0 ? r2(mBev) : null }),
     d('Küchen Umsatz', { month: mHatUmsatz && mFood > 0 ? r2(mFood) : null }),
     d('Bar Umsatz Vorjahr', { vj: hatVjBev ? r2(vjBevG / VAT_STD) : null, month: hatVjBev ? r2(vjBevG / VAT_STD) : null }),

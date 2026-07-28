@@ -87,6 +87,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync } from '@/lib/maison-store';
+import { parseGaesteXlsx, parseDurchschnittXlsx, type TagesmetrikImportResult } from '@/lib/gaeste-import';
+import { saveGaesteDaily, saveAvgCheck } from '@/lib/gaeste-store';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
 import { ImportGroupCards, IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
 import { visibleCategories } from '@/lib/import-center';
@@ -2361,6 +2363,165 @@ function MaisonImportSection() {
   );
 }
 
+/**
+ * Manuelle Tages-Importe für den Monatsreport: GÄSTE (Zeile «Gesamt», Personen)
+ * und DURCHSCHNITTSVERKAUF (Zeile «Durchschnitt», CHF). Gleiche Excel-Mechanik
+ * wie der Umsatz-Import; die «Zeitraum»-Spalte ist massgeblich.
+ */
+function TagesmetrikImportSection({ art }: { art: 'gaeste' | 'durchschnitt' }) {
+  const { tenantKey } = useTenant();
+  const [year, setYear]     = useState(currentYear);
+  const [file, setFile]     = useState<File | null>(null);
+  const [status, setStatus] = useState<'idle' | 'parsing' | 'done' | 'error'>('idle');
+  const [result, setResult] = useState<TagesmetrikImportResult | null>(null);
+  const [error, setError]   = useState('');
+  const [saving, setSaving] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const isGaeste = art === 'gaeste';
+  const fmtVal = (n: number) => isGaeste
+    ? `${n.toLocaleString('de-CH')} P.`
+    : `CHF ${n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const handleParse = async () => {
+    if (!file) return;
+    setStatus('parsing');
+    setError('');
+    try {
+      const r = isGaeste ? await parseGaesteXlsx(file, year) : await parseDurchschnittXlsx(file, year);
+      setResult(r);
+      setStatus('done');
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+      setStatus('error');
+    }
+  };
+
+  const handleSave = async () => {
+    if (!result) return;
+    setSaving(true);
+    try {
+      if (isGaeste) {
+        await saveGaesteDaily(tenantKey, result.daily);
+        toast.success(`Gäste gespeichert: ${result.daysWithData} Tage, ${result.zeitraum != null ? fmtVal(result.zeitraum) : '–'} gesamt`);
+      } else {
+        const monthKey = `${result.year}-${String(result.month).padStart(2, '0')}`;
+        await saveAvgCheck(
+          tenantKey,
+          result.daily,
+          result.zeitraum != null ? { [monthKey]: result.zeitraum } : null,
+        );
+        toast.success(`Durchschnittsverkauf gespeichert: ${result.daysWithData} Tage${result.zeitraum != null ? `, Monatswert ${fmtVal(result.zeitraum)}` : ''}`);
+      }
+      setFile(null);
+      setResult(null);
+      setStatus('idle');
+      if (fileRef.current) fileRef.current.value = '';
+    } catch (e) {
+      toast.error('Fehler beim Speichern: ' + String(e instanceof Error ? e.message : e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10 p-4 space-y-3">
+        <p className="text-xs text-muted-foreground">
+          {isGaeste ? (
+            <>Lade den Gastronovi-Export (Excel) mit der Zeile <span className="font-mono bg-muted px-1 rounded">Gesamt</span> (Personen) hoch.
+            Die <strong>Zeitraum-Spalte ist massgeblich</strong> — die Tageswerte werden darauf abgeglichen. Quelle für «Gäste IN» im Monatsreport.</>
+          ) : (
+            <>Lade den Gastronovi-Export (Excel) mit der Zeile <span className="font-mono bg-muted px-1 rounded">Durchschnitt</span> (CHF) hoch.
+            Der <strong>Zeitraum-Wert ist der massgebliche Monatswert</strong> für «Durchschnittsverkauf» im Monatsreport.</>
+          )}
+        </p>
+
+        <div className="flex flex-wrap gap-2 items-end">
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Jahr</p>
+            <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
+              <SelectTrigger className="h-8 w-24 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[currentYear - 1, currentYear, currentYear + 1].map(y => (
+                  <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex-1 space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Excel-Datei</p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={e => {
+                const f = e.target.files?.[0];
+                if (f) { setFile(f); setStatus('idle'); setResult(null); setError(''); }
+              }}
+              className="block w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-amber-100 file:text-amber-700 dark:file:bg-amber-900/40 dark:file:text-amber-300 cursor-pointer"
+            />
+          </div>
+        </div>
+
+        {file && status === 'idle' && (
+          <Button size="sm" className="h-8 text-xs w-full gap-1.5" onClick={handleParse}>
+            <Upload className="h-3.5 w-3.5" />
+            Datei analysieren
+          </Button>
+        )}
+
+        {status === 'parsing' && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Wird analysiert…
+          </div>
+        )}
+
+        {status === 'error' && (
+          <div className="flex items-start gap-2 rounded bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            {error}
+          </div>
+        )}
+
+        {status === 'done' && result && (
+          <div className="space-y-2">
+            <div className="rounded border border-amber-200 dark:border-amber-700 bg-white dark:bg-amber-950/10 p-3 space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Analyse abgeschlossen
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-1">
+                <span className="text-muted-foreground">Monat erkannt:</span>
+                <span className="font-medium">{result.month.toString().padStart(2, '0')}.{result.year}</span>
+                <span className="text-muted-foreground">Tage mit Daten:</span>
+                <span className="font-medium">{result.daysWithData}</span>
+                <span className="text-muted-foreground">{isGaeste ? 'Gesamt (Zeitraum):' : 'Monatswert (Zeitraum):'}</span>
+                <span className="font-medium">{result.zeitraum != null ? fmtVal(result.zeitraum) : '–'}</span>
+                <span className="text-muted-foreground">Zeilen verarbeitet:</span>
+                <span className="font-medium">{result.rowsFound.join(', ') || '–'}</span>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="h-8 text-xs w-full gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              {saving ? 'Wird gespeichert…' : 'Daten übernehmen'}
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BeaulieuBudgetImportSection() {
   const [running, setRunning]   = useState(false);
   const [result, setResult]     = useState<BeaulieuBudgetSeedResult | null>(null);
@@ -2877,6 +3038,32 @@ const ImportHub = () => {
           badgeColor="border-violet-300 text-violet-700 bg-violet-50 dark:bg-violet-950/20"
         >
           <MaisonImportSection />
+        </Section>
+
+        {/* ── 1c. Gäste ─────────────────────────────────────────────────── */}
+        <Section
+          id="gaeste-import"
+          title="Gäste"
+          subtitle="Tägliche Gästezahlen aus Gastronovi-Export importieren (Zeile «Gesamt», Personen)"
+          icon={<TrendingUp className="h-4 w-4" />}
+          color="border-amber-400 dark:border-amber-600"
+          badge="Excel .xlsx"
+          badgeColor="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20"
+        >
+          <TagesmetrikImportSection art="gaeste" />
+        </Section>
+
+        {/* ── 1d. Durchschnittsverkauf ──────────────────────────────────── */}
+        <Section
+          id="durchschnitt-import"
+          title="Durchschnittsverkauf"
+          subtitle="Täglicher Durchschnittsverkauf aus Gastronovi-Export importieren (Zeile «Durchschnitt», CHF)"
+          icon={<TrendingUp className="h-4 w-4" />}
+          color="border-amber-400 dark:border-amber-600"
+          badge="Excel .xlsx"
+          badgeColor="border-amber-300 text-amber-700 bg-amber-50 dark:bg-amber-950/20"
+        >
+          <TagesmetrikImportSection art="durchschnitt" />
         </Section>
 
         {/* ── 2. Umsatz Vorjahr ─────────────────────────────────────────── */}
