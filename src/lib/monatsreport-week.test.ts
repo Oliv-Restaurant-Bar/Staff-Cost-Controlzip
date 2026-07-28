@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 // damit der Import von monatsreport.ts unter node läuft.
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 
-import { computeWeekRange, weekSelectionLabel } from './monatsreport';
+import { computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks } from './monatsreport';
 
 /**
  * Reine Logik-Tests für die Wochen-Zeitraum-Berechnung (computeWeekRange)
@@ -122,3 +122,57 @@ describe('computeWeekRange — leere Bereiche', () => {
     expect(r).toEqual({ weekFrom: null, weekTo: null });
   });
 });
+
+// ── Wochenverlauf: Fenster der letzten N abgeschlossenen Wochen ───────────────
+
+describe('computeLastCompleteWeeks', () => {
+  it('heute Mi 16.07.2025 → letzte abgeschl. Woche = KW 28 (07.–13.07.), volle 7 Tage', () => {
+    const w = computeLastCompleteWeeks(1, heute);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatchObject({ kwYear: 2025, kw: 28, from: '2025-07-07', to: '2025-07-13' });
+  });
+
+  it('N=4 → 4 Wochen, älteste links → neueste rechts, aufsteigend & lückenlos', () => {
+    const w = computeLastCompleteWeeks(4, heute);
+    expect(w.map(x => x.kw)).toEqual([25, 26, 27, 28]);
+    expect(w.map(x => x.from)).toEqual(['2025-06-16', '2025-06-23', '2025-06-30', '2025-07-07']);
+    expect(w.map(x => x.to)).toEqual(['2025-06-22', '2025-06-29', '2025-07-06', '2025-07-13']);
+    // jede Woche = volle 7 Tage
+    for (const x of w) {
+      const d = (Date.parse(x.to) - Date.parse(x.from)) / (24 * 3600 * 1000);
+      expect(d).toBe(6);
+    }
+  });
+
+  it('überschreitet Monatsgrenze (Woche 30.06.–06.07. bleibt volle 7 Tage, keine Klemmung)', () => {
+    const w = computeLastCompleteWeeks(4, heute);
+    const grenz = w.find(x => x.from === '2025-06-30')!;
+    expect(grenz.to).toBe('2025-07-06'); // NICHT auf Monatsende geklemmt
+    expect(grenz.kw).toBe(27);
+  });
+
+  it('Jahreswechsel: heute Mi 07.01.2026 → jüngste abgeschl. Woche = KW 1/2026 (29.12.2025–04.01.2026)', () => {
+    const jan = new Date(2026, 0, 7); // Mi 07.01.2026 (KW2)
+    const w = computeLastCompleteWeeks(2, jan);
+    expect(w).toHaveLength(2);
+    // jüngste (rechts) = Woche vor der laufenden = KW1/2026
+    expect(w[1]).toMatchObject({ kwYear: 2026, kw: 1, from: '2025-12-29', to: '2026-01-04' });
+    // ältere (links) = KW52/2025
+    expect(w[0]).toMatchObject({ kwYear: 2025, kw: 52, from: '2025-12-22', to: '2025-12-28' });
+  });
+
+  it('Jahreswechsel mit KW 53: heute Mi 06.01.2021 → jüngste abgeschl. = KW 53/2020 (28.12.2020–03.01.2021)', () => {
+    const jan = new Date(2021, 0, 6); // Mi 06.01.2021 (KW1/2021)
+    const w = computeLastCompleteWeeks(1, jan);
+    expect(w[0]).toMatchObject({ kwYear: 2020, kw: 53, from: '2020-12-28', to: '2021-01-03' });
+  });
+});
+
+/**
+ * «leer statt 0»-Regel im Wochenverlauf (in ladeWochenverlauf verdrahtet, I/O):
+ *   - Woche ohne Umsatz-Import  → Brutto/Netto/Food/Beverage/TA-Anteil = null
+ *   - Woche ohne Gäste-Import    → Gäste IN = null, Umsatz pro Gast = null
+ *   - Umsatz pro Gast nur über Tage mit Umsatz UND Gästen (pairedGaeste>0)
+ *   - Trend nur, wenn beide Wochen einen Wert haben (trendPct in der UI).
+ * Fensterlogik oben deckt die Wochen-Bestimmung inkl. Jahreswechsel ab.
+ */

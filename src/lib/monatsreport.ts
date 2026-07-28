@@ -136,6 +136,60 @@ export function computeWeekRange(
   return { weekFrom: wf, weekTo: wt };
 }
 
+// ── Wochenverlauf: Fensterbestimmung ─────────────────────────────────────────
+
+/** Ein abgeschlossenes ISO-Wochenfenster (Mo–So, volle 7 Tage). */
+export interface WeekWindow {
+  /** ISO-Wochenjahr (wichtig am Jahreswechsel) */
+  kwYear: number;
+  /** ISO-Kalenderwoche */
+  kw: number;
+  /** 'YYYY-MM-DD' Montag */
+  from: string;
+  /** 'YYYY-MM-DD' Sonntag */
+  to: string;
+}
+
+/** ISO-Kalenderwoche + ISO-Wochenjahr eines Datums (Mo=Wochenanfang). */
+function isoWeekYearOf(d: Date): { kw: number; kwYear: number } {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = (t.getUTCDay() + 6) % 7; // Mo=0
+  t.setUTCDate(t.getUTCDate() - day + 3); // Donnerstag dieser Woche
+  const kwYear = t.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(kwYear, 0, 4));
+  const firstDay = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3);
+  const kw = 1 + Math.round((t.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+  return { kw, kwYear };
+}
+
+/**
+ * Die letzten `anzahl` ABGESCHLOSSENEN ISO-Kalenderwochen (Mo–So), älteste
+ * zuerst → neueste zuletzt. «Letzte abgeschlossene» = Woche VOR der laufenden
+ * Woche. Wochen überschreiten Monats-/Jahresgrenzen (volle 7 Tage, keine
+ * Klemmung). Reine Funktion (keine I/O) — testbar.
+ */
+export function computeLastCompleteWeeks(anzahl: number, heute: Date): WeekWindow[] {
+  const today = new Date(heute.getFullYear(), heute.getMonth(), heute.getDate());
+  // Montag der laufenden Woche.
+  const thisMonday = new Date(today);
+  thisMonday.setDate(thisMonday.getDate() - ((today.getDay() + 6) % 7));
+  // Montag der letzten abgeschlossenen Woche.
+  const lastCompleteMonday = new Date(thisMonday);
+  lastCompleteMonday.setDate(lastCompleteMonday.getDate() - 7);
+
+  const out: WeekWindow[] = [];
+  for (let i = anzahl - 1; i >= 0; i--) {
+    const mon = new Date(lastCompleteMonday);
+    mon.setDate(mon.getDate() - i * 7);
+    const sun = new Date(mon);
+    sun.setDate(sun.getDate() + 6);
+    const { kw, kwYear } = isoWeekYearOf(mon);
+    out.push({ kwYear, kw, from: iso(mon), to: iso(sun) });
+  }
+  return out;
+}
+
 // ── Zeilenmodell ─────────────────────────────────────────────────────────────
 
 export type MrFormat = 'chf' | 'count' | 'pct' | 'hours';
@@ -401,4 +455,182 @@ export async function ladeMonatsreport(
   ];
 
   return { year, month, weekFrom, weekTo, weekLabel, rows };
+}
+
+// ── Wochenverlauf (mehrere abgeschlossene Wochen nebeneinander) ──────────────
+
+/** Eine Kennzahl-Zeile im Wochenverlauf: Werte je Wochenfenster (null = leer). */
+export interface WochenverlaufRow {
+  label: string;
+  fmt: MrFormat;
+  bold?: boolean;
+  /** Werte je Woche (Reihenfolge = weeks), null = keine Datenquelle */
+  values: (number | null)[];
+}
+
+export interface WochenverlaufDaten {
+  weeks: WeekWindow[];
+  rows: WochenverlaufRow[];
+}
+
+/**
+ * Aggregierte Tageswerte einer Woche — dieselbe Logik/Quellen wie
+ * ladeMonatsreport, nur pro Wochenfenster (keine Z-Berichte).
+ */
+interface WeekAgg {
+  gross: number; net: number; ta: number; food: number; bev: number; hatUmsatz: boolean;
+  gaeste: number; hatGaeste: boolean;
+  pairedNet: number; pairedGaeste: number; // Tage mit Umsatz UND Gästen
+  avgW: number | null;
+  istStd: number; hatIst: boolean;
+  planStd: number; hatPlan: boolean;
+}
+
+function emptyAgg(): WeekAgg {
+  return {
+    gross: 0, net: 0, ta: 0, food: 0, bev: 0, hatUmsatz: false,
+    gaeste: 0, hatGaeste: false, pairedNet: 0, pairedGaeste: 0, avgW: null,
+    istStd: 0, hatIst: false, planStd: 0, hatPlan: false,
+  };
+}
+
+/**
+ * Lädt die letzten `anzahlWochen` abgeschlossenen ISO-Wochen (Mo–So) und
+ * berechnet je Woche dieselben Kennzahlen wie der Monatsreport. Wiederverwendet
+ * die bestehenden Lade-Bausteine (Umsatz-Import, gaeste-daily, avgcheck-daily,
+ * Dienstplan-Stunden). KEINE Z-Berichte. «leer statt 0» wie im Monatsreport.
+ */
+export async function ladeWochenverlauf(
+  anzahlWochen: number,
+  tenantId: TenantId,
+  tenantKey: KeyFn,
+  rates: SocialCostRates,
+  heute: Date = new Date(),
+): Promise<WochenverlaufDaten> {
+  const weeks = computeLastCompleteWeeks(Math.max(1, anzahlWochen), heute);
+  const fromIso = weeks[0].from;
+  const toIso = weeks[weeks.length - 1].to;
+
+  // Welcher Woche gehört ein Datum? (Index in weeks) — sonst -1.
+  const weekIndexOf = (date: string): number => {
+    for (let i = 0; i < weeks.length; i++) {
+      if (date >= weeks[i].from && date <= weeks[i].to) return i;
+    }
+    return -1;
+  };
+
+  // Globale KV-Maps (nicht monatsgebunden) + Umsatz für den gesamten Bereich.
+  const [gaesteDaily, avgDaily, umsatzTage] = await Promise.all([
+    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    ladeUmsatzTage(tenantId, fromIso, toIso),
+  ]);
+
+  // Personalkosten sind monatsweise geladen — alle berührten Monate einmalig.
+  const monthsTouched = new Map<string, { year: number; month: number }>();
+  for (const w of weeks) {
+    for (const dateStr of [w.from, w.to]) {
+      const y = Number(dateStr.slice(0, 4));
+      const m = Number(dateStr.slice(5, 7));
+      monthsTouched.set(`${y}-${m}`, { year: y, month: m });
+    }
+    // auch Zwischenmonate abdecken (Woche kann über Monatsgrenze gehen)
+  }
+  const pkList = await Promise.all(
+    [...monthsTouched.values()].map(({ year, month }) =>
+      ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null)),
+  );
+  // Ist-/Plan-Stunden pro Tag aus allen Monaten zusammenführen.
+  const istStdProTag: Record<string, Record<string, number>> = {};
+  const planStdProTag: Record<string, Record<string, number>> = {};
+  for (const pk of pkList) {
+    if (!pk) continue;
+    for (const [date, perEmp] of Object.entries(pk.istStdProTag) as [string, Record<string, number>][]) {
+      istStdProTag[date] = { ...(istStdProTag[date] ?? {}), ...perEmp };
+    }
+    for (const [date, perEmp] of Object.entries(pk.planStdProTag) as [string, Record<string, number>][]) {
+      planStdProTag[date] = { ...(planStdProTag[date] ?? {}), ...perEmp };
+    }
+  }
+
+  const aggs: WeekAgg[] = weeks.map(emptyAgg);
+
+  // ── Umsatz + gepaarte Umsatz/Gäste-Tage ──
+  for (const [date, tag] of umsatzTage) {
+    const wi = weekIndexOf(date);
+    if (wi < 0 || tag.gesamtBrutto <= 0) continue;
+    const a = aggs[wi];
+    const netto = nettoUmsatzTag(tag);
+    const split = foodBeverageSplit(tag);
+    a.gross += tag.gesamtBrutto; a.ta += tag.takeAwayBrutto; a.net += netto;
+    a.food += split.food; a.bev += split.beverage; a.hatUmsatz = true;
+    const g = gaesteDaily[date] ?? 0;
+    if (g > 0) { a.pairedNet += netto; a.pairedGaeste += g; }
+  }
+
+  // ── Gäste (volle importierte Summe) ──
+  for (const [date, n] of Object.entries(gaesteDaily)) {
+    if (!(n > 0)) continue;
+    const wi = weekIndexOf(date);
+    if (wi < 0) continue;
+    aggs[wi].gaeste += n; aggs[wi].hatGaeste = true;
+  }
+
+  // ── Durchschnittsverkauf je Woche (gäste-gewichtet, Fallback Mittel) ──
+  const avgSum = weeks.map(() => ({ wSum: 0, wWeight: 0, sSum: 0, sCount: 0 }));
+  for (const [date, v] of Object.entries(avgDaily)) {
+    if (!(v > 0)) continue;
+    const wi = weekIndexOf(date);
+    if (wi < 0) continue;
+    const g = gaesteDaily[date] ?? 0;
+    if (g > 0) { avgSum[wi].wSum += v * g; avgSum[wi].wWeight += g; }
+    avgSum[wi].sSum += v; avgSum[wi].sCount++;
+  }
+  weeks.forEach((_, i) => {
+    const s = avgSum[i];
+    aggs[i].avgW = s.wWeight > 0 ? r2(s.wSum / s.wWeight)
+      : s.sCount > 0 ? r2(s.sSum / s.sCount) : null;
+  });
+
+  // ── Produktive Stunden (Ist/Plan) ──
+  for (const [date, perEmp] of Object.entries(istStdProTag)) {
+    const wi = weekIndexOf(date);
+    if (wi < 0) continue;
+    for (const h of Object.values(perEmp)) { aggs[wi].istStd += h; aggs[wi].hatIst = true; }
+  }
+  for (const [date, perEmp] of Object.entries(planStdProTag)) {
+    const wi = weekIndexOf(date);
+    if (wi < 0) continue;
+    for (const h of Object.values(perEmp)) { aggs[wi].planStd += h; aggs[wi].hatPlan = true; }
+  }
+
+  // ── Zeilen bauen (Werte je Woche; null = leer) ──
+  const col = (fn: (a: WeekAgg) => number | null): (number | null)[] => aggs.map(fn);
+
+  const rows: WochenverlaufRow[] = [
+    { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
+      values: col(a => a.hatUmsatz ? r2(a.gross) : null) },
+    { label: 'Netto Umsatz', fmt: 'chf', bold: true,
+      values: col(a => a.hatUmsatz ? r2(a.net) : null) },
+    { label: 'Gäste IN', fmt: 'count',
+      values: col(a => a.hatGaeste ? r2(a.gaeste) : null) },
+    { label: 'Durchschnittsverkauf', fmt: 'chf',
+      values: col(a => a.avgW) },
+    { label: 'Take Away Anteil', fmt: 'pct',
+      values: col(a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null) },
+    { label: 'Food', fmt: 'chf',
+      values: col(a => a.hatUmsatz && a.food > 0 ? r2(a.food) : null) },
+    { label: 'Beverage', fmt: 'chf',
+      values: col(a => a.hatUmsatz && a.bev > 0 ? r2(a.bev) : null) },
+    { label: 'Produktive Stunden (Ist)', fmt: 'hours',
+      values: col(a => a.hatIst ? r2(a.istStd) : null) },
+    { label: 'Produktive Stunden geplant', fmt: 'hours',
+      values: col(a => a.hatPlan ? r2(a.planStd) : null) },
+    { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
+      values: col(a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null) },
+    { label: 'Umsatz pro Gast', fmt: 'chf',
+      values: col(a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null) },
+  ];
+
+  return { weeks, rows };
 }
