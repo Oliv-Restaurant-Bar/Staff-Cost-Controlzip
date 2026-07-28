@@ -49,6 +49,7 @@ import ImportHub from "./pages/ImportHub";
 import ImportCockpitPage from "./pages/ImportCockpitPage";
 import PersonalFixPage from "./pages/PersonalFix";
 import PersonalkostenNeu from "./pages/PersonalkostenNeu";
+import MonatsreportPage from "./pages/MonatsreportPage";
 import DataIntegrityTest from "./pages/DataIntegrityTest";
 import ProdukteSeite from "./pages/Produkte";
 import AbsenzKostenPage from "./pages/AbsenzKosten";
@@ -238,14 +239,22 @@ const AppContent = () => {
           <ErrorBoundary label="Seite">
           <Routes>
             {/* Routen mit Rollenprüfung */}
-            {/* Startseite: Admins (inkl. Gast-Lesezugriff) → vereinfachte Übersicht;
+            {/* Startseite: Admins → Monatsreport (Meeting-Cockpit);
                 Manager behalten ihr bisheriges Dashboard-Verhalten. */}
             <Route path="/"
               element={isAdmin
-                ? <StartOverview />
+                ? <MonatsreportPage />
                 : canAccessModule('dashboard')
                   ? <Dashboard />
                   : <Navigate to="/personal" replace />}
+            />
+            {/* Monatsreport auch unter eigener URL (analog Kennzahlen-Bericht) */}
+            <Route path="/monatsreport"
+              element={<RequireAdmin path="/monatsreport" allowBeaulieu><MonatsreportPage /></RequireAdmin>}
+            />
+            {/* Bisherige Startübersicht bleibt über das Menü erreichbar */}
+            <Route path="/startuebersicht"
+              element={<RequireAdmin path="/startuebersicht" allowBeaulieu><StartOverview /></RequireAdmin>}
             />
             {/* Ausführliches Dashboard bleibt vollständig erhalten (Detailseite). */}
             <Route path="/dashboard"

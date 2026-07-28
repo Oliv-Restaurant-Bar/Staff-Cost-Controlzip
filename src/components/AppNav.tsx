@@ -100,6 +100,23 @@ export const NAV_GROUPS: NavGroup[] = [
       // «Ausführliches Dashboard» auf der Startübersicht und direkt per URL;
       // für Manager-Rollen bleibt es die Startroute «/».
       {
+        path: '/monatsreport',
+        label: 'Monatsreport',
+        shortLabel: 'Report',
+        icon: Table2,
+        adminOnly: true,
+        beaulieuAllowed: true,
+      },
+      {
+        path: '/startuebersicht',
+        label: 'Startübersicht',
+        shortLabel: 'Start',
+        icon: PieChart,
+        adminOnly: true,
+        beaulieuAllowed: true,
+        secondary: true,
+      },
+      {
         path: '/verkauf-dashboard',
         label: 'Verkaufsdashboard',
         shortLabel: 'Verkauf',
