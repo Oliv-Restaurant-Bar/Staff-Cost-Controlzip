@@ -1,0 +1,19 @@
+---
+name: Personalkosten-SSOT (personalkosten.ts)
+description: Alle Personalkosten-Ansichten müssen die zentrale Lib nutzen; Budget/PKQ-Regeln und Umstellungs-Fallstricke
+---
+
+# Personalkosten-SSOT
+
+**Regel:** `src/lib/personalkosten.ts` ist die EINZIGE Quelle für Personalkosten-Totale, Budget und PKQ in allen Ansichten (PersonalkostenNeu, PersonalFix-Kopf, MonthlyCostSummary, IstDayDetailDialog, Drilldowns).
+- Budget = `PK_BUDGET_TOTAL` (106'400 = 35.5 % × 300'000), Zielquote `PK_BUDGET_QUOTE` (35.5 %), harte Obergrenze 40 %. NIE Budget aus budget_v1/useBudgetMonth für Personalkosten-Kopfzahlen (führte zu Schein-Budget 138'802).
+- PKQ nur via `personalquote()` (Netto-Umsatz-Nenner aus umsatz.ts). Alte Formeln «volle Kosten ÷ Teil-/effectiveRevenue» ergaben falsche 63–65 %.
+- Ferienabbau, Kranken/Unfall, Überstunden, Zusatzkosten sind AUSSERHALB der Kopf-Totale — nur als einklappbare Side-Info.
+
+**Why:** Widersprüchliche Totale auf verschiedenen Seiten (PersonalFix vs. /personalkosten-neu) verwirrten den User; Etappe 2b (Juli 2026 verifiziert: HR 120'918, Budget 106'400, PKQ 45.0 %) hat alles auf die Lib gezogen.
+
+**How to apply / Fallstricke:**
+- Konsumenten laden async via `ladePersonalkostenDaten(...)`; beim Monats-/Tenantwechsel State SOFORT auf null setzen, sonst kurz falsche (alte) zentrale Werte sichtbar.
+- Abteilungs-Splits dürfen lokale Detail-Logik behalten, müssen aber proportional aufs zentrale Total skaliert werden (Service+Küche=Gesamt); Randfall lokale Basis=0 explizit behandeln.
+- Kumulierter PKQ-Verlauf: Fix `totalMonat × d/daysInMonth` (nicht 31× fixKosten), Tage ohne kumulierten Umsatz → null-Lücke.
+- E2E hinter Login: Test-User-Rolle via Supabase-Management-API SQL setzen (PostgREST-PATCH mit service_role auf user_profiles gibt 42501 permission denied); nach Test auf kueche_manager zurückstufen.

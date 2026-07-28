@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay, startOfWeek, endOfWeek, eachWeekOfInterval } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,10 +10,15 @@ import { Euro, TrendingUp, TrendingDown, Users, Clock, Download, AlertTriangle }
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { EMPLOYER_COST_LABELS, EMPLOYER_COST_LABELS_SHORT } from '@/lib/social-costs';
 import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
+import {
+  ladePersonalkostenDaten, personalkosten, personalquote,
+  PK_BUDGET_QUOTE, type PersonalkostenDaten,
+} from '@/lib/personalkosten';
 
 interface MonthlyCostSummaryProps {
   employees: Employee[];
@@ -45,12 +50,45 @@ export const MonthlyCostSummary = ({
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
   const weeksInMonth = eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 });
 
-  // Load threshold from settings
-  const laborCostThreshold = parseFloat(localStorage.getItem('labor_cost_threshold') || '40');
+  // Zielquote (Schwellenwert): Default = zentrale Budget-Quote (35.5 %),
+  // 40 % gilt als harte Obergrenze (Ampel wird ab dort rot statt orange).
+  const laborCostThreshold = parseFloat(
+    localStorage.getItem('labor_cost_threshold') || String(PK_BUDGET_QUOTE * 100),
+  );
+  const HARD_CAP_PCT = 40;
+
+  const { tenantId, tenantKey } = useTenant();
 
   // Zentrale AG-Sozialkostensätze — Kostenbasis = Total Arbeitgeberkosten
   // (Bruttolohn + Arbeitgeber-Sozialkosten), nie roher hourlyWage.
-  const { rates: socialCostRates } = useSocialCostRates();
+  const { rates: socialCostRates, loading: ratesLoading } = useSocialCostRates();
+
+  // ── Zentrale Berechnungsquelle (personalkosten.ts) ──────────────────────────
+  // Monats-Total (Fix+Flex, Hochrechnung) und PKQ kommen aus der Lib, damit
+  // dieselben Regeln gelten wie in /personalkosten-neu (Etappe 2b). Async-Load
+  // pro Monat gecacht; Abteilungs-Splits behalten ihre lokale Detail-Logik.
+  const [pkDaten, setPkDaten] = useState<PersonalkostenDaten | null>(null);
+  useEffect(() => {
+    if (ratesLoading) return;
+    // Vorherige Monats-/Mandanten-Daten sofort verwerfen, damit beim Wechsel
+    // keine veralteten zentralen Totale angezeigt werden (Fallback = lokal).
+    setPkDaten(null);
+    let alive = true;
+    const y = currentMonth.getFullYear();
+    const m = currentMonth.getMonth() + 1;
+    ladePersonalkostenDaten(y, m, tenantId, tenantKey, socialCostRates)
+      .then(d => { if (alive) setPkDaten(d); })
+      .catch(() => { if (alive) setPkDaten(null); });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMonth, tenantId, ratesLoading, socialCostRates]);
+
+  const centralTotals = useMemo(() => {
+    if (!pkDaten) return null;
+    const k = personalkosten(pkDaten, 'hochrechnung');
+    const q = personalquote(pkDaten);
+    return { total: k.total, fix: k.fix, flex: k.flex, pkqHochrechnung: q.pkqHochrechnung };
+  }, [pkDaten]);
   const rateById = useMemo(() => {
     const m = new Map<string, number>();
     employees.forEach(emp => {
@@ -92,9 +130,25 @@ export const MonthlyCostSummary = ({
 
   const serviceStats = useMemo(() => calculateDepartmentStats(serviceEmployees), [serviceEmployees, scheduleData, daysInMonth, rateById]);
   const kitchenStats = useMemo(() => calculateDepartmentStats(kitchenEmployees), [kitchenEmployees, scheduleData, daysInMonth, rateById]);
+  // Lokale (eigene) Splitsumme — dient als Basis für die proportionale
+  // Umverteilung des zentralen Gesamt-Totals auf Service/Küche.
+  const localSplitTotal = serviceStats.totalCosts + kitchenStats.totalCosts;
+
+  // GESAMT-Total kommt aus der zentralen Quelle (personalkosten.ts, Hochrechnung
+  // = Fix voller Monat + Flex pro Tag). Fallback auf lokale Summe, solange die
+  // Lib-Daten noch laden. Die Abteilungs-Splits behalten ihre Detail-Logik,
+  // werden aber proportional zur zentralen Flex-Summe skaliert, damit
+  // Service + Küche = Gesamt (inkl. Fix-Anteil) ergibt.
+  const totalCosts = centralTotals ? centralTotals.total : localSplitTotal;
+  const splitScale = localSplitTotal > 0 ? totalCosts / localSplitTotal : 1;
+  // Randfall: keine lokale Split-Basis (z.B. nur Fixkosten, keine Stunden) —
+  // dann Gesamt hälftig aufteilen, damit Service + Küche = Gesamt bleibt.
+  const noSplitBasis = localSplitTotal <= 0 && totalCosts > 0;
+  const serviceCosts = noSplitBasis ? totalCosts / 2 : serviceStats.totalCosts * splitScale;
+  const kitchenCosts = noSplitBasis ? totalCosts / 2 : kitchenStats.totalCosts * splitScale;
   const totalStats = {
     totalHours: serviceStats.totalHours + kitchenStats.totalHours,
-    totalCosts: serviceStats.totalCosts + kitchenStats.totalCosts,
+    totalCosts,
   };
 
   // Calculate monthly revenue
@@ -105,8 +159,14 @@ export const MonthlyCostSummary = ({
     }, 0);
   }, [daysInMonth, dailyBudgets]);
 
-  const laborCostPercentage = monthlyRevenue > 0 ? (totalStats.totalCosts / monthlyRevenue) * 100 : 0;
+  // PKQ aus der zentralen Quelle (gleiche Basis Kosten/Netto-Umsatz);
+  // Fallback: lokale Kosten ÷ geplanter Umsatz, solange Lib-Daten laden.
+  const laborCostPercentage = centralTotals?.pkqHochrechnung != null
+    ? centralTotals.pkqHochrechnung * 100
+    : (monthlyRevenue > 0 ? (totalStats.totalCosts / monthlyRevenue) * 100 : 0);
   const isOverBudget = laborCostPercentage > laborCostThreshold;
+  // Harte Obergrenze (40 %) → Ampel rot; zwischen Ziel und Cap → orange.
+  const isOverHardCap = laborCostPercentage > HARD_CAP_PCT;
 
   // Calculate weekly breakdown
   const weeklyBreakdown = useMemo(() => {
@@ -191,8 +251,8 @@ export const MonthlyCostSummary = ({
       startY: finalY1 + 5,
       head: [['Abteilung', 'Mitarbeiter', 'Stunden', EMPLOYER_COST_LABELS_SHORT.total]],
       body: [
-        ['Service', serviceEmployees.length.toString(), `${serviceStats.totalHours.toFixed(1)} h`, `CHF ${serviceStats.totalCosts.toFixed(2)}`],
-        ['Küche', kitchenEmployees.length.toString(), `${kitchenStats.totalHours.toFixed(1)} h`, `CHF ${kitchenStats.totalCosts.toFixed(2)}`],
+        ['Service', serviceEmployees.length.toString(), `${serviceStats.totalHours.toFixed(1)} h`, `CHF ${serviceCosts.toFixed(2)}`],
+        ['Küche', kitchenEmployees.length.toString(), `${kitchenStats.totalHours.toFixed(1)} h`, `CHF ${kitchenCosts.toFixed(2)}`],
         ['Gesamt', employees.length.toString(), `${totalStats.totalHours.toFixed(1)} h`, `CHF ${totalStats.totalCosts.toFixed(2)}`],
       ],
       theme: 'striped',
@@ -283,12 +343,18 @@ export const MonthlyCostSummary = ({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Warning if over budget */}
+        {/* Warning if over budget — 40 % ist die harte Obergrenze (rot) */}
         {isOverBudget && (
-          <div className="flex items-center gap-2 p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-destructive">
+          <div className={cn(
+            'flex items-center gap-2 p-3 rounded-lg border',
+            isOverHardCap
+              ? 'bg-destructive/10 border-destructive/30 text-destructive'
+              : 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400',
+          )}>
             <AlertTriangle className="h-5 w-5" />
             <span className="font-medium">
-              Personalkostenquote ({laborCostPercentage.toFixed(1)}%) überschreitet Schwellenwert ({laborCostThreshold}%)
+              Personalkostenquote ({laborCostPercentage.toFixed(1)}%) überschreitet
+              {' '}{isOverHardCap ? `harte Obergrenze (${HARD_CAP_PCT}%)` : `Zielquote (${laborCostThreshold}%)`}
             </span>
           </div>
         )}
@@ -312,7 +378,7 @@ export const MonthlyCostSummary = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}:</span>
-                <span className="font-medium text-blue-600">CHF {serviceStats.totalCosts.toFixed(0)}</span>
+                <span className="font-medium text-blue-600">CHF {serviceCosts.toFixed(0)}</span>
               </div>
             </div>
           </div>
@@ -334,7 +400,7 @@ export const MonthlyCostSummary = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}:</span>
-                <span className="font-medium text-orange-600">CHF {kitchenStats.totalCosts.toFixed(0)}</span>
+                <span className="font-medium text-orange-600">CHF {kitchenCosts.toFixed(0)}</span>
               </div>
             </div>
           </div>

@@ -14,6 +14,7 @@ import {
   CalendarDays, Euro, Users, FileText, FileSpreadsheet, Calendar, ChevronDown, BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PK_BUDGET_QUOTE } from '@/lib/personalkosten';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ComposedChart, Line, Area } from 'recharts';
 import { toast } from '@/hooks/use-toast';
 import jsPDF from 'jspdf';
@@ -395,9 +396,17 @@ export const UnifiedCostOverview = ({
     return 'text-muted-foreground';
   };
 
+  // HINWEIS (Etappe 2b): Diese Komponente wird aktuell NIRGENDS gerendert
+  // (kein Import im aktiven src/-Baum). Sie wurde daher nur minimal auf die
+  // zentrale Zielquote PK_BUDGET_QUOTE (35.5 %) ausgerichtet. Eine vollständige
+  // Umstellung auf ladePersonalkostenDaten/personalkosten (AG-Total-Kostenbasis
+  // statt roher hourlyWage, Netto-Umsatz-Nenner) ist bewusst zurückgestellt,
+  // solange die Komponente nicht eingebunden ist — sie würde den Prop-Vertrag
+  // (employees/timeEntries/dailyBudgets) und einen Tenant-Async-Load erfordern.
+  const TARGET_QUOTE_PCT = PK_BUDGET_QUOTE * 100; // 35.5 %
   const getQuoteColor = (quote: number) => {
-    if (quote > 35) return 'text-destructive';
-    if (quote > 30) return 'text-amber-500';
+    if (quote > TARGET_QUOTE_PCT) return 'text-destructive';
+    if (quote > TARGET_QUOTE_PCT - 5) return 'text-amber-500';
     return 'text-green-600';
   };
 
@@ -495,7 +504,7 @@ export const UnifiedCostOverview = ({
             </div>
             <p className="text-lg font-bold">{formatCurrency(totals.actualCost)}</p>
           </div>
-          <div className={cn("p-3 rounded-lg", totals.laborQuote > 30 ? 'bg-destructive/10' : 'bg-green-500/10')}>
+          <div className={cn("p-3 rounded-lg", totals.laborQuote > TARGET_QUOTE_PCT ? 'bg-destructive/10' : 'bg-green-500/10')}>
             <div className="text-muted-foreground text-xs mb-1">Personalkostenquote</div>
             <p className={cn("text-lg font-bold", getQuoteColor(totals.laborQuote))}>
               {totals.laborQuote.toFixed(1)}%

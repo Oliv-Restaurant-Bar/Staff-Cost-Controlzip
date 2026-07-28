@@ -85,6 +85,16 @@ import {
   buildPkqBreakdown,
   type ComparisonTone,
 } from '@/lib/personal-fix-reconciliation';
+import {
+  ladePersonalkostenDaten, personalkosten, personalquote, umsatz,
+  fixKosten, flexKostenProTag, letzterVergangenerTag,
+  PK_BUDGET_TOTAL, PK_BUDGET_QUOTE, PK_BUDGET_UMSATZ_MONAT,
+  type PersonalkostenDaten,
+} from '@/lib/personalkosten';
+import {
+  LineChart, Line as RLine, XAxis, YAxis, CartesianGrid,
+  Tooltip as RTooltip, ReferenceLine, ResponsiveContainer,
+} from 'recharts';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -2107,6 +2117,10 @@ export default function PersonalFixPage() {
   const [overtimeDisabledIds, setOvertimeDisabledIds] = useState<Set<string>>(new Set());
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [extraCostPeople, setExtraCostPeople] = useState<ExtraCostPerson[]>([]);
+  // ── Zentrale Berechnungsquelle (src/lib/personalkosten.ts) ─────────────────
+  // Einzige Quelle für Schlagzeile/KPI/Budget/PKQ. Detailtabellen behalten ihre
+  // bestehende Logik; hier werden nur die Kopf-Kennzahlen daraus gespeist.
+  const [pkDaten, setPkDaten] = useState<PersonalkostenDaten | null>(null);
   // Vollständige Supabase IST-Einträge (inkl. isAdditionalCost-Flag) für persistente Zusatzkosten-Berechnung
   const [supabaseActualHours, setSupabaseActualHours] = useState<Record<string, ActualHourEntry>>({});
   const [loading, setLoading] = useState(true);
@@ -2128,6 +2142,8 @@ export default function PersonalFixPage() {
   const [kuIstDays, setKuIstDays] = useState<Record<string, number>>({});
   // Ferienabbau Drill-down aufgeklappt
   const [showFerienDetail, setShowFerienDetail] = useState(false);
+  // Kranken-/Unfallkosten-Detail (Side-Info, default zu)
+  const [showKuSection, setShowKuSection] = useState(false);
   // Ferien Detail-Daten (welche Tage genau)
   const [ferienPlanDetail, setFerienPlanDetail] = useState<Record<string, { date: string }[]>>({});
   const [ferienIstDetail, setFerienIstDetail]   = useState<Record<string, { date: string }[]>>({});
@@ -2450,6 +2466,65 @@ export default function PersonalFixPage() {
     }).catch(err => console.error('[IST] Supabase load failed in PersonalFix:', err));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick]);
+
+  // ── Zentrale Personalkosten-Daten laden (SSOT für Kopf-Kennzahlen) ─────────
+  // Analog zu PersonalkostenNeu.tsx: bei Monats-/Tenant-Wechsel und bei
+  // scheduleRefreshTick (Dienstplan-/Ist-/Umsatz-Sync) neu laden.
+  useEffect(() => {
+    if (!socialCostRates) return;
+    let alive = true;
+    setPkDaten(null);
+    ladePersonalkostenDaten(selectedYear, selectedMonth, tenantId, tenantKey, socialCostRates)
+      .then(d => { if (alive) setPkDaten(d); })
+      .catch(err => { if (alive) { setPkDaten(null); console.error('[PK-SSOT] Laden fehlgeschlagen:', err); } });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedYear, selectedMonth, tenantId, scheduleRefreshTick, socialCostRates]);
+
+  // Kanonische Kennzahlen (Hochrechnung/Ist/PKQ/Umsatz/Stichtag) aus der SSOT.
+  const pkZentral = useMemo(() => {
+    if (!pkDaten) return null;
+    const stichtag = letzterVergangenerTag(selectedYear, selectedMonth);
+    const kHr = personalkosten(pkDaten, 'hochrechnung', { stichtag });
+    const kIst = personalkosten(pkDaten, 'istBisHeute', { stichtag });
+    const pkq = personalquote(pkDaten, { stichtag });
+    const ums = umsatz(pkDaten, { stichtag });
+    return { stichtag, kHr, kIst, pkq, ums };
+  }, [pkDaten, selectedYear, selectedMonth]);
+
+  // ── PKQ-Verlauf (kumuliert) — ausschliesslich aus der zentralen Quelle ─────
+  // Pro Tag d (1..stichtag): kumulierte PKQ % = (Fix anteilig d/daysInMonth +
+  // Σ Flex-effektivKosten der Tage ≤ d) ÷ (Σ Ist-Netto-Umsatz der Tage ≤ d) × 100.
+  // Fix wird linear anteilig gerechnet (identisch zu fixKosten.kostenBisStichtag);
+  // flexKostenProTag wird EINMAL berechnet und kumuliert (keine 31 Lib-Aufrufe).
+  const pkqVerlauf = useMemo(() => {
+    if (!pkDaten) return null;
+    const stichtag = letzterVergangenerTag(selectedYear, selectedMonth);
+    if (stichtag <= 0) return null;
+    const fixMonat = fixKosten(pkDaten).totalMonat; // voller Monat, einmalig
+    const tage = flexKostenProTag(pkDaten, { stichtag }); // einmalig
+    const mm = String(selectedMonth).padStart(2, '0');
+    let flexKum = 0;
+    let umsatzKum = 0;
+    const rows: { label: string; pkq: number | null }[] = [];
+    for (let d = 1; d <= stichtag; d++) {
+      const date = `${selectedYear}-${mm}-${String(d).padStart(2, '0')}`;
+      const tag = tage.find(t => t.date === date);
+      // Nur vergangene Ist-Tage tragen Ist-Flex bei; sonst Plan (Lib-Tag-Regel).
+      flexKum += tag ? tag.effektivKosten : 0;
+      umsatzKum += pkDaten.umsatzIstProTag[date] ?? 0;
+      const fixKum = fixMonat * (d / pkDaten.daysInMonth);
+      const kostenKum = fixKum + flexKum;
+      rows.push({
+        label: `${String(d).padStart(2, '0')}.${mm}.`,
+        pkq: umsatzKum > 0 ? Math.round((kostenKum / umsatzKum) * 1000) / 10 : null,
+      });
+    }
+    // Sinnvolle Y-Domain-Obergrenze: mind. 45, sonst höchster Punkt + Puffer.
+    const maxPkq = rows.reduce((m, r) => (r.pkq != null && r.pkq > m ? r.pkq : m), 0);
+    const yMax = Math.max(45, Math.ceil((maxPkq + 5) / 5) * 5);
+    return { rows, yMax };
+  }, [pkDaten, selectedYear, selectedMonth]);
 
   // ── K/U-Plan-Eintrag direkt bearbeiten ────────────────────────────────────
   const handleKuPlanEdit = useCallback((empId: string, date: string, action: 'delete' | 'frei') => {
@@ -4258,76 +4333,136 @@ export default function PersonalFixPage() {
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold">
-              Total Personal FIX + VARIABEL Ist — {getMonthLabel(selectedYear, selectedMonth)}
-              {proRataDay !== null ? ` (bis ${proRataDay}.)` : ''}
+              Total Personal FIX + VARIABEL — {getMonthLabel(selectedYear, selectedMonth)} (Hochrechnung)
             </h2>
           </div>
-          <KpiGrid>
-            <DsKpiCard
-              label="Total Ist"
-              value={fmtCHF(pfix.active.istTotal)}
-              sub={`FIX ${fmtCHF(pfix.active.fix)} + Flex ${fmtCHF(pfix.active.istTotalVar)}`}
-              tone={personnelBudget > 0
-                ? (pfix.active.istTotal <= personnelBudget * (proRataDay !== null ? proRataFactor : 1) ? 'good' : 'critical')
-                : 'neutral'}
-              onClick={() => setDrilldownFocus('ist')}
-            />
-            <DsKpiCard
-              label="Total Budget"
-              value={fmtCHF(pfix.active.planTotal)}
-              sub="FIX + Flex (Budget)"
-              tone="info"
-              onClick={() => setDrilldownFocus('budget')}
-            />
-            <DsKpiCard
-              label="Abweichung Ist − Budget"
-              value={signCHF(budgetVsIst.diffCHF)}
-              sub={budgetDeltaText(budgetVsIst.diffCHF)}
-              tone={budgetVsIst.tone}
-              trend={{
-                direction: budgetVsIst.direction === 'over' ? 'up' : budgetVsIst.direction === 'under' ? 'down' : 'flat',
-                tone: budgetVsIst.tone,
-                label: 'Ist − Budget',
-              }}
-              onClick={() => setDrilldownFocus('abweichung')}
-            />
-            <DsKpiCard
-              label="PKQ Ist"
-              value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-              sub={
-                <span className="inline-flex items-center gap-1" data-testid="pfix-pkq-sub">
-                  {pkqPlan !== null ? `Budget ${pkqPlan.toFixed(1)} %` : (effectiveRevenue > 0 ? '' : 'Kein Umsatz erfasst')}
-                  <InfoTip
-                    side="top"
-                    text={
-                      pkqBreakdown.hasRevenue && pkqBreakdown.pkq !== null ? (
-                        <span>
-                          <b>PKQ Ist = Total Personal Ist ÷ Nettoumsatz</b>
-                          <br />
-                          {fmtCHF(pkqBreakdown.personalIst)} ÷ {fmtCHF(pkqBreakdown.revenue)} = {pkqBreakdown.pkq.toFixed(1)} %
-                          <br />
-                          Umsatz: {pkqBreakdown.revenueLabel}
-                          {pkqBreakdown.revenueIsAssumed ? ' (manuelle Annahme)' : ''}, netto (nach MWST).
-                          <br />
-                          Periode: {pkqBreakdown.monthLabel}
-                          {pkqBreakdown.cutoffDay !== null ? ` (bis ${pkqBreakdown.cutoffDay}.)` : ''}.
-                        </span>
-                      ) : (
-                        <span>
-                          PKQ Ist = Total Personal Ist ÷ Nettoumsatz. Für {pkqBreakdown.monthLabel} ist kein
-                          Umsatz erfasst — die Quote ist nicht berechenbar.
-                        </span>
-                      )
-                    }
-                  />
+          {/* Schlagzeile/KPI ausschliesslich aus der zentralen Quelle personalkosten.ts.
+              Hochrechnung = Ist bis heute + Plan ab morgen; Budget = 106'400 (35.5 % von
+              300'000); PKQ auf gleicher Basis (kein Voll-Kosten ÷ Teilumsatz). */}
+          {(() => {
+            const abwHr = pkZentral ? pkZentral.kHr.total - PK_BUDGET_TOTAL : 0;
+            const pkqHr = pkZentral?.pkq.pkqHochrechnung ?? null;
+            return (
+              <KpiGrid>
+                <DsKpiCard
+                  label="Personalkosten (Hochrechnung)"
+                  value={pkZentral ? fmtCHF(pkZentral.kHr.total) : '—'}
+                  sub={pkZentral ? `FIX ${fmtCHF(pkZentral.kHr.fix)} + Flex ${fmtCHF(pkZentral.kHr.flex)}` : 'Lade Daten …'}
+                  tone={pkZentral ? (pkZentral.kHr.total <= PK_BUDGET_TOTAL ? 'good' : 'critical') : 'neutral'}
+                  onClick={() => setDrilldownFocus('ist')}
+                />
+                <DsKpiCard
+                  label="Budget"
+                  value={fmtCHF(PK_BUDGET_TOTAL)}
+                  sub={`${(PK_BUDGET_QUOTE * 100).toFixed(1)} % von ${fmtCHF(PK_BUDGET_UMSATZ_MONAT)}`}
+                  tone="info"
+                  onClick={() => setDrilldownFocus('budget')}
+                />
+                <DsKpiCard
+                  label="Abweichung (HR − Budget)"
+                  value={pkZentral ? signCHF(abwHr) : '—'}
+                  sub={pkZentral ? budgetDeltaText(abwHr) : 'Lade Daten …'}
+                  tone={pkZentral ? (abwHr <= 0 ? 'good' : 'critical') : 'neutral'}
+                  trend={pkZentral ? {
+                    direction: abwHr > 0 ? 'up' : abwHr < 0 ? 'down' : 'flat',
+                    tone: abwHr <= 0 ? 'good' : 'critical',
+                    label: 'HR − Budget',
+                  } : undefined}
+                  onClick={() => setDrilldownFocus('abweichung')}
+                />
+                <DsKpiCard
+                  label="PKQ (Hochrechnung)"
+                  value={pkqHr !== null ? `${(pkqHr * 100).toFixed(1)} %` : '—'}
+                  sub={
+                    <span className="inline-flex items-center gap-1" data-testid="pfix-pkq-sub">
+                      {pkZentral ? `Umsatz HR ${fmtCHF(pkZentral.ums.hochrechnung)}` : 'Lade Daten …'}
+                      <InfoTip
+                        side="top"
+                        text={
+                          <span>
+                            <b>PKQ = Personalkosten ÷ Nettoumsatz</b> (immer gleiche Basis).
+                            {pkZentral && pkqHr !== null ? (
+                              <>
+                                <br />
+                                Hochrechnung: {fmtCHF(pkZentral.kHr.total)} ÷ {fmtCHF(pkZentral.ums.hochrechnung)} = {(pkqHr * 100).toFixed(1)} %
+                                <br />
+                                Budget-Ziel: {(PK_BUDGET_QUOTE * 100).toFixed(1)} %, Obergrenze 40 %.
+                              </>
+                            ) : (
+                              <>
+                                <br />
+                                Für {getMonthLabel(selectedYear, selectedMonth)} kein Umsatz erfasst — Quote nicht berechenbar.
+                              </>
+                            )}
+                          </span>
+                        }
+                      />
+                    </span>
+                  }
+                  tone={pkqHr !== null
+                    ? (pkqHr > 0.40 ? 'critical' : pkqHr > PK_BUDGET_QUOTE ? 'warn' : 'good')
+                    : 'neutral'}
+                  onClick={() => setDrilldownFocus('quote')}
+                />
+              </KpiGrid>
+            );
+          })()}
+
+          {/* ── PKQ-Verlauf (kumuliert) — nur bis Stichtag, ausschliesslich SSOT ── */}
+          {pkDaten && pkqVerlauf && pkqVerlauf.rows.length > 0 && (
+            <div
+              data-testid="pfix-pkq-verlauf"
+              className="rounded-lg border border-border bg-card p-3 space-y-2"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  PKQ-Verlauf (kumuliert)
+                </h3>
+                <span className="text-[11px] text-muted-foreground">
+                  Kumulierte Personalkosten ÷ kumulierter Netto-Umsatz
                 </span>
-              }
-              tone={pkqIst !== null && pkqPlan !== null
-                ? (pkqIst > pkqPlan + 1 ? 'critical' : pkqIst < pkqPlan - 1 ? 'good' : 'neutral')
-                : 'neutral'}
-              onClick={() => setDrilldownFocus('quote')}
-            />
-          </KpiGrid>
+              </div>
+              <div style={{ width: '100%', height: 220 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={pkqVerlauf.rows} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted/50" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={16} />
+                    <YAxis
+                      domain={[0, pkqVerlauf.yMax]}
+                      tick={{ fontSize: 10 }}
+                      tickFormatter={(v: number) => `${v} %`}
+                      width={40}
+                    />
+                    <RTooltip
+                      formatter={(v: number | null) => [v == null ? '—' : `${v.toFixed(1)} %`, 'PKQ']}
+                      labelFormatter={(l: string) => `Datum: ${l}`}
+                    />
+                    <ReferenceLine
+                      y={PK_BUDGET_QUOTE * 100}
+                      stroke="hsl(142, 76%, 36%)"
+                      strokeDasharray="5 4"
+                      label={{ value: `Ziel ${(PK_BUDGET_QUOTE * 100).toFixed(1)} %`, position: 'insideBottomLeft', fill: 'hsl(142, 76%, 36%)', fontSize: 10 }}
+                    />
+                    <ReferenceLine
+                      y={40}
+                      stroke="hsl(0, 72%, 51%)"
+                      strokeDasharray="5 4"
+                      label={{ value: 'Obergrenze 40 %', position: 'insideTopLeft', fill: 'hsl(0, 72%, 51%)', fontSize: 10 }}
+                    />
+                    <RLine
+                      type="monotone"
+                      dataKey="pkq"
+                      name="PKQ"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth={2}
+                      dot={false}
+                      connectNulls={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
           {/* ── Personalcontrolling: Budget vs. Ist (Betrieb) + App vs. Erfolgsrechnung (Kontrolle) ─ */}
           {/* Nur ganzer Monat: die Erfolgsrechnung liegt monatsweise vor, ein
@@ -4977,18 +5112,25 @@ export default function PersonalFixPage() {
           if (empWithKU.length === 0) return null;
           return (
             <section className="rounded-xl border border-amber-200 dark:border-amber-800 bg-card shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20">
+              <button
+                onClick={() => setShowKuSection(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50/80 dark:hover:bg-amber-950/30 transition-colors text-left"
+              >
                 <div className="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
                   <AlertCircle className="h-4 w-4 text-amber-500" />
                   Kranken-/Unfallkosten (80 %)
                   <Badge variant="secondary" className="text-xs">{empWithKU.length} MA mit K/U-Tagen</Badge>
                 </div>
-                {totalKuCHF > 0 && (
-                  <span className="text-sm font-mono font-bold text-amber-700 dark:text-amber-400">
-                    {fmtCHF(totalKuCHF)}
-                  </span>
-                )}
-              </div>
+                <div className="flex items-center gap-3">
+                  {totalKuCHF > 0 && (
+                    <span className="text-sm font-mono font-bold text-amber-700 dark:text-amber-400">
+                      {fmtCHF(totalKuCHF)}
+                    </span>
+                  )}
+                  <ChevronDown className={cn('h-4 w-4 text-amber-500 transition-transform duration-200', showKuSection && 'rotate-180')} />
+                </div>
+              </button>
+              {showKuSection && (<>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs min-w-[600px]">
                   <thead>
@@ -5077,6 +5219,7 @@ export default function PersonalFixPage() {
               <p className="text-[10px] text-muted-foreground px-4 py-2 border-t border-border bg-muted/5">
                 Nur Information — fliesst nicht in die Personalkosten ein. Basis: (K+U) Tage Plan × h/Tag × Total AG/h × 80 % (bei fehlendem Plan: Ist-Tage).
               </p>
+              </>)}
             </section>
           );
         })()}
