@@ -60,6 +60,6 @@
 - [PostgREST unordered-query cap](postgrest-row-cap.md) — status/freshness queries need order-desc+limit or pagination; PostgREST caps ~1000 rows unordered, newest days silently drop.
 - [Partial vi.mock internal calls](partial-mock-internal-calls.md) — module-internal calls bypass mocks: mock wrapper exports too; collapsed MoreKpis: seed storageKey='1'; supabase-transitive libs need happy-dom.
 - [Netto-Umsatz SSOT](umsatz-ssot.md) — umsatz.ts einzige Netto-Quelle (ALLE Views); Quelle = MANUELLER Speisekarte-Import (dailyBudgets-KV) + maison-daily-Marketing, NIE gn_imports mischen; Mount-Loads brauchen store-synced-Retry.
-- [Monatsreport Quellen & Regeln](monatsreport-sources.md) — Startseite-Report: leer statt 0 bei fehlender Quelle; Ist-bis-heute-Klemme gilt auch für Reservations-Zählungen; Nav beaulieuAllowed ⇒ Route allowBeaulieu.
+- [Monatsreport Quellen & Regeln](monatsreport-sources.md) — leer statt 0; Ist-Klemme; Gäste-Tagessumme massgeblich (kein Zeitraum-Abgleich); Umsatz/Gast nur über gepaarte Tage; KW-Auswahl braucht ISO-Wochenjahr.
 - [Personalkosten-SSOT](personalkosten-ssot.md) — alle PK-Ansichten nur via personalkosten.ts; Budget 106'400/35.5 %, PKQ nur personalquote(); State-Reset bei Monatswechsel; Rollen-Setzen via Mgmt-API-SQL.
 - [Supabase Edge Deploy via Management API](supabase-mgmt-api-deploy.md) — PAT frisch anfordern bei 401; Deploy per multipart /functions/deploy, verify_jwt in metadata (config.toml nur CLI); Ref aus .env.

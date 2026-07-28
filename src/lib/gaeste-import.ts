@@ -6,10 +6,16 @@
  *   GÄSTE-Datei:            Zeile «Gesamt»       — Personen («… P.»)
  *   DURCHSCHNITTSVERKAUF:   Zeile «Durchschnitt» — CHF
  *
- * Die «Zeitraum»-Spalte (Spalte 2) ist MASSGEBLICH (wie beim Umsatz-Import):
- *  - Gäste: Tageswerte werden ganzzahlig proportional auf das Zeitraum-Total
- *    abgeglichen (Rest auf den letzten Tag mit Wert).
- *  - Durchschnittsverkauf: der Zeitraum-Wert ist der massgebliche Monatswert;
+ * Massgeblichkeit der Werte:
+ *  - GÄSTE: die TAGESSUMME ist massgeblich. Die Tageswerte werden nur gerundet
+ *    (Math.round) und unverändert übernommen — KEINE Skalierung auf das
+ *    Zeitraum-Total, KEIN Rest auf den letzten Tag, KEIN Addieren des Zeitraums
+ *    bei leerer Tagessumme. Grund: die Gastronovi-«Zeitraum»-Zelle kann einen
+ *    abweichenden Zeitraum abdecken (z.B. Zeitraum 8'604 vs. Tagessumme 8'584);
+ *    korrekt sind die Tageswerte. Der Zeitraum-Wert (`zeitraum`) wird weiterhin
+ *    zurückgegeben — nur als Info, damit die Import-UI bei Abweichung
+ *    zeitraum ≠ tagessumme einen HINWEIS zeigen kann (nicht blockieren).
+ *  - DURCHSCHNITTSVERKAUF: der «Zeitraum»-Wert ist der massgebliche Monatswert;
  *    Tageswerte werden unverändert übernommen (ein Durchschnitt ist nicht
  *    summierbar und wird nicht skaliert).
  */
@@ -19,8 +25,16 @@ import ExcelJS from 'exceljs';
 export interface TagesmetrikImportResult {
   /** YYYY-MM-DD → Wert (Gäste: Personen, Durchschnitt: CHF) */
   daily: Record<string, number>;
-  /** Massgeblicher Wert der «Zeitraum»-Spalte (null wenn Zelle leer) */
+  /**
+   * Wert der «Zeitraum»-Spalte (null wenn Zelle leer). Beim Durchschnittsverkauf
+   * der massgebliche Monatswert; bei Gästen nur Info (Tageswerte sind massgeblich).
+   */
   zeitraum: number | null;
+  /**
+   * Summe der (gerundeten) Tageswerte. Bei Gästen der massgebliche Gesamtwert;
+   * die Import-UI kann bei Abweichung zeitraum ≠ tagessumme einen Hinweis zeigen.
+   */
+  tagessumme: number;
   year: number;
   month: number; // 1-basiert, aus den Datumsspalten abgeleitet
   daysWithData: number;
@@ -99,9 +113,12 @@ async function parseTagesmetrikXlsx(
     throw new Error('Erwartete Zeile nicht gefunden — bitte Datei prüfen');
   }
 
+  const tagessumme = Object.values(daily).reduce((s, v) => s + v, 0);
+
   return {
     daily,
     zeitraum,
+    tagessumme,
     year,
     month: inferredMonth,
     daysWithData: Object.keys(daily).length,
@@ -110,29 +127,24 @@ async function parseTagesmetrikXlsx(
 }
 
 /**
- * GÄSTE-Import: Zeile «Gesamt» (Personen). Tageswerte werden ganzzahlig auf
- * das Zeitraum-Total abgeglichen — das Zeitraum-Total ist massgeblich.
+ * GÄSTE-Import: Zeile «Gesamt» (Personen). Die TAGESSUMME ist massgeblich —
+ * die Tageswerte werden nur ganzzahlig gerundet und unverändert übernommen.
+ * KEINE Skalierung auf das Zeitraum-Total, KEIN Rest auf den letzten Tag,
+ * KEIN Addieren des Zeitraums bei leerer Tagessumme. Der «Zeitraum»-Wert wird
+ * (gerundet) weiterhin als Info zurückgegeben; die Import-UI kann bei
+ * Abweichung zeitraum ≠ tagessumme einen Hinweis zeigen.
  */
 export async function parseGaesteXlsx(file: File, year: number): Promise<TagesmetrikImportResult> {
   const r = await parseTagesmetrikXlsx(file, year, l => l === 'gesamt');
 
-  // Ganzzahlig runden, dann auf das massgebliche Zeitraum-Total abgleichen.
+  // Tageswerte nur ganzzahlig runden — kein Abgleich auf das Zeitraum-Total.
   const dates = Object.keys(r.daily).sort();
   for (const d of dates) r.daily[d] = Math.round(r.daily[d]);
-  if (r.zeitraum != null && dates.length > 0) {
-    const target = Math.round(r.zeitraum);
-    const sum = dates.reduce((s, d) => s + r.daily[d], 0);
-    if (sum > 0 && sum !== target) {
-      const factor = target / sum;
-      let acc = 0;
-      for (const d of dates) { r.daily[d] = Math.round(r.daily[d] * factor); acc += r.daily[d]; }
-      // Rest auf den letzten Tag mit Wert
-      r.daily[dates[dates.length - 1]] += target - acc;
-    } else if (sum === 0) {
-      r.daily[dates[dates.length - 1]] += target;
-    }
-    r.zeitraum = target;
-  }
+
+  // Zeitraum bleibt reine Info (gerundet); tagessumme aus den gerundeten Tageswerten.
+  if (r.zeitraum != null) r.zeitraum = Math.round(r.zeitraum);
+  r.tagessumme = dates.reduce((s, d) => s + r.daily[d], 0);
+
   return r;
 }
 

@@ -88,7 +88,8 @@ import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx, type TagesmetrikImportResult } from '@/lib/gaeste-import';
-import { saveGaesteDaily, saveAvgCheck } from '@/lib/gaeste-store';
+import { saveGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily } from '@/lib/gaeste-store';
+import { ladeUmsatzTage } from '@/lib/umsatz';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
 import { ImportGroupCards, IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
 import { visibleCategories } from '@/lib/import-center';
@@ -591,6 +592,192 @@ const JahresDatenstandCard = () => {
               </div>
             </div>
           </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+// ─── Vollständigkeit Tagesdaten ──────────────────────────────────────────────
+//
+// Kompakte Kontrollkarte: prüft für einen Monat (nur vergangene Tage inkl.
+// heute), wo Umsatz-, Gäste- und Durchschnittsverkauf-Tagesdaten zueinander
+// fehlen. Reiner Hinweis — blockiert nichts. Grün «vollständig» wenn leer.
+
+/** Liste von yyyy-MM-dd → «5., 12., 19.7.» (Tag mit Punkt, letzter mit Monat). */
+function formatDayList(isoDates: string[]): string {
+  if (isoDates.length === 0) return '';
+  const sorted = [...isoDates].sort();
+  return sorted
+    .map((d, i) => {
+      const [, m, day] = d.split('-').map(Number);
+      const dayNum = Number(day);
+      return i === sorted.length - 1 ? `${dayNum}.${Number(m)}.` : `${dayNum}.`;
+    })
+    .join(', ');
+}
+
+const VollstaendigkeitCard = () => {
+  const { tenantId, tenantKey } = useTenant();
+  const now = new Date();
+  const [ym, setYm] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [result, setResult] = useState<{
+    umsatzOhneGaeste: string[];
+    gaesteOhneUmsatz: string[];
+    umsatzOhneDurchschnitt: string[];
+  } | null>(null);
+
+  // Auswahl der letzten 12 Monate (aktueller Monat zuerst)
+  const monthOptions = useMemo(() => {
+    const opts: { value: string; label: string }[] = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      opts.push({
+        value: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        label: format(d, 'MMMM yyyy', { locale: de }),
+      });
+    }
+    return opts;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let stale = false;
+    setLoading(true);
+    setLoadError(false);
+    (async () => {
+      try {
+        const [y, m] = ym.split('-').map(Number);
+        const fromIso = `${y}-${String(m).padStart(2, '0')}-01`;
+        const lastDay = endOfMonth(new Date(y, m - 1, 1)).getDate();
+        const toIso = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        const todayIso = format(new Date(), 'yyyy-MM-dd');
+
+        const [umsatzMap, gaeste, avg] = await Promise.all([
+          ladeUmsatzTage(tenantId, fromIso, toIso),
+          loadGaesteDaily(tenantKey),
+          loadAvgCheckDaily(tenantKey),
+        ]);
+        if (stale) return;
+
+        // Nur vergangene Tage inkl. heute berücksichtigen.
+        const inRange = (d: string) => d >= fromIso && d <= toIso && d <= todayIso;
+
+        const umsatzTage = new Set<string>();
+        for (const [d, tag] of umsatzMap) {
+          if (inRange(d) && tag.gesamtBrutto > 0) umsatzTage.add(d);
+        }
+        const gaesteTage = new Set(
+          Object.entries(gaeste).filter(([d, v]) => inRange(d) && v > 0).map(([d]) => d),
+        );
+        const avgTage = new Set(
+          Object.entries(avg).filter(([d, v]) => inRange(d) && v > 0).map(([d]) => d),
+        );
+
+        setResult({
+          umsatzOhneGaeste: [...umsatzTage].filter(d => !gaesteTage.has(d)),
+          gaesteOhneUmsatz: [...gaesteTage].filter(d => !umsatzTage.has(d)),
+          umsatzOhneDurchschnitt: [...umsatzTage].filter(d => !avgTage.has(d)),
+        });
+        setLoading(false);
+      } catch (e) {
+        console.warn('[VOLLSTÄNDIGKEIT] Laden fehlgeschlagen', e);
+        if (!stale) { setLoadError(true); setLoading(false); }
+      }
+    })();
+    return () => { stale = true; };
+  }, [ym, tenantId, tenantKey, refreshKey]);
+
+  const rows: { label: string; dates: string[] }[] = result ? [
+    { label: 'Umsatz ohne Gäste', dates: result.umsatzOhneGaeste },
+    { label: 'Gäste ohne Umsatz', dates: result.gaesteOhneUmsatz },
+    { label: 'Umsatz ohne Durchschnittsverkauf', dates: result.umsatzOhneDurchschnitt },
+  ] : [];
+  const allComplete = result != null && rows.every(r => r.dates.length === 0);
+
+  return (
+    <Card className="border-border bg-card shadow-sm" data-testid="vollstaendigkeit-card">
+      <CardHeader className="pb-2 pt-4">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">Vollständigkeit Tagesdaten</span>
+            <span className="text-xs font-normal text-muted-foreground">– fehlen Umsatz, Gäste oder Durchschnitt zueinander?</span>
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Select value={ym} onValueChange={setYm}>
+              <SelectTrigger className="h-7 w-[140px] text-xs" data-testid="vollstaendigkeit-month">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {monthOptions.map(o => (
+                  <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <button
+              onClick={() => setRefreshKey(k => k + 1)}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              title="Aktualisieren"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+            </button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pb-4 pt-0 space-y-2">
+        {loadError && (
+          <HintBox tone="critical">
+            Vollständigkeit konnte nicht geladen werden.{' '}
+            <button className="underline font-medium" onClick={() => setRefreshKey(k => k + 1)}>
+              Erneut versuchen
+            </button>
+          </HintBox>
+        )}
+        {!loadError && loading && (
+          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Wird geprüft …
+          </div>
+        )}
+        {!loadError && !loading && result && (
+          <>
+            {allComplete ? (
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 px-3 py-2.5 text-xs text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span className="font-medium">Vollständig — keine fehlenden Tagesdaten in diesem Monat.</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {rows.map(r => (
+                  <div
+                    key={r.label}
+                    className={cn(
+                      'flex items-start gap-3 rounded-lg border px-3 py-2 text-xs',
+                      r.dates.length === 0
+                        ? 'border-border/60 bg-muted/20'
+                        : 'border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10',
+                    )}
+                  >
+                    <span className={cn('flex-none w-2 h-2 rounded-full mt-1', r.dates.length === 0 ? 'bg-emerald-500' : 'bg-amber-400')} />
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium">{r.label}</p>
+                      {r.dates.length === 0 ? (
+                        <p className="text-[11px] text-muted-foreground">vollständig</p>
+                      ) : (
+                        <p className="text-[11px] text-amber-700 dark:text-amber-400 tabular-nums">
+                          {r.dates.length} {r.dates.length === 1 ? 'Tag' : 'Tage'}: {formatDayList(r.dates)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-[10px] text-muted-foreground">Berücksichtigt nur vergangene Tage inkl. heute. Reiner Hinweis — blockiert nichts.</p>
+          </>
         )}
       </CardContent>
     </Card>
@@ -2403,7 +2590,7 @@ function TagesmetrikImportSection({ art }: { art: 'gaeste' | 'durchschnitt' }) {
     try {
       if (isGaeste) {
         await saveGaesteDaily(tenantKey, result.daily);
-        toast.success(`Gäste gespeichert: ${result.daysWithData} Tage, ${result.zeitraum != null ? fmtVal(result.zeitraum) : '–'} gesamt`);
+        toast.success(`Gäste gespeichert: ${result.daysWithData} Tage, ${fmtVal(result.tagessumme)} gesamt`);
       } else {
         const monthKey = `${result.year}-${String(result.month).padStart(2, '0')}`;
         await saveAvgCheck(
@@ -2500,11 +2687,25 @@ function TagesmetrikImportSection({ art }: { art: 'gaeste' | 'durchschnitt' }) {
                 <span className="font-medium">{result.month.toString().padStart(2, '0')}.{result.year}</span>
                 <span className="text-muted-foreground">Tage mit Daten:</span>
                 <span className="font-medium">{result.daysWithData}</span>
-                <span className="text-muted-foreground">{isGaeste ? 'Gesamt (Zeitraum):' : 'Monatswert (Zeitraum):'}</span>
-                <span className="font-medium">{result.zeitraum != null ? fmtVal(result.zeitraum) : '–'}</span>
+                {isGaeste ? (
+                  <>
+                    <span className="text-muted-foreground">Tagessumme (massgeblich):</span>
+                    <span className="font-medium">{fmtVal(result.tagessumme)}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-muted-foreground">Monatswert (Zeitraum):</span>
+                    <span className="font-medium">{result.zeitraum != null ? fmtVal(result.zeitraum) : '–'}</span>
+                  </>
+                )}
                 <span className="text-muted-foreground">Zeilen verarbeitet:</span>
                 <span className="font-medium">{result.rowsFound.join(', ') || '–'}</span>
               </div>
+              {isGaeste && result.zeitraum != null && result.zeitraum !== result.tagessumme && (
+                <p className="text-[11px] text-muted-foreground pt-1">
+                  Zeitraum-Spalte der Datei: {fmtVal(result.zeitraum)} — abweichend, Tageswerte sind massgeblich.
+                </p>
+              )}
             </div>
             <Button
               size="sm"
@@ -3013,6 +3214,9 @@ const ImportHub = () => {
 
         {/* ── 0b. Datenstand Vorjahr (je Jahr, Default 2024) ───────────── */}
         <JahresDatenstandCard />
+
+        {/* ── 0c. Vollständigkeit Tagesdaten (Umsatz/Gäste/Durchschnitt) ─ */}
+        <VollstaendigkeitCard />
 
         {/* ── 1. Umsatz Ist ────────────────────────────────────────────── */}
         <Section

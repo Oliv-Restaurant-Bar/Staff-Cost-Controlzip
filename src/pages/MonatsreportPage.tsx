@@ -8,14 +8,67 @@ import { useEffect, useMemo, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
 import { ChevronLeft, ChevronRight, FileSpreadsheet, CalendarDays } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
-import { ladeMonatsreport, type MonatsreportDaten, type MrRow } from '@/lib/monatsreport';
+import { ladeMonatsreport, type MonatsreportDaten, type MrRow, type WeekSelection } from '@/lib/monatsreport';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+
+/** ISO-Kalenderwoche + ISO-Wochenjahr eines Datums (Mo=Wochenanfang). */
+function isoWeekOf(d: Date): { week: number; year: number } {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = (t.getUTCDay() + 6) % 7; // Mo=0
+  t.setUTCDate(t.getUTCDate() - day + 3); // Donnerstag dieser Woche = ISO-Wochenjahr
+  const weekYear = t.getUTCFullYear();
+  const firstThursday = new Date(Date.UTC(weekYear, 0, 4));
+  const firstDay = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3);
+  const week = 1 + Math.round((t.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+  return { week, year: weekYear };
+}
+
+interface KwOption { kw: number; kwYear: number; start: number; }
+
+/**
+ * ISO-KWs, die den gegebenen Monat schneiden — mit ISO-Wochenjahr (wichtig am
+ * Jahreswechsel), dedupliziert, chronologisch nach tatsächlichem Wochenstart.
+ */
+function isoWeeksOfMonth(year: number, month: number): KwOption[] {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const seen = new Map<string, KwOption>();
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(year, month - 1, day);
+    const { week, year: kwYear } = isoWeekOf(d);
+    const key = `${kwYear}-${week}`;
+    if (!seen.has(key)) {
+      // Montag dieser Woche als chronologischer Sortierschlüssel.
+      const mon = new Date(d);
+      mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+      seen.set(key, { kw: week, kwYear, start: mon.getTime() });
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.start - b.start);
+}
+
+// Serialisierte Werte fürs Select (WeekSelection ist ein Objekt).
+const WEEK_LASTCOMPLETE = 'lastComplete';
+const WEEK_CURRENT = 'current';
+const WEEK_LAST7 = 'last7';
+
+/** KW-Wert als "YYYY-Wnn" (ISO-Wochenjahr + Woche). */
+const kwValue = (o: KwOption) => `${o.kwYear}-W${String(o.kw).padStart(2, '0')}`;
+
+function parseWeekValue(v: string): WeekSelection {
+  if (v === WEEK_CURRENT) return { kind: 'current' };
+  if (v === WEEK_LAST7) return { kind: 'last7' };
+  const m = /^(\d{4})-W(\d{1,2})$/.exec(v);
+  if (m) return { kind: 'kw', kw: Number(m[2]), kwYear: Number(m[1]) };
+  return { kind: 'lastComplete' };
+}
 
 const fmtNum = (v: number, dec = 2) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -44,23 +97,27 @@ export default function MonatsreportPage() {
   const [daten, setDaten] = useState<MonatsreportDaten | null>(null);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState<string | null>(null);
+  const [weekValue, setWeekValue] = useState<string>(WEEK_LASTCOMPLETE);
+
+  const weekSelection = useMemo<WeekSelection>(() => parseWeekValue(weekValue), [weekValue]);
+  const kwOptions = useMemo(() => isoWeeksOfMonth(year, month), [year, month]);
 
   useEffect(() => {
     if (ratesLoading || !rates) return;
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute)
+    ladeMonatsreport(year, month, tenantId, tenantKey, rates, heute, weekSelection)
       .then(d => { if (alive) setDaten(d); })
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute]);
+  }, [year, month, tenantId, tenantKey, rates, ratesLoading, heute, weekSelection]);
 
   const prev = () => { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); };
   const next = () => { if (month === 12) { setYear(y => y + 1); setMonth(1); } else setMonth(m => m + 1); };
 
-  const wocheLabel = daten?.weekFrom && daten?.weekTo
+  const wocheRange = daten?.weekFrom && daten?.weekTo
     ? `${fmtDate(daten.weekFrom)}–${fmtDate(daten.weekTo)}`
     : null;
 
@@ -88,6 +145,19 @@ export default function MonatsreportPage() {
             <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month">
               <ChevronRight className="h-4 w-4" />
             </Button>
+            <Select value={weekValue} onValueChange={setWeekValue}>
+              <SelectTrigger className="h-8 w-[210px] text-xs ml-2" data-testid="select-week">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={WEEK_LASTCOMPLETE}>Letzte abgeschlossene Woche</SelectItem>
+                <SelectItem value={WEEK_CURRENT}>Aktuelle Woche</SelectItem>
+                <SelectItem value={WEEK_LAST7}>Letzte 7 Tage</SelectItem>
+                {kwOptions.map(o => (
+                  <SelectItem key={kwValue(o)} value={kwValue(o)}>KW {o.kw}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               size="sm" className="gap-1.5 ml-2"
               disabled={!daten || loading}
@@ -116,7 +186,8 @@ export default function MonatsreportPage() {
                   <th className="px-3 py-2 text-right font-semibold">Budget</th>
                   <th className="px-3 py-2 text-right font-semibold">Vorjahr</th>
                   <th className="px-3 py-2 text-right font-semibold">
-                    Woche{wocheLabel ? <span className="block normal-case font-normal">{wocheLabel}</span> : null}
+                    {daten?.weekLabel ?? 'Woche'}
+                    {wocheRange ? <span className="block normal-case font-normal">{wocheRange}</span> : null}
                   </th>
                   <th className="px-3 py-2 text-right font-semibold">+/- in %</th>
                   <th className="px-3 py-2 text-right font-semibold">Monat</th>
@@ -152,8 +223,10 @@ export default function MonatsreportPage() {
         )}
 
         <p className="text-xs text-muted-foreground">
-          Woche = Ist der laufenden Woche (nur im aktuellen Monat) · Monat = Ist bis heute ·
-          +/- = Abweichung zum Budget bzw. Budget-Wochenanteil · leere Felder = keine Datenquelle vorhanden.
+          Woche = gewählter Zeitraum ({daten?.weekLabel ?? '—'}
+          {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Monat = Ist bis heute ·
+          +/- = Abweichung zum Budget bzw. Budget-Wochenanteil · Umsatz pro Gast = Netto ÷ Gäste
+          nur über Tage mit beiden Quellen · leere Felder = keine Datenquelle vorhanden.
           Warenaufwand, Lieferanten und manuelle Felder folgen in einer späteren Etappe.
         </p>
       </div>
