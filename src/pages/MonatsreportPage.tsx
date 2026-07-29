@@ -14,8 +14,9 @@ import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import {
-  ladeMonatsreport, ladeWochenverlauf,
+  ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel,
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
+  type JahresvergleichDaten,
 } from '@/lib/monatsreport';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 
@@ -65,6 +66,9 @@ const WEEK_LAST7 = 'last7';
 
 /** KW-Wert als "YYYY-Wnn" (ISO-Wochenjahr + Woche). */
 const kwValue = (o: KwOption) => `${o.kwYear}-W${String(o.kw).padStart(2, '0')}`;
+
+/** Dropdown-Label einer KW inkl. Mo–So-Bereich (zentrale, getestete Logik). */
+const kwOptionLabel = (o: KwOption): string => kwRangeLabel(o.kwYear, o.kw);
 
 function parseWeekValue(v: string): WeekSelection {
   if (v === WEEK_CURRENT) return { kind: 'current' };
@@ -143,6 +147,7 @@ export default function MonatsreportPage() {
           <TabsList data-testid="tabs-cockpit">
             <TabsTrigger value="monat" data-testid="tab-monat">Monatsübersicht</TabsTrigger>
             <TabsTrigger value="wochen" data-testid="tab-wochen">Wochenverlauf</TabsTrigger>
+            <TabsTrigger value="jahr" data-testid="tab-jahr">Jahresvergleich</TabsTrigger>
           </TabsList>
 
           {/* ── Monatsübersicht (unverändert) ── */}
@@ -166,7 +171,7 @@ export default function MonatsreportPage() {
                   <SelectItem value={WEEK_CURRENT}>Aktuelle Woche</SelectItem>
                   <SelectItem value={WEEK_LAST7}>Letzte 7 Tage</SelectItem>
                   {kwOptions.map(o => (
-                    <SelectItem key={kwValue(o)} value={kwValue(o)}>KW {o.kw}</SelectItem>
+                    <SelectItem key={kwValue(o)} value={kwValue(o)}>{kwOptionLabel(o)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -245,6 +250,11 @@ export default function MonatsreportPage() {
           {/* ── Wochenverlauf (neu) ── */}
           <TabsContent value="wochen" className="space-y-4">
             <WochenverlaufView />
+          </TabsContent>
+
+          {/* ── Jahresvergleich (YTD, neu) ── */}
+          <TabsContent value="jahr" className="space-y-4">
+            <JahresvergleichView />
           </TabsContent>
         </Tabs>
       </div>
@@ -419,6 +429,111 @@ function WochenverlaufView() {
         gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
         nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
         {showVj && ' · Vorjahr = gleiche ISO-KW im Vorjahr (kleine Zeile darunter + Δ% aktuell vs. VJ); Produktive Stunden/Produktivität haben keine VJ-Quelle.'}
+      </p>
+    </>
+  );
+}
+
+// ── Jahresvergleich-Ansicht (Year-to-Date) ────────────────────────────────────
+
+// Session-Cache: der YTD-Load ist teuer (bis zu 12 Monate PK + Vorjahr) und
+// Radix-Tabs unmounten inaktive Inhalte — ohne Cache würde jeder Tab-Wechsel
+// alles neu laden. Key = Mandant + Kalendertag (neuer Tag ⇒ frisch laden).
+let jahresvergleichCache: { key: string; daten: JahresvergleichDaten } | null = null;
+
+function JahresvergleichView() {
+  const heute = useMemo(() => new Date(), []);
+  const { tenantId, tenantKey } = useTenant();
+  const { rates, loading: ratesLoading } = useSocialCostRates();
+
+  const cacheKey = `${tenantId}:${heute.toISOString().slice(0, 10)}`;
+  const cached = jahresvergleichCache?.key === cacheKey ? jahresvergleichCache!.daten : null;
+  const [daten, setDaten] = useState<JahresvergleichDaten | null>(cached);
+  const [loading, setLoading] = useState(!cached);
+  const [fehler, setFehler] = useState<string | null>(null);
+
+  // Lazy: erst beim Öffnen des Tabs (Mount) laden — YTD zieht bis zu 12 Monate
+  // Personalkosten + Vorjahr. Danach aus dem Session-Cache.
+  useEffect(() => {
+    if (ratesLoading || !rates) return;
+    if (jahresvergleichCache?.key === cacheKey) {
+      setDaten(jahresvergleichCache.daten);
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    setFehler(null);
+    ladeJahresvergleich(tenantId, tenantKey, rates, heute)
+      .then(d => {
+        jahresvergleichCache = { key: cacheKey, daten: d };
+        if (alive) setDaten(d);
+      })
+      .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [tenantId, tenantKey, rates, ratesLoading, heute, cacheKey]);
+
+  return (
+    <>
+      {daten && (
+        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+          <span>
+            YTD {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} ·
+            {' '}YTD {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}
+          </span>
+        </div>
+      )}
+
+      {fehler && (
+        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          Fehler beim Laden: {fehler}
+        </div>
+      )}
+
+      {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
+
+      {!loading && daten && (
+        <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
+          <table className="w-full text-sm" data-testid="table-jahresvergleich">
+            <thead>
+              <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+                <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
+                <th className="px-3 py-2 text-right font-semibold">YTD {daten.curYear}</th>
+                <th className="px-3 py-2 text-right font-semibold">YTD {daten.vjYear}</th>
+                <th className="px-3 py-2 text-right font-semibold">+/- in %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {daten.rows.map((row, i) => {
+                const delta = trendPct(row.cur, row.vj);
+                return (
+                  <tr key={i} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')}>
+                    <td className="px-3 py-1.5">{row.label}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {row.cur === null ? <span className="text-muted-foreground">—</span> : fmtCell(row.cur, row.fmt)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {row.vj === null ? <span className="text-muted-foreground">—</span> : fmtCell(row.vj, row.fmt)}
+                    </td>
+                    <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
+                      delta !== null && (delta >= 0 ? 'text-emerald-600' : 'text-red-600'))}>
+                      {delta === null ? '' : `${delta >= 0 ? '+' : ''}${delta.toFixed(1)} %`}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        Jahresvergleich = Year-to-Date: 01.01.–heute vs. 01.01.–gleiches Datum im Vorjahr (pro rata) ·
+        gleiche Quellen &amp; Berechnung wie die Monatsübersicht (keine Z-Berichte) · +/- = aktuell vs. Vorjahr
+        (nur wenn beide Werte vorhanden) · Vorjahr aus vj_daily; Produktive Stunden/Produktivität haben
+        keine VJ-Quelle → «—» · leere Felder (—) = keine Datenquelle, nie 0. Umsatz pro Gast = Netto ÷ Gäste
+        nur über Tage mit beiden Quellen.
       </p>
     </>
   );

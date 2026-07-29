@@ -207,6 +207,76 @@ export function vorjahresWoche(w: WeekWindow): WeekWindow | null {
   return { kwYear: prevYear, kw: w.kw, from: iso(mon), to: iso(sun) };
 }
 
+// ── Jahresvergleich (Year-to-Date) ──────────────────────────────────────────
+
+/** YTD-Fenster: 01.01. bis heute vs. 01.01. Vorjahr bis gleiches Datum (pro rata). */
+export interface YtdWindow {
+  curYear: number;
+  vjYear: number;
+  /** 'YYYY-01-01' laufendes Jahr */
+  curFrom: string;
+  /** 'YYYY-MM-DD' = heute (Ist-Grenze) */
+  curTo: string;
+  /** 'YYYY-01-01' Vorjahr */
+  vjFrom: string;
+  /** 'YYYY-MM-DD' = gleiches Datum im Vorjahr (Schaltjahr-Randfall geklemmt) */
+  vjTo: string;
+}
+
+/**
+ * Bestimmt das YTD-Fenster: laufendes Jahr 01.01.→heute und Vorjahr
+ * 01.01.→gleiches Kalenderdatum. Schaltjahr-Randfall: fällt «heute» auf den
+ * 29.02., existiert dieses Datum im (Nicht-Schalt-)Vorjahr nicht → geklemmt auf
+ * 28.02. des Vorjahres. Reine Funktion (keine I/O) — testbar.
+ */
+export function computeYtdWindow(heute: Date): YtdWindow {
+  const curYear = heute.getFullYear();
+  const vjYear = curYear - 1;
+  const m = heute.getMonth();       // 0-basiert
+  const d = heute.getDate();
+  const curTo = `${curYear}-${pad2(m + 1)}-${pad2(d)}`;
+  // Vorjahres-Enddatum: gleiches (Monat, Tag). 29.02. → 28.02. im Nicht-Schaltjahr.
+  let vjMonth = m, vjDay = d;
+  if (m === 1 && d === 29) {
+    const vjFeb = new Date(vjYear, 1, 29).getDate() === 29 ? 29 : 28; // 29 nur im Schaltjahr
+    vjDay = vjFeb;
+  }
+  const vjTo = `${vjYear}-${pad2(vjMonth + 1)}-${pad2(vjDay)}`;
+  return {
+    curYear, vjYear,
+    curFrom: `${curYear}-01-01`, curTo,
+    vjFrom: `${vjYear}-01-01`, vjTo,
+  };
+}
+
+/** Eine Kennzahl-Zeile im Jahresvergleich (YTD aktuell vs. Vorjahr). */
+export interface JahresvergleichRow {
+  label: string;
+  fmt: MrFormat;
+  bold?: boolean;
+  /** YTD laufendes Jahr, null = keine Quelle */
+  cur: number | null;
+  /** YTD Vorjahr (pro rata), null = keine Quelle */
+  vj: number | null;
+}
+
+export interface JahresvergleichDaten extends YtdWindow {
+  rows: JahresvergleichRow[];
+}
+
+/**
+ * Dropdown-Label einer ISO-KW inkl. Mo–So-Datumsbereich, z.B.
+ * «KW 27 · 29.06.–05.07.». Nutzt dieselbe ISO-Wochenlogik wie der Wochenverlauf.
+ * Reine Funktion (keine I/O) — testbar.
+ */
+export function kwRangeLabel(kwYear: number, kw: number): string {
+  const mon = mondayOfIsoWeek(kwYear, kw);
+  const sun = new Date(mon);
+  sun.setDate(sun.getDate() + 6);
+  const dm = (d: Date) => `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.`;
+  return `KW ${kw} · ${dm(mon)}–${dm(sun)}`;
+}
+
 // ── Zeilenmodell ─────────────────────────────────────────────────────────────
 
 export type MrFormat = 'chf' | 'count' | 'pct' | 'hours';
@@ -827,4 +897,153 @@ export async function ladeWochenverlauf(
   ];
 
   return { weeks, vjWeeks, rows };
+}
+
+// ── Jahresvergleich (Year-to-Date, aktuell vs. Vorjahr pro rata) ─────────────
+
+/**
+ * Lädt den Year-to-Date-Vergleich: 01.01.→heute vs. 01.01. Vorjahr→gleiches
+ * Datum. Zeilen = dieselben Kennzahlen wie Cockpit/Wochenverlauf, gleiche
+ * Quellen (keine Z-Berichte). Personalkosten werden pro Monat (Jan→heute) lazy
+ * geladen; scheitert ein Monat, bleiben die Stunden-Zeilen «—» (kein Absturz).
+ * Vorjahr: vj_daily je Monat, gaeste-daily/avgcheck-daily auf VJ-Zeitraum;
+ * keine VJ-Personalstunden → «—». «leer statt 0» durchgehend.
+ */
+export async function ladeJahresvergleich(
+  tenantId: TenantId,
+  tenantKey: KeyFn,
+  rates: SocialCostRates,
+  heute: Date = new Date(),
+): Promise<JahresvergleichDaten> {
+  const win = computeYtdWindow(heute);
+  const { curYear, vjYear, curFrom, curTo, vjFrom, vjTo } = win;
+  const lastMonth = heute.getMonth() + 1; // 1-basiert: Jan..aktueller Monat
+
+  // ── Aktuelles Jahr: Umsatz + globale KV-Maps ───────────────────────────────
+  const [gaesteDaily, avgDaily, umsatzTage] = await Promise.all([
+    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    ladeUmsatzTage(tenantId, curFrom, curTo),
+  ]);
+
+  // Umsatz aktuell + gepaarte Umsatz/Gäste-Tage.
+  let gross = 0, net = 0, ta = 0, food = 0, bev = 0, hatUmsatz = false;
+  let pairedNet = 0, pairedGaeste = 0;
+  for (const [date, tag] of umsatzTage) {
+    if (date < curFrom || date > curTo || tag.gesamtBrutto <= 0) continue;
+    const netto = nettoUmsatzTag(tag);
+    const split = foodBeverageSplit(tag);
+    gross += tag.gesamtBrutto; ta += tag.takeAwayBrutto; net += netto;
+    food += split.food; bev += split.beverage; hatUmsatz = true;
+    const g = gaesteDaily[date] ?? 0;
+    if (g > 0) { pairedNet += netto; pairedGaeste += g; }
+  }
+
+  // Gäste aktuell (volle importierte Summe im Zeitraum).
+  let gaeste = 0, hatGaeste = false;
+  for (const [date, n] of Object.entries(gaesteDaily)) {
+    if (date < curFrom || date > curTo || !(n > 0)) continue;
+    gaeste += n; hatGaeste = true;
+  }
+  // Durchschnittsverkauf aktuell — einfacher Mittelwert der Tageswerte
+  // (Direkt-Import-Regel, konsistent zu Wochenverlauf/VJ).
+  let avgSum = 0, avgCount = 0;
+  for (const [date, v] of Object.entries(avgDaily)) {
+    if (date < curFrom || date > curTo || !(v > 0)) continue;
+    avgSum += v; avgCount++;
+  }
+  const avgCur = avgCount > 0 ? r2(avgSum / avgCount) : null;
+
+  // ── Personalkosten aktuell: Monate Jan..aktueller Monat (lazy, fehlertolerant) ──
+  const pkList = await Promise.all(
+    Array.from({ length: lastMonth }, (_, i) => i + 1).map(mo =>
+      ladePersonalkostenDaten(curYear, mo, tenantId, tenantKey, rates).catch(() => null)),
+  );
+  let istStd = 0, hatIst = false, planStd = 0, hatPlan = false;
+  for (const pk of pkList) {
+    if (!pk) continue;
+    for (const [date, perEmp] of Object.entries(pk.istStdProTag) as [string, Record<string, number>][]) {
+      if (date < curFrom || date > curTo) continue;
+      for (const h of Object.values(perEmp)) { istStd += h; hatIst = true; }
+    }
+    for (const [date, perEmp] of Object.entries(pk.planStdProTag) as [string, Record<string, number>][]) {
+      if (date < curFrom || date > curTo) continue;
+      for (const h of Object.values(perEmp)) { planStd += h; hatPlan = true; }
+    }
+  }
+
+  // ── Vorjahr (pro rata): vj_daily je Monat Jan..aktueller Monat ─────────────
+  const vjMonthMaps = await Promise.all(
+    Array.from({ length: lastMonth }, (_, i) => i + 1).map(mo =>
+      loadVjDailyMonth(vjYear, mo, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
+  );
+  const vjDaily: Record<string, VjDayRecord> = {};
+  for (const m of vjMonthMaps) Object.assign(vjDaily, m);
+
+  let vjGross = 0, vjNet = 0, vjFoodG = 0, vjBevG = 0, vjTaG = 0;
+  let hatVj = false, hatVjFood = false, hatVjBev = false, hatVjTa = false;
+  let vjPairedNet = 0, vjPairedGaeste = 0;
+  for (const [date, rec] of Object.entries(vjDaily)) {
+    if (date < vjFrom || date > vjTo) continue;
+    if ((rec.actualRevenue ?? 0) > 0) {
+      vjGross += rec.actualRevenue; vjNet += rec.actualRevenue / VAT_STD; hatVj = true;
+    }
+    if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue! / VAT_STD; hatVjFood = true; }
+    if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue! / VAT_STD; hatVjBev = true; }
+    if ((rec.takeawayRevenue ?? 0) > 0) { vjTaG += rec.takeawayRevenue!; hatVjTa = true; }
+    const gVj = gaesteDaily[date] ?? 0;
+    if ((rec.actualRevenue ?? 0) > 0 && gVj > 0) {
+      vjPairedNet += rec.actualRevenue / VAT_STD; vjPairedGaeste += gVj;
+    }
+  }
+  // Gäste VJ (volle Summe im VJ-Zeitraum).
+  let vjGaeste = 0, hatVjGaeste = false;
+  for (const [date, n] of Object.entries(gaesteDaily)) {
+    if (date < vjFrom || date > vjTo || !(n > 0)) continue;
+    vjGaeste += n; hatVjGaeste = true;
+  }
+  // Durchschnittsverkauf VJ — einfacher Mittelwert der VJ-Tageswerte.
+  let vjAvgSum = 0, vjAvgCount = 0;
+  for (const [date, v] of Object.entries(avgDaily)) {
+    if (date < vjFrom || date > vjTo || !(v > 0)) continue;
+    vjAvgSum += v; vjAvgCount++;
+  }
+  const avgVj = vjAvgCount > 0 ? r2(vjAvgSum / vjAvgCount) : null;
+
+  // ── Gruppen ab 20 Pax (Foratable) — YTD-Zeitraum, VJ-Variante «—» statt 0 ──
+  const [gruppen20, gruppen20Vj] = await Promise.all([
+    countGroupsFrom20Pax(tenantId, curFrom, curTo),
+    countGroupsFrom20PaxVj(tenantId, vjFrom, vjTo),
+  ]);
+
+  // ── Zeilen bauen (cur | vj; Δ% berechnet die UI) ───────────────────────────
+  const rows: JahresvergleichRow[] = [
+    { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
+      cur: hatUmsatz ? r2(gross) : null, vj: hatVj ? r2(vjGross) : null },
+    { label: 'Netto Umsatz', fmt: 'chf', bold: true,
+      cur: hatUmsatz ? r2(net) : null, vj: hatVj ? r2(vjNet) : null },
+    { label: 'Gäste IN', fmt: 'count',
+      cur: hatGaeste ? r2(gaeste) : null, vj: hatVjGaeste ? r2(vjGaeste) : null },
+    { label: 'Durchschnittsverkauf', fmt: 'chf', cur: avgCur, vj: avgVj },
+    { label: 'Take Away Anteil', fmt: 'pct',
+      cur: hatUmsatz && gross > 0 && ta > 0 ? r2((ta / gross) * 100) : null,
+      vj: hatVjTa && vjGross > 0 ? r2((vjTaG / vjGross) * 100) : null },
+    { label: 'Food', fmt: 'chf',
+      cur: hatUmsatz && food > 0 ? r2(food) : null, vj: hatVjFood ? r2(vjFoodG) : null },
+    { label: 'Beverage', fmt: 'chf',
+      cur: hatUmsatz && bev > 0 ? r2(bev) : null, vj: hatVjBev ? r2(vjBevG) : null },
+    { label: 'Produktive Stunden (Ist)', fmt: 'hours',
+      cur: hatIst ? r2(istStd) : null, vj: null },  // keine VJ-Quelle
+    { label: 'Produktive Stunden geplant', fmt: 'hours',
+      cur: hatPlan ? r2(planStd) : null, vj: null }, // keine VJ-Quelle
+    { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
+      cur: hatUmsatz && hatIst && istStd > 0 ? r2(net / istStd) : null, vj: null }, // keine VJ-Quelle
+    { label: 'Umsatz pro Gast', fmt: 'chf',
+      cur: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
+      vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null },
+    { label: 'Gruppen ab 20 Pax', fmt: 'count',
+      cur: gruppen20, vj: gruppen20Vj },
+  ];
+
+  return { ...win, rows };
 }

@@ -5,7 +5,10 @@ import { describe, it, expect, vi } from 'vitest';
 // damit der Import von monatsreport.ts unter node läuft.
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 
-import { computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche } from './monatsreport';
+import {
+  computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
+  computeYtdWindow, kwRangeLabel,
+} from './monatsreport';
 
 /**
  * Reine Logik-Tests für die Wochen-Zeitraum-Berechnung (computeWeekRange)
@@ -204,3 +207,54 @@ describe('vorjahresWoche', () => {
  *   - Trend nur, wenn beide Wochen einen Wert haben (trendPct in der UI).
  * Fensterlogik oben deckt die Wochen-Bestimmung inkl. Jahreswechsel ab.
  */
+
+// ── Jahresvergleich: YTD-Fensterlogik (aktuell vs. Vorjahr pro rata) ─────────
+
+describe('computeYtdWindow', () => {
+  it('01.01.–heute vs. 01.01. Vorjahr–gleiches Datim (28.07.2026 ↔ 28.07.2025)', () => {
+    const w = computeYtdWindow(new Date(2026, 6, 28)); // 28. Juli 2026
+    expect(w).toMatchObject({
+      curYear: 2026, vjYear: 2025,
+      curFrom: '2026-01-01', curTo: '2026-07-28',
+      vjFrom: '2025-01-01', vjTo: '2025-07-28',
+    });
+  });
+
+  it('Jahresanfang: 03.01.2025 → cur 01.–03.01.2025, vj 01.–03.01.2024', () => {
+    const w = computeYtdWindow(new Date(2025, 0, 3));
+    expect(w).toMatchObject({
+      curFrom: '2025-01-01', curTo: '2025-01-03',
+      vjFrom: '2024-01-01', vjTo: '2024-01-03',
+    });
+  });
+
+  it('Schaltjahr-Randfall: heute 29.02.2024 → VJ geklemmt auf 28.02.2023', () => {
+    const w = computeYtdWindow(new Date(2024, 1, 29)); // 2024 ist Schaltjahr
+    expect(w.curTo).toBe('2024-02-29');
+    expect(w.vjYear).toBe(2023);      // 2023 kein Schaltjahr
+    expect(w.vjTo).toBe('2023-02-28'); // 29.02. existiert im VJ nicht → geklemmt
+  });
+
+  it('Schaltjahr → Schaltjahr: heute 29.02.2024 nicht, aber 28.02.2025 → VJ 28.02.2024 (kein Klemmen nötig)', () => {
+    const w = computeYtdWindow(new Date(2025, 1, 28));
+    expect(w.curTo).toBe('2025-02-28');
+    expect(w.vjTo).toBe('2024-02-28'); // regulär, kein 29.02.-Sonderfall
+  });
+});
+
+// ── KW-Dropdown-Label mit Datumsbereich (Monatsübersicht) ────────────────────
+
+describe('kwRangeLabel', () => {
+  it('KW 27/2025 → «KW 27 · 30.06.–06.07.» (Mo–So)', () => {
+    expect(kwRangeLabel(2025, 27)).toBe('KW 27 · 30.06.–06.07.');
+  });
+
+  it('KW 1/2026 überschreitet Jahresgrenze → «KW 1 · 29.12.–04.01.»', () => {
+    // KW 1/2026 = Mo 29.12.2025 – So 04.01.2026.
+    expect(kwRangeLabel(2026, 1)).toBe('KW 1 · 29.12.–04.01.');
+  });
+
+  it('KW 53/2020 → «KW 53 · 28.12.–03.01.»', () => {
+    expect(kwRangeLabel(2020, 53)).toBe('KW 53 · 28.12.–03.01.');
+  });
+});
