@@ -146,6 +146,27 @@ export function isDateColumn(header: string): boolean {
   return DATE_COL_REGEX.test(header.trim());
 }
 
+/**
+ * Pure: ermittelt den datierten Zeitraum (min/max sale_date) über eine Liste
+ * bereits datierter Zeilen. Dient der Vorschau («TT.MM.»-Spalten sind ohne
+ * Jahr — das gewählte Jahr wird über headerToIsoDate eingesetzt; hier wird der
+ * resultierende, tatsächlich datierte Bereich sichtbar gemacht). Ignoriert
+ * leere/ungültige ISO-Daten. Leere Eingabe → { from: null, to: null }.
+ */
+export function saleDateRange(
+  rows: Array<{ sale_date?: string | null }>,
+): { from: string | null; to: string | null } {
+  let from: string | null = null;
+  let to: string | null = null;
+  for (const r of rows) {
+    const d = r.sale_date;
+    if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    if (from === null || d < from) from = d;
+    if (to === null || d > to) to = d;
+  }
+  return { from, to };
+}
+
 // ─── Strukturzeilen-Erkennung ─────────────────────────────────────────────────
 
 /** Gibt true wenn die Zeile eine Summen- oder Strukturzeile ist */

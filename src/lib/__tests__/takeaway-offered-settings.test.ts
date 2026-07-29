@@ -75,6 +75,7 @@ describe('Take Away — filterTakeAwayRows', () => {
     { type: 'empty', month: null, week: null, budget: null, vj: null, vjMonth: null, weekBudget: null, monthBudget: null },
     { type: 'data', id: 'durchschnittsverkauf', label: 'Durchschnittsverkauf', month: 3, week: null, budget: null, vj: null, vjMonth: null, weekBudget: null, monthBudget: null },
     { type: 'data', id: 'take_away_anteil', label: 'Take Away Anteil', month: 4, week: null, budget: null, vj: null, vjMonth: null, weekBudget: null, monthBudget: null },
+    { type: 'data', id: 'take_away_umsatz', label: 'Take Away Umsatz', month: 5, week: null, budget: null, vj: null, vjMonth: null, weekBudget: null, monthBudget: null },
   ]) as MrRow[];
 
   it('offered=true → alle Zeilen unverändert', () => {
@@ -83,21 +84,23 @@ describe('Take Away — filterTakeAwayRows', () => {
     expect(out).toBe(rows); // identische Referenz (kein Kopieren nötig)
     expect(out.map(r => r.id)).toContain('gaeste_take_away');
     expect(out.map(r => r.id)).toContain('take_away_anteil');
+    expect(out.map(r => r.id)).toContain('take_away_umsatz');
   });
 
-  it('offered=false → beide TA-Zeilen fehlen, restliche bleiben', () => {
+  it('offered=false → alle TA-Zeilen fehlen, restliche bleiben', () => {
     const out = filterTakeAwayRows(mk(), false);
     const ids = out.filter(r => r.type === 'data').map(r => r.id);
     expect(ids).not.toContain('gaeste_take_away');
     expect(ids).not.toContain('take_away_anteil');
+    expect(ids).not.toContain('take_away_umsatz');
     expect(ids).toContain('gaeste_in');
     expect(ids).toContain('durchschnittsverkauf');
     // Trennzeile (ohne id) bleibt erhalten
     expect(out.some(r => r.type === 'empty')).toBe(true);
   });
 
-  it('TAKEAWAY_ROW_IDS deckt genau die beiden Zeilen ab', () => {
-    expect([...TAKEAWAY_ROW_IDS].sort()).toEqual(['gaeste_take_away', 'take_away_anteil']);
+  it('TAKEAWAY_ROW_IDS deckt genau die drei TA-Zeilen ab', () => {
+    expect([...TAKEAWAY_ROW_IDS].sort()).toEqual(['gaeste_take_away', 'take_away_anteil', 'take_away_umsatz']);
   });
 
   it('Key ist der erwartete, tenantKey-tauglich (roh, unpräfixiert)', () => {

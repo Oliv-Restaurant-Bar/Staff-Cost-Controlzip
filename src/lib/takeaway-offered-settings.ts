@@ -3,7 +3,8 @@
  * ===================================================================
  * EINE zentrale, pro Tenant persistierte Einstellung, ob der Betrieb überhaupt
  * ein Take-Away-Angebot führt. Steuert die Cockpit-Zeilen «Gäste Take Away»
- * (id `gaeste_take_away`) und «Take Away Anteil» (id `take_away_anteil`):
+ * (id `gaeste_take_away`), «Take Away Anteil» (id `take_away_anteil`) und
+ * «Take Away Umsatz» (id `take_away_umsatz`):
  *   - true  → Zeilen werden in Monats- und Wochenübersicht gebaut/angezeigt
  *             (und damit auch exportiert).
  *   - false → Zeilen werden GAR NICHT erst erzeugt (Anzeige, Excel/PDF-Export
@@ -31,7 +32,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 export const TAKEAWAY_OFFERED_KEY = 'takeaway_offered_v1';
 
 /** Row-IDs der Take-Away-Cockpit-Zeilen (bei «nein» nicht gebaut). */
-export const TAKEAWAY_ROW_IDS = ['gaeste_take_away', 'take_away_anteil'] as const;
+export const TAKEAWAY_ROW_IDS = ['gaeste_take_away', 'take_away_anteil', 'take_away_umsatz'] as const;
 
 // ── Typen & Defaults ─────────────────────────────────────────────────────────
 

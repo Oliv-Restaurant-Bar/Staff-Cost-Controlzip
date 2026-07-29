@@ -1016,6 +1016,8 @@ export async function ladeMonatsreport(
   }
   // TA-Anteil VJ-Woche = TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche.
   const vwTaAnteil = hatVw && hatVwTa && vwGross > 0 ? r2((vwTa / vwGross) * 100) : null;
+  // Take-Away-UMSATZ VJ-Woche (CHF brutto) — Zähler des VJ-Anteils. «—» wenn keine TA-Quelle.
+  const vwTaUmsatz = hatVw && hatVwTa && vwTa > 0 ? r2(vwTa) : null;
   // Umsatz/Gast VJ-Woche = Netto ÷ Gäste über gepaarte Tage (Regel wie Ist).
   const vwUpg = hatVw && vwPairedGaeste > 0 ? r2(vwPairedNet / vwPairedGaeste) : null;
 
@@ -1023,6 +1025,8 @@ export async function ladeMonatsreport(
   // Absolutwerte = Summe über den Vorjahres-Monat; Quoten als Quote (nicht
   // summiert), gleiche Regeln wie Ist. «leer statt 0».
   const vjTaAnteilM = hatVjTa && vjGross > 0 ? r2((vjTa / vjGross) * 100) : null;
+  // Take-Away-UMSATZ Vorjahres-Monat (CHF brutto) — Zähler des VJ-Anteils. «—» ohne TA-Quelle.
+  const vjTaUmsatzM = hatVjTa && vjTa > 0 ? r2(vjTa) : null;
   const vjUpgM = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null;
   const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD) : null;
   const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD) : null;
@@ -1081,6 +1085,13 @@ export async function ladeMonatsreport(
       // Vorjahr-Woche: TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche (Quote, nicht summiert).
       vj: vwTaAnteil, vjMonth: vjTaAnteilM,
     }, { fmt: 'pct' }),
+    // Take Away Umsatz (CHF brutto): identische Quelle wie der TA-Anteil (dessen
+    // Zähler = takeawayRevenue/takeAwayBrutto). Es gilt: Anteil = Umsatz ÷ Gesamt.
+    // Woche = gewählte Woche, Monat = ganzer Monat; VJ wie beim TA-Anteil.
+    d('take_away_umsatz', 'Take Away Umsatz', {
+      month: taM, week: taW,
+      vj: vwTaUmsatz, vjMonth: vjTaUmsatzM,
+    }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
     d('food', 'Food', {
