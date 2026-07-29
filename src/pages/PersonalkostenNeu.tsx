@@ -12,8 +12,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import {
   ladePersonalkostenDaten, fixKosten, flexKostenProTag, personalkosten,
-  budget, umsatz, personalquote, letzterVergangenerTag,
-  PK_BUDGET_TOTAL, PK_BUDGET_QUOTE, PK_BUDGET_UMSATZ_MONAT,
+  budget, umsatz, personalquote, letzterVergangenerTag, budgetZielQuote,
   type PersonalkostenDaten,
 } from '@/lib/personalkosten';
 import {
@@ -75,14 +74,15 @@ export default function PersonalkostenNeu() {
     const tage  = flexKostenProTag(daten, { stichtag });
     const kIst  = personalkosten(daten, 'istBisHeute',  { stichtag });
     const kHr   = personalkosten(daten, 'hochrechnung', { stichtag });
-    const bud   = budget(year, month, daten.gewichte);
+    const bud   = budget(year, month, daten.gewichte, daten.pkBudgetMonat);
     const ums   = umsatz(daten, { stichtag });
     const pkq   = personalquote(daten, { stichtag });
+    const zielQuote = budgetZielQuote(daten);
     const istTageBisStichtag = tage.filter(t => parseInt(t.date.slice(-2), 10) <= stichtag && t.istTag).length;
     // Flex getrennt: Ist-Anteil (Ist-Tage) und Plan-Anteil (übrige Tage) der Hochrechnung
     const flexIstAnteil  = tage.reduce((s, t) => s + (t.istTag ? t.istKosten : 0), 0);
     const flexPlanAnteil = tage.reduce((s, t) => s + (t.istTag ? 0 : t.planKosten), 0);
-    return { stichtag, fix, fixHr, tage, kIst, kHr, bud, ums, pkq, istTageBisStichtag, flexIstAnteil, flexPlanAnteil };
+    return { stichtag, fix, fixHr, tage, kIst, kHr, bud, ums, pkq, zielQuote, istTageBisStichtag, flexIstAnteil, flexPlanAnteil };
   }, [daten, year, month]);
 
   const prev = () => { if (month === 1) { setMonth(12); setYear(y => y - 1); } else setMonth(m => m - 1); };
@@ -134,20 +134,28 @@ export default function PersonalkostenNeu() {
               />
               <Kachel
                 title="Budget"
-                value={`CHF ${fmtCHF(berechnung.bud.total)}`}
-                sub={`${(PK_BUDGET_QUOTE * 100).toFixed(1)} % von CHF ${fmtCHF(PK_BUDGET_UMSATZ_MONAT)}`}
+                value={berechnung.bud ? `CHF ${fmtCHF(berechnung.bud.total)}` : '—'}
+                sub={berechnung.bud
+                  ? `aus Budget-Planung ${MONATE[month - 1]} ${year}`
+                  : `Kein PK-Budget in der Budget-Planung ${MONATE[month - 1]} ${year} hinterlegt`}
               />
               <Kachel
                 title="Abweichung (HR − Budget)"
-                value={`${berechnung.kHr.total - PK_BUDGET_TOTAL >= 0 ? '+' : '−'}CHF ${fmtCHF(Math.abs(berechnung.kHr.total - PK_BUDGET_TOTAL))}`}
-                tone={berechnung.kHr.total <= PK_BUDGET_TOTAL ? 'good' : 'bad'}
+                value={berechnung.bud
+                  ? `${berechnung.kHr.total - berechnung.bud.total >= 0 ? '+' : '−'}CHF ${fmtCHF(Math.abs(berechnung.kHr.total - berechnung.bud.total))}`
+                  : '—'}
+                tone={berechnung.bud
+                  ? (berechnung.kHr.total <= berechnung.bud.total ? 'good' : 'bad')
+                  : 'neutral'}
               />
               <Kachel
                 title="PKQ Hochrechnung"
                 value={fmtPct(berechnung.pkq.pkqHochrechnung)}
-                sub={`Umsatz HR: CHF ${fmtCHF(berechnung.ums.hochrechnung)}`}
-                tone={berechnung.pkq.pkqHochrechnung != null
-                  ? (berechnung.pkq.pkqHochrechnung <= PK_BUDGET_QUOTE ? 'good' : 'bad') : 'neutral'}
+                sub={berechnung.zielQuote != null
+                  ? `Umsatz HR: CHF ${fmtCHF(berechnung.ums.hochrechnung)} · Ziel ${fmtPct(berechnung.zielQuote)}`
+                  : `Umsatz HR: CHF ${fmtCHF(berechnung.ums.hochrechnung)}`}
+                tone={berechnung.pkq.pkqHochrechnung != null && berechnung.zielQuote != null
+                  ? (berechnung.pkq.pkqHochrechnung <= berechnung.zielQuote ? 'good' : 'bad') : 'neutral'}
               />
             </div>
 

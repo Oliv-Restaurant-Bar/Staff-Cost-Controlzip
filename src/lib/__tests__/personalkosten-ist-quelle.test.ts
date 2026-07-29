@@ -77,6 +77,7 @@ function makeDaten(flexEmployees: Employee[], opts: {
     istTage: new Set(Object.keys(opts.ist ?? {})),
     umsatzIstProTag: {},
     umsatzBudgetMonat: 0,
+    pkBudgetMonat: null,
     gewichte: {},
   };
 }

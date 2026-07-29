@@ -4,6 +4,7 @@ import { de } from 'date-fns/locale';
 import { Employee, TimeEntry, DailyBudget } from '@/types/personnel';
 import { formatCurrency, formatHours } from '@/lib/personnel-utils';
 import { useWeekSync } from '@/hooks/useWeekSync';
+import { useTenant } from '@/contexts/TenantContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Button } from '@/components/ui/button';
@@ -14,7 +15,7 @@ import {
   CalendarDays, Euro, Users, FileText, FileSpreadsheet, Calendar, ChevronDown, BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { PK_BUDGET_QUOTE } from '@/lib/personalkosten';
+import { getMonthlyBudgetPersonnel, getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine, ComposedChart, Line, Area } from 'recharts';
 import { toast } from '@/hooks/use-toast';
 import jsPDF from 'jspdf';
@@ -61,6 +62,7 @@ export const UnifiedCostOverview = ({
   selectedDate,
 }: UnifiedCostOverviewProps) => {
   const [viewMode, setViewMode] = useState<ViewMode>('week');
+  const { tenantKey } = useTenant();
   
   const { 
     currentWeekStart,
@@ -397,13 +399,20 @@ export const UnifiedCostOverview = ({
   };
 
   // HINWEIS (Etappe 2b): Diese Komponente wird aktuell NIRGENDS gerendert
-  // (kein Import im aktiven src/-Baum). Sie wurde daher nur minimal auf die
-  // zentrale Zielquote PK_BUDGET_QUOTE (35.5 %) ausgerichtet. Eine vollständige
-  // Umstellung auf ladePersonalkostenDaten/personalkosten (AG-Total-Kostenbasis
-  // statt roher hourlyWage, Netto-Umsatz-Nenner) ist bewusst zurückgestellt,
-  // solange die Komponente nicht eingebunden ist — sie würde den Prop-Vertrag
-  // (employees/timeEntries/dailyBudgets) und einen Tenant-Async-Load erfordern.
-  const TARGET_QUOTE_PCT = PK_BUDGET_QUOTE * 100; // 35.5 %
+  // (kein Import im aktiven src/-Baum). Zielquote LIVE aus dem Budget-Modul
+  // (PK-Budget ÷ Umsatz-Budget des Monats, Default-Store 'budget_v1') — KEIN
+  // fixes 35.5 % mehr. Fehlt ein Budget → nur die harte Obergrenze (40 %).
+  // Eine vollständige Umstellung auf ladePersonalkostenDaten/personalkosten
+  // (AG-Total-Kostenbasis, Netto-Umsatz-Nenner, Tenant-Async-Load) bleibt
+  // zurückgestellt, solange die Komponente nicht eingebunden ist.
+  const TARGET_QUOTE_PCT = useMemo(() => {
+    const y = selectedDate.getFullYear();
+    const mi = selectedDate.getMonth();
+    const storeKey = tenantKey('budget_v1');
+    const pk = getMonthlyBudgetPersonnel(y, mi, storeKey)?.total ?? null;
+    const rev = getMonthlyBudgetRevenue(y, mi, storeKey);
+    return pk != null && rev > 0 ? (pk / rev) * 100 : 40;
+  }, [selectedDate, tenantKey]);
   const getQuoteColor = (quote: number) => {
     if (quote > TARGET_QUOTE_PCT) return 'text-destructive';
     if (quote > TARGET_QUOTE_PCT - 5) return 'text-amber-500';

@@ -5,6 +5,8 @@ description: Alle Personalkosten-Ansichten müssen die zentrale Lib nutzen; Budg
 
 # Personalkosten-SSOT
 
+**Budget live (Juli 2026):** PK_BUDGET_TOTAL/QUOTE/UMSATZ_MONAT-Konstanten (106'400/35.5 %/300'000) sind ENTFERNT. PK-Budget = getMonthlyBudgetPersonnel (budgetDistribution.ts → buildBudgetByRowForMonth, personnel_wages+personnel_social exkl. other); Umsatz-Budget = getMonthlyBudgetRevenue — beide brauchen tenantKey('budget_v1') als storeKey! budget()/budgetZielQuote() sind nullable; fehlendes Budget ⇒ «—», nie Konstanten-Fallback.
+
 **Etappe 3 (Juli 2026):** AG-Faktor-Default = 15.7 % (11.21 % gemeinsam + 4.5 % BVG) in DEFAULT_SOCIAL_COST_RATES; `migrateLegacyDefaultRates()` hebt NUR Blobs an, die exakt den alten 14.2-%-Defaults entsprechen. Employee.istQuelle ('mirus'|'manuell'|'plan', employees.ist_quelle, Presence-Guard!) steuert die Tag-Regel; Default via getEffectiveIstQuelle (fix→mirus, flex→plan), nie in DB zurückschreiben. Fehlendes Ist an vergangenen Tagen (mirus/manuell) ⇒ istFehltTage-Markierung + Plan-Wert, nie still 0. Die zwei «Flex Ist»-Werte in PersonalFix sind SCOPES (nur Flex-Arbeit vs. inkl. Zusatzk./Ferien), kein Rechenfehler — Vollumstellung von PersonalFix/ActualHoursGrid auf die Lib steht als Task aus.
 
 **Regel:** `src/lib/personalkosten.ts` ist die EINZIGE Quelle für Personalkosten-Totale, Budget und PKQ in allen Ansichten (PersonalkostenNeu, PersonalFix-Kopf, MonthlyCostSummary, IstDayDetailDialog, Drilldowns).

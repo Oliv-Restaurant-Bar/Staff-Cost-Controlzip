@@ -27,14 +27,13 @@ import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
-import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
+import { getMonthlyBudgetRevenue, getMonthlyBudgetPersonnel } from '@/lib/budgetDistribution';
 import type { TenantId } from '@/contexts/TenantContext';
 import { ladeUmsatzTage, nettoUmsatzTag } from '@/lib/umsatz';
 
-// ── Budget-Konstanten (Vorgabe: 35.5 % von 300'000 = 106'400) ────────────────
-export const PK_BUDGET_UMSATZ_MONAT = 300_000;
-export const PK_BUDGET_QUOTE       = 0.355;
-export const PK_BUDGET_TOTAL       = 106_400;
+// ── KEINE hartcodierten Budget-Konstanten mehr ───────────────────────────────
+// Umsatz- UND Personalkosten-Budget kommen LIVE aus dem Budget-Modul (SSoT,
+// identisch zum Monatsreport). Fehlt ein Wert → null (keine stille Konstante).
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -76,6 +75,12 @@ export interface PersonalkostenDaten {
   umsatzIstProTag: Record<string, number>;
   /** Budgetierter Monatsumsatz aus dem Budget-Modul (0 = nicht vorhanden) */
   umsatzBudgetMonat: number;
+  /**
+   * Budgetiertes Personalkosten-Budget des Monats aus dem Budget-Modul
+   * (Löhne + Sozialleistungen, exkl. übriger Personalaufwand). `null`, wenn
+   * im Budget-Modul kein PK-Budget hinterlegt ist — NIE eine Konstante.
+   */
+  pkBudgetMonat: number | null;
   /** Wochentagsgewichte (normiert, Summe ≈ 1); Fallback = gleichmässig (1/7) */
   gewichte: Record<number, number>;
 }
@@ -358,14 +363,25 @@ export interface PkBudget {
 }
 
 /**
- * Personalkosten-Budget des Monats: 106'400 (35.5 % von 300'000), auf Tage
- * verteilt nach den vorhandenen Wochentagsgewichten (Umsatzgewichtung);
- * Fallback ohne Einstellungen: gleichmässig (1/7 pro Wochentag).
+ * Personalkosten-Budget des Monats LIVE aus dem Budget-Modul, auf Tage verteilt
+ * nach den vorhandenen Wochentagsgewichten (Umsatzgewichtung); Fallback ohne
+ * Einstellungen: gleichmässig (1/7 pro Wochentag).
+ *
+ * `pkBudgetMonat` stammt aus `PersonalkostenDaten.pkBudgetMonat`
+ * (getMonthlyBudgetPersonnel). Ist KEIN PK-Budget hinterlegt (`null`), gibt die
+ * Funktion `null` zurück → die Anzeige muss «—»/Hinweis zeigen, NICHT auf eine
+ * Konstante zurückfallen.
  */
-export function budget(year: number, month: number, gewichte: Record<number, number>): PkBudget {
-  const map = computeMonthlyDailyBudgets(PK_BUDGET_TOTAL, year, month, gewichte);
+export function budget(
+  year: number,
+  month: number,
+  gewichte: Record<number, number>,
+  pkBudgetMonat: number | null,
+): PkBudget | null {
+  if (pkBudgetMonat == null || pkBudgetMonat <= 0) return null;
+  const map = computeMonthlyDailyBudgets(pkBudgetMonat, year, month, gewichte);
   const proTag = Object.keys(map).sort().map(date => ({ date, betrag: map[date] }));
-  return { total: PK_BUDGET_TOTAL, proTag };
+  return { total: pkBudgetMonat, proTag };
 }
 
 // ══ 5. umsatz ═══════════════════════════════════════════════════════════════════
@@ -383,8 +399,9 @@ export interface PkUmsatz {
 export function umsatz(daten: PersonalkostenDaten, opts?: { stichtag?: number }): PkUmsatz {
   const stichtag = opts?.stichtag ?? letzterVergangenerTag(daten.year, daten.month);
   const mm = pad2(daten.month);
-  // Budget-Tagesumsätze: Budget-Modul (Umsatzbudget), Fallback 300'000.
-  const budgetMonat = daten.umsatzBudgetMonat > 0 ? daten.umsatzBudgetMonat : PK_BUDGET_UMSATZ_MONAT;
+  // Budget-Tagesumsätze ausschliesslich aus dem Budget-Modul (kein Fallback auf
+  // eine Konstante); fehlt das Umsatzbudget → 0 pro Tag (keine Erfindung).
+  const budgetMonat = daten.umsatzBudgetMonat > 0 ? daten.umsatzBudgetMonat : 0;
   const budgetProTag = computeMonthlyDailyBudgets(budgetMonat, daten.year, daten.month, daten.gewichte);
   let ist = 0, hochrechnung = 0, istTage = 0;
   for (let d = 1; d <= daten.daysInMonth; d++) {
@@ -421,6 +438,17 @@ export function personalquote(daten: PersonalkostenDaten, opts?: { stichtag?: nu
     pkqIst:          u.istBisHeute  > 0 ? kIst.total / u.istBisHeute  : null,
     pkqHochrechnung: u.hochrechnung > 0 ? kHr.total  / u.hochrechnung : null,
   };
+}
+
+/**
+ * Ziel-PK-Quote des Monats = PK-Budget ÷ Umsatz-Budget (beide LIVE aus dem
+ * Budget-Modul). `null`, wenn eines der beiden Budgets fehlt → die Anzeige darf
+ * KEINE fixe Zielquote (früher 35.5 %) mehr verwenden, sondern «—»/Hinweis.
+ */
+export function budgetZielQuote(daten: PersonalkostenDaten): number | null {
+  if (daten.pkBudgetMonat == null || daten.pkBudgetMonat <= 0) return null;
+  if (!(daten.umsatzBudgetMonat > 0)) return null;
+  return daten.pkBudgetMonat / daten.umsatzBudgetMonat;
 }
 
 // ══ Hilfen ═══════════════════════════════════════════════════════════════════════
@@ -529,8 +557,10 @@ export async function ladePersonalkostenDaten(
     if (netto > 0) umsatzIstProTag[date] = netto;
   }
 
-  // ── Umsatzbudget (Budget-Modul) ──────────────────────────────────────────
+  // ── Umsatzbudget (Budget-Modul, SSoT identisch Monatsreport) ─────────────
   const umsatzBudgetMonat = getMonthlyBudgetRevenue(year, month - 1, tenantKey('budget_v1'));
+  // ── Personalkosten-Budget (Budget-Modul, SSoT via buildBudgetByRowForMonth) ─
+  const pkBudgetMonat = getMonthlyBudgetPersonnel(year, month - 1, tenantKey('budget_v1'))?.total ?? null;
 
   return {
     year, month, daysInMonth,
@@ -538,7 +568,7 @@ export async function ladePersonalkostenDaten(
     agFactor: socialCostFactorFromRates(rates),
     rates,
     planStdProTag, istStdProTag, istTage,
-    umsatzIstProTag, umsatzBudgetMonat,
+    umsatzIstProTag, umsatzBudgetMonat, pkBudgetMonat,
     gewichte: ladeWochentagsGewichte(tenantKey),
   };
 }

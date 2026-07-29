@@ -8,6 +8,7 @@
 import { format } from 'date-fns';
 import { loadBudgetWithPL, computePLCategoryTotals } from './budget-store';
 import { loadWeekdayWeights, getDailyBudgetMap } from './budget-day';
+import { buildBudgetByRowForMonth } from './pl-engine';
 
 // ─── Für Abwärtskompatibilität: dynamische Gewichte aus Einstellungen ─────────
 /** @deprecated Bitte getDailyBudgetMap() aus budget-day.ts verwenden. */
@@ -32,6 +33,39 @@ export function getMonthlyBudgetRevenue(year: number, monthIndex: number, storeK
     return byMonth[monthIndex] ?? 0;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * Liest das budgetierte Personalkosten-Budget des Monats aus dem Budget-Modul.
+ *
+ * SSoT: Es wird EXAKT dieselbe Ableitung wie in der Erfolgsrechnung/PLView
+ * verwendet (`buildBudgetByRowForMonth` → budgetByRow), NICHT das actual-gated
+ * Direktfeld. „Personalaufwand" = Löhne (`personnel_wages`) + Sozialleistungen
+ * (`personnel_social`) — EXKLUSIVE „Übriger Personalaufwand" (`personnel_other`).
+ *
+ * @returns `{ total, wages, social }` oder `null`, wenn im Budget-Modul für
+ *          diesen Monat KEIN Personalkosten-Budget hinterlegt ist (dann darf
+ *          NICHT still auf eine Konstante zurückgefallen werden).
+ * @param year       Jahreszahl (z.B. 2026)
+ * @param monthIndex Monat 0-basiert (0 = Januar, 11 = Dezember)
+ * @param storeKey   Optionaler Tenant-Speicherschlüssel (default: Oliv 'budget_v1')
+ */
+export function getMonthlyBudgetPersonnel(
+  year: number,
+  monthIndex: number,
+  storeKey?: string,
+): { total: number; wages: number; social: number } | null {
+  try {
+    const budget = loadBudgetWithPL(year, storeKey);
+    const byRow  = buildBudgetByRowForMonth(budget, monthIndex);
+    const wages  = byRow.get('personnel_wages')  ?? 0;
+    const social = byRow.get('personnel_social') ?? 0;
+    const total  = wages + social;
+    if (total <= 0) return null; // kein PK-Budget im Budget-Modul hinterlegt
+    return { total, wages, social };
+  } catch {
+    return null;
   }
 }
 

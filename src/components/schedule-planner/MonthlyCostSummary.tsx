@@ -17,7 +17,7 @@ import { EMPLOYER_COST_LABELS, EMPLOYER_COST_LABELS_SHORT } from '@/lib/social-c
 import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import {
   ladePersonalkostenDaten, personalkosten, personalquote,
-  PK_BUDGET_QUOTE, type PersonalkostenDaten,
+  budgetZielQuote, type PersonalkostenDaten,
 } from '@/lib/personalkosten';
 
 interface MonthlyCostSummaryProps {
@@ -50,11 +50,6 @@ export const MonthlyCostSummary = ({
   const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd });
   const weeksInMonth = eachWeekOfInterval({ start: monthStart, end: monthEnd }, { weekStartsOn: 1 });
 
-  // Zielquote (Schwellenwert): Default = zentrale Budget-Quote (35.5 %),
-  // 40 % gilt als harte Obergrenze (Ampel wird ab dort rot statt orange).
-  const laborCostThreshold = parseFloat(
-    localStorage.getItem('labor_cost_threshold') || String(PK_BUDGET_QUOTE * 100),
-  );
   const HARD_CAP_PCT = 40;
 
   const { tenantId, tenantKey } = useTenant();
@@ -88,6 +83,18 @@ export const MonthlyCostSummary = ({
     const k = personalkosten(pkDaten, 'hochrechnung');
     const q = personalquote(pkDaten);
     return { total: k.total, fix: k.fix, flex: k.flex, pkqHochrechnung: q.pkqHochrechnung };
+  }, [pkDaten]);
+
+  // Zielquote (Schwellenwert): manuelle Einstellung hat Vorrang, sonst LIVE aus
+  // dem Budget-Modul (PK-Budget ÷ Umsatz-Budget des Monats) — KEIN fixes 35.5 %.
+  // Fehlt beides → nur die harte Obergrenze (40 %) greift für die Ampel.
+  const laborCostThreshold = useMemo(() => {
+    const stored = localStorage.getItem('labor_cost_threshold');
+    if (stored != null && stored !== '' && !Number.isNaN(parseFloat(stored))) {
+      return parseFloat(stored);
+    }
+    const ziel = pkDaten ? budgetZielQuote(pkDaten) : null;
+    return ziel != null ? ziel * 100 : HARD_CAP_PCT;
   }, [pkDaten]);
   const rateById = useMemo(() => {
     const m = new Map<string, number>();

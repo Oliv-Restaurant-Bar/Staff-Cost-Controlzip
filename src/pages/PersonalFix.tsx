@@ -87,8 +87,7 @@ import {
 } from '@/lib/personal-fix-reconciliation';
 import {
   ladePersonalkostenDaten, personalkosten, personalquote, umsatz,
-  fixKosten, flexKostenProTag, letzterVergangenerTag,
-  PK_BUDGET_TOTAL, PK_BUDGET_QUOTE, PK_BUDGET_UMSATZ_MONAT,
+  fixKosten, flexKostenProTag, letzterVergangenerTag, budget, budgetZielQuote,
   type PersonalkostenDaten,
 } from '@/lib/personalkosten';
 import {
@@ -2492,7 +2491,10 @@ export default function PersonalFixPage() {
     const kIst = personalkosten(pkDaten, 'istBisHeute', { stichtag });
     const pkq = personalquote(pkDaten, { stichtag });
     const ums = umsatz(pkDaten, { stichtag });
-    return { stichtag, kHr, kIst, pkq, ums };
+    // Budget LIVE aus dem Budget-Modul (SSoT); null = kein PK-Budget hinterlegt.
+    const pkBudget = budget(selectedYear, selectedMonth, pkDaten.gewichte, pkDaten.pkBudgetMonat);
+    const zielQuote = budgetZielQuote(pkDaten);
+    return { stichtag, kHr, kIst, pkq, ums, pkBudget, zielQuote };
   }, [pkDaten, selectedYear, selectedMonth]);
 
   // ── PKQ-Verlauf (kumuliert) — ausschliesslich aus der zentralen Quelle ─────
@@ -4340,33 +4342,39 @@ export default function PersonalFixPage() {
             </h2>
           </div>
           {/* Schlagzeile/KPI ausschliesslich aus der zentralen Quelle personalkosten.ts.
-              Hochrechnung = Ist bis heute + Plan ab morgen; Budget = 106'400 (35.5 % von
-              300'000); PKQ auf gleicher Basis (kein Voll-Kosten ÷ Teilumsatz). */}
+              Hochrechnung = Ist bis heute + Plan ab morgen; Budget LIVE aus dem
+              Budget-Modul (Löhne + Sozialleistungen), NICHT hartcodiert; PKQ auf
+              gleicher Basis (kein Voll-Kosten ÷ Teilumsatz). */}
           {(() => {
-            const abwHr = pkZentral ? pkZentral.kHr.total - PK_BUDGET_TOTAL : 0;
+            const budgetTotal = pkZentral?.pkBudget?.total ?? null;
+            const hasBudget = budgetTotal != null;
+            const abwHr = pkZentral && hasBudget ? pkZentral.kHr.total - budgetTotal : 0;
             const pkqHr = pkZentral?.pkq.pkqHochrechnung ?? null;
+            const zielQuote = pkZentral?.zielQuote ?? null;
             return (
               <KpiGrid>
                 <DsKpiCard
                   label="Personalkosten (Hochrechnung)"
                   value={pkZentral ? fmtCHF(pkZentral.kHr.total) : '—'}
                   sub={pkZentral ? `FIX ${fmtCHF(pkZentral.kHr.fix)} + Flex ${fmtCHF(pkZentral.kHr.flex)}` : 'Lade Daten …'}
-                  tone={pkZentral ? (pkZentral.kHr.total <= PK_BUDGET_TOTAL ? 'good' : 'critical') : 'neutral'}
+                  tone={pkZentral && hasBudget ? (pkZentral.kHr.total <= budgetTotal ? 'good' : 'critical') : 'neutral'}
                   onClick={() => setDrilldownFocus('ist')}
                 />
                 <DsKpiCard
                   label="Budget"
-                  value={fmtCHF(PK_BUDGET_TOTAL)}
-                  sub={`${(PK_BUDGET_QUOTE * 100).toFixed(1)} % von ${fmtCHF(PK_BUDGET_UMSATZ_MONAT)}`}
+                  value={hasBudget ? fmtCHF(budgetTotal) : '—'}
+                  sub={hasBudget
+                    ? `aus Budget-Planung ${getMonthLabel(selectedYear, selectedMonth)}`
+                    : `Kein PK-Budget in der Budget-Planung ${getMonthLabel(selectedYear, selectedMonth)} hinterlegt`}
                   tone="info"
                   onClick={() => setDrilldownFocus('budget')}
                 />
                 <DsKpiCard
                   label="Abweichung (HR − Budget)"
-                  value={pkZentral ? signCHF(abwHr) : '—'}
-                  sub={pkZentral ? budgetDeltaText(abwHr) : 'Lade Daten …'}
-                  tone={pkZentral ? (abwHr <= 0 ? 'good' : 'critical') : 'neutral'}
-                  trend={pkZentral ? {
+                  value={pkZentral && hasBudget ? signCHF(abwHr) : '—'}
+                  sub={pkZentral && hasBudget ? budgetDeltaText(abwHr) : (pkZentral ? 'Kein Budget hinterlegt' : 'Lade Daten …')}
+                  tone={pkZentral && hasBudget ? (abwHr <= 0 ? 'good' : 'critical') : 'neutral'}
+                  trend={pkZentral && hasBudget ? {
                     direction: abwHr > 0 ? 'up' : abwHr < 0 ? 'down' : 'flat',
                     tone: abwHr <= 0 ? 'good' : 'critical',
                     label: 'HR − Budget',
@@ -4389,7 +4397,9 @@ export default function PersonalFixPage() {
                                 <br />
                                 Hochrechnung: {fmtCHF(pkZentral.kHr.total)} ÷ {fmtCHF(pkZentral.ums.hochrechnung)} = {(pkqHr * 100).toFixed(1)} %
                                 <br />
-                                Budget-Ziel: {(PK_BUDGET_QUOTE * 100).toFixed(1)} %, Obergrenze 40 %.
+                                {zielQuote != null
+                                  ? `Budget-Ziel: ${(zielQuote * 100).toFixed(1)} % (aus Budget-Planung), Obergrenze 40 %.`
+                                  : 'Budget-Ziel: — (kein Budget in der Planung), Obergrenze 40 %.'}
                               </>
                             ) : (
                               <>
@@ -4403,7 +4413,7 @@ export default function PersonalFixPage() {
                     </span>
                   }
                   tone={pkqHr !== null
-                    ? (pkqHr > 0.40 ? 'critical' : pkqHr > PK_BUDGET_QUOTE ? 'warn' : 'good')
+                    ? (pkqHr > 0.40 ? 'critical' : (zielQuote != null && pkqHr > zielQuote) ? 'warn' : 'good')
                     : 'neutral'}
                   onClick={() => setDrilldownFocus('quote')}
                 />
@@ -4440,12 +4450,14 @@ export default function PersonalFixPage() {
                       formatter={(v: number | null) => [v == null ? '—' : `${v.toFixed(1)} %`, 'PKQ']}
                       labelFormatter={(l: string) => `Datum: ${l}`}
                     />
-                    <ReferenceLine
-                      y={PK_BUDGET_QUOTE * 100}
-                      stroke="hsl(142, 76%, 36%)"
-                      strokeDasharray="5 4"
-                      label={{ value: `Ziel ${(PK_BUDGET_QUOTE * 100).toFixed(1)} %`, position: 'insideBottomLeft', fill: 'hsl(142, 76%, 36%)', fontSize: 10 }}
-                    />
+                    {pkZentral?.zielQuote != null && (
+                      <ReferenceLine
+                        y={pkZentral.zielQuote * 100}
+                        stroke="hsl(142, 76%, 36%)"
+                        strokeDasharray="5 4"
+                        label={{ value: `Ziel ${(pkZentral.zielQuote * 100).toFixed(1)} %`, position: 'insideBottomLeft', fill: 'hsl(142, 76%, 36%)', fontSize: 10 }}
+                      />
+                    )}
                     <ReferenceLine
                       y={40}
                       stroke="hsl(0, 72%, 51%)"
