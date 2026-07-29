@@ -356,11 +356,20 @@ export async function ladeMonatsreport(
   // ── Vorjahr (vj_daily) ─────────────────────────────────────────────────────
   let vjGross = 0, vjFoodG = 0, vjBevG = 0, vjTa = 0;
   let hatVj = false, hatVjFood = false, hatVjBev = false, hatVjTa = false;
-  for (const rec of Object.values(vjDaily)) {
+  // «Umsatz pro Gast» VJ: Netto-VJ ÷ Gäste-VJ, aber NUR über GEPAARTE Tage
+  // (Tag mit vj_daily.actualRevenue>0 UND gaesteDaily[date]>0 im Vorjahr) —
+  // exakt dieselbe Paarungs-Regel wie im Ist-Zweig, gleicher Zeitraum.
+  let vjPairedNet = 0, vjPairedGaeste = 0;
+  for (const [date, rec] of Object.entries(vjDaily)) {
     if ((rec.actualRevenue ?? 0) > 0) { vjGross += rec.actualRevenue; hatVj = true; }
     if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue!; hatVjFood = true; }
     if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue!; hatVjBev = true; }
     if ((rec.takeawayRevenue ?? 0) > 0) { vjTa += rec.takeawayRevenue!; hatVjTa = true; }
+    const gVj = gaesteDaily[date] ?? 0;
+    if ((rec.actualRevenue ?? 0) > 0 && gVj > 0) {
+      vjPairedNet += rec.actualRevenue / VAT_STD; // Netto wie vjNetV (Standard-MwSt)
+      vjPairedGaeste += gVj;
+    }
   }
 
   // ── Produktive Stunden ─────────────────────────────────────────────────────
@@ -456,6 +465,9 @@ export async function ladeMonatsreport(
     d('Umsatz pro Gast', {
       month: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
       week: weekFrom && wPairedGaeste > 0 ? r2(wPairedNet / wPairedGaeste) : null,
+      // Vorjahr: Netto-VJ ÷ Gäste-VJ über gepaarte Tage; leer wenn keine
+      // gepaarten Tage (eine Quelle fehlt) — «leer statt 0».
+      vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null,
     }),
   ];
 

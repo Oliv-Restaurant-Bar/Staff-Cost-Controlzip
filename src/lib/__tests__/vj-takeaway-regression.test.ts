@@ -95,3 +95,48 @@ describe('V2 — VJ-TA-Anteil-Berechnung (Guard/Formel wie im Report)', () => {
     expect(share).toBeNull(); // «leer statt 0»
   });
 });
+
+// Exakte Formel/Guard aus monatsreport.ts (Vorjahr-Zelle «Umsatz pro Gast»):
+//   pro Tag: rec.actualRevenue>0 UND gaesteDaily[date]>0
+//     vjPairedNet    += rec.actualRevenue / VAT_STD
+//     vjPairedGaeste += gaesteDaily[date]
+//   vj = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null
+const VAT_STD = 1.081;
+function vjUmsatzProGast(
+  vjDaily: Record<string, { actualRevenue?: number }>,
+  gaesteDaily: Record<string, number>,
+): number | null {
+  let vjPairedNet = 0, vjPairedGaeste = 0;
+  for (const [date, rec] of Object.entries(vjDaily)) {
+    const g = gaesteDaily[date] ?? 0;
+    if ((rec.actualRevenue ?? 0) > 0 && g > 0) {
+      vjPairedNet += rec.actualRevenue! / VAT_STD;
+      vjPairedGaeste += g;
+    }
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null;
+}
+
+describe('V3 — VJ «Umsatz pro Gast» (Netto-VJ ÷ Gäste-VJ über gepaarte Tage)', () => {
+  it('summiert nur GEPAARTE Tage (Umsatz UND Gäste vorhanden)', () => {
+    const vjDaily = {
+      '2025-07-01': { actualRevenue: 10810 }, // Netto 10000
+      '2025-07-02': { actualRevenue: 21620 }, // Netto 20000
+      '2025-07-03': { actualRevenue: 5405 },  // KEIN Gästetag → ignoriert
+    };
+    const gaeste = { '2025-07-01': 200, '2025-07-02': 400 /* 07-03 fehlt */ };
+    // (10000 + 20000) / (200 + 400) = 30000 / 600 = 50.00
+    expect(vjUmsatzProGast(vjDaily, gaeste)).toBeCloseTo(50.0, 2);
+  });
+
+  it('Kontrollwert Juli 2025 (echte Daten): ≈ 20.29 CHF', () => {
+    // paired_net 293'754 / paired_gaeste 14'480 (aus Supabase-SELECT)
+    expect(Math.round((293754 / 14480) * 100) / 100).toBeCloseTo(20.29, 2);
+  });
+
+  it('leer (null) wenn keine gepaarten Tage (nur Umsatz ODER nur Gäste)', () => {
+    expect(vjUmsatzProGast({ '2025-07-01': { actualRevenue: 10000 } }, {})).toBeNull();
+    expect(vjUmsatzProGast({}, { '2025-07-01': 100 })).toBeNull();
+  });
+});
