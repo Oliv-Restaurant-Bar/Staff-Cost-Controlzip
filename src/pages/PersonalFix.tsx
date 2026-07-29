@@ -94,6 +94,12 @@ import {
   LineChart, Line as RLine, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ReferenceLine, ResponsiveContainer,
 } from 'recharts';
+import {
+  buildPkqBruecke, buildKumulierterVerlauf,
+} from '@/lib/personalkosten-darstellung';
+import { PkHeadline } from '@/components/personalkosten/PkHeadline';
+import { PkKostenentstehung } from '@/components/personalkosten/PkKostenentstehung';
+import { PkVerlaufChart } from '@/components/personalkosten/PkVerlaufChart';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -2531,6 +2537,33 @@ export default function PersonalFixPage() {
     return { rows, yMax };
   }, [pkDaten, selectedYear, selectedMonth]);
 
+  // ── NEUE Darstellung (Etappe 4): reine Ableitungen aus dem Kern ───────────
+  // PKQ-Brücke (Wasserfall) — Ziel → Umsatz-Effekt → Zwischen → Personal-Effekt
+  // → PKQ-Hochrechnung. Alle Eingaben aus pkZentral (SSOT), keine neue Rechnung.
+  const pkBruecke = useMemo(() => {
+    if (!pkZentral) return null;
+    return buildPkqBruecke({
+      zielQuotePct: pkZentral.zielQuote * 100,
+      pkBudgetCHF: pkZentral.pkBudget?.total ?? null,
+      personalHochrechnungCHF: pkZentral.kHr.total,
+      umsatzHochrechnungCHF: pkZentral.ums.hochrechnung,
+    });
+  }, [pkZentral]);
+
+  // Kumulierter Kostenverlauf (Ist bis heute / Plan ab morgen / Budget-Linie).
+  const pkVerlauf = useMemo(() => {
+    if (!pkDaten || !pkZentral) return null;
+    return buildKumulierterVerlauf({
+      year: selectedYear,
+      month: selectedMonth,
+      daysInMonth: pkDaten.daysInMonth,
+      stichtag: pkZentral.stichtag,
+      fixMonatCHF: fixKosten(pkDaten).totalMonat,
+      flexTage: flexKostenProTag(pkDaten, { stichtag: pkZentral.stichtag }),
+      budgetProTag: pkZentral.pkBudget?.proTag ?? [],
+    });
+  }, [pkDaten, pkZentral, selectedYear, selectedMonth]);
+
   // ── K/U-Plan-Eintrag direkt bearbeiten ────────────────────────────────────
   const handleKuPlanEdit = useCallback((empId: string, date: string, action: 'delete' | 'frei') => {
     const mk          = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
@@ -4342,93 +4375,49 @@ export default function PersonalFixPage() {
           data-testid="pfix-total-summary"
           className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3"
         >
-          <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold">
-              Total Personal FIX + VARIABEL — {getMonthLabel(selectedYear, selectedMonth)} (Hochrechnung)
-            </h2>
-          </div>
-          {/* Schlagzeile/KPI ausschliesslich aus der zentralen Quelle personalkosten.ts.
-              Hochrechnung = Ist bis heute + Plan ab morgen; Budget =
-              Ziel-Personalquote × Netto-Umsatz-Budget (skaliert mit dem Umsatz,
-              NICHT hartcodiert); PKQ auf gleicher Basis (kein Voll-Kosten ÷
-              Teilumsatz). */}
-          {(() => {
-            const budgetTotal = pkZentral?.pkBudget?.total ?? null;
-            const hasBudget = budgetTotal != null;
-            const abwHr = pkZentral && hasBudget ? pkZentral.kHr.total - budgetTotal : 0;
-            const pkqHr = pkZentral?.pkq.pkqHochrechnung ?? null;
-            const zielQuote = pkZentral?.zielQuote ?? null; // Bruch (z.B. 0.355)
-            const umsatzBudget = pkDaten?.umsatzBudgetMonat ?? 0;
-            return (
-              <KpiGrid>
-                <DsKpiCard
-                  label="Personalkosten (Hochrechnung)"
-                  value={pkZentral ? fmtCHF(pkZentral.kHr.total) : '—'}
-                  sub={pkZentral ? `FIX ${fmtCHF(pkZentral.kHr.fix)} + Flex ${fmtCHF(pkZentral.kHr.flex)}` : 'Lade Daten …'}
-                  tone={pkZentral && hasBudget ? (pkZentral.kHr.total <= budgetTotal ? 'good' : 'critical') : 'neutral'}
-                  onClick={() => setDrilldownFocus('ist')}
-                />
-                <DsKpiCard
-                  label="Budget"
-                  value={hasBudget ? fmtCHF(budgetTotal) : '—'}
-                  sub={hasBudget && zielQuote != null
-                    ? `${(zielQuote * 100).toFixed(1)} % von CHF ${fmtCHF(umsatzBudget)} (Umsatz-Budget ${getMonthLabel(selectedYear, selectedMonth)})`
-                    : `Kein Umsatz-Budget in der Budget-Planung ${getMonthLabel(selectedYear, selectedMonth)} hinterlegt`}
-                  tone="info"
-                  onClick={() => setDrilldownFocus('budget')}
-                />
-                <DsKpiCard
-                  label="Abweichung (HR − Budget)"
-                  value={pkZentral && hasBudget ? signCHF(abwHr) : '—'}
-                  sub={pkZentral && hasBudget ? budgetDeltaText(abwHr) : (pkZentral ? 'Kein Budget hinterlegt' : 'Lade Daten …')}
-                  tone={pkZentral && hasBudget ? (abwHr <= 0 ? 'good' : 'critical') : 'neutral'}
-                  trend={pkZentral && hasBudget ? {
-                    direction: abwHr > 0 ? 'up' : abwHr < 0 ? 'down' : 'flat',
-                    tone: abwHr <= 0 ? 'good' : 'critical',
-                    label: 'HR − Budget',
-                  } : undefined}
-                  onClick={() => setDrilldownFocus('abweichung')}
-                />
-                <DsKpiCard
-                  label="PKQ (Hochrechnung)"
-                  value={pkqHr !== null ? `${(pkqHr * 100).toFixed(1)} %` : '—'}
-                  sub={
-                    <span className="inline-flex items-center gap-1" data-testid="pfix-pkq-sub">
-                      {pkZentral ? `Umsatz HR ${fmtCHF(pkZentral.ums.hochrechnung)}` : 'Lade Daten …'}
-                      <InfoTip
-                        side="top"
-                        text={
-                          <span>
-                            <b>PKQ = Personalkosten ÷ Nettoumsatz</b> (immer gleiche Basis).
-                            {pkZentral && pkqHr !== null ? (
-                              <>
-                                <br />
-                                Hochrechnung: {fmtCHF(pkZentral.kHr.total)} ÷ {fmtCHF(pkZentral.ums.hochrechnung)} = {(pkqHr * 100).toFixed(1)} %
-                                <br />
-                                {zielQuote != null
-                                  ? `Ziel-Personalquote: ${(zielQuote * 100).toFixed(1)} % (zentrale Einstellung), Obergrenze 40 %.`
-                                  : 'Ziel-Personalquote: —, Obergrenze 40 %.'}
-                              </>
-                            ) : (
-                              <>
-                                <br />
-                                Für {getMonthLabel(selectedYear, selectedMonth)} kein Umsatz erfasst — Quote nicht berechenbar.
-                              </>
-                            )}
-                          </span>
-                        }
-                      />
-                    </span>
-                  }
-                  tone={pkqHr !== null
-                    ? (pkqHr > 0.40 ? 'critical' : (zielQuote != null && pkqHr > zielQuote) ? 'warn' : 'good')
-                    : 'neutral'}
-                  onClick={() => setDrilldownFocus('quote')}
-                />
-              </KpiGrid>
-            );
-          })()}
+          {/* ── Etappe 4: Schlagzeile + 4 Kacheln + Ist-Zeile (SSOT: personalkosten.ts) ── */}
+          {pkZentral && pkDaten ? (
+            <PkHeadline
+              monthLabel={getMonthLabel(selectedYear, selectedMonth)}
+              hrTotalCHF={pkZentral.kHr.total}
+              hrFixCHF={pkZentral.kHr.fix}
+              hrFlexCHF={pkZentral.kHr.flex}
+              budgetCHF={pkZentral.pkBudget?.total ?? null}
+              umsatzBudgetCHF={pkDaten.umsatzBudgetMonat ?? 0}
+              zielQuote={pkZentral.zielQuote}
+              pkqHochrechnung={pkZentral.pkq.pkqHochrechnung}
+              umsatzHochrechnungCHF={pkZentral.ums.hochrechnung}
+              istTotalCHF={pkZentral.kIst.total}
+              umsatzIstCHF={pkZentral.ums.istBisHeute}
+              pkqIst={pkZentral.pkq.pkqIst}
+              istTage={pkZentral.ums.istTage}
+              daysInMonth={pkDaten.daysInMonth}
+              stichtag={pkZentral.stichtag}
+              year={selectedYear}
+              month={selectedMonth}
+              fmtCHF={fmtCHF}
+              onFocus={(f) => setDrilldownFocus(f)}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground py-4">Lade Personalkosten …</p>
+          )}
+
+          {/* ── Etappe 4: Wie die Kosten entstehen (Balken + PKQ-Brücke) ─────── */}
+          {pkZentral && pkBruecke && (
+            <PkKostenentstehung
+              budgetCHF={pkZentral.pkBudget?.total ?? null}
+              hrFixCHF={pkZentral.kHr.fix}
+              hrFlexCHF={pkZentral.kHr.flex}
+              hrTotalCHF={pkZentral.kHr.total}
+              bruecke={pkBruecke}
+              fmtCHF={fmtCHF}
+            />
+          )}
+
+          {/* ── Etappe 4: Verlaufsgrafik — kumulierte Personalkosten ─────────── */}
+          {pkVerlauf && pkVerlauf.length > 0 && (
+            <PkVerlaufChart punkte={pkVerlauf} fmtCHF={fmtCHF} />
+          )}
 
           {/* ── PKQ-Verlauf (kumuliert) — nur bis Stichtag, ausschliesslich SSOT ── */}
           {pkDaten && pkqVerlauf && pkqVerlauf.rows.length > 0 && (
