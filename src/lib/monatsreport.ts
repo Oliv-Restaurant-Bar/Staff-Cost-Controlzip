@@ -22,7 +22,7 @@ import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { ladeWochentagsGewichte, ladePersonalkostenDaten } from '@/lib/personalkosten';
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
-import { loadVjDailyMonth } from '@/lib/vj-daily-supabase';
+import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 
@@ -188,6 +188,23 @@ export function computeLastCompleteWeeks(anzahl: number, heute: Date): WeekWindo
     out.push({ kwYear, kw, from: iso(mon), to: iso(sun) });
   }
   return out;
+}
+
+/**
+ * Vorjahres-Woche zur gegebenen Woche: GLEICHE ISO-KW-Nummer im ISO-Wochenjahr−1
+ * (Mo–So). Existiert die KW im Vorjahr nicht (z.B. KW 53, wenn das Vorjahr nur
+ * 52 Wochen hat), → null. Reine Funktion (keine I/O) — testbar.
+ */
+export function vorjahresWoche(w: WeekWindow): WeekWindow | null {
+  const prevYear = w.kwYear - 1;
+  const mon = mondayOfIsoWeek(prevYear, w.kw);
+  // Verifizieren, dass die berechnete Woche tatsächlich (prevYear, kw) ist —
+  // sonst existiert diese KW im Vorjahr nicht (KW-53-Fall).
+  const check = isoWeekYearOf(mon);
+  if (check.kwYear !== prevYear || check.kw !== w.kw) return null;
+  const sun = new Date(mon);
+  sun.setDate(sun.getDate() + 6);
+  return { kwYear: prevYear, kw: w.kw, from: iso(mon), to: iso(sun) };
 }
 
 // ── Zeilenmodell ─────────────────────────────────────────────────────────────
@@ -530,10 +547,14 @@ export interface WochenverlaufRow {
   bold?: boolean;
   /** Werte je Woche (Reihenfolge = weeks), null = keine Datenquelle */
   values: (number | null)[];
+  /** Vorjahreswerte je Woche (nur bei mitVorjahr), null = keine VJ-Quelle */
+  vjValues?: (number | null)[];
 }
 
 export interface WochenverlaufDaten {
   weeks: WeekWindow[];
+  /** Vorjahres-Wochen je Spalte (nur bei mitVorjahr; null = KW im VJ inexistent) */
+  vjWeeks?: (WeekWindow | null)[];
   rows: WochenverlaufRow[];
 }
 
@@ -559,6 +580,27 @@ function emptyAgg(): WeekAgg {
 }
 
 /**
+ * Vorjahres-Aggregat je Woche (vj_daily brutto → netto per VAT_STD, wie im
+ * Monats-VJ-Zweig). Keine VJ-Quelle für Produktive Stunden/Produktivität.
+ */
+interface VjWeekAgg {
+  gross: number; net: number; food: number; bev: number; ta: number;
+  hatUmsatz: boolean; hatFood: boolean; hatBev: boolean; hatTa: boolean;
+  gaeste: number; hatGaeste: boolean;
+  avgSum: number; avgCount: number;             // avgcheck-daily: einfacher Mittelwert
+  pairedNet: number; pairedGaeste: number;      // vj-Umsatz>0 UND Gäste>0
+}
+
+function emptyVjAgg(): VjWeekAgg {
+  return {
+    gross: 0, net: 0, food: 0, bev: 0, ta: 0,
+    hatUmsatz: false, hatFood: false, hatBev: false, hatTa: false,
+    gaeste: 0, hatGaeste: false, avgSum: 0, avgCount: 0,
+    pairedNet: 0, pairedGaeste: 0,
+  };
+}
+
+/**
  * Lädt die letzten `anzahlWochen` abgeschlossenen ISO-Wochen (Mo–So) und
  * berechnet je Woche dieselben Kennzahlen wie der Monatsreport. Wiederverwendet
  * die bestehenden Lade-Bausteine (Umsatz-Import, gaeste-daily, avgcheck-daily,
@@ -570,6 +612,7 @@ export async function ladeWochenverlauf(
   tenantKey: KeyFn,
   rates: SocialCostRates,
   heute: Date = new Date(),
+  mitVorjahr = false,
 ): Promise<WochenverlaufDaten> {
   const weeks = computeLastCompleteWeeks(Math.max(1, anzahlWochen), heute);
   const fromIso = weeks[0].from;
@@ -668,33 +711,120 @@ export async function ladeWochenverlauf(
     for (const h of Object.values(perEmp)) { aggs[wi].planStd += h; aggs[wi].hatPlan = true; }
   }
 
+  // ── Vorjahr (lazy: nur wenn Toggle aktiv) ──────────────────────────────────
+  // VJ-Woche = gleiche ISO-KW im Wochenjahr−1 (null wenn KW dort inexistent).
+  const vjWeeks: (WeekWindow | null)[] | undefined = mitVorjahr
+    ? weeks.map(vorjahresWoche) : undefined;
+  let vjAggs: (VjWeekAgg | null)[] | undefined;
+
+  if (mitVorjahr && vjWeeks) {
+    // Datum → VJ-Wochenindex (nur existierende VJ-Wochen).
+    const vjIndexOf = (date: string): number => {
+      for (let i = 0; i < vjWeeks.length; i++) {
+        const w = vjWeeks[i];
+        if (w && date >= w.from && date <= w.to) return i;
+      }
+      return -1;
+    };
+    // Berührte VJ-Monate für vj_daily-Load (kann Monatsgrenzen überschreiten).
+    const vjMonths = new Map<string, { year: number; month: number }>();
+    for (const w of vjWeeks) {
+      if (!w) continue;
+      for (const dateStr of [w.from, w.to]) {
+        const y = Number(dateStr.slice(0, 4));
+        const m = Number(dateStr.slice(5, 7));
+        vjMonths.set(`${y}-${m}`, { year: y, month: m });
+      }
+    }
+    const vjMonthMaps = await Promise.all(
+      [...vjMonths.values()].map(({ year, month }) =>
+        loadVjDailyMonth(year, month, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
+    );
+    const vjDaily: Record<string, VjDayRecord> = {};
+    for (const m of vjMonthMaps) Object.assign(vjDaily, m);
+
+    vjAggs = vjWeeks.map(w => (w ? emptyVjAgg() : null));
+
+    // vj_daily (brutto → netto per VAT_STD, wie Monats-VJ) + gepaarte Tage.
+    for (const [date, rec] of Object.entries(vjDaily)) {
+      const wi = vjIndexOf(date);
+      if (wi < 0) continue;
+      const a = vjAggs[wi];
+      if (!a) continue;
+      if ((rec.actualRevenue ?? 0) > 0) {
+        a.gross += rec.actualRevenue; a.net += rec.actualRevenue / VAT_STD; a.hatUmsatz = true;
+      }
+      if ((rec.foodRevenue ?? 0) > 0) { a.food += rec.foodRevenue! / VAT_STD; a.hatFood = true; }
+      if ((rec.beverageRevenue ?? 0) > 0) { a.bev += rec.beverageRevenue! / VAT_STD; a.hatBev = true; }
+      if ((rec.takeawayRevenue ?? 0) > 0) { a.ta += rec.takeawayRevenue!; a.hatTa = true; }
+      const g = gaesteDaily[date] ?? 0;
+      if ((rec.actualRevenue ?? 0) > 0 && g > 0) {
+        a.pairedNet += rec.actualRevenue / VAT_STD; a.pairedGaeste += g;
+      }
+    }
+    // Gäste IN (VJ) — volle importierte Summe.
+    for (const [date, n] of Object.entries(gaesteDaily)) {
+      if (!(n > 0)) continue;
+      const wi = vjIndexOf(date);
+      if (wi < 0) continue;
+      const a = vjAggs[wi];
+      if (!a) continue;
+      a.gaeste += n; a.hatGaeste = true;
+    }
+    // Durchschnittsverkauf (VJ) — einfacher Mittelwert (Direkt-Import).
+    for (const [date, v] of Object.entries(avgDaily)) {
+      if (!(v > 0)) continue;
+      const wi = vjIndexOf(date);
+      if (wi < 0) continue;
+      const a = vjAggs[wi];
+      if (!a) continue;
+      a.avgSum += v; a.avgCount++;
+    }
+  }
+
   // ── Zeilen bauen (Werte je Woche; null = leer) ──
   const col = (fn: (a: WeekAgg) => number | null): (number | null)[] => aggs.map(fn);
+  // VJ-Spalte je Zeile: mapping vom VJ-Aggregat (oder null → leere Zellen).
+  const vjCol = (fn: (a: VjWeekAgg) => number | null): (number | null)[] | undefined => {
+    if (!vjAggs) return undefined;
+    return vjAggs.map(a => (a ? fn(a) : null));
+  };
 
   const rows: WochenverlaufRow[] = [
     { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
-      values: col(a => a.hatUmsatz ? r2(a.gross) : null) },
+      values: col(a => a.hatUmsatz ? r2(a.gross) : null),
+      vjValues: vjCol(a => a.hatUmsatz ? r2(a.gross) : null) },
     { label: 'Netto Umsatz', fmt: 'chf', bold: true,
-      values: col(a => a.hatUmsatz ? r2(a.net) : null) },
+      values: col(a => a.hatUmsatz ? r2(a.net) : null),
+      vjValues: vjCol(a => a.hatUmsatz ? r2(a.net) : null) },
     { label: 'Gäste IN', fmt: 'count',
-      values: col(a => a.hatGaeste ? r2(a.gaeste) : null) },
+      values: col(a => a.hatGaeste ? r2(a.gaeste) : null),
+      vjValues: vjCol(a => a.hatGaeste ? r2(a.gaeste) : null) },
     { label: 'Durchschnittsverkauf', fmt: 'chf',
-      values: col(a => a.avgW) },
+      values: col(a => a.avgW),
+      vjValues: vjCol(a => a.avgCount > 0 ? r2(a.avgSum / a.avgCount) : null) },
     { label: 'Take Away Anteil', fmt: 'pct',
-      values: col(a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null) },
+      values: col(a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null),
+      vjValues: vjCol(a => a.hatTa && a.gross > 0 ? r2((a.ta / a.gross) * 100) : null) },
     { label: 'Food', fmt: 'chf',
-      values: col(a => a.hatUmsatz && a.food > 0 ? r2(a.food) : null) },
+      values: col(a => a.hatUmsatz && a.food > 0 ? r2(a.food) : null),
+      vjValues: vjCol(a => a.hatFood ? r2(a.food) : null) },
     { label: 'Beverage', fmt: 'chf',
-      values: col(a => a.hatUmsatz && a.bev > 0 ? r2(a.bev) : null) },
+      values: col(a => a.hatUmsatz && a.bev > 0 ? r2(a.bev) : null),
+      vjValues: vjCol(a => a.hatBev ? r2(a.bev) : null) },
     { label: 'Produktive Stunden (Ist)', fmt: 'hours',
-      values: col(a => a.hatIst ? r2(a.istStd) : null) },
+      values: col(a => a.hatIst ? r2(a.istStd) : null),
+      vjValues: vjCol(() => null) },      // keine VJ-Quelle
     { label: 'Produktive Stunden geplant', fmt: 'hours',
-      values: col(a => a.hatPlan ? r2(a.planStd) : null) },
+      values: col(a => a.hatPlan ? r2(a.planStd) : null),
+      vjValues: vjCol(() => null) },      // keine VJ-Quelle
     { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
-      values: col(a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null) },
+      values: col(a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null),
+      vjValues: vjCol(() => null) },      // keine VJ-Quelle (Stunden fehlen)
     { label: 'Umsatz pro Gast', fmt: 'chf',
-      values: col(a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null) },
+      values: col(a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null),
+      vjValues: vjCol(a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null) },
   ];
 
-  return { weeks, rows };
+  return { weeks, vjWeeks, rows };
 }

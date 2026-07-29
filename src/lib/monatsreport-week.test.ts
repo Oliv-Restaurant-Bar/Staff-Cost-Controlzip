@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest';
 // damit der Import von monatsreport.ts unter node läuft.
 vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 
-import { computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks } from './monatsreport';
+import { computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche } from './monatsreport';
 
 /**
  * Reine Logik-Tests für die Wochen-Zeitraum-Berechnung (computeWeekRange)
@@ -165,6 +165,34 @@ describe('computeLastCompleteWeeks', () => {
     const jan = new Date(2021, 0, 6); // Mi 06.01.2021 (KW1/2021)
     const w = computeLastCompleteWeeks(1, jan);
     expect(w[0]).toMatchObject({ kwYear: 2020, kw: 53, from: '2020-12-28', to: '2021-01-03' });
+  });
+});
+
+// ── Wochenverlauf: Vorjahres-Woche (gleiche ISO-KW im Wochenjahr−1) ──────────
+
+describe('vorjahresWoche', () => {
+  it('gleiche KW-Nummer im Vorjahr: KW 27/2026 → KW 27/2025 (30.06.–06.07.2025)', () => {
+    const vj = vorjahresWoche({ kwYear: 2026, kw: 27, from: '2026-06-29', to: '2026-07-05' });
+    expect(vj).toMatchObject({ kwYear: 2025, kw: 27, from: '2025-06-30', to: '2025-07-06' });
+  });
+
+  it('KW 1: KW 1/2026 (29.12.2025–04.01.2026) → KW 1/2025 (30.12.2024–05.01.2025)', () => {
+    const vj = vorjahresWoche({ kwYear: 2026, kw: 1, from: '2025-12-29', to: '2026-01-04' });
+    expect(vj).toMatchObject({ kwYear: 2025, kw: 1, from: '2024-12-30', to: '2025-01-05' });
+  });
+
+  it('KW 53 existiert im Vorjahr → gültig: KW 53/2021 (2020 hat KW 53) → 28.12.2020–03.01.2021', () => {
+    // 2020 ist ein ISO-53-Wochen-Jahr.
+    const vj = vorjahresWoche({ kwYear: 2021, kw: 53, from: '2021-01-04', to: '2021-01-10' });
+    // KW 53/2021 gibt es gar nicht, aber der Test prüft die Logik: kwYear-1 = 2020,
+    // und 2020 HAT eine KW 53.
+    expect(vj).toMatchObject({ kwYear: 2020, kw: 53, from: '2020-12-28', to: '2021-01-03' });
+  });
+
+  it('KW 53 existiert im Vorjahr NICHT → null (2025 hat nur 52 Wochen)', () => {
+    // KW 53/2026: Vorjahr 2025 hat nur 52 ISO-Wochen → keine KW 53 → null.
+    const vj = vorjahresWoche({ kwYear: 2026, kw: 53, from: '2026-12-28', to: '2027-01-03' });
+    expect(vj).toBeNull();
   });
 });
 

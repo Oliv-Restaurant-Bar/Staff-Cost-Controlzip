@@ -6,7 +6,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, CalendarDays } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, CalendarDays, GitCompareArrows } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -293,6 +293,7 @@ function WochenverlaufView() {
   const { rates, loading: ratesLoading } = useSocialCostRates();
 
   const [anzahl, setAnzahl] = useState(4);
+  const [mitVorjahr, setMitVorjahr] = useState(false);
   const [daten, setDaten] = useState<WochenverlaufDaten | null>(null);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState<string | null>(null);
@@ -302,17 +303,28 @@ function WochenverlaufView() {
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeWochenverlauf(anzahl, tenantId, tenantKey, rates, heute)
+    ladeWochenverlauf(anzahl, tenantId, tenantKey, rates, heute, mitVorjahr)
       .then(d => { if (alive) setDaten(d); })
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [anzahl, tenantId, tenantKey, rates, ratesLoading, heute]);
+  }, [anzahl, mitVorjahr, tenantId, tenantKey, rates, ratesLoading, heute]);
+
+  const showVj = mitVorjahr && !!daten?.vjWeeks;
 
   return (
     <>
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <span className="text-xs text-muted-foreground">Anzahl Wochen</span>
+        <Button
+          variant={mitVorjahr ? 'default' : 'outline'}
+          size="sm" className="h-8 gap-1.5"
+          aria-pressed={mitVorjahr}
+          onClick={() => setMitVorjahr(v => !v)}
+          data-testid="button-toggle-vorjahr"
+        >
+          <GitCompareArrows className="h-4 w-4" /> Vorjahr vergleichen
+        </Button>
+        <span className="text-xs text-muted-foreground ml-2">Anzahl Wochen</span>
         <Select value={String(anzahl)} onValueChange={v => setAnzahl(Number(v))}>
           <SelectTrigger className="h-8 w-20 text-xs" data-testid="select-week-count">
             <SelectValue />
@@ -339,31 +351,53 @@ function WochenverlaufView() {
             <thead>
               <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
-                {daten.weeks.map(w => (
-                  <th key={`${w.kwYear}-${w.kw}`} className="px-3 py-2 text-right font-semibold">
-                    KW {w.kw}
-                    <span className="block normal-case font-normal">
-                      {fmtDate(w.from)}–{fmtDate(w.to)}
-                    </span>
-                  </th>
-                ))}
+                {daten.weeks.map((w, ci) => {
+                  const vjw = daten.vjWeeks?.[ci] ?? null;
+                  return (
+                    <th key={`${w.kwYear}-${w.kw}`} className="px-3 py-2 text-right font-semibold">
+                      KW {w.kw}
+                      <span className="block normal-case font-normal">
+                        {fmtDate(w.from)}–{fmtDate(w.to)}
+                      </span>
+                      {showVj && (
+                        <span className="block normal-case font-normal text-muted-foreground/70">
+                          {vjw ? `VJ ${vjw.kwYear}` : 'VJ —'}
+                        </span>
+                      )}
+                    </th>
+                  );
+                })}
                 <th className="px-3 py-2 text-right font-semibold">Verlauf</th>
               </tr>
             </thead>
             <tbody>
               {daten.rows.map((row, ri) => (
-                <tr key={ri} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')}>
+                <tr key={ri} className={cn('border-b last:border-0 hover:bg-muted/30 align-top', row.bold && 'font-semibold')}>
                   <td className="px-3 py-1.5">{row.label}</td>
                   {row.values.map((v, ci) => {
                     const prev = ci > 0 ? row.values[ci - 1] : null;
                     const t = ci > 0 ? trendPct(v, prev) : null;
+                    const vjV = showVj ? (row.vjValues?.[ci] ?? null) : null;
+                    const vjDelta = showVj ? trendPct(v, vjV) : null;
                     return (
                       <td key={ci} className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
-                        {v === null ? <span className="text-muted-foreground">—</span> : fmtCell(v, row.fmt)}
-                        {t !== null && (
-                          <span className={cn('ml-1.5 text-[10px] font-normal',
-                            t >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                            {t >= 0 ? '▲' : '▼'}{Math.abs(t).toFixed(0)}%
+                        <span className="block">
+                          {v === null ? <span className="text-muted-foreground">—</span> : fmtCell(v, row.fmt)}
+                          {t !== null && (
+                            <span className={cn('ml-1.5 text-[10px] font-normal',
+                              t >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                              {t >= 0 ? '▲' : '▼'}{Math.abs(t).toFixed(0)}%
+                            </span>
+                          )}
+                        </span>
+                        {showVj && (
+                          <span className="block text-[10px] font-normal text-muted-foreground">
+                            {vjV === null ? '—' : fmtCell(vjV, row.fmt)}
+                            {vjDelta !== null && (
+                              <span className={cn('ml-1', vjDelta >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                                {vjDelta >= 0 ? '+' : ''}{vjDelta.toFixed(0)}%
+                              </span>
+                            )}
                           </span>
                         )}
                       </td>
@@ -384,6 +418,7 @@ function WochenverlaufView() {
         Trend ▲/▼ = Veränderung zur Vorwoche · Verlauf = Mini-Trend über alle Wochen ·
         gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
         nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
+        {showVj && ' · Vorjahr = gleiche ISO-KW im Vorjahr (kleine Zeile darunter + Δ% aktuell vs. VJ); Produktive Stunden/Produktivität haben keine VJ-Quelle.'}
       </p>
     </>
   );
