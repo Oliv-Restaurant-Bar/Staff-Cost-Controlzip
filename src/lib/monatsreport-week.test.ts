@@ -9,6 +9,7 @@ import {
   computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
   computeYtdWindow, kwRangeLabel, computeWeeksForYear, computeVergleichsWindow,
   computeVorjahrWocheDays, computePersonalBlock, OBERGRENZE_PKQ_PCT, applyRowOrder,
+  gewichteterTagesAvg,
   type MrRow,
 } from './monatsreport';
 
@@ -570,5 +571,39 @@ describe('computeWeeksForYear', () => {
     const sel = computeWeeksForYear(2, hJan2021, hJan2021.getFullYear() - 1);
     expect(sel.some(w => w.kw === 53)).toBe(false);  // KW 53 fehlt (2019 hat sie nicht)
     expect(sel.length).toBeLessThan(ref.length);     // eine Woche weniger
+  });
+});
+
+describe('gewichteterTagesAvg — Durchschnittsverkauf-Fallback (Monat & Woche)', () => {
+  const tage = ['2026-07-01', '2026-07-02', '2026-07-03'];
+
+  it('gäste-gewichteter Mittelwert wenn Gästezahlen vorhanden', () => {
+    const avg = { '2026-07-01': 10, '2026-07-02': 20 };
+    const gaeste = { '2026-07-01': 100, '2026-07-02': 300 };
+    // (10*100 + 20*300) / 400 = 17.5
+    expect(gewichteterTagesAvg(tage, avg, gaeste)).toBe(17.5);
+  });
+
+  it('Fallback einfacher Mittelwert ohne Gästezahlen', () => {
+    const avg = { '2026-07-01': 10, '2026-07-02': 20 };
+    expect(gewichteterTagesAvg(tage, avg, {})).toBe(15);
+  });
+
+  it('null wenn keine Tageswerte (leer statt 0)', () => {
+    expect(gewichteterTagesAvg(tage, {}, { '2026-07-01': 100 })).toBeNull();
+    expect(gewichteterTagesAvg([], { '2026-07-01': 10 }, {})).toBeNull();
+  });
+
+  it('Tage ausserhalb der Liste und Werte <= 0 werden ignoriert', () => {
+    const avg = { '2026-07-01': 0, '2026-07-02': 20, '2026-08-01': 99 };
+    const gaeste = { '2026-07-02': 50, '2026-08-01': 500 };
+    expect(gewichteterTagesAvg(tage, avg, gaeste)).toBe(20);
+  });
+
+  it('Mischfall: nur Tage MIT Gästen gewichten (Regel wWeight>0 gewinnt)', () => {
+    const avg = { '2026-07-01': 10, '2026-07-02': 20 };
+    const gaeste = { '2026-07-02': 200 };
+    // Tag 1 hat keinen Gästewert → nur Tag 2 zählt gewichtet: 20
+    expect(gewichteterTagesAvg(tage, avg, gaeste)).toBe(20);
   });
 });

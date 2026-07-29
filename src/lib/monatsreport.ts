@@ -41,6 +41,31 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
 /**
+ * Gäste-gewichteter Mittelwert der Durchschnittsverkauf-Tageswerte über die
+ * gegebenen Tage (Fallback: einfacher Mittelwert, wenn keine Gästezahlen
+ * vorliegen). `null` wenn KEIN Tag einen Wert > 0 hat (leer statt 0).
+ * Wird identisch für Wochensicht UND als Ist-Monats-Fallback genutzt
+ * (fehlt der direkt importierte avgcheck-monthly-Wert).
+ */
+export function gewichteterTagesAvg(
+  tage: readonly string[],
+  avgDaily: Record<string, number>,
+  gaesteDaily: Record<string, number>,
+): number | null {
+  let wSum = 0, wWeight = 0, sSum = 0, sCount = 0;
+  for (const date of tage) {
+    const v = avgDaily[date];
+    if (!(v > 0)) continue;
+    const g = gaesteDaily[date] ?? 0;
+    if (g > 0) { wSum += v * g; wWeight += g; }
+    sSum += v; sCount++;
+  }
+  if (wWeight > 0) return r2(wSum / wWeight);
+  if (sCount > 0) return r2(sSum / sCount);
+  return null;
+}
+
+/**
  * Harte PKQ-Obergrenze in Prozent (separat/fix, NICHT aus ziel_personalquote_v1 —
  * die Ziel-Quote kommt aus dem Kern via daten.zielQuotePct). Spiegelt die
  * Konstante der Personalkosten-Seite (PkHeadline: OBERGRENZE_PCT = 40).
@@ -800,7 +825,12 @@ export async function ladeMonatsreport(
   }
 
   // ── Durchschnittsverkauf (manueller Import; Zeitraum-Wert massgeblich) ─────
-  const avgMonat: number | null = avgMonthly[`${year}-${mm}`] ?? null;
+  // Ist-Monat: primär der direkt importierte Monatswert (avgcheck-monthly).
+  // Fehlt dieser, Fallback wie Wochensicht/Vorjahr: gäste-gewichteter
+  // Mittelwert der Tageswerte (avgcheck-daily) über den Monat, Fallback
+  // einfacher Mittelwert. Leer NUR wenn weder Monats- noch Tageswerte da sind.
+  let avgMonat: number | null = avgMonthly[`${year}-${mm}`] ?? null;
+  if (avgMonat == null) avgMonat = gewichteterTagesAvg(alleTage, avgDaily, gaesteDaily);
   // Vorjahr: primär der importierte Monatswert (avgcheck-monthly). Fehlt dieser
   // (z.B. alte Importe, die nur Tageswerte schrieben), Fallback = einfacher
   // Mittelwert der Vorjahres-Tageswerte (avgcheck-daily) über den Vorjahres-
@@ -816,19 +846,9 @@ export async function ladeMonatsreport(
     if (sCount > 0) avgVj = r2(sSum / sCount);
   }
   // Woche: gäste-gewichteter Mittelwert der Tageswerte (Fallback: einfacher Mittelwert)
-  let avgWoche: number | null = null;
-  if (weekFrom && weekTo) {
-    let wSum = 0, wWeight = 0, sSum = 0, sCount = 0;
-    for (const date of wocheTage) {
-      const v = avgDaily[date];
-      if (!(v > 0)) continue;
-      const g = gaesteDaily[date] ?? 0;
-      if (g > 0) { wSum += v * g; wWeight += g; }
-      sSum += v; sCount++;
-    }
-    if (wWeight > 0) avgWoche = r2(wSum / wWeight);
-    else if (sCount > 0) avgWoche = r2(sSum / sCount);
-  }
+  const avgWoche: number | null = weekFrom && weekTo
+    ? gewichteterTagesAvg(wocheTage, avgDaily, gaesteDaily)
+    : null;
 
   // ── Vorjahr (vj_daily) ─────────────────────────────────────────────────────
   let vjGross = 0, vjFoodG = 0, vjBevG = 0, vjTa = 0;
