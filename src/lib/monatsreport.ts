@@ -114,12 +114,27 @@ export function computeWeekRange(
     }
     case 'lastComplete':
     default: {
-      // Letzte vollständig abgeschlossene Woche Mo–So vor der laufenden Woche.
-      const thisMonday = mondayOf(today);
-      rawFrom = new Date(thisMonday);
-      rawFrom.setDate(rawFrom.getDate() - 7);
-      rawTo = new Date(thisMonday);
-      rawTo.setDate(rawTo.getDate() - 1);
+      const todayIso = iso(today);
+      if (todayIso >= fromIso && todayIso <= toIso) {
+        // Aktueller Monat: letzte vollständig abgeschlossene Woche Mo–So vor
+        // der laufenden Woche (wie bisher).
+        const thisMonday = mondayOf(today);
+        rawFrom = new Date(thisMonday);
+        rawFrom.setDate(rawFrom.getDate() - 7);
+        rawTo = new Date(thisMonday);
+        rawTo.setDate(rawTo.getDate() - 1);
+      } else {
+        // Anderer Monat gewählt: letzte abgeschlossene Woche INNERHALB des
+        // Monats — sonst fiele die reale letzte Woche aus dem Monat und die
+        // Woche-Spalte bliebe leer. Sonntag = letzter Sonntag ≤ Monatsende.
+        const [ty, tm, td] = toIso.split('-').map(Number);
+        const monthEnd = new Date(ty, tm - 1, td);
+        const lastSunday = new Date(monthEnd);
+        lastSunday.setDate(lastSunday.getDate() - (monthEnd.getDay() % 7));
+        rawTo = lastSunday;
+        rawFrom = new Date(lastSunday);
+        rawFrom.setDate(rawFrom.getDate() - 6);
+      }
       break;
     }
   }

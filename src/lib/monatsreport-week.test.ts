@@ -56,6 +56,32 @@ describe('computeWeekRange — laufender Monat (Juli 2025, heute=16.07.)', () =>
   });
 });
 
+describe('computeWeekRange — lastComplete bei anderem Monat', () => {
+  it('vergangener Monat: letzte abgeschlossene Woche INNERHALB des Monats (Juni 2025 → 23.–29.06.)', () => {
+    // heute=16.07.2025, gewählt Juni 2025: 30.06. ist ein Montag,
+    // letzter Sonntag ≤ 30.06. ist der 29.06. → Woche 23.–29.06.
+    const r = computeWeekRange({ kind: 'lastComplete' }, 2025, '2025-06-01', '2025-06-30', '2025-06-30', heute);
+    expect(r).toEqual({ weekFrom: '2025-06-23', weekTo: '2025-06-29' });
+  });
+
+  it('Monatsende = Sonntag: Woche endet am Monatsletzten (Nov 2025 → 24.–30.11. bei heute=16.12.)', () => {
+    const dez = new Date(2025, 11, 16);
+    const r = computeWeekRange({ kind: 'lastComplete' }, 2025, '2025-11-01', '2025-11-30', '2025-11-30', dez);
+    expect(r).toEqual({ weekFrom: '2025-11-24', weekTo: '2025-11-30' });
+  });
+
+  it('Wochenstart vor Monatsanfang wird geklemmt (Feb 2025 → 24.–28.02.? nein: letzter So=23.02. → 17.–23.02.)', () => {
+    // 28.02.2025 = Freitag → letzter Sonntag = 23.02. → Woche 17.–23.02. (voll im Monat).
+    const r = computeWeekRange({ kind: 'lastComplete' }, 2025, '2025-02-01', '2025-02-28', '2025-02-28', heute);
+    expect(r).toEqual({ weekFrom: '2025-02-17', weekTo: '2025-02-23' });
+  });
+
+  it('Zukunftsmonat bleibt leer', () => {
+    const r = computeWeekRange({ kind: 'lastComplete' }, 2025, '2025-08-01', '2025-08-31', '', heute);
+    expect(r).toEqual({ weekFrom: null, weekTo: null });
+  });
+});
+
 describe('computeWeekRange — kw (ganze Woche, vergangener Monat)', () => {
   it('KW 27 2025 = 30.06.–06.07., auf Juli geklemmt (01.–06.07.)', () => {
     // Vergangener Monat → istTo = Monatsende (voller Monat).
