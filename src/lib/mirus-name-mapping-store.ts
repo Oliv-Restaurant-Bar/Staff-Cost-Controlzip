@@ -21,7 +21,7 @@ export type MirusNameMapping = Record<string, string | 'skip'>;
 
 // ─── Name-Matching-Logik (geteilt zwischen Import-Schritten) ─────────────────
 
-export type NameMatchType = 'exact' | 'saved' | 'firstName' | 'new';
+export type NameMatchType = 'exact' | 'saved' | 'firstName' | 'new' | 'conflict';
 
 export interface EmployeeMatchResult {
   employee: Employee | null;
@@ -53,6 +53,11 @@ export interface EmployeeMatchResult {
  * @param existingEmps  Liste aller bekannten Mitarbeiter
  * @param debug         true = Console-Log für diesen Namen ausgeben
  */
+/** Entfernt Duplikate anhand der Mitarbeiter-ID (behält Reihenfolge). */
+function dedupeById(list: Employee[]): Employee[] {
+  return Array.from(new Map(list.map(e => [e.id, e])).values());
+}
+
 export function matchEmployeeByName(
   importedName: string,
   existingEmps: Employee[],
@@ -105,11 +110,20 @@ export function matchEmployeeByName(
   const stripEmp = (e: Employee) => strip(e.name);
 
   // ── Step 1: Exact match (normalized) ─────────────────────────────────────
-  const exact = existingEmps.find(e => normEmp(e) === normImport || stripEmp(e) === stripImport);
-  if (exact) {
-    log(`final resolved employee: "${exact.name}" via exact match`);
+  // ALLE exakten Treffer sammeln (nicht nur den ersten): bei einer
+  // Normalisierungs-/Reihenfolge-Kollision (zwei verschiedene Personen mit
+  // identischem normalisiertem Namen) darf NICHT automatisch gematcht werden.
+  const exactAll = dedupeById(
+    existingEmps.filter(e => normEmp(e) === normImport || stripEmp(e) === stripImport),
+  );
+  if (exactAll.length === 1) {
+    log(`final resolved employee: "${exactAll[0].name}" via exact match`);
     log(`import row saved: yes (exact)`);
-    return { employee: exact, matchType: 'exact', matchStep: 'exact' };
+    return { employee: exactAll[0], matchType: 'exact', matchStep: 'exact' };
+  }
+  if (exactAll.length > 1) {
+    log(`exact match AMBIGUOUS: ${exactAll.map(e => `"${e.name}"`).join(', ')} — marking conflict`);
+    return { employee: null, matchType: 'conflict', matchStep: 'exact-conflict' };
   }
 
   // ── Step 2: Exact match after stripping punctuation ───────────────────────
@@ -126,18 +140,24 @@ export function matchEmployeeByName(
   // ── Step 3: Reversed word order ───────────────────────────────────────────
   // "Momand Sajed" (import) ↔ "Sajed Momand" (system), and vice versa.
   // Try reversing both the normalized and stripped import name.
-  const tryReversed = (tokens: string[]): Employee | undefined => {
+  const tryReversedAll = (tokens: string[]): Employee[] => {
     const rev = [...tokens].reverse().join(' ');
-    return existingEmps.find(e => stripEmp(e) === rev || normEmp(e) === rev);
+    return existingEmps.filter(e => stripEmp(e) === rev || normEmp(e) === rev);
   };
-  const reversedMatch = tryReversed(importTokens)
-    ?? tryReversed(norm(importedName).split(/\s+/).filter(Boolean));
+  const reversedAll = dedupeById([
+    ...tryReversedAll(importTokens),
+    ...tryReversedAll(norm(importedName).split(/\s+/).filter(Boolean)),
+  ]);
 
-  if (reversedMatch) {
+  if (reversedAll.length === 1) {
     const revStr = [...importTokens].reverse().join(' ');
-    log(`reversed-order match: "${stripImport}" → reversed "${revStr}" → "${reversedMatch.name}"`);
+    log(`reversed-order match: "${stripImport}" → reversed "${revStr}" → "${reversedAll[0].name}"`);
     log(`import row saved: yes (reversed-exact)`);
-    return { employee: reversedMatch, matchType: 'exact', matchStep: 'reversed-exact' };
+    return { employee: reversedAll[0], matchType: 'exact', matchStep: 'reversed-exact' };
+  }
+  if (reversedAll.length > 1) {
+    log(`reversed-order match AMBIGUOUS: ${reversedAll.map(e => `"${e.name}"`).join(', ')} — marking conflict`);
+    return { employee: null, matchType: 'conflict', matchStep: 'reversed-conflict' };
   }
 
   // ── Step 4: All-token containment ─────────────────────────────────────────

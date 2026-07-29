@@ -77,7 +77,7 @@ function isDebugName(name: string): boolean {
 function findMatchingEmployee(
   importedName: string,
   existingEmployees: Employee[],
-): { employee: Employee | null; matchType: 'exact' | 'saved' | 'firstName' | 'new' } {
+): { employee: Employee | null; matchType: 'exact' | 'saved' | 'firstName' | 'new' | 'conflict' } {
   const debug = isDebugName(importedName);
   const result = matchEmployeeByName(importedName, existingEmployees, debug);
   return { employee: result.employee, matchType: result.matchType };
@@ -121,11 +121,14 @@ export const ActualHoursImportButton = ({
     const uniqueNames = [...new Set(entries.map(e => e.name))];
     return uniqueNames.map(name => {
       const { employee, matchType } = findMatchingEmployee(name, employees);
+      // 'conflict' (mehrdeutiger exakter Treffer) → behandeln wie unresolved:
+      // KEIN Auto-Match, User muss im Dialog manuell auswählen.
+      const isUnresolved = matchType === 'new' || matchType === 'conflict';
       return {
         importedName:    name,
-        matchedEmployee: employee,
-        matchType:       matchType === 'saved' ? 'exact' : matchType,
-        isNew:           matchType === 'new',
+        matchedEmployee: isUnresolved ? null : employee,
+        matchType:       isUnresolved ? 'new' : (matchType === 'saved' ? 'exact' : matchType),
+        isNew:           isUnresolved,
       };
     });
   }
@@ -195,7 +198,11 @@ export const ActualHoursImportButton = ({
       setParsedEntries(result.entries);
       setDetectedDates(result.dateRange);
 
-      if (result.entries.length === 0) {
+      if (result.failureReason) {
+        // Import STOPPEN (z.B. Wochentags-Mismatch / Off-by-one-Schutz).
+        console.warn('[MIRUS] import gestoppt:', result.failureReason, result.debug);
+        toast.error(`Import gestoppt: ${result.failureReason}`);
+      } else if (result.entries.length === 0) {
         toast.error(
           'Keine Ist-Stunden gefunden. Prüfe ob die Datei das Mirus-Format hat (Datumsbereich "von … bis …" erwartet).',
         );
@@ -231,7 +238,10 @@ export const ActualHoursImportButton = ({
       const result  = await parseMirusDailyExcel(file);
       setParsedEntries(result.entries);
       setDetectedDates(result.dateRange);
-      if (result.entries.length > 0) {
+      if (result.failureReason) {
+        console.warn('[MIRUS] import gestoppt:', result.failureReason, result.debug);
+        toast.error(`Import gestoppt: ${result.failureReason}`);
+      } else if (result.entries.length > 0) {
         const matches = generateNameMatches(result.entries);
         const unresolved = matches.filter(m => m.isNew && !m.matchedEmployee);
         if (unresolved.length === 0) {

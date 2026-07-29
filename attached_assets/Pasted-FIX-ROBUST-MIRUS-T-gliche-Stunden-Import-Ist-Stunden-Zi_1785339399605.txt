@@ -1,0 +1,28 @@
+FIX + ROBUST – MIRUS "Tägliche Stunden"-Import (Ist-Stunden). Ziel: keine fehlenden Stunden, keine falschen Tage, kein stiller Verlust.
+
+Dateiformat (verifiziert an einer echten Datei):
+- Titelzeile: "Tägliche Stunden von <TT.MM.JJJJ> bis <TT.MM.JJJJ>" → daraus Monat/Jahr und Zeitraum lesen.
+- Eine Kopfzeile enthält je Stundenspalte die TAGESZAHL (z.B. 27, 28), darüber der Wochentag (Mo, Di).
+- Mitarbeiterzeilen: "Nachname Vorname" + je Tagesspalte die Stunden als Dezimal (z.B. 7.7833 = 7h47). Spalte "Total" ignorieren.
+- Struktur-/Summenzeilen überspringen: Kostenstellen-Header ("1 Küche", "2 Service"), "Total Stunden", "Anzahl Mitarbeiter".
+- Es erscheinen NUR Mitarbeiter/Tage mit Einsatz; fehlende = kein Eintrag (nicht 0 erzwingen).
+
+1) DATUM KORREKT ZUORDNEN (behebt "falsche Tage"):
+   - Für jede Stundenspalte das Datum bilden aus: Tageszahl (Kopfzeile) + Monat/Jahr (aus dem Titel). NIEMALS die Spaltenposition als Tag interpretieren.
+   - Robustheits-Check: den Wochentag der Kopfzeile (Mo/Di/…) gegen den berechneten Wochentag prüfen; bei Abweichung Import stoppen und melden (Off-by-one-Schutz).
+
+2) NAMEN ROBUST MATCHEN (behebt "nicht importiert"):
+   - Match gegen den Personalstamm normalisiert (Gross/Klein, Akzente/Umlaute, Reihenfolge egal: "Nachname Vorname" UND "Vorname Nachname" probieren).
+   - Nicht eindeutig zuordenbare Zeilen NICHT still verwerfen, sondern in der Vorschau als "nicht zugeordnet" auflisten, mit manueller Zuordnung.
+
+3) VORSCHAU VOR DEM ÜBERNEHMEN:
+   - Zeige: erkannter Zeitraum (von–bis), Anzahl Tage, gematchte Mitarbeiter, Summe Stunden, sowie "nicht zugeordnete Zeilen" und Konflikte.
+   - Erst nach Bestätigung schreiben.
+
+4) MERGE STATT ÜBERSCHREIBEN:
+   - Nur die im File enthaltenen Tage/Mitarbeiter aktualisieren. Andere Tage NICHT auf 0 setzen oder löschen.
+   - Importierte Tage als Ist-Quelle "MIRUS" markieren.
+
+5) ABSCHLUSS-MELDUNG: "X Mitarbeiter, Y Tage (<von>–<bis>), Z Stunden importiert; N Zeilen nicht zugeordnet." Plus klare Meldung, wenn der Zeitraum kürzer als der gewählte Monat ist ("nur 27.–28.07. importiert – Rest des Monats unverändert").
+
+Tests: mit einem Teil-Export (nur 2 Tage, Start = Tag 27) beweisen, dass die Stunden auf 27./28. landen (nicht auf Tag 1/2). Typecheck grün.
