@@ -29,6 +29,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { resetProductSalesMonth } from '@/lib/sales-db';
+import { useTenant } from '@/contexts/TenantContext';
 
 // ─── Konstanten ───────────────────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ interface Props {
 
 export function ResetProductMonthDialog({ userEmail, onReset }: Props) {
   const labelId = useId();
+  const { tenantId } = useTenant();
 
   // Auswahl-State
   const [year,      setYear]      = useState(currentYear());
@@ -114,6 +116,7 @@ export function ResetProductMonthDialog({ userEmail, onReset }: Props) {
     setStep('deleting');
 
     const result = await resetProductSalesMonth({
+      tenantId,
       year,
       month,
       sources:   Array.from(sourceOption.sources),

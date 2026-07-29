@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { loadProductSalesRows, sourceLabel, type ProductSalesRow } from '@/lib/sales-db';
+import { useTenant } from '@/contexts/TenantContext';
 import {
   buildBreakdown, filtersFromParams, filtersToParams,
   PERIOD_KIND_LABEL,
@@ -67,6 +68,7 @@ const FIRST_COL_LABEL: Record<PeriodKind, string> = {
 export default function ProduktDetail() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { tenantId } = useTenant();
 
   const productName = searchParams.get('name') ?? '';
   const baseFilters = useMemo(
@@ -85,14 +87,14 @@ export default function ProduktDetail() {
     setLoading(true);
     setError(null);
     try {
-      const data = await loadProductSalesRows();
+      const data = await loadProductSalesRows(tenantId);
       setAllRows(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => { load(); }, [load]);
 

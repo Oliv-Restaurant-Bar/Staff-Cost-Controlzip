@@ -19,6 +19,7 @@ import {
   Info, Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useTenant } from '@/contexts/TenantContext';
 import { ResetProductMonthDialog } from '@/components/ResetProductMonthDialog';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,7 +31,7 @@ import {
   parseWideFile, matchAnzahlUmsatz, generateImportBatch,
   type NormalizedSaleRow, type MatchResult, type ParseResult,
 } from '@/lib/gastronovi-csv-parser';
-import { insertProductSales, deleteProductSalesForPeriod, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
+import { insertProductSales, deleteProductSalesForPeriod, computeDeleteScope, fetchImportBatches, sourceLabel, type ImportBatch } from '@/lib/sales-db';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -337,6 +338,7 @@ function PreviewCard({
 
 export default function SalesUpload() {
   const { isAdmin, user } = useAuth();
+  const { tenantId } = useTenant();
   const userEmail = user?.email ?? 'unbekannt';
 
   // Datei-Zustand
@@ -363,9 +365,9 @@ export default function SalesUpload() {
 
   const loadBatches = useCallback(async () => {
     setBatchLoading(true);
-    setBatches(await fetchImportBatches());
+    setBatches(await fetchImportBatches(tenantId));
     setBatchLoading(false);
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => { loadBatches(); }, [loadBatches]);
 
@@ -449,22 +451,14 @@ export default function SalesUpload() {
     if (allRows.length === 0) return;
     setStep('importing');
 
-    // ── Schritt A: Bestehende Daten für dieselben source+Monate löschen ──────
-    // Verhindert Duplikate bei Re-Import (naives Insert würde anhängen).
-    // Gruppenbildung: { source → Set<'YYYY-MM'> }
-    const sourceMonthMap = new Map<string, Set<string>>();
-    for (const row of allRows) {
-      const src = row.source ?? 'food_csv_export';
-      if (!sourceMonthMap.has(src)) sourceMonthMap.set(src, new Set());
-      sourceMonthMap.get(src)!.add(row.sale_date.slice(0, 7));
-    }
-    const deletions = Array.from(sourceMonthMap.entries()).map(([src, months]) => ({
-      source: src,
-      months: Array.from(months),
-    }));
+    // ── Schritt A: Bestehende Daten TAG-GENAU ersetzen ──────────────────────
+    // Nur die tatsächlich in der Datei enthaltenen Tage (pro Mandant + source)
+    // werden gelöscht; Tage/Produkte ausserhalb der Datei bleiben unverändert.
+    // Re-Import derselben Datei ⇒ identische Summen (idempotent).
+    const scope = computeDeleteScope(allRows);
 
-    console.log('[SalesUpload] Delete-before-insert:', deletions);
-    const { deleted, error: delErr } = await deleteProductSalesForPeriod(deletions);
+    console.log('[SalesUpload] Delete-before-insert (tag-genau, tenant=' + tenantId + '):', scope);
+    const { deleted, error: delErr } = await deleteProductSalesForPeriod(tenantId, scope);
     if (delErr) {
       setParseError(`Fehler beim Löschen alter Daten: ${delErr}`);
       setStep('error');
@@ -473,8 +467,8 @@ export default function SalesUpload() {
     setDeletedCount(deleted);
     console.log(`[SalesUpload] ${deleted} alte Zeilen gelöscht vor Re-Import`);
 
-    // ── Schritt B: Neue Daten einfügen ────────────────────────────────────────
-    const { count, error } = await insertProductSales(allRows);
+    // ── Schritt B: Neue Daten einfügen (mit aktivem Mandant) ──────────────────
+    const { count, error } = await insertProductSales(tenantId, allRows);
     if (error) {
       setParseError(error);
       setStep('error');

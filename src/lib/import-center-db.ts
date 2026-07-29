@@ -65,7 +65,7 @@ export async function loadImportCenterStatuses(
     // Produktumsätze → product_sales import batches (already sorted newest-first)
     (async () => {
       if (!allowedSources.has('product_batches')) return;
-      const batches = await fetchImportBatches();
+      const batches = await fetchImportBatches(restaurantId as any);
       const latest = batches[0]?.imported_at ?? null;
       out.produktumsaetze = deriveStatusFromTimestamp(latest);
     })(),

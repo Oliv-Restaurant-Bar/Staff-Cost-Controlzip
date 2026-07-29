@@ -181,7 +181,7 @@ export default function ProduktAnalyse() {
     setExtError(null);
     try {
       const [data, ext] = await Promise.all([
-        loadProductSalesRows(),
+        loadProductSalesRows(tenantId),
         // Serverseitig auf die Positions-Sektion gefiltert (¼ der Zeilen);
         // der Client-Filter unten bleibt als Sicherheitsnetz bestehen.
         fetchExtendedPositions(tenantId, undefined, undefined, 'positions'),

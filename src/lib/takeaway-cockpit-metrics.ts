@@ -28,6 +28,7 @@
  */
 
 import { supabase } from '@/integrations/supabase/client';
+import type { TenantId } from '@/contexts/TenantContext';
 
 /**
  * Case-SENSITIVE TA-Erkennung mit Wortgrenzen: der eigenständige Token «TA»
@@ -97,12 +98,12 @@ const PAGE = 1000;
 /**
  * Lädt die schlanken Produkt-Verkaufszeilen eines Zeitraums aus `product_sales`
  * (nur product_name + quantity), paginiert gegen den PostgREST-Row-Cap.
- * `product_sales` besitzt KEINE restaurant_id — Mandanten-Trennung erfolgt (wie
- * in `loadProductSalesRows`) nicht DB-seitig. Rückgabe: alle Zeilen ODER `null`
- * bei DB-Fehler (Aufrufer behandelt `null` als «keine Daten»).
+ * Mandanten-getrennt via `.eq('restaurant_id', tenantId)` (Spalte existiert
+ * live). Rückgabe: alle Zeilen ODER `null` bei DB-Fehler (Aufrufer behandelt
+ * `null` als «keine Daten»).
  */
 async function fetchTakeAwayRows(
-  fromIso: string, toIso: string,
+  tenantId: TenantId, fromIso: string, toIso: string,
 ): Promise<TakeAwaySalesRow[] | null> {
   try {
     const all: TakeAwaySalesRow[] = [];
@@ -110,6 +111,7 @@ async function fetchTakeAwayRows(
       const { data, error } = await (supabase as any)
         .from('product_sales')
         .select('product_name, quantity')
+        .eq('restaurant_id', tenantId)
         .not('source', 'is', null)
         .not('import_batch', 'is', null)
         .gte('sale_date', fromIso)
@@ -133,11 +135,12 @@ async function fetchTakeAwayRows(
  * Zukünftige Perioden zählen mit (nicht auf «heute» geklemmt).
  */
 export async function loadTakeAwayGuests(
+  tenantId: TenantId,
   fromIso: string | null,
   toIso: string | null,
 ): Promise<number | null> {
   if (!fromIso || !toIso || fromIso > toIso) return null;
-  const rows = await fetchTakeAwayRows(fromIso, toIso);
+  const rows = await fetchTakeAwayRows(tenantId, fromIso, toIso);
   if (rows === null) return null;
   return aggregateTakeAwayGuests(rows, rows.length > 0);
 }

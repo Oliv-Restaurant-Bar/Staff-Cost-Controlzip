@@ -10,6 +10,7 @@
 
 import { supabase } from '@/integrations/supabase/client';
 import { loadProductCostsFromDB } from '@/lib/produkte-store';
+import type { TenantId } from '@/contexts/TenantContext';
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ const PRODUCT_SALES_COLUMNS = [
   'sale_date',
   'source',
   'import_batch',
+  'restaurant_id',
 ] as const;
 
 type ProductSalesColumn = typeof PRODUCT_SALES_COLUMNS[number];
@@ -88,6 +90,7 @@ export interface ProductSaleInsert {
   sale_date:     string;       // YYYY-MM-DD
   source?:       string;
   import_batch?: string;
+  restaurant_id?: string;      // wird in insertProductSales IMMER auf den aktiven Tenant gesetzt
 }
 
 // ─── Hilfsfunktionen & zentrale Label-Mappings ────────────────────────────────
@@ -148,7 +151,7 @@ export function normalizeProductName(name: string | null | undefined): string {
  * Wirft einen Error wenn die Tabelle nicht gelesen werden kann
  * (z.B. fehlende SELECT-Policy → Code 42501).
  */
-export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
+export async function loadProductSalesRows(tenantId: TenantId): Promise<ProductSalesRow[]> {
   const PAGE_SIZE = 1000;
   const allRows: ProductSalesRow[] = [];
   let from = 0;
@@ -156,11 +159,12 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
 
   while (true) {
     const to = from + PAGE_SIZE - 1;
-    console.log(`[DASHBOARD] fetching page ${page}: rows ${from}–${to}`);
+    console.log(`[DASHBOARD] fetching page ${page}: rows ${from}–${to} (tenant=${tenantId})`);
 
     const { data, error, count } = await (supabase as any)
       .from('product_sales')
       .select('product_name, quantity, revenue, sale_date, source, import_batch', { count: 'exact' })
+      .eq('restaurant_id', tenantId)
       .not('source', 'is', null)
       .not('import_batch', 'is', null)
       .range(from, to);
@@ -194,10 +198,11 @@ export async function loadProductSalesRows(): Promise<ProductSalesRow[]> {
  * um einen informativen KPI im Dashboard anzuzeigen.
  * Schlägt still fehl (gibt 0 zurück) — kein kritischer Pfad.
  */
-export async function loadAltbestandCount(): Promise<number> {
+export async function loadAltbestandCount(tenantId: TenantId): Promise<number> {
   const { count, error } = await (supabase as any)
     .from('product_sales')
     .select('*', { count: 'exact', head: true })
+    .eq('restaurant_id', tenantId)
     .or('source.is.null,import_batch.is.null');
 
   if (error) {
@@ -356,18 +361,18 @@ function aggregateTopProducts(rows: ProductSalesRow[], limit: number): TopProduc
 
 // ─── Öffentliche Wrapper (Rückwärtskompatibilität) ─────────────────────────────
 
-export async function fetchManagementDashboard(): Promise<ManagementDashboard | null> {
-  const rows = await loadProductSalesRows();
+export async function fetchManagementDashboard(tenantId: TenantId): Promise<ManagementDashboard | null> {
+  const rows = await loadProductSalesRows(tenantId);
   return aggregateManagementDashboard(rows);
 }
 
-export async function fetchCategoryKpis(): Promise<CategoryKpi[]> {
-  const rows = await loadProductSalesRows();
+export async function fetchCategoryKpis(tenantId: TenantId): Promise<CategoryKpi[]> {
+  const rows = await loadProductSalesRows(tenantId);
   return aggregateCategoryKpis(rows);
 }
 
-export async function fetchTopProducts(limit = 10): Promise<TopProduct[]> {
-  const rows = await loadProductSalesRows();
+export async function fetchTopProducts(tenantId: TenantId, limit = 10): Promise<TopProduct[]> {
+  const rows = await loadProductSalesRows(tenantId);
   return aggregateTopProducts(rows, limit);
 }
 
@@ -389,7 +394,7 @@ function parseBatchTimestamp(batchId: string): string {
 /** Import-Historie – aggregiert direkt aus product_sales.
  *  Kein separates sales_import_batches-View nötig.
  */
-export async function fetchImportBatches(): Promise<ImportBatch[]> {
+export async function fetchImportBatches(tenantId: TenantId): Promise<ImportBatch[]> {
   try {
     // Paginiert laden — Supabase gibt max. 1000 Zeilen pro Request zurück.
     const PAGE_SIZE = 1000;
@@ -400,6 +405,7 @@ export async function fetchImportBatches(): Promise<ImportBatch[]> {
       const { data, error } = await (supabase as any)
         .from('product_sales')
         .select('import_batch, source, sale_date, quantity, revenue')
+        .eq('restaurant_id', tenantId)
         .range(from, from + PAGE_SIZE - 1);
 
       if (error) {
@@ -487,8 +493,9 @@ function sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
     revenue:       row.revenue,
     sale_date:     row.sale_date,
   };
-  if (row.source      !== undefined) out.source      = row.source;
-  if (row.import_batch !== undefined) out.import_batch = row.import_batch;
+  if (row.source        !== undefined) out.source        = row.source;
+  if (row.import_batch  !== undefined) out.import_batch  = row.import_batch;
+  if (row.restaurant_id !== undefined) out.restaurant_id = row.restaurant_id;
   return out;
 }
 
@@ -532,12 +539,13 @@ export interface ResetMonthResult {
  * @param deletedBy  E-Mail-Adresse des eingeloggten Admins (für Audit-Log)
  */
 export async function resetProductSalesMonth(params: {
+  tenantId:  TenantId;
   year:      number;
   month:     number;
   sources:   string[];
   deletedBy: string;
 }): Promise<ResetMonthResult> {
-  const { year, month, sources, deletedBy } = params;
+  const { tenantId, year, month, sources, deletedBy } = params;
 
   const fromDate = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDay  = new Date(year, month, 0).getDate();
@@ -551,6 +559,7 @@ export async function resetProductSalesMonth(params: {
     const { error, count } = await (supabase as any)
       .from('product_sales')
       .delete({ count: 'exact' })
+      .eq('restaurant_id', tenantId)
       .eq('source', source)
       .gte('sale_date', fromDate)
       .lte('sale_date', toDate);
@@ -592,38 +601,81 @@ export async function resetProductSalesMonth(params: {
 
 // ─── Delete-before-Insert ─────────────────────────────────────────────────────
 
+/** Eine zu importierende Zeile, reduziert auf die für das Löschen relevanten Felder. */
+export interface DeleteScopeInputRow {
+  source?: string | null;
+  sale_date: string; // YYYY-MM-DD
+}
+
+/** Lösch-Scope-Eintrag: pro (source) die EXAKTE Menge der betroffenen Tage. */
+export interface DeleteScopeEntry {
+  source: string;
+  /** Aufsteigend sortierte, deduplizierte Liste der Tage (YYYY-MM-DD). */
+  dates: string[];
+}
+
 /**
- * Löscht bestehende Zeilen aus product_sales für eine Kombination aus
- * source + Monate (YYYY-MM), bevor neue Daten importiert werden.
+ * Reine Funktion: berechnet den TAG-GENAUEN Lösch-Scope aus den geparsten
+ * Import-Zeilen. Gruppiert nach `source`, sammelt je Quelle die EXAKT in der
+ * Datei enthaltenen Kalendertage (dedupliziert, sortiert). Fehlende/leere
+ * `source` fällt auf 'food_csv_export' zurück (Bestandsverhalten des Uploads).
  *
- * Verhindert Duplikate bei Re-Imports: ohne diesen Schritt werden neue
- * Zeilen schlicht angehängt — dieselben Produkte erscheinen mehrfach.
+ * Damit wird beim Re-Import NUR ersetzt, was die Datei tatsächlich enthält —
+ * Tage/Produkte ausserhalb der Datei bleiben unberührt. Idempotent: zweimal
+ * dieselbe Datei ⇒ derselbe Scope ⇒ identische Summen nach Delete+Insert.
  *
- * @param deletions  Array von { source, months } — z.B.
- *                   [{ source: 'food_csv_export', months: ['2026-01', '2026-02'] }]
+ * @param rows          geparste Import-Zeilen (source + sale_date)
+ * @param defaultSource Fallback-source, wenn `row.source` fehlt (Default 'food_csv_export')
+ */
+export function computeDeleteScope(
+  rows: DeleteScopeInputRow[],
+  defaultSource = 'food_csv_export',
+): DeleteScopeEntry[] {
+  const bySource = new Map<string, Set<string>>();
+  for (const row of rows) {
+    if (!row?.sale_date) continue;
+    const src = row.source ?? defaultSource;
+    if (!bySource.has(src)) bySource.set(src, new Set());
+    bySource.get(src)!.add(row.sale_date);
+  }
+  return Array.from(bySource.entries()).map(([source, dates]) => ({
+    source,
+    dates: Array.from(dates).sort(),
+  }));
+}
+
+/**
+ * Löscht bestehende Zeilen aus product_sales TAG-GENAU pro
+ * (restaurant_id, source, sale_date), bevor neue Daten importiert werden.
+ *
+ * Anders als die frühere Monats-Löschung: es werden AUSSCHLIESSLICH die Tage
+ * gelöscht, die in der Import-Datei tatsächlich vorkommen. Tage/Produkte
+ * ausserhalb der Datei bleiben unverändert; Re-Import derselben Datei ist
+ * idempotent (identische Summen). Die Löschung ist zudem mandanten-isoliert
+ * (.eq('restaurant_id', tenantId)).
+ *
+ * @param tenantId   aktiver Mandant ('oliv' | 'beaulieu')
+ * @param scope      Lösch-Scope aus computeDeleteScope (source + exakte Tage)
  * @returns          Gesamtzahl der gelöschten Zeilen, oder Fehlermeldung
  */
 export async function deleteProductSalesForPeriod(
-  deletions: Array<{ source: string; months: string[] }>,
+  tenantId: TenantId,
+  scope: DeleteScopeEntry[],
 ): Promise<{ deleted: number; error: string | null }> {
+  const CHUNK = 200; // .in()-Liste in Chunks halten (URL-/Payload-Grenzen)
   let totalDeleted = 0;
 
-  for (const { source, months } of deletions) {
-    for (const month of months) {
-      // Monats-Range: 'YYYY-MM-01' bis 'YYYY-MM-NN' (letzter Tag)
-      const [y, m] = month.split('-').map(Number);
-      const fromDate = `${month}-01`;
-      const lastDay  = new Date(y, m, 0).getDate();
-      const toDate   = `${month}-${String(lastDay).padStart(2, '0')}`;
-
-      console.log(`[sales-db] DELETE product_sales WHERE source='${source}' AND sale_date BETWEEN '${fromDate}' AND '${toDate}'`);
+  for (const { source, dates } of scope) {
+    for (let i = 0; i < dates.length; i += CHUNK) {
+      const chunk = dates.slice(i, i + CHUNK);
+      console.log(`[sales-db] DELETE product_sales WHERE restaurant_id='${tenantId}' AND source='${source}' AND sale_date IN (${chunk.length} Tage)`);
 
       const { error, count } = await (supabase as any)
         .from('product_sales')
         .delete({ count: 'exact' })
+        .eq('restaurant_id', tenantId)
         .eq('source', source)
-        .gte('sale_date', fromDate)
-        .lte('sale_date', toDate);
+        .in('sale_date', chunk);
 
       if (error) {
         console.error('[sales-db] deleteProductSalesForPeriod Fehler:', error);
@@ -632,11 +684,11 @@ export async function deleteProductSalesForPeriod(
 
       const n = count ?? 0;
       totalDeleted += n;
-      console.log(`[sales-db] Gelöscht: ${n} Zeilen für ${source} ${month}`);
+      console.log(`[sales-db] Gelöscht: ${n} Zeilen für ${source} (${chunk.length} Tage)`);
     }
   }
 
-  console.log(`[sales-db] deleteProductSalesForPeriod: ${totalDeleted} Zeilen total gelöscht`);
+  console.log(`[sales-db] deleteProductSalesForPeriod (tag-genau): ${totalDeleted} Zeilen total gelöscht`);
   return { deleted: totalDeleted, error: null };
 }
 
@@ -644,11 +696,17 @@ export async function deleteProductSalesForPeriod(
 
 /** Verkaufsdaten in product_sales einfügen */
 export async function insertProductSales(
+  tenantId: TenantId,
   rows: ProductSaleInsert[],
 ): Promise<{ count: number; error: string | null }> {
   // Cast to generic map so we can inspect/strip fields at runtime regardless of
   // what the TypeScript type says (callers may pass a superset interface).
-  const rawRows = rows as Array<Record<string, unknown>>;
+  // Mandant IMMER auf den aktiven Tenant setzen (überschreibt evtl. mitgelieferte
+  // restaurant_id-Werte) — konsistente Mandanten-Trennung beim Import.
+  const rawRows = (rows as unknown as Array<Record<string, unknown>>).map(r => ({
+    ...r,
+    restaurant_id: tenantId,
+  }));
 
   // ── 0. Auth diagnostics ───────────────────────────────────────────────────
   // Run BEFORE the insert to see if the client is authenticated or anon.

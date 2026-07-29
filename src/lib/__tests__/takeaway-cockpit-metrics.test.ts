@@ -16,16 +16,47 @@
  * TA-Fixtures gemäss Spec synthetisch aufgebaut (17 TA-Namen + Negativliste,
  * Tagessumme 28.07. = 101).
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Query-aufzeichnender Supabase-Stub: jede Builder-Methode gibt den Builder
+// zurück und protokolliert ihre Argumente, damit wir prüfen können, dass
+// loadTakeAwayGuests nach restaurant_id filtert. `select` liefert am Ende die
+// gemockten Zeilen (via __setRows) bzw. einen Fehler (via __setError).
+const eqCalls: Array<[string, unknown]> = [];
+let mockRows: any[] = [];
+let mockError: unknown = null;
+
+function makeBuilder() {
+  const builder: any = {};
+  const chain = (name: string) => (...args: any[]) => {
+    if (name === 'eq') eqCalls.push([args[0], args[1]]);
+    return builder;
+  };
+  builder.select = chain('select');
+  builder.eq = chain('eq');
+  builder.not = chain('not');
+  builder.gte = chain('gte');
+  builder.lte = chain('lte');
+  // .range(...) beendet die Kette und liefert das Ergebnis.
+  builder.range = (..._args: any[]) => Promise.resolve({ data: mockError ? null : mockRows, error: mockError });
+  return builder;
+}
 
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: () => ({}) },
+  supabase: { from: () => makeBuilder() },
 }));
 
 import {
   isTakeAwayProduct, aggregateTakeAwayGuests, mergeTakeAwayDays,
+  loadTakeAwayGuests,
   type TakeAwaySalesRow,
 } from '@/lib/takeaway-cockpit-metrics';
+
+beforeEach(() => {
+  eqCalls.length = 0;
+  mockRows = [];
+  mockError = null;
+});
 
 // 17 echte TA-Produktnamen (Kontroll-Referenz «exakt 17 TA-Produkte»).
 const TA_NAMES = [
@@ -190,5 +221,32 @@ describe('Tag-Merge: erneuter Import ersetzt NUR enthaltene Tage', () => {
     const merged = mergeTakeAwayDays(existing, incoming);
     expect(merged.length).toBe(2);
     expect(aggregateTakeAwayGuests(merged, true)).toBe(16);
+  });
+});
+
+describe('loadTakeAwayGuests — Mandanten-Filter in der Query', () => {
+  it('filtert nach restaurant_id = aktivem Tenant', async () => {
+    mockRows = [{ product_name: 'Pizza TA', quantity: 7 }];
+    const result = await loadTakeAwayGuests('beaulieu', '2026-07-01', '2026-07-31');
+    expect(result).toBe(7);
+    // .eq('restaurant_id', 'beaulieu') MUSS aufgerufen worden sein.
+    expect(eqCalls).toContainEqual(['restaurant_id', 'beaulieu']);
+  });
+
+  it('übergibt den korrekten Tenant (oliv) an den Filter', async () => {
+    mockRows = [{ product_name: 'Pasta TA', quantity: 3 }];
+    await loadTakeAwayGuests('oliv', '2026-07-01', '2026-07-31');
+    expect(eqCalls).toContainEqual(['restaurant_id', 'oliv']);
+  });
+
+  it('leerer/ungültiger Zeitraum → null, keine Query', async () => {
+    expect(await loadTakeAwayGuests('oliv', null, '2026-07-31')).toBeNull();
+    expect(await loadTakeAwayGuests('oliv', '2026-07-31', '2026-07-01')).toBeNull();
+    expect(eqCalls.length).toBe(0);
+  });
+
+  it('DB-Fehler → null', async () => {
+    mockError = { message: 'boom' };
+    expect(await loadTakeAwayGuests('oliv', '2026-07-01', '2026-07-31')).toBeNull();
   });
 });

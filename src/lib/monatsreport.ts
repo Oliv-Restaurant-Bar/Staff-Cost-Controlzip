@@ -758,8 +758,8 @@ export async function ladeMonatsreport(
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte, GANZER
     // Monat bzw. gewählte Woche (ungeklemmt, future-capable). Kein trivialer
     // Vorjahreswert → VJ-Spalten bleiben «—».
-    taOffered ? loadTakeAwayGuests(fromIso, toIso).catch(() => null) : Promise.resolve(null),
-    taOffered ? loadTakeAwayGuests(resWeekFrom, resWeekTo).catch(() => null) : Promise.resolve(null),
+    taOffered ? loadTakeAwayGuests(tenantId, fromIso, toIso).catch(() => null) : Promise.resolve(null),
+    taOffered ? loadTakeAwayGuests(tenantId, resWeekFrom, resWeekTo).catch(() => null) : Promise.resolve(null),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
