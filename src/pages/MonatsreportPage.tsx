@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, ArrowUp, ArrowDown, ListOrdered, RotateCcw, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -20,13 +20,14 @@ import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import {
-  ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel,
+  ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel, applyRowOrder,
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
   type WochenverlaufRow, type JahresvergleichDaten, type VergleichsModus,
 } from '@/lib/monatsreport';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 import { exportCockpitPanelPDF, naechsterFrame } from '@/lib/cockpit-pdf-export';
 import { useToast } from '@/hooks/use-toast';
+import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
 
 /** Metadaten fürs PDF (Titel/Zeitraum/Dateiname/Fussnote), von jedem Tab gemeldet. */
 export interface CockpitPdfMeta {
@@ -35,6 +36,11 @@ export interface CockpitPdfMeta {
   fileName: string;
   footnote?: string;
 }
+
+/** Die vier Cockpit-Zeitebenen (gross → klein). */
+type CockpitTab = 'jahr' | 'monat' | 'woche' | 'verlauf';
+const isCockpitTab = (v: string): v is CockpitTab =>
+  v === 'jahr' || v === 'monat' || v === 'woche' || v === 'verlauf';
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -111,6 +117,151 @@ function fmtDev(v: number | null): string {
 
 const fmtDate = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
 
+/** Granularität der Report-Tabelle. */
+type ReportGranularity = 'monat' | 'woche';
+
+/**
+ * DIESELBE Report-Tabelle für Monats- UND Wochensicht — nur andere Granularität.
+ * Zieht je Granularität die passenden Felder aus derselben `MrRow`:
+ *  - woche:  Budget = weekBudget, Vorjahr = vj (Woche), Ist = week
+ *  - monat:  Budget = monthBudget, Vorjahr = vjMonth,    Ist = month
+ * Δ% = (Ist − Budget) / Budget × 100 (identische Basis wie die Budget-Spalte).
+ * Kosten-Δ-Invertierung (deltaInverted) und warnAbove-Rot gelten in beiden Sichten.
+ */
+function ReportTable({
+  rows, granularity, budgetSub, vjSub, istHeader, istSub, testid,
+  editMode = false, onMove,
+}: {
+  rows: MrRow[];
+  granularity: ReportGranularity;
+  budgetSub?: string | null;
+  vjSub?: string | null;
+  istHeader: string;
+  istSub?: string | null;
+  testid: string;
+  /** Bearbeiten-Modus: Auf/Ab-Pfeile je Datenzeile. */
+  editMode?: boolean;
+  /** Verschiebt die Zeile `id` um `dir` (-1 hoch, +1 runter). */
+  onMove?: (id: string, dir: -1 | 1) => void;
+}) {
+  const pick = (row: MrRow) => granularity === 'monat'
+    ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget }
+    : { budget: row.budget, vj: row.vj, ist: row.week, devBudget: row.weekBudget };
+  // Im Bearbeiten-Modus nur Datenzeilen (Trenner ausblenden → eindeutige Pfeile).
+  const shown = editMode ? rows.filter(r => r.type === 'data') : rows;
+  const dataCount = shown.filter(r => r.type === 'data').length;
+  let dataIdx = -1;
+  return (
+    <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
+      <table className="w-full text-sm" data-testid={testid}>
+        <thead>
+          <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+            {editMode ? <th className="px-2 py-2 w-16" /> : null}
+            <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
+            <th className="px-3 py-2 text-right font-semibold">
+              Budget
+              {budgetSub ? <span className="block normal-case font-normal">{budgetSub}</span> : null}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              Vorjahr
+              {vjSub ? <span className="block normal-case font-normal">{vjSub}</span> : null}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">
+              {istHeader}
+              {istSub ? <span className="block normal-case font-normal">{istSub}</span> : null}
+            </th>
+            <th className="px-3 py-2 text-right font-semibold">Δ %</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((row, i) => {
+            if (row.type === 'empty') {
+              return <tr key={`e${i}`}><td colSpan={editMode ? 6 : 5} className="h-3 bg-muted/20" /></tr>;
+            }
+            dataIdx++;
+            const isFirst = dataIdx === 0;
+            const isLast = dataIdx === dataCount - 1;
+            const p = pick(row);
+            const dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
+              ? ((p.ist - p.devBudget) / p.devBudget) * 100 : null;
+            // Kosten-Zeilen (deltaInverted): über Budget = rot (Vorzeichen umgekehrt).
+            const devClass = dev === null ? undefined
+              : (row.deltaInverted ? dev <= 0 : dev >= 0) ? 'text-emerald-600' : 'text-red-600';
+            // Schwellen-Rot (warnAbove, z.B. PKQ > 40 %) für den Ist-Wert.
+            const warnClass = row.warnAbove != null && p.ist !== null && p.ist > row.warnAbove
+              ? 'text-red-600 font-semibold' : undefined;
+            return (
+              <tr key={row.id ?? `d${i}`} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')} data-testid={`row-${row.id ?? i}`}>
+                {editMode ? (
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-0.5">
+                      <Button
+                        variant="ghost" size="icon" className="h-6 w-6"
+                        disabled={isFirst || !row.id}
+                        onClick={() => row.id && onMove?.(row.id, -1)}
+                        data-testid={`button-move-up-${row.id}`}
+                        aria-label="nach oben"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost" size="icon" className="h-6 w-6"
+                        disabled={isLast || !row.id}
+                        onClick={() => row.id && onMove?.(row.id, 1)}
+                        data-testid={`button-move-down-${row.id}`}
+                        aria-label="nach unten"
+                      >
+                        <ArrowDown className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </td>
+                ) : null}
+                <td className="px-3 py-1.5">{row.label}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt)}</td>
+                <td className={cn('px-3 py-1.5 text-right tabular-nums', warnClass)}>{fmtCell(p.ist, row.fmt)}</td>
+                <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>{fmtDev(dev)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** «Zeilen anordnen»-Umschalter + «Standard wiederherstellen» (Bearbeiten-Modus). */
+function RowOrderControls({
+  editMode, onToggle, onReset, disabled,
+}: {
+  editMode: boolean;
+  onToggle: () => void;
+  onReset: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-2 ml-2">
+      {editMode ? (
+        <Button
+          variant="ghost" size="sm" className="h-8 gap-1.5 text-muted-foreground"
+          onClick={onReset} disabled={disabled}
+          data-testid="button-reset-order"
+        >
+          <RotateCcw className="h-4 w-4" /> Standard
+        </Button>
+      ) : null}
+      <Button
+        variant={editMode ? 'default' : 'outline'} size="sm" className="h-8 gap-1.5"
+        onClick={onToggle} disabled={disabled}
+        data-testid="button-toggle-order"
+      >
+        {editMode ? <Check className="h-4 w-4" /> : <ListOrdered className="h-4 w-4" />}
+        {editMode ? 'Fertig' : 'Zeilen anordnen'}
+      </Button>
+    </div>
+  );
+}
+
 export default function MonatsreportPage() {
   const heute = useMemo(() => new Date(), []);
   const { tenantId, tenantKey } = useTenant();
@@ -118,13 +269,17 @@ export default function MonatsreportPage() {
   const { toast } = useToast();
 
   // Aktiver Tab (kontrolliert), damit der PDF-Button die richtige Ansicht erfasst.
-  const [activeTab, setActiveTab] = useState<'monat' | 'wochen' | 'jahr'>('monat');
-  // Refs auf die drei Tab-Panels (das wird jeweils gecaptured).
-  const monatPanelRef = useRef<HTMLDivElement>(null);
-  const wochenPanelRef = useRef<HTMLDivElement>(null);
+  // Reihenfolge gross → klein: Jahr · Monat · Woche · Verlauf.
+  const [activeTab, setActiveTab] = useState<CockpitTab>('monat');
+  // Unbekannte/alte Tab-Werte (z.B. gespeicherte Deep-Links) → Default «monat».
+  const onTabChange = (v: string) => setActiveTab(isCockpitTab(v) ? v : 'monat');
+  // Refs auf die vier Tab-Panels (das wird jeweils gecaptured).
   const jahrPanelRef = useRef<HTMLDivElement>(null);
-  // PDF-Metadaten je Tab; Wochenverlauf/Jahresvergleich melden sie via Callback.
-  const [wochenMeta, setWochenMeta] = useState<CockpitPdfMeta | null>(null);
+  const monatPanelRef = useRef<HTMLDivElement>(null);
+  const wochePanelRef = useRef<HTMLDivElement>(null);
+  const verlaufPanelRef = useRef<HTMLDivElement>(null);
+  // PDF-Metadaten je Tab; Wochenverlauf/Jahresübersicht melden sie via Callback.
+  const [verlaufMeta, setVerlaufMeta] = useState<CockpitPdfMeta | null>(null);
   const [jahrMeta, setJahrMeta] = useState<CockpitPdfMeta | null>(null);
   const [pdfLaeuft, setPdfLaeuft] = useState(false);
 
@@ -137,6 +292,30 @@ export default function MonatsreportPage() {
 
   const weekSelection = useMemo<WeekSelection>(() => parseWeekValue(weekValue), [weekValue]);
   const kwOptions = useMemo(() => isoWeeksOfMonth(year, month), [year, month]);
+
+  // Benutzerdefinierte Zeilen-Reihenfolge (EINE für Monat + Woche, pro Tenant).
+  const { savedIds, saveOrder, resetOrder } = useCockpitRowOrder();
+  const [editRows, setEditRows] = useState(false);
+  // Effektive (sortierte) Zeilen — Basis für Anzeige UND Export.
+  const orderedRows = useMemo(
+    () => (daten ? applyRowOrder(daten.rows, savedIds) : []),
+    [daten, savedIds],
+  );
+  // Aktuelle Datenzeilen-IDs in effektiver Reihenfolge (Basis fürs Umsortieren).
+  const currentIds = useMemo(
+    () => orderedRows.filter(r => r.type === 'data' && r.id).map(r => r.id as string),
+    [orderedRows],
+  );
+  // Zeile verschieben: Reihenfolge neu berechnen und persistieren.
+  const moveRow = useCallback((id: string, dir: -1 | 1) => {
+    const idx = currentIds.indexOf(id);
+    if (idx < 0) return;
+    const to = idx + dir;
+    if (to < 0 || to >= currentIds.length) return;
+    const next = [...currentIds];
+    [next[idx], next[to]] = [next[to], next[idx]];
+    saveOrder(next);
+  }, [currentIds, saveOrder]);
 
   useEffect(() => {
     if (ratesLoading || !rates) return;
@@ -176,17 +355,32 @@ export default function MonatsreportPage() {
       el = monatPanelRef.current;
       meta = {
         title: 'Monatsübersicht',
-        subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
+        subtitle: `${MONATE[month - 1]} ${year}`,
         fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
-        footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget (Woche) = Budget-Wochenanteil dieses Zeitraums · '
-          + 'Vorjahr (Woche) = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Monat = Ist bis heute · '
-          + 'Δ% Woche = Woche-Ist vs. Budget-Woche, Δ% Monat = Monat-Ist vs. Monats-Budget · Verhältnis-Kennzahlen (Durchschnittsverkauf, '
-          + 'Take-Away-Anteil, Umsatz pro Gast, Produktivität) als Quote über die Woche, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste '
-          + 'nur über Tage mit beiden Quellen · leere Felder = keine Datenquelle vorhanden (nie 0). Jahreswerte im Tab «Jahresvergleich».',
+        footnote: 'Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) · Ist (Monat) = Ist bis heute · '
+          + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) '
+          + 'als Quote über den Monat, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
+          + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
+          + 'PKQ = Hochrechnung ÷ Hochrechnung, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».',
       };
-    } else if (activeTab === 'wochen') {
-      el = wochenPanelRef.current;
-      meta = wochenMeta;
+    } else if (activeTab === 'woche') {
+      el = wochePanelRef.current;
+      meta = {
+        title: 'Wochenübersicht',
+        subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
+        fileName: `cockpit-wochenuebersicht-${year}-${String(month).padStart(2, '0')}`,
+        footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget = Budget-Wochenanteil dieses Zeitraums · '
+          + 'Vorjahr = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · '
+          + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, '
+          + 'Produktivität) als Quote über die Woche, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
+          + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
+          + 'PKQ = Ist ÷ Ist, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».',
+      };
+    } else if (activeTab === 'verlauf') {
+      el = verlaufPanelRef.current;
+      meta = verlaufMeta;
     } else {
       el = jahrPanelRef.current;
       meta = jahrMeta;
@@ -208,7 +402,7 @@ export default function MonatsreportPage() {
     } finally {
       setPdfLaeuft(false);
     }
-  }, [activeTab, month, year, daten, wocheRange, wochenMeta, jahrMeta, heute, toast]);
+  }, [activeTab, month, year, daten, wocheRange, verlaufMeta, jahrMeta, heute, toast]);
 
   return (
     <PageShell>
@@ -217,19 +411,20 @@ export default function MonatsreportPage() {
         <div className="flex items-center gap-3">
           <CalendarDays className="h-6 w-6 text-muted-foreground" />
           <div>
-            <h1 className="text-xl font-bold tracking-tight">Monatsreport</h1>
+            <h1 className="text-xl font-bold tracking-tight">Cockpit</h1>
             <p className="text-xs text-muted-foreground">
               Meeting-Cockpit — automatisch gefüllte Kennzahlen, fehlende Quellen bleiben leer
             </p>
           </div>
         </div>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+        <Tabs value={activeTab} onValueChange={onTabChange}>
           <div className="flex items-center justify-between gap-2">
             <TabsList data-testid="tabs-cockpit">
+              <TabsTrigger value="jahr" data-testid="tab-jahr">Jahresübersicht</TabsTrigger>
               <TabsTrigger value="monat" data-testid="tab-monat">Monatsübersicht</TabsTrigger>
-              <TabsTrigger value="wochen" data-testid="tab-wochen">Wochenverlauf</TabsTrigger>
-              <TabsTrigger value="jahr" data-testid="tab-jahr">Jahresvergleich</TabsTrigger>
+              <TabsTrigger value="woche" data-testid="tab-woche">Wochenübersicht</TabsTrigger>
+              <TabsTrigger value="verlauf" data-testid="tab-verlauf">Wochenverlauf</TabsTrigger>
             </TabsList>
             <Button
               variant="outline" size="sm" className="h-8 gap-1.5"
@@ -244,13 +439,16 @@ export default function MonatsreportPage() {
             </Button>
           </div>
 
-          {/* ── Monatsübersicht (unverändert) ── */}
+          {/* ── 1) Jahresübersicht (YTD) ── */}
+          <TabsContent value="jahr" className="space-y-4" ref={jahrPanelRef}>
+            <JahresvergleichView onPdfMeta={setJahrMeta} />
+          </TabsContent>
+
+          {/* ── 2) Monatsübersicht — dieselbe Report-Tabelle, Granularität «monat» ── */}
           <TabsContent value="monat" className="space-y-4" ref={monatPanelRef}>
             {/* Capture-only: schlichte Zeitraum-Zeile anstelle der Controls (nur im PDF sichtbar) */}
             <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-monat">
               {MONATE[month - 1]} {year}
-              {daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}
-              {wocheRange ? ` ${wocheRange}` : ''}
             </div>
             <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month">
@@ -260,6 +458,73 @@ export default function MonatsreportPage() {
                 {MONATE[month - 1]} {year}
               </span>
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <RowOrderControls
+                editMode={editRows}
+                onToggle={() => setEditRows(v => !v)}
+                onReset={() => { resetOrder(); }}
+                disabled={!daten || loading}
+              />
+              <Button
+                size="sm" className="gap-1.5 ml-2"
+                disabled={!daten || loading}
+                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'monat')}
+                data-testid="button-export-excel-monat"
+              >
+                <FileSpreadsheet className="h-4 w-4" /> Export Excel
+              </Button>
+            </div>
+
+            {fehler && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                Fehler beim Laden: {fehler}
+              </div>
+            )}
+            {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
+            {!loading && daten && (
+              <ReportTable
+                rows={orderedRows}
+                granularity="monat"
+                budgetSub="Monatsbudget"
+                vjSub={`${MONATE[month - 1]} ${year - 1}`}
+                istHeader="Ist (Monat)"
+                istSub="bis heute"
+                testid="table-monatsuebersicht"
+                editMode={editRows}
+                onMove={moveRow}
+              />
+            )}
+
+            <p className="pdf-footnote text-xs text-muted-foreground">
+              Budget = Monatsbudget · Vorjahr = gleicher Monat im Vorjahr (aus Tages-Vorjahresdaten) ·
+              Ist (Monat) = Ist bis heute · Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen
+              (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) werden als Quote
+              über den Monat gebildet, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit
+              beiden Quellen · Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote ×
+              Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, rot über
+              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · leere Felder = keine
+              Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht», Jahreswerte im Tab
+              «Jahresübersicht».
+            </p>
+          </TabsContent>
+
+          {/* ── 3) Wochenübersicht — dieselbe Report-Tabelle, Granularität «woche» ── */}
+          <TabsContent value="woche" className="space-y-4" ref={wochePanelRef}>
+            {/* Capture-only: schlichte Zeitraum-Zeile anstelle der Controls (nur im PDF sichtbar) */}
+            <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-woche">
+              {MONATE[month - 1]} {year}
+              {daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}
+              {wocheRange ? ` ${wocheRange}` : ''}
+            </div>
+            <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month-woche">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="min-w-[130px] text-center text-sm font-semibold" data-testid="text-month-label-woche">
+                {MONATE[month - 1]} {year}
+              </span>
+              <Button variant="outline" size="icon" className="h-8 w-8" onClick={next} data-testid="button-next-month-woche">
                 <ChevronRight className="h-4 w-4" />
               </Button>
               <Select value={weekValue} onValueChange={setWeekValue}>
@@ -275,10 +540,16 @@ export default function MonatsreportPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <RowOrderControls
+                editMode={editRows}
+                onToggle={() => setEditRows(v => !v)}
+                onReset={() => { resetOrder(); }}
+                disabled={!daten || loading}
+              />
               <Button
                 size="sm" className="gap-1.5 ml-2"
                 disabled={!daten || loading}
-                onClick={() => daten && exportMonatsreportXlsx(daten.rows, year, month)}
+                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'woche')}
                 data-testid="button-export-excel"
               >
                 <FileSpreadsheet className="h-4 w-4" /> Export Excel
@@ -290,82 +561,38 @@ export default function MonatsreportPage() {
                 Fehler beim Laden: {fehler}
               </div>
             )}
-
             {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
-
             {!loading && daten && (
-              <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
-                <table className="w-full text-sm" data-testid="table-monatsreport">
-                  <thead>
-                    <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
-                      <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
-                      <th className="px-3 py-2 text-right font-semibold">
-                        Budget (Woche)
-                        {budgetWocheSub ? <span className="block normal-case font-normal">{budgetWocheSub}</span> : null}
-                      </th>
-                      <th className="px-3 py-2 text-right font-semibold">
-                        Vorjahr (Woche)
-                        {vjWocheSub ? <span className="block normal-case font-normal">{vjWocheSub}</span> : null}
-                      </th>
-                      <th className="px-3 py-2 text-right font-semibold">
-                        {daten?.weekLabel ?? 'Woche'}
-                        {wocheRange ? <span className="block normal-case font-normal">{wocheRange}</span> : null}
-                      </th>
-                      <th className="px-3 py-2 text-right font-semibold">Δ %</th>
-                      <th className="px-3 py-2 text-right font-semibold">Monat</th>
-                      <th className="px-3 py-2 text-right font-semibold">Δ %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {daten.rows.map((row, i) => {
-                      if (row.type === 'empty') {
-                        return <tr key={i}><td colSpan={7} className="h-3 bg-muted/20" /></tr>;
-                      }
-                      const wDev = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
-                        ? ((row.week - row.weekBudget) / row.weekBudget) * 100 : null;
-                      // Monat-Δ% weiterhin gegen das MONATS-Budget (monthBudget), nicht die Budget-Woche-Spalte.
-                      const mDev = row.month !== null && row.monthBudget !== null && row.monthBudget > 0
-                        ? ((row.month - row.monthBudget) / row.monthBudget) * 100 : null;
-                      return (
-                        <tr key={i} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')}>
-                          <td className="px-3 py-1.5">{row.label}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(row.budget, row.fmt)}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(row.vj, row.fmt)}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(row.week, row.fmt)}</td>
-                          <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
-                            wDev !== null && (wDev >= 0 ? 'text-emerald-600' : 'text-red-600'))}>{fmtDev(wDev)}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(row.month, row.fmt)}</td>
-                          <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs',
-                            mDev !== null && (mDev >= 0 ? 'text-emerald-600' : 'text-red-600'))}>{fmtDev(mDev)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <ReportTable
+                rows={orderedRows}
+                granularity="woche"
+                budgetSub={budgetWocheSub}
+                vjSub={vjWocheSub}
+                istHeader={daten?.weekLabel ?? 'Woche'}
+                istSub={wocheRange}
+                testid="table-wochenuebersicht"
+                editMode={editRows}
+                onMove={moveRow}
+              />
             )}
 
             <p className="pdf-footnote text-xs text-muted-foreground">
               Woche = gewählter Zeitraum ({daten?.weekLabel ?? '—'}
-              {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Budget (Woche) =
-              Budget-Wochenanteil dieses Zeitraums · Vorjahr (Woche) = gleiche Kalenderwoche im Vorjahr
-              (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Monat = Ist bis heute · Δ% Woche = Woche-Ist
-              vs. Budget-Woche, Δ% Monat = Monat-Ist vs. Monats-Budget · Verhältnis-Kennzahlen
-              (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) werden als Quote
-              über die Woche gebildet, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit
-              beiden Quellen · leere Felder = keine Datenquelle vorhanden (nie 0). Jahreswerte im Tab
-              «Jahresvergleich». Warenaufwand, Lieferanten und manuelle Felder folgen später.
+              {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Budget =
+              Budget-Wochenanteil dieses Zeitraums · Vorjahr = gleiche Kalenderwoche im Vorjahr
+              (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Ist = Woche · Δ% = Woche-Ist vs. Budget-Woche ·
+              Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast,
+              Produktivität) werden als Quote über die Woche gebildet, nicht summiert · Umsatz pro Gast =
+              Netto ÷ Gäste nur über Tage mit beiden Quellen · Personalkosten = FIX pro-rata der Wochentage
+              + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · PKQ =
+              Ist ÷ Ist, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) ·
+              leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».
             </p>
           </TabsContent>
 
-          {/* ── Wochenverlauf (neu) ── */}
-          <TabsContent value="wochen" className="space-y-4" ref={wochenPanelRef}>
-            <WochenverlaufView onPdfMeta={setWochenMeta} />
-          </TabsContent>
-
-          {/* ── Jahresvergleich (YTD, neu) ── */}
-          <TabsContent value="jahr" className="space-y-4" ref={jahrPanelRef}>
-            <JahresvergleichView onPdfMeta={setJahrMeta} />
+          {/* ── 4) Wochenverlauf (unverändert) ── */}
+          <TabsContent value="verlauf" className="space-y-4" ref={verlaufPanelRef}>
+            <WochenverlaufView onPdfMeta={setVerlaufMeta} />
           </TabsContent>
         </Tabs>
       </div>

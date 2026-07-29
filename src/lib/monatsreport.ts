@@ -20,7 +20,10 @@ import { supabase } from '@/integrations/supabase/client';
 import { ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit } from '@/lib/umsatz';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
-import { ladeWochentagsGewichte, ladePersonalkostenDaten } from '@/lib/personalkosten';
+import {
+  ladeWochentagsGewichte, ladePersonalkostenDaten,
+  personalkosten, personalquote, fixKosten, flexKostenProTagDetail, budgetZielQuote,
+} from '@/lib/personalkosten';
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -31,6 +34,13 @@ type KeyFn = (key: string) => string;
 const VAT_STD = 1.081;
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const r2 = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * Harte PKQ-Obergrenze in Prozent (separat/fix, NICHT aus ziel_personalquote_v1 —
+ * die Ziel-Quote kommt aus dem Kern via daten.zielQuotePct). Spiegelt die
+ * Konstante der Personalkosten-Seite (PkHeadline: OBERGRENZE_PCT = 40).
+ */
+export const OBERGRENZE_PKQ_PCT = 40;
 
 // ── Wochen-Auswahl ─────────────────────────────────────────────────────────
 
@@ -184,6 +194,93 @@ export function computeVorjahrWocheDays(
     out.push({ ist: iso(d), vj: iso(vjDay) });
   }
   return out;
+}
+
+// ── Personal-Block (Personalkosten + Personalquote) ─────────────────────────
+
+/** Eingaben für den Personal-Block — alles aus dem Kern src/lib/personalkosten.ts. */
+export interface PersonalBlockInput {
+  /** FLEX-Ist je Tag ('YYYY-MM-DD' → istKosten), NUR vergangene Ist-Tage > 0 (Kern: flexKostenProTagDetail). */
+  flexIstProTag: Record<string, number>;
+  /** Set der Tage, die als Ist-Tag (vergangen) gelten (istTag=true im Kern). */
+  istTagSet: Set<string>;
+  /** FIX-Kosten des ganzen Monats (Kern: fixKosten().totalMonat). */
+  fixMonat: number;
+  /** Tage im Monat (für FIX pro-rata). */
+  daysInMonth: number;
+  /** Tage der gewählten Woche im Monat (geklemmt), aufsteigend. */
+  wocheTage: string[];
+  /** Netto-Umsatz-Budget der gewählten Woche (gleiche Quelle wie Umsatz-Zeilen). */
+  wBudgetNet: number | null;
+  /** Netto-Umsatz-Ist der gewählten Woche. */
+  wNetIst: number | null;
+  /** Ziel-Personalquote als BRUCH (Kern: budgetZielQuote, z.B. 0.355). */
+  zielQuote: number;
+  /** Personalkosten-Hochrechnung des Monats (Kern: personalkosten(hochrechnung)). */
+  hrKostenMonat: number | null;
+  /** Umsatz-Budget des Monats (für PK-Budget-Monat = Zielquote × Umsatz-Budget). */
+  umsatzBudgetMonat: number | null;
+  /** PKQ Hochrechnung des Monats (Kern: personalquote().pkqHochrechnung, Bruch). */
+  pkqHrMonat: number | null;
+}
+
+export interface PersonalBlockErgebnis {
+  /** PK-Ist der Woche (FIX pro-rata Wochentage + FLEX-Ist der Woche), null = keine Woche. */
+  pkIstWoche: number | null;
+  /** PK-Budget der Woche = Zielquote × Netto-Umsatz-Budget-Woche, null = keine Quelle. */
+  pkBudgetWoche: number | null;
+  /** PK-Budget des Monats = Zielquote × Umsatz-Budget-Monat, null = keine Quelle. */
+  pkBudgetMonat: number | null;
+  /** PK-Hochrechnung Monat (durchgereicht). */
+  pkHrMonat: number | null;
+  /** PKQ Woche = PK-Ist-Woche ÷ Netto-Umsatz-Ist-Woche in %, null = kein Umsatz. */
+  pkqWochePct: number | null;
+  /** PKQ Hochrechnung Monat in %, null = kein Umsatz. */
+  pkqMonatPct: number | null;
+}
+
+/**
+ * Aggregiert den Personal-Block aus den KERN-Werten (keine Parallel-Rechnung):
+ *  - PK-Ist-Woche = FIX pro-rata der Wochentage (fixMonat × |Wochentage| ÷
+ *    daysInMonth) + Σ FLEX-Ist der Woche (nur vergangene Ist-Tage).
+ *  - PK-Budget-Woche = zielQuote × Netto-Umsatz-Budget der Woche.
+ *  - PK-Budget-Monat = zielQuote × Umsatz-Budget-Monat.
+ *  - PKQ-Woche = PK-Ist-Woche ÷ Netto-Umsatz-Ist-Woche (Ist ÷ Ist), % .
+ *  - PKQ-Monat = pkqHrMonat (Hochrechnung ÷ Hochrechnung aus dem Kern), % .
+ * «leer statt 0»: fehlt die jeweilige Quelle → null. Reine Funktion — testbar.
+ */
+export function computePersonalBlock(inp: PersonalBlockInput): PersonalBlockErgebnis {
+  const hatWoche = inp.wocheTage.length > 0 && inp.daysInMonth > 0;
+
+  // PK-Ist-Woche: FIX pro-rata + FLEX-Ist der Woche (nur Ist-Tage).
+  let pkIstWoche: number | null = null;
+  if (hatWoche) {
+    const fixAnteil = inp.fixMonat * (inp.wocheTage.length / inp.daysInMonth);
+    let flexIst = 0;
+    for (const date of inp.wocheTage) {
+      if (inp.istTagSet.has(date)) flexIst += inp.flexIstProTag[date] ?? 0;
+    }
+    pkIstWoche = r2(fixAnteil + flexIst);
+  }
+
+  const pkBudgetWoche = hatWoche && inp.wBudgetNet != null && inp.wBudgetNet > 0
+    ? r2(inp.zielQuote * inp.wBudgetNet) : null;
+  const pkBudgetMonat = inp.umsatzBudgetMonat != null && inp.umsatzBudgetMonat > 0
+    ? r2(inp.zielQuote * inp.umsatzBudgetMonat) : null;
+
+  // PKQ-Woche = Ist ÷ Ist (zeitkonsistent). null wenn kein Ist-Umsatz-Woche.
+  const pkqWochePct = pkIstWoche != null && inp.wNetIst != null && inp.wNetIst > 0
+    ? r2((pkIstWoche / inp.wNetIst) * 100) : null;
+  const pkqMonatPct = inp.pkqHrMonat != null ? r2(inp.pkqHrMonat * 100) : null;
+
+  return {
+    pkIstWoche,
+    pkBudgetWoche,
+    pkBudgetMonat,
+    pkHrMonat: inp.hrKostenMonat,
+    pkqWochePct,
+    pkqMonatPct,
+  };
 }
 
 // ── Wochenverlauf: Fensterbestimmung ─────────────────────────────────────────
@@ -418,6 +515,12 @@ export type MrFormat = 'chf' | 'count' | 'pct' | 'hours';
 
 export interface MrRow {
   type: 'data' | 'empty';
+  /**
+   * Stabile Zeilen-ID (Slug, z.B. 'netto_umsatz') — NICHT das Label, da Labels
+   * sich ändern können. Basis für die benutzerdefinierte Zeilen-Reihenfolge.
+   * Nur bei type='data' gesetzt; Trenner (type='empty') haben keine ID.
+   */
+  id?: string;
   label?: string;
   fmt?: MrFormat;
   bold?: boolean;
@@ -426,14 +529,26 @@ export interface MrRow {
   budget: number | null;
   /** Spalte «Vorjahr (Woche)» = Vorjahr derselben Woche (gleiche KW/Kalendertage). */
   vj: number | null;
+  /** Vorjahr MONAT (gleicher Monat im Vorjahr, aus vj_daily) — Monatssicht. */
+  vjMonth: number | null;
   /** Spalte «Woche» (Ist der aktuellen Woche) */
   week: number | null;
   /** Budget-Wochenanteil (Basis für +/- der Woche = identisch mit `budget`). */
   weekBudget: number | null;
-  /** MONATS-Budget (Basis der Monat-Δ%, nicht als Spalte gezeigt). */
+  /** MONATS-Budget (Basis der Monat-Δ% + Budget-Spalte der Monatssicht). */
   monthBudget: number | null;
-  /** Spalte «Monat» (Ist bis heute) */
+  /** Spalte «Monat» (Ist bis heute; Personalkosten = Hochrechnung) */
   month: number | null;
+  /**
+   * true = KOSTEN-Zeile: bei der Δ%-Färbung ist MEHR schlecht (über Budget = rot).
+   * Kehrt die Vorzeichen-Färbung gegenüber Umsatz-/Ertragszeilen um.
+   */
+  deltaInverted?: boolean;
+  /**
+   * Schwelle in derselben Einheit wie der Zellwert (z.B. 40 für PKQ-Prozent):
+   * Woche-/Monatswert ÜBER dieser Schwelle wird rot markiert (Obergrenze-Warnung).
+   */
+  warnAbove?: number;
 }
 
 export interface MonatsreportDaten {
@@ -448,6 +563,50 @@ export interface MonatsreportDaten {
   vjWeekFrom: string | null;
   vjWeekTo: string | null;
   rows: MrRow[];
+}
+
+// ── Benutzerdefinierte Zeilen-Reihenfolge (Cockpit) ──────────────────────────
+
+/** Persistiertes Reihenfolge-Setting (app_settings, pro Tenant). */
+export interface CockpitRowOrder {
+  /** Zeilen-IDs in gewünschter Reihenfolge (nur type='data'). */
+  ids: string[];
+  /** ISO-Zeitstempel der letzten Änderung (Diagnose/Merge). */
+  updatedAt: string;
+}
+
+/**
+ * Wendet eine gespeicherte Zeilen-Reihenfolge auf die Standard-Zeilen an.
+ * REIN & testbar (keine I/O).
+ *
+ * Trenner-Entscheid: Bei benutzerdefinierter Reihenfolge werden die
+ * Block-Trenner (type='empty') WEGGELASSEN — die Tabelle ist dann durchgehend.
+ * Trenner haben keine stabile ID und markieren nur die Standard-Blockstruktur;
+ * eine frei umsortierte Liste hat keine sinnvolle Blockzuordnung mehr. Ohne
+ * gespeicherte Reihenfolge bleibt alles unverändert (inkl. Trenner).
+ *
+ * Regeln (nie Zeilen verlieren):
+ *  - Leeres/fehlendes Setting → Standard-`rows` unverändert (mit Trennern).
+ *  - Unbekannte gespeicherte IDs (nicht mehr in `rows`) werden ignoriert.
+ *  - NEUE Datenzeilen (in `rows`, aber nicht im Setting) werden in ihrer
+ *    Standard-Reihenfolge hinten angehängt → gehen nie verloren.
+ */
+export function applyRowOrder(rows: MrRow[], savedIds: string[] | null | undefined): MrRow[] {
+  if (!savedIds || savedIds.length === 0) return rows;
+  const dataRows = rows.filter((r): r is MrRow => r.type === 'data' && !!r.id);
+  const byId = new Map(dataRows.map(r => [r.id!, r]));
+  const seen = new Set<string>();
+  const ordered: MrRow[] = [];
+  // 1) Gespeicherte Reihenfolge (unbekannte IDs überspringen, Duplikate einmal).
+  for (const id of savedIds) {
+    const row = byId.get(id);
+    if (row && !seen.has(id)) { ordered.push(row); seen.add(id); }
+  }
+  // 2) Neue Datenzeilen (nicht im Setting) in Standard-Reihenfolge anhängen.
+  for (const row of dataRows) {
+    if (!seen.has(row.id!)) { ordered.push(row); seen.add(row.id!); }
+  }
+  return ordered;
 }
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────
@@ -716,20 +875,51 @@ export async function ladeMonatsreport(
     wPlanStd = hatPlan && weekFrom ? r2(wPlan) : null;
   }
 
+  // ── Personal-Block: ALLE Zahlen aus dem Kern (personalkosten.ts) ───────────
+  // KEINE Parallel-Rechnung: FIX/FLEX/Hochrechnung/PKQ stammen aus den zentralen
+  // Kern-Funktionen (identisch mit der Personalkosten-Seite).
+  let personal: PersonalBlockErgebnis | null = null;
+  if (pk) {
+    const fixMonat = fixKosten(pk).totalMonat;
+    const flexDetail = flexKostenProTagDetail(pk);
+    const flexIstProTag: Record<string, number> = {};
+    const istTagSet = new Set<string>();
+    for (const t of flexDetail.tage) {
+      if (t.istTag) { istTagSet.add(t.date); flexIstProTag[t.date] = t.istKosten; }
+    }
+    const hrKosten = personalkosten(pk, 'hochrechnung');
+    const pkq = personalquote(pk);
+    personal = computePersonalBlock({
+      flexIstProTag,
+      istTagSet,
+      fixMonat,
+      daysInMonth,
+      wocheTage,
+      wBudgetNet: hatBudget && weekFrom ? r2(wBudgetNet) : null,
+      wNetIst: weekFrom && wHatUmsatz ? r2(wNet) : null,
+      zielQuote: budgetZielQuote(pk),
+      hrKostenMonat: hrKosten.total,
+      umsatzBudgetMonat: hatBudget ? r2(budgetNet) : null,
+      pkqHrMonat: pkq.pkqHochrechnung,
+    });
+  }
+
   // ── Zeilen bauen ───────────────────────────────────────────────────────────
   const N = (v: number, hat: boolean): number | null => (hat ? r2(v) : null);
-  const e = (): MrRow => ({ type: 'empty', budget: null, vj: null, week: null, weekBudget: null, monthBudget: null, month: null });
+  const e = (): MrRow => ({ type: 'empty', budget: null, vj: null, vjMonth: null, week: null, weekBudget: null, monthBudget: null, month: null });
   const d = (
+    id: string,
     label: string,
-    vals: { budget?: number | null; vj?: number | null; week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null },
-    opts: { fmt?: MrFormat; bold?: boolean } = {},
+    vals: { budget?: number | null; vj?: number | null; vjMonth?: number | null; week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null },
+    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number } = {},
   ): MrRow => ({
-    type: 'data', label,
-    budget: vals.budget ?? null, vj: vals.vj ?? null,
+    type: 'data', id, label,
+    budget: vals.budget ?? null, vj: vals.vj ?? null, vjMonth: vals.vjMonth ?? null,
     week: vals.week ?? null, weekBudget: vals.weekBudget ?? null,
     monthBudget: vals.monthBudget ?? null,
     month: vals.month ?? null,
     fmt: opts.fmt ?? 'chf', bold: opts.bold,
+    deltaInverted: opts.deltaInverted, warnAbove: opts.warnAbove,
   });
 
   const mGrossV = N(mGross, mHatUmsatz);
@@ -767,68 +957,95 @@ export async function ladeMonatsreport(
   // Umsatz/Gast VJ-Woche = Netto ÷ Gäste über gepaarte Tage (Regel wie Ist).
   const vwUpg = hatVw && vwPairedGaeste > 0 ? r2(vwPairedNet / vwPairedGaeste) : null;
 
+  // ── Vorjahres-MONAT: Anzeigewerte der «Vorjahr»-Spalte in der Monatssicht ──
+  // Absolutwerte = Summe über den Vorjahres-Monat; Quoten als Quote (nicht
+  // summiert), gleiche Regeln wie Ist. «leer statt 0».
+  const vjTaAnteilM = hatVjTa && vjGross > 0 ? r2((vjTa / vjGross) * 100) : null;
+  const vjUpgM = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null;
+  const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD) : null;
+  const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD) : null;
+
   const rows: MrRow[] = [
     // ── Block Umsatz/Gäste ──
     // Budget-Spalte = Budget-WOCHENANTEIL (= weekBudget, Basis der Woche-Δ%);
     // Vorjahr-Spalte = VJ-WOCHE. monthBudget trägt das Monatsbudget für die Monat-Δ%.
-    d('Brutto Umsatz', {
+    d('brutto_umsatz', 'Brutto Umsatz', {
       month: mGrossV, week: wGrossV,
       weekBudget: wBudget != null ? r2(wBudget * VAT_STD) : null,
       budget: wBudget != null ? r2(wBudget * VAT_STD) : null,
       monthBudget: budgetGross,
-      vj: vwGrossV,
+      vj: vwGrossV, vjMonth: vjGrossV,
     }, { bold: true }),
-    d('Netto Umsatz', {
+    d('netto_umsatz', 'Netto Umsatz', {
       month: mNetV, week: wNetV,
       weekBudget: wBudget, budget: wBudget, monthBudget: budgetNetV,
-      vj: vwNetV,
+      vj: vwNetV, vjMonth: vjNetV,
     }, { bold: true }),
-    d('Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vwGaesteV }, { fmt: 'count' }),
-    // Gruppen ab 20 Pax: keine Wochen-Aufteilung → Vorjahr-Woche leer.
-    d('Gruppen ab 20 Pax', { month: gruppen20, vj: null }, { fmt: 'count' }),
+    d('gaeste_in', 'Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV }, { fmt: 'count' }),
+    // Gruppen ab 20 Pax: keine Wochen-Aufteilung → Vorjahr-Woche leer; VJ-Monat vorhanden.
+    d('gruppen_ab_20', 'Gruppen ab 20 Pax', { month: gruppen20, vj: null, vjMonth: gruppen20Vj }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
     // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),
     // NICHT berechnet — die berechnete Grösse ist «Umsatz pro Gast».
-    d('Durchschnittsverkauf', {
+    d('durchschnittsverkauf', 'Durchschnittsverkauf', {
       month: avgMonat,
       week: avgWoche,
-      vj: vwAvg,
+      vj: vwAvg, vjMonth: avgVj,
     }),
-    d('Take Away Anteil', {
+    d('take_away_anteil', 'Take Away Anteil', {
       month: taM != null && mGross > 0 ? r2((mTa / mGross) * 100) : null,
       week: taW != null && wGross > 0 ? r2((wTa / wGross) * 100) : null,
       // Vorjahr-Woche: TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche (Quote, nicht summiert).
-      vj: vwTaAnteil,
+      vj: vwTaAnteil, vjMonth: vjTaAnteilM,
     }, { fmt: 'pct' }),
     e(),
-    // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr-Woche in vj-Spalte ──
-    d('Food', {
+    // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
+    d('food', 'Food', {
       month: mHatUmsatz && mFood > 0 ? r2(mFood) : null,
       week: weekFrom && wHatUmsatz && wFood > 0 ? r2(wFood) : null,
-      vj: vwFoodNet,
+      vj: vwFoodNet, vjMonth: vjFoodNet,
     }),
-    d('Beverage', {
+    d('beverage', 'Beverage', {
       month: mHatUmsatz && mBev > 0 ? r2(mBev) : null,
       week: weekFrom && wHatUmsatz && wBev > 0 ? r2(wBev) : null,
-      vj: vwBevNet,
+      vj: vwBevNet, vjMonth: vjBevNet,
     }),
     e(),
     // ── Block Produktivität ──
-    d('Produktive Stunden (Ist)', { month: istStd, week: wIstStd }, { fmt: 'hours' }),
-    d('Produktive Stunden geplant', { month: planStd, week: wPlanStd }, { fmt: 'hours' }),
-    d('Produktivität (Umsatz/Std)', {
+    d('prod_stunden_ist', 'Produktive Stunden (Ist)', { month: istStd, week: wIstStd }, { fmt: 'hours' }),
+    d('prod_stunden_plan', 'Produktive Stunden geplant', { month: planStd, week: wPlanStd }, { fmt: 'hours' }),
+    d('produktivitaet', 'Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
       // vj_daily hat keine Personalstunden → keine VJ-Produktivität.
     }),
     // Netto ÷ Gäste, NUR über Tage mit BEIDEN Quellen (Umsatz + Gäste).
-    d('Umsatz pro Gast', {
+    d('umsatz_pro_gast', 'Umsatz pro Gast', {
       month: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
       week: weekFrom && wPairedGaeste > 0 ? r2(wPairedNet / wPairedGaeste) : null,
-      // Vorjahr-Woche: Netto-VJ ÷ Gäste-VJ über gepaarte Tage der VJ-Woche.
-      vj: vwUpg,
+      // Vorjahr: Netto-VJ ÷ Gäste-VJ über gepaarte Tage (Woche bzw. Monat).
+      vj: vwUpg, vjMonth: vjUpgM,
     }),
+    e(),
+    // ── Block Personal (ALLE Werte aus dem Kern personalkosten.ts) ─────────────
+    // Kosten-Zeile: deltaInverted → über Budget = rot. MONAT = Hochrechnung
+    // (bewusst anders als «Ist bis heute» der übrigen Zeilen; im Label markiert).
+    d('personalkosten', 'Personalkosten (Monat = Hochrechnung)', {
+      week: personal?.pkIstWoche ?? null,
+      weekBudget: personal?.pkBudgetWoche ?? null,
+      budget: personal?.pkBudgetWoche ?? null,
+      monthBudget: personal?.pkBudgetMonat ?? null,
+      month: personal?.pkHrMonat ?? null,
+      vj: null, vjMonth: null,   // keine Vorjahres-Quelle
+    }, { bold: true, deltaInverted: true }),
+    // PKQ: Budget = Ziel; rot über Obergrenze (Woche & Monat). Δ% n/a (Quote).
+    d('personalquote', 'Personalquote (PKQ)', {
+      budget: pk ? r2(budgetZielQuote(pk) * 100) : null,
+      week: personal?.pkqWochePct ?? null,
+      month: personal?.pkqMonatPct ?? null,
+      vj: null, vjMonth: null,
+    }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT }),
   ];
 
   return {

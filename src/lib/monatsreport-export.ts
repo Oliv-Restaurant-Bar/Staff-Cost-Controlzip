@@ -1,8 +1,11 @@
 /**
- * Monatsreport — Excel-Export (.xlsx) exakt im Layout der Meeting-Vorlage:
- * Kopfzeile «Monat <Name> | Budget | Vorjahr | Woche | +/- in % | Monat | +/- in %»,
- * dieselben Zeilen/Beschriftungen und Leerzeilen zwischen den Blöcken.
+ * Cockpit — Excel-Export (.xlsx) der Report-Tabelle je Granularität.
+ * DIESELBE Datenquelle wie die Bildschirmtabelle (MrRow), nur andere Felder:
+ *  - 'monat': Budget = monthBudget, Vorjahr = vjMonth, Ist = month
+ *  - 'woche': Budget = budget (Woche), Vorjahr = vj (Woche), Ist = week
+ * Spalten: Kennzahl | Budget | Vorjahr | Ist | Δ %.
  * Schweizer Zahlenformat (1'234.56), Prozente als % mit einer Nachkommastelle.
+ * Δ%-Färbung invertiert bei Kosten (deltaInverted); Ist-Wert rot bei warnAbove.
  */
 import ExcelJS from 'exceljs';
 import type { MrRow } from '@/lib/monatsreport';
@@ -14,74 +17,121 @@ const FMT_CHF = "#'##0.00";
 const FMT_COUNT = "#'##0";
 const FMT_PCT = '0.0" %"';
 
-export async function exportMonatsreportXlsx(rows: MrRow[], year: number, month: number): Promise<void> {
+/** Granularität des Exports (spiegelt den aktiven Cockpit-Tab). */
+export type ExportGranularity = 'monat' | 'woche';
+
+/** Aufbereitete Zellwerte einer Zeile für den Export (rein, ohne ExcelJS). */
+export interface ExportCell {
+  budget: number | null;
+  vj: number | null;
+  ist: number | null;
+  /** Δ% (Ist vs. Budget der jeweiligen Granularität), null wenn nicht bestimmbar. */
+  dev: number | null;
+  /** true → Ist-Wert rot (warnAbove überschritten). */
+  istWarn: boolean;
+  /** true → Δ% grün, false → rot (berücksichtigt deltaInverted). */
+  devGut: boolean | null;
+}
+
+/**
+ * Wählt je Granularität die passenden Felder derselben `MrRow` und berechnet
+ * Δ% + Färb-Flags — identisch zur Bildschirmtabelle. Rein & testbar (canvas-frei).
+ */
+export function mapRowForExport(row: MrRow, granularity: ExportGranularity): ExportCell {
+  const budget = granularity === 'monat' ? row.monthBudget : row.budget;
+  const vj = granularity === 'monat' ? row.vjMonth : row.vj;
+  const ist = granularity === 'monat' ? row.month : row.week;
+  const devBudget = granularity === 'monat' ? row.monthBudget : row.weekBudget;
+  const dev = ist !== null && devBudget !== null && devBudget > 0
+    ? ((ist - devBudget) / devBudget) * 100 : null;
+  const istWarn = row.warnAbove != null && ist !== null && ist > row.warnAbove;
+  // Kosten-Zeilen (deltaInverted): über Budget (dev>0) = schlecht/rot.
+  const devGut = dev === null ? null : (row.deltaInverted ? dev <= 0 : dev >= 0);
+  return { budget, vj, ist, dev, istWarn, devGut };
+}
+
+/**
+ * Baut die Arbeitsmappe (ohne Download-Seiteneffekt) — rein & testbar.
+ * Zieht je Granularität dieselben Felder wie die Bildschirmtabelle.
+ */
+export function buildMonatsreportWorkbook(
+  rows: MrRow[], month: number, granularity: ExportGranularity = 'woche',
+): ExcelJS.Workbook {
+  const istHeader = granularity === 'monat' ? 'Ist (Monat)' : 'Woche';
+  const sheetName = granularity === 'monat'
+    ? `Monatsübersicht ${MONATE[month - 1]}`
+    : `Wochenübersicht ${MONATE[month - 1]}`;
+
   const wb = new ExcelJS.Workbook();
   wb.created = new Date();
-  const ws = wb.addWorksheet(`Monatsreport ${MONATE[month - 1]}`, {
-    views: [{ state: 'frozen', ySplit: 1 }],
-  });
+  const ws = wb.addWorksheet(sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
 
   ws.columns = [
-    { width: 34 }, { width: 14 }, { width: 14 }, { width: 14 },
-    { width: 10 }, { width: 14 }, { width: 10 },
+    { width: 34 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 10 },
   ];
 
   // Kopfzeile
   const head = ws.addRow([
-    `Monat ${MONATE[month - 1]}`, 'Budget (Woche)', 'Vorjahr (Woche)', 'Woche', 'Δ %', 'Monat', 'Δ %',
+    `${granularity === 'monat' ? 'Monat' : 'Woche'} ${MONATE[month - 1]}`,
+    'Budget', 'Vorjahr', istHeader, 'Δ %',
   ]);
   head.font = { bold: true };
   head.eachCell(c => {
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
     c.border = { bottom: { style: 'thin', color: { argb: 'FFA0A0A0' } } };
   });
-  for (let i = 2; i <= 7; i++) head.getCell(i).alignment = { horizontal: 'right' };
+  for (let i = 2; i <= 5; i++) head.getCell(i).alignment = { horizontal: 'right' };
 
   for (const row of rows) {
     if (row.type === 'empty') { ws.addRow([]); continue; }
 
-    const wDev = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
-      ? ((row.week - row.weekBudget) / row.weekBudget) * 100 : null;
-    // Monat-Δ% weiterhin gegen das MONATS-Budget (monthBudget), nicht die Budget-Woche-Spalte.
-    const mDev = row.month !== null && row.monthBudget !== null && row.monthBudget > 0
-      ? ((row.month - row.monthBudget) / row.monthBudget) * 100 : null;
+    // Felder je Granularität (identisch zur Bildschirm-Ansicht ReportTable).
+    const c = mapRowForExport(row, granularity);
 
-    const r = ws.addRow([
-      row.label ?? '',
-      row.budget ?? null,
-      row.vj ?? null,
-      row.week ?? null,
-      wDev,
-      row.month ?? null,
-      mDev,
-    ]);
+    const r = ws.addRow([row.label ?? '', c.budget, c.vj, c.ist, c.dev]);
 
     const numFmt = row.fmt === 'count' || row.fmt === 'hours' ? FMT_COUNT
       : row.fmt === 'pct' ? FMT_PCT
       : FMT_CHF;
-    for (const col of [2, 3, 4, 6]) {
+    for (const col of [2, 3, 4]) {
       const cell = r.getCell(col);
       cell.numFmt = numFmt;
       cell.alignment = { horizontal: 'right' };
     }
-    for (const col of [5, 7]) {
-      const cell = r.getCell(col);
-      cell.numFmt = '+0.0" %";-0.0" %"';
-      cell.alignment = { horizontal: 'right' };
-      const v = cell.value;
-      if (typeof v === 'number') {
-        cell.font = { color: { argb: v >= 0 ? 'FF196B24' : 'FFC00000' } };
+    // Schwellen-Rot (warnAbove, z.B. PKQ > 40 %) für den Ist-Wert (Spalte 4).
+    if (c.istWarn) {
+      r.getCell(4).font = { color: { argb: 'FFC00000' }, bold: true };
+    }
+    // Δ%-Spalte (5): Kosten-Zeilen (deltaInverted) → über Budget (>0) = rot.
+    const devCell = r.getCell(5);
+    devCell.numFmt = '+0.0" %";-0.0" %"';
+    devCell.alignment = { horizontal: 'right' };
+    if (c.devGut !== null) {
+      devCell.font = { color: { argb: c.devGut ? 'FF196B24' : 'FFC00000' } };
+    }
+    // Fett pro Zelle mergen — r.font = {bold} würde die gesetzten Zellfarben
+    // (istWarn / Δ%-Färbung) der ganzen Zeile überschreiben.
+    if (row.bold) {
+      for (let col = 1; col <= 5; col++) {
+        const cell = r.getCell(col);
+        cell.font = { ...(cell.font ?? {}), bold: true };
       }
     }
-    if (row.bold) r.font = { bold: true };
   }
 
+  return wb;
+}
+
+export async function exportMonatsreportXlsx(
+  rows: MrRow[], year: number, month: number, granularity: ExportGranularity = 'woche',
+): Promise<void> {
+  const wb = buildMonatsreportWorkbook(rows, month, granularity);
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `monatsreport-${year}-${String(month).padStart(2, '0')}.xlsx`;
+  a.download = `cockpit-${granularity === 'monat' ? 'monatsuebersicht' : 'wochenuebersicht'}-${year}-${String(month).padStart(2, '0')}.xlsx`;
   a.click();
   URL.revokeObjectURL(url);
 }

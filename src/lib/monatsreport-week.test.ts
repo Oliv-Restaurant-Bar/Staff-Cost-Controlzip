@@ -8,7 +8,8 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 import {
   computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
   computeYtdWindow, kwRangeLabel, computeWeeksForYear, computeVergleichsWindow,
-  computeVorjahrWocheDays,
+  computeVorjahrWocheDays, computePersonalBlock, OBERGRENZE_PKQ_PCT, applyRowOrder,
+  type MrRow,
 } from './monatsreport';
 
 /**
@@ -389,6 +390,151 @@ describe('computeVorjahrWocheDays', () => {
   it('leerer/ungültiger Bereich → leeres Array', () => {
     expect(computeVorjahrWocheDays(null, null)).toEqual([]);
     expect(computeVorjahrWocheDays('2025-07-27', '2025-07-21')).toEqual([]);
+  });
+});
+
+// ── Monatsübersicht: Personal-Block (Personalkosten + PKQ) ───────────────────
+
+describe('computePersonalBlock', () => {
+  // Basis-Szenario: Monat 30 Tage, FIX 30'000/Mt → 1'000/Tag; Woche = 7 Tage
+  // (davon 5 vergangene Ist-Tage mit FLEX-Ist), Ziel 35.5 %.
+  const base = {
+    // FLEX-Ist nur an den 5 vergangenen Ist-Tagen (Mo–Fr), je 200.
+    flexIstProTag: {
+      '2025-07-07': 200, '2025-07-08': 200, '2025-07-09': 200,
+      '2025-07-10': 200, '2025-07-11': 200,
+    } as Record<string, number>,
+    istTagSet: new Set(['2025-07-07', '2025-07-08', '2025-07-09', '2025-07-10', '2025-07-11']),
+    fixMonat: 30000,
+    daysInMonth: 30,
+    wocheTage: [
+      '2025-07-07', '2025-07-08', '2025-07-09', '2025-07-10', '2025-07-11',
+      '2025-07-12', '2025-07-13',
+    ],
+    wBudgetNet: 20000,      // Netto-Umsatz-Budget der Woche
+    wNetIst: 18000,         // Netto-Umsatz-Ist der Woche
+    zielQuote: 0.355,
+    hrKostenMonat: 123961,
+    umsatzBudgetMonat: 280000,
+    pkqHrMonat: 0.489,
+  };
+
+  it('PK-Ist-Woche = FIX pro-rata (7/30 × 30000) + FLEX-Ist (5×200)', () => {
+    const r = computePersonalBlock(base);
+    // 30000 × 7/30 = 7000; + 1000 FLEX = 8000.
+    expect(r.pkIstWoche).toBe(8000);
+  });
+
+  it('FLEX-Ist zählt nur an Ist-Tagen (künftige Wochentage ohne Ist ignoriert)', () => {
+    // Zusätzlicher (künftiger) FLEX-Wert an einem NICHT-Ist-Tag darf nicht zählen.
+    const r = computePersonalBlock({
+      ...base,
+      flexIstProTag: { ...base.flexIstProTag, '2025-07-12': 999 },
+    });
+    expect(r.pkIstWoche).toBe(8000); // 2025-07-12 ist kein istTag → ignoriert
+  });
+
+  it('PK-Budget-Woche = Zielquote × Netto-Umsatz-Budget-Woche', () => {
+    const r = computePersonalBlock(base);
+    expect(r.pkBudgetWoche).toBe(7100); // 0.355 × 20000
+  });
+
+  it('PK-Budget-Monat = Zielquote × Umsatz-Budget-Monat', () => {
+    const r = computePersonalBlock(base);
+    expect(r.pkBudgetMonat).toBe(99400); // 0.355 × 280000
+  });
+
+  it('PKQ-Woche = PK-Ist-Woche ÷ Netto-Umsatz-Ist-Woche (Ist÷Ist), %', () => {
+    const r = computePersonalBlock(base);
+    // 8000 / 18000 = 44.44 %
+    expect(r.pkqWochePct).toBeCloseTo(44.44, 2);
+    // über Obergrenze → würde in der UI rot markiert.
+    expect(r.pkqWochePct! > OBERGRENZE_PKQ_PCT).toBe(true);
+  });
+
+  it('PKQ-Monat = Hochrechnung (durchgereicht), % ; HR-Kosten durchgereicht', () => {
+    const r = computePersonalBlock(base);
+    expect(r.pkqMonatPct).toBe(48.9);
+    expect(r.pkHrMonat).toBe(123961);
+  });
+
+  it('keine Woche gewählt → Woche-Werte null (leer statt 0)', () => {
+    const r = computePersonalBlock({ ...base, wocheTage: [] });
+    expect(r.pkIstWoche).toBeNull();
+    expect(r.pkBudgetWoche).toBeNull();
+    expect(r.pkqWochePct).toBeNull();
+    // Monatswerte bleiben verfügbar.
+    expect(r.pkBudgetMonat).toBe(99400);
+    expect(r.pkqMonatPct).toBe(48.9);
+  });
+
+  it('fehlendes Umsatz-Budget → Budget-Zellen null, nie 0', () => {
+    const r = computePersonalBlock({ ...base, wBudgetNet: null, umsatzBudgetMonat: null });
+    expect(r.pkBudgetWoche).toBeNull();
+    expect(r.pkBudgetMonat).toBeNull();
+    // Ist-Woche ist von Budget unabhängig.
+    expect(r.pkIstWoche).toBe(8000);
+  });
+
+  it('kein Ist-Umsatz-Woche → PKQ-Woche null (nicht 0/∞)', () => {
+    const r = computePersonalBlock({ ...base, wNetIst: 0 });
+    expect(r.pkqWochePct).toBeNull();
+  });
+
+  it('kein PKQ-HR vom Kern → PKQ-Monat null', () => {
+    const r = computePersonalBlock({ ...base, pkqHrMonat: null });
+    expect(r.pkqMonatPct).toBeNull();
+  });
+});
+
+// ── Cockpit: benutzerdefinierte Zeilen-Reihenfolge (applyRowOrder) ───────────
+
+describe('applyRowOrder', () => {
+  const dat = (id: string): MrRow => ({
+    type: 'data', id, label: id,
+    budget: null, vj: null, vjMonth: null, week: null, weekBudget: null, monthBudget: null, month: null,
+  });
+  const sep = (): MrRow => ({
+    type: 'empty', budget: null, vj: null, vjMonth: null, week: null, weekBudget: null, monthBudget: null, month: null,
+  });
+  // Standard: A, B, (Trenner), C
+  const standard: MrRow[] = [dat('a'), dat('b'), sep(), dat('c')];
+  const ids = (rows: MrRow[]) => rows.filter(r => r.type === 'data').map(r => r.id);
+
+  it('leeres/fehlendes Setting → Standard unverändert (inkl. Trenner)', () => {
+    expect(applyRowOrder(standard, null)).toBe(standard);
+    expect(applyRowOrder(standard, undefined)).toBe(standard);
+    expect(applyRowOrder(standard, [])).toBe(standard);
+  });
+
+  it('gespeicherte Reihenfolge wird angewendet; Trenner entfallen', () => {
+    const out = applyRowOrder(standard, ['c', 'a', 'b']);
+    expect(ids(out)).toEqual(['c', 'a', 'b']);
+    // Keine Trenner mehr in der benutzerdefinierten Reihenfolge.
+    expect(out.every(r => r.type === 'data')).toBe(true);
+  });
+
+  it('unbekannte gespeicherte IDs werden ignoriert (nie crashen)', () => {
+    const out = applyRowOrder(standard, ['x', 'c', 'y', 'a']);
+    // x/y existieren nicht → übersprungen; b ist neu → hinten angehängt.
+    expect(ids(out)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('NEUE Zeilen (nicht im Setting) hängen in Standard-Reihenfolge hinten an', () => {
+    // Setting kennt nur c; a und b sind «neu» → in Standardreihenfolge (a, b) danach.
+    const out = applyRowOrder(standard, ['c']);
+    expect(ids(out)).toEqual(['c', 'a', 'b']);
+  });
+
+  it('Duplikate im Setting werden nur einmal berücksichtigt', () => {
+    const out = applyRowOrder(standard, ['b', 'b', 'a', 'c']);
+    expect(ids(out)).toEqual(['b', 'a', 'c']);
+  });
+
+  it('verliert nie Zeilen — Ausgabe enthält alle Datenzeilen genau einmal', () => {
+    const out = applyRowOrder(standard, ['c']);
+    expect(new Set(ids(out))).toEqual(new Set(['a', 'b', 'c']));
+    expect(ids(out).length).toBe(3);
   });
 });
 
