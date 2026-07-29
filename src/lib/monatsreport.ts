@@ -207,6 +207,33 @@ export function vorjahresWoche(w: WeekWindow): WeekWindow | null {
   return { kwYear: prevYear, kw: w.kw, from: iso(mon), to: iso(sun) };
 }
 
+/**
+ * Wochenfenster für ein GEWÄHLTES Jahr: dieselben KW-Nummern, die für das
+ * aktuelle Jahr angezeigt würden (letzte `anzahl` abgeschlossene Wochen),
+ * aber im ISO-Wochenjahr `selectedYear` — d.h. der kwYear jeder Referenzwoche
+ * wird um (selectedYear − aktuelles Jahr) verschoben, die KW-Nummer bleibt.
+ * Existiert eine KW im Zieljahr nicht (KW-53-Randfall), wird die Woche
+ * WEGGELASSEN (dokumentierte Wahl; die restlichen Spalten bleiben stabil).
+ * Für das aktuelle Jahr identisch zu computeLastCompleteWeeks. Reine Funktion.
+ */
+export function computeWeeksForYear(anzahl: number, heute: Date, selectedYear: number): WeekWindow[] {
+  const ref = computeLastCompleteWeeks(Math.max(1, anzahl), heute);
+  const shift = selectedYear - heute.getFullYear();
+  if (shift === 0) return ref;
+  const out: WeekWindow[] = [];
+  for (const w of ref) {
+    const targetKwYear = w.kwYear + shift;
+    const mon = mondayOfIsoWeek(targetKwYear, w.kw);
+    // Verifizieren, dass (targetKwYear, kw) tatsächlich existiert (KW-53-Fall).
+    const chk = isoWeekYearOf(mon);
+    if (chk.kwYear !== targetKwYear || chk.kw !== w.kw) continue; // KW gibt es dort nicht
+    const sun = new Date(mon);
+    sun.setDate(sun.getDate() + 6);
+    out.push({ kwYear: targetKwYear, kw: w.kw, from: iso(mon), to: iso(sun) });
+  }
+  return out;
+}
+
 // ── Jahresvergleich (Year-to-Date) ──────────────────────────────────────────
 
 /** YTD-Fenster: 01.01. bis heute vs. 01.01. Vorjahr bis gleiches Datum (pro rata). */
@@ -671,10 +698,153 @@ function emptyVjAgg(): VjWeekAgg {
 }
 
 /**
- * Lädt die letzten `anzahlWochen` abgeschlossenen ISO-Wochen (Mo–So) und
- * berechnet je Woche dieselben Kennzahlen wie der Monatsreport. Wiederverwendet
- * die bestehenden Lade-Bausteine (Umsatz-Import, gaeste-daily, avgcheck-daily,
- * Dienstplan-Stunden). KEINE Z-Berichte. «leer statt 0» wie im Monatsreport.
+ * Aggregiert vj_daily + gaeste-daily + avgcheck-daily auf die gegebenen
+ * Wochenfenster (Mo–So) — dieselbe Logik/Quellen wie der Vorjahres-Zweig.
+ * Wird für den Vorjahresvergleich UND für ein allein ausgewertetes
+ * Vergangenheits-Jahr (Hauptlinie aus vj_daily) genutzt. Wochen = null → kein
+ * Aggregat (KW existiert im Zieljahr nicht). Keine Personalstunden aus dieser
+ * Quelle (Produktive Stunden/Produktivität bleiben «—»).
+ */
+async function aggregiereVjWochen(
+  weeks: (WeekWindow | null)[],
+  tenantId: TenantId,
+  gaesteDaily: Record<string, number>,
+  avgDaily: Record<string, number>,
+): Promise<(VjWeekAgg | null)[]> {
+  const indexOf = (date: string): number => {
+    for (let i = 0; i < weeks.length; i++) {
+      const w = weeks[i];
+      if (w && date >= w.from && date <= w.to) return i;
+    }
+    return -1;
+  };
+  // Berührte vj_daily-Monate (kann Monatsgrenzen überschreiten).
+  const months = new Map<string, { year: number; month: number }>();
+  for (const w of weeks) {
+    if (!w) continue;
+    for (const dateStr of [w.from, w.to]) {
+      months.set(`${dateStr.slice(0, 4)}-${dateStr.slice(5, 7)}`,
+        { year: Number(dateStr.slice(0, 4)), month: Number(dateStr.slice(5, 7)) });
+    }
+  }
+  const monthMaps = await Promise.all(
+    [...months.values()].map(({ year, month }) =>
+      loadVjDailyMonth(year, month, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
+  );
+  const vjDaily: Record<string, VjDayRecord> = {};
+  for (const m of monthMaps) Object.assign(vjDaily, m);
+
+  const aggs = weeks.map(w => (w ? emptyVjAgg() : null));
+
+  for (const [date, rec] of Object.entries(vjDaily)) {
+    const wi = indexOf(date);
+    if (wi < 0) continue;
+    const a = aggs[wi];
+    if (!a) continue;
+    if ((rec.actualRevenue ?? 0) > 0) {
+      a.gross += rec.actualRevenue; a.net += rec.actualRevenue / VAT_STD; a.hatUmsatz = true;
+    }
+    if ((rec.foodRevenue ?? 0) > 0) { a.food += rec.foodRevenue! / VAT_STD; a.hatFood = true; }
+    if ((rec.beverageRevenue ?? 0) > 0) { a.bev += rec.beverageRevenue! / VAT_STD; a.hatBev = true; }
+    if ((rec.takeawayRevenue ?? 0) > 0) { a.ta += rec.takeawayRevenue!; a.hatTa = true; }
+    const g = gaesteDaily[date] ?? 0;
+    if ((rec.actualRevenue ?? 0) > 0 && g > 0) {
+      a.pairedNet += rec.actualRevenue / VAT_STD; a.pairedGaeste += g;
+    }
+  }
+  for (const [date, n] of Object.entries(gaesteDaily)) {
+    if (!(n > 0)) continue;
+    const wi = indexOf(date);
+    if (wi < 0) continue;
+    const a = aggs[wi];
+    if (!a) continue;
+    a.gaeste += n; a.hatGaeste = true;
+  }
+  for (const [date, v] of Object.entries(avgDaily)) {
+    if (!(v > 0)) continue;
+    const wi = indexOf(date);
+    if (wi < 0) continue;
+    const a = aggs[wi];
+    if (!a) continue;
+    a.avgSum += v; a.avgCount++;
+  }
+  return aggs;
+}
+
+/**
+ * Baut die Kennzahlen-Zeilen des Wochenverlaufs. `mainAus` = Datenquelle der
+ * Hauptlinie: 'ist' (WeekAgg, aktuelles Jahr, inkl. Personalstunden) oder 'vj'
+ * (VjWeekAgg, vergangenes Jahr aus vj_daily, keine Stunden). `vjAggs` = optionale
+ * Vergleichs-Spalte (immer aus vj_daily).
+ */
+function baueWochenverlaufRows(
+  mainAggs: WeekAgg[] | (VjWeekAgg | null)[],
+  mainAus: 'ist' | 'vj',
+  vjAggs: (VjWeekAgg | null)[] | undefined,
+): WochenverlaufRow[] {
+  const vjCol = (fn: (a: VjWeekAgg) => number | null): (number | null)[] | undefined =>
+    vjAggs ? vjAggs.map(a => (a ? fn(a) : null)) : undefined;
+
+  // Hauptspalte je Kennzahl: aus WeekAgg (Ist) oder VjWeekAgg (vergangenes Jahr).
+  const istCol = (fn: (a: WeekAgg) => number | null): (number | null)[] =>
+    (mainAggs as WeekAgg[]).map(fn);
+  const vjMainCol = (fn: (a: VjWeekAgg) => number | null): (number | null)[] =>
+    (mainAggs as (VjWeekAgg | null)[]).map(a => (a ? fn(a) : null));
+
+  // Für jede Kennzahl je ein Ist- und ein Vj-Extraktor (gleiche Semantik wie
+  // bisher; Produktive Stunden/Produktivität aus vj-Quelle → null).
+  type Def = {
+    label: string; fmt: MrFormat; bold?: boolean;
+    ist: (a: WeekAgg) => number | null;
+    vj: (a: VjWeekAgg) => number | null;
+  };
+  const defs: Def[] = [
+    { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
+      ist: a => a.hatUmsatz ? r2(a.gross) : null, vj: a => a.hatUmsatz ? r2(a.gross) : null },
+    { label: 'Netto Umsatz', fmt: 'chf', bold: true,
+      ist: a => a.hatUmsatz ? r2(a.net) : null, vj: a => a.hatUmsatz ? r2(a.net) : null },
+    { label: 'Gäste IN', fmt: 'count',
+      ist: a => a.hatGaeste ? r2(a.gaeste) : null, vj: a => a.hatGaeste ? r2(a.gaeste) : null },
+    { label: 'Durchschnittsverkauf', fmt: 'chf',
+      ist: a => a.avgW, vj: a => a.avgCount > 0 ? r2(a.avgSum / a.avgCount) : null },
+    { label: 'Take Away Anteil', fmt: 'pct',
+      ist: a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null,
+      vj: a => a.hatTa && a.gross > 0 ? r2((a.ta / a.gross) * 100) : null },
+    { label: 'Food', fmt: 'chf',
+      ist: a => a.hatUmsatz && a.food > 0 ? r2(a.food) : null, vj: a => a.hatFood ? r2(a.food) : null },
+    { label: 'Beverage', fmt: 'chf',
+      ist: a => a.hatUmsatz && a.bev > 0 ? r2(a.bev) : null, vj: a => a.hatBev ? r2(a.bev) : null },
+    { label: 'Produktive Stunden (Ist)', fmt: 'hours',
+      ist: a => a.hatIst ? r2(a.istStd) : null, vj: () => null },       // keine vj-Quelle
+    { label: 'Produktive Stunden geplant', fmt: 'hours',
+      ist: a => a.hatPlan ? r2(a.planStd) : null, vj: () => null },      // keine vj-Quelle
+    { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
+      ist: a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null, vj: () => null },
+    { label: 'Umsatz pro Gast', fmt: 'chf',
+      ist: a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null,
+      vj: a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null },
+  ];
+
+  return defs.map(d => ({
+    label: d.label, fmt: d.fmt, bold: d.bold,
+    values: mainAus === 'ist' ? istCol(d.ist) : vjMainCol(d.vj),
+    vjValues: vjCol(d.vj),
+  }));
+}
+
+/**
+ * Lädt `anzahlWochen` ISO-Wochen (Mo–So) des gewählten Jahres und berechnet je
+ * Woche dieselben Kennzahlen wie der Monatsreport. KEINE Z-Berichte, «leer statt
+ * 0».
+ *
+ * Jahr-Auswahl (`jahr`, Default = aktuelles Jahr → rückwärtskompatibel):
+ *  - Aktuelles Jahr: letzte N abgeschlossene Wochen; Hauptlinie aus
+ *    ladeUmsatzTage (dailyBudgets) inkl. Personalstunden.
+ *  - Vergangenes Jahr: DIESELBEN KW-Nummern, aber im gewählten ISO-Wochenjahr
+ *    (KW existiert dort nicht → Woche weggelassen). Hauptlinie aus vj_daily
+ *    (konsistent zum Vorjahresvergleich); keine Personalstunden → «—».
+ *
+ * `mitVorjahr` bezieht sich stets aufs GEWÄHLTE Jahr (Vergleich = Jahr−1).
  */
 export async function ladeWochenverlauf(
   anzahlWochen: number,
@@ -683,10 +853,21 @@ export async function ladeWochenverlauf(
   rates: SocialCostRates,
   heute: Date = new Date(),
   mitVorjahr = false,
+  jahr?: number,
 ): Promise<WochenverlaufDaten> {
-  const weeks = computeLastCompleteWeeks(Math.max(1, anzahlWochen), heute);
-  const fromIso = weeks[0].from;
-  const toIso = weeks[weeks.length - 1].to;
+  const anzahl = Math.max(1, anzahlWochen);
+  const curYear = heute.getFullYear();
+  const selectedYear = jahr ?? curYear;
+  const istAktuell = selectedYear === curYear;
+
+  const weeks = computeWeeksForYear(anzahl, heute, selectedYear);
+
+  // Globale KV-Maps sind ISO-datumsbasiert → liefern automatisch die Daten des
+  // gewählten Jahres (Gäste, Durchschnittsverkauf).
+  const [gaesteDaily, avgDaily] = await Promise.all([
+    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+    loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
+  ]);
 
   // Welcher Woche gehört ein Datum? (Index in weeks) — sonst -1.
   const weekIndexOf = (date: string): number => {
@@ -696,205 +877,99 @@ export async function ladeWochenverlauf(
     return -1;
   };
 
-  // Globale KV-Maps (nicht monatsgebunden) + Umsatz für den gesamten Bereich.
-  const [gaesteDaily, avgDaily, umsatzTage] = await Promise.all([
-    loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
-    loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
-    ladeUmsatzTage(tenantId, fromIso, toIso),
-  ]);
+  // ── Hauptlinie ─────────────────────────────────────────────────────────────
+  let mainAggs: WeekAgg[] | (VjWeekAgg | null)[];
+  let mainAus: 'ist' | 'vj';
 
-  // Personalkosten sind monatsweise geladen — alle berührten Monate einmalig.
-  const monthsTouched = new Map<string, { year: number; month: number }>();
-  for (const w of weeks) {
-    for (const dateStr of [w.from, w.to]) {
-      const y = Number(dateStr.slice(0, 4));
-      const m = Number(dateStr.slice(5, 7));
-      monthsTouched.set(`${y}-${m}`, { year: y, month: m });
-    }
-    // auch Zwischenmonate abdecken (Woche kann über Monatsgrenze gehen)
-  }
-  const pkList = await Promise.all(
-    [...monthsTouched.values()].map(({ year, month }) =>
-      ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null)),
-  );
-  // Ist-/Plan-Stunden pro Tag aus allen Monaten zusammenführen.
-  const istStdProTag: Record<string, Record<string, number>> = {};
-  const planStdProTag: Record<string, Record<string, number>> = {};
-  for (const pk of pkList) {
-    if (!pk) continue;
-    for (const [date, perEmp] of Object.entries(pk.istStdProTag) as [string, Record<string, number>][]) {
-      istStdProTag[date] = { ...(istStdProTag[date] ?? {}), ...perEmp };
-    }
-    for (const [date, perEmp] of Object.entries(pk.planStdProTag) as [string, Record<string, number>][]) {
-      planStdProTag[date] = { ...(planStdProTag[date] ?? {}), ...perEmp };
-    }
-  }
+  if (istAktuell) {
+    // Aktuelles Jahr: Umsatz-Import (dailyBudgets) + Personalstunden wie bisher.
+    mainAus = 'ist';
+    const fromIso = weeks[0].from;
+    const toIso = weeks[weeks.length - 1].to;
+    const umsatzTage = await ladeUmsatzTage(tenantId, fromIso, toIso);
 
-  const aggs: WeekAgg[] = weeks.map(emptyAgg);
-
-  // ── Umsatz + gepaarte Umsatz/Gäste-Tage ──
-  for (const [date, tag] of umsatzTage) {
-    const wi = weekIndexOf(date);
-    if (wi < 0 || tag.gesamtBrutto <= 0) continue;
-    const a = aggs[wi];
-    const netto = nettoUmsatzTag(tag);
-    const split = foodBeverageSplit(tag);
-    a.gross += tag.gesamtBrutto; a.ta += tag.takeAwayBrutto; a.net += netto;
-    a.food += split.food; a.bev += split.beverage; a.hatUmsatz = true;
-    const g = gaesteDaily[date] ?? 0;
-    if (g > 0) { a.pairedNet += netto; a.pairedGaeste += g; }
-  }
-
-  // ── Gäste (volle importierte Summe) ──
-  for (const [date, n] of Object.entries(gaesteDaily)) {
-    if (!(n > 0)) continue;
-    const wi = weekIndexOf(date);
-    if (wi < 0) continue;
-    aggs[wi].gaeste += n; aggs[wi].hatGaeste = true;
-  }
-
-  // ── Durchschnittsverkauf je Woche (gäste-gewichtet, Fallback Mittel) ──
-  const avgSum = weeks.map(() => ({ wSum: 0, wWeight: 0, sSum: 0, sCount: 0 }));
-  for (const [date, v] of Object.entries(avgDaily)) {
-    if (!(v > 0)) continue;
-    const wi = weekIndexOf(date);
-    if (wi < 0) continue;
-    const g = gaesteDaily[date] ?? 0;
-    if (g > 0) { avgSum[wi].wSum += v * g; avgSum[wi].wWeight += g; }
-    avgSum[wi].sSum += v; avgSum[wi].sCount++;
-  }
-  weeks.forEach((_, i) => {
-    const s = avgSum[i];
-    aggs[i].avgW = s.wWeight > 0 ? r2(s.wSum / s.wWeight)
-      : s.sCount > 0 ? r2(s.sSum / s.sCount) : null;
-  });
-
-  // ── Produktive Stunden (Ist/Plan) ──
-  for (const [date, perEmp] of Object.entries(istStdProTag)) {
-    const wi = weekIndexOf(date);
-    if (wi < 0) continue;
-    for (const h of Object.values(perEmp)) { aggs[wi].istStd += h; aggs[wi].hatIst = true; }
-  }
-  for (const [date, perEmp] of Object.entries(planStdProTag)) {
-    const wi = weekIndexOf(date);
-    if (wi < 0) continue;
-    for (const h of Object.values(perEmp)) { aggs[wi].planStd += h; aggs[wi].hatPlan = true; }
-  }
-
-  // ── Vorjahr (lazy: nur wenn Toggle aktiv) ──────────────────────────────────
-  // VJ-Woche = gleiche ISO-KW im Wochenjahr−1 (null wenn KW dort inexistent).
-  const vjWeeks: (WeekWindow | null)[] | undefined = mitVorjahr
-    ? weeks.map(vorjahresWoche) : undefined;
-  let vjAggs: (VjWeekAgg | null)[] | undefined;
-
-  if (mitVorjahr && vjWeeks) {
-    // Datum → VJ-Wochenindex (nur existierende VJ-Wochen).
-    const vjIndexOf = (date: string): number => {
-      for (let i = 0; i < vjWeeks.length; i++) {
-        const w = vjWeeks[i];
-        if (w && date >= w.from && date <= w.to) return i;
-      }
-      return -1;
-    };
-    // Berührte VJ-Monate für vj_daily-Load (kann Monatsgrenzen überschreiten).
-    const vjMonths = new Map<string, { year: number; month: number }>();
-    for (const w of vjWeeks) {
-      if (!w) continue;
+    // Personalkosten monatsweise (alle berührten Monate einmalig).
+    const monthsTouched = new Map<string, { year: number; month: number }>();
+    for (const w of weeks) {
       for (const dateStr of [w.from, w.to]) {
-        const y = Number(dateStr.slice(0, 4));
-        const m = Number(dateStr.slice(5, 7));
-        vjMonths.set(`${y}-${m}`, { year: y, month: m });
+        monthsTouched.set(`${dateStr.slice(0, 4)}-${dateStr.slice(5, 7)}`,
+          { year: Number(dateStr.slice(0, 4)), month: Number(dateStr.slice(5, 7)) });
       }
     }
-    const vjMonthMaps = await Promise.all(
-      [...vjMonths.values()].map(({ year, month }) =>
-        loadVjDailyMonth(year, month, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
+    const pkList = await Promise.all(
+      [...monthsTouched.values()].map(({ year, month }) =>
+        ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null)),
     );
-    const vjDaily: Record<string, VjDayRecord> = {};
-    for (const m of vjMonthMaps) Object.assign(vjDaily, m);
-
-    vjAggs = vjWeeks.map(w => (w ? emptyVjAgg() : null));
-
-    // vj_daily (brutto → netto per VAT_STD, wie Monats-VJ) + gepaarte Tage.
-    for (const [date, rec] of Object.entries(vjDaily)) {
-      const wi = vjIndexOf(date);
-      if (wi < 0) continue;
-      const a = vjAggs[wi];
-      if (!a) continue;
-      if ((rec.actualRevenue ?? 0) > 0) {
-        a.gross += rec.actualRevenue; a.net += rec.actualRevenue / VAT_STD; a.hatUmsatz = true;
+    const istStdProTag: Record<string, Record<string, number>> = {};
+    const planStdProTag: Record<string, Record<string, number>> = {};
+    for (const pk of pkList) {
+      if (!pk) continue;
+      for (const [date, perEmp] of Object.entries(pk.istStdProTag) as [string, Record<string, number>][]) {
+        istStdProTag[date] = { ...(istStdProTag[date] ?? {}), ...perEmp };
       }
-      if ((rec.foodRevenue ?? 0) > 0) { a.food += rec.foodRevenue! / VAT_STD; a.hatFood = true; }
-      if ((rec.beverageRevenue ?? 0) > 0) { a.bev += rec.beverageRevenue! / VAT_STD; a.hatBev = true; }
-      if ((rec.takeawayRevenue ?? 0) > 0) { a.ta += rec.takeawayRevenue!; a.hatTa = true; }
-      const g = gaesteDaily[date] ?? 0;
-      if ((rec.actualRevenue ?? 0) > 0 && g > 0) {
-        a.pairedNet += rec.actualRevenue / VAT_STD; a.pairedGaeste += g;
+      for (const [date, perEmp] of Object.entries(pk.planStdProTag) as [string, Record<string, number>][]) {
+        planStdProTag[date] = { ...(planStdProTag[date] ?? {}), ...perEmp };
       }
     }
-    // Gäste IN (VJ) — volle importierte Summe.
+
+    const aggs: WeekAgg[] = weeks.map(emptyAgg);
+    for (const [date, tag] of umsatzTage) {
+      const wi = weekIndexOf(date);
+      if (wi < 0 || tag.gesamtBrutto <= 0) continue;
+      const a = aggs[wi];
+      const netto = nettoUmsatzTag(tag);
+      const split = foodBeverageSplit(tag);
+      a.gross += tag.gesamtBrutto; a.ta += tag.takeAwayBrutto; a.net += netto;
+      a.food += split.food; a.bev += split.beverage; a.hatUmsatz = true;
+      const g = gaesteDaily[date] ?? 0;
+      if (g > 0) { a.pairedNet += netto; a.pairedGaeste += g; }
+    }
     for (const [date, n] of Object.entries(gaesteDaily)) {
       if (!(n > 0)) continue;
-      const wi = vjIndexOf(date);
+      const wi = weekIndexOf(date);
       if (wi < 0) continue;
-      const a = vjAggs[wi];
-      if (!a) continue;
-      a.gaeste += n; a.hatGaeste = true;
+      aggs[wi].gaeste += n; aggs[wi].hatGaeste = true;
     }
-    // Durchschnittsverkauf (VJ) — einfacher Mittelwert (Direkt-Import).
+    const avgSum = weeks.map(() => ({ wSum: 0, wWeight: 0, sSum: 0, sCount: 0 }));
     for (const [date, v] of Object.entries(avgDaily)) {
       if (!(v > 0)) continue;
-      const wi = vjIndexOf(date);
+      const wi = weekIndexOf(date);
       if (wi < 0) continue;
-      const a = vjAggs[wi];
-      if (!a) continue;
-      a.avgSum += v; a.avgCount++;
+      const g = gaesteDaily[date] ?? 0;
+      if (g > 0) { avgSum[wi].wSum += v * g; avgSum[wi].wWeight += g; }
+      avgSum[wi].sSum += v; avgSum[wi].sCount++;
     }
+    weeks.forEach((_, i) => {
+      const s = avgSum[i];
+      aggs[i].avgW = s.wWeight > 0 ? r2(s.wSum / s.wWeight)
+        : s.sCount > 0 ? r2(s.sSum / s.sCount) : null;
+    });
+    for (const [date, perEmp] of Object.entries(istStdProTag)) {
+      const wi = weekIndexOf(date);
+      if (wi < 0) continue;
+      for (const h of Object.values(perEmp)) { aggs[wi].istStd += h; aggs[wi].hatIst = true; }
+    }
+    for (const [date, perEmp] of Object.entries(planStdProTag)) {
+      const wi = weekIndexOf(date);
+      if (wi < 0) continue;
+      for (const h of Object.values(perEmp)) { aggs[wi].planStd += h; aggs[wi].hatPlan = true; }
+    }
+    mainAggs = aggs;
+  } else {
+    // Vergangenes Jahr: Hauptlinie aus vj_daily (konsistent zum VJ-Vergleich);
+    // keine Personalstunden → Produktive Stunden/Produktivität «—».
+    mainAus = 'vj';
+    mainAggs = await aggregiereVjWochen(weeks, tenantId, gaesteDaily, avgDaily);
   }
 
-  // ── Zeilen bauen (Werte je Woche; null = leer) ──
-  const col = (fn: (a: WeekAgg) => number | null): (number | null)[] => aggs.map(fn);
-  // VJ-Spalte je Zeile: mapping vom VJ-Aggregat (oder null → leere Zellen).
-  const vjCol = (fn: (a: VjWeekAgg) => number | null): (number | null)[] | undefined => {
-    if (!vjAggs) return undefined;
-    return vjAggs.map(a => (a ? fn(a) : null));
-  };
+  // ── Vergleichsjahr (Toggle) = gewähltes Jahr − 1, immer aus vj_daily ────────
+  const vjWeeks: (WeekWindow | null)[] | undefined = mitVorjahr
+    ? weeks.map(vorjahresWoche) : undefined;
+  const vjAggs = mitVorjahr && vjWeeks
+    ? await aggregiereVjWochen(vjWeeks, tenantId, gaesteDaily, avgDaily)
+    : undefined;
 
-  const rows: WochenverlaufRow[] = [
-    { label: 'Brutto Umsatz', fmt: 'chf', bold: true,
-      values: col(a => a.hatUmsatz ? r2(a.gross) : null),
-      vjValues: vjCol(a => a.hatUmsatz ? r2(a.gross) : null) },
-    { label: 'Netto Umsatz', fmt: 'chf', bold: true,
-      values: col(a => a.hatUmsatz ? r2(a.net) : null),
-      vjValues: vjCol(a => a.hatUmsatz ? r2(a.net) : null) },
-    { label: 'Gäste IN', fmt: 'count',
-      values: col(a => a.hatGaeste ? r2(a.gaeste) : null),
-      vjValues: vjCol(a => a.hatGaeste ? r2(a.gaeste) : null) },
-    { label: 'Durchschnittsverkauf', fmt: 'chf',
-      values: col(a => a.avgW),
-      vjValues: vjCol(a => a.avgCount > 0 ? r2(a.avgSum / a.avgCount) : null) },
-    { label: 'Take Away Anteil', fmt: 'pct',
-      values: col(a => a.hatUmsatz && a.gross > 0 && a.ta > 0 ? r2((a.ta / a.gross) * 100) : null),
-      vjValues: vjCol(a => a.hatTa && a.gross > 0 ? r2((a.ta / a.gross) * 100) : null) },
-    { label: 'Food', fmt: 'chf',
-      values: col(a => a.hatUmsatz && a.food > 0 ? r2(a.food) : null),
-      vjValues: vjCol(a => a.hatFood ? r2(a.food) : null) },
-    { label: 'Beverage', fmt: 'chf',
-      values: col(a => a.hatUmsatz && a.bev > 0 ? r2(a.bev) : null),
-      vjValues: vjCol(a => a.hatBev ? r2(a.bev) : null) },
-    { label: 'Produktive Stunden (Ist)', fmt: 'hours',
-      values: col(a => a.hatIst ? r2(a.istStd) : null),
-      vjValues: vjCol(() => null) },      // keine VJ-Quelle
-    { label: 'Produktive Stunden geplant', fmt: 'hours',
-      values: col(a => a.hatPlan ? r2(a.planStd) : null),
-      vjValues: vjCol(() => null) },      // keine VJ-Quelle
-    { label: 'Produktivität (Umsatz/Std)', fmt: 'chf',
-      values: col(a => a.hatUmsatz && a.hatIst && a.istStd > 0 ? r2(a.net / a.istStd) : null),
-      vjValues: vjCol(() => null) },      // keine VJ-Quelle (Stunden fehlen)
-    { label: 'Umsatz pro Gast', fmt: 'chf',
-      values: col(a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null),
-      vjValues: vjCol(a => a.pairedGaeste > 0 ? r2(a.pairedNet / a.pairedGaeste) : null) },
-  ];
+  const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs);
 
   return { weeks, vjWeeks, rows };
 }

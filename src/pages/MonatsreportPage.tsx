@@ -309,23 +309,33 @@ function WochenverlaufView() {
   const { rates, loading: ratesLoading } = useSocialCostRates();
 
   const [anzahl, setAnzahl] = useState(4);
+  const [jahr, setJahr] = useState(heute.getFullYear());
   const [mitVorjahr, setMitVorjahr] = useState(false);
   const [ansicht, setAnsicht] = useState<'table' | 'chart'>('table');
   const [daten, setDaten] = useState<WochenverlaufDaten | null>(null);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState<string | null>(null);
 
+  // Jahr-Optionen: aktuelles Jahr … 2024.
+  const jahrOptions = useMemo(() => {
+    const cur = heute.getFullYear();
+    const out: number[] = [];
+    for (let y = cur; y >= 2024; y--) out.push(y);
+    return out;
+  }, [heute]);
+  const istAktuellesJahr = jahr === heute.getFullYear();
+
   useEffect(() => {
     if (ratesLoading || !rates) return;
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeWochenverlauf(anzahl, tenantId, tenantKey, rates, heute, mitVorjahr)
+    ladeWochenverlauf(anzahl, tenantId, tenantKey, rates, heute, mitVorjahr, jahr)
       .then(d => { if (alive) setDaten(d); })
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [anzahl, mitVorjahr, tenantId, tenantKey, rates, ratesLoading, heute]);
+  }, [anzahl, jahr, mitVorjahr, tenantId, tenantKey, rates, ratesLoading, heute]);
 
   const showVj = mitVorjahr && !!daten?.vjWeeks;
   // Grafik braucht Vorjahresdaten (zwei Linien) → nur bei mitVorjahr wählbar.
@@ -335,9 +345,21 @@ function WochenverlaufView() {
   return (
     <>
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <span className="text-xs text-muted-foreground">Jahr</span>
+        <Select value={String(jahr)} onValueChange={v => setJahr(Number(v))}>
+          <SelectTrigger className="h-8 w-24 text-xs" data-testid="select-jahr">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {jahrOptions.map(y => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
         <Button
           variant={mitVorjahr ? 'default' : 'outline'}
-          size="sm" className="h-8 gap-1.5"
+          size="sm" className="h-8 gap-1.5 ml-2"
           aria-pressed={mitVorjahr}
           onClick={() => setMitVorjahr(v => !v)}
           data-testid="button-toggle-vorjahr"
@@ -395,7 +417,7 @@ function WochenverlaufView() {
       {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
 
       {!loading && daten && effektiveAnsicht === 'chart' && showVj && (
-        <WochenverlaufChart daten={daten} />
+        <WochenverlaufChart daten={daten} jahr={jahr} />
       )}
 
       {!loading && daten && effektiveAnsicht === 'table' && (
@@ -468,11 +490,14 @@ function WochenverlaufView() {
 
       {effektiveAnsicht === 'table' && (
         <p className="text-xs text-muted-foreground">
-          Wochenverlauf = letzte {anzahl} abgeschlossene ISO-Kalenderwochen (Mo–So, älteste links) ·
+          Wochenverlauf {jahr} = {istAktuellesJahr
+            ? `letzte ${anzahl} abgeschlossene ISO-Kalenderwochen`
+            : `dieselben ${anzahl} KW-Nummern wie aktuell, aber im Jahr ${jahr}`} (Mo–So, älteste links) ·
           Trend ▲/▼ = Veränderung zur Vorwoche · Verlauf = Mini-Trend über alle Wochen ·
           gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
           nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
-          {showVj && ' · Vorjahr = gleiche ISO-KW im Vorjahr (kleine Zeile darunter + Δ% aktuell vs. VJ); Produktive Stunden/Produktivität haben keine VJ-Quelle.'}
+          {!istAktuellesJahr && ` · ${jahr} aus Vorjahresdaten (vj_daily); Produktive Stunden/Produktivität nur fürs aktuelle Jahr → «—».`}
+          {showVj && ` · Vergleich = gleiche ISO-KW ${jahr - 1} (kleine Zeile darunter + Δ%); Produktive Stunden/Produktivität haben keine Vergleichsquelle.`}
         </p>
       )}
     </>
@@ -549,26 +574,26 @@ function MiniChart({ row, weeks }: { row: WochenverlaufRow; weeks: Wochenverlauf
   );
 }
 
-function WochenverlaufChart({ daten }: { daten: WochenverlaufDaten }) {
+function WochenverlaufChart({ daten, jahr }: { daten: WochenverlaufDaten; jahr: number }) {
   const charts = CHART_METRICS
     .map(label => daten.rows.find(r => r.label === label))
     .filter((r): r is WochenverlaufRow => !!r);
 
   return (
     <div className="space-y-3" data-testid="wochenverlauf-grafik">
-      {/* Gemeinsame Legende oben */}
+      {/* Gemeinsame Legende oben (Jahre gemäss Auswahl) */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1.5">
           <svg width="24" height="8" aria-hidden="true">
             <line x1="0" y1="4" x2="24" y2="4" stroke="hsl(var(--primary))" strokeWidth="2.25" />
           </svg>
-          Aktuelles Jahr
+          {jahr}
         </span>
         <span className="inline-flex items-center gap-1.5">
           <svg width="24" height="8" aria-hidden="true">
             <line x1="0" y1="4" x2="24" y2="4" stroke="hsl(var(--muted-foreground))" strokeWidth="1.5" strokeDasharray="5 4" />
           </svg>
-          Vorjahr
+          {jahr - 1}
         </span>
       </div>
 

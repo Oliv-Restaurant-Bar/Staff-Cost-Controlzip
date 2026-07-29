@@ -7,7 +7,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 
 import {
   computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
-  computeYtdWindow, kwRangeLabel,
+  computeYtdWindow, kwRangeLabel, computeWeeksForYear,
 } from './monatsreport';
 
 /**
@@ -256,5 +256,40 @@ describe('kwRangeLabel', () => {
 
   it('KW 53/2020 → «KW 53 · 28.12.–03.01.»', () => {
     expect(kwRangeLabel(2020, 53)).toBe('KW 53 · 28.12.–03.01.');
+  });
+});
+
+// ── Wochenverlauf: Jahr-Auswahl (Fensterbestimmung fürs gewählte Jahr) ───────
+
+describe('computeWeeksForYear', () => {
+  // Referenz-Heute: Mi 16.07.2025 → letzte 4 abgeschlossene Wochen = KW 24–27/2025.
+  const h2025 = new Date(2025, 6, 16);
+
+  it('aktuelles Jahr = identisch zu computeLastCompleteWeeks', () => {
+    const ref = computeLastCompleteWeeks(4, h2025);
+    const sel = computeWeeksForYear(4, h2025, 2025);
+    expect(sel).toEqual(ref);
+  });
+
+  it('vergangenes Jahr: gleiche KW-Nummern, aber im Zieljahr (2024)', () => {
+    const ref = computeLastCompleteWeeks(4, h2025);   // KW 24–27/2025
+    const sel = computeWeeksForYear(4, h2025, 2024);
+    expect(sel.map(w => w.kw)).toEqual(ref.map(w => w.kw));       // gleiche KW-Nummern
+    expect(sel.every(w => w.kwYear === 2024)).toBe(true);         // alle im Zieljahr
+    // KW 27/2024 = Mo 01.07.2024 – So 07.07.2024.
+    const kw27 = sel.find(w => w.kw === 27)!;
+    expect(kw27).toMatchObject({ kwYear: 2024, from: '2024-07-01', to: '2024-07-07' });
+  });
+
+  it('KW-53-Randfall: KW 53 wird weggelassen, wenn sie im Zieljahr nicht existiert', () => {
+    // Heute so wählen, dass KW 53 im Referenz-Fenster liegt: 08.01.2021 (KW 1/2021),
+    // letzte abgeschlossene Woche = KW 53/2020 (2020 hat 53 Wochen).
+    const hJan2021 = new Date(2021, 0, 8);
+    const ref = computeLastCompleteWeeks(2, hJan2021);
+    expect(ref.some(w => w.kw === 53)).toBe(true);   // Referenz enthält KW 53
+    // Zieljahr −1 (Shift −1): 2020→2019 usw. 2019 hat KEINE KW 53 → weggelassen.
+    const sel = computeWeeksForYear(2, hJan2021, hJan2021.getFullYear() - 1);
+    expect(sel.some(w => w.kw === 53)).toBe(false);  // KW 53 fehlt (2019 hat sie nicht)
+    expect(sel.length).toBeLessThan(ref.length);     // eine Woche weniger
   });
 });
