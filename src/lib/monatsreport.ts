@@ -444,7 +444,6 @@ export async function ladeMonatsreport(
     d('Brutto Umsatz', { month: mGrossV, week: wGrossV, weekBudget: wBudget != null ? r2(wBudget * VAT_STD) : null, budget: budgetGross, vj: vjGrossV }, { bold: true }),
     d('Netto Umsatz', { month: mNetV, week: wNetV, weekBudget: wBudget, budget: budgetNetV, vj: vjNetV }, { bold: true }),
     d('Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vjGaesteV }, { fmt: 'count' }),
-    d('Gäste Take Away', {}, { fmt: 'count' }), // keine Quelle (Personen-Import ohne TA-Trennung)
     d('Gruppen ab 20 Pax', { month: gruppen20 }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
