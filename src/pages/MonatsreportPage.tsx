@@ -4,9 +4,9 @@
  * Spalten: Kennzahl | Budget | Vorjahr | Woche | +/- in % | Monat | +/- in %
  * Fehlende Quellen bleiben leer (nie 0). Bestehende Seiten bleiben erreichbar.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, CalendarDays, GitCompareArrows, Table2, ChartLine } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -25,6 +25,15 @@ import {
   type WochenverlaufRow, type JahresvergleichDaten, type VergleichsModus,
 } from '@/lib/monatsreport';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
+import { exportCockpitPanelPDF, naechsterFrame } from '@/lib/cockpit-pdf-export';
+import { useToast } from '@/hooks/use-toast';
+
+/** Metadaten fürs PDF (Titel/Zeitraum/Dateiname), von jedem Tab gemeldet. */
+export interface CockpitPdfMeta {
+  title: string;
+  subtitle: string;
+  fileName: string;
+}
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -105,6 +114,18 @@ export default function MonatsreportPage() {
   const heute = useMemo(() => new Date(), []);
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
+  const { toast } = useToast();
+
+  // Aktiver Tab (kontrolliert), damit der PDF-Button die richtige Ansicht erfasst.
+  const [activeTab, setActiveTab] = useState<'monat' | 'wochen' | 'jahr'>('monat');
+  // Refs auf die drei Tab-Panels (das wird jeweils gecaptured).
+  const monatPanelRef = useRef<HTMLDivElement>(null);
+  const wochenPanelRef = useRef<HTMLDivElement>(null);
+  const jahrPanelRef = useRef<HTMLDivElement>(null);
+  // PDF-Metadaten je Tab; Wochenverlauf/Jahresvergleich melden sie via Callback.
+  const [wochenMeta, setWochenMeta] = useState<CockpitPdfMeta | null>(null);
+  const [jahrMeta, setJahrMeta] = useState<CockpitPdfMeta | null>(null);
+  const [pdfLaeuft, setPdfLaeuft] = useState(false);
 
   const [year, setYear] = useState(heute.getFullYear());
   const [month, setMonth] = useState(heute.getMonth() + 1); // 1-basiert
@@ -135,6 +156,44 @@ export default function MonatsreportPage() {
     ? `${fmtDate(daten.weekFrom)}–${fmtDate(daten.weekTo)}`
     : null;
 
+  // PDF-Export der aktuell aktiven Ansicht «genau so wie angezeigt».
+  const handlePdfExport = useCallback(async () => {
+    // Panel + Metadaten je aktivem Tab bestimmen.
+    let el: HTMLElement | null = null;
+    let meta: CockpitPdfMeta | null = null;
+    if (activeTab === 'monat') {
+      el = monatPanelRef.current;
+      meta = {
+        title: 'Monatsübersicht',
+        subtitle: `${MONATE[month - 1]} ${year}`,
+        fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
+      };
+    } else if (activeTab === 'wochen') {
+      el = wochenPanelRef.current;
+      meta = wochenMeta;
+    } else {
+      el = jahrPanelRef.current;
+      meta = jahrMeta;
+    }
+    if (!el || !meta) {
+      toast({ title: 'PDF-Export nicht möglich', description: 'Ansicht ist noch nicht geladen.', variant: 'destructive' });
+      return;
+    }
+    setPdfLaeuft(true);
+    try {
+      await naechsterFrame(); // Recharts/Layout sicher fertig
+      await exportCockpitPanelPDF(el, meta, heute);
+    } catch (e) {
+      toast({
+        title: 'PDF-Export fehlgeschlagen',
+        description: e instanceof Error ? e.message : 'Unbekannter Fehler',
+        variant: 'destructive',
+      });
+    } finally {
+      setPdfLaeuft(false);
+    }
+  }, [activeTab, month, year, wochenMeta, jahrMeta, heute, toast]);
+
   return (
     <PageShell>
       <div className="space-y-4 max-w-5xl">
@@ -149,15 +208,28 @@ export default function MonatsreportPage() {
           </div>
         </div>
 
-        <Tabs defaultValue="monat">
-          <TabsList data-testid="tabs-cockpit">
-            <TabsTrigger value="monat" data-testid="tab-monat">Monatsübersicht</TabsTrigger>
-            <TabsTrigger value="wochen" data-testid="tab-wochen">Wochenverlauf</TabsTrigger>
-            <TabsTrigger value="jahr" data-testid="tab-jahr">Jahresvergleich</TabsTrigger>
-          </TabsList>
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+          <div className="flex items-center justify-between gap-2">
+            <TabsList data-testid="tabs-cockpit">
+              <TabsTrigger value="monat" data-testid="tab-monat">Monatsübersicht</TabsTrigger>
+              <TabsTrigger value="wochen" data-testid="tab-wochen">Wochenverlauf</TabsTrigger>
+              <TabsTrigger value="jahr" data-testid="tab-jahr">Jahresvergleich</TabsTrigger>
+            </TabsList>
+            <Button
+              variant="outline" size="sm" className="h-8 gap-1.5"
+              onClick={handlePdfExport}
+              disabled={pdfLaeuft}
+              data-testid="button-pdf-export"
+            >
+              {pdfLaeuft
+                ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden="true" />
+                : <FileDown className="h-4 w-4" />}
+              PDF
+            </Button>
+          </div>
 
           {/* ── Monatsübersicht (unverändert) ── */}
-          <TabsContent value="monat" className="space-y-4">
+          <TabsContent value="monat" className="space-y-4" ref={monatPanelRef}>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month">
                 <ChevronLeft className="h-4 w-4" />
@@ -254,13 +326,13 @@ export default function MonatsreportPage() {
           </TabsContent>
 
           {/* ── Wochenverlauf (neu) ── */}
-          <TabsContent value="wochen" className="space-y-4">
-            <WochenverlaufView />
+          <TabsContent value="wochen" className="space-y-4" ref={wochenPanelRef}>
+            <WochenverlaufView onPdfMeta={setWochenMeta} />
           </TabsContent>
 
           {/* ── Jahresvergleich (YTD, neu) ── */}
-          <TabsContent value="jahr" className="space-y-4">
-            <JahresvergleichView />
+          <TabsContent value="jahr" className="space-y-4" ref={jahrPanelRef}>
+            <JahresvergleichView onPdfMeta={setJahrMeta} />
           </TabsContent>
         </Tabs>
       </div>
@@ -303,7 +375,7 @@ function Sparkline({ values }: { values: (number | null)[] }) {
   );
 }
 
-function WochenverlaufView() {
+function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => void }) {
   const heute = useMemo(() => new Date(), []);
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
@@ -341,6 +413,16 @@ function WochenverlaufView() {
   // Grafik braucht Vorjahresdaten (zwei Linien) → nur bei mitVorjahr wählbar.
   // Wird der Toggle abgeschaltet, fällt die Ansicht automatisch auf Tabelle.
   const effektiveAnsicht: 'table' | 'chart' = mitVorjahr ? ansicht : 'table';
+
+  // PDF-Metadaten an die Seite melden (Titel/Zeitraum/Dateiname je nach Einstellungen).
+  useEffect(() => {
+    const ans = effektiveAnsicht === 'chart' ? 'grafik' : 'tabelle';
+    onPdfMeta({
+      title: 'Wochenverlauf',
+      subtitle: `${jahr} · letzte ${anzahl} Wochen${mitVorjahr ? ' · mit Vorjahr' : ''} · ${effektiveAnsicht === 'chart' ? 'Grafik' : 'Tabelle'}`,
+      fileName: `cockpit-wochenverlauf-${jahr}-${anzahl}w-${ans}`,
+    });
+  }, [onPdfMeta, jahr, anzahl, mitVorjahr, effektiveAnsicht]);
 
   return (
     <>
@@ -617,7 +699,7 @@ function WochenverlaufChart({ daten, jahr }: { daten: WochenverlaufDaten; jahr: 
 // der Cache beim Umschalten des Zeitraums falsche Daten!).
 let jahresvergleichCache: { key: string; daten: JahresvergleichDaten } | null = null;
 
-function JahresvergleichView() {
+function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => void }) {
   const heute = useMemo(() => new Date(), []);
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
@@ -670,6 +752,24 @@ function JahresvergleichView() {
   const spaltenLabel = daten?.modus === 'ytd'
     ? (jahr: number) => `YTD ${jahr}`
     : (jahr: number) => `${jahr}`;
+
+  // PDF-Metadaten an die Seite melden (Zeitraum aus den geladenen Fensterdaten).
+  useEffect(() => {
+    const fmtFull = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.${iso.slice(0, 4)}`;
+    const modusSlug = modus === 'ganzjahr' ? 'ganzjahr' : modus === 'custom' ? 'eigener' : 'ytd';
+    let subtitle: string;
+    let fileName: string;
+    if (daten && customValid) {
+      subtitle = daten.modus === 'ganzjahr'
+        ? `Aktuelles Jahr bis heute vs. ganzes Vorjahr · ${fmtFull(daten.curFrom)}–${fmtFull(daten.curTo)} vs. ${daten.vjYear}`
+        : `${fmtFull(daten.curFrom)}–${fmtFull(daten.curTo)} vs. ${fmtFull(daten.vjFrom)}–${fmtFull(daten.vjTo)}`;
+      fileName = `cockpit-jahresvergleich-${modusSlug}-${daten.curFrom}_${daten.curTo}`;
+    } else {
+      subtitle = modus === 'custom' ? `Eigener Zeitraum ${von}–${bis}` : `${curYear} vs. ${curYear - 1}`;
+      fileName = `cockpit-jahresvergleich-${modusSlug}-${curYear}`;
+    }
+    onPdfMeta({ title: 'Jahresvergleich', subtitle, fileName });
+  }, [onPdfMeta, daten, customValid, modus, von, bis, curYear]);
 
   return (
     <>
