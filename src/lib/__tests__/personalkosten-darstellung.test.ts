@@ -141,12 +141,16 @@ describe('buildKumulierterVerlauf — Ist durchgezogen, Plan ab Stichtag, Budget
     expect(p[3].planKum).toBe(5000);
   });
 
-  it('Budget-Linie kumuliert FIX anteilig + Budget/Tag', () => {
+  it('Budget-Linie = kumuliertes PK-Budget/Tag OHNE Fix-Anteil; Endpunkt == pkBudget.total', () => {
     const p = buildKumulierterVerlauf(base);
-    // Tag 1: FIX 1000 + Budget 250 = 1250
-    expect(p[0].budgetKum).toBe(1250);
-    // Tag 4: FIX 4000 + Budget 1000 = 5000
-    expect(p[3].budgetKum).toBe(5000);
+    // Tag 1: nur Budget 250 (kein Fix obendrauf)
+    expect(p[0].budgetKum).toBe(250);
+    // Tag 4 (Monatsende): Summe budgetProTag = 4×250 = 1000 = pkBudget.total
+    const pkBudgetTotal = base.budgetProTag.reduce((s, b) => s + b.betrag, 0);
+    expect(p[3].budgetKum).toBe(pkBudgetTotal);
+    expect(p[3].budgetKum).toBe(1000);
+    // Endpunkt Budget-Linie liegt UNTER Plan/HR-Endpunkt (5000) → korrekt.
+    expect(p[3].budgetKum! < p[3].planKum!).toBe(true);
   });
 
   it('ohne Budget → budgetKum null', () => {

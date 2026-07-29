@@ -112,7 +112,10 @@ export function PkHeadline(props: PkHeadlineProps) {
         <p className="text-xs text-muted-foreground">
           Budget {hasBudget ? fmtCHF(budgetCHF) : '—'} · Ziel {zielPct.toFixed(1)} % / Obergrenze {OBERGRENZE_PCT} %
           {' · '}
-          <span data-testid="pk-headline-isttage">Stand: {istTage} von {daysInMonth} Tagen als Ist erfasst</span>
+          <span data-testid="pk-headline-isttage">
+            Stand: {stichtag} von {daysInMonth} Tagen abgeschlossen
+            {istTage < stichtag && `, davon ${istTage} mit Ist-Umsatz`}
+          </span>
         </p>
       </div>
 

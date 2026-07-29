@@ -177,8 +177,8 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
  *                Σ Flex-effektivKosten der abgeschlossenen Tage).
  *   - planKum:   ab Stichtag (inkl. Stichtag als Anknüpfpunkt) die
  *                Hochrechnung weiter (FIX anteilig + Flex-Plan der Resttage).
- *   - budgetKum: gerade Budget-Linie (FIX anteilig + kumuliertes Budget/Tag);
- *                null, wenn kein Budget hinterlegt.
+ *   - budgetKum: kumuliertes PK-Budget/Tag; Endpunkt == pkBudget.total (kein
+ *                Fix-Anteil obendrauf!); null, wenn kein Budget hinterlegt.
  *
  * Reine Darstellung — FIX wird linear je Tag verteilt (identische Annahme wie
  * die bestehende PKQ-Verlaufsgrafik), die Flex-Werte kommen 1:1 aus dem Kern.
@@ -212,8 +212,12 @@ export function buildKumulierterVerlauf(input: VerlaufInput): VerlaufPunkt[] {
       istKum = r2(fixKum + istFlexKum);
     }
 
+    // Budget-Linie = das GESAMTE PK-Budget (pkBudget.total, dieselbe Zahl wie
+    // die Kopf-Kachel) linear/gewichtet über die Tage kumuliert. Es ist bereits
+    // der volle Personalaufwand-Zielwert — KEIN Fix-Anteil obendrauf, sonst
+    // würde FIX doppelt gezählt und die Linie über die Ist/HR-Linie schiessen.
     budgetTagKum += budgetByDate.get(date) ?? 0;
-    const budgetKum = hasBudget ? r2(fixKum + budgetTagKum) : null;
+    const budgetKum = hasBudget ? r2(budgetTagKum) : null;
 
     // Plan-Linie erst ab Stichtag zeichnen (durchgezogene Ist-Linie davor).
     // Am Stichtag selbst beide Punkte setzen → Linien treffen sich sauber.

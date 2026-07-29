@@ -172,4 +172,19 @@ describe('personalkosten — Modi + istFehltTage durchgereicht', () => {
     expect(personalkosten(daten, 'istBisHeute', { stichtag: 3 }).istFehltTage).toContain(`${D(2)}|m`);
     expect(personalkosten(daten, 'hochrechnung', { stichtag: 3 }).istFehltTage).toContain(`${D(2)}|m`);
   });
+
+  it('Kopf-Kachel FLEX (kHr.flex) ist Ist+Plan, NICHT reiner Plan, wenn Ist ≠ Plan', () => {
+    // Vergangener Tag 1: Plan 4h, aber Ist 6h (mehr gearbeitet). Zukunft Tag 5: Plan 4h.
+    // Reiner Monatsplan wäre (4+4)=8h; korrekte Hochrechnung = Ist 6h + Plan 4h = 10h.
+    const emp = flexEmp('m', 'mirus');
+    const daten = makeDaten([emp], {
+      plan: { [D(1)]: { m: 4 }, [D(5)]: { m: 4 } },
+      ist:  { [D(1)]: { m: 6 } },
+    });
+    const rate = flexKostenProTagDetail(daten).tage.find(t => t.date === D(1))!.proMa.m.chfProStd;
+    const kHr = personalkosten(daten, 'hochrechnung', { stichtag: 3 });
+    // Beweist: HR-FLEX = 10h × rate (Ist 6 + Plan 4), NICHT 8h (reiner Plan).
+    expect(kHr.flex).toBeCloseTo(10 * rate, 0);
+    expect(kHr.flex).not.toBeCloseTo(8 * rate, 0);
+  });
 });

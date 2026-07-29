@@ -55,9 +55,23 @@ describe('PkHeadline — Schlagzeile aus Kernwerten (reine Darstellung)', () => 
     expect(screen.getByTestId('pk-headline-chip-pkq').textContent).toContain('46.9 %');
   });
 
-  it('Zusatzzeile zeigt Ist-Tage X von Y', () => {
+  it('Zusatzzeile: Stand = abgeschlossene Tage (Stichtag) von Monatstagen', () => {
+    // stichtag 12, istTage 12 → «12 von 31 Tagen abgeschlossen», kein Zusatz.
     renderHeadline();
-    expect(screen.getByTestId('pk-headline-isttage').textContent).toContain('12 von 31');
+    const t = screen.getByTestId('pk-headline-isttage').textContent ?? '';
+    expect(t).toContain('12 von 31');
+    expect(t).toContain('abgeschlossen');
+    expect(t).not.toContain('mit Ist-Umsatz');
+  });
+
+  it('Zusatzzeile: bei fehlendem Ist-Umsatz zeigt sie «, davon X mit Ist-Umsatz»', () => {
+    // stichtag 28 (bis 28.07.), aber nur 27 Tage mit Ist-Umsatz → konsistent.
+    renderHeadline({ stichtag: 28, istTage: 27, pkqIst: 0.53 });
+    const t = screen.getByTestId('pk-headline-isttage').textContent ?? '';
+    expect(t).toContain('28 von 31 Tagen abgeschlossen');
+    expect(t).toContain('davon 27 mit Ist-Umsatz');
+    // «bis <Datum>» der Ist-Zeile nutzt denselben Stichtag → 28.07.
+    expect(screen.getByTestId('pk-ist-row').textContent).toContain('Ist bis 28.07');
   });
 
   it('Ist-Zeile zeigt PKQ Ist und «bis <Datum>»', () => {
