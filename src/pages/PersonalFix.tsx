@@ -4477,147 +4477,6 @@ export default function PersonalFixPage() {
             </div>
           )}
 
-          {/* ── Personalcontrolling: Budget vs. Ist (Betrieb) + App vs. Erfolgsrechnung (Kontrolle) ─ */}
-          {/* Nur ganzer Monat: die Erfolgsrechnung liegt monatsweise vor, ein
-              Stichtag-Vergleich (pro rata) wäre irreführend. */}
-          {proRataDay === null && (
-            <div
-              data-testid="pfix-personalcontrolling"
-              className="rounded-lg border border-border bg-muted/10 p-3 space-y-3"
-            >
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Personalcontrolling
-                </h3>
-                <InfoTip
-                  side="top"
-                  text={
-                    <span>
-                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)},
-                      beide mit denselben Werten wie die Kopf-Kennzahlen (Quelle:
-                      Personalkosten-Kern):{' '}
-                      <b>Budget vs. Ist</b> vergleicht das Budget (Ziel-Personalquote ×
-                      Umsatz-Budget) mit der Hochrechnung — betriebswirtschaftlich, ob der
-                      Personalaufwand unter oder über Budget liegt (Richtung = gut/schlecht).{' '}
-                      <b>Erfolgsrechnung-Abgleich</b> ist eine technische Kontrolle, ob die
-                      Hochrechnung mit dem vollen Personalaufwand der Erfolgsrechnung (Löhne +
-                      Sozialleistungen, FIBU 5000–5999) übereinstimmt — hier zählt nur die
-                      Grösse der Abweichung. Alle Quoten sind zeitkonsistent
-                      (Hochrechnung ÷ Hochrechnungs-Umsatz {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}).
-                    </span>
-                  }
-                />
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {/* Block A — Budget vs. Ist (betriebswirtschaftlich, richtungsabhängig) */}
-                <ControllingBlock
-                  testid="pfix-pc-budget-ist"
-                  title="Budget vs. Ist (Hochrechnung)"
-                  colLeft="Budget"
-                  colRight="Ist (HR)"
-                  colDiff="HR − Budget"
-                  onClick={() => setDrilldownFocus('abweichung')}
-                  pill={
-                    <StatusPill tone={hasCoreBudget ? budgetVsIst.tone : 'neutral'} size="xs">
-                      {hasCoreBudget ? budgetDeltaText(budgetVsIst.diffCHF) : 'Kein Umsatz-Budget'}
-                    </StatusPill>
-                  }
-                  chf={{
-                    left: hasCoreBudget ? fmtCHF(budgetVsIst.budgetCHF) : '—',
-                    right: fmtCHF(budgetVsIst.istCHF),
-                    diff: hasCoreBudget ? signCHF(budgetVsIst.diffCHF) : '—',
-                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
-                  }}
-                  pct={{
-                    left: fmtQuote(budgetVsIst.budgetPct),
-                    right: fmtQuote(budgetVsIst.istPct),
-                    diff: hasCoreBudget && budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
-                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
-                  }}
-                />
-
-                {/* Block B — App vs. Erfolgsrechnung (technische Kontrolle, betragsbasiert) */}
-                {erVergleich.status === 'ok' ? (
-                  <ControllingBlock
-                    testid="pfix-pc-app-er"
-                    title="Erfolgsrechnung-Abgleich — voller Personalaufwand"
-                    colLeft="HR App"
-                    colRight="Ist ER"
-                    colDiff="App − ER"
-                    onClick={() => setDrilldownFocus('er')}
-                    info={
-                      <InfoTip
-                        side="top"
-                        text={
-                          <span>
-                            Kontrolle: die App-Hochrechnung des Personalaufwands (Total
-                            Arbeitgeberkosten aus dem Personalkosten-Kern) gegenüber „Löhne (Total)"
-                            + „Sozialleistungen" der Erfolgsrechnung (exakt dieselben Werte wie dort,
-                            FIBU 5000–5999, voller Arbeitgeberaufwand exkl. „Übriger
-                            Personalaufwand"). Diese werden <b>nicht</b> nochmals mit Sozialkosten
-                            multipliziert. Beide Quoten zeitkonsistent auf den Hochrechnungs-Umsatz{' '}
-                            {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}.
-                            {erVergleich.revenueMismatch
-                              ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
-                              : ''}
-                          </span>
-                        }
-                      />
-                    }
-                    pill={
-                      <StatusPill tone={erVergleich.tone} size="xs">
-                        {ER_STATUS_LABEL[erVergleich.tone]}
-                      </StatusPill>
-                    }
-                    footer={
-                      <span className={TONE_TEXT[erVergleich.tone]}>
-                        {appVsErText(erVergleich.diffCHF)}
-                      </span>
-                    }
-                    chf={{
-                      left: fmtCHF(pkZentral?.kHr.total ?? 0),
-                      right: fmtCHF(erVergleich.fibuCHF),
-                      diff: signCHF(erVergleich.diffCHF),
-                      tone: erVergleich.tone,
-                    }}
-                    pct={{
-                      left: fmtQuote(erVergleich.berechnetPct),
-                      right: fmtQuote(erVergleich.fibuPct),
-                      diff: erVergleich.diffPp !== null ? `${signPp(erVergleich.diffPp)} Pp` : '—',
-                      tone: erVergleich.tone,
-                    }}
-                  />
-                ) : (
-                  <div
-                    data-testid="pfix-pc-app-er"
-                    className="rounded-md border border-border bg-card p-2.5 space-y-2"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        App vs. Erfolgsrechnung
-                      </span>
-                    </div>
-                    <div
-                      data-testid="pfix-pc-app-er-missing"
-                      className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-                    >
-                      <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
-                      {!isGuest && (
-                        <Link
-                          to="/reporting"
-                          data-testid="pfix-er-import-link"
-                          className="font-medium text-primary underline underline-offset-2"
-                        >
-                          Erfolgsrechnung importieren →
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
           {/* ── Planungsempfehlungen: regelbasiert, read-only, lokale Simulation ── */}
           <PlanungsempfehlungenSection
@@ -6444,6 +6303,154 @@ export default function PersonalFixPage() {
             </section>
           );
         })()}
+
+          {/* ── Erfolgsrechnung-Abgleich (Zusatzsicht, ganz unten, default zu) ── */}
+          {proRataDay === null && (
+            <CollapsibleSection
+              testid="pfix-er-abgleich-section"
+              title="Erfolgsrechnung-Abgleich — voller Personalaufwand"
+              status="Zusatzsicht · anderer Umfang als die Schlagzeile"
+            >
+              <div className="p-3">
+            <div
+              data-testid="pfix-personalcontrolling"
+              className="rounded-lg border border-border bg-muted/10 p-3 space-y-3"
+            >
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Personalcontrolling
+                </h3>
+                <InfoTip
+                  side="top"
+                  text={
+                    <span>
+                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)},
+                      beide mit denselben Werten wie die Kopf-Kennzahlen (Quelle:
+                      Personalkosten-Kern):{' '}
+                      <b>Budget vs. Ist</b> vergleicht das Budget (Ziel-Personalquote ×
+                      Umsatz-Budget) mit der Hochrechnung — betriebswirtschaftlich, ob der
+                      Personalaufwand unter oder über Budget liegt (Richtung = gut/schlecht).{' '}
+                      <b>Erfolgsrechnung-Abgleich</b> ist eine technische Kontrolle, ob die
+                      Hochrechnung mit dem vollen Personalaufwand der Erfolgsrechnung (Löhne +
+                      Sozialleistungen, FIBU 5000–5999) übereinstimmt — hier zählt nur die
+                      Grösse der Abweichung. Alle Quoten sind zeitkonsistent
+                      (Hochrechnung ÷ Hochrechnungs-Umsatz {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}).
+                    </span>
+                  }
+                />
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {/* Block A — Budget vs. Ist (betriebswirtschaftlich, richtungsabhängig) */}
+                <ControllingBlock
+                  testid="pfix-pc-budget-ist"
+                  title="Budget vs. Ist (Hochrechnung)"
+                  colLeft="Budget"
+                  colRight="Ist (HR)"
+                  colDiff="HR − Budget"
+                  onClick={() => setDrilldownFocus('abweichung')}
+                  pill={
+                    <StatusPill tone={hasCoreBudget ? budgetVsIst.tone : 'neutral'} size="xs">
+                      {hasCoreBudget ? budgetDeltaText(budgetVsIst.diffCHF) : 'Kein Umsatz-Budget'}
+                    </StatusPill>
+                  }
+                  chf={{
+                    left: hasCoreBudget ? fmtCHF(budgetVsIst.budgetCHF) : '—',
+                    right: fmtCHF(budgetVsIst.istCHF),
+                    diff: hasCoreBudget ? signCHF(budgetVsIst.diffCHF) : '—',
+                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
+                  }}
+                  pct={{
+                    left: fmtQuote(budgetVsIst.budgetPct),
+                    right: fmtQuote(budgetVsIst.istPct),
+                    diff: hasCoreBudget && budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
+                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
+                  }}
+                />
+
+                {/* Block B — App vs. Erfolgsrechnung (technische Kontrolle, betragsbasiert) */}
+                {erVergleich.status === 'ok' ? (
+                  <ControllingBlock
+                    testid="pfix-pc-app-er"
+                    title="Erfolgsrechnung-Abgleich — voller Personalaufwand"
+                    colLeft="HR App"
+                    colRight="Ist ER"
+                    colDiff="App − ER"
+                    onClick={() => setDrilldownFocus('er')}
+                    info={
+                      <InfoTip
+                        side="top"
+                        text={
+                          <span>
+                            Kontrolle: die App-Hochrechnung des Personalaufwands (Total
+                            Arbeitgeberkosten aus dem Personalkosten-Kern) gegenüber „Löhne (Total)"
+                            + „Sozialleistungen" der Erfolgsrechnung (exakt dieselben Werte wie dort,
+                            FIBU 5000–5999, voller Arbeitgeberaufwand exkl. „Übriger
+                            Personalaufwand"). Diese werden <b>nicht</b> nochmals mit Sozialkosten
+                            multipliziert. Beide Quoten zeitkonsistent auf den Hochrechnungs-Umsatz{' '}
+                            {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}.
+                            {erVergleich.revenueMismatch
+                              ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
+                              : ''}
+                          </span>
+                        }
+                      />
+                    }
+                    pill={
+                      <StatusPill tone={erVergleich.tone} size="xs">
+                        {ER_STATUS_LABEL[erVergleich.tone]}
+                      </StatusPill>
+                    }
+                    footer={
+                      <span className={TONE_TEXT[erVergleich.tone]}>
+                        {appVsErText(erVergleich.diffCHF)}
+                      </span>
+                    }
+                    chf={{
+                      left: fmtCHF(pkZentral?.kHr.total ?? 0),
+                      right: fmtCHF(erVergleich.fibuCHF),
+                      diff: signCHF(erVergleich.diffCHF),
+                      tone: erVergleich.tone,
+                    }}
+                    pct={{
+                      left: fmtQuote(erVergleich.berechnetPct),
+                      right: fmtQuote(erVergleich.fibuPct),
+                      diff: erVergleich.diffPp !== null ? `${signPp(erVergleich.diffPp)} Pp` : '—',
+                      tone: erVergleich.tone,
+                    }}
+                  />
+                ) : (
+                  <div
+                    data-testid="pfix-pc-app-er"
+                    className="rounded-md border border-border bg-card p-2.5 space-y-2"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        App vs. Erfolgsrechnung
+                      </span>
+                    </div>
+                    <div
+                      data-testid="pfix-pc-app-er-missing"
+                      className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                    >
+                      <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
+                      {!isGuest && (
+                        <Link
+                          to="/reporting"
+                          data-testid="pfix-er-import-link"
+                          className="font-medium text-primary underline underline-offset-2"
+                        >
+                          Erfolgsrechnung importieren →
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+              </div>
+            </CollapsibleSection>
+          )}
 
       </main>
 
