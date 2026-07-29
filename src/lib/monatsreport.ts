@@ -30,6 +30,7 @@ import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/g
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { loadReservationCounting, DEFAULT_RESERVATION_COUNTING } from '@/lib/reservation-cockpit-settings';
 import { loadReservationMetrics } from '@/lib/reservation-cockpit-metrics';
+import { loadTakeAwayGuests } from '@/lib/takeaway-cockpit-metrics';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 
@@ -711,7 +712,7 @@ export async function ladeMonatsreport(
   const resCounting = await loadReservationCounting(tenantKey).catch(() => null);
   const resSettings = resCounting ?? DEFAULT_RESERVATION_COUNTING;
 
-  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, pk] = await Promise.all([
+  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, taMonth, taWeek, pk] = await Promise.all([
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
@@ -722,6 +723,11 @@ export async function ladeMonatsreport(
     loadReservationMetrics(tenantId, resWeekFrom, resWeekTo, resSettings),
     // Vorjahr: gleicher Monat Jahr−1 (für die Vorjahr-Spalte der Monatssicht).
     loadReservationMetrics(tenantId, vjFromIsoG, vjToIsoG, resSettings),
+    // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte, GANZER
+    // Monat bzw. gewählte Woche (ungeklemmt, future-capable). Kein trivialer
+    // Vorjahreswert → VJ-Spalten bleiben «—».
+    loadTakeAwayGuests(fromIso, toIso).catch(() => null),
+    loadTakeAwayGuests(resWeekFrom, resWeekTo).catch(() => null),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
@@ -1026,6 +1032,13 @@ export async function ladeMonatsreport(
       monthPax: resMonth.largeGroupPersons, weekPax: resWeek.largeGroupPersons,
       vjMonthPax: resVjMonth.largeGroupPersons,
     }, { fmt: 'countPax' }),
+    // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte (1 Stück
+    // = 1 TA-Gast). Woche = gewählte Woche, Monat = ganzer Monat (inkl. Zukunft).
+    // Kein trivialer Vorjahreswert → VJ-Spalten «—». Quelle fehlt → «—» (nie 0).
+    d('gaeste_take_away', 'Gäste Take Away', {
+      month: taMonth, week: taWeek,
+      vj: null, vjMonth: null,
+    }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
     // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),
