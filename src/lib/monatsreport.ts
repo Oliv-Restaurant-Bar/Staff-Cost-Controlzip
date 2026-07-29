@@ -601,21 +601,27 @@ export async function ladeMonatsreport(
 
   // ── Produktive Stunden ─────────────────────────────────────────────────────
   let istStd: number | null = null, planStd: number | null = null;
-  let wIstStd: number | null = null;
+  let wIstStd: number | null = null, wPlanStd: number | null = null;
   if (pk) {
-    let ist = 0, hatIst = false, plan = 0, hatPlan = false, wIst = 0;
+    let ist = 0, hatIst = false, plan = 0, hatPlan = false, wIst = 0, wPlan = 0;
     for (const [date, perEmp] of Object.entries(pk.istStdProTag)) {
       for (const h of Object.values(perEmp)) { ist += h; hatIst = true; }
       if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) {
         for (const h of Object.values(perEmp)) wIst += h;
       }
     }
-    for (const perEmp of Object.values(pk.planStdProTag)) {
+    // Woche geplant: exakt derselbe (auf den Monat geklemmte) Tagesbereich
+    // wie bei den Ist-Stunden — Summe der Dienstplan-Plan-Stunden dieser Tage.
+    for (const [date, perEmp] of Object.entries(pk.planStdProTag)) {
       for (const h of Object.values(perEmp)) { plan += h; hatPlan = true; }
+      if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) {
+        for (const h of Object.values(perEmp)) wPlan += h;
+      }
     }
     istStd = hatIst ? r2(ist) : null;
     planStd = hatPlan ? r2(plan) : null;
     wIstStd = hatIst && weekFrom ? r2(wIst) : null;
+    wPlanStd = hatPlan && weekFrom ? r2(wPlan) : null;
   }
 
   // ── Zeilen bauen ───────────────────────────────────────────────────────────
@@ -690,7 +696,7 @@ export async function ladeMonatsreport(
     e(),
     // ── Block Produktivität ──
     d('Produktive Stunden (Ist)', { month: istStd, week: wIstStd }, { fmt: 'hours' }),
-    d('Produktive Stunden geplant', { month: planStd }, { fmt: 'hours' }),
+    d('Produktive Stunden geplant', { month: planStd, week: wPlanStd }, { fmt: 'hours' }),
     d('Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
