@@ -444,6 +444,9 @@ export interface MonatsreportDaten {
   weekTo: string | null;
   /** Beschriftung der «Woche»-Auswahl (z.B. "KW 30", "Aktuelle Woche") */
   weekLabel: string;
+  /** Zeitraum der «Vorjahr (Woche)»-Spalte (gleiche ISO-KW im Vorjahr); null wenn keine VJ-Woche. */
+  vjWeekFrom: string | null;
+  vjWeekTo: string | null;
   rows: MrRow[];
 }
 
@@ -828,7 +831,12 @@ export async function ladeMonatsreport(
     }),
   ];
 
-  return { year, month, weekFrom, weekTo, weekLabel, rows };
+  return {
+    year, month, weekFrom, weekTo, weekLabel,
+    vjWeekFrom: vjWochePaare.length > 0 ? vjWochePaare[0].vj : null,
+    vjWeekTo: vjWochePaare.length > 0 ? vjWochePaare[vjWochePaare.length - 1].vj : null,
+    rows,
+  };
 }
 
 // ── Wochenverlauf (mehrere abgeschlossene Wochen nebeneinander) ──────────────

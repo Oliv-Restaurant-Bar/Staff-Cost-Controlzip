@@ -157,6 +157,16 @@ export default function MonatsreportPage() {
     ? `${fmtDate(daten.weekFrom)}–${fmtDate(daten.weekTo)}`
     : null;
 
+  // KW + Datum als Untertitel der Budget-/Vorjahr-Wochenspalten (gleiche Woche
+  // wie die «Woche»-Spalte bzw. gleiche ISO-KW im Vorjahr).
+  const parseIso = (s: string) => new Date(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  const budgetWocheSub = daten?.weekFrom && daten?.weekTo
+    ? `KW ${isoWeekOf(parseIso(daten.weekFrom)).week} · ${fmtDate(daten.weekFrom)}–${fmtDate(daten.weekTo)}`
+    : null;
+  const vjWocheSub = daten?.vjWeekFrom && daten?.vjWeekTo
+    ? `KW ${isoWeekOf(parseIso(daten.vjWeekFrom)).week} · ${fmtDate(daten.vjWeekFrom)}–${fmtDate(daten.vjWeekTo)}${daten.vjWeekTo.slice(0, 4)}`
+    : null;
+
   // PDF-Export der aktuell aktiven Ansicht «genau so wie angezeigt».
   const handlePdfExport = useCallback(async () => {
     // Panel + Metadaten je aktivem Tab bestimmen.
@@ -289,8 +299,14 @@ export default function MonatsreportPage() {
                   <thead>
                     <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
-                      <th className="px-3 py-2 text-right font-semibold">Budget (Woche)</th>
-                      <th className="px-3 py-2 text-right font-semibold">Vorjahr (Woche)</th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Budget (Woche)
+                        {budgetWocheSub ? <span className="block normal-case font-normal">{budgetWocheSub}</span> : null}
+                      </th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Vorjahr (Woche)
+                        {vjWocheSub ? <span className="block normal-case font-normal">{vjWocheSub}</span> : null}
+                      </th>
                       <th className="px-3 py-2 text-right font-semibold">
                         {daten?.weekLabel ?? 'Woche'}
                         {wocheRange ? <span className="block normal-case font-normal">{wocheRange}</span> : null}
