@@ -28,7 +28,7 @@ export async function exportMonatsreportXlsx(rows: MrRow[], year: number, month:
 
   // Kopfzeile
   const head = ws.addRow([
-    `Monat ${MONATE[month - 1]}`, 'Budget', 'Vorjahr', 'Woche', '+/- in %', 'Monat', '+/- in %',
+    `Monat ${MONATE[month - 1]}`, 'Budget (Woche)', 'Vorjahr (Woche)', 'Woche', 'Δ %', 'Monat', 'Δ %',
   ]);
   head.font = { bold: true };
   head.eachCell(c => {
@@ -42,8 +42,9 @@ export async function exportMonatsreportXlsx(rows: MrRow[], year: number, month:
 
     const wDev = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
       ? ((row.week - row.weekBudget) / row.weekBudget) * 100 : null;
-    const mDev = row.month !== null && row.budget !== null && row.budget > 0
-      ? ((row.month - row.budget) / row.budget) * 100 : null;
+    // Monat-Δ% weiterhin gegen das MONATS-Budget (monthBudget), nicht die Budget-Woche-Spalte.
+    const mDev = row.month !== null && row.monthBudget !== null && row.monthBudget > 0
+      ? ((row.month - row.monthBudget) / row.monthBudget) * 100 : null;
 
     const r = ws.addRow([
       row.label ?? '',

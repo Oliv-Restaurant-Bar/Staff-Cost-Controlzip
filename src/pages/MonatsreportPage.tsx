@@ -168,9 +168,11 @@ export default function MonatsreportPage() {
         title: 'Monatsübersicht',
         subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
         fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
-        footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Monat = Ist bis heute · '
-          + '+/- = Abweichung zum Budget bzw. Budget-Wochenanteil · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
-          + 'leere Felder = keine Datenquelle vorhanden. Warenaufwand, Lieferanten und manuelle Felder folgen in einer späteren Etappe.',
+        footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Budget (Woche) = Budget-Wochenanteil dieses Zeitraums · '
+          + 'Vorjahr (Woche) = gleiche Kalenderwoche im Vorjahr (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Monat = Ist bis heute · '
+          + 'Δ% Woche = Woche-Ist vs. Budget-Woche, Δ% Monat = Monat-Ist vs. Monats-Budget · Verhältnis-Kennzahlen (Durchschnittsverkauf, '
+          + 'Take-Away-Anteil, Umsatz pro Gast, Produktivität) als Quote über die Woche, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste '
+          + 'nur über Tage mit beiden Quellen · leere Felder = keine Datenquelle vorhanden (nie 0). Jahreswerte im Tab «Jahresvergleich».',
       };
     } else if (activeTab === 'wochen') {
       el = wochenPanelRef.current;
@@ -287,8 +289,8 @@ export default function MonatsreportPage() {
                   <thead>
                     <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                       <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
-                      <th className="px-3 py-2 text-right font-semibold">Budget</th>
-                      <th className="px-3 py-2 text-right font-semibold">Vorjahr</th>
+                      <th className="px-3 py-2 text-right font-semibold">Budget (Woche)</th>
+                      <th className="px-3 py-2 text-right font-semibold">Vorjahr (Woche)</th>
                       <th className="px-3 py-2 text-right font-semibold">
                         {daten?.weekLabel ?? 'Woche'}
                         {wocheRange ? <span className="block normal-case font-normal">{wocheRange}</span> : null}
@@ -305,8 +307,9 @@ export default function MonatsreportPage() {
                       }
                       const wDev = row.week !== null && row.weekBudget !== null && row.weekBudget > 0
                         ? ((row.week - row.weekBudget) / row.weekBudget) * 100 : null;
-                      const mDev = row.month !== null && row.budget !== null && row.budget > 0
-                        ? ((row.month - row.budget) / row.budget) * 100 : null;
+                      // Monat-Δ% weiterhin gegen das MONATS-Budget (monthBudget), nicht die Budget-Woche-Spalte.
+                      const mDev = row.month !== null && row.monthBudget !== null && row.monthBudget > 0
+                        ? ((row.month - row.monthBudget) / row.monthBudget) * 100 : null;
                       return (
                         <tr key={i} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')}>
                           <td className="px-3 py-1.5">{row.label}</td>
@@ -328,10 +331,14 @@ export default function MonatsreportPage() {
 
             <p className="pdf-footnote text-xs text-muted-foreground">
               Woche = gewählter Zeitraum ({daten?.weekLabel ?? '—'}
-              {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Monat = Ist bis heute ·
-              +/- = Abweichung zum Budget bzw. Budget-Wochenanteil · Umsatz pro Gast = Netto ÷ Gäste
-              nur über Tage mit beiden Quellen · leere Felder = keine Datenquelle vorhanden.
-              Warenaufwand, Lieferanten und manuelle Felder folgen in einer späteren Etappe.
+              {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Budget (Woche) =
+              Budget-Wochenanteil dieses Zeitraums · Vorjahr (Woche) = gleiche Kalenderwoche im Vorjahr
+              (gleiche ISO-KW, aus Tages-Vorjahresdaten) · Monat = Ist bis heute · Δ% Woche = Woche-Ist
+              vs. Budget-Woche, Δ% Monat = Monat-Ist vs. Monats-Budget · Verhältnis-Kennzahlen
+              (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) werden als Quote
+              über die Woche gebildet, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit
+              beiden Quellen · leere Felder = keine Datenquelle vorhanden (nie 0). Jahreswerte im Tab
+              «Jahresvergleich». Warenaufwand, Lieferanten und manuelle Felder folgen später.
             </p>
           </TabsContent>
 

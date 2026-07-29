@@ -8,6 +8,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 import {
   computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
   computeYtdWindow, kwRangeLabel, computeWeeksForYear, computeVergleichsWindow,
+  computeVorjahrWocheDays,
 } from './monatsreport';
 
 /**
@@ -335,6 +336,59 @@ describe('kwRangeLabel', () => {
 
   it('KW 53/2020 → «KW 53 · 28.12.–03.01.»', () => {
     expect(kwRangeLabel(2020, 53)).toBe('KW 53 · 28.12.–03.01.');
+  });
+});
+
+// ── Monatsübersicht: Vorjahres-Woche der gewählten (Monats-)Woche ────────────
+
+describe('computeVorjahrWocheDays', () => {
+  it('volle Woche → 7 tag-genaue Ist→VJ-Paare, gleiche KW im Vorjahr (Mo→Mo)', () => {
+    // KW 30/2025 = Mo 21.07. – So 27.07.2025. Vorjahr KW 30/2024 = Mo 22.07. – So 28.07.2024.
+    const pairs = computeVorjahrWocheDays('2025-07-21', '2025-07-27');
+    expect(pairs).toHaveLength(7);
+    expect(pairs[0]).toEqual({ ist: '2025-07-21', vj: '2024-07-22' }); // Mo→Mo
+    expect(pairs[6]).toEqual({ ist: '2025-07-27', vj: '2024-07-28' }); // So→So
+    // Wochentags-Ausrichtung: jeder Ist-Tag ↦ selber Wochentag im VJ.
+    for (const p of pairs) {
+      const wi = new Date(p.ist).getDay();
+      const wv = new Date(p.vj).getDay();
+      expect(wi).toBe(wv);
+    }
+  });
+
+  it('Teilwoche (auf Monatsanfang geklemmt) bleibt tag-genau ausgerichtet', () => {
+    // Angenommen geklemmt auf Di–So (22.–27.07.2025) → VJ Di–So derselben KW.
+    const pairs = computeVorjahrWocheDays('2025-07-22', '2025-07-27');
+    expect(pairs).toHaveLength(6);
+    expect(pairs[0]).toEqual({ ist: '2025-07-22', vj: '2024-07-23' }); // Di→Di
+    expect(pairs[5]).toEqual({ ist: '2025-07-27', vj: '2024-07-28' }); // So→So
+  });
+
+  it('last7-artige Teilwoche (Do–So) mappt auf dieselben Wochentage im VJ', () => {
+    // Do 24.07. – So 27.07.2025 → VJ Do 25.07. – So 28.07.2024.
+    const pairs = computeVorjahrWocheDays('2025-07-24', '2025-07-27');
+    expect(pairs.map(p => p.vj)).toEqual([
+      '2024-07-25', '2024-07-26', '2024-07-27', '2024-07-28',
+    ]);
+  });
+
+  it('Jahreswechsel: KW 1/2026 (29.12.2025–…) → VJ KW 1/2025 (30.12.2024–…)', () => {
+    const pairs = computeVorjahrWocheDays('2025-12-29', '2025-12-31');
+    // 29.12.2025 = Mo (KW1/2026). VJ Mo KW1/2025 = 30.12.2024.
+    expect(pairs[0]).toEqual({ ist: '2025-12-29', vj: '2024-12-30' });
+    expect(pairs).toHaveLength(3);
+  });
+
+  it('KW existiert im Vorjahr nicht (KW-53-Randfall) → leeres Array', () => {
+    // KW 53/2026: Vorjahr 2025 hat nur 52 ISO-Wochen → keine Zuordnung.
+    // Mo KW53/2026 = 28.12.2026.
+    const pairs = computeVorjahrWocheDays('2026-12-28', '2027-01-03');
+    expect(pairs).toEqual([]);
+  });
+
+  it('leerer/ungültiger Bereich → leeres Array', () => {
+    expect(computeVorjahrWocheDays(null, null)).toEqual([]);
+    expect(computeVorjahrWocheDays('2025-07-27', '2025-07-21')).toEqual([]);
   });
 });
 

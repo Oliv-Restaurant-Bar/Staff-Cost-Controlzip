@@ -151,6 +151,41 @@ export function computeWeekRange(
   return { weekFrom: wf, weekTo: wt };
 }
 
+/**
+ * Bildet die Kalendertage der GEWÄHLTEN (evtl. geklemmten) Monats-Woche
+ * [weekFrom, weekTo] auf die ENTSPRECHENDEN Tage im Vorjahr ab: gleiche
+ * ISO-KW-Position (gleicher Wochentag, gleiche KW-Nummer, ISO-Wochenjahr−1) —
+ * konsistent mit `vorjahresWoche`. Für jeden Ist-Tag δ Tage nach dem Montag der
+ * enthaltenden ISO-Woche wird der Vorjahres-Tag = (Vorjahres-Montag + δ)
+ * geliefert. So bleibt die Zuordnung auch bei Teilwochen (last7, current,
+ * geklemmte KW) tag-genau. Existiert die KW im Vorjahr nicht (KW-53-Randfall)
+ * → leeres Array. Reine Funktion (keine I/O) — testbar.
+ *
+ * Rückgabe: geordnetes Array `{ ist, vj }` 'YYYY-MM-DD'-Paare (Ist-Tag → VJ-Tag).
+ */
+export function computeVorjahrWocheDays(
+  weekFrom: string | null,
+  weekTo: string | null,
+): { ist: string; vj: string }[] {
+  if (!weekFrom || !weekTo || weekFrom > weekTo) return [];
+  const parse = (s: string) => new Date(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  const from = parse(weekFrom);
+  const refMonday = mondayOf(from);
+  const { kw, kwYear } = isoWeekYearOf(refMonday);
+  const vj = vorjahresWoche({ kwYear, kw, from: iso(refMonday), to: iso(new Date(refMonday.getTime() + 6 * 86400000)) });
+  if (!vj) return [];               // KW existiert im Vorjahr nicht → leer
+  const vjMonday = parse(vj.from);
+  const out: { ist: string; vj: string }[] = [];
+  const to = parse(weekTo);
+  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    const delta = Math.round((d.getTime() - refMonday.getTime()) / 86400000);
+    const vjDay = new Date(vjMonday);
+    vjDay.setDate(vjDay.getDate() + delta);
+    out.push({ ist: iso(d), vj: iso(vjDay) });
+  }
+  return out;
+}
+
 // ── Wochenverlauf: Fensterbestimmung ─────────────────────────────────────────
 
 /** Ein abgeschlossenes ISO-Wochenfenster (Mo–So, volle 7 Tage). */
@@ -386,14 +421,17 @@ export interface MrRow {
   label?: string;
   fmt?: MrFormat;
   bold?: boolean;
-  /** Spalte «Budget» */
+  /** Spalte «Budget (Woche)» = Budget-Wochenanteil der gewählten Woche.
+   *  IDENTISCH mit `weekBudget` (Basis der Woche-Δ%) → Anzeige & Δ% konsistent. */
   budget: number | null;
-  /** Spalte «Vorjahr» */
+  /** Spalte «Vorjahr (Woche)» = Vorjahr derselben Woche (gleiche KW/Kalendertage). */
   vj: number | null;
   /** Spalte «Woche» (Ist der aktuellen Woche) */
   week: number | null;
-  /** Budget-Wochenanteil (Basis für +/- der Woche, nicht als Spalte gezeigt) */
+  /** Budget-Wochenanteil (Basis für +/- der Woche = identisch mit `budget`). */
   weekBudget: number | null;
+  /** MONATS-Budget (Basis der Monat-Δ%, nicht als Spalte gezeigt). */
+  monthBudget: number | null;
   /** Spalte «Monat» (Ist bis heute) */
   month: number | null;
 }
@@ -481,6 +519,9 @@ export async function ladeMonatsreport(
   const istTage = alleTage.filter(d => istToIso && d <= istToIso);
   const wocheTage = weekFrom && weekTo ? alleTage.filter(d => d >= weekFrom! && d <= weekTo!) : [];
 
+  // Vorjahres-Woche derselben KW/Kalendertage (tag-genaue Ist→VJ-Zuordnung).
+  const vjWochePaare = computeVorjahrWocheDays(weekFrom, weekTo);
+
   // ── Parallel laden ─────────────────────────────────────────────────────────
   const vjMonth = month; // gleicher Monat im Vorjahr
   const vjDays = new Date(year - 1, month, 0).getDate();
@@ -497,6 +538,23 @@ export async function ladeMonatsreport(
     countGroupsFrom20PaxVj(tenantId, vjFromIsoG, vjToIsoG),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
+
+  // ── Vorjahres-Woche: vj_daily der berührten Monate laden ───────────────────
+  // Die VJ-Woche kann Monatsgrenzen überschreiten und einen anderen Monat als
+  // vjMonth treffen (z.B. Wochenanfang KW am Monatsanfang). Alle berührten
+  // vj_daily-Monate laden und in einer Map vereinen.
+  const vjWocheDaily: Record<string, VjDayRecord> = {};
+  if (vjWochePaare.length > 0) {
+    const vjMonate = new Map<string, { y: number; m: number }>();
+    for (const { vj } of vjWochePaare) {
+      vjMonate.set(vj.slice(0, 7), { y: Number(vj.slice(0, 4)), m: Number(vj.slice(5, 7)) });
+    }
+    const maps = await Promise.all(
+      [...vjMonate.values()].map(({ y, m }) =>
+        loadVjDailyMonth(y, m, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
+    );
+    for (const mp of maps) Object.assign(vjWocheDaily, mp);
+  }
 
   // ── Umsatz Ist aus der kanonischen Netto-Quelle (src/lib/umsatz.ts) ────────
   const umsatzTage = await ladeUmsatzTage(tenantId, fromIso, toIso);
@@ -599,6 +657,37 @@ export async function ladeMonatsreport(
     }
   }
 
+  // ── Vorjahres-WOCHE (vj_daily der gemappten VJ-Kalendertage) ───────────────
+  // Verhältnis-/Prozent-Zeilen werden NICHT summiert, sondern als Quote über
+  // die Woche gebildet (TA-Anteil, Umsatz/Gast, Durchschnittsverkauf). Gäste-
+  // Tagessumme massgeblich; «leer statt 0».
+  let vwGross = 0, vwFoodG = 0, vwBevG = 0, vwTa = 0;
+  let hatVwUmsatz = false, hatVwFood = false, hatVwBev = false, hatVwTa = false;
+  let vwGaeste = 0, hatVwGaeste = false;
+  let vwPairedNet = 0, vwPairedGaeste = 0;
+  let vwAvgSum = 0, vwAvgWeight = 0, vwAvgSimpleSum = 0, vwAvgSimpleCount = 0;
+  for (const { vj } of vjWochePaare) {
+    const rec = vjWocheDaily[vj];
+    if (rec) {
+      if ((rec.actualRevenue ?? 0) > 0) { vwGross += rec.actualRevenue; hatVwUmsatz = true; }
+      if ((rec.foodRevenue ?? 0) > 0) { vwFoodG += rec.foodRevenue!; hatVwFood = true; }
+      if ((rec.beverageRevenue ?? 0) > 0) { vwBevG += rec.beverageRevenue!; hatVwBev = true; }
+      if ((rec.takeawayRevenue ?? 0) > 0) { vwTa += rec.takeawayRevenue!; hatVwTa = true; }
+    }
+    const gVj = gaesteDaily[vj] ?? 0;
+    if (gVj > 0) { vwGaeste += gVj; hatVwGaeste = true; }
+    if (rec && (rec.actualRevenue ?? 0) > 0 && gVj > 0) {
+      vwPairedNet += rec.actualRevenue / VAT_STD; vwPairedGaeste += gVj;
+    }
+    // Durchschnittsverkauf VJ-Woche: gäste-gewichtet, Fallback einfacher Mittel.
+    const av = avgDaily[vj];
+    if (av > 0) {
+      if (gVj > 0) { vwAvgSum += av * gVj; vwAvgWeight += gVj; }
+      vwAvgSimpleSum += av; vwAvgSimpleCount++;
+    }
+  }
+  const vwNet = vwGross / VAT_STD;
+
   // ── Produktive Stunden ─────────────────────────────────────────────────────
   let istStd: number | null = null, planStd: number | null = null;
   let wIstStd: number | null = null, wPlanStd: number | null = null;
@@ -626,15 +715,16 @@ export async function ladeMonatsreport(
 
   // ── Zeilen bauen ───────────────────────────────────────────────────────────
   const N = (v: number, hat: boolean): number | null => (hat ? r2(v) : null);
-  const e = (): MrRow => ({ type: 'empty', budget: null, vj: null, week: null, weekBudget: null, month: null });
+  const e = (): MrRow => ({ type: 'empty', budget: null, vj: null, week: null, weekBudget: null, monthBudget: null, month: null });
   const d = (
     label: string,
-    vals: { budget?: number | null; vj?: number | null; week?: number | null; weekBudget?: number | null; month?: number | null },
+    vals: { budget?: number | null; vj?: number | null; week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null },
     opts: { fmt?: MrFormat; bold?: boolean } = {},
   ): MrRow => ({
     type: 'data', label,
     budget: vals.budget ?? null, vj: vals.vj ?? null,
     week: vals.week ?? null, weekBudget: vals.weekBudget ?? null,
+    monthBudget: vals.monthBudget ?? null,
     month: vals.month ?? null,
     fmt: opts.fmt ?? 'chf', bold: opts.bold,
   });
@@ -654,17 +744,45 @@ export async function ladeMonatsreport(
   const taM = mHatUmsatz && mTa > 0 ? r2(mTa) : null;
   const taW = weekFrom && wHatUmsatz && wTa > 0 ? r2(wTa) : null;
 
-  // Vorjahr-Netto der Sparten (Vorjahr-Spalte trägt jetzt den Vergleich,
-  // separate Vorjahr-Zeilen entfallen).
-  const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD) : null;
-  const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD) : null;
+  // ── Vorjahres-WOCHE: Anzeigewerte der «Vorjahr (Woche)»-Spalte ─────────────
+  // Absolutwerte = Summe über die VJ-Woche; Quoten/Prozente = über die Woche
+  // gebildet (NICHT summiert). «leer statt 0».
+  const hatVw = vjWochePaare.length > 0;
+  const vwGrossV = hatVw && hatVwUmsatz ? r2(vwGross) : null;
+  const vwNetV = hatVw && hatVwUmsatz ? r2(vwNet) : null;
+  const vwGaesteV = hatVw && hatVwGaeste ? r2(vwGaeste) : null;
+  const vwFoodNet = hatVw && hatVwFood ? r2(vwFoodG / VAT_STD) : null;
+  const vwBevNet = hatVw && hatVwBev ? r2(vwBevG / VAT_STD) : null;
+  // Durchschnittsverkauf VJ-Woche: gäste-gewichtet (Fallback einfacher Mittel).
+  let vwAvg: number | null = null;
+  if (hatVw) {
+    if (vwAvgWeight > 0) vwAvg = r2(vwAvgSum / vwAvgWeight);
+    else if (vwAvgSimpleCount > 0) vwAvg = r2(vwAvgSimpleSum / vwAvgSimpleCount);
+  }
+  // TA-Anteil VJ-Woche = TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche.
+  const vwTaAnteil = hatVw && hatVwTa && vwGross > 0 ? r2((vwTa / vwGross) * 100) : null;
+  // Umsatz/Gast VJ-Woche = Netto ÷ Gäste über gepaarte Tage (Regel wie Ist).
+  const vwUpg = hatVw && vwPairedGaeste > 0 ? r2(vwPairedNet / vwPairedGaeste) : null;
 
   const rows: MrRow[] = [
     // ── Block Umsatz/Gäste ──
-    d('Brutto Umsatz', { month: mGrossV, week: wGrossV, weekBudget: wBudget != null ? r2(wBudget * VAT_STD) : null, budget: budgetGross, vj: vjGrossV }, { bold: true }),
-    d('Netto Umsatz', { month: mNetV, week: wNetV, weekBudget: wBudget, budget: budgetNetV, vj: vjNetV }, { bold: true }),
-    d('Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vjGaesteV }, { fmt: 'count' }),
-    d('Gruppen ab 20 Pax', { month: gruppen20, vj: gruppen20Vj }, { fmt: 'count' }),
+    // Budget-Spalte = Budget-WOCHENANTEIL (= weekBudget, Basis der Woche-Δ%);
+    // Vorjahr-Spalte = VJ-WOCHE. monthBudget trägt das Monatsbudget für die Monat-Δ%.
+    d('Brutto Umsatz', {
+      month: mGrossV, week: wGrossV,
+      weekBudget: wBudget != null ? r2(wBudget * VAT_STD) : null,
+      budget: wBudget != null ? r2(wBudget * VAT_STD) : null,
+      monthBudget: budgetGross,
+      vj: vwGrossV,
+    }, { bold: true }),
+    d('Netto Umsatz', {
+      month: mNetV, week: wNetV,
+      weekBudget: wBudget, budget: wBudget, monthBudget: budgetNetV,
+      vj: vwNetV,
+    }, { bold: true }),
+    d('Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vwGaesteV }, { fmt: 'count' }),
+    // Gruppen ab 20 Pax: keine Wochen-Aufteilung → Vorjahr-Woche leer.
+    d('Gruppen ab 20 Pax', { month: gruppen20, vj: null }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
     // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),
@@ -672,26 +790,25 @@ export async function ladeMonatsreport(
     d('Durchschnittsverkauf', {
       month: avgMonat,
       week: avgWoche,
-      vj: avgVj,
+      vj: vwAvg,
     }),
     d('Take Away Anteil', {
       month: taM != null && mGross > 0 ? r2((mTa / mGross) * 100) : null,
       week: taW != null && wGross > 0 ? r2((wTa / wGross) * 100) : null,
-      // Vorjahr: TA-Summe ÷ Gesamt-Umsatz über denselben Monat (analog Ist).
-      // Leer wenn keine VJ-TA-Daten (alte Records ohne Feld) — leer statt 0.
-      vj: hatVjTa && vjGross > 0 ? r2((vjTa / vjGross) * 100) : null,
+      // Vorjahr-Woche: TA-Umsatz ÷ Gesamt-Umsatz der VJ-Woche (Quote, nicht summiert).
+      vj: vwTaAnteil,
     }, { fmt: 'pct' }),
     e(),
-    // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
+    // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr-Woche in vj-Spalte ──
     d('Food', {
       month: mHatUmsatz && mFood > 0 ? r2(mFood) : null,
       week: weekFrom && wHatUmsatz && wFood > 0 ? r2(wFood) : null,
-      vj: vjFoodNet,
+      vj: vwFoodNet,
     }),
     d('Beverage', {
       month: mHatUmsatz && mBev > 0 ? r2(mBev) : null,
       week: weekFrom && wHatUmsatz && wBev > 0 ? r2(wBev) : null,
-      vj: vjBevNet,
+      vj: vwBevNet,
     }),
     e(),
     // ── Block Produktivität ──
@@ -700,14 +817,14 @@ export async function ladeMonatsreport(
     d('Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
+      // vj_daily hat keine Personalstunden → keine VJ-Produktivität.
     }),
     // Netto ÷ Gäste, NUR über Tage mit BEIDEN Quellen (Umsatz + Gäste).
     d('Umsatz pro Gast', {
       month: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
       week: weekFrom && wPairedGaeste > 0 ? r2(wPairedNet / wPairedGaeste) : null,
-      // Vorjahr: Netto-VJ ÷ Gäste-VJ über gepaarte Tage; leer wenn keine
-      // gepaarten Tage (eine Quelle fehlt) — «leer statt 0».
-      vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null,
+      // Vorjahr-Woche: Netto-VJ ÷ Gäste-VJ über gepaarte Tage der VJ-Woche.
+      vj: vwUpg,
     }),
   ];
 
