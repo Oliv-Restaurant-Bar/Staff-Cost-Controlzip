@@ -242,6 +242,26 @@ async function countGroupsFrom20Pax(
   } catch { return null; }
 }
 
+/**
+ * Vorjahr-Variante: wie countGroupsFrom20Pax, aber «—» statt 0, wenn für den
+ * Zeitraum GAR KEINE Reservationen vorliegen (Daten fehlen ≠ null Gruppen).
+ */
+async function countGroupsFrom20PaxVj(
+  tenantId: TenantId, fromIso: string, toIso: string,
+): Promise<number | null> {
+  try {
+    const { count: any20, error: e1 } = await (supabase as any)
+      .from('reservation_records')
+      .select('id', { count: 'exact', head: true })
+      .eq('restaurant_id', tenantId)
+      .gte('reservation_date', fromIso)
+      .lte('reservation_date', toIso)
+      .neq('status_normalized', 'cancelled');
+    if (e1 || typeof any20 !== 'number' || any20 === 0) return null;
+    return countGroupsFrom20Pax(tenantId, fromIso, toIso);
+  } catch { return null; }
+}
+
 // ── Hauptlader ───────────────────────────────────────────────────────────────
 
 export async function ladeMonatsreport(
@@ -276,13 +296,18 @@ export async function ladeMonatsreport(
 
   // ── Parallel laden ─────────────────────────────────────────────────────────
   const vjMonth = month; // gleicher Monat im Vorjahr
-  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, gruppen20, pk] = await Promise.all([
+  const vjDays = new Date(year - 1, month, 0).getDate();
+  const vjFromIsoG = `${year - 1}-${mm}-01`;
+  const vjToIsoG = `${year - 1}-${mm}-${pad2(vjDays)}`;
+  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, gruppen20, gruppen20Vj, pk] = await Promise.all([
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
     loadVjDailyMonth(year - 1, vjMonth, tenantId),
     // Ist-Logik wie übrige Monatswerte: laufender Monat bis heute, Zukunft leer.
     istToIso ? countGroupsFrom20Pax(tenantId, fromIso, istToIso) : Promise.resolve(null),
+    // Vorjahr: ganzer Monat Jahr−1; null (nie 0) wenn keine Reservationen vorhanden.
+    countGroupsFrom20PaxVj(tenantId, vjFromIsoG, vjToIsoG),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
@@ -446,7 +471,7 @@ export async function ladeMonatsreport(
     d('Brutto Umsatz', { month: mGrossV, week: wGrossV, weekBudget: wBudget != null ? r2(wBudget * VAT_STD) : null, budget: budgetGross, vj: vjGrossV }, { bold: true }),
     d('Netto Umsatz', { month: mNetV, week: wNetV, weekBudget: wBudget, budget: budgetNetV, vj: vjNetV }, { bold: true }),
     d('Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vjGaesteV }, { fmt: 'count' }),
-    d('Gruppen ab 20 Pax', { month: gruppen20 }, { fmt: 'count' }),
+    d('Gruppen ab 20 Pax', { month: gruppen20, vj: gruppen20Vj }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
     // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),
