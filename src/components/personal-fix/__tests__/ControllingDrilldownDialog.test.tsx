@@ -86,6 +86,8 @@ function renderDialog(overrides: Partial<Parameters<typeof ControllingDrilldownD
         manualVarHours={false}
         overtimeCostCHF={0}
         er={erOk}
+        coreFixCHF={3000}
+        coreFlexCHF={370}
         {...overrides}
       />
     </TooltipProvider>,
@@ -136,6 +138,24 @@ describe('ControllingDrilldownDialog', () => {
     expect(screen.getByTestId('pfix-dd-er-bridge')).toBeTruthy();
     expect(screen.getByTestId('pfix-dd-er-diff').textContent).toContain('−30');
     expect(screen.queryByTestId('pfix-dd-table')).toBeNull();
+  });
+
+  it('ER-Überleitung: Kern-Zerlegung (Fix + Flex) summiert exakt auf berechnetCHF (SSOT)', () => {
+    // coreFix 3000 + coreFlex 370 = 3370 = er.berechnetCHF → kein Auseinanderlaufen.
+    renderDialog({ focus: 'er', coreFixCHF: 3000, coreFlexCHF: 370 });
+    const appTotal = screen.getByTestId('pfix-dd-er-app-total').textContent ?? '';
+    expect(appTotal).toContain('3’370');
+    const bridgeEl = screen.getByTestId('pfix-dd-er-bridge');
+    // Keine alte Ferienabbau-Zeile mehr (Kern-Modell kennt nur Fix + Flex).
+    expect(bridgeEl.textContent).toContain('Personal FIX');
+    expect(bridgeEl.textContent).toContain('Flex (variable Arbeit');
+    expect(bridgeEl.textContent).not.toContain('Ferienabbau');
+  });
+
+  it('ER-Überleitung: Rundungsrest wird ausgewiesen, wenn Fix+Flex ≠ berechnetCHF', () => {
+    // 3000 + 369 = 3369, berechnetCHF 3370 → Rest +1 als eigene Zeile.
+    renderDialog({ focus: 'er', coreFixCHF: 3000, coreFlexCHF: 369 });
+    expect(screen.getByTestId('pfix-dd-er-bridge').textContent).toContain('Rundung');
   });
 
   it('shows missing-ER hint when er.status is missing', () => {

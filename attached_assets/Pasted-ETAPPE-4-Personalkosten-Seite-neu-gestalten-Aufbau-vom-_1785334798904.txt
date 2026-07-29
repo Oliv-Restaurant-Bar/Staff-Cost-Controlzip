@@ -1,0 +1,35 @@
+ETAPPE 4 – Personalkosten-Seite neu gestalten (Aufbau "vom Groben ins Feine"). Alle Zahlen kommen aus dem zentralen Kern (personalkosten.ts + Budget-Modul); keine neue Rechnung, nur neue Darstellung.
+
+Seitenaufbau von oben nach unten:
+
+1) SCHLAGZEILE (eine grosse Kernaussage):
+   "Personalkosten Juli (Hochrechnung) = CHF <Wert>", darunter als Chips: Abweichung zum Budget (+/− CHF und %, rot wenn über Budget) und "PKQ <x> %". Kleiner Zusatz: "Budget CHF <Budget> · Ziel 35.5 % / Obergrenze 40 % · Stand: X von Y Tagen als Ist erfasst".
+
+2) VIER KACHELN:
+   Hochrechnung (mit Untertitel "FIX <..> + FLEX <..>") · Budget (Untertitel "35.5 % von Umsatz-Budget <Monat>") · Abweichung (Hochrechnung − Budget) · PKQ Hochrechnung.
+
+3) ZEILE "IST BIS <heute-1>":
+   Schmale Zeile, klar getrennt: Personalkosten Ist · Netto-Umsatz Ist · PKQ Ist (zeitkonsistent). Beschriftung "bis <Datum>".
+
+4) BLOCK "WIE DIE KOSTEN ENTSTEHEN":
+   a) Zwei Balken untereinander: "Budget" und "Hochrechnung" (Hochrechnung aufgeteilt in FIX + FLEX, mit Budget-Marker als senkrechte Linie). Legende: FIX = Monatslöhne (stehen fest), FLEX = Stundenlöhne, Budget.
+   b) PKQ-Brücke (Wasserfall) in Schritten: Ziel 35.5 % → +Effekt "Umsatz unter Plan" → Zwischen-PKQ → +Effekt "Personal über Budget" → PKQ Hochrechnung. So sieht man, WARUM die Quote über dem Ziel liegt.
+
+5) VERLAUFSGRAFIK:
+   Kumulierte Personalkosten über den Monat: durchgezogen = Ist bis heute, gestrichelt = Plan ab morgen, dazu die gerade Budget-Linie. (Die PKQ-Verlaufsgrafik, die es schon gibt, kann bleiben.)
+
+6) AUFSCHLÜSSELUNG (rückverfolgbar):
+   - FIX: Liste Monatslohn-MA (Pensum, Bruttolohn/Mt, AG-Zuschlag, Kosten/Mt), Zwischentotal.
+   - FLEX: Liste Stundenlohn-MA (Ist-Quelle-Badge MIRUS/Manuell/Plan=Ist, Plan-Std, Ist-Std, Ansatz/h, Kosten), Zwischentotal. "Ist fehlt"-Tage rot markiert.
+   - Ein Gesamttotal, das exakt der Schlagzeile oben entspricht.
+
+7) BLOCK "WO LAUFEN WIR AUS DEM RUDER?" MIT DETAIL-AUSWERTUNG:
+   - Oben die grössten Abweichungen (Top-Treiber) als kurze Liste.
+   - Darunter die volle Plan-vs-Ist-Auswertung mit Umschalter Woche / Tag / Mitarbeiter:
+     * Pro Woche: Zeitraum, Flex Plan, Flex Ist, Diff CHF, Diff %, Status-Ampel (grün im Plan / gelb ≤5 % / rot über Plan), kumulierte Abweichung.
+     * Aufklappbar pro Mitarbeiter: Name, Abt., Ansatz/h, Plan-Std, Ist-Std, Flex Plan, Flex Ist, Diff. Klick auf eine MA-Zeile → Tagesdetails.
+
+8) SIDE-INFOS (einklappbar, standardmässig zu):
+   Ferienabbau · Kranken-/Unfall (80 %) · Überstunden Festangestellte — reine Information, ändern die Schlagzeile nicht.
+
+Regeln: mobil-tauglich, Schweizer Zahlenformat (1'234.56), dieselben Farben/Definitionen wie bisher. Alle Werte live aus dem zentralen Kern. Tests + Typecheck grün. Danach kurze Rückmeldung mit Screenshot-Beschreibung der neuen Seite.

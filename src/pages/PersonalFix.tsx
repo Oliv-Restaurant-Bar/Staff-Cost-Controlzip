@@ -3286,12 +3286,13 @@ export default function PersonalFixPage() {
     : monthRevenue;
   const revenueIsAssumed = revenueAssumption !== null && revenueAssumption > 0;
 
-  // PKQ = Personalkosten / Umsatz × 100
-  const pkqPlan = effectiveRevenue > 0 ? (pfix.active.planTotal / effectiveRevenue) * 100 : null;
-  const pkqIst  = effectiveRevenue > 0 ? (pfix.active.istTotal  / effectiveRevenue) * 100 : null;
-  const pkqFlexPlan = effectiveRevenue > 0 ? (pfix.active.planWork / effectiveRevenue) * 100 : null;
-  const pkqFlexIst  = effectiveRevenue > 0 ? (pfix.active.istWork  / effectiveRevenue) * 100 : null;
-  const pkqFix      = effectiveRevenue > 0 ? (pfix.active.fix      / effectiveRevenue) * 100 : null;
+  // ── PKQ — AUSSCHLIESSLICH zeitkonsistent aus dem Kern (personalkosten.ts) ──
+  // Es gibt nur EINE PKQ-Definition (personalquote()): Zähler und Nenner immer
+  // auf gleicher Zeitbasis. KEINE Quote «volle Monatskosten ÷ Teilumsatz» mehr.
+  //  • pkqIst  = Hochrechnung ÷ Hochrechnungs-Umsatz  (pkq.pkqHochrechnung)
+  //  • pkqPlan = Ziel-Personalquote (zentrale Einstellung, konstant)
+  const pkqIst  = pkZentral?.pkq.pkqHochrechnung != null ? pkZentral.pkq.pkqHochrechnung * 100 : null;
+  const pkqPlan = pkZentral?.zielQuote != null ? pkZentral.zielQuote * 100 : null;
   const revenueLabel = revenueIsAssumed
     ? 'Annahme'
     : maisonOn
@@ -3330,33 +3331,37 @@ export default function PersonalFixPage() {
 
   // Ist vs. Erfolgsrechnung Ist: berechneter Personalaufwand (Ist) ↔ Erfolgsrechnung
   // (Löhne + Sozialleistungen), EXAKT wie in der Erfolgsrechnung dargestellt.
+  // App-Ist = Hochrechnung aus dem Kern (zeitkonsistent), Quoten-Nenner =
+  // Hochrechnungs-Umsatz aus dem Kern — KEIN Teilumsatz mehr.
   const erVergleich = useMemo(() => buildErfolgsrechnungVergleich({
-    berechnetCHF: pfix.active.istTotal,
+    berechnetCHF: pkZentral?.kHr.total ?? 0,
     fibuCHF: erfolgsrechnung.plPersonnelActual,
     plNetRevenue: erfolgsrechnung.plNetRevenue,
-    effectiveRevenue,
-  }), [erfolgsrechnung, pfix.active.istTotal, effectiveRevenue]);
+    effectiveRevenue: pkZentral?.ums.hochrechnung ?? 0,
+  }), [erfolgsrechnung, pkZentral]);
 
-  // Budget vs. Ist (Block A des Personalcontrollings): App-Budget (planTotal) ↔ App-Ist
-  // (istTotal), beide Quoten auf demselben effektiven Umsatz → Prozentpunkte vergleichbar.
-  // Zentrale, richtungsabhängige Differenz (Ist − Budget) — SSOT für KPI-Karte + Block A,
-  // keine Parallelberechnung (Werte kommen aus pfix.active + pkqPlan/pkqIst).
+  // Budget vs. Ist (Block A des Personalcontrollings): dieselbe SSOT wie die
+  // Kopf-Boxen — Budget = Ziel-Personalquote × Umsatz-Budget (pkZentral.pkBudget),
+  // Ist = Hochrechnung (pkZentral.kHr, zeitkonsistent), Quoten aus dem Kern
+  // (pkqPlan = Ziel-Quote, pkqIst = Hochrechnungs-PKQ). KEINE Parallelberechnung
+  // und KEIN «volle Kosten ÷ Teilumsatz» mehr.
   const budgetVsIst = useMemo(() => buildBudgetVsIst({
-    budgetCHF: pfix.active.planTotal,
-    istCHF: pfix.active.istTotal,
+    budgetCHF: pkZentral?.pkBudget?.total ?? 0,
+    istCHF: pkZentral?.kHr.total ?? 0,
     budgetPct: pkqPlan,
     istPct: pkqIst,
-  }), [pfix.active.planTotal, pfix.active.istTotal, pkqPlan, pkqIst]);
+  }), [pkZentral, pkqPlan, pkqIst]);
+  const hasCoreBudget = pkZentral?.pkBudget?.total != null;
 
   // PKQ-Herleitung für InfoTip (echte Werte + Quelle, nichts hartcodiert)
   const pkqBreakdown = useMemo(() => buildPkqBreakdown({
-    personalIst: pfix.active.istTotal,
-    revenue: effectiveRevenue,
+    personalIst: pkZentral?.kHr.total ?? 0,
+    revenue: pkZentral?.ums.hochrechnung ?? 0,
     revenueIsAssumed,
     revenueLabel,
     monthLabel: getMonthLabel(selectedYear, selectedMonth),
     cutoffDay: proRataDay,
-  }), [pfix.active.istTotal, effectiveRevenue, revenueIsAssumed, revenueLabel, selectedYear, selectedMonth, proRataDay]);
+  }), [pkZentral, revenueIsAssumed, revenueLabel, selectedYear, selectedMonth, proRataDay]);
 
   // ── Drilldown-Daten (Ursachenanalyse) ─────────────────────────────────────
   // Nur bei geöffnetem Dialog aufgebaut (gated memo). Nutzt dieselben Loader
@@ -4137,17 +4142,19 @@ export default function PersonalFixPage() {
         proRataVarByEmp,
         daysInSelectedMonth,
         // PKQ
+        // PKQ nur zeitkonsistent (Total): Ziel-Quote vs. Hochrechnungs-PKQ.
+        // Keine Teil-Quoten je Ebene mehr (volle Kosten ÷ Teilumsatz entfernt).
         pkqPlan,
         pkqIst,
-        pkqFlexPlan,
-        pkqFlexIst,
-        pkqFix,
-        monthRevenue,
-        revenueLabel,
+        pkqFlexPlan: null,
+        pkqFlexIst: null,
+        pkqFix: null,
+        monthRevenue: pkZentral?.ums.hochrechnung ?? 0,
+        revenueLabel: 'Hochrechnungs-Umsatz',
         pfixPlanWork:  pfix.active.planWork,
         pfixIstWork:   pfix.active.istWork,
-        pfixPlanTotal: pfix.active.planTotal,
-        pfixIstTotal:  pfix.active.istTotal,
+        pfixPlanTotal: pkZentral?.pkBudget?.total ?? pfix.active.planTotal,
+        pfixIstTotal:  pkZentral?.kHr.total ?? pfix.active.istTotal,
       });
       toast.success('PDF erfolgreich exportiert');
     } catch (err) {
@@ -4497,13 +4504,17 @@ export default function PersonalFixPage() {
                   side="top"
                   text={
                     <span>
-                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)}:{' '}
-                      <b>Budget vs. Ist</b> zeigt betriebswirtschaftlich, ob der Ist-Personalaufwand
-                      unter oder über dem geplanten Budget liegt (Richtung = gut/schlecht).{' '}
-                      <b>App vs. Erfolgsrechnung</b> ist eine technische Kontrolle, ob der von der App
-                      berechnete Ist-Aufwand mit dem Personalaufwand der Erfolgsrechnung (FIBU-Konten
-                      5000–5999, voller Arbeitgeberaufwand) übereinstimmt — hier zählt nur die
-                      Grösse der Abweichung. Quoten auf {fmtCHF(effectiveRevenue)} ({revenueLabel}).
+                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)},
+                      beide mit denselben Werten wie die Kopf-Kennzahlen (Quelle:
+                      Personalkosten-Kern):{' '}
+                      <b>Budget vs. Ist</b> vergleicht das Budget (Ziel-Personalquote ×
+                      Umsatz-Budget) mit der Hochrechnung — betriebswirtschaftlich, ob der
+                      Personalaufwand unter oder über Budget liegt (Richtung = gut/schlecht).{' '}
+                      <b>Erfolgsrechnung-Abgleich</b> ist eine technische Kontrolle, ob die
+                      Hochrechnung mit dem vollen Personalaufwand der Erfolgsrechnung (Löhne +
+                      Sozialleistungen, FIBU 5000–5999) übereinstimmt — hier zählt nur die
+                      Grösse der Abweichung. Alle Quoten sind zeitkonsistent
+                      (Hochrechnung ÷ Hochrechnungs-Umsatz {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}).
                     </span>
                   }
                 />
@@ -4513,27 +4524,27 @@ export default function PersonalFixPage() {
                 {/* Block A — Budget vs. Ist (betriebswirtschaftlich, richtungsabhängig) */}
                 <ControllingBlock
                   testid="pfix-pc-budget-ist"
-                  title="Budget vs. Ist"
+                  title="Budget vs. Ist (Hochrechnung)"
                   colLeft="Budget"
-                  colRight="Ist App"
-                  colDiff="Ist − Budget"
+                  colRight="Ist (HR)"
+                  colDiff="HR − Budget"
                   onClick={() => setDrilldownFocus('abweichung')}
                   pill={
-                    <StatusPill tone={budgetVsIst.tone} size="xs">
-                      {budgetDeltaText(budgetVsIst.diffCHF)}
+                    <StatusPill tone={hasCoreBudget ? budgetVsIst.tone : 'neutral'} size="xs">
+                      {hasCoreBudget ? budgetDeltaText(budgetVsIst.diffCHF) : 'Kein Umsatz-Budget'}
                     </StatusPill>
                   }
                   chf={{
-                    left: fmtCHF(budgetVsIst.budgetCHF),
+                    left: hasCoreBudget ? fmtCHF(budgetVsIst.budgetCHF) : '—',
                     right: fmtCHF(budgetVsIst.istCHF),
-                    diff: signCHF(budgetVsIst.diffCHF),
-                    tone: budgetVsIst.tone,
+                    diff: hasCoreBudget ? signCHF(budgetVsIst.diffCHF) : '—',
+                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
                   }}
                   pct={{
                     left: fmtQuote(budgetVsIst.budgetPct),
                     right: fmtQuote(budgetVsIst.istPct),
-                    diff: budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
-                    tone: budgetVsIst.tone,
+                    diff: hasCoreBudget && budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
+                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
                   }}
                 />
 
@@ -4541,8 +4552,8 @@ export default function PersonalFixPage() {
                 {erVergleich.status === 'ok' ? (
                   <ControllingBlock
                     testid="pfix-pc-app-er"
-                    title="App vs. Erfolgsrechnung"
-                    colLeft="Ist App"
+                    title="Erfolgsrechnung-Abgleich — voller Personalaufwand"
+                    colLeft="HR App"
                     colRight="Ist ER"
                     colDiff="App − ER"
                     onClick={() => setDrilldownFocus('er')}
@@ -4551,12 +4562,13 @@ export default function PersonalFixPage() {
                         side="top"
                         text={
                           <span>
-                            Kontrolle: der von der App berechnete Ist-Personalaufwand (Total
-                            Arbeitgeberkosten) gegenüber „Löhne (Total)" + „Sozialleistungen" der
-                            Erfolgsrechnung (exakt dieselben Werte wie dort, FIBU 5000–5999). Diese
-                            enthalten bereits den vollen Arbeitgeberaufwand und werden <b>nicht</b>{' '}
-                            nochmals mit Sozialkosten multipliziert. Ist-Quote auf{' '}
-                            {fmtCHF(effectiveRevenue)} ({revenueLabel}).
+                            Kontrolle: die App-Hochrechnung des Personalaufwands (Total
+                            Arbeitgeberkosten aus dem Personalkosten-Kern) gegenüber „Löhne (Total)"
+                            + „Sozialleistungen" der Erfolgsrechnung (exakt dieselben Werte wie dort,
+                            FIBU 5000–5999, voller Arbeitgeberaufwand exkl. „Übriger
+                            Personalaufwand"). Diese werden <b>nicht</b> nochmals mit Sozialkosten
+                            multipliziert. Beide Quoten zeitkonsistent auf den Hochrechnungs-Umsatz{' '}
+                            {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}.
                             {erVergleich.revenueMismatch
                               ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
                               : ''}
@@ -4575,7 +4587,7 @@ export default function PersonalFixPage() {
                       </span>
                     }
                     chf={{
-                      left: fmtCHF(pfix.active.istTotal),
+                      left: fmtCHF(pkZentral?.kHr.total ?? 0),
                       right: fmtCHF(erVergleich.fibuCHF),
                       diff: signCHF(erVergleich.diffCHF),
                       tone: erVergleich.tone,
@@ -4649,16 +4661,16 @@ export default function PersonalFixPage() {
             color={pfix.active.istWork > 0 ? 'orange' : 'default'}
           />
           <KpiCard
-            title={proRataDay !== null ? `PKQ Budget bis ${proRataDay}.` : 'PKQ Budget'}
+            title="PKQ Ziel (Budget)"
             value={pkqPlan !== null ? `${pkqPlan.toFixed(1)} %` : '—'}
-            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.planTotal)} / ${fmtCHF(effectiveRevenue)}${revenueIsAssumed ? ' (Annahme)' : ''}` : 'Kein Umsatz erfasst'}
+            sub="Ziel-Personalquote (Einstellung)"
             icon={<TrendingDown className="h-5 w-5" />}
             color="blue"
           />
           <KpiCard
-            title={proRataDay !== null ? `PKQ Ist bis ${proRataDay}.` : 'PKQ Ist'}
+            title="PKQ Hochrechnung"
             value={pkqIst !== null ? `${pkqIst.toFixed(1)} %` : '—'}
-            sub={effectiveRevenue > 0 ? `${fmtCHF(pfix.active.istTotal)} / ${fmtCHF(effectiveRevenue)} · ${revenueLabel}` : 'Kein Umsatz erfasst'}
+            sub={pkZentral && pkZentral.ums.hochrechnung > 0 ? `${fmtCHF(pkZentral.kHr.total)} / ${fmtCHF(pkZentral.ums.hochrechnung)} (HR)` : 'Kein Umsatz erfasst'}
             icon={<TrendingDown className="h-5 w-5" />}
             color={pkqIst !== null && pkqPlan !== null ? (pkqIst > pkqPlan + 1 ? 'red' : pkqIst < pkqPlan - 1 ? 'green' : 'default') : 'default'}
           />
@@ -6228,17 +6240,6 @@ export default function PersonalFixPage() {
             { label: 'Ø Abw./Tag',        val: avgDayDiff,  plan: days.length  > 0 ? monthPlan / days.length  : 0,  pct: days.length  > 0 ? (avgDayDiff  / (monthPlan / days.length))  * 100 : null },
           ];
 
-          const empTotal = pfixPerEmp.reduce((s, r) => s + r.planWork, 0);
-          const empIst   = pfixPerEmp.reduce((s, r) => s + r.istWork, 0);
-          console.log(`[FLEX] summary total plan: ${monthPlan.toFixed(2)}`);
-          console.log(`[FLEX] summary total ist: ${monthIst.toFixed(2)}`);
-          console.log(`[FLEX] employee table total plan: ${empTotal.toFixed(2)}`);
-          console.log(`[FLEX] employee table total ist: ${empIst.toFixed(2)}`);
-          if (monthPlan > 0 && Math.abs(empTotal - monthPlan) > 0.10)
-            console.error(`[FLEX] plan cross-check MISMATCH: periodTable=${monthPlan.toFixed(2)} empTable=${empTotal.toFixed(2)} Δ=${(empTotal-monthPlan).toFixed(2)}`);
-          if (monthIst > 0 && Math.abs(empIst - monthIst) > 0.10)
-            console.error(`[FLEX] ist cross-check MISMATCH: periodTable=${monthIst.toFixed(2)} empTable=${empIst.toFixed(2)} Δ=${(empIst-monthIst).toFixed(2)}`);
-
           return (
             <section className={cn('rounded-xl border-2 bg-card shadow-sm overflow-hidden', mA.border)}>
               {/* ── Header ────────────────────────────────────────────────────── */}
@@ -6488,6 +6489,8 @@ export default function PersonalFixPage() {
           manualVarHours={varView === 'manual'}
           overtimeCostCHF={overtimeAnalysis.totalOvertimeCost}
           er={erVergleich}
+          coreFixCHF={pkZentral?.kHr.fix ?? 0}
+          coreFlexCHF={pkZentral?.kHr.flex ?? 0}
           onOpenSchedule={() => navigate('/personal')}
         />
       )}

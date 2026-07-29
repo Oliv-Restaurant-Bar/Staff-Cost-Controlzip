@@ -3015,7 +3015,32 @@ const SchedulePlanner = () => {
     calendarView === 'month' ? monthlyActualRevenue : weeklyActualRevenue;
   const activeRevenue = scheduleMode === 'ist' ? activeIstRevenue : activePlannedRevenue;
 
-  const gesamtCostRatio = activeRevenue > 0 ? (gesamtActiveLaborCost / activeRevenue) * 100 : null;
+  // ── Zeitkonsistente Ist-PKQ (SSOT-Prinzip) ───────────────────────────────
+  // Antipattern vermeiden: aufgelaufene Ist-Kosten des GANZEN Monats dürfen
+  // NICHT gegen einen Teil-/fehlenden Ist-Umsatz gerechnet werden (früher bis
+  // >100 %). Zähler und Nenner müssen dieselbe Periode abdecken → wir zählen
+  // NUR Tage, die tatsächlich Ist-Umsatz haben (dieselbe Logik wie der
+  // Personalkosten-Kern: Ist ÷ Ist über deckungsgleiche Tage).
+  const revenueDateSet = new Set(
+    Object.entries(dailyBudgets)
+      .filter(([date, b]) => (b.actualRevenue || 0) > 0 &&
+        (calendarView === 'month' ? monthDateSet.has(date) : displayDateSet.has(date)))
+      .map(([date]) => date),
+  );
+  const istLaborCostOnRevenueDays = activeEmployees.reduce((sum, emp) => {
+    const hrs = Array.from(revenueDateSet).reduce((h, date) => {
+      const entry = actualHoursData[`${emp.id}-${date}`];
+      return h + (entry?.hours || 0);
+    }, 0);
+    return sum + hrs * agRate(emp);
+  }, 0);
+
+  // Ist-Modus: zeitkonsistente Quote (Kosten der Umsatz-Tage ÷ Umsatz dieser
+  // Tage). Plan-Modus: unverändert (Plan ÷ Plan-Budget, per Definition
+  // deckungsgleich). Ohne Ist-Umsatz-Tag → null → Anzeige „—".
+  const gesamtCostRatio = scheduleMode === 'ist'
+    ? (activeRevenue > 0 ? (istLaborCostOnRevenueDays / activeRevenue) * 100 : null)
+    : (activeRevenue > 0 ? (gesamtActiveLaborCost / activeRevenue) * 100 : null);
   const gesamtCostRatioStatus: 'good' | 'ok' | 'high' | 'unknown' =
     gesamtCostRatio === null ? 'unknown' :
     gesamtCostRatio <= laborCostThreshold ? 'good' :
@@ -3339,8 +3364,23 @@ const SchedulePlanner = () => {
   const insuranceCostOffset = totalKrankUnfallLaborCost * 0.20;
   // Effektive Kosten nach Versicherungsabzug (K/U zu 80%)
   const totalActualLaborCostWithInsurance = totalActualLaborCost - insuranceCostOffset;
-  const actualCostRatio = totalActualRevenue > 0 && totalActualLaborCost > 0
-    ? (totalActualLaborCost / totalActualRevenue) * 100
+  // Zeitkonsistente Ist-Quote für den Soll/Ist-Vergleich: Ist-Kosten NUR der
+  // Tage mit Ist-Umsatz ÷ Ist-Umsatz dieser Tage (deckungsgleiche Periode).
+  // Verhindert das „volle Monatskosten ÷ Teilumsatz"-Antipattern (>100 %).
+  const monthRevenueDateSet = new Set(
+    Object.entries(dailyBudgets)
+      .filter(([date, b]) => (b.actualRevenue || 0) > 0 && monthDateSet.has(date))
+      .map(([date]) => date),
+  );
+  const actualLaborCostOnRevenueDays = visibleEmployees.reduce((sum, emp) => {
+    const hrs = Array.from(monthRevenueDateSet).reduce((h, date) => {
+      const entry = actualHoursData[`${emp.id}-${date}`];
+      return h + (entry?.hours || 0);
+    }, 0);
+    return sum + hrs * agRate(emp);
+  }, 0);
+  const actualCostRatio = totalActualRevenue > 0 && actualLaborCostOnRevenueDays > 0
+    ? (actualLaborCostOnRevenueDays / totalActualRevenue) * 100
     : null;
   const hasActualHours = totalActualHoursAll > 0;
   const hasActualRevenue = totalActualRevenue > 0;
@@ -5332,7 +5372,9 @@ const SchedulePlanner = () => {
                     </span>
                   </div>
                   <div className="flex justify-between items-baseline">
-                    <span className="text-sm text-muted-foreground">Ist</span>
+                    <span className="text-sm text-muted-foreground">
+                      Ist<span className="ml-1 text-muted-foreground text-[10px]">(nur Tage mit Ist-Umsatz)</span>
+                    </span>
                     <span className={cn(
                       "text-base font-bold tabular-nums",
                       actualCostRatio === null                                  ? "text-muted-foreground" :
