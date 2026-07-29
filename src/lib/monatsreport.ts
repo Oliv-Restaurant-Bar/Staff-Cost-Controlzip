@@ -29,6 +29,7 @@ import {
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { loadReservationCounting, DEFAULT_RESERVATION_COUNTING } from '@/lib/reservation-cockpit-settings';
+import { loadTakeAwayOffered, filterTakeAwayRows } from '@/lib/takeaway-offered-settings';
 import { loadReservationMetrics } from '@/lib/reservation-cockpit-metrics';
 import { loadTakeAwayGuests } from '@/lib/takeaway-cockpit-metrics';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -737,6 +738,12 @@ export async function ladeMonatsreport(
   const resCounting = await loadReservationCounting(tenantKey).catch(() => null);
   const resSettings = resCounting ?? DEFAULT_RESERVATION_COUNTING;
 
+  // «Betrieb bietet Take Away» (pro Tenant, Default oliv=ja / beaulieu=nein).
+  // Bei «nein» werden die TA-Loads übersprungen UND die TA-Zeilen gar nicht
+  // erst gebaut (Anzeige/Export/Umsortier-Liste bleiben so konsistent).
+  const taOffered = (await loadTakeAwayOffered(tenantKey, tenantId).catch(() => null))?.offered
+    ?? (tenantId === 'oliv');
+
   const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, taMonth, taWeek, pk] = await Promise.all([
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
@@ -751,8 +758,8 @@ export async function ladeMonatsreport(
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte, GANZER
     // Monat bzw. gewählte Woche (ungeklemmt, future-capable). Kein trivialer
     // Vorjahreswert → VJ-Spalten bleiben «—».
-    loadTakeAwayGuests(fromIso, toIso).catch(() => null),
-    loadTakeAwayGuests(resWeekFrom, resWeekTo).catch(() => null),
+    taOffered ? loadTakeAwayGuests(fromIso, toIso).catch(() => null) : Promise.resolve(null),
+    taOffered ? loadTakeAwayGuests(resWeekFrom, resWeekTo).catch(() => null) : Promise.resolve(null),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
@@ -1123,11 +1130,14 @@ export async function ladeMonatsreport(
     }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT }),
   ];
 
+  // Take-Away-Zeilen entfernen, wenn der Betrieb kein Take Away anbietet.
+  const rowsFinal = filterTakeAwayRows(rows, taOffered);
+
   return {
     year, month, weekFrom, weekTo, weekLabel,
     vjWeekFrom: vjWochePaare.length > 0 ? vjWochePaare[0].vj : null,
     vjWeekTo: vjWochePaare.length > 0 ? vjWochePaare[vjWochePaare.length - 1].vj : null,
-    rows,
+    rows: rowsFinal,
   };
 }
 

@@ -13,6 +13,7 @@
 - [Admin gate excludes guests (read+write)](admin-write-gate-guest-session.md) — isAdmin = isAdminUser || isGuest; admin-only PII/write pages must gate isAdmin && !isGuest on BOTH route guard AND data-fetch effect.
 - [Vitest environments](vitest-node-environment.md) — pure logic: `node` pragma; component tests: `happy-dom` (jsdom→canvas/libuuid crash); multi-suite runs OOM → split.
 - [Reservation CRM visit metrics & PII gating](reservation-crm-metrics.md) — never mix all-status first/last_seen_at with completed-only visit counts; guest PII is admin-gated in UI, not DB RLS.
+- [Foratable Res.Nr. je Restaurant](reservation-resnr-namespace.md) — Res.Nr. nur pro Restaurant eindeutig; oliv/beaulieu-Kollisionen sind KEINE Duplikate; Check via restaurant_name↔restaurant_id.
 - [Reservationen Import (Foratable)](reservation-import.md) — separate from gn_* imports; union-find guest clustering; PII tables authenticated-only RLS + REVOKE anon.
 - [gn_imports data integrity](gn-import-data-integrity.md) — cost-center overlap filter only when non-empty; verify replace via .select rows-affected; batch keyed by stable id not fileName; never auto-split multi-day.
 - [Gastronovi parser diagnostics](gn-parser-diagnostics.md) — every GN import parser must return a debug object + failureReason on all paths; surface real CSV structure on failure, never blind-adapt to a guessed format.

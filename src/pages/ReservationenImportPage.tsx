@@ -36,6 +36,7 @@ import { logImportRun } from '@/lib/import-runs-db';
 import { buildReservationRunStats } from '@/lib/import-runs';
 import { ReservationSummary, fdate } from '@/components/reservations/ReservationSummary';
 import { ReservationCountingSettingsCard } from '@/components/reservations/ReservationCountingSettingsCard';
+import { TakeAwayOfferedSettingsCard } from '@/components/reservations/TakeAwayOfferedSettingsCard';
 
 type WizardStep = 'upload' | 'preview' | 'saving' | 'done';
 type Tab = 'import' | 'history';
@@ -312,6 +313,9 @@ export default function ReservationenImportPage(
 
               {/* Zentrale Zählregel für die Cockpit-Kennzahlen (pro Tenant). */}
               <ReservationCountingSettingsCard />
+
+              {/* Take-Away-Angebot pro Tenant (steuert die TA-Cockpit-Zeilen). */}
+              <TakeAwayOfferedSettingsCard />
             </div>
           )}
 
