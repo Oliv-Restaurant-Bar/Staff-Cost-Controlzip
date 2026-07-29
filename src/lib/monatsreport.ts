@@ -289,7 +289,7 @@ export async function ladeMonatsreport(
   // ── Umsatz Ist aus der kanonischen Netto-Quelle (src/lib/umsatz.ts) ────────
   const umsatzTage = await ladeUmsatzTage(tenantId, fromIso, toIso);
   let mGross = 0, mNet = 0, mTa = 0, mFood = 0, mBev = 0, mHatUmsatz = false;
-  let wGross = 0, wNet = 0, wTa = 0, wHatUmsatz = false;
+  let wGross = 0, wNet = 0, wTa = 0, wFood = 0, wBev = 0, wHatUmsatz = false;
   // «Umsatz pro Gast»: Netto ÷ Gäste, aber NUR über Tage, die BEIDE Quellen
   // haben (Umsatz-Tag mit gesamtBrutto>0 UND gaesteDaily[date]>0).
   let pairedNet = 0, pairedGaeste = 0, wPairedNet = 0, wPairedGaeste = 0;
@@ -303,7 +303,9 @@ export async function ladeMonatsreport(
     mHatUmsatz = true;
     const inWeek = !!(weekFrom && weekTo && date >= weekFrom && date <= weekTo);
     if (inWeek) {
-      wGross += tag.gesamtBrutto; wTa += tag.takeAwayBrutto; wNet += netto; wHatUmsatz = true;
+      wGross += tag.gesamtBrutto; wTa += tag.takeAwayBrutto; wNet += netto;
+      wFood += split.food; wBev += split.beverage;
+      wHatUmsatz = true;
     }
     const g = gaesteDaily[date] ?? 0;
     if (g > 0) {
@@ -463,8 +465,16 @@ export async function ladeMonatsreport(
     }, { fmt: 'pct' }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
-    d('Food', { month: mHatUmsatz && mFood > 0 ? r2(mFood) : null, vj: vjFoodNet }),
-    d('Beverage', { month: mHatUmsatz && mBev > 0 ? r2(mBev) : null, vj: vjBevNet }),
+    d('Food', {
+      month: mHatUmsatz && mFood > 0 ? r2(mFood) : null,
+      week: weekFrom && wHatUmsatz && wFood > 0 ? r2(wFood) : null,
+      vj: vjFoodNet,
+    }),
+    d('Beverage', {
+      month: mHatUmsatz && mBev > 0 ? r2(mBev) : null,
+      week: weekFrom && wHatUmsatz && wBev > 0 ? r2(wBev) : null,
+      vj: vjBevNet,
+    }),
     e(),
     // ── Block Produktivität ──
     d('Produktive Stunden (Ist)', { month: istStd, week: wIstStd }, { fmt: 'hours' }),
