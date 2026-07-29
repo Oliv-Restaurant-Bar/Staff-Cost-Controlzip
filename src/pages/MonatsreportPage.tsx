@@ -28,11 +28,12 @@ import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 import { exportCockpitPanelPDF, naechsterFrame } from '@/lib/cockpit-pdf-export';
 import { useToast } from '@/hooks/use-toast';
 
-/** Metadaten fürs PDF (Titel/Zeitraum/Dateiname), von jedem Tab gemeldet. */
+/** Metadaten fürs PDF (Titel/Zeitraum/Dateiname/Fussnote), von jedem Tab gemeldet. */
 export interface CockpitPdfMeta {
   title: string;
   subtitle: string;
   fileName: string;
+  footnote?: string;
 }
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -165,8 +166,11 @@ export default function MonatsreportPage() {
       el = monatPanelRef.current;
       meta = {
         title: 'Monatsübersicht',
-        subtitle: `${MONATE[month - 1]} ${year}`,
+        subtitle: `${MONATE[month - 1]} ${year}${daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}${wocheRange ? ` ${wocheRange}` : ''}`,
         fileName: `cockpit-monatsuebersicht-${year}-${String(month).padStart(2, '0')}`,
+        footnote: 'Woche = gewählter Zeitraum, auf den Monat geklemmt · Monat = Ist bis heute · '
+          + '+/- = Abweichung zum Budget bzw. Budget-Wochenanteil · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
+          + 'leere Felder = keine Datenquelle vorhanden. Warenaufwand, Lieferanten und manuelle Felder folgen in einer späteren Etappe.',
       };
     } else if (activeTab === 'wochen') {
       el = wochenPanelRef.current;
@@ -192,7 +196,7 @@ export default function MonatsreportPage() {
     } finally {
       setPdfLaeuft(false);
     }
-  }, [activeTab, month, year, wochenMeta, jahrMeta, heute, toast]);
+  }, [activeTab, month, year, daten, wocheRange, wochenMeta, jahrMeta, heute, toast]);
 
   return (
     <PageShell>
@@ -230,7 +234,13 @@ export default function MonatsreportPage() {
 
           {/* ── Monatsübersicht (unverändert) ── */}
           <TabsContent value="monat" className="space-y-4" ref={monatPanelRef}>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            {/* Capture-only: schlichte Zeitraum-Zeile anstelle der Controls (nur im PDF sichtbar) */}
+            <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-monat">
+              {MONATE[month - 1]} {year}
+              {daten?.weekLabel ? ` · ${daten.weekLabel}` : ''}
+              {wocheRange ? ` ${wocheRange}` : ''}
+            </div>
+            <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="icon" className="h-8 w-8" onClick={prev} data-testid="button-prev-month">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
@@ -283,9 +293,9 @@ export default function MonatsreportPage() {
                         {daten?.weekLabel ?? 'Woche'}
                         {wocheRange ? <span className="block normal-case font-normal">{wocheRange}</span> : null}
                       </th>
-                      <th className="px-3 py-2 text-right font-semibold">+/- in %</th>
+                      <th className="px-3 py-2 text-right font-semibold">Δ %</th>
                       <th className="px-3 py-2 text-right font-semibold">Monat</th>
-                      <th className="px-3 py-2 text-right font-semibold">+/- in %</th>
+                      <th className="px-3 py-2 text-right font-semibold">Δ %</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -316,7 +326,7 @@ export default function MonatsreportPage() {
               </div>
             )}
 
-            <p className="text-xs text-muted-foreground">
+            <p className="pdf-footnote text-xs text-muted-foreground">
               Woche = gewählter Zeitraum ({daten?.weekLabel ?? '—'}
               {wocheRange ? `, ${wocheRange}` : ''}), auf den Monat geklemmt · Monat = Ist bis heute ·
               +/- = Abweichung zum Budget bzw. Budget-Wochenanteil · Umsatz pro Gast = Netto ÷ Gäste
@@ -414,19 +424,29 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
   // Wird der Toggle abgeschaltet, fällt die Ansicht automatisch auf Tabelle.
   const effektiveAnsicht: 'table' | 'chart' = mitVorjahr ? ansicht : 'table';
 
+  const einstellungText = `${jahr} · letzte ${anzahl} Wochen${mitVorjahr ? ' · mit Vorjahr' : ''} · ${effektiveAnsicht === 'chart' ? 'Grafik' : 'Tabelle'}`;
+
   // PDF-Metadaten an die Seite melden (Titel/Zeitraum/Dateiname je nach Einstellungen).
   useEffect(() => {
     const ans = effektiveAnsicht === 'chart' ? 'grafik' : 'tabelle';
     onPdfMeta({
       title: 'Wochenverlauf',
-      subtitle: `${jahr} · letzte ${anzahl} Wochen${mitVorjahr ? ' · mit Vorjahr' : ''} · ${effektiveAnsicht === 'chart' ? 'Grafik' : 'Tabelle'}`,
+      subtitle: einstellungText,
       fileName: `cockpit-wochenverlauf-${jahr}-${anzahl}w-${ans}`,
+      footnote: 'Wochenverlauf = abgeschlossene ISO-Kalenderwochen (Mo–So, älteste links) · Trend ▲/▼ = Veränderung zur Vorwoche · '
+        + 'Verlauf = Mini-Trend über alle Wochen · gleiche Quellen & Berechnung wie die Monatsübersicht · '
+        + 'leere Felder (—) = keine Datenquelle, nie 0 · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen'
+        + (mitVorjahr ? ' · Vorjahr = kleine Zeile darunter + Δ%; Produktive Stunden/Produktivität haben keine VJ-Quelle.' : '.'),
     });
-  }, [onPdfMeta, jahr, anzahl, mitVorjahr, effektiveAnsicht]);
+  }, [onPdfMeta, jahr, anzahl, mitVorjahr, effektiveAnsicht, einstellungText]);
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* Capture-only: Einstellungs-Zusammenfassung anstelle der Controls */}
+      <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-wochen">
+        Wochenverlauf · {einstellungText}
+      </div>
+      <div className="pdf-hide flex flex-wrap items-center justify-end gap-2">
         <span className="text-xs text-muted-foreground">Jahr</span>
         <Select value={String(jahr)} onValueChange={v => setJahr(Number(v))}>
           <SelectTrigger className="h-8 w-24 text-xs" data-testid="select-jahr">
@@ -571,7 +591,7 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
       )}
 
       {effektiveAnsicht === 'table' && (
-        <p className="text-xs text-muted-foreground">
+        <p className="pdf-footnote text-xs text-muted-foreground">
           Wochenverlauf {jahr} = {istAktuellesJahr
             ? `letzte ${anzahl} abgeschlossene ISO-Kalenderwochen`
             : `dieselben ${anzahl} KW-Nummern wie aktuell, aber im Jahr ${jahr}`} (Mo–So, älteste links) ·
@@ -768,13 +788,28 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
       subtitle = modus === 'custom' ? `Eigener Zeitraum ${von}–${bis}` : `${curYear} vs. ${curYear - 1}`;
       fileName = `cockpit-jahresvergleich-${modusSlug}-${curYear}`;
     }
-    onPdfMeta({ title: 'Jahresvergleich', subtitle, fileName });
+    const footnote = 'Jahresvergleich: «Bis heute (YTD)» = 01.01.–heute vs. 01.01.–gleiches Datum im Vorjahr · '
+      + '«Ganzes Jahr» = aktuelles Jahr bis heute vs. ganzes Vorjahr · «Eigener Zeitraum» = gewählter Bereich vs. gleicher MM-TT-Bereich im Vorjahr (29.02. → 28.02. geklemmt) · '
+      + 'gleiche Quellen & Berechnung wie die Monatsübersicht (keine Z-Berichte) · +/- = aktuell vs. Vorjahr (nur wenn beide Werte vorhanden) · '
+      + 'Vorjahr aus vj_daily; Produktive Stunden/Produktivität haben keine VJ-Quelle → «—» · leere Felder (—) = keine Datenquelle, nie 0.';
+    onPdfMeta({ title: 'Jahresvergleich', subtitle, fileName, footnote });
   }, [onPdfMeta, daten, customValid, modus, von, bis, curYear]);
+
+  const modusText = modus === 'ganzjahr' ? 'Ganzes Jahr' : modus === 'custom' ? 'Eigener Zeitraum' : 'Bis heute (YTD)';
 
   return (
     <>
+      {/* Capture-only: Modus-/Zeitraum-Zusammenfassung anstelle der Controls */}
+      <div className="pdf-only hidden items-center gap-2 text-sm font-semibold" data-testid="pdf-summary-jahr">
+        Jahresvergleich · {modusText}
+        {daten && customValid && (
+          <span className="font-normal text-muted-foreground">
+            {' '}· {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}
+          </span>
+        )}
+      </div>
       {/* Zeitraum-Wähler */}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="pdf-hide flex flex-wrap items-center gap-3">
         <ToggleGroup
           type="single"
           value={modus}
@@ -827,7 +862,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
       )}
 
       {daten && customValid && (
-        <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
+        <div className="pdf-hide flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
           <span data-testid="jahresvergleich-kopf">
             {daten.modus === 'ganzjahr'
               ? <>Aktuelles Jahr bis heute vs. ganzes Vorjahr · {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>
@@ -852,7 +887,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
                 <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
                 <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.curYear)}</th>
                 <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.vjYear)}</th>
-                <th className="px-3 py-2 text-right font-semibold">+/- in %</th>
+                <th className="px-3 py-2 text-right font-semibold">Δ %</th>
               </tr>
             </thead>
             <tbody>
@@ -879,7 +914,7 @@ function JahresvergleichView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => 
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">
+      <p className="pdf-footnote text-xs text-muted-foreground">
         Jahresvergleich mit wählbarem Zeitraum: «Bis heute (YTD)» = 01.01.–heute vs. 01.01.–gleiches Datum
         im Vorjahr (pro rata) · «Ganzes Jahr» = aktuelles Jahr bis heute vs. ganzes Vorjahr (das laufende
         Jahr ist unvollständig) · «Eigener Zeitraum» = frei gewählter Bereich im aktuellen Jahr vs. gleicher
