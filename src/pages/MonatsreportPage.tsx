@@ -6,17 +6,23 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, CalendarDays, GitCompareArrows } from 'lucide-react';
+import { ChevronLeft, ChevronRight, FileSpreadsheet, CalendarDays, GitCompareArrows, Table2, ChartLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip as ReTooltip,
+} from 'recharts';
 import { cn } from '@/lib/utils';
 import { useTenant } from '@/contexts/TenantContext';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import {
   ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel,
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
-  type JahresvergleichDaten,
+  type WochenverlaufRow, type JahresvergleichDaten,
 } from '@/lib/monatsreport';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 
@@ -304,6 +310,7 @@ function WochenverlaufView() {
 
   const [anzahl, setAnzahl] = useState(4);
   const [mitVorjahr, setMitVorjahr] = useState(false);
+  const [ansicht, setAnsicht] = useState<'table' | 'chart'>('table');
   const [daten, setDaten] = useState<WochenverlaufDaten | null>(null);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState<string | null>(null);
@@ -321,6 +328,9 @@ function WochenverlaufView() {
   }, [anzahl, mitVorjahr, tenantId, tenantKey, rates, ratesLoading, heute]);
 
   const showVj = mitVorjahr && !!daten?.vjWeeks;
+  // Grafik braucht Vorjahresdaten (zwei Linien) → nur bei mitVorjahr wählbar.
+  // Wird der Toggle abgeschaltet, fällt die Ansicht automatisch auf Tabelle.
+  const effektiveAnsicht: 'table' | 'chart' = mitVorjahr ? ansicht : 'table';
 
   return (
     <>
@@ -334,6 +344,35 @@ function WochenverlaufView() {
         >
           <GitCompareArrows className="h-4 w-4" /> Vorjahr vergleichen
         </Button>
+
+        {/* Tabelle ⇄ Grafik. Grafik nur bei aktivem Vorjahresvergleich. */}
+        <ToggleGroup
+          type="single"
+          value={effektiveAnsicht}
+          onValueChange={v => { if (v === 'table' || v === 'chart') setAnsicht(v); }}
+          className="ml-2"
+          data-testid="toggle-ansicht"
+        >
+          <ToggleGroupItem value="table" size="sm" className="h-8 w-8 p-0" aria-label="Tabelle" data-testid="toggle-tabelle">
+            <Table2 className="h-4 w-4" />
+          </ToggleGroupItem>
+          {mitVorjahr ? (
+            <ToggleGroupItem value="chart" size="sm" className="h-8 w-8 p-0" aria-label="Grafik" data-testid="toggle-grafik">
+              <ChartLine className="h-4 w-4" />
+            </ToggleGroupItem>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* deaktivierte Grafik-Option: erst «Vorjahr vergleichen» einschalten */}
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground/40 cursor-not-allowed" data-testid="toggle-grafik-disabled">
+                  <ChartLine className="h-4 w-4" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>«Vorjahr vergleichen» einschalten, um die Grafik zu sehen</TooltipContent>
+            </Tooltip>
+          )}
+        </ToggleGroup>
+
         <span className="text-xs text-muted-foreground ml-2">Anzahl Wochen</span>
         <Select value={String(anzahl)} onValueChange={v => setAnzahl(Number(v))}>
           <SelectTrigger className="h-8 w-20 text-xs" data-testid="select-week-count">
@@ -355,7 +394,11 @@ function WochenverlaufView() {
 
       {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
 
-      {!loading && daten && (
+      {!loading && daten && effektiveAnsicht === 'chart' && showVj && (
+        <WochenverlaufChart daten={daten} />
+      )}
+
+      {!loading && daten && effektiveAnsicht === 'table' && (
         <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
           <table className="w-full text-sm" data-testid="table-wochenverlauf">
             <thead>
@@ -423,14 +466,121 @@ function WochenverlaufView() {
         </div>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        Wochenverlauf = letzte {anzahl} abgeschlossene ISO-Kalenderwochen (Mo–So, älteste links) ·
-        Trend ▲/▼ = Veränderung zur Vorwoche · Verlauf = Mini-Trend über alle Wochen ·
-        gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
-        nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
-        {showVj && ' · Vorjahr = gleiche ISO-KW im Vorjahr (kleine Zeile darunter + Δ% aktuell vs. VJ); Produktive Stunden/Produktivität haben keine VJ-Quelle.'}
-      </p>
+      {effektiveAnsicht === 'table' && (
+        <p className="text-xs text-muted-foreground">
+          Wochenverlauf = letzte {anzahl} abgeschlossene ISO-Kalenderwochen (Mo–So, älteste links) ·
+          Trend ▲/▼ = Veränderung zur Vorwoche · Verlauf = Mini-Trend über alle Wochen ·
+          gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
+          nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
+          {showVj && ' · Vorjahr = gleiche ISO-KW im Vorjahr (kleine Zeile darunter + Δ% aktuell vs. VJ); Produktive Stunden/Produktivität haben keine VJ-Quelle.'}
+        </p>
+      )}
     </>
+  );
+}
+
+// ── Wochenverlauf: Grafik (Small Multiples, Aktuell vs. Vorjahr) ─────────────
+
+/** Kennzahlen (Reihenfolge) fürs Grafik-Grid — ohne Produktive Stunden/Produktivität. */
+const CHART_METRICS = [
+  'Brutto Umsatz', 'Netto Umsatz', 'Gäste IN', 'Durchschnittsverkauf',
+  'Take Away Anteil', 'Food', 'Beverage', 'Umsatz pro Gast',
+];
+
+/** Kompaktes Achsen-Label: 60'000 → «60k», 1'250'000 → «1.25M». */
+function fmtAxisCompact(v: number, fmt: MrRow['fmt']): string {
+  if (fmt === 'pct') return `${v.toFixed(0)}%`;
+  const a = Math.abs(v);
+  if (a >= 1_000_000) return `${(v / 1_000_000).toLocaleString('de-CH', { maximumFractionDigits: 1 })}M`;
+  if (a >= 1_000) return `${Math.round(v / 1_000)}k`;
+  return fmtNum(v, 0);
+}
+
+/** Ein Mini-Liniendiagramm (aktuelles Jahr Volllinie, Vorjahr gestrichelt). */
+function MiniChart({ row, weeks }: { row: WochenverlaufRow; weeks: WochenverlaufDaten['weeks'] }) {
+  const data = weeks.map((w, i) => ({
+    kw: `KW ${w.kw}`,
+    cur: row.values[i],
+    vj: row.vjValues?.[i] ?? null,
+  }));
+  // Δ% letzte Woche vs. gleiche VJ-Woche (nur wenn beide Werte vorhanden).
+  const lastCur = row.values[row.values.length - 1] ?? null;
+  const lastVj = row.vjValues?.[row.vjValues.length - 1] ?? null;
+  const delta = trendPct(lastCur, lastVj);
+
+  return (
+    <div className="rounded-lg border bg-card p-2.5 shadow-sm" data-testid={`chart-${row.label}`}>
+      <div className="mb-1 flex items-baseline justify-between">
+        <span className="text-xs font-semibold">{row.label}</span>
+        {delta !== null && (
+          <span className={cn('text-[10px] font-medium', delta >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+            {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}% ggü. VJ
+          </span>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={150}>
+        <LineChart data={data} margin={{ top: 6, right: 10, bottom: 0, left: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />
+          <XAxis dataKey="kw" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+          <YAxis
+            width={38} tick={{ fontSize: 10 }} tickLine={false} axisLine={false}
+            tickFormatter={(v: number) => fmtAxisCompact(v, row.fmt)}
+          />
+          <ReTooltip
+            formatter={(value: number | null, name: string) =>
+              [value == null ? '—' : fmtCell(value, row.fmt), name]}
+            labelClassName="text-xs" contentStyle={{ fontSize: 12 }}
+          />
+          {/* Vorjahr: hellgrau + gestrichelt (Unterscheidung nicht nur über Farbe). */}
+          <Line
+            type="monotone" dataKey="vj" name="Vorjahr"
+            stroke="hsl(var(--muted-foreground))" strokeWidth={1.5} strokeDasharray="5 4"
+            dot={false} connectNulls={false} isAnimationActive={false}
+          />
+          {/* Aktuelles Jahr: kräftige Volllinie in der Akzentfarbe. */}
+          <Line
+            type="monotone" dataKey="cur" name="Aktuell"
+            stroke="hsl(var(--primary))" strokeWidth={2.25}
+            dot={{ r: 2 }} connectNulls={false} isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function WochenverlaufChart({ daten }: { daten: WochenverlaufDaten }) {
+  const charts = CHART_METRICS
+    .map(label => daten.rows.find(r => r.label === label))
+    .filter((r): r is WochenverlaufRow => !!r);
+
+  return (
+    <div className="space-y-3" data-testid="wochenverlauf-grafik">
+      {/* Gemeinsame Legende oben */}
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <svg width="24" height="8" aria-hidden="true">
+            <line x1="0" y1="4" x2="24" y2="4" stroke="hsl(var(--primary))" strokeWidth="2.25" />
+          </svg>
+          Aktuelles Jahr
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <svg width="24" height="8" aria-hidden="true">
+            <line x1="0" y1="4" x2="24" y2="4" stroke="hsl(var(--muted-foreground))" strokeWidth="1.5" strokeDasharray="5 4" />
+          </svg>
+          Vorjahr
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {charts.map(row => <MiniChart key={row.label} row={row} weeks={daten.weeks} />)}
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Produktive Stunden/Produktivität: keine Vorjahresdaten · Δ% = letzte Woche vs. gleiche KW im Vorjahr ·
+        Lücken = keine Datenquelle (nie 0).
+      </p>
+    </div>
   );
 }
 
