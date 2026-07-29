@@ -337,7 +337,20 @@ export async function ladeMonatsreport(
 
   // ── Durchschnittsverkauf (manueller Import; Zeitraum-Wert massgeblich) ─────
   const avgMonat: number | null = avgMonthly[`${year}-${mm}`] ?? null;
-  const avgVj: number | null = avgMonthly[`${year - 1}-${mm}`] ?? null;
+  // Vorjahr: primär der importierte Monatswert (avgcheck-monthly). Fehlt dieser
+  // (z.B. alte Importe, die nur Tageswerte schrieben), Fallback = einfacher
+  // Mittelwert der Vorjahres-Tageswerte (avgcheck-daily) über den Vorjahres-
+  // Monat — Durchschnittsverkauf ist ein direkt importierter Wert, nicht
+  // gäste-gewichtet. Leer wenn beide Quellen fehlen (nie 0).
+  let avgVj: number | null = avgMonthly[`${year - 1}-${mm}`] ?? null;
+  if (avgVj == null) {
+    let sSum = 0, sCount = 0;
+    for (const [date, v] of Object.entries(avgDaily)) {
+      if (date < vjFrom || date > vjTo || !(v > 0)) continue;
+      sSum += v; sCount++;
+    }
+    if (sCount > 0) avgVj = r2(sSum / sCount);
+  }
   // Woche: gäste-gewichteter Mittelwert der Tageswerte (Fallback: einfacher Mittelwert)
   let avgWoche: number | null = null;
   if (weekFrom && weekTo) {

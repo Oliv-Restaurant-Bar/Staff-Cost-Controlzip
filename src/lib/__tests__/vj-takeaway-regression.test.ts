@@ -140,3 +140,49 @@ describe('V3 — VJ «Umsatz pro Gast» (Netto-VJ ÷ Gäste-VJ über gepaarte Ta
     expect(vjUmsatzProGast({}, { '2025-07-01': 100 })).toBeNull();
   });
 });
+
+// Exakte Logik aus monatsreport.ts (Vorjahr-Zelle «Durchschnittsverkauf»):
+//   avgVj = avgMonthly[`${year-1}-${mm}`] ?? null
+//   fällt dieser weg → einfacher Mittelwert der avgcheck-daily-Werte (>0) über
+//   den Vorjahres-Monat [vjFrom..vjTo]; leer wenn beide Quellen fehlen.
+function vjDurchschnitt(
+  avgMonthly: Record<string, number>,
+  avgDaily: Record<string, number>,
+  year: number, mm: string, vjFrom: string, vjTo: string,
+): number | null {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  let avgVj: number | null = avgMonthly[`${year - 1}-${mm}`] ?? null;
+  if (avgVj == null) {
+    let sSum = 0, sCount = 0;
+    for (const [date, v] of Object.entries(avgDaily)) {
+      if (date < vjFrom || date > vjTo || !(v > 0)) continue;
+      sSum += v; sCount++;
+    }
+    if (sCount > 0) avgVj = r2(sSum / sCount);
+  }
+  return avgVj;
+}
+
+describe('V4 — VJ «Durchschnittsverkauf» (Monatswert, Fallback einfacher Mittelwert)', () => {
+  const FROM = '2025-07-01', TO = '2025-07-31';
+  it('nimmt den importierten Monatswert (avgcheck-monthly), wenn vorhanden', () => {
+    expect(vjDurchschnitt({ '2025-07': 35.72 }, {}, 2026, '07', FROM, TO)).toBe(35.72);
+  });
+
+  it('Fallback: einfacher Mittelwert der Vorjahres-Tageswerte, wenn Monatswert fehlt', () => {
+    // Kontroll-Konstellation (Juli 2025): monthly fehlt, daily-Mittel = 35.72
+    const daily = { '2025-07-01': 40, '2025-07-02': 30, '2025-07-03': 37.16 };
+    // (40 + 30 + 37.16) / 3 = 35.72
+    expect(vjDurchschnitt({}, daily, 2026, '07', FROM, TO)).toBeCloseTo(35.72, 2);
+  });
+
+  it('Fallback ignoriert Tage ausserhalb des Vorjahres-Monats und Nullwerte', () => {
+    const daily = { '2025-06-30': 99, '2025-07-01': 40, '2025-07-02': 0, '2025-08-01': 99, '2025-07-03': 30 };
+    // nur 07-01 (40) und 07-03 (30) → (40+30)/2 = 35
+    expect(vjDurchschnitt({}, daily, 2026, '07', FROM, TO)).toBe(35);
+  });
+
+  it('leer (null) wenn weder Monatswert noch Tageswerte im Zeitraum', () => {
+    expect(vjDurchschnitt({}, { '2024-07-01': 50 }, 2026, '07', FROM, TO)).toBeNull();
+  });
+});
