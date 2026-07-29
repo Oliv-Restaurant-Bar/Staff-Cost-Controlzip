@@ -9,7 +9,7 @@
  * sind per RLS auf `authenticated` beschränkt (siehe Migration).
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertTriangle, Loader2,
   Database, Users, Clock, MapPin, CalendarRange, UserPlus, UserCheck,
@@ -23,7 +23,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
-import { parseReservationsCsv } from '@/lib/reservation-import-parser';
+import { parseReservationsCsv, checkTenantMatch, TENANT_LABELS } from '@/lib/reservation-import-parser';
 import type {
   ReservationParseResult, ReservationStatusNormalized,
 } from '@/lib/reservation-import-parser';
@@ -146,6 +146,13 @@ export default function ReservationenImportPage(
   // ── Speichern ─────────────────────────────────────────────────────────────
   const handleConfirm = async () => {
     if (!parsed) return;
+    // Mandanten-Schutz: erkannter, abweichender Mandant blockiert den Import
+    // hart — auch als letzter Riegel, falls der Button-disabled umgangen würde.
+    const guard = checkTenantMatch(parsed.dominantRestaurantName, tenantId);
+    if (guard.block) {
+      toast.error(guard.message ?? 'Import blockiert: Datei gehört zu einem anderen Mandanten.');
+      return;
+    }
     const startedAt = new Date().toISOString();
     setStep('saving');
     const result = await saveReservationImport(tenantId, parsed);
@@ -193,6 +200,16 @@ export default function ReservationenImportPage(
   // ── Vorschau-Werte ──────────────────────────────────────────────────────────
   const stats = parsed?.stats ?? null;
   const skippedRows = parsed?.errors.filter(e => e.rowNumber > 0).length ?? 0;
+
+  // ── Mandanten-Schutz ──────────────────────────────────────────────────────
+  // Abgleich Datei-Restaurant ↔ aktiver Mandant. Erkannter, abweichender
+  // Mandant → harter Stopp (Import-Button blockiert). Unbekannter/fehlender
+  // Restaurant-Name → nur Warnung (Import bleibt möglich). Reine Logik.
+  const tenantMatch = useMemo(
+    () => parsed ? checkTenantMatch(parsed.dominantRestaurantName, tenantId) : null,
+    [parsed, tenantId],
+  );
+  const importBlocked = tenantMatch?.block ?? false;
 
   // ── Tabellen fehlen → Hinweisbanner ─────────────────────────────────────────
   const tablesMissingBanner = tablesOk === false && (
@@ -306,6 +323,44 @@ export default function ReservationenImportPage(
                 <span className="font-medium">{parsed.fileName}</span>
               </div>
 
+              {/* Mandanten-Schutz: IMMER Datei-Restaurant + Ziel-Mandant zeigen. */}
+              {tenantMatch && (
+                <div
+                  data-testid="banner-tenant-check"
+                  className={cn(
+                    'rounded-lg border p-3 text-sm',
+                    tenantMatch.block
+                      ? 'border-red-300 bg-red-50 text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-200'
+                      : tenantMatch.warn
+                        ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200'
+                        : 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    {tenantMatch.block
+                      ? <Ban className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                      : tenantMatch.warn
+                        ? <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                        : <CheckCircle2 className="h-4 w-4 flex-shrink-0 mt-0.5" />}
+                    <div className="space-y-0.5">
+                      <p>
+                        Datei-Restaurant:{' '}
+                        <span className="font-semibold" data-testid="text-file-restaurant">
+                          {tenantMatch.fileRestaurant ?? '— (kein Wert)'}
+                        </span>
+                        {' · '}Ziel-Mandant:{' '}
+                        <span className="font-semibold" data-testid="text-target-tenant">
+                          {TENANT_LABELS[tenantId]}
+                        </span>
+                      </p>
+                      {tenantMatch.message && (
+                        <p className="font-medium" data-testid="text-tenant-message">{tenantMatch.message}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <ReservationSummary
                 stats={stats}
                 newGuests={guestClass ? guestClass.newGuests : null}
@@ -320,7 +375,9 @@ export default function ReservationenImportPage(
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleConfirm}
-                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                  disabled={importBlocked}
+                  data-testid="button-import-reservations"
+                  className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Database className="h-4 w-4" />
                   {stats.reservationCount} Reservationen importieren

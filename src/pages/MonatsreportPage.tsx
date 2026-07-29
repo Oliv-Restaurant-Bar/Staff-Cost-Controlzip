@@ -133,12 +133,14 @@ type ReportGranularity = 'monat' | 'woche';
  * Kosten-Δ-Invertierung (deltaInverted) und warnAbove-Rot gelten in beiden Sichten.
  */
 function ReportTable({
-  rows, granularity, budgetSub, vjSub, istHeader, istSub, testid,
+  rows, granularity, budgetSub, vjHeader = 'Vorjahr', vjSub, istHeader, istSub, testid,
   editMode = false, onMove,
 }: {
   rows: MrRow[];
   granularity: ReportGranularity;
   budgetSub?: string | null;
+  /** Eindeutiger Vorjahres-Spaltentitel (z.B. «Vorjahr (Monat 2025)»). */
+  vjHeader?: string;
   vjSub?: string | null;
   istHeader: string;
   istSub?: string | null;
@@ -169,7 +171,7 @@ function ReportTable({
               {budgetSub ? <span className="block normal-case font-normal">{budgetSub}</span> : null}
             </th>
             <th className="px-3 py-2 text-right font-semibold">
-              Vorjahr
+              {vjHeader}
               {vjSub ? <span className="block normal-case font-normal">{vjSub}</span> : null}
             </th>
             <th className="px-3 py-2 text-right font-semibold">
@@ -493,6 +495,7 @@ export default function MonatsreportPage() {
                 rows={orderedRows}
                 granularity="monat"
                 budgetSub="Monatsbudget"
+                vjHeader={`Vorjahr (Monat ${year - 1})`}
                 vjSub={`${MONATE[month - 1]} ${year - 1}`}
                 istHeader="Ist (Monat)"
                 istSub="bis heute"
@@ -573,6 +576,7 @@ export default function MonatsreportPage() {
                 rows={orderedRows}
                 granularity="woche"
                 budgetSub={budgetWocheSub}
+                vjHeader={`Vorjahr (Woche ${year - 1})`}
                 vjSub={vjWocheSub}
                 istHeader={daten?.weekLabel ?? 'Woche'}
                 istSub={wocheRange}

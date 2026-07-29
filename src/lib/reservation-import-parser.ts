@@ -108,6 +108,12 @@ export interface ReservationParseResult {
   checksum: string;
   headerOk: boolean;
   headerMissing: string[];           // fehlende Pflicht-/erwartete Spalten
+  /**
+   * Dominanter (häufigster nicht-leerer) Restaurant-Name aus der Spalte
+   * «Restaurant». `null`, wenn die Spalte fehlt oder überall leer ist.
+   * Dient dem Mandanten-Schutz beim Import (Abgleich mit dem aktiven Mandanten).
+   */
+  dominantRestaurantName: string | null;
 }
 
 // ── CSV-Grundfunktionen ──────────────────────────────────────────────────────
@@ -426,6 +432,7 @@ export function parseReservationsCsv(fileName: string, rawText: string): Reserva
     checksum,
     headerOk: false,
     headerMissing: Object.values(EXPECTED_HEADERS),
+    dominantRestaurantName: null,
   };
   if (rows.length === 0) return empty;
 
@@ -518,8 +525,119 @@ export function parseReservationsCsv(fileName: string, rawText: string): Reserva
     checksum,
     headerOk: true,
     headerMissing,
+    dominantRestaurantName: dominantRestaurantName(reservations),
   };
 }
+
+// ── Mandanten-Schutz (Restaurant-Spalte ↔ aktiver Mandant) ───────────────────
+
+/**
+ * Ermittelt den DOMINANTEN Restaurant-Namen aus den geparsten Reservationen:
+ * der häufigste nicht-leere Wert der Spalte «Restaurant». Bei Gleichstand
+ * gewinnt der zuerst gesehene. `null`, wenn kein Wert vorhanden ist.
+ */
+export function dominantRestaurantName(
+  reservations: Array<{ restaurantName?: string | null }>,
+): string | null {
+  const counts = new Map<string, number>();
+  const order: string[] = [];
+  for (const r of reservations) {
+    const name = (r.restaurantName ?? '').trim();
+    if (!name) continue;
+    if (!counts.has(name)) order.push(name);
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestCount = 0;
+  for (const name of order) {
+    const c = counts.get(name)!;
+    if (c > bestCount) { best = name; bestCount = c; }
+  }
+  return best;
+}
+
+/** Erkannter Mandant aus dem Restaurant-Namen (oder null = unbekannt/leer). */
+export type ReservationTenantSlug = 'oliv' | 'beaulieu';
+
+/**
+ * Robustes Mapping Restaurant-Name → Mandant. Wort-/lowercase-basiert:
+ * enthält der Name «beaulieu» → beaulieu; sonst enthält er «oliv» → oliv;
+ * sonst `null` (unbekannt/leer). Reihenfolge wichtig (Beaulieu zuerst), damit
+ * ein «Beaulieu»-Name nie versehentlich als «oliv» erkannt wird.
+ */
+export function mapRestaurantToTenant(
+  name: string | null | undefined,
+): ReservationTenantSlug | null {
+  if (!name) return null;
+  const lower = stripDiacritics(name).toLowerCase();
+  if (lower.includes('beaulieu')) return 'beaulieu';
+  if (lower.includes('oliv')) return 'oliv';
+  return null;
+}
+
+/** Ergebnis der Mandanten-Prüfung beim Import. */
+export interface TenantMatchResult {
+  /** Roh-Restaurantname aus der Datei (für die Anzeige), null = keiner. */
+  fileRestaurant: string | null;
+  /** Erkannter Mandant der Datei (null = unbekannt/leer). */
+  fileTenant: ReservationTenantSlug | null;
+  /** Aktiver Ziel-Mandant. */
+  activeTenant: ReservationTenantSlug;
+  /**
+   * true → Import blockieren. NUR bei einem ERKANNTEN, ABWEICHENDEN Mandanten.
+   * Unbekannter/fehlender Name blockiert NICHT (nur Warnhinweis).
+   */
+  block: boolean;
+  /** true → Warnung anzeigen (unbekannter/fehlender Restaurant-Name). */
+  warn: boolean;
+  /** Menschlich lesbare Meldung (Vorschau/Blockade), null = alles i.O. */
+  message: string | null;
+}
+
+/**
+ * Prüft, ob eine Reservations-Datei zum aktiven Mandanten passt. Reine,
+ * testbare Logik (kein DB/DOM):
+ *   - erkannter, abweichender Mandant  → HARTER STOPP (block=true).
+ *   - unbekannter/fehlender Restaurant → Warnung (warn=true), KEIN Stopp.
+ *   - erkannter, passender Mandant      → alles i.O.
+ */
+export function checkTenantMatch(
+  fileRestaurant: string | null | undefined,
+  activeTenant: ReservationTenantSlug,
+): TenantMatchResult {
+  const fileTenant = mapRestaurantToTenant(fileRestaurant);
+  const activeLabel = TENANT_LABELS[activeTenant];
+  const raw = (fileRestaurant ?? '').trim() || null;
+
+  if (fileTenant === null) {
+    return {
+      fileRestaurant: raw, fileTenant: null, activeTenant,
+      block: false, warn: true,
+      message: raw
+        ? `Restaurant «${raw}» konnte keinem Mandanten zugeordnet werden. Bitte vor dem Import prüfen, dass die Datei zu «${activeLabel}» gehört.`
+        : `Kein Restaurant-Name in der Datei gefunden. Bitte vor dem Import prüfen, dass die Datei zu «${activeLabel}» gehört.`,
+    };
+  }
+
+  if (fileTenant !== activeTenant) {
+    return {
+      fileRestaurant: raw, fileTenant, activeTenant,
+      block: true, warn: false,
+      message: `Diese Datei gehört zu «${TENANT_LABELS[fileTenant]}», aktiver Mandant ist «${activeLabel}». Import blockiert.`,
+    };
+  }
+
+  return {
+    fileRestaurant: raw, fileTenant, activeTenant,
+    block: false, warn: false, message: null,
+  };
+}
+
+/** Anzeige-Labels der Mandanten. */
+export const TENANT_LABELS: Record<ReservationTenantSlug, string> = {
+  oliv: 'Oliv',
+  beaulieu: 'Beaulieu',
+};
 
 // ── Statistik / Vorschau ─────────────────────────────────────────────────────
 

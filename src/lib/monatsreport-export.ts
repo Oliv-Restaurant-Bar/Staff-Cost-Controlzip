@@ -55,6 +55,19 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   return { budget, vj, ist, dev, istWarn, devGut, vjPax, istPax };
 }
 
+/**
+ * Eindeutiger Vorjahres-Spaltentitel mit DYNAMISCHEM Jahr (JJJJ−1), damit Ist
+ * und Vorjahr im Export nicht verwechselt werden. Fehlt das Jahr → schlichtes
+ * «Vorjahr» (Rückwärtskompatibilität).
+ */
+export function vjColumnHeader(
+  granularity: ExportGranularity, year?: number,
+): string {
+  if (year == null || !Number.isFinite(year)) return 'Vorjahr';
+  const kind = granularity === 'monat' ? 'Monat' : 'Woche';
+  return `Vorjahr (${kind} ${year - 1})`;
+}
+
 /** «Anzahl (Σ Personen)»-Text für fmt='countPax'; null → leer. */
 function countPaxText(count: number | null, pax: number | null): string {
   if (count === null || count === undefined) return '';
@@ -70,8 +83,11 @@ function countPaxText(count: number | null, pax: number | null): string {
  */
 export function buildMonatsreportWorkbook(
   rows: MrRow[], month: number, granularity: ExportGranularity = 'woche',
+  year?: number,
 ): ExcelJS.Workbook {
   const istHeader = granularity === 'monat' ? 'Ist (Monat)' : 'Woche';
+  // Eindeutiger Vorjahres-Spaltentitel mit DYNAMISCHEM Jahr (Ist ≠ Vorjahr).
+  const vjHeader = vjColumnHeader(granularity, year);
   const sheetName = granularity === 'monat'
     ? `Monatsübersicht ${MONATE[month - 1]}`
     : `Wochenübersicht ${MONATE[month - 1]}`;
@@ -87,7 +103,7 @@ export function buildMonatsreportWorkbook(
   // Kopfzeile
   const head = ws.addRow([
     `${granularity === 'monat' ? 'Monat' : 'Woche'} ${MONATE[month - 1]}`,
-    'Budget', 'Vorjahr', istHeader, 'Δ %',
+    'Budget', vjHeader, istHeader, 'Δ %',
   ]);
   head.font = { bold: true };
   head.eachCell(c => {
@@ -145,7 +161,7 @@ export function buildMonatsreportWorkbook(
 export async function exportMonatsreportXlsx(
   rows: MrRow[], year: number, month: number, granularity: ExportGranularity = 'woche',
 ): Promise<void> {
-  const wb = buildMonatsreportWorkbook(rows, month, granularity);
+  const wb = buildMonatsreportWorkbook(rows, month, granularity, year);
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);

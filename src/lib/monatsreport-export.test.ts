@@ -5,7 +5,7 @@
  * Node-Umgebung: jsdom lädt sonst `canvas` (libuuid) eager → Crash im Container.
  */
 import { describe, it, expect } from 'vitest';
-import { buildMonatsreportWorkbook } from './monatsreport-export';
+import { buildMonatsreportWorkbook, vjColumnHeader } from './monatsreport-export';
 import type { MrRow } from './monatsreport';
 
 /** Bequemer MrRow-Builder mit sinnvollen Defaults (alle Felder gesetzt). */
@@ -62,6 +62,31 @@ describe('buildMonatsreportWorkbook — Granularität', () => {
     expect(r.getCell(5).value).toBeCloseTo(5, 6);
     // Umsatz über Budget = grün.
     expect((r.getCell(5).font as any).color.argb).toBe(GREEN);
+  });
+});
+
+describe('Vorjahres-Spaltenkopf — dynamisches Jahr (Ist ≠ Vorjahr)', () => {
+  it('vjColumnHeader: Monat/Woche mit JJJJ−1, ohne Jahr Fallback «Vorjahr»', () => {
+    expect(vjColumnHeader('monat', 2026)).toBe('Vorjahr (Monat 2025)');
+    expect(vjColumnHeader('woche', 2026)).toBe('Vorjahr (Woche 2025)');
+    expect(vjColumnHeader('monat', 2024)).toBe('Vorjahr (Monat 2023)');
+    expect(vjColumnHeader('monat')).toBe('Vorjahr');
+    expect(vjColumnHeader('woche', undefined)).toBe('Vorjahr');
+  });
+
+  it('Excel-Kopfzeile (Spalte 3) trägt das dynamische Vorjahr — Monat', () => {
+    const wb = buildMonatsreportWorkbook([row({ label: 'Netto Umsatz' })], 7, 'monat', 2026);
+    expect(wb.worksheets[0].getRow(1).getCell(3).value).toBe('Vorjahr (Monat 2025)');
+  });
+
+  it('Excel-Kopfzeile (Spalte 3) trägt das dynamische Vorjahr — Woche', () => {
+    const wb = buildMonatsreportWorkbook([row({ label: 'Netto Umsatz' })], 7, 'woche', 2026);
+    expect(wb.worksheets[0].getRow(1).getCell(3).value).toBe('Vorjahr (Woche 2025)');
+  });
+
+  it('ohne Jahr-Argument bleibt der Kopf «Vorjahr» (rückwärtskompatibel)', () => {
+    const wb = buildMonatsreportWorkbook([row({ label: 'Netto Umsatz' })], 7, 'monat');
+    expect(wb.worksheets[0].getRow(1).getCell(3).value).toBe('Vorjahr');
   });
 });
 
