@@ -103,8 +103,12 @@ function parseWeekValue(v: string): WeekSelection {
 const fmtNum = (v: number, dec = 2) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
-function fmtCell(v: number | null, fmt: MrRow['fmt']): string {
+function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): string {
   if (v === null || v === undefined) return '';
+  if (fmt === 'countPax') {
+    const n = fmtNum(v, 0);
+    return pax !== null && pax !== undefined ? `${n} (${fmtNum(pax, 0)})` : n;
+  }
   if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
   return fmtNum(v);
@@ -145,8 +149,10 @@ function ReportTable({
   onMove?: (id: string, dir: -1 | 1) => void;
 }) {
   const pick = (row: MrRow) => granularity === 'monat'
-    ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget }
-    : { budget: row.budget, vj: row.vj, ist: row.week, devBudget: row.weekBudget };
+    ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget,
+        vjPax: row.vjMonthPax, istPax: row.monthPax }
+    : { budget: row.budget, vj: row.vj, ist: row.week, devBudget: row.weekBudget,
+        vjPax: null as number | null, istPax: row.weekPax };
   // Im Bearbeiten-Modus nur Datenzeilen (Trenner ausblenden → eindeutige Pfeile).
   const shown = editMode ? rows.filter(r => r.type === 'data') : rows;
   const dataCount = shown.filter(r => r.type === 'data').length;
@@ -218,8 +224,8 @@ function ReportTable({
                 ) : null}
                 <td className="px-3 py-1.5">{row.label}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt)}</td>
-                <td className={cn('px-3 py-1.5 text-right tabular-nums', warnClass)}>{fmtCell(p.ist, row.fmt)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax)}</td>
+                <td className={cn('px-3 py-1.5 text-right tabular-nums', warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
                 <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>{fmtDev(dev)}</td>
               </tr>
             );

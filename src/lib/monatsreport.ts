@@ -10,7 +10,9 @@
  *    mit den Personalkosten
  *  - Gäste:                   gaeste-daily-KV (manueller GÄSTE-Import, Zeile «Gesamt»)
  *  - Durchschnittsverkauf:    avgcheck-monthly/-daily-KV (manueller Import, Zeile «Durchschnitt»)
- *  - Gruppen ab 20 Pax:       reservation_records (Foratable-Import, party_size >= 20)
+ *  - Reservierte Gäste / Gruppen ab N Pax: reservation_records (Foratable-Import)
+ *    via reservation-cockpit-metrics; Zählregel (Status) + Schwelle zentral aus
+ *    reservation-cockpit-settings (app_settings, pro Tenant). Zukunft inklusive.
  *  - Budget:                  budget_v1 (P&L pl_revenue, netto) via getMonthlyBudgetRevenue
  *  - Wochenanteil Budget:     Wochentagsgewichte (ladeWochentagsGewichte, Fallback gleichmässig)
  *  - Vorjahr:                 vj_daily (app_settings) via loadVjDailyMonth
@@ -26,6 +28,8 @@ import {
 } from '@/lib/personalkosten';
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { loadReservationCounting, DEFAULT_RESERVATION_COUNTING } from '@/lib/reservation-cockpit-settings';
+import { loadReservationMetrics } from '@/lib/reservation-cockpit-metrics';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 
@@ -511,7 +515,7 @@ export function kwRangeLabel(kwYear: number, kw: number): string {
 
 // ── Zeilenmodell ─────────────────────────────────────────────────────────────
 
-export type MrFormat = 'chf' | 'count' | 'pct' | 'hours';
+export type MrFormat = 'chf' | 'count' | 'pct' | 'hours' | 'countPax';
 
 export interface MrRow {
   type: 'data' | 'empty';
@@ -549,6 +553,14 @@ export interface MrRow {
    * Woche-/Monatswert ÜBER dieser Schwelle wird rot markiert (Obergrenze-Warnung).
    */
   warnAbove?: number;
+  /**
+   * Begleit-«Personen»-Werte für fmt='countPax' (Anzeige «Anzahl (Σ Personen)»).
+   * Pro Spalte parallel zu month/week/vjMonth; null = kein Zusatzwert.
+   * Nur bei fmt='countPax' relevant, sonst undefined.
+   */
+  monthPax?: number | null;
+  weekPax?: number | null;
+  vjMonthPax?: number | null;
 }
 
 export interface MonatsreportDaten {
@@ -676,6 +688,12 @@ export async function ladeMonatsreport(
   const weekLabel = weekSelectionLabel(weekSelection);
   const { weekFrom, weekTo } = computeWeekRange(weekSelection, year, fromIso, toIso, istToIso, heute);
 
+  // Reservationen dürfen in der ZUKUNFT liegen (geplante Perioden). Deshalb ein
+  // NICHT auf «heute» geklemmter Wochenbereich (nur auf den Monat begrenzt): wie
+  // computeWeekRange, aber mit istToIso = toIso (ganzer Monat verfügbar).
+  const { weekFrom: resWeekFrom, weekTo: resWeekTo } =
+    computeWeekRange(weekSelection, year, fromIso, toIso, toIso, heute);
+
   const alleTage: string[] = [];
   for (let t = 1; t <= daysInMonth; t++) alleTage.push(`${year}-${mm}-${pad2(t)}`);
   const istTage = alleTage.filter(d => istToIso && d <= istToIso);
@@ -689,15 +707,21 @@ export async function ladeMonatsreport(
   const vjDays = new Date(year - 1, month, 0).getDate();
   const vjFromIsoG = `${year - 1}-${mm}-01`;
   const vjToIsoG = `${year - 1}-${mm}-${pad2(vjDays)}`;
-  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, gruppen20, gruppen20Vj, pk] = await Promise.all([
+  // Zentrale Reservations-Zählregel (Status-Set + Gruppen-Schwelle) laden.
+  const resCounting = await loadReservationCounting(tenantKey).catch(() => null);
+  const resSettings = resCounting ?? DEFAULT_RESERVATION_COUNTING;
+
+  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, pk] = await Promise.all([
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
     loadVjDailyMonth(year - 1, vjMonth, tenantId),
-    // Ist-Logik wie übrige Monatswerte: laufender Monat bis heute, Zukunft leer.
-    istToIso ? countGroupsFrom20Pax(tenantId, fromIso, istToIso) : Promise.resolve(null),
-    // Vorjahr: ganzer Monat Jahr−1; null (nie 0) wenn keine Reservationen vorhanden.
-    countGroupsFrom20PaxVj(tenantId, vjFromIsoG, vjToIsoG),
+    // Reservationen: GANZER Monat (inkl. Zukunft — geplante Perioden zählen mit).
+    loadReservationMetrics(tenantId, fromIso, toIso, resSettings),
+    // Reservationen der gewählten Woche (ungeklemmt, future-capable).
+    loadReservationMetrics(tenantId, resWeekFrom, resWeekTo, resSettings),
+    // Vorjahr: gleicher Monat Jahr−1 (für die Vorjahr-Spalte der Monatssicht).
+    loadReservationMetrics(tenantId, vjFromIsoG, vjToIsoG, resSettings),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
@@ -910,7 +934,11 @@ export async function ladeMonatsreport(
   const d = (
     id: string,
     label: string,
-    vals: { budget?: number | null; vj?: number | null; vjMonth?: number | null; week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null },
+    vals: {
+      budget?: number | null; vj?: number | null; vjMonth?: number | null;
+      week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null;
+      monthPax?: number | null; weekPax?: number | null; vjMonthPax?: number | null;
+    },
     opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number } = {},
   ): MrRow => ({
     type: 'data', id, label,
@@ -918,6 +946,7 @@ export async function ladeMonatsreport(
     week: vals.week ?? null, weekBudget: vals.weekBudget ?? null,
     monthBudget: vals.monthBudget ?? null,
     month: vals.month ?? null,
+    monthPax: vals.monthPax ?? null, weekPax: vals.weekPax ?? null, vjMonthPax: vals.vjMonthPax ?? null,
     fmt: opts.fmt ?? 'chf', bold: opts.bold,
     deltaInverted: opts.deltaInverted, warnAbove: opts.warnAbove,
   });
@@ -982,8 +1011,21 @@ export async function ladeMonatsreport(
       vj: vwNetV, vjMonth: vjNetV,
     }, { bold: true }),
     d('gaeste_in', 'Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV }, { fmt: 'count' }),
-    // Gruppen ab 20 Pax: keine Wochen-Aufteilung → Vorjahr-Woche leer; VJ-Monat vorhanden.
-    d('gruppen_ab_20', 'Gruppen ab 20 Pax', { month: gruppen20, vj: null, vjMonth: gruppen20Vj }, { fmt: 'count' }),
+    // Reservierte Gäste (Foratable): Σ Personen gezählter Reservationen. Woche =
+    // gewählte Woche, Monat = ganzer Monat (inkl. Zukunft). VJ-Woche leer (keine
+    // KW-genaue VJ-Zuordnung); VJ-Monat = gleicher Monat Vorjahr.
+    d('reservierte_gaeste', 'Reservierte Gäste', {
+      month: resMonth.reservedGuests, week: resWeek.reservedGuests,
+      vj: null, vjMonth: resVjMonth.reservedGuests,
+    }, { fmt: 'count' }),
+    // Gruppen ab N Pax: Anzeige «Anzahl (Σ Personen)». Companion-Personen je
+    // Spalte in *Pax-Feldern. VJ-Woche leer; VJ-Monat vorhanden.
+    d('gruppen_ab_20', `Gruppen ab ${resSettings.groupThreshold} Pax`, {
+      month: resMonth.largeGroupCount, week: resWeek.largeGroupCount,
+      vj: null, vjMonth: resVjMonth.largeGroupCount,
+      monthPax: resMonth.largeGroupPersons, weekPax: resWeek.largeGroupPersons,
+      vjMonthPax: resVjMonth.largeGroupPersons,
+    }, { fmt: 'countPax' }),
     e(),
     // ── Block Durchschnitt ──
     // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),

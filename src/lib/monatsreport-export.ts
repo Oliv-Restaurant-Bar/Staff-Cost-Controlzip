@@ -31,6 +31,9 @@ export interface ExportCell {
   istWarn: boolean;
   /** true → Δ% grün, false → rot (berücksichtigt deltaInverted). */
   devGut: boolean | null;
+  /** Begleit-«Personen» für fmt='countPax' (Anzeige «Anzahl (Σ Personen)»). */
+  vjPax: number | null;
+  istPax: number | null;
 }
 
 /**
@@ -47,7 +50,18 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   const istWarn = row.warnAbove != null && ist !== null && ist > row.warnAbove;
   // Kosten-Zeilen (deltaInverted): über Budget (dev>0) = schlecht/rot.
   const devGut = dev === null ? null : (row.deltaInverted ? dev <= 0 : dev >= 0);
-  return { budget, vj, ist, dev, istWarn, devGut };
+  const vjPax = granularity === 'monat' ? (row.vjMonthPax ?? null) : null;
+  const istPax = granularity === 'monat' ? (row.monthPax ?? null) : (row.weekPax ?? null);
+  return { budget, vj, ist, dev, istWarn, devGut, vjPax, istPax };
+}
+
+/** «Anzahl (Σ Personen)»-Text für fmt='countPax'; null → leer. */
+function countPaxText(count: number | null, pax: number | null): string {
+  if (count === null || count === undefined) return '';
+  const c = Math.round(count).toLocaleString('de-CH');
+  return pax !== null && pax !== undefined
+    ? `${c} (${Math.round(pax).toLocaleString('de-CH')})`
+    : c;
 }
 
 /**
@@ -88,14 +102,20 @@ export function buildMonatsreportWorkbook(
     // Felder je Granularität (identisch zur Bildschirm-Ansicht ReportTable).
     const c = mapRowForExport(row, granularity);
 
-    const r = ws.addRow([row.label ?? '', c.budget, c.vj, c.ist, c.dev]);
+    // countPax («Anzahl (Σ Personen)») wird als Text geschrieben, sonst als Zahl.
+    const isCountPax = row.fmt === 'countPax';
+    const vjOut = isCountPax ? countPaxText(c.vj, c.vjPax) : c.vj;
+    const istOut = isCountPax ? countPaxText(c.ist, c.istPax) : c.ist;
+
+    const r = ws.addRow([row.label ?? '', c.budget, vjOut, istOut, c.dev]);
 
     const numFmt = row.fmt === 'count' || row.fmt === 'hours' ? FMT_COUNT
       : row.fmt === 'pct' ? FMT_PCT
       : FMT_CHF;
     for (const col of [2, 3, 4]) {
       const cell = r.getCell(col);
-      cell.numFmt = numFmt;
+      // countPax-Text (Spalten 3/4) bleibt Text — kein Zahlenformat.
+      if (!(isCountPax && (col === 3 || col === 4))) cell.numFmt = numFmt;
       cell.alignment = { horizontal: 'right' };
     }
     // Schwellen-Rot (warnAbove, z.B. PKQ > 40 %) für den Ist-Wert (Spalte 4).

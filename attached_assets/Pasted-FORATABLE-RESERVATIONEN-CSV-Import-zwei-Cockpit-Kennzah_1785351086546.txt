@@ -1,0 +1,29 @@
+FORATABLE-RESERVATIONEN – CSV-Import + zwei Cockpit-Kennzahlen (Personen).
+
+DATEIFORMAT (verifiziert an echter Export-Datei):
+- CSV, Trennzeichen ";", UTF-8 mit BOM. Kommentar-Felder können ";" und Anführungszeichen enthalten → robusten CSV-Parser nutzen.
+- Relevante Spalten: "Personen" (Pax, Ganzzahl), "Datum" (TT.MM.JJJJ), "Status", "Res.Nr." (eindeutige ID). Gäste-PII (Name/E-Mail/Telefon) NICHT speichern.
+- Status-Werte: Abgeschlossen, Bestätigt, Storniert, No-show, Nicht beantwortet, Abgelehnt.
+
+1) IMPORT "Reservationen (Foratable CSV)":
+- Robust parsen (";", BOM, Quotes/Semikola in Kommentaren).
+- Upsert nach "Res.Nr.": gleiche Nr. aktualisiert bestehende Reservation (z.B. Statuswechsel), neue kommen dazu. Erneuter Voll-Export = aktueller Stand.
+- Vorschau vor dem Schreiben: Zeitraum, Anzahl Reservationen, gezählt vs. ausgeschlossen (nach Status).
+
+2) ZÄHL-REGEL Status (zentrale Einstellung), Default:
+- ZÄHLEN: "Abgeschlossen" + "Bestätigt" (= vergangene + zukünftige bestätigte).
+- AUSSCHLIESSEN: "Storniert", "No-show", "Abgelehnt", "Nicht beantwortet".
+
+3) SCHWELLE "grosse Gruppen" als zentrale Einstellung, Default 20 (Personen >= 20; die 20 zählt mit).
+
+4) KENNZAHLEN pro Woche UND pro Monat (nur gezählte Reservationen; Datum → ISO-Woche/Monat), inkl. ZUKÜNFTIGER Perioden:
+   a) "Reservierte Gäste" = Summe der Personen ALLER gezählten Reservationen (eine Res. mit 5 zählt 5).
+   b) "Gruppen ab 20 Pax" = Anzahl Reservationen mit Personen >= Schwelle, ANZEIGE als "Anzahl (Σ Personen dieser Gruppen)", z.B. "3 (70)".
+
+5) COCKPIT:
+- NEUE Zeile "Reservierte Gäste".
+- Bestehende Zeile "Gruppen ab 20 Pax" auf Anzeige "Anzahl (Personen)" umstellen und aus dem Import befüllen (nicht mehr manuell).
+- Wochenübersicht = gewählte Woche; Monatsübersicht = Monatswert. Fehlt Import → "—", nie still 0.
+- Beide Zeilen auch in Excel-/PDF-Export.
+
+Tests: reservierte Gäste = Σ Personen; Gruppen-Zähler und -Personen korrekt; Storno nicht gezählt; Upsert nach Res.Nr.; zukünftige Woche zeigt Werte.

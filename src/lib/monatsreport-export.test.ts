@@ -120,4 +120,26 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     expect(ws.getRow(3).getCell(1).value ?? null).toBeNull(); // Leerzeile
     expect(ws.getRow(4).getCell(1).value).toBe('B');
   });
+
+  // ── Gruppen ab N Pax: fmt='countPax' → «Anzahl (Σ Personen)» als Text ──────
+  it('countPax schreibt «Anzahl (Personen)» als Text in Ist & Vorjahr (Monat)', () => {
+    const gruppen = row({
+      label: 'Gruppen ab 20 Pax', fmt: 'countPax',
+      month: 3, monthPax: 70, vjMonth: 2, vjMonthPax: 45,
+    });
+    const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
+    expect(r.getCell(3).value).toBe('2 (45)'); // Vorjahr = vjMonth (vjMonthPax)
+    expect(r.getCell(4).value).toBe('3 (70)'); // Ist = month (monthPax)
+  });
+
+  it('countPax zieht in der Wochensicht week/weekPax (Vorjahr-Woche leer)', () => {
+    const gruppen = row({
+      label: 'Gruppen ab 20 Pax', fmt: 'countPax',
+      week: 1, weekPax: 22, vj: null,
+      month: 3, monthPax: 70, vjMonth: 2, vjMonthPax: 45,
+    });
+    const r = buildMonatsreportWorkbook([gruppen], 7, 'woche').worksheets[0].getRow(2);
+    expect(r.getCell(4).value).toBe('1 (22)'); // Ist = week (weekPax)
+    expect(r.getCell(3).value ?? '').toBe(''); // keine VJ-Woche
+  });
 });
