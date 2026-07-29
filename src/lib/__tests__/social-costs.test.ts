@@ -2,9 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_SOCIAL_COST_RATES,
+  LEGACY_DEFAULT_SOCIAL_COST_RATES_14_2,
   SOCIAL_COST_RATE_FIELDS,
   normalizeSocialCostRates,
   normalizeSocialCostRatesBlob,
+  migrateLegacyDefaultRates,
   totalSocialRatePct,
   socialCostFactorFromRates,
   splitEmployerCost,
@@ -28,6 +30,28 @@ describe('DEFAULT_SOCIAL_COST_RATES', () => {
     const total = totalSocialRatePct(DEFAULT_SOCIAL_COST_RATES);
     expect(total).toBeGreaterThan(10);
     expect(total).toBeLessThan(20);
+  });
+
+  it('default AG-Faktor ist neu ~15.7 %', () => {
+    expect(totalSocialRatePct(DEFAULT_SOCIAL_COST_RATES)).toBeCloseTo(15.71, 2);
+    expect(socialCostFactorFromRates(DEFAULT_SOCIAL_COST_RATES)).toBeCloseTo(1.1571, 4);
+  });
+});
+
+describe('migrateLegacyDefaultRates', () => {
+  it('hebt EXAKTE Alt-Defaults (14.2 %) auf die neuen Defaults (15.7 %)', () => {
+    const migrated = migrateLegacyDefaultRates({ ...LEGACY_DEFAULT_SOCIAL_COST_RATES_14_2 });
+    expect(migrated).toEqual(DEFAULT_SOCIAL_COST_RATES);
+  });
+
+  it('lässt bewusst angepasste User-Werte unangetastet', () => {
+    const custom: SocialCostRates = { ...LEGACY_DEFAULT_SOCIAL_COST_RATES_14_2, bvgPct: 6.0 };
+    expect(migrateLegacyDefaultRates(custom)).toBe(custom);
+  });
+
+  it('lässt bereits neue Defaults unverändert (idempotent)', () => {
+    const already = { ...DEFAULT_SOCIAL_COST_RATES };
+    expect(migrateLegacyDefaultRates(already)).toBe(already);
   });
 });
 

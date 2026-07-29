@@ -23,6 +23,17 @@ export interface Employee {
   socialCostFactor?: number;        // AG-Sozialkostenanteil z.B. 1.13 = 13%
   has13thSalary?: boolean;          // 13. Monatslohn vereinbart?
 
+  /**
+   * Ist-Quelle für die Personalkosten-Tagesregel (employees.ist_quelle):
+   *   'mirus'   = importierte Ist-Stunden aus MIRUS
+   *   'manuell' = manuell nachgetragenes Ist (gleiches Ist-Feld im Dienstplan)
+   *   'plan'    = Plan gilt als Ist (keine Ist-Erfassung nötig)
+   * Fehlt der Wert, greift getEffectiveIstQuelle() mit einer Default-Ableitung:
+   *   Monatslohn-MA ('fix') → 'mirus'; Stundenlohn/Aushilfe → 'plan'.
+   * Der Default wird NICHT in die DB zurückgeschrieben.
+   */
+  istQuelle?: 'mirus' | 'manuell' | 'plan';
+
   // ─── Persönliche Daten (für Onboarding / Vertrag) ──────────────────────
   birthDate?: string;               // ISO-Datum
   nationality?: string;

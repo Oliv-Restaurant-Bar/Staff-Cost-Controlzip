@@ -47,6 +47,13 @@ export interface PkFlexTagZelle {
   chfProStd: number;
   planKosten: number;
   istKosten?: number;
+  /** Effektive Ist-Quelle des MA (getEffectiveIstQuelle). */
+  quelle?: IstQuelle;
+  /**
+   * true = vergangener Tag, an dem für einen 'mirus'/'manuell'-MA das Ist
+   * fehlt → mit Plan gerechnet, aber als «Ist fehlt» markiert (nicht still 0).
+   */
+  istFehlt?: boolean;
 }
 
 export interface PersonalkostenDaten {
@@ -100,6 +107,21 @@ export function ladeWochentagsGewichte(tenantKey: KeyFn): Record<number, number>
 export function pkHasFixedSalary(emp: Employee): boolean {
   return (emp.employmentType === 'vollzeit' || emp.employmentType === 'teilzeit')
     && (emp.monthlySalary ?? 0) > 0;
+}
+
+export type IstQuelle = 'mirus' | 'manuell' | 'plan';
+
+/**
+ * Effektive Ist-Quelle eines MA gemäss TAG-REGEL.
+ * Ist das Stammfeld `istQuelle` gesetzt, gilt es. Sonst greift die Default-
+ * Ableitung (NICHT in die DB zurückgeschrieben):
+ *   Monatslohn-MA ('fix') → 'mirus'; Stundenlohn/Aushilfe → 'plan'.
+ */
+export function getEffectiveIstQuelle(emp: Employee): IstQuelle {
+  if (emp.istQuelle === 'mirus' || emp.istQuelle === 'manuell' || emp.istQuelle === 'plan') {
+    return emp.istQuelle;
+  }
+  return pkHasFixedSalary(emp) ? 'mirus' : 'plan';
 }
 
 /** Brutto-Monatsbasis inkl. 13. (identisch zu PersonalFix.getFixCost). */
@@ -186,33 +208,57 @@ export function fixKosten(daten: PersonalkostenDaten, opts?: { stichtag?: number
 
 export interface FlexTag {
   date: string;
-  /** TAG-REGEL: true = Ist-Stunden importiert → Tag zählt als IST */
+  /** TAG-REGEL: true = vergangener (abgeschlossener) Tag → zählt als IST */
   istTag: boolean;
   proMa: Record<string, PkFlexTagZelle>; // empId → Zelle
   planKosten: number;
+  /**
+   * Effektive Ist-Kosten des Tags gemäss Ist-Quelle-Regel (nur an vergangenen
+   * Tagen > 0): 'plan' → Plan gilt als Ist; 'mirus'/'manuell' → importiertes/
+   * manuelles Ist, bei fehlendem Ist Fallback auf Plan (markiert als «Ist fehlt»).
+   */
   istKosten:  number;
   /** Effektive Kosten des Tags gemäss Tag-Regel (Ist wenn istTag, sonst Plan) */
   effektivKosten: number;
 }
 
+export interface FlexKostenProTagErgebnis {
+  tage: FlexTag[];
+  /**
+   * Vergangene Tage, an denen bei einem 'mirus'/'manuell'-MA das Ist fehlt.
+   * Format: 'YYYY-MM-DD|empId' (eindeutig je MA+Tag). Mit Plan gerechnet.
+   */
+  istFehltTage: string[];
+}
+
 /**
- * Flex-Kosten je Tag/Flex-MA (Plan aus Dienstplan, Ist aus MIRUS).
- * TAG-REGEL: Ein Tag zählt nur dann als IST, wenn er VOR heute liegt UND
- * Ist-Stunden vorhanden sind. Heutiger Tag und alle künftigen Tage = PLAN.
+ * Flex-Kosten je Tag/Flex-MA (Plan aus Dienstplan, Ist aus MIRUS/manuell).
+ * TAG-REGEL mit Ist-Quelle (getEffectiveIstQuelle je MA):
+ *   - Künftiger/heutiger Tag (> stichtag) → PLAN.
+ *   - Vergangener Tag (<= stichtag):
+ *       'plan'            → Plan gilt als Ist.
+ *       'mirus'/'manuell' → Ist-Stunden; fehlt das Ist trotz Plan → «Ist fehlt»,
+ *                           mit Plan gerechnet (NICHT still 0).
+ * Pro Tag genau eine Zahl je MA — nie Plan UND Ist gleichzeitig.
  */
-export function flexKostenProTag(daten: PersonalkostenDaten, opts?: { stichtag?: number }): FlexTag[] {
+export function flexKostenProTagDetail(daten: PersonalkostenDaten, opts?: { stichtag?: number }): FlexKostenProTagErgebnis {
   const stichtag = opts?.stichtag ?? letzterVergangenerTag(daten.year, daten.month);
   const mm = pad2(daten.month);
   const tage: FlexTag[] = [];
+  const istFehltTage: string[] = [];
   const rateCache = new Map<string, number>();
+  const quelleCache = new Map<string, IstQuelle>();
   const rateOf = (emp: Employee): number => {
     if (!rateCache.has(emp.id)) rateCache.set(emp.id, getEffectiveHourlyRate(emp, daten.rates) ?? 0);
     return rateCache.get(emp.id)!;
   };
+  const quelleOf = (emp: Employee): IstQuelle => {
+    if (!quelleCache.has(emp.id)) quelleCache.set(emp.id, getEffectiveIstQuelle(emp));
+    return quelleCache.get(emp.id)!;
+  };
   for (let d = 1; d <= daten.daysInMonth; d++) {
     const date = `${daten.year}-${mm}-${pad2(d)}`;
-    // TAG-REGEL: nur vergangene Tage (d <= stichtag) mit Ist-Stunden sind Ist-Tage.
-    const istTag = d <= stichtag && daten.istTage.has(date);
+    const istTag = d <= stichtag; // vergangener, abgeschlossener Tag
     const proMa: Record<string, PkFlexTagZelle> = {};
     let planKosten = 0, istKosten = 0;
     for (const emp of daten.flexEmployees) {
@@ -220,18 +266,37 @@ export function flexKostenProTag(daten: PersonalkostenDaten, opts?: { stichtag?:
       const istStd  = daten.istStdProTag[date]?.[emp.id];
       if (planStd <= 0 && (istStd ?? 0) <= 0) continue;
       const chfProStd = rateOf(emp);
+      const quelle = quelleOf(emp);
       const zelle: PkFlexTagZelle = {
         planStd,
         chfProStd: r2(chfProStd),
         planKosten: r2(planStd * chfProStd),
+        quelle,
       };
-      if (istStd != null && istStd > 0) {
+      const hasIst = istStd != null && istStd > 0;
+      if (hasIst) {
         zelle.istStd = istStd;
         zelle.istKosten = r2(istStd * chfProStd);
       }
+      // Effektiver Ist-Wert des MA an diesem Tag (nur an vergangenen Tagen).
+      let maIstKosten = 0;
+      if (istTag) {
+        if (quelle === 'plan') {
+          // Plan gilt als Ist.
+          maIstKosten = zelle.planKosten;
+        } else if (hasIst) {
+          // 'mirus'/'manuell' mit vorhandenem Ist.
+          maIstKosten = zelle.istKosten!;
+        } else if (planStd > 0) {
+          // 'mirus'/'manuell', Ist fehlt trotz Plan → mit Plan rechnen, markieren.
+          maIstKosten = zelle.planKosten;
+          zelle.istFehlt = true;
+          istFehltTage.push(`${date}|${emp.id}`);
+        }
+      }
       proMa[emp.id] = zelle;
       planKosten += zelle.planKosten;
-      istKosten  += zelle.istKosten ?? 0;
+      istKosten  += maIstKosten;
     }
     planKosten = r2(planKosten);
     istKosten  = r2(istKosten);
@@ -240,12 +305,26 @@ export function flexKostenProTag(daten: PersonalkostenDaten, opts?: { stichtag?:
       effektivKosten: istTag ? istKosten : planKosten,
     });
   }
-  return tage;
+  return { tage, istFehltTage };
+}
+
+/** Rückwärtskompatibler Wrapper: nur die Tag-Liste (siehe flexKostenProTagDetail). */
+export function flexKostenProTag(daten: PersonalkostenDaten, opts?: { stichtag?: number }): FlexTag[] {
+  return flexKostenProTagDetail(daten, opts).tage;
 }
 
 // ══ 3. personalkosten ═══════════════════════════════════════════════════════════
 
-export interface PkSumme { fix: number; flex: number; total: number; }
+export interface PkSumme {
+  fix: number;
+  flex: number;
+  total: number;
+  /**
+   * Vergangene Tage, an denen bei 'mirus'/'manuell'-MA das Ist fehlt
+   * ('YYYY-MM-DD|empId'). Es wurde mit Plan gerechnet (nicht still 0).
+   */
+  istFehltTage: string[];
+}
 export type PkModus = 'istBisHeute' | 'hochrechnung';
 
 /**
@@ -257,21 +336,18 @@ export type PkModus = 'istBisHeute' | 'hochrechnung';
  */
 export function personalkosten(daten: PersonalkostenDaten, modus: PkModus, opts?: { stichtag?: number }): PkSumme {
   const stichtag = opts?.stichtag ?? letzterVergangenerTag(daten.year, daten.month);
-  const tage = flexKostenProTag(daten, { stichtag });
+  const { tage, istFehltTage } = flexKostenProTagDetail(daten, { stichtag });
   if (modus === 'istBisHeute') {
     const fix = fixKosten(daten, { stichtag }).totalBisStichtag;
-    let flex = 0;
-    for (const t of tage) {
-      const day = parseInt(t.date.slice(-2), 10);
-      if (day <= stichtag && t.istTag) flex += t.istKosten;
-    }
-    flex = r2(flex);
-    return { fix, flex, total: r2(fix + flex) };
+    // istKosten enthält gemäss Ist-Quelle-Regel bereits nur die vergangenen
+    // Tage (0 an künftigen Tagen); «Ist fehlt» wurde mit Plan aufgefüllt.
+    const flex = r2(tage.reduce((s, t) => s + (t.istTag ? t.istKosten : 0), 0));
+    return { fix, flex, total: r2(fix + flex), istFehltTage };
   }
-  // hochrechnung
+  // hochrechnung: FIX voll + FLEX-Ist (vergangene Tage) + FLEX-Plan (Resttage)
   const fix = fixKosten(daten).totalMonat;
   const flex = r2(tage.reduce((s, t) => s + t.effektivKosten, 0));
-  return { fix, flex, total: r2(fix + flex) };
+  return { fix, flex, total: r2(fix + flex), istFehltTage };
 }
 
 // ══ 4. budget ═══════════════════════════════════════════════════════════════════

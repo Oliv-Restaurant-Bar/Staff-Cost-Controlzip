@@ -54,8 +54,39 @@ export const SOCIAL_COST_RATES_KEY = 'socialCostRates_v1';
  * CH-Richtwerte 2026 (Gastgewerbe, Kanton Bern) — bewusst als Startwerte,
  * die effektiven Sätze (insb. BVG/KTG/UVG) sind policenabhängig und sollten
  * vom Betrieb in den Einstellungen präzisiert werden.
+ *
+ * AG-Faktor-Herleitung (Summe = 15.71 % ≈ 15.7 %):
+ *   Gemeinsame Sozialkosten .............. 11.21 %
+ *     AHV/IV/EO (AG) ......... 5.30
+ *     ALV (AG) ............... 1.10
+ *     FAK (BE) ............... 1.60
+ *     Verwaltungskosten AK ... 0.37
+ *     UVG Berufsunfall (½) ... 1.60
+ *     KTG (AG-Anteil, ½) ..... 1.10
+ *     Berufsbildung (L-GAV) .. 0.14
+ *   BVG (AG-Anteil, Puffer) .............. 4.50 %  (auf alle angewandt)
+ *   ───────────────────────────────────────────
+ *   Total ................................ 15.71 %
  */
 export const DEFAULT_SOCIAL_COST_RATES: SocialCostRates = {
+  ahvPct: 5.30,
+  alvPct: 1.10,
+  fakPct: 1.60,   // FAK Kanton Bern
+  vkPct: 0.37,    // Verwaltungskosten Ausgleichskasse
+  uvgBuPct: 1.60, // UVG Berufsunfall (AG trägt ½)
+  ktgPct: 1.10,   // KTG (AG trägt ½)
+  bvgPct: 4.50,   // BVG-Puffer (auf alle Löhne)
+  lgavPct: 0.14,  // Berufsbildungsbeitrag L-GAV
+  otherPct: 0,
+};
+
+/**
+ * Exakter Snapshot der ALTEN Defaults (Summe 14.2 %) — NUR für die einmalige
+ * Rates-Migration: entspricht ein gespeicherter Blob EXAKT diesen 9 Werten,
+ * wurde er nie angepasst und wird auf die neuen Defaults gehoben. Weicht auch
+ * nur ein Wert ab, gelten es als bewusste User-Werte und bleiben unangetastet.
+ */
+export const LEGACY_DEFAULT_SOCIAL_COST_RATES_14_2: SocialCostRates = {
   ahvPct: 5.3,
   alvPct: 1.1,
   fakPct: 1.2,
@@ -75,12 +106,12 @@ export const SOCIAL_COST_RATE_FIELDS: ReadonlyArray<{
 }> = [
   { key: 'ahvPct',   label: 'AHV/IV/EO (AG)',                 info: 'Arbeitgeberbeitrag AHV/IV/EO. Gesetzlich 5.3% des Bruttolohns.' },
   { key: 'alvPct',   label: 'ALV (AG)',                       info: 'Arbeitgeberbeitrag Arbeitslosenversicherung. Gesetzlich 1.1% bis zur ALV-Höchstgrenze.' },
-  { key: 'fakPct',   label: 'FAK',                            info: 'Familienausgleichskasse — vollständig vom Arbeitgeber getragen. Satz je nach Kasse/Kanton (ca. 1–2%).' },
+  { key: 'fakPct',   label: 'FAK (BE)',                       info: 'Familienausgleichskasse — vollständig vom Arbeitgeber getragen. Satz je nach Kasse/Kanton (Kanton Bern ca. 1.6%).' },
   { key: 'vkPct',    label: 'Verwaltungskosten AK',           info: 'Verwaltungskostenbeitrag der Ausgleichskasse, meist in % des AHV-Beitrags — hier vereinfacht als % des Bruttolohns.' },
   { key: 'uvgBuPct', label: 'UVG Berufsunfall',               info: 'Berufsunfallversicherung — Prämie trägt der Arbeitgeber. Satz gemäss Police.' },
   { key: 'ktgPct',   label: 'KTG (AG-Anteil)',                info: 'Krankentaggeldversicherung — im Gastgewerbe (L-GAV) trägt der Arbeitgeber mindestens die Hälfte der Prämie. Satz gemäss Police.' },
   { key: 'bvgPct',   label: 'BVG (AG-Anteil)',                info: 'Pensionskasse, Arbeitgeberanteil. Näherung als flacher %-Satz auf den Bruttolohn — effektiv hängt der BVG-Beitrag von Koordinationsabzug und Alter ab.' },
-  { key: 'lgavPct',  label: 'L-GAV Beitrag (AG)',             info: 'Vollzugskostenbeitrag L-GAV Gastgewerbe, Arbeitgeberanteil.' },
+  { key: 'lgavPct',  label: 'Berufsbildung (L-GAV)',          info: 'Berufsbildungsbeitrag L-GAV Gastgewerbe, Arbeitgeberanteil.' },
   { key: 'otherPct', label: 'Weitere AG-Kosten',              info: 'Optionale weitere Arbeitgeberkosten in % des Bruttolohns (z.B. übernommene NBU-Prämie, weitere GAV-Fonds).' },
 ];
 
@@ -131,6 +162,19 @@ export function normalizeSocialCostRates(raw: unknown): SocialCostRates {
   return out;
 }
 
+/**
+ * Einmalige Default-Migration (14.2 % → 15.7 %).
+ * Entspricht ein gespeicherter Satz-Satz EXAKT den ALTEN Defaults (alle 9
+ * Werte identisch), wurde er nie bewusst angepasst → auf die neuen Defaults
+ * heben. Weicht auch nur EIN Wert ab, gelten es als bewusste User-Werte und
+ * bleiben vollständig unangetastet. Idempotent (neue Defaults ≠ alte Defaults).
+ */
+export function migrateLegacyDefaultRates(rates: SocialCostRates): SocialCostRates {
+  const isExactLegacyDefault = (SOCIAL_COST_RATE_FIELDS as ReadonlyArray<{ key: keyof SocialCostRates }>)
+    .every(({ key }) => rates[key] === LEGACY_DEFAULT_SOCIAL_COST_RATES_14_2[key]);
+  return isExactLegacyDefault ? { ...DEFAULT_SOCIAL_COST_RATES } : rates;
+}
+
 /** Roh-Blob (localStorage/KV) defensiv normalisieren — wirft nie. */
 export function normalizeSocialCostRatesBlob(raw: unknown): SocialCostRatesBlob {
   const src = (raw && typeof raw === 'object' && !Array.isArray(raw))
@@ -150,13 +194,13 @@ export function normalizeSocialCostRatesBlob(raw: unknown): SocialCostRatesBlob 
 
 // ── Berechnung ───────────────────────────────────────────────────────────────
 
-/** Summe aller AG-Sozialkostensätze in % (z.B. 14.2). */
+/** Summe aller AG-Sozialkostensätze in % (Default 15.7). */
 export function totalSocialRatePct(rates: SocialCostRates): number {
   return SOCIAL_COST_RATE_FIELDS.reduce((sum, f) => sum + (rates[f.key] || 0), 0);
 }
 
 /**
- * Multiplikator-Faktor für calcSL/calcML (z.B. 1.142).
+ * Multiplikator-Faktor für calcSL/calcML (Default 1.157).
  * Brücke zur bestehenden salaryCalc-Signatur (socialCostFactor-Parameter).
  */
 export function socialCostFactorFromRates(rates: SocialCostRates): number {

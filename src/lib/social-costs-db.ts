@@ -17,9 +17,19 @@ import { tenantKey, tlsGetJson, tlsSetJson } from './tenant-utils';
 import {
   SOCIAL_COST_RATES_KEY,
   normalizeSocialCostRatesBlob,
+  migrateLegacyDefaultRates,
   type SocialCostRatesBlob,
   type SocialCostRates,
 } from './social-costs';
+
+/**
+ * Wendet die einmalige Default-Migration (14.2 % → 15.7 %) auf ein Blob an.
+ * Nur exakte Alt-Defaults werden gehoben; bewusste User-Werte bleiben intakt.
+ */
+function withRatesMigration(blob: SocialCostRatesBlob): SocialCostRatesBlob {
+  const migrated = migrateLegacyDefaultRates(blob.rates);
+  return migrated === blob.rates ? blob : { ...blob, rates: migrated };
+}
 
 /**
  * Wird nach jedem erfolgreichen Save gefeuert, damit offene Seiten
@@ -30,7 +40,7 @@ export const SOCIAL_COST_RATES_UPDATED_EVENT = 'socialCostRatesUpdated';
 /** Synchroner Frisch-Stand aus dem localStorage-Primärspeicher. */
 export function loadSocialCostRatesLocal(tenantId: TenantId): SocialCostRatesBlob {
   try {
-    return normalizeSocialCostRatesBlob(tlsGetJson<unknown>(tenantId, SOCIAL_COST_RATES_KEY));
+    return withRatesMigration(normalizeSocialCostRatesBlob(tlsGetJson<unknown>(tenantId, SOCIAL_COST_RATES_KEY)));
   } catch {
     return normalizeSocialCostRatesBlob(null);
   }
@@ -45,14 +55,14 @@ export function loadSocialCostRatesLocal(tenantId: TenantId): SocialCostRatesBlo
 export async function loadSocialCostRates(tenantId: TenantId): Promise<SocialCostRatesBlob> {
   let local = normalizeSocialCostRatesBlob(null);
   try {
-    local = normalizeSocialCostRatesBlob(tlsGetJson<unknown>(tenantId, SOCIAL_COST_RATES_KEY));
+    local = withRatesMigration(normalizeSocialCostRatesBlob(tlsGetJson<unknown>(tenantId, SOCIAL_COST_RATES_KEY)));
   } catch {
     // Beschädigter/gesperrter localStorage → Defaults.
   }
   try {
     const remote = await kvGet(tenantKey(tenantId, SOCIAL_COST_RATES_KEY));
     if (remote && typeof remote === 'object' && !Array.isArray(remote)) {
-      const normalized = normalizeSocialCostRatesBlob(remote);
+      const normalized = withRatesMigration(normalizeSocialCostRatesBlob(remote));
       tlsSetJson(tenantId, SOCIAL_COST_RATES_KEY, normalized);
       return normalized;
     }

@@ -99,6 +99,7 @@ import {
   EMPLOYER_COST_LABELS,
   EMPLOYER_COST_LABELS_SHORT,
 } from '@/lib/social-costs';
+import { getEffectiveIstQuelle } from '@/lib/personalkosten';
 import { EmployerCostInfoTip } from '@/components/ui/employer-cost-info';
 import { getEmployerCostRate } from '@/lib/employee-rate';
 import { TABLE, TABLE_SCROLL, TABLE_WRAP, TH, TH_NUM, TH_STICKY, TD, TD_NUM } from '@/components/ui/table-style';
@@ -2515,6 +2516,11 @@ CREATE POLICY "Anon self-register new employee"
                               <div className="grid grid-cols-2 gap-y-2 text-sm">
                                 {emp.contractType   && <DataRow label="Vertragsart"        value={emp.contractType === 'monthly' ? 'Monatslohn-Vertrag' : emp.contractType === 'hourly' ? 'Stundenlohn-Vertrag' : 'Aushilfe'} />}
                                 {emp.positionTitle  && <DataRow label="Stellenbezeichnung" value={emp.positionTitle} />}
+                                <DataRow label="Ist-Quelle" value={
+                                  getEffectiveIstQuelle(emp) === 'mirus' ? (emp.istQuelle ? 'MIRUS' : 'MIRUS (Standard)')
+                                  : getEffectiveIstQuelle(emp) === 'manuell' ? 'Manuell'
+                                  : (emp.istQuelle ? 'Plan = Ist' : 'Plan = Ist (Standard)')
+                                } />
                                 {emp.contractStart  && <DataRow label="Eintritt"           value={emp.contractStart} />}
                                 {emp.employmentEndDate && <DataRow label="Austritt"        value={emp.employmentEndDate} />}
                                 {emp.isLimitedContract && emp.contractEnd && <DataRow label="Vertragsende (befristet)" value={emp.contractEnd} />}
@@ -2708,6 +2714,34 @@ CREATE POLICY "Anon self-register new employee"
                             </div>
                             <p className="text-[10px] text-muted-foreground mt-0.5">
                               Sätze in Einstellungen → Sozialkostensätze Arbeitgeber
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* ── Ist-Quelle (Personalkosten-Tagesregel) ─────────── */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">
+                              Ist-Quelle
+                              <span className="ml-1 text-[10px] italic opacity-60">für Personalkosten Ist/Hochrechnung</span>
+                            </Label>
+                            <Select
+                              value={editData?.istQuelle ?? getEffectiveIstQuelle(editData!)}
+                              onValueChange={v => setEditData(d => d ? { ...d, istQuelle: v as 'mirus' | 'manuell' | 'plan' } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm" data-testid="select-ist-quelle">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="mirus">MIRUS (importierte Ist-Stunden)</SelectItem>
+                                <SelectItem value="manuell">Manuell (nachgetragenes Ist)</SelectItem>
+                                <SelectItem value="plan">Plan = Ist</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {editData?.istQuelle
+                                ? 'Explizit gesetzt.'
+                                : `Standard (nicht gesetzt): ${getEffectiveIstQuelle(editData!) === 'mirus' ? 'MIRUS' : 'Plan = Ist'}`}
                             </p>
                           </div>
                         </div>

@@ -54,6 +54,11 @@ const employeeToDb = (emp: Employee) => ({
   monthly_salary_with_13th: emp.monthlySalaryWith13th   ?? null,
   social_cost_factor:       emp.socialCostFactor        ?? 1.03,
   has_13th_salary:          emp.has13thSalary           ?? false,
+  // ── Ist-Quelle (Migration: employees.ist_quelle, nullable text) ───────────
+  // Presence-Guard: nur schreiben, wenn das Feld im Objekt vorhanden ist
+  // (undefined = Feld nicht im Formular → bestehenden DB-Wert BEWAHREN, nie
+  // via ?? null clobbern — vgl. Ali-Reactivation-Bug).
+  ...('istQuelle' in emp ? { ist_quelle: emp.istQuelle ?? null } : {}),
   // ── Saldi ────────────────────────────────────────────────────────────────
   hours_balance:            emp.hoursBalance            ?? null,
   vacation_balance:         emp.vacationBalance         ?? null,
@@ -130,6 +135,9 @@ const dbToEmployee = (row: any): Employee => {
   monthlySalaryWith13th:  row.monthly_salary_with_13th  ?? undefined,
   socialCostFactor:       row.social_cost_factor        != null ? Number(row.social_cost_factor) : undefined,
   has13thSalary:          row.has_13th_salary           ?? undefined,
+  // ── Ist-Quelle: pre-migration-tolerant (Spalte kann in anderen Umgebungen
+  //    fehlen → nur konditional spreaden, nie einen undefined-Key erzeugen). ──
+  ...(row.ist_quelle != null ? { istQuelle: row.ist_quelle as Employee['istQuelle'] } : {}),
   // ── Saldi ────────────────────────────────────────────────────────────────
   hoursBalance:           row.hours_balance             ?? undefined,
   vacationBalance:        row.vacation_balance          ?? undefined,

@@ -1468,9 +1468,12 @@ function FlexPeriodPopup({
           <div className="flex items-start gap-3 flex-wrap">
             <div className="flex-1 min-w-0">
               <h2 className="text-base font-bold leading-tight">Flex-Auswertung — {label}</h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Scope: nur Flex-Arbeit (variable MA) — ohne Zusatzkosten Fixlohn-MA und ohne Ferien.
+              </p>
               <div className="flex flex-wrap gap-3 mt-2">
-                <span className="text-xs text-muted-foreground">Plan <span className="text-blue-700 dark:text-blue-400 font-mono font-semibold">{fmtCHF(planTotal)}</span></span>
-                <span className="text-xs text-muted-foreground">Ist <span className="text-orange-700 dark:text-orange-400 font-mono font-semibold">{fmtCHF(istTotal)}</span></span>
+                <span className="text-xs text-muted-foreground">Flex-Arbeit Plan <span className="text-blue-700 dark:text-blue-400 font-mono font-semibold">{fmtCHF(planTotal)}</span></span>
+                <span className="text-xs text-muted-foreground">Flex-Arbeit Ist <span className="text-orange-700 dark:text-orange-400 font-mono font-semibold">{fmtCHF(istTotal)}</span></span>
                 <span className={cn('text-xs font-bold font-mono', diffCls(diff))}>{fmtD(diff)}</span>
                 {diffPct !== null && <span className={cn('text-xs font-mono', diffCls(diff))}>({diffPct > 0.005 ? '+' : ''}{diffPct.toFixed(1)} %)</span>}
               </div>
@@ -1496,8 +1499,8 @@ function FlexPeriodPopup({
                     <th className={cn(thCls, 'text-left')}>Mitarbeiter</th>
                     <th className={cn(thCls, 'text-right text-muted-foreground')}>Plan Std</th>
                     <th className={cn(thCls, 'text-right text-muted-foreground')}>Ist Std</th>
-                    <th className={cn(thCls, 'text-right text-blue-600')}>Flex Plan CHF</th>
-                    <th className={cn(thCls, 'text-right text-orange-600')}>Flex Ist CHF</th>
+                    <th className={cn(thCls, 'text-right text-blue-600')} title="Nur Flex-Arbeit (variable MA), ohne Zusatzkosten Fixlohn-MA / Ferien">Flex-Arbeit Plan CHF</th>
+                    <th className={cn(thCls, 'text-right text-orange-600')} title="Nur Flex-Arbeit (variable MA), ohne Zusatzkosten Fixlohn-MA / Ferien">Flex-Arbeit Ist CHF</th>
                     <th className={cn(thCls, 'text-right')}>Diff CHF</th>
                   </tr>
                 </thead>
@@ -1680,10 +1683,10 @@ function WeekDetailPopup({ data, onClose }: { data: WeekDetailData | null; onClo
           {/* FLEX Section */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400">Personal FLEX</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-orange-600 dark:text-orange-400" title="Nur Flex-Arbeit (variable MA), ohne Zusatzkosten Fixlohn-MA und ohne Ferien">Personal FLEX (nur Flex-Arbeit)</p>
               <div className="flex gap-3 text-xs font-mono">
                 <span className="text-blue-600 dark:text-blue-400">Plan {fmtCHF(totalFlexPlan)}</span>
-                <span className="text-orange-600 dark:text-orange-400">Ist {fmtCHF(totalFlexIst)}</span>
+                <span className="text-orange-600 dark:text-orange-400" title="Nur Flex-Arbeit, ohne Zusatzkosten Fixlohn-MA / Ferien">Ist {fmtCHF(totalFlexIst)}</span>
                 <span className={cn('font-semibold', diffCls(totalFlexIst - totalFlexPlan))}>{fmtD(totalFlexIst - totalFlexPlan)}</span>
               </div>
             </div>

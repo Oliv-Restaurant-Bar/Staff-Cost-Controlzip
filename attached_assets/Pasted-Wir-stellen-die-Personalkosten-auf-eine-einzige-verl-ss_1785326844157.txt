@@ -1,0 +1,22 @@
+Wir stellen die Personalkosten auf eine einzige, verlässliche Quelle um. Diese Etappe ändert nur Berechnung und Stammdaten — keine neue Seite, keine visuelle Umgestaltung. Bestehende Screens sollen danach dieselben (nur konsistenteren) Zahlen zeigen.
+
+1. Zentraler Arbeitgeber-Faktor (statt hartcodierter 14.2 %)
+Lege einen zentralen, einstellbaren AG-Faktor an, Standardwert 15.7 %. Ersetze jede hartcodierte 14.2 %/0.142 in der Kostenberechnung durch diesen zentralen Wert. Hinterlege als Kommentar die Herleitung: 11.2 % gemeinsam (AHV/IV/EO 5.30, ALV 1.10, FAK BE 1.60, Berufsbildung 0.14, Verwaltung 0.37, UVG ½ ~1.60, KTG ½ ~1.10) + 4.5 % BVG (Puffer, auf alle angewandt). Ferien 10.65 %, Feiertage 2.27 %, 13. 8.33 % bleiben wie bisher; 13. nur wenn im Stamm angehakt.
+
+2. Neues Feld je Mitarbeiter „Ist-Quelle" (im Personalstamm, Bereich Lohn & Kosten):
+Drei Werte: MIRUS (Ist aus Zeiterfassungs-Import), Manuell (Ist wird im Dienstplan nachgetragen), Plan = Ist (geplante Stunden gelten als geleistet). Default: Festangestellte/gestempelte → MIRUS; Aushilfen ohne Erfassung → Plan = Ist. Als kleines Badge in der MA-Ansicht sichtbar.
+
+3. personalkosten.ts als EINZIGE Quelle (falls schon vorhanden, konsolidieren):
+
+FIX-MA: Kosten/Monat = Monatslohn × (13/12 falls 13. vereinbart, sonst 1) × (1 + AG-Faktor); pro rata bei Ein-/Austritt (Arbeitstage ÷ Monatstage). Stunden sind für die FIX-Kosten irrelevant.
+FLEX-MA: Kosten = Stunden × interner Ansatz/h (auszahlbarer Bruttolohn × (1 + AG-Faktor)).
+Pro Tag gilt genau eine Zahl: vergangener Tag → Ist, künftiger Tag → Plan. Die Ist-Stunden je MA werden nach seiner Ist-Quelle aufgelöst (MIRUS-Import / manuelles Ist-Feld / Plan=Ist). Fehlt bei „MIRUS"/„Manuell" an einem vergangenen Tag das Ist, wird der Tag als „Ist fehlt" markiert und solange mit Plan gerechnet — nicht still mit 0 überschrieben.
+Hochrechnung = FIX (voller Monat) + FLEX-Ist (vergangene Tage) + FLEX-Plan (Resttage).
+Budget = CHF 106'400 (35.5 % × 300'000); jedes aus Teilumsatz abgeleitete „Schein-Budget" entfernen.
+PKQ zeitkonsistent: Ist ÷ Ist bzw. Hochrechnung ÷ Hochrechnung — nie volle Kosten ÷ Teilumsatz.
+
+4. Konsistenz herstellen: Aktuell zeigt der Flex-Screen zwei verschiedene „Flex Ist" (30'518 vs. 36'408). Nach der Umstellung muss überall dieselbe Flex-Ist- und Total-Personalkosten-Zahl aus personalkosten.ts kommen. Zwischengrössen eindeutig beschriften („Ist bis 28.07.").
+
+5. Nicht anfassen: Layout/Seiten, Dienstplan-Eingabe, Report-Struktur. Nur Rechenkern + das neue Stammfeld.
+
+Am Schluss: Bitte melde mir (a) wo überall 14.2 % ersetzt wurde, (b) ob „Flex Ist" jetzt überall gleich ist, (c) Tests grün. Danke.
