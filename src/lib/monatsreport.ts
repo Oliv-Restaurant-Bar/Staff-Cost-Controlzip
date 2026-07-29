@@ -262,18 +262,74 @@ export function computeYtdWindow(heute: Date): YtdWindow {
   const m = heute.getMonth();       // 0-basiert
   const d = heute.getDate();
   const curTo = `${curYear}-${pad2(m + 1)}-${pad2(d)}`;
-  // Vorjahres-Enddatum: gleiches (Monat, Tag). 29.02. → 28.02. im Nicht-Schaltjahr.
-  let vjMonth = m, vjDay = d;
-  if (m === 1 && d === 29) {
-    const vjFeb = new Date(vjYear, 1, 29).getDate() === 29 ? 29 : 28; // 29 nur im Schaltjahr
-    vjDay = vjFeb;
-  }
-  const vjTo = `${vjYear}-${pad2(vjMonth + 1)}-${pad2(vjDay)}`;
+  const vjTo = spiegelDatumInsVorjahr(vjYear, m, d);
   return {
     curYear, vjYear,
     curFrom: `${curYear}-01-01`, curTo,
     vjFrom: `${vjYear}-01-01`, vjTo,
   };
+}
+
+/**
+ * Spiegelt (Monat, Tag) ins Vorjahr und klemmt den Schaltjahr-Randfall:
+ * fällt das Datum auf den 29.02. und ist das Vorjahr kein Schaltjahr →
+ * 28.02. Liefert 'YYYY-MM-DD'.
+ */
+function spiegelDatumInsVorjahr(vjYear: number, monat0: number, tag: number): string {
+  let d = tag;
+  if (monat0 === 1 && tag === 29 && new Date(vjYear, 1, 29).getDate() !== 29) {
+    d = 28; // 29.02. existiert im Nicht-Schalt-Vorjahr nicht → geklemmt
+  }
+  return `${vjYear}-${pad2(monat0 + 1)}-${pad2(d)}`;
+}
+
+/** Modus des Jahresvergleich-Zeitraums. */
+export type VergleichsModus = 'ytd' | 'ganzjahr' | 'custom';
+
+/**
+ * Verallgemeinertes Vergleichsfenster für den Jahresvergleich. Liefert stets die
+ * YtdWindow-Struktur (aktuelles Jahr vs. Vorjahr):
+ *  - 'ytd'      : 01.01.→heute vs. 01.01.→gleiches Datum Vorjahr (29.02.-Klemmung).
+ *  - 'ganzjahr' : aktuelles Jahr 01.01.→31.12. vs. ganzes Vorjahr 01.01.→31.12.
+ *                 (Ist-Daten reichen faktisch nur bis heute — Kopf weist darauf hin).
+ *  - 'custom'   : von→bis im aktuellen Jahr (auf aktuelles Jahr begrenzt);
+ *                 Vorjahr = derselbe MM-TT-Bereich mit 29.02.-Klemmung.
+ * von/bis sind 'YYYY-MM-DD' und nur im 'custom'-Modus relevant. Reine Funktion.
+ */
+export function computeVergleichsWindow(
+  modus: VergleichsModus,
+  heute: Date,
+  von?: string,
+  bis?: string,
+): YtdWindow {
+  const curYear = heute.getFullYear();
+  const vjYear = curYear - 1;
+
+  if (modus === 'ganzjahr') {
+    return {
+      curYear, vjYear,
+      curFrom: `${curYear}-01-01`, curTo: `${curYear}-12-31`,
+      vjFrom: `${vjYear}-01-01`, vjTo: `${vjYear}-12-31`,
+    };
+  }
+
+  if (modus === 'custom') {
+    // von/bis werden vom Aufrufer validiert (von ≤ bis); hier defensiv normalisiert.
+    const f = von ?? `${curYear}-01-01`;
+    const t = bis ?? `${curYear}-12-31`;
+    const [fm, fd] = [Number(f.slice(5, 7)) - 1, Number(f.slice(8, 10))];
+    const [tm, td] = [Number(t.slice(5, 7)) - 1, Number(t.slice(8, 10))];
+    return {
+      curYear, vjYear,
+      curFrom: `${curYear}-${pad2(fm + 1)}-${pad2(fd)}`,
+      curTo: `${curYear}-${pad2(tm + 1)}-${pad2(td)}`,
+      vjFrom: spiegelDatumInsVorjahr(vjYear, fm, fd),
+      vjTo: spiegelDatumInsVorjahr(vjYear, tm, td),
+    };
+  }
+
+  // 'ytd' (Default)
+  return computeYtdWindow(heute);
 }
 
 /** Eine Kennzahl-Zeile im Jahresvergleich (YTD aktuell vs. Vorjahr). */
@@ -289,6 +345,8 @@ export interface JahresvergleichRow {
 
 export interface JahresvergleichDaten extends YtdWindow {
   rows: JahresvergleichRow[];
+  /** Gewählter Vergleichsmodus (für die Kopf-Beschriftung). */
+  modus: VergleichsModus;
 }
 
 /**
@@ -989,10 +1047,28 @@ export async function ladeJahresvergleich(
   tenantKey: KeyFn,
   rates: SocialCostRates,
   heute: Date = new Date(),
+  modus: VergleichsModus = 'ytd',
+  von?: string,
+  bis?: string,
 ): Promise<JahresvergleichDaten> {
-  const win = computeYtdWindow(heute);
+  const win = computeVergleichsWindow(modus, heute, von, bis);
   const { curYear, vjYear, curFrom, curTo, vjFrom, vjTo } = win;
-  const lastMonth = heute.getMonth() + 1; // 1-basiert: Jan..aktueller Monat
+  // Monats-Fenster (1-basiert) für PK/vj_daily aus dem gewählten Zeitraum ableiten.
+  // Aktuelles Jahr: nur bis zum aktuellen Monat laden, wenn der Zeitraum darüber
+  // hinausreicht (Ganzjahr) — künftige Monate haben ohnehin keine Ist-Daten.
+  const curStartMonth = Number(curFrom.slice(5, 7));                 // 1..12
+  const curEndMonthRaw = Number(curTo.slice(5, 7));                  // 1..12
+  const heuteMonth = heute.getFullYear() === curYear ? heute.getMonth() + 1 : 12;
+  const curEndMonth = Math.min(curEndMonthRaw, heuteMonth);
+  const curMonths = curStartMonth <= curEndMonth
+    ? Array.from({ length: curEndMonth - curStartMonth + 1 }, (_, i) => curStartMonth + i)
+    : [];
+  // Vorjahr: derselbe MM-Bereich (aus vjFrom/vjTo), volle Monate (Daten liegen vor).
+  const vjStartMonth = Number(vjFrom.slice(5, 7));
+  const vjEndMonth = Number(vjTo.slice(5, 7));
+  const vjMonths = vjStartMonth <= vjEndMonth
+    ? Array.from({ length: vjEndMonth - vjStartMonth + 1 }, (_, i) => vjStartMonth + i)
+    : [];
 
   // ── Aktuelles Jahr: Umsatz + globale KV-Maps ───────────────────────────────
   const [gaesteDaily, avgDaily, umsatzTage] = await Promise.all([
@@ -1031,7 +1107,7 @@ export async function ladeJahresvergleich(
 
   // ── Personalkosten aktuell: Monate Jan..aktueller Monat (lazy, fehlertolerant) ──
   const pkList = await Promise.all(
-    Array.from({ length: lastMonth }, (_, i) => i + 1).map(mo =>
+    curMonths.map(mo =>
       ladePersonalkostenDaten(curYear, mo, tenantId, tenantKey, rates).catch(() => null)),
   );
   let istStd = 0, hatIst = false, planStd = 0, hatPlan = false;
@@ -1049,7 +1125,7 @@ export async function ladeJahresvergleich(
 
   // ── Vorjahr (pro rata): vj_daily je Monat Jan..aktueller Monat ─────────────
   const vjMonthMaps = await Promise.all(
-    Array.from({ length: lastMonth }, (_, i) => i + 1).map(mo =>
+    vjMonths.map(mo =>
       loadVjDailyMonth(vjYear, mo, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
   );
   const vjDaily: Record<string, VjDayRecord> = {};
@@ -1120,5 +1196,5 @@ export async function ladeJahresvergleich(
       cur: gruppen20, vj: gruppen20Vj },
   ];
 
-  return { ...win, rows };
+  return { ...win, rows, modus };
 }

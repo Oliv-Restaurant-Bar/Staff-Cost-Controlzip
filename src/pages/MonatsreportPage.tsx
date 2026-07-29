@@ -22,7 +22,7 @@ import { useSocialCostRates } from '@/hooks/useSocialCostRates';
 import {
   ladeMonatsreport, ladeWochenverlauf, ladeJahresvergleich, kwRangeLabel,
   type MonatsreportDaten, type MrRow, type WeekSelection, type WochenverlaufDaten,
-  type WochenverlaufRow, type JahresvergleichDaten,
+  type WochenverlaufRow, type JahresvergleichDaten, type VergleichsModus,
 } from '@/lib/monatsreport';
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 
@@ -609,11 +609,12 @@ function WochenverlaufChart({ daten, jahr }: { daten: WochenverlaufDaten; jahr: 
   );
 }
 
-// ── Jahresvergleich-Ansicht (Year-to-Date) ────────────────────────────────────
+// ── Jahresvergleich-Ansicht (wählbarer Zeitraum) ──────────────────────────────
 
-// Session-Cache: der YTD-Load ist teuer (bis zu 12 Monate PK + Vorjahr) und
+// Session-Cache: der Load ist teuer (bis zu 12 Monate PK + Vorjahr) und
 // Radix-Tabs unmounten inaktive Inhalte — ohne Cache würde jeder Tab-Wechsel
-// alles neu laden. Key = Mandant + Kalendertag (neuer Tag ⇒ frisch laden).
+// alles neu laden. Key = Mandant + Kalendertag + Modus + Zeitraum (sonst liefert
+// der Cache beim Umschalten des Zeitraums falsche Daten!).
 let jahresvergleichCache: { key: string; daten: JahresvergleichDaten } | null = null;
 
 function JahresvergleichView() {
@@ -621,16 +622,33 @@ function JahresvergleichView() {
   const { tenantId, tenantKey } = useTenant();
   const { rates, loading: ratesLoading } = useSocialCostRates();
 
-  const cacheKey = `${tenantId}:${heute.toISOString().slice(0, 10)}`;
+  const curYear = heute.getFullYear();
+  const heuteIso = heute.toISOString().slice(0, 10);
+
+  const [modus, setModus] = useState<VergleichsModus>('ytd');
+  // Eigener Zeitraum: Default 01.01. → heute; auf aktuelles Jahr begrenzt.
+  const [von, setVon] = useState(`${curYear}-01-01`);
+  const [bis, setBis] = useState(heuteIso);
+
+  const jahrMin = `${curYear}-01-01`;
+  const jahrMax = `${curYear}-12-31`;
+  // Validierung nur im custom-Modus: von ≤ bis. Sonst kein Load, Hinweis anzeigen.
+  const customValid = modus !== 'custom' || (!!von && !!bis && von <= bis);
+
+  // Ladeparameter für den aktiven Modus (custom nur bei gültigem Bereich).
+  const loadVon = modus === 'custom' ? von : undefined;
+  const loadBis = modus === 'custom' ? bis : undefined;
+
+  const cacheKey = `${tenantId}:${heuteIso}:${modus}:${modus === 'custom' ? `${von}_${bis}` : '-'}`;
   const cached = jahresvergleichCache?.key === cacheKey ? jahresvergleichCache!.daten : null;
   const [daten, setDaten] = useState<JahresvergleichDaten | null>(cached);
   const [loading, setLoading] = useState(!cached);
   const [fehler, setFehler] = useState<string | null>(null);
 
-  // Lazy: erst beim Öffnen des Tabs (Mount) laden — YTD zieht bis zu 12 Monate
-  // Personalkosten + Vorjahr. Danach aus dem Session-Cache.
+  // Lazy: erst beim Öffnen des Tabs (Mount) laden; Reload bei Modus-/Zeitraumwechsel.
   useEffect(() => {
     if (ratesLoading || !rates) return;
+    if (!customValid) { setDaten(null); setLoading(false); return; }
     if (jahresvergleichCache?.key === cacheKey) {
       setDaten(jahresvergleichCache.daten);
       setLoading(false);
@@ -639,7 +657,7 @@ function JahresvergleichView() {
     let alive = true;
     setLoading(true);
     setFehler(null);
-    ladeJahresvergleich(tenantId, tenantKey, rates, heute)
+    ladeJahresvergleich(tenantId, tenantKey, rates, heute, modus, loadVon, loadBis)
       .then(d => {
         jahresvergleichCache = { key: cacheKey, daten: d };
         if (alive) setDaten(d);
@@ -647,15 +665,73 @@ function JahresvergleichView() {
       .catch(e => { if (alive) { setDaten(null); setFehler(String(e?.message ?? e)); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [tenantId, tenantKey, rates, ratesLoading, heute, cacheKey]);
+  }, [tenantId, tenantKey, rates, ratesLoading, heute, cacheKey, modus, loadVon, loadBis, customValid]);
+
+  const spaltenLabel = daten?.modus === 'ytd'
+    ? (jahr: number) => `YTD ${jahr}`
+    : (jahr: number) => `${jahr}`;
 
   return (
     <>
-      {daten && (
+      {/* Zeitraum-Wähler */}
+      <div className="flex flex-wrap items-center gap-3">
+        <ToggleGroup
+          type="single"
+          value={modus}
+          onValueChange={(v) => v && setModus(v as VergleichsModus)}
+          className="justify-start"
+          data-testid="toggle-vergleichsmodus"
+        >
+          <ToggleGroupItem value="ytd" data-testid="modus-ytd" className="text-xs">Bis heute (YTD)</ToggleGroupItem>
+          <ToggleGroupItem value="ganzjahr" data-testid="modus-ganzjahr" className="text-xs">Ganzes Jahr</ToggleGroupItem>
+          <ToggleGroupItem value="custom" data-testid="modus-custom" className="text-xs">Eigener Zeitraum</ToggleGroupItem>
+        </ToggleGroup>
+
+        {modus === 'custom' && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <label className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">von</span>
+              <input
+                type="date"
+                value={von}
+                min={jahrMin}
+                max={jahrMax}
+                onChange={(e) => setVon(e.target.value)}
+                data-testid="input-von"
+                className="rounded-md border bg-background px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">bis</span>
+              <input
+                type="date"
+                value={bis}
+                min={jahrMin}
+                max={jahrMax}
+                onChange={(e) => setBis(e.target.value)}
+                data-testid="input-bis"
+                className="rounded-md border bg-background px-2 py-1 text-sm"
+              />
+            </label>
+          </div>
+        )}
+      </div>
+
+      {!customValid && (
+        <div
+          className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
+          data-testid="hinweis-zeitraum"
+        >
+          Bitte gültigen Zeitraum wählen: «von» darf nicht nach «bis» liegen.
+        </div>
+      )}
+
+      {daten && customValid && (
         <div className="flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground">
-          <span>
-            YTD {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} ·
-            {' '}YTD {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}
+          <span data-testid="jahresvergleich-kopf">
+            {daten.modus === 'ganzjahr'
+              ? <>Aktuelles Jahr bis heute vs. ganzes Vorjahr · {daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>
+              : <>{daten.curYear}: {fmtDate(daten.curFrom)}–{fmtDate(daten.curTo)} · {daten.vjYear}: {fmtDate(daten.vjFrom)}–{fmtDate(daten.vjTo)}</>}
           </span>
         </div>
       )}
@@ -666,16 +742,16 @@ function JahresvergleichView() {
         </div>
       )}
 
-      {loading && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
+      {loading && customValid && <p className="text-sm text-muted-foreground py-8">Lade Daten …</p>}
 
-      {!loading && daten && (
+      {!loading && daten && customValid && (
         <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
           <table className="w-full text-sm" data-testid="table-jahresvergleich">
             <thead>
               <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                 <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
-                <th className="px-3 py-2 text-right font-semibold">YTD {daten.curYear}</th>
-                <th className="px-3 py-2 text-right font-semibold">YTD {daten.vjYear}</th>
+                <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.curYear)}</th>
+                <th className="px-3 py-2 text-right font-semibold">{spaltenLabel(daten.vjYear)}</th>
                 <th className="px-3 py-2 text-right font-semibold">+/- in %</th>
               </tr>
             </thead>
@@ -704,11 +780,13 @@ function JahresvergleichView() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        Jahresvergleich = Year-to-Date: 01.01.–heute vs. 01.01.–gleiches Datum im Vorjahr (pro rata) ·
-        gleiche Quellen &amp; Berechnung wie die Monatsübersicht (keine Z-Berichte) · +/- = aktuell vs. Vorjahr
-        (nur wenn beide Werte vorhanden) · Vorjahr aus vj_daily; Produktive Stunden/Produktivität haben
-        keine VJ-Quelle → «—» · leere Felder (—) = keine Datenquelle, nie 0. Umsatz pro Gast = Netto ÷ Gäste
-        nur über Tage mit beiden Quellen.
+        Jahresvergleich mit wählbarem Zeitraum: «Bis heute (YTD)» = 01.01.–heute vs. 01.01.–gleiches Datum
+        im Vorjahr (pro rata) · «Ganzes Jahr» = aktuelles Jahr bis heute vs. ganzes Vorjahr (das laufende
+        Jahr ist unvollständig) · «Eigener Zeitraum» = frei gewählter Bereich im aktuellen Jahr vs. gleicher
+        MM-TT-Bereich im Vorjahr (29.02. → 28.02. geklemmt) · gleiche Quellen &amp; Berechnung wie die
+        Monatsübersicht (keine Z-Berichte) · +/- = aktuell vs. Vorjahr (nur wenn beide Werte vorhanden) ·
+        Vorjahr aus vj_daily; Produktive Stunden/Produktivität haben keine VJ-Quelle → «—» · leere Felder (—)
+        = keine Datenquelle, nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
       </p>
     </>
   );

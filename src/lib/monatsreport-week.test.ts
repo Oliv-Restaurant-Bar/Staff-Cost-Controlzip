@@ -7,7 +7,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 
 import {
   computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
-  computeYtdWindow, kwRangeLabel, computeWeeksForYear,
+  computeYtdWindow, kwRangeLabel, computeWeeksForYear, computeVergleichsWindow,
 } from './monatsreport';
 
 /**
@@ -239,6 +239,59 @@ describe('computeYtdWindow', () => {
     const w = computeYtdWindow(new Date(2025, 1, 28));
     expect(w.curTo).toBe('2025-02-28');
     expect(w.vjTo).toBe('2024-02-28'); // regulär, kein 29.02.-Sonderfall
+  });
+});
+
+// ── Jahresvergleich: wählbarer Zeitraum (Fensterlogik aller Modi) ────────────
+
+describe('computeVergleichsWindow', () => {
+  const heute = new Date(2025, 6, 16); // Mi 16.07.2025
+
+  it('«ytd» = identisch zu computeYtdWindow', () => {
+    expect(computeVergleichsWindow('ytd', heute)).toEqual(computeYtdWindow(heute));
+  });
+
+  it('«ganzjahr»: aktuelles Jahr 01.01.–31.12. vs. ganzes Vorjahr 01.01.–31.12.', () => {
+    const w = computeVergleichsWindow('ganzjahr', heute);
+    expect(w).toMatchObject({
+      curYear: 2025, vjYear: 2024,
+      curFrom: '2025-01-01', curTo: '2025-12-31',
+      vjFrom: '2024-01-01', vjTo: '2024-12-31',
+    });
+  });
+
+  it('«custom»: freier Bereich im aktuellen Jahr vs. gleicher MM-TT-Bereich im Vorjahr', () => {
+    const w = computeVergleichsWindow('custom', heute, '2025-03-10', '2025-06-20');
+    expect(w).toMatchObject({
+      curYear: 2025, vjYear: 2024,
+      curFrom: '2025-03-10', curTo: '2025-06-20',
+      vjFrom: '2024-03-10', vjTo: '2024-06-20',
+    });
+  });
+
+  it('«custom» 29.02.-Klemmung: bis 29.02. → VJ (Nicht-Schaltjahr) 28.02.', () => {
+    // Heute 2024 (Schaltjahr), Bereich endet auf 29.02.2024; VJ 2023 hat keinen 29.02.
+    const h2024 = new Date(2024, 5, 1);
+    const w = computeVergleichsWindow('custom', h2024, '2024-01-15', '2024-02-29');
+    expect(w.curTo).toBe('2024-02-29');
+    expect(w.vjYear).toBe(2023);
+    expect(w.vjTo).toBe('2023-02-28'); // geklemmt (2023 kein Schaltjahr)
+    expect(w.vjFrom).toBe('2023-01-15');
+  });
+
+  it('«custom» 29.02.-Start klemmt ebenfalls', () => {
+    const h2024 = new Date(2024, 5, 1);
+    const w = computeVergleichsWindow('custom', h2024, '2024-02-29', '2024-03-31');
+    expect(w.curFrom).toBe('2024-02-29');
+    expect(w.vjFrom).toBe('2023-02-28'); // Startdatum ins VJ gespiegelt + geklemmt
+    expect(w.vjTo).toBe('2023-03-31');
+  });
+
+  it('«custom» von>bis: Fenster wird NICHT normalisiert (Aufrufer validiert; Werte bleiben roh)', () => {
+    // computeVergleichsWindow spiegelt nur — die von≤bis-Validierung liegt in der UI.
+    const w = computeVergleichsWindow('custom', heute, '2025-06-20', '2025-03-10');
+    expect(w.curFrom).toBe('2025-06-20');
+    expect(w.curTo).toBe('2025-03-10'); // roh übernommen → UI verhindert Load
   });
 });
 
