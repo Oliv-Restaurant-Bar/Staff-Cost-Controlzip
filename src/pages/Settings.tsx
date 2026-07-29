@@ -29,6 +29,7 @@ import { CapacitySettingsCard } from '@/components/CapacitySettingsCard';
 import { UserManagementCard } from '@/components/UserManagementCard';
 import { ZielwerteCard } from '@/components/ZielwerteCard';
 import { SocialCostRatesCard } from '@/components/SocialCostRatesCard';
+import { ZielPersonalquoteCard } from '@/components/ZielPersonalquoteCard';
 
 const DEFAULT_PASSWORD = 'admin123';
 
@@ -1533,6 +1534,9 @@ const Settings = () => {
 
           {/* Zentrale AG-Sozialkostensätze */}
           <SocialCostRatesCard />
+
+          {/* Zentrale Ziel-Personalquote (skaliert das PK-Budget mit dem Umsatz) */}
+          <ZielPersonalquoteCard />
 
           {/* Import Settings */}
           <Card className="mt-6">

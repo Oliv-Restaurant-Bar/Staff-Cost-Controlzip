@@ -12,6 +12,9 @@ vi.mock('@/lib/supabase-db', () => ({
 vi.mock('@/lib/umsatz', () => ({ ladeUmsatzTage: vi.fn(), nettoUmsatzTag: vi.fn() }));
 vi.mock('@/lib/wage-history', () => ({ applyEffectiveWages: vi.fn(), firstOfMonth: vi.fn() }));
 vi.mock('@/lib/budgetDistribution', () => ({ getMonthlyBudgetRevenue: vi.fn() }));
+vi.mock('@/lib/ziel-personalquote', () => ({
+  loadZielPersonalquoteLocal: vi.fn(() => ({ pct: 35.5 })),
+}));
 vi.mock('@/hooks/useShiftConfig', () => ({ calculateDayNetHours: vi.fn() }));
 import { DEFAULT_SOCIAL_COST_RATES, socialCostFactorFromRates } from '@/lib/social-costs';
 import {
@@ -77,6 +80,7 @@ function makeDaten(flexEmployees: Employee[], opts: {
     istTage: new Set(Object.keys(opts.ist ?? {})),
     umsatzIstProTag: {},
     umsatzBudgetMonat: 0,
+    zielQuotePct: 35.5,
     pkBudgetMonat: null,
     gewichte: {},
   };

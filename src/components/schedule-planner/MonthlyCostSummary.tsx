@@ -85,16 +85,15 @@ export const MonthlyCostSummary = ({
     return { total: k.total, fix: k.fix, flex: k.flex, pkqHochrechnung: q.pkqHochrechnung };
   }, [pkDaten]);
 
-  // Zielquote (Schwellenwert): manuelle Einstellung hat Vorrang, sonst LIVE aus
-  // dem Budget-Modul (PK-Budget ÷ Umsatz-Budget des Monats) — KEIN fixes 35.5 %.
-  // Fehlt beides → nur die harte Obergrenze (40 %) greift für die Ampel.
+  // Zielquote (Schwellenwert): manuelle Einstellung (labor_cost_threshold) hat
+  // Vorrang, sonst die zentrale Ziel-Personalquote (Einstellung, Default 35.5 %)
+  // — KEIN hartcodiertes 35.5 %. Ohne pkDaten greift die harte Obergrenze (40 %).
   const laborCostThreshold = useMemo(() => {
     const stored = localStorage.getItem('labor_cost_threshold');
     if (stored != null && stored !== '' && !Number.isNaN(parseFloat(stored))) {
       return parseFloat(stored);
     }
-    const ziel = pkDaten ? budgetZielQuote(pkDaten) : null;
-    return ziel != null ? ziel * 100 : HARD_CAP_PCT;
+    return pkDaten ? budgetZielQuote(pkDaten) * 100 : HARD_CAP_PCT;
   }, [pkDaten]);
   const rateById = useMemo(() => {
     const m = new Map<string, number>();

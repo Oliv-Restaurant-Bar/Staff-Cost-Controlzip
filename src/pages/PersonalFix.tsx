@@ -4342,15 +4342,17 @@ export default function PersonalFixPage() {
             </h2>
           </div>
           {/* Schlagzeile/KPI ausschliesslich aus der zentralen Quelle personalkosten.ts.
-              Hochrechnung = Ist bis heute + Plan ab morgen; Budget LIVE aus dem
-              Budget-Modul (Löhne + Sozialleistungen), NICHT hartcodiert; PKQ auf
-              gleicher Basis (kein Voll-Kosten ÷ Teilumsatz). */}
+              Hochrechnung = Ist bis heute + Plan ab morgen; Budget =
+              Ziel-Personalquote × Netto-Umsatz-Budget (skaliert mit dem Umsatz,
+              NICHT hartcodiert); PKQ auf gleicher Basis (kein Voll-Kosten ÷
+              Teilumsatz). */}
           {(() => {
             const budgetTotal = pkZentral?.pkBudget?.total ?? null;
             const hasBudget = budgetTotal != null;
             const abwHr = pkZentral && hasBudget ? pkZentral.kHr.total - budgetTotal : 0;
             const pkqHr = pkZentral?.pkq.pkqHochrechnung ?? null;
-            const zielQuote = pkZentral?.zielQuote ?? null;
+            const zielQuote = pkZentral?.zielQuote ?? null; // Bruch (z.B. 0.355)
+            const umsatzBudget = pkDaten?.umsatzBudgetMonat ?? 0;
             return (
               <KpiGrid>
                 <DsKpiCard
@@ -4363,9 +4365,9 @@ export default function PersonalFixPage() {
                 <DsKpiCard
                   label="Budget"
                   value={hasBudget ? fmtCHF(budgetTotal) : '—'}
-                  sub={hasBudget
-                    ? `aus Budget-Planung ${getMonthLabel(selectedYear, selectedMonth)}`
-                    : `Kein PK-Budget in der Budget-Planung ${getMonthLabel(selectedYear, selectedMonth)} hinterlegt`}
+                  sub={hasBudget && zielQuote != null
+                    ? `${(zielQuote * 100).toFixed(1)} % von CHF ${fmtCHF(umsatzBudget)} (Umsatz-Budget ${getMonthLabel(selectedYear, selectedMonth)})`
+                    : `Kein Umsatz-Budget in der Budget-Planung ${getMonthLabel(selectedYear, selectedMonth)} hinterlegt`}
                   tone="info"
                   onClick={() => setDrilldownFocus('budget')}
                 />
@@ -4398,8 +4400,8 @@ export default function PersonalFixPage() {
                                 Hochrechnung: {fmtCHF(pkZentral.kHr.total)} ÷ {fmtCHF(pkZentral.ums.hochrechnung)} = {(pkqHr * 100).toFixed(1)} %
                                 <br />
                                 {zielQuote != null
-                                  ? `Budget-Ziel: ${(zielQuote * 100).toFixed(1)} % (aus Budget-Planung), Obergrenze 40 %.`
-                                  : 'Budget-Ziel: — (kein Budget in der Planung), Obergrenze 40 %.'}
+                                  ? `Ziel-Personalquote: ${(zielQuote * 100).toFixed(1)} % (zentrale Einstellung), Obergrenze 40 %.`
+                                  : 'Ziel-Personalquote: —, Obergrenze 40 %.'}
                               </>
                             ) : (
                               <>

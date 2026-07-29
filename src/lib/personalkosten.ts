@@ -27,9 +27,10 @@ import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
-import { getMonthlyBudgetRevenue, getMonthlyBudgetPersonnel } from '@/lib/budgetDistribution';
+import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import type { TenantId } from '@/contexts/TenantContext';
 import { ladeUmsatzTage, nettoUmsatzTag } from '@/lib/umsatz';
+import { loadZielPersonalquoteLocal } from '@/lib/ziel-personalquote';
 
 // ── KEINE hartcodierten Budget-Konstanten mehr ───────────────────────────────
 // Umsatz- UND Personalkosten-Budget kommen LIVE aus dem Budget-Modul (SSoT,
@@ -76,9 +77,15 @@ export interface PersonalkostenDaten {
   /** Budgetierter Monatsumsatz aus dem Budget-Modul (0 = nicht vorhanden) */
   umsatzBudgetMonat: number;
   /**
-   * Budgetiertes Personalkosten-Budget des Monats aus dem Budget-Modul
-   * (Löhne + Sozialleistungen, exkl. übriger Personalaufwand). `null`, wenn
-   * im Budget-Modul kein PK-Budget hinterlegt ist — NIE eine Konstante.
+   * Ziel-Personalquote in Prozent (zentrale Einstellung, Default 35.5). Daraus
+   * skaliert das PK-Budget mit dem Umsatz: pkBudgetMonat = zielQuotePct/100 ×
+   * umsatzBudgetMonat.
+   */
+  zielQuotePct: number;
+  /**
+   * Personalkosten-Budget des Monats = Ziel-Personalquote × Netto-Umsatz-Budget.
+   * `null`, wenn KEIN Umsatz-Budget für den Monat hinterlegt ist (umsatzBudgetMonat
+   * ≤ 0) — dann darf NICHT still auf eine Konstante zurückgefallen werden.
    */
   pkBudgetMonat: number | null;
   /** Wochentagsgewichte (normiert, Summe ≈ 1); Fallback = gleichmässig (1/7) */
@@ -363,14 +370,14 @@ export interface PkBudget {
 }
 
 /**
- * Personalkosten-Budget des Monats LIVE aus dem Budget-Modul, auf Tage verteilt
- * nach den vorhandenen Wochentagsgewichten (Umsatzgewichtung); Fallback ohne
- * Einstellungen: gleichmässig (1/7 pro Wochentag).
+ * Personalkosten-Budget des Monats = Ziel-Personalquote × Netto-Umsatz-Budget,
+ * auf Tage verteilt nach den vorhandenen Wochentagsgewichten (Umsatzgewichtung);
+ * Fallback ohne Einstellungen: gleichmässig (1/7 pro Wochentag).
  *
  * `pkBudgetMonat` stammt aus `PersonalkostenDaten.pkBudgetMonat`
- * (getMonthlyBudgetPersonnel). Ist KEIN PK-Budget hinterlegt (`null`), gibt die
- * Funktion `null` zurück → die Anzeige muss «—»/Hinweis zeigen, NICHT auf eine
- * Konstante zurückfallen.
+ * (= zielQuotePct/100 × umsatzBudgetMonat). Fehlt das Umsatz-Budget (`null`),
+ * gibt die Funktion `null` zurück → die Anzeige muss «—»/Hinweis zeigen, NICHT
+ * auf eine Konstante zurückfallen.
  */
 export function budget(
   year: number,
@@ -441,14 +448,13 @@ export function personalquote(daten: PersonalkostenDaten, opts?: { stichtag?: nu
 }
 
 /**
- * Ziel-PK-Quote des Monats = PK-Budget ÷ Umsatz-Budget (beide LIVE aus dem
- * Budget-Modul). `null`, wenn eines der beiden Budgets fehlt → die Anzeige darf
- * KEINE fixe Zielquote (früher 35.5 %) mehr verwenden, sondern «—»/Hinweis.
+ * Ziel-PK-Quote als BRUCH (z.B. 0.355) — die zentrale Einstellung
+ * (`zielQuotePct`), NICHT aus Budget-Werten abgeleitet. Damit ist die Ziel-Linie
+ * der PKQ-Grafik KONSTANT und unabhängig vom Umsatz-Budget. Immer definiert
+ * (Default 35.5 %), daher nie `null`.
  */
-export function budgetZielQuote(daten: PersonalkostenDaten): number | null {
-  if (daten.pkBudgetMonat == null || daten.pkBudgetMonat <= 0) return null;
-  if (!(daten.umsatzBudgetMonat > 0)) return null;
-  return daten.pkBudgetMonat / daten.umsatzBudgetMonat;
+export function budgetZielQuote(daten: PersonalkostenDaten): number {
+  return daten.zielQuotePct / 100;
 }
 
 // ══ Hilfen ═══════════════════════════════════════════════════════════════════════
@@ -559,8 +565,13 @@ export async function ladePersonalkostenDaten(
 
   // ── Umsatzbudget (Budget-Modul, SSoT identisch Monatsreport) ─────────────
   const umsatzBudgetMonat = getMonthlyBudgetRevenue(year, month - 1, tenantKey('budget_v1'));
-  // ── Personalkosten-Budget (Budget-Modul, SSoT via buildBudgetByRowForMonth) ─
-  const pkBudgetMonat = getMonthlyBudgetPersonnel(year, month - 1, tenantKey('budget_v1'))?.total ?? null;
+  // ── Personalkosten-Budget = Ziel-Personalquote × Netto-Umsatz-Budget ──────
+  // Ziel-Personalquote = zentrale Einstellung (Default 35.5 %); lokaler Frisch-
+  // Stand genügt (KV-Backup zieht via Hook/Event in den Ansichten nach).
+  const zielQuotePct = loadZielPersonalquoteLocal(tenantId).pct;
+  const pkBudgetMonat = umsatzBudgetMonat > 0
+    ? r2((zielQuotePct / 100) * umsatzBudgetMonat)
+    : null;
 
   return {
     year, month, daysInMonth,
@@ -568,7 +579,7 @@ export async function ladePersonalkostenDaten(
     agFactor: socialCostFactorFromRates(rates),
     rates,
     planStdProTag, istStdProTag, istTage,
-    umsatzIstProTag, umsatzBudgetMonat, pkBudgetMonat,
+    umsatzIstProTag, umsatzBudgetMonat, zielQuotePct, pkBudgetMonat,
     gewichte: ladeWochentagsGewichte(tenantKey),
   };
 }

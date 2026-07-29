@@ -136,8 +136,8 @@ export default function PersonalkostenNeu() {
                 title="Budget"
                 value={berechnung.bud ? `CHF ${fmtCHF(berechnung.bud.total)}` : '—'}
                 sub={berechnung.bud
-                  ? `aus Budget-Planung ${MONATE[month - 1]} ${year}`
-                  : `Kein PK-Budget in der Budget-Planung ${MONATE[month - 1]} ${year} hinterlegt`}
+                  ? `${fmtPct(berechnung.zielQuote)} von CHF ${fmtCHF(daten.umsatzBudgetMonat)} (Umsatz-Budget ${MONATE[month - 1]} ${year})`
+                  : `Kein Umsatz-Budget in der Budget-Planung ${MONATE[month - 1]} ${year} hinterlegt`}
               />
               <Kachel
                 title="Abweichung (HR − Budget)"
