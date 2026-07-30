@@ -1,0 +1,25 @@
+Personalbedarf-Seite umbauen + Fr/Sa reduzieren (Oliv und Beaulieu):
+
+0) Fr/Sa auf 18 setzen (bestätigt):
+- Freitag und Samstag je: Bar 1, Springer 1, Service 6, Take Away 1, Küche 5, Kalt/Sushi 1, Abwasch 2, Reinigung/Prep 1 = 18 Personen.
+- Werktage bleiben wie hinterlegt (Mi-Service 5). Nur Fr/Sa anpassen.
+
+1) Layout aufräumen (weniger Leerraum oben, Wichtiges zuerst):
+- Die oberen Kacheln "Personentage/Woche" und "Spitzentage" ENTFERNEN und ersetzen durch aussagekräftige Vergleichs-Kacheln für die gewählte Kalenderwoche:
+    • "Kopfzahl: Plan vs. Bedarf" (geplante Personen der Woche vs. Soll, mit Δ und Ampel)
+    • "Stunden: Plan vs. Bedarf" (Plan-Netto-Stunden vs. Bedarf-Stunden, Δ%)
+    • "Stunden: Ist vs. Bedarf" (Ist-Stunden vs. Bedarf; leer, solange kein MIRUS-Import)
+- Leerraum oben reduzieren, damit die Wochenübersicht sofort sichtbar ist.
+- Das "Personal pro Tag"-Balkendiagramm nach UNTEN verschieben (unter die Vergleichstabellen).
+
+2) Neue Wochenansicht A — "Bedarf vs. Planung" (Kopfzahl, pro Position):
+- Gleiches Matrix-Layout wie die Soll-Wochenübersicht (Positionen × Mo–So), aber je Zelle Bedarf UND geplante Kopfzahl im Vergleich (z. B. "5 / 4" = Bedarf 5, Plan 4), Δ farbig: grün = passt, rot = über Bedarf, gelb = unter Bedarf.
+- Kalenderwochen-Wähler (Plan ist wochenspezifisch). So sieht man pro Position und Tag, wo der Dienstplan vom Bedarf abweicht — pro Person/Position.
+
+3) Neue Wochenansicht B — "Stunden: Bedarf / Plan / Ist" (ganze Woche, nur Stunden):
+- Pro Tag drei Zahlen: Bedarf-Stunden, Plan-Stunden, Ist-Stunden, je mit Δ zum Bedarf (Ampel), plus Wochensumme. Keine Positions-Aufschlüsselung, nur Tagestotale.
+
+4) Verwirrenden Einzeltag-Abgleich ersetzen:
+- Der bisherige "Dienstplan-Abgleich (Ist vs. Soll)" für ein einzelnes Datum ist unklar (man sieht den Tag nicht). Durch die Wochenansichten A und B ersetzen (Tag immer sichtbar). Einzeltag-Detail nur noch per Klick auf einen Wochentag.
+
+Konsistenz: Alle Zahlen (Bedarf, Plan, Ist – Kopfzahl und Stunden) aus der gemeinsamen Berechnung, damit Seite und Cockpit nie widersprechen.

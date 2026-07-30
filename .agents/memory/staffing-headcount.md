@@ -15,3 +15,10 @@ description: Führende Kennzahl im Personalbedarf ist die KOPFZAHL (Personen/Tag
 ## Live-Hinweis Dienstplan (Plan vs. Bedarf)
 - Kopfzahl-SSOT ist `computeWeekCell` (staffing-week-utils) — Wochenmatrix UND Dienstplan-Hinweis (`staffing-day-hints.ts`) nutzen sie; nie separat rechnen.
 - Personen-Total des Hinweises MUSS in der Soll-Einheit (Σ Positions-Kopfzahlen) laufen: Person auf 2 Positionen zählt 2×, sonst falsche Unterbesetzungs-Pille trotz grüner Positionszeilen. Unzugeordnete Personen nur als Hinweis, Stunden dagegen über ALLE produktiven Einsätze (Kosten).
+
+## Wochen-Abgleich (Personalbedarf-Seite)
+- `buildWeekCompare` (staffing-week-compare.ts) ist die einzige Quelle der Wochen-Vergleiche (Kacheln, Matrix «Bedarf vs. Planung», Stunden-Tabelle) — intern nur computeDayPlanHints pro Datum.
+- Plan-Kopfzahl = Σ Positions-Kopfzahlen (Person auf 2 Positionen zählt 2×, gleiche Einheit wie Soll); Regressionstest mit Splitschicht über 2 Positionen existiert.
+- Plan-/Ist-Stunden sind `null`, nie 0, wenn nichts geplant/importiert ist.
+- Farbkonvention Kopfzahl-Matrix: grün = passt, ROT = über Bedarf, GELB = unter (abweichend von der 2-Farben-Logik des Einzeltag-Abgleichs).
+- Mitarbeiter-Zweitpositionen heißen `secondaryStations` (nicht trainedStations).

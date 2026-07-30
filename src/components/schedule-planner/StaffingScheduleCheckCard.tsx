@@ -80,6 +80,12 @@ interface StaffingScheduleCheckCardProps {
   weekday: number;
   /** Profil-Konfiguration (CdS-Priorität etc.) für die 3-Dimensionen-Prüfung. */
   profilesConfig?: StaffingProfilesConfig | null;
+  /**
+   * Von aussen gesetztes Datum (yyyy-MM-dd), z.B. Klick auf eine Tagesspalte
+   * der Wochenansichten — übersteuert das Default-Datum, bleibt danach frei
+   * wählbar.
+   */
+  dateOverride?: string | null;
 }
 
 export function StaffingScheduleCheckCard({
@@ -88,6 +94,7 @@ export function StaffingScheduleCheckCard({
   season,
   weekday,
   profilesConfig,
+  dateOverride,
 }: StaffingScheduleCheckCardProps) {
   const { tenantId } = useTenant();
   const { isGuest } = usePermissions();
@@ -105,6 +112,11 @@ export function StaffingScheduleCheckCard({
   useEffect(() => {
     setDateStr(format(nextDateForIsoWeekday(weekday), 'yyyy-MM-dd'));
   }, [weekday]);
+
+  // Klick auf eine Tagesspalte der Wochenansichten → dieses Datum anzeigen.
+  useEffect(() => {
+    if (dateOverride && isValid(parseISO(dateOverride))) setDateStr(dateOverride);
+  }, [dateOverride]);
 
   const selectedDate = useMemo(() => {
     const d = parseISO(dateStr);

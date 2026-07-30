@@ -41,9 +41,13 @@ import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
 import { buildCellSaveDrafts, buildWeekOverview, isEveningShift, explicitDayHeadcount } from '@/lib/staffing-week-utils';
 import { StaffingWeekSummary } from '@/components/schedule-planner/StaffingWeekSummary';
+import { WeekCompareTiles, WeekCompareMatrix, WeekHoursTable } from '@/components/schedule-planner/StaffingWeekCompare';
+import { buildWeekCompare } from '@/lib/staffing-week-compare';
+import { useUgEventDays } from '@/hooks/useUgEventDays';
+import type { Employee } from '@/types/personnel';
+import type { DaySchedule, ActualHourEntry } from '@/lib/supabase-db';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
 import { StaffingWeekMatrix, type WeekHoursStack, type WeekCellMode } from '@/components/schedule-planner/StaffingWeekMatrix';
-import { planNettoHoursForDate, istHoursForDate } from '@/lib/bedarf-stunden-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { format, startOfWeek, addDays, parseISO, isValid, getISOWeek } from 'date-fns';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
@@ -101,7 +105,15 @@ export default function Personalbedarf() {
   // eine KONKRETE Kalenderwoche (Default: aktuelle Woche, Montag).
   const [weekAnchor, setWeekAnchor] = useState<string>(() =>
     format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'));
-  const [hoursStack, setHoursStack] = useState<WeekHoursStack | null>(null);
+  /** Roh-Daten der gewählten Kalenderwoche (Dienstplan/Ist), read-only geladen. */
+  const [weekData, setWeekData] = useState<{
+    employees: Employee[];
+    scheduleData: Record<string, DaySchedule>;
+    actualData: Record<string, ActualHourEntry>;
+  } | null>(null);
+  /** Einzeltag-Detail (Klick auf eine Tagesspalte der Wochenansichten). */
+  const [detailDate, setDetailDate] = useState<string | null>(null);
+  const { eventDays } = useUgEventDays();
   /** Zellen-Anzeige der Wochenmatrix: Personen | Stunden (bleibt beim Wechsel
    *  von Wochentag/Woche/Profil erhalten — Page-State). */
   const [cellMode, setCellMode] = useState<WeekCellMode>('persons');
@@ -112,14 +124,26 @@ export default function Personalbedarf() {
     [positions, requirements, profilesConfig, season],
   );
 
+  /** Mo–So-Daten (yyyy-MM-dd) der gewählten Kalenderwoche. */
+  const weekDates = useMemo(() => {
+    const anchor = parseISO(weekAnchor);
+    if (!isValid(anchor)) return null;
+    const monday = startOfWeek(anchor, { weekStartsOn: 1 });
+    return Array.from({ length: 7 }, (_, i) => format(addDays(monday, i), 'yyyy-MM-dd'));
+  }, [weekAnchor]);
+
+  const weekLabel = useMemo(() => {
+    if (!weekDates) return null;
+    const monday = parseISO(weekDates[0]);
+    const sunday = parseISO(weekDates[6]);
+    return `KW ${getISOWeek(monday)} · ${format(monday, 'dd.MM.')}–${format(sunday, 'dd.MM.yyyy')}`;
+  }, [weekDates]);
+
   useEffect(() => {
     if (viewMode !== 'week') return;
-    const anchor = parseISO(weekAnchor);
-    if (!isValid(anchor)) { setHoursStack(null); return; }
-    const monday = startOfWeek(anchor, { weekStartsOn: 1 });
-    const dates = Array.from({ length: 7 }, (_, i) => format(addDays(monday, i), 'yyyy-MM-dd'));
+    if (!weekDates) { setWeekData(null); return; }
     // Berührte Monate (Woche kann Monatsgrenze überschreiten).
-    const months = [...new Set(dates.map((d) => d.slice(0, 7)))]
+    const months = [...new Set(weekDates.map((d) => d.slice(0, 7)))]
       .map((ym) => parseISO(`${ym}-01`));
     let cancelled = false;
     (async () => {
@@ -130,29 +154,48 @@ export default function Personalbedarf() {
           Promise.all(months.map((m) => loadActualHoursForMonth(m, tenantId))),
         ]);
         if (cancelled) return;
-        const scheduleData = Object.assign({}, ...schedules.map((s) => s ?? {}));
-        const actualData = Object.assign({}, ...actuals.map((a) => a ?? {}));
-        const plan: Record<number, number | null> = {};
-        const ist: Record<number, number | null> = {};
-        dates.forEach((dateStr, i) => {
-          const wd = i + 1; // Mo-basiert
-          plan[wd] = planNettoHoursForDate({
-            employees: emps ?? [], scheduleData, positions, dateStr,
-          });
-          ist[wd] = istHoursForDate(actualData, dateStr);
-        });
-        const sunday = addDays(monday, 6);
-        setHoursStack({
-          weekLabel: `KW ${getISOWeek(monday)} · ${format(monday, 'dd.MM.')}–${format(sunday, 'dd.MM.yyyy')}`,
-          plan,
-          ist,
+        setWeekData({
+          employees: emps ?? [],
+          scheduleData: Object.assign({}, ...schedules.map((s) => s ?? {})),
+          actualData: Object.assign({}, ...actuals.map((a) => a ?? {})),
         });
       } catch {
-        if (!cancelled) setHoursStack(null);
+        if (!cancelled) setWeekData(null);
       }
     })();
     return () => { cancelled = true; };
-  }, [viewMode, weekAnchor, tenantId, positions]);
+  }, [viewMode, weekDates, tenantId]);
+
+  /**
+   * Wochen-Abgleich «Bedarf vs. Planung vs. Ist» — EINE gemeinsame Berechnung
+   * (buildWeekCompare → computeDayPlanHints/computeWeekCell) mit Dienstplan-
+   * Live-Hinweis und Cockpit, damit sich die Ansichten nie widersprechen.
+   */
+  const weekCompare = useMemo(() => {
+    if (!weekData || !weekDates) return null;
+    return buildWeekCompare({
+      positions,
+      requirements,
+      config: profilesConfig,
+      employees: weekData.employees,
+      scheduleData: weekData.scheduleData,
+      actualHours: weekData.actualData,
+      dates: weekDates,
+      eventDays,
+    });
+  }, [weekData, weekDates, positions, requirements, profilesConfig, eventDays]);
+
+  /** Stunden-Stapel der Soll-Wochenmatrix (Plan/Ist je Wochentag). */
+  const hoursStack: WeekHoursStack | null = useMemo(() => {
+    if (!weekCompare || !weekLabel) return null;
+    const plan: Record<number, number | null> = {};
+    const ist: Record<number, number | null> = {};
+    for (const d of weekCompare.days) {
+      plan[d.weekday] = d.planHours;
+      ist[d.weekday] = d.istHours;
+    }
+    return { weekLabel, plan, ist };
+  }, [weekCompare, weekLabel]);
 
   const activeProfile = profileByKey(profilesConfig, season);
   const locked = isProfileLocked(profilesConfig, season);
@@ -486,12 +529,6 @@ export default function Personalbedarf() {
         </div>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        SOLL-Besetzung je Saison und Wochentag. Pro Position lassen sich mehrere
-        Schichten mit Beginn, Ende und benötigter Anzahl festlegen. Diese Vorlagen
-        sind unabhängig von der Dienstplanung.
-      </p>
-
       {error && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm flex items-start gap-2">
           <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
@@ -651,13 +688,25 @@ export default function Personalbedarf() {
       {/* Wochenübersicht (Standard-Ansicht) */}
       {!loading && viewMode === 'week' && hasActivePositions && (
         <>
-          <StaffingWeekSummary
-            overview={weekOverview}
-            profileLabel={`Profil «${activeProfile?.label ?? seasonLabel(season)}»`}
-          />
+          {/* Kalenderwoche + Anzeige-Umschalter (Plan/Ist sind wochenspezifisch) */}
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-0.5">
-              <Label className="text-[10px] text-muted-foreground">Anzeige</Label>
+              <Label className="text-[10px] text-muted-foreground">
+                Kalenderwoche (Dienstplan/Ist)
+              </Label>
+              <Input
+                type="date"
+                value={weekAnchor}
+                onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
+                className="h-8 w-[10.5rem] text-sm"
+                data-testid="input-week-anchor"
+              />
+            </div>
+            {weekLabel && (
+              <span className="text-[11px] text-muted-foreground pb-1.5">{weekLabel}</span>
+            )}
+            <div className="flex flex-col gap-0.5 ml-auto">
+              <Label className="text-[10px] text-muted-foreground">Anzeige Soll-Matrix</Label>
               <div className="flex gap-1">
                 <Button type="button" size="sm" className="h-8"
                   variant={cellMode === 'persons' ? 'default' : 'outline'}
@@ -671,24 +720,13 @@ export default function Personalbedarf() {
                 </Button>
               </div>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <Label className="text-[10px] text-muted-foreground">
-                Kalenderwoche für Dienstplan/Ist-Stunden
-              </Label>
-              <Input
-                type="date"
-                value={weekAnchor}
-                onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
-                className="h-8 w-[10.5rem] text-sm"
-                data-testid="input-week-anchor"
-              />
-            </div>
-            {hoursStack && (
-              <span className="text-[11px] text-muted-foreground pb-1.5">
-                {hoursStack.weekLabel}
-              </span>
-            )}
           </div>
+
+          {/* Vergleichs-Kacheln der gewählten Kalenderwoche */}
+          {weekCompare && (
+            <WeekCompareTiles compare={weekCompare} weekLabel={weekLabel ?? undefined} />
+          )}
+
           <StaffingWeekMatrix
             positions={positions}
             requirements={requirements}
@@ -702,8 +740,25 @@ export default function Personalbedarf() {
             onSaveCell={handleSaveCell}
             onSelectWeekday={(w) => {
               setWeekday(w);
+              setDetailDate(null); // Wochentag wird wieder führend fürs Detail
               setViewMode('day');
             }}
+          />
+
+          {/* Wochenansicht A: Bedarf vs. Planung (Kopfzahl je Position) */}
+          {weekCompare && (
+            <WeekCompareMatrix compare={weekCompare} onSelectDate={setDetailDate} />
+          )}
+
+          {/* Wochenansicht B: Stunden Bedarf / Plan / Ist (Tagestotale) */}
+          {weekCompare && (
+            <WeekHoursTable compare={weekCompare} onSelectDate={setDetailDate} />
+          )}
+
+          {/* «Personal pro Tag»-Diagramm unter den Vergleichstabellen */}
+          <StaffingWeekSummary
+            overview={weekOverview}
+            profileLabel={`Profil «${activeProfile?.label ?? seasonLabel(season)}»`}
           />
         </>
       )}
@@ -724,14 +779,16 @@ export default function Personalbedarf() {
         </Card>
       )}
 
-      {/* Dienstplan-Abgleich (Ist vs. Soll, nur Anzeige) */}
-      {!loading && (
+      {/* Einzeltag-Detail: nur per Klick auf eine Tagesspalte der Wochenansichten
+          (in der Tagesansicht weiterhin immer sichtbar). */}
+      {!loading && (viewMode === 'day' || detailDate != null) && (
         <StaffingScheduleCheckCard
           positions={positions}
           requirements={requirements}
           season={season}
           weekday={weekday}
           profilesConfig={profilesConfig}
+          dateOverride={detailDate}
         />
       )}
 

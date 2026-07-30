@@ -1,7 +1,8 @@
 /**
- * Visuelle Übersicht des Personalbedarfs («Ganze Woche», oberhalb der Matrix):
- *  - Kennzahlen-Kacheln: Personentage/Woche, Netto-Stunden/Woche, Spitzentage
- *  - Gestapeltes Balkendiagramm «Personal pro Tag» (Service + Küche, Mo–So)
+ * Balkendiagramm «Personal pro Tag» des Personalbedarfs (Service + Küche,
+ * Mo–So, gestapelt). Die früheren Kennzahlen-Kacheln (Personentage/Spitzentage)
+ * wurden durch die Vergleichs-Kacheln in StaffingWeekCompare ersetzt; dieses
+ * Diagramm steht unterhalb der Vergleichstabellen.
  *
  * Werte kommen aus dem AKTIVEN Profil (buildWeekOverview → effektiver Bedarf
  * inkl. UG-Zuschlag bei Winter/UG), pro Mandant. Reine Anzeige, keine Writes.
@@ -12,7 +13,6 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from 'recharts';
 import { Card, CardContent } from '@/components/ui/card';
-import { Users, Clock, TrendingUp } from 'lucide-react';
 import type { WeekOverview } from '@/lib/staffing-week-utils';
 
 const WEEKDAY_SHORT: Record<number, string> = {
@@ -21,9 +21,6 @@ const WEEKDAY_SHORT: Record<number, string> = {
 
 const SERVICE_COLOR = 'hsl(24 90% 55%)';   // warmes Orange (Service)
 const KUECHE_COLOR = 'hsl(200 70% 45%)';   // Blau (Küche)
-
-const fmtH = (h: number) =>
-  `${h.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h`;
 
 /**
  * KOPFZAHL je Abteilung × Wochentag aus der Wochenübersicht aufsummieren —
@@ -56,26 +53,9 @@ export function summarizeWeekOverview(overview: WeekOverview) {
   return { byDay, personDays, nettoHours: Math.round(nettoHours * 10) / 10, maxPersons, peakDays };
 }
 
-function Kachel({ icon, label, value, sub, testid }: {
-  icon: React.ReactNode; label: string; value: string; sub?: string; testid: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4 flex items-start gap-3">
-        <div className="rounded-lg bg-muted p-2 text-muted-foreground">{icon}</div>
-        <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="text-xl font-semibold tabular-nums" data-testid={testid}>{value}</p>
-          {sub ? <p className="text-[11px] text-muted-foreground">{sub}</p> : null}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 export function StaffingWeekSummary({ overview, profileLabel }: {
   overview: WeekOverview;
-  /** z.B. «Profil ‹Standard›» — erscheint als Untertitel der Kacheln. */
+  /** z.B. «Profil ‹Standard›» — erscheint als Untertitel des Diagramms. */
   profileLabel?: string;
 }) {
   const s = useMemo(() => summarizeWeekOverview(overview), [overview]);
@@ -83,33 +63,12 @@ export function StaffingWeekSummary({ overview, profileLabel }: {
 
   return (
     <div className="space-y-3" data-testid="staffing-week-summary">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <Kachel
-          icon={<Users className="h-4 w-4" />}
-          label="Personentage / Woche (Kopfzahl)"
-          value={String(s.personDays)}
-          sub={profileLabel}
-          testid="tile-person-days"
-        />
-        <Kachel
-          icon={<Clock className="h-4 w-4" />}
-          label="Netto-Stunden / Woche"
-          value={fmtH(s.nettoHours)}
-          sub="Soll-Schichten × Dauer, ArG-Pausenabzug"
-          testid="tile-netto-hours"
-        />
-        <Kachel
-          icon={<TrendingUp className="h-4 w-4" />}
-          label="Spitzentage"
-          value={s.peakDays.length > 0 ? s.peakDays.join(' · ') : '—'}
-          sub={s.maxPersons > 0 ? `${s.maxPersons} Personen (Kopfzahl)` : undefined}
-          testid="tile-peak-days"
-        />
-      </div>
-
       <Card>
         <CardContent className="p-4">
-          <p className="text-sm font-semibold mb-2">Personal pro Tag</p>
+          <p className="text-sm font-semibold mb-2">
+            Personal pro Tag (Bedarf)
+            {profileLabel ? <span className="ml-2 text-xs font-normal text-muted-foreground">{profileLabel}</span> : null}
+          </p>
           <div className="h-56" data-testid="chart-personal-pro-tag">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={s.byDay} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
