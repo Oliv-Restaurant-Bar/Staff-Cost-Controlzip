@@ -2,7 +2,7 @@ import { useMemo, useState, useCallback } from 'react';
 import { format, getISODay } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { Link } from 'react-router-dom';
-import { ClipboardList, ArrowRight, CalendarDays, ChevronDown } from 'lucide-react';
+import { ClipboardList, ArrowRight, CalendarDays, ChevronDown, UserCheck } from 'lucide-react';
 
 import type { Department, Employee } from '@/types/personnel';
 import type { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
@@ -24,6 +24,12 @@ import {
   type ShiftComparisonRow,
   type StaffingHeadline,
 } from '@/lib/staffing-comparison-utils';
+import { computeCdsCheck } from '@/lib/staffing-check-utils';
+import { buildEffectiveRequirements, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
+import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
+import { useUgEventDays } from '@/hooks/useUgEventDays';
+import { usePermissions } from '@/hooks/usePermissions';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   StaffingKpiCards,
   StaffingStatusBadge,
@@ -58,6 +64,10 @@ interface StaffingComparisonPanelProps {
    */
   season?: StaffingSeason;
   onSeasonChange?: (season: StaffingSeason) => void;
+  /** Dynamische Profil-Liste (aus der Profil-Konfiguration); ohne = SEASONS. */
+  profiles?: { key: string; label: string }[];
+  /** CdS-Prioritätsliste (Mitarbeiter-IDs) für die Chef-de-Service-Warnung. */
+  cdsPriority?: string[];
 }
 
 const DEPARTMENT_LABEL: Record<Department, string> = {
@@ -139,9 +149,14 @@ export function StaffingComparisonPanel({
   departments,
   season: seasonProp,
   onSeasonChange,
+  profiles,
+  cdsPriority,
 }: StaffingComparisonPanelProps) {
   const { positions, loading: posLoading } = usePositions();
   const { requirements, loading: reqLoading } = useStaffingRequirements();
+  const { config: profilesConfig } = useStaffingProfiles();
+  const { eventDays, toggle: toggleEventDay } = useUgEventDays();
+  const { isGuest } = usePermissions();
 
   const [selectedDate, setSelectedDate] = useState<Date>(initialDate ?? new Date());
   const [internalSeason, setInternalSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
@@ -157,21 +172,40 @@ export function StaffingComparisonPanel({
     [employees, scheduleData, positions, dateStr],
   );
 
+  // Effektiver Bedarf: Winter/UG = Standard-Zeilen + UG-Zuschlag (Fr/Sa bzw.
+  // Tages-Flag «UG/Event offen», ganzjährig).
+  const eventOpen = eventDays.has(dateStr);
+  const effectiveRequirements = useMemo(
+    () => buildEffectiveRequirements({ requirements, config: profilesConfig, season, weekday, eventOpen }),
+    [requirements, profilesConfig, season, weekday, eventOpen],
+  );
+  const surchargeActive = ugSurchargeApplies({ config: profilesConfig, season, weekday, eventOpen });
+
   const result = useMemo(
     () =>
       computeStaffingComparison({
         positions,
-        requirements,
+        requirements: effectiveRequirements,
         plannedEmployees,
         season,
         weekday,
         departments,
       }),
-    [positions, requirements, plannedEmployees, season, weekday, departments],
+    [positions, effectiveRequirements, plannedEmployees, season, weekday, departments],
   );
 
   const kpis = useMemo(() => summarizeStaffingKpis(result.rows), [result.rows]);
   const headline = useMemo(() => staffingHeadline(result), [result]);
+
+  // Chef-de-Service-Regel (nur wenn eine Prioritätsliste konfiguriert ist).
+  const cdsCheck = useMemo(
+    () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsPriority ?? []),
+    [plannedEmployees, cdsPriority],
+  );
+  const employeeName = useCallback(
+    (id: string) => employees.find((e) => e.id === id)?.name ?? id,
+    [employees],
+  );
 
   const loading = posLoading || reqLoading;
 
@@ -241,12 +275,18 @@ export function StaffingComparisonPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {SEASONS.map((s) => (
-                  <SelectItem key={s.key} value={s.key} disabled={!s.available}>
-                    {s.label}
-                    {!s.available ? ' (bald)' : ''}
-                  </SelectItem>
-                ))}
+                {profiles && profiles.length > 0
+                  ? profiles.map((p) => (
+                      <SelectItem key={p.key} value={p.key}>
+                        {p.label}
+                      </SelectItem>
+                    ))
+                  : SEASONS.map((s) => (
+                      <SelectItem key={s.key} value={s.key} disabled={!s.available}>
+                        {s.label}
+                        {!s.available ? ' (bald)' : ''}
+                      </SelectItem>
+                    ))}
               </SelectContent>
             </Select>
             <Button
@@ -257,7 +297,47 @@ export function StaffingComparisonPanel({
             >
               Heute
             </Button>
+            {/* Tages-Flag «UG/Event offen» — UG-Zuschlag ganzjährig aktivieren. */}
+            <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+              <Checkbox
+                checked={eventOpen}
+                disabled={isGuest}
+                onCheckedChange={() => toggleEventDay(dateStr)}
+                data-testid="ug-event-toggle-panel"
+              />
+              UG/Event offen
+            </label>
+            {surchargeActive && (
+              <span className="inline-flex items-center rounded-full border border-violet-400 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:text-violet-400 whitespace-nowrap">
+                UG-Zuschlag aktiv{eventOpen ? ' (Event)' : ' (Winter Fr/Sa)'}
+              </span>
+            )}
           </div>
+
+          {/* Chef-de-Service-Regel (Warnung bzw. aktiver CdS) */}
+          {(cdsPriority?.length ?? 0) > 0 && (
+            <div
+              data-testid="staffing-cds-status"
+              className={cn(
+                'mb-3 rounded-md border px-3 py-2 text-xs flex items-start gap-2',
+                cdsCheck.ok
+                  ? 'border-border bg-muted/30'
+                  : 'border-amber-300 bg-amber-50 dark:bg-amber-950/20',
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+              {cdsCheck.ok ? (
+                <span>
+                  Chef de Service: <strong>{employeeName(cdsCheck.activeCdsId!)}</strong>
+                  {cdsCheck.gastgeberId && (
+                    <> · Gastgeber/GF: <strong>{employeeName(cdsCheck.gastgeberId)}</strong></>
+                  )}
+                </span>
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">{cdsCheck.warning}</span>
+              )}
+            </div>
+          )}
 
           {/* Nachfrage-Kontext (Reservationen) — nur geöffnet, admin-only. */}
           <StaffingDemandContext date={dateStr} className="mb-3" />

@@ -1,0 +1,60 @@
+Personalbedarf, Positionszuordnung und Dienstplan-Prüfung aufbauen — mandantenfähig (Oliv + Beaulieu). Additive Migration, keine bestehenden Daten löschen, alle Seeds idempotent (nur einfügen wenn noch nicht vorhanden).
+
+TEIL A — Positionen als Stammdaten
+- Katalog-Tabelle "positionen" (bereich: 'Front' | 'Küche', name).
+  Seed Küche: Kochen (heiss), Sushi, Kalte Küche, Pizza, Take Away/Piazzolo, Spüle/Abwasch, Reinigung/Prep, Springer Küche.
+  Seed Front: Service, Chef de Service, Gastgeber/GF, Bar oben, Bar unten, Corner Bar, Springer/Take Away.
+- Zuordnungstabelle "mitarbeiter_positionen" (mitarbeiter_id, mandant, position, haupt boolean). Ein Mitarbeiter kann mehrere Positionen haben.
+- Im Personalstamm pro Mitarbeiter Mehrfachauswahl der Positionen (Badges), editierbar.
+
+TEIL A2 — Seed der Oliv-Zuordnung (genau so hinterlegen):
+Küche:
+- Mejdi: Kochen (heiss)[haupt], Kalte Küche, Sushi
+- Micky: Kochen (heiss)[haupt], Sushi
+- Karel: Kochen (heiss)[haupt]
+- Michele: Kochen (heiss)[haupt], Kalte Küche
+- Miro: Kalte Küche[haupt], Sushi
+- Asim: Pizza[haupt], Take Away/Piazzolo
+- Party: Kochen (heiss)[haupt]
+- Sajed: Spüle/Abwasch[haupt], Reinigung/Prep
+- Deti: Reinigung/Prep[haupt]
+- Aushilfe Küche: Springer Küche[haupt], Kochen (heiss), Pizza, Take Away/Piazzolo
+Front:
+- Mendim: Service[haupt], Gastgeber/GF, Chef de Service
+- Artin: Chef de Service[haupt], Service
+- Ibrahim: Service[haupt], Chef de Service, Bar oben
+- Arber: Service[haupt], Bar oben
+- Marion: Service[haupt], Bar oben
+- Isabella: Service[haupt], Bar oben
+- Karwan: Service[haupt], Bar oben
+- Stefan: Service[haupt]
+- Nahuel: Bar oben[haupt], Bar unten
+- Carlos: Bar oben[haupt]
+- Saad: Bar oben[haupt], Springer/Take Away
+- Kawtar: Springer/Take Away[haupt]
+- Yulia: Springer/Take Away[haupt], Kalte Küche
+
+TEIL B — Chef-de-Service-Regel (Front)
+- Pro Tag genau 1 Chef de Service. Konfigurierbare Prioritätsliste, Default: Artin > Mendim > Ibrahim.
+- Aktiver CdS = die am Tag geplante Person mit höchster Priorität. Ist Mendim CdS-Ersatz (kein Artin geplant) → Mendim = Chef de Service; ist Artin geplant → Mendim = Gastgeber/GF. Ibrahim nur CdS, wenn weder Artin noch Mendim geplant sind, sonst Service.
+- Warnung anzeigen, wenn an einem Tag kein CdS planbar ist.
+
+TEIL C — Personalbedarf als festsetzbarer Soll, mit Saison-Profilen
+- Tabelle "personalbedarf" (mandant, profil, wochentag, bereich, position, anzahl_soll, schicht, zeit_von, zeit_bis, stunden_soll).
+- Profile: 'Standard' und 'Winter/UG'. Weitere Profile anlegbar. Ein Profil ist je Datumsbereich aktiv (z. B. Winter/UG ab 01.10.).
+- Seed Profil 'Standard' (Oliv) mit den Soll-Werten aus der gelieferten Positions-Übersicht (Anzahl je Position/Wochentag + Netto-Stunden; Umsatzbudget Mo 5'000, Di/Mi 6'000, Do 8'000, Fr/Sa 12'000, So 7'000). Werte im UI editierbar und "festsetzbar" (sperren gegen versehentliches Ändern).
+- Profil 'Winter/UG': Kopie von 'Standard', zusätzlich UG-Betrieb aktiv (Positionen Bar unten und zusätzliche Service/Bar-Köpfe an umsatzstarken Tagen erhöhbar). Konkrete Erhöhungen lasse ich im UI leer/als Vorschlag — die trägt der Nutzer ein.
+- Bedarf-Editor im UI: Matrix Wochentag × Position mit Anzahl + Zeitfenster, Profil-Auswahl oben, Button "festsetzen".
+
+TEIL D — Prüfung Soll vs. Ist (3 Dimensionen mit Ampel)
+Beim/nach Dienstplan-Erstellen je Tag gegen das aktive Profil vergleichen:
+1. Stunden: geplante Netto-Ist-Stunden je Position vs stunden_soll.
+2. Positionen: geplante Ist-Anzahl je Position vs anzahl_soll.
+3. Schichtabdeckung: jede geforderte Position je Schicht mit mindestens einer geschulten Person besetzt (aus mitarbeiter_positionen); zusätzlich CdS-Regel erfüllt.
+- Netto-Stunden: durchgehende Schicht abzüglich Pause nach ArG/L-GAV (15/30/60 min ab 5.5/7/9 h); Splitschicht = Summe der Segmente (Pause liegt in der Lücke).
+- Ampel je Dimension und gesamt: grün = im Soll, gelb = Soll ±1 bzw. knapp, rot = Über-/Unterbesetzung oder Station/Schicht unbesetzt.
+
+TEIL E — Mandantenfähig / Beaulieu
+- Alle Tabellen und Ansichten pro Mandant. Oliv-Seeds nur für Mandant Oliv.
+- Für Beaulieu: die Dienstpläne Juni und Juli des Mandanten Beaulieu aus der DB auslesen und daraus dieselbe Ist-Aufstellung je Wochentag erzeugen (Positionen, Anzahl, Netto-Stunden) — als Vorschlag für den Beaulieu-'Standard'-Bedarf. Die Positionszuordnung der Beaulieu-Mitarbeiter im UI leer anlegen (zum Ausfüllen wie bei Oliv).
+- Beaulieu hat kein Take Away (entsprechende Positionen für Beaulieu ausblenden).

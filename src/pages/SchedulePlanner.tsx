@@ -99,6 +99,9 @@ import { usePositions } from '@/hooks/usePositions';
 import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
+import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
+import { resolveActiveProfileForDate, buildEffectiveRequirements } from '@/lib/staffing-profiles-utils';
+import { useUgEventDays } from '@/hooks/useUgEventDays';
 import { useQuickTimes } from '@/hooks/useQuickTimes';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { Input } from '@/components/ui/input';
@@ -257,6 +260,22 @@ const SchedulePlanner = () => {
   }, [role, allowedDepartment]);
   // Personalbedarf: Saison geteilt zwischen Tages-Badges (Grid) und Abgleich-Panel.
   const [staffingSeason, setStaffingSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
+  // Aktives Profil automatisch aus dem Datumsbereich der Profil-Konfiguration
+  // vorbelegen (z.B. Winter/UG ab 01.10.); manuelle Auswahl bleibt danach erhalten.
+  const {
+    tenantId: staffingTenantId,
+    config: staffingProfilesConfig,
+    loading: staffingProfilesLoading,
+  } = useStaffingProfiles();
+  // Pro Mandant genau einmal auto-setzen (Mandantenwechsel ⇒ neu auflösen);
+  // manuelle Auswahl innerhalb des Mandanten bleibt danach erhalten.
+  const { eventDays: ugEventDays } = useUgEventDays();
+  const staffingSeasonAutoSetFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (staffingProfilesLoading || staffingSeasonAutoSetFor.current === staffingTenantId) return;
+    staffingSeasonAutoSetFor.current = staffingTenantId;
+    setStaffingSeason(resolveActiveProfileForDate(staffingProfilesConfig, new Date()));
+  }, [staffingProfilesLoading, staffingProfilesConfig, staffingTenantId]);
   const { positions: staffingPositions } = usePositions();
   const { requirements: staffingRequirements } = useStaffingRequirements();
   const [scheduleData, setScheduleData] = useState<{[key: string]: DaySchedule}>({});
@@ -1309,12 +1328,21 @@ const SchedulePlanner = () => {
       const planned = buildPlannedEmployees(
         roleScopedEmployees, scheduleData, staffingPositions, dateStr,
       );
+      const weekday = getISODay(day); // ISO 1..7 (Mo..So)
+      // Winter/UG = Standard + UG-Zuschlag (Fr/Sa bzw. «UG/Event offen»-Flag).
+      const effectiveReqs = buildEffectiveRequirements({
+        requirements: staffingRequirements,
+        config: staffingProfilesConfig,
+        season: staffingSeason,
+        weekday,
+        eventOpen: ugEventDays.has(dateStr),
+      });
       const summary = computeDayStaffingSummary({
         positions: staffingPositions,
-        requirements: staffingRequirements,
+        requirements: effectiveReqs,
         plannedEmployees: planned,
         season: staffingSeason,
-        weekday: getISODay(day), // ISO 1..7 (Mo..So)
+        weekday,
         departments: comparisonDepartments,
       });
       if (summary.hasRequirements && summary.departments.length > 0) {
@@ -1322,7 +1350,7 @@ const SchedulePlanner = () => {
       }
     }
     return map;
-  }, [displayDays, roleScopedEmployees, scheduleData, staffingPositions, staffingRequirements, staffingSeason, comparisonDepartments]);
+  }, [displayDays, roleScopedEmployees, scheduleData, staffingPositions, staffingRequirements, staffingSeason, comparisonDepartments, staffingProfilesConfig, ugEventDays]);
 
   // Calculate hours from a time slot
   const calculateSlotHours = (slot: TimeSlot | null | undefined): number => {
@@ -5686,6 +5714,8 @@ const SchedulePlanner = () => {
         departments={comparisonDepartments}
         season={staffingSeason}
         onSeasonChange={setStaffingSeason}
+        profiles={staffingProfilesConfig.profiles}
+        cdsPriority={staffingProfilesConfig.cdsPriority}
       />
 
       {/* Day Detail Dialog (Plan view) */}

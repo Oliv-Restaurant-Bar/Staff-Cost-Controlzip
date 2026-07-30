@@ -29,7 +29,18 @@ import type { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 import type { Position } from '@/types/positions';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import { seasonLabel, weekdayLabel } from '@/lib/staffing-requirements-utils';
-import { positionDisplayName } from '@/lib/position-utils';
+import { positionDisplayName, employeeCoverableKeys, resolvePositionKey } from '@/lib/position-utils';
+import { computeDayCheck, type PlannedEmployeeDayEx } from '@/lib/staffing-check-utils';
+import {
+  buildEffectiveRequirements,
+  defaultStaffingProfilesConfig,
+  ugSurchargeApplies,
+  type StaffingProfilesConfig,
+} from '@/lib/staffing-profiles-utils';
+import { useUgEventDays } from '@/hooks/useUgEventDays';
+import { usePermissions } from '@/hooks/usePermissions';
+import { Checkbox } from '@/components/ui/checkbox';
+import { StaffingDayCheck } from '@/components/schedule-planner/StaffingDayCheck';
 import {
   buildPlannedEmployees,
   computeStaffingComparison,
@@ -61,6 +72,8 @@ interface StaffingScheduleCheckCardProps {
   season: StaffingSeason;
   /** Auf der Seite gewählter ISO-Wochentag (1..7) — steuert das Default-Datum. */
   weekday: number;
+  /** Profil-Konfiguration (CdS-Priorität etc.) für die 3-Dimensionen-Prüfung. */
+  profilesConfig?: StaffingProfilesConfig | null;
 }
 
 export function StaffingScheduleCheckCard({
@@ -68,8 +81,11 @@ export function StaffingScheduleCheckCard({
   requirements,
   season,
   weekday,
+  profilesConfig,
 }: StaffingScheduleCheckCardProps) {
   const { tenantId } = useTenant();
+  const { isGuest } = usePermissions();
+  const { eventDays, toggle: toggleEventDay } = useUgEventDays();
 
   const [dateStr, setDateStr] = useState<string>(() =>
     format(nextDateForIsoWeekday(weekday), 'yyyy-MM-dd'),
@@ -122,6 +138,19 @@ export function StaffingScheduleCheckCard({
 
   const dateWeekday = selectedDate ? getISODay(selectedDate) : weekday;
 
+  // Effektiver Bedarf: Winter/UG liest Standard-Zeilen; UG-Zuschlag additiv
+  // (Winter Fr/Sa bzw. Tages-Flag «UG/Event offen», ganzjährig).
+  const config = useMemo(
+    () => profilesConfig ?? defaultStaffingProfilesConfig(tenantId),
+    [profilesConfig, tenantId],
+  );
+  const eventOpen = eventDays.has(dateStr);
+  const effectiveRequirements = useMemo(
+    () => buildEffectiveRequirements({ requirements, config, season, weekday: dateWeekday, eventOpen }),
+    [requirements, config, season, dateWeekday, eventOpen],
+  );
+  const surchargeActive = ugSurchargeApplies({ config, season, weekday: dateWeekday, eventOpen });
+
   const plannedEmployees = useMemo(
     () => (selectedDate
       ? buildPlannedEmployees(employees, scheduleData, positions, format(selectedDate, 'yyyy-MM-dd'))
@@ -131,21 +160,43 @@ export function StaffingScheduleCheckCard({
 
   const comparison = useMemo(
     () => computeStaffingComparison({
-      positions, requirements, plannedEmployees, season, weekday: dateWeekday,
+      positions, requirements: effectiveRequirements, plannedEmployees, season, weekday: dateWeekday,
     }),
-    [positions, requirements, plannedEmployees, season, dateWeekday],
+    [positions, effectiveRequirements, plannedEmployees, season, dateWeekday],
   );
 
   const summary = useMemo(
     () => computeDayStaffingSummary({
-      positions, requirements, plannedEmployees, season, weekday: dateWeekday,
+      positions, requirements: effectiveRequirements, plannedEmployees, season, weekday: dateWeekday,
     }),
-    [positions, requirements, plannedEmployees, season, dateWeekday],
+    [positions, effectiveRequirements, plannedEmployees, season, dateWeekday],
   );
 
   const kpis = useMemo(() => summarizeStaffingKpis(comparison.rows), [comparison.rows]);
 
+  // 3-Dimensionen-Tagesprüfung (Stunden / Anzahl / Abdeckung + CdS-Regel).
+  const dayCheck = useMemo(() => {
+    const byId = new Map(employees.map((e) => [e.id, e]));
+    const plannedEx: PlannedEmployeeDayEx[] = plannedEmployees.map((p) => {
+      const emp = byId.get(p.id);
+      const trainedKeys = emp
+        ? employeeCoverableKeys(emp)
+            .map((k) => resolvePositionKey(positions, k) ?? k)
+            .filter((k): k is string => !!k)
+        : [];
+      return { ...p, trainedKeys: [...new Set(trainedKeys)] };
+    });
+    return computeDayCheck({
+      requirements: effectiveRequirements,
+      plannedEmployees: plannedEx,
+      season,
+      weekday: dateWeekday,
+      cdsPriority: config.cdsPriority,
+    });
+  }, [employees, plannedEmployees, positions, effectiveRequirements, season, dateWeekday, config]);
+
   const positionName = (key: string) => positionDisplayName(positions, key) || key;
+  const employeeName = (id: string) => employees.find((e) => e.id === id)?.name ?? id;
 
   return (
     <Card>
@@ -175,6 +226,21 @@ export function StaffingScheduleCheckCard({
             <span className="text-xs text-muted-foreground pb-1.5">
               {format(selectedDate, 'EEEE, dd.MM.yyyy', { locale: de })}
             </span>
+          )}
+          {/* Tages-Flag «UG/Event offen» — aktiviert den UG-Zuschlag ganzjährig. */}
+          <label className="flex items-center gap-1.5 pb-1.5 text-xs cursor-pointer select-none">
+            <Checkbox
+              checked={eventOpen}
+              disabled={isGuest}
+              onCheckedChange={() => toggleEventDay(dateStr)}
+              data-testid="ug-event-toggle"
+            />
+            UG/Event offen
+          </label>
+          {surchargeActive && (
+            <Badge variant="outline" className="mb-1 border-violet-400 text-violet-700 dark:text-violet-400 text-[10px]">
+              UG-Zuschlag aktiv{eventOpen ? ' (Event)' : ' (Winter Fr/Sa)'}
+            </Badge>
           )}
           {dateWeekday !== weekday && (
             <Badge variant="outline" className="mb-1 border-amber-400 text-amber-700 dark:text-amber-400 text-[10px]">
@@ -252,6 +318,15 @@ export function StaffingScheduleCheckCard({
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Tagesprüfung (3 Dimensionen mit Ampel + CdS-Regel) */}
+            <div className="rounded-md border p-3">
+              <StaffingDayCheck
+                check={dayCheck}
+                positionName={positionName}
+                employeeName={employeeName}
+              />
             </div>
 
             <Link

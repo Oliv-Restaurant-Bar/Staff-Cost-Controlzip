@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
-  ClipboardList, Plus, Trash2, AlertTriangle, Save, RotateCcw, Clock,
+  ClipboardList, Plus, Trash2, AlertTriangle, Save, RotateCcw, Clock, Lock, Unlock, Coins,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,14 +26,25 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { usePositions } from '@/hooks/usePositions';
 import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
+import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useTenant } from '@/contexts/TenantContext';
+import {
+  isProfileLocked,
+  isValidMonthDay,
+  profileKeyFromLabel,
+  profileByKey,
+  dataSeasonForProfile,
+} from '@/lib/staffing-profiles-utils';
+import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
+import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
+import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
 import { StaffingScheduleCheckCard } from '@/components/schedule-planner/StaffingScheduleCheckCard';
 import type { StaffingSeason, StaffingRequirementDraft, StaffingScope } from '@/types/staffing';
 import {
-  SEASONS,
   DEFAULT_SEASON,
   SCOPE_WEEKLY,
   WEEKDAYS,
@@ -65,8 +76,10 @@ function serializeEdits(edits: EditsMap): string {
 
 export default function Personalbedarf() {
   const { canAccessModule, isGuest } = usePermissions();
+  const { tenantId } = useTenant();
   const { positions, loading: posLoading, error: posError } = usePositions();
   const { requirements, loading: reqLoading, error: reqError, saveScope } = useStaffingRequirements();
+  const { config: profilesConfig, save: saveProfilesConfig } = useStaffingProfiles();
 
   const [season, setSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
   const [weekday, setWeekday] = useState<number>(currentIsoWeekday());
@@ -74,13 +87,72 @@ export default function Personalbedarf() {
   const [baselineKey, setBaselineKey] = useState<string>('[]');
   const [busy, setBusy] = useState(false);
 
-  const readOnly = isGuest;
+  const activeProfile = profileByKey(profilesConfig, season);
+  const locked = isProfileLocked(profilesConfig, season);
+  /** Abgeleitetes Profil (Winter/UG = Standard + UG-Zuschlag): kein eigener Editor. */
+  const derived = !!activeProfile?.baseKey;
+  /** Saison, deren Zeilen die Matrix zeigt (Winter/UG → Standard-Zeilen). */
+  const matrixSeason = dataSeasonForProfile(profilesConfig, season);
+  const readOnly = isGuest || locked || derived;
   const loading = posLoading || reqLoading;
+
+  // ── Profil-Verwaltung ───────────────────────────────────────────────────────
+
+  const updateProfile = async (
+    key: StaffingSeason,
+    patch: Partial<{ activeFrom: string | null; activeTo: string | null; locked: boolean }>,
+  ) => {
+    const next = {
+      ...profilesConfig,
+      profiles: profilesConfig.profiles.map((p) => (p.key === key ? { ...p, ...patch } : p)),
+    };
+    try {
+      await saveProfilesConfig(next);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Profil konnte nicht gespeichert werden');
+    }
+  };
+
+  const handleToggleLock = async () => {
+    if (!activeProfile) return;
+    await updateProfile(season, { locked: !activeProfile.locked });
+    toast.success(activeProfile.locked
+      ? `Profil «${activeProfile.label}» ist wieder bearbeitbar`
+      : `Profil «${activeProfile.label}» festgesetzt`);
+  };
+
+  const handleAddProfile = async () => {
+    const label = window.prompt('Name des neuen Profils (z.B. «Sommerfest»):')?.trim();
+    if (!label) return;
+    const key = profileKeyFromLabel(label);
+    if (!key) { toast.error('Ungültiger Profilname'); return; }
+    if (profilesConfig.profiles.some((p) => p.key === key)) {
+      toast.error('Ein Profil mit diesem Namen existiert bereits');
+      return;
+    }
+    try {
+      await saveProfilesConfig({
+        ...profilesConfig,
+        profiles: [...profilesConfig.profiles, { key, label, activeFrom: null, activeTo: null, locked: false, baseKey: null }],
+      });
+      setSeason(key);
+      toast.success(`Profil «${label}» angelegt — Bedarf jetzt erfassen`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Profil konnte nicht angelegt werden');
+    }
+  };
+
+  const handleRangeChange = async (field: 'activeFrom' | 'activeTo', value: string) => {
+    // <input type="date"> liefert yyyy-MM-dd → auf MM-TT reduzieren; leer = null.
+    const mmdd = value ? value.slice(5) : '';
+    if (mmdd && !isValidMonthDay(mmdd)) return;
+    await updateProfile(season, { [field]: mmdd || null });
+  };
 
   // Hierarchie (Abteilung → Bereich → Position) für den aktiven Bereich.
   const matrix = useMemo(
-    () => buildRequirementMatrix(positions, requirements, season, weekday),
-    [positions, requirements, season, weekday],
+    () => buildRequirementMatrix(positions, requirements, matrixSeason, weekday),
+    [positions, requirements, matrixSeason, weekday],
   );
 
   // Aktive (= angezeigte) Positions-Keys dieses Bereichs.
@@ -93,8 +165,8 @@ export default function Personalbedarf() {
   // Schichten von NICHT angezeigten Positionen (inaktiv/gelöscht) dieses
   // Bereichs — werden beim Speichern UNVERÄNDERT erhalten (kein stilles Löschen).
   const orphanShifts = useMemo(
-    () => shiftsForScope(requirements, season, weekday).filter((r) => !visibleKeys.has(r.positionKey)),
-    [requirements, season, weekday, visibleKeys],
+    () => shiftsForScope(requirements, matrixSeason, weekday).filter((r) => !visibleKeys.has(r.positionKey)),
+    [requirements, matrixSeason, weekday, visibleKeys],
   );
 
   // Edits aus den geladenen Daten (neu) aufbauen, wenn sich Bereich/Daten ändern.
@@ -160,6 +232,28 @@ export default function Personalbedarf() {
   };
 
   const handleSave = async () => {
+    // 0a) Abgeleitete Profile (Winter/UG) haben keine eigenen Zeilen — nie speichern.
+    if (derived) {
+      toast.error('Winter/UG ist abgeleitet (Standard + UG-Zuschlag) — bitte den Standard bearbeiten.');
+      return;
+    }
+    // 0) Festgesetzte Profile: Schreibsperre auch im Save-Pfad durchsetzen —
+    //    frisch aus der DB prüfen, damit UI-Regressionen/parallele Sperren
+    //    nicht am veralteten lokalen State vorbeischreiben.
+    if (isProfileLocked(profilesConfig, season)) {
+      toast.error('Profil ist festgesetzt — zum Bearbeiten zuerst entsperren.');
+      return;
+    }
+    try {
+      const fresh = await loadStaffingProfilesConfig(tenantId);
+      if (isProfileLocked(fresh, season)) {
+        toast.error('Profil wurde zwischenzeitlich festgesetzt — Speichern abgebrochen.');
+        return;
+      }
+    } catch {
+      /* Prüfung best-effort; lokale Sperre wurde oben bereits geprüft. */
+    }
+
     // 1) Validierung aller bearbeiteten Schichten.
     for (const [key, shifts] of Object.entries(edits)) {
       for (const s of shifts) {
@@ -236,16 +330,30 @@ export default function Personalbedarf() {
           <ClipboardList className="h-5 w-5 text-violet-600" />
           <h1 className="text-lg font-semibold">Personalbedarf</h1>
         </div>
-        {!readOnly && (
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="ghost" className="gap-1" onClick={handleReset} disabled={!dirty || busy}>
-              <RotateCcw className="h-4 w-4" /> Verwerfen
+        <div className="flex items-center gap-2">
+          {!isGuest && (
+            <Button
+              size="sm"
+              variant={locked ? 'secondary' : 'outline'}
+              className="gap-1"
+              onClick={handleToggleLock}
+              title={locked ? 'Profil wieder bearbeitbar machen' : 'Profil gegen versehentliches Ändern sperren'}
+            >
+              {locked ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+              {locked ? 'Entsperren' : 'Festsetzen'}
             </Button>
-            <Button size="sm" className="gap-1" onClick={handleSave} disabled={!dirty || busy}>
-              <Save className="h-4 w-4" /> {busy ? 'Speichert…' : 'Speichern'}
-            </Button>
-          </div>
-        )}
+          )}
+          {!readOnly && (
+            <>
+              <Button size="sm" variant="ghost" className="gap-1" onClick={handleReset} disabled={!dirty || busy}>
+                <RotateCcw className="h-4 w-4" /> Verwerfen
+              </Button>
+              <Button size="sm" className="gap-1" onClick={handleSave} disabled={!dirty || busy}>
+                <Save className="h-4 w-4" /> {busy ? 'Speichert…' : 'Speichern'}
+              </Button>
+            </>
+          )}
+        </div>
       </div>
 
       <p className="text-sm text-muted-foreground">
@@ -261,24 +369,86 @@ export default function Personalbedarf() {
         </div>
       )}
 
-      {/* Saison-Auswahl */}
+      {/* Profil-Auswahl (Saisons + individuelle Profile) */}
       <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">Saison</Label>
-        <div className="flex flex-wrap gap-1.5">
-          {SEASONS.map((s) => (
+        <Label className="text-xs text-muted-foreground">Profil</Label>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {profilesConfig.profiles.map((p) => (
             <Button
-              key={s.key}
+              key={p.key}
               type="button"
               size="sm"
-              variant={season === s.key ? 'default' : 'outline'}
-              disabled={!s.available}
-              title={!s.available ? 'Bald verfügbar' : undefined}
-              onClick={() => s.available && setSeason(s.key)}
+              variant={season === p.key ? 'default' : 'outline'}
+              onClick={() => setSeason(p.key)}
+              className="gap-1"
             >
-              {s.label}{!s.available && ' (bald)'}
+              {p.locked && <Lock className="h-3 w-3" />}
+              {p.label}
             </Button>
           ))}
+          {!isGuest && (
+            <Button type="button" size="sm" variant="ghost" className="gap-1 text-xs" onClick={handleAddProfile}>
+              <Plus className="h-3.5 w-3.5" /> Neues Profil
+            </Button>
+          )}
         </div>
+        {/* Abgeleitetes Profil: Winter/UG = Standard + UG-Zuschlag */}
+        {derived && (
+          <div className="rounded-md border border-violet-300 bg-violet-50 dark:bg-violet-950/20 px-3 py-2 space-y-2">
+            <p className="text-xs font-medium">
+              «{activeProfile?.label}» = Standard + UG-Zuschlag (kein eigener Bedarf — Änderungen am Soll bitte im Profil «Standard»).
+            </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-muted-foreground">UG-Zuschlag:</span>
+              {profilesConfig.ugSurcharge.entries.length === 0 && (
+                <span className="italic text-muted-foreground">keiner konfiguriert</span>
+              )}
+              {profilesConfig.ugSurcharge.entries.map((e) => (
+                <Badge key={e.positionKey} variant="secondary" className="text-[11px]">
+                  {positions.find((p) => p.key === e.positionKey)?.name ?? e.positionKey} +{e.count}
+                </Badge>
+              ))}
+              <span className="text-muted-foreground">
+                · Regelbetrieb: {profilesConfig.ugSurcharge.weekdays
+                  .map((w) => WEEKDAYS.find((x) => x.value === w)?.label ?? w)
+                  .join(' + ')}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Zusätzlich greift der Zuschlag GANZJÄHRIG an jedem Tag mit gesetztem
+              «UG/Event offen»-Flag (im Dienstplan-Abgleich bzw. unten in der Prüfkarte setzbar).
+            </p>
+          </div>
+        )}
+        {/* Aktivierungs-Datumsbereich des gewählten Profils (ausser Standard = Rückfall) */}
+        {activeProfile && activeProfile.key !== 'standard' && (
+          <div className="flex flex-wrap items-end gap-2 pt-1">
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Aktiv ab (jährlich)</Label>
+              <Input
+                type="date"
+                value={activeProfile.activeFrom ? `2026-${activeProfile.activeFrom}` : ''}
+                disabled={isGuest}
+                onChange={(e) => handleRangeChange('activeFrom', e.target.value)}
+                className="h-8 w-[10.5rem] text-sm"
+              />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Aktiv bis (jährlich)</Label>
+              <Input
+                type="date"
+                value={activeProfile.activeTo ? `2026-${activeProfile.activeTo}` : ''}
+                disabled={isGuest}
+                onChange={(e) => handleRangeChange('activeTo', e.target.value)}
+                className="h-8 w-[10.5rem] text-sm"
+              />
+            </div>
+            <span className="text-[11px] text-muted-foreground pb-1.5">
+              Jahr wird ignoriert — der Bereich gilt jedes Jahr (z.B. 01.10.–31.03.).
+              Ohne Bereich ist das Profil nie automatisch aktiv.
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Wochentag-Auswahl */}
@@ -303,8 +473,19 @@ export default function Personalbedarf() {
       {/* Bereichs-Zusammenfassung (rein informativ) */}
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Clock className="h-4 w-4" />
-        <span>{seasonLabel(season)} · {weekdayLabel(weekday)}</span>
+        <span>{activeProfile?.label ?? seasonLabel(season)} · {weekdayLabel(weekday)}</span>
         <Badge variant="secondary" className="ml-1">Benötigt gesamt: {dayTotal}</Badge>
+        {profilesConfig.revenueBudgetByWeekday[weekday] != null && (
+          <Badge variant="outline" className="gap-1">
+            <Coins className="h-3 w-3" />
+            Umsatzbudget: CHF {profilesConfig.revenueBudgetByWeekday[weekday].toLocaleString('de-CH')}
+          </Badge>
+        )}
+        {locked && (
+          <Badge variant="outline" className="border-slate-400 gap-1">
+            <Lock className="h-3 w-3" /> festgesetzt
+          </Badge>
+        )}
         {dirty && <Badge variant="outline" className="border-amber-400 text-amber-700 dark:text-amber-400">ungespeichert</Badge>}
       </div>
 
@@ -331,8 +512,12 @@ export default function Personalbedarf() {
           requirements={requirements}
           season={season}
           weekday={weekday}
+          profilesConfig={profilesConfig}
         />
       )}
+
+      {/* Beaulieu: Ist-Aufstellung aus Juni/Juli als Standard-Vorschlag */}
+      {!loading && tenantId === 'beaulieu' && <PastScheduleSuggestionCard />}
 
       {/* Hierarchie: Abteilung → Bereich → Position → Schichten */}
       {!loading && hasActivePositions && matrix.map((dep) => (
@@ -410,6 +595,18 @@ export default function Personalbedarf() {
                                   className="h-8 w-[5rem] text-sm"
                                 />
                               </div>
+                              {/* Netto-Stunden-Soll (ArG-Pausenstaffel), rein informativ */}
+                              {(() => {
+                                const netto = nettoSegmentMinutes(s.shiftStart, s.shiftEnd);
+                                const count = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
+                                if (netto <= 0) return null;
+                                return (
+                                  <span className="text-[11px] text-muted-foreground pb-2 tabular-nums whitespace-nowrap">
+                                    netto {(netto / 60).toLocaleString('de-CH', { maximumFractionDigits: 1 })} h
+                                    {count > 1 && ` · Soll ${((netto * count) / 60).toLocaleString('de-CH', { maximumFractionDigits: 1 })} h`}
+                                  </span>
+                                );
+                              })()}
                               {!readOnly && (
                                 <Button
                                   size="icon"
