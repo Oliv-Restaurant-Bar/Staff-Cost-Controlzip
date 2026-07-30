@@ -18,19 +18,19 @@ const rows: EmployeeListRow[] = [
     id: 'a1', name: 'Anna Muster', department: 'service', deptLabel: 'Service',
     positionLabel: 'Chef de Service', employmentType: 'vollzeit', typeLabel: 'Vollzeit',
     eintrittIso: '2023-05-15', eintrittLabel: '15.05.2023', pensumLabel: '100 %',
-    status: 'aktiv', statusLabel: 'Aktiv', hasContractFile: true,
+    status: 'aktiv', statusLabel: 'Aktiv', hasContractFile: true, erfassungsart: 'MIRUS',
   },
   {
     id: 'b2', name: 'Beat Beispiel', department: 'küche', deptLabel: 'Küche',
     positionLabel: '', employmentType: 'teilzeit', typeLabel: 'Teilzeit',
     eintrittIso: undefined, eintrittLabel: '—', pensumLabel: '—',
-    status: 'ausgetreten', statusLabel: 'Ausgetreten', hasContractFile: false,
+    status: 'ausgetreten', statusLabel: 'Ausgetreten', hasContractFile: false, erfassungsart: 'MANUELL',
   },
   {
     id: 'c3', name: 'Carla Chef', department: 'service', deptLabel: 'Service',
     positionLabel: 'Service', employmentType: 'aushilfe', typeLabel: 'Aushilfe',
     eintrittIso: '2026-09-01', eintrittLabel: '01.09.2026', pensumLabel: '20 %',
-    status: 'eintritt_geplant', statusLabel: 'Eintritt geplant', hasContractFile: false,
+    status: 'eintritt_geplant', statusLabel: 'Eintritt geplant', hasContractFile: false, erfassungsart: 'MANUELL',
   },
 ];
 

@@ -34,6 +34,16 @@ export interface Employee {
    */
   istQuelle?: 'mirus' | 'manuell' | 'plan';
 
+  /**
+   * Erfassungsart für den MIRUS-Ist-Import (employees.erfassungsart):
+   *   'MIRUS'   = gestempelter Mitarbeiter — wird vom MIRUS-Import geschrieben
+   *   'MANUELL' = Aushilfe / nicht gestempelt — Import fasst diese MA NIE an
+   * Default (falls NULL): Wer in einem MIRUS-Import vorkommt = 'MIRUS',
+   * alle anderen = 'MANUELL'. Reine Kennzeichnung/Filter — keine Auswirkung
+   * auf Abteilungen, Sortierung oder Kostenrechnung (dafür gilt istQuelle).
+   */
+  erfassungsart?: 'MIRUS' | 'MANUELL';
+
   // ─── Persönliche Daten (für Onboarding / Vertrag) ──────────────────────
   birthDate?: string;               // ISO-Datum
   nationality?: string;

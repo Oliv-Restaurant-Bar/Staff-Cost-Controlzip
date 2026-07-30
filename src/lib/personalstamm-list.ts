@@ -116,6 +116,8 @@ export interface EmployeeListRow {
   statusLabel: string;
   /** Lokal hinterlegter Vertrag vorhanden (reines Anzeige-Icon). */
   hasContractFile: boolean;
+  /** MIRUS-Import-Kennzeichnung: 'MIRUS' = gestempelt, 'MANUELL' = Aushilfe/Default. */
+  erfassungsart: 'MIRUS' | 'MANUELL';
 }
 
 /** View-Model einer Listenzeile/Kachel — Liste und Kacheln nutzen DIESELBEN Rows. */
@@ -142,6 +144,7 @@ export function buildEmployeeRow(
     status,
     statusLabel: STATUS_LABELS[status],
     hasContractFile,
+    erfassungsart: emp.erfassungsart ?? 'MANUELL',
   };
 }
 

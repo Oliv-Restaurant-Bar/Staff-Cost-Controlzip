@@ -64,4 +64,5 @@
 - [Netto-Umsatz SSOT](umsatz-ssot.md) — umsatz.ts einzige Netto-Quelle (ALLE Views); Quelle = MANUELLER Speisekarte-Import (dailyBudgets-KV) + maison-daily-Marketing, NIE gn_imports mischen; Mount-Loads brauchen store-synced-Retry.
 - [Monatsreport Quellen & Regeln](monatsreport-sources.md) — leer statt 0; Ist-Klemme; Gäste-Tagessumme massgeblich (kein Zeitraum-Abgleich); Umsatz/Gast nur über gepaarte Tage; KW-Auswahl braucht ISO-Wochenjahr.
 - [Personalkosten-SSOT](personalkosten-ssot.md) — alle PK-Ansichten nur via personalkosten.ts; Budget 106'400/35.5 %, PKQ nur personalquote(); State-Reset bei Monatswechsel; Rollen-Setzen via Mgmt-API-SQL.
+- [MIRUS-Reconcile-Import (Dienstplan)](mirus-reconcile-import.md) — erfassungsart-Kennzeichnung, awaited Writes ({ok}-Check, wirft nie), Backup/Undo-Disziplin; alte ActualHoursImportButton lebt auf 3 anderen Seiten weiter.
 - [Supabase Edge Deploy via Management API](supabase-mgmt-api-deploy.md) — PAT frisch anfordern bei 401; Deploy per multipart /functions/deploy, verify_jwt in metadata (config.toml nur CLI); Ref aus .env.

@@ -1,0 +1,45 @@
+MIRUS Ist-Stunden-Import komplett neu bauen — Modus „MIRUS überschreibt mit Rückfragen", mandantenfähig für Oliv UND Beaulieu.
+
+Ziel: Gestempelte Ist-Stunden zuverlässig übernehmen, bei echten Konflikten VOR dem Schreiben rückfragen, immer zuerst ein Backup anlegen, danach eine Abgleich-Übersicht zeigen. Keine Daten verlieren, Aushilfen nie anfassen. Nichts wird geschrieben, bevor die Rückfrage-Liste bestätigt ist.
+
+1) Erfassungsart pro Mitarbeiter
+- Neues Feld im Personalstamm: erfassungsart = 'MIRUS' | 'MANUELL' (gestempelt vs. Aushilfe/nicht gestempelt).
+- Default: Wer in einem MIRUS-Import vorkommt = 'MIRUS', alle anderen = 'MANUELL'.
+- Das ist NUR eine Kennzeichnung/Filter. Abteilungen Küche/Service bleiben in Ansicht und Sortierung exakt wie jetzt — keine Umsortierung, keine getrennten Blöcke.
+- Kleines Badge „MIRUS"/„Manuell" pro Mitarbeiter, optional Filter „nur MIRUS / nur Manuell".
+- Eigene Zuteilung je Mandant (Oliv und Beaulieu getrennt pflegbar).
+
+2) Scope-Check (monatsintern)
+- Datumsbereich aus dem Dateititel lesen („von DD.MM.YYYY bis DD.MM.YYYY").
+- Prüfen: alle Tage im selben Monat + Jahr. Falls monatsübergreifend → Abbruch mit klarer Meldung, nichts schreiben.
+- Nur Tage 1..Stichtag des Monats anfassen; restliche Tage des Monats, andere Monate und der andere Mandant bleiben unberührt.
+
+3) Nur MIRUS-Mitarbeiter werden geschrieben
+- Import verändert ausschliesslich Mitarbeiter mit erfassungsart='MIRUS', die in der Datei stehen.
+- MANUELL-Mitarbeiter (Aushilfen) werden NIE berührt — auch nicht im lokalen State. Den bestehenden Bug beheben, der beim „Ersetzen" lokal ~78 Einträge von Nicht-Datei-Mitarbeitern wegräumt.
+
+4) Zell-Logik (pro MIRUS-Mitarbeiter, pro Datei-Tag) — automatisch anwenden ausser bei Konflikten:
+- Dienstplan leer/Frei ohne Marke + Datei > 0  → MIRUS-Stunden übernehmen.
+- Dienstplan leer/Frei + Datei = 0            → bleibt frei.
+- Dienstplan Stunden ohne Marke + Datei > 0 (abweichend) → mit MIRUS überschreiben (korrigiert automatisch die um einen Tag verschobenen Blöcke und die Kleindifferenzen).
+- Dienstplan Absenz-Marke (FE/K/Unfall/F) + Datei = 0 → Marke + evtl. Stunden bleiben vollständig (MIRUS bestätigt Absenz).
+
+5) Konflikte → Rückfrage-Liste VOR dem Schreiben:
+- Typ A „MIRUS 0 vs. Dienstplan Stunden": Datei = 0, Dienstplan hat Stunden ohne Marke. Pro Zelle fragen: 0 übernehmen (frei) ODER Dienstplan-Stunden behalten.
+- Typ B „MIRUS Stunden vs. Dienstplan Absenz": Datei > 0, Dienstplan hat FE/K/Unfall. Pro Zelle fragen: MIRUS-Stunden übernehmen und Marke entfernen ODER Absenz behalten.
+- UI: kompakte Tabelle, je Zeile Mitarbeiter / Datum / Dienstplan-Wert / MIRUS-Wert / Auswahl. Schnellauswahl „Alle MIRUS übernehmen" und „Alle Dienstplan behalten", einzeln übersteuerbar. Erst der Button „Import bestätigen" schreibt.
+
+6) Backup + Undo
+- Vor dem Schreiben Snapshot aller betroffenen Dienstplan-Ist-Zeilen (Mandant + Monat + Tage 1..Stichtag) in Tabelle dienstplan_ist_backup mit Zeitstempel und Mandant.
+- „Rückgängig"-Funktion stellt den Stand vor dem letzten Import wieder her.
+
+7) Abgleich-Übersicht (nach dem Import), im Dienstplan anzeigbar:
+- Pro MIRUS-Mitarbeiter: MIRUS-Total (Datei) vs. Dienstplan-Ist-Total vorher vs. gespeichert nachher, mit Delta. Gegenprüfung: gespeichert muss = Datei sein (±0.02 h Tagesrundung), sonst Warnung.
+- Liste aller automatisch überschriebenen Zellen (alt → neu).
+- Liste aller Konflikt-Entscheidungen (Typ A/B) mit gewählter Lösung.
+- Bestätigung, dass alle MANUELL-Mitarbeiter unberührt blieben (Anzahl geprüft).
+
+8) Beaulieu
+- Identische Logik, Erfassungsart-Klassifikation und Übersicht auch für Mandant Beaulieu aktivieren. Tenant-generisch bauen, nichts auf Oliv hardcoden.
+
+Wichtig: Keine Zeile schreiben, bevor die Rückfrage-Liste bestätigt ist. MANUELL-Mitarbeiter nie anfassen. Backup immer zuerst. Zuerst nur die Rückfrage-Liste + Vorschau erzeugen und mir zeigen, bevor tatsächlich gespeichert wird.

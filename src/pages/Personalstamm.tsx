@@ -365,6 +365,7 @@ const Personalstamm = () => {
   const [filterActive, setFilterActive]   = useState<'all' | 'active' | 'inactive'>('active');
   const [filterPosition, setFilterPosition] = useState<string>('all');
   const [filterJahr, setFilterJahr]         = useState<string>('all');
+  const [filterErfassung, setFilterErfassung] = useState<'all' | 'MIRUS' | 'MANUELL'>('all');
 
   // Ansicht (Liste/Kacheln) + Sortierung — pro Benutzer lokal gespeichert.
   const { prefs: listPrefs, savePrefs: saveListPrefs } = usePersonalstammPrefs();
@@ -571,10 +572,12 @@ const Personalstamm = () => {
       if (filterActive === 'inactive' && active)  return false;
       if (filterDept !== 'all' && emp.department !== filterDept) return false;
       if (filterType !== 'all' && emp.employmentType !== filterType) return false;
+      // Erfassungsart-Filter: NULL zählt als 'MANUELL' (Default: nicht gestempelt)
+      if (filterErfassung !== 'all' && (emp.erfassungsart ?? 'MANUELL') !== filterErfassung) return false;
       if (search && !emp.name.toLowerCase().includes(search.toLowerCase())) return false;
       return true;
     });
-  }, [visibleBase, filterActive, filterDept, filterType, search, today]);
+  }, [visibleBase, filterActive, filterDept, filterType, filterErfassung, search, today]);
 
   // ── Zeilen-View-Models (EINE Ableitung für Tabelle, Kacheln UND Kompaktliste) ──
   const baseRows = useMemo(() =>
@@ -1260,6 +1263,18 @@ const Personalstamm = () => {
               </SelectContent>
             </Select>
           )}
+
+          {/* Erfassungsart (MIRUS gestempelt / Manuell) */}
+          <Select value={filterErfassung} onValueChange={v => setFilterErfassung(v as 'all' | 'MIRUS' | 'MANUELL')}>
+            <SelectTrigger className="h-8 text-xs w-36" data-testid="filter-erfassung">
+              <SelectValue placeholder="Erfassungsart" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Alle Erfassungsarten</SelectItem>
+              <SelectItem value="MIRUS">Nur MIRUS</SelectItem>
+              <SelectItem value="MANUELL">Nur Manuell</SelectItem>
+            </SelectContent>
+          </Select>
 
           {/* Sortierung (zentral) */}
           <Select
@@ -2521,6 +2536,11 @@ CREATE POLICY "Anon self-register new employee"
                                   : getEffectiveIstQuelle(emp) === 'manuell' ? 'Manuell'
                                   : (emp.istQuelle ? 'Plan = Ist' : 'Plan = Ist (Standard)')
                                 } />
+                                <DataRow label="Erfassungsart" value={
+                                  emp.erfassungsart === 'MIRUS' ? 'MIRUS (gestempelt)'
+                                  : emp.erfassungsart === 'MANUELL' ? 'Manuell (nicht gestempelt)'
+                                  : 'Manuell (Standard — noch nicht klassiert)'
+                                } />
                                 {emp.contractStart  && <DataRow label="Eintritt"           value={emp.contractStart} />}
                                 {emp.employmentEndDate && <DataRow label="Austritt"        value={emp.employmentEndDate} />}
                                 {emp.isLimitedContract && emp.contractEnd && <DataRow label="Vertragsende (befristet)" value={emp.contractEnd} />}
@@ -2742,6 +2762,27 @@ CREATE POLICY "Anon self-register new employee"
                               {editData?.istQuelle
                                 ? 'Explizit gesetzt.'
                                 : `Standard (nicht gesetzt): ${getEffectiveIstQuelle(editData!) === 'mirus' ? 'MIRUS' : 'Plan = Ist'}`}
+                            </p>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-muted-foreground mb-1 block">
+                              Erfassungsart
+                              <span className="ml-1 text-[10px] italic opacity-60">für den MIRUS-Import</span>
+                            </Label>
+                            <Select
+                              value={editData?.erfassungsart ?? 'MANUELL'}
+                              onValueChange={v => setEditData(d => d ? { ...d, erfassungsart: v as 'MIRUS' | 'MANUELL' } : d)}
+                            >
+                              <SelectTrigger className="h-9 text-sm" data-testid="select-erfassungsart">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="MIRUS">MIRUS (gestempelt — Import schreibt)</SelectItem>
+                                <SelectItem value="MANUELL">Manuell (Aushilfe — Import fasst nie an)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              Nur Kennzeichnung für den Ist-Import — keine Auswirkung auf Abteilung, Sortierung oder Kosten.
                             </p>
                           </div>
                         </div>

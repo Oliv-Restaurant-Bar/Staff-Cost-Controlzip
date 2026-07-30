@@ -39,6 +39,23 @@ const STATUS_BADGE: Record<EmployeeListStatus, string> = {
   inaktiv: 'bg-slate-100 text-slate-500 border-slate-300 dark:bg-slate-900/40',
 };
 
+/** MIRUS-Import-Kennzeichnung: gestempelt (MIRUS) vs. manuell (Aushilfe). */
+function ErfassungsartBadge({ row }: { row: EmployeeListRow }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border',
+        row.erfassungsart === 'MIRUS'
+          ? 'border-green-300 text-green-700 bg-green-50 dark:bg-green-950/20'
+          : 'border-slate-300 text-slate-600 bg-slate-50 dark:bg-slate-900/30',
+      )}
+      data-testid={`badge-erfassungsart-${row.id}`}
+    >
+      {row.erfassungsart === 'MIRUS' ? 'MIRUS' : 'Manuell'}
+    </span>
+  );
+}
+
 function StatusBadge({ row }: { row: EmployeeListRow }) {
   return (
     <span
@@ -131,8 +148,11 @@ export function EmployeeTable({ rows, selectedId, onSelect }: ViewProps) {
                 </td>
                 <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">{deptPosition(row)}</td>
                 <td className="px-3 py-2.5">
-                  <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border', TYPE_BADGE[row.employmentType])}>
-                    {row.typeLabel}
+                  <span className="inline-flex items-center gap-1">
+                    <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border', TYPE_BADGE[row.employmentType])}>
+                      {row.typeLabel}
+                    </span>
+                    <ErfassungsartBadge row={row} />
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-xs tabular-nums whitespace-nowrap">{row.eintrittLabel}</td>
@@ -183,6 +203,7 @@ export function EmployeeTiles({ rows, selectedId, onSelect }: ViewProps) {
               <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border', TYPE_BADGE[row.employmentType])}>
                 {row.typeLabel}
               </span>
+              <ErfassungsartBadge row={row} />
               <StatusBadge row={row} />
             </div>
             <p className="text-[11px] text-muted-foreground tabular-nums">

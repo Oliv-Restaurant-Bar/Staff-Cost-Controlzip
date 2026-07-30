@@ -39,7 +39,6 @@ import { StaffFeedbackEntry, loadStaffFeedback, updateFeedbackStatus } from '@/l
 import { getPublicBaseUrl } from '@/lib/public-url';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
-import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
 import {
   stablePublishToken,
@@ -72,8 +71,7 @@ import { LaborCostComparison } from '@/components/schedule-planner/LaborCostComp
 import { KüchenplanImportDialog } from '@/components/schedule-planner/KüchenplanImportDialog';
 import { WeeklyReportDialog } from '@/components/schedule-planner/WeeklyReportDialog';
 import { EmployeeForm } from '@/components/EmployeeForm';
-import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
-import { MirusDailyImportEntry, MirusImportMode } from '@/types/personnel';
+import { MirusReconcileImportButton } from '@/components/schedule-planner/MirusReconcileImportButton';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { getVisibleEmployeesForRole, effectiveEmployeeDepartmentScope } from '@/lib/employee-visibility';
 import { computeDailyKitchenTotals, toDailyTotalsDisplay, type EmployeeDayInput, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
@@ -2102,7 +2100,9 @@ const SchedulePlanner = () => {
   };
 
   // Handle actual hours change
-  const handleActualHoursChange = (employeeId: string, date: string, entry: ActualHoursEntry | null) => {
+  // opts.skipSupabase: Aufrufer hat bereits selbst (awaited) in Supabase geschrieben
+  // — z.B. der MIRUS-Import, der Schreibfehler pro Zelle prüfen muss.
+  const handleActualHoursChange = (employeeId: string, date: string, entry: ActualHoursEntry | null, opts?: { skipSupabase?: boolean }) => {
     const cellKey = `${employeeId}-${date}`;
 
     setActualHoursData(prev => {
@@ -2111,7 +2111,7 @@ const SchedulePlanner = () => {
         delete newState[cellKey];
 
         // Always delete from Supabase — absence_type column exists and loadActualHoursForMonth now reads it back.
-        saveActualHourEntry(employeeId, date, null);
+        if (!opts?.skipSupabase) saveActualHourEntry(employeeId, date, null);
 
         const monthKey = format(currentMonth, 'yyyy-MM');
         localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
@@ -2127,119 +2127,13 @@ const SchedulePlanner = () => {
       if (entry.absenceType) {
         console.log(`[FERIEN-IST] saving absence to Supabase: ${cellKey} type=${entry.absenceType}`);
       }
-      saveActualHourEntry(employeeId, date, entry);
+      if (!opts?.skipSupabase) saveActualHourEntry(employeeId, date, entry);
 
       const monthKey = format(currentMonth, 'yyyy-MM');
       localStorage.setItem(tenantKey(`actual-hours-${monthKey}`), JSON.stringify(newState));
       window.dispatchEvent(new CustomEvent('schedule-updated'));
       return newState;
     });
-  };
-
-  // Handle Mirus XLS Ist-Stunden import directly in the Dienstplan
-  const handleImportMirusActualHours = async (entries: MirusDailyImportEntry[], mode: MirusImportMode) => {
-    const affectedMonths = new Set(entries.map(e => e.date.slice(0, 7)));
-    const supabaseSaves: Array<{ empId: string; date: string; hours: number }> = [];
-
-    setActualHoursData(prev => {
-      let updated = { ...prev };
-
-      if (mode === 'replace') {
-        const importedDates = new Set(entries.map(e => e.date));
-        for (const key of Object.keys(updated)) {
-          const dateFromKey = key.slice(-10);
-          if (importedDates.has(dateFromKey)) {
-            // BUG 1 FIX: NEVER delete FE/K/F absence entries in the replace-wipe loop.
-            // The check for "existingEntry?.absenceType" below can only work if we
-            // haven't already deleted the entry here.
-            if (updated[key]?.absenceType) {
-              console.log(`[FERIEN-IST] reload preserved holiday entry: ${key} (${updated[key].absenceType})`);
-            } else {
-              delete updated[key];
-            }
-          }
-        }
-      }
-
-      let matchedCount = 0;
-      const unmatched = new Set<string>();
-
-      const debugNames = ['sadete', 'momand'];
-      for (const entry of entries) {
-        const isDebug = debugNames.some(d => entry.name.toLowerCase().includes(d));
-        if (isDebug) {
-          console.log('[Ist-Import] Verarbeite Eintrag:', { name: entry.name, date: entry.date, hours: entry.hours });
-        }
-        const { employee, matchStep } = matchEmployeeByName(entry.name, employees, isDebug);
-        if (!employee) {
-          unmatched.add(entry.name);
-          if (isDebug) console.warn('[Ist-Import] KEIN Match für:', entry.name);
-          continue;
-        }
-        if (isDebug) {
-          console.log('[Ist-Import] Match gefunden:', { importName: entry.name, empName: employee.name, empId: employee.id, matchStep });
-        }
-        const cellKey = `${employee.id}-${entry.date}`;
-        const existingEntry = updated[cellKey];  // now correctly reads preserved FE entries
-
-        if (existingEntry?.absenceType) {
-          console.log(`[FERIEN-IST] existing entry found: ${cellKey} absenceType=${existingEntry.absenceType} hours=${existingEntry.hours}`);
-        }
-
-        // Priority rule:
-        // 1. Real imported hours (> 0) → highest priority, overwrites FE
-        // 2. Existing FE/K/F absence → second priority, survives 0-hour imports
-        // 3. Empty → lowest priority
-        if (existingEntry?.absenceType && entry.hours === 0) {
-          console.log(`[FERIEN-IST] preserved holiday entry because import had no hours: ${employee.name} ${entry.date}`);
-          matchedCount++;
-          continue;
-        }
-        if (existingEntry?.absenceType && entry.hours > 0) {
-          console.log(`[FERIEN-IST] replaced holiday entry because import had working hours: ${employee.name} ${entry.date} (${existingEntry.absenceType} → ${entry.hours}h)`);
-        }
-
-        if (mode === 'replace' || !updated[cellKey]) {
-          updated[cellKey] = { hours: entry.hours };
-          supabaseSaves.push({ empId: employee.id, date: entry.date, hours: entry.hours });
-        }
-        matchedCount++;
-      }
-
-      for (const m of affectedMonths) {
-        const sk = `actual-hours-${m}`;
-        const ex = (() => { try { return JSON.parse(localStorage.getItem(tenantKey(sk)) || '{}'); } catch { return {}; } })();
-        // Merge: start from existing localStorage (preserves FE entries not in `updated`),
-        // then overlay with updated (which itself preserved FE via the delete loop fix above).
-        const data = { ...ex };
-        for (const [k, v] of Object.entries(updated)) {
-          const dateFromKey = k.slice(-10);
-          if (dateFromKey.slice(0, 7) === m) data[k] = v;
-        }
-        localStorage.setItem(tenantKey(sk), JSON.stringify(data));
-      }
-
-      window.dispatchEvent(new CustomEvent('schedule-updated'));
-
-      const uniqueEmployees = new Set(entries.map(e => e.name));
-      if (matchedCount > 0) {
-        toast.success(`Mirus Ist-Stunden importiert: ${entries.length} Einträge, ${uniqueEmployees.size} Mitarbeiter`);
-      }
-      if (unmatched.size > 0) {
-        toast.warning(`${unmatched.size} Mitarbeiter nicht gefunden: ${[...unmatched].slice(0, 3).join(', ')}`);
-      }
-
-      return updated;
-    });
-
-    // Supabase persistieren — parallel, außerhalb des setState-Callbacks
-    if (supabaseSaves.length > 0) {
-      await Promise.all(
-        supabaseSaves.map(({ empId, date, hours }) =>
-          saveActualHourEntry(empId, date, { hours }),
-        ),
-      );
-    }
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -5092,10 +4986,15 @@ const SchedulePlanner = () => {
                       <Clock className="h-4 w-4 inline mr-1" />
                       <strong>Ist-Stunden:</strong> Klicke auf eine Zelle um Ist-Stunden zu erfassen, oder importiere den Mirus «Tägliche Stunden» Export direkt.
                     </p>
-                    <ActualHoursImportButton
-                      onImport={handleImportMirusActualHours}
+                    <MirusReconcileImportButton
                       employees={roleScopedEmployees}
-                      existingTimeEntries={[]}
+                      actualHoursData={actualHoursData}
+                      currentMonth={currentMonth}
+                      onCellChange={handleActualHoursChange}
+                      onErfassungsartPersisted={(updates) => {
+                        setEmployees(prev => prev.map(e =>
+                          updates[e.id] ? { ...e, erfassungsart: updates[e.id] } : e));
+                      }}
                     />
                   </div>
 

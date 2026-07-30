@@ -59,6 +59,8 @@ const employeeToDb = (emp: Employee) => ({
   // (undefined = Feld nicht im Formular → bestehenden DB-Wert BEWAHREN, nie
   // via ?? null clobbern — vgl. Ali-Reactivation-Bug).
   ...('istQuelle' in emp ? { ist_quelle: emp.istQuelle ?? null } : {}),
+  // ── Erfassungsart (MIRUS-Import-Kennzeichnung, nullable text) ─────────────
+  ...('erfassungsart' in emp ? { erfassungsart: emp.erfassungsart ?? null } : {}),
   // ── Saldi ────────────────────────────────────────────────────────────────
   hours_balance:            emp.hoursBalance            ?? null,
   vacation_balance:         emp.vacationBalance         ?? null,
@@ -138,6 +140,7 @@ const dbToEmployee = (row: any): Employee => {
   // ── Ist-Quelle: pre-migration-tolerant (Spalte kann in anderen Umgebungen
   //    fehlen → nur konditional spreaden, nie einen undefined-Key erzeugen). ──
   ...(row.ist_quelle != null ? { istQuelle: row.ist_quelle as Employee['istQuelle'] } : {}),
+  ...(row.erfassungsart != null ? { erfassungsart: row.erfassungsart as Employee['erfassungsart'] } : {}),
   // ── Saldi ────────────────────────────────────────────────────────────────
   hoursBalance:           row.hours_balance             ?? undefined,
   vacationBalance:        row.vacation_balance          ?? undefined,
@@ -2748,4 +2751,98 @@ export async function insertSchedulePublicationSnapshot(
   } else {
     console.log(`[supabase-db] insertSchedulePublicationSnapshot OK — ${snap.tenant_id} ${snap.year}-${String(snap.month).padStart(2, '0')} dept=${snap.department} rev=${snap.revision}`);
   }
+}
+
+// ─── MIRUS-Import: Erfassungsart & Dienstplan-Ist-Backup ─────────────────────
+
+/**
+ * Chirurgisches Einzelspalten-Update employees.erfassungsart.
+ * Bewusst KEIN employeeToDb/upsert (Employees-Write-Gate: nur das
+ * Personalstamm-Formular schreibt volle Datensätze) — hier wird ausschliesslich
+ * die Kennzeichnungs-Spalte gesetzt, kein anderes Feld kann geclobbert werden.
+ */
+export async function updateEmployeeErfassungsart(
+  employeeId: string,
+  erfassungsart: 'MIRUS' | 'MANUELL',
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('employees')
+    .update({ erfassungsart } as never)
+    .eq('id', employeeId);
+  if (error) {
+    console.error('[supabase-db] updateEmployeeErfassungsart:', error.message);
+    return false;
+  }
+  return true;
+}
+
+export interface DienstplanIstBackupRow {
+  employee_id: string;
+  date: string;               // ISO
+  hours: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  absence_type?: string | null;
+  is_additional_cost_ist?: boolean;
+  source?: string | null;
+}
+
+export interface DienstplanIstBackup {
+  id: string;
+  tenant_id: string;
+  month: string;              // 'YYYY-MM'
+  created_at: string;
+  label: string | null;
+  /** Abgedeckter Bereich: alle (employeeIds × dates)-Zellen sind im Snapshot enthalten
+   *  — fehlt eine Zelle in rows, war sie zum Backup-Zeitpunkt LEER. */
+  scope: { employeeIds: string[]; dates: string[] };
+  rows: DienstplanIstBackupRow[];
+}
+
+// dienstplan_ist_backup ist (noch) nicht in den generierten Supabase-Typen —
+// einzelner isolierter Cast analog appSettingsTable-Muster.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const dienstplanIstBackupTable = () => (supabase as any).from('dienstplan_ist_backup');
+
+/** Snapshot VOR einem MIRUS-Import speichern. Liefert die Backup-ID oder null. */
+export async function saveDienstplanIstBackup(
+  tenantId: string,
+  month: string,
+  label: string,
+  scope: { employeeIds: string[]; dates: string[] },
+  rows: DienstplanIstBackupRow[],
+): Promise<string | null> {
+  const { data, error } = await dienstplanIstBackupTable()
+    .insert({ tenant_id: tenantId, month, label, scope, rows })
+    .select('id')
+    .single();
+  if (error) {
+    console.error('[supabase-db] saveDienstplanIstBackup:', error.message);
+    return null;
+  }
+  return data?.id ?? null;
+}
+
+/** Neuestes Backup für Mandant+Monat laden (für «Rückgängig»). */
+export async function loadLatestDienstplanIstBackup(
+  tenantId: string,
+  month: string,
+): Promise<DienstplanIstBackup | null> {
+  const { data, error } = await dienstplanIstBackupTable()
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .eq('month', month)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.error('[supabase-db] loadLatestDienstplanIstBackup:', error.message);
+    return null;
+  }
+  return (data && data[0]) ? (data[0] as DienstplanIstBackup) : null;
+}
+
+/** Verbrauchtes Backup nach erfolgreichem Undo entfernen. */
+export async function deleteDienstplanIstBackup(id: string): Promise<void> {
+  const { error } = await dienstplanIstBackupTable().delete().eq('id', id);
+  if (error) console.error('[supabase-db] deleteDienstplanIstBackup:', error.message);
 }
