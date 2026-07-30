@@ -38,8 +38,10 @@ import {
 } from '@/lib/staffing-profiles-utils';
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
+import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
+import { buildCellSaveDrafts } from '@/lib/staffing-week-utils';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
-import { StaffingWeekMatrix, type WeekHoursStack } from '@/components/schedule-planner/StaffingWeekMatrix';
+import { StaffingWeekMatrix, type WeekHoursStack, type WeekCellMode } from '@/components/schedule-planner/StaffingWeekMatrix';
 import { planNettoHoursForDate, istHoursForDate } from '@/lib/bedarf-stunden-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { format, startOfWeek, addDays, parseISO, isValid, getISOWeek } from 'date-fns';
@@ -99,6 +101,9 @@ export default function Personalbedarf() {
   const [weekAnchor, setWeekAnchor] = useState<string>(() =>
     format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'));
   const [hoursStack, setHoursStack] = useState<WeekHoursStack | null>(null);
+  /** Zellen-Anzeige der Wochenmatrix: Personen | Stunden (bleibt beim Wechsel
+   *  von Wochentag/Woche/Profil erhalten — Page-State). */
+  const [cellMode, setCellMode] = useState<WeekCellMode>('persons');
 
   useEffect(() => {
     if (viewMode !== 'week') return;
@@ -368,6 +373,57 @@ export default function Personalbedarf() {
     }
   };
 
+  /**
+   * Speichern aus dem Zellen-Editor der Wochenansicht: ersetzt die Schichten
+   * EINER Position an EINEM Wochentag im aktiven Profil; alle anderen Zeilen
+   * des Scopes (andere Positionen + Orphans inaktiver Positionen) werden
+   * unverändert wieder mitgegeben. Gleiche Sperr-/Validierungslogik wie
+   * handleSave (Bedarf-Editor).
+   */
+  const handleSaveCell = async (
+    positionKey: string,
+    wd: number,
+    part: 'mittag' | 'abend',
+    shifts: ShiftDraft[],
+  ) => {
+    if (derived) {
+      throw new Error('Winter/UG ist abgeleitet (Standard + UG-Zuschlag) — bitte den Standard bearbeiten.');
+    }
+    if (isProfileLocked(profilesConfig, season)) {
+      throw new Error('Profil ist festgesetzt — zum Bearbeiten zuerst entsperren.');
+    }
+    try {
+      const fresh = await loadStaffingProfilesConfig(tenantId);
+      if (isProfileLocked(fresh, season)) {
+        throw new Error('Profil wurde zwischenzeitlich festgesetzt — Speichern abgebrochen.');
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.includes('festgesetzt')) throw e;
+      /* Prüfung best-effort; lokale Sperre wurde oben bereits geprüft. */
+    }
+    for (const s of shifts) {
+      const errs = validateShiftDraft(s);
+      if (errs.length > 0) throw new Error(errs[0]);
+    }
+
+    // FRISCHEN Scope-Stand aus der DB laden — nicht den lokalen Snapshot:
+    // parallel geänderte Zeilen (andere Tageshälfte, andere Positionen)
+    // dürfen nicht mit veraltetem State überschrieben werden.
+    let freshReqs = requirements;
+    try {
+      freshReqs = await loadStaffingRequirements(tenantId);
+    } catch {
+      /* Fallback: lokaler Stand (best-effort) */
+    }
+    const scope: StaffingScope = { scopeType: SCOPE_WEEKLY, season, weekday: wd, scopeRef: null };
+    const existing = shiftsForScope(freshReqs, season, wd);
+    const drafts: (StaffingRequirementDraft & { id?: string })[] = buildCellSaveDrafts({
+      existing, season, weekday: wd, positionKey, part, partDrafts: shifts,
+    });
+    await saveScope(scope, drafts);
+    toast.success(`Personalbedarf gespeichert (${seasonLabel(season)} · ${weekdayLabel(wd)})`);
+  };
+
   // ── Tagessumme (rein informativ, KEINE Besetzungs-Prüfung) ──────────────────
   const dayTotal = useMemo(
     () => Object.values(edits).reduce((sum, shifts) => sum + shifts.reduce((a, s) => a + (Number.isFinite(s.requiredCount) ? s.requiredCount : 0), 0), 0),
@@ -576,7 +632,22 @@ export default function Personalbedarf() {
       {/* Wochenübersicht (Standard-Ansicht) */}
       {!loading && viewMode === 'week' && hasActivePositions && (
         <>
-          <div className="flex flex-wrap items-end gap-2">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Anzeige</Label>
+              <div className="flex gap-1">
+                <Button type="button" size="sm" className="h-8"
+                  variant={cellMode === 'persons' ? 'default' : 'outline'}
+                  onClick={() => setCellMode('persons')} data-testid="cellmode-persons">
+                  Personen
+                </Button>
+                <Button type="button" size="sm" className="h-8"
+                  variant={cellMode === 'hours' ? 'default' : 'outline'}
+                  onClick={() => setCellMode('hours')} data-testid="cellmode-hours">
+                  Stunden
+                </Button>
+              </div>
+            </div>
             <div className="flex flex-col gap-0.5">
               <Label className="text-[10px] text-muted-foreground">
                 Kalenderwoche für Dienstplan/Ist-Stunden
@@ -601,6 +672,11 @@ export default function Personalbedarf() {
             config={profilesConfig}
             season={season}
             hoursStack={hoursStack}
+            cellMode={cellMode}
+            editable={!readOnly}
+            editSeason={matrixSeason}
+            sourceLabel={`Profil «${activeProfile?.label ?? seasonLabel(season)}»`}
+            onSaveCell={handleSaveCell}
             onSelectWeekday={(w) => {
               setWeekday(w);
               setViewMode('day');

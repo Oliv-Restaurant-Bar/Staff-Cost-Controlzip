@@ -12,7 +12,7 @@
 
 import type { Position } from '@/types/positions';
 import type { Department } from '@/types/personnel';
-import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
+import type { StaffingRequirement, StaffingRequirementDraft, StaffingSeason } from '@/types/staffing';
 import type { PositionArea } from '@/lib/position-utils';
 import { timeToMinutes, buildRequirementMatrix } from '@/lib/staffing-requirements-utils';
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
@@ -70,6 +70,58 @@ export interface WeekOverview {
   totals: Record<number, WeekDayTotals>;
   /** True, wenn irgendein Tag Bedarf hat. */
   hasAny: boolean;
+}
+
+/**
+ * Drafts für das Zellen-Speichern der Wochenmatrix (Position × Wochentag ×
+ * Mittag/Abend): ersetzt NUR die Blöcke der bearbeiteten Tageshälfte der
+ * Position; alle anderen Zeilen des Scopes — andere Positionen, Orphans UND
+ * die ANDERE Tageshälfte derselben Position — werden VERBATIM aus `existing`
+ * übernommen. `existing` muss der FRISCHE Scope-Stand (season × weekday) sein,
+ * damit parallel geänderte Zeilen nicht mit einem veralteten Snapshot
+ * überschrieben werden.
+ */
+export function buildCellSaveDrafts(args: {
+  /** Frische RAW-Zeilen des Scopes (shiftsForScope(fresh, season, weekday)). */
+  existing: StaffingRequirement[];
+  season: StaffingSeason;
+  weekday: number;
+  positionKey: string;
+  part: 'mittag' | 'abend';
+  /** Neue Blöcke der bearbeiteten Tageshälfte. */
+  partDrafts: { id?: string; shiftStart: string; shiftEnd: string; requiredCount: number }[];
+}): (StaffingRequirementDraft & { id?: string })[] {
+  const { existing, season, weekday, positionKey, part, partDrafts } = args;
+  const out: (StaffingRequirementDraft & { id?: string })[] = [];
+  const isPart = (start: string) => (part === 'abend') === isEveningShift(start);
+  // Andere Positionen + Orphans + andere Tageshälfte: verbatim erhalten.
+  for (const o of existing) {
+    if (o.positionKey === positionKey && isPart(o.shiftStart)) continue; // wird ersetzt
+    out.push({
+      id: o.id, scopeType: o.scopeType, season: o.season, weekday: o.weekday,
+      scopeRef: o.scopeRef, positionKey: o.positionKey, shiftStart: o.shiftStart,
+      shiftEnd: o.shiftEnd, requiredCount: o.requiredCount, sortOrder: o.sortOrder, meta: o.meta,
+    });
+  }
+  // Bearbeitete Tageshälfte: neue Blöcke (meta vorhandener Zeilen per id erhalten).
+  const metaById = new Map(existing.filter((r) => r.positionKey === positionKey).map((r) => [r.id, r.meta]));
+  const baseSort = existing.filter((r) => r.positionKey === positionKey && !isPart(r.shiftStart)).length;
+  partDrafts.forEach((s, index) => {
+    out.push({
+      id: s.id,
+      scopeType: 'weekly',
+      season,
+      weekday,
+      scopeRef: null,
+      positionKey,
+      shiftStart: s.shiftStart,
+      shiftEnd: s.shiftEnd,
+      requiredCount: s.requiredCount,
+      sortOrder: baseSort + index,
+      meta: (s.id ? metaById.get(s.id) : undefined) ?? {},
+    });
+  });
+  return out;
 }
 
 /**

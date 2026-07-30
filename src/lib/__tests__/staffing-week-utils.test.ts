@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 
 import type { Position } from '@/types/positions';
 import type { StaffingRequirement } from '@/types/staffing';
-import { buildWeekOverview, isEveningShift, EVENING_START_MINUTES } from '@/lib/staffing-week-utils';
+import { buildWeekOverview, isEveningShift, buildCellSaveDrafts, EVENING_START_MINUTES } from '@/lib/staffing-week-utils';
 import { defaultStaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
 
 const POSITIONS: Position[] = [
@@ -87,5 +87,52 @@ describe('buildWeekOverview', () => {
   it('leerer Bedarf → hasAny false', () => {
     const o = buildWeekOverview({ positions: POSITIONS, requirements: [], config, season: 'standard' });
     expect(o.hasAny).toBe(false);
+  });
+});
+
+describe('buildCellSaveDrafts', () => {
+  const base = [
+    // Mittag-Zeile der bearbeiteten Position
+    req({ positionKey: 'service', weekday: 1, shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }),
+    // Abend-Zeile derselben Position (andere Tageshälfte)
+    req({ positionKey: 'service', weekday: 1, shiftStart: '18:00', shiftEnd: '22:00', requiredCount: 3 }),
+    // Andere Position (muss verbatim erhalten bleiben)
+    req({ positionKey: 'kueche', weekday: 1, shiftStart: '09:00', shiftEnd: '14:00', requiredCount: 1 }),
+  ];
+
+  it('ersetzt nur die bearbeitete Tageshälfte; Rest verbatim', () => {
+    const drafts = buildCellSaveDrafts({
+      existing: base, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'mittag',
+      partDrafts: [{ shiftStart: '10:30', shiftEnd: '14:30', requiredCount: 1 }],
+    });
+    const service = drafts.filter((d) => d.positionKey === 'service');
+    expect(service).toHaveLength(2);
+    expect(service.some((d) => d.shiftStart === '18:00' && d.requiredCount === 3)).toBe(true);
+    expect(service.some((d) => d.shiftStart === '10:30' && d.requiredCount === 1)).toBe(true);
+    expect(drafts.filter((d) => d.positionKey === 'kueche')).toHaveLength(1);
+  });
+
+  it('Regression: paralleler Refresh der ANDEREN Hälfte überlebt das Speichern', () => {
+    // Mittag-Editor offen; währenddessen wird die Abend-Zeile auf 5 geändert.
+    const refreshed = base.map((r) =>
+      r.shiftStart === '18:00' ? { ...r, requiredCount: 5 } : r);
+    const drafts = buildCellSaveDrafts({
+      existing: refreshed, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'mittag',
+      partDrafts: [{ shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }],
+    });
+    const abend = drafts.find((d) => d.positionKey === 'service' && d.shiftStart === '18:00');
+    expect(abend?.requiredCount).toBe(5);
+  });
+
+  it('leere partDrafts löschen die Tageshälfte (Zelle leeren)', () => {
+    const drafts = buildCellSaveDrafts({
+      existing: base, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'abend', partDrafts: [],
+    });
+    const service = drafts.filter((d) => d.positionKey === 'service');
+    expect(service).toHaveLength(1);
+    expect(service[0].shiftStart).toBe('11:00');
   });
 });
