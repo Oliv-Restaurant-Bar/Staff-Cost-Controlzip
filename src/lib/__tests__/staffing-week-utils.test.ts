@@ -175,6 +175,22 @@ describe('buildCellSaveDrafts', () => {
     expect(service[0].shiftStart).toBe('11:00');
   });
 
+  it("part 'day' ersetzt ALLE Blöcke der Position an dem Tag; Rest verbatim", () => {
+    const drafts = buildCellSaveDrafts({
+      existing: base, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'day',
+      partDrafts: [
+        { shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 1 },
+        { shiftStart: '17:30', shiftEnd: '23:00', requiredCount: 2 },
+      ],
+    });
+    const service = drafts.filter((d) => d.positionKey === 'service');
+    expect(service).toHaveLength(2);
+    expect(service.some((d) => d.shiftStart === '18:00')).toBe(false); // alte Abend-Zeile ersetzt
+    expect(service.some((d) => d.shiftStart === '17:30' && d.requiredCount === 2)).toBe(true);
+    expect(drafts.filter((d) => d.positionKey === 'kueche')).toHaveLength(1);
+  });
+
   it('dayHeadcount setzt meta.dayHeadcount auf ALLEN Zeilen der Position, andere Positionen unberührt', () => {
     const drafts = buildCellSaveDrafts({
       existing: base, season: 'standard', weekday: 1,

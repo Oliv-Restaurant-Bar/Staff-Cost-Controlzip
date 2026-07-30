@@ -93,13 +93,14 @@ export interface WeekOverview {
 }
 
 /**
- * Drafts für das Zellen-Speichern der Wochenmatrix (Position × Wochentag ×
- * Mittag/Abend): ersetzt NUR die Blöcke der bearbeiteten Tageshälfte der
- * Position; alle anderen Zeilen des Scopes — andere Positionen, Orphans UND
- * die ANDERE Tageshälfte derselben Position — werden VERBATIM aus `existing`
- * übernommen. `existing` muss der FRISCHE Scope-Stand (season × weekday) sein,
- * damit parallel geänderte Zeilen nicht mit einem veralteten Snapshot
- * überschrieben werden.
+ * Drafts für das Zellen-Speichern der Wochenmatrix (Position × Wochentag):
+ * part 'day' ersetzt ALLE Blöcke der Position an diesem Tag (Standard des
+ * Tages-Editors); 'mittag'/'abend' ersetzen nur die jeweilige Tageshälfte und
+ * erhalten die andere Hälfte verbatim. Alle übrigen Zeilen des Scopes —
+ * andere Positionen und Orphans — werden VERBATIM aus `existing` übernommen.
+ * `existing` muss der FRISCHE Scope-Stand (season × weekday) sein, damit
+ * parallel geänderte Zeilen nicht mit einem veralteten Snapshot überschrieben
+ * werden.
  */
 export function buildCellSaveDrafts(args: {
   /** Frische RAW-Zeilen des Scopes (shiftsForScope(fresh, season, weekday)). */
@@ -107,8 +108,9 @@ export function buildCellSaveDrafts(args: {
   season: StaffingSeason;
   weekday: number;
   positionKey: string;
-  part: 'mittag' | 'abend';
-  /** Neue Blöcke der bearbeiteten Tageshälfte. */
+  /** 'day' ersetzt ALLE Blöcke der Position an diesem Tag. */
+  part: 'mittag' | 'abend' | 'day';
+  /** Neue Blöcke der bearbeiteten Tageshälfte (bzw. des ganzen Tages). */
   partDrafts: { id?: string; shiftStart: string; shiftEnd: string; requiredCount: number }[];
   /**
    * Explizite KOPFZAHL des Tages (meta.dayHeadcount auf allen Blöcken der
@@ -125,7 +127,7 @@ export function buildCellSaveDrafts(args: {
     return dayHeadcount === null ? rest : { ...rest, dayHeadcount };
   };
   const out: (StaffingRequirementDraft & { id?: string })[] = [];
-  const isPart = (start: string) => (part === 'abend') === isEveningShift(start);
+  const isPart = (start: string) => part === 'day' || (part === 'abend') === isEveningShift(start);
   // Andere Positionen + Orphans + andere Tageshälfte: verbatim erhalten.
   for (const o of existing) {
     if (o.positionKey === positionKey && isPart(o.shiftStart)) continue; // wird ersetzt

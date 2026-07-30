@@ -390,7 +390,7 @@ export default function Personalbedarf() {
   const handleSaveCell = async (
     positionKey: string,
     wd: number,
-    part: 'mittag' | 'abend',
+    part: 'mittag' | 'abend' | 'day',
     shifts: ShiftDraft[],
     dayHeadcount?: number | null,
   ) => {

@@ -62,46 +62,65 @@ function partNettoHours(cell: WeekCell | undefined, part: 'mittag' | 'abend'): n
   return Math.round((minutes / 60) * 10) / 10;
 }
 
-function CellValue({ cell, part, mode }: {
+/**
+ * Tooltip-Text einer Tageszelle: WANN gearbeitet wird (durchgehend / nur
+ * Mittag / nur Abend) mit Uhrzeiten — die Spalten selbst zeigen nur die Zahl.
+ */
+function dayCellTitle(cell: WeekCell | undefined): string {
+  if (!cell || cell.shifts.length === 0) return '';
+  const m = cell.shifts.filter((s) => !isEveningShift(s.shiftStart));
+  const a = cell.shifts.filter((s) => isEveningShift(s.shiftStart));
+  const fmt = (list: typeof m) => list.map((s) => `${s.shiftStart}–${s.shiftEnd} × ${s.requiredCount}`).join(', ');
+  const parts: string[] = [];
+  if (m.length > 0) parts.push(`Mittag: ${fmt(m)}`);
+  if (a.length > 0) parts.push(`Abend: ${fmt(a)}`);
+  const kind = m.length > 0 && a.length > 0
+    ? (cell.headcountExplicit ? 'Mittag + Abend (getrennte Personen möglich)' : 'durchgehend / beide Hälften')
+    : m.length > 0 ? 'nur Mittag' : 'nur Abend';
+  return `${kind}\n${parts.join('\n')}\nKopfzahl: ${cell.headcount}${cell.headcountExplicit ? ' (explizit)' : ''}`;
+}
+
+function CellValue({ cell, mode }: {
   cell: WeekCell | undefined;
-  part: 'mittag' | 'abend';
   mode: WeekCellMode;
 }) {
-  const v = mode === 'hours' ? partNettoHours(cell, part) : (cell?.[part] ?? 0);
+  // EINE Zahl pro Tag: Personen = KOPFZAHL (keine Doppelzählung M/A),
+  // Stunden = Netto-Stunden aller Blöcke (jede Person mit ihrer echten Dauer).
+  const v = mode === 'hours'
+    ? partNettoHours(cell, 'mittag') + partNettoHours(cell, 'abend')
+    : (cell?.headcount ?? 0);
   if (v === 0) return <span className="text-muted-foreground/40">–</span>;
-  const title = cell?.shifts
-    .filter((s) => (part === 'abend') === isEveningShift(s.shiftStart))
-    .map((s) => `${s.shiftStart}–${s.shiftEnd} × ${s.requiredCount}`)
-    .join(', ');
   return (
-    <span title={title} className="font-medium tabular-nums">
-      {mode === 'hours' ? fmtH(v) : v}
+    <span title={dayCellTitle(cell)} className="font-medium tabular-nums">
+      {mode === 'hours' ? fmtH(Math.round(v * 10) / 10) : v}
     </span>
   );
 }
 
 /**
- * Inline-Editor einer Zelle (Position × Wochentag × Mittag/Abend): zeigt die
- * hinterlegten Soll-Schichten (RAW-Zeilen des aktiven Profils) und erlaubt
- * Anpassen von Zeiten/Anzahl bzw. Hinzufügen/Entfernen. Die Schichten der
- * ANDEREN Tageshälfte bleiben beim Speichern unverändert erhalten.
+ * Inline-Editor einer Tageszelle (Position × Wochentag, GANZER Tag): zeigt
+ * alle hinterlegten Soll-Blöcke (RAW-Zeilen des aktiven Profils) chronologisch
+ * und erlaubt Anpassen von Zeiten/Anzahl bzw. Hinzufügen/Entfernen. Beim
+ * Speichern (part='day') werden ALLE Blöcke der Position an diesem Tag
+ * ersetzt; andere Positionen/Orphans bleiben unverändert erhalten.
  */
 function CellEditPanel({
-  positionKey, positionName, weekday, part, rawShifts, sourceLabel, onSaveCell, onClose,
+  positionKey, positionName, weekday, rawShifts, sourceLabel, onSaveCell, onClose,
 }: {
   positionKey: string;
   positionName: string;
   weekday: number;
-  part: 'mittag' | 'abend';
   rawShifts: StaffingRequirement[];
   /** Quelle/Regel-Beschriftung, z.B. «Profil Standard». */
   sourceLabel: string;
-  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
+  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend' | 'day', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
   onClose: () => void;
 }) {
-  const partShifts = rawShifts.filter((s) => (part === 'abend') === isEveningShift(s.shiftStart));
+  // GANZER Tag: alle Blöcke der Position (Mittag + Abend), chronologisch.
   const [drafts, setDrafts] = useState<ShiftDraft[]>(() =>
-    partShifts.map((s) => ({ id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: s.requiredCount })));
+    [...rawShifts]
+      .sort((x, y) => x.shiftStart.localeCompare(y.shiftStart))
+      .map((s) => ({ id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: s.requiredCount })));
   // Explizite KOPFZAHL des Tages (leer = Automatik max(Mittag, Abend)).
   const [headInput, setHeadInput] = useState<string>(() => {
     const v = explicitDayHeadcount(rawShifts);
@@ -127,10 +146,10 @@ function CellEditPanel({
     setError(null);
     setSaving(true);
     try {
-      // NUR die bearbeitete Tageshälfte übergeben — das Mergen mit der anderen
-      // Hälfte passiert beim Speichern gegen den FRISCHEN Scope-Stand
-      // (buildCellSaveDrafts), damit kein veralteter Snapshot zurückschreibt.
-      await onSaveCell(positionKey, weekday, part, drafts, head);
+      // 'day' ersetzt ALLE Blöcke der Position an diesem Tag; das Mergen mit
+      // den übrigen Zeilen des Scopes passiert beim Speichern gegen den
+      // FRISCHEN Stand (buildCellSaveDrafts) — kein veralteter Snapshot.
+      await onSaveCell(positionKey, weekday, 'day', drafts, head);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen');
@@ -140,10 +159,10 @@ function CellEditPanel({
   };
 
   return (
-    <div className="space-y-2" data-testid={`cell-editor-${positionKey}-${weekday}-${part === 'abend' ? 'a' : 'm'}`}>
+    <div className="space-y-2" data-testid={`cell-editor-${positionKey}-${weekday}`}>
       <div className="space-y-0.5">
         <p className="text-xs font-semibold">
-          {positionName} · {weekdayLabel(weekday)} · {part === 'abend' ? 'Abend' : 'Mittag'}
+          {positionName} · {weekdayLabel(weekday)} · ganzer Tag
         </p>
         <p className="text-[10px] text-muted-foreground">Quelle: {sourceLabel}</p>
       </div>
@@ -180,8 +199,8 @@ function CellEditPanel({
       <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs"
         onClick={() => setDrafts((d) => [...d, {
           ...defaultShiftDraft(),
-          // Sinnvoller Default je Tageshälfte (Abend-Zelle → Abend-Zeiten).
-          ...(part === 'abend' ? { shiftStart: '17:00', shiftEnd: '23:00' } : {}),
+          // Zweiter Block eines Tages ist typischerweise der Abend.
+          ...(d.some((s) => !isEveningShift(s.shiftStart)) ? { shiftStart: '17:00', shiftEnd: '23:00' } : {}),
         }])}
         data-testid="cell-edit-add">
         <Plus className="h-3.5 w-3.5" /> Schicht hinzufügen
@@ -215,17 +234,16 @@ function CellEditPanel({
 
 /** Zelle mit Klick-Editor (Popover) + Stift-Hinweis; read-only nur Anzeige. */
 function EditableCell({
-  cell, part, mode, positionKey, positionName, weekday, rawShifts, sourceLabel, onSaveCell,
+  cell, mode, positionKey, positionName, weekday, rawShifts, sourceLabel, onSaveCell,
 }: {
   cell: WeekCell | undefined;
-  part: 'mittag' | 'abend';
   mode: WeekCellMode;
   positionKey: string;
   positionName: string;
   weekday: number;
   rawShifts: StaffingRequirement[];
   sourceLabel: string;
-  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
+  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend' | 'day', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const ruleHint = RULE_BASED_POSITION_HINTS[positionKey] ?? null;
@@ -235,10 +253,10 @@ function EditableCell({
         <button
           type="button"
           className="group relative w-full rounded px-0.5 py-0.5 hover:bg-muted/70"
-          title="Zelle bearbeiten"
-          data-testid={`week-cell-btn-${positionKey}-${weekday}-${part === 'abend' ? 'a' : 'm'}`}
+          title={dayCellTitle(cell) || 'Zelle bearbeiten'}
+          data-testid={`week-cell-btn-${positionKey}-${weekday}`}
         >
-          <CellValue cell={cell} part={part} mode={mode} />
+          <CellValue cell={cell} mode={mode} />
           <Pencil className="pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 text-muted-foreground/0 group-hover:text-muted-foreground/70" />
         </button>
       </PopoverTrigger>
@@ -258,7 +276,6 @@ function EditableCell({
             positionKey={positionKey}
             positionName={positionName}
             weekday={weekday}
-            part={part}
             rawShifts={rawShifts}
             sourceLabel={sourceLabel}
             onSaveCell={onSaveCell}
@@ -329,7 +346,7 @@ export function StaffingWeekMatrix({
   /** Quelle/Regel-Beschriftung im Editor, z.B. «Profil Standard». */
   sourceLabel?: string;
   /** Persistiert die kompletten Tages-Schichten der Position (+ Kopfzahl). */
-  onSaveCell?: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
+  onSaveCell?: (positionKey: string, weekday: number, part: 'mittag' | 'abend' | 'day', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
 }) {
   const overview = buildWeekOverview({ positions, requirements, config, season });
   const canEdit = editable && !!onSaveCell && !!editSeason;
@@ -352,7 +369,7 @@ export function StaffingWeekMatrix({
   return (
     <Card data-testid="staffing-week-matrix">
       <CardHeader className="pb-2 pt-4">
-        <CardTitle className="text-sm">Soll-Wochenübersicht (Mo–So · M = Mittag, A = Abend)</CardTitle>
+        <CardTitle className="text-sm">Soll-Wochenübersicht (Mo–So · eine Kopfzahl pro Tag)</CardTitle>
       </CardHeader>
       <CardContent className="pt-0 overflow-x-auto">
         <table className="w-full min-w-[720px] text-sm">
@@ -360,7 +377,7 @@ export function StaffingWeekMatrix({
             <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
               <th className="py-1 pr-2 text-left font-medium">Position</th>
               {WEEKDAYS.map((w) => (
-                <th key={w.value} colSpan={2} className="py-1 px-1 text-center font-medium">
+                <th key={w.value} className="py-1 px-1 text-center font-medium border-b border-r border-border/40 last:border-r-0">
                   {onSelectWeekday ? (
                     <button
                       type="button"
@@ -377,15 +394,6 @@ export function StaffingWeekMatrix({
                 </th>
               ))}
             </tr>
-            <tr className="text-[10px] text-muted-foreground border-b">
-              <th />
-              {WEEKDAYS.map((w) => (
-                <Fragment key={w.value}>
-                  <th className="pb-1 px-1 text-center font-normal">M</th>
-                  <th className="pb-1 px-1 text-center font-normal border-r border-border/40 last:border-r-0">A</th>
-                </Fragment>
-              ))}
-            </tr>
           </thead>
           <tbody>
             {/* EINE klare Überschrift-Ebene: Bereich (Restaurant, Bar/Buffet,
@@ -396,7 +404,7 @@ export function StaffingWeekMatrix({
                 {dep.areas.map((area) => (
                   <Fragment key={`${dep.department}-${area.area?.key ?? 'none'}`}>
                     <tr className="bg-muted/40">
-                      <td colSpan={15} className="py-1 pr-2 text-xs font-semibold uppercase tracking-wide">
+                      <td colSpan={8} className="py-1 pr-2 text-xs font-semibold uppercase tracking-wide">
                         {area.area?.name ?? DEPT_LABEL[dep.department]}
                       </td>
                     </tr>
@@ -404,32 +412,18 @@ export function StaffingWeekMatrix({
                       <tr key={row.positionKey} className="border-t border-border/50">
                         <td className="py-1 pr-2 whitespace-nowrap">{row.positionName}</td>
                         {WEEKDAYS.map((w) => (
-                          <Fragment key={w.value}>
-                            <td className="py-1 px-1 text-center" data-testid={`week-cell-${row.positionKey}-${w.value}-m`}>
-                              {canEdit ? (
-                                <EditableCell
-                                  cell={row.cells[w.value]} part="mittag" mode={cellMode}
-                                  positionKey={row.positionKey} positionName={row.positionName}
-                                  weekday={w.value} rawShifts={rawShiftsFor(row.positionKey, w.value)}
-                                  sourceLabel={sourceLabel ?? ''} onSaveCell={onSaveCell!}
-                                />
-                              ) : (
-                                <CellValue cell={row.cells[w.value]} part="mittag" mode={cellMode} />
-                              )}
-                            </td>
-                            <td className="py-1 px-1 text-center border-r border-border/40 last:border-r-0">
-                              {canEdit ? (
-                                <EditableCell
-                                  cell={row.cells[w.value]} part="abend" mode={cellMode}
-                                  positionKey={row.positionKey} positionName={row.positionName}
-                                  weekday={w.value} rawShifts={rawShiftsFor(row.positionKey, w.value)}
-                                  sourceLabel={sourceLabel ?? ''} onSaveCell={onSaveCell!}
-                                />
-                              ) : (
-                                <CellValue cell={row.cells[w.value]} part="abend" mode={cellMode} />
-                              )}
-                            </td>
-                          </Fragment>
+                          <td key={w.value} className="py-1 px-1 text-center border-r border-border/40 last:border-r-0" data-testid={`week-cell-${row.positionKey}-${w.value}`}>
+                            {canEdit ? (
+                              <EditableCell
+                                cell={row.cells[w.value]} mode={cellMode}
+                                positionKey={row.positionKey} positionName={row.positionName}
+                                weekday={w.value} rawShifts={rawShiftsFor(row.positionKey, w.value)}
+                                sourceLabel={sourceLabel ?? ''} onSaveCell={onSaveCell!}
+                              />
+                            ) : (
+                              <CellValue cell={row.cells[w.value]} mode={cellMode} />
+                            )}
+                          </td>
                         ))}
                       </tr>
                     ))}
@@ -442,7 +436,7 @@ export function StaffingWeekMatrix({
             <tr className="text-xs">
               <td className="py-1 pr-2 font-medium">Personal total</td>
               {WEEKDAYS.map((w) => (
-                <td key={w.value} colSpan={2} className={cn('py-1 px-1 text-center tabular-nums font-medium border-r border-border/40 last:border-r-0')} data-testid={`week-total-persons-${w.value}`}>
+                <td key={w.value} className={cn('py-1 px-1 text-center tabular-nums font-medium border-r border-border/40 last:border-r-0')} data-testid={`week-total-persons-${w.value}`}>
                   {overview.totals[w.value]?.persons ?? 0}
                 </td>
               ))}
@@ -453,7 +447,7 @@ export function StaffingWeekMatrix({
             <tr className="text-xs">
               <td className="py-1 pr-2 font-semibold">Bedarf-Stunden (Soll)</td>
               {WEEKDAYS.map((w) => (
-                <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums font-semibold border-r border-border/40 last:border-r-0" data-testid={`week-bedarf-h-${w.value}`}>
+                <td key={w.value} className="py-1 px-1 text-center tabular-nums font-semibold border-r border-border/40 last:border-r-0" data-testid={`week-bedarf-h-${w.value}`}>
                   {fmtH(overview.totals[w.value]?.nettoHours ?? 0)}
                 </td>
               ))}
@@ -466,7 +460,7 @@ export function StaffingWeekMatrix({
                     const plan = hoursStack.plan[w.value] ?? null;
                     const bedarf = overview.totals[w.value]?.nettoHours ?? 0;
                     return (
-                      <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0" data-testid={`week-plan-h-${w.value}`}>
+                      <td key={w.value} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0" data-testid={`week-plan-h-${w.value}`}>
                         {plan != null ? fmtH(plan) : '–'}
                         <DiffBadge value={plan} bedarf={bedarf} />
                       </td>
@@ -479,7 +473,7 @@ export function StaffingWeekMatrix({
                     const ist = hoursStack.ist[w.value] ?? null;
                     const bedarf = overview.totals[w.value]?.nettoHours ?? 0;
                     return (
-                      <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0" data-testid={`week-ist-h-${w.value}`}>
+                      <td key={w.value} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0" data-testid={`week-ist-h-${w.value}`}>
                         {ist != null ? fmtH(ist) : ''}
                         <DiffBadge value={ist} bedarf={bedarf} />
                       </td>
@@ -493,7 +487,7 @@ export function StaffingWeekMatrix({
               {WEEKDAYS.map((w) => {
                 const b = overview.totals[w.value]?.budget;
                 return (
-                  <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0">
+                  <td key={w.value} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0">
                     {b != null ? b.toLocaleString('de-CH') : '–'}
                   </td>
                 );
@@ -502,11 +496,12 @@ export function StaffingWeekMatrix({
           </tfoot>
         </table>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          Mittag = Schichtbeginn vor 16:00, Abend = ab 16:00. Zahlen = {cellMode === 'hours'
-            ? 'Bedarf-Netto-Stunden (Soll-Schichten × Dauer, ArG-Pausenabzug)'
-            : 'besetzte Blöcke (M/A zeigen WANN)'}; Zeiten im Tooltip.
-          «Personal total» = KOPFZAHL: eine Person zählt 1× pro Tag (durchgehend = 1);
-          automatisch max(Mittag, Abend), pro Zelle explizit übersteuerbar.{' '}
+          Eine Zahl pro Tag = {cellMode === 'hours'
+            ? 'Bedarf-Netto-Stunden (jede Person mit ihrer echten Schichtlänge, ArG-Pausenabzug)'
+            : 'KOPFZAHL (Personen; eine durchgehende Person zählt 1×, keine Doppelzählung Mittag/Abend)'}.
+          WANN (durchgehend / nur Mittag / nur Abend, mit Uhrzeiten) steht im Tooltip
+          und im Bearbeitungs-Panel. «Personal total» = Summe der Kopfzahlen;
+          Kopfzahl automatisch max(Mittag, Abend), pro Zelle explizit übersteuerbar.{' '}
           {canEdit
             ? 'Klick auf eine Zelle öffnet das Bearbeitungs-Panel (schreibt ins aktive Profil); regelbasierte Positionen zeigen nur den Regel-Hinweis.'
             : 'Bearbeiten in der Tagesansicht (Klick auf einen Wochentag).'}
