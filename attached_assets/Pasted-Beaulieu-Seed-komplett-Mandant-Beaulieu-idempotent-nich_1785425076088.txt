@@ -1,0 +1,43 @@
+Beaulieu-Seed komplett (Mandant Beaulieu), idempotent — nichts löschen was schon korrekt ist:
+
+A) Positionen-Katalog Beaulieu (kein Take Away, kein Pizza/Sushi):
+- Küche: Kochen (heiss), Kalte Küche, Küche Zubereitung, Spüle/Abwasch, Reinigung Restaurant
+- Service: Service, Chef de Service, Bar, Runner, Abwasch
+
+B) Positionszuordnung ([haupt] = Hauptposition):
+Service:
+- Burkhalter Nadica: Service[haupt], Bar
+- Firlovic Maja: Service[haupt], Bar
+- Svyrydovych Varvara: Service[haupt], Bar
+- Veronika Poganyova: Service[haupt], Bar, Runner
+- Murat Safi: Bar[haupt], Abwasch, Runner
+- Doni: Service[haupt], Bar, Runner
+- Krebs Marcel: Chef de Service[haupt], Service
+- Redzepi Nehat: Chef de Service[haupt], Service, Bar
+- Joana Bolsinger: Chef de Service, Service[haupt], Bar
+Küche:
+- Horvath Robert Stefan: Kochen (heiss)[haupt], Kalte Küche, Küche Zubereitung
+- Luigi Vittorio Maestri: Kochen (heiss)[haupt], Kalte Küche, Küche Zubereitung
+- Jimi: Kochen (heiss)[haupt], Kalte Küche, Küche Zubereitung
+- Ramadani Naip: Kalte Küche[haupt], Küche Zubereitung, Spüle/Abwasch
+- Raja: Kalte Küche[haupt], Küche Zubereitung
+- Jose Elpidio Camacho: Kalte Küche[haupt], Küche Zubereitung
+- Hadzija Hatidze: Spüle/Abwasch[haupt], Reinigung Restaurant
+- Priyanka Masina: Spüle/Abwasch[haupt]
+- Gazmend: Spüle/Abwasch[haupt]
+- Bafhani: Spüle/Abwasch[haupt]
+- Thas: Spüle/Abwasch[haupt]
+
+C) Chef-de-Service-Regel Beaulieu:
+- Immer genau 1 pro geöffnetem Tag. Priorität: Krebs Marcel > Redzepi Nehat > Joana Bolsinger (Joana = Default-Vertretung). Warnung, wenn keiner der drei geplant ist.
+
+D) Personalbedarf Soll (Profil 'Standard'), Sonntag geschlossen:
+Service (Anzahl/Tag, inkl. 1 Chef de Service): Mo 3 · Di 3 · Mi 3 · Do 3 · Fr 4 · Sa 2 · So –
+Küche pro Wochentag:
+- Kochen (heiss): 1  (Mo–Sa)
+- Kalte Küche / Zubereitung: 2  (Mo–Sa)
+- Reinigung Restaurant: Mo–Fr 08:00–11:00 × 1 (Hadzija); Sa/So keine
+- Spüle/Abwasch: Mo–Fr 11:00–14:00 × 1 (Hadzija, direkt nach Reinigung) und 18:00–22:00 × 1 (zweite Kraft, halber Abend-Einsatz); Sa 11:00–14:00 und 18:00–22:00 je × 1
+- Sonntag: geschlossen (keine Zeilen; Events über Tages-Flag)
+
+E) Beaulieu-spezifisch: kein Take Away, keine Pizza/Sushi-Positionen anzeigen. Netto-Stunden mit Pausen nach ArG/L-GAV; Splitschicht = Summe der Segmente.

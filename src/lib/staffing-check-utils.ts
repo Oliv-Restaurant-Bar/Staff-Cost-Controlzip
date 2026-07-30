@@ -36,6 +36,7 @@ import type { KitchenColdRule } from '@/lib/staffing-profiles-utils';
 import { shiftsForScope, timeToMinutes } from '@/lib/staffing-requirements-utils';
 import {
   slotOverlapsShift,
+  assignPlannedToShifts,
   type PlannedSlot,
   type PlannedEmployeeDay,
 } from '@/lib/staffing-comparison-utils';
@@ -179,6 +180,24 @@ export function computeKitchenColdCheck(
   };
 }
 
+/**
+ * Übersetzt die dynamischen Regeln (CdS/Gastgeber + Kalte Küche/Sushi) in
+ * bevorzugte Positions-Keys je Person — Eingabe für assignPlannedToShifts
+ * bzw. computeStaffingComparison({ preferredKeysById }).
+ */
+export function dynamicPositionOverrides(
+  cds: CdsCheckResult,
+  kitchenCold: KitchenColdCheckResult,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (cds.activeCdsId) out[cds.activeCdsId] = ['chef_de_service'];
+  if (cds.gastgeberId) out[cds.gastgeberId] = ['gastgeber_gf'];
+  if (kitchenCold.coldId) {
+    out[kitchenCold.coldId] = [...(out[kitchenCold.coldId] ?? []), 'kalte_kueche', 'sushi'];
+  }
+  return out;
+}
+
 // ─── Tages-Prüfung (3 Dimensionen) ────────────────────────────────────────────
 
 export type Ampel = 'gruen' | 'gelb' | 'rot';
@@ -314,13 +333,15 @@ export function computeDayCheck(args: {
     return { positionKey: key, sollHours: soll, istHours: ist, diffHours: diff, ampel: hoursAmpel(diff) };
   });
 
-  // ── 2) Anzahl je Bedarfs-Schicht (Zählregel wie bisher: HAUPT-Position) ──
-  const countRows: CountCheckRow[] = shifts.map((s) => {
-    const ist = plannedEmployees.filter(
-      (e) =>
-        e.positionKey === s.positionKey &&
-        e.slots.some((sl) => slotOverlapsShift(sl, s.shiftStart, s.shiftEnd)),
-    ).length;
+  // ── 2) Anzahl je Bedarfs-Schicht: eindeutige Zuordnung (jeder Einsatz zählt
+  // genau EINMAL — grösste Überlappung, Haupt/Zweit/Regel; keine Mehrfachzählung).
+  const assignment = assignPlannedToShifts(
+    shifts,
+    plannedEmployees,
+    dynamicPositionOverrides(cds, cold),
+  );
+  const countRows: CountCheckRow[] = shifts.map((s, i) => {
+    const ist = (assignment.get(i) ?? []).length;
     const diff = ist - s.requiredCount;
     return {
       positionKey: s.positionKey,

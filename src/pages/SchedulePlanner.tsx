@@ -98,6 +98,7 @@ import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { usePositions } from '@/hooks/usePositions';
 import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
+import { computeCdsCheck, computeKitchenColdCheck, dynamicPositionOverrides } from '@/lib/staffing-check-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
 import { resolveActiveProfileForDate, buildEffectiveRequirements } from '@/lib/staffing-profiles-utils';
@@ -1337,6 +1338,7 @@ const SchedulePlanner = () => {
         weekday,
         eventOpen: ugEventDays.has(dateStr),
       });
+      const plannedIds = planned.map((p) => p.id);
       const summary = computeDayStaffingSummary({
         positions: staffingPositions,
         requirements: effectiveReqs,
@@ -1344,6 +1346,10 @@ const SchedulePlanner = () => {
         season: staffingSeason,
         weekday,
         departments: comparisonDepartments,
+        preferredKeysById: dynamicPositionOverrides(
+          computeCdsCheck(plannedIds, staffingProfilesConfig.cdsPriority ?? [], weekday),
+          computeKitchenColdCheck(plannedIds, staffingProfilesConfig.kitchenCold),
+        ),
       });
       if (summary.hasRequirements && summary.departments.length > 0) {
         map[dateStr] = summary;

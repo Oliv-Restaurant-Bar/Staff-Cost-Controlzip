@@ -13,6 +13,7 @@ import {
   slotOverlapsShift,
   countPlanned,
   plannedIdsForShift,
+  assignPlannedToShifts,
   buildPlannedEmployees,
   computeStaffingComparison,
   computeDayStaffingSummary,
@@ -523,6 +524,7 @@ describe('summarizeStaffingKpis', () => {
       planned,
       diff,
       status: comparisonStatus(required, planned),
+      assigned: [],
     };
   }
 
@@ -604,6 +606,7 @@ function headlineRow(required: number, planned: number): ShiftComparisonRow {
     planned,
     diff: planned - required,
     status: comparisonStatus(required, planned),
+    assigned: [],
   };
 }
 
@@ -678,5 +681,101 @@ describe('staffingHeadline', () => {
     expect(h.tone).toBe('red');
     expect(h.understaffPersons).toBe(2);
     expect(h.overstaffPersons).toBe(2);
+  });
+});
+
+// ─── assignPlannedToShifts (eindeutige Einsatz-Zuordnung) ─────────────────────
+
+describe('assignPlannedToShifts', () => {
+  const p = (over: Partial<PlannedEmployeeDay> & { id: string }): PlannedEmployeeDay => ({
+    department: 'service',
+    positionKey: 'service',
+    slots: [{ start: '11:00', end: '22:00' }],
+    ...over,
+  });
+
+  it('keine Mehrfachzählung: durchgehende Schicht zählt nur im Block mit grösster Überlappung', () => {
+    const shifts = [
+      req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }),
+      req({ positionKey: 'service', shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 2 }),
+    ];
+    const m = assignPlannedToShifts(shifts, [p({ id: 'a' })]);
+    expect(m.get(0)).toBeUndefined(); // 3h Überlappung
+    expect(m.get(1)?.map((x) => x.id)).toEqual(['a']); // 5h Überlappung gewinnt
+  });
+
+  it('getrennte Früh+Spät-Einsätze füllen zwei Blöcke (je Einsatz ein Block)', () => {
+    const shifts = [
+      req({ positionKey: 'service', shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 1 }),
+      req({ positionKey: 'service', shiftStart: '18:00', shiftEnd: '22:00', requiredCount: 1 }),
+    ];
+    const m = assignPlannedToShifts(shifts, [
+      p({ id: 'a', slots: [{ start: '11:00', end: '14:00' }, { start: '18:00', end: '22:00' }] }),
+    ]);
+    expect(m.get(0)?.map((x) => x.id)).toEqual(['a']);
+    expect(m.get(1)?.map((x) => x.id)).toEqual(['a']);
+  });
+
+  it('Zweitposition zählt, wenn kein Block der Hauptposition passt', () => {
+    const shifts = [req({ positionKey: 'bar_oben', shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 1 })];
+    const m = assignPlannedToShifts(shifts, [
+      p({ id: 'a', positionKey: 'service', trainedKeys: ['service', 'bar_oben'] }),
+    ]);
+    expect(m.get(0)?.[0]).toMatchObject({ id: 'a', via: 'zweit' });
+  });
+
+  it('Hauptposition gewinnt bei gleicher Überlappung vor Zweitposition', () => {
+    const shifts = [
+      req({ positionKey: 'bar_oben', shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 1 }),
+      req({ positionKey: 'service', shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 1 }),
+    ];
+    const m = assignPlannedToShifts(shifts, [
+      p({ id: 'a', positionKey: 'service', trainedKeys: ['service', 'bar_oben'] }),
+    ]);
+    expect(m.get(1)?.[0]).toMatchObject({ id: 'a', via: 'haupt' });
+    expect(m.get(0)).toBeUndefined();
+  });
+
+  it('dynamische Regel (preferredKeysById) hat Vorrang vor der Hauptposition', () => {
+    const shifts = [
+      req({ positionKey: 'service', shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 1 }),
+      req({ positionKey: 'chef_de_service', shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 1 }),
+    ];
+    const m = assignPlannedToShifts(shifts, [p({ id: 'cds', positionKey: 'service' })], {
+      cds: ['chef_de_service'],
+    });
+    expect(m.get(1)?.[0]).toMatchObject({ id: 'cds', via: 'regel' });
+    expect(m.get(0)).toBeUndefined();
+  });
+
+  it('Legacy-Alias: Hauptposition «bar» zählt auf BAR-Buffet-Bedarf (via alias)', () => {
+    const shifts = [req({ positionKey: 'bar_buffet_springer', shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 })];
+    const m = assignPlannedToShifts(shifts, [p({ id: 'a', positionKey: 'bar', trainedKeys: ['bar'] })]);
+    expect(m.get(0)?.[0]).toMatchObject({ id: 'a', via: 'alias' });
+  });
+
+  it('ohne Zeitüberlappung oder ohne passende Position keine Zuordnung', () => {
+    const shifts = [req({ positionKey: 'service', shiftStart: '06:00', shiftEnd: '08:00', requiredCount: 1 })];
+    const m = assignPlannedToShifts(shifts, [
+      p({ id: 'a' }), // Zeit passt nicht
+      p({ id: 'b', positionKey: 'kueche', trainedKeys: ['kueche'], department: 'küche' }), // Position passt nicht
+    ]);
+    expect(m.size).toBe(0);
+  });
+});
+
+// Determinismus-Absicherung: gleiche Überlappung + gleiche Stufe → erster Block
+// der (sortierten) Liste gewinnt stabil.
+describe('assignPlannedToShifts – deterministischer Gleichstand', () => {
+  it('bei identischer Überlappung und Stufe gewinnt der zuerst gelistete Block', () => {
+    const shifts = [
+      req({ id: 'block-a', positionKey: 'service', shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 1 }),
+      req({ id: 'block-b', positionKey: 'service', shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 1 }),
+    ];
+    const m = assignPlannedToShifts(shifts, [
+      { id: 'a', department: 'service', positionKey: 'service', slots: [{ start: '11:00', end: '14:00' }] },
+    ]);
+    expect(m.get(0)?.map((x) => x.id)).toEqual(['a']);
+    expect(m.get(1)).toBeUndefined();
   });
 });

@@ -39,6 +39,7 @@ import {
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
+import { StaffingWeekMatrix } from '@/components/schedule-planner/StaffingWeekMatrix';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
@@ -83,6 +84,8 @@ export default function Personalbedarf() {
 
   const [season, setSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
   const [weekday, setWeekday] = useState<number>(currentIsoWeekday());
+  /** Ansicht: «Ganze Woche» (Standard, nur Anzeige) oder «Einzelner Tag» (Editor). */
+  const [viewMode, setViewMode] = useState<'week' | 'day'>('week');
   const [edits, setEdits] = useState<EditsMap>({});
   const [baselineKey, setBaselineKey] = useState<string>('[]');
   const [busy, setBusy] = useState(false);
@@ -451,7 +454,33 @@ export default function Personalbedarf() {
         )}
       </div>
 
-      {/* Wochentag-Auswahl */}
+      {/* Ansicht-Umschalter: Ganze Woche (Übersicht) | Einzelner Tag (Editor) */}
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Ansicht</Label>
+        <div className="flex flex-wrap gap-1.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={viewMode === 'week' ? 'default' : 'outline'}
+            onClick={() => setViewMode('week')}
+            data-testid="view-week"
+          >
+            Ganze Woche
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={viewMode === 'day' ? 'default' : 'outline'}
+            onClick={() => setViewMode('day')}
+            data-testid="view-day"
+          >
+            Einzelner Tag
+          </Button>
+        </div>
+      </div>
+
+      {/* Wochentag-Auswahl (nur Tagesansicht) */}
+      {viewMode === 'day' && (
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Wochentag</Label>
         <div className="flex flex-wrap gap-1.5">
@@ -469,8 +498,10 @@ export default function Personalbedarf() {
           ))}
         </div>
       </div>
+      )}
 
-      {/* Bereichs-Zusammenfassung (rein informativ) */}
+      {/* Bereichs-Zusammenfassung (rein informativ, Tagesansicht) */}
+      {viewMode === 'day' && (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Clock className="h-4 w-4" />
         <span>{activeProfile?.label ?? seasonLabel(season)} · {weekdayLabel(weekday)}</span>
@@ -488,6 +519,21 @@ export default function Personalbedarf() {
         )}
         {dirty && <Badge variant="outline" className="border-amber-400 text-amber-700 dark:text-amber-400">ungespeichert</Badge>}
       </div>
+      )}
+
+      {/* Wochenübersicht (Standard-Ansicht) */}
+      {!loading && viewMode === 'week' && hasActivePositions && (
+        <StaffingWeekMatrix
+          positions={positions}
+          requirements={requirements}
+          config={profilesConfig}
+          season={season}
+          onSelectWeekday={(w) => {
+            setWeekday(w);
+            setViewMode('day');
+          }}
+        />
+      )}
 
       {loading && <p className="text-sm text-muted-foreground">Lädt…</p>}
 
@@ -519,8 +565,8 @@ export default function Personalbedarf() {
       {/* Beaulieu: Ist-Aufstellung aus Juni/Juli als Standard-Vorschlag */}
       {!loading && tenantId === 'beaulieu' && <PastScheduleSuggestionCard />}
 
-      {/* Hierarchie: Abteilung → Bereich → Position → Schichten */}
-      {!loading && hasActivePositions && matrix.map((dep) => (
+      {/* Hierarchie: Abteilung → Bereich → Position → Schichten (Tagesansicht) */}
+      {!loading && viewMode === 'day' && hasActivePositions && matrix.map((dep) => (
         <Card key={dep.department}>
           <CardHeader className="pb-2 pt-4">
             <CardTitle className="text-sm">

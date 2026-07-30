@@ -11,3 +11,16 @@ description: Architektur der Profil-Config (app_settings), CdS-Regel, 3-Dimensio
 - Dynamische Personen-Regeln (CdS, Gastgeber nur Do/Fr/Sa, Kalte Küche/Sushi) leben als Config auf StaffingProfilesConfig + reine compute*-Checks; Regel-Verstösse = GELB in der Abdeckung, nur unbesetzte Soll-Schichten = ROT. Jede neue Regel muss in BEIDEN Anzeigen (StaffingComparisonPanel UND StaffingDayCheck) gerendert werden, sonst widerspricht die Erfolgszeile der Ampel.
 - Beaulieu-Katalog: «Abwasch» existiert ZWEIMAL — Küche `abwasch` (Spüle/Abwasch) vs. Service `abwasch_service` (Abwasch); nie verwechseln. CdS-Priorität Beaulieu default: Krebs b-200 > Redzepi b-161 > Joana b-220 (im Code-Default, kein Blob nötig). Alte Positionen (Sushi/Pizza/Bar oben/unten …) sind DEAKTIVIERT, nicht gelöscht.
 - Optimistische Mehrfach-Toggles (Event-Flag): Schreibzugriffe über Single-Flight-Queue + Revisionszähler serialisieren — veraltete Revisionen überspringen, bei Fehler des letzten Stands DB-Wahrheit neu laden. Closure-Stand in toggle() ist ein Race.
+
+## Ist-Zählregel (seit Juli 2026)
+Alle Ist-Zahlen (Panel, DayCheck-counts, Dienstplan-Badges) laufen über
+`assignPlannedToShifts`: jeder EINSATZ (Slot) zählt genau in EINEM Soll-Block
+(grösste Überlappung; Priorität Regel > Haupt > Zweit > Legacy-Alias, Aliasse
+in `LEGACY_POSITION_ALIASES`, z.B. bar ↔ bar_buffet_springer). Getrennte
+Früh+Spät-Slots dürfen zwei Blöcke füllen. Dynamische Regeln kommen als
+`preferredKeysById` via `dynamicPositionOverrides(cds, cold)` herein — jeder
+neue Aufrufer von computeStaffingComparison/…DayStaffingSummary muss sie
+mitgeben, sonst weichen die Zahlen vom Panel ab. **Nie** zu countPlanned je
+Zeile zurückkehren (Mehrfachzählung war der ursprüngliche Bug).
+Personalbedarf-Seite: Standard-Ansicht «Ganze Woche» (staffing-week-utils,
+Mittag/Abend-Grenze 16:00); Editor nur in der Tagesansicht.

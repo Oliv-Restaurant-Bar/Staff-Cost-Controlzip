@@ -9,6 +9,7 @@ import type { DaySchedule } from '@/components/schedule-planner/ScheduleGrid';
 import type { StaffingSeason } from '@/types/staffing';
 
 import { usePositions } from '@/hooks/usePositions';
+import { positionDisplayName } from '@/lib/position-utils';
 import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import {
   SEASONS,
@@ -24,7 +25,16 @@ import {
   type ShiftComparisonRow,
   type StaffingHeadline,
 } from '@/lib/staffing-comparison-utils';
-import { computeCdsCheck, computeKitchenColdCheck } from '@/lib/staffing-check-utils';
+import {
+  computeCdsCheck,
+  computeKitchenColdCheck,
+  dynamicPositionOverrides,
+} from '@/lib/staffing-check-utils';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import type { KitchenColdRule } from '@/lib/staffing-profiles-utils';
 import { buildEffectiveRequirements, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
@@ -123,7 +133,27 @@ function HeadlinePill({ headline }: { headline: StaffingHeadline }) {
   );
 }
 
-function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
+const VIA_LABEL: Record<string, string> = {
+  regel: 'Regel',
+  haupt: 'Hauptposition',
+  zweit: 'Zweitposition',
+  alias: 'Alt-Position',
+};
+
+/**
+ * Zeilen einer Position mit Drill-down: Klick auf die Ist-Zahl öffnet die
+ * Liste der zugeordneten Personen (Name + Schichtzeit + Zuordnungsweg);
+ * Klick auf die Soll-Zahl zeigt die hinterlegte Anforderung.
+ */
+function ShiftRows({
+  shifts,
+  positionName,
+  employeeName,
+}: {
+  shifts: ShiftComparisonRow[];
+  positionName: (key: string) => string;
+  employeeName: (id: string) => string;
+}) {
   return (
     <>
       {shifts.map((s, i) => (
@@ -131,8 +161,60 @@ function ShiftRows({ shifts }: { shifts: ShiftComparisonRow[] }) {
           <td className="py-1.5 pr-3 tabular-nums whitespace-nowrap text-sm">
             {s.shiftStart}–{s.shiftEnd}
           </td>
-          <td className="py-1.5 px-3 text-center tabular-nums text-sm">{s.required}</td>
-          <td className="py-1.5 px-3 text-center tabular-nums text-sm">{s.planned}</td>
+          <td className="py-1.5 px-3 text-center tabular-nums text-sm">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-muted"
+                  data-testid={`soll-drilldown-${s.positionKey}-${s.shiftStart}`}
+                >
+                  {s.required}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 text-xs" align="center">
+                <p className="font-semibold mb-1">Hinterlegte Anforderung</p>
+                <p>
+                  {positionName(s.positionKey)} · {s.shiftStart}–{s.shiftEnd} ·{' '}
+                  {s.required} {s.required === 1 ? 'Person' : 'Personen'}
+                </p>
+              </PopoverContent>
+            </Popover>
+          </td>
+          <td className="py-1.5 px-3 text-center tabular-nums text-sm">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-muted"
+                  data-testid={`ist-drilldown-${s.positionKey}-${s.shiftStart}`}
+                >
+                  {s.planned}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-xs" align="center">
+                <p className="font-semibold mb-1">
+                  Zugeordnete Personen ({positionName(s.positionKey)} {s.shiftStart}–{s.shiftEnd})
+                </p>
+                {s.assigned.length === 0 ? (
+                  <p className="text-muted-foreground">Niemand zugeordnet.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {s.assigned.map((a) => (
+                      <li key={a.id} className="flex items-baseline justify-between gap-2">
+                        <span className="font-medium">{employeeName(a.id)}</span>
+                        <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                          {a.slots.map((sl) => `${sl.start}–${sl.end}`).join(' / ')}
+                          {' · '}
+                          {VIA_LABEL[a.via] ?? a.via}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </PopoverContent>
+            </Popover>
+          </td>
           <td className="py-1.5 px-3 text-right text-sm">
             <StaffingDiffCell data={{ required: s.required, planned: s.planned, diff: s.diff }} />
           </td>
@@ -185,22 +267,6 @@ export function StaffingComparisonPanel({
   );
   const surchargeActive = ugSurchargeApplies({ config: profilesConfig, season, weekday, eventOpen });
 
-  const result = useMemo(
-    () =>
-      computeStaffingComparison({
-        positions,
-        requirements: effectiveRequirements,
-        plannedEmployees,
-        season,
-        weekday,
-        departments,
-      }),
-    [positions, effectiveRequirements, plannedEmployees, season, weekday, departments],
-  );
-
-  const kpis = useMemo(() => summarizeStaffingKpis(result.rows), [result.rows]);
-  const headline = useMemo(() => staffingHeadline(result), [result]);
-
   // Chef-de-Service-Regel (nur wenn eine Prioritätsliste konfiguriert ist).
   const cdsCheck = useMemo(
     () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsPriority ?? [], weekday),
@@ -211,9 +277,30 @@ export function StaffingComparisonPanel({
     () => computeKitchenColdCheck(plannedEmployees.map((p) => p.id), kitchenCold),
     [plannedEmployees, kitchenCold],
   );
+
+  const result = useMemo(
+    () =>
+      computeStaffingComparison({
+        positions,
+        requirements: effectiveRequirements,
+        plannedEmployees,
+        season,
+        weekday,
+        departments,
+        preferredKeysById: dynamicPositionOverrides(cdsCheck, kitchenColdCheck),
+      }),
+    [positions, effectiveRequirements, plannedEmployees, season, weekday, departments, cdsCheck, kitchenColdCheck],
+  );
+
+  const kpis = useMemo(() => summarizeStaffingKpis(result.rows), [result.rows]);
+  const headline = useMemo(() => staffingHeadline(result), [result]);
   const employeeName = useCallback(
     (id: string) => employees.find((e) => e.id === id)?.name ?? id,
     [employees],
+  );
+  const positionName = useCallback(
+    (key: string) => positionDisplayName(positions, key),
+    [positions],
   );
 
   const loading = posLoading || reqLoading;
@@ -459,7 +546,7 @@ export function StaffingComparisonPanel({
                             </tr>
                           </thead>
                           <tbody>
-                            <ShiftRows shifts={pc.shifts} />
+                            <ShiftRows shifts={pc.shifts} positionName={positionName} employeeName={employeeName} />
                           </tbody>
                         </table>
                       </div>
@@ -492,7 +579,7 @@ export function StaffingComparisonPanel({
                         </tr>
                       </thead>
                       <tbody>
-                        <ShiftRows shifts={op.shifts} />
+                        <ShiftRows shifts={op.shifts} positionName={positionName} employeeName={employeeName} />
                       </tbody>
                     </table>
                   </div>
@@ -503,8 +590,9 @@ export function StaffingComparisonPanel({
             {/* Fußnote: Zählregel + Link */}
             <div className="flex flex-col gap-1.5 border-t pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Gezählt werden aktive Mitarbeitende mit dieser Position als Hauptposition,
-                deren Schicht den Zeitraum überschneidet.
+                Jeder Einsatz wird genau einem Soll-Block zugeordnet (Haupt- oder
+                Zweitposition bzw. Regel, grösste Zeitüberlappung) — keine Mehrfachzählung.
+                Klick auf eine Zahl zeigt Details.
               </span>
               <Link
                 to="/personalbedarf"

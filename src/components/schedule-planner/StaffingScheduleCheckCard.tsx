@@ -30,7 +30,13 @@ import type { Position } from '@/types/positions';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import { seasonLabel, weekdayLabel } from '@/lib/staffing-requirements-utils';
 import { positionDisplayName, employeeCoverableKeys, resolvePositionKey } from '@/lib/position-utils';
-import { computeDayCheck, type PlannedEmployeeDayEx } from '@/lib/staffing-check-utils';
+import {
+  computeDayCheck,
+  computeCdsCheck,
+  computeKitchenColdCheck,
+  dynamicPositionOverrides,
+  type PlannedEmployeeDayEx,
+} from '@/lib/staffing-check-utils';
 import {
   buildEffectiveRequirements,
   defaultStaffingProfilesConfig,
@@ -158,18 +164,29 @@ export function StaffingScheduleCheckCard({
     [employees, scheduleData, positions, selectedDate],
   );
 
+  // Dynamische Regeln (CdS/Gastgeber, Kalte Küche) → bevorzugte Block-Zuordnung.
+  const preferredKeysById = useMemo(() => {
+    const ids = plannedEmployees.map((p) => p.id);
+    return dynamicPositionOverrides(
+      computeCdsCheck(ids, config.cdsPriority ?? [], dateWeekday),
+      computeKitchenColdCheck(ids, config.kitchenCold),
+    );
+  }, [plannedEmployees, config, dateWeekday]);
+
   const comparison = useMemo(
     () => computeStaffingComparison({
       positions, requirements: effectiveRequirements, plannedEmployees, season, weekday: dateWeekday,
+      preferredKeysById,
     }),
-    [positions, effectiveRequirements, plannedEmployees, season, dateWeekday],
+    [positions, effectiveRequirements, plannedEmployees, season, dateWeekday, preferredKeysById],
   );
 
   const summary = useMemo(
     () => computeDayStaffingSummary({
       positions, requirements: effectiveRequirements, plannedEmployees, season, weekday: dateWeekday,
+      preferredKeysById,
     }),
-    [positions, effectiveRequirements, plannedEmployees, season, dateWeekday],
+    [positions, effectiveRequirements, plannedEmployees, season, dateWeekday, preferredKeysById],
   );
 
   const kpis = useMemo(() => summarizeStaffingKpis(comparison.rows), [comparison.rows]);

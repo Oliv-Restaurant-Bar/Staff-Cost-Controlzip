@@ -1,0 +1,91 @@
+// @vitest-environment node
+/**
+ * Tests für die «Ganze Woche»-Übersicht des Personalbedarfs.
+ */
+import { describe, it, expect } from 'vitest';
+
+import type { Position } from '@/types/positions';
+import type { StaffingRequirement } from '@/types/staffing';
+import { buildWeekOverview, isEveningShift, EVENING_START_MINUTES } from '@/lib/staffing-week-utils';
+import { defaultStaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
+
+const POSITIONS: Position[] = [
+  { id: '1', key: 'service', name: 'Service', department: 'service', departmentGroup: null, sortOrder: 1, active: true },
+  { id: '2', key: 'kueche', name: 'Kochen (heiss)', department: 'küche', departmentGroup: null, sortOrder: 1, active: true },
+] as unknown as Position[];
+
+function req(partial: Partial<StaffingRequirement>): StaffingRequirement {
+  return {
+    id: `${partial.positionKey}-${partial.weekday}-${partial.shiftStart}`,
+    positionKey: 'service',
+    scopeType: 'weekly',
+    season: 'standard',
+    weekday: 1,
+    shiftStart: '11:00',
+    shiftEnd: '14:00',
+    requiredCount: 1,
+    sortOrder: 0,
+    meta: null,
+    ...partial,
+  } as StaffingRequirement;
+}
+
+describe('isEveningShift', () => {
+  it('Beginn vor 16:00 = Mittag, ab 16:00 = Abend', () => {
+    expect(isEveningShift('11:00')).toBe(false);
+    expect(isEveningShift('15:59')).toBe(false);
+    expect(isEveningShift('16:00')).toBe(true);
+    expect(isEveningShift('18:30')).toBe(true);
+    expect(EVENING_START_MINUTES).toBe(960);
+  });
+});
+
+describe('buildWeekOverview', () => {
+  const config = defaultStaffingProfilesConfig('beaulieu'); // kein Umsatzbudget-Default
+
+  it('verteilt Blöcke auf Mittag/Abend und liefert Zellen nur für Tage mit Bedarf', () => {
+    const requirements = [
+      req({ positionKey: 'service', weekday: 1, shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }),
+      req({ positionKey: 'service', weekday: 1, shiftStart: '18:00', shiftEnd: '22:00', requiredCount: 3 }),
+      req({ positionKey: 'kueche', weekday: 5, shiftStart: '09:00', shiftEnd: '14:00', requiredCount: 1 }),
+    ];
+    const o = buildWeekOverview({ positions: POSITIONS, requirements, config, season: 'standard' });
+    expect(o.hasAny).toBe(true);
+    const serviceRow = o.groups
+      .flatMap((g) => g.areas)
+      .flatMap((a) => a.positions)
+      .find((r) => r.positionKey === 'service')!;
+    expect(serviceRow.cells[1]).toMatchObject({ mittag: 2, abend: 3 });
+    expect(serviceRow.cells[2]).toBeUndefined();
+    const kuecheRow = o.groups
+      .flatMap((g) => g.areas)
+      .flatMap((a) => a.positions)
+      .find((r) => r.positionKey === 'kueche')!;
+    expect(kuecheRow.cells[5]).toMatchObject({ mittag: 1, abend: 0 });
+  });
+
+  it('Tages-Summen: Einsätze und Netto-Stunden (ARG-Pausenabzug) je Tag', () => {
+    const requirements = [
+      // 11–14 (3h brutto, <5.5h → keine Pause) × 2 = 6.0 h
+      req({ positionKey: 'service', weekday: 1, shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }),
+      // 11–22 (11h brutto, >9h → 1h Pause) × 1 = 10.0 h
+      req({ positionKey: 'kueche', weekday: 1, shiftStart: '11:00', shiftEnd: '22:00', requiredCount: 1 }),
+    ];
+    const o = buildWeekOverview({ positions: POSITIONS, requirements, config, season: 'standard' });
+    expect(o.totals[1].persons).toBe(3);
+    expect(o.totals[1].nettoHours).toBe(16);
+    expect(o.totals[2]).toMatchObject({ persons: 0, nettoHours: 0 });
+  });
+
+  it('Umsatzbudget je Wochentag aus der Konfiguration (null wenn fehlt)', () => {
+    const withBudget = { ...config, revenueBudgetByWeekday: { 1: 5000 } };
+    const o = buildWeekOverview({ positions: POSITIONS, requirements: [req({})], config: withBudget, season: 'standard' });
+    expect(o.totals[1].budget).toBe(5000);
+    expect(o.totals[2].budget).toBeNull();
+  });
+
+  it('leerer Bedarf → hasAny false', () => {
+    const o = buildWeekOverview({ positions: POSITIONS, requirements: [], config, season: 'standard' });
+    expect(o.hasAny).toBe(false);
+  });
+});
