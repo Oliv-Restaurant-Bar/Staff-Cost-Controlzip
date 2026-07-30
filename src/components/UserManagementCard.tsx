@@ -223,7 +223,13 @@ export function UserManagementCard() {
         ) : (
           <div className="divide-y divide-border rounded-md border overflow-hidden">
             {users.map(u => {
-              const cfg = ROLE_CONFIG[u.role];
+              // Defensive: Alt-/unbekannte Rollen (z.B. Legacy 'manager') dürfen
+              // die Liste nicht crashen — neutraler Fallback statt cfg.Icon auf undefined.
+              const cfg = ROLE_CONFIG[u.role] ?? {
+                label: u.role || 'Unbekannt',
+                color: 'bg-muted text-muted-foreground border-border',
+                Icon: AlertTriangle,
+              };
               const Icon = cfg.Icon;
               const isEditing = editingId === u.id;
 
