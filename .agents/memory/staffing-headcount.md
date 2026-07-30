@@ -11,3 +11,7 @@ description: Führende Kennzahl im Personalbedarf ist die KOPFZAHL (Personen/Tag
 **How to apply:** Neue Ansichten/Reports auf Personen-Ebene müssen `WeekCell.headcount` (staffing-week-utils) nutzen, nie mittag+abend. Stunden-Analytik (bedarf-stunden-utils) bleibt block-basiert.
 
 **Zeitformat-Falle:** staffing_requirements.shift_start/end sind text; Alt-/Fremd-Schreiber können 'HH:MM:SS' liefern → isValidTime schlägt fehl, Stunden werden NaN («–»). Leser normalisiert (rowToRequirement), aber neue Schreibpfade müssen 'HH:MM' schreiben.
+
+## Live-Hinweis Dienstplan (Plan vs. Bedarf)
+- Kopfzahl-SSOT ist `computeWeekCell` (staffing-week-utils) — Wochenmatrix UND Dienstplan-Hinweis (`staffing-day-hints.ts`) nutzen sie; nie separat rechnen.
+- Personen-Total des Hinweises MUSS in der Soll-Einheit (Σ Positions-Kopfzahlen) laufen: Person auf 2 Positionen zählt 2×, sonst falsche Unterbesetzungs-Pille trotz grüner Positionszeilen. Unzugeordnete Personen nur als Hinweis, Stunden dagegen über ALLE produktiven Einsätze (Kosten).

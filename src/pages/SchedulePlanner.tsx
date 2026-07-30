@@ -98,6 +98,7 @@ import { useShiftConfig, ShiftConfigItem } from '@/hooks/useShiftConfig';
 import { usePositions } from '@/hooks/usePositions';
 import { useStaffingRequirements } from '@/hooks/useStaffingRequirements';
 import { buildPlannedEmployees, computeDayStaffingSummary, type DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
+import { computeDayPlanHints, type DayPlanHints } from '@/lib/staffing-day-hints';
 import { computeCdsCheck, computeKitchenColdCheck, dynamicPositionOverrides } from '@/lib/staffing-check-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
@@ -1354,6 +1355,42 @@ const SchedulePlanner = () => {
       if (summary.hasRequirements && summary.departments.length > 0) {
         map[dateStr] = summary;
       }
+    }
+    return map;
+  }, [displayDays, roleScopedEmployees, scheduleData, staffingPositions, staffingRequirements, staffingSeason, comparisonDepartments, staffingProfilesConfig, ugEventDays]);
+
+  // Live-Hinweis «Plan vs. Bedarf» je Tag (Kopfzahl-Logik, identisch mit
+  // Wochenmatrix/Cockpit): eine Berechnung pro angezeigtem Tag, NUR Anzeige.
+  const dayPlanHints = useMemo(() => {
+    const map: Record<string, DayPlanHints> = {};
+    if (staffingRequirements.length === 0 || staffingPositions.length === 0) return map;
+    for (const day of displayDays) {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      const planned = buildPlannedEmployees(
+        roleScopedEmployees, scheduleData, staffingPositions, dateStr,
+      );
+      const weekday = getISODay(day);
+      const effectiveReqs = buildEffectiveRequirements({
+        requirements: staffingRequirements,
+        config: staffingProfilesConfig,
+        season: staffingSeason,
+        weekday,
+        eventOpen: ugEventDays.has(dateStr),
+      });
+      const plannedIds = planned.map((p) => p.id);
+      const cds = computeCdsCheck(plannedIds, staffingProfilesConfig.cdsPriority ?? [], weekday);
+      const cold = computeKitchenColdCheck(plannedIds, staffingProfilesConfig.kitchenCold);
+      const hints = computeDayPlanHints({
+        positions: staffingPositions,
+        requirements: effectiveReqs,
+        plannedEmployees: planned,
+        season: staffingSeason,
+        weekday,
+        departments: comparisonDepartments,
+        preferredKeysById: dynamicPositionOverrides(cds, cold),
+        ruleWarnings: [cds.warning, cold.warning],
+      });
+      if (hints.hasRequirements) map[dateStr] = hints;
     }
     return map;
   }, [displayDays, roleScopedEmployees, scheduleData, staffingPositions, staffingRequirements, staffingSeason, comparisonDepartments, staffingProfilesConfig, ugEventDays]);
@@ -5010,6 +5047,7 @@ const SchedulePlanner = () => {
                         managerSafeTotals={isKuecheManager}
                         dailyManagerTotals={dailyManagerTotals}
                         dayStaffingSummaries={dayStaffingSummaries}
+                        dayPlanHints={dayPlanHints}
                       />
                 </>
               ) : (

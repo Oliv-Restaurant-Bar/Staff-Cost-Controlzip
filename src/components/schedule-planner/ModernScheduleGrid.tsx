@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils';
 import { dailyTotalsVisibility, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
 import type { DayStaffingSummaryResult } from '@/lib/staffing-comparison-utils';
 import { DayStaffingBadge } from './DayStaffingBadge';
+import type { DayPlanHints } from '@/lib/staffing-day-hints';
 import { AlertTriangle, CalendarOff, Copy, ClipboardPaste, X } from 'lucide-react';
 
 // ── Shared cell-clipboard type (also used by SchedulePlanner) ─────────────────
@@ -116,6 +117,9 @@ export interface ModernScheduleGridProps {
   // `${yyyy-MM-dd}` → Tages-Zusammenfassung (bereits rollen-gescopt berechnet).
   // Nur Anzeige; Tage ohne Bedarf haben keinen Eintrag/kein Badge.
   dayStaffingSummaries?: Record<string, DayStaffingSummaryResult>;
+  // ── Live-Hinweis «Plan vs. Bedarf» (Kopfzahl-Logik, identisch Wochenmatrix):
+  // `${yyyy-MM-dd}` → Tages-Hinweise (je Position + Summen + Warnungen).
+  dayPlanHints?: Record<string, DayPlanHints>;
 }
 
 // ── Small helper: format a numeric diff as +x.x / −x.x ───────────────────────
@@ -160,6 +164,7 @@ export function ModernScheduleGrid({
   managerSafeTotals = false,
   dailyManagerTotals,
   dayStaffingSummaries,
+  dayPlanHints,
 }: ModernScheduleGridProps) {
 
   const today = useMemo(() => new Date(), []);
@@ -393,6 +398,7 @@ export function ModernScheduleGrid({
                   {dayStaffingSummaries?.[dateStr] && (
                     <DayStaffingBadge
                       summary={dayStaffingSummaries[dateStr]}
+                      hints={dayPlanHints?.[dateStr]}
                       dateLabel={`${WEEKDAY_SHORT[weekdayIdx]}, ${format(day, 'dd.MM.')}`}
                       date={dateStr}
                     />

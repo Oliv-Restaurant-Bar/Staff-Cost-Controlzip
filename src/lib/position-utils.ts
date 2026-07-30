@@ -118,7 +118,6 @@ export function defaultPositions(): PositionDraft[] {
     { key: 'service',             name: 'Service',             department: 'service', departmentGroup: 'restaurant',        color: '#22c55e', icon: 'ConciergeBell', sortOrder: 1, active: true },
     { key: 'springer',            name: 'Springer',            department: 'service', departmentGroup: 'restaurant',        color: '#8b5cf6', icon: 'Sparkles',      sortOrder: 2, active: true },
     { key: 'kalt_sushi',          name: 'Kalt/Sushi',          department: 'küche',   departmentGroup: 'kueche_produktion', color: '#14b8a6', icon: 'Salad',         sortOrder: 3, active: true },
-    { key: 'reinigung',           name: 'Reinigung',           department: 'küche',   departmentGroup: 'abwasch',           color: '#0ea5e9', icon: 'Sparkles',      sortOrder: 4, active: true },
     { key: 'piazzolo_take_away',  name: 'Piazzolo Take Away',  department: 'küche',   departmentGroup: 'take_away',         color: '#f97316', icon: 'Pizza',         sortOrder: 0, active: true },
     { key: 'abwasch',             name: 'Abwasch',             department: 'küche',   departmentGroup: 'abwasch',           color: '#64748b', icon: 'Utensils',      sortOrder: 1, active: true },
     { key: 'kueche',              name: 'Küche',               department: 'küche',   departmentGroup: 'kueche_produktion', color: '#ef4444', icon: 'ChefHat',       sortOrder: 2, active: true },

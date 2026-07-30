@@ -58,6 +58,33 @@ export function explicitDayHeadcount(
   return null;
 }
 
+/**
+ * Baut die Tageszelle einer Position aus ihren Soll-Blöcken — die EINZIGE
+ * Kopfzahl-Berechnung der App (Wochenmatrix, Cockpit-Stapel und
+ * Dienstplan-Live-Hinweis nutzen alle diese Funktion, damit sich die
+ * Ansichten nie widersprechen): explizites `meta.dayHeadcount` vor Automatik
+ * max(Mittag, Abend); UG-Zuschlag (`meta.ugSurcharge`) wird IMMER addiert.
+ */
+export function computeWeekCell(
+  shifts: { shiftStart: string; shiftEnd: string; requiredCount: number; meta?: Record<string, unknown> | null }[],
+): WeekCell {
+  const cell: WeekCell = { mittag: 0, abend: 0, headcount: 0, headcountExplicit: false, shifts: [] };
+  for (const s of shifts) {
+    const count = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
+    if (isEveningShift(s.shiftStart)) cell.abend += count;
+    else cell.mittag += count;
+    cell.shifts.push({ shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: count });
+  }
+  const explicit = explicitDayHeadcount(shifts.map((s) => ({ meta: s.meta ?? undefined })));
+  const ugExtra = shifts.reduce((a, s) => {
+    const v = (s.meta as Record<string, unknown> | null | undefined)?.ugSurcharge;
+    return a + (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  }, 0);
+  cell.headcount = explicit != null ? explicit + ugExtra : Math.max(cell.mittag, cell.abend);
+  cell.headcountExplicit = explicit != null;
+  return cell;
+}
+
 export interface WeekPositionRow {
   positionKey: string;
   positionName: string;
@@ -194,26 +221,12 @@ export function buildWeekOverview(args: {
       for (const area of dept.areas) {
         for (const pr of area.positions) {
           if (pr.shifts.length === 0) continue;
-          const cell: WeekCell = { mittag: 0, abend: 0, headcount: 0, headcountExplicit: false, shifts: [] };
+          // Kopfzahl + Blöcke über die zentrale Zell-Berechnung (SSOT).
+          const cell = computeWeekCell(pr.shifts);
           for (const s of pr.shifts) {
             const count = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
-            if (isEveningShift(s.shiftStart)) cell.abend += count;
-            else cell.mittag += count;
-            cell.shifts.push({ shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: count });
             nettoMinutes += nettoSegmentMinutes(s.shiftStart, s.shiftEnd) * count;
           }
-          // KOPFZAHL: explizites Soll (meta.dayHeadcount) vor Automatik
-          // max(mittag, abend) — Blöcke werden nie zur Personenzahl summiert.
-          // UG-Zuschlag (meta.ugSurcharge) sind IMMER zusätzliche Personen:
-          // er wird auch auf eine explizite Kopfzahl aufgeschlagen, damit ein
-          // Basis-Profilwert den operativen Zuschlag nicht unterdrückt.
-          const explicit = explicitDayHeadcount(pr.shifts);
-          const ugExtra = pr.shifts.reduce((a, s) => {
-            const v = (s.meta as Record<string, unknown> | null | undefined)?.ugSurcharge;
-            return a + (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
-          }, 0);
-          cell.headcount = explicit != null ? explicit + ugExtra : Math.max(cell.mittag, cell.abend);
-          cell.headcountExplicit = explicit != null;
           persons += cell.headcount;
           const byDay = cellsByPosition.get(pr.position.key) ?? {};
           byDay[weekday] = cell;
