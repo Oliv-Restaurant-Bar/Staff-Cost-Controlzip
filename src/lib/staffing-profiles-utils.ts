@@ -83,6 +83,12 @@ export function defaultProfiles(): StaffingProfile[] {
 /** Oliv-Default der CdS-Priorität: Artin (2) > Mendim (103) > Ibrahim (105). */
 const OLIV_CDS_PRIORITY = ['2', '103', '105'];
 
+/**
+ * Beaulieu-Default der CdS-Priorität:
+ * Krebs Marcel (b-200) > Redzepi Nehat (b-161) > Joana Bolsinger (b-220, Vertretung).
+ */
+const BEAULIEU_CDS_PRIORITY = ['b-200', 'b-161', 'b-220'];
+
 /** UG-Zuschlag Oliv: Bar unten +1, Service +2; Winter-Regelbetrieb Fr+Sa. */
 const OLIV_UG_SURCHARGE: UgSurcharge = {
   entries: [
@@ -101,7 +107,9 @@ export function defaultStaffingProfilesConfig(tenantId: string): StaffingProfile
   const isOliv = tenantId === 'oliv';
   return {
     profiles: defaultProfiles(),
-    cdsPriority: isOliv ? [...OLIV_CDS_PRIORITY] : [],
+    cdsPriority: isOliv
+      ? [...OLIV_CDS_PRIORITY]
+      : tenantId === 'beaulieu' ? [...BEAULIEU_CDS_PRIORITY] : [],
     revenueBudgetByWeekday: isOliv ? { ...OLIV_REVENUE_BUDGET } : {},
     ugSurcharge: isOliv
       ? { entries: OLIV_UG_SURCHARGE.entries.map((e) => ({ ...e })), weekdays: [...OLIV_UG_SURCHARGE.weekdays] }

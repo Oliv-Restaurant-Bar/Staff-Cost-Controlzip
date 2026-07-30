@@ -27,9 +27,9 @@ describe('Defaults', () => {
     expect(c.revenueBudgetByWeekday[5]).toBe(12000);
     expect(c.revenueBudgetByWeekday[7]).toBe(7000);
   });
-  it('Beaulieu: leere CdS-Liste, kein Umsatzbudget, leerer UG-Zuschlag', () => {
+  it('Beaulieu: CdS Krebs>Redzepi>Joana, kein Umsatzbudget, leerer UG-Zuschlag', () => {
     const c = defaultStaffingProfilesConfig('beaulieu');
-    expect(c.cdsPriority).toEqual([]);
+    expect(c.cdsPriority).toEqual(['b-200', 'b-161', 'b-220']);
     expect(Object.keys(c.revenueBudgetByWeekday)).toHaveLength(0);
     expect(c.ugSurcharge.entries).toEqual([]);
   });

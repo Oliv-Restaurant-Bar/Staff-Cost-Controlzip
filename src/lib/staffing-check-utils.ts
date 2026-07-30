@@ -82,23 +82,34 @@ export interface CdsCheckResult {
 }
 
 /**
+ * ISO-Wochentage, an denen die Gastgeber/GF-Rolle vorgesehen ist (Do/Fr/Sa).
+ * An So–Mi ist die zweitpriorisierte Person (sofern nicht selbst CdS) in
+ * ihrer normalen Position (Service) — kein Gastgeber/GF.
+ */
+export const GASTGEBER_WEEKDAYS: readonly number[] = [4, 5, 6];
+
+/**
  * Genau 1 CdS pro Tag: die am Tag GEPLANTE Person mit höchster Priorität.
  * Ist die erstpriorisierte Person geplant, wird die zweitpriorisierte (falls
- * ebenfalls geplant) Gastgeber/GF; nachfolgende Prioritäten bleiben in ihrer
- * normalen Rolle (z.B. Ibrahim → Service). Leere Prioritätsliste ⇒ Regel
- * nicht konfiguriert (ok, keine Warnung).
+ * ebenfalls geplant) Gastgeber/GF — aber NUR an den GASTGEBER_WEEKDAYS
+ * (Do/Fr/Sa); an anderen Tagen bleibt sie in ihrer normalen Rolle.
+ * Nachfolgende Prioritäten bleiben immer in ihrer normalen Rolle.
+ * Leere Prioritätsliste ⇒ Regel nicht konfiguriert (ok, keine Warnung).
+ * `weekday` weglassen ⇒ Gastgeber-Zuweisung wie bisher (jeden Tag).
  */
 export function computeCdsCheck(
   plannedEmployeeIds: readonly string[],
   cdsPriority: readonly string[],
+  weekday?: number,
 ): CdsCheckResult {
   if (cdsPriority.length === 0) {
     return { activeCdsId: null, gastgeberId: null, ok: true, warning: null };
   }
   const planned = new Set(plannedEmployeeIds);
   const activeCdsId = cdsPriority.find((id) => planned.has(id)) ?? null;
+  const gastgeberDay = weekday === undefined || GASTGEBER_WEEKDAYS.includes(weekday);
   let gastgeberId: string | null = null;
-  if (activeCdsId !== null && activeCdsId === cdsPriority[0] && cdsPriority.length > 1) {
+  if (gastgeberDay && activeCdsId !== null && activeCdsId === cdsPriority[0] && cdsPriority.length > 1) {
     const second = cdsPriority[1];
     if (planned.has(second)) gastgeberId = second;
   }
@@ -202,7 +213,7 @@ export function computeDayCheck(args: {
   const shifts = shiftsForScope(requirements, season, weekday);
 
   // ── CdS (alle produktiv geplanten Personen des Tages) ──
-  const cds = computeCdsCheck(plannedEmployees.map((e) => e.id), cdsPriority);
+  const cds = computeCdsCheck(plannedEmployees.map((e) => e.id), cdsPriority, weekday);
 
   if (shifts.length === 0) {
     return {

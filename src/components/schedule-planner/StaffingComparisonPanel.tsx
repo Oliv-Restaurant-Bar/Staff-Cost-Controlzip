@@ -199,8 +199,8 @@ export function StaffingComparisonPanel({
 
   // Chef-de-Service-Regel (nur wenn eine Prioritätsliste konfiguriert ist).
   const cdsCheck = useMemo(
-    () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsPriority ?? []),
-    [plannedEmployees, cdsPriority],
+    () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsPriority ?? [], weekday),
+    [plannedEmployees, cdsPriority, weekday],
   );
   const employeeName = useCallback(
     (id: string) => employees.find((e) => e.id === id)?.name ?? id,

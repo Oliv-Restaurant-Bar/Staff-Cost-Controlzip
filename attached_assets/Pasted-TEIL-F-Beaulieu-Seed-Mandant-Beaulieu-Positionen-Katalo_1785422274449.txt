@@ -1,0 +1,46 @@
+TEIL F — Beaulieu-Seed (Mandant Beaulieu)
+
+Positionen-Katalog Beaulieu (kein Take Away, kein Pizza/Sushi):
+- Küche: Kochen (heiss), Kalte Küche, Küche Zubereitung, Spüle/Abwasch, Reinigung Restaurant
+- Front/Service: Service, Chef de Service, Bar, Runner, Abwasch
+
+Positionszuordnung Beaulieu (mitarbeiter_positionen, Mandant Beaulieu), [haupt] = Hauptposition:
+Service:
+- Burkhalter Nadica: Service[haupt], Bar
+- Firlovic Maja: Service[haupt], Bar
+- Svyrydovych Varvara: Service[haupt], Bar
+- Murat Safi: Bar[haupt], Abwasch, Runner
+- Veronika Poganyova: Service[haupt], Bar, Runner
+- Krebs Marcel: Chef de Service[haupt], Service
+- Redzepi Nehat: Chef de Service[haupt], Service, Bar
+- Joana Bolsinger: Chef de Service, Service[haupt], Bar
+- Doni: Service[haupt], Bar, Runner
+Küche:
+- Horvath Robert Stefan: Kochen (heiss)[haupt], Kalte Küche, Küche Zubereitung
+- Luigi Vittorio Maestri: Kochen (heiss)[haupt], Kalte Küche, Küche Zubereitung
+- Jimi: Kochen (heiss)[haupt], Kalte Küche, Küche Zubereitung
+- Ramadani Naip: Kalte Küche[haupt], Küche Zubereitung, Spüle/Abwasch
+- Raja: Kalte Küche[haupt], Küche Zubereitung
+- Jose Elpidio Camacho: Kalte Küche[haupt], Küche Zubereitung
+- Hadzija Hatidze: Spüle/Abwasch[haupt], Reinigung Restaurant
+- Priyanka Masina: Spüle/Abwasch[haupt]
+- Gazmend: Spüle/Abwasch[haupt]
+- Bafhani: Spüle/Abwasch[haupt]
+- Thas: Spüle/Abwasch[haupt]
+
+Chef-de-Service-Regel Beaulieu:
+- Feste Leitung: Krebs Marcel, Redzepi Nehat. Default-Vertretung an Tagen ohne beide: Joana Bolsinger.
+- Priorität (konfigurierbar): Krebs Marcel > Redzepi Nehat > Joana Bolsinger. Immer genau 1 Chef de Service pro geöffnetem Tag; Warnung, wenn keiner der drei geplant ist.
+
+Personalbedarf Beaulieu, Profil 'Standard' (aus Plan-Dienstplan Juni+Juli, Median-Kopfzahl / Ø Netto-Stunden):
+- Service Anzahl:  Mo 3 · Di 3 · Mi 3 · Do 3 · Fr 4 · Sa 2 · So geschlossen
+- Service Stunden: Mo 20.4 · Di 17.6 · Mi 16.7 · Do 19.6 · Fr 24.9 · Sa 15.1
+- Küche Anzahl:    Mo 5 · Di 5 · Mi 5 · Do 5 · Fr 5 · Sa 4 · So geschlossen
+- Küche Stunden:   Mo 36.9 · Di 36.1 · Mi 37.4 · Do 40.2 · Fr 40.5 · Sa 32.2
+- Sonntag: Betrieb geschlossen (kein Bedarf). Kein Take Away, kein UG-Profil.
+- Werte im UI editierbar und festsetzbar (wie Oliv).
+
+Engpass-Hinweise Beaulieu (für die Schichtabdeckungs-Prüfung):
+- Kochen (heiss): nur Horvath, Luigi, Jimi (stark abhängig von Horvath).
+- Spüle/Abwasch: breit abgedeckt.
+- Chef de Service: an vielen Tagen im Ist-Plan nicht besetzt — mit der neuen Regel (Joana als Vertretung) sicherstellen, dass täglich einer geplant ist.

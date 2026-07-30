@@ -14,6 +14,7 @@ import {
   type PlannedEmployeeDayEx,
 } from '@/lib/staffing-check-utils';
 import type { StaffingRequirement } from '@/types/staffing';
+import { defaultStaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
 
 function req(partial: Partial<StaffingRequirement>): StaffingRequirement {
   return {
@@ -80,6 +81,24 @@ describe('Netto-Stunden', () => {
   });
 });
 
+describe('computeCdsCheck — Beaulieu-Defaults (Krebs > Redzepi > Joana)', () => {
+  const beaulieuCds = defaultStaffingProfilesConfig('beaulieu').cdsPriority;
+
+  it('nur Joana (b-220) geplant → Vertretung greift, keine Warnung', () => {
+    const r = computeCdsCheck(['b-220', 'b-50'], beaulieuCds);
+    expect(r.activeCdsId).toBe('b-220');
+    expect(r.ok).toBe(true);
+    expect(r.warning).toBeNull();
+  });
+
+  it('keiner der drei geplant → Warnung', () => {
+    const r = computeCdsCheck(['b-50', 'b-62'], beaulieuCds);
+    expect(r.activeCdsId).toBeNull();
+    expect(r.ok).toBe(false);
+    expect(r.warning).toMatch(/Kein Chef de Service/);
+  });
+});
+
 describe('computeCdsCheck (Artin > Mendim > Ibrahim)', () => {
   const prio = ['artin', 'mendim', 'ibrahim'];
   it('Artin geplant → Artin CdS, Mendim (falls geplant) Gastgeber/GF', () => {
@@ -87,6 +106,21 @@ describe('computeCdsCheck (Artin > Mendim > Ibrahim)', () => {
     expect(r.activeCdsId).toBe('artin');
     expect(r.gastgeberId).toBe('mendim');
     expect(r.ok).toBe(true);
+  });
+  it('Gastgeber/GF nur an Do/Fr/Sa: Do/Fr/Sa ja, So–Mi nein (Mendim = Service)', () => {
+    for (const wd of [4, 5, 6]) {
+      expect(computeCdsCheck(['artin', 'mendim'], prio, wd).gastgeberId).toBe('mendim');
+    }
+    for (const wd of [7, 1, 2, 3]) {
+      const r = computeCdsCheck(['artin', 'mendim'], prio, wd);
+      expect(r.gastgeberId).toBeNull();
+      expect(r.activeCdsId).toBe('artin'); // CdS-Regel selbst unverändert
+    }
+  });
+  it('Mo ohne Artin: Mendim ist CdS (nicht Service), kein Gastgeber', () => {
+    const r = computeCdsCheck(['mendim', 'ibrahim'], prio, 1);
+    expect(r.activeCdsId).toBe('mendim');
+    expect(r.gastgeberId).toBeNull();
   });
   it('Artin geplant, Mendim nicht → kein Gastgeber', () => {
     const r = computeCdsCheck(['artin', 'ibrahim'], prio);
