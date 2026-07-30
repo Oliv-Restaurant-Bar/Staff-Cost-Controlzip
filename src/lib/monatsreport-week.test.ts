@@ -8,7 +8,7 @@ vi.mock('@/integrations/supabase/client', () => ({ supabase: {} }));
 import {
   computeWeekRange, weekSelectionLabel, computeLastCompleteWeeks, vorjahresWoche,
   computeYtdWindow, kwRangeLabel, computeWeeksForYear, computeVergleichsWindow,
-  computeVorjahrWocheDays, computePersonalBlock, OBERGRENZE_PKQ_PCT, applyRowOrder,
+  computeVorjahrWocheDays, computePersonalBlock, OBERGRENZE_PKQ_PCT, applyRowOrder, isRunningWeek,
   gewichteterTagesAvg,
   type MrRow,
 } from './monatsreport';
@@ -158,17 +158,17 @@ describe('computeWeekRange — leere Bereiche', () => {
 // ── Wochenverlauf: Fenster der letzten N abgeschlossenen Wochen ───────────────
 
 describe('computeLastCompleteWeeks', () => {
-  it('heute Mi 16.07.2025 → letzte abgeschl. Woche = KW 28 (07.–13.07.), volle 7 Tage', () => {
+  it('heute Mi 16.07.2025 → jüngste Woche = LAUFENDE KW 29 (14.–20.07.), volle 7 Tage', () => {
     const w = computeLastCompleteWeeks(1, heute);
     expect(w).toHaveLength(1);
-    expect(w[0]).toMatchObject({ kwYear: 2025, kw: 28, from: '2025-07-07', to: '2025-07-13' });
+    expect(w[0]).toMatchObject({ kwYear: 2025, kw: 29, from: '2025-07-14', to: '2025-07-20' });
   });
 
-  it('N=4 → 4 Wochen, älteste links → neueste rechts, aufsteigend & lückenlos', () => {
+  it('N=4 → 4 Wochen, älteste links → laufende Woche rechts, aufsteigend & lückenlos', () => {
     const w = computeLastCompleteWeeks(4, heute);
-    expect(w.map(x => x.kw)).toEqual([25, 26, 27, 28]);
-    expect(w.map(x => x.from)).toEqual(['2025-06-16', '2025-06-23', '2025-06-30', '2025-07-07']);
-    expect(w.map(x => x.to)).toEqual(['2025-06-22', '2025-06-29', '2025-07-06', '2025-07-13']);
+    expect(w.map(x => x.kw)).toEqual([26, 27, 28, 29]);
+    expect(w.map(x => x.from)).toEqual(['2025-06-23', '2025-06-30', '2025-07-07', '2025-07-14']);
+    expect(w.map(x => x.to)).toEqual(['2025-06-29', '2025-07-06', '2025-07-13', '2025-07-20']);
     // jede Woche = volle 7 Tage
     for (const x of w) {
       const d = (Date.parse(x.to) - Date.parse(x.from)) / (24 * 3600 * 1000);
@@ -183,20 +183,35 @@ describe('computeLastCompleteWeeks', () => {
     expect(grenz.kw).toBe(27);
   });
 
-  it('Jahreswechsel: heute Mi 07.01.2026 → jüngste abgeschl. Woche = KW 1/2026 (29.12.2025–04.01.2026)', () => {
+  it('Jahreswechsel: heute Mi 07.01.2026 → jüngste (laufende) Woche = KW 2/2026 (05.–11.01.)', () => {
     const jan = new Date(2026, 0, 7); // Mi 07.01.2026 (KW2)
     const w = computeLastCompleteWeeks(2, jan);
     expect(w).toHaveLength(2);
-    // jüngste (rechts) = Woche vor der laufenden = KW1/2026
-    expect(w[1]).toMatchObject({ kwYear: 2026, kw: 1, from: '2025-12-29', to: '2026-01-04' });
-    // ältere (links) = KW52/2025
-    expect(w[0]).toMatchObject({ kwYear: 2025, kw: 52, from: '2025-12-22', to: '2025-12-28' });
+    // jüngste (rechts) = laufende Woche = KW2/2026
+    expect(w[1]).toMatchObject({ kwYear: 2026, kw: 2, from: '2026-01-05', to: '2026-01-11' });
+    // ältere (links) = KW1/2026 (29.12.2025–04.01.2026)
+    expect(w[0]).toMatchObject({ kwYear: 2026, kw: 1, from: '2025-12-29', to: '2026-01-04' });
   });
 
-  it('Jahreswechsel mit KW 53: heute Mi 06.01.2021 → jüngste abgeschl. = KW 53/2020 (28.12.2020–03.01.2021)', () => {
-    const jan = new Date(2021, 0, 6); // Mi 06.01.2021 (KW1/2021)
-    const w = computeLastCompleteWeeks(1, jan);
+  it('Jahreswechsel mit KW 53: heute Mi 30.12.2020 (KW 53/2020) → laufende = KW 53/2020 (28.12.2020–03.01.2021)', () => {
+    const dez = new Date(2020, 11, 30); // Mi 30.12.2020 (KW53/2020)
+    const w = computeLastCompleteWeeks(1, dez);
     expect(w[0]).toMatchObject({ kwYear: 2020, kw: 53, from: '2020-12-28', to: '2021-01-03' });
+  });
+});
+
+// ── Wochenverlauf: laufende (partielle) Woche ────────────────────────────────
+
+describe('isRunningWeek', () => {
+  const w = { kwYear: 2025, kw: 29, from: '2025-07-14', to: '2025-07-20' };
+  it('heute innerhalb Mo–So → laufend (inkl. Randtage)', () => {
+    expect(isRunningWeek(w, '2025-07-16')).toBe(true);
+    expect(isRunningWeek(w, '2025-07-14')).toBe(true);
+    expect(isRunningWeek(w, '2025-07-20')).toBe(true);
+  });
+  it('heute ausserhalb → nicht laufend', () => {
+    expect(isRunningWeek(w, '2025-07-13')).toBe(false);
+    expect(isRunningWeek(w, '2025-07-21')).toBe(false);
   });
 });
 
@@ -537,12 +552,29 @@ describe('applyRowOrder', () => {
     expect(new Set(ids(out))).toEqual(new Set(['a', 'b', 'c']));
     expect(ids(out).length).toBe(3);
   });
+
+  // Stunden-Stapel: Bedarf → Plan → Ist müssen IMMER ein zusammenhängender
+  // Block sein — auch wenn eine alte gespeicherte Reihenfolge 'bedarf_stunden'
+  // noch nicht kennt (die Zeile würde sonst einzeln ans Tabellenende rutschen).
+  it('Stunden-Stapel wird zusammengeklebt: bedarf_stunden rückt vor plan/ist', () => {
+    const rows = [dat('a'), dat('prod_stunden_plan'), dat('prod_stunden_ist'), dat('b'), dat('bedarf_stunden')];
+    // Altes Setting ohne bedarf_stunden → würde ohne Glue hinten angehängt.
+    const out = applyRowOrder(rows, ['a', 'prod_stunden_plan', 'prod_stunden_ist', 'b']);
+    expect(ids(out)).toEqual(['a', 'bedarf_stunden', 'prod_stunden_plan', 'prod_stunden_ist', 'b']);
+  });
+
+  it('Stunden-Stapel: feste Block-Reihenfolge auch bei verdrehtem Setting', () => {
+    const rows = [dat('bedarf_stunden'), dat('prod_stunden_plan'), dat('prod_stunden_ist'), dat('x')];
+    const out = applyRowOrder(rows, ['prod_stunden_ist', 'x', 'bedarf_stunden', 'prod_stunden_plan']);
+    // Block an Position der ersten Stapel-Zeile, intern Bedarf → Plan → Ist.
+    expect(ids(out)).toEqual(['bedarf_stunden', 'prod_stunden_plan', 'prod_stunden_ist', 'x']);
+  });
 });
 
 // ── Wochenverlauf: Jahr-Auswahl (Fensterbestimmung fürs gewählte Jahr) ───────
 
 describe('computeWeeksForYear', () => {
-  // Referenz-Heute: Mi 16.07.2025 → letzte 4 abgeschlossene Wochen = KW 24–27/2025.
+  // Referenz-Heute: Mi 16.07.2025 → 4 Wochen inkl. laufender = KW 25–28/2025.
   const h2025 = new Date(2025, 6, 16);
 
   it('aktuelles Jahr = identisch zu computeLastCompleteWeeks', () => {
@@ -552,7 +584,7 @@ describe('computeWeeksForYear', () => {
   });
 
   it('vergangenes Jahr: gleiche KW-Nummern, aber im Zieljahr (2024)', () => {
-    const ref = computeLastCompleteWeeks(4, h2025);   // KW 24–27/2025
+    const ref = computeLastCompleteWeeks(4, h2025);   // KW 25–28/2025
     const sel = computeWeeksForYear(4, h2025, 2024);
     expect(sel.map(w => w.kw)).toEqual(ref.map(w => w.kw));       // gleiche KW-Nummern
     expect(sel.every(w => w.kwYear === 2024)).toBe(true);         // alle im Zieljahr
@@ -563,7 +595,7 @@ describe('computeWeeksForYear', () => {
 
   it('KW-53-Randfall: KW 53 wird weggelassen, wenn sie im Zieljahr nicht existiert', () => {
     // Heute so wählen, dass KW 53 im Referenz-Fenster liegt: 08.01.2021 (KW 1/2021),
-    // letzte abgeschlossene Woche = KW 53/2020 (2020 hat 53 Wochen).
+    // Vorwoche = KW 53/2020 (2020 hat 53 Wochen).
     const hJan2021 = new Date(2021, 0, 8);
     const ref = computeLastCompleteWeeks(2, hJan2021);
     expect(ref.some(w => w.kw === 53)).toBe(true);   // Referenz enthält KW 53

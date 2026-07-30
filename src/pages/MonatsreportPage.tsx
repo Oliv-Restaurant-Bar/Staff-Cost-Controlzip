@@ -1,7 +1,7 @@
 /**
  * Monatsreport — zentrales Meeting-Cockpit (Startseite)
  * Etappe 1: automatisch füllbare Zeilen + Excel-Export.
- * Spalten: Kennzahl | Budget | Vorjahr | Woche | +/- in % | Monat | +/- in %
+ * Spalten: Kennzahl | Δ % | Ist | Vorjahr | Budget (Δ zuerst, Budget zuletzt)
  * Fehlende Quellen bleiben leer (nie 0). Bestehende Seiten bleiben erreichbar.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -166,19 +166,19 @@ function ReportTable({
           <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
             {editMode ? <th className="px-2 py-2 w-16" /> : null}
             <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
+            <th className="px-3 py-2 text-right font-semibold">Δ %</th>
             <th className="px-3 py-2 text-right font-semibold">
-              Budget
-              {budgetSub ? <span className="block normal-case font-normal">{budgetSub}</span> : null}
+              {istHeader}
+              {istSub ? <span className="block normal-case font-normal">{istSub}</span> : null}
             </th>
             <th className="px-3 py-2 text-right font-semibold">
               {vjHeader}
               {vjSub ? <span className="block normal-case font-normal">{vjSub}</span> : null}
             </th>
             <th className="px-3 py-2 text-right font-semibold">
-              {istHeader}
-              {istSub ? <span className="block normal-case font-normal">{istSub}</span> : null}
+              Budget
+              {budgetSub ? <span className="block normal-case font-normal">{budgetSub}</span> : null}
             </th>
-            <th className="px-3 py-2 text-right font-semibold">Δ %</th>
           </tr>
         </thead>
         <tbody>
@@ -225,10 +225,10 @@ function ReportTable({
                   </td>
                 ) : null}
                 <td className="px-3 py-1.5">{row.label}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax)}</td>
-                <td className={cn('px-3 py-1.5 text-right tabular-nums', warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
                 <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>{fmtDev(dev)}</td>
+                <td className={cn('px-3 py-1.5 text-right tabular-nums', warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
               </tr>
             );
           })}
@@ -370,6 +370,7 @@ export default function MonatsreportPage() {
           + 'als Quote über den Monat, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
           + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
           + 'PKQ = Hochrechnung ÷ Hochrechnung, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
           + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».',
       };
     } else if (activeTab === 'woche') {
@@ -384,6 +385,7 @@ export default function MonatsreportPage() {
           + 'Produktivität) als Quote über die Woche, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
           + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
           + 'PKQ = Ist ÷ Ist, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
           + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».',
       };
     } else if (activeTab === 'verlauf') {
@@ -515,7 +517,7 @@ export default function MonatsreportPage() {
               Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · Personalkosten/PKQ
               (Vorjahr) = schreibgeschützter Buchhaltungswert «aus Buchhaltung {year - 1}» (nur Jahre ohne
               Dienstplan-Berechnung, keine Wochen-Verteilung) · Bedarf-Stunden (Soll) = Leitplanke aus dem
-              Personalbedarf; Dienstplan- und Ist-Stunden zeigen Δ% dazu (über Bedarf = rot) · leere Felder = keine
+              Personalbedarf; Dienstplan- und Ist-Stunden vergleichen sich gegen den BEDARF, nicht gegen das Budget (Δ% dazu, über Bedarf = rot) · leere Felder = keine
               Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht», Jahreswerte im Tab
               «Jahresübersicht».
             </p>
@@ -696,7 +698,8 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
       title: 'Wochenverlauf',
       subtitle: einstellungText,
       fileName: `cockpit-wochenverlauf-${jahr}-${anzahl}w-${ans}`,
-      footnote: 'Wochenverlauf = abgeschlossene ISO-Kalenderwochen (Mo–So, älteste links) · Trend ▲/▼ = Veränderung zur Vorwoche · '
+      footnote: 'Wochenverlauf = ISO-Kalenderwochen inkl. laufender Woche (Mo–So, älteste links, aktuelle Woche ganz rechts) · '
+        + 'laufende Woche = partiell bis heute; Trend/VJ-Δ/Verlauf nur über volle Wochen · Trend ▲/▼ = Veränderung zur Vorwoche · '
         + 'Verlauf = Mini-Trend über alle Wochen · gleiche Quellen & Berechnung wie die Monatsübersicht · '
         + 'leere Felder (—) = keine Datenquelle, nie 0 · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen'
         + (mitVorjahr ? ' · Vorjahr = kleine Zeile darunter + Δ%; Produktive Stunden/Produktivität haben keine VJ-Quelle.' : '.'),
@@ -793,9 +796,10 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                 <th className="px-3 py-2 text-left font-semibold">Kennzahl</th>
                 {daten.weeks.map((w, ci) => {
                   const vjw = daten.vjWeeks?.[ci] ?? null;
+                  const partial = daten.partialWeekIndex === ci;
                   return (
                     <th key={`${w.kwYear}-${w.kw}`} className="px-3 py-2 text-right font-semibold">
-                      KW {w.kw}
+                      KW {w.kw}{partial ? ' (laufend)' : ''}
                       <span className="block normal-case font-normal">
                         {fmtDate(w.from)}–{fmtDate(w.to)}
                       </span>
@@ -815,10 +819,13 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                 <tr key={ri} className={cn('border-b last:border-0 hover:bg-muted/30 align-top', row.bold && 'font-semibold')}>
                   <td className="px-3 py-1.5">{row.label}</td>
                   {row.values.map((v, ci) => {
+                    // Laufende (partielle) Woche: Trend-/VJ-Δ unterdrücken —
+                    // partiell vs. volle Woche wäre nicht aussagekräftig.
+                    const partial = daten.partialWeekIndex === ci;
                     const prev = ci > 0 ? row.values[ci - 1] : null;
-                    const t = ci > 0 ? trendPct(v, prev) : null;
+                    const t = ci > 0 && !partial ? trendPct(v, prev) : null;
                     const vjV = showVj ? (row.vjValues?.[ci] ?? null) : null;
-                    const vjDelta = showVj ? trendPct(v, vjV) : null;
+                    const vjDelta = showVj && !partial ? trendPct(v, vjV) : null;
                     return (
                       <td key={ci} className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
                         <span className="block">
@@ -844,7 +851,9 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                     );
                   })}
                   <td className="px-3 py-1.5 text-right">
-                    <Sparkline values={row.values} />
+                    {/* Sparkline nur über volle Wochen (laufende Woche ausgeblendet). */}
+                    <Sparkline values={row.values.map((v, ci) =>
+                      daten.partialWeekIndex === ci ? null : v)} />
                   </td>
                 </tr>
               ))}
@@ -856,8 +865,9 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
       {effektiveAnsicht === 'table' && (
         <p className="pdf-footnote text-xs text-muted-foreground">
           Wochenverlauf {jahr} = {istAktuellesJahr
-            ? `letzte ${anzahl} abgeschlossene ISO-Kalenderwochen`
-            : `dieselben ${anzahl} KW-Nummern wie aktuell, aber im Jahr ${jahr}`} (Mo–So, älteste links) ·
+            ? `letzte ${anzahl} ISO-Kalenderwochen inkl. laufender Woche`
+            : `dieselben ${anzahl} KW-Nummern wie aktuell, aber im Jahr ${jahr}`} (Mo–So, älteste links, aktuelle Woche ganz rechts) ·
+          {istAktuellesJahr && ' laufende Woche = partiell bis heute (Trend/VJ-Δ/Verlauf nur über volle Wochen) ·'}
           Trend ▲/▼ = Veränderung zur Vorwoche · Verlauf = Mini-Trend über alle Wochen ·
           gleiche Quellen &amp; Berechnung wie die Monatsübersicht · leere Felder (—) = keine Datenquelle,
           nie 0. Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen.
@@ -887,15 +897,20 @@ function fmtAxisCompact(v: number, fmt: MrRow['fmt']): string {
 }
 
 /** Ein Mini-Liniendiagramm (aktuelles Jahr Volllinie, Vorjahr gestrichelt). */
-function MiniChart({ row, weeks }: { row: WochenverlaufRow; weeks: WochenverlaufDaten['weeks'] }) {
+function MiniChart({ row, weeks, partialWeekIndex }: {
+  row: WochenverlaufRow; weeks: WochenverlaufDaten['weeks']; partialWeekIndex: number | null;
+}) {
   const data = weeks.map((w, i) => ({
-    kw: `KW ${w.kw}`,
+    kw: `KW ${w.kw}${partialWeekIndex === i ? '*' : ''}`,
     cur: row.values[i],
     vj: row.vjValues?.[i] ?? null,
   }));
-  // Δ% letzte Woche vs. gleiche VJ-Woche (nur wenn beide Werte vorhanden).
-  const lastCur = row.values[row.values.length - 1] ?? null;
-  const lastVj = row.vjValues?.[row.vjValues.length - 1] ?? null;
+  // Δ% = letzte VOLLE Woche vs. gleiche VJ-Woche (laufende Woche ist partiell
+  // → für den Vergleich überspringen; nur wenn beide Werte vorhanden).
+  let lastFull = row.values.length - 1;
+  if (partialWeekIndex === lastFull) lastFull--;
+  const lastCur = lastFull >= 0 ? row.values[lastFull] ?? null : null;
+  const lastVj = lastFull >= 0 ? row.vjValues?.[lastFull] ?? null : null;
   const delta = trendPct(lastCur, lastVj);
 
   return (
@@ -963,12 +978,15 @@ function WochenverlaufChart({ daten, jahr }: { daten: WochenverlaufDaten; jahr: 
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        {charts.map(row => <MiniChart key={row.label} row={row} weeks={daten.weeks} />)}
+        {charts.map(row => (
+          <MiniChart key={row.label} row={row} weeks={daten.weeks}
+            partialWeekIndex={daten.partialWeekIndex} />
+        ))}
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Produktive Stunden/Produktivität: keine Vorjahresdaten · Δ% = letzte Woche vs. gleiche KW im Vorjahr ·
-        Lücken = keine Datenquelle (nie 0).
+        Produktive Stunden/Produktivität: keine Vorjahresdaten · Δ% = letzte VOLLE Woche vs. gleiche KW im Vorjahr ·
+        * = laufende (partielle) Woche · Lücken = keine Datenquelle (nie 0).
       </p>
     </div>
   );

@@ -39,7 +39,8 @@ import {
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
-import { buildCellSaveDrafts } from '@/lib/staffing-week-utils';
+import { buildCellSaveDrafts, buildWeekOverview } from '@/lib/staffing-week-utils';
+import { StaffingWeekSummary } from '@/components/schedule-planner/StaffingWeekSummary';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
 import { StaffingWeekMatrix, type WeekHoursStack, type WeekCellMode } from '@/components/schedule-planner/StaffingWeekMatrix';
 import { planNettoHoursForDate, istHoursForDate } from '@/lib/bedarf-stunden-utils';
@@ -104,6 +105,12 @@ export default function Personalbedarf() {
   /** Zellen-Anzeige der Wochenmatrix: Personen | Stunden (bleibt beim Wechsel
    *  von Wochentag/Woche/Profil erhalten — Page-State). */
   const [cellMode, setCellMode] = useState<WeekCellMode>('persons');
+  /** Wochenübersicht des aktiven Profils (effektiver Bedarf inkl. UG-Zuschlag)
+   *  für Kacheln + «Personal pro Tag»-Diagramm. */
+  const weekOverview = useMemo(
+    () => buildWeekOverview({ positions, requirements, config: profilesConfig, season }),
+    [positions, requirements, profilesConfig, season],
+  );
 
   useEffect(() => {
     if (viewMode !== 'week') return;
@@ -632,6 +639,10 @@ export default function Personalbedarf() {
       {/* Wochenübersicht (Standard-Ansicht) */}
       {!loading && viewMode === 'week' && hasActivePositions && (
         <>
+          <StaffingWeekSummary
+            overview={weekOverview}
+            profileLabel={`Profil «${activeProfile?.label ?? seasonLabel(season)}»`}
+          />
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-0.5">
               <Label className="text-[10px] text-muted-foreground">Anzeige</Label>

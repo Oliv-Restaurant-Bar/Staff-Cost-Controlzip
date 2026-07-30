@@ -352,23 +352,20 @@ function isoWeekYearOf(d: Date): { kw: number; kwYear: number } {
 }
 
 /**
- * Die letzten `anzahl` ABGESCHLOSSENEN ISO-Kalenderwochen (Mo–So), älteste
- * zuerst → neueste zuletzt. «Letzte abgeschlossene» = Woche VOR der laufenden
- * Woche. Wochen überschreiten Monats-/Jahresgrenzen (volle 7 Tage, keine
+ * Die letzten `anzahl` ISO-Kalenderwochen (Mo–So) INKLUSIVE der laufenden
+ * Woche, chronologisch: älteste zuerst (links) → laufende Woche zuletzt
+ * (rechts). Wochen überschreiten Monats-/Jahresgrenzen (volle 7 Tage, keine
  * Klemmung). Reine Funktion (keine I/O) — testbar.
  */
 export function computeLastCompleteWeeks(anzahl: number, heute: Date): WeekWindow[] {
   const today = new Date(heute.getFullYear(), heute.getMonth(), heute.getDate());
-  // Montag der laufenden Woche.
+  // Montag der laufenden Woche = jüngste (rechte) Woche des Fensters.
   const thisMonday = new Date(today);
   thisMonday.setDate(thisMonday.getDate() - ((today.getDay() + 6) % 7));
-  // Montag der letzten abgeschlossenen Woche.
-  const lastCompleteMonday = new Date(thisMonday);
-  lastCompleteMonday.setDate(lastCompleteMonday.getDate() - 7);
 
   const out: WeekWindow[] = [];
   for (let i = anzahl - 1; i >= 0; i--) {
-    const mon = new Date(lastCompleteMonday);
+    const mon = new Date(thisMonday);
     mon.setDate(mon.getDate() - i * 7);
     const sun = new Date(mon);
     sun.setDate(sun.getDate() + 6);
@@ -655,7 +652,36 @@ export function applyRowOrder(rows: MrRow[], savedIds: string[] | null | undefin
   for (const row of dataRows) {
     if (!seen.has(row.id!)) { ordered.push(row); seen.add(row.id!); }
   }
-  return ordered;
+  // 3) Stunden-Stapel IMMER als EIN zusammenhängender Block in fester
+  //    Reihenfolge (Bedarf → Plan → Ist). Alte gespeicherte Reihenfolgen kennen
+  //    'bedarf_stunden' noch nicht → die Zeile würde sonst doppelt wirken bzw.
+  //    einzeln ans Tabellenende rutschen.
+  return glueStundenStack(ordered);
+}
+
+/** IDs des Stunden-Stapels (feste Block-Reihenfolge Bedarf → Plan → Ist). */
+export const STUNDEN_STACK_IDS = ['bedarf_stunden', 'prod_stunden_plan', 'prod_stunden_ist'] as const;
+
+/**
+ * Zieht die drei Stunden-Zeilen zu EINEM Block zusammen: Position = erste der
+ * drei in der aktuellen Reihenfolge, Block-Reihenfolge fest Bedarf → Plan → Ist.
+ */
+export function glueStundenStack(rows: MrRow[]): MrRow[] {
+  const stackIds = new Set<string>(STUNDEN_STACK_IDS);
+  const stack = STUNDEN_STACK_IDS
+    .map((id) => rows.find((r) => r.id === id))
+    .filter((r): r is MrRow => !!r);
+  if (stack.length < 2) return rows; // nichts zu kleben
+  const firstIdx = rows.findIndex((r) => !!r.id && stackIds.has(r.id));
+  const out: MrRow[] = [];
+  rows.forEach((r, i) => {
+    if (r.id && stackIds.has(r.id)) {
+      if (i === firstIdx) out.push(...stack);
+      return; // übrige Stapel-Zeilen an alter Stelle entfernen
+    }
+    out.push(r);
+  });
+  return out;
 }
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────
@@ -1222,6 +1248,18 @@ export interface WochenverlaufDaten {
   /** Vorjahres-Wochen je Spalte (nur bei mitVorjahr; null = KW im VJ inexistent) */
   vjWeeks?: (WeekWindow | null)[];
   rows: WochenverlaufRow[];
+  /**
+   * Index der LAUFENDEN (partiellen) Woche in `weeks` — nur im aktuellen Jahr
+   * gesetzt. Die Ist-Aggregation dieser Woche ist auf «bis heute» geklemmt;
+   * Trend-/Vorjahres-Δ sind für diese Spalte nicht aussagekräftig (partiell
+   * vs. volle Woche) und sollen in der UI unterdrückt/markiert werden.
+   */
+  partialWeekIndex: number | null;
+}
+
+/** Enthält das Wochenfenster das Datum `todayIso` (⇒ laufende Woche)? */
+export function isRunningWeek(w: WeekWindow, todayIso: string): boolean {
+  return todayIso >= w.from && todayIso <= w.to;
 }
 
 /**
@@ -1438,8 +1476,17 @@ export async function ladeWochenverlauf(
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
   ]);
 
+  // Laufende (partielle) Woche: nur im aktuellen Jahr; Ist-Aggregation wird
+  // auf «bis heute» geklemmt, damit keine zukünftigen Datensätze einfliessen.
+  const todayIso = iso(new Date(heute.getFullYear(), heute.getMonth(), heute.getDate()));
+  const partialWeekIndex = istAktuell
+    ? (() => { const i = weeks.findIndex(w => isRunningWeek(w, todayIso)); return i >= 0 ? i : null; })()
+    : null;
+
   // Welcher Woche gehört ein Datum? (Index in weeks) — sonst -1.
+  // Im aktuellen Jahr werden Zukunfts-Daten (date > heute) NIE zugeordnet.
   const weekIndexOf = (date: string): number => {
+    if (istAktuell && date > todayIso) return -1;
     for (let i = 0; i < weeks.length; i++) {
       if (date >= weeks[i].from && date <= weeks[i].to) return i;
     }
@@ -1540,7 +1587,7 @@ export async function ladeWochenverlauf(
 
   const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs);
 
-  return { weeks, vjWeeks, rows };
+  return { weeks, vjWeeks, rows, partialWeekIndex };
 }
 
 // ── Jahresvergleich (Year-to-Date, aktuell vs. Vorjahr pro rata) ─────────────
