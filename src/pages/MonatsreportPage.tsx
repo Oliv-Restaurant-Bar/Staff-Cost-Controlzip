@@ -512,7 +512,10 @@ export default function MonatsreportPage() {
               über den Monat gebildet, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit
               beiden Quellen · Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote ×
               Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, rot über
-              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · leere Felder = keine
+              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · Personalkosten/PKQ
+              (Vorjahr) = schreibgeschützter Buchhaltungswert «aus Buchhaltung {year - 1}» (nur Jahre ohne
+              Dienstplan-Berechnung, keine Wochen-Verteilung) · Bedarf-Stunden (Soll) = Leitplanke aus dem
+              Personalbedarf; Dienstplan- und Ist-Stunden zeigen Δ% dazu (über Bedarf = rot) · leere Felder = keine
               Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht», Jahreswerte im Tab
               «Jahresübersicht».
             </p>

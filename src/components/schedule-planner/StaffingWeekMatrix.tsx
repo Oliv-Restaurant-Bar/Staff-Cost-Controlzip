@@ -10,6 +10,7 @@ import type { Position } from '@/types/positions';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import type { StaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
 import { buildWeekOverview, isEveningShift, type WeekCell } from '@/lib/staffing-week-utils';
+import { diffToBedarf } from '@/lib/bedarf-stunden-utils';
 import { WEEKDAYS } from '@/lib/staffing-requirements-utils';
 import { DEPT_LABEL } from '@/lib/station-config';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,12 +31,42 @@ function CellValue({ cell, part }: { cell: WeekCell | undefined; part: 'mittag' 
   );
 }
 
+/** Stunden je ISO-Wochentag aus einer konkreten Kalenderwoche (null = leer). */
+export interface WeekHoursStack {
+  /** Beschriftung der Kalenderwoche, z.B. «KW 31 · 27.07.–02.08.2026». */
+  weekLabel: string;
+  /** Dienstplan-Plan-Netto-Stunden je Wochentag (ArG-Pausen); null = leer. */
+  plan: Record<number, number | null>;
+  /** Ist-Stunden (MIRUS/gestempelt) je Wochentag; null = kein Import (nie 0). */
+  ist: Record<number, number | null>;
+}
+
+const fmtH = (v: number) =>
+  v.toLocaleString('de-CH', { maximumFractionDigits: 1 });
+
+/** Δ zum Bedarf mit Vorzeichen + Ampel (grün = im/unter Bedarf, rot = über). */
+function DiffBadge({ value, bedarf }: { value: number | null; bedarf: number | null }) {
+  const diff = diffToBedarf(value, bedarf);
+  if (diff == null) return null;
+  return (
+    <span
+      className={cn(
+        'block text-[10px] tabular-nums',
+        diff > 0 ? 'text-red-600' : 'text-emerald-600',
+      )}
+    >
+      {diff > 0 ? '+' : ''}{fmtH(diff)}
+    </span>
+  );
+}
+
 export function StaffingWeekMatrix({
   positions,
   requirements,
   config,
   season,
   onSelectWeekday,
+  hoursStack,
 }: {
   positions: Position[];
   requirements: StaffingRequirement[];
@@ -43,6 +74,8 @@ export function StaffingWeekMatrix({
   season: StaffingSeason;
   /** Klick auf eine Tagesspalte → in die Tagesansicht dieses Wochentags. */
   onSelectWeekday?: (weekday: number) => void;
+  /** Dienstplan-/Ist-Stunden einer konkreten Kalenderwoche (optional). */
+  hoursStack?: WeekHoursStack | null;
 }) {
   const overview = buildWeekOverview({ positions, requirements, config, season });
 
@@ -140,14 +173,47 @@ export function StaffingWeekMatrix({
                 </td>
               ))}
             </tr>
-            <tr className="text-xs text-muted-foreground">
-              <td className="py-1 pr-2">Netto-Stunden</td>
+            {/* Stapel Bedarf → Dienstplan → Ist: Bedarf = Leitplanke (kräftig),
+                Dienstplan darunter abgeschwächt, Ist zuunterst am leisesten.
+                Dienstplan/Ist zeigen zusätzlich Δ zum Bedarf (grün/rot). */}
+            <tr className="text-xs">
+              <td className="py-1 pr-2 font-semibold">Bedarf-Stunden (Soll)</td>
               {WEEKDAYS.map((w) => (
-                <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0">
-                  {(overview.totals[w.value]?.nettoHours ?? 0).toLocaleString('de-CH')}
+                <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums font-semibold border-r border-border/40 last:border-r-0" data-testid={`week-bedarf-h-${w.value}`}>
+                  {fmtH(overview.totals[w.value]?.nettoHours ?? 0)}
                 </td>
               ))}
             </tr>
+            {hoursStack && (
+              <>
+                <tr className="text-[11px] text-muted-foreground">
+                  <td className="py-1 pr-2">Dienstplan (Plan)</td>
+                  {WEEKDAYS.map((w) => {
+                    const plan = hoursStack.plan[w.value] ?? null;
+                    const bedarf = overview.totals[w.value]?.nettoHours ?? 0;
+                    return (
+                      <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0" data-testid={`week-plan-h-${w.value}`}>
+                        {plan != null ? fmtH(plan) : '–'}
+                        <DiffBadge value={plan} bedarf={bedarf} />
+                      </td>
+                    );
+                  })}
+                </tr>
+                <tr className="text-[11px] text-muted-foreground/70">
+                  <td className="py-1 pr-2">Ist (MIRUS)</td>
+                  {WEEKDAYS.map((w) => {
+                    const ist = hoursStack.ist[w.value] ?? null;
+                    const bedarf = overview.totals[w.value]?.nettoHours ?? 0;
+                    return (
+                      <td key={w.value} colSpan={2} className="py-1 px-1 text-center tabular-nums border-r border-border/40 last:border-r-0" data-testid={`week-ist-h-${w.value}`}>
+                        {ist != null ? fmtH(ist) : ''}
+                        <DiffBadge value={ist} bedarf={bedarf} />
+                      </td>
+                    );
+                  })}
+                </tr>
+              </>
+            )}
             <tr className="text-xs text-muted-foreground">
               <td className="py-1 pr-2">Umsatzbudget (CHF)</td>
               {WEEKDAYS.map((w) => {
@@ -166,6 +232,14 @@ export function StaffingWeekMatrix({
           Personen; Zeiten im Tooltip. Bearbeiten in der Tagesansicht (Klick auf
           einen Wochentag).
         </p>
+        {hoursStack && (
+          <p className="text-[11px] text-muted-foreground">
+            Stunden-Stapel ({hoursStack.weekLabel}): Bedarf (Soll, netto mit
+            ArG-Pausen) = Leitplanke · Dienstplan (Plan) und Ist (MIRUS) mit Δ zum
+            Bedarf — grün = im/unter Bedarf, rot = über Bedarf. Ist bleibt leer,
+            solange kein MIRUS-Import vorliegt.
+          </p>
+        )}
         {season !== 'standard' && (
           <p className="text-[11px] text-muted-foreground">
             UG-Zuschlag ist an seinen Regeltagen eingerechnet; tagesbezogene

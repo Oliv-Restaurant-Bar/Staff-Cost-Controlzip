@@ -34,6 +34,16 @@ import { loadReservationMetrics } from '@/lib/reservation-cockpit-metrics';
 import { loadTakeAwayGuests } from '@/lib/takeaway-cockpit-metrics';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
+import { loadVorjahresPersonalkosten } from '@/lib/vorjahres-personalkosten';
+import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
+import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
+import { loadPositions } from '@/lib/positions-db';
+import {
+  bedarfNettoHoursForDates,
+  planNettoHoursForDates,
+  istHoursForDates,
+} from '@/lib/bedarf-stunden-utils';
+import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 
 type KeyFn = (key: string) => string;
 
@@ -744,7 +754,12 @@ export async function ladeMonatsreport(
   const taOffered = (await loadTakeAwayOffered(tenantKey, tenantId).catch(() => null))?.offered
     ?? (tenantId === 'oliv');
 
-  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, taMonth, taWeek, taVjMonth, pk] = await Promise.all([
+  const [
+    gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth,
+    taMonth, taWeek, taVjMonth, pk,
+    pkVj, staffingPositions, staffingReqs, staffingConfig,
+    mrEmployees, mrSchedule, mrActual,
+  ] = await Promise.all([
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
@@ -762,6 +777,17 @@ export async function ladeMonatsreport(
     taOffered ? loadTakeAwayGuests(tenantId, resWeekFrom, resWeekTo).catch(() => null) : Promise.resolve(null),
     taOffered ? loadTakeAwayGuests(tenantId, vjFromIsoG, vjToIsoG).catch(() => null) : Promise.resolve(null),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
+    // Vorjahres-Personalkosten aus der BUCHHALTUNG (nur Jahre < 2026, nur Monat)
+    loadVorjahresPersonalkosten(tenantId, year - 1, month).catch(() => null),
+    // Personalbedarf-Stammdaten für die Bedarf-Stunden-Leitplanke.
+    loadPositions(tenantId).catch(() => [] as Awaited<ReturnType<typeof loadPositions>>),
+    loadStaffingRequirements(tenantId).catch(() => [] as Awaited<ReturnType<typeof loadStaffingRequirements>>),
+    loadStaffingProfilesConfig(tenantId).catch(() => null),
+    // Dienstplan/Ist des Monats für den Stunden-Stapel (gemeinsame Helfer —
+    // identische Semantik wie die Personalbedarf-Wochenübersicht).
+    loadEmployees(tenantId).catch(() => null),
+    loadScheduleForMonth(new Date(year, month - 1, 1), tenantId).catch(() => null),
+    loadActualHoursForMonth(new Date(year, month - 1, 1), tenantId).catch(() => null),
   ]);
 
   // ── Vorjahres-Woche: vj_daily der berührten Monate laden ───────────────────
@@ -908,29 +934,37 @@ export async function ladeMonatsreport(
   }
   const vwNet = vwGross / VAT_STD;
 
-  // ── Produktive Stunden ─────────────────────────────────────────────────────
-  let istStd: number | null = null, planStd: number | null = null;
-  let wIstStd: number | null = null, wPlanStd: number | null = null;
-  if (pk) {
-    let ist = 0, hatIst = false, plan = 0, hatPlan = false, wIst = 0, wPlan = 0;
-    for (const [date, perEmp] of Object.entries(pk.istStdProTag)) {
-      for (const h of Object.values(perEmp)) { ist += h; hatIst = true; }
-      if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) {
-        for (const h of Object.values(perEmp)) wIst += h;
-      }
-    }
-    // Woche geplant: exakt derselbe (auf den Monat geklemmte) Tagesbereich
-    // wie bei den Ist-Stunden — Summe der Dienstplan-Plan-Stunden dieser Tage.
-    for (const [date, perEmp] of Object.entries(pk.planStdProTag)) {
-      for (const h of Object.values(perEmp)) { plan += h; hatPlan = true; }
-      if (weekFrom && weekTo && date >= weekFrom && date <= weekTo) {
-        for (const h of Object.values(perEmp)) wPlan += h;
-      }
-    }
-    istStd = hatIst ? r2(ist) : null;
-    planStd = hatPlan ? r2(plan) : null;
-    wIstStd = hatIst && weekFrom ? r2(wIst) : null;
-    wPlanStd = hatPlan && weekFrom ? r2(wPlan) : null;
+  // ── Stunden-Stapel Bedarf → Dienstplan → Ist ───────────────────────────────
+  // GEMEINSAME Helfer (bedarf-stunden-utils) — identische Semantik wie die
+  // Personalbedarf-Wochenübersicht: Plan = gespeicherter Dienstplan ohne
+  // Absenzen, netto mit ArG-Pausenstaffel; Ist = gestempelte Stunden ohne
+  // Absenz-Einträge; ohne Datenquelle bleibt der Wert null (nie 0).
+  const stackEmployees = mrEmployees ?? [];
+  const stackSchedule = mrSchedule ?? {};
+  const stackActual = mrActual ?? {};
+  const planStd = stackEmployees.length > 0
+    ? planNettoHoursForDates({
+        employees: stackEmployees, scheduleData: stackSchedule,
+        positions: staffingPositions, dates: alleTage,
+      })
+    : null;
+  const wPlanStd = stackEmployees.length > 0 && wocheTage.length > 0
+    ? planNettoHoursForDates({
+        employees: stackEmployees, scheduleData: stackSchedule,
+        positions: staffingPositions, dates: wocheTage,
+      })
+    : null;
+  const istStd = istHoursForDates(stackActual, alleTage);
+  const wIstStd = wocheTage.length > 0 ? istHoursForDates(stackActual, wocheTage) : null;
+
+  // ── Bedarf-Stunden (Soll aus dem Personalbedarf, netto mit ArG-Pausen) ─────
+  // Leitplanke der Stapel-Anzeige Bedarf → Dienstplan → Ist: Monat = alle Tage
+  // des Monats, Woche = derselbe geklemmte Tagesbereich wie Plan/Ist-Stunden.
+  let bedarfStdM: number | null = null, bedarfStdW: number | null = null;
+  if (staffingConfig && staffingReqs.length > 0 && staffingPositions.length > 0) {
+    const base = { positions: staffingPositions, requirements: staffingReqs, config: staffingConfig };
+    bedarfStdM = bedarfNettoHoursForDates({ ...base, dates: alleTage });
+    bedarfStdW = wocheTage.length > 0 ? bedarfNettoHoursForDates({ ...base, dates: wocheTage }) : null;
   }
 
   // ── Personal-Block: ALLE Zahlen aus dem Kern (personalkosten.ts) ───────────
@@ -1107,8 +1141,19 @@ export async function ladeMonatsreport(
     }),
     e(),
     // ── Block Produktivität ──
-    d('prod_stunden_ist', 'Produktive Stunden (Ist)', { month: istStd, week: wIstStd }, { fmt: 'hours' }),
-    d('prod_stunden_plan', 'Produktive Stunden geplant', { month: planStd, week: wPlanStd }, { fmt: 'hours' }),
+    // Stapel Bedarf → Dienstplan → Ist: Bedarf = Leitplanke (Budget-Spalte der
+    // beiden Folgezeilen ⇒ Δ% mit Kosten-Ampel: über Bedarf = rot).
+    d('bedarf_stunden', 'Bedarf-Stunden (Soll)', {
+      month: bedarfStdM, week: bedarfStdW,
+    }, { fmt: 'hours', bold: true }),
+    d('prod_stunden_plan', 'Dienstplan-Stunden (Plan)', {
+      month: planStd, week: wPlanStd,
+      monthBudget: bedarfStdM, budget: bedarfStdW, weekBudget: bedarfStdW,
+    }, { fmt: 'hours', deltaInverted: true }),
+    d('prod_stunden_ist', 'Ist-Stunden (MIRUS)', {
+      month: istStd, week: wIstStd,
+      monthBudget: bedarfStdM, budget: bedarfStdW, weekBudget: bedarfStdW,
+    }, { fmt: 'hours', deltaInverted: true }),
     d('produktivitaet', 'Produktivität (Umsatz/Std)', {
       month: mNetV != null && istStd ? r2(mNet / istStd) : null,
       week: wNetV != null && wIstStd ? r2(wNet / wIstStd) : null,
@@ -1131,14 +1176,20 @@ export async function ladeMonatsreport(
       budget: personal?.pkBudgetWoche ?? null,
       monthBudget: personal?.pkBudgetMonat ?? null,
       month: personal?.pkHrMonat ?? null,
-      vj: null, vjMonth: null,   // keine Vorjahres-Quelle
+      // Vorjahr NUR Monat: Buchhaltungswert (vorjahres_personalkosten,
+      // ausschliesslich Jahre < 2026 ohne Dienstplan-Berechnung).
+      // KEINE Verteilung auf Wochen → vj (Woche) bleibt leer.
+      vj: null, vjMonth: pkVj ? r2(pkVj.chf) : null,
     }, { bold: true, deltaInverted: true }),
     // PKQ: Budget = Ziel; rot über Obergrenze (Woche & Monat). Δ% n/a (Quote).
     d('personalquote', 'Personalquote (PKQ)', {
       budget: pk ? r2(budgetZielQuote(pk) * 100) : null,
       week: personal?.pkqWochePct ?? null,
       month: personal?.pkqMonatPct ?? null,
-      vj: null, vjMonth: null,
+      // PKQ Vorjahr (nur Monat) = Buchhaltungs-Personalkosten ÷ Netto-Umsatz
+      // desselben VJ-Monats (vj_daily, Standard-MwSt-Netto).
+      vj: null,
+      vjMonth: pkVj && vjNetV != null && vjNetV > 0 ? r2((pkVj.chf / vjNetV) * 100) : null,
     }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT }),
   ];
 

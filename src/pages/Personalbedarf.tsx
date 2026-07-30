@@ -39,7 +39,10 @@ import {
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
-import { StaffingWeekMatrix } from '@/components/schedule-planner/StaffingWeekMatrix';
+import { StaffingWeekMatrix, type WeekHoursStack } from '@/components/schedule-planner/StaffingWeekMatrix';
+import { planNettoHoursForDate, istHoursForDate } from '@/lib/bedarf-stunden-utils';
+import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
+import { format, startOfWeek, addDays, parseISO, isValid, getISOWeek } from 'date-fns';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
@@ -89,6 +92,55 @@ export default function Personalbedarf() {
   const [edits, setEdits] = useState<EditsMap>({});
   const [baselineKey, setBaselineKey] = useState<string>('[]');
   const [busy, setBusy] = useState(false);
+
+  // ── Stunden-Stapel der Wochenübersicht (Dienstplan/Ist einer Kalenderwoche) ─
+  // Bedarf ist wochentags-generisch; Dienstplan-Plan und Ist (MIRUS) brauchen
+  // eine KONKRETE Kalenderwoche (Default: aktuelle Woche, Montag).
+  const [weekAnchor, setWeekAnchor] = useState<string>(() =>
+    format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'));
+  const [hoursStack, setHoursStack] = useState<WeekHoursStack | null>(null);
+
+  useEffect(() => {
+    if (viewMode !== 'week') return;
+    const anchor = parseISO(weekAnchor);
+    if (!isValid(anchor)) { setHoursStack(null); return; }
+    const monday = startOfWeek(anchor, { weekStartsOn: 1 });
+    const dates = Array.from({ length: 7 }, (_, i) => format(addDays(monday, i), 'yyyy-MM-dd'));
+    // Berührte Monate (Woche kann Monatsgrenze überschreiten).
+    const months = [...new Set(dates.map((d) => d.slice(0, 7)))]
+      .map((ym) => parseISO(`${ym}-01`));
+    let cancelled = false;
+    (async () => {
+      try {
+        const [emps, schedules, actuals] = await Promise.all([
+          loadEmployees(tenantId),
+          Promise.all(months.map((m) => loadScheduleForMonth(m, tenantId))),
+          Promise.all(months.map((m) => loadActualHoursForMonth(m, tenantId))),
+        ]);
+        if (cancelled) return;
+        const scheduleData = Object.assign({}, ...schedules.map((s) => s ?? {}));
+        const actualData = Object.assign({}, ...actuals.map((a) => a ?? {}));
+        const plan: Record<number, number | null> = {};
+        const ist: Record<number, number | null> = {};
+        dates.forEach((dateStr, i) => {
+          const wd = i + 1; // Mo-basiert
+          plan[wd] = planNettoHoursForDate({
+            employees: emps ?? [], scheduleData, positions, dateStr,
+          });
+          ist[wd] = istHoursForDate(actualData, dateStr);
+        });
+        const sunday = addDays(monday, 6);
+        setHoursStack({
+          weekLabel: `KW ${getISOWeek(monday)} · ${format(monday, 'dd.MM.')}–${format(sunday, 'dd.MM.yyyy')}`,
+          plan,
+          ist,
+        });
+      } catch {
+        if (!cancelled) setHoursStack(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [viewMode, weekAnchor, tenantId, positions]);
 
   const activeProfile = profileByKey(profilesConfig, season);
   const locked = isProfileLocked(profilesConfig, season);
@@ -523,16 +575,38 @@ export default function Personalbedarf() {
 
       {/* Wochenübersicht (Standard-Ansicht) */}
       {!loading && viewMode === 'week' && hasActivePositions && (
-        <StaffingWeekMatrix
-          positions={positions}
-          requirements={requirements}
-          config={profilesConfig}
-          season={season}
-          onSelectWeekday={(w) => {
-            setWeekday(w);
-            setViewMode('day');
-          }}
-        />
+        <>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">
+                Kalenderwoche für Dienstplan/Ist-Stunden
+              </Label>
+              <Input
+                type="date"
+                value={weekAnchor}
+                onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
+                className="h-8 w-[10.5rem] text-sm"
+                data-testid="input-week-anchor"
+              />
+            </div>
+            {hoursStack && (
+              <span className="text-[11px] text-muted-foreground pb-1.5">
+                {hoursStack.weekLabel}
+              </span>
+            )}
+          </div>
+          <StaffingWeekMatrix
+            positions={positions}
+            requirements={requirements}
+            config={profilesConfig}
+            season={season}
+            hoursStack={hoursStack}
+            onSelectWeekday={(w) => {
+              setWeekday(w);
+              setViewMode('day');
+            }}
+          />
+        </>
       )}
 
       {loading && <p className="text-sm text-muted-foreground">Lädt…</p>}
