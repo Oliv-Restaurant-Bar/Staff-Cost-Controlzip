@@ -744,7 +744,7 @@ export async function ladeMonatsreport(
   const taOffered = (await loadTakeAwayOffered(tenantKey, tenantId).catch(() => null))?.offered
     ?? (tenantId === 'oliv');
 
-  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, taMonth, taWeek, pk] = await Promise.all([
+  const [gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth, taMonth, taWeek, taVjMonth, pk] = await Promise.all([
     loadGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckDaily(tenantKey).catch(() => ({} as Record<string, number>)),
     loadAvgCheckMonthly(tenantKey).catch(() => ({} as Record<string, number>)),
@@ -756,10 +756,11 @@ export async function ladeMonatsreport(
     // Vorjahr: gleicher Monat Jahr−1 (für die Vorjahr-Spalte der Monatssicht).
     loadReservationMetrics(tenantId, vjFromIsoG, vjToIsoG, resSettings),
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte, GANZER
-    // Monat bzw. gewählte Woche (ungeklemmt, future-capable). Kein trivialer
-    // Vorjahreswert → VJ-Spalten bleiben «—».
+    // Monat bzw. gewählte Woche (ungeklemmt, future-capable). VJ-Monat = gleicher
+    // Monat Jahr−1 aus derselben Quelle (fehlt → «—»); VJ-Woche bleibt «—».
     taOffered ? loadTakeAwayGuests(tenantId, fromIso, toIso).catch(() => null) : Promise.resolve(null),
     taOffered ? loadTakeAwayGuests(tenantId, resWeekFrom, resWeekTo).catch(() => null) : Promise.resolve(null),
+    taOffered ? loadTakeAwayGuests(tenantId, vjFromIsoG, vjToIsoG).catch(() => null) : Promise.resolve(null),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
   ]);
 
@@ -1065,10 +1066,10 @@ export async function ladeMonatsreport(
     }, { fmt: 'countPax' }),
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte (1 Stück
     // = 1 TA-Gast). Woche = gewählte Woche, Monat = ganzer Monat (inkl. Zukunft).
-    // Kein trivialer Vorjahreswert → VJ-Spalten «—». Quelle fehlt → «—» (nie 0).
+    // VJ-Monat aus derselben Quelle (Jahr−1); VJ-Woche «—». Quelle fehlt → «—» (nie 0).
     d('gaeste_take_away', 'Gäste Take Away', {
       month: taMonth, week: taWeek,
-      vj: null, vjMonth: null,
+      vj: null, vjMonth: taVjMonth,
     }, { fmt: 'count' }),
     e(),
     // ── Block Durchschnitt ──
