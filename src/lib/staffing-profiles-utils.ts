@@ -56,6 +56,26 @@ export interface UgSurcharge {
   weekdays: number[];
 }
 
+/**
+ * Dynamische Küchen-Stationsregel «Kalte Küche / Sushi» (analog CdS-Regel):
+ *  - Ist `soloId` (Miro) geplant → er übernimmt Kalte Küche UND Sushi.
+ *  - Sonst, wenn ≥ `minHotCooks` Köche aus `hotCookIds` am Herd geplant sind →
+ *    die erste geplante Person aus `fallbackIds` (Michele, dann Mejdi)
+ *    übernimmt Kalte Küche/Sushi.
+ *  - Sind weniger Köche geplant (schwacher Tag, z.B. Sonntag) → keine eigene
+ *    Kalte-Station; die Köche decken alles ab (kein Fehler).
+ */
+export interface KitchenColdRule {
+  /** Stamm-Besetzung der Kalten Küche (Oliv: Miro). */
+  soloId: string;
+  /** Vertretungs-Reihenfolge, wenn soloId fehlt (Oliv: Michele > Mejdi). */
+  fallbackIds: string[];
+  /** «Küche heiss»-Köche (Oliv: Mejdi, Micky, Karel, Michele, Party). */
+  hotCookIds: string[];
+  /** Mindestzahl geplanter Herd-Köche, ab der die Kalte-Station besetzt wird. */
+  minHotCooks: number;
+}
+
 export interface StaffingProfilesConfig {
   profiles: StaffingProfile[];
   /**
@@ -67,6 +87,8 @@ export interface StaffingProfilesConfig {
   revenueBudgetByWeekday: Record<number, number>;
   /** UG-Zuschlag (additiv auf Standard). */
   ugSurcharge: UgSurcharge;
+  /** Küchen-Stationsregel Kalte Küche/Sushi (null = nicht konfiguriert). */
+  kitchenCold: KitchenColdRule | null;
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -98,6 +120,18 @@ const OLIV_UG_SURCHARGE: UgSurcharge = {
   weekdays: [5, 6],
 };
 
+/**
+ * Küchen-Stationsregel Oliv: Miro (15) übernimmt Kalte Küche+Sushi; fehlt er
+ * und sind ≥3 Herd-Köche (Mejdi 14, Micky 18, Karel 17, Michele 106, Party)
+ * geplant, übernimmt Michele (106), sonst Mejdi (14).
+ */
+const OLIV_KITCHEN_COLD: KitchenColdRule = {
+  soloId: '15',
+  fallbackIds: ['106', '14'],
+  hotCookIds: ['14', '18', '17', '106', 'party'],
+  minHotCooks: 3,
+};
+
 /** Umsatzbudget Oliv je Wochentag (Mo 5000, Di/Mi 6000, Do 8000, Fr/Sa 12000, So 7000). */
 const OLIV_REVENUE_BUDGET: Record<number, number> = {
   1: 5000, 2: 6000, 3: 6000, 4: 8000, 5: 12000, 6: 12000, 7: 7000,
@@ -114,6 +148,9 @@ export function defaultStaffingProfilesConfig(tenantId: string): StaffingProfile
     ugSurcharge: isOliv
       ? { entries: OLIV_UG_SURCHARGE.entries.map((e) => ({ ...e })), weekdays: [...OLIV_UG_SURCHARGE.weekdays] }
       : { entries: [], weekdays: [5, 6] },
+    kitchenCold: isOliv
+      ? { ...OLIV_KITCHEN_COLD, fallbackIds: [...OLIV_KITCHEN_COLD.fallbackIds], hotCookIds: [...OLIV_KITCHEN_COLD.hotCookIds] }
+      : null,
   };
 }
 
@@ -166,6 +203,21 @@ function normSurcharge(raw: unknown, def: UgSurcharge): UgSurcharge {
   return { entries, weekdays };
 }
 
+function normKitchenCold(raw: unknown, def: KitchenColdRule | null): KitchenColdRule | null {
+  if (raw === null) return null; // explizit deaktiviert
+  if (!raw || typeof raw !== 'object') return def;
+  const r = raw as Record<string, unknown>;
+  const ids = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : [];
+  const soloId = typeof r.soloId === 'string' ? r.soloId.trim() : '';
+  if (!soloId) return def;
+  const minHotCooks =
+    typeof r.minHotCooks === 'number' && Number.isInteger(r.minHotCooks) && r.minHotCooks >= 1
+      ? r.minHotCooks
+      : def?.minHotCooks ?? 3;
+  return { soloId, fallbackIds: ids(r.fallbackIds), hotCookIds: ids(r.hotCookIds), minHotCooks };
+}
+
 /**
  * Baut aus einem unbekannten JSON-Blob eine gültige Konfiguration.
  * Fehlende Teile werden aus den Mandanten-Defaults ergänzt; 'standard' und
@@ -206,6 +258,8 @@ export function normalizeStaffingProfilesConfig(
     cdsPriority: cds,
     revenueBudgetByWeekday: budget,
     ugSurcharge: normSurcharge(r.ugSurcharge, def.ugSurcharge),
+    // 'kitchenCold' fehlt in alten Blobs → Mandanten-Default ergänzen.
+    kitchenCold: 'kitchenCold' in r ? normKitchenCold(r.kitchenCold, def.kitchenCold) : def.kitchenCold,
   };
 }
 

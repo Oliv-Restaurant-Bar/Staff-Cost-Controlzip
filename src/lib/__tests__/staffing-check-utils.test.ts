@@ -9,6 +9,7 @@ import {
   nettoSegmentMinutes,
   nettoMinutesForSlots,
   computeCdsCheck,
+  computeKitchenColdCheck,
   computeDayCheck,
   worstAmpel,
   type PlannedEmployeeDayEx,
@@ -144,6 +145,64 @@ describe('computeCdsCheck (Artin > Mendim > Ibrahim)', () => {
     const r = computeCdsCheck(['x'], []);
     expect(r.ok).toBe(true);
     expect(r.warning).toBeNull();
+  });
+});
+
+describe('computeKitchenColdCheck (Kalte Küche/Sushi, Oliv-Regel)', () => {
+  const rule = defaultStaffingProfilesConfig('oliv').kitchenCold!;
+
+  it('Miro (15) geplant → übernimmt Kalte Küche UND Sushi (solo)', () => {
+    const r = computeKitchenColdCheck(['15', '14', '18'], rule);
+    expect(r.coldId).toBe('15');
+    expect(r.mode).toBe('solo');
+    expect(r.ok).toBe(true);
+  });
+  it('ohne Miro, ≥3 Herd-Köche → Michele (106) übernimmt', () => {
+    const r = computeKitchenColdCheck(['14', '18', '106'], rule);
+    expect(r.coldId).toBe('106');
+    expect(r.mode).toBe('fallback');
+    expect(r.hotCookCount).toBe(3);
+  });
+  it('ohne Miro/Michele, ≥3 Herd-Köche → Mejdi (14) übernimmt', () => {
+    const r = computeKitchenColdCheck(['14', '18', '17'], rule);
+    expect(r.coldId).toBe('14');
+    expect(r.mode).toBe('fallback');
+  });
+  it('schwacher Tag (2 Köche, z.B. Sonntag) → keine eigene Kalte-Station, ok', () => {
+    const r = computeKitchenColdCheck(['18', '17'], rule);
+    expect(r.coldId).toBeNull();
+    expect(r.mode).toBe('weak_day');
+    expect(r.ok).toBe(true);
+    expect(r.warning).toBeNull();
+  });
+  it('≥3 Herd-Köche, aber weder Miro noch Vertretung → Warnung', () => {
+    const r = computeKitchenColdCheck(['18', '17', 'party'], rule);
+    expect(r.mode).toBe('missing');
+    expect(r.ok).toBe(false);
+    expect(r.warning).toMatch(/Kalte Küche\/Sushi unbesetzt/);
+  });
+  it('computeDayCheck: alles besetzt + CdS ok, aber Kalte-Station missing → Abdeckung gelb', () => {
+    const req: StaffingRequirement = {
+      id: 'r1', restaurantId: 'oliv', scopeType: 'weekly', season: 'standard', weekday: 4,
+      scopeRef: null, positionKey: 'kueche', shiftStart: '10:00', shiftEnd: '14:00',
+      requiredCount: 1, sortOrder: 0, meta: {},
+    } as StaffingRequirement;
+    const emp = (id: string): PlannedEmployeeDayEx => ({
+      id, positionKey: 'kueche', slots: [{ start: '10:00', end: '14:00' }], trainedKeys: ['kueche'],
+    } as PlannedEmployeeDayEx);
+    const r = computeDayCheck({
+      requirements: [req],
+      plannedEmployees: [emp('18'), emp('17'), emp('party')], // 3 Herd-Köche, keine Vertretung
+      season: 'standard', weekday: 4, cdsPriority: [], kitchenCold: rule,
+    });
+    expect(r.coverage.rows.every((x) => x.covered)).toBe(true);
+    expect(r.coverage.kitchenCold.mode).toBe('missing');
+    expect(r.coverage.ampel).toBe('gelb');
+  });
+  it('keine Regel (z.B. Beaulieu) → not_configured, ok', () => {
+    const r = computeKitchenColdCheck(['x'], defaultStaffingProfilesConfig('beaulieu').kitchenCold);
+    expect(r.mode).toBe('not_configured');
+    expect(r.ok).toBe(true);
   });
 });
 

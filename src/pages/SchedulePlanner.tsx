@@ -5716,6 +5716,7 @@ const SchedulePlanner = () => {
         onSeasonChange={setStaffingSeason}
         profiles={staffingProfilesConfig.profiles}
         cdsPriority={staffingProfilesConfig.cdsPriority}
+        kitchenCold={staffingProfilesConfig.kitchenCold}
       />
 
       {/* Day Detail Dialog (Plan view) */}

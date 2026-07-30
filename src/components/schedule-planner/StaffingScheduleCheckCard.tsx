@@ -192,6 +192,7 @@ export function StaffingScheduleCheckCard({
       season,
       weekday: dateWeekday,
       cdsPriority: config.cdsPriority,
+      kitchenCold: config.kitchenCold,
     });
   }, [employees, plannedEmployees, positions, effectiveRequirements, season, dateWeekday, config]);
 

@@ -32,6 +32,7 @@
  */
 import type { Position } from '@/types/positions';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
+import type { KitchenColdRule } from '@/lib/staffing-profiles-utils';
 import { shiftsForScope, timeToMinutes } from '@/lib/staffing-requirements-utils';
 import {
   slotOverlapsShift,
@@ -124,6 +125,60 @@ export function computeCdsCheck(
   };
 }
 
+// ─── Küchen-Stationsregel Kalte Küche/Sushi (dynamisch, analog CdS) ──────────
+
+export interface KitchenColdCheckResult {
+  /** Person, die heute Kalte Küche/Sushi übernimmt (oder null). */
+  coldId: string | null;
+  /**
+   * 'solo'       = Stamm-Besetzung (Miro) geplant, übernimmt beide Stationen.
+   * 'fallback'   = Vertretung aus fallbackIds (Michele > Mejdi).
+   * 'weak_day'   = < minHotCooks Herd-Köche geplant → keine eigene Kalte-Station (ok).
+   * 'missing'    = genug Herd-Köche, aber niemand kann Kalte Küche übernehmen.
+   * 'not_configured' = keine Regel hinterlegt.
+   */
+  mode: 'solo' | 'fallback' | 'weak_day' | 'missing' | 'not_configured';
+  /** Anzahl geplanter Herd-Köche (aus hotCookIds). */
+  hotCookCount: number;
+  ok: boolean;
+  /** Deutsche Warnung bei 'missing' (sonst null). */
+  warning: string | null;
+}
+
+/**
+ * Kalte Küche/Sushi: Miro zuerst; sonst ab `minHotCooks` geplanten Herd-Köchen
+ * die erste geplante Vertretung (Michele > Mejdi). An schwach besetzten Tagen
+ * (< minHotCooks) entfällt die eigene Kalte-Station ohne Warnung.
+ */
+export function computeKitchenColdCheck(
+  plannedEmployeeIds: readonly string[],
+  rule: KitchenColdRule | null | undefined,
+): KitchenColdCheckResult {
+  if (!rule) {
+    return { coldId: null, mode: 'not_configured', hotCookCount: 0, ok: true, warning: null };
+  }
+  const planned = new Set(plannedEmployeeIds);
+  const hotCookCount = rule.hotCookIds.filter((id) => planned.has(id)).length;
+  if (planned.has(rule.soloId)) {
+    return { coldId: rule.soloId, mode: 'solo', hotCookCount, ok: true, warning: null };
+  }
+  if (hotCookCount < rule.minHotCooks) {
+    return { coldId: null, mode: 'weak_day', hotCookCount, ok: true, warning: null };
+  }
+  const coldId = rule.fallbackIds.find((id) => planned.has(id)) ?? null;
+  if (coldId !== null) {
+    return { coldId, mode: 'fallback', hotCookCount, ok: true, warning: null };
+  }
+  return {
+    coldId: null,
+    mode: 'missing',
+    hotCookCount,
+    ok: false,
+    warning:
+      'Kalte Küche/Sushi unbesetzt — weder die Stamm-Besetzung noch eine Vertretung ist an diesem Tag eingeplant.',
+  };
+}
+
 // ─── Tages-Prüfung (3 Dimensionen) ────────────────────────────────────────────
 
 export type Ampel = 'gruen' | 'gelb' | 'rot';
@@ -175,7 +230,12 @@ export interface DayCheckResult {
   hasRequirements: boolean;
   hours: { rows: HoursCheckRow[]; ampel: Ampel };
   counts: { rows: CountCheckRow[]; ampel: Ampel };
-  coverage: { rows: CoverageCheckRow[]; cds: CdsCheckResult; ampel: Ampel };
+  coverage: {
+    rows: CoverageCheckRow[];
+    cds: CdsCheckResult;
+    kitchenCold: KitchenColdCheckResult;
+    ampel: Ampel;
+  };
   overall: Ampel;
 }
 
@@ -208,20 +268,25 @@ export function computeDayCheck(args: {
   season: StaffingSeason;
   weekday: number;
   cdsPriority: readonly string[];
+  /** Küchen-Stationsregel Kalte Küche/Sushi (optional, analog CdS). */
+  kitchenCold?: KitchenColdRule | null;
 }): DayCheckResult {
-  const { requirements, plannedEmployees, season, weekday, cdsPriority } = args;
+  const { requirements, plannedEmployees, season, weekday, cdsPriority, kitchenCold } = args;
   const shifts = shiftsForScope(requirements, season, weekday);
 
-  // ── CdS (alle produktiv geplanten Personen des Tages) ──
-  const cds = computeCdsCheck(plannedEmployees.map((e) => e.id), cdsPriority, weekday);
+  // ── CdS + Kalte Küche/Sushi (alle produktiv geplanten Personen des Tages) ──
+  const plannedIds = plannedEmployees.map((e) => e.id);
+  const cds = computeCdsCheck(plannedIds, cdsPriority, weekday);
+  const cold = computeKitchenColdCheck(plannedIds, kitchenCold);
 
   if (shifts.length === 0) {
+    const ruleAmpel: Ampel = cds.ok && cold.ok ? 'gruen' : 'gelb';
     return {
       hasRequirements: false,
       hours: { rows: [], ampel: 'gruen' },
       counts: { rows: [], ampel: 'gruen' },
-      coverage: { rows: [], cds, ampel: cds.ok ? 'gruen' : 'gelb' },
-      overall: cds.ok ? 'gruen' : 'gelb',
+      coverage: { rows: [], cds, kitchenCold: cold, ampel: ruleAmpel },
+      overall: ruleAmpel,
     };
   }
 
@@ -295,7 +360,7 @@ export function computeDayCheck(args: {
   const anySecondaryOnly = coverageRows.some((r) => r.coveredOnlyBySecondary);
   const coverageOverall: Ampel = anyUncovered
     ? 'rot'
-    : !cds.ok
+    : !cds.ok || !cold.ok
       ? 'gelb'
       : anySecondaryOnly
         ? 'gelb'
@@ -305,7 +370,7 @@ export function computeDayCheck(args: {
     hasRequirements: true,
     hours: { rows: hoursRows, ampel: hoursOverall },
     counts: { rows: countRows, ampel: countsOverall },
-    coverage: { rows: coverageRows, cds, ampel: coverageOverall },
+    coverage: { rows: coverageRows, cds, kitchenCold: cold, ampel: coverageOverall },
     overall: worstAmpel([hoursOverall, countsOverall, coverageOverall]),
   };
 }

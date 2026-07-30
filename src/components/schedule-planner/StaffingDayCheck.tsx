@@ -108,6 +108,36 @@ export function StaffingDayCheck({ check, positionName, employeeName, className 
         </div>
       )}
 
+      {/* Kalte-Küche/Sushi-Status (dynamische Küchen-Stationsregel) */}
+      {coverage.kitchenCold.mode !== 'not_configured' && (
+        <div
+          data-testid="daycheck-kitchen-cold-status"
+          className={cn(
+            'rounded-md border px-3 py-2 text-xs flex items-start gap-2',
+            coverage.kitchenCold.ok
+              ? 'border-border bg-muted/30'
+              : 'border-amber-300 bg-amber-50 dark:bg-amber-950/20',
+          )}
+        >
+          <UserCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+          {coverage.kitchenCold.ok ? (
+            coverage.kitchenCold.mode === 'weak_day' ? (
+              <span>
+                Kalte Küche/Sushi: keine eigene Station ({coverage.kitchenCold.hotCookCount} Köche
+                geplant — die Köche decken alles ab)
+              </span>
+            ) : (
+              <span>
+                Kalte Küche/Sushi: <strong>{empName(coverage.kitchenCold.coldId!)}</strong>
+                {coverage.kitchenCold.mode === 'fallback' && <> (Vertretung)</>}
+              </span>
+            )
+          ) : (
+            <span className="text-amber-700 dark:text-amber-400">{coverage.kitchenCold.warning}</span>
+          )}
+        </div>
+      )}
+
       {/* 1) Stunden je Position */}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -157,12 +187,14 @@ export function StaffingDayCheck({ check, positionName, employeeName, className 
             ))}
         </div>
       )}
-      {!coverage.rows.some((r) => !r.covered || r.coveredOnlyBySecondary) && (
-        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-          Alle geforderten Schichten sind mit geschulten Personen besetzt.
-        </p>
-      )}
+      {!coverage.rows.some((r) => !r.covered || r.coveredOnlyBySecondary) &&
+        coverage.cds.ok &&
+        coverage.kitchenCold.ok && (
+          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            Alle geforderten Schichten sind mit geschulten Personen besetzt.
+          </p>
+        )}
 
       {/* Hinweis auf abweichende Anzahl (Detailzeilen stehen in der Soll/Ist-Tabelle) */}
       {counts.ampel !== 'gruen' && (

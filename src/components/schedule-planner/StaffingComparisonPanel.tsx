@@ -24,7 +24,8 @@ import {
   type ShiftComparisonRow,
   type StaffingHeadline,
 } from '@/lib/staffing-comparison-utils';
-import { computeCdsCheck } from '@/lib/staffing-check-utils';
+import { computeCdsCheck, computeKitchenColdCheck } from '@/lib/staffing-check-utils';
+import type { KitchenColdRule } from '@/lib/staffing-profiles-utils';
 import { buildEffectiveRequirements, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
 import { useUgEventDays } from '@/hooks/useUgEventDays';
@@ -68,6 +69,8 @@ interface StaffingComparisonPanelProps {
   profiles?: { key: string; label: string }[];
   /** CdS-Prioritätsliste (Mitarbeiter-IDs) für die Chef-de-Service-Warnung. */
   cdsPriority?: string[];
+  /** Küchen-Stationsregel Kalte Küche/Sushi (dynamisch, analog CdS). */
+  kitchenCold?: KitchenColdRule | null;
 }
 
 const DEPARTMENT_LABEL: Record<Department, string> = {
@@ -151,6 +154,7 @@ export function StaffingComparisonPanel({
   onSeasonChange,
   profiles,
   cdsPriority,
+  kitchenCold,
 }: StaffingComparisonPanelProps) {
   const { positions, loading: posLoading } = usePositions();
   const { requirements, loading: reqLoading } = useStaffingRequirements();
@@ -201,6 +205,11 @@ export function StaffingComparisonPanel({
   const cdsCheck = useMemo(
     () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsPriority ?? [], weekday),
     [plannedEmployees, cdsPriority, weekday],
+  );
+  // Küchen-Stationsregel Kalte Küche/Sushi (nur wenn eine Regel konfiguriert ist).
+  const kitchenColdCheck = useMemo(
+    () => computeKitchenColdCheck(plannedEmployees.map((p) => p.id), kitchenCold),
+    [plannedEmployees, kitchenCold],
   );
   const employeeName = useCallback(
     (id: string) => employees.find((e) => e.id === id)?.name ?? id,
@@ -335,6 +344,36 @@ export function StaffingComparisonPanel({
                 </span>
               ) : (
                 <span className="text-amber-700 dark:text-amber-400">{cdsCheck.warning}</span>
+              )}
+            </div>
+          )}
+
+          {/* Küchen-Stationsregel Kalte Küche/Sushi (dynamisch, analog CdS) */}
+          {kitchenColdCheck.mode !== 'not_configured' && (
+            <div
+              data-testid="staffing-kitchen-cold-status"
+              className={cn(
+                'mb-3 rounded-md border px-3 py-2 text-xs flex items-start gap-2',
+                kitchenColdCheck.ok
+                  ? 'border-border bg-muted/30'
+                  : 'border-amber-300 bg-amber-50 dark:bg-amber-950/20',
+              )}
+            >
+              <UserCheck className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+              {kitchenColdCheck.ok ? (
+                kitchenColdCheck.mode === 'weak_day' ? (
+                  <span>
+                    Kalte Küche/Sushi: keine eigene Station ({kitchenColdCheck.hotCookCount} Köche
+                    geplant — die Köche decken alles ab)
+                  </span>
+                ) : (
+                  <span>
+                    Kalte Küche/Sushi: <strong>{employeeName(kitchenColdCheck.coldId!)}</strong>
+                    {kitchenColdCheck.mode === 'fallback' && <> (Vertretung)</>}
+                  </span>
+                )
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">{kitchenColdCheck.warning}</span>
               )}
             </div>
           )}
