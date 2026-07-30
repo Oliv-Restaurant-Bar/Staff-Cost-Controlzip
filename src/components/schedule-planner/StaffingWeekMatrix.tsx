@@ -2,7 +2,7 @@
  * «Ganze Woche»-Ansicht des Personalbedarfs: Matrix Mo–So (Spalten, je Tag
  * Mittag/Abend), Zeilen = Positionen gruppiert nach Abteilung/Bereich,
  * Zelle = Soll-Anzahl ODER Bedarf-Netto-Stunden (Umschalter «Personen |
- * Stunden»); unten Tages-Summen (Einsätze, Netto-Stunden, Umsatzbudget).
+ * Stunden»); unten Tages-Summen (Personal total = Kopfzahl, Netto-Stunden, Umsatzbudget).
  * Zellen sind direkt bearbeitbar (Inline-Panel, schreibt ins aktive Profil);
  * regelbasierte Positionen (CdS/Gastgeber, Kalte Küche/Sushi) zeigen nur
  * einen Regel-Hinweis.
@@ -13,7 +13,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import type { Position } from '@/types/positions';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import type { StaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
-import { buildWeekOverview, isEveningShift, type WeekCell } from '@/lib/staffing-week-utils';
+import { buildWeekOverview, isEveningShift, explicitDayHeadcount, type WeekCell } from '@/lib/staffing-week-utils';
 import { diffToBedarf } from '@/lib/bedarf-stunden-utils';
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import {
@@ -96,12 +96,17 @@ function CellEditPanel({
   rawShifts: StaffingRequirement[];
   /** Quelle/Regel-Beschriftung, z.B. «Profil Standard». */
   sourceLabel: string;
-  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[]) => Promise<void>;
+  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
   onClose: () => void;
 }) {
   const partShifts = rawShifts.filter((s) => (part === 'abend') === isEveningShift(s.shiftStart));
   const [drafts, setDrafts] = useState<ShiftDraft[]>(() =>
     partShifts.map((s) => ({ id: s.id, shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: s.requiredCount })));
+  // Explizite KOPFZAHL des Tages (leer = Automatik max(Mittag, Abend)).
+  const [headInput, setHeadInput] = useState<string>(() => {
+    const v = explicitDayHeadcount(rawShifts);
+    return v == null ? '' : String(v);
+  });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -113,13 +118,19 @@ function CellEditPanel({
       const errs = validateShiftDraft(d);
       if (errs.length > 0) { setError(errs[0]); return; }
     }
+    const headTrim = headInput.trim();
+    const head = headTrim === '' ? null : Number(headTrim);
+    if (head !== null && (!Number.isFinite(head) || head < 0 || !Number.isInteger(head))) {
+      setError('Personen (Kopfzahl) muss eine ganze Zahl ≥ 0 sein — oder leer für Automatik.');
+      return;
+    }
     setError(null);
     setSaving(true);
     try {
       // NUR die bearbeitete Tageshälfte übergeben — das Mergen mit der anderen
       // Hälfte passiert beim Speichern gegen den FRISCHEN Scope-Stand
       // (buildCellSaveDrafts), damit kein veralteter Snapshot zurückschreibt.
-      await onSaveCell(positionKey, weekday, part, drafts);
+      await onSaveCell(positionKey, weekday, part, drafts, head);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Speichern fehlgeschlagen');
@@ -175,6 +186,19 @@ function CellEditPanel({
         data-testid="cell-edit-add">
         <Plus className="h-3.5 w-3.5" /> Schicht hinzufügen
       </Button>
+      <div className="flex items-end gap-2 border-t pt-2">
+        <div className="flex flex-col gap-0.5">
+          <Label className="text-[10px] text-muted-foreground">Personen am Tag (Kopfzahl)</Label>
+          <Input type="number" min={0} step={1} className="h-7 w-20 text-xs" value={headInput}
+            placeholder="auto"
+            onChange={(e) => setHeadInput(e.target.value)}
+            data-testid="cell-edit-headcount" />
+        </div>
+        <p className="pb-0.5 text-[10px] text-muted-foreground max-w-[12rem]">
+          Leer = automatisch max(Mittag, Abend): eine durchgehende Person zählt 1×.
+          Nur setzen, wenn Mittag und Abend VERSCHIEDENE Personen sind.
+        </p>
+      </div>
       {error && <p className="text-[11px] text-red-600">{error}</p>}
       <div className="flex justify-end gap-1.5 pt-1">
         <Button type="button" size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onClose}>
@@ -201,7 +225,7 @@ function EditableCell({
   weekday: number;
   rawShifts: StaffingRequirement[];
   sourceLabel: string;
-  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[]) => Promise<void>;
+  onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const ruleHint = RULE_BASED_POSITION_HINTS[positionKey] ?? null;
@@ -304,8 +328,8 @@ export function StaffingWeekMatrix({
   editSeason?: StaffingSeason;
   /** Quelle/Regel-Beschriftung im Editor, z.B. «Profil Standard». */
   sourceLabel?: string;
-  /** Persistiert die kompletten Tages-Schichten der Position. */
-  onSaveCell?: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[]) => Promise<void>;
+  /** Persistiert die kompletten Tages-Schichten der Position (+ Kopfzahl). */
+  onSaveCell?: (positionKey: string, weekday: number, part: 'mittag' | 'abend', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
 }) {
   const overview = buildWeekOverview({ positions, requirements, config, season });
   const canEdit = editable && !!onSaveCell && !!editSeason;
@@ -364,22 +388,18 @@ export function StaffingWeekMatrix({
             </tr>
           </thead>
           <tbody>
+            {/* EINE klare Überschrift-Ebene: Bereich (Restaurant, Bar/Buffet,
+                Küche, Take Away, Abwasch) — ohne redundante Abteilungs-Zeile
+                darüber. Positionen ohne Bereich fallen auf die Abteilung zurück. */}
             {overview.groups.map((dep) => (
               <Fragment key={dep.department}>
-                <tr className="bg-muted/40">
-                  <td colSpan={15} className="py-1 pr-2 text-xs font-semibold">
-                    {DEPT_LABEL[dep.department]}
-                  </td>
-                </tr>
                 {dep.areas.map((area) => (
                   <Fragment key={`${dep.department}-${area.area?.key ?? 'none'}`}>
-                    {area.area && dep.areas.length > 1 && (
-                      <tr>
-                        <td colSpan={15} className="pt-1 pr-2 text-[11px] text-muted-foreground">
-                          {area.area.name}
-                        </td>
-                      </tr>
-                    )}
+                    <tr className="bg-muted/40">
+                      <td colSpan={15} className="py-1 pr-2 text-xs font-semibold uppercase tracking-wide">
+                        {area.area?.name ?? DEPT_LABEL[dep.department]}
+                      </td>
+                    </tr>
                     {area.positions.map((row) => (
                       <tr key={row.positionKey} className="border-t border-border/50">
                         <td className="py-1 pr-2 whitespace-nowrap">{row.positionName}</td>
@@ -420,7 +440,7 @@ export function StaffingWeekMatrix({
           </tbody>
           <tfoot className="border-t-2">
             <tr className="text-xs">
-              <td className="py-1 pr-2 font-medium">Einsätze total</td>
+              <td className="py-1 pr-2 font-medium">Personal total</td>
               {WEEKDAYS.map((w) => (
                 <td key={w.value} colSpan={2} className={cn('py-1 px-1 text-center tabular-nums font-medium border-r border-border/40 last:border-r-0')} data-testid={`week-total-persons-${w.value}`}>
                   {overview.totals[w.value]?.persons ?? 0}
@@ -484,7 +504,9 @@ export function StaffingWeekMatrix({
         <p className="mt-2 text-[11px] text-muted-foreground">
           Mittag = Schichtbeginn vor 16:00, Abend = ab 16:00. Zahlen = {cellMode === 'hours'
             ? 'Bedarf-Netto-Stunden (Soll-Schichten × Dauer, ArG-Pausenabzug)'
-            : 'benötigte Personen'}; Zeiten im Tooltip.{' '}
+            : 'besetzte Blöcke (M/A zeigen WANN)'}; Zeiten im Tooltip.
+          «Personal total» = KOPFZAHL: eine Person zählt 1× pro Tag (durchgehend = 1);
+          automatisch max(Mittag, Abend), pro Zelle explizit übersteuerbar.{' '}
           {canEdit
             ? 'Klick auf eine Zelle öffnet das Bearbeitungs-Panel (schreibt ins aktive Profil); regelbasierte Positionen zeigen nur den Regel-Hinweis.'
             : 'Bearbeiten in der Tagesansicht (Klick auf einen Wochentag).'}

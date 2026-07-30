@@ -39,7 +39,7 @@ import {
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
-import { buildCellSaveDrafts, buildWeekOverview } from '@/lib/staffing-week-utils';
+import { buildCellSaveDrafts, buildWeekOverview, isEveningShift, explicitDayHeadcount } from '@/lib/staffing-week-utils';
 import { StaffingWeekSummary } from '@/components/schedule-planner/StaffingWeekSummary';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
 import { StaffingWeekMatrix, type WeekHoursStack, type WeekCellMode } from '@/components/schedule-planner/StaffingWeekMatrix';
@@ -392,6 +392,7 @@ export default function Personalbedarf() {
     wd: number,
     part: 'mittag' | 'abend',
     shifts: ShiftDraft[],
+    dayHeadcount?: number | null,
   ) => {
     if (derived) {
       throw new Error('Winter/UG ist abgeleitet (Standard + UG-Zuschlag) — bitte den Standard bearbeiten.');
@@ -425,17 +426,28 @@ export default function Personalbedarf() {
     const scope: StaffingScope = { scopeType: SCOPE_WEEKLY, season, weekday: wd, scopeRef: null };
     const existing = shiftsForScope(freshReqs, season, wd);
     const drafts: (StaffingRequirementDraft & { id?: string })[] = buildCellSaveDrafts({
-      existing, season, weekday: wd, positionKey, part, partDrafts: shifts,
+      existing, season, weekday: wd, positionKey, part, partDrafts: shifts, dayHeadcount,
     });
     await saveScope(scope, drafts);
     toast.success(`Personalbedarf gespeichert (${seasonLabel(season)} · ${weekdayLabel(wd)})`);
   };
 
-  // ── Tagessumme (rein informativ, KEINE Besetzungs-Prüfung) ──────────────────
-  const dayTotal = useMemo(
-    () => Object.values(edits).reduce((sum, shifts) => sum + shifts.reduce((a, s) => a + (Number.isFinite(s.requiredCount) ? s.requiredCount : 0), 0), 0),
-    [edits],
-  );
+  // ── Tagessumme = KOPFZAHL (rein informativ): je Position zählt eine Person
+  // 1× pro Tag. Explizites Soll (meta.dayHeadcount aus den gespeicherten
+  // Zeilen) hat Vorrang, sonst Automatik max(Mittag, Abend) — nie Blocksumme.
+  const dayTotal = useMemo(() => {
+    const scopeRows = shiftsForScope(requirements, matrixSeason, weekday);
+    return Object.entries(edits).reduce((sum, [positionKey, shifts]) => {
+      const explicit = explicitDayHeadcount(scopeRows.filter((r) => r.positionKey === positionKey));
+      if (explicit != null) return sum + explicit;
+      let mittag = 0; let abend = 0;
+      for (const s of shifts) {
+        const c = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
+        if (isEveningShift(s.shiftStart)) abend += c; else mittag += c;
+      }
+      return sum + Math.max(mittag, abend);
+    }, 0);
+  }, [edits, requirements, matrixSeason, weekday]);
 
   const error = posError || reqError;
   const hasActivePositions = matrix.length > 0;
@@ -620,7 +632,7 @@ export default function Personalbedarf() {
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Clock className="h-4 w-4" />
         <span>{activeProfile?.label ?? seasonLabel(season)} · {weekdayLabel(weekday)}</span>
-        <Badge variant="secondary" className="ml-1">Benötigt gesamt: {dayTotal}</Badge>
+        <Badge variant="secondary" className="ml-1">Personal total: {dayTotal}</Badge>
         {profilesConfig.revenueBudgetByWeekday[weekday] != null && (
           <Badge variant="outline" className="gap-1">
             <Coins className="h-3 w-3" />

@@ -44,6 +44,12 @@ function newId(): string {
   return `sr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** 'HH:MM:SS' → 'HH:MM' (sonst unverändert). */
+function normalizeTime(v: unknown): string {
+  const s = typeof v === 'string' ? v : '';
+  return /^\d{2}:\d{2}:\d{2}$/.test(s) ? s.slice(0, 5) : s;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToRequirement(row: any): StaffingRequirement {
   return {
@@ -54,8 +60,10 @@ function rowToRequirement(row: any): StaffingRequirement {
     weekday: row.weekday ?? null,
     scopeRef: row.scope_ref ?? null,
     positionKey: row.position_key,
-    shiftStart: row.shift_start,
-    shiftEnd: row.shift_end,
+    // DB kann 'HH:MM:SS' liefern (Alt-Daten) — auf 'HH:MM' normalisieren,
+    // sonst scheitert isValidTime und die Stunden-Berechnung wird NaN.
+    shiftStart: normalizeTime(row.shift_start),
+    shiftEnd: normalizeTime(row.shift_end),
     requiredCount: row.required_count ?? 0,
     sortOrder: row.sort_order ?? 0,
     meta: (row.meta ?? {}) as Record<string, unknown>,

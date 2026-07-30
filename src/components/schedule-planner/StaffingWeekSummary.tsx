@@ -25,7 +25,10 @@ const KUECHE_COLOR = 'hsl(200 70% 45%)';   // Blau (Küche)
 const fmtH = (h: number) =>
   `${h.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h`;
 
-/** Personen je Abteilung × Wochentag aus der Wochenübersicht aufsummieren. */
+/**
+ * KOPFZAHL je Abteilung × Wochentag aus der Wochenübersicht aufsummieren —
+ * eine Person zählt 1× pro Tag (cell.headcount), Blöcke werden nie summiert.
+ */
 export function summarizeWeekOverview(overview: WeekOverview) {
   const byDay: { weekday: number; tag: string; service: number; kueche: number }[] = [];
   for (let wd = 1; wd <= 7; wd++) {
@@ -36,7 +39,7 @@ export function summarizeWeekOverview(overview: WeekOverview) {
       for (const area of dep.areas) {
         for (const pos of area.positions) {
           const c = pos.cells[wd];
-          if (c) sum += c.mittag + c.abend;
+          if (c) sum += c.headcount;
         }
       }
       if (dep.department === 'service') service += sum;
@@ -83,7 +86,7 @@ export function StaffingWeekSummary({ overview, profileLabel }: {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <Kachel
           icon={<Users className="h-4 w-4" />}
-          label="Personentage / Woche"
+          label="Personentage / Woche (Kopfzahl)"
           value={String(s.personDays)}
           sub={profileLabel}
           testid="tile-person-days"
@@ -99,7 +102,7 @@ export function StaffingWeekSummary({ overview, profileLabel }: {
           icon={<TrendingUp className="h-4 w-4" />}
           label="Spitzentage"
           value={s.peakDays.length > 0 ? s.peakDays.join(' · ') : '—'}
-          sub={s.maxPersons > 0 ? `${s.maxPersons} Personen-Einsätze` : undefined}
+          sub={s.maxPersons > 0 ? `${s.maxPersons} Personen (Kopfzahl)` : undefined}
           testid="tile-peak-days"
         />
       </div>

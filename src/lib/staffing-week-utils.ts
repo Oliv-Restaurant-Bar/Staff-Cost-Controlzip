@@ -34,8 +34,28 @@ export interface WeekCell {
   mittag: number;
   /** Σ benötigte Personen der Abend-Blöcke. */
   abend: number;
+  /**
+   * KOPFZAHL des Tages (führende Kennzahl): Anzahl PERSONEN — eine Person
+   * zählt genau einmal, egal ob Mittag, Abend oder durchgehend. Explizit über
+   * `meta.dayHeadcount` gesetzt, sonst automatisch = max(mittag, abend)
+   * (durchgehende Person deckt beide Hälften ab). Blöcke werden NIE summiert.
+   */
+  headcount: number;
+  /** true = Kopfzahl kommt aus dem expliziten Feld (meta.dayHeadcount). */
+  headcountExplicit: boolean;
   /** Blöcke für Tooltip/Detail (Zeit + Anzahl). */
   shifts: { shiftStart: string; shiftEnd: string; requiredCount: number }[];
+}
+
+/** Explizite Kopfzahl aus den meta-Feldern der Blöcke (erste gültige Zahl). */
+export function explicitDayHeadcount(
+  shifts: { meta?: Record<string, unknown> }[],
+): number | null {
+  for (const s of shifts) {
+    const v = s.meta?.dayHeadcount;
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) return v;
+  }
+  return null;
 }
 
 export interface WeekPositionRow {
@@ -56,7 +76,7 @@ export interface WeekDepartmentGroup {
 }
 
 export interface WeekDayTotals {
-  /** Σ benötigte Personen-Einsätze (Soll-Blöcke × Anzahl) des Tages. */
+  /** Σ KOPFZAHLEN (Personen, nicht Einsätze) über alle Positionen des Tages. */
   persons: number;
   /** Σ Netto-Stunden (ARG-Pausenabzug) über alle Soll-Blöcke des Tages. */
   nettoHours: number;
@@ -90,8 +110,20 @@ export function buildCellSaveDrafts(args: {
   part: 'mittag' | 'abend';
   /** Neue Blöcke der bearbeiteten Tageshälfte. */
   partDrafts: { id?: string; shiftStart: string; shiftEnd: string; requiredCount: number }[];
+  /**
+   * Explizite KOPFZAHL des Tages (meta.dayHeadcount auf allen Blöcken der
+   * Position): number = setzen, null = löschen (Automatik max(M, A)),
+   * undefined = unverändert lassen.
+   */
+  dayHeadcount?: number | null;
 }): (StaffingRequirementDraft & { id?: string })[] {
-  const { existing, season, weekday, positionKey, part, partDrafts } = args;
+  const { existing, season, weekday, positionKey, part, partDrafts, dayHeadcount } = args;
+  // meta der Position ggf. mit expliziter Kopfzahl überschreiben/bereinigen.
+  const applyHead = (meta: Record<string, unknown>): Record<string, unknown> => {
+    if (dayHeadcount === undefined) return meta;
+    const { dayHeadcount: _drop, ...rest } = meta ?? {};
+    return dayHeadcount === null ? rest : { ...rest, dayHeadcount };
+  };
   const out: (StaffingRequirementDraft & { id?: string })[] = [];
   const isPart = (start: string) => (part === 'abend') === isEveningShift(start);
   // Andere Positionen + Orphans + andere Tageshälfte: verbatim erhalten.
@@ -100,7 +132,8 @@ export function buildCellSaveDrafts(args: {
     out.push({
       id: o.id, scopeType: o.scopeType, season: o.season, weekday: o.weekday,
       scopeRef: o.scopeRef, positionKey: o.positionKey, shiftStart: o.shiftStart,
-      shiftEnd: o.shiftEnd, requiredCount: o.requiredCount, sortOrder: o.sortOrder, meta: o.meta,
+      shiftEnd: o.shiftEnd, requiredCount: o.requiredCount, sortOrder: o.sortOrder,
+      meta: o.positionKey === positionKey ? applyHead(o.meta) : o.meta,
     });
   }
   // Bearbeitete Tageshälfte: neue Blöcke (meta vorhandener Zeilen per id erhalten).
@@ -118,7 +151,7 @@ export function buildCellSaveDrafts(args: {
       shiftEnd: s.shiftEnd,
       requiredCount: s.requiredCount,
       sortOrder: baseSort + index,
-      meta: (s.id ? metaById.get(s.id) : undefined) ?? {},
+      meta: applyHead((s.id ? metaById.get(s.id) : undefined) ?? {}),
     });
   });
   return out;
@@ -159,15 +192,27 @@ export function buildWeekOverview(args: {
       for (const area of dept.areas) {
         for (const pr of area.positions) {
           if (pr.shifts.length === 0) continue;
-          const cell: WeekCell = { mittag: 0, abend: 0, shifts: [] };
+          const cell: WeekCell = { mittag: 0, abend: 0, headcount: 0, headcountExplicit: false, shifts: [] };
           for (const s of pr.shifts) {
             const count = Number.isFinite(s.requiredCount) ? s.requiredCount : 0;
             if (isEveningShift(s.shiftStart)) cell.abend += count;
             else cell.mittag += count;
             cell.shifts.push({ shiftStart: s.shiftStart, shiftEnd: s.shiftEnd, requiredCount: count });
-            persons += count;
             nettoMinutes += nettoSegmentMinutes(s.shiftStart, s.shiftEnd) * count;
           }
+          // KOPFZAHL: explizites Soll (meta.dayHeadcount) vor Automatik
+          // max(mittag, abend) — Blöcke werden nie zur Personenzahl summiert.
+          // UG-Zuschlag (meta.ugSurcharge) sind IMMER zusätzliche Personen:
+          // er wird auch auf eine explizite Kopfzahl aufgeschlagen, damit ein
+          // Basis-Profilwert den operativen Zuschlag nicht unterdrückt.
+          const explicit = explicitDayHeadcount(pr.shifts);
+          const ugExtra = pr.shifts.reduce((a, s) => {
+            const v = (s.meta as Record<string, unknown> | null | undefined)?.ugSurcharge;
+            return a + (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+          }, 0);
+          cell.headcount = explicit != null ? explicit + ugExtra : Math.max(cell.mittag, cell.abend);
+          cell.headcountExplicit = explicit != null;
+          persons += cell.headcount;
           const byDay = cellsByPosition.get(pr.position.key) ?? {};
           byDay[weekday] = cell;
           cellsByPosition.set(pr.position.key, byDay);

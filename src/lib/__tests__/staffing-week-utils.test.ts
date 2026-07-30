@@ -88,6 +88,45 @@ describe('buildWeekOverview', () => {
     const o = buildWeekOverview({ positions: POSITIONS, requirements: [], config, season: 'standard' });
     expect(o.hasAny).toBe(false);
   });
+
+  // KOPFZAHL: eine Person zählt 1× pro Tag — Automatik = max(Mittag, Abend),
+  // nie die Blocksumme (durchgehende Person mit 2 Blöcken = 1).
+  it('Kopfzahl automatisch = max(Mittag, Abend), nicht die Blocksumme', () => {
+    const requirements = [
+      req({ positionKey: 'service', weekday: 1, shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 1 }),
+      req({ positionKey: 'service', weekday: 1, shiftStart: '17:00', shiftEnd: '22:00', requiredCount: 1 }),
+    ];
+    const o = buildWeekOverview({ positions: POSITIONS, requirements, config, season: 'standard' });
+    const row = o.groups.flatMap((g) => g.areas).flatMap((a) => a.positions)
+      .find((r) => r.positionKey === 'service')!;
+    expect(row.cells[1]).toMatchObject({ mittag: 1, abend: 1, headcount: 1, headcountExplicit: false });
+    expect(o.totals[1].persons).toBe(1); // NICHT 2 (dieselbe Person deckt beide Hälften)
+  });
+
+  it('explizite Kopfzahl (meta.dayHeadcount) übersteuert die Automatik', () => {
+    const requirements = [
+      req({ positionKey: 'service', weekday: 1, shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 1, meta: { dayHeadcount: 2 } }),
+      req({ positionKey: 'service', weekday: 1, shiftStart: '17:00', shiftEnd: '22:00', requiredCount: 1 }),
+    ];
+    const o = buildWeekOverview({ positions: POSITIONS, requirements, config, season: 'standard' });
+    const row = o.groups.flatMap((g) => g.areas).flatMap((a) => a.positions)
+      .find((r) => r.positionKey === 'service')!;
+    expect(row.cells[1]).toMatchObject({ headcount: 2, headcountExplicit: true });
+    expect(o.totals[1].persons).toBe(2); // Mittag und Abend sind VERSCHIEDENE Personen
+  });
+
+  it('UG-Zuschlag (meta.ugSurcharge) addiert auch auf eine EXPLIZITE Kopfzahl', () => {
+    // Basis-Profil sagt explizit 2 Personen; der UG-Zuschlag (+1) darf davon
+    // nicht verschluckt werden — Zuschlag = immer zusätzliche Person(en).
+    const requirements = [
+      req({ positionKey: 'service', weekday: 5, shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2, meta: { dayHeadcount: 2 } }),
+      req({ positionKey: 'service', weekday: 5, shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 3, meta: { dayHeadcount: 2, ugSurcharge: 1 } }),
+    ];
+    const o = buildWeekOverview({ positions: POSITIONS, requirements, config, season: 'standard' });
+    const row = o.groups.flatMap((g) => g.areas).flatMap((a) => a.positions)
+      .find((r) => r.positionKey === 'service')!;
+    expect(row.cells[5]).toMatchObject({ headcount: 3, headcountExplicit: true });
+  });
 });
 
 describe('buildCellSaveDrafts', () => {
@@ -134,5 +173,42 @@ describe('buildCellSaveDrafts', () => {
     const service = drafts.filter((d) => d.positionKey === 'service');
     expect(service).toHaveLength(1);
     expect(service[0].shiftStart).toBe('11:00');
+  });
+
+  it('dayHeadcount setzt meta.dayHeadcount auf ALLEN Zeilen der Position, andere Positionen unberührt', () => {
+    const drafts = buildCellSaveDrafts({
+      existing: base, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'mittag',
+      partDrafts: [{ shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }],
+      dayHeadcount: 3,
+    });
+    for (const d of drafts.filter((x) => x.positionKey === 'service')) {
+      expect(d.meta).toMatchObject({ dayHeadcount: 3 });
+    }
+    expect(drafts.find((x) => x.positionKey === 'kueche')!.meta ?? {}).not.toHaveProperty('dayHeadcount');
+  });
+
+  it('dayHeadcount null löscht das Feld; undefined lässt es unverändert', () => {
+    const withHead = base.map((r) =>
+      r.positionKey === 'service' ? { ...r, meta: { dayHeadcount: 4, keep: true } } : r);
+    const cleared = buildCellSaveDrafts({
+      existing: withHead, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'mittag',
+      partDrafts: [{ shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }],
+      dayHeadcount: null,
+    });
+    for (const d of cleared.filter((x) => x.positionKey === 'service')) {
+      expect(d.meta ?? {}).not.toHaveProperty('dayHeadcount');
+    }
+    // andere meta-Felder überleben das Löschen
+    expect(cleared.find((x) => x.positionKey === 'service' && x.shiftStart === '18:00')!.meta)
+      .toMatchObject({ keep: true });
+    const untouched = buildCellSaveDrafts({
+      existing: withHead, season: 'standard', weekday: 1,
+      positionKey: 'service', part: 'mittag',
+      partDrafts: [{ shiftStart: '11:00', shiftEnd: '14:00', requiredCount: 2 }],
+    });
+    expect(untouched.find((x) => x.positionKey === 'service' && x.shiftStart === '18:00')!.meta)
+      .toMatchObject({ dayHeadcount: 4 });
   });
 });

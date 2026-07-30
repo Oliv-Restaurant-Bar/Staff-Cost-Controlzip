@@ -1,0 +1,25 @@
+Personalbedarf auf Kopfzahl umstellen + Struktur/Bugs (Oliv; Kopfzahl-Logik & Visuals identisch für Beaulieu):
+
+1) KOPFZAHL statt Einsätze (Kern):
+- Führende Kennzahl je Position/Tag ist die ANZAHL PERSONEN. Eine Person zählt genau einmal — egal ob Mittag, Abend oder durchgehend.
+- Getrennte Mittag-/Abend-Blöcke, die dieselbe durchgehende Person abdeckt, zählen als 1 Person, nicht 2. Nur wenn Mittag und Abend verschiedene Personen sind, zählen beide.
+- Umsetzung: je Position/Tag ein explizites Feld "Personen" (Kopfzahl) als Soll. Die Schicht-Blöcke (Zeit von–bis) beschreiben nur WANN und dienen der Stunden- und M/A-Anzeige, werden NIE zur Kopfzahl summiert.
+- "Total/Tag" und Wochensumme = Summe der Kopfzahlen. Beschriftung "Personal total" statt "Einsätze total".
+- Kachel-Übersicht und Balkendiagramm "Personal pro Tag" nutzen dieselbe Kopfzahl (Montag zeigt dann die echte Kopfzahl, nicht 23). Auch die Kacheln "Personentage/Woche" auf Kopfzahl umstellen.
+
+2) Bug Gastgeber/GF-Stunden:
+- Zeitfenster hinterlegen: Do/Fr/Sa 17:00–22:00 × 1 Person → Stundenansicht zeigt 5 h statt "–".
+
+3) Neue Position "Springer" (eine Stelle, Springer + Runner kombiniert), gruppiert unter SERVICE:
+- Start-Bedarf: Fr und Sa je 1 Person, durchgehend ca. 11:30–23:00; übrige Tage 0. Im Editor anpassbar.
+
+4) "Kalt/Sushi" als feste Position in der KÜCHE (nicht nur Regel):
+- Start-Bedarf: Fr, Sa, So je 1 Person, 10:00–14:00 / 17:00–23:00. Im Editor anpassbar.
+- Die dynamische Kalte-Küche/Sushi-Regel (Miro, sonst Michele/Mejdi) bleibt zusätzlich für die Abdeckungs-Prüfung bestehen.
+
+5) Positions-Entscheid "mischen": Gastgeber/GF bleibt eigene Position (Do–Sa); Kalt/Sushi fest wie oben.
+
+6) Visuelle Gruppierung aufräumen:
+- Klare Bereichs-Überschriften (Service, Bar, Küche, Abwasch) — darunter die Positionen OHNE redundante Wiederholung (kein Bereich "Service" mit gleichnamiger Unterzeile "Service"). Gruppen deutlich abgesetzt, Positionsnamen sprechend.
+
+Gilt für Oliv; Kopfzahl-Zählung und Visuals identisch für Beaulieu.
