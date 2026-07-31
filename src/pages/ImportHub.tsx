@@ -28,7 +28,7 @@ import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ManualEntryCard } from '@/components/GastronoviImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { LastImportPanel } from '@/components/import-center/LastImportPanel';
-import { recordImportRun } from '@/lib/import-undo-store';
+import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult, type BeaulieuBudgetVerifyRow } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
@@ -65,11 +65,11 @@ import { REPORTING_DATA_CHANGED_EVENT, notifyReportingDataChanged } from '@/lib/
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { notifyKVBackupProblem, kvGetStrict } from '@/lib/supabase-kv';
+import { notifyKVBackupProblem, kvGetStrict, loadDailyBudgetsBaseStrict } from '@/lib/supabase-kv';
 import { asRecordBlob, readLocalRecord } from '@/lib/kv-blob-utils';
 import { HintBox } from '@/components/ui/hint-box';
 import { StatusPill } from '@/components/ui/status-pill';
-import { loadVjDailyYear } from '@/lib/vj-daily-supabase';
+import { loadVjDailyYear, vjDailyKey } from '@/lib/vj-daily-supabase';
 import {
   summarizeEffectiveMonth,
   type MonthActualsSummary,
@@ -90,9 +90,9 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
-import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync } from '@/lib/maison-store';
+import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
-import { saveGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily } from '@/lib/gaeste-store';
+import { saveGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
 import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
 import { detectTagesdatenTypFromFile, readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
@@ -920,6 +920,24 @@ const AnnualRevenueImportSection = () => {
     // damit die P&L-Engine (pl-engine.ts) record.revenuePreviousYear korrekt liest.
     // Beispiel: Datei für 2025 → gespeichert als revenuePreviousYear in Jahr 2026.
     const saveYear = importYear + 1;
+    // EIN gemeinsamer Store-Key für Snapshot, saveMonth und Undo-Protokoll —
+    // niemals divergieren lassen (sonst restauriert der Undo den falschen Blob).
+    const reportingKey = tenantKey(REPORTING_STORAGE_KEY);
+    // Undo-Snapshot VOR dem Schreiben: bisheriger revenuePreviousYear der
+    // betroffenen Monate (null = Feld war nicht gesetzt).
+    const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+    try {
+      for (const row of result.months) {
+        if (row.revenue === 0) continue;
+        const prior = loadMonth(saveYear, row.month, reportingKey).revenuePreviousYear;
+        undoMonths.push({
+          monthId: `${saveYear}-${String(row.month).padStart(2, '0')}`,
+          fields: { revenuePreviousYear: prior ?? null },
+        });
+      }
+    } catch (err) {
+      console.warn('[PRIOR-YEAR] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+    }
     for (const row of result.months) {
       if (row.revenue === 0) continue;
       saveMonth(
@@ -927,7 +945,7 @@ const AnnualRevenueImportSection = () => {
         'annual_xlsx_import',
         'update',
         { note: `Vorjahr-Import ${importYear} → erscheint in P&L ${saveYear}` },
-        tenantKey('reporting_v1'),
+        reportingKey,
       );
       saved++;
     }
@@ -935,6 +953,18 @@ const AnnualRevenueImportSection = () => {
     setSaved(true);
     console.log(`[PRIOR-YEAR] values preserved: yes | tenant: ${tid} | year: ${importYear} | months: ${saved}`);
     toast.success(`${saved} Monate als Vorjahr ${importYear} gespeichert (sichtbar in P&L ${saveYear})`);
+    // Import-Protokoll (Letzter Import + Rückgängig) — best-effort.
+    void recordImportRun(tid, {
+      source: 'umsatz-vorjahr-jahr',
+      periodLabel: `VJ ${importYear} → P&L ${saveYear}`,
+      itemCount: saved,
+      itemLabel: 'Monate',
+      fileName: fileName || undefined,
+      ...(undoMonths.length > 0 ? { snapshot: { kind: 'reporting-fields', storeKey: reportingKey, months: undoMonths } } : {}),
+    }).catch(err => {
+      console.error('[PRIOR-YEAR] Import-Protokoll fehlgeschlagen:', err);
+      toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+    });
   };
 
   const handleAnnualLock = async () => {
@@ -969,6 +999,11 @@ const AnnualRevenueImportSection = () => {
 
   return (
     <div className="space-y-3">
+      {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
+      <LastImportPanel
+        source="umsatz-vorjahr-jahr"
+        undoHint="Zurückgesetzt wird das Feld «Umsatz Vorjahr» der betroffenen P&L-Monate. Alle anderen Monatswerte bleiben unberührt."
+      />
       <div className="flex items-center gap-2">
         <label className="text-xs text-muted-foreground whitespace-nowrap">Für Jahr:</label>
         <Select value={String(importYear)} onValueChange={v => { setImportYear(Number(v)); setResult(null); setSaved(false); }}>
@@ -2689,8 +2724,83 @@ function TagesdatenImportSection() {
     setStatus('saving');
     try {
       const { typ, daily, umsatzRows } = preview;
+
+      // ── Undo-Snapshot VOR dem Schreiben (Import-Center «Rückgängig») ──
+      // Pro Typ: Vorzustand der betroffenen Blob-Einträge (null = existierte
+      // nicht → Undo entfernt den Eintrag). Best-effort: schlägt der Snapshot
+      // fehl, läuft der Import weiter — nur ohne Undo-Möglichkeit.
+      let undoBlobs: Array<{ key: string; entries: Record<string, unknown | null> }> | null = null;
+      let undoKvItems: KvKeyItem[] | undefined;
+      try {
+        if (typ === 'gaeste') {
+          const prior = await loadGaesteDaily(tenantKey);
+          undoBlobs = [{
+            key: tenantKey('gaeste-daily'),
+            entries: Object.fromEntries(preview.dates.map(d => [d, prior[d] ?? null])),
+          }];
+        } else if (typ === 'durchschnitt') {
+          const priorDaily = await loadAvgCheckDaily(tenantKey);
+          undoBlobs = [{
+            key: tenantKey('avgcheck-daily'),
+            entries: Object.fromEntries(preview.dates.map(d => [d, priorDaily[d] ?? null])),
+          }];
+          if (preview.zeitraum != null) {
+            const monthKey = preview.from ? preview.from.slice(0, 7) : `${preview.year}-01`;
+            const priorMonthly = await loadAvgCheckMonthly(tenantKey);
+            undoBlobs.push({
+              key: tenantKey('avgcheck-monthly'),
+              entries: { [monthKey]: priorMonthly[monthKey] ?? null },
+            });
+          }
+        } else if (typ === 'marketing') {
+          const prior = await loadMaisonDaily(tenantKey);
+          undoBlobs = [{
+            key: tenantKey('maison-daily'),
+            entries: Object.fromEntries(preview.dates.map(d => [d, prior[d] ?? null])),
+          }];
+        } else {
+          // umsatz: ganze Tages-Objekte aus der merged dailyBudgets-Basis
+          // (STRICT — bei KV-Lesefehler kein Snapshot, nie falsche Basis).
+          const base = await loadDailyBudgetsBaseStrict(tenantKey('dailyBudgets'));
+          undoBlobs = [{
+            key: tenantKey('dailyBudgets'),
+            entries: Object.fromEntries(preview.dates.map(d =>
+              [d, base[d] ? JSON.parse(JSON.stringify(base[d])) : null])),
+          }];
+          // Vorjahr-Modus schreibt zusätzlich vj_daily-Keys → deren Vorzustand sichern.
+          if (targetForYear(preview.year, currentYear) === 'previous_year') {
+            const priorVj = await loadVjDailyYear(preview.year, tenantId);
+            undoKvItems = preview.dates.map(d => ({
+              key: vjDailyKey(d, tenantId),
+              value: (priorVj[d] as unknown) ?? null,
+            }));
+          }
+        }
+      } catch (err) {
+        undoBlobs = null;
+        undoKvItems = undefined;
+        console.warn('[TAGESDATEN] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+      }
+      const typLabel = typ === 'gaeste' ? 'Gäste'
+        : typ === 'durchschnitt' ? 'Durchschnittsverkauf'
+        : typ === 'marketing' ? 'Marketing-Umsatz'
+        : targetForYear(preview.year, currentYear) === 'actual' ? 'Ist-Umsatz' : 'Vorjahresumsatz';
+      const recordRun = () => recordImportRun(tenantId, {
+        source: 'tagesdaten-einheitsimport',
+        periodLabel: `${preview.from ?? '?'} – ${preview.to ?? '?'} (${preview.year})`,
+        itemCount: preview.dates.length,
+        itemLabel: 'Tage',
+        fileName: file?.name || undefined,
+        details: `Typ: ${typLabel}`,
+        ...(undoBlobs ? { snapshot: { kind: 'kv-blob-entries' as const, blobs: undoBlobs, ...(undoKvItems ? { kvItems: undoKvItems } : {}) } } : {}),
+      }).catch(err => {
+        console.error('[TAGESDATEN] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+      });
+
       if (typ === 'gaeste') {
         await saveGaesteDaily(tenantKey, daily);
+        void recordRun();
         toast.success(`Gäste gespeichert: ${preview.dates.length} Tage, ${fmtValueByTyp('gaeste', preview.tagessumme ?? 0)} gesamt`);
       } else if (typ === 'durchschnitt') {
         const monthKey = preview.from ? preview.from.slice(0, 7) : `${preview.year}-01`;
@@ -2699,10 +2809,12 @@ function TagesdatenImportSection() {
           daily,
           preview.zeitraum != null ? { [monthKey]: preview.zeitraum } : null,
         );
+        void recordRun();
         toast.success(`Durchschnittsverkauf gespeichert: ${preview.dates.length} Tage`);
       } else if (typ === 'marketing') {
         await saveMaisonDaily(tenantKey, daily);
         if (!getMaisonEnabledSync(tenantKey)) await saveMaisonEnabled(tenantKey, true);
+        void recordRun();
         const total = preview.monthTotals.reduce((s, m) => s + m.value, 0);
         toast.success(`Marketing-Umsatz gespeichert: ${preview.dates.length} Tage, CHF ${total.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`);
       } else {
@@ -2722,6 +2834,7 @@ function TagesdatenImportSection() {
           return;
         }
         window.dispatchEvent(new Event('supabase-kv-synced'));
+        void recordRun();
         console.log(`[REVENUE] tenant: ${tenantId} | key: ${storageKey} | target: ${target} | ${res.count} Tage ${res.from ?? '?'}..${res.to ?? '?'} | vj_daily: ${res.vjUpserted}`);
         toast.success(
           target === 'actual'
@@ -2746,6 +2859,11 @@ function TagesdatenImportSection() {
 
   return (
     <div className="space-y-3">
+      {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
+      <LastImportPanel
+        source="tagesdaten-einheitsimport"
+        undoHint="Zurückgesetzt werden genau die importierten Tage des Laufs (je nach Typ: Umsatz, Gäste, Marketing oder Durchschnittsverkauf); vorher nicht vorhandene Tage werden entfernt. Beim Vorjahresumsatz werden auch die vj_daily-Tageswerte zurückgesetzt. Andere Tage und Datentypen bleiben unberührt."
+      />
       <div className="rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/10 p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
           Lade einen Gastronovi-Tagesdaten-Export (Excel) hoch. Der Dateityp wird

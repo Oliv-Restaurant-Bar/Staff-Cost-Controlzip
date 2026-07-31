@@ -12,4 +12,6 @@ Zentrales Protokoll: `import-undo-store.ts`, KV-Key `import_undo_log:<tenant>` (
 - MIRUS-Undo: Backup erst nach Vollerfolg löschen; geparkte «Offene Stunden» des Laufs via `discardParkedByRun` (nur status open) verwerfen; Aliasse bleiben. Dienstplan-Undo und Import-Center-Undo teilen sich das Backup (einmal verbraucht) und synchronisieren das Protokoll via `markMirusRunUndoneByBackup`.
 - UI: `LastImportPanel` (source-Prop), Gäste ohne Undo-Button, Refresh via `IMPORT_UNDO_LOG_EVENT`.
 
-**Nicht verdrahtet** (Stand Juli 2026): Tagesdaten-Einheitsimport, Manuelle Eingabe, Umsatz Vorjahr (Jahres-XLSX) — Muster ist erweiterbar (recordImportRun + Snapshot + Panel).
+Zusätzliche Snapshot-Art `kv-blob-entries` (Einträge innerhalb von KV-Blobs wie dailyBudgets/gaeste-daily; null=Eintrag löschen; optional kvItems für ganze Keys wie vj_daily). Restore-Basis IMMER kvGetStrict (Lesefehler → Undo-Abbruch, nie Remote-Wipe); dailyBudgets-Snapshot via `loadDailyBudgetsBaseStrict`. Snapshot-, Schreib- und Protokoll-Key müssen aus EINER Variablen kommen (Review-Fund: divergierende tenantKey-Aufrufe).
+
+**Verdrahtet** (Stand Juli 2026): MIRUS, VJ-Tagesumsatz, Ist/VJ-Kosten Buchhaltung, Personalkosten VJ, Umsatz Vorjahr (Jahres-XLSX), Tagesdaten-Einheitsimport (alle 4 Typen). **Bewusst ohne Undo:** Manuelle Eingabe (direkt editierbar); maison-enabled-Flag wird beim Marketing-Undo nicht zurückgesetzt.

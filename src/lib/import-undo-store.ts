@@ -19,6 +19,7 @@
  */
 
 import { appSettingsTable } from '@/lib/app-settings-table';
+import { kvGetStrict, kvSetStrict } from '@/lib/supabase-kv';
 import { restoreReportingFields, restoreReportingRecord } from '@/lib/reporting-store';
 import type { MonthlyFinancialRecord, SageJournalEntry } from '@/types/reporting';
 
@@ -28,7 +29,9 @@ export type ImportSourceKey =
   | 'ist-kosten-buchhaltung'
   | 'kosten-vorjahr-monat'
   | 'vorjahr-kosten-buchhaltung'
-  | 'personalkosten-vorjahr';
+  | 'personalkosten-vorjahr'
+  | 'umsatz-vorjahr-jahr'
+  | 'tagesdaten-einheitsimport';
 
 export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'mirus-ist':                  'Ist-Stunden (MIRUS)',
@@ -37,6 +40,8 @@ export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'kosten-vorjahr-monat':       'Kosten Vorjahr (Monat)',
   'vorjahr-kosten-buchhaltung': 'Vorjahr Kosten Buchhaltung (Jahr)',
   'personalkosten-vorjahr':     'Personalkosten Vorjahr',
+  'umsatz-vorjahr-jahr':        'Umsatz Vorjahr (Jahres-Excel)',
+  'tagesdaten-einheitsimport':  'Tagesdaten-Einheitsimport',
 };
 
 /** Ein app_settings-Key mit seinem Zustand VOR dem Import (null = existierte nicht). */
@@ -51,7 +56,12 @@ export type ImportRunSnapshot =
   | { kind: 'reporting-record'; storeKey: string; monthId: string; record: unknown | null;
       journal?: { year: number; month: number; entries: unknown[] } }
   /** MIRUS: Verweis auf das dienstplan_ist_backup + Lauf-ID der geparkten Einträge. */
-  | { kind: 'mirus-ist'; month: string; backupId: string; runId: string };
+  | { kind: 'mirus-ist'; month: string; backupId: string; runId: string }
+  /** Einzelne EINTRÄGE innerhalb von KV-Blobs (z. B. dailyBudgets, gaeste-daily):
+   *  pro Blob-Key eine Map Eintrag→Vorzustand (null = Eintrag existierte nicht).
+   *  Optional zusätzlich ganze KV-Keys (kvItems, z. B. vj_daily:<date>). */
+  | { kind: 'kv-blob-entries'; blobs: Array<{ key: string; entries: Record<string, unknown | null> }>;
+      kvItems?: KvKeyItem[] };
 
 export interface ImportRunEntry {
   id: string;
@@ -199,6 +209,37 @@ async function restoreKvKeys(items: KvKeyItem[]): Promise<void> {
   }
 }
 
+/**
+ * Einträge innerhalb von KV-Blobs auf den Vorzustand zurücksetzen.
+ * STRICT: Merge-Basis wird remote gelesen (Lesefehler ≠ leer) — bei Lesefehler
+ * wird der Undo abgebrochen, damit kein Blob ohne Remote-Basis ersetzt wird.
+ * null = Eintrag existierte vor dem Import nicht → wird entfernt.
+ */
+async function restoreKvBlobEntries(
+  blobs: Array<{ key: string; entries: Record<string, unknown | null> }>,
+): Promise<number> {
+  let restored = 0;
+  for (const blob of blobs) {
+    const remote = await kvGetStrict(blob.key);
+    const base: Record<string, unknown> =
+      (remote && typeof remote === 'object' && !Array.isArray(remote))
+        ? { ...(remote as Record<string, unknown>) }
+        : {};
+    for (const [entryKey, prior] of Object.entries(blob.entries)) {
+      if (prior === null) delete base[entryKey];
+      else base[entryKey] = prior;
+      restored++;
+    }
+    try { localStorage.setItem(blob.key, JSON.stringify(base)); } catch { /* voll */ }
+    await kvSetStrict(blob.key, base);
+  }
+  try {
+    window.dispatchEvent(new Event('store-synced'));
+    window.dispatchEvent(new Event('supabase-kv-synced'));
+  } catch { /* SSR/Test */ }
+  return restored;
+}
+
 export interface UndoResult { ok: boolean; message: string }
 
 /**
@@ -221,6 +262,13 @@ export async function undoImportRun(tenantId: string, run: ImportRunEntry): Prom
     await markRunUndone(tenantId, run.id);
     try { window.dispatchEvent(new Event('supabase-kv-synced')); } catch { /* noop */ }
     return { ok: true, message: `${snap.items.length} Einträge auf den Stand vor dem Import zurückgesetzt.` };
+  }
+  if (snap.kind === 'kv-blob-entries') {
+    const restored = await restoreKvBlobEntries(snap.blobs);
+    if (snap.kvItems && snap.kvItems.length > 0) await restoreKvKeys(snap.kvItems);
+    await markRunUndone(tenantId, run.id);
+    try { window.dispatchEvent(new Event('supabase-kv-synced')); } catch { /* noop */ }
+    return { ok: true, message: `${restored} Einträge auf den Stand vor dem Import zurückgesetzt.` };
   }
   if (snap.kind === 'reporting-fields') {
     const res = await restoreReportingFields(snap.storeKey, snap.months);

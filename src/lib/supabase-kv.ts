@@ -296,6 +296,19 @@ export async function kvSetStrict(key: string, value: unknown): Promise<void> {
  * @param updates     Map { 'YYYY-MM-DD' → DailyBudget-Felder } – nur diese Tage werden geändert
  * @param onlyIfZero  Wenn true: Tag wird nur gesetzt wenn kein Wert (> 0) vorhanden
  */
+/**
+ * Merged-Basis der dailyBudgets STRICT lesen (localStorage + KV, gleiche
+ * Merge-Regel wie safeUpsertDailyBudgets). Für Undo-Snapshots im Import-Center:
+ * wirft bei KV-Lesefehler (Lesefehler ≠ leer) — dann wird KEIN Snapshot erhoben.
+ */
+export async function loadDailyBudgetsBaseStrict(
+  storageKey: string,
+): Promise<Record<string, Record<string, unknown>>> {
+  const local = readLocalRecord(storageKey) as Record<string, Record<string, unknown>>;
+  const remote = asRecordBlob(await kvGetStrict(storageKey)) as Record<string, Record<string, unknown>>;
+  return mergeDailyBudgets(local, remote);
+}
+
 export async function safeUpsertDailyBudgets(
   storageKey: string,
   updates: Record<string, Record<string, unknown>>,
