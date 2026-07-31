@@ -5061,6 +5061,7 @@ const SchedulePlanner = () => {
                     <MirusReconcileImportButton
                       employees={roleScopedEmployees}
                       actualHoursData={actualHoursData}
+                      scheduleData={scheduleData}
                       currentMonth={currentMonth}
                       onCellChange={handleActualHoursChange}
                       onErfassungsartPersisted={(updates) => {

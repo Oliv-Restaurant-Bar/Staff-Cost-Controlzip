@@ -1,0 +1,56 @@
+MIRUS Ist-Stunden-Import aus Excel — sicher, mit Backup, nach Mustern gruppierter Vorschau und Sammelbestätigung (Oliv und Beaulieu)
+
+Ziel: Ist-Stunden aus einer MIRUS-Excel-Datei (JasperReports-Export „Tägliche Stunden") importieren, ohne Datenverlust. MIRUS überschreibt die Ist-Stunden, aber nie blind: Backup → nach Mustern gruppierte Vorschau mit Sammelbestätigung → erst dann schreiben.
+
+A. DATEIFORMAT (fix, an echtem Export verankert)
+1. Datei: .xls (OLE/JasperReports) UND .xlsx unterstützen. Blattname „report_stdtagkst" bzw. erstes Blatt.
+2. Kopf: Titelzeile „Tägliche Stunden von TT.MM.JJJJ bis TT.MM.JJJJ" → daraus Start-/Enddatum lesen. Zeile darunter „<Nr> Restaurant OLIV" bzw. der Kostenträger-Name = Mandanten-Kennung.
+3. Tagesspalten: 28 aufeinanderfolgende Tage. Spaltenindex 7 = erster Tag (Startdatum), fortlaufend bis Spalte 34 = Tag 28; Spalte 35 = Zeilentotal (nur Kontrolle). Zeile mit Wochentagskürzeln (Mi/Do/…) und Zeile mit Tageszahlen (1..28) als Kreuzcheck nutzen (Startdatum-Wochentag muss passen).
+4. Abteilungsblöcke: In Spalte 1 stehen Blockköpfe „1 Küche", „2 Service" (Name-Spalte leer) und Blocktotale (Spalte 4 = „Total Stunden"). Diese Zeilen sind KEINE Mitarbeiter — überspringen.
+5. Mitarbeiterzeilen: Name in Spalte 2 im Format „Nachname Vorname(n)" (mehrere Vornamen möglich). Tageswerte sind Dezimalstunden (z. B. 9.983333). 0 = kein Einsatz. Keine Absenzcodes im Export.
+
+B. UMFANG & SICHERHEIT
+6. Mandanten-Check: Kostenträger im Kopf muss zum aktiven Mandanten passen (OLIV vs. Beaulieu). Bei Nichtübereinstimmung Import stoppen mit klarer Meldung („Datei gehört zu <X>, aktiver Mandant ist <Y>").
+7. Monatsbezug: Nur Tage innerhalb des aktuell gewählten Monats schreiben. Deckt die Datei den Monat nicht vollständig (z. B. 01.–28.07., 29.–31.07. fehlen), diese fehlenden Tage NICHT anfassen und als Hinweis anzeigen: „Datei deckt nur 01.–28.07. ab — 29.–31.07. bleiben unverändert." Tage ausserhalb des Monats überspringen.
+8. Backup zuerst: bestehende Ist-Werte des Monats mit Zeitstempel sichern (Rücksetzen möglich).
+9. Nicht in der Datei enthaltene Mitarbeiter werden NICHT verändert (kein Nullen). Nur Mitarbeiter, die in der Datei vorkommen, werden verarbeitet. Unterschied beachten: „in Datei mit 0" (MIRUS meldet 0) ≠ „nicht in Datei" (keine MIRUS-Daten → unverändert).
+
+C. MITARBEITER-MATCHING
+10. Namen „Nachname Vorname(n)" den App-Mitarbeitern des Mandanten zuordnen (robust: Nach-/Vorname-Kombinationen, Gross-/Kleinschreibung, mehrere Vornamen tolerieren).
+11. Pro Mitarbeiter einen dauerhaften „MIRUS-Name/Alias" speichern können, damit die Zuordnung bei künftigen Importen fix sitzt.
+12. Nicht eindeutige oder nicht gefundene Namen (z. B. „Ukaj Ilir") VOR dem Schreiben als „nicht zugeordnet" listen und manuell zuordnen lassen — nichts still verwerfen, nichts still importieren.
+
+D. ERFASSUNGSART & AUSHILFEN
+13. Erfassungsart pro Ist-Zeile: MIRUS oder MANUELL. Import schreibt nur auf MIRUS-Zeilen.
+14. MANUELL-Aushilfen werden NIE angefasst. Interne Aufteilung rein nach Erfassungsart (MIRUS vs. manuell), OHNE Trennung von Service und Küche.
+
+E. VERGLEICH & MUSTER (Drei-Weg pro Mitarbeiter/Tag: MIRUS-Ist / Dienstplan-Plan / gespeicherte Ist)
+15. Rundungsdifferenzen NICHT anzeigen: Abweichung ≤ 0.05 h (3 Min., konfigurierbar) → MIRUS-Wert still übernehmen, kein Konflikt, keine Gruppe.
+16. Muster:
+    - Muster 1: MIRUS hat Stunden, kein Gegenteil im Plan → wird übernommen.
+    - Muster 2: MIRUS = 0, Plan = Stunden → Rückfrage.
+    - Muster 3: Plan = FE/K/U, MIRUS = 0 → Absenzcode behalten, bestätigen.
+    - Muster 4: Plan = FE/K/U, MIRUS = Stunden → Rückfrage.
+    - Muster 5: beide Stunden, Abweichung über Rundungsschwelle → Rückfrage mit Differenz.
+17. Absenzcodes exakt FE, K, U. Bei bestätigter Absenz: Code bleibt, Ist = 0.
+
+F. VORSCHAU NACH GRÜNDEN GRUPPIERT (Sammelbestätigung)
+18. Vorschau ordnet alle Fälle in aufklappbare Gruppen nach Muster: „Muster 1 (wird übernommen)", „Muster 2 …", „Muster 3 …", „Muster 4 …", „Muster 5 (Stundendifferenz)" — je mit Anzahl.
+19. Pro Gruppe eine Sammelaktion „Alle in dieser Gruppe bestätigen/übernehmen" (bzw. ablehnen), zusätzlich Einzelentscheid pro Zeile. So lässt sich z. B. Muster 5 komplett auf einmal bestätigen.
+20. Jede Zeile zeigt: Mitarbeiter, Tag, Plan, alte Ist, neue MIRUS-Ist, Differenz, geplante Aktion. Zusätzliche Abschnitte „nicht zugeordnet" und „ausserhalb Zeitraum/Monat".
+21. Abbrechen in jedem Schritt → kein Schreibvorgang.
+
+G. SCHREIBEN
+22. Erst nach Bestätigung schreiben; betroffene Zeilen als Erfassungsart = MIRUS markieren; Backup-Referenz speichern.
+
+H. REPORT PRO MITARBEITER
+23. Nach dem Import ein separater Report je Mitarbeiter: Plan vs Ist (pro Tag und Monatstotal), inkl. Absenztage (FE/K/U) und getroffener Entscheidungen (übernommen / behalten / übersprungen / nicht zugeordnet).
+
+I. MANDANTEN
+24. Identisch für Oliv und Beaulieu, jeweils nur Mitarbeiter des aktiven Mandanten; Mandanten-Check aus Punkt 6 erzwingen.
+
+Abnahme (mit der echten Datei „Tägliche Stunden 01.07.–28.07.2026", Kostenträger 3027 Restaurant OLIV):
+- Kopf korrekt gelesen (Zeitraum, Mandant OLIV), 29.–31.07. als „nicht abgedeckt" gemeldet.
+- Alle Mitarbeiter ausser „Ukaj Ilir" zugeordnet; „Ukaj Ilir" erscheint unter „nicht zugeordnet".
+- Rundungsfälle still übernommen; übrige Fälle korrekt nach Muster gruppiert; Sammelbestätigung pro Gruppe funktioniert.
+- Nach Bestätigung stimmen die Ist-Werte (Kontrolle über Zeilentotale, z. B. de Jong Micky 145.58 h, Küche-Block 854.15 h, Service-Block 1346.98 h); MANUELL-Aushilfen unverändert; Backup vorhanden; nicht in der Datei enthaltene MA (z. B. Mendim, Ibrahim, Kawtar, Miro) unverändert.

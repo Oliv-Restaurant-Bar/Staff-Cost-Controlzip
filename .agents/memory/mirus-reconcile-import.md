@@ -13,3 +13,10 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Backup in `dienstplan_ist_backup` VOR dem Schreiben; Undo löscht das Backup erst nach vollständig erfolgreicher Wiederherstellung; Undo-Button hängt an DB-Backup-Existenz, nicht am localStorage-Report.
 
 **Why:** Review-Fail wegen fire-and-forget-Writes + Backup-Löschung trotz möglicher Teilfehler; diese Disziplin verhindert stille Datenverluste.
+
+## Muster-Klassierung (Ausbau Juli 2026)
+- Engine ist jetzt Drei-Weg-Vergleich MIRUS/Dienstplan-PLAN/gespeicherte Ist; Zellen klassiert als Muster 1–5 (`auto_take`, `conflict_zero`, `absence_keep`, `conflict_absence`, `conflict_diff`) plus `silent_round` (Diff ≤ 0.05 h → still geschrieben, erscheint nirgends).
+- Rundungsschwelle `MIRUS_ROUNDING_THRESHOLD_H` (0.05 h) ist Parameter von `buildMirusReconcilePlan`; Muster-5-Konflikte ersetzen das frühere Auto-Überschreiben abweichender Stunden.
+- **Konsistenz-Regel:** `resolvePlanToWrites`, `expectedAfterTotals` (Engine) und `finalEntryForCell`/`decisionForCell` (Button) müssen dieselbe Fallmatrix abbilden — bei Änderung immer alle vier anpassen.
+- Muster 3 keep: bestehende Ist-Absenz bleibt UNANGETASTET; nur Plan-Absenz ohne Ist wird als `{hours:0, absenceType}` materialisiert. Plan-Absenzcodes werden via lokale Kopie der VACATION/SICK/ACCIDENT-Sets kanonisiert (kein Import aus absence-utils — zieht Supabase-Kette in Node-Tests!).
+- Erstklassierung «Datei-MA ohne erfassungsart → MIRUS» ist bewusst; muss in der Vorschau explizit ausgewiesen werden (Alert «Neu als MIRUS klassiert»), sonst Review-Fail wegen Write-Gate.

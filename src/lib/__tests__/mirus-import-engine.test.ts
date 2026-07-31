@@ -1,11 +1,12 @@
 // @vitest-environment node
 /**
- * Tests für die MIRUS-Import-Engine («MIRUS überschreibt mit Rückfragen»).
+ * Tests für die MIRUS-Import-Engine («MIRUS überschreibt mit Rückfragen»),
+ * inkl. Muster 1–5 und stiller Rundungs-Übernahme (Spec-Abnahme).
  */
 import { describe, it, expect } from 'vitest';
 import {
   checkMirusScope, buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
-  MirusResolvedEntry,
+  groupPlanCells, canonicalAbsence, MirusResolvedEntry,
 } from '@/lib/mirus-import-engine';
 
 const month = '2026-07';
@@ -32,8 +33,19 @@ describe('checkMirusScope', () => {
   });
 });
 
-describe('buildMirusReconcilePlan — Zell-Logik', () => {
-  it('leer + Datei > 0 → auto_take; leer + 0 → bleibt frei', () => {
+describe('canonicalAbsence', () => {
+  it('mappt Plan-Codes auf FE/K/U; «F» (frei) zählt nicht', () => {
+    expect(canonicalAbsence('FE')).toBe('FE');
+    expect(canonicalAbsence('Ferien')).toBe('FE');
+    expect(canonicalAbsence('K')).toBe('K');
+    expect(canonicalAbsence('Unfall')).toBe('U');
+    expect(canonicalAbsence('F')).toBeNull();
+    expect(canonicalAbsence(null)).toBeNull();
+  });
+});
+
+describe('buildMirusReconcilePlan — Muster-Logik', () => {
+  it('Muster 1: MIRUS-Stunden, Ist leer → auto_take (Gruppe «wird übernommen»)', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 8.5), entry('a', '2026-07-02', 0)],
       existing: {},
@@ -42,68 +54,126 @@ describe('buildMirusReconcilePlan — Zell-Logik', () => {
     });
     const cells = plan.employees[0].cells;
     expect(cells[0].decision).toBe('auto_take');
+    expect(cells[0].resolution).toBe('mirus');
     expect(cells[1].decision).toBe('unchanged_free');
-    expect(cells[2].decision).toBe('unchanged_free'); // Tag ohne Eintrag = 0
-    expect(plan.conflicts).toHaveLength(0);
+    expect(groupPlanCells(plan)[1]).toHaveLength(1);
   });
 
-  it('abweichende Stunden ohne Marke + Datei > 0 → auto überschreiben; identisch → unverändert', () => {
+  it('Rundung ≤ 0.05 h → still übernehmen (silent_round, nicht in Gruppen), exakt gleich → kein Write', () => {
     const plan = buildMirusReconcilePlan({
-      entries: [entry('a', '2026-07-01', 9.85), entry('a', '2026-07-02', 8)],
+      entries: [entry('a', '2026-07-01', 8.04), entry('a', '2026-07-02', 8)],
       existing: {
-        'a-2026-07-01': { hours: 8.43 },
-        'a-2026-07-02': { hours: 8 },
+        'a-2026-07-01': { hours: 8 },      // Diff 0.04 ≤ 0.05 → still
+        'a-2026-07-02': { hours: 8 },      // identisch → kein Write
       },
       erfassungsart: { a: 'MIRUS' },
       month, dates,
     });
     const cells = plan.employees[0].cells;
-    expect(cells[0].decision).toBe('auto_take');
+    expect(cells[0].decision).toBe('silent_round');
     expect(cells[1].decision).toBe('unchanged_equal');
+    expect(plan.silentRounds).toHaveLength(1);
+    const g = groupPlanCells(plan);
+    expect(g[1].length + g[2].length + g[3].length + g[4].length + g[5].length).toBe(0);
+    const writes = resolvePlanToWrites(plan);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].entry?.hours).toBe(8.04);
   });
 
-  it('Absenz + Datei 0 → Marke inkl. Stunden bleibt vollständig', () => {
+  it('Muster 5: beide Stunden, Diff > Schwelle → Rückfrage (kein Auto-Überschreiben mehr)', () => {
     const plan = buildMirusReconcilePlan({
-      entries: [entry('a', '2026-07-01', 0)],
-      existing: { 'a-2026-07-01': { hours: 8.4, absenceType: 'K' } },
+      entries: [entry('a', '2026-07-01', 9.85)],
+      existing: { 'a-2026-07-01': { hours: 8.43 } },
       erfassungsart: { a: 'MIRUS' },
       month, dates,
     });
-    expect(plan.employees[0].cells[0].decision).toBe('unchanged_absence');
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('conflict_diff');
+    expect(groupPlanCells(plan)[5]).toHaveLength(1);
+    // Default mirus → überschreiben; keep → nichts
+    expect(resolvePlanToWrites(plan)[0].entry?.hours).toBe(9.85);
+    cell.resolution = 'keep';
     expect(resolvePlanToWrites(plan)).toHaveLength(0);
-    // Stunden der Absenz-Zelle zählen im After-Total weiter
-    expect(expectedAfterTotals(plan).a).toBe(8.4);
+    expect(expectedAfterTotals(plan).a).toBe(8.43);
   });
 
-  it('Konflikt A: Datei 0 vs. Stunden ohne Marke → Rückfrage, Default MIRUS = löschen', () => {
+  it('Muster 2: MIRUS 0 vs. Ist-Stunden → Rückfrage; mirus = Zelle leeren', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 0)],
       existing: { 'a-2026-07-01': { hours: 8 } },
       erfassungsart: { a: 'MIRUS' },
       month, dates,
     });
-    expect(plan.conflicts).toHaveLength(1);
-    expect(plan.conflicts[0].decision).toBe('conflict_a');
-    const writes = resolvePlanToWrites(plan);
-    expect(writes).toEqual([{ employeeId: 'a', date: '2026-07-01', entry: null }]);
-    // Lösung «Dienstplan behalten» → keine Schreib-Operation
-    plan.employees[0].cells[0].resolution = 'keep';
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('conflict_zero');
+    expect(resolvePlanToWrites(plan)).toEqual([{ employeeId: 'a', date: '2026-07-01', entry: null }]);
+    cell.resolution = 'keep';
     expect(resolvePlanToWrites(plan)).toHaveLength(0);
     expect(expectedAfterTotals(plan).a).toBe(8);
   });
 
-  it('Konflikt B: Datei > 0 vs. Absenz → Rückfrage; MIRUS entfernt Marke', () => {
+  it('Muster 2 (Plan-Variante): MIRUS 0, Ist leer, PLAN hat Stunden → Rückfrage ohne Write', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 0)],
+      existing: {},
+      planned: { 'a-2026-07-01': { hours: 8.5, absence: null } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('conflict_zero');
+    expect(cell.plan.hours).toBe(8.5);
+    // Keine gespeicherte Ist vorhanden → weder mirus noch keep schreibt etwas
+    expect(resolvePlanToWrites(plan)).toHaveLength(0);
+  });
+
+  it('Muster 3: Ist-Absenz + MIRUS 0 → absence_keep, Default keep = unangetastet', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 0)],
+      existing: { 'a-2026-07-01': { hours: 8.4, absenceType: 'K' } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('absence_keep');
+    expect(cell.resolution).toBe('keep');
+    expect(resolvePlanToWrites(plan)).toHaveLength(0);
+    expect(expectedAfterTotals(plan).a).toBe(8.4);
+    // «MIRUS übernehmen» = 0 ohne Code → Zelle leeren
+    cell.resolution = 'mirus';
+    expect(resolvePlanToWrites(plan)).toEqual([{ employeeId: 'a', date: '2026-07-01', entry: null }]);
+  });
+
+  it('Muster 3 (Plan-Absenz, Ist leer): keep materialisiert Code mit 0 Stunden', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 0)],
+      existing: {},
+      planned: { 'a-2026-07-01': { hours: 0, absence: 'FE' } },
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('absence_keep');
+    const writes = resolvePlanToWrites(plan);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].entry).toMatchObject({ hours: 0, absenceType: 'FE' });
+  });
+
+  it('Muster 4: Absenz vs. MIRUS-Stunden → Rückfrage; mirus entfernt Marke', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 9.27)],
       existing: { 'a-2026-07-01': { hours: 0, absenceType: 'F' } },
       erfassungsart: { a: 'MIRUS' },
       month, dates,
     });
-    expect(plan.conflicts[0].decision).toBe('conflict_b');
+    const cell = plan.employees[0].cells[0];
+    expect(cell.decision).toBe('conflict_absence');
     const writes = resolvePlanToWrites(plan);
     expect(writes).toHaveLength(1);
     expect(writes[0].entry?.hours).toBe(9.27);
     expect(writes[0].entry?.absenceType).toBeUndefined();
+    cell.resolution = 'keep';
+    expect(resolvePlanToWrites(plan)).toHaveLength(0);
   });
 
   it('MANUELL-Mitarbeiter in der Datei werden übersprungen, nie geschrieben', () => {
@@ -121,6 +191,17 @@ describe('buildMirusReconcilePlan — Zell-Logik', () => {
     expect(writes.every(w => w.employeeId === 'a')).toBe(true);
   });
 
+  it('Zeilen ausserhalb des Monats werden übersprungen und gelistet', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [entry('a', '2026-07-01', 8), entry('a', '2026-06-30', 7.5)],
+      existing: {},
+      erfassungsart: { a: 'MIRUS' },
+      month, dates,
+    });
+    expect(plan.skippedOutOfScope).toEqual([{ employeeName: 'A', date: '2026-06-30', hours: 7.5 }]);
+    expect(plan.employees[0].fileTotal).toBe(8);
+  });
+
   it('Nicht-Datei-Mitarbeiter kommen im Plan nicht vor (78-Einträge-Bug behoben)', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 8)],
@@ -136,14 +217,14 @@ describe('buildMirusReconcilePlan — Zell-Logik', () => {
     expect(writes.map(w => w.employeeId)).toEqual(['a']);
   });
 
-  it('Gegenprüfung: After-Total = Datei-Total bei reinem Auto-Fall', () => {
+  it('Gegenprüfung: After-Total = Datei-Total, wenn alle Muster auf MIRUS stehen', () => {
     const plan = buildMirusReconcilePlan({
       entries: [entry('a', '2026-07-01', 8.08), entry('a', '2026-07-02', 7.33), entry('a', '2026-07-03', 9.1)],
       existing: { 'a-2026-07-01': { hours: 9 }, 'a-2026-07-03': { hours: 0, absenceType: 'F' } },
       erfassungsart: { a: 'MIRUS' },
       month, dates,
     });
-    // 03. ist Konflikt B (Default mirus) → alles = Datei
+    // 01. Muster 5, 03. Muster 4 — Defaults mirus → alles = Datei
     expect(expectedAfterTotals(plan).a).toBe(24.51);
     expect(plan.employees[0].fileTotal).toBe(24.51);
   });
@@ -156,5 +237,34 @@ describe('buildMirusReconcilePlan — Zell-Logik', () => {
       month, dates,
     });
     expect(plan.employees[0].cells[0].fileHours).toBe(8.5);
+  });
+
+  it('Abnahme-Szenario: je ein Fall Muster 1–5 + Rundungsfall gruppiert korrekt', () => {
+    const plan = buildMirusReconcilePlan({
+      entries: [
+        entry('m1', '2026-07-01', 8),      // Ist leer → Muster 1
+        entry('m2', '2026-07-01', 0),      // Ist 8h → Muster 2
+        entry('m3', '2026-07-01', 0),      // Ist FE → Muster 3
+        entry('m4', '2026-07-01', 6),      // Ist FE → Muster 4
+        entry('m5', '2026-07-01', 9),      // Ist 8h → Muster 5
+        entry('r', '2026-07-01', 8.03),    // Ist 8h → Rundung, still
+      ],
+      existing: {
+        'm2-2026-07-01': { hours: 8 },
+        'm3-2026-07-01': { hours: 8.4, absenceType: 'FE' },
+        'm4-2026-07-01': { hours: 8.4, absenceType: 'FE' },
+        'm5-2026-07-01': { hours: 8 },
+        'r-2026-07-01': { hours: 8 },
+      },
+      erfassungsart: { m1: 'MIRUS', m2: 'MIRUS', m3: 'MIRUS', m4: 'MIRUS', m5: 'MIRUS', r: 'MIRUS' },
+      month, dates,
+    });
+    const g = groupPlanCells(plan);
+    expect(g[1].map(c => c.employeeId)).toEqual(['m1']);
+    expect(g[2].map(c => c.employeeId)).toEqual(['m2']);
+    expect(g[3].map(c => c.employeeId)).toEqual(['m3']);
+    expect(g[4].map(c => c.employeeId)).toEqual(['m4']);
+    expect(g[5].map(c => c.employeeId)).toEqual(['m5']);
+    expect(plan.silentRounds.map(c => c.employeeId)).toEqual(['r']);
   });
 });
