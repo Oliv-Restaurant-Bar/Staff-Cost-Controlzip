@@ -1,0 +1,29 @@
+Warenkosten-Controlling — Cockpit-Block, Lieferantenübersicht, Buchhaltungs-Abgleich (Oliv und Beaulieu)
+
+Ziel: Warenkosten im Cockpit steuern — Detail aus den Warenrechnungen (pro Lieferant), Quote gegen eine Gesamt-Zielquote, plus ein Kontroll-Total aus der Buchhaltung/Erfolgsrechnung.
+
+A. DATENBASIS
+1. Detailquelle = Menüpunkt „Warenrechnungen": pro Rechnung Lieferant, Datum, Betrag, optional Kategorie/Notiz und optional Beleg-/Screenshot-Upload. Falls Felder fehlen, ergänzen — insbesondere ein Lieferant-Feld (Auswahl bestehender Lieferant oder neu anlegen).
+2. Kontroll-Total = Warenkosten-Summe aus der Buchhaltung/Erfolgsrechnung (aus dem bestehenden „Ist Kosten Buchhaltung"-Import), pro Monat.
+
+B. COCKPIT-BLOCK „WARENKOSTEN"
+3. Neuer Cockpit-Block analog zum Personalkosten-Block, für den gewählten Monat/Zeitraum:
+   - Warenkosten (CHF) = Summe der Warenrechnungen im Zeitraum.
+   - Warenkostenquote (WKQ) = Warenkosten ÷ Umsatz, in %.
+   - Vergleich zur konfigurierbaren Gesamt-Zielquote (ein Wert pro Mandant): Ampel grün ≤ Ziel, rot > Ziel; Abweichung in Prozentpunkten.
+   - Falls Buchhaltungs-Vorjahreswert vorhanden: optional WKQ Vorjahr als Referenz (kein Zwang).
+
+C. LIEFERANTENÜBERSICHT (Aufteilung nach Lieferant)
+4. Tabelle „Warenkosten nach Lieferant" für den Zeitraum: Lieferant, Betrag (CHF), Anteil % an den Warenkosten, Anzahl Rechnungen — absteigend sortiert (Top-Lieferanten zuerst).
+5. Klick auf einen Lieferanten öffnet dessen Rechnungen im Zeitraum (Detail).
+
+D. BUCHHALTUNGS-ABGLEICH (ganz unten)
+6. Unten ein Abgleich-Block: „Warenrechnungen erfasst: CHF X · Buchhaltung/ER: CHF Y · Differenz: CHF Z". Zeigt transparent, ob die erfassten Rechnungen zur Buchhaltungssumme passen (ob alles erfasst ist). Reine Anzeige, kein Zwang, kein automatisches Überschreiben.
+
+E. ZEITRAUM, MANDANTEN, SICHERHEIT
+7. Zeitraum/Monat folgt dem Cockpit; mandantengetrennt (Oliv/Beaulieu), keine Vermischung. Zielquote pro Mandant konfigurierbar. Rollen wie üblich (Gäste nur lesend). Belege sicher/mandantengetrennt gespeichert.
+
+F. UNVERÄNDERT
+8. Bestehende Berechnungen (Personalkosten, PKQ etc.) bleiben unberührt; der Warenkosten-Block kommt additiv dazu.
+
+Abnahme: Im Cockpit erscheint ein Warenkosten-Block mit CHF, WKQ und Ampel gegen die Gesamt-Zielquote; die Lieferantenübersicht zeigt die Ausgaben pro Lieferant mit Anteil und Drilldown; unten steht der Abgleich Warenrechnungen vs. Buchhaltung mit Differenz; alles mandantengetrennt für Oliv und Beaulieu.

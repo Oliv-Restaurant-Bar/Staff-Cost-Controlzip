@@ -17,6 +17,9 @@ import {
   loadMonthInvoices,
   saveInvoiceEntry,
   deleteInvoiceEntry,
+  uploadInvoiceReceipt,
+  getInvoiceReceiptUrl,
+  deleteInvoiceReceipt,
   loadDailyRevenueFromLocalStorage,
   loadWarenMonthlyRevenue,
   seedMonthlyRevenueIfMissing,
@@ -68,7 +71,7 @@ import { toast } from 'sonner';
 import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download,
+  Filter, X, Receipt, Download, Paperclip,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -285,6 +288,9 @@ export default function WarenrechnungenPage() {
   const [tab,            setTab]            = useState<Tab>('erfassung');
 
   const [form,              setForm]              = useState<EntryForm>(EMPTY_FORM);
+  const [receiptFile,       setReceiptFile]       = useState<File | null>(null);
+  const [receiptInputKey,   setReceiptInputKey]   = useState(0);
+  const [editReceiptFile,   setEditReceiptFile]   = useState<File | null>(null);
   const [saving,            setSaving]            = useState(false);
   const [editEntry,         setEditEntry]         = useState<InvoiceEntry | null>(null);
   const [showEditDialog,    setShowEditDialog]    = useState(false);
@@ -985,10 +991,21 @@ export default function WarenrechnungenPage() {
     }
 
     setSaving(true);
+    if (receiptFile) {
+      try {
+        entry.receiptPath = await uploadInvoiceReceipt(tenantId, entry.id, receiptFile);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Beleg-Upload fehlgeschlagen.');
+        setSaving(false);
+        return; // Eintrag NICHT ohne den gewünschten Beleg speichern
+      }
+    }
     await saveInvoiceEntry(tenantId, entry);
     console.log(`[WAREN] entry saved: ${entry.supplierName} · ${entry.date} · net CHF ${entry.amountNet.toFixed(2)}${entry.kontoSplits ? ' (split)' : entry.warenkonto ? ` · konto ${entry.warenkonto}` : ''}`);
     await loadData();
     setForm(f => ({ ...EMPTY_FORM, date: f.date, supplierName: f.supplierName, vatRate: f.vatRate, vatIncluded: f.vatIncluded }));
+    setReceiptFile(null);
+    setReceiptInputKey(k => k + 1);
     toast.success(`${form.supplierName} · CHF ${fmtChf(entry.amountNet)} netto gespeichert`);
     setSaving(false);
   }
@@ -997,11 +1014,22 @@ export default function WarenrechnungenPage() {
     if (!canEdit) { toast.error('Keine Berechtigung zum Bearbeiten von Einträgen.'); return; }
     if (!editEntry) return;
     setSaving(true);
-    await saveInvoiceEntry(tenantId, { ...editEntry, updatedAt: new Date().toISOString() });
+    let receiptPath = editEntry.receiptPath;
+    if (editReceiptFile) {
+      try {
+        receiptPath = await uploadInvoiceReceipt(tenantId, editEntry.id, editReceiptFile);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Beleg-Upload fehlgeschlagen.');
+        setSaving(false);
+        return;
+      }
+    }
+    await saveInvoiceEntry(tenantId, { ...editEntry, ...(receiptPath ? { receiptPath } : {}), updatedAt: new Date().toISOString() });
     console.log(`[WAREN] entry updated: ${editEntry.id}`);
     await loadData();
     setShowEditDialog(false);
     setEditEntry(null);
+    setEditReceiptFile(null);
     toast.success('Eintrag aktualisiert.');
     setSaving(false);
   }
@@ -1010,9 +1038,21 @@ export default function WarenrechnungenPage() {
     if (!canDelete) { toast.error('Keine Berechtigung zum Löschen von Einträgen.'); return; }
     await deleteInvoiceEntry(tenantId, entry.id, entry.date);
     console.log(`[WAREN] entry deleted: ${entry.id}`);
+    if (entry.receiptPath) {
+      try { await deleteInvoiceReceipt(tenantId, entry.receiptPath); } catch { /* best effort */ }
+    }
     await loadData();
     setDeleteConfirm(null);
     toast.success('Eintrag gelöscht.');
+  }
+
+  async function openReceipt(path: string) {
+    try {
+      const url = await getInvoiceReceiptUrl(tenantId, path);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Beleg konnte nicht geöffnet werden.');
+    }
   }
 
   async function handleAddSupplier() {
@@ -1439,6 +1479,18 @@ export default function WarenrechnungenPage() {
                         />
                       </div>
                     </div>
+                    {/* Optionaler Beleg/Screenshot */}
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Beleg / Screenshot (optional, JPEG/PNG/WebP/PDF, max. 10 MB)</Label>
+                      <input
+                        type="file" accept="image/jpeg,image/png,image/webp,application/pdf"
+                        data-testid="input-receipt-file"
+                        className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1.5 file:text-xs file:font-medium"
+                        onChange={e => setReceiptFile(e.target.files?.[0] ?? null)}
+                        // key erzwingt Reset des nativen Inputs nach dem Speichern
+                        key={receiptInputKey}
+                      />
+                    </div>
                   </div>
                 </section>
                 )} {/* end canCreate */}
@@ -1539,12 +1591,25 @@ export default function WarenrechnungenPage() {
                                   <span className="opacity-30">–</span>
                                 )}
                               </td>
-                              <td className="px-4 py-2.5 text-xs text-muted-foreground">{e.reference ?? <span className="opacity-30">–</span>}</td>
+                              <td className="px-4 py-2.5 text-xs text-muted-foreground">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {e.reference ?? (!e.receiptPath && <span className="opacity-30">–</span>)}
+                                  {e.receiptPath && (
+                                    <button
+                                      type="button" title="Beleg öffnen" data-testid={`receipt-open-${e.id}`}
+                                      className="text-primary hover:underline inline-flex items-center gap-0.5"
+                                      onClick={() => openReceipt(e.receiptPath!)}
+                                    >
+                                      <Paperclip className="h-3 w-3" /> Beleg
+                                    </button>
+                                  )}
+                                </span>
+                              </td>
                               <td className="px-4 py-2.5 text-xs text-muted-foreground max-w-[140px] truncate">{e.note ?? <span className="opacity-30">–</span>}</td>
                               <td className="px-4 py-2.5">
                                 <div className="flex items-center gap-1">
                                   {canEdit && (
-                                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => { setEditEntry(e); setShowEditDialog(true); }}>
+                                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs gap-1" onClick={() => { setEditEntry(e); setEditReceiptFile(null); setShowEditDialog(true); }}>
                                     <Pencil className="h-3 w-3" />
                                     Edit
                                   </Button>
@@ -2749,6 +2814,26 @@ export default function WarenrechnungenPage() {
                 <Input value={editEntry.reference ?? ''}
                   onChange={e => setEditEntry(x => x ? { ...x, reference: e.target.value || undefined } : x)}
                   className="h-8 text-sm" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Beleg / Screenshot (optional)</Label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {editEntry.receiptPath && (
+                    <button type="button" className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+                      onClick={() => openReceipt(editEntry.receiptPath!)}>
+                      <Paperclip className="h-3 w-3" /> Beleg öffnen
+                    </button>
+                  )}
+                  <input
+                    type="file" accept="image/jpeg,image/png,image/webp,application/pdf"
+                    data-testid="input-edit-receipt-file"
+                    className="block text-xs text-muted-foreground file:mr-2 file:rounded-md file:border-0 file:bg-muted file:px-2.5 file:py-1 file:text-xs"
+                    onChange={e => setEditReceiptFile(e.target.files?.[0] ?? null)}
+                  />
+                </div>
+                {editEntry.receiptPath && (
+                  <p className="text-[10px] text-muted-foreground/60">Neue Datei wählen ersetzt den bestehenden Beleg beim Speichern.</p>
+                )}
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Bemerkung (optional)</Label>

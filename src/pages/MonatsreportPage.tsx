@@ -17,6 +17,7 @@ import {
   fetchReviewsData, computeWeeklyStarColumns, summarizeStarColumns, type SingleReview,
 } from '@/lib/reviews-store';
 import { Star } from 'lucide-react';
+import { CockpitWarenkosten } from '@/components/waren/CockpitWarenkosten';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -691,6 +692,11 @@ export default function MonatsreportPage() {
         </Tabs>
 
         {/* Rezensionen-Wochentracking fürs Meeting (rein lesend, Erfassung auf /rezensionen) */}
+        {/* ── Warenkosten-Block (folgt dem Cockpit-Monat) ── */}
+        <div className="pdf-hide">
+          <CockpitWarenkosten year={year} month={month} />
+        </div>
+
         <div className="pdf-hide rounded-xl border bg-card shadow-sm p-4">
           <ReviewsWeeklyTracker
             showCockpitLink

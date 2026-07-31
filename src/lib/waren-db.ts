@@ -60,8 +60,54 @@ export interface InvoiceEntry {
   kontoSplits?: KontoSplit[];
   /** Kategorie für Food/Beverage-Auswertung (Standard: Sonstiges) */
   kategorie?: WarenKategorie;
+  /** Optionaler Beleg/Screenshot im privaten Storage-Bucket `waren-belege` (Pfad `<tenantId>/<id>.<ext>`). */
+  receiptPath?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Beleg-/Screenshot-Upload (privater Bucket `waren-belege`) ───────────────
+
+const RECEIPT_BUCKET = 'waren-belege';
+const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
+const RECEIPT_MIME_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf',
+};
+
+/** Wirft, wenn der Pfad nicht zum aktuellen Mandanten gehört (Tenant-Grenze). */
+function assertTenantReceiptPath(tenantId: TenantId, path: string): void {
+  if (!path.startsWith(`${tenantId}/`) || path.includes('..')) {
+    throw new Error('Beleg-Pfad gehört nicht zu diesem Mandanten.');
+  }
+}
+
+/** Beleg hochladen (JPEG/PNG/WebP/PDF, max. 10 MB); gibt den Storage-Pfad zurück. */
+export async function uploadInvoiceReceipt(tenantId: TenantId, invoiceId: string, file: File): Promise<string> {
+  const ext = RECEIPT_MIME_EXT[file.type];
+  if (!ext) throw new Error('Nur JPEG, PNG, WebP oder PDF sind als Beleg erlaubt.');
+  if (file.size > RECEIPT_MAX_BYTES) throw new Error('Beleg zu gross (max. 10 MB).');
+  const path = `${tenantId}/${invoiceId}.${ext}`;
+  const { supabase } = await import('@/integrations/supabase/client');
+  const { error } = await supabase.storage.from(RECEIPT_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: true });
+  if (error) throw new Error(`Beleg-Upload fehlgeschlagen: ${error.message}`);
+  return path;
+}
+
+/** Kurzlebige Anzeige-URL (1 h); nur für Pfade des aktuellen Mandanten. */
+export async function getInvoiceReceiptUrl(tenantId: TenantId, path: string): Promise<string> {
+  assertTenantReceiptPath(tenantId, path);
+  const { supabase } = await import('@/integrations/supabase/client');
+  const { data, error } = await supabase.storage.from(RECEIPT_BUCKET).createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) throw new Error(`Beleg-URL fehlgeschlagen: ${error?.message ?? 'unbekannt'}`);
+  return data.signedUrl;
+}
+
+/** Beleg löschen (best effort); nur für Pfade des aktuellen Mandanten. */
+export async function deleteInvoiceReceipt(tenantId: TenantId, path: string): Promise<void> {
+  assertTenantReceiptPath(tenantId, path);
+  const { supabase } = await import('@/integrations/supabase/client');
+  await supabase.storage.from(RECEIPT_BUCKET).remove([path]);
 }
 
 // ─── Warenkonto Schnellauswahl ────────────────────────────────────────────────
