@@ -72,6 +72,7 @@ import { KüchenplanImportDialog } from '@/components/schedule-planner/Küchenpl
 import { WeeklyReportDialog } from '@/components/schedule-planner/WeeklyReportDialog';
 import { EmployeeForm } from '@/components/EmployeeForm';
 import { MirusReconcileImportButton } from '@/components/schedule-planner/MirusReconcileImportButton';
+import { ScheduleProposalInbox } from '@/components/schedule-planner/ScheduleProposalInbox';
 import { importScheduleFromExcelV2, exportScheduleToPDF, exportScheduleTemplate, NameMatchInfo } from '@/lib/schedule-export-import';
 import { getVisibleEmployeesForRole, effectiveEmployeeDepartmentScope } from '@/lib/employee-visibility';
 import { computeDailyKitchenTotals, toDailyTotalsDisplay, type EmployeeDayInput, type DailyTotalsDisplay } from '@/lib/schedule-daily-totals';
@@ -1665,6 +1666,29 @@ const SchedulePlanner = () => {
     console.log(`[SCHEDULE] day ${isEmpty ? 'cleared' : 'queued'} – key=${cellKey}`);
     window.dispatchEvent(new CustomEvent('schedule-updated'));
     return isEmpty ? null : updated;
+  };
+
+  // ── Bestätigung von Analyse-Vorschlägen («Offene Punkte») ────────────────
+  // Schreibt AUSSCHLIESSLICH über applyDayPatch (tages-atomar). Slot-Wahl:
+  // Start vor 16:00 → früh, sonst spät; ist der Ziel-Slot belegt, weicht der
+  // Eintrag auf den freien Slot aus (Split-Schicht); beide belegt → Fehler.
+  const handleProposalConfirmAdd = (employeeId: string, date: string, slot: { start: string; end: string }): boolean => {
+    const current = scheduleDataRef.current[`${employeeId}-${date}`] || {};
+    const wantsFrueh = slot.start < '16:00';
+    let patch: Partial<DaySchedule>;
+    if (wantsFrueh && !current.früh && !current.frühAbsence) patch = { früh: slot };
+    else if (!current.spät && !current.spätAbsence) patch = { spät: slot };
+    else if (!current.früh && !current.frühAbsence) patch = { früh: slot };
+    else {
+      toast.error('Beide Schichten sind an diesem Tag bereits belegt — bitte direkt in der Plan-Zelle anpassen.');
+      return false;
+    }
+    return applyDayPatch(employeeId, date, patch) !== undefined;
+  };
+
+  /** Entfernt den ganzen Tageseintrag (tages-atomar, leerer Ersatz). */
+  const handleProposalConfirmRemove = (employeeId: string, date: string) => {
+    applyDayPatch(employeeId, date, {}, { replace: true });
   };
 
   // ── Plan→Ist-Absenz-Sync (idempotent, day-atomar) ─────────────────────────
@@ -4771,6 +4795,16 @@ const SchedulePlanner = () => {
               </div>
               
               <div className="flex items-center gap-2">
+                {/* Offene Punkte aus der Bedarf-Analyse — nur im Plan-Modus */}
+                {scheduleMode === 'plan' && (
+                  <ScheduleProposalInbox
+                    tenantId={tenantId}
+                    employees={roleScopedEmployees}
+                    scheduleData={scheduleData}
+                    onConfirmAdd={handleProposalConfirmAdd}
+                    onConfirmRemove={handleProposalConfirmRemove}
+                  />
+                )}
                 {/* Sortierungsmodus-Toggle — nur im Plan-Modus */}
                 {scheduleMode === 'plan' && (
                   <Button

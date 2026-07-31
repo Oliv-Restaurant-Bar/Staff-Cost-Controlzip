@@ -1,0 +1,19 @@
+Personalbedarf ↔ Dienstplan — direkte Zuteilung/Streichung + Konfliktwarnung bei Doppelplanung (Ergänzung, Oliv und Beaulieu)
+
+Erweiterung der Bedarf-vs-Plan-Kopplung: Aus der Bedarfsplanung heraus einen Mitarbeiter direkt einer Schicht zuteilen oder aus dem Dienstplan streichen — mit Prüfung, ob die Person an dem Tag schon verplant ist.
+
+1. Direktzuteilung/Streichung aus dem Bedarf-Pop-up:
+   - „+ Person einplanen": qualifizierte Person wählen und ihr die Schicht dieser Position/dieses Tages zuteilen (als Vorschlag/offener Punkt wie definiert; im Dienstplan mit Schichtzeit bestätigen).
+   - „streichen": eine geplante Person für diesen Tag/Position zum Entfernen vormerken.
+
+2. Konfliktwarnung beim Zuteilen (Kern der Ergänzung):
+   - Beim Auswählen einer Person wird geprüft, ob sie an DIESEM Tag bereits einen Dienstplan-Eintrag hat.
+   - Ist sie bereits geplant, erscheint eine klare Meldung: „‹Name› ist am ‹Wochentag TT.MM.› bereits geplant: ‹Position›, ‹Schichtzeit›." Optionen: „Trotzdem zuteilen" (z. B. zweite Schicht / andere Position / Split) oder „Abbrechen".
+   - Ist die Person an dem Tag als Absenz FE/K/U eingetragen, ebenfalls warnen: „‹Name› ist am ‹Tag› als ‹FE/K/U› eingetragen." mit „Trotzdem zuteilen" / „Abbrechen".
+   - Es ist eine WARNUNG, keine Sperre — geteilte Schichten und Positionswechsel bleiben möglich, aber nur nach bewusster Bestätigung.
+
+3. Dieselbe Konfliktprüfung greift auch beim Bestätigen eines offenen Punkts im Dienstplan (falls sich die Lage zwischen Vorschlag und Bestätigung geändert hat), damit keine unbemerkte Doppelplanung durchrutscht.
+
+4. Mandanten: identisch für Oliv und Beaulieu, nur Daten/qualifizierte MA des aktiven Mandanten.
+
+Abnahme: Einer Person, die am Freitag bereits im Service geplant ist, im Bedarf-Pop-up eine weitere Freitag-Schicht zuteilen → Warnung mit Position + Schichtzeit erscheint; „Abbrechen" verwirft, „Trotzdem zuteilen" legt den Vorschlag als offenen Punkt an. Bei einer als FE eingetragenen Person am selben Tag erscheint die FE-Warnung.

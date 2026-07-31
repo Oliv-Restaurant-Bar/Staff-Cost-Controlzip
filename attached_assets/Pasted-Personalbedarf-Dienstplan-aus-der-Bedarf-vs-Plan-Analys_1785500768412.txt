@@ -1,0 +1,21 @@
+Personalbedarf ↔ Dienstplan — aus der Bedarf-vs-Plan-Analyse Personen vorschlagen/streichen, im Dienstplan bestätigen (Oliv und Beaulieu)
+
+Ziel: Aus dem Bedarf-vs-Plan-Detail (Zell-Pop-up) heraus den Dienstplan feinjustieren — Unter-/Überdeckung direkt korrigieren. Änderungen sind Vorschläge und werden im Dienstplan als offene Punkte bestätigt.
+
+1. Im Zell-Pop-up (Position × Tag) zusätzlich zu den Anzeige-Infos Aktionen:
+   - Bei Unterdeckung (Plan < Bedarf): Button „+ Person einplanen". Auswahl: entweder eine qualifizierte Person aus einem Dropdown (nur für diese Position qualifizierte MA des Mandanten, aus der Qualifikations-Matrix) ODER „offener Platz" (Person später im Dienstplan wählen).
+   - Bei Überdeckung (Plan > Bedarf): neben jeder geplanten Person ein „streichen"-Button.
+   - Jede Aktion erzeugt einen VORSCHLAG (hinzufügen/entfernen) für diesen Tag + diese Position — KEIN direkter, harter Dienstplan-Eintrag.
+
+2. Vorschläge = offene Punkte im Dienstplan:
+   - Im Dienstplan erscheinen diese Vorschläge als „offene Punkte" beim betroffenen Tag/Position, mit Zähler/Badge (z. B. „3 offene Punkte").
+   - Pro offenem Punkt: „Bestätigen" (bei hinzufügen: konkrete Schichtzeit setzen; bei „offener Platz" zusätzlich Person wählen; bei streichen: Entfernen bestätigen) oder „Ablehnen/Verwerfen".
+   - Erst beim Bestätigen wird der echte Dienstplan-Eintrag erstellt bzw. entfernt.
+
+3. Rückkopplung: Nach Bestätigung rechnet die Bedarf-vs-Plan-Übersicht neu (Zelle bewegt sich Richtung grün). Offene, noch nicht bestätigte Vorschläge sind in der Analyse dezent markiert (z. B. „+1 vorgeschlagen"), zählen aber noch nicht als geplant.
+
+4. Sicherheit: Vorschläge verändern weder Ist-Stunden noch Kosten, bis sie im Dienstplan bestätigt sind. Alles verwerfbar. Herkunft eines Eintrags (aus Analyse-Vorschlag) wird vermerkt. Dynamische Regeln (Chef de Service, Kalt/Sushi) greifen nach der Bestätigung wie gewohnt.
+
+5. Mandanten: identisch für Oliv und Beaulieu, jeweils nur Daten/qualifizierte MA des aktiven Mandanten.
+
+Abnahme: In einer unterbesetzten Zelle (z. B. Kochen heiss Fr, Bedarf 5 / Plan 4) „+ Person einplanen" mit einem qualifizierten Koch → erscheint im Dienstplan als offener Punkt; nach Bestätigung mit Schichtzeit ist der Plan 5/5, die Analyse-Zelle wird grün. In einer überbesetzten Zelle „streichen" → offener Punkt „entfernen", nach Bestätigung Plan reduziert. Keine Änderung an Ist/Kosten vor Bestätigung.

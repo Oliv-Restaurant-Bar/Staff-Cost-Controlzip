@@ -16,6 +16,7 @@ import { Users, Clock, ClipboardCheck } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import type { WeekCompare } from '@/lib/staffing-week-compare';
+import type { SchedulePlanProposal } from '@/lib/schedule-proposal-store';
 
 const WEEKDAY_SHORT: Record<number, string> = {
   1: 'Mo', 2: 'Di', 3: 'Mi', 4: 'Do', 5: 'Fr', 6: 'Sa', 7: 'So',
@@ -120,14 +121,35 @@ export function WeekCompareTiles({ compare, weekLabel }: {
 
 // ── Wochenansicht A: Bedarf vs. Planung (Kopfzahl je Position) ───────────────
 
-export function WeekCompareMatrix({ compare, onSelectDate, onSelectCell }: {
+export function WeekCompareMatrix({ compare, onSelectDate, onSelectCell, openProposals }: {
   compare: WeekCompare;
   /** Klick auf eine Tagesspalte → Einzeltag-Detail. */
   onSelectDate?: (dateStr: string) => void;
   /** Klick auf eine Datenzelle (Position × Tag) → Zell-Detail-Pop-up. */
   onSelectCell?: (positionKey: string, dateStr: string) => void;
+  /** Offene Dienstplan-Vorschläge («+1 vorgeschlagen»-Marker; zählen NICHT als geplant). */
+  openProposals?: SchedulePlanProposal[];
 }) {
   if (!compare.hasAnyRequirement && !compare.hasAnyPlan) return null;
+  /** Dezenter Marker offener Vorschläge einer Zelle (+n / −n). */
+  const proposalMarker = (positionKey: string, dateStr: string) => {
+    const cellProps = (openProposals ?? []).filter(
+      (p) => p.positionKey === positionKey && p.date === dateStr && p.status === 'open');
+    if (cellProps.length === 0) return null;
+    const adds = cellProps.filter((p) => p.type === 'add').length;
+    const removes = cellProps.length - adds;
+    const label = [adds > 0 ? `+${adds}` : null, removes > 0 ? `−${removes}` : null]
+      .filter(Boolean).join(' ');
+    return (
+      <span
+        className="block text-[9px] leading-tight text-sky-600 dark:text-sky-400"
+        title={`${label} vorgeschlagen — im Dienstplan bestätigen (zählt noch nicht als geplant)`}
+        data-testid={`proposal-marker-${positionKey}-${dateStr}`}
+      >
+        {label} vorgeschlagen
+      </span>
+    );
+  };
   return (
     <Card data-testid="week-compare-matrix">
       <CardHeader className="pb-2 pt-4">
@@ -178,10 +200,12 @@ export function WeekCompareMatrix({ compare, onSelectDate, onSelectCell }: {
                             title={`${row.positionName}: Bedarf ${c.soll} · Plan ${c.planned} (${diffLabel(c.diff)}) — Detail öffnen`}
                           >
                             {c.soll} / <span className={cn('font-medium', headDiffClass(c.diff))}>{c.planned}</span>
+                            {proposalMarker(row.positionKey, d.dateStr)}
                           </button>
                         ) : (
                           <span title={`Bedarf ${c.soll} · Plan ${c.planned} (${diffLabel(c.diff)})`}>
                             {c.soll} / <span className={cn('font-medium', headDiffClass(c.diff))}>{c.planned}</span>
+                            {proposalMarker(row.positionKey, d.dateStr)}
                           </span>
                         )
                       ) : (

@@ -12,7 +12,7 @@
  * (Tabelle staffing_requirements). Diese Seite enthält BEWUSST KEINE
  * Besetzungs-Prüfung/Warnungen/Vorschläge/Budget — das ist ein späterer Schritt.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -59,6 +59,7 @@ import { de } from 'date-fns/locale';
 import { UgSurchargeDialog } from '@/components/schedule-planner/UgSurchargeDialog';
 import { PositionAssignmentDialog } from '@/components/schedule-planner/PositionAssignmentDialog';
 import { WeekCompareCellDialog } from '@/components/schedule-planner/WeekCompareCellDialog';
+import { fetchOpenProposals, type SchedulePlanProposal } from '@/lib/schedule-proposal-store';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
@@ -138,6 +139,9 @@ export default function Personalbedarf() {
   const [positionDialog, setPositionDialog] = useState<{ key: string; name: string } | null>(null);
   /** Zell-Detail «Bedarf vs. Planung» (Position × Tag, read-only). */
   const [cellDialog, setCellDialog] = useState<{ positionKey: string; dateStr: string } | null>(null);
+  /** Offene Dienstplan-Vorschläge (Marker in der Matrix + Zell-Pop-up-Aktionen). */
+  const [openProposals, setOpenProposals] = useState<SchedulePlanProposal[]>([]);
+  const [proposalsVersion, setProposalsVersion] = useState(0);
   /** Roh-Daten der gewählten Kalenderwoche (Dienstplan/Ist), read-only geladen. */
   const [weekData, setWeekData] = useState<{
     employees: Employee[];
@@ -232,6 +236,16 @@ export default function Personalbedarf() {
    * (buildWeekCompare → computeDayPlanHints/computeWeekCell) mit Dienstplan-
    * Live-Hinweis und Cockpit, damit sich die Ansichten nie widersprechen.
    */
+  // Offene Vorschläge laden (best-effort: Lesefehler → leere Marker, die
+  // Analyse selbst bleibt funktionsfähig; Anlegen meldet Fehler explizit).
+  useEffect(() => {
+    let cancelled = false;
+    fetchOpenProposals(tenantId)
+      .then((list) => { if (!cancelled) setOpenProposals(list); })
+      .catch(() => { if (!cancelled) setOpenProposals([]); });
+    return () => { cancelled = true; };
+  }, [tenantId, proposalsVersion]);
+
   const weekCompare = useMemo(() => {
     if (!weekData || !compareDates) return null;
     // Hinweis Monatsmodus: totals summieren korrekt über ALLE Tage; die
@@ -248,6 +262,38 @@ export default function Personalbedarf() {
       eventDays,
     });
   }, [weekData, compareDates, positions, requirements, profilesConfig, eventDays]);
+
+  /**
+   * Konfliktprüfung fürs Zell-Pop-up: Ist die Person am gewählten Tag bereits
+   * geplant (Position + Schichtzeit aus der Analyse) oder als Absenz (FE/K/U)
+   * eingetragen? Warnung, keine Sperre.
+   */
+  const conflictForCellDate = useCallback((employeeId: string): string | null => {
+    if (!cellDialog || !weekData) return null;
+    const dateStr = cellDialog.dateStr;
+    const emp = weekData.employees.find((e) => e.id === employeeId);
+    const name = emp?.name ?? employeeId;
+    const dayLabel = format(parseISO(dateStr), 'EEEE dd.MM.', { locale: de });
+    const entry = weekData.scheduleData[`${employeeId}-${dateStr}`];
+    const absence = entry?.frühAbsence || entry?.spätAbsence;
+    if (absence) return `${name} ist am ${dayLabel} als ${absence} eingetragen.`;
+    // Bereits produktiv geplant? Positionen + Zeiten aus derselben Berechnung
+    // wie die Matrix (weekCompare-Drilldown, alle Positionen des Tages).
+    const day = weekCompare?.days.find((d) => d.dateStr === dateStr);
+    const placements: string[] = [];
+    for (const pos of day?.hints.positions ?? []) {
+      const a = pos.assigned.find((x) => x.id === employeeId);
+      if (a) placements.push(`${pos.positionName}, ${a.slots.map((s) => `${s.start}–${s.end}`).join(', ')}`);
+    }
+    if (placements.length > 0) return `${name} ist am ${dayLabel} bereits geplant: ${placements.join(' · ')}.`;
+    // Fallback: Eintrag ohne Positions-Zuordnung (z.B. Zeiten ohne Matrix-Treffer).
+    if (entry?.früh || entry?.spät) {
+      const times = [entry.früh, entry.spät].filter(Boolean)
+        .map((s) => `${s!.start}–${s!.end}`).join(', ');
+      return `${name} ist am ${dayLabel} bereits geplant: ${times}.`;
+    }
+    return null;
+  }, [cellDialog, weekData, weekCompare]);
 
   /** Stunden-Stapel der Soll-Wochenmatrix (Plan/Ist je Wochentag) — nur im
    *  Wochenmodus (im Monatsmodus ist der Wochentag nicht eindeutig). */
@@ -863,6 +909,7 @@ export default function Personalbedarf() {
               compare={weekCompare}
               onSelectDate={setDetailDate}
               onSelectCell={(positionKey, dateStr) => setCellDialog({ positionKey, dateStr })}
+              openProposals={openProposals}
             />
           )}
 
@@ -950,6 +997,11 @@ export default function Personalbedarf() {
         }
         employees={weekData?.employees ?? []}
         dynamicRuleHint={cellDialog ? dynamicRuleHintFor(cellDialog.positionKey, profilesConfig) : null}
+        tenantId={tenantId}
+        readOnly={isGuest}
+        conflictFor={conflictForCellDate}
+        openProposals={openProposals}
+        onProposalsChanged={() => setProposalsVersion((v) => v + 1)}
       />
 
       {/* Positions-Pop-up: Mitarbeiter dieser Position ansehen/zuordnen/entfernen */}

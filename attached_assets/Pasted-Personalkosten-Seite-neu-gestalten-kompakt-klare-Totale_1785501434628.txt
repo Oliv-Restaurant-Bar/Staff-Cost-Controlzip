@@ -1,0 +1,29 @@
+Personalkosten-Seite neu gestalten — kompakt, klare Totale, Excel-Export (Oliv und Beaulieu)
+
+Ziel: Weniger Scrollen, Fix- und Flex-Lohnkosten visuell zusammenhängend, sofort sichtbare Totale, plus ein einfacher Excel-Export aller Lohnkosten.
+
+A. KENNZAHLEN-KOPF (sofort sichtbar, ohne Scrollen)
+1. Oben eine kompakte Zusammenfassung für den gewählten Monat: Total FIX (alle Abteilungen), Total FLEX (alle Mitarbeiter), Total Personalkosten (FIX + FLEX) und Personalquote (PKQ). Diese vier Zahlen stehen zuoberst, bevor die Detaillisten kommen.
+
+B. FIX-BLOCK
+2. Fix-Lohnkosten pro Abteilung (Service, Küche) mit je einem Abteilungs-Zwischentotal wie bisher.
+3. NEU: direkt darunter ein deutlich hervorgehobenes GEMEINSAMES Gesamttotal „Total FIX (alle Abteilungen)" (Summe Service + Küche über alle relevanten Spalten: Basis/Mt, inkl. 13./Mt, Total AG/Mt, Total AG/Jahr). Das gemeinsame Total muss auf einen Blick ersichtlich sein.
+
+C. FLEX-BLOCK
+4. Flex-Lohnkosten pro Mitarbeiter (Name, Abteilung, Total AG/h, Plan Std, Ist Std, Flex Plan, Flex Ist, Diff) mit Total FLEX.
+5. FIX- und FLEX-Block direkt untereinander, im GLEICHEN Tabellen-/Kartenstil und mit geringem Abstand — als zusammengehörige Einheit, nicht durch andere Blöcke getrennt.
+
+D. AUFRÄUMEN
+6. Sekundäre Inhalte (z. B. „Überstundenkosten Festangestellte", Hochrechnungs-Details, Monatsansicht-Zusatzinfos) einklappbar machen bzw. ans Ende verschieben, damit der Weg von FIX zu FLEX kurz ist und wenig dazwischenliegt. Standardmässig eingeklappt.
+
+E. EXCEL-EXPORT (einfach)
+7. Ein Button „Excel-Export" oben. Erzeugt eine einfache .xlsx für den gewählten Monat + Mandant mit:
+   - Übersicht: Total FIX, Total FLEX, Total Personalkosten, PKQ.
+   - Fix-Lohnkosten: pro Mitarbeiter (Name, Abteilung, Anstellung, Basis-Lohn/Mt, inkl. 13./Mt, Total AG/Mt, Total AG/Jahr), Zwischentotale Service/Küche und Gesamttotal FIX.
+   - Flex-Lohnkosten: pro Mitarbeiter (Name, Abteilung, Total AG/h, Plan Std, Ist Std, Flex Plan, Flex Ist, Diff) und Total FLEX.
+   - Dateiname mit Mandant + Monat (z. B. „Personalkosten_Oliv_2026-08.xlsx").
+
+F. UNVERÄNDERT
+8. Die zugrundeliegende Berechnung (Vertragsphasen FIX/FLEX, AG 15.7%, 13., pro rata) bleibt exakt gleich — nur Darstellung, Totale und Export. Gilt identisch für Oliv und Beaulieu.
+
+Abnahme: Kopf zeigt die vier Totale sofort; unter dem FIX-Block steht ein gemeinsames „Total FIX (alle Abteilungen)"; FIX und FLEX liegen direkt untereinander im gleichen Stil; Sekundärblöcke eingeklappt; der Excel-Export enthält beide Listen mit allen Totalen und öffnet sauber.
