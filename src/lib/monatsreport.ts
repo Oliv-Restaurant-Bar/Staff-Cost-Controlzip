@@ -588,6 +588,18 @@ export interface MrRow {
    */
   warnAbove?: number;
   /**
+   * true = Δ als PROZENTPUNKTE (Ist − Budget, z.B. PKQ 51.8 % − 35.5 % =
+   * +16.3 PP) statt relativer Abweichung. Nur für Quoten-Zeilen (fmt='pct');
+   * Färbung wie Kosten: über Ziel = rot.
+   */
+  deltaPp?: boolean;
+  /**
+   * true = Δ% gegen das VORJAHR statt gegen das Budget (Zeilen ohne Budget,
+   * z.B. Take Away Umsatz): Monat vs. vjMonth, Woche vs. vj (VJ-Woche).
+   * Färbung wie Umsatz (mehr = grün); deltaInverted wird respektiert.
+   */
+  deltaVsVj?: boolean;
+  /**
    * Begleit-«Personen»-Werte für fmt='countPax' (Anzeige «Anzahl (Σ Personen)»).
    * Pro Spalte parallel zu month/week/vjMonth; null = kein Zusatzwert.
    * Nur bei fmt='countPax' relevant, sonst undefined.
@@ -656,7 +668,30 @@ export function applyRowOrder(rows: MrRow[], savedIds: string[] | null | undefin
   //    Reihenfolge (Bedarf → Plan → Ist). Alte gespeicherte Reihenfolgen kennen
   //    'bedarf_stunden' noch nicht → die Zeile würde sonst doppelt wirken bzw.
   //    einzeln ans Tabellenende rutschen.
-  return glueStundenStack(ordered);
+  return anchorTakeAwayUmsatz(glueStundenStack(ordered), savedIds);
+}
+
+/**
+ * Verankert «Take Away Umsatz» bei den übrigen Take-Away-Zeilen, WENN die
+ * gespeicherte Reihenfolge die Zeile noch nicht kennt (sonst würde sie als
+ * «neue» Zeile ans Tabellenende angehängt). Ziel: direkt nach der LETZTEN der
+ * Zeilen «Take Away Anteil»/«Gäste Take Away». Kennt das Setting die Zeile
+ * (Nutzer hat sie bewusst platziert), bleibt die Nutzer-Position massgeblich.
+ */
+export function anchorTakeAwayUmsatz(rows: MrRow[], savedIds: string[] | null | undefined): MrRow[] {
+  if (savedIds?.includes('take_away_umsatz')) return rows;
+  const taIdx = rows.findIndex((r) => r.id === 'take_away_umsatz');
+  if (taIdx < 0) return rows;
+  const anchorIdx = Math.max(
+    rows.findIndex((r) => r.id === 'take_away_anteil'),
+    rows.findIndex((r) => r.id === 'gaeste_take_away'),
+  );
+  if (anchorIdx < 0) return rows;
+  const out = rows.slice();
+  const [ta] = out.splice(taIdx, 1);
+  const insertAt = taIdx < anchorIdx ? anchorIdx : anchorIdx + 1;
+  out.splice(insertAt, 0, ta);
+  return out;
 }
 
 /** IDs des Stunden-Stapels (feste Block-Reihenfolge Bedarf → Plan → Ist). */
@@ -1033,7 +1068,7 @@ export async function ladeMonatsreport(
       week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null;
       monthPax?: number | null; weekPax?: number | null; vjMonthPax?: number | null;
     },
-    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number } = {},
+    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean } = {},
   ): MrRow => ({
     type: 'data', id, label,
     budget: vals.budget ?? null, vj: vals.vj ?? null, vjMonth: vals.vjMonth ?? null,
@@ -1043,6 +1078,7 @@ export async function ladeMonatsreport(
     monthPax: vals.monthPax ?? null, weekPax: vals.weekPax ?? null, vjMonthPax: vals.vjMonthPax ?? null,
     fmt: opts.fmt ?? 'chf', bold: opts.bold,
     deltaInverted: opts.deltaInverted, warnAbove: opts.warnAbove,
+    deltaPp: opts.deltaPp, deltaVsVj: opts.deltaVsVj,
   });
 
   const mGrossV = N(mGross, mHatUmsatz);
@@ -1149,10 +1185,12 @@ export async function ladeMonatsreport(
     // Take Away Umsatz (CHF brutto): identische Quelle wie der TA-Anteil (dessen
     // Zähler = takeawayRevenue/takeAwayBrutto). Es gilt: Anteil = Umsatz ÷ Gesamt.
     // Woche = gewählte Woche, Monat = ganzer Monat; VJ wie beim TA-Anteil.
+    // Kein Budget vorhanden → Δ% gegen das Vorjahr (deltaVsVj), Farblogik wie
+    // die übrigen Umsatzkennzahlen (mehr = grün).
     d('take_away_umsatz', 'Take Away Umsatz', {
       month: taM, week: taW,
       vj: vwTaUmsatz, vjMonth: vjTaUmsatzM,
-    }),
+    }, { deltaVsVj: true }),
     e(),
     // ── Block Sparten (netto) — Gastronovi-Begriffe, Vorjahr in vj-Spalte ──
     d('food', 'Food', {
@@ -1207,16 +1245,20 @@ export async function ladeMonatsreport(
       // KEINE Verteilung auf Wochen → vj (Woche) bleibt leer.
       vj: null, vjMonth: pkVj ? r2(pkVj.chf) : null,
     }, { bold: true, deltaInverted: true }),
-    // PKQ: Budget = Ziel; rot über Obergrenze (Woche & Monat). Δ% n/a (Quote).
+    // PKQ: Budget = Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz, aus dem
+    // Kern budgetZielQuote) in BEIDEN Sichten; Δ = Ist − Ziel in PROZENTPUNKTEN
+    // (deltaPp, über Ziel = rot); zusätzlich rot über harter Obergrenze.
     d('personalquote', 'Personalquote (PKQ)', {
       budget: pk ? r2(budgetZielQuote(pk) * 100) : null,
+      weekBudget: pk ? r2(budgetZielQuote(pk) * 100) : null,
+      monthBudget: pk ? r2(budgetZielQuote(pk) * 100) : null,
       week: personal?.pkqWochePct ?? null,
       month: personal?.pkqMonatPct ?? null,
       // PKQ Vorjahr (nur Monat) = Buchhaltungs-Personalkosten ÷ Netto-Umsatz
       // desselben VJ-Monats (vj_daily, Standard-MwSt-Netto).
       vj: null,
       vjMonth: pkVj && vjNetV != null && vjNetV > 0 ? r2((pkVj.chf / vjNetV) * 100) : null,
-    }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT }),
+    }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT, deltaPp: true }),
   ];
 
   // Take-Away-Zeilen entfernen, wenn der Betrieb kein Take Away anbietet.

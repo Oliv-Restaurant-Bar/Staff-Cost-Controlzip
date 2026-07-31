@@ -32,7 +32,7 @@ import {
   TAKEAWAY_ROW_IDS,
   TAKEAWAY_OFFERED_KEY,
 } from '@/lib/takeaway-offered-settings';
-import { applyRowOrder, type MrRow } from '@/lib/monatsreport';
+import { applyRowOrder, anchorTakeAwayUmsatz, type MrRow } from '@/lib/monatsreport';
 
 describe('Take Away — Mandanten-Defaults', () => {
   it('oliv → Default ja (true)', () => {
@@ -133,5 +133,41 @@ describe('Take Away — Custom-Row-Order bricht nicht bei entfernten TA-IDs', ()
     const filtered = filterTakeAwayRows(mk(), true);
     const ordered = applyRowOrder(filtered, savedOrder);
     expect(ordered.map(r => r.id)).toEqual(savedOrder);
+  });
+});
+
+describe('Take Away Umsatz — Anker bei alten gespeicherten Reihenfolgen', () => {
+  const row = (id: string): MrRow => ({
+    type: 'data', id, label: id, month: 1, week: null, budget: null,
+    vj: null, vjMonth: null, weekBudget: null, monthBudget: null,
+  } as MrRow);
+
+  it('Order OHNE take_away_umsatz → Zeile rutscht NICHT ans Ende, sondern direkt hinter die letzte TA-Zeile', () => {
+    const rows = [
+      row('netto_umsatz'), row('take_away_anteil'), row('gaeste_take_away'),
+      row('durchschnittsverkauf'), row('take_away_umsatz'),
+    ];
+    // Altes Setting kennt take_away_umsatz noch nicht → applyRowOrder hängt es
+    // hinten an; der Anker zieht es zu den TA-Zeilen.
+    const saved = ['netto_umsatz', 'take_away_anteil', 'gaeste_take_away', 'durchschnittsverkauf'];
+    const out = applyRowOrder(rows, saved);
+    expect(out.map(r => r.id)).toEqual([
+      'netto_umsatz', 'take_away_anteil', 'gaeste_take_away', 'take_away_umsatz', 'durchschnittsverkauf',
+    ]);
+  });
+
+  it('Order MIT take_away_umsatz → Nutzer-Position bleibt massgeblich (kein Anker)', () => {
+    const rows = [
+      row('netto_umsatz'), row('take_away_anteil'), row('gaeste_take_away'), row('take_away_umsatz'),
+    ];
+    const saved = ['take_away_umsatz', 'netto_umsatz', 'take_away_anteil', 'gaeste_take_away'];
+    const out = applyRowOrder(rows, saved);
+    expect(out.map(r => r.id)).toEqual(saved);
+  });
+
+  it('anchorTakeAwayUmsatz: ohne TA-Ankerzeilen bleibt alles unverändert', () => {
+    const rows = [row('netto_umsatz'), row('take_away_umsatz')];
+    expect(anchorTakeAwayUmsatz(rows, null).map(r => r.id))
+      .toEqual(['netto_umsatz', 'take_away_umsatz']);
   });
 });

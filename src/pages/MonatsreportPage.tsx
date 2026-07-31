@@ -119,6 +119,12 @@ function fmtDev(v: number | null): string {
   return `${v >= 0 ? '+' : ''}${v.toFixed(1)} %`;
 }
 
+/** Δ in PROZENTPUNKTEN (Quoten-Zeilen, z.B. PKQ Ist − Ziel = +16.3 PP). */
+function fmtDevPp(v: number | null): string {
+  if (v === null) return '';
+  return `${v >= 0 ? '+' : ''}${v.toFixed(1)} PP`;
+}
+
 const fmtDate = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
 
 /** Granularität der Report-Tabelle. */
@@ -190,11 +196,27 @@ function ReportTable({
             const isFirst = dataIdx === 0;
             const isLast = dataIdx === dataCount - 1;
             const p = pick(row);
-            const dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
-              ? ((p.ist - p.devBudget) / p.devBudget) * 100 : null;
-            // Kosten-Zeilen (deltaInverted): über Budget = rot (Vorzeichen umgekehrt).
+            // Δ-Varianten:
+            //  - deltaPp:   Ist − Budget in PROZENTPUNKTEN (Quoten, z.B. PKQ);
+            //               über Ziel = rot (Kosten-Logik).
+            //  - deltaVsVj: Δ% gegen das Vorjahr (Zeilen ohne Budget, z.B.
+            //               Take Away Umsatz); Farblogik wie Umsatz.
+            //  - Standard:  Δ% gegen das Budget.
+            let dev: number | null = null;
+            let inverted = !!row.deltaInverted;
+            if (row.deltaPp) {
+              dev = p.ist !== null && p.devBudget !== null ? p.ist - p.devBudget : null;
+              inverted = true; // Quote über Ziel = rot
+            } else if (row.deltaVsVj) {
+              dev = p.ist !== null && p.vj !== null && p.vj > 0
+                ? ((p.ist - p.vj) / p.vj) * 100 : null;
+            } else {
+              dev = p.ist !== null && p.devBudget !== null && p.devBudget > 0
+                ? ((p.ist - p.devBudget) / p.devBudget) * 100 : null;
+            }
+            // Kosten-Zeilen (inverted): über Budget/Ziel = rot (Vorzeichen umgekehrt).
             const devClass = dev === null ? undefined
-              : (row.deltaInverted ? dev <= 0 : dev >= 0) ? 'text-emerald-600' : 'text-red-600';
+              : (inverted ? dev <= 0 : dev >= 0) ? 'text-emerald-600' : 'text-red-600';
             // Schwellen-Rot (warnAbove, z.B. PKQ > 40 %) für den Ist-Wert.
             const warnClass = row.warnAbove != null && p.ist !== null && p.ist > row.warnAbove
               ? 'text-red-600 font-semibold' : undefined;
@@ -225,7 +247,10 @@ function ReportTable({
                   </td>
                 ) : null}
                 <td className="px-3 py-1.5">{row.label}</td>
-                <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>{fmtDev(dev)}</td>
+                <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>
+                  {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
+                  {row.deltaVsVj && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
+                </td>
                 <td className={cn('px-3 py-1.5 text-right tabular-nums', warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
@@ -369,7 +394,8 @@ export default function MonatsreportPage() {
           + 'Δ% = Monat-Ist vs. Monatsbudget · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) '
           + 'als Quote über den Monat, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
           + 'Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote × Umsatzbudget-Monat), Δ% gegen Monatsbudget · '
-          + 'PKQ = Hochrechnung ÷ Hochrechnung, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'PKQ = Hochrechnung ÷ Hochrechnung, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'Take Away Umsatz: Δ% gegen das Vorjahr (kein Budget) · '
           + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
           + 'leere Felder = keine Datenquelle vorhanden (nie 0). Wochenwerte im Tab «Wochenübersicht».',
       };
@@ -384,7 +410,8 @@ export default function MonatsreportPage() {
           + 'Δ% = Woche-Ist vs. Budget-Woche · Verhältnis-Kennzahlen (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, '
           + 'Produktivität) als Quote über die Woche, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit beiden Quellen · '
           + 'Personalkosten = FIX pro-rata der Wochentage + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · '
-          + 'PKQ = Ist ÷ Ist, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'PKQ = Ist ÷ Ist, Budget = Ziel-PKQ, Δ in Prozentpunkten (über Ziel = rot), rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot · '
+          + 'Take Away Umsatz: Δ% gegen das Vorjahr (kein Budget) · '
           + 'Stunden-Block: Bedarf-Stunden (Soll) = Referenz; Dienstplan-/Ist-Stunden vergleichen sich gegen den BEDARF, nicht das Budget · '
           + 'leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».',
       };
@@ -513,8 +540,10 @@ export default function MonatsreportPage() {
               (Durchschnittsverkauf, Take-Away-Anteil, Umsatz pro Gast, Produktivität) werden als Quote
               über den Monat gebildet, nicht summiert · Umsatz pro Gast = Netto ÷ Gäste nur über Tage mit
               beiden Quellen · Personalkosten = HOCHRECHNUNG des Monats (Budget = Zielquote ×
-              Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, rot über
-              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · Personalkosten/PKQ
+              Umsatzbudget-Monat), Δ% gegen Monatsbudget · PKQ = Hochrechnung ÷ Hochrechnung, Budget =
+              Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz), Δ in PROZENTPUNKTEN (über Ziel = rot), rot über
+              Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) · Take Away Umsatz:
+              Δ% gegen das Vorjahr, da kein Budget vorhanden («vs. VJ») · Personalkosten/PKQ
               (Vorjahr) = schreibgeschützter Buchhaltungswert «aus Buchhaltung {year - 1}» (nur Jahre ohne
               Dienstplan-Berechnung, keine Wochen-Verteilung) · Bedarf-Stunden (Soll) = Leitplanke aus dem
               Personalbedarf; Dienstplan- und Ist-Stunden vergleichen sich gegen den BEDARF, nicht gegen das Budget (Δ% dazu, über Bedarf = rot) · leere Felder = keine
@@ -600,7 +629,8 @@ export default function MonatsreportPage() {
               Produktivität) werden als Quote über die Woche gebildet, nicht summiert · Umsatz pro Gast =
               Netto ÷ Gäste nur über Tage mit beiden Quellen · Personalkosten = FIX pro-rata der Wochentage
               + FLEX-Ist (Budget = Zielquote × Netto-Umsatz-Budget-Woche), Δ% gegen Budget-Woche · PKQ =
-              Ist ÷ Ist, rot über Obergrenze 40 %; bei Personalkosten ist «über Budget» rot (Kosten) ·
+              Ist ÷ Ist, Budget = Ziel-PKQ, Δ in PROZENTPUNKTEN (über Ziel = rot), rot über Obergrenze 40 %;
+              bei Personalkosten ist «über Budget» rot (Kosten) · Take Away Umsatz: Δ% gegen das Vorjahr («vs. VJ») ·
               leere Felder = keine Datenquelle vorhanden (nie 0). Monatswerte im Tab «Monatsübersicht».
             </p>
           </TabsContent>
