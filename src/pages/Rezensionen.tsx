@@ -287,6 +287,13 @@ export default function Rezensionen() {
                       className="rounded-lg border border-border/70 p-3 flex flex-wrap items-start gap-x-4 gap-y-1.5 text-sm"
                       data-testid={`review-row-${r.id}`}>
                       <span className="font-mono text-xs text-muted-foreground pt-0.5">{r.date}</span>
+                      {/* Altbestand aus der früheren Mehr-Plattform-Erfassung kennzeichnen */}
+                      {r.platform !== PLATFORM && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap"
+                          data-testid={`review-alt-badge-${r.id}`}>
+                          Alt · {r.platform}
+                        </span>
+                      )}
                       <span className="text-amber-500 font-semibold whitespace-nowrap" title={`${r.stars} von 5 Sternen`}>
                         {'★'.repeat(r.stars)}<span className="text-muted-foreground/40">{'★'.repeat(5 - r.stars)}</span>
                       </span>
