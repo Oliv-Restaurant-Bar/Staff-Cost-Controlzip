@@ -42,7 +42,7 @@ vi.mock('@/hooks/useStaffingProfiles', () => ({
       ],
       cdsPriority: [],
       revenueBudgetByWeekday: {},
-      ugSurcharge: { entries: [], weekdays: [5, 6] },
+      ugSurcharge: { enabled: true, entries: [], weekdays: [5, 6] },
     },
     loading: false,
     save: async () => {},

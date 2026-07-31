@@ -17,6 +17,7 @@ import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Trash2, AlertTriangle, Save, RotateCcw, Clock, Lock, Unlock, Coins,
+  ChevronLeft, ChevronRight, Settings2,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49,7 +50,12 @@ import type { DaySchedule, ActualHourEntry } from '@/lib/supabase-db';
 import { PastScheduleSuggestionCard } from '@/components/schedule-planner/PastScheduleSuggestionCard';
 import { StaffingWeekMatrix, type WeekHoursStack, type WeekCellMode } from '@/components/schedule-planner/StaffingWeekMatrix';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
-import { format, startOfWeek, addDays, parseISO, isValid, getISOWeek } from 'date-fns';
+import {
+  format, startOfWeek, addDays, parseISO, isValid, getISOWeek,
+  addMonths, startOfMonth, endOfMonth, eachDayOfInterval,
+} from 'date-fns';
+import { de } from 'date-fns/locale';
+import { UgSurchargeDialog } from '@/components/schedule-planner/UgSurchargeDialog';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
@@ -105,6 +111,10 @@ export default function Personalbedarf() {
   // eine KONKRETE Kalenderwoche (Default: aktuelle Woche, Montag).
   const [weekAnchor, setWeekAnchor] = useState<string>(() =>
     format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'));
+  /** Vergleichszeitraum der Kacheln: Woche (Default) oder ganzer Monat. */
+  const [periodMode, setPeriodMode] = useState<'week' | 'month'>('week');
+  /** Pop-up «UG konfigurieren». */
+  const [ugDialogOpen, setUgDialogOpen] = useState(false);
   /** Roh-Daten der gewählten Kalenderwoche (Dienstplan/Ist), read-only geladen. */
   const [weekData, setWeekData] = useState<{
     employees: Employee[];
@@ -139,11 +149,39 @@ export default function Personalbedarf() {
     return `KW ${getISOWeek(monday)} · ${format(monday, 'dd.MM.')}–${format(sunday, 'dd.MM.yyyy')}`;
   }, [weekDates]);
 
+  /** Alle Kalendertage des Anker-Monats (Vergleichsmodus «Monat»). */
+  const monthDates = useMemo(() => {
+    const anchor = parseISO(weekAnchor);
+    if (!isValid(anchor)) return null;
+    return eachDayOfInterval({ start: startOfMonth(anchor), end: endOfMonth(anchor) })
+      .map((d) => format(d, 'yyyy-MM-dd'));
+  }, [weekAnchor]);
+
+  /** Datumsliste des VERGLEICHSZEITRAUMS (Kacheln): Woche oder ganzer Monat. */
+  const compareDates = periodMode === 'week' ? weekDates : monthDates;
+
+  /** Anzeige-Label des Vergleichszeitraums. */
+  const periodLabel = useMemo(() => {
+    if (periodMode === 'week') return weekLabel;
+    const anchor = parseISO(weekAnchor);
+    return isValid(anchor) ? format(anchor, 'LLLL yyyy', { locale: de }) : null;
+  }, [periodMode, weekLabel, weekAnchor]);
+
+  /** Pfeile: eine Periode zurück/vor (Woche ±7 Tage, Monat ±1 Monat). */
+  const shiftPeriod = (dir: -1 | 1) => {
+    const anchor = parseISO(weekAnchor);
+    if (!isValid(anchor)) return;
+    const next = periodMode === 'week'
+      ? addDays(startOfWeek(anchor, { weekStartsOn: 1 }), dir * 7)
+      : startOfMonth(addMonths(anchor, dir));
+    setWeekAnchor(format(next, 'yyyy-MM-dd'));
+  };
+
   useEffect(() => {
     if (viewMode !== 'week') return;
-    if (!weekDates) { setWeekData(null); return; }
+    if (!compareDates) { setWeekData(null); return; }
     // Berührte Monate (Woche kann Monatsgrenze überschreiten).
-    const months = [...new Set(weekDates.map((d) => d.slice(0, 7)))]
+    const months = [...new Set(compareDates.map((d) => d.slice(0, 7)))]
       .map((ym) => parseISO(`${ym}-01`));
     let cancelled = false;
     (async () => {
@@ -164,7 +202,7 @@ export default function Personalbedarf() {
       }
     })();
     return () => { cancelled = true; };
-  }, [viewMode, weekDates, tenantId]);
+  }, [viewMode, compareDates, tenantId]);
 
   /**
    * Wochen-Abgleich «Bedarf vs. Planung vs. Ist» — EINE gemeinsame Berechnung
@@ -172,7 +210,10 @@ export default function Personalbedarf() {
    * Live-Hinweis und Cockpit, damit sich die Ansichten nie widersprechen.
    */
   const weekCompare = useMemo(() => {
-    if (!weekData || !weekDates) return null;
+    if (!weekData || !compareDates) return null;
+    // Hinweis Monatsmodus: totals summieren korrekt über ALLE Tage; die
+    // wochentags-keyed rows/days sind dann nicht eindeutig — deshalb werden
+    // Ansicht A/B und der Stunden-Stapel nur im Wochenmodus gerendert.
     return buildWeekCompare({
       positions,
       requirements,
@@ -180,14 +221,15 @@ export default function Personalbedarf() {
       employees: weekData.employees,
       scheduleData: weekData.scheduleData,
       actualHours: weekData.actualData,
-      dates: weekDates,
+      dates: compareDates,
       eventDays,
     });
-  }, [weekData, weekDates, positions, requirements, profilesConfig, eventDays]);
+  }, [weekData, compareDates, positions, requirements, profilesConfig, eventDays]);
 
-  /** Stunden-Stapel der Soll-Wochenmatrix (Plan/Ist je Wochentag). */
+  /** Stunden-Stapel der Soll-Wochenmatrix (Plan/Ist je Wochentag) — nur im
+   *  Wochenmodus (im Monatsmodus ist der Wochentag nicht eindeutig). */
   const hoursStack: WeekHoursStack | null = useMemo(() => {
-    if (!weekCompare || !weekLabel) return null;
+    if (periodMode !== 'week' || !weekCompare || !weekLabel) return null;
     const plan: Record<number, number | null> = {};
     const ist: Record<number, number | null> = {};
     for (const d of weekCompare.days) {
@@ -195,7 +237,7 @@ export default function Personalbedarf() {
       ist[d.weekday] = d.istHours;
     }
     return { weekLabel, plan, ist };
-  }, [weekCompare, weekLabel]);
+  }, [periodMode, weekCompare, weekLabel]);
 
   const activeProfile = profileByKey(profilesConfig, season);
   const locked = isProfileLocked(profilesConfig, season);
@@ -507,6 +549,18 @@ export default function Personalbedarf() {
           {!isGuest && (
             <Button
               size="sm"
+              variant="outline"
+              className="gap-1"
+              onClick={() => setUgDialogOpen(true)}
+              data-testid="button-ug-config"
+              title="UG-Zuschlag konfigurieren (Saison, Wochentage, Positionen)"
+            >
+              <Settings2 className="h-4 w-4" /> UG konfigurieren
+            </Button>
+          )}
+          {!isGuest && (
+            <Button
+              size="sm"
               variant={locked ? 'secondary' : 'outline'}
               className="gap-1"
               onClick={handleToggleLock}
@@ -575,11 +629,17 @@ export default function Personalbedarf() {
                   {positions.find((p) => p.key === e.positionKey)?.name ?? e.positionKey} +{e.count}
                 </Badge>
               ))}
-              <span className="text-muted-foreground">
-                · Regelbetrieb: {profilesConfig.ugSurcharge.weekdays
-                  .map((w) => WEEKDAYS.find((x) => x.value === w)?.label ?? w)
-                  .join(' + ')}
-              </span>
+              {profilesConfig.ugSurcharge.enabled === false ? (
+                <Badge variant="outline" className="border-amber-400 text-amber-700 dark:text-amber-400 text-[11px]">
+                  Automatik deaktiviert — Zuschlag nur bei «UG/Event offen»
+                </Badge>
+              ) : (
+                <span className="text-muted-foreground">
+                  · Regelbetrieb: {profilesConfig.ugSurcharge.weekdays
+                    .map((w) => WEEKDAYS.find((x) => x.value === w)?.label ?? w)
+                    .join(' + ')}
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-muted-foreground">
               Zusätzlich greift der Zuschlag GANZJÄHRIG an jedem Tag mit gesetztem
@@ -688,22 +748,51 @@ export default function Personalbedarf() {
       {/* Wochenübersicht (Standard-Ansicht) */}
       {!loading && viewMode === 'week' && hasActivePositions && (
         <>
-          {/* Kalenderwoche + Anzeige-Umschalter (Plan/Ist sind wochenspezifisch) */}
+          {/* Zeitraum-Navigation: Pfeile + Woche|Monat + Datum (Plan/Ist-Vergleich) */}
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-0.5">
               <Label className="text-[10px] text-muted-foreground">
-                Kalenderwoche (Dienstplan/Ist)
+                {periodMode === 'week' ? 'Kalenderwoche (Dienstplan/Ist)' : 'Monat (Dienstplan/Ist)'}
               </Label>
-              <Input
-                type="date"
-                value={weekAnchor}
-                onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
-                className="h-8 w-[10.5rem] text-sm"
-                data-testid="input-week-anchor"
-              />
+              <div className="flex items-center gap-1">
+                <Button type="button" size="icon" variant="outline" className="h-8 w-8"
+                  onClick={() => shiftPeriod(-1)} data-testid="period-prev"
+                  title={periodMode === 'week' ? 'Eine Woche zurück' : 'Einen Monat zurück'}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Input
+                  type="date"
+                  value={weekAnchor}
+                  onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
+                  className="h-8 w-[10.5rem] text-sm"
+                  data-testid="input-week-anchor"
+                />
+                <Button type="button" size="icon" variant="outline" className="h-8 w-8"
+                  onClick={() => shiftPeriod(1)} data-testid="period-next"
+                  title={periodMode === 'week' ? 'Eine Woche vor' : 'Einen Monat vor'}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
-            {weekLabel && (
-              <span className="text-[11px] text-muted-foreground pb-1.5">{weekLabel}</span>
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-[10px] text-muted-foreground">Vergleichszeitraum</Label>
+              <div className="flex gap-1">
+                <Button type="button" size="sm" className="h-8"
+                  variant={periodMode === 'week' ? 'default' : 'outline'}
+                  onClick={() => setPeriodMode('week')} data-testid="period-week">
+                  Woche
+                </Button>
+                <Button type="button" size="sm" className="h-8"
+                  variant={periodMode === 'month' ? 'default' : 'outline'}
+                  onClick={() => setPeriodMode('month')} data-testid="period-month">
+                  Monat
+                </Button>
+              </div>
+            </div>
+            {periodLabel && (
+              <span className="text-[11px] text-muted-foreground pb-1.5" data-testid="period-label">
+                {periodLabel}
+              </span>
             )}
             <div className="flex flex-col gap-0.5 ml-auto">
               <Label className="text-[10px] text-muted-foreground">Anzeige Soll-Matrix</Label>
@@ -722,9 +811,9 @@ export default function Personalbedarf() {
             </div>
           </div>
 
-          {/* Vergleichs-Kacheln der gewählten Kalenderwoche */}
+          {/* Vergleichs-Kacheln des gewählten Zeitraums (Woche oder Monat) */}
           {weekCompare && (
-            <WeekCompareTiles compare={weekCompare} weekLabel={weekLabel ?? undefined} />
+            <WeekCompareTiles compare={weekCompare} weekLabel={periodLabel ?? undefined} />
           )}
 
           <StaffingWeekMatrix
@@ -745,13 +834,14 @@ export default function Personalbedarf() {
             }}
           />
 
-          {/* Wochenansicht A: Bedarf vs. Planung (Kopfzahl je Position) */}
-          {weekCompare && (
+          {/* Wochenansicht A: Bedarf vs. Planung (Kopfzahl je Position) —
+              nur im Wochenmodus (im Monatsmodus sind Wochentags-Spalten mehrdeutig) */}
+          {periodMode === 'week' && weekCompare && (
             <WeekCompareMatrix compare={weekCompare} onSelectDate={setDetailDate} />
           )}
 
           {/* Wochenansicht B: Stunden Bedarf / Plan / Ist (Tagestotale) */}
-          {weekCompare && (
+          {periodMode === 'week' && weekCompare && (
             <WeekHoursTable compare={weekCompare} onSelectDate={setDetailDate} />
           )}
 
@@ -791,6 +881,35 @@ export default function Personalbedarf() {
           dateOverride={detailDate}
         />
       )}
+
+      {/* Pop-up «UG konfigurieren» */}
+      <UgSurchargeDialog
+        open={ugDialogOpen}
+        onOpenChange={setUgDialogOpen}
+        config={profilesConfig}
+        positions={positions}
+        onSave={async (next) => {
+          // Frisch laden und NUR die UG-relevanten Teile mergen — parallel
+          // geänderte Config-Teile (CdS-Priorität, Locks, Budget …) dürfen
+          // nicht mit dem Dialog-Snapshot überschrieben werden.
+          let base = profilesConfig;
+          try {
+            base = await loadStaffingProfilesConfig(tenantId);
+          } catch { /* best-effort: lokaler Stand */ }
+          const winterNext = next.profiles.find((p) => p.key === 'winter');
+          const merged = {
+            ...base,
+            ugSurcharge: next.ugSurcharge,
+            profiles: base.profiles.map((p) =>
+              p.key === 'winter' && winterNext
+                ? { ...p, activeFrom: winterNext.activeFrom, activeTo: winterNext.activeTo }
+                : p,
+            ),
+          };
+          await saveProfilesConfig(merged);
+          toast.success('UG-Zuschlag gespeichert — wirkt sofort auf den effektiven Bedarf.');
+        }}
+      />
 
       {/* Beaulieu: Ist-Aufstellung aus Juni/Juli als Standard-Vorschlag */}
       {!loading && tenantId === 'beaulieu' && <PastScheduleSuggestionCard />}

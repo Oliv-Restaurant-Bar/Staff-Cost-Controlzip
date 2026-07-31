@@ -44,6 +44,13 @@ export interface EffectiveWage {
   salary13:               boolean;
   source:                 'history' | 'fallback';
   validFrom?:             string;    // nur wenn source = 'history'
+  /**
+   * Lohntyp des Eintrags: 'hourly' = reine Stundenlohn-Phase (monthly_salary=0),
+   * 'monthly' = Monatslohn-Phase. Wichtig: eine 'hourly'-Phase muss einen
+   * allfälligen Monatslohn auf dem Employee-Stammsatz VERDRÄNGEN (auf 0 setzen),
+   * sonst zählt der MA in dieser Phase fälschlich als Fix-MA.
+   */
+  wageType:               'hourly' | 'monthly' | 'none';
 }
 
 export interface NewWageEntry {
@@ -134,6 +141,7 @@ export async function getEffectiveWage(
       salary13:               entry.salary13,
       source:                 'history',
       validFrom:              entry.validFrom,
+      wageType:               wageType(entry),
     };
   } catch {
     return null;
@@ -178,6 +186,7 @@ export async function getEffectiveWageBatch(
         salary13:              entry.salary13,
         source:                'history',
         validFrom:             entry.validFrom,
+        wageType:              wageType(entry),
       };
     }
 
@@ -215,7 +224,23 @@ export async function applyEffectiveWages(
     }
 
     // History-Wert anwenden
-    console.log(`[WAGE-HISTORY] employee: ${emp.id} | date: ${date} | selected wage: ${effective.hourlyWage || effective.monthlySalary} | source: history | valid_from: ${effective.validFrom}`);
+    console.log(`[WAGE-HISTORY] employee: ${emp.id} | date: ${date} | selected wage: ${effective.hourlyWage || effective.monthlySalary} | source: history | valid_from: ${effective.validFrom} | type: ${effective.wageType}`);
+
+    if (effective.wageType === 'hourly') {
+      // Reine Stundenlohn-Phase: Monatslohn des Stammsatzes VERDRÄNGEN (auf 0),
+      // sonst würde der MA in dieser Phase weiterhin als Fix-MA (Monatslohn)
+      // gerechnet (z.B. Wechsel Stundenlohn → Monatslohn per Stichtag: Monate
+      // VOR dem Stichtag müssen Stundenlohn rechnen).
+      return {
+        ...emp,
+        contractType:          'hourly',
+        hourlyWage:            effective.hourlyWage,
+        monthlySalary:         0,
+        monthlySalaryWith13th: 0,
+      };
+    }
+
+    // Monatslohn-Phase (oder leerer Eintrag → bestehende Werte als Fallback)
     return {
       ...emp,
       hourlyWage:            effective.hourlyWage            || emp.hourlyWage,

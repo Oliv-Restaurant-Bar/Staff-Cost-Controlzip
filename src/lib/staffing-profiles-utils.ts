@@ -51,6 +51,12 @@ export interface UgSurchargeEntry {
  * unabhängig vom Saisonprofil.
  */
 export interface UgSurcharge {
+  /**
+   * Automatik EIN/AUS: bei false greift der SAISONALE Zuschlag (Winter/UG ×
+   * weekdays) nicht; das Tages-Flag «UG/Event offen» wirkt WEITERHIN
+   * (einmalige Events bleiben unabhängig möglich). Default true.
+   */
+  enabled: boolean;
   entries: UgSurchargeEntry[];
   /** ISO-Wochentage (1=Mo…7=So), an denen der Zuschlag im Winter/UG-Profil greift. */
   weekdays: number[];
@@ -113,6 +119,7 @@ const BEAULIEU_CDS_PRIORITY = ['b-200', 'b-161', 'b-220'];
 
 /** UG-Zuschlag Oliv: Bar unten +1, Service +2; Winter-Regelbetrieb Fr+Sa. */
 const OLIV_UG_SURCHARGE: UgSurcharge = {
+  enabled: true,
   entries: [
     { positionKey: 'bar_unten', count: 1 },
     { positionKey: 'service', count: 2 },
@@ -146,8 +153,8 @@ export function defaultStaffingProfilesConfig(tenantId: string): StaffingProfile
       : tenantId === 'beaulieu' ? [...BEAULIEU_CDS_PRIORITY] : [],
     revenueBudgetByWeekday: isOliv ? { ...OLIV_REVENUE_BUDGET } : {},
     ugSurcharge: isOliv
-      ? { entries: OLIV_UG_SURCHARGE.entries.map((e) => ({ ...e })), weekdays: [...OLIV_UG_SURCHARGE.weekdays] }
-      : { entries: [], weekdays: [5, 6] },
+      ? { enabled: true, entries: OLIV_UG_SURCHARGE.entries.map((e) => ({ ...e })), weekdays: [...OLIV_UG_SURCHARGE.weekdays] }
+      : { enabled: true, entries: [], weekdays: [5, 6] },
     kitchenCold: isOliv
       ? { ...OLIV_KITCHEN_COLD, fallbackIds: [...OLIV_KITCHEN_COLD.fallbackIds], hotCookIds: [...OLIV_KITCHEN_COLD.hotCookIds] }
       : null,
@@ -200,7 +207,9 @@ function normSurcharge(raw: unknown, def: UgSurcharge): UgSurcharge {
   const weekdays = Array.isArray(r.weekdays)
     ? [...new Set(r.weekdays.filter((w): w is number => Number.isInteger(w) && (w as number) >= 1 && (w as number) <= 7))]
     : def.weekdays;
-  return { entries, weekdays };
+  // Alte Blobs ohne Feld → aktiviert (bisheriges Verhalten).
+  const enabled = r.enabled === false ? false : true;
+  return { enabled, entries, weekdays };
 }
 
 function normKitchenCold(raw: unknown, def: KitchenColdRule | null): KitchenColdRule | null {
@@ -331,7 +340,10 @@ export function ugSurchargeApplies(params: {
 }): boolean {
   const { config, season, weekday, eventOpen } = params;
   if (config.ugSurcharge.entries.length === 0) return false;
+  // Tages-Flag wirkt IMMER (auch bei deaktivierter Automatik) — einmalige Events.
   if (eventOpen) return true;
+  // Saisonale Automatik: nur wenn aktiviert (enabled !== false).
+  if (config.ugSurcharge.enabled === false) return false;
   return season === 'winter' && config.ugSurcharge.weekdays.includes(weekday);
 }
 

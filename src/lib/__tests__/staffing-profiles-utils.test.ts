@@ -128,6 +128,29 @@ describe('UG-Zuschlag', () => {
     expect(ugSurchargeApplies({ config: beaulieu, season: 'winter', weekday: 5, eventOpen: true })).toBe(false);
   });
 
+  it('enabled=false: saisonale Automatik aus, Tages-Flag wirkt weiterhin', () => {
+    const off = { ...config, ugSurcharge: { ...config.ugSurcharge, enabled: false } };
+    // Winter Fr — Automatik deaktiviert → kein Zuschlag
+    expect(ugSurchargeApplies({ config: off, season: 'winter', weekday: 5, eventOpen: false })).toBe(false);
+    // Tages-Flag «UG/Event offen» greift trotzdem (einmalige Events)
+    expect(ugSurchargeApplies({ config: off, season: 'winter', weekday: 5, eventOpen: true })).toBe(true);
+    expect(ugSurchargeApplies({ config: off, season: 'standard', weekday: 2, eventOpen: true })).toBe(true);
+  });
+
+  it('normalize: alte Blobs ohne enabled-Feld → aktiviert; enabled:false bleibt erhalten', () => {
+    const legacy = normalizeStaffingProfilesConfig(
+      { ugSurcharge: { entries: [{ positionKey: 'service', count: 2 }], weekdays: [5, 6] } },
+      'oliv',
+    );
+    expect(legacy.ugSurcharge.enabled).toBe(true);
+    const off = normalizeStaffingProfilesConfig(
+      { ugSurcharge: { enabled: false, entries: [{ positionKey: 'service', count: 2 }], weekdays: [5] } },
+      'oliv',
+    );
+    expect(off.ugSurcharge.enabled).toBe(false);
+    expect(off.ugSurcharge.weekdays).toEqual([5]);
+  });
+
   it('dataSeasonForProfile: winter → standard, standard/custom bleiben', () => {
     expect(dataSeasonForProfile(config, 'winter')).toBe('standard');
     expect(dataSeasonForProfile(config, 'standard')).toBe('standard');

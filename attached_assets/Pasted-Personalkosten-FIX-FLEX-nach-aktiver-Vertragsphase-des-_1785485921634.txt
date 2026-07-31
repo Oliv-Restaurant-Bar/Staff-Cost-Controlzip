@@ -1,0 +1,18 @@
+Personalkosten — FIX/FLEX nach aktiver Vertragsphase des Monats (Fallback-Bug beheben)
+
+Problem: Auf der Seite „Personal FIX + VARIABEL" (Personalkosten) wird ein Mitarbeiter nach dem Lohn aus der employees-Tabelle in FIX oder FLEX einsortiert. Dadurch landet Ibrahim Krasniqi im August 2026 fälschlich in „FLEX KOSTEN PRO MITARBEITER" (Plan 203.5 h → CHF 9'021), obwohl seine aktive Vertragsphase ab 01.08.2026 Monatslohn (CHF 5'700 + 13.) ist. Die Personalstamm-/Lohnhistorie ist bereits korrekt — nur die Personalkosten-Einordnung nicht.
+
+Bitte umsetzen (für Oliv und Beaulieu, generisch für alle Mitarbeiter, kein Hardcode auf Ibrahim):
+
+Single Source of Truth für die Lohnart im Monat: Die FIX/FLEX-Einordnung auf der Personalkosten-Seite muss denselben Phasen-Resolver benutzen wie der Personalstamm (die im angezeigten Monat aktive Vertragsphase → lohnart: Monatslohn = FIX, Stundenlohn = FLEX). Der Wert aus der employees-Tabelle (Basislohn) darf nur als Fallback verwendet werden, wenn für diesen Monat keine Lohnhistorie-Phase existiert.
+Voll-Monatslohn-Monat: Deckt eine Monatslohn-Phase den ganzen Monat ab, erscheint der Mitarbeiter ausschliesslich in „Personal FIX" mit den fixen Monatskosten (Basis-Lohn/Mt, inkl. 13., Total AG/Mt, Total AG/Jahr) und wird aus der Flex-Liste entfernt. Geplante/erfasste Stunden erzeugen bei einem Monatslöhner keine Flex-Kosten.
+Voll-Stundenlohn-Monat: Deckt eine Stundenlohn-Phase den ganzen Monat ab, erscheint der Mitarbeiter nur in FLEX (Plan/Ist × Total AG/h) — wie bisher.
+Monat mit Phasenwechsel (pro rata): Wechselt die Phase mitten im Monat, wird der Monat tageweise aufgeteilt: Fix-Tage anteilig in „Personal FIX", Flex-Tage anteilig in FLEX — jeweils mit sichtbarem Datumsbereich, ohne Doppelzählung der vollen Kosten.
+Überstunden Festangestellte: Die Plan-/Ist-Stunden eines Monatslöhners fliessen weiterhin in den Block „Überstundenkosten Festangestellte" (falls über Vertragssoll) — nicht in die Flex-Kosten.
+Vergangenheit unverändert: Keine bereits gespeicherten Monatskosten neu berechnen/überschreiben. Es geht nur um die Anzeige-/Aggregationslogik pro Anzeigemonat.
+
+Abnahme-Test (bitte konkret prüfen und Ergebnis melden):
+
+Ibrahim Krasniqi, August 2026 → erscheint in „Service — FIX" (Liste dann 8 MA), Kosten = Monatslohn (Basis 5'700 / inkl. 13. 6'175 / Total AG ~7'145/Mt), und nicht mehr in „FLEX KOSTEN PRO MITARBEITER". Flex-Liste danach 12 MA statt 13; Flex-Plan-Total um CHF 9'021 tiefer.
+Ibrahim Krasniqi, Mai / Juni / Juli 2026 → erscheint weiterhin in FLEX (Stundenlohn CHF 31.32/h), nicht in FIX.
+Kurz loggen, welche lohnart und welche Quelle (Phase vs. Fallback) der Resolver für Ibrahim in August bzw. Juli auflöst.
