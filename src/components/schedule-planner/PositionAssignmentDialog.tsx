@@ -12,6 +12,7 @@
  * unberührt. Mandantentrennung via loadEmployees(tenantId) (ID-Präfix).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -20,7 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Info, Loader2, Plus, Star, X } from 'lucide-react';
+import { Info, LayoutGrid, Loader2, Plus, Star, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { loadEmployees, updateEmployeeStations } from '@/lib/supabase-db';
 import type { Employee, EmploymentType } from '@/types/personnel';
@@ -58,6 +59,7 @@ export function PositionAssignmentDialog({
   /** Zweistufiges Entfernen: erste × klickt an, zweiter Klick bestätigt. */
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [addId, setAddId] = useState<string>('');
+  const navigate = useNavigate();
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -116,6 +118,31 @@ export function PositionAssignmentDialog({
     }
   };
 
+  /**
+   * Haupt-Stern setzen: genau EINE Hauptposition pro MA — die bisherige
+   * Hauptposition wird automatisch zur normalen Qualifikation zurückgestuft.
+   */
+  const handleSetPrimary = async (empId: string) => {
+    if (!positionKey) return;
+    setBusyId(empId);
+    try {
+      const fresh = await loadEmployees(tenantId);
+      const emp = fresh?.find((e) => e.id === empId);
+      if (!emp) { toast.error('Mitarbeiter nicht gefunden.'); return; }
+      if (emp.primaryStation === positionKey) return; // schon Haupt
+      const sec = emp.secondaryStations ?? [];
+      let nextSec = sec.filter((k) => k !== positionKey);
+      if (emp.primaryStation && !nextSec.includes(emp.primaryStation)) nextSec = [...nextSec, emp.primaryStation];
+      const patch = { primaryStation: positionKey, secondaryStations: nextSec };
+      const res = await updateEmployeeStations(empId, patch, tenantId);
+      if (!res.ok) { toast.error(`Speichern fehlgeschlagen: ${res.error}`); return; }
+      toast.success(`${emp.name}: «${positionName}» ist jetzt Hauptposition.`);
+      if (fresh) setEmployees(fresh.map((e) => (e.id === empId ? { ...e, ...patch } : e)));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   /** Zuordnen: Position als zusätzliche Qualifikation (secondaryStations) eintragen. */
   const handleAdd = async () => {
     if (!positionKey || !addId) return;
@@ -164,6 +191,9 @@ export function PositionAssignmentDialog({
           </div>
         ) : (
           <>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Qualifiziert ({assigned.length})
+            </h4>
             <div className="space-y-1 max-h-[45vh] overflow-y-auto pr-1" data-testid="position-assigned-list">
               {assigned.length === 0 && (
                 <p className="text-sm text-muted-foreground italic py-2">
@@ -177,11 +207,22 @@ export function PositionAssignmentDialog({
                   data-testid={`position-emp-${e.id}`}
                 >
                   <span className="font-medium truncate">{e.name}</span>
-                  {e.primaryStation === positionKey && (
+                  {e.primaryStation === positionKey ? (
                     <Badge variant="secondary" className="gap-0.5 text-[10px] shrink-0" title="Hauptposition">
-                      <Star className="h-2.5 w-2.5" /> Haupt
+                      <Star className="h-2.5 w-2.5 fill-amber-400 text-amber-500" /> Haupt
                     </Badge>
-                  )}
+                  ) : (!readOnly && (
+                    <Button
+                      size="icon" variant="ghost"
+                      className="h-6 w-6 shrink-0 text-muted-foreground/50 hover:text-amber-500"
+                      title={`«${positionName}» als Hauptposition von ${e.name} setzen (bisherige wird zurückgestuft)`}
+                      disabled={busyId != null}
+                      onClick={() => handleSetPrimary(e.id)}
+                      data-testid={`set-primary-${e.id}`}
+                    >
+                      {busyId === e.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Star className="h-3.5 w-3.5" />}
+                    </Button>
+                  ))}
                   <span className="text-xs text-muted-foreground truncate">
                     {DEPT_LABEL[e.department] ?? e.department} · {TYPE_LABEL[e.employmentType] ?? e.employmentType}
                   </span>
@@ -216,7 +257,12 @@ export function PositionAssignmentDialog({
             </div>
 
             {!readOnly && (
-              <div className="flex items-center gap-2 pt-1 border-t mt-1">
+              <h4 className="pt-1 border-t mt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Mitarbeiter hinzufügen
+              </h4>
+            )}
+            {!readOnly && (
+              <div className="flex items-center gap-2">
                 <Select value={addId} onValueChange={setAddId}>
                   <SelectTrigger className="h-8 text-sm flex-1" data-testid="add-emp-select">
                     <SelectValue placeholder="Mitarbeiter zuordnen…" />
@@ -241,6 +287,14 @@ export function PositionAssignmentDialog({
                 </Button>
               </div>
             )}
+
+            <Button
+              variant="outline" size="sm" className="gap-1.5 w-full mt-1"
+              onClick={() => { onOpenChange(false); navigate('/positionen'); }}
+              data-testid="open-position-matrix"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" /> Alle Positionen verwalten
+            </Button>
           </>
         )}
       </DialogContent>
