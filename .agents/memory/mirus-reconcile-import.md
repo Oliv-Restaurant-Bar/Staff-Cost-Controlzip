@@ -31,3 +31,9 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Mehrblock-Mitarbeiter: parseEmployeeRows summiert am Ende pro (name lowercase, Tag) — nie überschreiben.
 - Harte Stopps: Spaltenzahl ≠ Titel-Zeitraum (Ende−Start+1) → failureReason; Wochentags-Gegenprobe bleibt Pflicht. Keine permissiven Fallbacks einführen.
 - Mandanten-Check: detectCostCenter + COST_CENTER_TENANTS {3027→oliv, 3012→beaulieu} (Zuordnung NUR über Nummer, robust gegen «AG»); Button stoppt bei Mismatch VOR jedem Schreiben; fehlender/unbekannter Kostenträger blockt nicht.
+
+## Offene Stunden (Parken)
+- Store `mirus-open-hours-store.ts`: app_settings-Blob `mirus_open_hours:<tenant>`, Laden→Mergen→Upsert (best-effort, nicht atomar); Status open/resolved/discarded statt Löschen (keine Tombstones). fetchParkedEntries WIRFT bei Lesefehler.
+- Parken schreibt NIE Ist; Write-Gate bleibt: keine MA-Anlage aus Import/Offene-Stunden-UI, nur Link auf Personalstamm.
+- Auto-Auflösung nach Re-Import nur bei Tagesabdeckung (jeder geparkte Tag ±0.05h im Import), sonst offen lassen — Teil-Importe dürfen nichts still verstecken.
+- Manuelle Zuweisung (OpenHoursSection): volle Pipeline (Plan/Backup/Writes), Ziel-MA für den Plan als MIRUS behandeln (sonst skippt die Engine); resolved NUR wenn keine Muster-Zelle mit fileHours>0 auf 'keep' steht, sonst bleibt Eintrag offen.

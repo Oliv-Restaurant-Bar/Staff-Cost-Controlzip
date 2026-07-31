@@ -52,6 +52,9 @@ import {
   fetchRemoteAliases, saveRemoteAliases, mergeAliasesIntoLocal,
 } from '@/lib/mirus-name-mapping-store';
 import {
+  parkEntries, fetchOpenParkedEntries, resolveParkedByImport, ParkInput,
+} from '@/lib/mirus-open-hours-store';
+import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import {
@@ -110,6 +113,8 @@ export interface MirusImportReport {
   unmatchedNames: string[];
   /** Zeilen ausserhalb des Monats (ignoriert) */
   outOfScopeRows: Array<{ name: string; date: string; hours: number }>;
+  /** Als «Offene Stunden» geparkte Namen (nicht in Ist geschrieben) */
+  parkedNames?: string[];
 }
 
 const reportStorageKey = (month: string) => `mirus-import-report-${month}`;
@@ -228,6 +233,12 @@ export function MirusReconcileImportButton({
   const [matchDialogOpen, setMatchDialogOpen] = useState(false);
   const [nameMatches, setNameMatches] = useState<NameMatchInfo[]>([]);
   const [unmatchedNames, setUnmatchedNames] = useState<string[]>([]);
+  /** In diesem Durchlauf als «Offene Stunden» geparkte Namen. */
+  const [parkedNames, setParkedNames] = useState<string[]>([]);
+  /** Zugeordnete Datei-Namen → Mitarbeiter + Tageswerte (für Auto-Auflösung geparkter Einträge mit Abdeckungs-Check). */
+  const [matchedPairs, setMatchedPairs] = useState<Array<{ importedName: string; employeeId: string; days: Record<string, number> }>>([]);
+  /** Offene geparkte Einträge des Monats (Sichtbarkeit in der Abdeckung). */
+  const [openParkedCount, setOpenParkedCount] = useState(0);
 
   const [plan, setPlan] = useState<MirusReconcilePlan | null>(null);
   /** MA ohne gespeicherte Erfassungsart, die in der Datei stehen → würden mit Bestätigung neu als MIRUS klassiert. */
@@ -257,6 +268,11 @@ export function MirusReconcileImportButton({
     loadLatestDienstplanIstBackup(tenantId, monthKey)
       .then(b => { if (alive) setHasBackup(!!b); })
       .catch(() => { if (alive) setHasBackup(false); });
+    // Offene geparkte Einträge des Monats — Abdeckung gilt für diese
+    // Personen/Tage noch nicht als vollständig (Spec 5).
+    fetchOpenParkedEntries(tenantId)
+      .then(list => { if (alive) setOpenParkedCount(list.filter(e => e.month === monthKey).length); })
+      .catch(() => { /* Anzeige best-effort */ });
     return () => { alive = false; };
   }, [tenantId, monthKey, report]);
 
@@ -356,7 +372,7 @@ export function MirusReconcileImportButton({
     dates: string[],
   ) => {
     saveNameMappingsBatch(
-      overrides.filter(o => o.selectedEmployeeId !== 'new')
+      overrides.filter(o => o.selectedEmployeeId !== 'new' && o.selectedEmployeeId !== 'park')
         .map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId || 'skip' })),
     );
     // Manuell zugeordnete (vorher nicht automatisch erkannte) Namen zusätzlich
@@ -376,6 +392,44 @@ export function MirusReconcileImportButton({
     }
     const skippedNames = overrides.filter(o => o.selectedEmployeeId === 'skip' || o.selectedEmployeeId === 'new').map(o => o.importedName);
     setUnmatchedNames(skippedNames);
+    // Tageswerte je zugeordnetem Namen (nur Scope-Tage, summiert) — Basis für
+    // den Abdeckungs-Check der Auto-Auflösung geparkter Einträge.
+    const scopeDateSet = new Set(dates);
+    const daysByName = new Map<string, Record<string, number>>();
+    for (const e of entries) {
+      if (!nameToEmp.has(e.name) || !scopeDateSet.has(e.date)) continue;
+      const d = daysByName.get(e.name) ?? {};
+      d[e.date] = Math.round(((d[e.date] ?? 0) + e.hours) * 100) / 100;
+      daysByName.set(e.name, d);
+    }
+    setMatchedPairs([...nameToEmp.entries()].map(([importedName, emp]) => ({
+      importedName, employeeId: emp.id, days: daysByName.get(importedName) ?? {},
+    })));
+
+    // «Als offene Stunden parken»: Tageswerte je Name sammeln und persistent
+    // ablegen — schreibt NICHTS in die Ist-Werte (Spec: Parken statt verwerfen).
+    const parkNames = overrides.filter(o => o.selectedEmployeeId === 'park').map(o => o.importedName);
+    setParkedNames(parkNames);
+    if (parkNames.length > 0) {
+      const parkSet = new Set(parkNames);
+      const dateSet = new Set(dates);
+      const byName = new Map<string, ParkInput>();
+      for (const e of entries) {
+        if (!parkSet.has(e.name) || !dateSet.has(e.date)) continue;
+        const cur = byName.get(e.name) ?? {
+          name: e.name, department: e.department, month, days: {}, sourceFile: fileName,
+        };
+        cur.days[e.date] = Math.round(((cur.days[e.date] ?? 0) + e.hours) * 100) / 100;
+        byName.set(e.name, cur);
+      }
+      parkEntries(tenantId, [...byName.values()])
+        .then(added => {
+          setOpenParkedCount(c => c + added);
+          if (added > 0) toast.success(`${added} Eintrag/Einträge als «Offene Stunden» geparkt — später im Import-Center zuweisen.`);
+          else toast.info('Bereits geparkt (gleiche Quelle und Monat) — kein Duplikat angelegt.');
+        })
+        .catch(err => toast.error(`Parken fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`));
+    }
 
     const resolved: MirusResolvedEntry[] = [];
     for (const e of entries) {
@@ -405,6 +459,14 @@ export function MirusReconcileImportButton({
           absence: canonicalAbsence(ds.frühAbsence) ?? canonicalAbsence(ds.spätAbsence),
         };
       }
+    }
+
+    // Wurden ALLE Namen geparkt/übersprungen, gibt es nichts abzugleichen —
+    // keine leere Vorschau öffnen, es wird nichts geschrieben.
+    if (resolved.length === 0) {
+      setMatchDialogOpen(false);
+      if (parkNames.length === 0) toast.info('Keine zugeordneten Namen — es wurde nichts geschrieben.');
+      return;
     }
 
     const p = buildMirusReconcilePlan({
@@ -511,6 +573,14 @@ export function MirusReconcileImportButton({
       for (const [id, ok] of results) if (ok) persisted[id] = updates[id];
       if (Object.keys(persisted).length > 0) onErfassungsartPersisted?.(persisted);
 
+      // 3b) Re-Import-Dedupe: offene geparkte Einträge dieses Monats, deren
+      // Name jetzt zugeordnet wurde, als aufgelöst markieren (keine Doppelzählung).
+      const autoResolved = await resolveParkedByImport(tenantId, plan.month, matchedPairs);
+      if (autoResolved > 0) {
+        setOpenParkedCount(c => Math.max(0, c - autoResolved));
+        toast.info(`${autoResolved} geparkter Eintrag/Einträge («Offene Stunden») durch diesen Import aufgelöst.`);
+      }
+
       // 4) Report bauen: pro MA Tages-Detail (Plan/Ist/Entscheidung) + Totale
       const after = expectedAfterTotals(plan);
       const manuellCount = employees.filter(e => (e.erfassungsart ?? persisted[e.id]) === 'MANUELL').length;
@@ -551,6 +621,7 @@ export function MirusReconcileImportButton({
         manualUntouchedCount: manuellCount,
         unmatchedNames,
         outOfScopeRows: plan.skippedOutOfScope.map(r => ({ name: r.employeeName, date: r.date, hours: r.hours })),
+        parkedNames,
       };
       try { localStorage.setItem(tenantKey(reportStorageKey(plan.month)), JSON.stringify(rep)); } catch { /* voll */ }
       setReport(rep);
@@ -654,6 +725,11 @@ export function MirusReconcileImportButton({
         Ist-Abdeckung: {coverage.covered}/{coverage.total} Tage
         {coverage.missingDates.length > 0 && ` — es fehlen ${formatDayRanges(coverage.missingDates)}`}
       </span>
+      {openParkedCount > 0 && (
+        <span className="text-xs text-sky-700" data-testid="text-open-parked" title="Geparkte MIRUS-Stunden ohne Mitarbeiter-Zuordnung — im Import-Center unter «Offene Stunden» zuweisen. Die Abdeckung gilt für diese Personen noch nicht als vollständig.">
+          {openParkedCount} offene(r) geparkte(r) Eintrag/Einträge (nicht zugeordnet)
+        </span>
+      )}
 
       {/* Namens-Zuordnung für offene Namen */}
       <ImportMatchPreviewDialog
@@ -663,6 +739,7 @@ export function MirusReconcileImportButton({
         existingEmployees={employees}
         onConfirm={(ov) => buildPlanFromMatches(ov, parsedEntries, scopeMonth, scopeDates)}
         onCancel={() => { setMatchDialogOpen(false); setParsedEntries([]); }}
+        allowPark
       />
 
       {/* Vorschau nach Mustern gruppiert — erst «Import bestätigen» schreibt */}
@@ -709,12 +786,17 @@ export function MirusReconcileImportButton({
                 </Alert>
               )}
 
-              {(unmatchedNames.length > 0 || plan.skippedOutOfScope.length > 0) && (
+              {(unmatchedNames.length > 0 || parkedNames.length > 0 || plan.skippedOutOfScope.length > 0) && (
                 <Alert>
                   <AlertTriangle className="h-4 w-4" />
                   <AlertDescription className="space-y-1">
                     {unmatchedNames.length > 0 && (
                       <div>Ohne Zuordnung (werden übersprungen): {unmatchedNames.join(', ')}</div>
+                    )}
+                    {parkedNames.length > 0 && (
+                      <div data-testid="text-parked-names">
+                        Als «Offene Stunden» geparkt (nicht in Ist geschrieben): {parkedNames.join(', ')} — später im Import-Center zuweisen.
+                      </div>
                     )}
                     {plan.skippedOutOfScope.length > 0 && (
                       <div data-testid="text-out-of-scope">
@@ -965,6 +1047,9 @@ export function MirusReconcileImportButton({
                   <AlertDescription className="space-y-1">
                     {report.unmatchedNames?.length > 0 && (
                       <div>Nicht zugeordnet (übersprungen): {report.unmatchedNames.join(', ')}</div>
+                    )}
+                    {(report.parkedNames?.length ?? 0) > 0 && (
+                      <div>Nicht zugeordnet (geparkt als «Offene Stunden»): {report.parkedNames!.join(', ')} — die Abdeckung gilt für diese Personen noch nicht als vollständig.</div>
                     )}
                     {report.outOfScopeRows?.length > 0 && (
                       <div>

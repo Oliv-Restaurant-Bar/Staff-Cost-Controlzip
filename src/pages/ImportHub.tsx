@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
+import { OpenHoursSection, useOpenParkedCount } from '@/components/import-center/OpenHoursSection';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useTenant } from '@/contexts/TenantContext';
@@ -1892,6 +1893,29 @@ const AnnualCostImportSection = () => {
 
 // ─── Ist-Stunden Import ───────────────────────────────────────────────────────
 
+/**
+ * «Offene Stunden» — geparkte MIRUS-Einträge ohne Mitarbeiter-Zuordnung.
+ * Badge zeigt die Anzahl offener Einträge, damit sie nicht vergessen gehen.
+ */
+const OpenHoursSectionCard = () => {
+  const openCount = useOpenParkedCount();
+  return (
+    <Section
+      id="offene-stunden"
+      title="Offene Stunden"
+      subtitle="Geparkte MIRUS-Stunden ohne Mitarbeiter-Zuordnung — hier nachträglich zuweisen"
+      icon={<Clock className="h-4 w-4" />}
+      color="border-sky-400 dark:border-sky-600"
+      badge={openCount > 0 ? `${openCount} offene Einträge` : 'keine offenen'}
+      badgeColor={openCount > 0
+        ? 'border-sky-300 text-sky-700 bg-sky-50 dark:bg-sky-950/20'
+        : 'border-slate-300 text-slate-600 bg-slate-50 dark:bg-slate-950/20'}
+    >
+      <OpenHoursSection />
+    </Section>
+  );
+};
+
 const IstStundenSection = () => {
   const { tenantId, tenantKey } = useTenant();
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -3383,6 +3407,9 @@ const ImportHub = () => {
         >
           <IstStundenSection />
         </Section>
+
+        {/* ── 3b. Offene Stunden (geparkte MIRUS-Einträge) ──────────────── */}
+        <OpenHoursSectionCard />
 
         {/* ── 4. Ist Kosten Buchhaltung ──────────────────────────────────── */}
         <Section

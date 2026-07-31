@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Check, UserPlus, Link2, AlertTriangle, RefreshCw, X, Ban, Sparkles, Save, History, Zap, Lightbulb } from 'lucide-react';
+import { Check, UserPlus, Link2, AlertTriangle, RefreshCw, X, Ban, Sparkles, Save, History, Zap, Lightbulb, Inbox } from 'lucide-react';
 import { Employee } from '@/types/personnel';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
@@ -30,7 +30,7 @@ export interface NameMatchInfo {
 
 export interface NameMatchOverride {
   importedName: string;
-  selectedEmployeeId: string | 'new' | 'skip';
+  selectedEmployeeId: string | 'new' | 'skip' | 'park';
 }
 
 interface ImportMatchPreviewDialogProps {
@@ -40,6 +40,8 @@ interface ImportMatchPreviewDialogProps {
   existingEmployees: Employee[];
   onConfirm: (overrides: NameMatchOverride[]) => void;
   onCancel: () => void;
+  /** Option «Als offene Stunden parken» anbieten (nur MIRUS-Reconcile-Import). */
+  allowPark?: boolean;
 }
 
 export function ImportMatchPreviewDialog({
@@ -48,7 +50,8 @@ export function ImportMatchPreviewDialog({
   nameMatches,
   existingEmployees,
   onConfirm,
-  onCancel
+  onCancel,
+  allowPark = false,
 }: ImportMatchPreviewDialogProps) {
   // Track manual overrides
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -193,7 +196,8 @@ export function ImportMatchPreviewDialog({
   const currentOverrides = Object.entries(overrides);
   const skippedCount = currentOverrides.filter(([_, v]) => v === 'skip').length;
   const newCount = currentOverrides.filter(([_, v]) => v === 'new').length;
-  const matchedCount = currentOverrides.filter(([_, v]) => v !== 'skip' && v !== 'new').length;
+  const parkedCount = currentOverrides.filter(([_, v]) => v === 'park').length;
+  const matchedCount = currentOverrides.filter(([_, v]) => v !== 'skip' && v !== 'new' && v !== 'park').length;
 
   // Check how many new employees are using saved suggestions
   const usingSavedCount = newEmployees.filter(m => {
@@ -295,8 +299,9 @@ export function ImportMatchPreviewDialog({
     const currentValue = overrides[match.importedName] || (match.matchedEmployee?.id || 'new');
     const isOverridden = match.matchedEmployee && currentValue !== match.matchedEmployee.id;
     const isSkipped = currentValue === 'skip';
-    const isAssignedToExisting = currentValue !== 'skip' && currentValue !== 'new';
-    const isResolved = isSkipped || isAssignedToExisting;
+    const isParked = currentValue === 'park';
+    const isAssignedToExisting = currentValue !== 'skip' && currentValue !== 'new' && currentValue !== 'park';
+    const isResolved = isSkipped || isParked || isAssignedToExisting;
     
     // Get suggestions for this name
     const suggestionData = suggestionsMap[match.importedName];
@@ -382,6 +387,14 @@ export function ImportMatchPreviewDialog({
                   Neu erstellen
                 </span>
               </SelectItem>
+              {allowPark && (
+                <SelectItem value="park" className="text-sky-700">
+                  <span className="flex items-center gap-2">
+                    <Inbox className="h-3 w-3" />
+                    Als offene Stunden parken (später zuweisen)
+                  </span>
+                </SelectItem>
+              )}
               
               {/* Saved suggestion */}
               {savedSuggestion && (
@@ -563,6 +576,17 @@ export function ImportMatchPreviewDialog({
               <div className="text-xs text-muted-foreground">Übersprungen</div>
             </div>
           </div>
+
+          {allowPark && parkedCount > 0 && (
+            <Alert className="border-sky-300 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
+              <Inbox className="h-4 w-4 text-sky-700" />
+              <AlertDescription className="text-sm">
+                <span className="font-medium">{parkedCount} Name(n) werden als «Offene Stunden» geparkt.</span>{' '}
+                Die Stunden gehen nicht verloren, werden aber NICHT in die Ist-Werte geschrieben —
+                sie lassen sich später im Import-Center unter «Offene Stunden» einem Mitarbeiter zuweisen.
+              </AlertDescription>
+            </Alert>
+          )}
 
           <p className="text-xs text-muted-foreground">
             Klicke auf den Dropdown um die Zuordnung anzupassen. Manuelle Zuordnungen werden für zukünftige Imports gespeichert.
