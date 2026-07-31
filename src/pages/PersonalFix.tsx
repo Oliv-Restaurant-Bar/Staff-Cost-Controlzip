@@ -98,6 +98,7 @@ import {
   buildPkqBruecke, buildKumulierterVerlauf,
 } from '@/lib/personalkosten-darstellung';
 import { PkHeadline } from '@/components/personalkosten/PkHeadline';
+import { exportPersonalkostenExcel } from '@/lib/personalkosten-excel-export';
 import { PkKostenentstehung } from '@/components/personalkosten/PkKostenentstehung';
 import { PkVerlaufChart } from '@/components/personalkosten/PkVerlaufChart';
 
@@ -4197,6 +4198,50 @@ export default function PersonalFixPage() {
 
   // ── PDF-Export ────────────────────────────────────────────────────────────
 
+  // ── Excel-Export (einfach): Übersicht + Fix- + Flex-Lohnkosten ───────────
+  // Nur Darstellung: alle Zahlen kommen aus den bestehenden Tabellen (byDept,
+  // pfixPerEmp) bzw. der SSOT (pkZentral) — keine neue Berechnung.
+  const handleExportExcel = async () => {
+    try {
+      const fixRows = Object.entries(byDept).flatMap(([dept, rows]) =>
+        rows.map(({ emp, cost, yearlyCost }) => ({
+          department: DEPT_LABEL[dept] ?? dept,
+          name: emp.name,
+          anstellung: EMP_TYPE_LABEL[emp.employmentType] ?? emp.employmentType,
+          basisMt: emp.monthlySalary ?? 0,
+          inkl13Mt: emp.monthlySalaryWith13th ?? 0,
+          agMt: cost,
+          agJahr: yearlyCost,
+        })));
+      const flexRows = pfixPerEmp.map((r) => ({
+        name: r.name,
+        department: DEPT_LABEL[r.dept] ?? r.dept,
+        agProStunde: r.hourlyWage,
+        planStd: r.planH,
+        istStd: r.istH,
+        flexPlan: r.planWork,
+        flexIst: r.istWork,
+        diff: r.diffWork,
+      }));
+      const tenantLabel = tenantId === 'beaulieu' ? 'Beaulieu' : 'Oliv';
+      await exportPersonalkostenExcel({
+        tenantLabel,
+        monthKey: `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`,
+        monthLabel: getMonthLabel(selectedYear, selectedMonth),
+        totalFix: pkZentral?.kHr.fix ?? totalFixCost,
+        totalFlex: pkZentral?.kHr.flex ?? 0,
+        totalPersonalkosten: pkZentral?.kHr.total ?? totalFixCost,
+        pkqProzent: pkZentral?.pkq.pkqHochrechnung != null ? pkZentral.pkq.pkqHochrechnung * 100 : null,
+        fixRows,
+        flexRows,
+      });
+      toast.success('Excel-Export erstellt.');
+    } catch (e) {
+      console.error('[PFIX] Excel-Export fehlgeschlagen:', e);
+      toast.error('Excel-Export fehlgeschlagen.');
+    }
+  };
+
   const handleExportPDF = () => {
     try {
       const varRowsByDept: Record<string, Array<{ emp: Employee; hours: number; monthlyCost: number; hourlyWage: number }>> = {};
@@ -4414,6 +4459,7 @@ export default function PersonalFixPage() {
           <UnifiedExportButton
             data-testid="pfix-export"
             actions={[
+              { key: 'excel', label: 'Excel-Export (Personalkosten)', kind: 'excel', onSelect: handleExportExcel },
               { key: 'pdf', label: 'Personal FIX (PDF)', kind: 'pdf', onSelect: handleExportPDF },
             ]}
           />
@@ -4442,6 +4488,28 @@ export default function PersonalFixPage() {
           data-testid="pfix-total-summary"
           className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3"
         >
+          {/* ── Kompakte Top-Totale: FIX · FLEX · Total · PKQ (SSOT pkZentral,
+                 Hochrechnung — keine neue Rechnung) ─────────────────────────── */}
+          {pkZentral && (
+            <div data-testid="pk-top-totals" className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {([
+                { key: 'fix',   label: 'Total FIX',            value: fmtCHF(pkZentral.kHr.fix),   sub: 'alle Abteilungen',    cls: 'text-blue-700 dark:text-blue-300' },
+                { key: 'flex',  label: 'Total FLEX',           value: fmtCHF(pkZentral.kHr.flex),  sub: 'alle Mitarbeiter',    cls: 'text-orange-700 dark:text-orange-400' },
+                { key: 'total', label: 'Total Personalkosten', value: fmtCHF(pkZentral.kHr.total), sub: 'FIX + FLEX',          cls: 'text-foreground' },
+                { key: 'pkq',   label: 'PKQ',
+                  value: pkZentral.pkq.pkqHochrechnung != null ? `${(pkZentral.pkq.pkqHochrechnung * 100).toFixed(1)} %` : '—',
+                  sub: `Ziel ${(pkZentral.zielQuote * 100).toFixed(1)} %`,
+                  cls: pkZentral.pkq.pkqHochrechnung != null && pkZentral.pkq.pkqHochrechnung > pkZentral.zielQuote
+                    ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400' },
+              ] as const).map((t) => (
+                <div key={t.key} className="rounded-lg border border-border bg-muted/20 px-3 py-2" data-testid={`pk-top-total-${t.key}`}>
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">{t.label}</p>
+                  <p className={cn('font-mono font-bold text-base leading-tight tabular-nums', t.cls)}>{t.value}</p>
+                  <p className="text-[10px] text-muted-foreground">{t.sub}</p>
+                </div>
+              ))}
+            </div>
+          )}
           {/* ── Etappe 4: Schlagzeile + 4 Kacheln + Ist-Zeile (SSOT: personalkosten.ts) ── */}
           {pkZentral && pkDaten ? (
             <PkHeadline
@@ -4622,6 +4690,155 @@ export default function PersonalFixPage() {
         </div>
           </MoreKpis>
         </section>
+
+        {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
+        {Object.entries(byDept).map(([dept, rows]) => {
+          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
+          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const isCollapsed = expandedFixDepts.has(dept);
+          const toggleDept  = () => setExpandedFixDepts(prev => {
+            const next = new Set(prev);
+            if (next.has(dept)) next.delete(dept); else next.add(dept);
+            return next;
+          });
+          return (
+            <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <button
+                onClick={toggleDept}
+                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
+                aria-expanded={!isCollapsed}
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  {DEPT_ICON[dept]}
+                  {DEPT_LABEL[dept] ?? dept} — FIX
+                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
+                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
+                </div>
+                <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
+                  <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
+                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
+                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
+                </div>
+              </button>
+
+              {!isCollapsed && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[540px]">
+                  <thead>
+                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
+                      <th className="text-left px-4 py-2 font-medium">Name</th>
+                      <th className="text-left px-4 py-2 font-medium">Anstellung</th>
+                      <th className="text-right px-4 py-2 font-medium">Basis-Lohn/Mt</th>
+                      <th className="text-right px-4 py-2 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">inkl. 13. /Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="text-right px-4 py-2 font-medium">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
+                        </Tooltip>
+                      </th>
+                      <th className="text-right px-4 py-2 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {rows.map(({ emp, cost, label, yearlyCost }) => {
+                      const isSavingThis = saving === emp.id;
+                      const isProRata = label !== null;
+                      return (
+                        <tr
+                          key={emp.id}
+                          className={cn('hover:bg-muted/30 transition-colors', isSavingThis && 'opacity-50')}
+                        >
+                          <td className="px-4 py-2.5 font-medium">
+                            <div className="flex items-center gap-2">
+                              {emp.name}
+                              {isProRata && (
+                                <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
+                                  {label}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {canEditEmployees ? (
+                              <InlineSalaryEditor empId={emp.id} field="monthlySalary" value={emp.monthlySalary} onSaved={handleSaved} />
+                            ) : (
+                              <span className="font-mono text-sm">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right">
+                            {canEditEmployees ? (
+                              <InlineSalaryEditor empId={emp.id} field="monthlySalaryWith13th" value={emp.monthlySalaryWith13th} onSaved={handleSaved} />
+                            ) : (
+                              <span className="font-mono text-sm">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
+                            {cost > 0
+                              ? <span>{fmtCHF(cost)}{isProRata && <span className="text-xs font-normal text-amber-600 ml-1">*</span>}</span>
+                              : <span className="text-muted-foreground">–</span>}
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
+                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/20 font-semibold border-t-2 border-border">
+                      <td className="px-4 py-2.5 text-sm" colSpan={2}>Total {DEPT_LABEL[dept] ?? dept}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{fmtCHF(deptBase)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">
+                        {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
+                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              )}
+            </section>
+          );
+        })}
+
+        {/* ── Gesamttotal FIX (alle Abteilungen) — Summe Service + Küche ──── */}
+        {Object.keys(byDept).length > 0 && (() => {
+          const all   = Object.values(byDept).flat();
+          const tBase = all.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const t13   = all.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0);
+          const tMt   = all.reduce((s, r) => s + r.cost, 0);
+          const tJahr = all.reduce((s, r) => s + r.yearlyCost, 0);
+          return (
+            <div
+              data-testid="pfix-fix-total-all"
+              className="rounded-xl border-2 border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-2 text-sm font-bold text-blue-900 dark:text-blue-100">
+                <DollarSign className="h-4 w-4 text-blue-600" />
+                Total FIX (alle Abteilungen)
+              </div>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+                <span className="text-muted-foreground">Basis/Mt <strong className="font-mono text-foreground">{fmtCHF(tBase)}</strong></span>
+                <span className="text-muted-foreground">inkl. 13./Mt <strong className="font-mono text-foreground">{fmtCHF(t13)}</strong></span>
+                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}/Mt <strong className="font-mono text-blue-700 dark:text-blue-300 text-sm">{fmtCHF(tMt)}</strong></span>
+                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr <strong className="font-mono text-foreground">{fmtCHF(tJahr)}</strong></span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ── C: Flex Kosten pro Mitarbeiter ─────────────────────────────── */}
         {pfixPerEmp.length > 0 && (
@@ -4815,128 +5032,6 @@ export default function PersonalFixPage() {
           </div>
         </div>
 
-        {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
-        {Object.entries(byDept).map(([dept, rows]) => {
-          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
-          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
-          const isCollapsed = expandedFixDepts.has(dept);
-          const toggleDept  = () => setExpandedFixDepts(prev => {
-            const next = new Set(prev);
-            if (next.has(dept)) next.delete(dept); else next.add(dept);
-            return next;
-          });
-          return (
-            <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-              <button
-                onClick={toggleDept}
-                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-                aria-expanded={!isCollapsed}
-              >
-                <div className="flex items-center gap-2 text-sm font-semibold">
-                  {DEPT_ICON[dept]}
-                  {DEPT_LABEL[dept] ?? dept} — FIX
-                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
-                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
-                </div>
-                <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
-                  <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
-                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
-                </div>
-              </button>
-
-              {!isCollapsed && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[540px]">
-                  <thead>
-                    <tr className="text-xs text-muted-foreground border-b border-border bg-muted/10">
-                      <th className="text-left px-4 py-2 font-medium">Name</th>
-                      <th className="text-left px-4 py-2 font-medium">Anstellung</th>
-                      <th className="text-right px-4 py-2 font-medium">Basis-Lohn/Mt</th>
-                      <th className="text-right px-4 py-2 font-medium">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help underline decoration-dotted">inkl. 13. /Mt</span>
-                          </TooltipTrigger>
-                          <TooltipContent>Monatslohn amortisiert inkl. 13. Monatslohn</TooltipContent>
-                        </Tooltip>
-                      </th>
-                      <th className="text-right px-4 py-2 font-medium">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="cursor-help underline decoration-dotted">{EMPLOYER_COST_LABELS_SHORT.total}/Mt</span>
-                          </TooltipTrigger>
-                          <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
-                        </Tooltip>
-                      </th>
-                      <th className="text-right px-4 py-2 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {rows.map(({ emp, cost, label, yearlyCost }) => {
-                      const isSavingThis = saving === emp.id;
-                      const isProRata = label !== null;
-                      return (
-                        <tr
-                          key={emp.id}
-                          className={cn('hover:bg-muted/30 transition-colors', isSavingThis && 'opacity-50')}
-                        >
-                          <td className="px-4 py-2.5 font-medium">
-                            <div className="flex items-center gap-2">
-                              {emp.name}
-                              {isProRata && (
-                                <span className="text-xs font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
-                                  {label}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <Badge variant="outline" className="text-xs">{EMP_TYPE_LABEL[emp.employmentType]}</Badge>
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {canEditEmployees ? (
-                              <InlineSalaryEditor empId={emp.id} field="monthlySalary" value={emp.monthlySalary} onSaved={handleSaved} />
-                            ) : (
-                              <span className="font-mono text-sm">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-right">
-                            {canEditEmployees ? (
-                              <InlineSalaryEditor empId={emp.id} field="monthlySalaryWith13th" value={emp.monthlySalaryWith13th} onSaved={handleSaved} />
-                            ) : (
-                              <span className="font-mono text-sm">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
-                            {cost > 0
-                              ? <span>{fmtCHF(cost)}{isProRata && <span className="text-xs font-normal text-amber-600 ml-1">*</span>}</span>
-                              : <span className="text-muted-foreground">–</span>}
-                          </td>
-                          <td className="px-4 py-2.5 text-right font-mono text-muted-foreground text-sm">
-                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/20 font-semibold border-t-2 border-border">
-                      <td className="px-4 py-2.5 text-sm" colSpan={2}>Total {DEPT_LABEL[dept] ?? dept}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">{fmtCHF(deptBase)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono">
-                        {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-              )}
-            </section>
-          );
-        })}
 
         {/* ── Ferienabbau Drill-down ──────────────────────────────────────── */}
         {(ferienIstTotalCHF > 0 || ferienPlanTotalCHF > 0) && (
