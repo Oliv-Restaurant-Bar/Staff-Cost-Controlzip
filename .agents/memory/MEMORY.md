@@ -70,4 +70,5 @@
 - [Stunden-Stapel Bedarf→Plan→Ist](bedarf-stunden-stapel.md) — Cockpit prod_stunden_* + Wochenmatrix nur via bedarf-stunden-utils (ArG, ohne Absenzen, null nie 0); personalkosten.ts nur noch Kosten-SSOT.
 - [Monats-Phasenresolver FIX/FLEX](month-wage-resolver.md) — Lohnart je Monat via wage-history-Phase (Monatserster), Split-Monate pro rata mit Pseudo-id `::flexsplit`; nie Stammsatz-contractType für Monatslogik.
 - [Dienstplan-Vorschläge («offene Punkte»)](schedule-proposals.md) — Vorschlag→Bestätigung; Konflikt-Recheck bei Bestätigung Pflicht; Entfernen löscht ganzen Tag → Stale-Schutz nötig.
+- [Import-Center Undo-Protokoll](import-center-undo.md) — Snapshot VOR dem Schreiben, nur neuester Lauf undo-bar; JEDER Undo-Pfad (auch MIRUS-Sonderweg) braucht den Stale-Check gegen das Remote-Protokoll.
 - [Supabase Edge Deploy via Management API](supabase-mgmt-api-deploy.md) — PAT frisch anfordern bei 401; Deploy per multipart /functions/deploy, verify_jwt in metadata (config.toml nur CLI); Ref aus .env.

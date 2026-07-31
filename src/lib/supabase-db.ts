@@ -2893,6 +2893,17 @@ export async function loadLatestDienstplanIstBackup(
   return (data && data[0]) ? (data[0] as DienstplanIstBackup) : null;
 }
 
+/** Backup per ID laden (Import-Center-Undo referenziert das Backup des Laufs). */
+export async function loadDienstplanIstBackupById(id: string): Promise<DienstplanIstBackup | null> {
+  const { data, error } = await dienstplanIstBackupTable()
+    .select('*').eq('id', id).maybeSingle();
+  if (error) {
+    console.error('[supabase-db] loadDienstplanIstBackupById:', error.message);
+    return null;
+  }
+  return (data as DienstplanIstBackup | null) ?? null;
+}
+
 /** Verbrauchtes Backup nach erfolgreichem Undo entfernen. */
 export async function deleteDienstplanIstBackup(id: string): Promise<void> {
   const { error } = await dienstplanIstBackupTable().delete().eq('id', id);

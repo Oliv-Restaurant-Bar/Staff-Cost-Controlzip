@@ -34,6 +34,8 @@ export interface ParkedHoursEntry {
   sourceFile: string;
   importedAt: string; // ISO
   status: ParkedHoursStatus;
+  /** Import-Lauf, der diesen Eintrag erzeugt hat (für «Import rückgängig»). */
+  runId?: string;
   resolvedAt?: string;
   resolvedEmployeeId?: string;
   resolvedNote?: string;
@@ -92,6 +94,8 @@ export interface ParkInput {
   month: string;
   days: Record<string, number>;
   sourceFile: string;
+  /** Import-Lauf-ID (verknüpft Parken mit «Import rückgängig»). */
+  runId?: string;
 }
 
 /**
@@ -123,6 +127,7 @@ export async function parkEntries(tenantId: string, inputs: ParkInput[]): Promis
       sourceFile: inp.sourceFile,
       importedAt: new Date().toISOString(),
       status: 'open',
+      ...(inp.runId ? { runId: inp.runId } : {}),
     });
     added++;
   }
@@ -151,6 +156,25 @@ export async function markParkedResolved(
 
 export async function discardParkedEntry(tenantId: string, id: string): Promise<void> {
   await setStatus(tenantId, id, 'discarded');
+}
+
+/**
+ * Alle noch OFFENEN Einträge eines Import-Laufs verwerfen («Import rückgängig»,
+ * Spec: keine Reste hängen lassen). Bereits zugewiesene (resolved) Einträge
+ * bleiben unangetastet — deren Stunden wurden separat geschrieben.
+ * Status-Markierung statt Löschen (tombstone-frei, siehe Kopfkommentar).
+ */
+export async function discardParkedByRun(tenantId: string, runId: string): Promise<number> {
+  const current = await fetchParkedEntries(tenantId);
+  const now = new Date().toISOString();
+  let changed = 0;
+  const next = current.map(e => {
+    if (e.status !== 'open' || e.runId !== runId) return e;
+    changed++;
+    return { ...e, status: 'discarded' as const, resolvedAt: now, resolvedNote: 'Import rückgängig gemacht' };
+  });
+  if (changed > 0) await persist(tenantId, next);
+  return changed;
 }
 
 /** Toleranz beim Tageswert-Vergleich für die Auto-Auflösung (Rundung). */

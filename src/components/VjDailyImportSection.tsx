@@ -34,8 +34,11 @@ import {
   upsertVjDailyBatch,
   countVjDailyYear,
   loadVjDailyYear,
+  vjDailyKey,
   type VjDayRecord,
 } from '@/lib/vj-daily-supabase';
+import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
+import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
@@ -272,6 +275,7 @@ export function VjDailyImportSection() {
   const [saving,  setSaving]  = useState(false);
   const [saved,   setSaved]   = useState(false);
   const [preview, setPreview] = useState<VjPreview | null>(null);
+  const [fileName, setFileName] = useState('');
   const [error,   setError]   = useState<string | null>(null);
   const [existingCount, setExistingCount]   = useState<number | null>(null);
   const [lockState,     setLockState]       = useState<PriorYearLockState>({ locked: false });
@@ -301,6 +305,7 @@ export function VjDailyImportSection() {
     setPreview(null);
     setError(null);
     setSaved(false);
+    setFileName(file.name);
     const yearFromName = file.name.match(/20(\d{2})/)?.[0];
     const detectedYear = yearFromName ? parseInt(yearFromName) : year;
     if (yearFromName) setYear(detectedYear);
@@ -337,11 +342,39 @@ export function VjDailyImportSection() {
         ...(entry.beverage != null ? { beverageRevenue: entry.beverage } : {}),
       }));
 
+      // Undo-Snapshot VOR dem Schreiben: bisheriger Stand aller betroffenen
+      // vj_daily-Keys (null = Tag existierte nicht → beim Undo löschen).
+      let snapshotItems: KvKeyItem[] | null = null;
+      try {
+        const prior = await loadVjDailyYear(preview.year, tid);
+        snapshotItems = records.map(r => ({
+          key: vjDailyKey(r.date, tid),
+          value: (prior[r.date] as unknown) ?? null,
+        }));
+      } catch (err) {
+        console.warn('[PRIOR-YEAR] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+      }
+
       const { upserted, error: supaErr } = await upsertVjDailyBatch(records, tid);
 
       if (supaErr) {
         toast.error('Supabase-Fehler: ' + supaErr);
         return;
+      }
+
+      // Import-Protokoll (Import-Center «Letzter Import» + Rückgängig) — best-effort.
+      try {
+        await recordImportRun(tid, {
+          source: 'vj-tagesumsatz',
+          periodLabel: `Jahr ${preview.year}`,
+          itemCount: records.length,
+          itemLabel: 'Tage',
+          fileName: fileName || undefined,
+          ...(snapshotItems ? { snapshot: { kind: 'kv-keys', items: snapshotItems } } : {}),
+        });
+      } catch (err) {
+        console.error('[PRIOR-YEAR] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
       }
 
       // Seed-Flags zurücksetzen (verhindert alten Seed-Daten das Überschreiben)
@@ -481,6 +514,12 @@ export function VjDailyImportSection() {
 
   return (
     <div className="space-y-4">
+
+      {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
+      <LastImportPanel
+        source="vj-tagesumsatz"
+        undoHint="Zurückgesetzt werden die vj_daily-Tageswerte dieses Jahres. Bereits in die Erfolgsrechnung übernommene Monate (Übernahme-Schritt) sind davon nicht betroffen."
+      />
 
       {/* Lock-Status ─────────────────────────────────────────────────────────── */}
       {lockState.locked ? (

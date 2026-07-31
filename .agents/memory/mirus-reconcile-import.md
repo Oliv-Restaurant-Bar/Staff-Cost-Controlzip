@@ -37,3 +37,9 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Parken schreibt NIE Ist; Write-Gate bleibt: keine MA-Anlage aus Import/Offene-Stunden-UI, nur Link auf Personalstamm.
 - Auto-Auflösung nach Re-Import nur bei Tagesabdeckung (jeder geparkte Tag ±0.05h im Import), sonst offen lassen — Teil-Importe dürfen nichts still verstecken.
 - Manuelle Zuweisung (OpenHoursSection): volle Pipeline (Plan/Backup/Writes), Ziel-MA für den Plan als MIRUS behandeln (sonst skippt die Engine); resolved NUR wenn keine Muster-Zelle mit fileHours>0 auf 'keep' steht, sonst bleibt Eintrag offen.
+
+## Parken statt «Neu erstellen» (Juli 2026)
+- Im MIRUS-Matching-Dialog (allowPark) ist der Default für unbekannte Namen 'park'; 'create' («Neuen Mitarbeiter anlegen») parkt EBENFALLS und verweist nur per Toast auf den Personalstamm — nie Ghost-Datensätze (Write-Gate).
+- Sentinel-Werte 'park'/'create' dürfen NIE als Mitarbeiter-ID interpretiert oder als Alias/Name-Mapping gespeichert werden — alle Filter (saveNameMappingsBatch, manualAliases, nameToEmp, Dialog-handleConfirm) müssen sie ausschliessen.
+- Erfolgsmeldung via buildMirusSuccessMessage (pure): zugeordnet/geparkt/übersprungen getrennt, «Summe im Importumfang (Monat)» ohne out-of-scope; out-of-scope-Stunden separat ausweisen.
+- Altlast bereinigt: Legacy-Pfad hatte Juli-2026-Beaulieu-Stunden unter UUID-employee_ids ohne employees-Datensatz in actual_hours hinterlassen (unauffindbar); solche Ghost-Stunden gehören nach mirus_open_hours:<tenant> (Tageswerte!) und die actual_hours-Zeilen gelöscht. Service-Role hat KEINEN Zugriff auf employees/app_settings (REVOKE) — Diagnose/Fix via Management-API-SQL.

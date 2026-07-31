@@ -41,6 +41,7 @@ import {
   ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { buildMirusSuccessMessage } from '@/lib/mirus-success-message';
 import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 
@@ -53,7 +54,9 @@ import {
 } from '@/lib/mirus-name-mapping-store';
 import {
   parkEntries, fetchOpenParkedEntries, resolveParkedByImport, ParkInput,
+  discardParkedByRun,
 } from '@/lib/mirus-open-hours-store';
+import { recordImportRun, markMirusRunUndoneByBackup } from '@/lib/import-undo-store';
 import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
@@ -235,6 +238,12 @@ export function MirusReconcileImportButton({
   const [unmatchedNames, setUnmatchedNames] = useState<string[]>([]);
   /** In diesem Durchlauf als «Offene Stunden» geparkte Namen. */
   const [parkedNames, setParkedNames] = useState<string[]>([]);
+  /** Summen für die ehrliche Erfolgsmeldung (geparkt/übersprungen, in h). */
+  const [parkedHours, setParkedHours] = useState(0);
+  // Lauf-ID des aktuellen Imports: verknüpft geparkte Einträge mit dem
+  // Import-Protokoll (Import-Center «Letzten Import rückgängig machen»).
+  const [pendingRunId, setPendingRunId] = useState('');
+  const [skippedHours, setSkippedHours] = useState(0);
   /** Zugeordnete Datei-Namen → Mitarbeiter + Tageswerte (für Auto-Auflösung geparkter Einträge mit Abdeckungs-Check). */
   const [matchedPairs, setMatchedPairs] = useState<Array<{ importedName: string; employeeId: string; days: Record<string, number> }>>([]);
   /** Offene geparkte Einträge des Monats (Sichtbarkeit in der Abdeckung). */
@@ -372,7 +381,7 @@ export function MirusReconcileImportButton({
     dates: string[],
   ) => {
     saveNameMappingsBatch(
-      overrides.filter(o => o.selectedEmployeeId !== 'new' && o.selectedEmployeeId !== 'park')
+      overrides.filter(o => o.selectedEmployeeId !== 'new' && o.selectedEmployeeId !== 'park' && o.selectedEmployeeId !== 'create')
         .map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId || 'skip' })),
     );
     // Manuell zugeordnete (vorher nicht automatisch erkannte) Namen zusätzlich
@@ -380,18 +389,27 @@ export function MirusReconcileImportButton({
     // Datei-String trifft dann bei künftigen Importen direkt (best-effort).
     const manualAliases = overrides.filter(o =>
       o.selectedEmployeeId && o.selectedEmployeeId !== 'skip' && o.selectedEmployeeId !== 'new'
+      && o.selectedEmployeeId !== 'park' && o.selectedEmployeeId !== 'create'
       && nameMatches.some(m => m.importedName === o.importedName && m.isNew),
     ).map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId }));
     void saveRemoteAliases(tenantId, manualAliases);
     const nameToEmp = new Map<string, Employee>();
     for (const o of overrides) {
-      if (o.selectedEmployeeId && o.selectedEmployeeId !== 'skip' && o.selectedEmployeeId !== 'new') {
+      if (o.selectedEmployeeId && o.selectedEmployeeId !== 'skip' && o.selectedEmployeeId !== 'new'
+        && o.selectedEmployeeId !== 'park' && o.selectedEmployeeId !== 'create') {
         const emp = employees.find(e => e.id === o.selectedEmployeeId);
         if (emp) nameToEmp.set(o.importedName, emp);
       }
     }
     const skippedNames = overrides.filter(o => o.selectedEmployeeId === 'skip' || o.selectedEmployeeId === 'new').map(o => o.importedName);
     setUnmatchedNames(skippedNames);
+    // Übersprungene Stunden für die ehrliche Erfolgsmeldung mitzählen.
+    const skippedSet = new Set(skippedNames);
+    const scopeDates = new Set(dates);
+    const skippedH = Math.round(entries
+      .filter(e => skippedSet.has(e.name) && scopeDates.has(e.date))
+      .reduce((s, e) => s + e.hours, 0) * 100) / 100;
+    setSkippedHours(skippedH);
     // Tageswerte je zugeordnetem Namen (nur Scope-Tage, summiert) — Basis für
     // den Abdeckungs-Check der Auto-Auflösung geparkter Einträge.
     const scopeDateSet = new Set(dates);
@@ -408,8 +426,19 @@ export function MirusReconcileImportButton({
 
     // «Als offene Stunden parken»: Tageswerte je Name sammeln und persistent
     // ablegen — schreibt NICHTS in die Ist-Werte (Spec: Parken statt verwerfen).
-    const parkNames = overrides.filter(o => o.selectedEmployeeId === 'park').map(o => o.importedName);
+    // 'create' («Neuen Mitarbeiter anlegen») parkt die Stunden EBENFALLS — es
+    // wird KEIN Ghost-Datensatz angelegt; der echte MA entsteht nur im
+    // Personalstamm-Formular (Write-Gate). Danach lassen sich die geparkten
+    // Stunden im Import-Center zuweisen.
+    const createNames = overrides.filter(o => o.selectedEmployeeId === 'create').map(o => o.importedName);
+    const parkNames = overrides
+      .filter(o => o.selectedEmployeeId === 'park' || o.selectedEmployeeId === 'create')
+      .map(o => o.importedName);
     setParkedNames(parkNames);
+    // Lauf-ID JETZT erzeugen: geparkte Einträge tragen sie, das Import-Protokoll
+    // (bei Bestätigung) verwendet dieselbe ID → Undo kann beides verknüpfen.
+    const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    setPendingRunId(runId);
     if (parkNames.length > 0) {
       const parkSet = new Set(parkNames);
       const dateSet = new Set(dates);
@@ -417,18 +446,32 @@ export function MirusReconcileImportButton({
       for (const e of entries) {
         if (!parkSet.has(e.name) || !dateSet.has(e.date)) continue;
         const cur = byName.get(e.name) ?? {
-          name: e.name, department: e.department, month, days: {}, sourceFile: fileName,
+          name: e.name, department: e.department, month, days: {}, sourceFile: fileName, runId,
         };
         cur.days[e.date] = Math.round(((cur.days[e.date] ?? 0) + e.hours) * 100) / 100;
         byName.set(e.name, cur);
       }
+      const parkedH = Math.round([...byName.values()]
+        .reduce((s, p) => s + Object.values(p.days).reduce((a, b) => a + b, 0), 0) * 100) / 100;
+      setParkedHours(parkedH);
       parkEntries(tenantId, [...byName.values()])
         .then(added => {
           setOpenParkedCount(c => c + added);
-          if (added > 0) toast.success(`${added} Eintrag/Einträge als «Offene Stunden» geparkt — später im Import-Center zuweisen.`);
+          if (added > 0) toast.success(`${added} Eintrag/Einträge (${parkedH.toFixed(2)} h) als «Offene Stunden» geparkt — später im Import-Center zuweisen.`);
           else toast.info('Bereits geparkt (gleiche Quelle und Monat) — kein Duplikat angelegt.');
+          if (createNames.length > 0) {
+            toast.info(
+              `Neuen Mitarbeiter anlegen: ${createNames.join(', ')} — bitte im Personalstamm-Formular erfassen (Vertrag/Lohn). Die Stunden bleiben bis zur Zuweisung geparkt.`,
+              {
+                duration: 12000,
+                action: { label: 'Zum Personalstamm', onClick: () => { window.location.href = '/personal-stamm'; } },
+              },
+            );
+          }
         })
         .catch(err => toast.error(`Parken fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`));
+    } else {
+      setParkedHours(0);
     }
 
     const resolved: MirusResolvedEntry[] = [];
@@ -630,7 +673,37 @@ export function MirusReconcileImportButton({
       setExpandedReportEmp(null);
       setReportOpen(true);
       const warnCount = rep.perEmployee.filter(p => p.warn).length;
-      toast.success(`MIRUS-Import gespeichert: ${written} Zellen geschrieben, Backup angelegt.${warnCount ? ` ${warnCount} Warnung(en) in der Gegenprüfung!` : ''}`);
+      // Ehrliche Erfolgsmeldung: zugeordnet importiert vs. geparkt/übersprungen
+      // klar trennen — geparkte Stunden sind NICHT einem Mitarbeiter zugeordnet.
+      // Out-of-scope-Stunden (anderer Monat in der Datei) separat ausweisen.
+      // 5) Import-Protokoll (Import-Center «Letzter Import» + Rückgängig).
+      // Best-effort: ein Protokoll-Fehler bricht den Import nicht ab, wird aber gemeldet.
+      try {
+        await recordImportRun(tenantId, {
+          id: pendingRunId || undefined,
+          source: 'mirus-ist',
+          periodLabel: format(new Date(`${plan.month}-01`), 'MMMM yyyy', { locale: de }),
+          itemCount: rep.perEmployee.length,
+          itemLabel: 'Mitarbeiter',
+          fileName,
+          details: `${written} Zellen geschrieben` +
+            (parkedNames.length > 0 ? `, ${parkedNames.length} geparkt (${parkedHours.toFixed(2)} h)` : ''),
+          snapshot: { kind: 'mirus-ist', month: plan.month, backupId, runId: pendingRunId },
+        });
+      } catch (err) {
+        console.error('[MIRUS] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist im Import-Center für diesen Lauf nicht verfügbar (im Dienstplan weiterhin möglich).');
+      }
+      toast.success(buildMirusSuccessMessage({
+        assignedEmployeeCount: rep.perEmployee.length,
+        assignedHours: rep.perEmployee.reduce((s, p) => s + p.fileTotal, 0),
+        writtenCells: written,
+        parkedCount: parkedNames.length,
+        parkedHours,
+        skippedHours,
+        outOfScopeHours: plan.skippedOutOfScope.reduce((s, r) => s + r.hours, 0),
+        warnCount,
+      }), { duration: 10000 });
     } finally {
       setBusy(false);
     }
@@ -679,6 +752,20 @@ export function MirusReconcileImportButton({
         return;
       }
       await deleteDienstplanIstBackup(backup.id);
+      // Import-Protokoll synchron halten + geparkte Einträge dieses Laufs
+      // verwerfen (best-effort — Undo selbst ist bereits vollständig).
+      const undoneRunId = await markMirusRunUndoneByBackup(tenantId, backup.id);
+      if (undoneRunId) {
+        try {
+          const discarded = await discardParkedByRun(tenantId, undoneRunId);
+          if (discarded > 0) {
+            setOpenParkedCount(c => Math.max(0, c - discarded));
+            toast.info(`${discarded} geparkte «Offene Stunden»-Einträge dieses Imports entfernt.`);
+          }
+        } catch (err) {
+          console.warn('[MIRUS] Geparkte Einträge konnten nicht verworfen werden:', err);
+        }
+      }
       setHasBackup(false);
       try { localStorage.removeItem(tenantKey(reportStorageKey(monthKey))); } catch { /* noop */ }
       setReport(null);

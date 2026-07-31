@@ -63,6 +63,11 @@ function keyOf(date: string, tenantId?: string): string {
   return `${tenantPrefix(tenantId)}${date}`;
 }
 
+/** Öffentlicher Key-Helper (Import-Center-Undo: Snapshot der betroffenen Keys). */
+export function vjDailyKey(date: string, tenantId?: string): string {
+  return keyOf(date, tenantId);
+}
+
 function keyOfMonth(year: number, month: number, tenantId?: string): string {
   const mm = String(month).padStart(2, '0');
   return `${tenantPrefix(tenantId)}${year}-${mm}-`;

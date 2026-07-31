@@ -27,6 +27,8 @@ import { de } from 'date-fns/locale';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
 import { ManualEntryCard } from '@/components/GastronoviImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
+import { LastImportPanel } from '@/components/import-center/LastImportPanel';
+import { recordImportRun } from '@/lib/import-undo-store';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult, type BeaulieuBudgetVerifyRow } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
@@ -45,6 +47,7 @@ import { parseAnnualSageKontoblattByMonth, AnnualKostenResult } from '@/lib/pdf-
 import { matchCSVRows, buildMonthRecord, buildExpenseCategoriesOnly } from '@/lib/csv-import-engine';
 import {
   saveMonth,
+  loadMonth,
   loadYear,
   replaceAnnualCostYear,
   removeAnnualCostYear,
@@ -1119,7 +1122,7 @@ const AnnualRevenueImportSection = () => {
 const MONTH_LABELS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
 const AnnualCostImportSection = () => {
-  const { tenantKey } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
   const { isGuest } = useGuestSession();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1258,6 +1261,26 @@ const AnnualCostImportSection = () => {
     setSaving(true);
     try {
       const year = result.detectedYear;
+      // Undo-Snapshot VOR dem Schreiben: bisherige expenseCategories aller
+      // Monate des Zieljahres, die der Import anfassen KÖNNTE (Datei-Kategorien
+      // vorhanden ODER bestehende numerische Konten). null = Monat existierte nicht.
+      const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+      try {
+        const priorYearRecords = new Map(loadYear(year, reportingKey).map(r => [r.month, r]));
+        for (let m = 1; m <= 12; m++) {
+          const rec = priorYearRecords.get(m);
+          const newCats = modeResult.effective.get(m) ?? [];
+          // gleiche Definition wie NUMERIC_ACCOUNT_RE in reporting-store.ts
+          const hadNumeric = (rec?.expenseCategories ?? []).some(c => /^\d{3,5}$/.test(c.categoryId));
+          if (newCats.length === 0 && !hadNumeric) continue;
+          undoMonths.push({
+            monthId: `${year}-${String(m).padStart(2, '0')}`,
+            fields: { expenseCategories: rec?.expenseCategories ? JSON.parse(JSON.stringify(rec.expenseCategories)) : null },
+          });
+        }
+      } catch (err) {
+        console.warn('[ANNUAL-IMPORTS] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+      }
       const { monthsWritten, monthsCleared, monthsUnchanged, kvBackup } = replaceAnnualCostYear(
         year,
         modeResult.effective,
@@ -1283,6 +1306,21 @@ const AnnualCostImportSection = () => {
       refreshEntries(registryKey);
       notifyReportingDataChanged();
       setSaved(true);
+      // Import-Protokoll (Letzter Import + Rückgängig) — best-effort.
+      try {
+        await recordImportRun(tenantId, {
+          source: 'vorjahr-kosten-buchhaltung',
+          periodLabel: `Jahr ${year}`,
+          itemCount: monthsWritten + monthsCleared,
+          itemLabel: 'Monate',
+          fileName: fileName || undefined,
+          details: `${result.accountCount} Konten, ${result.bookingCount} Buchungen`,
+          ...(undoMonths.length > 0 ? { snapshot: { kind: 'reporting-fields', storeKey: reportingKey, months: undoMonths } } : {}),
+        });
+      } catch (err) {
+        console.error('[ANNUAL-IMPORTS] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+      }
       toast.success(
         `Jahr ${year}: ${monthsWritten} Monate gespeichert` +
         (monthsCleared > 0 ? `, ${monthsCleared} Monate von alten Kontodaten bereinigt` : '') +
@@ -1407,6 +1445,11 @@ const AnnualCostImportSection = () => {
 
   return (
     <div className="space-y-3">
+      {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
+      <LastImportPanel
+        source="vorjahr-kosten-buchhaltung"
+        undoHint="Zurückgesetzt werden die Konto-Kategorien (Kostenzeilen) der betroffenen Monate des Import-Jahres. Manuell erfasste Kategorien und andere Felder bleiben unberührt."
+      />
       {/* Immer gerendert, damit «Ersetzen» in der Verwaltungstabelle den Dateidialog öffnen kann */}
       <input
         ref={fileRef}
@@ -2044,6 +2087,11 @@ const IstStundenSection = () => {
 
   return (
     <div className="space-y-3">
+      {/* Letzter MIRUS-Import (Dienstplan-Abgleich) + Rückgängig + Historie */}
+      <LastImportPanel
+        source="mirus-ist"
+        undoHint="Zurückgesetzt werden die Ist-Stunden des Import-Monats auf den Stand vor dem Import (aus dem Backup). Zusätzlich werden die aus diesem Import geparkten «Offene Stunden»-Einträge entfernt. Namenszuordnungen (Aliasse) bleiben erhalten."
+      />
       <p className="text-xs text-muted-foreground">
         Mirus-Export («Tägliche Stunden», XLS) oder CSV-Vorlage hochladen.
         Die Stunden werden den Mitarbeitern automatisch zugeordnet.
@@ -3006,6 +3054,21 @@ const AnnualPersonnelCostImportSection = () => {
     // personnelCostPreviousYear is stored in the *following* year's record,
     // so it appears in the P&L "Vorjahr" column for that year.
     const saveYear = importYear + 1;
+    // Undo-Snapshot VOR dem Schreiben: bisheriger personnelCostPreviousYear
+    // der betroffenen Monate (null = Feld war nicht gesetzt).
+    const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+    try {
+      for (const row of result.months) {
+        if (row.amount === 0) continue;
+        const prior = loadMonth(saveYear, row.month, tenantKey(REPORTING_STORAGE_KEY)).personnelCostPreviousYear;
+        undoMonths.push({
+          monthId: `${saveYear}-${String(row.month).padStart(2, '0')}`,
+          fields: { personnelCostPreviousYear: prior ?? null },
+        });
+      }
+    } catch (err) {
+      console.warn('[PRIOR-YEAR-COST] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+    }
     let savedCount = 0;
     for (const row of result.months) {
       if (row.amount === 0) continue;
@@ -3022,6 +3085,18 @@ const AnnualPersonnelCostImportSection = () => {
     setSaved(true);
     console.log(`[PRIOR-YEAR-COST] saved | tenant: ${tid} | year: ${importYear} | months: ${savedCount}`);
     toast.success(`${savedCount} Monate Personalkosten VJ ${importYear} gespeichert (sichtbar in P&L ${saveYear})`);
+    // Import-Protokoll (Letzter Import + Rückgängig) — best-effort.
+    void recordImportRun(tid, {
+      source: 'personalkosten-vorjahr',
+      periodLabel: `VJ ${importYear} → P&L ${saveYear}`,
+      itemCount: savedCount,
+      itemLabel: 'Monate',
+      fileName: fileName || undefined,
+      ...(undoMonths.length > 0 ? { snapshot: { kind: 'reporting-fields', storeKey: tenantKey(REPORTING_STORAGE_KEY), months: undoMonths } } : {}),
+    }).catch(err => {
+      console.error('[PRIOR-YEAR-COST] Import-Protokoll fehlgeschlagen:', err);
+      toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+    });
   };
 
   const handleLock = async () => {
@@ -3055,6 +3130,11 @@ const AnnualPersonnelCostImportSection = () => {
 
   return (
     <div className="space-y-3">
+      {/* Letzter Import + Rückgängig + Historie (Import-Center-Spec) */}
+      <LastImportPanel
+        source="personalkosten-vorjahr"
+        undoHint="Zurückgesetzt wird das Feld «Personalkosten Vorjahr» der betroffenen P&L-Monate. Alle anderen Monatswerte bleiben unberührt."
+      />
 
       {/* Jahresauswahl + Template-Download */}
       <div className="flex items-center gap-2 flex-wrap">
@@ -3422,6 +3502,11 @@ const ImportHub = () => {
           badgeColor="border-purple-300 text-purple-700 bg-purple-50 dark:bg-purple-950/20"
         >
           <div className="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/10 p-4 space-y-3">
+            {/* Letzter Import + Rückgängig (Import erfolgt auf der Buchhaltungs-Import-Seite) */}
+            <LastImportPanel
+              source="ist-kosten-buchhaltung"
+              undoHint="Zurückgesetzt wird der komplette Monats-Record (inkl. Buchungszeilen) auf den Stand vor dem Import. Existierte der Monat vorher nicht, wird er entfernt."
+            />
             <p className="text-xs text-muted-foreground">
               Importiere monatliche Buchhaltungskosten (laufendes Jahr) aus deinem Buchhaltungsprogramm.
               Unterstützte Formate: Excel (Sage Kontoblatt), CSV, PDF.

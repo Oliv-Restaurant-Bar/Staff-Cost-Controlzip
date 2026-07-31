@@ -198,6 +198,81 @@ export function saveMonth(
 }
 
 /**
+ * Undo-Wiederherstellung: einzelne FELDER pro Monat auf den Stand vor einem
+ * Import zurücksetzen (Import-Center «Letzten Import rückgängig machen»).
+ * `null` = Feld war vor dem Import nicht vorhanden → wird entfernt.
+ * Scope-treu: nur die genannten Felder der genannten Monate werden angefasst.
+ * Supabase-Sicherung SEQUENZIELL (retryReportingMonthsBackup-Disziplin).
+ */
+export async function restoreReportingFields(
+  storeKey: string,
+  months: Array<{ monthId: string; fields: Record<string, unknown | null> }>,
+): Promise<{ failedMonths: string[] }> {
+  const all = loadAll(storeKey);
+  const now = new Date().toISOString();
+  const touched: string[] = [];
+  for (const m of months) {
+    const existing = all[m.monthId];
+    // Monat existiert nicht (mehr) und alle Felder waren vorher leer → nichts zu tun.
+    const [y, mo] = m.monthId.split('-').map(Number);
+    const rec: MonthlyFinancialRecord = existing ?? createEmptyMonth(y, mo);
+    const restored: MonthlyFinancialRecord = { ...rec };
+    let changed = false;
+    for (const [field, prior] of Object.entries(m.fields)) {
+      const cur = (restored as unknown as Record<string, unknown>)[field];
+      const target = prior === null ? undefined : prior;
+      if (JSON.stringify(cur ?? null) === JSON.stringify(target ?? null)) continue;
+      if (target === undefined) {
+        delete (restored as unknown as Record<string, unknown>)[field];
+      } else {
+        (restored as unknown as Record<string, unknown>)[field] = target;
+      }
+      changed = true;
+    }
+    if (!changed) continue;
+    restored.updatedAt = now;
+    all[m.monthId] = restored;
+    touched.push(m.monthId);
+  }
+  if (touched.length === 0) return { failedMonths: [] };
+  saveAll(all, storeKey);
+  const res = await retryReportingMonthsBackup(touched, storeKey);
+  return { failedMonths: res.failedMonths };
+}
+
+/**
+ * Undo-Wiederherstellung: kompletten Monats-Record ersetzen (oder entfernen,
+ * wenn er vor dem Import nicht existierte) + optional Journalzeilen.
+ * Für Importe im replace-Modus (z. B. Ist Kosten Buchhaltung).
+ */
+export async function restoreReportingRecord(
+  storeKey: string,
+  monthId: string,
+  record: MonthlyFinancialRecord | null,
+  journal?: { year: number; month: number; entries: SageJournalEntry[] },
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const all = loadAll(storeKey);
+    if (record === null) {
+      delete all[monthId];
+      saveAll(all, storeKey);
+      await safeDeleteReportingMonth(monthId, storeKey);
+    } else {
+      all[monthId] = { ...record, updatedAt: new Date().toISOString() };
+      saveAll(all, storeKey);
+      const res = await retryReportingMonthsBackup([monthId], storeKey);
+      if (res.failedMonths.length > 0) {
+        return { ok: false, error: 'Lokal zurückgesetzt, aber Supabase-Sicherung fehlgeschlagen — bitte erneut versuchen.' };
+      }
+    }
+    if (journal) saveJournalEntries(journal.year, journal.month, journal.entries, 'replace');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
  * Monat löschen (Admin-Funktion, z.B. Testdaten entfernen).
  */
 export function deleteMonth(year: number, month: number, storeKey: string = STORAGE_KEY): void {

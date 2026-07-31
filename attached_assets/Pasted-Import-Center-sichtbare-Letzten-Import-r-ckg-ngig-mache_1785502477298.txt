@@ -1,0 +1,18 @@
+Import-Center — sichtbare „Letzten Import rückgängig machen"-Funktion für alle Importquellen (Oliv und Beaulieu)
+
+Ziel: Jede Importquelle hat einen klar sichtbaren Button, um den letzten Import rückgängig zu machen, plus eine kurze Import-Historie. Gilt für Ist-Stunden (MIRUS) und alle anderen Quellen.
+
+1. Pro Importquelle im Import-Center (Ist-Stunden/MIRUS, Vorjahres-Tagesumsatz, Ist Kosten Buchhaltung, Vorjahr Kosten Buchhaltung, Personalkosten Vorjahr und alle weiteren, die Daten schreiben):
+   - Ein sichtbarer Bereich „Letzter Import" mit Details: Datum/Uhrzeit, Zeitraum, Anzahl Einträge/Mitarbeiter, Quelle/Dateiname, Mandant.
+   - Ein Button „Letzten Import rückgängig machen".
+
+2. Rückgängig-Verhalten:
+   - Stellt exakt den Zustand VOR diesem Import wieder her (aus dem Backup, das vor dem Schreiben angelegt wurde) — nur für den betroffenen Scope (Quelle + Zeitraum/Monat + Mandant). Andere Daten bleiben unberührt.
+   - Vor Ausführung ein Bestätigungsdialog mit Zusammenfassung, was zurückgesetzt wird.
+   - Speziell MIRUS: beim Rückgängig auch die durch diesen Import erzeugten „Offene Stunden"-Einträge sauber entfernen, damit kein Rest hängenbleibt. Aliasse (Namenszuordnungen) bleiben erhalten (sind keine Ist-Daten).
+
+3. Import-Historie (klein): pro Quelle eine Liste der letzten Importe (z. B. letzte 5) mit denselben Angaben; der jeweils letzte ist rückgängig machbar. (Ältere nur anzeigen, damit keine widersprüchlichen Teil-Rücksetzungen entstehen.)
+
+4. Sicherheit & Mandanten: Rückgängig nur mit Bestätigung; strikt pro Restaurant und pro Zeitraum; keine monatsübergreifende Rücksetzung. Rollen wie bisher (Gäste kein Schreib-/Rückgängig-Zugriff). Gilt identisch für Oliv und Beaulieu.
+
+Abnahme: Nach einem MIRUS-Import steht bei „Ist-Stunden" sichtbar „Letzter Import" mit Details + Button „Letzten Import rückgängig machen"; ein Klick (mit Bestätigung) setzt die Ist-Stunden des Monats auf den Stand davor zurück und entfernt die aus diesem Import geparkten offenen Stunden. Dasselbe Muster (sichtbarer Button + Historie) erscheint bei den übrigen Importquellen.

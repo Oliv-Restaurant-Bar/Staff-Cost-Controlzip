@@ -50,7 +50,8 @@ import {
   saveMappingCustom, PL_CATEGORIES, getCategoryLabel, getSectionLabel,
 } from '@/lib/account-mapping-store';
 import { PLCategory, DepartmentHint } from '@/types/account-mapping';
-import { saveMonth, saveJournalEntries, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { saveMonth, saveJournalEntries, loadJournalEntries, loadYear, syncJournalYearFromDB, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
+import { recordImportRun } from '@/lib/import-undo-store';
 import { useTenant } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
 
@@ -778,7 +779,7 @@ function UnresolvedTable({ rows, onAssign, onSplit }: UnresolvedTableProps) {
 // ─── Haupt-Komponente ─────────────────────────────────────────────────────────
 
 export default function CSVImportPage() {
-  const { tenantKey } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const navigate    = useNavigate();
   const { isAdmin } = usePermissions();
 
@@ -1031,6 +1032,20 @@ export default function CSVImportPage() {
         ? `, ${splitExcluded.size} aufgeteilt (${splitMatchedRows.length} Teilzeilen)`
         : '';
 
+      // Undo-Snapshot VOR dem Schreiben: kompletter bisheriger Monats-Record
+      // (null = Monat existierte nicht) + bisheriges Journal bei Ist-Daten.
+      const monthId = `${year}-${String(month).padStart(2, '0')}`;
+      const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+      let priorRecord: import('@/types/reporting').MonthlyFinancialRecord | null = null;
+      let priorJournal: import('@/types/reporting').SageJournalEntry[] | undefined;
+      try {
+        priorRecord = loadYear(year, storeKey).find(r => r.month === month) ?? null;
+        priorRecord = priorRecord ? JSON.parse(JSON.stringify(priorRecord)) : null;
+        if (dataType === 'actual') priorJournal = loadJournalEntries(year, month);
+      } catch (err) {
+        console.warn('[CSV-IMPORT] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
+      }
+
       saveMonth(
         { ...record, year, month },
         source,
@@ -1045,6 +1060,26 @@ export default function CSVImportPage() {
       if (parseResult.journalEntries && parseResult.journalEntries.length > 0 && dataType === 'actual') {
         saveJournalEntries(year, month, parseResult.journalEntries, importMode);
       }
+
+      // Import-Protokoll (Import-Center «Letzter Import» + Rückgängig) — best-effort.
+      void recordImportRun(tenantId, {
+        source: dataType === 'previous_year' ? 'kosten-vorjahr-monat' : 'ist-kosten-buchhaltung',
+        periodLabel: `${MONTHS[month - 1]} ${year}`,
+        itemCount: allSelected.length,
+        itemLabel: 'Positionen',
+        fileName: fileName || undefined,
+        details: `${parseResult.matchedCount} zugeordnet, ${remainingUnresolved.length} unbekannt${splitNote}`,
+        snapshot: {
+          kind: 'reporting-record',
+          storeKey,
+          monthId,
+          record: priorRecord,
+          ...(priorJournal !== undefined ? { journal: { year, month, entries: priorJournal } } : {}),
+        },
+      }).catch(err => {
+        console.error('[CSV-IMPORT] Import-Protokoll fehlgeschlagen:', err);
+        toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
+      });
 
       setSavedMonth({ year, month });
       setStep('done');
