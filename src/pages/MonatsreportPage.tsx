@@ -10,6 +10,7 @@ import { ChevronLeft, ChevronRight, FileSpreadsheet, FileDown, CalendarDays, Git
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ReviewsWeeklyTracker } from '@/components/reviews/ReviewsWeeklyTracker';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -640,6 +641,11 @@ export default function MonatsreportPage() {
             <WochenverlaufView onPdfMeta={setVerlaufMeta} />
           </TabsContent>
         </Tabs>
+
+        {/* Rezensionen-Wochentracking fürs Meeting (rein lesend, Erfassung auf /rezensionen) */}
+        <div className="pdf-hide rounded-xl border bg-card shadow-sm p-4">
+          <ReviewsWeeklyTracker showCockpitLink />
+        </div>
       </div>
     </PageShell>
   );

@@ -31,6 +31,7 @@ import Betriebe from "./pages/Betriebe";
 import MitarbeiterEintritt from "./pages/MitarbeiterEintritt";
 import Positionen from "./pages/Positionen";
 import Personalbedarf from "./pages/Personalbedarf";
+import Rezensionen from "./pages/Rezensionen";
 import Reporting from "./pages/Reporting";
 import AccountMappingPage from "./pages/AccountMapping";
 import PLViewPage from "./pages/PLView";
@@ -318,6 +319,11 @@ const AppContent = () => {
             />
             <Route path="/erfolgsrechnung"
               element={<RequireAdmin path="/erfolgsrechnung"><PLViewPage /></RequireAdmin>}
+            />
+            {/* Rezensionen (manuelle Bewertungs-Kennzahlen): Admin inkl. Gast-Lesezugriff
+                + beaulieu_manager; Editieren gated die Seite selbst (isAdmin && !isGuest || beaulieu_manager). */}
+            <Route path="/rezensionen"
+              element={<RequireAdmin path="/rezensionen" allowBeaulieu><Rezensionen /></RequireAdmin>}
             />
             {/* Import-Flächen (Schreibaktionen): nur Admin, keine Gast-Sessions */}
             <Route path="/csv-import"

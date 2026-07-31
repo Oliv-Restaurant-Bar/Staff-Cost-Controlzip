@@ -37,7 +37,7 @@ import {
   Contact, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
-  Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2,
+  Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2, Star,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
@@ -285,6 +285,15 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: TrendingUp,
         adminOnly: true,
         hideForGuest: true,
+      },
+      {
+        path: '/rezensionen',
+        label: 'Rezensionen',
+        shortLabel: 'Rezens.',
+        icon: Star,
+        adminOnly: true,
+        beaulieuAllowed: true,
+        // bewusst KEIN hideForGuest: keine PII, Gäste sehen rein lesend
       },
     ],
   },
