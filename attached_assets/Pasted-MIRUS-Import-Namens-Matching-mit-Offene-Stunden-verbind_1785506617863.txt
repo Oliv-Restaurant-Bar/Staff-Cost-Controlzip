@@ -1,0 +1,20 @@
+MIRUS-Import — Namens-Matching mit „Offene Stunden" verbinden, „Neu erstellen" korrigieren, Erfolgsmeldung ehrlich machen (Oliv und Beaulieu)
+
+Problem: Im Namens-Matching-Dialog gibt es „Neu erstellen" / „Alle neu erstellen". Diese Option legt keinen auffindbaren Mitarbeiter an und parkt die Stunden auch nicht — nach dem Import sind die betroffenen Mitarbeiter (z. B. „Krishnathas Krishnavarthani", „Theivendiram Krishanthas") nirgends zu finden, ihre Stunden (~100 h) tauchen weder in „Offene Stunden" noch beim Mitarbeiter auf, werden in der Erfolgsmeldung aber mitgezählt. Das muss konsistent und transparent werden.
+
+1. Optionen für einen nicht gefundenen Namen (klar und funktionierend):
+   - „Als offene Stunden parken" (Standard, sicher): Stunden gehen in die bestehende „Offene Stunden"-Ansicht (persistiert pro Mandant), NICHTS wird einem Mitarbeiter zugeschrieben.
+   - „Bestehendem Mitarbeiter zuordnen": Dropdown wie bisher (mit Alias-Speicherung).
+   - „Überspringen": Stunden werden bewusst nicht importiert (klare Konsequenz anzeigen).
+   - „Neuen Mitarbeiter anlegen": führt zum Personalstamm-/Personaleintritt-Anlageformular (echter Datensatz mit Vertrag/Lohn) UND parkt die Stunden automatisch als „offene Stunden", bis der neue Mitarbeiter angelegt und die Stunden zugewiesen sind. KEIN stiller Ghost-Datensatz.
+   - Das bisherige „Neu erstellen" / „Alle neu erstellen", das nichts Auffindbares erzeugt, entfernen bzw. durch die obigen echten Pfade ersetzen.
+
+2. Nach dem Import müssen unzugeordnete/geparkte Stunden IMMER in „Offene Stunden" sichtbar sein (mit Badge/Zähler). Es darf keinen Zustand geben, in dem Stunden als importiert gemeldet, aber nirgends auffindbar sind.
+
+3. Ehrliche Erfolgsmeldung: klar trennen in „X Einträge zugeordnet importiert (Y Stunden)" und „Z Einträge geparkt/offen (W Stunden, nicht zugeordnet)". Die Gesamt-Dateisumme separat ausweisen, aber nicht so tun, als sei alles einem Mitarbeiter zugeordnet.
+
+4. Diagnose/Bereinigung des letzten Laufs: Prüfen, wohin die Stunden von „Krishnathas Krishnavarthani" (81.5 h) und „Theivendiram Krishanthas" (18.75 h) beim Beaulieu-Juli-Import tatsächlich geschrieben wurden. Falls in einem nicht auffindbaren/Ghost-Zustand: bereinigen und als „offene Stunden" verfügbar machen, sodass keine Stunden verloren oder unsichtbar sind.
+
+5. Datensicherheit & Mandanten: Parken schreibt nichts in Ist; Zuweisen nur mit Backup+Vorschau; strikt pro Restaurant. Identisch für Oliv und Beaulieu.
+
+Abnahme: Beaulieu-Juli bis zur Vorschau: „Krishnathas" und „Theivendiram" auf „Als offene Stunden parken" → nach Import erscheinen beide in „Offene Stunden" mit ihren Stunden, Badge zeigt 2; Erfolgsmeldung trennt zugeordnet vs. geparkt. „Neuen Mitarbeiter anlegen" führt ins Personalstamm-Formular und parkt die Stunden; nach Anlage lassen sie sich zuweisen. Kein Zustand mit importiert gemeldeten, aber unauffindbaren Stunden.
