@@ -20,3 +20,8 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - **Konsistenz-Regel:** `resolvePlanToWrites`, `expectedAfterTotals` (Engine) und `finalEntryForCell`/`decisionForCell` (Button) müssen dieselbe Fallmatrix abbilden — bei Änderung immer alle vier anpassen.
 - Muster 3 keep: bestehende Ist-Absenz bleibt UNANGETASTET; nur Plan-Absenz ohne Ist wird als `{hours:0, absenceType}` materialisiert. Plan-Absenzcodes werden via lokale Kopie der VACATION/SICK/ACCIDENT-Sets kanonisiert (kein Import aus absence-utils — zieht Supabase-Kette in Node-Tests!).
 - Erstklassierung «Datei-MA ohne erfassungsart → MIRUS» ist bewusst; muss in der Vorschau explizit ausgewiesen werden (Alert «Neu als MIRUS klassiert»), sonst Review-Fail wegen Write-Gate.
+
+## Namens-Matching & Aliasse (Juli 2026)
+- Matching in mirus-name-mapping-store faltet jetzt Umlaute/Akzente (foldDiacritics: ä→ae/ö→oe/ü→ue/ß→ss + NFD-Strip) in ALLEN Vergleichspfaden; Reihenfolge egal (reversed/token-set), Mehrdeutigkeit → conflict (fail-closed, manuell).
+- Dauerhafte MIRUS-Aliasse pro Mandant in app_settings (`mirus_name_aliases:<tenant>`): fetchRemoteAliases vor dem Matching in den localStorage-Cache mergen (remote gewinnt); nur manuell bestätigte Zuordnungen werden remote gespeichert, 'skip' bleibt bewusst lokal. Alles best-effort, wirft nie.
+- Mapping-Keys sind gefaltet normalisiert; lookupSavedMapping hat Legacy-Fallback für alte ungefaltete Keys. Bekannte Grenze: saveRemoteAliases read-merge-upsert ist nicht atomar (seltener Last-Writer-Verlust bei parallelen Geräten).

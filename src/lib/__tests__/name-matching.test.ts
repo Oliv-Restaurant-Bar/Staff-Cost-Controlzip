@@ -29,6 +29,34 @@ describe('normalizeNameKey', () => {
   });
 });
 
+describe('matchEmployeeByName — reihenfolgeunabhängig + Akzente (Spec-Abnahme)', () => {
+  const employees = [
+    emp('s1', 'Ilir Ukaj'),
+    emp('s2', 'Anna Müller'),
+    emp('s3', 'José Peña'),
+    emp('s4', 'Ilir Berisha'),
+  ];
+
+  it('«Ukaj Ilir» (Nachname Vorname) → Ilir Ukaj, automatisch', () => {
+    const r = matchEmployeeByName('Ukaj Ilir', employees);
+    expect(r.employee?.id).toBe('s1');
+  });
+
+  it('Akzente/Umlaute egal: «MÜLLER  anna» und «Jose Pena» treffen', () => {
+    expect(matchEmployeeByName('MÜLLER  anna', employees).employee?.id).toBe('s2');
+    expect(matchEmployeeByName('Pena Jose', employees).employee?.id).toBe('s3');
+  });
+
+  it('Mehrdeutigkeit («Ilir» allein bei zwei Ilirs) → kein Auto-Match', () => {
+    const r = matchEmployeeByName('Ilir', employees);
+    expect(r.employee).toBeNull();
+  });
+
+  it('unbekannter Name bleibt unzugeordnet', () => {
+    expect(matchEmployeeByName('Xxyyzz Qqrrss', employees).employee).toBeNull();
+  });
+});
+
 describe('findMatchingEmployeeWithSuggestions', () => {
   const employees = [
     emp('e1', 'Anna Müller'),

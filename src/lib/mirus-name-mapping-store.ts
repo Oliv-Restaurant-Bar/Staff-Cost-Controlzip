@@ -19,6 +19,18 @@ const STORAGE_KEY = 'mirus_name_mappings_v1';
 
 export type MirusNameMapping = Record<string, string | 'skip'>;
 
+/**
+ * Akzente/Umlaute wegfalten («Ilir Ukaj» = «Ilír Ukaj», «Müller» = «Muller»).
+ * NFD-Zerlegung + Entfernen der kombinierten Diakritika; ß → ss.
+ */
+export function foldDiacritics(s: string): string {
+  return s
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+    .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 // ─── Name-Matching-Logik (geteilt zwischen Import-Schritten) ─────────────────
 
 export type NameMatchType = 'exact' | 'saved' | 'firstName' | 'new' | 'conflict';
@@ -87,11 +99,11 @@ export function matchEmployeeByName(
 
   // ── Normalization helpers ─────────────────────────────────────────────────
 
-  /** Lowercase + trim + collapse whitespace */
-  const norm = (s: string) => s.toLowerCase().trim().replace(/\s{2,}/g, ' ');
+  /** Lowercase + Akzent-/Umlaut-Faltung + trim + collapse whitespace */
+  const norm = (s: string) => foldDiacritics(s.toLowerCase()).trim().replace(/\s{2,}/g, ' ');
 
   /** Strip non-letter, non-space chars (commas, dots, hyphens used as separators) */
-  const strip = (s: string) => norm(s).replace(/[^a-z\u00e4\u00f6\u00fc\u00df\u00e0-\u00ff\s]/gi, '').replace(/\s{2,}/g, ' ').trim();
+  const strip = (s: string) => norm(s).replace(/[^a-z\s]/gi, ' ').replace(/\s{2,}/g, ' ').trim();
 
   const normImport  = norm(importedName);
   const stripImport = strip(importedName);
@@ -353,15 +365,25 @@ export function clearNameMappings(): void {
  */
 export function lookupSavedMapping(importedName: string): string | 'skip' | undefined {
   const all = loadNameMappings();
-  const exactKey   = normalize(importedName);
-  const strippedKey = exactKey.replace(/[^a-zäöüß\s]/gi, '').replace(/\s{2,}/g, ' ').trim();
-  return all[exactKey] ?? (strippedKey !== exactKey ? all[strippedKey] : undefined);
+  const exactKey    = normalize(importedName);
+  const strippedKey = exactKey.replace(/[^a-z\s]/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+  const legacyKey   = legacyNormalize(importedName);
+  return all[exactKey]
+    ?? (strippedKey !== exactKey ? all[strippedKey] : undefined)
+    ?? (legacyKey !== exactKey ? all[legacyKey] : undefined);
 }
 
 /**
- * Normalisierung: lowercase + trim (für konsistente Schlüssel)
+ * Normalisierung für Mapping-Schlüssel: lowercase + Akzent-/Umlaut-Faltung + trim.
+ * (Ältere localStorage-Einträge können ungefaltete Keys haben — lookupSavedMapping
+ * probiert deshalb zusätzlich den Legacy-Key ohne Faltung.)
  */
 function normalize(name: string): string {
+  return foldDiacritics(name.toLowerCase()).trim().replace(/\s{2,}/g, ' ');
+}
+
+/** Legacy-Schlüssel (vor Einführung der Akzent-Faltung). */
+function legacyNormalize(name: string): string {
   return name.toLowerCase().trim().replace(/\s{2,}/g, ' ');
 }
 
@@ -370,4 +392,75 @@ function normalize(name: string): string {
  */
 export function countSavedMappings(): number {
   return Object.keys(loadNameMappings()).length;
+}
+
+// ─── Dauerhafte MIRUS-Aliasse (Supabase, pro Mandant) ─────────────────────────
+//
+// Manuell bestätigte Zuordnungen werden zusätzlich zum localStorage-Cache
+// dauerhaft in app_settings gespeichert (Key `mirus_name_aliases:<tenant>`),
+// damit sie geräteübergreifend und nach Cache-Löschung erhalten bleiben.
+// Format: Record<normalizedImportedName, employeeId> — 'skip' bleibt bewusst
+// lokal (Gerätepräferenz, keine Personenzuordnung).
+// Alle Funktionen sind best-effort und werfen nie (Import darf nicht an der
+// Alias-Persistenz scheitern).
+
+function aliasKey(tenantId: string): string {
+  return `mirus_name_aliases:${tenantId}`;
+}
+
+/** Dauerhafte Aliasse des Mandanten laden (leer bei Fehler). */
+export async function fetchRemoteAliases(tenantId: string): Promise<Record<string, string>> {
+  try {
+    const { appSettingsTable } = await import('@/lib/app-settings-table');
+    const { data, error } = await appSettingsTable()
+      .select('value')
+      .eq('key', aliasKey(tenantId))
+      .maybeSingle();
+    if (error || !data) return {};
+    const val = data.value as Record<string, string> | null;
+    return val && typeof val === 'object' ? val : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Manuelle Zuordnungen dauerhaft speichern: frisch laden → mergen → upsert
+ * (Merge, damit parallel gespeicherte Aliasse nicht überschrieben werden).
+ */
+export async function saveRemoteAliases(
+  tenantId: string,
+  mappings: Array<{ importedName: string; employeeId: string }>,
+): Promise<void> {
+  if (mappings.length === 0) return;
+  try {
+    const { appSettingsTable } = await import('@/lib/app-settings-table');
+    const current = await fetchRemoteAliases(tenantId);
+    const next = { ...current };
+    for (const { importedName, employeeId } of mappings) {
+      next[normalize(importedName)] = employeeId;
+    }
+    const { error } = await appSettingsTable().upsert(
+      { key: aliasKey(tenantId), value: next as unknown as Record<string, unknown> },
+      { onConflict: 'key' },
+    );
+    if (error) console.warn('[MIRUS-ALIAS] Speichern fehlgeschlagen:', error.message);
+  } catch (e) {
+    console.warn('[MIRUS-ALIAS] Speichern fehlgeschlagen:', e);
+  }
+}
+
+/**
+ * Remote-Aliasse in den lokalen Mapping-Cache übernehmen (vor dem Matching
+ * aufrufen). Lokale Einträge gewinnen NICHT — der dauerhafte Alias ist die
+ * verbindliche, manuell bestätigte Zuordnung.
+ */
+export function mergeAliasesIntoLocal(aliases: Record<string, string>): void {
+  const entries = Object.entries(aliases);
+  if (entries.length === 0) return;
+  const all = loadNameMappings();
+  for (const [key, empId] of entries) all[key] = empId;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  } catch { /* Cache-Fehler ignorieren */ }
 }

@@ -1,0 +1,27 @@
+MIRUS-Import — Parser robust für unterschiedliche Datei-Layouts (Oliv 28 Tage / Beaulieu 31 Tage, mehr Blöcke, Doppelblöcke)
+
+Anlass: Der echte Beaulieu-Export ist gleich aufgebaut wie Oliv, hat aber verschobene Spalten, mehr Abteilungsblöcke, denselben Mitarbeiter in zwei Blöcken und einen anderen Kostenträger. Der Parser darf nichts vom Oliv-Layout hardcodieren.
+
+1. DYNAMISCHE SPALTENERKENNUNG (kein fester Index):
+   - Tagesspalten aus der Tagesnummern-Zeile ermitteln (Werte 1..31, können als Zahl ODER als Text vorliegen). Erste Tagesspalte, Anzahl und Total-Spalte werden gefunden, nicht angenommen.
+   - Die „Total"-Spalte per Kopftext „Total" lokalisieren (nur zur Kontrolle, nicht als Tag lesen).
+   - Startdatum aus dem Titel „Tägliche Stunden von TT.MM.JJJJ bis TT.MM.JJJJ" lesen; jede Tagesspalte fortlaufend auf ein Datum mappen. Plausibilitätscheck: Anzahl Tagesspalten muss (Enddatum − Startdatum + 1) entsprechen; Wochentagskürzel-Zeile als Kreuzcheck. Bei Abweichung Import stoppen mit klarer Meldung.
+   - Muss sowohl 28-Tage- (Oliv, Tag 1 in Spalte 7) als auch 31-Tage-Dateien (Beaulieu, Tag 1 in Spalte 6, Total Spalte 37) korrekt lesen.
+
+2. GENERISCHE BLOCKERKENNUNG:
+   - Beliebig viele Abteilungsblöcke unterstützen (z. B. „1 Küche", „2 Service", „3 Hilfsarbeiter", „4 Geschäftsleitung"), erkannt an einem Blockkopf in Spalte 1 mit leerer Namensspalte.
+   - Block-Total-Zeilen (Label „Total Stunden") und die Gesamt-Total-Zeilen am Dateiende (leere Namensspalte) werden übersprungen — nie als Mitarbeiter interpretiert.
+
+3. MITARBEITER ÜBER BLÖCKE AGGREGIEREN:
+   - Ein Mitarbeiter kann in mehreren Blöcken vorkommen (z. B. „Ramadani Naip" in Küche und Hilfsarbeiter). Die Ist-Stunden werden pro Mitarbeiter pro Tag über ALLE seine Zeilen SUMMIERT (nicht überschrieben), bevor der Drei-Weg-Vergleich läuft. Das Monatstotal des Mitarbeiters entspricht der Summe aller seiner Blockzeilen.
+
+4. MANDANTEN-CHECK ÜBER KOSTENTRÄGER:
+   - Kostenträger-Kopf lesen und dem Mandanten zuordnen: „3027 Restaurant OLIV" → Oliv, „3012 Restaurant Beaulieu AG" → Beaulieu (Zuordnung als konfigurierbare Tabelle Kostenträger-Nr → Mandant hinterlegen, robust gegen Zusätze wie „AG"). 
+   - Passt der Kostenträger nicht zum aktiven Mandanten → Import stoppen mit Meldung „Datei gehört zu <X>, aktiver Mandant ist <Y>". Nur bei Übereinstimmung importieren.
+
+5. Alles Übrige (Drei-Weg-Vergleich, Muster 1–5, stille Rundung, Muster-Gruppen mit Sammelbestätigung, Backup/Rückgängig, MANUELL-Aushilfen unberührt, Kalendermonat-Anker + Abdeckungs-Anzeige, reihenfolgeunabhängiges Namens-Matching) bleibt unverändert und gilt für beide Mandanten.
+
+Abnahme:
+- Oliv-Datei (01.–28.07., 3027) unter Mandant Oliv: liest korrekt wie bisher (Küche-Block 854.15 h, Service-Block 1346.98 h), meldet 29.–31.07. offen.
+- Beaulieu-Datei (01.–31.07., 3012) unter Mandant Beaulieu: Spalten korrekt erkannt (Tag 1 = Spalte 6, 31 Tage), 4 Blöcke gelesen, „Ramadani Naip" mit summierten Stunden aus Küche + Hilfsarbeiter (Total 101.18 + 23.70 = 124.88 h), Abdeckung 31/31 Tage, keine Lücke.
+- Beaulieu-Datei unter Mandant Oliv (falscher Mandant) → Import wird mit klarer Meldung gestoppt, nichts geschrieben.

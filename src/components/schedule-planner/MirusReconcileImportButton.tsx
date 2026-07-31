@@ -47,7 +47,10 @@ import { de } from 'date-fns/locale';
 import { Employee, MirusDailyImportEntry, DaySchedule } from '@/types/personnel';
 import { parseMirusDailyExcel } from '@/lib/personnel-utils';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
-import { matchEmployeeByName, saveNameMappingsBatch } from '@/lib/mirus-name-mapping-store';
+import {
+  matchEmployeeByName, saveNameMappingsBatch,
+  fetchRemoteAliases, saveRemoteAliases, mergeAliasesIntoLocal,
+} from '@/lib/mirus-name-mapping-store';
 import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
@@ -302,6 +305,10 @@ export function MirusReconcileImportButton({
       setScopeDates(inMonthDates);
       setScopeMonth(monthKey);
 
+      // Dauerhafte MIRUS-Aliasse des Mandanten vor dem Matching in den lokalen
+      // Cache übernehmen (manuell bestätigte Zuordnungen früherer Importe).
+      mergeAliasesIntoLocal(await fetchRemoteAliases(tenantId));
+
       const uniqueNames = [...new Set(result.entries.map(e => e.name))];
       const matches: NameMatchInfo[] = uniqueNames.map(name => {
         const m = matchEmployeeByName(name, employees, false);
@@ -342,6 +349,14 @@ export function MirusReconcileImportButton({
       overrides.filter(o => o.selectedEmployeeId !== 'new')
         .map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId || 'skip' })),
     );
+    // Manuell zugeordnete (vorher nicht automatisch erkannte) Namen zusätzlich
+    // als dauerhaften MIRUS-Alias beim Mandanten speichern — der exakte
+    // Datei-String trifft dann bei künftigen Importen direkt (best-effort).
+    const manualAliases = overrides.filter(o =>
+      o.selectedEmployeeId && o.selectedEmployeeId !== 'skip' && o.selectedEmployeeId !== 'new'
+      && nameMatches.some(m => m.importedName === o.importedName && m.isNew),
+    ).map(o => ({ importedName: o.importedName, employeeId: o.selectedEmployeeId }));
+    void saveRemoteAliases(tenantId, manualAliases);
     const nameToEmp = new Map<string, Employee>();
     for (const o of overrides) {
       if (o.selectedEmployeeId && o.selectedEmployeeId !== 'skip' && o.selectedEmployeeId !== 'new') {
