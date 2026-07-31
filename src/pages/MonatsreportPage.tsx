@@ -10,7 +10,13 @@ import { ChevronLeft, ChevronRight, FileSpreadsheet, FileDown, CalendarDays, Git
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { ReviewsWeeklyTracker } from '@/components/reviews/ReviewsWeeklyTracker';
+import {
+  ReviewsWeeklyTracker, weekKeysForPeriod, PERIOD_LABELS, type Period as ReviewPeriod,
+} from '@/components/reviews/ReviewsWeeklyTracker';
+import {
+  fetchReviewsData, computeWeeklyStarColumns, summarizeStarColumns, type SingleReview,
+} from '@/lib/reviews-store';
+import { Star } from 'lucide-react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -319,6 +325,27 @@ export default function MonatsreportPage() {
 
   const [year, setYear] = useState(heute.getFullYear());
   const [month, setMonth] = useState(heute.getMonth() + 1); // 1-basiert
+
+  // ── Rezensionen: geteilter Zustand für KPI-Block (oben) + Wochentracking (unten) ──
+  const [reviewPeriod, setReviewPeriod] = useState<ReviewPeriod>('w8');
+  const [reviewPlatform, setReviewPlatform] = useState<string>('__all__');
+  const [cockpitReviews, setCockpitReviews] = useState<SingleReview[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setCockpitReviews(null); // State-Reset bei Tenant-Wechsel
+    fetchReviewsData(tenantId)
+      .then(d => { if (alive) setCockpitReviews(d.singleReviews); })
+      .catch(() => { if (alive) setCockpitReviews([]); }); // KPI oben still leer; Tracker unten zeigt Fehler nicht doppelt
+    return () => { alive = false; };
+  }, [tenantId]);
+  const reviewStarCounts = useMemo(() => {
+    if (!cockpitReviews) return null;
+    const keys = weekKeysForPeriod(reviewPeriod, new Date());
+    const cols = computeWeeklyStarColumns(
+      cockpitReviews, keys, reviewPlatform === '__all__' ? null : reviewPlatform,
+    );
+    return summarizeStarColumns(cols).counts;
+  }, [cockpitReviews, reviewPeriod, reviewPlatform]);
   const [daten, setDaten] = useState<MonatsreportDaten | null>(null);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState<string | null>(null);
@@ -454,6 +481,27 @@ export default function MonatsreportPage() {
               Meeting-Cockpit — automatisch gefüllte Kennzahlen, fehlende Quellen bleiben leer
             </p>
           </div>
+        </div>
+
+        {/* ── Rezensionen-Kennzahl: 5/3/1 Sterne mit Anzahl (Zeitraum/Plattform wie Tracking unten) ── */}
+        <div
+          data-testid="cockpit-reviews-kpi"
+          className="pdf-hide rounded-xl border border-border bg-card shadow-sm px-4 py-2.5 flex flex-wrap items-center gap-x-6 gap-y-2"
+        >
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            <Star className="h-3.5 w-3.5 text-amber-500" /> Rezensionen
+          </span>
+          {([[5, 'text-emerald-600 dark:text-emerald-400'], [3, 'text-foreground'], [1, 'text-red-600 dark:text-red-400']] as const).map(([star, cls]) => (
+            <span key={star} className="inline-flex items-baseline gap-1.5" data-testid={`cockpit-reviews-kpi-${star}`}>
+              <span className="text-xs text-muted-foreground">{star} Stern{star > 1 ? 'e' : ''}</span>
+              <span className={cn('text-lg font-bold tabular-nums', cls)}>
+                {reviewStarCounts ? reviewStarCounts[star] : '…'}
+              </span>
+            </span>
+          ))}
+          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
+            {PERIOD_LABELS[reviewPeriod]}{reviewPlatform !== '__all__' ? ` · ${reviewPlatform}` : ''}
+          </span>
         </div>
 
         <Tabs value={activeTab} onValueChange={onTabChange}>
@@ -644,7 +692,12 @@ export default function MonatsreportPage() {
 
         {/* Rezensionen-Wochentracking fürs Meeting (rein lesend, Erfassung auf /rezensionen) */}
         <div className="pdf-hide rounded-xl border bg-card shadow-sm p-4">
-          <ReviewsWeeklyTracker showCockpitLink />
+          <ReviewsWeeklyTracker
+            showCockpitLink
+            reviews={cockpitReviews ?? []}
+            period={reviewPeriod} onPeriodChange={setReviewPeriod}
+            platform={reviewPlatform} onPlatformChange={setReviewPlatform}
+          />
         </div>
       </div>
     </PageShell>

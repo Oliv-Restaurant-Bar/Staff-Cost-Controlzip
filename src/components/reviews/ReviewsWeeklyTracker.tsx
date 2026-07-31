@@ -20,14 +20,14 @@ import {
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
-type Period = 'w4' | 'w8' | 'w12' | 'month';
+export type Period = 'w4' | 'w8' | 'w12' | 'month';
 
-const PERIOD_LABELS: Record<Period, string> = {
+export const PERIOD_LABELS: Record<Period, string> = {
   w4: 'Letzte 4 Wochen', w8: 'Letzte 8 Wochen', w12: 'Letzte 12 Wochen', month: 'Aktueller Monat',
 };
 
 /** ISO-Wochen-Keys für den gewählten Zeitraum, aufsteigend (heute-basiert). */
-function weekKeysForPeriod(period: Period, today: Date): string[] {
+export function weekKeysForPeriod(period: Period, today: Date): string[] {
   if (period === 'month') {
     const keys: string[] = [];
     let cur = startOfISOWeek(startOfMonth(today));
@@ -46,17 +46,30 @@ function weekKeysForPeriod(period: Period, today: Date): string[] {
 export function ReviewsWeeklyTracker({
   reviews: reviewsProp,
   showCockpitLink = false,
+  period: periodProp,
+  onPeriodChange,
+  platform: platformProp,
+  onPlatformChange,
 }: {
   /** Optional bereits geladene Einzelrezensionen (Rezensionen-Seite); sonst lädt die Komponente selbst. */
   reviews?: SingleReview[];
   /** Im Cockpit: Link zur Erfassung anzeigen. */
   showCockpitLink?: boolean;
+  /** Optional kontrolliert (Cockpit teilt Zeitraum/Plattform mit dem KPI-Block oben). */
+  period?: Period;
+  onPeriodChange?: (p: Period) => void;
+  platform?: string;
+  onPlatformChange?: (p: string) => void;
 }) {
   const { tenantId } = useTenant();
   const [loaded, setLoaded] = useState<SingleReview[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [period, setPeriod] = useState<Period>('w8');
-  const [platform, setPlatform] = useState<string>('__all__');
+  const [periodState, setPeriodState] = useState<Period>('w8');
+  const [platformState, setPlatformState] = useState<string>('__all__');
+  const period = periodProp ?? periodState;
+  const platform = platformProp ?? platformState;
+  const setPeriod = onPeriodChange ?? setPeriodState;
+  const setPlatform = onPlatformChange ?? setPlatformState;
 
   const selfLoad = reviewsProp === undefined;
   useEffect(() => {
