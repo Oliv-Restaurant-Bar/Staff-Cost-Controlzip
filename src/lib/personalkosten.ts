@@ -25,7 +25,7 @@ import { getEffectiveHourlyRate } from '@/lib/employee-rate';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import { isEmployeeActiveInMonth } from '@/lib/personnel-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
-import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
+import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { computeMonthlyDailyBudgets } from '@/lib/budget-day';
 import { getMonthlyBudgetRevenue } from '@/lib/budgetDistribution';
 import type { TenantId } from '@/contexts/TenantContext';
@@ -62,8 +62,11 @@ export interface PersonalkostenDaten {
   daysInMonth: number;
   /** Aktive Fix-MA (Monatslohn) im Monat */
   fixEmployees:  Employee[];
-  /** Aktive Flex-MA (Stundenlohn) im Monat */
+  /** Aktive Flex-MA (Stundenlohn) im Monat; enthält bei Lohnart-Wechsel im
+   *  Monat zusätzlich Pseudo-Einträge `<empId>::flexsplit` (Stundenlohn-Anteil). */
   flexEmployees: Employee[];
+  /** Lohnart-Wechsel MITTEN im Monat (empId → Split mit Tage-Anteilen). */
+  wageSplits?: Record<string, MonthWageSplit>;
   agFactor: number;
   rates: SocialCostRates;
   /** Plan-Stunden je 'YYYY-MM-DD' je empId (Dienstplan, netto, ohne FE) */
@@ -198,13 +201,17 @@ export function fixKosten(daten: PersonalkostenDaten, opts?: { stichtag?: number
   for (const emp of daten.fixEmployees) {
     const { faktor, label } = proRataFaktor(emp, daten.year, daten.month);
     if (faktor <= 0) continue;
-    const kostenMonat = r2(fixBrutto(emp) * faktor * daten.agFactor);
+    // Lohnart-Wechsel im Monat: nur der Monatslohn-Tage-Anteil zählt als FIX
+    // (der Stundenlohn-Anteil läuft als Pseudo-Flex-MA über flexKosten).
+    const split = daten.wageSplits?.[String(emp.id)];
+    const splitFaktor = split ? split.monthlyFraction : 1;
+    const kostenMonat = r2(fixBrutto(emp) * faktor * splitFaktor * daten.agFactor);
     zeilen.push({
       empId: emp.id,
       name:  emp.name,
       kostenMonat,
       kostenBisStichtag: r2(kostenMonat * anteil),
-      label,
+      label: split ? [label, 'Lohnart-Wechsel pro rata'].filter(Boolean).join(' / ') : label,
     });
   }
   zeilen.sort((a, b) => a.name.localeCompare(b.name, 'de'));
@@ -501,10 +508,26 @@ export async function ladePersonalkostenDaten(
 
   // Mitarbeiter mit zum Monatsbeginn gültigen Löhnen
   const emps = (await loadEmployees(tenantId)) ?? [];
-  const employees = await applyEffectiveWages(emps, firstOfMonth(year, month), tenantId);
+  // SSOT Lohnart: im Monat aktive Vertragsphase (inkl. Backfill-Regel) — gleiche
+  // Auflösung wie die Personal-FIX/VARIABEL-Seite, damit sich die Ansichten decken.
+  const { employees, splits } = await applyEffectiveWagesForMonth(emps, year, month, tenantId);
   const aktiv = employees.filter(e => isEmployeeActiveInMonth(e, year, month));
   const fixEmployees  = aktiv.filter(pkHasFixedSalary);
   const flexEmployees = aktiv.filter(e => !pkHasFixedSalary(e));
+  // Lohnart-Wechsel MITTEN im Monat: Stundenlohn-Anteil als Pseudo-Flex-MA
+  // (eigene id `<empId>::flexsplit`), Fix-Anteil bleibt pro rata in fixKosten.
+  for (const emp of fixEmployees) {
+    const s = splits[String(emp.id)];
+    if (!s) continue;
+    flexEmployees.push({
+      ...emp,
+      id: `${emp.id}::flexsplit`,
+      contractType: 'hourly',
+      hourlyWage: s.hourly.hourlyWage,
+      monthlySalary: 0,
+      monthlySalaryWith13th: 0,
+    });
+  }
 
   // ── Plan-Stunden (Dienstplan) ────────────────────────────────────────────
   // Supabase ist kanonisch; leeres Resultat → localStorage-Cache als Fallback.
@@ -573,9 +596,24 @@ export async function ladePersonalkostenDaten(
     ? r2((zielQuotePct / 100) * umsatzBudgetMonat)
     : null;
 
+  // Split-Monate: Tages-Stunden der Stundenlohn-Phase auf die Pseudo-Flex-id
+  // verschieben (tag-genau — Tage der Monatslohn-Phase erzeugen keine Flex-Kosten).
+  for (const [empId, s] of Object.entries(splits)) {
+    for (const map of [planStdProTag, istStdProTag]) {
+      for (const [date, perEmp] of Object.entries(map)) {
+        if (perEmp[empId] == null) continue;
+        if (date >= s.hourlyFrom && date <= s.hourlyTo) {
+          perEmp[`${empId}::flexsplit`] = perEmp[empId];
+        }
+        delete perEmp[empId];
+      }
+    }
+  }
+
   return {
     year, month, daysInMonth,
     fixEmployees, flexEmployees,
+    wageSplits: splits,
     agFactor: socialCostFactorFromRates(rates),
     rates,
     planStdProTag, istStdProTag, istTage,

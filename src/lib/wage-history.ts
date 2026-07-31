@@ -250,6 +250,199 @@ export async function applyEffectiveWages(
   });
 }
 
+// ── Monats-Auflösung (FIX/FLEX nach aktiver Vertragsphase des Monats) ────────
+
+/**
+ * Phasenwechsel Stundenlohn ↔ Monatslohn INNERHALB eines Monats.
+ * Tage-Anteile für die pro-rata-Aufteilung FIX/FLEX.
+ */
+export interface MonthWageSplit {
+  monthly:          EffectiveWage;
+  hourly:           EffectiveWage;
+  monthlyFrom:      string;  // YYYY-MM-DD (innerhalb des Monats)
+  monthlyTo:        string;
+  hourlyFrom:       string;
+  hourlyTo:         string;
+  monthlyFraction:  number;  // Tage-Anteil Monatslohn-Phase (0..1)
+  hourlyFraction:   number;  // Tage-Anteil Stundenlohn-Phase (0..1)
+}
+
+export interface MonthWageResolution {
+  /** Massgebende Phase des Monats (bei Split: die Monatslohn-Phase). */
+  wage:   EffectiveWage;
+  /** Nur gesetzt, wenn die Lohnart mitten im Monat wechselt. */
+  split?: MonthWageSplit;
+}
+
+function lastOfMonth(year: number, month: number): string {
+  const d = new Date(year, month, 0).getDate();
+  return `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function entryToEffective(entry: WageEntry): EffectiveWage {
+  return {
+    hourlyWage:            entry.hourlyWage,
+    monthlySalary:         entry.monthlySalary || undefined,
+    monthlySalaryWith13th: entry.monthlySalaryWith13th || undefined,
+    salary13:              entry.salary13,
+    source:                'history',
+    validFrom:             entry.validFrom,
+    wageType:              wageType(entry),
+  };
+}
+
+/**
+ * Lohnart-Auflösung PRO ANZEIGEMONAT (Single Source of Truth für FIX/FLEX).
+ *
+ * Regeln:
+ * - Massgebend ist die am Monatsersten aktive Historie-Phase.
+ * - Backfill: existiert KEINE Phase vor dem Monatsersten, aber eine Phase, die
+ *   IM Monat beginnt und die früheste Historie überhaupt ist, gilt sie ab
+ *   Monatsbeginn (die erste Zeile markiert den Beginn der ERFASSUNG, nicht
+ *   einen echten Wechsel).
+ * - Wechselt die LOHNART (hourly ↔ monthly) mitten im Monat, wird ein Split
+ *   mit Datumsbereichen + Tage-Anteilen zurückgegeben (erster Wechsel zählt).
+ * - Keine Historie bis Monatsende → kein Eintrag in der Map (Aufrufer nutzt
+ *   den employees-Stammsatz als Fallback).
+ */
+export async function getMonthWageResolutionBatch(
+  employeeIds:  string[],
+  year:         number,
+  month:        number,
+  restaurantId: string,
+): Promise<Record<string, MonthWageResolution>> {
+  if (employeeIds.length === 0) return {};
+  const monthStart = firstOfMonth(year, month);
+  const monthEnd   = lastOfMonth(year, month);
+
+  let rows: Record<string, unknown>[] = [];
+  try {
+    const { data, error } = await (supabase as any)
+      .from('employee_wages')
+      .select('*')
+      .eq('restaurant_id', restaurantId)
+      .in('employee_id', employeeIds)
+      .lte('valid_from', monthEnd)
+      .order('valid_from', { ascending: true });
+    if (error || !data) return {};
+    rows = data as Record<string, unknown>[];
+  } catch {
+    return {};
+  }
+
+  const byEmp: Record<string, WageEntry[]> = {};
+  for (const row of rows) {
+    const e = rowToEntry(row);
+    (byEmp[e.employeeId] ||= []).push(e); // bereits aufsteigend sortiert
+  }
+
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const result: Record<string, MonthWageResolution> = {};
+
+  for (const [empId, entries] of Object.entries(byEmp)) {
+    // Am Monatsersten aktive Phase (letzter Eintrag mit valid_from <= monthStart)
+    const atStart = [...entries].reverse().find(e => e.validFrom <= monthStart) ?? null;
+    const inMonth = entries.filter(e => e.validFrom > monthStart && e.validFrom <= monthEnd);
+
+    // Backfill: keine Phase vor Monatsbeginn → früheste In-Monats-Phase gilt ab Monatsbeginn
+    const startEntry = atStart ?? inMonth.shift() ?? null;
+    if (!startEntry) continue;
+
+    const startType = wageType(startEntry);
+    // Erster LOHNART-Wechsel im Monat (Wertänderungen gleicher Art sind kein Split)
+    const change = inMonth.find(e => wageType(e) !== startType && wageType(e) !== 'none');
+
+    if (!change || startType === 'none') {
+      result[empId] = { wage: entryToEffective(startEntry) };
+      console.log(`[WAGE-MONTH] employee: ${empId} | monat: ${year}-${String(month).padStart(2, '0')} | lohnart: ${startType} | quelle: phase (valid_from ${startEntry.validFrom}${atStart ? '' : ', backfill ab Monatsbeginn'})`);
+      continue;
+    }
+
+    // Split: Tag des Wechsels
+    const changeDay   = parseInt(change.validFrom.slice(8, 10), 10);
+    const firstDays   = changeDay - 1;              // Tage der Start-Phase
+    const secondDays  = daysInMonth - firstDays;    // Tage der Wechsel-Phase
+    const dayBefore   = `${year}-${String(month).padStart(2, '0')}-${String(changeDay - 1).padStart(2, '0')}`;
+
+    const first  = entryToEffective(startEntry);
+    const second = entryToEffective(change);
+    const monthlyFirst = startType === 'monthly';
+
+    const split: MonthWageSplit = monthlyFirst
+      ? {
+          monthly: first,  hourly: second,
+          monthlyFrom: monthStart, monthlyTo: dayBefore,
+          hourlyFrom: change.validFrom, hourlyTo: monthEnd,
+          monthlyFraction: firstDays / daysInMonth,
+          hourlyFraction:  secondDays / daysInMonth,
+        }
+      : {
+          monthly: second, hourly: first,
+          monthlyFrom: change.validFrom, monthlyTo: monthEnd,
+          hourlyFrom: monthStart, hourlyTo: dayBefore,
+          monthlyFraction: secondDays / daysInMonth,
+          hourlyFraction:  firstDays / daysInMonth,
+        };
+
+    result[empId] = { wage: split.monthly, split };
+    console.log(`[WAGE-MONTH] employee: ${empId} | monat: ${year}-${String(month).padStart(2, '0')} | lohnart: SPLIT (${startType} → ${wageType(change)} ab ${change.validFrom}) | quelle: phase`);
+  }
+
+  return result;
+}
+
+/**
+ * Employees mit der im ANZEIGEMONAT aktiven Vertragsphase anreichern
+ * (Monats-Variante von applyEffectiveWages, plus Split-Infos).
+ *
+ * - Voll-Monatslohn-Monat  → Monatslohn-Werte, Stundenlohn/Stammsatz verdrängt nicht.
+ * - Voll-Stundenlohn-Monat → hourlyWage gesetzt, Monatslohn VERDRÄNGT (0) → FLEX.
+ * - Phasenwechsel im Monat → Employee erhält die Monatslohn-Werte (FIX-Seite);
+ *   der Aufrufer teilt pro rata über die zurückgegebene splits-Map auf.
+ * - Ohne Historie → Stammsatz unverändert (Fallback, wird geloggt).
+ */
+export async function applyEffectiveWagesForMonth(
+  employees:    Employee[],
+  year:         number,
+  month:        number,
+  restaurantId: string,
+): Promise<{ employees: Employee[]; splits: Record<string, MonthWageSplit> }> {
+  const ids = employees.map(e => String(e.id));
+  const resMap = await getMonthWageResolutionBatch(ids, year, month, restaurantId);
+
+  const splits: Record<string, MonthWageSplit> = {};
+  const enriched = employees.map(emp => {
+    const res = resMap[String(emp.id)];
+    if (!res) {
+      console.log(`[WAGE-MONTH] employee: ${emp.id} | monat: ${year}-${String(month).padStart(2, '0')} | lohnart: ${(emp.monthlySalary ?? 0) > 0 ? 'monthly' : 'hourly'} | quelle: fallback (employees-Stammsatz)`);
+      return emp;
+    }
+    if (res.split) splits[String(emp.id)] = res.split;
+
+    const w = res.wage;
+    if (w.wageType === 'hourly') {
+      // Reine Stundenlohn-Phase: Monatslohn des Stammsatzes verdrängen → FLEX
+      return {
+        ...emp,
+        contractType:          'hourly' as const,
+        hourlyWage:            w.hourlyWage,
+        monthlySalary:         0,
+        monthlySalaryWith13th: 0,
+      };
+    }
+    // Monatslohn-Phase (inkl. Split: FIX-Seite)
+    return {
+      ...emp,
+      contractType:          'monthly' as const,
+      hourlyWage:            w.hourlyWage            || emp.hourlyWage,
+      monthlySalary:         w.monthlySalary         ?? emp.monthlySalary,
+      monthlySalaryWith13th: w.monthlySalaryWith13th ?? emp.monthlySalaryWith13th,
+    };
+  });
+
+  return { employees: enriched, splits };
+}
+
 // ── Schreiben ─────────────────────────────────────────────────────────────────
 
 /**

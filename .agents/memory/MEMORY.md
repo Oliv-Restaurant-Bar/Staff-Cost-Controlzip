@@ -68,4 +68,5 @@
 - [Personalbedarf Kopfzahl-Modell](staffing-headcount.md) — führende Kennzahl = Personen/Tag (max(M,A) bzw. meta.dayHeadcount, UG immer additiv); shift-Zeiten strikt 'HH:MM' (HH:MM:SS ⇒ NaN-Bug).
 - [Personalbedarf-Profile & Prüfung](staffing-profiles-and-check.md) — Profile als season-Keys + app_settings-Blob; Lock im Save-Pfad prüfen; Auto-Profil pro Mandant; Schedule-Key-Datum = letzte 10 Zeichen.
 - [Stunden-Stapel Bedarf→Plan→Ist](bedarf-stunden-stapel.md) — Cockpit prod_stunden_* + Wochenmatrix nur via bedarf-stunden-utils (ArG, ohne Absenzen, null nie 0); personalkosten.ts nur noch Kosten-SSOT.
+- [Monats-Phasenresolver FIX/FLEX](month-wage-resolver.md) — Lohnart je Monat via wage-history-Phase (Monatserster), Split-Monate pro rata mit Pseudo-id `::flexsplit`; nie Stammsatz-contractType für Monatslogik.
 - [Supabase Edge Deploy via Management API](supabase-mgmt-api-deploy.md) — PAT frisch anfordern bei 401; Deploy per multipart /functions/deploy, verify_jwt in metadata (config.toml nur CLI); Ref aus .env.

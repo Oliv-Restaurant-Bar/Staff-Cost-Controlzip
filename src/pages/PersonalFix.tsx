@@ -25,7 +25,7 @@ import {
 } from '@/lib/extra-cost-people-db';
 import type { ActualHourEntry } from '@/lib/supabase-db';
 import { loadAllContractHistory, getMidMonthSwitchInMonth } from '@/lib/contract-history-store';
-import { applyEffectiveWages, firstOfMonth } from '@/lib/wage-history';
+import { applyEffectiveWagesForMonth, type MonthWageSplit } from '@/lib/wage-history';
 import { Employee, grossToNet } from '@/types/personnel';
 import { getEffectiveHourlyRate } from '@/components/schedule-planner/ActualHoursGrid';
 import { useSocialCostRates } from '@/hooks/useSocialCostRates';
@@ -279,6 +279,15 @@ function getFixCost(emp: Employee): number {
     return emp.monthlySalary;
   return 0;
 }
+
+/**
+ * Split-Monat (Lohnart-Wechsel): FLEX-Pseudo-Zeilen tragen eine EIGENE id
+ * (`<empId>::flexsplit`), damit fixe und variable Liste nie dieselbe id führen.
+ * Stunden-/Rate-Lookups laufen über die Basis-id.
+ */
+const FLEX_SPLIT_SUFFIX = '::flexsplit';
+const splitBaseId = (id: string): string =>
+  id.endsWith(FLEX_SPLIT_SUFFIX) ? id.slice(0, -FLEX_SPLIT_SUFFIX.length) : id;
 
 /** Ob der Mitarbeiter einen fixen Monatslohn hat */
 function hasFixedSalary(emp: Employee): boolean {
@@ -2140,6 +2149,8 @@ export default function PersonalFixPage() {
   const [varView, setVarView] = useState<VarView>('plan');
   const [planHours, setPlanHours] = useState<Record<string, number>>({});
   const [istHours, setIstHours] = useState<Record<string, number>>({});
+  /** Lohnart-Wechsel MITTEN im Anzeigemonat (empId → Split mit Tage-Anteilen). */
+  const [wageSplits, setWageSplits] = useState<Record<string, MonthWageSplit>>({});
   // empId → Anzahl FE-Tage im Ist (absenceType='FE' in actual-hours-* localStorage)
   const [ferienIstDays, setFerienIstDays] = useState<Record<string, number>>({});
   // empId → Anzahl FE-Tage im PLAN (frühAbsence/spätAbsence='FE' in schedule-v2-* localStorage)
@@ -2292,9 +2303,12 @@ export default function PersonalFixPage() {
     ]).then(async ([emps, extraPeople]) => {
       setExtraCostPeople(extraPeople.filter(p => p.isActive));
       if (emps) {
-        const effectiveDate = firstOfMonth(selectedYear, selectedMonth);
-        const enriched = await applyEffectiveWages(emps, effectiveDate, tenantId);
+        // SSOT Lohnart: im ANZEIGEMONAT aktive Vertragsphase (Monatslohn = FIX,
+        // Stundenlohn = FLEX); employees-Stammsatz nur als Fallback ohne Historie.
+        const { employees: enriched, splits } =
+          await applyEffectiveWagesForMonth(emps, selectedYear, selectedMonth, tenantId);
         setEmployees(enriched);
+        setWageSplits(splits);
         console.log(`[EMPLOYEE LOAD] count: ${enriched.length} + ${extraPeople.length} ExtraCost`);
         // ─── [CONSISTENCY] Standardformat-Logs ───────────────────────────
         console.log(`[CONSISTENCY] tenant: ${tenantId}`);
@@ -2321,12 +2335,15 @@ export default function PersonalFixPage() {
         }
       } else {
         setEmployees([]);
+        setWageSplits({});
         console.log(`[CONSISTENCY] personal_fix employees: 0 (keine Daten von Supabase)`);
       }
       setLoading(false);
     });
+  // WICHTIG: selectedYear/selectedMonth als Deps — die FIX/FLEX-Einordnung folgt
+  // der im ANZEIGEMONAT aktiven Vertragsphase (vorher blieb sie am Lade-Monat kleben).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+  }, [tenantId, selectedYear, selectedMonth]);
 
 
   // Tagesumsätze bei Monatswechsel neu laden
@@ -2756,13 +2773,30 @@ export default function PersonalFixPage() {
   const variableEmployees = useMemo(() => {
     const fromEmployees = employees
       .filter(e => !hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth));
-    const existingIds = new Set(fromEmployees.map(e => e.id));
+    // Lohnart-Wechsel mitten im Monat: Stundenlohn-Anteil erscheint zusätzlich
+    // in FLEX (pro rata, Stunden × hourlyFraction) — der Fix-Anteil bleibt in FIX.
+    const splitFlex = employees
+      .filter(e => wageSplits[e.id] && hasFixedSalary(e) && isEmployeeActiveInMonth(e, selectedYear, selectedMonth))
+      .map(e => {
+        const s = wageSplits[e.id];
+        const dd = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+        return {
+          ...e,
+          id: `${e.id}${FLEX_SPLIT_SUFFIX}`,
+          name: `${e.name} (${dd(s.hourlyFrom)}–${dd(s.hourlyTo)})`,
+          contractType: 'hourly' as const,
+          hourlyWage: s.hourly.hourlyWage,
+          monthlySalary: 0,
+          monthlySalaryWith13th: 0,
+        };
+      });
+    const existingIds = new Set([...fromEmployees, ...splitFlex].map(e => e.id));
     const fromExtraCost = extraCostPeople
       .map(extraCostPersonToEmployee)
       .filter(e => !existingIds.has(e.id));
-    return [...fromEmployees, ...fromExtraCost]
+    return [...fromEmployees, ...splitFlex, ...fromExtraCost]
       .sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  }, [employees, extraCostPeople, selectedYear, selectedMonth]);
+  }, [employees, extraCostPeople, selectedYear, selectedMonth, wageSplits]);
 
   // Beaulieu: Mitarbeiter ohne hinterlegten Lohn (weder Stunden- noch Monatslohn)
   const missingWageEmployees = useMemo(() =>
@@ -2775,16 +2809,20 @@ export default function PersonalFixPage() {
 
   // ── Hilfsfunktion: Stunden je nach Ansicht ─────────────────────────────────
 
-  const getVarHoursFor = useCallback((empId: string): number => {
-    if (varView === 'plan') return planHours[empId] ?? 0;
-    if (varView === 'ist')  return istHours[empId] ?? 0;
+  const getVarHoursFor = useCallback((rawEmpId: string): number => {
+    // Split-Pseudo-Zeilen: Stunden über die Basis-id, skaliert mit dem
+    // Stundenlohn-Tage-Anteil (Lohnart-Wechsel im Monat).
+    const empId = splitBaseId(rawEmpId);
+    const splitFactor = wageSplits[empId]?.hourlyFraction ?? 1;
+    if (varView === 'plan') return (planHours[empId] ?? 0) * splitFactor;
+    if (varView === 'ist')  return (istHours[empId] ?? 0) * splitFactor;
     // Manuell: manual monthly entry takes priority; weekly baseline as fallback
     const manual  = varHours[empId];
     const weekly  = varWeekly[empId];
-    if (manual != null && manual > 0) return manual;
-    if (weekly?.hours)  return Math.round(weekly.hours * WEEKS_PER_MONTH * 10) / 10;
+    if (manual != null && manual > 0) return manual * splitFactor;
+    if (weekly?.hours)  return Math.round(weekly.hours * WEEKS_PER_MONTH * 10) / 10 * splitFactor;
     return 0;
-  }, [varView, planHours, istHours, varHours, varWeekly]);
+  }, [varView, planHours, istHours, varHours, varWeekly, wageSplits]);
 
   /** Returns monthly cost regardless of pricing mode. */
   const getVarMonthlyCostFor = useCallback((empId: string, emp?: Employee): number => {
@@ -2814,6 +2852,21 @@ export default function PersonalFixPage() {
   const fixedWithCost = useMemo(() => {
     const agFactor = socialCostFactorFromRates(socialCostRates);
     return fixedEmployees.map(emp => {
+      // Lohnart-Wechsel LAUT LOHNHISTORIE (SSOT) mitten im Monat → Fix-Anteil pro rata
+      const wageSplit = wageSplits[emp.id];
+      if (wageSplit) {
+        const dd = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+        const full = getFixCost(emp);
+        return {
+          emp,
+          cost: Math.round(full * wageSplit.monthlyFraction * agFactor * 100) / 100,
+          label: `Pro rata ${dd(wageSplit.monthlyFrom)}–${dd(wageSplit.monthlyTo)} (Lohnart-Wechsel)`,
+          excluded: false,
+          yearlyCost: Math.round(getYearlyFixCost(emp, selectedYear) * agFactor * 100) / 100,
+          hasMidMonthSwitch: true,
+        };
+      }
+
       const phases     = contractHistoryMap[emp.id] ?? [];
       const midSwitch  = getMidMonthSwitchInMonth(phases, selectedYear, selectedMonth);
 
@@ -2843,7 +2896,7 @@ export default function PersonalFixPage() {
         hasMidMonthSwitch: false,
       };
     });
-  }, [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap, socialCostRates]);
+  }, [fixedEmployees, selectedYear, selectedMonth, contractHistoryMap, socialCostRates, wageSplits]);
 
   const activeFixedEmployees = useMemo(() =>
     fixedWithCost.filter(r => !r.excluded),
@@ -2896,12 +2949,18 @@ export default function PersonalFixPage() {
   // ── Stichtag-Controlling: Plan + Ist getrennt (varView-unabhängig) ─────────
   // Variable Kosten immer aus Plan-Stunden (Dienstplan) bzw. Ist-Stunden (Mirus)
   const varPlanTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + (planHours[e.id] ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0), 0),
-    [variableEmployees, planHours, socialCostRates],
+    variableEmployees.reduce((s, e) => {
+      const base = splitBaseId(e.id);
+      return s + (planHours[base] ?? 0) * (wageSplits[base]?.hourlyFraction ?? 1) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
+    }, 0),
+    [variableEmployees, planHours, socialCostRates, wageSplits],
   );
   const varIstTotalCHF = useMemo(() =>
-    variableEmployees.reduce((s, e) => s + (istHours[e.id] ?? 0) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0), 0),
-    [variableEmployees, istHours, socialCostRates],
+    variableEmployees.reduce((s, e) => {
+      const base = splitBaseId(e.id);
+      return s + (istHours[base] ?? 0) * (wageSplits[base]?.hourlyFraction ?? 1) * (getEffectiveHourlyRate(e, socialCostRates) ?? 0);
+    }, 0),
+    [variableEmployees, istHours, socialCostRates, wageSplits],
   );
 
   // Zusatzkosten-IST: Fixlohn-MA Tage mit isAdditionalCost=true → fliessen als variable Flex-Kosten ein
@@ -3811,20 +3870,23 @@ export default function PersonalFixPage() {
 
     const rows = variableEmployees.map(emp => {
       const wage = getEffectiveHourlyRate(emp, socialCostRates) ?? 0;
+      // Split-Pseudo-Zeilen: Stunden über Basis-id, skaliert mit Stundenlohn-Anteil
+      const baseId = splitBaseId(emp.id);
+      const splitF = wageSplits[baseId]?.hourlyFraction ?? 1;
       let planH: number, istH: number, planWork: number, istWork: number;
 
       if (proRataDay !== null) {
         // ── Cutoff mode: actual day filtering (identical to FlexPeriodPopup) ──
-        const planW = loadDailyPlanDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
-        const istW  = loadDailyIstDetails(emp.id, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
-        planH    = planW.reduce((s, r) => s + r.hours, 0);
-        istH     = istW.reduce((s, r) => s + r.hours, 0);
-        planWork = planW.reduce((s, r) => s + r.cost,  0);
-        istWork  = istW.reduce((s, r) => s + r.cost,   0);
+        const planW = loadDailyPlanDetails(baseId, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        const istW  = loadDailyIstDetails(baseId, selectedYear, selectedMonth, proRataDay, wage, tenantKey);
+        planH    = planW.reduce((s, r) => s + r.hours, 0) * splitF;
+        istH     = istW.reduce((s, r) => s + r.hours, 0) * splitF;
+        planWork = planW.reduce((s, r) => s + r.cost,  0) * splitF;
+        istWork  = istW.reduce((s, r) => s + r.cost,   0) * splitF;
       } else {
         // ── Full-month mode: pre-aggregated totals ─────────────────────────
-        planH    = planHours[emp.id] ?? 0;
-        istH     = istHours[emp.id]  ?? 0;
+        planH    = (planHours[baseId] ?? 0) * splitF;
+        istH     = (istHours[baseId]  ?? 0) * splitF;
         planWork = planH * wage;
         istWork  = istH  * wage;
       }
@@ -4088,7 +4150,12 @@ export default function PersonalFixPage() {
 
   // ── Stundensaldo aller Mitarbeiter ────────────────────────────────────────
 
-  const allEmployees = useMemo(() => [...fixedEmployees, ...variableEmployees], [fixedEmployees, variableEmployees]);
+  // Stundensaldo: reale Personen genau EINMAL — Split-Pseudo-Zeilen ausschliessen
+  // (der Mitarbeiter ist im Split-Monat bereits über fixedEmployees vertreten).
+  const allEmployees = useMemo(
+    () => [...fixedEmployees, ...variableEmployees.filter(e => splitBaseId(e.id) === e.id)],
+    [fixedEmployees, variableEmployees],
+  );
 
   const hourBalances = useMemo(() =>
     buildHourBalances(
