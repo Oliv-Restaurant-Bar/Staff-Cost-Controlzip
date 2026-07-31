@@ -281,6 +281,16 @@ export function MirusReconcileImportButton({
         toast.error(`Import gestoppt: ${result.failureReason}`);
         return;
       }
+      // Mandanten-Check über Kostenträger (Spec Punkt 4): Datei muss zum
+      // aktiven Mandanten gehören, sonst stoppen — es wird nichts geschrieben.
+      if (result.costCenter?.tenant && result.costCenter.tenant !== tenantId) {
+        const label = (t: string) => t === 'oliv' ? 'Oliv' : t === 'beaulieu' ? 'Beaulieu' : t;
+        toast.error(
+          `Import gestoppt: Datei gehört zu ${label(result.costCenter.tenant)} ` +
+          `(Kostenträger «${result.costCenter.label}»), aktiver Mandant ist ${label(tenantId)}. Es wurde nichts geschrieben.`,
+        );
+        return;
+      }
       if (result.entries.length === 0) {
         toast.error('Keine Ist-Stunden gefunden. Erwartet wird der Mirus-Export «Tägliche Stunden» mit Zeitraum «von … bis …».');
         return;

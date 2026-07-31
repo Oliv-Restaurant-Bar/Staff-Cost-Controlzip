@@ -25,3 +25,9 @@ Regeln (Spec-verbindlich, bei Änderungen beibehalten):
 - Matching in mirus-name-mapping-store faltet jetzt Umlaute/Akzente (foldDiacritics: ä→ae/ö→oe/ü→ue/ß→ss + NFD-Strip) in ALLEN Vergleichspfaden; Reihenfolge egal (reversed/token-set), Mehrdeutigkeit → conflict (fail-closed, manuell).
 - Dauerhafte MIRUS-Aliasse pro Mandant in app_settings (`mirus_name_aliases:<tenant>`): fetchRemoteAliases vor dem Matching in den localStorage-Cache mergen (remote gewinnt); nur manuell bestätigte Zuordnungen werden remote gespeichert, 'skip' bleibt bewusst lokal. Alles best-effort, wirft nie.
 - Mapping-Keys sind gefaltet normalisiert; lookupSavedMapping hat Legacy-Fallback für alte ungefaltete Keys. Bekannte Grenze: saveRemoteAliases read-merge-upsert ist nicht atomar (seltener Last-Writer-Verlust bei parallelen Geräten).
+
+## Parser layoutrobust (Juli 2026)
+- Blockerkennung generisch (BLOCK_HEADER_RE «<Nr> <Label>», keine hardcodierten Abteilungsnamen); unbekannte Blöcke (Hilfsarbeiter, Geschäftsleitung) werden GELESEN, nicht mehr übersprungen; küche/service per Keyword, sonst bleibt currentDept.
+- Mehrblock-Mitarbeiter: parseEmployeeRows summiert am Ende pro (name lowercase, Tag) — nie überschreiben.
+- Harte Stopps: Spaltenzahl ≠ Titel-Zeitraum (Ende−Start+1) → failureReason; Wochentags-Gegenprobe bleibt Pflicht. Keine permissiven Fallbacks einführen.
+- Mandanten-Check: detectCostCenter + COST_CENTER_TENANTS {3027→oliv, 3012→beaulieu} (Zuordnung NUR über Nummer, robust gegen «AG»); Button stoppt bei Mismatch VOR jedem Schreiben; fehlender/unbekannter Kostenträger blockt nicht.

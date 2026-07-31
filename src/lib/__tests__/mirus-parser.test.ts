@@ -228,3 +228,102 @@ describe('Multi-Tag Voll-Monat (Spaltenoffset spielt keine Rolle)', () => {
     expect(anna.find(e => e.date === '2026-02-02')!.hours).toBe(6.5);
   });
 });
+
+// ── Spec-Runde «robust für unterschiedliche Layouts» (Oliv 28T / Beaulieu 31T) ──
+
+describe('Generische Blöcke + Aggregation über Blöcke (Beaulieu-Layout)', () => {
+  const SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+  // 31 Tage Juli 2026, Tag 1 in Spaltenindex 5 (Beaulieu: «Spalte 6»), Total dahinter.
+  const weekdayRow: unknown[] = ['', '', '', '', ''];
+  const dayRow: unknown[] = ['', '', '', '', ''];
+  for (let d = 1; d <= 31; d++) {
+    weekdayRow.push(SHORT[new Date(2026, 6, d).getDay()]);
+    dayRow.push(d);
+  }
+  weekdayRow.push('Total'); dayRow.push('');
+
+  const empRow = (name: string, perDay: number): unknown[] => {
+    const r: unknown[] = [name, '', '', '', ''];
+    for (let d = 1; d <= 31; d++) r.push(perDay);
+    r.push(perDay * 31);
+    return r;
+  };
+
+  const rows: unknown[][] = [
+    ['3012 Restaurant Beaulieu AG'],
+    title('01.07.2026', '31.07.2026'),
+    weekdayRow,
+    dayRow,
+    ['1 Küche'],
+    empRow('Ramadani Naip', 3.0),
+    ['Total Stunden', '', '', '', '', 3.0],
+    ['2 Service'],
+    empRow('Krauss Marion', 5.0),
+    ['3 Hilfsarbeiter'],
+    empRow('Ramadani Naip', 1.5),
+    ['4 Geschäftsleitung'],
+    empRow('Chef Person', 2.0),
+    ['Total Stunden', '', '', '', '', 2.0],
+  ];
+
+  it('liest alle 4 Blöcke inkl. Hilfsarbeiter/Geschäftsleitung (nichts übersprungen)', () => {
+    const r = parseMirusRows(rows, 'beaulieu.xls');
+    expect(r.failureReason).toBeNull();
+    const names = new Set(r.entries.map(e => e.name));
+    expect(names).toEqual(new Set(['Ramadani Naip', 'Krauss Marion', 'Chef Person']));
+  });
+
+  it('summiert denselben Mitarbeiter über Blöcke pro Tag (3.0 + 1.5 = 4.5)', () => {
+    const r = parseMirusRows(rows, 'beaulieu.xls');
+    const naip = r.entries.filter(e => e.name === 'Ramadani Naip');
+    expect(naip).toHaveLength(31); // pro Tag genau EIN summierter Eintrag
+    expect(naip.every(e => e.hours === 4.5)).toBe(true);
+    const total = naip.reduce((s, e) => s + e.hours, 0);
+    expect(total).toBeCloseTo(31 * 4.5, 2);
+  });
+
+  it('erkennt den Kostenträger 3012 → beaulieu', () => {
+    const r = parseMirusRows(rows, 'beaulieu.xls');
+    expect(r.costCenter).not.toBeNull();
+    expect(r.costCenter!.number).toBe('3012');
+    expect(r.costCenter!.tenant).toBe('beaulieu');
+  });
+
+  it('erkennt Kostenträger 3027 → oliv (robust gegen Zusätze)', () => {
+    const olivRows = rows.map(r0 => [...r0]);
+    olivRows[0] = ['3027 Restaurant OLIV'];
+    const r = parseMirusRows(olivRows, 'oliv.xls');
+    expect(r.costCenter!.tenant).toBe('oliv');
+  });
+
+  it('unbekannter Kostenträger → tenant null (kein Blocken)', () => {
+    const xRows = rows.map(r0 => [...r0]);
+    xRows[0] = ['9999 Restaurant Anderswo'];
+    const r = parseMirusRows(xRows, 'x.xls');
+    expect(r.costCenter!.number).toBe('9999');
+    expect(r.costCenter!.tenant).toBeNull();
+  });
+});
+
+describe('Spalten-Plausibilitätscheck: Anzahl Tagesspalten ≠ Zeitraum → Stopp', () => {
+  it('stoppt, wenn nur ein Teil der Tagesspalten gefunden wird', () => {
+    // Titel sagt 01.–31.07., Kopfzeile enthält aber nur Tage 1..10 → Abbruch.
+    const weekdayRow: unknown[] = ['', ''];
+    const dayRow: unknown[] = ['', ''];
+    const SHORT = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+    for (let d = 1; d <= 10; d++) {
+      weekdayRow.push(SHORT[new Date(2026, 6, d).getDay()]);
+      dayRow.push(d);
+    }
+    const rows: unknown[][] = [
+      title('01.07.2026', '31.07.2026'),
+      weekdayRow,
+      dayRow,
+      ['1 Küche'],
+      ['Momand Sajed', '', 8, 8, 8, 8, 8, 8, 8, 8, 8, 8],
+    ];
+    const r = parseMirusRows(rows, 'x.xls');
+    expect(r.failureReason).toMatch(/Plausibilit/i);
+    expect(r.entries).toHaveLength(0);
+  });
+});
