@@ -226,6 +226,58 @@ async function saveEmployeeStationsBestEffort(emp: Employee): Promise<void> {
 }
 
 /**
+ * Gezieltes Update NUR der Stations-/Positionsfelder eines Mitarbeiters.
+ *
+ * Employees-Write-Gate: Die employees-Tabelle wird grundsätzlich nur vom
+ * Personalstamm-Formular geschrieben. Dieser Pfad ist eine BEWUSST sanktionierte
+ * Ausnahme (analog daysOff/preferredWorkDays im Dienstplan): Er schreibt
+ * ausschliesslich primary_station/secondary_stations eines EXISTIERENDEN
+ * Mitarbeiters (Positions-Pop-up auf der Personalbedarf-Seite) — dieselbe
+ * Zuordnung wie Personalstamm → «Positionen/Qualifikationen» (SSOT), kein
+ * voller Datensatz-Upsert, daher keine Reaktivierungs-/Clobber-Gefahr.
+ * Merge-Verhalten: Aufrufer lesen den MA frisch aus der DB und übergeben nur
+ * die neuen Stationswerte; andere Felder bleiben unberührt.
+ *
+ * Mandanten-Scope: Die employees-Tabelle hat KEINE restaurant_id-Spalte —
+ * Tenant = ID-Präfix (b-* = Beaulieu). Das UPDATE wird deshalb zusätzlich zum
+ * id-Match auf das Präfix des übergebenen Mandanten eingeschränkt (analog
+ * loadEmployees); 0 aktualisierte Zeilen gelten als Fehler. Das ist dieselbe
+ * TS-seitige Tenant-Isolation wie bei allen anderen employees-Schreibpfaden
+ * (vgl. Memory «Tenant-safe upsert under RLS»); echte DB-erzwungene Trennung
+ * bräuchte eine restaurant_id-Spalte + RLS (bekannte, app-weite Grenze).
+ */
+export async function updateEmployeeStations(
+  empId: string,
+  patch: { primaryStation?: string; secondaryStations?: string[] },
+  tenantId: TenantId,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    // Tenant-Präfix-Guard: falsche Mandanten-IDs gar nicht erst anfragen.
+    const isBeaulieuId = empId.startsWith('b-');
+    if ((tenantId === 'beaulieu') !== isBeaulieuId) {
+      return { ok: false, error: `Mitarbeiter-ID ${empId} gehört nicht zum Mandanten ${tenantId}` };
+    }
+    const dbPatch: Record<string, unknown> = {};
+    if ('primaryStation' in patch)    dbPatch.primary_station    = patch.primaryStation ?? null;
+    if ('secondaryStations' in patch) dbPatch.secondary_stations = patch.secondaryStations ?? [];
+    if (Object.keys(dbPatch).length === 0) return { ok: true };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let q = (supabase as any)
+      .from('employees')
+      .update(dbPatch)
+      .eq('id', empId);
+    // Zusätzlich in der Query verankern (id UND Tenant-Präfix müssen passen).
+    q = tenantId === 'beaulieu' ? q.like('id', 'b-%') : q.not('id', 'like', 'b-%');
+    const { data, error } = await q.select('id');
+    if (error) return { ok: false, error: error.message ?? 'unbekannter Fehler' };
+    if (!data || data.length === 0) return { ok: false, error: 'Mitarbeiter nicht gefunden (0 Zeilen aktualisiert)' };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
  * Mitarbeiter laden, optional gefiltert nach Mandant.
  * Tenant-Filterung via ID-Präfix: Beaulieu-IDs starten mit "b-" (z.B. "b-169"),
  * Oliv-IDs sind numerisch. Die Spalte restaurant_id existiert nicht in Supabase.

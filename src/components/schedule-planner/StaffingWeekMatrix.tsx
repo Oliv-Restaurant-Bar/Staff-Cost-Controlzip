@@ -322,6 +322,7 @@ export function StaffingWeekMatrix({
   config,
   season,
   onSelectWeekday,
+  onSelectPosition,
   hoursStack,
   cellMode = 'persons',
   editable = false,
@@ -335,6 +336,8 @@ export function StaffingWeekMatrix({
   season: StaffingSeason;
   /** Klick auf eine Tagesspalte → in die Tagesansicht dieses Wochentags. */
   onSelectWeekday?: (weekday: number) => void;
+  /** Klick auf den Positionsnamen (linke Spalte) → Positions-Pop-up (MA-Zuordnung). */
+  onSelectPosition?: (positionKey: string, positionName: string) => void;
   /** Dienstplan-/Ist-Stunden einer konkreten Kalenderwoche (optional). */
   hoursStack?: WeekHoursStack | null;
   /** Zellen zeigen Personen-Anzahl oder Bedarf-Netto-Stunden. */
@@ -410,7 +413,21 @@ export function StaffingWeekMatrix({
                     </tr>
                     {area.positions.map((row) => (
                       <tr key={row.positionKey} className="border-t border-border/50">
-                        <td className="py-1 pr-2 whitespace-nowrap">{row.positionName}</td>
+                        <td className="py-1 pr-2 whitespace-nowrap">
+                          {onSelectPosition ? (
+                            <button
+                              type="button"
+                              onClick={() => onSelectPosition(row.positionKey, row.positionName)}
+                              className="rounded px-1 -mx-1 cursor-pointer hover:bg-muted hover:text-foreground underline-offset-2 hover:underline"
+                              title={`Position «${row.positionName}»: Mitarbeiter zuordnen/entfernen`}
+                              data-testid={`position-name-${row.positionKey}`}
+                            >
+                              {row.positionName}
+                            </button>
+                          ) : (
+                            row.positionName
+                          )}
+                        </td>
                         {WEEKDAYS.map((w) => (
                           <td key={w.value} className="py-1 px-1 text-center border-r border-border/40 last:border-r-0" data-testid={`week-cell-${row.positionKey}-${w.value}`}>
                             {canEdit ? (

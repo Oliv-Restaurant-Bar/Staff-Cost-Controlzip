@@ -1,0 +1,21 @@
+Personalbedarf — „Bedarf vs. Planung": Klick auf einzelne Zelle öffnet Dienstplan-Detail (Oliv und Beaulieu)
+
+Ziel: In der Tabelle „Bedarf vs. Planung (Kopfzahl · Bedarf / Plan)" soll nicht nur die Tagesspalte, sondern jede einzelne Zelle (Position × Tag) anklickbar sein und ein Detail-Pop-up mit den konkreten Dienstplan-Einträgen dieser Position an diesem Tag öffnen.
+
+1. Klick-Ziel: Jede Datenzelle der Matrix (Kreuzung Position × Tag, z. B. Mo 27.07. / Kochen (heiss)) wird anklickbar (Cursor pointer, dezenter Hover). Der bestehende Klick auf die Tagesspalten-Überschrift (Einzeltag-Detail gesamt) bleibt zusätzlich erhalten.
+
+2. Inhalt des Pop-ups „Kochen (heiss) — Montag 27.07.2026":
+   - Kopfzeile mit Bedarf (Soll) vs. Plan für diese Position an diesem Tag (z. B. Bedarf 4 / Plan 3, Differenz −1) und Ampelfarbe (grün passt / rot über / gelb unter Bedarf).
+   - Liste der tatsächlich geplanten Mitarbeiter für diese Position an diesem Tag: Name, Schichtzeit (von–bis), Schicht (Mittag / Abend / durchgehend), Netto-Plan-Stunden (mit ArG-Pausenabzug).
+   - Summenzeile: Anzahl geplanter Personen (Kopfzahl, eine durchgehende Person zählt 1×) und Total Netto-Plan-Stunden.
+   - Falls unterbesetzt: Hinweis „−X Person(en) unter Bedarf"; falls überbesetzt entsprechend.
+
+3. Datenquelle: Der Dienstplan (Plan) des aktiven Mandanten für genau diesen Tag und diese Position. Kopfzahl = max(Mittag, Abend), keine Doppelzählung Mittag/Abend — konsistent zur Matrix.
+
+4. Dynamische Positionen: Bei regelbasierten Positionen (z. B. Chef de Service, Kalt/Sushi) zusätzlich ein kurzer Hinweis, dass die konkrete Besetzung per Regel bestimmt wird, plus die per Regel zugeordnete Person des Tages.
+
+5. Bedienung: Pop-up schliessbar (× / Klick ausserhalb / Esc). Nur Anzeige (read-only) — keine Bearbeitung in diesem Schritt. Werte müssen exakt zu den Zell-Zahlen der Matrix passen (keine Abweichung).
+
+6. Mandantentrennung: Gilt identisch für Oliv und Beaulieu, jeweils nur Daten des aktiven Mandanten.
+
+Abnahme: Klick auf Mo 27.07. / Kochen (heiss) zeigt Bedarf 4 / Plan 3 und die 3 konkret geplanten Köche mit Schichtzeit und Netto-Stunden; die Summenzeile stimmt mit der Matrix-Zelle überein. Gleiches Verhalten für andere Positionen/Tage und für Beaulieu.

@@ -36,6 +36,7 @@ import {
   profileKeyFromLabel,
   profileByKey,
   dataSeasonForProfile,
+  type StaffingProfilesConfig,
 } from '@/lib/staffing-profiles-utils';
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
@@ -56,6 +57,7 @@ import {
 } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { UgSurchargeDialog } from '@/components/schedule-planner/UgSurchargeDialog';
+import { PositionAssignmentDialog } from '@/components/schedule-planner/PositionAssignmentDialog';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
@@ -76,6 +78,22 @@ import {
 } from '@/lib/staffing-requirements-utils';
 
 /** Aktueller ISO-Wochentag (1 = Mo … 7 = So). */
+/**
+ * Hinweistext für Positionen mit dynamischer Besetzungs-Regel (Positions-Pop-up):
+ * Die Liste im Pop-up zeigt die grundsätzlich qualifizierten Mitarbeiter —
+ * die konkrete Tagesbesetzung wird zusätzlich per Regel bestimmt.
+ */
+function dynamicRuleHintFor(positionKey: string, config: StaffingProfilesConfig): string | null {
+  const k = positionKey.toLowerCase();
+  if ((k.includes('kalt') || k.includes('sushi')) && config.kitchenCold) {
+    return 'Diese Position hat eine dynamische Regel (Kalte Küche/Sushi): Die konkrete Tagesbesetzung wird zusätzlich über die Stationsregel (Stamm/Vertretung, Herd-Köche-Schwelle) bestimmt. Die Liste hier zeigt die grundsätzlich qualifizierten Mitarbeiter.';
+  }
+  if (k === 'service' && config.cdsPriority.length > 0) {
+    return 'Diese Position hat eine dynamische Regel (Chef de Service): Die konkrete Tagesbesetzung wird zusätzlich über die CdS-Prioritätsliste bestimmt. Die Liste hier zeigt die grundsätzlich qualifizierten Mitarbeiter.';
+  }
+  return null;
+}
+
 function currentIsoWeekday(): number {
   const d = new Date().getDay(); // 0 = So … 6 = Sa
   return d === 0 ? 7 : d;
@@ -115,6 +133,8 @@ export default function Personalbedarf() {
   const [periodMode, setPeriodMode] = useState<'week' | 'month'>('week');
   /** Pop-up «UG konfigurieren». */
   const [ugDialogOpen, setUgDialogOpen] = useState(false);
+  /** Positions-Pop-up: Mitarbeiter zuordnen/entfernen (SSOT Personalstamm). */
+  const [positionDialog, setPositionDialog] = useState<{ key: string; name: string } | null>(null);
   /** Roh-Daten der gewählten Kalenderwoche (Dienstplan/Ist), read-only geladen. */
   const [weekData, setWeekData] = useState<{
     employees: Employee[];
@@ -825,6 +845,7 @@ export default function Personalbedarf() {
             editSeason={matrixSeason}
             sourceLabel={`Profil «${activeProfile?.label ?? seasonLabel(season)}»`}
             onSaveCell={handleSaveCell}
+            onSelectPosition={(key, name) => setPositionDialog({ key, name })}
             onSelectWeekday={(w) => {
               setWeekday(w);
               setDetailDate(null); // Wochentag wird wieder führend fürs Detail
@@ -909,6 +930,17 @@ export default function Personalbedarf() {
         }}
       />
 
+      {/* Positions-Pop-up: Mitarbeiter dieser Position ansehen/zuordnen/entfernen */}
+      <PositionAssignmentDialog
+        open={positionDialog != null}
+        onOpenChange={(o) => { if (!o) setPositionDialog(null); }}
+        positionKey={positionDialog?.key ?? null}
+        positionName={positionDialog?.name ?? ''}
+        tenantId={tenantId}
+        readOnly={isGuest}
+        dynamicRuleHint={positionDialog ? dynamicRuleHintFor(positionDialog.key, profilesConfig) : null}
+      />
+
       {/* Beaulieu: Ist-Aufstellung aus Juni/Juli als Standard-Vorschlag */}
       {!loading && tenantId === 'beaulieu' && <PastScheduleSuggestionCard />}
 
@@ -942,7 +974,15 @@ export default function Personalbedarf() {
                         >
                           <PositionIcon name={p.icon} className="h-4 w-4" />
                         </span>
-                        <span className="text-sm font-medium flex-1 truncate">{p.name}</span>
+                        <button
+                          type="button"
+                          className="text-sm font-medium flex-1 truncate text-left cursor-pointer rounded px-1 -mx-1 hover:bg-muted underline-offset-2 hover:underline"
+                          onClick={() => setPositionDialog({ key: p.key, name: p.name })}
+                          title={`Position «${p.name}»: Mitarbeiter zuordnen/entfernen`}
+                          data-testid={`position-name-day-${p.key}`}
+                        >
+                          {p.name}
+                        </button>
                         {shifts.length > 0 && (
                           <Badge variant="secondary" className="text-[10px]">
                             {shifts.length} {shifts.length === 1 ? 'Schicht' : 'Schichten'} · {shifts.reduce((a, s) => a + (Number.isFinite(s.requiredCount) ? s.requiredCount : 0), 0)} MA
