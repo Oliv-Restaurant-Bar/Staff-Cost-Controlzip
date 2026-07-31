@@ -353,6 +353,25 @@ export function StaffingWeekMatrix({
 }) {
   const overview = buildWeekOverview({ positions, requirements, config, season });
   const canEdit = editable && !!onSaveCell && !!editSeason;
+
+  /** Wochentotal einer Positionszeile (Kopfzahlen bzw. Netto-Stunden Mo–So). */
+  const rowWeekTotal = (cells: Record<number, WeekCell | undefined>): number => {
+    let sum = 0;
+    for (const w of WEEKDAYS) {
+      const cell = cells[w.value];
+      sum += cellMode === 'hours'
+        ? partNettoHours(cell, 'mittag') + partNettoHours(cell, 'abend')
+        : (cell?.headcount ?? 0);
+    }
+    return Math.round(sum * 10) / 10;
+  };
+  const weekPersonsTotal = WEEKDAYS.reduce((s, w) => s + (overview.totals[w.value]?.persons ?? 0), 0);
+  const weekBedarfTotal = Math.round(WEEKDAYS.reduce((s, w) => s + (overview.totals[w.value]?.nettoHours ?? 0), 0) * 10) / 10;
+  const budgetValues = WEEKDAYS.map((w) => overview.totals[w.value]?.budget).filter((b): b is number => b != null);
+  const weekBudgetTotal = budgetValues.length > 0 ? budgetValues.reduce((s, b) => s + b, 0) : null;
+
+  /** Dezente Summenspalten-Optik (links abgesetzt, leicht hinterlegt). */
+  const totalColClass = 'border-l-2 border-border/70 bg-muted/30';
   /** RAW-Zeilen (ohne UG-Zuschlag/Ableitung) einer Position an einem Wochentag. */
   const rawShiftsFor = (positionKey: string, weekday: number): StaffingRequirement[] =>
     canEdit
@@ -396,6 +415,9 @@ export function StaffingWeekMatrix({
                   )}
                 </th>
               ))}
+              <th className={cn('py-1 px-2 text-center font-medium border-b border-border/40', totalColClass)} title="Wochentotal Mo–So">
+                Woche
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -407,7 +429,7 @@ export function StaffingWeekMatrix({
                 {dep.areas.map((area) => (
                   <Fragment key={`${dep.department}-${area.area?.key ?? 'none'}`}>
                     <tr className="bg-muted/40">
-                      <td colSpan={8} className="py-1 pr-2 text-xs font-semibold uppercase tracking-wide">
+                      <td colSpan={9} className="py-1 pr-2 text-xs font-semibold uppercase tracking-wide">
                         {area.area?.name ?? DEPT_LABEL[dep.department]}
                       </td>
                     </tr>
@@ -442,6 +464,9 @@ export function StaffingWeekMatrix({
                             )}
                           </td>
                         ))}
+                        <td className={cn('py-1 px-2 text-center tabular-nums font-medium text-muted-foreground', totalColClass)} data-testid={`week-row-total-${row.positionKey}`}>
+                          {rowWeekTotal(row.cells) > 0 ? (cellMode === 'hours' ? fmtH(rowWeekTotal(row.cells)) : rowWeekTotal(row.cells)) : <span className="text-muted-foreground/40">–</span>}
+                        </td>
                       </tr>
                     ))}
                   </Fragment>
@@ -457,6 +482,9 @@ export function StaffingWeekMatrix({
                   {overview.totals[w.value]?.persons ?? 0}
                 </td>
               ))}
+              <td className={cn('py-1 px-2 text-center tabular-nums font-semibold', totalColClass)} data-testid="week-total-persons-week">
+                {weekPersonsTotal}
+              </td>
             </tr>
             {/* Stapel Bedarf → Dienstplan → Ist: Bedarf = Leitplanke (kräftig),
                 Dienstplan darunter abgeschwächt, Ist zuunterst am leisesten.
@@ -468,6 +496,9 @@ export function StaffingWeekMatrix({
                   {fmtH(overview.totals[w.value]?.nettoHours ?? 0)}
                 </td>
               ))}
+              <td className={cn('py-1 px-2 text-center tabular-nums font-semibold', totalColClass)} data-testid="week-bedarf-h-week">
+                {fmtH(weekBedarfTotal)}
+              </td>
             </tr>
             {hoursStack && (
               <>
@@ -483,6 +514,7 @@ export function StaffingWeekMatrix({
                       </td>
                     );
                   })}
+                  <td className={cn('py-1 px-2', totalColClass)} />
                 </tr>
                 <tr className="text-[11px] text-muted-foreground/70">
                   <td className="py-1 pr-2">Ist (MIRUS)</td>
@@ -496,6 +528,7 @@ export function StaffingWeekMatrix({
                       </td>
                     );
                   })}
+                  <td className={cn('py-1 px-2', totalColClass)} />
                 </tr>
               </>
             )}
@@ -509,6 +542,9 @@ export function StaffingWeekMatrix({
                   </td>
                 );
               })}
+              <td className={cn('py-1 px-2 text-center tabular-nums font-medium', totalColClass)} data-testid="week-budget-week">
+                {weekBudgetTotal != null ? weekBudgetTotal.toLocaleString('de-CH') : '–'}
+              </td>
             </tr>
           </tfoot>
         </table>
