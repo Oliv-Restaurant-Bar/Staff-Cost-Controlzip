@@ -1,0 +1,45 @@
+MIRUS Ist-Stunden-Import aus Excel — sicher, mit Backup, nach Mustern gruppierter Vorschau und Sammelbestätigung (Oliv und Beaulieu)
+
+Ziel: Ist-Stunden aus einer MIRUS-Excel-Datei importieren, ohne dass Daten verloren gehen. MIRUS überschreibt grundsätzlich die Ist-Stunden, aber nie blind: zuerst Backup, dann eine Vorschau, in der alle Rückfragen NACH GRUND/MUSTER gruppiert sind und pro Gruppe auf einmal bestätigt werden können. Erst danach schreiben.
+
+A. QUELLE & UMFANG
+1. Quelle ist ein Excel-Upload (MIRUS-Export), KEINE API. Es gibt einen Import-Button „MIRUS Ist-Stunden importieren", der eine .xlsx/.xls-Datei entgegennimmt.
+2. Strikt monatsweise: Nur der aktuell gewählte Monat wird verarbeitet. Zeilen mit Datum ausserhalb des Monats werden ignoriert und im Log als „ausserhalb Zeitraum, übersprungen" gelistet. Nie monatsübergreifend schreiben.
+3. Backup zuerst: Vor jedem Schreibvorgang die bestehenden Ist-Werte des Monats mit Zeitstempel sichern (Rücksetzen möglich).
+4. Kein stilles Überschreiben von Inhalten: Jede Übernahme, die vorhandene FE/K/U oder Stunden ersetzt, muss in der Vorschau bestätigt werden (siehe E).
+
+B. EINLESEN & ZUORDNUNG
+5. Excel parsen: relevante Spalten erkennen (Mitarbeiter, Datum, Ist-Stunden, ggf. Absenzcode). Falls die Spalten nicht eindeutig sind, einen kurzen Mapping-Schritt anbieten (Spalten zuordnen).
+6. Mitarbeiter-Matching: MIRUS-Zeilen den App-Mitarbeitern des aktiven Mandanten zuordnen (Name/Personalnummer). Nicht zuordenbare Zeilen werden VOR dem Schreiben klar als „nicht zugeordnet" gelistet und nicht importiert (keine stille Datenverwerfung).
+
+C. ERFASSUNGSART & AUSHILFEN
+7. Erfassungsart pro Ist-Zeile: MIRUS oder MANUELL. Der Import schreibt nur auf Zeilen der Erfassungsart MIRUS.
+8. MANUELL-Aushilfen werden NIE angefasst. Interne Aufteilung der Mitarbeiter in „MIRUS-Mitarbeiter" und „manuelle Aushilfen" rein nach Erfassungsart — OHNE die Abteilungen Service und Küche zu trennen.
+
+D. VERGLEICH & MUSTER (Drei-Weg pro Mitarbeiter/Tag: MIRUS-Ist / Dienstplan-Plan / gespeicherte Ist)
+9. Rundungsdifferenzen werden NICHT angezeigt und nicht als Rückfrage behandelt: Ist die Abweichung zwischen MIRUS und Plan/alt sehr klein (Rundung, Standard ≤ 0.05 h = 3 Min., konfigurierbar), wird der MIRUS-Wert still übernommen. Solche Fälle erscheinen weder in den Gruppen noch als Konflikt.
+10. Muster:
+    - Muster 1: MIRUS hat Stunden, kein Gegenteil im Plan → wird übernommen (Sammelgruppe „wird übernommen").
+    - Muster 2: MIRUS = 0, Plan = Stunden → Rückfrage.
+    - Muster 3: Plan = FE/K/U, MIRUS = 0 → Absenzcode behalten, bestätigen.
+    - Muster 4: Plan = FE/K/U, MIRUS = Stunden → Rückfrage.
+    - Muster 5: beide Stunden, Abweichung über der Rundungsschwelle → Rückfrage mit angezeigter Differenz.
+11. Absenzcodes sind exakt FE, K, U. Bei bestätigter Absenz bleibt der Code, Ist-Stunden = 0.
+
+E. VORSCHAU NACH GRÜNDEN GRUPPIERT (Kern der Anpassung)
+12. Die Vorschau ordnet alle Fälle NACH GRUND/MUSTER in aufklappbare Gruppen: „Muster 1 (wird übernommen)", „Muster 2 (MIRUS 0 / Plan Stunden)", „Muster 3 (Absenz FE/K/U)", „Muster 4 (Absenz vs. Stunden)", „Muster 5 (Stundendifferenz)". Jede Gruppe zeigt ihre Anzahl.
+13. Pro Gruppe eine Sammelaktion: „Alle in dieser Gruppe bestätigen/übernehmen" (bzw. „ablehnen"), zusätzlich Einzelentscheid pro Zeile möglich. So kann z. B. Muster 5 komplett auf einmal bestätigt werden.
+14. Jede Zeile in einer Gruppe zeigt: Mitarbeiter, Tag, Plan, alte Ist, neue MIRUS-Ist, Differenz, geplante Aktion.
+15. Abbrechen in jedem Schritt → kein Schreibvorgang.
+
+F. SCHREIBEN
+16. Erst nach Bestätigung schreiben; betroffene Zeilen als Erfassungsart = MIRUS markieren; Backup-Referenz speichern. Nicht zugeordnete und ausserhalb des Monats liegende Zeilen bleiben aussen vor.
+
+G. REPORT PRO MITARBEITER
+17. Nach dem Import ein separater Report je Mitarbeiter: Plan vs Ist (pro Tag und Monatstotal), inkl. Absenztage (FE/K/U) und der getroffenen Entscheidungen (übernommen / behalten / übersprungen / nicht zugeordnet).
+
+H. MANDANTEN
+18. Gilt identisch für Oliv und Beaulieu, jeweils nur Mitarbeiter des aktiven Mandanten, keine mandantenübergreifende Vermischung.
+
+Abnahme:
+- Ein Testmonat mit je einem Fall pro Muster 1–5 plus einer reinen Rundungsdifferenz zeigt: Rundungsfall wird still übernommen (nicht sichtbar), die übrigen Fälle korrekt in Gruppen einsortiert, Sammelbestätigung pro Gruppe funktioniert, nach Bestätigung stimmen die Ist-Werte, MANUELL-Aushilfen unverändert, Backup vorhanden, nicht zuordenbare Zeilen gelistet, Report pro Mitarbeiter Plan vs Ist korrekt.

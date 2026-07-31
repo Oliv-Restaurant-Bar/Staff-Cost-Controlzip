@@ -38,8 +38,10 @@ import { nettoSegmentMinutes, nettoMinutesForSlots } from '@/lib/staffing-check-
 import {
   assignPlannedToShifts,
   comparisonStatus,
+  type AssignedPerson,
   type ComparisonStatus,
   type PlannedEmployeeDay,
+  type PlannedSlot,
 } from '@/lib/staffing-comparison-utils';
 
 /** Kopfzahl-Abgleich einer Position an einem Tag. */
@@ -55,6 +57,21 @@ export interface DayPositionHint {
   status: ComparisonStatus;
   /** true = Soll-Kopfzahl kommt aus dem expliziten Feld (meta.dayHeadcount). */
   headcountExplicit: boolean;
+  /**
+   * Die dieser Position an dem Tag zugeordneten PERSONEN (dedupliziert, Basis
+   * der `planned`-Kopfzahl) inkl. aller zugeordneten Einsätze — Drill-down für
+   * das Zell-Detail «Bedarf vs. Planung». Reihenfolge: Auftrittsreihenfolge.
+   */
+  assigned: AssignedPersonDetail[];
+}
+
+/** Person + alle ihre dieser Position zugeordneten Einsätze eines Tages. */
+export interface AssignedPersonDetail {
+  id: string;
+  /** Alle zugeordneten Slots (Früh/Spät), chronologisch nach Startzeit. */
+  slots: PlannedSlot[];
+  /** Stärkste Zuordnungsstufe (regel > haupt > zweit > alias). */
+  via: AssignedPerson['via'];
 }
 
 export interface DayPlanHints {
@@ -162,12 +179,26 @@ export function computeDayPlanHints(args: {
     const entry = byKey.get(key)!;
     const cell = computeWeekCell(entry.blocks);
     const ids = new Set<string>();
+    // Drill-down: Person → alle ihr zugeordneten Einsätze dieser Position.
+    const VIA_RANK: Record<AssignedPerson['via'], number> = { regel: 0, haupt: 1, zweit: 2, alias: 3 };
+    const detailById = new Map<string, AssignedPersonDetail>();
     for (const i of entry.idx) {
       for (const a of assignment.get(i) ?? []) {
         ids.add(a.id);
         matchedIds.add(a.id);
+        const d = detailById.get(a.id);
+        if (d) {
+          d.slots.push(...a.slots);
+          if (VIA_RANK[a.via] < VIA_RANK[d.via]) d.via = a.via;
+        } else {
+          detailById.set(a.id, { id: a.id, slots: [...a.slots], via: a.via });
+        }
       }
     }
+    const assigned = [...detailById.values()].map((d) => ({
+      ...d,
+      slots: [...d.slots].sort((x, y) => x.start.localeCompare(y.start)),
+    }));
     const soll = cell.headcount;
     const planned = ids.size;
     const name = activeByKey.get(key)?.name ?? positionDisplayName(positions, key) ?? key;
@@ -179,6 +210,7 @@ export function computeDayPlanHints(args: {
       diff: planned - soll,
       status: comparisonStatus(soll, planned),
       headcountExplicit: cell.headcountExplicit,
+      assigned,
     });
     sollPersons += soll;
     for (let j = 0; j < entry.blocks.length; j++) {

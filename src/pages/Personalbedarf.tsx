@@ -58,6 +58,7 @@ import {
 import { de } from 'date-fns/locale';
 import { UgSurchargeDialog } from '@/components/schedule-planner/UgSurchargeDialog';
 import { PositionAssignmentDialog } from '@/components/schedule-planner/PositionAssignmentDialog';
+import { WeekCompareCellDialog } from '@/components/schedule-planner/WeekCompareCellDialog';
 import { DEPT_LABEL, DEPT_BADGE_CLASS } from '@/lib/station-config';
 import { DEPT_DEFAULT_COLOR } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
@@ -135,6 +136,8 @@ export default function Personalbedarf() {
   const [ugDialogOpen, setUgDialogOpen] = useState(false);
   /** Positions-Pop-up: Mitarbeiter zuordnen/entfernen (SSOT Personalstamm). */
   const [positionDialog, setPositionDialog] = useState<{ key: string; name: string } | null>(null);
+  /** Zell-Detail «Bedarf vs. Planung» (Position × Tag, read-only). */
+  const [cellDialog, setCellDialog] = useState<{ positionKey: string; dateStr: string } | null>(null);
   /** Roh-Daten der gewählten Kalenderwoche (Dienstplan/Ist), read-only geladen. */
   const [weekData, setWeekData] = useState<{
     employees: Employee[];
@@ -856,7 +859,11 @@ export default function Personalbedarf() {
           {/* Wochenansicht A: Bedarf vs. Planung (Kopfzahl je Position) —
               nur im Wochenmodus (im Monatsmodus sind Wochentags-Spalten mehrdeutig) */}
           {periodMode === 'week' && weekCompare && (
-            <WeekCompareMatrix compare={weekCompare} onSelectDate={setDetailDate} />
+            <WeekCompareMatrix
+              compare={weekCompare}
+              onSelectDate={setDetailDate}
+              onSelectCell={(positionKey, dateStr) => setCellDialog({ positionKey, dateStr })}
+            />
           )}
 
           {/* Wochenansicht B: Stunden Bedarf / Plan / Ist (Tagestotale) */}
@@ -928,6 +935,21 @@ export default function Personalbedarf() {
           await saveProfilesConfig(merged);
           toast.success('UG-Zuschlag gespeichert — wirkt sofort auf den effektiven Bedarf.');
         }}
+      />
+
+      {/* Zell-Detail «Bedarf vs. Planung» (Position × Tag, read-only) */}
+      <WeekCompareCellDialog
+        open={cellDialog != null}
+        onOpenChange={(o) => { if (!o) setCellDialog(null); }}
+        dateStr={cellDialog?.dateStr ?? null}
+        hint={
+          cellDialog && weekCompare
+            ? weekCompare.days.find((d) => d.dateStr === cellDialog.dateStr)
+                ?.hints.positions.find((p) => p.positionKey === cellDialog.positionKey) ?? null
+            : null
+        }
+        employees={weekData?.employees ?? []}
+        dynamicRuleHint={cellDialog ? dynamicRuleHintFor(cellDialog.positionKey, profilesConfig) : null}
       />
 
       {/* Positions-Pop-up: Mitarbeiter dieser Position ansehen/zuordnen/entfernen */}

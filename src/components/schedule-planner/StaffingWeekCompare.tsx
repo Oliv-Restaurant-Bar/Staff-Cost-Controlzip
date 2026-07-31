@@ -120,10 +120,12 @@ export function WeekCompareTiles({ compare, weekLabel }: {
 
 // ── Wochenansicht A: Bedarf vs. Planung (Kopfzahl je Position) ───────────────
 
-export function WeekCompareMatrix({ compare, onSelectDate }: {
+export function WeekCompareMatrix({ compare, onSelectDate, onSelectCell }: {
   compare: WeekCompare;
   /** Klick auf eine Tagesspalte → Einzeltag-Detail. */
   onSelectDate?: (dateStr: string) => void;
+  /** Klick auf eine Datenzelle (Position × Tag) → Zell-Detail-Pop-up. */
+  onSelectCell?: (positionKey: string, dateStr: string) => void;
 }) {
   if (!compare.hasAnyRequirement && !compare.hasAnyPlan) return null;
   return (
@@ -168,9 +170,20 @@ export function WeekCompareMatrix({ compare, onSelectDate }: {
                       data-testid={`compare-cell-${row.positionKey}-${d.weekday}`}
                     >
                       {c ? (
-                        <span title={`Bedarf ${c.soll} · Plan ${c.planned} (${diffLabel(c.diff)})`}>
-                          {c.soll} / <span className={cn('font-medium', headDiffClass(c.diff))}>{c.planned}</span>
-                        </span>
+                        onSelectCell ? (
+                          <button
+                            type="button"
+                            onClick={() => onSelectCell(row.positionKey, d.dateStr)}
+                            className="rounded px-1 -mx-1 cursor-pointer hover:bg-muted"
+                            title={`${row.positionName}: Bedarf ${c.soll} · Plan ${c.planned} (${diffLabel(c.diff)}) — Detail öffnen`}
+                          >
+                            {c.soll} / <span className={cn('font-medium', headDiffClass(c.diff))}>{c.planned}</span>
+                          </button>
+                        ) : (
+                          <span title={`Bedarf ${c.soll} · Plan ${c.planned} (${diffLabel(c.diff)})`}>
+                            {c.soll} / <span className={cn('font-medium', headDiffClass(c.diff))}>{c.planned}</span>
+                          </span>
+                        )
                       ) : (
                         <span className="text-muted-foreground/40">–</span>
                       )}
