@@ -49,17 +49,17 @@ function CompareTile({ icon, label, plan, soll, unit, diff, diffClass, sub, test
 }) {
   return (
     <Card>
-      <CardContent className="p-3 flex items-start gap-2.5">
-        <div className="rounded-lg bg-muted p-2 text-muted-foreground">{icon}</div>
+      <CardContent className="p-2.5 flex items-start gap-2">
+        <div className="rounded-md bg-muted p-1.5 text-muted-foreground">{icon}</div>
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="text-lg font-semibold tabular-nums leading-tight" data-testid={testid}>
-            {plan}<span className="text-muted-foreground font-normal"> / {soll}{unit ? ` ${unit}` : ''}</span>
+          <p className="text-[11px] leading-tight text-muted-foreground">{label}</p>
+          <p className="text-xl font-semibold tabular-nums leading-tight" data-testid={testid}>
+            {plan}<span className="text-muted-foreground font-normal text-base"> / {soll}{unit ? ` ${unit}` : ''}</span>
             {diff != null && (
               <span className={cn('ml-2 text-sm font-medium', diffClass)}>{diff}</span>
             )}
           </p>
-          {sub ? <p className="text-[11px] text-muted-foreground">{sub}</p> : null}
+          {sub ? <p className="text-[11px] leading-tight text-muted-foreground">{sub}</p> : null}
         </div>
       </CardContent>
     </Card>

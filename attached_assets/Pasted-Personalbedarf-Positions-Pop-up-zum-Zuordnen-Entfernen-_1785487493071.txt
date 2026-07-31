@@ -1,0 +1,21 @@
+Personalbedarf — Positions-Pop-up zum Zuordnen/Entfernen von Mitarbeitern (Oliv und Beaulieu)
+
+Ziel: In der Soll-Wochenübersicht soll jeder Positionsname anklickbar sein und ein Pop-up öffnen, in dem man sieht und bearbeitet, welche Mitarbeiter diese Position innehaben.
+
+1. Klick-Ziel: In der Soll-Wochenübersicht (und in den Tagesansichten) wird der Positions-Name in der linken Spalte (z. B. Service, Springer, Gastgeber/GF, BAR Buffet, Kochen (heiss), Reinigung/Prep, Kalt/Sushi, Take Away/Piazzolo, Abwasch) als klickbar dargestellt (Cursor pointer, dezenter Hover). Klick öffnet ein Pop-up „Position: <Name>".
+
+2. Inhalt des Pop-ups: Liste aller Mitarbeiter, die diese Position/Qualifikation aktuell hinterlegt haben (Quelle = Positionen/Qualifikationen im Personalstamm, gefiltert auf den aktiven Mandanten). Pro Mitarbeiter: Name, Abteilung, Anstellung (Voll/Teil/Aushilfe), und ein Entfernen-Button (×).
+
+3. Mitarbeiter entfernen: Entfernt die Position/Qualifikation bei diesem Mitarbeiter (mit kurzer Bestätigung). Wirkt direkt auf den Personalstamm.
+
+4. Mitarbeiter neu zuordnen: Ein Auswahlfeld (Dropdown/Suche) mit allen Mitarbeitern des Mandanten, die diese Position noch NICHT haben. Auswahl + „Hinzufügen" trägt die Position/Qualifikation beim Mitarbeiter ein.
+
+5. Single Source of Truth: Die Zuordnung ist dieselbe wie unter Personalstamm → „Positionen/Qualifikationen". Änderungen im Pop-up sind sofort überall synchron (Personalstamm, Dienstplan-Vorschläge, dynamische Regeln wie Chef de Service / Kalt-Sushi). Keine parallele Zweitliste anlegen.
+
+6. Speichern-Verhalten: Beim Laden frisch aus der DB lesen, beim Speichern nur die betroffene Zuordnung mergen (parallele Änderungen nicht überschreiben). Abbrechen verwirft.
+
+7. Mandantentrennung: Nur Mitarbeiter und Positionen des aktiven Mandanten (Oliv bzw. Beaulieu). Keine mandantenübergreifende Vermischung.
+
+8. Hinweis dynamische Positionen: Bei Positionen mit dynamischer Regel (z. B. Chef de Service, Kalt/Sushi) im Pop-up einen kurzen Info-Text anzeigen, dass die konkrete Tagesbesetzung zusätzlich per Regel bestimmt wird — die Liste hier zeigt die grundsätzlich qualifizierten Mitarbeiter.
+
+Abnahme: Klick auf „Service" zeigt alle Service-qualifizierten MA; ein MA lässt sich entfernen und ein neuer zuordnen; die Änderung erscheint sofort auch im Personalstamm unter Positionen/Qualifikationen desselben MA. Gleiches Verhalten für Beaulieu.

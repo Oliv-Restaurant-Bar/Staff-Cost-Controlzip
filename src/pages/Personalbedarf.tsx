@@ -538,7 +538,7 @@ export default function Personalbedarf() {
   const hasActivePositions = matrix.length > 0;
 
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-3">
       {/* Kopf */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
@@ -590,10 +590,11 @@ export default function Personalbedarf() {
         </div>
       )}
 
-      {/* Profil-Auswahl (Saisons + individuelle Profile) */}
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">Profil</Label>
+      {/* Kompakte Steuerleiste: Profil · Ansicht · Zeitraum · Anzeige (1–2 Zeilen) */}
+      <div className="rounded-lg border bg-muted/30 px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* Profil */}
         <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground">Profil</span>
           {profilesConfig.profiles.map((p) => (
             <Button
               key={p.key}
@@ -601,18 +602,103 @@ export default function Personalbedarf() {
               size="sm"
               variant={season === p.key ? 'default' : 'outline'}
               onClick={() => setSeason(p.key)}
-              className="gap-1"
+              className="gap-1 h-7 px-2.5 text-xs"
             >
               {p.locked && <Lock className="h-3 w-3" />}
               {p.label}
             </Button>
           ))}
           {!isGuest && (
-            <Button type="button" size="sm" variant="ghost" className="gap-1 text-xs" onClick={handleAddProfile}>
+            <Button type="button" size="sm" variant="ghost" className="gap-1 h-7 px-2 text-xs" onClick={handleAddProfile}>
               <Plus className="h-3.5 w-3.5" /> Neues Profil
             </Button>
           )}
         </div>
+        <div className="hidden sm:block h-5 border-l border-border/60" aria-hidden="true" />
+        {/* Ansicht */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground">Ansicht</span>
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            variant={viewMode === 'week' ? 'default' : 'outline'}
+            onClick={() => setViewMode('week')}
+            data-testid="view-week"
+          >
+            Ganze Woche
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            className="h-7 px-2.5 text-xs"
+            variant={viewMode === 'day' ? 'default' : 'outline'}
+            onClick={() => setViewMode('day')}
+            data-testid="view-day"
+          >
+            Einzelner Tag
+          </Button>
+        </div>
+        {viewMode === 'week' && (
+          <>
+            <div className="hidden sm:block h-5 border-l border-border/60" aria-hidden="true" />
+            {/* Zeitraum-Navigation (Dienstplan/Ist-Vergleich) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">Zeitraum</span>
+              <Button type="button" size="icon" variant="outline" className="h-7 w-7"
+                onClick={() => shiftPeriod(-1)} data-testid="period-prev"
+                title={periodMode === 'week' ? 'Eine Woche zurück' : 'Einen Monat zurück'}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Input
+                type="date"
+                value={weekAnchor}
+                onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
+                className="h-7 w-[9.5rem] text-xs"
+                data-testid="input-week-anchor"
+              />
+              <Button type="button" size="icon" variant="outline" className="h-7 w-7"
+                onClick={() => shiftPeriod(1)} data-testid="period-next"
+                title={periodMode === 'week' ? 'Eine Woche vor' : 'Einen Monat vor'}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button type="button" size="sm" className="h-7 px-2.5 text-xs"
+                variant={periodMode === 'week' ? 'default' : 'outline'}
+                onClick={() => setPeriodMode('week')} data-testid="period-week">
+                Woche
+              </Button>
+              <Button type="button" size="sm" className="h-7 px-2.5 text-xs"
+                variant={periodMode === 'month' ? 'default' : 'outline'}
+                onClick={() => setPeriodMode('month')} data-testid="period-month">
+                Monat
+              </Button>
+              {periodLabel && (
+                <span className="text-[11px] text-muted-foreground" data-testid="period-label">
+                  {periodLabel}
+                </span>
+              )}
+            </div>
+            <div className="hidden sm:block h-5 border-l border-border/60" aria-hidden="true" />
+            {/* Anzeige Soll-Matrix */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-muted-foreground">Soll-Matrix</span>
+              <Button type="button" size="sm" className="h-7 px-2.5 text-xs"
+                variant={cellMode === 'persons' ? 'default' : 'outline'}
+                onClick={() => setCellMode('persons')} data-testid="cellmode-persons">
+                Personen
+              </Button>
+              <Button type="button" size="sm" className="h-7 px-2.5 text-xs"
+                variant={cellMode === 'hours' ? 'default' : 'outline'}
+                onClick={() => setCellMode('hours')} data-testid="cellmode-hours">
+                Stunden
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Profil-Zusatzinfos (nur wenn vorhanden) */}
+      <div className="space-y-1.5 empty:hidden">
         {/* Abgeleitetes Profil: Winter/UG = Standard + UG-Zuschlag */}
         {derived && (
           <div className="rounded-md border border-violet-300 bg-violet-50 dark:bg-violet-950/20 px-3 py-2 space-y-2">
@@ -678,31 +764,6 @@ export default function Personalbedarf() {
         )}
       </div>
 
-      {/* Ansicht-Umschalter: Ganze Woche (Übersicht) | Einzelner Tag (Editor) */}
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">Ansicht</Label>
-        <div className="flex flex-wrap gap-1.5">
-          <Button
-            type="button"
-            size="sm"
-            variant={viewMode === 'week' ? 'default' : 'outline'}
-            onClick={() => setViewMode('week')}
-            data-testid="view-week"
-          >
-            Ganze Woche
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={viewMode === 'day' ? 'default' : 'outline'}
-            onClick={() => setViewMode('day')}
-            data-testid="view-day"
-          >
-            Einzelner Tag
-          </Button>
-        </div>
-      </div>
-
       {/* Wochentag-Auswahl (nur Tagesansicht) */}
       {viewMode === 'day' && (
       <div className="space-y-1.5">
@@ -748,69 +809,6 @@ export default function Personalbedarf() {
       {/* Wochenübersicht (Standard-Ansicht) */}
       {!loading && viewMode === 'week' && hasActivePositions && (
         <>
-          {/* Zeitraum-Navigation: Pfeile + Woche|Monat + Datum (Plan/Ist-Vergleich) */}
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-0.5">
-              <Label className="text-[10px] text-muted-foreground">
-                {periodMode === 'week' ? 'Kalenderwoche (Dienstplan/Ist)' : 'Monat (Dienstplan/Ist)'}
-              </Label>
-              <div className="flex items-center gap-1">
-                <Button type="button" size="icon" variant="outline" className="h-8 w-8"
-                  onClick={() => shiftPeriod(-1)} data-testid="period-prev"
-                  title={periodMode === 'week' ? 'Eine Woche zurück' : 'Einen Monat zurück'}>
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <Input
-                  type="date"
-                  value={weekAnchor}
-                  onChange={(e) => e.target.value && setWeekAnchor(e.target.value)}
-                  className="h-8 w-[10.5rem] text-sm"
-                  data-testid="input-week-anchor"
-                />
-                <Button type="button" size="icon" variant="outline" className="h-8 w-8"
-                  onClick={() => shiftPeriod(1)} data-testid="period-next"
-                  title={periodMode === 'week' ? 'Eine Woche vor' : 'Einen Monat vor'}>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <Label className="text-[10px] text-muted-foreground">Vergleichszeitraum</Label>
-              <div className="flex gap-1">
-                <Button type="button" size="sm" className="h-8"
-                  variant={periodMode === 'week' ? 'default' : 'outline'}
-                  onClick={() => setPeriodMode('week')} data-testid="period-week">
-                  Woche
-                </Button>
-                <Button type="button" size="sm" className="h-8"
-                  variant={periodMode === 'month' ? 'default' : 'outline'}
-                  onClick={() => setPeriodMode('month')} data-testid="period-month">
-                  Monat
-                </Button>
-              </div>
-            </div>
-            {periodLabel && (
-              <span className="text-[11px] text-muted-foreground pb-1.5" data-testid="period-label">
-                {periodLabel}
-              </span>
-            )}
-            <div className="flex flex-col gap-0.5 ml-auto">
-              <Label className="text-[10px] text-muted-foreground">Anzeige Soll-Matrix</Label>
-              <div className="flex gap-1">
-                <Button type="button" size="sm" className="h-8"
-                  variant={cellMode === 'persons' ? 'default' : 'outline'}
-                  onClick={() => setCellMode('persons')} data-testid="cellmode-persons">
-                  Personen
-                </Button>
-                <Button type="button" size="sm" className="h-8"
-                  variant={cellMode === 'hours' ? 'default' : 'outline'}
-                  onClick={() => setCellMode('hours')} data-testid="cellmode-hours">
-                  Stunden
-                </Button>
-              </div>
-            </div>
-          </div>
-
           {/* Vergleichs-Kacheln des gewählten Zeitraums (Woche oder Monat) */}
           {weekCompare && (
             <WeekCompareTiles compare={weekCompare} weekLabel={periodLabel ?? undefined} />
