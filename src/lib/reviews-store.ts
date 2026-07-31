@@ -42,6 +42,8 @@ export interface SingleReview {
   text: string;
   author?: string;
   answered: boolean;
+  /** Storage-Pfad des Screenshot im Bucket review-screenshots (tenant/…jpg), optional. */
+  screenshotPath?: string;
   updatedAt: string; // ISO
   deleted?: boolean;
 }
@@ -193,6 +195,51 @@ export async function deleteSingleReview(tenantId: string, review: SingleReview)
   return persistMerged(tenantId, {
     singleReviews: [{ ...review, deleted: true, updatedAt: new Date().toISOString() }],
   });
+}
+
+// ── Screenshots (Supabase Storage, Bucket review-screenshots) ────────────────
+//    Pfad IMMER tenant-präfixiert: <tenantId>/<reviewId>.<ext> — Mandantentrennung.
+
+const SCREENSHOT_BUCKET = 'review-screenshots';
+const SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
+const SCREENSHOT_MIME_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+};
+
+/** Wirft, wenn der Pfad nicht zum aktuellen Mandanten gehört (Tenant-Grenze). */
+function assertTenantPath(tenantId: string, path: string): void {
+  if (!path.startsWith(`${tenantId}/`) || path.includes('..')) {
+    throw new Error('Screenshot-Pfad gehört nicht zu diesem Mandanten.');
+  }
+}
+
+/** Screenshot hochladen (nur JPEG/PNG/WebP, max. 5 MB); gibt den Storage-Pfad zurück. */
+export async function uploadReviewScreenshot(tenantId: string, reviewId: string, file: File): Promise<string> {
+  const ext = SCREENSHOT_MIME_EXT[file.type];
+  if (!ext) throw new Error('Nur Bilddateien (JPEG, PNG, WebP) sind als Screenshot erlaubt.');
+  if (file.size > SCREENSHOT_MAX_BYTES) throw new Error('Screenshot zu gross (max. 5 MB).');
+  const path = `${tenantId}/${reviewId}.${ext}`;
+  const { supabase } = await import('@/integrations/supabase/client');
+  const { error } = await supabase.storage.from(SCREENSHOT_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: true });
+  if (error) throw new Error(`Screenshot-Upload fehlgeschlagen: ${error.message}`);
+  return path;
+}
+
+/** Kurzlebige Anzeige-URL (1 h); nur für Pfade des aktuellen Mandanten. */
+export async function getReviewScreenshotUrl(tenantId: string, path: string): Promise<string> {
+  assertTenantPath(tenantId, path);
+  const { supabase } = await import('@/integrations/supabase/client');
+  const { data, error } = await supabase.storage.from(SCREENSHOT_BUCKET).createSignedUrl(path, 3600);
+  if (error || !data?.signedUrl) throw new Error(`Screenshot-URL fehlgeschlagen: ${error?.message ?? 'unbekannt'}`);
+  return data.signedUrl;
+}
+
+/** Screenshot löschen (best effort); nur für Pfade des aktuellen Mandanten. */
+export async function deleteReviewScreenshot(tenantId: string, path: string): Promise<void> {
+  assertTenantPath(tenantId, path);
+  const { supabase } = await import('@/integrations/supabase/client');
+  await supabase.storage.from(SCREENSHOT_BUCKET).remove([path]);
 }
 
 // ── Kennzahlen (pure, testbar) ────────────────────────────────────────────────

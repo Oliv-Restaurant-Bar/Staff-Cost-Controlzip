@@ -2228,6 +2228,8 @@ export default function PersonalFixPage() {
   const [forecastIstDay,   setForecastIstDay]   = useState<number | null>(null);
   const [flexPeriodPopup,  setFlexPeriodPopup]  = useState<FlexPeriodTarget | null>(null);
   const [expandedFixDepts, setExpandedFixDepts] = useState<Set<string>>(new Set());
+  /** Abteilungs-Filter der gemeinsamen FIX-Tabelle: alle / nur Küche / nur Service. */
+  const [fixDeptFilter, setFixDeptFilter] = useState<'alle' | 'service' | 'küche'>('alle');
   // Incremented whenever schedule-v2-* localStorage changes (schedule-updated event)
   // so that pfixPerEmp and planHours re-read the latest data without a page reload.
   const [scheduleRefreshTick, setScheduleRefreshTick] = useState(0);
@@ -4517,45 +4519,67 @@ export default function PersonalFixPage() {
 
         </section>
 
-        {/* ── FIX-Tabellen nach Abteilung ──────────────────────────────────── */}
-        {Object.entries(byDept).map(([dept, rows]) => {
-          const deptTotal   = rows.reduce((s, r) => s + r.cost, 0);
-          const deptBase    = rows.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
-          const isCollapsed = expandedFixDepts.has(dept);
-          const toggleDept  = () => setExpandedFixDepts(prev => {
-            const next = new Set(prev);
-            if (next.has(dept)) next.delete(dept); else next.add(dept);
-            return next;
-          });
+        {/* ── FIX-Lohnkosten: EINE gemeinsame Tabelle mit Abteilungs-Spalte + Filter ──
+            Spalten Anstellung und Total AG/Jahr bewusst entfernt; Total im Fuss
+            synchronisiert sich mit dem Abteilungs-Filter (Alle/Küche/Service). */}
+        {Object.keys(byDept).length > 0 && (() => {
+          const deptOrder = ['service', 'küche'];
+          const allRows = Object.entries(byDept)
+            .flatMap(([dept, rows]) => rows.map(r => ({ ...r, dept })))
+            .sort((a, b) => {
+              const da = deptOrder.indexOf(a.dept); const db = deptOrder.indexOf(b.dept);
+              if (da !== db) return (da === -1 ? 99 : da) - (db === -1 ? 99 : db);
+              return a.emp.name.localeCompare(b.emp.name, 'de');
+            });
+          const filtered = fixDeptFilter === 'alle' ? allRows : allRows.filter(r => r.dept === fixDeptFilter);
+          const tBase = filtered.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
+          const t13   = filtered.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0);
+          const tMt   = filtered.reduce((s, r) => s + r.cost, 0);
+          const FILTERS: { key: 'alle' | 'küche' | 'service'; label: string }[] = [
+            { key: 'alle', label: 'Alle' },
+            { key: 'küche', label: 'nur Küche' },
+            { key: 'service', label: 'nur Service' },
+          ];
           return (
-            <section key={dept} className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-              <button
-                onClick={toggleDept}
-                className="w-full flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30 hover:bg-muted/50 transition-colors text-left"
-                aria-expanded={!isCollapsed}
-              >
+            <section data-testid="pfix-fix-table" className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-muted/30 border-b border-border">
                 <div className="flex items-center gap-2 text-sm font-semibold">
-                  {DEPT_ICON[dept]}
-                  {DEPT_LABEL[dept] ?? dept} — FIX
-                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
-                  {isCollapsed && <span className="text-[10px] font-normal text-muted-foreground ml-1">(eingeklappt)</span>}
+                  <DollarSign className="h-4 w-4 text-blue-600" />
+                  Fix-Lohnkosten
+                  <Badge variant="secondary" className="text-xs">{filtered.length}</Badge>
                 </div>
-                <div className="flex items-center gap-2 sm:gap-4 text-xs text-muted-foreground shrink-0">
-                  <span className="hidden sm:inline whitespace-nowrap">Basis: <strong className="text-foreground font-mono">{fmtCHF(deptBase)}/Mt</strong></span>
-                  <span className="whitespace-nowrap">{EMPLOYER_COST_LABELS_SHORT.total}: <strong className="text-foreground font-mono">{fmtCHF(deptTotal)}/Mt</strong></span>
-                  <ChevronDown className={cn('h-4 w-4 transition-transform duration-200', isCollapsed && '-rotate-90')} />
-                </div>
-              </button>
-
-              {!isCollapsed && (
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  {EMPLOYER_COST_LABELS_SHORT.total}/Mt <strong className="text-blue-700 dark:text-blue-300 font-mono">{fmtCHF(tMt)}</strong>
+                </span>
+              </div>
               <div className="overflow-x-auto">
-                {/* Kompakte Aufstellung: kleine Schrift/Zeilenhöhe, kein Inline-Editieren —
-                    alle Fix-MA sollen ohne Scrollen auf einen Bildschirm passen. */}
-                <table className="w-full text-xs min-w-[540px]">
+                {/* Kompakt: kleine Schrift/enge Zeilen — alle Fix-MA ohne Scrollen sichtbar. */}
+                <table className="w-full text-xs min-w-[520px]">
                   <thead>
                     <tr className="text-[11px] text-muted-foreground border-b border-border bg-muted/10">
                       <th className="text-left px-3 py-1 font-medium">Name</th>
-                      <th className="text-left px-3 py-1 font-medium">Anstellung</th>
+                      <th className="text-left px-3 py-1 font-medium">
+                        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                          Abteilung
+                          <span className="inline-flex rounded-md border border-border overflow-hidden" data-testid="pfix-fix-dept-filter">
+                            {FILTERS.map(f => (
+                              <button
+                                key={f.key}
+                                onClick={() => setFixDeptFilter(f.key)}
+                                data-testid={`pfix-fix-filter-${f.key}`}
+                                className={cn(
+                                  'px-1.5 py-0.5 text-[10px] font-normal transition-colors',
+                                  fixDeptFilter === f.key
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background hover:bg-muted text-muted-foreground',
+                                )}
+                              >
+                                {f.label}
+                              </button>
+                            ))}
+                          </span>
+                        </span>
+                      </th>
                       <th className="text-right px-3 py-1 font-medium">Basis-Lohn/Mt</th>
                       <th className="text-right px-3 py-1 font-medium">
                         <Tooltip>
@@ -4573,14 +4597,15 @@ export default function PersonalFixPage() {
                           <TooltipContent className="max-w-xs">{EMPLOYER_COST_INFO.total}</TooltipContent>
                         </Tooltip>
                       </th>
-                      <th className="text-right px-3 py-1 font-medium">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {rows.map(({ emp, cost, label, yearlyCost }) => {
+                    {filtered.map(({ emp, cost, label, dept }, i) => {
                       const isProRata = label !== null;
+                      // Kleine visuelle Trennung beim Abteilungswechsel (statt grosser Blöcke)
+                      const deptBreak = fixDeptFilter === 'alle' && i > 0 && filtered[i - 1].dept !== dept;
                       return (
-                        <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
+                        <tr key={emp.id} className={cn('hover:bg-muted/30 transition-colors', deptBreak && 'border-t-2 border-border')}>
                           <td className="px-3 py-1 font-medium whitespace-nowrap">
                             {emp.name}
                             {isProRata && (
@@ -4589,7 +4614,7 @@ export default function PersonalFixPage() {
                               </span>
                             )}
                           </td>
-                          <td className="px-3 py-1 text-muted-foreground whitespace-nowrap">{EMP_TYPE_LABEL[emp.employmentType]}</td>
+                          <td className="px-3 py-1 text-muted-foreground whitespace-nowrap">{DEPT_LABEL[dept] ?? dept}</td>
                           <td className="px-3 py-1 text-right font-mono">{emp.monthlySalary ? fmtCHFDec(emp.monthlySalary) : '–'}</td>
                           <td className="px-3 py-1 text-right font-mono">{emp.monthlySalaryWith13th ? fmtCHFDec(emp.monthlySalaryWith13th) : '–'}</td>
                           <td className="px-3 py-1 text-right font-semibold font-mono text-blue-700 dark:text-blue-400">
@@ -4597,54 +4622,23 @@ export default function PersonalFixPage() {
                               ? <span>{fmtCHF(cost)}{isProRata && <span className="text-[10px] font-normal text-amber-600 ml-1">*</span>}</span>
                               : <span className="text-muted-foreground">–</span>}
                           </td>
-                          <td className="px-3 py-1 text-right font-mono text-muted-foreground">
-                            {yearlyCost > 0 ? fmtCHF(yearlyCost) : '–'}
-                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot>
-                    <tr className="bg-muted/20 font-semibold border-t-2 border-border">
-                      <td className="px-3 py-1.5" colSpan={2}>Total {DEPT_LABEL[dept] ?? dept}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(deptBase)}</td>
-                      <td className="px-3 py-1.5 text-right font-mono">
-                        {fmtCHF(rows.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0))}
+                    <tr className="bg-muted/20 font-semibold border-t-2 border-border" data-testid="pfix-fix-total">
+                      <td className="px-3 py-1.5" colSpan={2}>
+                        Total FIX{fixDeptFilter !== 'alle' ? ` — ${DEPT_LABEL[fixDeptFilter]}` : ''}
                       </td>
-                      <td className="px-3 py-1.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(deptTotal)}</td>
-                      <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{fmtCHF(rows.reduce((s, r) => s + r.yearlyCost, 0))}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(tBase)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono">{fmtCHF(t13)}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-blue-700 dark:text-blue-400">{fmtCHF(tMt)}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
-              )}
             </section>
-          );
-        })}
-
-        {/* ── Gesamttotal FIX (alle Abteilungen) — Summe Service + Küche ──── */}
-        {Object.keys(byDept).length > 0 && (() => {
-          const all   = Object.values(byDept).flat();
-          const tBase = all.reduce((s, r) => s + (r.emp.monthlySalary ?? 0), 0);
-          const t13   = all.reduce((s, r) => s + (r.emp.monthlySalaryWith13th ?? 0), 0);
-          const tMt   = all.reduce((s, r) => s + r.cost, 0);
-          const tJahr = all.reduce((s, r) => s + r.yearlyCost, 0);
-          return (
-            <div
-              data-testid="pfix-fix-total-all"
-              className="rounded-xl border-2 border-blue-300 dark:border-blue-700 bg-blue-50/60 dark:bg-blue-950/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-            >
-              <div className="flex items-center gap-2 text-sm font-bold text-blue-900 dark:text-blue-100">
-                <DollarSign className="h-4 w-4 text-blue-600" />
-                Total FIX (alle Abteilungen)
-              </div>
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
-                <span className="text-muted-foreground">Basis/Mt <strong className="font-mono text-foreground">{fmtCHF(tBase)}</strong></span>
-                <span className="text-muted-foreground">inkl. 13./Mt <strong className="font-mono text-foreground">{fmtCHF(t13)}</strong></span>
-                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}/Mt <strong className="font-mono text-blue-700 dark:text-blue-300 text-sm">{fmtCHF(tMt)}</strong></span>
-                <span className="text-muted-foreground">{EMPLOYER_COST_LABELS_SHORT.total}/Jahr <strong className="font-mono text-foreground">{fmtCHF(tJahr)}</strong></span>
-              </div>
-            </div>
           );
         })()}
 
@@ -4856,7 +4850,6 @@ export default function PersonalFixPage() {
                         <th className="text-right px-4 py-2 font-medium text-orange-600">Flex Arbeit Ist</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. CHF</th>
                         <th className="text-right px-4 py-2 font-medium">Diff. %</th>
-                        <th className="text-left px-3 py-2 font-medium">Status</th>
                         <th className="text-right px-4 py-2 font-medium">Kum. Abw. CHF</th>
                       </tr>
                     </thead>
@@ -4895,7 +4888,6 @@ export default function PersonalFixPage() {
                               <td className="px-4 py-2 text-right font-mono tabular-nums text-orange-700 dark:text-orange-400">{fmtCHF(row.ist)}</td>
                               <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold', a.text)}>{fmtDiff(row.diff)}</td>
                               <td className={cn('px-4 py-2 text-right font-mono tabular-nums text-xs', a.text)}>{fmtPct(row.diffPct)}</td>
-                              <td className={cn('px-3 py-2 text-xs font-medium', a.text)}>{a.label}</td>
                               <td className={cn('px-4 py-2 text-right font-mono tabular-nums font-semibold text-xs', cumCls)}>
                                 {cumDiff > 0.005 ? '+' : cumDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(cumDiff))}
                               </td>
@@ -4913,7 +4905,6 @@ export default function PersonalFixPage() {
                           <td className="px-4 py-2.5 text-right font-mono font-bold text-orange-700 dark:text-orange-400">{fmtCHF(monthIst)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold', mA.text)}>{fmtDiff(monthDiff)}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono text-xs', mA.text)}>{fmtPct(monthPct)}</td>
-                          <td className={cn('px-3 py-2.5 text-xs font-semibold', mA.text)}>{mA.label}</td>
                           <td className={cn('px-4 py-2.5 text-right font-mono font-bold text-xs', mA.text)}>
                             {monthDiff > 0.005 ? '+' : monthDiff < -0.005 ? '−' : ''}{fmtCHF(Math.abs(monthDiff))}
                           </td>
@@ -4927,153 +4918,6 @@ export default function PersonalFixPage() {
           );
         })()}
 
-          {/* ── Erfolgsrechnung-Abgleich (Zusatzsicht, ganz unten, default zu) ── */}
-          {proRataDay === null && (
-            <CollapsibleSection
-              testid="pfix-er-abgleich-section"
-              title="Erfolgsrechnung-Abgleich — voller Personalaufwand"
-              status="Zusatzsicht · anderer Umfang als die Schlagzeile"
-            >
-              <div className="p-3">
-            <div
-              data-testid="pfix-personalcontrolling"
-              className="rounded-lg border border-border bg-muted/10 p-3 space-y-3"
-            >
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Personalcontrolling
-                </h3>
-                <InfoTip
-                  side="top"
-                  text={
-                    <span>
-                      Zwei getrennte Sichten für {getMonthLabel(selectedYear, selectedMonth)},
-                      beide mit denselben Werten wie die Kopf-Kennzahlen (Quelle:
-                      Personalkosten-Kern):{' '}
-                      <b>Budget vs. Ist</b> vergleicht das Budget (Ziel-Personalquote ×
-                      Umsatz-Budget) mit der Hochrechnung — betriebswirtschaftlich, ob der
-                      Personalaufwand unter oder über Budget liegt (Richtung = gut/schlecht).{' '}
-                      <b>Erfolgsrechnung-Abgleich</b> ist eine technische Kontrolle, ob die
-                      Hochrechnung mit dem vollen Personalaufwand der Erfolgsrechnung (Löhne +
-                      Sozialleistungen, FIBU 5000–5999) übereinstimmt — hier zählt nur die
-                      Grösse der Abweichung. Alle Quoten sind zeitkonsistent
-                      (Hochrechnung ÷ Hochrechnungs-Umsatz {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}).
-                    </span>
-                  }
-                />
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2">
-                {/* Block A — Budget vs. Ist (betriebswirtschaftlich, richtungsabhängig) */}
-                <ControllingBlock
-                  testid="pfix-pc-budget-ist"
-                  title="Budget vs. Ist (Hochrechnung)"
-                  colLeft="Budget"
-                  colRight="Ist (HR)"
-                  colDiff="HR − Budget"
-                  onClick={() => setDrilldownFocus('abweichung')}
-                  pill={
-                    <StatusPill tone={hasCoreBudget ? budgetVsIst.tone : 'neutral'} size="xs">
-                      {hasCoreBudget ? budgetDeltaText(budgetVsIst.diffCHF) : 'Kein Umsatz-Budget'}
-                    </StatusPill>
-                  }
-                  chf={{
-                    left: hasCoreBudget ? fmtCHF(budgetVsIst.budgetCHF) : '—',
-                    right: fmtCHF(budgetVsIst.istCHF),
-                    diff: hasCoreBudget ? signCHF(budgetVsIst.diffCHF) : '—',
-                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
-                  }}
-                  pct={{
-                    left: fmtQuote(budgetVsIst.budgetPct),
-                    right: fmtQuote(budgetVsIst.istPct),
-                    diff: hasCoreBudget && budgetVsIst.diffPp !== null ? `${signPp(budgetVsIst.diffPp)} Pp` : '—',
-                    tone: hasCoreBudget ? budgetVsIst.tone : 'neutral',
-                  }}
-                />
-
-                {/* Block B — App vs. Erfolgsrechnung (technische Kontrolle, betragsbasiert) */}
-                {erVergleich.status === 'ok' ? (
-                  <ControllingBlock
-                    testid="pfix-pc-app-er"
-                    title="Erfolgsrechnung-Abgleich — voller Personalaufwand"
-                    colLeft="HR App"
-                    colRight="Ist ER"
-                    colDiff="App − ER"
-                    onClick={() => setDrilldownFocus('er')}
-                    info={
-                      <InfoTip
-                        side="top"
-                        text={
-                          <span>
-                            Kontrolle: die App-Hochrechnung des Personalaufwands (Total
-                            Arbeitgeberkosten aus dem Personalkosten-Kern) gegenüber „Löhne (Total)"
-                            + „Sozialleistungen" der Erfolgsrechnung (exakt dieselben Werte wie dort,
-                            FIBU 5000–5999, voller Arbeitgeberaufwand exkl. „Übriger
-                            Personalaufwand"). Diese werden <b>nicht</b> nochmals mit Sozialkosten
-                            multipliziert. Beide Quoten zeitkonsistent auf den Hochrechnungs-Umsatz{' '}
-                            {fmtCHF(pkZentral?.ums.hochrechnung ?? 0)}.
-                            {erVergleich.revenueMismatch
-                              ? ' Achtung: Der P&L-Nettoumsatz weicht > 5 % vom hier verwendeten Umsatz ab.'
-                              : ''}
-                          </span>
-                        }
-                      />
-                    }
-                    pill={
-                      <StatusPill tone={erVergleich.tone} size="xs">
-                        {ER_STATUS_LABEL[erVergleich.tone]}
-                      </StatusPill>
-                    }
-                    footer={
-                      <span className={TONE_TEXT[erVergleich.tone]}>
-                        {appVsErText(erVergleich.diffCHF)}
-                      </span>
-                    }
-                    chf={{
-                      left: fmtCHF(pkZentral?.kHr.total ?? 0),
-                      right: fmtCHF(erVergleich.fibuCHF),
-                      diff: signCHF(erVergleich.diffCHF),
-                      tone: erVergleich.tone,
-                    }}
-                    pct={{
-                      left: fmtQuote(erVergleich.berechnetPct),
-                      right: fmtQuote(erVergleich.fibuPct),
-                      diff: erVergleich.diffPp !== null ? `${signPp(erVergleich.diffPp)} Pp` : '—',
-                      tone: erVergleich.tone,
-                    }}
-                  />
-                ) : (
-                  <div
-                    data-testid="pfix-pc-app-er"
-                    className="rounded-md border border-border bg-card p-2.5 space-y-2"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        App vs. Erfolgsrechnung
-                      </span>
-                    </div>
-                    <div
-                      data-testid="pfix-pc-app-er-missing"
-                      className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-                    >
-                      <span>Keine Erfolgsrechnung für {getMonthLabel(selectedYear, selectedMonth)} importiert.</span>
-                      {!isGuest && (
-                        <Link
-                          to="/reporting"
-                          data-testid="pfix-er-import-link"
-                          className="font-medium text-primary underline underline-offset-2"
-                        >
-                          Erfolgsrechnung importieren →
-                        </Link>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-              </div>
-            </CollapsibleSection>
-          )}
 
 
         {/* ── Verlaufs-Diagramme (ganz unten, standardmässig eingeklappt) ── */}
