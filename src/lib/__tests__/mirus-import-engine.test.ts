@@ -6,7 +6,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   checkMirusScope, buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
-  groupPlanCells, canonicalAbsence, MirusResolvedEntry,
+  groupPlanCells, canonicalAbsence, computeIstCoverage, formatDayRanges, daysInMonthOf,
+  MirusResolvedEntry,
 } from '@/lib/mirus-import-engine';
 
 const month = '2026-07';
@@ -30,6 +31,50 @@ describe('checkMirusScope', () => {
   it('bricht ohne Datum ab', () => {
     expect(checkMirusScope([]).ok).toBe(false);
     expect(checkMirusScope(['quark']).ok).toBe(false);
+  });
+});
+
+describe('Monats-Abdeckung («Ist-Abdeckung: X/N Tage»)', () => {
+  it('daysInMonthOf kennt Monatslängen inkl. Schaltjahr', () => {
+    expect(daysInMonthOf('2026-07')).toBe(31);
+    expect(daysInMonthOf('2026-02')).toBe(28);
+    expect(daysInMonthOf('2028-02')).toBe(29);
+  });
+
+  it('computeIstCoverage: Juli 28/31, es fehlen 29.–31.07.', () => {
+    const keys: string[] = [];
+    for (let d = 1; d <= 28; d++) {
+      keys.push(`emp1-2026-07-${String(d).padStart(2, '0')}`);
+    }
+    keys.push('emp1-2026-08-01'); // anderer Monat zählt nicht
+    const cov = computeIstCoverage('2026-07', keys);
+    expect(cov.covered).toBe(28);
+    expect(cov.total).toBe(31);
+    expect(cov.missingDates).toEqual(['2026-07-29', '2026-07-30', '2026-07-31']);
+    expect(formatDayRanges(cov.missingDates)).toBe('29.–31.07.');
+  });
+
+  it('formatDayRanges: Einzeltage und Bereiche gemischt', () => {
+    expect(formatDayRanges(['2026-07-05'])).toBe('05.07.');
+    expect(formatDayRanges(['2026-07-01', '2026-07-02', '2026-07-04'])).toBe('01.–02.07., 04.07.');
+    expect(formatDayRanges([])).toBe('');
+  });
+
+  it('Blockimport-Beispiel: Datei 29.07.–02.08. bei Juli → nur 29.–31.07. verarbeitet, August gelistet', () => {
+    const julyDates = ['2026-07-29', '2026-07-30', '2026-07-31'];
+    const plan = buildMirusReconcilePlan({
+      entries: [
+        entry('a', '2026-07-29', 8), entry('a', '2026-07-30', 8), entry('a', '2026-07-31', 8),
+        entry('a', '2026-08-01', 8), entry('a', '2026-08-02', 8),
+      ],
+      existing: {},
+      erfassungsart: { a: 'MIRUS' },
+      month: '2026-07',
+      dates: julyDates,
+    });
+    expect(plan.employees[0].fileTotal).toBe(24);
+    expect(resolvePlanToWrites(plan).map(w => w.date)).toEqual(julyDates);
+    expect(plan.skippedOutOfScope.map(r => r.date)).toEqual(['2026-08-01', '2026-08-02']);
   });
 });
 

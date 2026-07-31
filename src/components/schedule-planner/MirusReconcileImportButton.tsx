@@ -52,7 +52,8 @@ import {
   ImportMatchPreviewDialog, NameMatchInfo, NameMatchOverride,
 } from '@/components/schedule-planner/ImportMatchPreviewDialog';
 import {
-  checkMirusScope, buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
+  buildMirusReconcilePlan, resolvePlanToWrites, expectedAfterTotals,
+  computeIstCoverage, formatDayRanges,
   groupPlanCells, patternOf, canonicalAbsence, MIRUS_ROUNDING_THRESHOLD_H,
   MirusReconcilePlan, MirusResolvedEntry, MirusCellPlan, MirusPlanInfo,
 } from '@/lib/mirus-import-engine';
@@ -240,6 +241,14 @@ export function MirusReconcileImportButton({
 
   const monthKey = format(currentMonth, 'yyyy-MM');
 
+  // «Ist-Abdeckung: X/N Tage» — Tag gilt als abgedeckt, sobald irgendein
+  // Ist-Eintrag an diesem Tag existiert; Lücken bleiben sichtbar bis der
+  // nächste Import-Block sie füllt.
+  const coverage = useMemo(
+    () => computeIstCoverage(monthKey, Object.keys(actualHoursData)),
+    [monthKey, actualHoursData],
+  );
+
   useEffect(() => {
     let alive = true;
     loadLatestDienstplanIstBackup(tenantId, monthKey)
@@ -273,19 +282,25 @@ export function MirusReconcileImportButton({
         toast.error('Keine Ist-Stunden gefunden. Erwartet wird der Mirus-Export «Tägliche Stunden» mit Zeitraum «von … bis …».');
         return;
       }
-      const scope = checkMirusScope(result.dateRange.length > 0 ? result.dateRange : result.entries.map(e => e.date));
-      if (!scope.ok || !scope.month || !scope.dates) {
-        toast.error(scope.error ?? 'Scope-Prüfung fehlgeschlagen.');
-        return;
-      }
-      if (scope.month !== monthKey) {
-        toast.error(`Datei betrifft ${scope.month}, angezeigt ist aber ${monthKey}. Bitte zuerst zum richtigen Monat wechseln — es wurde nichts geschrieben.`);
+      // Kalendermonat als Anker: geschrieben werden NUR Tage des aktuell
+      // gewählten Monats. Datei-Tage anderer Monate werden übersprungen und
+      // gelistet («gehört zu <Monat> — bei ausgewähltem <Monat> importieren»).
+      const allDates = [...new Set(
+        (result.dateRange.length > 0 ? result.dateRange : result.entries.map(e => e.date))
+          .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+      )].sort();
+      const inMonthDates = allDates.filter(d => d.startsWith(`${monthKey}-`));
+      if (inMonthDates.length === 0) {
+        const otherMonths = [...new Set(allDates.map(d => d.slice(0, 7)))].sort();
+        toast.error(otherMonths.length > 0
+          ? `Datei enthält keine Tage für ${monthKey} (sie gehört zu ${otherMonths.join(', ')}). Bitte den passenden Monat auswählen — es wurde nichts geschrieben.`
+          : 'Kein Datumsbereich in der Datei erkannt («von DD.MM.YYYY bis DD.MM.YYYY» erwartet).');
         return;
       }
       setFileName(file.name);
       setParsedEntries(result.entries);
-      setScopeDates(scope.dates);
-      setScopeMonth(scope.month);
+      setScopeDates(inMonthDates);
+      setScopeMonth(monthKey);
 
       const uniqueNames = [...new Set(result.entries.map(e => e.name))];
       const matches: NameMatchInfo[] = uniqueNames.map(name => {
@@ -306,7 +321,7 @@ export function MirusReconcileImportButton({
         buildPlanFromMatches(matches.map(m => ({
           importedName: m.importedName,
           selectedEmployeeId: m.matchedEmployee?.id ?? 'skip',
-        })), result.entries, scope.month, scope.dates);
+        })), result.entries, monthKey, inMonthDates);
       }
     } catch (err) {
       toast.error(`Fehler beim Lesen der Datei: ${err instanceof Error ? err.message : String(err)}`);
@@ -606,6 +621,14 @@ export function MirusReconcileImportButton({
           <Undo2 className="h-4 w-4" /> {undoBusy ? 'Stelle wieder her…' : 'Rückgängig'}
         </Button>
       )}
+      <span
+        className={`text-xs ${coverage.missingDates.length > 0 ? 'text-orange-600' : 'text-muted-foreground'}`}
+        data-testid="text-ist-coverage"
+        title={coverage.missingDates.length > 0 ? `Es fehlen: ${formatDayRanges(coverage.missingDates)}` : 'Alle Tage haben Ist-Einträge.'}
+      >
+        Ist-Abdeckung: {coverage.covered}/{coverage.total} Tage
+        {coverage.missingDates.length > 0 && ` — es fehlen ${formatDayRanges(coverage.missingDates)}`}
+      </span>
 
       {/* Namens-Zuordnung für offene Namen */}
       <ImportMatchPreviewDialog
@@ -669,10 +692,18 @@ export function MirusReconcileImportButton({
                       <div>Ohne Zuordnung (werden übersprungen): {unmatchedNames.join(', ')}</div>
                     )}
                     {plan.skippedOutOfScope.length > 0 && (
-                      <div>
-                        {plan.skippedOutOfScope.length} Zeile(n) ausserhalb {plan.month} ignoriert:{' '}
-                        {plan.skippedOutOfScope.slice(0, 5).map(r => `${r.employeeName} ${format(new Date(r.date), 'dd.MM.yyyy', { locale: de })}`).join(', ')}
-                        {plan.skippedOutOfScope.length > 5 ? ', …' : ''}
+                      <div data-testid="text-out-of-scope">
+                        {Object.entries(
+                          plan.skippedOutOfScope.reduce<Record<string, string[]>>((acc, r) => {
+                            const m = r.date.slice(0, 7);
+                            (acc[m] = acc[m] ?? []).push(r.date);
+                            return acc;
+                          }, {}),
+                        ).sort(([a], [b]) => a.localeCompare(b)).map(([m, ds]) => (
+                          <div key={m}>
+                            {ds.length} Zeile(n) übersprungen — gehört zu {format(new Date(`${m}-01`), 'MMMM yyyy', { locale: de })}: bei ausgewähltem {format(new Date(`${m}-01`), 'MMMM yyyy', { locale: de })} importieren ({formatDayRanges([...new Set(ds)])}).
+                          </div>
+                        ))}
                       </div>
                     )}
                   </AlertDescription>
@@ -912,9 +943,17 @@ export function MirusReconcileImportButton({
                     )}
                     {report.outOfScopeRows?.length > 0 && (
                       <div>
-                        {report.outOfScopeRows.length} Zeile(n) ausserhalb des Monats ignoriert:{' '}
-                        {report.outOfScopeRows.slice(0, 8).map(r => `${r.name} ${format(new Date(r.date), 'dd.MM.yyyy', { locale: de })}`).join(', ')}
-                        {report.outOfScopeRows.length > 8 ? ', …' : ''}
+                        {Object.entries(
+                          report.outOfScopeRows.reduce<Record<string, string[]>>((acc, r) => {
+                            const m = r.date.slice(0, 7);
+                            (acc[m] = acc[m] ?? []).push(r.date);
+                            return acc;
+                          }, {}),
+                        ).sort(([a], [b]) => a.localeCompare(b)).map(([m, ds]) => (
+                          <div key={m}>
+                            {ds.length} Zeile(n) übersprungen — gehört zu {format(new Date(`${m}-01`), 'MMMM yyyy', { locale: de })}: bei ausgewähltem {format(new Date(`${m}-01`), 'MMMM yyyy', { locale: de })} importieren ({formatDayRanges([...new Set(ds)])}).
+                          </div>
+                        ))}
                       </div>
                     )}
                   </AlertDescription>

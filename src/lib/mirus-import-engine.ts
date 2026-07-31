@@ -137,6 +137,59 @@ export interface MirusWriteOp {
   entry: ActualHourEntry | null;
 }
 
+// ─── Monats-Abdeckung («Ist-Abdeckung: X/N Tage») ────────────────────────────
+
+/** Anzahl Tage eines Monats 'YYYY-MM'. */
+export function daysInMonthOf(month: string): number {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+}
+
+/**
+ * Ist-Abdeckung eines Monats: ein Tag gilt als abgedeckt, sobald mindestens
+ * ein Ist-Eintrag (beliebiger MA) an diesem Tag existiert.
+ * @param actualKeys Keys der Form `${employeeId}-${YYYY-MM-DD}`
+ */
+export function computeIstCoverage(
+  month: string,
+  actualKeys: Iterable<string>,
+): { covered: number; total: number; missingDates: string[] } {
+  const total = daysInMonthOf(month);
+  const coveredDays = new Set<string>();
+  for (const key of actualKeys) {
+    const date = key.slice(-10); // Datum = letzte 10 Zeichen des Keys
+    if (date.startsWith(`${month}-`)) coveredDays.add(date);
+  }
+  const missingDates: string[] = [];
+  for (let d = 1; d <= total; d++) {
+    const date = `${month}-${String(d).padStart(2, '0')}`;
+    if (!coveredDays.has(date)) missingDates.push(date);
+  }
+  return { covered: total - missingDates.length, total, missingDates };
+}
+
+/** Fehltage kompakt als Bereiche formatieren, z. B. «29.–31.07., 05.08.». */
+export function formatDayRanges(dates: string[]): string {
+  const sorted = [...dates].sort();
+  const fmt = (d: string) => `${d.slice(8, 10)}.${d.slice(5, 7)}.`;
+  const parts: string[] = [];
+  let start = 0;
+  const isNextDay = (a: string, b: string) => {
+    const da = new Date(`${a}T00:00:00Z`).getTime();
+    const db = new Date(`${b}T00:00:00Z`).getTime();
+    return db - da === 86400000;
+  };
+  for (let i = 1; i <= sorted.length; i++) {
+    if (i === sorted.length || !isNextDay(sorted[i - 1], sorted[i])) {
+      parts.push(start === i - 1
+        ? fmt(sorted[start])
+        : `${sorted[start].slice(8, 10)}.–${fmt(sorted[i - 1])}`);
+      start = i;
+    }
+  }
+  return parts.join(', ');
+}
+
 // ─── Scope-Check ─────────────────────────────────────────────────────────────
 
 /**

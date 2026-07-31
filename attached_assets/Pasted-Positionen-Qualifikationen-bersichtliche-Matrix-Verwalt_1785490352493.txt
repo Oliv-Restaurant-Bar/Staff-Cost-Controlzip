@@ -1,0 +1,24 @@
+Positionen/Qualifikationen — übersichtliche Matrix-Verwaltung (Oliv und Beaulieu)
+
+Ziel: Klare Gesamtübersicht, wer welche Position/Qualifikation hat, mit einfachem Hinzufügen/Entfernen — statt der unübersichtlichen Einzel-Liste im Pop-up.
+
+1. Neue Ansicht „Positionen verwalten" (Matrix):
+   - Erreichbar über den Menüpunkt „Positionen" und über einen Button „Alle Positionen verwalten" im bestehenden Positions-Pop-up.
+   - Matrix: Zeilen = Mitarbeiter (gruppiert nach Abteilung Küche/Service mit Zwischenüberschriften), Spalten = alle Positionen.
+   - Zelle = Umschalter mit drei Zuständen: leer (nicht qualifiziert), ✓ (qualifiziert), ★ (Hauptposition). Klick setzt/entfernt ✓; ein separater Stern-Klick markiert genau EINE Hauptposition pro Mitarbeiter (setzt die vorherige automatisch zurück).
+   - Spaltenkopf: Positionsname + Anzahl qualifizierter Mitarbeiter. Zeilenkopf: Mitarbeitername + Anstellung; Hauptposition hervorgehoben.
+
+2. Filter/Suche: Suchfeld (Mitarbeiter oder Position), Filter nach Abteilung, Umschalter „nur qualifizierte anzeigen". Kopfzeile und erste Spalte bleiben beim Scrollen fixiert (sticky).
+
+3. Legende: ✓ = qualifiziert, ★ = Hauptposition; kurzer Hinweis, dass bei dynamischen Positionen (Chef de Service, Kalt/Sushi) die konkrete Tagesbesetzung zusätzlich per Regel bestimmt wird.
+
+4. Bestehendes Pop-up „Position: ‹Name›" aufräumen:
+   - Zwei klare Bereiche: „Qualifiziert (X)" als Liste mit × zum Entfernen und setzbarem Haupt-Stern; darunter „Mitarbeiter hinzufügen" mit durchsuchbarem Dropdown + „Hinzufügen".
+   - Button „Alle Positionen verwalten" öffnet die Matrix.
+   - Kompakter, weniger visuelles Rauschen.
+
+5. Single Source of Truth: Matrix und Pop-up lesen/schreiben exakt dieselbe Zuordnung wie Personalstamm → „Positionen/Qualifikationen". Sicheres Speichern: vor Änderung frisch laden, nur die Stationsfelder des betroffenen MA patchen, Mandanten-Scope erzwingen (fremde IDs ablehnen). Änderungen sofort überall synchron (Personalstamm, Dienstplan-Vorschläge, Regeln).
+
+6. Mandantentrennung: nur Mitarbeiter und Positionen des aktiven Mandanten; identisch für Oliv und Beaulieu.
+
+Abnahme: In der Matrix eine Position bei einem MA per Klick setzen und wieder entfernen → erscheint sofort im Personalstamm und im Positions-Pop-up; der Haupt-Stern lässt genau eine Hauptposition pro MA zu; Filter/Suche funktionieren; dynamischer Regel-Hinweis vorhanden; Verhalten identisch für Beaulieu.
