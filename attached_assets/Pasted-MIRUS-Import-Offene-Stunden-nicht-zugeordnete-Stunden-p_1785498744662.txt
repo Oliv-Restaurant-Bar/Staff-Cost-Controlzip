@@ -1,0 +1,32 @@
+MIRUS-Import — „Offene Stunden": nicht zugeordnete Stunden parken und nachträglich zuweisen (Oliv und Beaulieu)
+
+Ziel: Stunden aus dem Import, die (noch) keinem Mitarbeiter zugeordnet werden können, gehen nie verloren. Sie werden geparkt und lassen sich später zuweisen oder durch erneuten Import auflösen.
+
+1. Parken statt verwerfen:
+   - Für einen nicht gefundenen Namen gibt es im Zuordnungs-Dialog drei Optionen: (a) bestehendem Mitarbeiter zuordnen (mit Alias-Speicherung), (b) „Neu erstellen & zuordnen" (legt MA an und ordnet direkt zu), (c) NEU: „Als offene Stunden parken" (später zuweisen).
+   - Geparkte Einträge werden persistent gespeichert (pro Mandant, in der DB) mit: MIRUS-Name, Abteilung, Zeitraum, Tageswerten, Quelle (Dateiname + Importdatum), Total-Stunden.
+   - Parken schreibt NICHTS in die Ist-Werte — die Stunden zählen erst nach der Zuweisung.
+
+2. Neue Ansicht „Offene Stunden" (im Import-Center):
+   - Liste aller geparkten Einträge des Mandanten: Name, Zeitraum, Stunden, Quelle, Status „offen".
+   - Ein Zähler/Badge „X offene Einträge" im Import-Center, damit offene Stunden sichtbar bleiben und nicht vergessen werden.
+   - Pro Eintrag: „Mitarbeiter zuordnen" (Dropdown bestehender MA inkl. neu angelegter), „Neu erstellen & zuordnen", oder „verwerfen" (nur mit expliziter Bestätigung).
+
+3. Nachträgliche Zuweisung (Kern):
+   - Wird ein geparkter Eintrag einem Mitarbeiter zugeordnet, laufen die Stunden durch dieselbe Logik wie beim Import: Drei-Weg-Vergleich, Muster 1–5, stille Rundung, Vorschau, Backup, dann Schreiben. Kein erneuter Datei-Upload nötig.
+   - Der MIRUS-Name wird als dauerhafter Alias beim Mitarbeiter gespeichert, sodass künftige Importe automatisch treffen.
+
+4. Re-Import bleibt möglich und dedupliziert:
+   - Importiert man dieselbe Datei erneut (nachdem der MA angelegt/aliased ist), wird der Name jetzt automatisch getroffen. Ein bereits geparkter Eintrag derselben Quelle/desselben Zeitraums wird erkannt und NICHT doppelt angelegt — stattdessen wird der geparkte Eintrag als „aufgelöst/zugeordnet" markiert. Keine Doppelzählung.
+
+5. Abdeckung & Report:
+   - Solange Stunden geparkt sind, weist der Ist-Report/die Ist-Abdeckung sie klar als „nicht zugeordnet (geparkt)" aus — die Abdeckung gilt für diese Person/Tage noch nicht als vollständig.
+   - Nach Zuweisung verschwinden sie aus „offen" und erscheinen normal in Ist und Report.
+
+6. Datensicherheit & Mandanten:
+   - Offene Stunden und Aliasse strikt pro Restaurant getrennt. Zuweisen schreibt nur mit Backup + Vorschau; Verwerfen nur explizit bestätigt. Gilt identisch für Oliv und Beaulieu.
+
+Abnahme:
+- Import mit unbekanntem Namen (z. B. „Krishnathas Krishnavarthani", 81.45 h): Option „Als offene Stunden parken" → Eintrag erscheint unter „Offene Stunden", nichts in Ist geschrieben, Zähler zeigt den offenen Eintrag.
+- Mitarbeiter anlegen, dann geparkten Eintrag zuweisen → Vorschau mit Mustern, nach Bestätigung sind die 81.45 h korrekt beim MA, Alias gespeichert, Eintrag nicht mehr „offen".
+- Dieselbe Datei erneut importieren → Name automatisch getroffen, kein doppelter Eintrag, geparkter Rest sauber aufgelöst.

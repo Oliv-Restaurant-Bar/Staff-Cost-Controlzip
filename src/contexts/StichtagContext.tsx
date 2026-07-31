@@ -4,8 +4,9 @@
  * Globaler "Stichtag" (Auswertungsdatum) — wenn gesetzt, zeigen alle Seiten
  * nur Daten bis zu diesem Datum an (monatsgenau).
  *
- * Wird in localStorage gespeichert, damit die Auswahl nach Reload erhalten bleibt.
- * Per Klick auf das X-Symbol wird der Stichtag wieder aufgehoben.
+ * Das frühere Sidebar-Feld (AppNav) wurde entfernt: der Stichtag ist immer
+ * null (voller Zeitraum), es gibt keine Persistenz mehr. Der Context bleibt
+ * als kompatible API für bestehende Consumer (isInScope liefert immer true).
  */
 
 import { createContext, useContext, useState, useEffect, ReactNode, useMemo } from 'react';
@@ -35,28 +36,15 @@ const MONTH_NAMES = [
 
 const StichtagContext = createContext<StichtagState | undefined>(undefined);
 
-function loadFromStorage(): Date | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const d = new Date(raw);
-    if (isNaN(d.getTime())) return null;
-    return d;
-  } catch {
-    return null;
-  }
-}
-
 export const StichtagProvider = ({ children }: { children: ReactNode }) => {
-  const [stichtag, setStichtagState] = useState<Date | null>(() => loadFromStorage());
+  // Menü-Feld «Stichtag» wurde entfernt: Auswertungen nutzen immer den vollen
+  // Zeitraum. Kein Laden/Speichern mehr — alte Persistenz wird aufgeräumt,
+  // damit kein gespeicherter Stichtag Ansichten weiter begrenzt.
+  const [stichtag, setStichtagState] = useState<Date | null>(null);
 
   useEffect(() => {
-    if (stichtag) {
-      localStorage.setItem(STORAGE_KEY, stichtag.toISOString());
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
-    }
-  }, [stichtag]);
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  }, []);
 
   const setStichtag = (date: Date | null) => setStichtagState(date);
   const clearStichtag = () => setStichtagState(null);

@@ -34,7 +34,7 @@ import {
   Package, Users,
   Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
-  CalendarClock, Contact, X, Eye, Table2, Activity,
+  Contact, Eye, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
   Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2,
@@ -43,10 +43,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useStichtag } from '@/contexts/StichtagContext';
 import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
-import { useMaison } from '@/contexts/MaisonContext';
 import { Button } from '@/components/ui/button';
 import { useTenant } from '@/contexts/TenantContext';
 import { TenantSwitcher } from '@/components/TenantSwitcher';
@@ -597,58 +595,6 @@ const ROLE_CONFIG = {
   },
 };
 
-// ─── Stichtag-Picker ─────────────────────────────────────────────────────────
-
-const StichtagPicker = () => {
-  const { stichtag, isActive, setStichtag, clearStichtag, formatted } = useStichtag();
-  const inputValue = stichtag ? stichtag.toISOString().split('T')[0] : '';
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    if (!val) clearStichtag();
-    else setStichtag(new Date(val + 'T12:00:00'));
-  };
-
-  return (
-    <div className={cn(
-      'mx-3 mb-2 rounded-md border p-2.5 space-y-1.5 transition-colors',
-      isActive
-        ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
-        : 'border-border bg-muted/30',
-    )}>
-      <div className="flex items-center gap-1.5">
-        <CalendarClock className={cn('h-3.5 w-3.5 flex-shrink-0', isActive ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground')} />
-        <span className={cn('text-[10px] font-semibold uppercase tracking-wider', isActive ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>
-          Stichtag
-        </span>
-        {isActive && (
-          <button
-            onClick={clearStichtag}
-            className="ml-auto h-4 w-4 flex items-center justify-center rounded-full bg-amber-200 dark:bg-amber-800 hover:bg-amber-300 dark:hover:bg-amber-700 text-amber-700 dark:text-amber-300 transition-colors"
-            title="Stichtag aufheben"
-          >
-            <X className="h-2.5 w-2.5" />
-          </button>
-        )}
-      </div>
-      {isActive
-        ? <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {formatted}</p>
-        : <p className="text-[10px] text-muted-foreground leading-tight">Auswertungen auf Datum begrenzen</p>
-      }
-      <input
-        type="date"
-        value={inputValue}
-        onChange={handleChange}
-        max={new Date().toISOString().split('T')[0]}
-        className={cn(
-          'w-full text-[11px] rounded px-1.5 py-1 border bg-background transition-colors',
-          isActive ? 'border-amber-300 dark:border-amber-700' : 'border-border',
-        )}
-      />
-    </div>
-  );
-};
-
 // ─── Desktop-Sidebar ─────────────────────────────────────────────────────────
 
 export const AppSidebar = () => {
@@ -657,7 +603,6 @@ export const AppSidebar = () => {
   const { role, isAdmin, isManager, isBeaulieuManager, isBeaulieuViewer, allowedDepartment, canAccessModule } = usePermissions();
   const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
 
-  const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
   const { tenant } = useTenant();
 
   // Auto-hide sidebar on schedule planner — it has its own inline panel
@@ -763,44 +708,6 @@ export const AppSidebar = () => {
         })}
       </nav>
 
-      {/* Stichtag-Picker */}
-      <StichtagPicker />
-
-      {/* Marketing / Maison Toggle */}
-      <div className="border-t border-border px-3 py-2.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5 px-0.5">
-          Marketing / Maison
-        </p>
-        <div className="flex rounded-md overflow-hidden border border-border text-xs h-7">
-          <button
-            type="button"
-            onClick={() => setShowMarketingCol(true)}
-            className={cn(
-              'flex-1 transition-colors font-medium',
-              showMarketingCol ? 'bg-violet-600 text-white' : 'text-muted-foreground hover:bg-muted',
-            )}
-          >
-            Anzeigen
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowMarketingCol(false)}
-            className={cn(
-              'flex-1 transition-colors font-medium',
-              !showMarketingCol ? 'bg-muted text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted',
-            )}
-          >
-            Ausblenden
-          </button>
-        </div>
-        <p className="text-[9px] mt-1 px-0.5 leading-tight">
-          {!showMarketingCol
-            ? <span className="text-muted-foreground">Überall ausgeblendet</span>
-            : <span className="text-violet-700 dark:text-violet-400 font-medium">✓ Sichtbar · in Betriebsertrag eingerechnet</span>
-          }
-        </p>
-      </div>
-
       {/* Mandantenauswahl */}
       <TenantSwitcher compact />
 
@@ -864,10 +771,8 @@ export const AppBottomNav = () => {
   const { isAdmin, isBeaulieuManager, isBeaulieuViewer, canAccessModule } = usePermissions();
   const { isGuest } = useGuestSession();
 
-  const { showMarketingCol, setShowMarketingCol, maisonExclude, setMaisonExclude } = useMaison();
   const { tenant } = useTenant();
   const { user, signOut } = useAuth();
-  const { isActive: stichtagActive, stichtagYear, stichtagMonth, stichtagDay, stichtag, formatted: stichtagFormatted, setStichtag, clearStichtag } = useStichtag();
 
   const [open, setOpen] = useState(false);
 
@@ -889,8 +794,6 @@ export const AppBottomNav = () => {
 
   const currentActivePath = activeNavPath(location.pathname);
   const anySubpageActive = currentActivePath !== null && !PINNED_PATHS.includes(currentActivePath);
-
-  const stichtagInputValue = stichtag ? stichtag.toISOString().split('T')[0] : '';
 
   return (
     <>
@@ -974,77 +877,8 @@ export const AppBottomNav = () => {
             })}
           </div>
 
-          {/* Stichtag + Umsatzbasis im Sheet-Footer */}
+          {/* Sheet-Footer */}
           <div className="shrink-0 border-t border-border px-4 py-3 space-y-3">
-            {/* Marketing / Maison Toggle (Mobile) */}
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">
-                Marketing / Maison
-              </p>
-              <div className="flex rounded-md overflow-hidden border border-border text-xs h-8">
-                <button
-                  onClick={() => setShowMarketingCol(true)}
-                  className={cn(
-                    'flex-1 transition-colors font-medium',
-                    showMarketingCol ? 'bg-violet-600 text-white' : 'text-muted-foreground hover:bg-muted',
-                  )}
-                >
-                  Anzeigen
-                </button>
-                <button
-                  onClick={() => setShowMarketingCol(false)}
-                  className={cn(
-                    'flex-1 transition-colors font-medium',
-                    !showMarketingCol ? 'bg-muted text-foreground font-semibold' : 'text-muted-foreground hover:bg-muted',
-                  )}
-                >
-                  Ausblenden
-                </button>
-              </div>
-            </div>
-
-            {/* Stichtag */}
-            <div className={cn(
-              'rounded-lg border p-2.5 space-y-1.5',
-              stichtagActive
-                ? 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/30'
-                : 'border-border bg-muted/30',
-            )}>
-              <div className="flex items-center gap-1.5">
-                <CalendarClock className={cn('h-3.5 w-3.5', stichtagActive ? 'text-amber-600' : 'text-muted-foreground')} />
-                <span className={cn('text-[10px] font-semibold uppercase tracking-wider', stichtagActive ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}>
-                  Stichtag
-                </span>
-                {stichtagActive && (
-                  <button
-                    onClick={clearStichtag}
-                    className="ml-auto h-4 w-4 flex items-center justify-center rounded-full bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-300"
-                    title="Stichtag aufheben"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                )}
-              </div>
-              {stichtagActive
-                ? <p className="text-xs font-bold text-amber-800 dark:text-amber-300">per {stichtagFormatted}</p>
-                : <p className="text-[10px] text-muted-foreground">Auswertungen auf Datum begrenzen</p>
-              }
-              <input
-                type="date"
-                value={stichtagInputValue}
-                onChange={e => {
-                  const val = e.target.value;
-                  if (!val) clearStichtag();
-                  else setStichtag(new Date(val + 'T12:00:00'));
-                }}
-                max={new Date().toISOString().split('T')[0]}
-                className={cn(
-                  'w-full text-[11px] rounded px-1.5 py-1 border bg-background',
-                  stichtagActive ? 'border-amber-300 dark:border-amber-700' : 'border-border',
-                )}
-              />
-            </div>
-
             {/* Abmelden */}
             <Button
               variant="outline"
