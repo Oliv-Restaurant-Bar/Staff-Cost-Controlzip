@@ -55,6 +55,24 @@ export interface PersonalkostenExportInput {
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
+/** Ganze CHF (Export zeigt keine Rappen). */
+const r0 = (v: number) => Math.round(v);
+
+/** Schweizer Zahlenformate (Excel-numFmt). */
+const FMT_CHF   = "#'##0;-#'##0";      // Apostroph-Tausender, keine Dezimalstellen
+const FMT_STD   = "#'##0.0;-#'##0.0";  // Stunden mit einer Dezimalstelle
+const FMT_PCT   = '0.0" %"';           // z. B. 49.7 %
+
+type NumKind = 'chf' | 'std' | 'pct';
+
+/** Formatiert die angegebenen Zellen (1-basierte Spaltennummern) einer Zeile. */
+function fmtCells(row: ExcelJS.Row, cols: Record<number, NumKind>): void {
+  for (const [colStr, kind] of Object.entries(cols)) {
+    const cell = row.getCell(Number(colStr));
+    cell.numFmt = kind === 'chf' ? FMT_CHF : kind === 'std' ? FMT_STD : FMT_PCT;
+    cell.alignment = { horizontal: 'right' };
+  }
+}
 
 export function buildPersonalkostenWorkbook(input: PersonalkostenExportInput): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook();
@@ -76,10 +94,14 @@ export function buildPersonalkostenWorkbook(input: PersonalkostenExportInput): E
   // ── Abschnitt 1: Übersicht ────────────────────────────────────────────────
   addBold(['Übersicht']);
   addBold(['Kennzahl', 'Wert']);
-  addRow(['Total FIX (alle Abteilungen)', r2(input.totalFix)]);
-  addRow(['Total FLEX (alle Mitarbeiter)', r2(input.totalFlex)]);
-  addBold(['Total Personalkosten (FIX + FLEX)', r2(input.totalPersonalkosten)]);
-  addRow(['Personalquote (PKQ)', input.pkqProzent != null ? `${input.pkqProzent.toFixed(1)} %` : '—']);
+  fmtCells(addRow(['Total FIX (alle Abteilungen)', r0(input.totalFix)]), { 2: 'chf' });
+  fmtCells(addRow(['Total FLEX (alle Mitarbeiter)', r0(input.totalFlex)]), { 2: 'chf' });
+  fmtCells(addBold(['Total Personalkosten (FIX + FLEX)', r0(input.totalPersonalkosten)]), { 2: 'chf' });
+  if (input.pkqProzent != null) {
+    fmtCells(addRow(['Personalquote (PKQ)', r2(input.pkqProzent)]), { 2: 'pct' });
+  } else {
+    addRow(['Personalquote (PKQ)', '—']);
+  }
   blank();
 
   // ── Abschnitt 2: Fix-Lohnkosten ───────────────────────────────────────────
@@ -91,34 +113,38 @@ export function buildPersonalkostenWorkbook(input: PersonalkostenExportInput): E
     list.push(row);
     byDept.set(row.department, list);
   }
-  const sum = (rows: FixExportRow[], f: (r: FixExportRow) => number) => r2(rows.reduce((s, r) => s + f(r), 0));
+  const sum = (rows: FixExportRow[], f: (r: FixExportRow) => number) => r0(rows.reduce((s, r) => s + f(r), 0));
+  const FIX_MONEY: Record<number, NumKind> = { 4: 'chf', 5: 'chf', 6: 'chf', 7: 'chf' };
   for (const [dept, rows] of byDept) {
     for (const r of rows) {
-      addRow([r.name, r.department, r.anstellung, r2(r.basisMt), r2(r.inkl13Mt), r2(r.agMt), r2(r.agJahr)]);
+      fmtCells(addRow([r.name, r.department, r.anstellung, r0(r.basisMt), r0(r.inkl13Mt), r0(r.agMt), r0(r.agJahr)]), FIX_MONEY);
     }
-    addBold([
+    fmtCells(addBold([
       `Total ${dept}`, dept, '',
       sum(rows, (r) => r.basisMt), sum(rows, (r) => r.inkl13Mt), sum(rows, (r) => r.agMt), sum(rows, (r) => r.agJahr),
-    ]);
+    ]), FIX_MONEY);
   }
-  addBold([
+  fmtCells(addBold([
     'Total FIX (alle Abteilungen)', '', '',
     sum(input.fixRows, (r) => r.basisMt), sum(input.fixRows, (r) => r.inkl13Mt),
     sum(input.fixRows, (r) => r.agMt), sum(input.fixRows, (r) => r.agJahr),
-  ]);
+  ]), FIX_MONEY);
   blank();
 
   // ── Abschnitt 3: Flex-Lohnkosten ──────────────────────────────────────────
   addBold(['Flex-Lohnkosten']);
   addBold(['Name', 'Abteilung', 'Total AG/h', 'Plan Std', 'Ist Std', 'Flex Plan', 'Flex Ist', 'Diff']);
+  // Stunden-Spalten (Plan/Ist Std) behalten EINE Dezimalstelle, Geld ganze CHF.
+  const FLEX_FMT: Record<number, NumKind> = { 3: 'chf', 4: 'std', 5: 'std', 6: 'chf', 7: 'chf', 8: 'chf' };
   for (const r of input.flexRows) {
-    addRow([r.name, r.department, r2(r.agProStunde), r2(r.planStd), r2(r.istStd), r2(r.flexPlan), r2(r.flexIst), r2(r.diff)]);
+    fmtCells(addRow([r.name, r.department, r0(r.agProStunde), r2(r.planStd), r2(r.istStd), r0(r.flexPlan), r0(r.flexIst), r0(r.diff)]), FLEX_FMT);
   }
-  const fsum = (f: (r: FlexExportRow) => number) => r2(input.flexRows.reduce((s, r) => s + f(r), 0));
-  addBold([
-    'Total FLEX', '', '', fsum((r) => r.planStd), fsum((r) => r.istStd),
-    fsum((r) => r.flexPlan), fsum((r) => r.flexIst), fsum((r) => r.diff),
-  ]);
+  const fsumStd = (f: (r: FlexExportRow) => number) => r2(input.flexRows.reduce((s, r) => s + f(r), 0));
+  const fsumChf = (f: (r: FlexExportRow) => number) => r0(input.flexRows.reduce((s, r) => s + f(r), 0));
+  fmtCells(addBold([
+    'Total FLEX', '', '', fsumStd((r) => r.planStd), fsumStd((r) => r.istStd),
+    fsumChf((r) => r.flexPlan), fsumChf((r) => r.flexIst), fsumChf((r) => r.diff),
+  ]), FLEX_FMT);
 
   return wb;
 }

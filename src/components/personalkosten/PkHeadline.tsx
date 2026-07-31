@@ -1,16 +1,15 @@
 /**
- * NEUE Personalkosten-Schlagzeile (Etappe 4, «vom Groben ins Feine»).
+ * Personalkosten-Schlagzeile (vereinfacht).
  * Reine Darstellung — ALLE Zahlen kommen fertig aus dem zentralen Kern
  * (personalkosten.ts) über die Props. Hier findet KEINE Rechnung statt.
  *
- * Aufbau (oben → unten):
- *  1) Schlagzeile: «Personalkosten <Monat> (Hochrechnung) = CHF X» + Chips
- *     (Abweichung Budget, PKQ) + Zusatzzeile (Budget, Ziel/Obergrenze, Ist-Tage).
- *  2) Vier Kacheln: Hochrechnung / Budget / Abweichung / PKQ-Hochrechnung.
- *  3) Ist-Zeile: Personalkosten Ist · Netto-Umsatz Ist · PKQ Ist (bis <Datum>).
+ * Aufbau:
+ *  1) Hero: links «Personalkosten <Monat> (Hochrechnung) = CHF X» + Chips
+ *     + Kontextzeile; RECHTS kompakte Kernzahlen-Zeilen (Budget, Abweichung,
+ *     PKQ-Hochrechnung inkl. Umsatz HR, FIX + FLEX) — keine separaten Boxen.
+ *  2) Ist-Zeile: Personalkosten Ist · Netto-Umsatz Ist · PKQ Ist (bis <Datum>).
  */
-import { KpiCard as DsKpiCard, KpiGrid } from '@/components/ui/kpi-card';
-import { InfoTip } from '@/components/ui/info-tip';
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface PkHeadlineProps {
@@ -67,10 +66,16 @@ export function PkHeadline(props: PkHeadlineProps) {
   const zielPct = zielQuote * 100;
   const istDatum = stichtagDatum(year, month, stichtag);
 
+  const focusBtn = (focus: 'ist' | 'budget' | 'abweichung' | 'quote') =>
+    onFocus ? { role: 'button' as const, tabIndex: 0, onClick: () => onFocus(focus),
+      onKeyDown: (e: ReactKeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') onFocus(focus); },
+      className: 'cursor-pointer hover:bg-muted/40 rounded transition-colors' } : {};
+
   return (
     <section data-testid="pk-headline" className="space-y-4">
-      {/* 1) Schlagzeile ------------------------------------------------------- */}
-      <div className="rounded-xl border border-border bg-gradient-to-br from-card to-muted/30 p-5 shadow-sm space-y-3">
+      {/* 1) Hero: Schlagzeile links · Kernzahlen rechts ----------------------- */}
+      <div className="rounded-xl border border-border bg-gradient-to-br from-card to-muted/30 p-5 shadow-sm flex flex-col lg:flex-row lg:items-stretch gap-4">
+        <div className="space-y-3 min-w-0 flex-1">
         <p className="text-sm font-medium text-muted-foreground">
           Personalkosten {monthLabel} <span className="text-xs">(Hochrechnung)</span>
         </p>
@@ -117,62 +122,64 @@ export function PkHeadline(props: PkHeadlineProps) {
             {istTage < stichtag && `, davon ${istTage} mit Ist-Umsatz`}
           </span>
         </p>
+        </div>
+
+        {/* Rechts: kompakte Kernzahlen (keine separaten Boxen) --------------- */}
+        <div
+          data-testid="pk-headline-keyfigures"
+          className="lg:w-[340px] shrink-0 lg:border-l lg:border-border/70 lg:pl-5 flex flex-col justify-center gap-1.5 text-sm"
+        >
+          <div {...focusBtn('budget')} data-testid="pk-key-budget">
+            <div className="flex items-baseline justify-between gap-3 px-1 py-0.5">
+              <span className="text-muted-foreground">Budget</span>
+              <span className="font-bold font-mono tabular-nums">{hasBudget ? fmtCHF(budgetCHF) : '—'}</span>
+            </div>
+            <p className="px-1 -mt-0.5 text-[10px] text-muted-foreground">
+              {hasBudget
+                ? `${zielPct.toFixed(1)} % von Umsatz-Budget ${fmtCHF(umsatzBudgetCHF)}`
+                : `Kein Umsatz-Budget ${monthLabel} hinterlegt`}
+            </p>
+          </div>
+          <div {...focusBtn('abweichung')} data-testid="pk-key-abweichung">
+            <div className="flex items-baseline justify-between gap-3 px-1 py-0.5">
+              <span className="text-muted-foreground">Abweichung (HR − Budget)</span>
+              <span className={cn('font-bold font-mono tabular-nums',
+                hasBudget ? (ueberBudget ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400') : '')}>
+                {hasBudget ? `${abwHr >= 0 ? '+' : '−'}${fmtCHF(Math.abs(abwHr))}` : '—'}
+              </span>
+            </div>
+            <p className="px-1 -mt-0.5 text-[10px] text-muted-foreground">
+              {hasBudget ? (ueberBudget ? 'über Budget' : abwHr < -0.5 ? 'unter Budget' : 'im Budget') : 'Kein Budget hinterlegt'}
+            </p>
+          </div>
+          <div {...focusBtn('quote')} data-testid="pk-key-pkq">
+            <div className="flex items-baseline justify-between gap-3 px-1 py-0.5">
+              <span className="text-muted-foreground">PKQ Hochrechnung</span>
+              <span className={cn('font-bold font-mono tabular-nums',
+                pkqHrPct != null
+                  ? (pkqHrPct > OBERGRENZE_PCT ? 'text-red-600 dark:text-red-400'
+                    : pkqHrPct > zielPct ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400')
+                  : '')}>
+                {pkqHrPct != null ? `${pkqHrPct.toFixed(1)} %` : '—'}
+              </span>
+            </div>
+            <p className="px-1 -mt-0.5 text-[10px] text-muted-foreground">
+              Umsatz HR {fmtCHF(umsatzHochrechnungCHF)}
+            </p>
+          </div>
+          <div {...focusBtn('ist')} data-testid="pk-key-fixflex">
+            <div className="flex items-baseline justify-between gap-3 px-1 py-0.5 border-t border-border/60 pt-1.5">
+              <span className="text-muted-foreground">FIX + FLEX</span>
+              <span className="font-mono tabular-nums text-xs">
+                <span className="font-semibold text-blue-700 dark:text-blue-400">{fmtCHF(hrFixCHF)}</span>
+                <span className="text-muted-foreground"> + </span>
+                <span className="font-semibold text-orange-700 dark:text-orange-400">{fmtCHF(hrFlexCHF)}</span>
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
-
-      {/* 2) Vier Kacheln ------------------------------------------------------ */}
-      <KpiGrid>
-        <DsKpiCard
-          label="Hochrechnung"
-          value={fmtCHF(hrTotalCHF)}
-          sub={`FIX ${fmtCHF(hrFixCHF)} + FLEX ${fmtCHF(hrFlexCHF)}`}
-          tone={hasBudget ? (hrTotalCHF <= budgetCHF ? 'good' : 'critical') : 'neutral'}
-          onClick={onFocus ? () => onFocus('ist') : undefined}
-        />
-        <DsKpiCard
-          label="Budget"
-          value={hasBudget ? fmtCHF(budgetCHF) : '—'}
-          sub={hasBudget
-            ? `${zielPct.toFixed(1)} % von Umsatz-Budget ${fmtCHF(umsatzBudgetCHF)}`
-            : `Kein Umsatz-Budget ${monthLabel} hinterlegt`}
-          tone="info"
-          onClick={onFocus ? () => onFocus('budget') : undefined}
-        />
-        <DsKpiCard
-          label="Abweichung (HR − Budget)"
-          value={hasBudget ? `${abwHr >= 0 ? '+' : '−'}${fmtCHF(Math.abs(abwHr))}` : '—'}
-          sub={hasBudget ? (ueberBudget ? 'über Budget' : abwHr < -0.5 ? 'unter Budget' : 'im Budget') : 'Kein Budget hinterlegt'}
-          tone={hasBudget ? (abwHr <= 0.5 ? 'good' : 'critical') : 'neutral'}
-          onClick={onFocus ? () => onFocus('abweichung') : undefined}
-        />
-        <DsKpiCard
-          label="PKQ Hochrechnung"
-          value={pkqHrPct != null ? `${pkqHrPct.toFixed(1)} %` : '—'}
-          sub={
-            <span className="inline-flex items-center gap-1">
-              {`Umsatz HR ${fmtCHF(umsatzHochrechnungCHF)}`}
-              <InfoTip
-                side="top"
-                text={
-                  <span>
-                    <b>PKQ = Personalkosten ÷ Nettoumsatz</b> (immer gleiche Basis).
-                    {pkqHrPct != null && (
-                      <>
-                        <br />Hochrechnung: {fmtCHF(hrTotalCHF)} ÷ {fmtCHF(umsatzHochrechnungCHF)} = {pkqHrPct.toFixed(1)} %
-                        <br />Ziel {zielPct.toFixed(1)} %, Obergrenze {OBERGRENZE_PCT} %.
-                      </>
-                    )}
-                  </span>
-                }
-              />
-            </span>
-          }
-          tone={pkqHrPct != null
-            ? (pkqHrPct > OBERGRENZE_PCT ? 'critical' : pkqHrPct > zielPct ? 'warn' : 'good')
-            : 'neutral'}
-          onClick={onFocus ? () => onFocus('quote') : undefined}
-        />
-      </KpiGrid>
-
       {/* 3) Ist-Zeile --------------------------------------------------------- */}
       <div
         data-testid="pk-ist-row"

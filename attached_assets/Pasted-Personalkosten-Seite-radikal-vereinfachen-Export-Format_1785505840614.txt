@@ -1,0 +1,34 @@
+Personalkosten-Seite radikal vereinfachen + Export-Formatierung (Oliv und Beaulieu)
+
+Ziel: Deutlich schlanker, kein Doppeln von Zahlen, alles Wichtige oben, wenig Scrollen. Berechnung und Zahlen bleiben exakt gleich — nur Darstellung/Anordnung und Export-Formatierung.
+
+A. HERO-KOPF (oben, gross) — Platz rechts nutzen
+1. Behalten: „Personalkosten <Monat> (Hochrechnung)", die grosse Summe (z. B. CHF 119'054), die Badges („+CHF … zum Budget", „PKQ …") und die Kontextzeile (Budget, Ziel 35.5 % / Obergrenze 40 %, Stand X von N Tagen).
+2. Den bisher LEEREN Platz RECHTS neben der grossen Summe nutzen: dort kompakt die Kernzahlen unterbringen, die heute in den vier Boxen darunter stehen — Budget (CHF 88'750), Abweichung (+CHF 30'304 über Budget), PKQ Hochrechnung (49.7 %, Umsatz HR CHF 239'413) und die Aufschlüsselung FIX CHF 83'811 + FLEX CHF 35'243. Als kompakte Zeilen/Chips, KEINE separaten Boxen mehr.
+
+B. KOMPLETT ENTFERNEN
+3. PKQ-Brücke (ganz weg).
+4. Die vier Kennzahlen-/Auswertungs-Boxen unter dem Kopf (Hochrechnung / Budget / Abweichung / PKQ) — Inhalt wandert in den Hero-Kopf (A2).
+5. Alle „Planungsempfehlungen".
+6. Alle weiteren Kennzahlen-Info-Boxen.
+7. „Überstundenkosten Festangestellte".
+8. „Monatsansicht <Monat>".
+9. Die Summen-/Kennzahlen-Boxen über „Flex Auswertung Plan vs Ist".
+
+C. KOMPAKTER
+10. Fix-Lohnkosten-Aufstellung deutlich kompakter, sodass ALLE Fix-Mitarbeiter ohne Scrollen auf einen Bildschirm passen (kleinere Zeilenhöhe/Schrift, enge Tabelle). Das Inline-Editieren darf entfallen, wenn es dadurch kleiner/übersichtlicher wird. Zwischentotale Service/Küche und ein deutliches gemeinsames „Total FIX (alle Abteilungen)" bleiben.
+11. Flex-Lohnkosten: die Mitarbeiterliste bleibt, nur die Boxen darüber weg; Total FLEX als schlichte Total-Zeile.
+
+D. ERFOLGSRECHNUNG-ABGLEICH
+12. Nicht mehr prominent, sondern als kompakter, visuell sauber platzierter kleiner Block (nicht ganz entfernen).
+
+E. VERLAUFS-DIAGRAMM
+13. Ganz nach unten verschieben und aufklappbar machen (standardmässig eingeklappt).
+
+F. EXCEL-EXPORT — Formatierung
+14. Alle Geldbeträge/Kennzahlen mit Tausender-Trennung (Schweizer Apostroph, z. B. 119'054), rechtsbündig, OHNE Dezimalstellen (auf ganze CHF gerundet). Prozentwerte (PKQ) als „49.7 %". Stunden-Spalten (Plan/Ist Std) mit einer Dezimalstelle belassen. Gilt für Übersicht-, Fix- und Flex-Abschnitt.
+
+G. UNVERÄNDERT
+15. Berechnung (Vertragsphasen FIX/FLEX, AG 15.7 %, 13., pro rata) und die Zahlenwerte bleiben exakt gleich. Identisch für Oliv und Beaulieu.
+
+Abnahme: Der Kopf zeigt oben alles Wesentliche (grosse Summe links, Kernzahlen rechts) ohne separate Boxen darunter; PKQ-Brücke, Planungsempfehlungen, Überstunden, Monatsansicht, Flex-Boxen und die Kennzahlen-Boxen sind weg; alle Fix-Mitarbeiter passen ohne Scrollen auf einen Bildschirm; der ER-Abgleich ist ein kompakter Block; das Verlaufs-Diagramm liegt ganz unten und ist eingeklappt; der Excel-Export zeigt Beträge rechtsbündig, mit Apostroph-Tausendern und ohne Dezimalstellen.

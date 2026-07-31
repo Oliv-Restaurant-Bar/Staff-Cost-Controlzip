@@ -57,11 +57,21 @@ describe('personalkosten-excel-export', () => {
     expect(idx('Fix-Lohnkosten')).toBeLessThan(idx('Flex-Lohnkosten'));
   });
 
-  it('Übersicht enthält die vier Kennzahlen (gerundet)', () => {
+  it('Übersicht enthält die vier Kennzahlen (Geld auf ganze CHF gerundet, PKQ als Zahl)', () => {
     expect(findRow(ws, 'Total FIX (alle Abteilungen)')?.[1]).toBe(50000);
-    expect(findRow(ws, 'Total FLEX (alle Mitarbeiter)')?.[1]).toBe(12000.46);
-    expect(findRow(ws, 'Total Personalkosten (FIX + FLEX)')?.[1]).toBe(62000.46);
-    expect(findRow(ws, 'Personalquote (PKQ)')?.[1]).toBe('34.3 %');
+    expect(findRow(ws, 'Total FLEX (alle Mitarbeiter)')?.[1]).toBe(12000);
+    expect(findRow(ws, 'Total Personalkosten (FIX + FLEX)')?.[1]).toBe(62000);
+    expect(findRow(ws, 'Personalquote (PKQ)')?.[1]).toBe(34.27);
+    // PKQ-Zelle trägt Prozent-Format «49.7 %»
+    const nr = findRowNr(ws, 'Personalquote (PKQ)');
+    expect(ws.getRow(nr).getCell(2).numFmt).toBe('0.0" %"');
+  });
+
+  it('Geldzellen: Apostroph-Tausender, keine Dezimalstellen, rechtsbündig', () => {
+    const nr = findRowNr(ws, 'Total FIX (alle Abteilungen)');
+    const cell = ws.getRow(nr).getCell(2);
+    expect(cell.numFmt).toBe("#'##0;-#'##0");
+    expect(cell.alignment?.horizontal).toBe('right');
   });
 
   it('Fix-Abschnitt: Gruppierung, Zwischentotale, Gesamttotal FIX', () => {
@@ -74,7 +84,7 @@ describe('personalkosten-excel-export', () => {
     // Gesamttotal FIX = zweite Zeile mit diesem Titel (erste steht in der Übersicht)
     const grand = rows(ws).filter((r) => r[0] === 'Total FIX (alle Abteilungen)')[1]!;
     expect(grand[3]).toBe(13000);
-    expect(grand[4]).toBe(14083.35);
+    expect(grand[4]).toBe(14083); // ganze CHF (14083.35 gerundet)
     expect(grand[5]).toBe(16293);
     expect(grand[6]).toBe(195516);
   });
@@ -83,9 +93,16 @@ describe('personalkosten-excel-export', () => {
     const header = rows(ws).find((r) => r[0] === 'Name' && r[2] === 'Total AG/h')!;
     expect(header).toEqual(['Name', 'Abteilung', 'Total AG/h', 'Plan Std', 'Ist Std', 'Flex Plan', 'Flex Ist', 'Diff']);
     const total = findRow(ws, 'Total FLEX')!;
-    expect(total[5]).toBe(2600);
-    expect(total[6]).toBe(2746.25);
-    expect(total[7]).toBe(146.25);
+    expect(total[3]).toBe(80);      // Plan Std: 1 Dezimalstelle bleibt
+    expect(total[4]).toBe(84.5);    // Ist Std: 1 Dezimalstelle bleibt
+    expect(total[5]).toBe(2600);    // Geld: ganze CHF
+    expect(total[6]).toBe(2746);    // 2746.25 gerundet
+    expect(total[7]).toBe(146);     // 146.25 gerundet
+    // Stunden-Zellen tragen 1-Dezimal-Format, Geld-Zellen das CHF-Format
+    const nr = findRowNr(ws, 'Dora');
+    expect(ws.getRow(nr).getCell(4).numFmt).toBe("#'##0.0;-#'##0.0");
+    expect(ws.getRow(nr).getCell(6).numFmt).toBe("#'##0;-#'##0");
+    expect(ws.getRow(nr).getCell(6).alignment?.horizontal).toBe('right');
   });
 
   it('Titelzeilen und Totale sind fett, Leerzeile zwischen Abschnitten', () => {
