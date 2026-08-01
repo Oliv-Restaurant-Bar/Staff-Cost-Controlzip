@@ -1,0 +1,17 @@
+Rezensionen — Feedback-CSV-Import + Cockpit-Zeilen ALLE 1–5 Sterne pro Plattform (Oliv und Beaulieu)
+
+A. PLATTFORMEN
+1. Rezensionen tragen eine Plattform. Neben „Google" neu die Reservationstool-Plattform (Label: „Lunchgate" bzw. „Foratable" — siehe Rückfrage). Klar gekennzeichnet, nie mit Google vermischt.
+
+B. CSV-IMPORT (Button in der App)
+2. Neuer Import für die Feedback-CSV. Format fix: Trennzeichen „;", UTF-8 (mit BOM), mehrzeilige Kommentare in Anführungszeichen korrekt parsen. Spalten: „Publish Date", „Pax", „Guest", „Reservation Date", „Average", „Service", „Kitchen", „Atmosphere", „Performance", „Comment".
+3. Pro Zeile eine Bewertung: Datum = „Publish Date" (Reservation Date zusätzlich als Besuchsdatum); Sterne (1–5) = „Average" kaufmännisch gerundet (4.5→5, 3.8→4, 2.3→2); exakter Average zusätzlich gespeichert; Plattform = Reservationstool; Kommentar = „Comment"; Gast = „Guest"; Teilnoten optional als Detail.
+4. Sicherheit: Backup → Vorschau (Anzahl neu + Verteilung 1–5) → Bestätigen → Schreiben; Dublettencheck (Publish Date + Guest + Reservation Date / Zeilen-Hash), damit ein erneuter Import nichts doppelt anlegt; „Letzter Import rückgängig machen" wie üblich. Import in den AKTIVEN Mandanten, strikt getrennt.
+
+C. COCKPIT — ALLE STERNSTUFEN
+5. Für JEDE Plattform je fünf Zeilen: „<Plattform> 5/4/3/2/1 Sterne" — Anzahl pro Periode (Monat/Woche, Publish Date). Auch die bestehenden Google-Zeilen von bisher 5/3/1 auf ALLE fünf (5/4/3/2/1) erweitern. Farbe 5 grün, 1 rot; „leer statt 0".
+
+D. REZENSIONEN-SEITE
+6. Jede importierte Bewertung erscheint als einzelne Zeile in der Rezensionsliste (Datum, Sterne, Plattform, Kommentar, Gast) — editier-/löschbar. Manuelle Einzelerfassung mit Plattform-Wahl (Google / Reservationstool).
+
+Abnahme: Nach dem Import unter dem richtigen Mandanten erscheinen im Cockpit fünf Zeilen pro Plattform (5–1 Sterne) mit den Perioden-Anzahlen; auf der Rezensionen-Seite steht jede Bewertung als eigene Zeile; erneuter Import legt nichts doppelt an; Google und Reservationstool klar getrennt.
