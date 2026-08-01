@@ -34,6 +34,7 @@ import {
 } from '@/lib/feedback-import';
 import { recordImportRun } from '@/lib/import-undo-store';
 import { LastImportPanel } from '@/components/import-center/LastImportPanel';
+import { CsvPasteBox } from '@/components/import/CsvPasteBox';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -193,8 +194,10 @@ export default function Rezensionen() {
     fileName: string; parse: FeedbackParseResult; preview: FeedbackPreview;
   } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importDragging, setImportDragging] = useState(false);
 
-  async function handleImportFile(file: File) {
+  /** Gemeinsamer Kern für Datei-Dialog, Drag & Drop und «CSV einfügen». */
+  function handleImportText(text: string, sourceLabel: string) {
     // NIE still abbrechen — jeder Abbruchgrund wird dem Nutzer gemeldet.
     if (!canEdit) {
       toast({ variant: 'destructive', title: 'Keine Berechtigung', description: 'Der Feedback-Import ist Administratoren/Geschäftsführung vorbehalten.' });
@@ -204,19 +207,24 @@ export default function Rezensionen() {
       toast({ variant: 'destructive', title: 'Rezensionen noch nicht geladen', description: error ? `Laden fehlgeschlagen: ${error}` : 'Bitte warten, bis die Seite fertig geladen ist, und erneut versuchen.' });
       return;
     }
+    console.info('[Feedback-Import] Quelle:', sourceLabel, `${text.length} Zeichen`);
+    const parse = parseFeedbackCsv(text);
+    if (parse.failureReason) {
+      console.error('[Feedback-Import] Parser-Fehler:', parse.failureReason, parse.debug);
+      toast({ variant: 'destructive', title: 'CSV konnte nicht gelesen werden', description: parse.failureReason });
+      return;
+    }
+    // Vorschau (Upsert): Match über importKey — Ersetzen statt Duplikat.
+    const preview = buildFeedbackPreview(parse.rows, data.singleReviews, () => newReviewId('fb'));
+    console.info('[Feedback-Import] Vorschau:', preview.neu, 'neu ·', preview.aktualisiert, 'aktualisiert ·', preview.unveraendert, 'unverändert');
+    setImportState({ fileName: sourceLabel, parse, preview });
+  }
+
+  async function handleImportFile(file: File) {
     console.info('[Feedback-Import] Datei gewählt:', file.name, file.type || '(kein MIME)', `${file.size} Bytes`);
     try {
       const text = await file.text();
-      const parse = parseFeedbackCsv(text);
-      if (parse.failureReason) {
-        console.error('[Feedback-Import] Parser-Fehler:', parse.failureReason, parse.debug);
-        toast({ variant: 'destructive', title: 'CSV konnte nicht gelesen werden', description: parse.failureReason });
-        return;
-      }
-      // Vorschau (Upsert): Match über importKey — Ersetzen statt Duplikat.
-      const preview = buildFeedbackPreview(parse.rows, data.singleReviews, () => newReviewId('fb'));
-      console.info('[Feedback-Import] Vorschau:', preview.neu, 'neu ·', preview.aktualisiert, 'aktualisiert ·', preview.unveraendert, 'unverändert');
-      setImportState({ fileName: file.name, parse, preview });
+      handleImportText(text, file.name);
     } catch (e) {
       console.error('[Feedback-Import] Datei-Lesefehler:', e);
       toast({ variant: 'destructive', title: 'Datei konnte nicht gelesen werden', description: e instanceof Error ? e.message : String(e) });
@@ -401,6 +409,35 @@ export default function Rezensionen() {
                       <Upload className="h-3.5 w-3.5 mr-1.5" /> CSV-Datei wählen …
                     </label>
                   </Button>
+                  {/* Alternative 1: Drag & Drop — funktioniert auch, wenn der
+                      Datei-Dialog in der eingebetteten Vorschau blockiert ist. */}
+                  <div
+                    onDragOver={e => { e.preventDefault(); setImportDragging(true); }}
+                    onDragLeave={() => setImportDragging(false)}
+                    onDrop={e => {
+                      e.preventDefault();
+                      setImportDragging(false);
+                      const f = e.dataTransfer.files?.[0];
+                      if (!f) {
+                        toast({ variant: 'destructive', title: 'Keine Datei erkannt', description: 'Bitte eine .csv-Datei auf das Feld ziehen.' });
+                        return;
+                      }
+                      void handleImportFile(f);
+                    }}
+                    className={cn(
+                      'rounded-lg border-2 border-dashed p-4 text-center text-xs text-muted-foreground transition-colors',
+                      importDragging ? 'border-primary bg-primary/5' : 'border-border',
+                    )}
+                    data-testid="feedback-csv-dropzone"
+                  >
+                    … oder CSV-Datei hierher ziehen
+                  </div>
+                  {/* Alternative 2: kopierten CSV-Inhalt einfügen. */}
+                  <CsvPasteBox
+                    disabled={importing}
+                    testIdPrefix="feedback-csv-paste"
+                    onText={(text, label) => handleImportText(text, label)}
+                  />
                   <LastImportPanel
                     source="feedback-rezensionen"
                     undoHint="Setzt die Rezensionen auf den Stand unmittelbar VOR dem letzten Feedback-Import zurück (inkl. allfälliger manueller Änderungen seither)."

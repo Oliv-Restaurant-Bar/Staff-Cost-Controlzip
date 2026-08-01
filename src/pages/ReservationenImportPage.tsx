@@ -24,6 +24,7 @@ import { Navigate, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 
 import { parseReservationsCsv, checkTenantMatch, TENANT_LABELS } from '@/lib/reservation-import-parser';
+import { CsvPasteBox } from '@/components/import/CsvPasteBox';
 import type {
   ReservationParseResult, ReservationStatusNormalized,
 } from '@/lib/reservation-import-parser';
@@ -97,15 +98,14 @@ export default function ReservationenImportPage(
     if (fileRef.current) fileRef.current.value = '';
   }, []);
 
-  // ── CSV verarbeiten ─────────────────────────────────────────────────────────
-  const processCSV = useCallback(async (file: File) => {
+  // ── CSV verarbeiten (gemeinsamer Kern für Datei, Drag & Drop und Einfügen) ──
+  const processText = useCallback(async (text: string, sourceName: string) => {
     setParseError(null);
     setParsed(null);
     setGuestClass(null);
     setDiff(null);
     try {
-      const text = await file.text();
-      const result = parseReservationsCsv(file.name, text);
+      const result = parseReservationsCsv(sourceName, text);
       if (!result.headerOk) {
         setParseError(result.errors[0]?.message
           ?? 'Datei konnte nicht als Foratable-Reservationsexport erkannt werden.');
@@ -136,17 +136,22 @@ export default function ReservationenImportPage(
         setClassifying(false);
       }
     } catch (e) {
-      setParseError('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e)));
+      setParseError('Fehler beim Verarbeiten der Daten: ' + (e instanceof Error ? e.message : String(e)));
     }
   }, [tenantId]);
 
   const handleFileSelect = (file: File | undefined) => {
-    if (!file) return;
+    if (!file) {
+      setParseError('Keine Datei erkannt — bitte eine .csv-Datei wählen oder hierher ziehen.');
+      return;
+    }
     if (!file.name.toLowerCase().endsWith('.csv')) {
       setParseError('Bitte eine CSV-Datei auswählen.');
       return;
     }
-    processCSV(file);
+    file.text()
+      .then(text => processText(text, file.name))
+      .catch(e => setParseError('Fehler beim Lesen der Datei: ' + (e instanceof Error ? e.message : String(e))));
   };
 
   const onDrop = (e: React.DragEvent) => {
@@ -349,6 +354,17 @@ export default function ReservationenImportPage(
                   accept=".csv,text/csv"
                   className="hidden"
                   onChange={(e) => handleFileSelect(e.target.files?.[0])}
+                />
+              </div>
+
+              {/* «CSV einfügen» — Alternative, falls der Datei-Dialog in der
+                  eingebetteten Vorschau blockiert ist. */}
+              <div className="rounded-xl border p-4 space-y-2">
+                <p className="text-sm font-medium">… oder CSV-Inhalt einfügen</p>
+                <CsvPasteBox
+                  disabled={tablesOk === false}
+                  testIdPrefix="reservation-csv-paste"
+                  onText={(text, label) => processText(text, label)}
                 />
               </div>
 
