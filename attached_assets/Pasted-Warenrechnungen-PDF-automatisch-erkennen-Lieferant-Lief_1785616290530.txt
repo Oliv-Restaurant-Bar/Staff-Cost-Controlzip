@@ -1,0 +1,22 @@
+Warenrechnungen — PDF automatisch erkennen (Lieferant, Lieferdatum) + Abgleich mit Buchhaltung pro Lieferant (Oliv und Beaulieu)
+
+Ziel: Für die meisten (wiederkehrenden) Lieferanten reicht das Hochladen der PDF-Rechnung — Lieferant und Lieferdatum werden automatisch erkannt, die Kontierung setzt der Nutzer. Zusätzlich ein Abgleich der erfassten Lieferantenkosten mit den importierten Buchhaltungskosten (Kontoblatt/Erfolgsrechnung).
+
+A. PDF-ERKENNUNG BEI DER ERFASSUNG
+1. Beim Hochladen einer PDF-Rechnung liest das System automatisch aus: Lieferant, Lieferdatum (Rechnungs-/Lieferdatum), Betrag und wenn möglich MWST. Text-PDFs direkt per Textauslesung; gescannte/Bild-PDFs per OCR-Fallback.
+2. Lieferant-Matching über Namen/Alias (normalisiert: Gross-/Kleinschreibung, Umlaute, Reihenfolge egal) auf die bestehenden Lieferanten. Unbekannter Name → manuell zuordnen oder Lieferant anlegen; die erkannte Schreibweise wird als dauerhafter Alias gespeichert (künftig automatisch getroffen) — gleiche Logik wie beim MIRUS-Namens-Matching.
+3. Kontierung setzt der Nutzer: Vorschlag = Standard-Konto/-Kategorie des erkannten Lieferanten, jederzeit änderbar (auch Split auf 2 Konten).
+4. Vor dem Speichern eine kurze Vorschau der erkannten Werte (Lieferant, Datum, Betrag, MWST, Konto) zum Bestätigen/Korrigieren — nie blind speichern. Das Original-PDF wird als Beleg gespeichert.
+5. Schlägt die Erkennung fehl oder ist unsicher, nahtloser Rückfall auf die manuelle Schnell-Erfassung; unsichere Felder farblich markieren.
+6. Mehrere PDFs nacheinander hochladbar (Stapel), jeweils mit kurzer Bestätigung.
+
+B. ABGLEICH MIT DER BUCHHALTUNG (pro Lieferant)
+7. Datenquelle Buchhaltung: die importierten Kosten aus Erfolgsrechnung/Kontoblatt, in denen die Rechnungen mit dem Lieferantennamen gebucht sind (aus dem bestehenden „Ist Kosten Buchhaltung"-Import).
+8. Abgleich je Lieferant (und Total) für den Monat: „Warenrechnungen erfasst (CHF)" vs. „Buchhaltung/Kontoblatt (CHF)" vs. „Differenz". Matching über Lieferantenname/Alias.
+9. Markierungen: Lieferant nur in einer Quelle (fehlende Erfassung ODER fehlende Buchung) → auffällig; Differenz über Schwelle → rot. So sieht man sofort, ob eine Rechnung fehlt, doppelt ist oder abweicht.
+10. Drilldown: Klick auf einen Lieferanten zeigt die erfassten Rechnungen und die zugehörigen Buchungen nebeneinander.
+
+C. SICHERHEIT & MANDANTEN
+11. Erkennung/Erfassung schreiben erst nach Bestätigung; keine Doppelzählung mit bestehenden Buchungen (Dublettencheck über Lieferant+Datum+Betrag+Rechnungsnr.). Strikt pro Restaurant (Oliv/Beaulieu), Belege mandantengetrennt/sicher. Nur berechtigte Rollen.
+
+Abnahme: Eine PDF-Rechnung eines bekannten Lieferanten hochladen → Lieferant und Lieferdatum werden korrekt erkannt, Konto vorgeschlagen, nach Bestätigung gespeichert (PDF als Beleg). Ein unbekannter Name lässt sich zuordnen und wird beim nächsten Mal automatisch erkannt. Der FIBU-Abgleich zeigt pro Lieferant erfasst vs. gebucht mit Differenz und markiert Fehlendes/Ausreisser.

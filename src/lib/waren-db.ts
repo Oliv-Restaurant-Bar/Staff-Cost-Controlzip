@@ -145,6 +145,29 @@ export interface Warenkonto {
 
 // kontoKategorie: siehe `warenkosten-quote` (pure Lib, re-exportiert oben).
 
+// ─── Warenkosten-Grenze (Kontoklassen-Grenze, pro Mandant) ───────────────────
+//
+// Konten 4000–Grenze = Warenkosten (WKQ), darüber = Betriebskosten.
+// KV `waren_grenze_v1`; fehlend/ungültig → DEFAULT_WARENKOSTEN_GRENZE (4070).
+
+export async function loadWarenkostenGrenze(tenantId: TenantId): Promise<number> {
+  const { DEFAULT_WARENKOSTEN_GRENZE } = await import('./waren-klassen');
+  try {
+    const raw = await kvGet(tenantKey(tenantId, 'waren_grenze_v1'));
+    const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
+    if (Number.isFinite(n) && n >= 4000 && n <= 9999) return n;
+  } catch { /* Lesefehler → Standard */ }
+  return DEFAULT_WARENKOSTEN_GRENZE;
+}
+
+export async function saveWarenkostenGrenze(tenantId: TenantId, grenze: number): Promise<void> {
+  if (!Number.isFinite(grenze) || grenze < 4000 || grenze > 9999) {
+    throw new Error('Warenkosten-Grenze muss zwischen 4000 und 9999 liegen.');
+  }
+  await kvSet(tenantKey(tenantId, 'waren_grenze_v1'), grenze);
+  console.log(`[WAREN] warenkosten-grenze saved: ${grenze} for tenant "${tenantId}"`);
+}
+
 function warenkontenKey(tenantId: TenantId): string {
   return tenantKey(tenantId, 'warenkonten_v1');
 }
@@ -158,6 +181,33 @@ export async function loadWarenkonten(tenantId: TenantId): Promise<Warenkonto[]>
 export async function saveWarenkonten(tenantId: TenantId, konten: Warenkonto[]): Promise<void> {
   await kvSet(warenkontenKey(tenantId), konten);
   console.log(`[WAREN] warenkonten saved: ${konten.length} entries for tenant "${tenantId}"`);
+}
+
+// ─── Lieferanten-Aliasse (PDF-Erkennung) ─────────────────────────────────────
+//
+// Erkannte Schreibweisen → Lieferanten-Name, pro Mandant. KV-Schlüssel
+// `waren_lieferanten_aliases_v1`; Keys sind normalisiert
+// (normalizeSupplierKey aus waren-pdf-erkennung).
+
+function supplierAliasesKey(tenantId: TenantId): string {
+  return tenantKey(tenantId, 'waren_lieferanten_aliases_v1');
+}
+
+export async function loadSupplierAliases(tenantId: TenantId): Promise<Record<string, string>> {
+  const raw = await kvGet(supplierAliasesKey(tenantId));
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw as Record<string, string> : {};
+}
+
+/** Alias dauerhaft speichern (Merge auf frischem Remote-Stand, nie Wipe). */
+export async function saveSupplierAlias(
+  tenantId: TenantId, aliasKey: string, supplierName: string,
+): Promise<void> {
+  if (!aliasKey.trim()) return;
+  const cur = await loadSupplierAliases(tenantId);
+  cur[aliasKey] = supplierName;
+  await kvSet(supplierAliasesKey(tenantId), cur);
+  console.log(`[WAREN] Alias gespeichert: "${aliasKey}" → "${supplierName}" (${tenantId})`);
 }
 
 // ─── Zuletzt genutzte Lieferanten (nur Sortier-Komfort, localStorage) ────────

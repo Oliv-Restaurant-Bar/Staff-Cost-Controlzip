@@ -1,0 +1,29 @@
+Warenrechnungen — Mehr-Konten-Split + Kontoklassen (Warenkosten 4000–4070 / Betriebskosten ab 4071) + Lieferanten-Total (Oliv und Beaulieu)
+
+A. ERFASSUNG
+1. Die schnelle manuelle Erfassung bleibt (Datum, Lieferant, Konto, Betrag, MWST) — für einfache Rechnungen in Sekunden.
+2. Neu: Eine Rechnung kann auf MEHRERE Konten aufgeteilt werden (nicht nur 2). Im Split beliebig viele Zeilen: je Zeile Konto + Betrag; die Summe der Split-Beträge ergibt den Rechnungsbetrag (Validierung, dass es aufgeht). MWST auf Rechnungsebene.
+
+B. KONTEN & KLASSIFIKATION (nach Kontonummer)
+3. Jedes Konto hat eine Kontonummer. Klassifikation automatisch aus der Nummer:
+   - Konten 4000–4070 = WARENKOSTEN (zählen in Warenkosten/WKQ).
+   - Konten 4071 und höher = BETRIEBSKOSTEN (zählen NICHT in Warenkosten/WKQ).
+   Die Grenze (4070/4071) ist konfigurierbar, Standard wie hier.
+4. In den Stammdaten Konten mit Nummer + Bezeichnung anlegen; die Klasse (Warenkosten/Betriebskosten) ergibt sich aus der Nummer und wird angezeigt. Warenkonten behalten die Standard-Kategorie Food/Beverage.
+
+C. BERECHNUNG
+5. Warenkosten total und WKQ = ausschliesslich die Beträge auf Konten 4000–4070 (÷ Netto-Umsatz). Betriebskosten (≥ 4071) fliessen NICHT in die WKQ.
+6. Betriebskosten werden separat ausgewiesen (eigene Summe), nicht mit den Warenkosten vermischt.
+
+D. AUSWERTUNG NACH LIEFERANTEN-TOTAL (wichtig für den Vergleich)
+7. In der Analyse eine Ansicht „nach Lieferant" mit dem GESAMT-Total pro Lieferant über ALLE Konten (Warenkosten + Betriebskosten) — damit der Vergleich mit der Buchhaltung/Kontoblatt pro Lieferant vollständig ist.
+8. Je Lieferant die Aufschlüsselung sichtbar: Total, davon Warenkosten (4000–4070), davon Betriebskosten (≥ 4071). So sieht man beides, ohne dass die Betriebskosten die WKQ verfälschen.
+9. Der FIBU-Abgleich pro Lieferant (aus dem PDF-/Abgleich-Befehl) vergleicht das Lieferanten-GESAMT-Total (alle Konten) gegen die Buchhaltung — nicht nur die Warenkosten — sonst würde die Differenz falsch aussehen.
+
+E. COCKPIT
+10. Cockpit „Warenkosten total"/WKQ bleibt nur 4000–4070. Optional eine separate Zeile „Betriebskosten (Waren-Lieferanten)" für Transparenz, klar getrennt von der WKQ.
+
+F. MANDANTEN & SICHERHEIT
+11. Strikt pro Restaurant (Oliv/Beaulieu); Split-Buchungen konsistent in Cockpit, Analyse und Export; keine Doppelzählung; nur berechtigte Rollen.
+
+Abnahme: Eine Rechnung lässt sich auf mehrere Konten aufteilen (z. B. 4000 Fleisch + 4071 Reinigung); die WKQ zählt nur den 4000–4070-Anteil, die Betriebskosten erscheinen separat. In der Lieferanten-Auswertung erscheint jeder Lieferant mit Gesamt-Total (Waren + Betrieb) und der Aufschlüsselung; der FIBU-Abgleich nutzt das Gesamt-Total. Grenze 4070/4071 konfigurierbar. Oliv und Beaulieu getrennt.

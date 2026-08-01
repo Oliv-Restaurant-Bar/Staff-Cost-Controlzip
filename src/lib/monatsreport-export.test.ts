@@ -153,8 +153,30 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
       month: 3, monthPax: 70, vjMonth: 2, vjMonthPax: 45,
     });
     const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
-    expect(r.getCell(3).value).toBe('2 (45)'); // Vorjahr = vjMonth (vjMonthPax)
-    expect(r.getCell(4).value).toBe('3 (70)'); // Ist = month (monthPax)
+    expect(r.getCell(3).value).toBe('2 (45 Pers.)'); // Vorjahr = vjMonth (vjMonthPax)
+    expect(r.getCell(4).value).toBe('3 (70 Pers.)'); // Ist = month (monthPax)
+  });
+
+  it('countPax MIT sharePct hängt den Gäste-IN-Anteil an («n (p Pers. · x.x %)»)', () => {
+    const gruppen = row({
+      label: 'Gruppen ab 20 Pax', fmt: 'countPax',
+      month: 8, monthPax: 255, vjMonth: 2, vjMonthPax: 45,
+      sharePct: { month: 1.8, week: null, vj: null, vjMonth: 2.4 },
+    });
+    const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
+    expect(r.getCell(4).value).toBe('8 (255 Pers. · 1.8 %)');
+    expect(r.getCell(3).value).toBe('2 (45 Pers. · 2.4 %)');
+  });
+
+  it('count MIT sharePct wird als Text «n (x.x %)» geschrieben; ohne Basis numerisch', () => {
+    const res = row({
+      label: 'Reservierte Gäste', fmt: 'count',
+      month: 2396, vjMonth: 2100,
+      sharePct: { month: 17.2, week: null, vj: null, vjMonth: null },
+    });
+    const r = buildMonatsreportWorkbook([res], 7, 'monat').worksheets[0].getRow(2);
+    expect(r.getCell(4).value).toBe('2’396 (17.2 %)'); // de-CH Tausender-Apostroph U+2019
+    expect(r.getCell(3).value).toBe(2100); // kein VJ-Anteil → Zahl bleibt Zahl
   });
 
   it('countPax zieht in der Wochensicht week/weekPax (Vorjahr-Woche leer)', () => {
@@ -164,7 +186,7 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
       month: 3, monthPax: 70, vjMonth: 2, vjMonthPax: 45,
     });
     const r = buildMonatsreportWorkbook([gruppen], 7, 'woche').worksheets[0].getRow(2);
-    expect(r.getCell(4).value).toBe('1 (22)'); // Ist = week (weekPax)
+    expect(r.getCell(4).value).toBe('1 (22 Pers.)'); // Ist = week (weekPax)
     expect(r.getCell(3).value ?? '').toBe(''); // keine VJ-Woche
   });
 });

@@ -104,13 +104,23 @@ function parseWeekValue(v: string): WeekSelection {
 const fmtNum = (v: number, dec = 2) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
-function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): string {
+function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null, share?: number | null): string {
   if (v === null || v === undefined) return '';
   if (fmt === 'countPax') {
     const n = fmtNum(v, 0);
-    return pax !== null && pax !== undefined ? `${n} (${fmtNum(pax, 0)})` : n;
+    // «8 (255 Pers. · 1.8 %)» — Anteil an Gäste IN nur wenn Basis vorhanden.
+    if (pax !== null && pax !== undefined) {
+      return share !== null && share !== undefined
+        ? `${n} (${fmtNum(pax, 0)} Pers. · ${share.toFixed(1)} %)`
+        : `${n} (${fmtNum(pax, 0)} Pers.)`;
+    }
+    return n;
   }
-  if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
+  if (fmt === 'count' || fmt === 'hours') {
+    const n = fmtNum(v, 0);
+    // «2'396 (17.2 %)» — Anteil an Gäste IN (Basis = 100 %).
+    return share !== null && share !== undefined ? `${n} (${share.toFixed(1)} %)` : n;
+  }
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
   return fmtNum(v);
 }
@@ -159,9 +169,13 @@ function ReportTable({
 }) {
   const pick = (row: MrRow) => granularity === 'monat'
     ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget,
-        vjPax: row.vjMonthPax, istPax: row.monthPax }
+        vjPax: row.vjMonthPax, istPax: row.monthPax,
+        istShare: row.sharePct?.month ?? null, vjShare: row.sharePct?.vjMonth ?? null,
+        pct: row.pctOfRevenue?.month ?? null }
     : { budget: row.budget, vj: row.vj, ist: row.week, devBudget: row.weekBudget,
-        vjPax: null as number | null, istPax: row.weekPax };
+        vjPax: null as number | null, istPax: row.weekPax,
+        istShare: row.sharePct?.week ?? null, vjShare: row.sharePct?.vj ?? null,
+        pct: row.pctOfRevenue?.week ?? null };
   // Ausklappbare Gruppen: Kinder (childOf) werden IMMER direkt unter ihrer
   // Eltern-Zeile gerendert (unabhängig von gespeicherter Reihenfolge) und sind
   // standardmässig eingeklappt.
@@ -318,8 +332,8 @@ function ReportTable({
                   {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
                   {row.deltaVsVj && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
                 </td>
-                <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax)}</td>
+                <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax, p.istShare)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax, p.vjShare)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
               </tr>
             );
@@ -333,7 +347,15 @@ function ReportTable({
                     <tr key={child.id} className="border-b last:border-0 bg-muted/10 hover:bg-muted/30" data-testid={`row-${child.id}`}>
                       <td className="px-3 py-1 pl-9 text-xs text-muted-foreground">{child.label}</td>
                       <td className="px-3 py-1" />
-                      <td className="px-3 py-1 text-right tabular-nums text-xs">{fmtCell(cp.ist, child.fmt)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums text-xs">
+                        {fmtCell(cp.ist, child.fmt)}
+                        {/* Quote je Lieferant in % auf den Netto-Umsatz der Periode. */}
+                        {cp.pct !== null && (
+                          <span className="ml-1 text-[10px] text-muted-foreground" data-testid={`pct-${child.id}`}>
+                            · {cp.pct.toFixed(1)} %
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.vj, child.fmt)}</td>
                       <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.budget, child.fmt)}</td>
                     </tr>
@@ -994,12 +1016,16 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                             </span>
                           )}
                         </span>
-                        {/* Kompakte WKQ unter dem CHF-Wert (nur «Warenkosten total»). */}
+                        {/* Kompakte Quote unter dem CHF-Wert: «Warenkosten total» mit
+                            Ziel-Ampel (wkqZiel), Lieferanten-Zeilen neutral (Anteil
+                            am Netto-Umsatz der KW, ohne Ampel). */}
                         {row.wkqValues && (
                           <span className={cn('block text-[10px] font-normal',
-                            wkqV == null ? 'text-muted-foreground'
+                            wkqV == null || row.wkqZiel == null ? 'text-muted-foreground'
                               : wkqGut ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
-                            {wkqV == null ? 'WKQ —' : `WKQ ${wkqV.toFixed(1)} %`}
+                            {row.wkqZiel != null
+                              ? (wkqV == null ? 'WKQ —' : `WKQ ${wkqV.toFixed(1)} %`)
+                              : (wkqV == null ? '—' : `${wkqV.toFixed(1)} %`)}
                           </span>
                         )}
                         {showVj && (

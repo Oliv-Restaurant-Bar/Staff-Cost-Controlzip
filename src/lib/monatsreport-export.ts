@@ -34,6 +34,9 @@ export interface ExportCell {
   /** Begleit-«Personen» für fmt='countPax' (Anzeige «Anzahl (Σ Personen)»). */
   vjPax: number | null;
   istPax: number | null;
+  /** Anteil an Gäste IN in % (reservierte Gäste / Gruppen ab 20); null ohne Basis. */
+  vjShare: number | null;
+  istShare: number | null;
 }
 
 /**
@@ -52,7 +55,10 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   const devGut = dev === null ? null : (row.deltaInverted ? dev <= 0 : dev >= 0);
   const vjPax = granularity === 'monat' ? (row.vjMonthPax ?? null) : null;
   const istPax = granularity === 'monat' ? (row.monthPax ?? null) : (row.weekPax ?? null);
-  return { budget, vj, ist, dev, istWarn, devGut, vjPax, istPax };
+  // Anteile an Gäste IN — identische Feldwahl wie die Bildschirmtabelle.
+  const istShare = (granularity === 'monat' ? row.sharePct?.month : row.sharePct?.week) ?? null;
+  const vjShare = (granularity === 'monat' ? row.sharePct?.vjMonth : row.sharePct?.vj) ?? null;
+  return { budget, vj, ist, dev, istWarn, devGut, vjPax, istPax, vjShare, istShare };
 }
 
 /**
@@ -68,13 +74,29 @@ export function vjColumnHeader(
   return `Vorjahr (${kind} ${year - 1})`;
 }
 
-/** «Anzahl (Σ Personen)»-Text für fmt='countPax'; null → leer. */
-function countPaxText(count: number | null, pax: number | null): string {
+/**
+ * «Anzahl (Σ Personen · Anteil %)»-Text für fmt='countPax'; null → leer.
+ * Gleiches Format wie die Bildschirmtabelle: «8 (255 Pers. · 1.8 %)»;
+ * ohne Gäste-IN-Basis (share=null) nur «8 (255 Pers.)».
+ */
+function countPaxText(count: number | null, pax: number | null, share: number | null): string {
   if (count === null || count === undefined) return '';
   const c = Math.round(count).toLocaleString('de-CH');
-  return pax !== null && pax !== undefined
-    ? `${c} (${Math.round(pax).toLocaleString('de-CH')})`
-    : c;
+  if (pax === null || pax === undefined) return c;
+  const p = Math.round(pax).toLocaleString('de-CH');
+  return share !== null && share !== undefined
+    ? `${c} (${p} Pers. · ${share.toFixed(1)} %)`
+    : `${c} (${p} Pers.)`;
+}
+
+/**
+ * «Anzahl (Anteil %)»-Text für fmt='count' mit Gäste-IN-Anteil (reservierte
+ * Gäste): «2'396 (17.2 %)». Nur genutzt, wenn ein Anteil vorhanden ist —
+ * sonst bleibt die Zelle numerisch.
+ */
+function countShareText(count: number | null, share: number): string {
+  if (count === null || count === undefined) return '';
+  return `${Math.round(count).toLocaleString('de-CH')} (${share.toFixed(1)} %)`;
 }
 
 /**
@@ -118,10 +140,15 @@ export function buildMonatsreportWorkbook(
     // Felder je Granularität (identisch zur Bildschirm-Ansicht ReportTable).
     const c = mapRowForExport(row, granularity);
 
-    // countPax («Anzahl (Σ Personen)») wird als Text geschrieben, sonst als Zahl.
+    // countPax («Anzahl (Σ Personen · Anteil)») wird als Text geschrieben;
+    // count MIT Gäste-IN-Anteil ebenfalls («2'396 (17.2 %)»), sonst als Zahl.
     const isCountPax = row.fmt === 'countPax';
-    const vjOut = isCountPax ? countPaxText(c.vj, c.vjPax) : c.vj;
-    const istOut = isCountPax ? countPaxText(c.ist, c.istPax) : c.ist;
+    const vjIsShareText = row.fmt === 'count' && c.vjShare !== null && c.vj !== null;
+    const istIsShareText = row.fmt === 'count' && c.istShare !== null && c.ist !== null;
+    const vjOut = isCountPax ? countPaxText(c.vj, c.vjPax, c.vjShare)
+      : vjIsShareText ? countShareText(c.vj, c.vjShare as number) : c.vj;
+    const istOut = isCountPax ? countPaxText(c.ist, c.istPax, c.istShare)
+      : istIsShareText ? countShareText(c.ist, c.istShare as number) : c.ist;
 
     const r = ws.addRow([row.label ?? '', c.budget, vjOut, istOut, c.dev]);
 
@@ -130,8 +157,10 @@ export function buildMonatsreportWorkbook(
       : FMT_CHF;
     for (const col of [2, 3, 4]) {
       const cell = r.getCell(col);
-      // countPax-Text (Spalten 3/4) bleibt Text — kein Zahlenformat.
-      if (!(isCountPax && (col === 3 || col === 4))) cell.numFmt = numFmt;
+      // Text-Zellen (countPax bzw. count mit Anteil, Spalten 3/4) — kein Zahlenformat.
+      const isText = (col === 3 && (isCountPax || vjIsShareText))
+        || (col === 4 && (isCountPax || istIsShareText));
+      if (!isText) cell.numFmt = numFmt;
       cell.alignment = { horizontal: 'right' };
     }
     // Schwellen-Rot (warnAbove, z.B. PKQ > 40 %) für den Ist-Wert (Spalte 4).
@@ -206,6 +235,15 @@ export function addWarenkostenSheet(
   // WKQ über Ziel = rot, sonst grün (gleiche Ampel wie im Cockpit).
   if (wkq != null && zielWkq != null) {
     total.getCell(3).font = { bold: true, color: { argb: wkq <= zielWkq ? 'FF196B24' : 'FFC00000' } };
+  }
+
+  // Betriebskosten-Anteile (Konten über der Warenkosten-Grenze) — separat,
+  // ausserhalb von Total/WKQ (keine Doppelzählung, verfälscht die Quote nicht).
+  if (waren.betrieb != null && waren.betrieb > 0) {
+    const b = ws.addRow(['Betriebskosten (Waren-Lieferanten)', waren.betrieb, null, null]);
+    b.getCell(2).numFmt = FMT_CHF;
+    b.getCell(2).alignment = { horizontal: 'right' };
+    b.font = { italic: true };
   }
 
   const foot = ws.addRow(['WKQ = Warenkosten ÷ Netto-Umsatz der Periode'

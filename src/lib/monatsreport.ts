@@ -45,8 +45,9 @@ import {
 } from '@/lib/bedarf-stunden-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { fetchReviewsData, countGoogleReviewsByStar, type SingleReview } from '@/lib/reviews-store';
-import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
+import { loadMonthInvoices, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
 import { filterInvoicesByRange, sumInvoicesNet, sumNetByKategorie, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
+import { nurWarenAnteil, sumBetriebNet, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
 import { loadWarenkonten, type Warenkonto } from '@/lib/waren-db';
 import { loadZielWarenquote, DEFAULT_ZIEL_WARENQUOTE_PCT } from '@/lib/ziel-warenquote';
 
@@ -631,6 +632,18 @@ export interface MrRow {
    * sowie Food-/Beverage-WKQ als kleine Zeile unter dem Label — je Granularität.
    */
   wkqInline?: { month: WkqInlineInfo | null; week: WkqInlineInfo | null };
+  /**
+   * Quote der Zeile in % auf den NETTO-Umsatz der Periode (Lieferanten-Zeilen:
+   * Lieferant ÷ Umsatz) — kleine Zusatzangabe direkt beim CHF-Wert. null =
+   * kein Umsatz (nie durch 0). Die Summe der Lieferanten-% ergibt die WKQ.
+   */
+  pctOfRevenue?: { month: number | null; week: number | null };
+  /**
+   * Anteil an «Gäste IN» in % (Basis = 100 %), je Spalte parallel zu
+   * month/week/vj/vjMonth. Reservierte Gäste: Personen ÷ Gäste IN; Gruppen:
+   * Σ Personen der Gruppen ÷ Gäste IN. null = keine Gäste-IN-Basis (nie ÷ 0).
+   */
+  sharePct?: { month: number | null; week: number | null; vj: number | null; vjMonth: number | null };
 }
 
 /** Kompakte WKQ-Angabe für die Inline-Anzeige bei «Warenkosten total». */
@@ -676,6 +689,8 @@ export interface WarenExportPeriod {
   total: number;
   /** Netto-Umsatz der Periode (Nenner für Anteil/WKQ); null = kein Umsatz. */
   revenue: number | null;
+  /** Betriebskosten-Anteile (Konten > Grenze) — separat, NIE in Total/WKQ. */
+  betrieb?: number | null;
 }
 
 // ── Benutzerdefinierte Zeilen-Reihenfolge (Cockpit) ──────────────────────────
@@ -878,10 +893,11 @@ export async function ladeMonatsreport(
 
   // Warenkosten (erfasste Warenrechnungen, netto) + Ziel-WKQ: Basis der
   // Lieferanten-/Total-/WKQ-Zeilen. Ladefehler → null (Zeilen bleiben leer).
-  const [warenInvoices, zielWkq, warenKonten] = await Promise.all([
+  const [warenInvoices, zielWkq, warenKonten, warenGrenze] = await Promise.all([
     loadMonthInvoices(tenantId, `${year}-${mm}`).catch(() => null as InvoiceEntry[] | null),
     loadZielWarenquote(tenantId).then(b => b.pct).catch(() => DEFAULT_ZIEL_WARENQUOTE_PCT),
     loadWarenkonten(tenantId).catch(() => [] as Warenkonto[]),
+    loadWarenkostenGrenze(tenantId).catch(() => DEFAULT_WARENKOSTEN_GRENZE),
   ]);
 
   const [
@@ -1159,7 +1175,13 @@ export async function ladeMonatsreport(
    * Lieferanten-Zeilen und Total/WKQ leer.
    */
   function buildWarenRows(): MrRow[] {
-    const inv = warenInvoices;
+    // Kontoklassen: «Warenkosten total»/WKQ/Lieferanten-Kinder zählen NUR die
+    // Anteile auf Warenkosten-Konten (4000–Grenze); Betriebskosten-Anteile
+    // (> Grenze, z.B. 4071/6040) laufen in eine separate Zeile und fliessen
+    // NIE in die WKQ — keine Doppelzählung, Summe = alle Rechnungen.
+    const invAll = warenInvoices;
+    const inv = invAll ? nurWarenAnteil(invAll, warenGrenze) : null;
+    const weekInvAll = invAll && weekFrom && weekTo ? filterInvoicesByRange(invAll, weekFrom, weekTo) : null;
     const weekInv = inv && weekFrom && weekTo ? filterInvoicesByRange(inv, weekFrom, weekTo) : null;
     const monthTotal = inv && inv.length > 0 ? r2(sumInvoicesNet(inv)) : null;
     const weekTotal = weekInv && weekInv.length > 0 ? r2(sumInvoicesNet(weekInv)) : null;
@@ -1171,12 +1193,17 @@ export async function ladeMonatsreport(
       const wSum = weekInv
         ? sumInvoicesNet(weekInv.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName))
         : 0;
+      // Quote je Lieferant in % auf den Netto-Umsatz der Periode (nie ÷ 0);
+      // die Summe der Lieferanten-% ergibt die Gesamt-WKQ.
+      const mPct = mNetV != null && mNet > 0 && agg.totalNet > 0 ? r2((agg.totalNet / mNet) * 100) : null;
+      const wPct = wNetV != null && wNet > 0 && wSum > 0 ? r2((wSum / wNet) * 100) : null;
       return {
         ...d(`warenkosten_${ids[i]}`, `Warenkosten · ${agg.supplierName}`, {
           month: r2(agg.totalNet),
           week: wSum > 0 ? r2(wSum) : null,
         }, { deltaInverted: true }),
         childOf: 'warenkosten_total',
+        pctOfRevenue: { month: mPct, week: wPct },
       };
     });
     // Kompakte WKQ-Infos je Granularität (nie durch 0; ohne Umsatz → null).
@@ -1205,26 +1232,42 @@ export async function ladeMonatsreport(
         week: wkqInfo(weekInv, weekTotal, wNetV, wNet),
       },
     };
-    return [totalRow, ...supplierRows];
+    // Betriebskosten (Konten > Grenze) der Waren-Lieferanten: separat, klar
+    // getrennt von der WKQ; «leer statt 0» (0 nur wenn wirklich Anteile = 0
+    // existieren würden → dann ebenfalls leer, keine erfundene Aussage).
+    const mBetrieb = invAll ? sumBetriebNet(invAll, warenGrenze) : 0;
+    const wBetrieb = weekInvAll ? sumBetriebNet(weekInvAll, warenGrenze) : 0;
+    const betriebRow: MrRow | null = invAll && mBetrieb > 0 ? {
+      ...d('betriebskosten_waren', 'Betriebskosten (Waren-Lieferanten)', {
+        month: r2(mBetrieb),
+        week: wBetrieb > 0 ? r2(wBetrieb) : null,
+      }, { deltaInverted: true }),
+    } : null;
+    return [totalRow, ...supplierRows, ...(betriebRow ? [betriebRow] : [])];
   }
 
   /** Lieferanten-Aufstellung für den Excel-Export (zweites Blatt «Warenkosten»). */
   function buildWarenExport(): MonatsreportDaten['waren'] {
-    const inv = warenInvoices;
-    const weekInv = inv && weekFrom && weekTo ? filterInvoicesByRange(inv, weekFrom, weekTo) : null;
-    const period = (list: InvoiceEntry[] | null, netV: number | null, net: number): WarenExportPeriod | null => {
-      if (!list || list.length === 0) return null;
+    const invAll = warenInvoices;
+    const weekInvAll = invAll && weekFrom && weekTo ? filterInvoicesByRange(invAll, weekFrom, weekTo) : null;
+    // Konsistent zum Cockpit: Lieferanten/Total/WKQ = nur Warenkosten-Anteile
+    // (4000–Grenze); Betriebskosten-Anteile als separate Summe im Blatt.
+    const period = (listAll: InvoiceEntry[] | null, netV: number | null, net: number): WarenExportPeriod | null => {
+      if (!listAll || listAll.length === 0) return null;
+      const list = nurWarenAnteil(listAll, warenGrenze);
+      const betrieb = sumBetriebNet(listAll, warenGrenze);
       return {
         suppliers: aggregateBySupplier(list).map(a => ({
           name: a.supplierName, net: r2(a.totalNet), count: a.count,
         })),
         total: r2(sumInvoicesNet(list)),
         revenue: netV != null && net > 0 ? r2(net) : null,
+        betrieb: betrieb > 0 ? r2(betrieb) : null,
       };
     };
     return {
-      monat: period(inv, mNetV, mNet),
-      woche: period(weekInv, wNetV, wNet),
+      monat: period(invAll, mNetV, mNet),
+      woche: period(weekInvAll, wNetV, wNet),
       zielWkq: r2(zielWkq),
     };
   }
@@ -1276,6 +1319,10 @@ export async function ladeMonatsreport(
   const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD) : null;
   const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD) : null;
 
+  /** Anteil n ÷ basis in % — null ohne Basis oder Wert (nie durch 0 teilen). */
+  const anteilPct = (n: number | null | undefined, basis: number | null): number | null =>
+    n != null && basis != null && basis > 0 ? r2((n / basis) * 100) : null;
+
   const rows: MrRow[] = [
     // ── Block Umsatz/Gäste ──
     // Budget-Spalte = Budget-WOCHENANTEIL (= weekBudget, Basis der Woche-Δ%);
@@ -1296,18 +1343,36 @@ export async function ladeMonatsreport(
     // Reservierte Gäste (Foratable): Σ Personen gezählter Reservationen. Woche =
     // gewählte Woche, Monat = ganzer Monat (inkl. Zukunft). VJ-Woche leer (keine
     // KW-genaue VJ-Zuordnung); VJ-Monat = gleicher Monat Vorjahr.
-    d('reservierte_gaeste', 'Reservierte Gäste', {
-      month: resMonth.reservedGuests, week: resWeek.reservedGuests,
-      vj: null, vjMonth: resVjMonth.reservedGuests,
-    }, { fmt: 'count' }),
-    // Gruppen ab N Pax: Anzeige «Anzahl (Σ Personen)». Companion-Personen je
-    // Spalte in *Pax-Feldern. VJ-Woche leer; VJ-Monat vorhanden.
-    d('gruppen_ab_20', `Gruppen ab ${resSettings.groupThreshold} Pax`, {
-      month: resMonth.largeGroupCount, week: resWeek.largeGroupCount,
-      vj: null, vjMonth: resVjMonth.largeGroupCount,
-      monthPax: resMonth.largeGroupPersons, weekPax: resWeek.largeGroupPersons,
-      vjMonthPax: resVjMonth.largeGroupPersons,
-    }, { fmt: 'countPax' }),
+    {
+      ...d('reservierte_gaeste', 'Reservierte Gäste', {
+        month: resMonth.reservedGuests, week: resWeek.reservedGuests,
+        vj: null, vjMonth: resVjMonth.reservedGuests,
+      }, { fmt: 'count' }),
+      // Anteil an «Gäste IN» (Basis = 100 %); ohne Gäste-IN-Basis null (nie ÷ 0).
+      sharePct: {
+        month: anteilPct(resMonth.reservedGuests, mGaesteV),
+        week: anteilPct(resWeek.reservedGuests, wGaesteV),
+        vj: null,
+        vjMonth: anteilPct(resVjMonth.reservedGuests, vjGaesteV),
+      },
+    },
+    // Gruppen ab N Pax: Anzeige «Anzahl (Σ Personen · Anteil an Gäste IN)».
+    // Companion-Personen je Spalte in *Pax-Feldern. VJ-Woche leer; VJ-Monat vorhanden.
+    {
+      ...d('gruppen_ab_20', `Gruppen ab ${resSettings.groupThreshold} Pax`, {
+        month: resMonth.largeGroupCount, week: resWeek.largeGroupCount,
+        vj: null, vjMonth: resVjMonth.largeGroupCount,
+        monthPax: resMonth.largeGroupPersons, weekPax: resWeek.largeGroupPersons,
+        vjMonthPax: resVjMonth.largeGroupPersons,
+      }, { fmt: 'countPax' }),
+      // Anteil = Σ PERSONEN der Gruppen ÷ Gäste IN (nicht Anzahl Gruppen).
+      sharePct: {
+        month: anteilPct(resMonth.largeGroupPersons, mGaesteV),
+        week: anteilPct(resWeek.largeGroupPersons, wGaesteV),
+        vj: null,
+        vjMonth: anteilPct(resVjMonth.largeGroupPersons, vjGaesteV),
+      },
+    },
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte (1 Stück
     // = 1 TA-Gast). Woche = gewählte Woche, Monat = ganzer Monat (inkl. Zukunft).
     // VJ-Monat aus derselben Quelle (Jahr−1); VJ-Woche «—». Quelle fehlt → «—» (nie 0).
@@ -1850,7 +1915,12 @@ export async function ladeWochenverlauf(
   const allInvoices: InvoiceEntry[] | null =
     invLists.every(l => l === null) ? null : invLists.flatMap(l => l ?? []);
   if (allInvoices) {
-    const weekInv = weeks.map(w => filterInvoicesByRange(allInvoices, w.from, w.to));
+    // Kontoklassen: Total/WKQ/Lieferanten nur Warenkosten-Anteile (4000–Grenze);
+    // Betriebskosten-Anteile separat als eigene Zeile (nie in der WKQ).
+    const grenzeVerlauf = await loadWarenkostenGrenze(tenantId).catch(() => DEFAULT_WARENKOSTEN_GRENZE);
+    const warenOnly = nurWarenAnteil(allInvoices, grenzeVerlauf);
+    const weekInvAll = weeks.map(w => filterInvoicesByRange(allInvoices, w.from, w.to));
+    const weekInv = weeks.map(w => filterInvoicesByRange(warenOnly, w.from, w.to));
     // WKQ je Woche = Warenkosten ÷ Netto-Umsatz derselben Woche (Hauptlinie).
     const netOf = (i: number): number | null => {
       const a = mainAggs[i];
@@ -1871,14 +1941,28 @@ export async function ladeWochenverlauf(
       }),
       wkqZiel: r2(zielWkqVerlauf) ?? undefined,
     });
-    for (const agg of aggregateBySupplier(allInvoices)) {
+    for (const agg of aggregateBySupplier(warenOnly)) {
+      const sums = weekInv.map(list =>
+        sumInvoicesNet(list.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName)));
       rows.push({
         label: `Warenkosten · ${agg.supplierName}`, fmt: 'chf',
         childOf: 'warenkosten_total',
-        values: weekInv.map(list => {
-          const s = sumInvoicesNet(list.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName));
-          return s > 0 ? r2(s) : null;
+        values: sums.map(s => (s > 0 ? r2(s) : null)),
+        // Quote je Lieferant in % auf den Netto-Umsatz der KW (nie ÷ 0). Kein
+        // wkqZiel: die Anzeige bleibt neutral (keine Ampel je Lieferant).
+        wkqValues: sums.map((s, i) => {
+          const net = netOf(i);
+          return s > 0 && net !== null ? r2((s / net) * 100) : null;
         }),
+      });
+    }
+    // Betriebskosten (Konten > Grenze) separat — klar getrennt von der WKQ.
+    const betriebSums = weekInvAll.map(list => sumBetriebNet(list, grenzeVerlauf));
+    if (betriebSums.some(s => s > 0)) {
+      rows.push({
+        id: 'betriebskosten_waren',
+        label: 'Betriebskosten (Waren-Lieferanten)', fmt: 'chf',
+        values: betriebSums.map(s => (s > 0 ? r2(s) : null)),
       });
     }
     // WKQ je Kategorie (Food/Beverage) — separate Zielquoten, deshalb einzeln.
