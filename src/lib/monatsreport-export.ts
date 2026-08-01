@@ -8,7 +8,7 @@
  * Δ%-Färbung invertiert bei Kosten (deltaInverted); Ist-Wert rot bei warnAbove.
  */
 import ExcelJS from 'exceljs';
-import type { MrRow } from '@/lib/monatsreport';
+import type { MrRow, MonatsreportDaten, WarenExportPeriod } from '@/lib/monatsreport';
 
 const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
@@ -158,10 +158,73 @@ export function buildMonatsreportWorkbook(
   return wb;
 }
 
+/**
+ * Zweites Tabellenblatt «Warenkosten»: Lieferanten-Aufstellung der Periode
+ * (Lieferant | Betrag netto | Anteil vom Umsatz | Anzahl Rechnungen) plus
+ * «Warenkosten total» und WKQ. Anteil = Lieferant ÷ Netto-Umsatz der Periode
+ * (die Anteile summieren sich zur Gesamt-WKQ); ohne Umsatz bleibt die
+ * Anteil-/WKQ-Spalte leer (nie durch 0 teilen). CH-Zahlenformat.
+ */
+export function addWarenkostenSheet(
+  wb: ExcelJS.Workbook, waren: WarenExportPeriod, zielWkq: number | null,
+  periodTitle: string,
+): void {
+  const ws = wb.addWorksheet('Warenkosten', { views: [{ state: 'frozen', ySplit: 2 }] });
+  ws.columns = [{ width: 34 }, { width: 18 }, { width: 18 }, { width: 12 }];
+
+  const title = ws.addRow([`Warenkosten ${periodTitle}`]);
+  title.font = { bold: true };
+
+  const head = ws.addRow(['Lieferant', 'Betrag (CHF netto)', 'Anteil vom Umsatz', 'Rechnungen']);
+  head.font = { bold: true };
+  head.eachCell(c => {
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+    c.border = { bottom: { style: 'thin', color: { argb: 'FFA0A0A0' } } };
+  });
+  for (let i = 2; i <= 4; i++) head.getCell(i).alignment = { horizontal: 'right' };
+
+  const rev = waren.revenue;
+  const share = (net: number): number | null => (rev != null && rev > 0 ? (net / rev) * 100 : null);
+
+  for (const s of waren.suppliers) {
+    const r = ws.addRow([s.name, s.net, share(s.net), s.count]);
+    r.getCell(2).numFmt = FMT_CHF;
+    r.getCell(3).numFmt = FMT_PCT;
+    r.getCell(4).numFmt = FMT_COUNT;
+    for (let i = 2; i <= 4; i++) r.getCell(i).alignment = { horizontal: 'right' };
+  }
+
+  const totalCount = waren.suppliers.reduce((a, s) => a + s.count, 0);
+  const wkq = share(waren.total);
+  const total = ws.addRow(['Warenkosten total', waren.total, wkq, totalCount]);
+  total.font = { bold: true };
+  total.getCell(2).numFmt = FMT_CHF;
+  total.getCell(3).numFmt = FMT_PCT;
+  total.getCell(4).numFmt = FMT_COUNT;
+  for (let i = 2; i <= 4; i++) total.getCell(i).alignment = { horizontal: 'right' };
+  total.eachCell(c => { c.border = { top: { style: 'thin', color: { argb: 'FFA0A0A0' } } }; });
+  // WKQ über Ziel = rot, sonst grün (gleiche Ampel wie im Cockpit).
+  if (wkq != null && zielWkq != null) {
+    total.getCell(3).font = { bold: true, color: { argb: wkq <= zielWkq ? 'FF196B24' : 'FFC00000' } };
+  }
+
+  const foot = ws.addRow(['WKQ = Warenkosten ÷ Netto-Umsatz der Periode'
+    + (rev != null ? ` (CHF ${rev.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : ' — kein Umsatz importiert')
+    + (zielWkq != null ? ` · Ziel-WKQ ${zielWkq.toLocaleString('de-CH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %` : '')]);
+  foot.font = { italic: true, size: 9, color: { argb: 'FF808080' } };
+}
+
 export async function exportMonatsreportXlsx(
   rows: MrRow[], year: number, month: number, granularity: ExportGranularity = 'woche',
+  waren?: MonatsreportDaten['waren'],
 ): Promise<void> {
   const wb = buildMonatsreportWorkbook(rows, month, granularity, year);
+  // Zweites Blatt «Warenkosten» (Lieferanten-Aufstellung der Periode).
+  const periode = granularity === 'monat' ? waren?.monat : waren?.woche;
+  if (waren && periode) {
+    addWarenkostenSheet(wb, periode, waren.zielWkq ?? null,
+      granularity === 'monat' ? `${MONATE[month - 1]} ${year}` : `Woche (${MONATE[month - 1]} ${year})`);
+  }
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);

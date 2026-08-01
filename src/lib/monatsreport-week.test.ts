@@ -553,6 +553,18 @@ describe('applyRowOrder', () => {
     expect(ids(out).length).toBe(3);
   });
 
+  // Legacy: alte gespeicherte Reihenfolgen kennen die entfernten Zeilen
+  // 'warenkostenquote'/'wkq_food'/'wkq_beverage' noch → einfach übersprungen;
+  // Lieferanten-Kinder (childOf) bleiben erhalten und werden nie verloren.
+  it('legacy WKQ-IDs im Setting + Lieferanten-Kinder: keine Zeile geht verloren', () => {
+    const child = (id: string): MrRow => ({ ...dat(id), childOf: 'warenkosten_total' });
+    const rows = [dat('a'), dat('warenkosten_total'), child('warenkosten_migros'), child('warenkosten_weinhandel')];
+    const out = applyRowOrder(rows, ['warenkostenquote', 'wkq_food', 'wkq_beverage', 'warenkosten_total', 'a']);
+    expect(ids(out)).toEqual(['warenkosten_total', 'a', 'warenkosten_migros', 'warenkosten_weinhandel']);
+    // Kinder behalten ihre childOf-Zuordnung (Anzeige gruppiert sie unter dem Total).
+    expect(out.filter(r => r.childOf === 'warenkosten_total').length).toBe(2);
+  });
+
   // Stunden-Stapel: Bedarf → Plan → Ist müssen IMMER ein zusammenhängender
   // Block sein — auch wenn eine alte gespeicherte Reihenfolge 'bedarf_stunden'
   // noch nicht kennt (die Zeile würde sonst einzeln ans Tabellenende rutschen).

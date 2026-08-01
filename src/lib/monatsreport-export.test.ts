@@ -5,7 +5,7 @@
  * Node-Umgebung: jsdom lädt sonst `canvas` (libuuid) eager → Crash im Container.
  */
 import { describe, it, expect } from 'vitest';
-import { buildMonatsreportWorkbook, vjColumnHeader } from './monatsreport-export';
+import { buildMonatsreportWorkbook, addWarenkostenSheet, vjColumnHeader } from './monatsreport-export';
 import type { MrRow } from './monatsreport';
 
 /** Bequemer MrRow-Builder mit sinnvollen Defaults (alle Felder gesetzt). */
@@ -166,5 +166,51 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     const r = buildMonatsreportWorkbook([gruppen], 7, 'woche').worksheets[0].getRow(2);
     expect(r.getCell(4).value).toBe('1 (22)'); // Ist = week (weekPax)
     expect(r.getCell(3).value ?? '').toBe(''); // keine VJ-Woche
+  });
+});
+
+describe('addWarenkostenSheet — zweites Blatt «Warenkosten»', () => {
+  const waren = {
+    suppliers: [
+      { name: 'Migros', net: 300, count: 3 },
+      { name: 'Weinhandel', net: 100, count: 1 },
+    ],
+    total: 400,
+    revenue: 2000,
+  };
+
+  it('Lieferanten, Anteil vom Umsatz und Total mit WKQ (Anteile summieren sich zur WKQ)', () => {
+    const wb = buildMonatsreportWorkbook([], 7, 'monat');
+    addWarenkostenSheet(wb, waren, 30, 'Juli 2026');
+    const ws = wb.getWorksheet('Warenkosten')!;
+    expect(ws).toBeDefined();
+    // Zeile 1 Titel, 2 Kopf, 3–4 Lieferanten, 5 Total
+    expect(ws.getRow(3).getCell(1).value).toBe('Migros');
+    expect(ws.getRow(3).getCell(2).value).toBe(300);
+    expect(ws.getRow(3).getCell(3).value).toBeCloseTo(15); // 300/2000
+    expect(ws.getRow(3).getCell(4).value).toBe(3);
+    expect(ws.getRow(4).getCell(3).value).toBeCloseTo(5);  // 100/2000
+    const total = ws.getRow(5);
+    expect(total.getCell(1).value).toBe('Warenkosten total');
+    expect(total.getCell(2).value).toBe(400);
+    expect(total.getCell(3).value).toBeCloseTo(20); // WKQ = Σ Anteile (15+5)
+    expect(total.getCell(4).value).toBe(4);
+    // WKQ 20 % <= Ziel 30 % → grün
+    expect((total.getCell(3).font?.color as { argb?: string })?.argb).toBe('FF196B24');
+  });
+
+  it('ohne Umsatz keine Anteile/WKQ (nie durch 0 teilen)', () => {
+    const wb = buildMonatsreportWorkbook([], 7, 'woche');
+    addWarenkostenSheet(wb, { ...waren, revenue: null }, 30, 'Woche');
+    const ws = wb.getWorksheet('Warenkosten')!;
+    expect(ws.getRow(3).getCell(3).value).toBeNull();
+    expect(ws.getRow(5).getCell(3).value).toBeNull();
+  });
+
+  it('WKQ über Ziel wird rot markiert', () => {
+    const wb = buildMonatsreportWorkbook([], 7, 'monat');
+    addWarenkostenSheet(wb, { ...waren, revenue: 1000 }, 30, 'Juli 2026'); // WKQ 40 %
+    const ws = wb.getWorksheet('Warenkosten')!;
+    expect((ws.getRow(5).getCell(3).font?.color as { argb?: string })?.argb).toBe('FFC00000');
   });
 });

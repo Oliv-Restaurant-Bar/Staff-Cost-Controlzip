@@ -619,6 +619,30 @@ export interface MrRow {
    * 3 Sterne neutral/ohne Tönung). Reine Anzeige, keine Δ-Logik.
    */
   tint?: 'green' | 'red';
+  /**
+   * ID der Eltern-Zeile: diese Zeile ist ein ausklappbares Kind (z.B.
+   * Lieferanten-Zeilen unter «Warenkosten total»). Kinder werden IMMER direkt
+   * unter ihrer Eltern-Zeile gerendert (unabhängig von der gespeicherten
+   * Reihenfolge) und sind standardmässig eingeklappt.
+   */
+  childOf?: string;
+  /**
+   * Kompakte WKQ-Zusatzinfo (nur «Warenkosten total»): WKQ inkl. Ziel-Ampel/Δ
+   * sowie Food-/Beverage-WKQ als kleine Zeile unter dem Label — je Granularität.
+   */
+  wkqInline?: { month: WkqInlineInfo | null; week: WkqInlineInfo | null };
+}
+
+/** Kompakte WKQ-Angabe für die Inline-Anzeige bei «Warenkosten total». */
+export interface WkqInlineInfo {
+  /** WKQ in % (Warenkosten ÷ Netto-Umsatz der Periode); null ohne Umsatz. */
+  pct: number | null;
+  /** Ziel-WKQ in % (Ampel: über Ziel = rot). */
+  ziel: number | null;
+  /** Food-WKQ in % (effektive Kategorie); null ohne Wert/Umsatz. */
+  food: number | null;
+  /** Beverage-WKQ in % (effektive Kategorie); null ohne Wert/Umsatz. */
+  bev: number | null;
 }
 
 export interface MonatsreportDaten {
@@ -633,6 +657,25 @@ export interface MonatsreportDaten {
   vjWeekFrom: string | null;
   vjWeekTo: string | null;
   rows: MrRow[];
+  /**
+   * Lieferanten-Aufstellung für den Cockpit-Export (zweites Blatt
+   * «Warenkosten»), je Granularität. null = keine Rechnungsdaten geladen.
+   */
+  waren?: {
+    monat: WarenExportPeriod | null;
+    woche: WarenExportPeriod | null;
+    /** Ziel-WKQ in % (pro Mandant). */
+    zielWkq: number;
+  };
+}
+
+/** Perioden-Aufstellung der Warenkosten für den Excel-Export. */
+export interface WarenExportPeriod {
+  suppliers: { name: string; net: number; count: number }[];
+  /** Warenkosten total (netto) der Periode. */
+  total: number;
+  /** Netto-Umsatz der Periode (Nenner für Anteil/WKQ); null = kein Umsatz. */
+  revenue: number | null;
 }
 
 // ── Benutzerdefinierte Zeilen-Reihenfolge (Cockpit) ──────────────────────────
@@ -1108,7 +1151,9 @@ export async function ladeMonatsreport(
   });
 
   /**
-   * Warenkosten-Zeilen: pro Lieferant (Top-Monatsbetrag zuerst) + Total + WKQ.
+   * Warenkosten-Zeilen: EINE «Warenkosten total»-Zeile (bold) mit kompakter
+   * Inline-WKQ (inkl. Food-/Beverage-WKQ, Ziel-Ampel) und darunter die
+   * Lieferanten-Zeilen als ausklappbare Kinder (childOf, Standard eingeklappt).
    * Monat = alle Rechnungen des Monats, Woche = Rechnungen im geklemmten
    * Wochenbereich. Leere Periode → null (nie 0); Ladefehler → keine
    * Lieferanten-Zeilen und Total/WKQ leer.
@@ -1126,34 +1171,62 @@ export async function ladeMonatsreport(
       const wSum = weekInv
         ? sumInvoicesNet(weekInv.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName))
         : 0;
-      return d(`warenkosten_${ids[i]}`, `Warenkosten · ${agg.supplierName}`, {
-        month: r2(agg.totalNet),
-        week: wSum > 0 ? r2(wSum) : null,
-      }, { deltaInverted: true });
+      return {
+        ...d(`warenkosten_${ids[i]}`, `Warenkosten · ${agg.supplierName}`, {
+          month: r2(agg.totalNet),
+          week: wSum > 0 ? r2(wSum) : null,
+        }, { deltaInverted: true }),
+        childOf: 'warenkosten_total',
+      };
     });
-    return [
-      ...supplierRows,
-      d('warenkosten_total', 'Warenkosten total', {
+    // Kompakte WKQ-Infos je Granularität (nie durch 0; ohne Umsatz → null).
+    const wkqInfo = (list: InvoiceEntry[] | null, total: number | null,
+      netV: number | null, net: number): WkqInlineInfo | null => {
+      if (total == null) return null;
+      const hatUmsatz = netV != null && net > 0;
+      const katPct = (kat: 'Food' | 'Beverage'): number | null => {
+        if (!hatUmsatz || !list) return null;
+        const s = sumNetByKategorie(list, kat, warenKonten);
+        return s > 0 ? r2((s / net) * 100) : null;
+      };
+      return {
+        pct: hatUmsatz ? r2((total / net) * 100) : null,
+        ziel: r2(zielWkq),
+        food: katPct('Food'),
+        bev: katPct('Beverage'),
+      };
+    };
+    const totalRow: MrRow = {
+      ...d('warenkosten_total', 'Warenkosten total', {
         month: monthTotal, week: weekTotal,
       }, { bold: true, deltaInverted: true }),
-      // WKQ = Warenkosten ÷ Netto-Umsatz; Budget-Spalte = Ziel-WKQ, Δ in
-      // Prozentpunkten mit Kosten-Ampel (über Ziel = rot) — wie die PKQ.
-      d('warenkostenquote', 'Warenkostenquote (WKQ)', {
-        month: monthTotal != null && mNetV != null && mNet > 0 ? r2((monthTotal / mNet) * 100) : null,
-        week: weekTotal != null && wNetV != null && wNet > 0 ? r2((weekTotal / wNet) * 100) : null,
-        budget: r2(zielWkq), weekBudget: r2(zielWkq), monthBudget: r2(zielWkq),
-      }, { fmt: 'pct', deltaPp: true }),
-      // WKQ je Kategorie (Food/Beverage) — Zielquoten unterscheiden sich,
-      // deshalb separat ausgewiesen (ohne Ziel-Spalte). Quote nur bei Umsatz.
-      ...(['Food', 'Beverage'] as const).map(kat => {
-        const mKat = inv ? sumNetByKategorie(inv, kat, warenKonten) : 0;
-        const wKat = weekInv ? sumNetByKategorie(weekInv, kat, warenKonten) : 0;
-        return d(`wkq_${kat.toLowerCase()}`, `WKQ ${kat}`, {
-          month: mKat > 0 && mNetV != null && mNet > 0 ? r2((mKat / mNet) * 100) : null,
-          week: wKat > 0 && wNetV != null && wNet > 0 ? r2((wKat / wNet) * 100) : null,
-        }, { fmt: 'pct', deltaPp: true });
-      }),
-    ];
+      wkqInline: {
+        month: wkqInfo(inv, monthTotal, mNetV, mNet),
+        week: wkqInfo(weekInv, weekTotal, wNetV, wNet),
+      },
+    };
+    return [totalRow, ...supplierRows];
+  }
+
+  /** Lieferanten-Aufstellung für den Excel-Export (zweites Blatt «Warenkosten»). */
+  function buildWarenExport(): MonatsreportDaten['waren'] {
+    const inv = warenInvoices;
+    const weekInv = inv && weekFrom && weekTo ? filterInvoicesByRange(inv, weekFrom, weekTo) : null;
+    const period = (list: InvoiceEntry[] | null, netV: number | null, net: number): WarenExportPeriod | null => {
+      if (!list || list.length === 0) return null;
+      return {
+        suppliers: aggregateBySupplier(list).map(a => ({
+          name: a.supplierName, net: r2(a.totalNet), count: a.count,
+        })),
+        total: r2(sumInvoicesNet(list)),
+        revenue: netV != null && net > 0 ? r2(net) : null,
+      };
+    };
+    return {
+      monat: period(inv, mNetV, mNet),
+      woche: period(weekInv, wNetV, wNet),
+      zielWkq: r2(zielWkq),
+    };
   }
 
   const mGrossV = N(mGross, mHatUmsatz);
@@ -1365,6 +1438,7 @@ export async function ladeMonatsreport(
     vjWeekFrom: vjWochePaare.length > 0 ? vjWochePaare[0].vj : null,
     vjWeekTo: vjWochePaare.length > 0 ? vjWochePaare[vjWochePaare.length - 1].vj : null,
     rows: rowsFinal,
+    waren: buildWarenExport(),
   };
 }
 
@@ -1381,6 +1455,17 @@ export interface WochenverlaufRow {
   vjValues?: (number | null)[];
   /** Farb-Tönung der Werte (Rezensions-Zeilen: 5 grün, 1 rot, 3 neutral). */
   tint?: 'green' | 'red';
+  /** Stabile Zeilen-ID (nur für Gruppierungszwecke, z.B. 'warenkosten_total'). */
+  id?: string;
+  /** ID der Eltern-Zeile: ausklappbares Kind (Standard eingeklappt). */
+  childOf?: string;
+  /**
+   * Kompakte WKQ je Woche (nur «Warenkosten total»): Prozentwert unter dem
+   * CHF-Wert, Ampel gegen `wkqZiel` (über Ziel = rot); null = kein Umsatz.
+   */
+  wkqValues?: (number | null)[];
+  /** Ziel-WKQ in % für die Ampel der `wkqValues`. */
+  wkqZiel?: number;
 }
 
 export interface WochenverlaufDaten {
@@ -1766,36 +1851,42 @@ export async function ladeWochenverlauf(
     invLists.every(l => l === null) ? null : invLists.flatMap(l => l ?? []);
   if (allInvoices) {
     const weekInv = weeks.map(w => filterInvoicesByRange(allInvoices, w.from, w.to));
+    // WKQ je Woche = Warenkosten ÷ Netto-Umsatz derselben Woche (Hauptlinie).
+    const netOf = (i: number): number | null => {
+      const a = mainAggs[i];
+      return a && a.hatUmsatz && a.net > 0 ? a.net : null;
+    };
+    const zielWkqVerlauf = await loadZielWarenquote(tenantId)
+      .then(b => b.pct).catch(() => DEFAULT_ZIEL_WARENQUOTE_PCT);
+    // «Warenkosten total» (bold) mit kompakter WKQ je KW-Spalte; Lieferanten
+    // als ausklappbare Kinder (Standard eingeklappt), Food-/Bev-WKQ ebenfalls
+    // als Kinder — keine langen Extrazeilen in der Standardansicht.
+    rows.push({
+      id: 'warenkosten_total',
+      label: 'Warenkosten total', fmt: 'chf', bold: true,
+      values: weekInv.map(list => (list.length > 0 ? r2(sumInvoicesNet(list)) : null)),
+      wkqValues: weekInv.map((list, i) => {
+        const net = netOf(i);
+        return list.length > 0 && net !== null ? r2((sumInvoicesNet(list) / net) * 100) : null;
+      }),
+      wkqZiel: r2(zielWkqVerlauf) ?? undefined,
+    });
     for (const agg of aggregateBySupplier(allInvoices)) {
       rows.push({
         label: `Warenkosten · ${agg.supplierName}`, fmt: 'chf',
+        childOf: 'warenkosten_total',
         values: weekInv.map(list => {
           const s = sumInvoicesNet(list.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName));
           return s > 0 ? r2(s) : null;
         }),
       });
     }
-    rows.push({
-      label: 'Warenkosten total', fmt: 'chf', bold: true,
-      values: weekInv.map(list => (list.length > 0 ? r2(sumInvoicesNet(list)) : null)),
-    });
-    // WKQ je Woche = Warenkosten ÷ Netto-Umsatz derselben Woche (Hauptlinie).
-    const netOf = (i: number): number | null => {
-      const a = mainAggs[i];
-      return a && a.hatUmsatz && a.net > 0 ? a.net : null;
-    };
-    rows.push({
-      label: 'Warenkostenquote (WKQ)', fmt: 'pct',
-      values: weekInv.map((list, i) => {
-        const net = netOf(i);
-        return list.length > 0 && net !== null ? r2((sumInvoicesNet(list) / net) * 100) : null;
-      }),
-    });
     // WKQ je Kategorie (Food/Beverage) — separate Zielquoten, deshalb einzeln.
     const warenKonten = await loadWarenkonten(tenantId).catch(() => [] as Warenkonto[]);
     for (const kat of ['Food', 'Beverage'] as const) {
       rows.push({
         label: `WKQ ${kat}`, fmt: 'pct',
+        childOf: 'warenkosten_total',
         values: weekInv.map((list, i) => {
           const net = netOf(i);
           const s = sumNetByKategorie(list, kat, warenKonten);

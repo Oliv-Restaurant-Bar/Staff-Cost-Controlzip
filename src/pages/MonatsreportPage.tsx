@@ -4,9 +4,9 @@
  * Spalten: Kennzahl | Δ % | Ist | Vorjahr | Budget (Δ zuerst, Budget zuletzt)
  * Fehlende Quellen bleiben leer (nie 0). Bestehende Seiten bleiben erreichbar.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, ArrowUp, ArrowDown, ListOrdered, RotateCcw, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, ArrowUp, ArrowDown, ListOrdered, RotateCcw, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -162,8 +162,22 @@ function ReportTable({
         vjPax: row.vjMonthPax, istPax: row.monthPax }
     : { budget: row.budget, vj: row.vj, ist: row.week, devBudget: row.weekBudget,
         vjPax: null as number | null, istPax: row.weekPax };
-  // Im Bearbeiten-Modus nur Datenzeilen (Trenner ausblenden → eindeutige Pfeile).
-  const shown = editMode ? rows.filter(r => r.type === 'data') : rows;
+  // Ausklappbare Gruppen: Kinder (childOf) werden IMMER direkt unter ihrer
+  // Eltern-Zeile gerendert (unabhängig von gespeicherter Reihenfolge) und sind
+  // standardmässig eingeklappt.
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const childrenBy = new Map<string, MrRow[]>();
+  for (const r of rows) {
+    if (r.type === 'data' && r.childOf) {
+      const list = childrenBy.get(r.childOf) ?? [];
+      list.push(r);
+      childrenBy.set(r.childOf, list);
+    }
+  }
+  const mains = rows.filter(r => !(r.type === 'data' && r.childOf));
+  // Im Bearbeiten-Modus nur Datenzeilen (Trenner ausblenden → eindeutige
+  // Pfeile); Kinder sind dort ausgeblendet (sie folgen ihrer Eltern-Zeile).
+  const shown = editMode ? mains.filter(r => r.type === 'data') : mains;
   const dataCount = shown.filter(r => r.type === 'data').length;
   let dataIdx = -1;
   return (
@@ -197,6 +211,9 @@ function ReportTable({
             const isFirst = dataIdx === 0;
             const isLast = dataIdx === dataCount - 1;
             const p = pick(row);
+            const children = row.id ? (childrenBy.get(row.id) ?? []) : [];
+            const isOpen = !!row.id && expanded.has(row.id);
+            const wkq = row.wkqInline ? (granularity === 'monat' ? row.wkqInline.month : row.wkqInline.week) : null;
             // Δ-Varianten:
             //  - deltaPp:   Ist − Budget in PROZENTPUNKTEN (Quoten, z.B. PKQ);
             //               über Ziel = rot (Kosten-Logik).
@@ -224,7 +241,10 @@ function ReportTable({
             // Farb-Tönung (Rezensions-Zeilen: 5 Sterne grün, 1 Stern rot).
             const tintClass = row.tint === 'green' ? 'text-emerald-600 dark:text-emerald-400'
               : row.tint === 'red' ? 'text-red-600 dark:text-red-400' : undefined;
-            return (
+            // WKQ-Inline-Ampel (nur «Warenkosten total»): über Ziel = rot.
+            const wkqGut = wkq?.pct != null && wkq.ziel != null ? wkq.pct <= wkq.ziel : null;
+            const wkqDelta = wkq?.pct != null && wkq.ziel != null ? wkq.pct - wkq.ziel : null;
+            const parentTr = (
               <tr key={row.id ?? `d${i}`} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')} data-testid={`row-${row.id ?? i}`}>
                 {editMode ? (
                   <td className="px-2 py-1.5">
@@ -250,7 +270,50 @@ function ReportTable({
                     </div>
                   </td>
                 ) : null}
-                <td className="px-3 py-1.5">{row.label}</td>
+                <td className="px-3 py-1.5">
+                  {children.length > 0 && !editMode ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 text-left hover:underline"
+                      onClick={() => setExpanded(prev => {
+                        const next = new Set(prev);
+                        if (row.id) { if (next.has(row.id)) next.delete(row.id); else next.add(row.id); }
+                        return next;
+                      })}
+                      aria-expanded={isOpen}
+                      data-testid={`button-toggle-${row.id}`}
+                    >
+                      {isOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                      {row.label}
+                    </button>
+                  ) : row.label}
+                  {wkq ? (
+                    <span className="block text-[11px] font-normal tabular-nums" data-testid={`wkq-inline-${granularity}`}>
+                      {wkq.pct != null ? (
+                        <span className="inline-flex items-center gap-1">
+                          <span className={cn('h-2 w-2 rounded-full inline-block',
+                            wkqGut ? 'bg-emerald-500' : 'bg-red-500')} />
+                          <span className={wkqGut ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
+                            WKQ {wkq.pct.toFixed(1)} %
+                          </span>
+                          {wkqDelta != null && (
+                            <span className="text-muted-foreground">
+                              ({wkqDelta >= 0 ? '+' : ''}{wkqDelta.toFixed(1)} PP zu Ziel {wkq.ziel!.toFixed(1)} %)
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">WKQ — (kein Umsatz)</span>
+                      )}
+                      {(wkq.food != null || wkq.bev != null) && (
+                        <span className="text-muted-foreground">
+                          {' · '}Food {wkq.food != null ? `${wkq.food.toFixed(1)} %` : '—'}
+                          {' · '}Beverage {wkq.bev != null ? `${wkq.bev.toFixed(1)} %` : '—'}
+                        </span>
+                      )}
+                    </span>
+                  ) : null}
+                </td>
                 <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>
                   {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
                   {row.deltaVsVj && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
@@ -259,6 +322,24 @@ function ReportTable({
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
               </tr>
+            );
+            if (children.length === 0 || editMode || !isOpen) return parentTr;
+            return (
+              <Fragment key={`g-${row.id}`}>
+                {parentTr}
+                {children.map(child => {
+                  const cp = pick(child);
+                  return (
+                    <tr key={child.id} className="border-b last:border-0 bg-muted/10 hover:bg-muted/30" data-testid={`row-${child.id}`}>
+                      <td className="px-3 py-1 pl-9 text-xs text-muted-foreground">{child.label}</td>
+                      <td className="px-3 py-1" />
+                      <td className="px-3 py-1 text-right tabular-nums text-xs">{fmtCell(cp.ist, child.fmt)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.vj, child.fmt)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums text-xs text-muted-foreground">{fmtCell(cp.budget, child.fmt)}</td>
+                    </tr>
+                  );
+                })}
+              </Fragment>
             );
           })}
         </tbody>
@@ -341,7 +422,11 @@ export default function MonatsreportPage() {
   );
   // Aktuelle Datenzeilen-IDs in effektiver Reihenfolge (Basis fürs Umsortieren).
   const currentIds = useMemo(
-    () => orderedRows.filter(r => r.type === 'data' && r.id).map(r => r.id as string),
+    // Kinder-Zeilen (childOf, z.B. Lieferanten) sind NICHT umsortierbar und
+    // dürfen nicht in die gespeicherte Reihenfolge geraten — sonst verschieben
+    // Pfeile gegen versteckte Nachbarn und dynamische Lieferanten-IDs werden
+    // dauerhaft persistiert.
+    () => orderedRows.filter(r => r.type === 'data' && r.id && !r.childOf).map(r => r.id as string),
     [orderedRows],
   );
   // Zeile verschieben: Reihenfolge neu berechnen und persistieren.
@@ -511,7 +596,7 @@ export default function MonatsreportPage() {
               <Button
                 size="sm" className="gap-1.5 ml-2"
                 disabled={!daten || loading}
-                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'monat')}
+                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'monat', daten.waren)}
                 data-testid="button-export-excel-monat"
               >
                 <FileSpreadsheet className="h-4 w-4" /> Export Excel
@@ -597,7 +682,7 @@ export default function MonatsreportPage() {
               <Button
                 size="sm" className="gap-1.5 ml-2"
                 disabled={!daten || loading}
-                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'woche')}
+                onClick={() => daten && exportMonatsreportXlsx(orderedRows, year, month, 'woche', daten.waren)}
                 data-testid="button-export-excel"
               >
                 <FileSpreadsheet className="h-4 w-4" /> Export Excel
@@ -702,6 +787,8 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
   const [daten, setDaten] = useState<WochenverlaufDaten | null>(null);
   const [loading, setLoading] = useState(true);
   const [fehler, setFehler] = useState<string | null>(null);
+  // Offene ausklappbare Gruppen (z.B. 'warenkosten_total'); Standard eingeklappt.
+  const [offeneGruppen, setOffeneGruppen] = useState<Set<string>>(() => new Set());
 
   // Jahr-Optionen: aktuelles Jahr … 2024.
   const jahrOptions = useMemo(() => {
@@ -855,9 +942,32 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
               </tr>
             </thead>
             <tbody>
-              {daten.rows.map((row, ri) => (
-                <tr key={ri} className={cn('border-b last:border-0 hover:bg-muted/30 align-top', row.bold && 'font-semibold')}>
-                  <td className="px-3 py-1.5">{row.label}</td>
+              {daten.rows.map((row, ri) => {
+                // Ausklappbare Kinder (z.B. Lieferanten unter «Warenkosten
+                // total»): Standard eingeklappt; Chevron auf der Eltern-Zeile.
+                if (row.childOf && !offeneGruppen.has(row.childOf)) return null;
+                const hatKinder = !!row.id && daten.rows.some(r2x => r2x.childOf === row.id);
+                const istOffen = !!row.id && offeneGruppen.has(row.id);
+                return (
+                <tr key={ri} className={cn('border-b last:border-0 hover:bg-muted/30 align-top', row.bold && 'font-semibold', row.childOf && 'bg-muted/10')}>
+                  <td className={cn('px-3 py-1.5', row.childOf && 'pl-9 text-xs text-muted-foreground font-normal')}>
+                    {hatKinder ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1 text-left hover:underline"
+                        onClick={() => setOffeneGruppen(prev => {
+                          const next = new Set(prev);
+                          if (row.id) { if (next.has(row.id)) next.delete(row.id); else next.add(row.id); }
+                          return next;
+                        })}
+                        aria-expanded={istOffen}
+                        data-testid={`button-toggle-verlauf-${row.id}`}
+                      >
+                        {istOffen ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                        {row.label}
+                      </button>
+                    ) : row.label}
+                  </td>
                   {row.values.map((v, ci) => {
                     // Laufende (partielle) Woche: Trend-/VJ-Δ unterdrücken —
                     // partiell vs. volle Woche wäre nicht aussagekräftig.
@@ -866,6 +976,8 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                     const t = ci > 0 && !partial ? trendPct(v, prev) : null;
                     const vjV = showVj ? (row.vjValues?.[ci] ?? null) : null;
                     const vjDelta = showVj && !partial ? trendPct(v, vjV) : null;
+                    const wkqV = row.wkqValues?.[ci] ?? null;
+                    const wkqGut = wkqV != null && row.wkqZiel != null ? wkqV <= row.wkqZiel : null;
                     return (
                       <td key={ci} className="px-3 py-1.5 text-right tabular-nums whitespace-nowrap">
                         <span className="block">
@@ -882,6 +994,14 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                             </span>
                           )}
                         </span>
+                        {/* Kompakte WKQ unter dem CHF-Wert (nur «Warenkosten total»). */}
+                        {row.wkqValues && (
+                          <span className={cn('block text-[10px] font-normal',
+                            wkqV == null ? 'text-muted-foreground'
+                              : wkqGut ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                            {wkqV == null ? 'WKQ —' : `WKQ ${wkqV.toFixed(1)} %`}
+                          </span>
+                        )}
                         {showVj && (
                           <span className="block text-[10px] font-normal text-muted-foreground">
                             {vjV === null ? '—' : fmtCell(vjV, row.fmt)}
@@ -901,7 +1021,8 @@ function WochenverlaufView({ onPdfMeta }: { onPdfMeta: (m: CockpitPdfMeta) => vo
                       daten.partialWeekIndex === ci ? null : v)} />
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

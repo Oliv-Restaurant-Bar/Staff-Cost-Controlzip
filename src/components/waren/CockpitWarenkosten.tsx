@@ -179,7 +179,7 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
               <tr className="text-muted-foreground border-b border-border">
                 <th className="text-left py-1.5 font-medium">Lieferant</th>
                 <th className="text-right py-1.5 font-medium">Betrag (CHF netto)</th>
-                <th className="text-right py-1.5 font-medium">Anteil</th>
+                <th className="text-right py-1.5 font-medium" title="Lieferant ÷ Netto-Umsatz des Monats — die Anteile summieren sich zur Gesamt-WKQ">Anteil Umsatz</th>
                 <th className="text-right py-1.5 font-medium">Rechnungen</th>
               </tr>
             </thead>
@@ -203,7 +203,9 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
                         </span>
                       </td>
                       <td className="py-1.5 text-right tabular-nums">{fmtChf(row.totalNet)}</td>
-                      <td className="py-1.5 text-right tabular-nums text-muted-foreground">{fmtPct(row.sharePct)}</td>
+                      <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                        {umsatzNet != null && umsatzNet > 0 ? fmtPct((row.totalNet / umsatzNet) * 100) : '—'}
+                      </td>
                       <td className="py-1.5 text-right tabular-nums text-muted-foreground">{row.count}</td>
                     </tr>
                     {open && (
@@ -232,7 +234,9 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
               <tr className="border-t border-border font-semibold">
                 <td className="py-1.5">Total</td>
                 <td className="py-1.5 text-right tabular-nums" data-testid="wk-table-total">{fmtChf(totalNet)}</td>
-                <td className="py-1.5 text-right tabular-nums text-muted-foreground">{totalNet > 0 ? '100.0 %' : '—'}</td>
+                <td className="py-1.5 text-right tabular-nums text-muted-foreground">
+                  {wkq != null ? fmtPct(wkq) : '—'}
+                </td>
                 <td className="py-1.5 text-right tabular-nums text-muted-foreground">{invoices?.length ?? 0}</td>
               </tr>
             </tfoot>
