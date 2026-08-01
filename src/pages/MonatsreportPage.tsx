@@ -28,6 +28,15 @@ import {
 import { exportMonatsreportXlsx } from '@/lib/monatsreport-export';
 import { exportCockpitPanelPDF, naechsterFrame } from '@/lib/cockpit-pdf-export';
 import { useToast } from '@/hooks/use-toast';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
+} from '@/components/ui/dialog';
+import {
+  fetchReservationDrilldown, type ReservationDrilldownRow,
+} from '@/lib/reservation-cockpit-metrics';
+import {
+  loadReservationCounting, DEFAULT_RESERVATION_COUNTING,
+} from '@/lib/reservation-cockpit-settings';
 import { useCockpitRowOrder } from '@/hooks/useCockpitRowOrder';
 
 /** Metadaten fürs PDF (Titel/Zeitraum/Dateiname/Fussnote), von jedem Tab gemeldet. */
@@ -141,6 +150,9 @@ const fmtDate = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
 /** Granularität der Report-Tabelle. */
 type ReportGranularity = 'monat' | 'woche';
 
+/** Zeilen mit Reservations-Drilldown (Liste der zugrunde liegenden Reservationen). */
+const DRILLABLE_ROW_IDS = new Set(['reservierte_gaeste', 'gruppen_ab_20']);
+
 /**
  * DIESELBE Report-Tabelle für Monats- UND Wochensicht — nur andere Granularität.
  * Zieht je Granularität die passenden Felder aus derselben `MrRow`:
@@ -151,7 +163,7 @@ type ReportGranularity = 'monat' | 'woche';
  */
 function ReportTable({
   rows, granularity, budgetSub, vjHeader = 'Vorjahr', vjSub, istHeader, istSub, testid,
-  editMode = false, onMove,
+  editMode = false, onMove, onDrill,
 }: {
   rows: MrRow[];
   granularity: ReportGranularity;
@@ -166,6 +178,8 @@ function ReportTable({
   editMode?: boolean;
   /** Verschiebt die Zeile `id` um `dir` (-1 hoch, +1 runter). */
   onMove?: (id: string, dir: -1 | 1) => void;
+  /** Drilldown: Zeilen-IDs mit Detail-Liste (z.B. Reservationen) klickbar machen. */
+  onDrill?: (id: string) => void;
 }) {
   const pick = (row: MrRow) => granularity === 'monat'
     ? { budget: row.monthBudget, vj: row.vjMonth, ist: row.month, devBudget: row.monthBudget,
@@ -298,6 +312,16 @@ function ReportTable({
                       data-testid={`button-toggle-${row.id}`}
                     >
                       {isOpen ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+                      {row.label}
+                    </button>
+                  ) : onDrill && row.id && DRILLABLE_ROW_IDS.has(row.id) && !editMode ? (
+                    <button
+                      type="button"
+                      className="text-left hover:underline underline-offset-2 decoration-dotted"
+                      onClick={() => onDrill(row.id!)}
+                      data-testid={`button-drill-${row.id}`}
+                      title="Zugrunde liegende Reservationen anzeigen"
+                    >
                       {row.label}
                     </button>
                   ) : row.label}
@@ -433,6 +457,36 @@ export default function MonatsreportPage() {
 
   const weekSelection = useMemo<WeekSelection>(() => parseWeekValue(weekValue), [weekValue]);
   const kwOptions = useMemo(() => isoWeeksOfMonth(year, month), [year, month]);
+
+  // ── Reservations-Drilldown (Klick auf «Reservierte Gäste»/«Gruppen ab N Pax») ──
+  const [drill, setDrill] = useState<{
+    title: string; sub: string; loading: boolean; error: string | null;
+    rows: ReservationDrilldownRow[];
+  } | null>(null);
+  const openDrill = useCallback(async (rowId: string, granularity: ReportGranularity) => {
+    if (!daten) return;
+    const groupsOnly = rowId === 'gruppen_ab_20';
+    // Zeitraum EXAKT wie die Kennzahl: Monat = ganzer Monat (inkl. Zukunft),
+    // Woche = gewählte Woche (daten.weekFrom/weekTo).
+    const mm = String(month).padStart(2, '0');
+    const fromIso = granularity === 'monat'
+      ? `${year}-${mm}-01` : daten.weekFrom;
+    const toIso = granularity === 'monat'
+      ? `${year}-${mm}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`
+      : daten.weekTo;
+    const settings = (await loadReservationCounting(tenantKey).catch(() => null))
+      ?? DEFAULT_RESERVATION_COUNTING;
+    const title = groupsOnly ? `Gruppen ab ${settings.groupThreshold} Pax` : 'Reservierte Gäste';
+    const sub = granularity === 'monat'
+      ? `${MONATE[month - 1]} ${year}` : `${fmtDate(fromIso ?? '')}–${fmtDate(toIso ?? '')}`;
+    setDrill({ title, sub, loading: true, error: null, rows: [] });
+    try {
+      const rows = await fetchReservationDrilldown(tenantId, fromIso ?? null, toIso ?? null, settings, groupsOnly);
+      setDrill({ title, sub, loading: false, error: null, rows });
+    } catch (e) {
+      setDrill({ title, sub, loading: false, error: e instanceof Error ? e.message : String(e), rows: [] });
+    }
+  }, [daten, month, year, tenantId, tenantKey]);
 
   // Benutzerdefinierte Zeilen-Reihenfolge (EINE für Monat + Woche, pro Tenant).
   const { savedIds, saveOrder, resetOrder } = useCockpitRowOrder();
@@ -643,6 +697,7 @@ export default function MonatsreportPage() {
                 testid="table-monatsuebersicht"
                 editMode={editRows}
                 onMove={moveRow}
+                onDrill={(id) => openDrill(id, 'monat')}
               />
             )}
 
@@ -729,6 +784,7 @@ export default function MonatsreportPage() {
                 testid="table-wochenuebersicht"
                 editMode={editRows}
                 onMove={moveRow}
+                onDrill={(id) => openDrill(id, 'woche')}
               />
             )}
 
@@ -757,6 +813,64 @@ export default function MonatsreportPage() {
         <div className="pdf-hide">
           <CockpitWarenkosten year={year} month={month} />
         </div>
+
+        {/* ── Reservations-Drilldown (Kennzahl → zugrunde liegende Reservationen) ── */}
+        <Dialog open={drill !== null} onOpenChange={(o) => { if (!o) setDrill(null); }}>
+          <DialogContent className="max-w-2xl" data-testid="dialog-reservation-drill">
+            <DialogHeader>
+              <DialogTitle>{drill?.title ?? ''}</DialogTitle>
+              <DialogDescription>
+                {drill?.sub ?? ''} · gezählt nach der zentralen Zählregel
+                (Quelle: Foratable-CSV-Import)
+              </DialogDescription>
+            </DialogHeader>
+            {drill?.loading && (
+              <p className="text-sm text-muted-foreground py-4">Lade Reservationen …</p>
+            )}
+            {drill?.error && (
+              <p className="text-sm text-red-600 py-2">Fehler: {drill.error}</p>
+            )}
+            {drill && !drill.loading && !drill.error && (
+              drill.rows.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4">
+                  Keine Reservationen im Zeitraum (oder noch kein Foratable-Import vorhanden).
+                </p>
+              ) : (
+                <div className="max-h-[60vh] overflow-y-auto rounded-lg border">
+                  <table className="w-full text-sm" data-testid="table-reservation-drill">
+                    <thead className="sticky top-0 bg-card">
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="px-3 py-2 font-medium">Datum</th>
+                        <th className="px-3 py-2 font-medium">Zeit</th>
+                        <th className="px-3 py-2 font-medium text-right">Pers.</th>
+                        <th className="px-3 py-2 font-medium">Name</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                        <th className="px-3 py-2 font-medium">Bereich</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {drill.rows.map((r, i) => (
+                        <tr key={i} className="border-b last:border-0">
+                          <td className="px-3 py-1.5 tabular-nums whitespace-nowrap">
+                            {`${r.reservationDate.slice(8, 10)}.${r.reservationDate.slice(5, 7)}.${r.reservationDate.slice(0, 4)}`}
+                          </td>
+                          <td className="px-3 py-1.5 tabular-nums">{r.reservationTime ? r.reservationTime.slice(0, 5) : '—'}</td>
+                          <td className="px-3 py-1.5 tabular-nums text-right">{r.partySize}</td>
+                          <td className="px-3 py-1.5">{r.name}</td>
+                          <td className="px-3 py-1.5">{r.status}</td>
+                          <td className="px-3 py-1.5">{r.area ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="px-3 py-2 text-xs text-muted-foreground border-t">
+                    {drill.rows.length} Reservationen · Σ {drill.rows.reduce((s, r) => s + r.partySize, 0)} Personen
+                  </p>
+                </div>
+              )
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </PageShell>
   );

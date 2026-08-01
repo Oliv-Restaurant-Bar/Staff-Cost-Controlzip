@@ -32,7 +32,8 @@ export type ImportSourceKey =
   | 'personalkosten-vorjahr'
   | 'umsatz-vorjahr-jahr'
   | 'tagesdaten-einheitsimport'
-  | 'feedback-rezensionen';
+  | 'feedback-rezensionen'
+  | 'reservationen-foratable';
 
 export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'mirus-ist':                  'Ist-Stunden (MIRUS)',
@@ -44,6 +45,7 @@ export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'umsatz-vorjahr-jahr':        'Umsatz Vorjahr (Jahres-Excel)',
   'tagesdaten-einheitsimport':  'Tagesdaten-Einheitsimport',
   'feedback-rezensionen':       'Feedback-Rezensionen (Lunchgate)',
+  'reservationen-foratable':    'Reservationen (Foratable)',
 };
 
 /** Ein app_settings-Key mit seinem Zustand VOR dem Import (null = existierte nicht). */
@@ -59,6 +61,11 @@ export type ImportRunSnapshot =
       journal?: { year: number; month: number; entries: unknown[] } }
   /** MIRUS: Verweis auf das dienstplan_ist_backup + Lauf-ID der geparkten Einträge. */
   | { kind: 'mirus-ist'; month: string; backupId: string; runId: string }
+  /** Reservationen (Foratable): Vorzustand der betroffenen Res.Nr. in
+   *  reservation_records. extIds = ALLE importierten Res.Nr.; priorRows =
+   *  vollständige Vorzustands-Zeilen (Res.Nr. ohne priorRow = war neu → löschen). */
+  | { kind: 'reservation-records'; restaurantId: string; extIds: string[];
+      priorRows: Array<Record<string, unknown>> }
   /** Einzelne EINTRÄGE innerhalb von KV-Blobs (z. B. dailyBudgets, gaeste-daily):
    *  pro Blob-Key eine Map Eintrag→Vorzustand (null = Eintrag existierte nicht).
    *  Optional zusätzlich ganze KV-Keys (kvItems, z. B. vj_daily:<date>). */
@@ -289,5 +296,76 @@ export async function undoImportRun(tenantId: string, run: ImportRunEntry): Prom
     await markRunUndone(tenantId, run.id);
     return { ok: true, message: `Monat ${snap.monthId} auf den Stand vor dem Import zurückgesetzt.` };
   }
+  if (snap.kind === 'reservation-records') {
+    const res = await restoreReservationRecords(snap.restaurantId, snap.extIds, snap.priorRows);
+    if (!res.ok) return { ok: false, message: res.error ?? 'Wiederherstellung fehlgeschlagen.' };
+    await markRunUndone(tenantId, run.id);
+    return {
+      ok: true,
+      message: `${snap.extIds.length} Reservationen auf den Stand vor dem Import zurückgesetzt`
+        + (res.deleted > 0 ? ` (${res.deleted} neu importierte entfernt)` : '') + '.',
+    };
+  }
   return { ok: false, message: 'Dieser Import-Typ wird hier nicht direkt zurückgesetzt.' };
+}
+
+/**
+ * Reservationen (Foratable) zurücksetzen: neu importierte Res.Nr. löschen,
+ * zuvor bestehende Zeilen verbatim wiederherstellen, Gast-Aggregate der
+ * betroffenen Gäste neu berechnen. Tenant-gescopt über restaurant_id.
+ */
+async function restoreReservationRecords(
+  restaurantId: string, extIds: string[], priorRows: Array<Record<string, unknown>>,
+): Promise<{ ok: boolean; deleted: number; error?: string }> {
+  const { supabase } = await import('@/integrations/supabase/client');
+  const priorByExt = new Set(priorRows.map(r => String(r.external_reservation_id)));
+  const toDelete = [...new Set(extIds)].filter(id => !priorByExt.has(id));
+  const affectedGuests = new Set<string>();
+  try {
+    // Betroffene Gäste VOR dem Löschen einsammeln (aktuelle + vorherige guest_ids).
+    for (let i = 0; i < extIds.length; i += 200) {
+      const part = [...new Set(extIds)].slice(i, i + 200);
+      if (part.length === 0) break;
+      const { data, error } = await (supabase as any)
+        .from('reservation_records')
+        .select('guest_id')
+        .eq('restaurant_id', restaurantId)
+        .in('external_reservation_id', part);
+      if (error) return { ok: false, deleted: 0, error: `Lesen fehlgeschlagen: ${error.message ?? error}` };
+      for (const row of (data ?? []) as Array<{ guest_id: string | null }>) {
+        if (row.guest_id) affectedGuests.add(row.guest_id);
+      }
+    }
+    for (const r of priorRows) if (r.guest_id) affectedGuests.add(String(r.guest_id));
+
+    // 1) Neu importierte Res.Nr. entfernen (existierten vor dem Import nicht).
+    for (let i = 0; i < toDelete.length; i += 200) {
+      const part = toDelete.slice(i, i + 200);
+      if (part.length === 0) break;
+      const { error } = await (supabase as any)
+        .from('reservation_records')
+        .delete()
+        .eq('restaurant_id', restaurantId)
+        .in('external_reservation_id', part);
+      if (error) return { ok: false, deleted: 0, error: `Löschen fehlgeschlagen: ${error.message ?? error}` };
+    }
+    // 2) Vorherige Zeilen verbatim wiederherstellen (Upsert über den Conflict-Key).
+    for (let i = 0; i < priorRows.length; i += 200) {
+      const part = priorRows.slice(i, i + 200);
+      if (part.length === 0) break;
+      const { error } = await (supabase as any)
+        .from('reservation_records')
+        .upsert(part, { onConflict: 'restaurant_id,external_reservation_id' });
+      if (error) return { ok: false, deleted: toDelete.length, error: `Wiederherstellen fehlgeschlagen: ${error.message ?? error}` };
+    }
+    // 3) Gast-Aggregate der betroffenen Gäste neu berechnen (best effort mit Meldung).
+    if (affectedGuests.size > 0) {
+      const { recomputeGuestAggregates } = await import('@/lib/reservation-import-db');
+      const err = await recomputeGuestAggregates(restaurantId, [...affectedGuests]);
+      if (err) return { ok: false, deleted: toDelete.length, error: `Reservationen zurückgesetzt, aber Gäste-Statistik fehlgeschlagen: ${err}` };
+    }
+    return { ok: true, deleted: toDelete.length };
+  } catch (e) {
+    return { ok: false, deleted: 0, error: e instanceof Error ? e.message : String(e) };
+  }
 }

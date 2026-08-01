@@ -107,6 +107,66 @@ async function fetchRows(
  * Leerer Zeitraum (`!fromIso || !toIso`) → EMPTY. DB-Fehler → EMPTY. Wenn der
  * Zeitraum gar keine Reservationen enthält → EMPTY (Daten fehlen ≠ 0).
  */
+/** Einzelreservation für den Cockpit-Drilldown (Liste hinter der Kennzahl). */
+export interface ReservationDrilldownRow {
+  reservationDate: string;
+  reservationTime: string | null;
+  partySize: number;
+  /** Anzeigename: Vorname/Nachname bzw. Firma. */
+  name: string;
+  status: string;
+  area: string | null;
+}
+
+/**
+ * Drilldown: die GEZÄHLTEN Reservationen eines Zeitraums (dieselbe Zählregel
+ * wie die Kennzahlen; `groupsOnly` = nur Gruppen >= Schwelle). Wirft bei
+ * DB-Fehler; leerer Zeitraum → [].
+ */
+export async function fetchReservationDrilldown(
+  tenantId: TenantId,
+  fromIso: string | null,
+  toIso: string | null,
+  settings: ReservationCountingSettings,
+  groupsOnly: boolean,
+): Promise<ReservationDrilldownRow[]> {
+  if (!fromIso || !toIso || fromIso > toIso) return [];
+  const all: ReservationDrilldownRow[] = [];
+  for (let offset = 0; ; offset += PAGE) {
+    let q = (supabase as any)
+      .from('reservation_records')
+      .select('reservation_date, reservation_time, party_size, first_name, last_name, company, status, status_normalized, area, room')
+      .eq('restaurant_id', tenantId)
+      .gte('reservation_date', fromIso)
+      .lte('reservation_date', toIso)
+      .order('reservation_date', { ascending: true })
+      .order('reservation_time', { ascending: true })
+      .range(offset, offset + PAGE - 1);
+    if (groupsOnly) q = q.gte('party_size', settings.groupThreshold);
+    const { data, error } = await q;
+    if (error) throw new Error(`Reservationen konnten nicht geladen werden: ${error.message ?? error}`);
+    const batch = (data ?? []) as Array<Record<string, unknown>>;
+    for (const r of batch) {
+      const status = (r.status_normalized ?? 'unknown') as ReservationStatusNormalized;
+      if (!statusCounts(status, settings)) continue;
+      const first = (r.first_name as string | null) ?? '';
+      const last = (r.last_name as string | null) ?? '';
+      const company = (r.company as string | null) ?? '';
+      const name = [first, last].filter(Boolean).join(' ') || company || '—';
+      all.push({
+        reservationDate: String(r.reservation_date),
+        reservationTime: (r.reservation_time as string | null) ?? null,
+        partySize: typeof r.party_size === 'number' ? r.party_size : 0,
+        name,
+        status: (r.status as string | null) || status,
+        area: (r.area as string | null) ?? (r.room as string | null) ?? null,
+      });
+    }
+    if (batch.length < PAGE) break;
+  }
+  return all;
+}
+
 export async function loadReservationMetrics(
   tenantId: TenantId,
   fromIso: string | null,

@@ -104,3 +104,9 @@ added, `IF NOT EXISTS` is a no-op and the constraint silently never gets created
 `pg_constraint` existence check, with a pre-dedup keeping the newest row per key)
 so older environments converge. Verify the constraint empirically — you cannot
 assume the in-CREATE-TABLE declaration actually ran.
+
+## Undo & Kennzahlen-SSOT (Aug 2026)
+- Undo-Snapshot (`kind: 'reservation-records'`) wird VOR dem Save via recordImportRun protokolliert; scheitert Backup/Protokoll oder ist der Snapshot >2 MB (app_settings-Blob-Grenze), wird der Import abgebrochen — kein Import ohne Rückweg.
+- Snapshot NIE select('*'): nur die vom Import geschriebenen Spalten sichern; Restore-Upsert einer Teilmenge lässt unberührte Spalten (created_at etc.) stehen.
+- Undo: guest_ids VOR dem Löschen einsammeln (aktuelle + prior), neu importierte extIds löschen, priorRows verbatim upserten, recomputeGuestAggregates (jetzt exportiert). Stale-Schutz kommt vom generischen undoImportRun (nur neuester nicht-undone Lauf).
+- «Reservierte Gäste»/«Gruppen ab N Pax» in ALLEN Ansichten (Monat/Woche/Wochenverlauf/Jahresvergleich) NUR via loadReservationMetrics + zentrale Zählregel; die alten Direkt-Zähler countGroupsFrom20Pax(Vj) wurden gelöscht — keine parallele Zählregel wieder einführen.

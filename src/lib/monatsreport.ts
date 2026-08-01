@@ -816,43 +816,11 @@ export function glueStundenStack(rows: MrRow[]): MrRow[] {
 
 // ── Hilfen ───────────────────────────────────────────────────────────────────
 
-/** Gruppen ab 20 Pax im Monat (Foratable-Reservationen, ohne Stornos). */
-async function countGroupsFrom20Pax(
-  tenantId: TenantId, fromIso: string, toIso: string,
-): Promise<number | null> {
-  try {
-    const { count, error } = await (supabase as any)
-      .from('reservation_records')
-      .select('id', { count: 'exact', head: true })
-      .eq('restaurant_id', tenantId)
-      .gte('reservation_date', fromIso)
-      .lte('reservation_date', toIso)
-      .gte('party_size', 20)
-      .neq('status_normalized', 'cancelled');
-    if (error) return null;
-    return typeof count === 'number' ? count : null;
-  } catch { return null; }
-}
-
-/**
- * Vorjahr-Variante: wie countGroupsFrom20Pax, aber «—» statt 0, wenn für den
- * Zeitraum GAR KEINE Reservationen vorliegen (Daten fehlen ≠ null Gruppen).
- */
-async function countGroupsFrom20PaxVj(
-  tenantId: TenantId, fromIso: string, toIso: string,
-): Promise<number | null> {
-  try {
-    const { count: any20, error: e1 } = await (supabase as any)
-      .from('reservation_records')
-      .select('id', { count: 'exact', head: true })
-      .eq('restaurant_id', tenantId)
-      .gte('reservation_date', fromIso)
-      .lte('reservation_date', toIso)
-      .neq('status_normalized', 'cancelled');
-    if (e1 || typeof any20 !== 'number' || any20 === 0) return null;
-    return countGroupsFrom20Pax(tenantId, fromIso, toIso);
-  } catch { return null; }
-}
+// Hinweis: Die früheren Direkt-Zähler countGroupsFrom20Pax(Vj) mit eigener
+// Zählregel (nur «ohne Stornos») wurden entfernt — ALLE Ansichten zählen
+// ausschliesslich über loadReservationMetrics + zentrale Zählregel
+// (reservation-cockpit-settings), Quelle = Foratable-CSV-Import
+// (reservation_records). Keine parallele Alt-Zählung mehr.
 
 // ── Hauptlader ───────────────────────────────────────────────────────────────
 
@@ -1901,6 +1869,31 @@ export async function ladeWochenverlauf(
 
   const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs);
 
+  // ── Reservationen je Woche (Foratable-CSV = ALLEINIGE Quelle) ─────────────
+  // «Reservierte Gäste» (Σ Personen gezählter Reservationen) und «Gruppen ab
+  // N Pax» je KW — dieselbe zentrale Zählregel (Status-Set + Schwelle) wie in
+  // Monats-/Wochensicht. Keine Daten im Fenster → null («leer statt 0»).
+  const wvCounting = (await loadReservationCounting(tenantKey).catch(() => null))
+    ?? DEFAULT_RESERVATION_COUNTING;
+  const [wvResMetrics, wvResVj] = await Promise.all([
+    Promise.all(weeks.map(w => loadReservationMetrics(tenantId, w.from, w.to, wvCounting))),
+    vjWeeks
+      ? Promise.all(vjWeeks.map(w =>
+          w ? loadReservationMetrics(tenantId, w.from, w.to, wvCounting)
+            : Promise.resolve({ reservedGuests: null, largeGroupCount: null, largeGroupPersons: null })))
+      : Promise.resolve(undefined),
+  ]);
+  rows.push({
+    label: 'Reservierte Gäste', fmt: 'count', id: 'reservierte_gaeste',
+    values: wvResMetrics.map(m => m.reservedGuests),
+    vjValues: wvResVj ? wvResVj.map(m => m.reservedGuests) : undefined,
+  });
+  rows.push({
+    label: `Gruppen ab ${wvCounting.groupThreshold} Pax`, fmt: 'count', id: 'gruppen_ab_20',
+    values: wvResMetrics.map(m => m.largeGroupCount),
+    vjValues: wvResVj ? wvResVj.map(m => m.largeGroupCount) : undefined,
+  });
+
   // ── Rezensionen je Woche (ALLE Sternstufen 5–1, Google + Lunchgate) ────────
   // Ladefehler → alle Spalten null (leer, nie 0 erfinden); geladener Blob →
   // echte Anzahl je Wochenfenster. VJ-Spalte nur, wenn dort wirklich Rezensionen
@@ -2134,10 +2127,14 @@ export async function ladeJahresvergleich(
   }
   const avgVj = vjAvgCount > 0 ? r2(vjAvgSum / vjAvgCount) : null;
 
-  // ── Gruppen ab 20 Pax (Foratable) — YTD-Zeitraum, VJ-Variante «—» statt 0 ──
-  const [gruppen20, gruppen20Vj, reviewSingles] = await Promise.all([
-    countGroupsFrom20Pax(tenantId, curFrom, curTo),
-    countGroupsFrom20PaxVj(tenantId, vjFrom, vjTo),
+  // ── Reservationen (Foratable-CSV = alleinige Quelle) — zentrale Zählregel ──
+  // Dieselbe Regel (Status-Set + Schwelle) wie Monats-/Wochen-/Wochenverlaufs-
+  // Ansicht; keine Daten im Zeitraum → null («—», nie erfundene 0).
+  const jvCounting = (await loadReservationCounting(tenantKey).catch(() => null))
+    ?? DEFAULT_RESERVATION_COUNTING;
+  const [resCur, resVj, reviewSingles] = await Promise.all([
+    loadReservationMetrics(tenantId, curFrom, curTo, jvCounting),
+    loadReservationMetrics(tenantId, vjFrom, vjTo, jvCounting),
     // Google-Rezensionen (Anzahl je Sternzahl) — Ladefehler → null (leer).
     fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null as SingleReview[] | null),
   ]);
@@ -2167,8 +2164,10 @@ export async function ladeJahresvergleich(
     { label: 'Umsatz pro Gast', fmt: 'chf',
       cur: pairedGaeste > 0 ? r2(pairedNet / pairedGaeste) : null,
       vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null },
-    { label: 'Gruppen ab 20 Pax', fmt: 'count',
-      cur: gruppen20, vj: gruppen20Vj },
+    { label: 'Reservierte Gäste', fmt: 'count',
+      cur: resCur.reservedGuests, vj: resVj.reservedGuests },
+    { label: `Gruppen ab ${jvCounting.groupThreshold} Pax`, fmt: 'count',
+      cur: resCur.largeGroupCount, vj: resVj.largeGroupCount },
     // Rezensionen (ALLE Sternstufen 5–1, Google + Lunchgate). Ladefehler → leer;
     // VJ nur wenn dort wirklich erfasst (>0) — Quelle existiert erst seit der
     // Einzelerfassung, ein «0» im VJ wäre erfunden.

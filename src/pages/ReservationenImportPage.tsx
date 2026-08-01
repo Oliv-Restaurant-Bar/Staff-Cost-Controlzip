@@ -29,9 +29,11 @@ import type {
 } from '@/lib/reservation-import-parser';
 import {
   checkReservationTablesExist, classifyGuests, saveReservationImport,
-  fetchReservationImports,
+  fetchReservationImports, previewReservationDiff, fetchPriorReservationRows,
 } from '@/lib/reservation-import-db';
-import type { GuestClassification, ReservationImportRow } from '@/lib/reservation-import-db';
+import type { GuestClassification, ReservationImportRow, ReservationDiffPreview } from '@/lib/reservation-import-db';
+import { recordImportRun } from '@/lib/import-undo-store';
+import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { logImportRun } from '@/lib/import-runs-db';
 import { buildReservationRunStats } from '@/lib/import-runs';
 import { ReservationSummary, fdate } from '@/components/reservations/ReservationSummary';
@@ -60,6 +62,8 @@ export default function ReservationenImportPage(
   const [parsed, setParsed] = useState<ReservationParseResult | null>(null);
   const [guestClass, setGuestClass] = useState<GuestClassification | null>(null);
   const [classifying, setClassifying] = useState(false);
+  /** Upsert-Vorschau «X neu · Y aktualisiert · Z unverändert» (Diff gegen DB). */
+  const [diff, setDiff] = useState<ReservationDiffPreview | null>(null);
 
   const [history, setHistory] = useState<ReservationImportRow[]>([]);
   const [histLoading, setHistLoading] = useState(false);
@@ -87,6 +91,7 @@ export default function ReservationenImportPage(
   const resetWizard = useCallback(() => {
     setParsed(null);
     setGuestClass(null);
+    setDiff(null);
     setParseError(null);
     setStep('upload');
     if (fileRef.current) fileRef.current.value = '';
@@ -97,6 +102,7 @@ export default function ReservationenImportPage(
     setParseError(null);
     setParsed(null);
     setGuestClass(null);
+    setDiff(null);
     try {
       const text = await file.text();
       const result = parseReservationsCsv(file.name, text);
@@ -111,6 +117,11 @@ export default function ReservationenImportPage(
       }
       setParsed(result);
       setStep('preview');
+
+      // Upsert-Vorschau (Diff über Res.Nr. gegen den DB-Bestand, ohne zu schreiben).
+      previewReservationDiff(tenantId, result.reservations)
+        .then(setDiff)
+        .catch(() => setDiff(null)); // Vorschau optional — Import bleibt möglich.
 
       // Neue / wiederkehrende Gäste klassifizieren (DB-Abfrage, ohne zu schreiben).
       setClassifying(true);
@@ -156,6 +167,43 @@ export default function ReservationenImportPage(
     }
     const startedAt = new Date().toISOString();
     setStep('saving');
+
+    // Backup VOR dem Schreiben: Vorzustand aller betroffenen Res.Nr. sichern
+    // UND im Undo-Protokoll ablegen — Grundlage für «Letzter Import rückgängig
+    // machen». Scheitert Backup oder Protokoll, wird NICHT importiert
+    // (kein Import ohne Rückweg).
+    const extIds = [...new Set(parsed.reservations.map(r => r.externalReservationId))];
+    try {
+      const priorRows = await fetchPriorReservationRows(tenantId, extIds);
+      const snapshot = {
+        kind: 'reservation-records' as const,
+        restaurantId: tenantId, extIds, priorRows,
+      };
+      // Grössen-Schutz: der Snapshot landet in einem app_settings-Blob —
+      // unbegrenzt grosse Backups würden dort scheitern (und der Import hätte
+      // keinen Rückweg). Lieber sauber abbrechen mit Handlungsanweisung.
+      if (JSON.stringify(snapshot).length > 2_000_000) {
+        toast.error('Import abgebrochen — die Datei betrifft zu viele bestehende Reservationen für ein Undo-Backup. Bitte den Export in kleinere Zeiträume aufteilen.');
+        setStep('preview');
+        return;
+      }
+      await recordImportRun(tenantId, {
+        source: 'reservationen-foratable',
+        periodLabel: parsed.stats?.periodFrom && parsed.stats?.periodTo
+          ? `${parsed.stats.periodFrom} – ${parsed.stats.periodTo}` : '—',
+        itemCount: extIds.length,
+        itemLabel: 'Reservationen',
+        fileName: parsed.fileName,
+        details: diff ? `${diff.neu} neu · ${diff.aktualisiert} aktualisiert · ${diff.unveraendert} unverändert` : undefined,
+        snapshot,
+      });
+    } catch (e) {
+      toast.error('Import abgebrochen — Undo-Backup konnte nicht erstellt werden: '
+        + (e instanceof Error ? e.message : String(e)));
+      setStep('preview');
+      return;
+    }
+
     const result = await saveReservationImport(tenantId, parsed);
     if (result.error) {
       void logImportRun(tenantId, {
@@ -311,6 +359,12 @@ export default function ReservationenImportPage(
                 </div>
               )}
 
+              {/* Letzter Import + «Rückgängig» (Snapshot der betroffenen Res.Nr.). */}
+              <LastImportPanel
+                source="reservationen-foratable"
+                undoHint="Setzt die beim letzten Import geschriebenen Res.Nr. auf ihren Vorzustand zurück (neu importierte werden entfernt, ersetzte wiederhergestellt) und berechnet die Gäste-Statistik neu."
+              />
+
               {/* Zentrale Zählregel für die Cockpit-Kennzahlen (pro Tenant). */}
               <ReservationCountingSettingsCard />
 
@@ -362,6 +416,19 @@ export default function ReservationenImportPage(
                       )}
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Upsert-Vorschau: dublettensicher über Res.Nr. (Ersetzen statt Duplikat) */}
+              {diff && (
+                <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm" data-testid="banner-upsert-preview">
+                  <p className="font-semibold" data-testid="text-upsert-counts">
+                    {diff.neu} neu · {diff.aktualisiert} aktualisiert · {diff.unveraendert} unverändert
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Schlüssel = Res.Nr. — dieselbe Res.Nr. wird ERSETZT, nie doppelt angelegt
+                    (wiederholter Import ist gefahrlos). Vor dem Schreiben wird ein Backup erstellt.
+                  </p>
                 </div>
               )}
 

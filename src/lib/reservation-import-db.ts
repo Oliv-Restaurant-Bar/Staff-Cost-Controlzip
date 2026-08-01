@@ -248,6 +248,123 @@ function resolveExisting(g: DistinctGuest, existing: GuestProfileRow[]): GuestPr
 
 // ── Tabellen-Setup prüfen ────────────────────────────────────────────────────
 
+// ── Upsert-Vorschau & Undo-Snapshot (dublettensicher über Res.Nr.) ───────────
+
+/** Import-relevante Spalten einer Reservation (für Diff-Vergleich + Snapshot). */
+const RESERVATION_COMPARE_COLS = [
+  'external_reservation_id', 'restaurant_name', 'reservation_date', 'reservation_time',
+  'party_size', 'company', 'first_name', 'last_name', 'mobile', 'email',
+  'status', 'status_normalized', 'reserved_at', 'comment', 'note',
+  'table_name', 'selection', 'guest_information', 'room', 'area',
+] as const;
+
+/** Mapped eine geparste Reservation auf die vergleichbaren DB-Feldwerte. */
+function comparableFields(r: ParsedReservation): Record<string, unknown> {
+  return {
+    restaurant_name: r.restaurantName || null,
+    reservation_date: r.reservationDate,
+    reservation_time: r.reservationTime,
+    party_size: r.partySize,
+    company: r.company || null,
+    first_name: r.firstName || null,
+    last_name: r.lastName || null,
+    mobile: r.mobile || null,
+    email: r.email || null,
+    status: r.statusRaw || null,
+    status_normalized: r.statusNormalized,
+    reserved_at: r.reservedAt,
+    comment: r.comment || null,
+    note: r.note || null,
+    table_name: r.tableName || null,
+    selection: r.selection || null,
+    guest_information: r.guestInformation || null,
+    room: r.room || null,
+    area: r.area || null,
+  };
+}
+
+export interface ReservationDiffPreview {
+  neu: number;
+  aktualisiert: number;
+  unveraendert: number;
+}
+
+/**
+ * Vorschau VOR dem Schreiben: vergleicht die (über Res.Nr. deduplizierten)
+ * CSV-Reservationen mit dem DB-Bestand des Mandanten →
+ * «X neu · Y aktualisiert · Z unverändert». Wirft bei DB-Fehler.
+ */
+export async function previewReservationDiff(
+  restaurantId: string, reservations: ParsedReservation[],
+): Promise<ReservationDiffPreview> {
+  const { deduped } = dedupeReservationsByExternalId(reservations);
+  const existing = new Map<string, Record<string, unknown>>();
+  for (const part of chunk([...new Set(deduped.map(r => r.externalReservationId))], 200)) {
+    if (part.length === 0) continue;
+    const { data, error } = await (supabase as any)
+      .from('reservation_records')
+      .select(RESERVATION_COMPARE_COLS.join(', '))
+      .eq('restaurant_id', restaurantId)
+      .in('external_reservation_id', part);
+    if (error) throw new Error(`Bestehende Reservationen konnten nicht geprüft werden: ${error.message ?? error}`);
+    for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+      existing.set(String(row.external_reservation_id), row);
+    }
+  }
+  let neu = 0, aktualisiert = 0, unveraendert = 0;
+  for (const r of deduped) {
+    const ex = existing.get(r.externalReservationId);
+    if (!ex) { neu++; continue; }
+    const want = comparableFields(r);
+    // Reine Feldgleichheit (dieselben Spalten, die der Import schreibt).
+    const same = Object.entries(want).every(([k, v]) => {
+      const cur = ex[k] ?? null;
+      // reserved_at kommt aus der DB als Timestamp-String — nur Wertvergleich auf String-Basis.
+      if (k === 'reserved_at') {
+        const a = cur == null ? null : String(cur).slice(0, 16);
+        const b = v == null ? null : String(v).slice(0, 16);
+        return a === b;
+      }
+      return (cur ?? null) === (v ?? null);
+    });
+    if (same) unveraendert++; else aktualisiert++;
+  }
+  return { neu, aktualisiert, unveraendert };
+}
+
+/**
+ * Snapshot-Spalten = exakt die Spalten, die der Import schreibt (+ Schlüssel).
+ * KEIN select('*'): hält den Undo-Snapshot klein; Spalten, die der Import nie
+ * anfasst (z.B. created_at), müssen nicht gesichert werden — der Restore-Upsert
+ * einer Teilmenge lässt sie unverändert.
+ */
+const RESERVATION_SNAPSHOT_COLS =
+  ['restaurant_id', 'guest_id', 'source_file_name', 'last_import_id', 'updated_at',
+   ...RESERVATION_COMPARE_COLS] as const;
+
+/**
+ * Vorzustands-Zeilen der betroffenen Res.Nr. (für den Undo-Snapshot; nur die
+ * vom Import geschriebenen Spalten). Nur Zeilen, die bereits existieren —
+ * fehlende Res.Nr. = neu. Wirft bei DB-Fehler (Backup unvollständig = Import
+ * nicht starten).
+ */
+export async function fetchPriorReservationRows(
+  restaurantId: string, externalIds: string[],
+): Promise<Array<Record<string, unknown>>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const part of chunk([...new Set(externalIds)], 200)) {
+    if (part.length === 0) continue;
+    const { data, error } = await (supabase as any)
+      .from('reservation_records')
+      .select(RESERVATION_SNAPSHOT_COLS.join(', '))
+      .eq('restaurant_id', restaurantId)
+      .in('external_reservation_id', part);
+    if (error) throw new Error(`Backup fehlgeschlagen: ${error.message ?? error}`);
+    rows.push(...((data ?? []) as Array<Record<string, unknown>>));
+  }
+  return rows;
+}
+
 export async function checkReservationTablesExist(): Promise<boolean> {
   try {
     const { error } = await (supabase as any)
@@ -548,7 +665,7 @@ export async function saveReservationImport(
  * Berechnet total/cancelled/completed/persons sowie first/last_seen für die
  * angegebenen guest_ids aus reservation_records neu.  Rückgabe: Fehlertext | null.
  */
-async function recomputeGuestAggregates(restaurantId: string, guestIds: string[]): Promise<string | null> {
+export async function recomputeGuestAggregates(restaurantId: string, guestIds: string[]): Promise<string | null> {
   interface Agg {
     total: number;
     persons: number;
