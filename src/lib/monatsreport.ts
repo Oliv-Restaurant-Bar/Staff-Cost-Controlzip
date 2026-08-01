@@ -46,7 +46,8 @@ import {
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
 import { fetchReviewsData, countGoogleReviewsByStar, type SingleReview } from '@/lib/reviews-store';
 import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
-import { filterInvoicesByRange, sumInvoicesNet, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
+import { filterInvoicesByRange, sumInvoicesNet, sumNetByKategorie, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
+import { loadWarenkonten, type Warenkonto } from '@/lib/waren-db';
 import { loadZielWarenquote, DEFAULT_ZIEL_WARENQUOTE_PCT } from '@/lib/ziel-warenquote';
 
 type KeyFn = (key: string) => string;
@@ -834,9 +835,10 @@ export async function ladeMonatsreport(
 
   // Warenkosten (erfasste Warenrechnungen, netto) + Ziel-WKQ: Basis der
   // Lieferanten-/Total-/WKQ-Zeilen. Ladefehler → null (Zeilen bleiben leer).
-  const [warenInvoices, zielWkq] = await Promise.all([
+  const [warenInvoices, zielWkq, warenKonten] = await Promise.all([
     loadMonthInvoices(tenantId, `${year}-${mm}`).catch(() => null as InvoiceEntry[] | null),
     loadZielWarenquote(tenantId).then(b => b.pct).catch(() => DEFAULT_ZIEL_WARENQUOTE_PCT),
+    loadWarenkonten(tenantId).catch(() => [] as Warenkonto[]),
   ]);
 
   const [
@@ -1141,6 +1143,16 @@ export async function ladeMonatsreport(
         week: weekTotal != null && wNetV != null && wNet > 0 ? r2((weekTotal / wNet) * 100) : null,
         budget: r2(zielWkq), weekBudget: r2(zielWkq), monthBudget: r2(zielWkq),
       }, { fmt: 'pct', deltaPp: true }),
+      // WKQ je Kategorie (Food/Beverage) — Zielquoten unterscheiden sich,
+      // deshalb separat ausgewiesen (ohne Ziel-Spalte). Quote nur bei Umsatz.
+      ...(['Food', 'Beverage'] as const).map(kat => {
+        const mKat = inv ? sumNetByKategorie(inv, kat, warenKonten) : 0;
+        const wKat = weekInv ? sumNetByKategorie(weekInv, kat, warenKonten) : 0;
+        return d(`wkq_${kat.toLowerCase()}`, `WKQ ${kat}`, {
+          month: mKat > 0 && mNetV != null && mNet > 0 ? r2((mKat / mNet) * 100) : null,
+          week: wKat > 0 && wNetV != null && wNet > 0 ? r2((wKat / wNet) * 100) : null,
+        }, { fmt: 'pct', deltaPp: true });
+      }),
     ];
   }
 
@@ -1779,6 +1791,18 @@ export async function ladeWochenverlauf(
         return list.length > 0 && net !== null ? r2((sumInvoicesNet(list) / net) * 100) : null;
       }),
     });
+    // WKQ je Kategorie (Food/Beverage) — separate Zielquoten, deshalb einzeln.
+    const warenKonten = await loadWarenkonten(tenantId).catch(() => [] as Warenkonto[]);
+    for (const kat of ['Food', 'Beverage'] as const) {
+      rows.push({
+        label: `WKQ ${kat}`, fmt: 'pct',
+        values: weekInv.map((list, i) => {
+          const net = netOf(i);
+          const s = sumNetByKategorie(list, kat, warenKonten);
+          return s > 0 && net !== null ? r2((s / net) * 100) : null;
+        }),
+      });
+    }
   }
 
   return { weeks, vjWeeks, rows, partialWeekIndex };

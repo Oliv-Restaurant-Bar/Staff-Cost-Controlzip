@@ -17,12 +17,13 @@ import type { TenantId } from '@/contexts/TenantContext';
 import {
   type WarenKategorie,
   kategorieFromKonto,
+  kontoKategorie,
 } from './warenkosten-quote';
 
 // WarenKategorie + kategorieFromKonto leben zentral in `warenkosten-quote`
 // (reine, IO-freie Lib = Single Source of Truth). Re-Export aus Kompatibilität,
 // damit bestehende Importe aus `@/lib/waren-db` weiter funktionieren.
-export { kategorieFromKonto };
+export { kategorieFromKonto, kontoKategorie };
 export type { WarenKategorie };
 
 // ─── Typen ────────────────────────────────────────────────────────────────────
@@ -32,6 +33,10 @@ export interface Supplier {
   name: string;
   active: boolean;
   createdAt: string;
+  /** Standard-Warenkonto: füllt sich bei Lieferanten-Wahl im Formular vor. */
+  defaultWarenkonto?: string;
+  /** Standard-Kategorie (Food/Beverage/Sonstiges): füllt sich vor. */
+  defaultKategorie?: WarenKategorie;
 }
 
 /**
@@ -124,6 +129,59 @@ export const WARENKONTO_LIST: { value: string; label: string }[] = [
 ];
 
 // kategorieFromKonto: siehe `warenkosten-quote` (re-exportiert oben).
+
+// ─── Warenkonten (frei definierbare Liste, pro Mandant) ──────────────────────
+//
+// KV-Schlüssel `warenkonten_v1`; leer/fehlend → WARENKONTO_LIST als Vorgabe.
+// Bestehende Rechnungen referenzieren Konten nur über `value` (Kontonummer),
+// gelöschte Konten machen alte Buchungen deshalb nicht kaputt.
+
+export interface Warenkonto {
+  value: string; // Kontonummer, z.B. "4000"
+  label: string; // Anzeigename, z.B. "4000 – Warenaufwand Lebensmittel"
+  /** Standard-Kategorie des Kontos (Food/Beverage/Sonstiges); fehlt → kategorieFromKonto. */
+  kategorie?: WarenKategorie;
+}
+
+// kontoKategorie: siehe `warenkosten-quote` (pure Lib, re-exportiert oben).
+
+function warenkontenKey(tenantId: TenantId): string {
+  return tenantKey(tenantId, 'warenkonten_v1');
+}
+
+export async function loadWarenkonten(tenantId: TenantId): Promise<Warenkonto[]> {
+  const raw = await kvGet(warenkontenKey(tenantId));
+  if (Array.isArray(raw) && raw.length > 0) return raw as Warenkonto[];
+  return WARENKONTO_LIST;
+}
+
+export async function saveWarenkonten(tenantId: TenantId, konten: Warenkonto[]): Promise<void> {
+  await kvSet(warenkontenKey(tenantId), konten);
+  console.log(`[WAREN] warenkonten saved: ${konten.length} entries for tenant "${tenantId}"`);
+}
+
+// ─── Zuletzt genutzte Lieferanten (nur Sortier-Komfort, localStorage) ────────
+
+const RECENT_SUPPLIERS_MAX = 8;
+
+function recentSuppliersKey(tenantId: TenantId): string {
+  return `waren_recent_suppliers_${tenantId}`;
+}
+
+export function loadRecentSupplierNames(tenantId: TenantId): string[] {
+  try {
+    const raw = localStorage.getItem(recentSuppliersKey(tenantId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+export function rememberRecentSupplier(tenantId: TenantId, name: string): string[] {
+  const list = [name, ...loadRecentSupplierNames(tenantId).filter(n => n !== name)]
+    .slice(0, RECENT_SUPPLIERS_MAX);
+  try { localStorage.setItem(recentSuppliersKey(tenantId), JSON.stringify(list)); } catch { /* egal */ }
+  return list;
+}
 
 // ─── Standard-Lieferanten ─────────────────────────────────────────────────────
 

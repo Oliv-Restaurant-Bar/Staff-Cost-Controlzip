@@ -8,7 +8,7 @@
  * Debug-Logs: [WAREN]
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
@@ -28,11 +28,19 @@ import {
   calcAmounts,
   WARENKONTO_LIST,
   kategorieFromKonto,
+  kontoKategorie,
+  loadWarenkonten,
+  saveWarenkonten,
+  loadRecentSupplierNames,
+  rememberRecentSupplier,
   type Supplier,
   type InvoiceEntry,
   type KontoSplit,
   type WarenKategorie,
+  type Warenkonto,
 } from '@/lib/waren-db';
+import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
+import { loadZielWarenquote, DEFAULT_ZIEL_WARENQUOTE_PCT } from '@/lib/ziel-warenquote';
 import {
   computeWarenkostenTotals,
   warenkostenQuote,
@@ -69,9 +77,15 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from '@/components/ui/command';
+import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
-  Filter, X, Receipt, Download, Paperclip,
+  Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -299,6 +313,23 @@ export default function WarenrechnungenPage() {
   const [deleteConfirm,     setDeleteConfirm]     = useState<string | null>(null);
   const [targetPct,         setTargetPct]         = useState<number>(30);
 
+  // ─── Schnellerfassung: Warenkonten, zuletzt genutzte Lieferanten, Details ──
+  const [warenkonten,       setWarenkonten]       = useState<Warenkonto[]>(WARENKONTO_LIST);
+  const [recentSuppliers,   setRecentSuppliers]   = useState<string[]>([]);
+  const [showDetails,       setShowDetails]       = useState(false);
+  const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
+  const [zielWkqPct,        setZielWkqPct]        = useState<number>(DEFAULT_ZIEL_WARENQUOTE_PCT);
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  // Warenkonten-Verwaltung (im Lieferantenstamm-Dialog)
+  const [newKontoValue,     setNewKontoValue]     = useState('');
+  const [newKontoLabel,     setNewKontoLabel]     = useState('');
+
+  useEffect(() => {
+    setRecentSuppliers(loadRecentSupplierNames(tenantId));
+    loadWarenkonten(tenantId).then(setWarenkonten).catch(() => setWarenkonten(WARENKONTO_LIST));
+    loadZielWarenquote(tenantId).then(b => setZielWkqPct(b.pct)).catch(() => {});
+  }, [tenantId]);
+
   // ─── Analyse: Zeitraum-Steuerung ──────────────────────────────────────────
   const [analyseMode, setAnalyseMode] = useState<AnalyseMode>('month');
   const [aYear,       setAYear]       = useState(today.getFullYear());
@@ -493,6 +524,13 @@ export default function WarenrechnungenPage() {
   }, [form.amount, form.vatIncluded, form.vatRate, form.splitEnabled, form.split1Amount, form.split2Amount]);
 
   const activeSuppliers    = suppliers.filter(s => s.active);
+  // Zuletzt genutzte Lieferanten zuoberst im Schnellerfassungs-Dropdown.
+  const recentSupplierOptions = useMemo(
+    () => recentSuppliers
+      .map(name => activeSuppliers.find(s => s.name === name))
+      .filter((s): s is Supplier => Boolean(s)),
+    [recentSuppliers, suppliers], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const suppliersWithEntries = stats.supplierTotals.length;
 
   function getCumulative(upToDate: string) {
@@ -942,6 +980,7 @@ export default function WarenrechnungenPage() {
   async function handleSave() {
     if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
     if (!form.supplierName) { toast.error('Bitte Lieferant wählen.'); return; }
+    if (!form.splitEnabled && !form.warenkonto) { toast.error('Bitte Warenkonto wählen (Pflichtfeld).'); return; }
 
     let entry: InvoiceEntry;
 
@@ -1003,11 +1042,31 @@ export default function WarenrechnungenPage() {
     await saveInvoiceEntry(tenantId, entry);
     console.log(`[WAREN] entry saved: ${entry.supplierName} · ${entry.date} · net CHF ${entry.amountNet.toFixed(2)}${entry.kontoSplits ? ' (split)' : entry.warenkonto ? ` · konto ${entry.warenkonto}` : ''}`);
     await loadData();
-    setForm(f => ({ ...EMPTY_FORM, date: f.date, supplierName: f.supplierName, vatRate: f.vatRate, vatIncluded: f.vatIncluded }));
+    // Stapelerfassung: Datum, Lieferant, Konto, Kategorie und MWST bleiben —
+    // nur Betrag/Referenz/Bemerkung/Beleg werden geleert, Fokus zurück auf Betrag.
+    setForm(f => ({
+      ...EMPTY_FORM, date: f.date, supplierName: f.supplierName,
+      vatRate: f.vatRate, vatIncluded: f.vatIncluded,
+      warenkonto: f.warenkonto, kategorie: f.kategorie,
+    }));
+    setRecentSuppliers(rememberRecentSupplier(tenantId, entry.supplierName));
     setReceiptFile(null);
     setReceiptInputKey(k => k + 1);
     toast.success(`${form.supplierName} · CHF ${fmtChf(entry.amountNet)} netto gespeichert`);
     setSaving(false);
+    requestAnimationFrame(() => amountInputRef.current?.focus());
+  }
+
+  /** Lieferant wählen: Standard-Konto/-Kategorie vorfüllen, Fokus auf Betrag. */
+  function handlePickSupplier(sup: Supplier) {
+    setForm(f => {
+      const konto = sup.defaultWarenkonto ?? f.warenkonto;
+      const kategorie = sup.defaultKategorie
+        ?? (sup.defaultWarenkonto ? kontoKategorie(sup.defaultWarenkonto, warenkonten) : f.kategorie);
+      return { ...f, supplierName: sup.name, warenkonto: konto, kategorie };
+    });
+    setSupplierPickerOpen(false);
+    requestAnimationFrame(() => amountInputRef.current?.focus());
   }
 
   async function handleEditSave() {
@@ -1056,6 +1115,7 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleAddSupplier() {
+    if (!canEdit) { toast.error('Keine Berechtigung für Stammdaten-Änderungen.'); return; }
     const name = newSupplierName.trim();
     if (!name) return;
     if (suppliers.some(s => s.name.toLowerCase() === name.toLowerCase())) {
@@ -1069,9 +1129,72 @@ export default function WarenrechnungenPage() {
   }
 
   async function handleToggleSupplier(sup: Supplier) {
+    if (!canEdit) { toast.error('Keine Berechtigung für Stammdaten-Änderungen.'); return; }
     const updated = suppliers.map(s => s.id === sup.id ? { ...s, active: !s.active } : s);
     await saveSuppliers(tenantId, updated);
     setSuppliers(updated);
+  }
+
+  /** Lieferanten-Vorgaben (Standard-Konto/-Kategorie) speichern. */
+  async function handleSupplierDefaults(sup: Supplier, patch: Partial<Pick<Supplier, 'defaultWarenkonto' | 'defaultKategorie'>>) {
+    if (!canEdit) { toast.error('Keine Berechtigung für Stammdaten-Änderungen.'); return; }
+    const updated = suppliers.map(s => {
+      if (s.id !== sup.id) return s;
+      const next = { ...s, ...patch };
+      // Konto gesetzt, aber keine explizite Kategorie → Kategorie aus dem Konto ableiten
+      if ('defaultWarenkonto' in patch && patch.defaultWarenkonto && !('defaultKategorie' in patch)) {
+        next.defaultKategorie = kontoKategorie(patch.defaultWarenkonto, warenkonten);
+      }
+      return next;
+    });
+    await saveSuppliers(tenantId, updated);
+    setSuppliers(updated);
+  }
+
+  // ─── Warenkonten verwalten (frei definierbare Liste pro Mandant) ──────────
+  async function handleAddKonto() {
+    if (!canEdit) { toast.error('Keine Berechtigung für Stammdaten-Änderungen.'); return; }
+    const value = newKontoValue.trim();
+    const label = newKontoLabel.trim();
+    if (!value) return;
+    if (warenkonten.some(k => k.value === value)) { toast.error('Kontonummer existiert bereits.'); return; }
+    const updated = [...warenkonten, { value, label: label ? `${value} – ${label}` : value }];
+    await saveWarenkonten(tenantId, updated);
+    setWarenkonten(updated);
+    setNewKontoValue(''); setNewKontoLabel('');
+    toast.success(`Warenkonto ${value} hinzugefügt.`);
+  }
+
+  /** Standard-Kategorie eines Warenkontos setzen (Stammdaten). */
+  async function handleSetKontoKategorie(value: string, kategorie: WarenKategorie) {
+    if (!canEdit) { toast.error('Keine Berechtigung für Stammdaten-Änderungen.'); return; }
+    const updated = warenkonten.map(k => k.value === value ? { ...k, kategorie } : k);
+    await saveWarenkonten(tenantId, updated);
+    setWarenkonten(updated);
+  }
+
+  async function handleRemoveKonto(value: string) {
+    if (!canEdit) { toast.error('Keine Berechtigung für Stammdaten-Änderungen.'); return; }
+    const updated = warenkonten.filter(k => k.value !== value);
+    if (updated.length === 0) { toast.error('Mindestens ein Warenkonto muss bleiben.'); return; }
+    await saveWarenkonten(tenantId, updated);
+    setWarenkonten(updated);
+    // Verwaiste Referenzen im Formular sofort leeren (sonst würde ein
+    // entferntes Konto weiter gespeichert werden können).
+    setForm(f => ({
+      ...f,
+      warenkonto: f.warenkonto === value ? '' : f.warenkonto,
+      kategorie: f.warenkonto === value ? 'Sonstiges' : f.kategorie,
+      split1Warenkonto: f.split1Warenkonto === value ? '' : f.split1Warenkonto,
+      split2Warenkonto: f.split2Warenkonto === value ? '' : f.split2Warenkonto,
+    }));
+    // Lieferanten-Vorgaben auf das entfernte Konto ebenfalls zurücksetzen.
+    if (suppliers.some(s => s.defaultWarenkonto === value)) {
+      const supUpdated = suppliers.map(s => s.defaultWarenkonto === value ? { ...s, defaultWarenkonto: undefined } : s);
+      await saveSuppliers(tenantId, supUpdated);
+      setSuppliers(supUpdated);
+    }
+    toast.success(`Warenkonto ${value} entfernt. Bestehende Buchungen bleiben unverändert.`);
   }
 
   const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' });
@@ -1224,7 +1347,7 @@ export default function WarenrechnungenPage() {
                     <h2 className="text-sm font-semibold">Neue Rechnung erfassen</h2>
                   </div>
                   <div className="px-5 py-4 space-y-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 items-end">
+                    <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3 items-end">
 
                       {/* Datum */}
                       <div className="space-y-1 col-span-1">
@@ -1238,20 +1361,69 @@ export default function WarenrechnungenPage() {
                         />
                       </div>
 
-                      {/* Lieferant */}
+                      {/* Lieferant – suchbares Dropdown, zuletzt genutzte zuoberst */}
                       <div className="space-y-1 col-span-2">
                         <Label className="text-xs text-muted-foreground">Lieferant</Label>
-                        <Select value={form.supplierName} onValueChange={v => setForm(f => ({ ...f, supplierName: v }))}>
-                          <SelectTrigger className="h-9 text-sm">
-                            <SelectValue placeholder="Lieferant wählen…" />
+                        <Popover open={supplierPickerOpen} onOpenChange={setSupplierPickerOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline" role="combobox"
+                              data-testid="button-supplier-picker"
+                              className="h-9 w-full justify-between text-sm font-normal"
+                            >
+                              <span className={form.supplierName ? '' : 'text-muted-foreground'}>
+                                {form.supplierName || 'Lieferant wählen…'}
+                              </span>
+                              <ChevronsUpDown className="ml-1 h-3.5 w-3.5 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[280px] p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Lieferant suchen…" />
+                              <CommandList>
+                                <CommandEmpty>Kein Lieferant gefunden.</CommandEmpty>
+                                {recentSupplierOptions.length > 0 && (
+                                  <CommandGroup heading="Zuletzt genutzt">
+                                    {recentSupplierOptions.map(s => (
+                                      <CommandItem key={`r-${s.id}`} value={`r ${s.name}`} onSelect={() => handlePickSupplier(s)}>
+                                        <Check className={cn('mr-2 h-3.5 w-3.5', form.supplierName === s.name ? 'opacity-100' : 'opacity-0')} />
+                                        {s.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                )}
+                                <CommandGroup heading="Alle Lieferanten">
+                                  {activeSuppliers.map(s => (
+                                    <CommandItem key={s.id} value={s.name} onSelect={() => handlePickSupplier(s)}>
+                                      <Check className={cn('mr-2 h-3.5 w-3.5', form.supplierName === s.name ? 'opacity-100' : 'opacity-0')} />
+                                      {s.name}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* Warenkonto (Pflichtfeld) – füllt sich via Lieferanten-Vorgabe */}
+                      {!form.splitEnabled && (
+                      <div className="space-y-1 col-span-2">
+                        <Label className="text-xs text-muted-foreground">
+                          Konto <span className="text-destructive">*</span>
+                        </Label>
+                        <Select value={form.warenkonto} onValueChange={v => setForm(f => ({ ...f, warenkonto: v, kategorie: kontoKategorie(v, warenkonten) }))}>
+                          <SelectTrigger className="h-9 text-sm" data-testid="select-warenkonto">
+                            <SelectValue placeholder="Konto wählen…" />
                           </SelectTrigger>
                           <SelectContent>
-                            {activeSuppliers.map(s => (
-                              <SelectItem key={s.id} value={s.name}>{s.name}</SelectItem>
+                            {warenkonten.map(k => (
+                              <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                       </div>
+                      )}
 
                       {/* Betrag – nur wenn kein Split */}
                       {!form.splitEnabled && (
@@ -1260,6 +1432,8 @@ export default function WarenrechnungenPage() {
                         <Input
                           type="number" step="0.01" min="0" placeholder="0.00"
                           value={form.amount}
+                          ref={amountInputRef}
+                          data-testid="input-amount"
                           onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
                           className="h-9 text-sm"
                           onKeyDown={e => e.key === 'Enter' && handleSave()}
@@ -1325,7 +1499,20 @@ export default function WarenrechnungenPage() {
                       </div>
                     </div>
 
-                    {/* ── Kategorie + Warenkonto-Zeile ───────────────────────────── */}
+    {/* ── Details (Sekundärfelder) einklappbar ──────────────────────────── */}
+                    <button
+                      type="button"
+                      data-testid="button-toggle-details"
+                      onClick={() => setShowDetails(v => !v)}
+                      className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showDetails && 'rotate-180')} />
+                      Details {showDetails ? 'ausblenden' : '(Kategorie, Split, Referenz, Beleg …)'}
+                      {(form.splitEnabled || form.reference || form.note || receiptFile) && !showDetails && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[10px]">aktiv</Badge>
+                      )}
+                    </button>
+                    {showDetails && (
                     <div className="flex flex-wrap items-end gap-3 pt-1">
 
                       {/* Kategorie (Pflichtfeld) */}
@@ -1375,28 +1562,6 @@ export default function WarenrechnungenPage() {
                         </div>
                       </div>
 
-                      {/* Einzel-Konto */}
-                      {!form.splitEnabled && (
-                        <div className="space-y-1 min-w-[220px]">
-                          <Label className="text-xs text-muted-foreground">Warenkonto (optional)</Label>
-                          <Select value={form.warenkonto} onValueChange={v => setForm(f => {
-                            const konto = v === '__none__' ? '' : v;
-                            return { ...f, warenkonto: konto, kategorie: kategorieFromKonto(konto) };
-                          })}>
-
-                            <SelectTrigger className="h-9 text-sm">
-                              <SelectValue placeholder="Kein Konto" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__none__">— kein Konto —</SelectItem>
-                              {WARENKONTO_LIST.map(k => (
-                                <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
-
                       {/* Split-Felder */}
                       {form.splitEnabled && (
                         <div className="flex flex-wrap gap-3 flex-1">
@@ -1406,7 +1571,7 @@ export default function WarenrechnungenPage() {
                             <Select value={form.split1Warenkonto} onValueChange={v => setForm(f => ({ ...f, split1Warenkonto: v }))}>
                               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Konto wählen…" /></SelectTrigger>
                               <SelectContent>
-                                {WARENKONTO_LIST.map(k => (
+                                {warenkonten.map(k => (
                                   <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
                                 ))}
                               </SelectContent>
@@ -1427,7 +1592,7 @@ export default function WarenrechnungenPage() {
                             <Select value={form.split2Warenkonto} onValueChange={v => setForm(f => ({ ...f, split2Warenkonto: v }))}>
                               <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Konto wählen…" /></SelectTrigger>
                               <SelectContent>
-                                {WARENKONTO_LIST.map(k => (
+                                {warenkonten.map(k => (
                                   <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
                                 ))}
                               </SelectContent>
@@ -1445,6 +1610,7 @@ export default function WarenrechnungenPage() {
                         </div>
                       )}
                     </div>
+                    )} {/* end showDetails (Kategorie/Split) */}
 
                     {/* Live-Berechnung */}
                     {liveAmounts && (
@@ -1458,7 +1624,8 @@ export default function WarenrechnungenPage() {
                       </div>
                     )}
 
-                    {/* Optionale Felder */}
+                    {/* Optionale Felder (Details) */}
+                    {showDetails && (<>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
                         <Label className="text-xs text-muted-foreground">Rechnungs-/Lieferscheinnummer</Label>
@@ -1491,6 +1658,7 @@ export default function WarenrechnungenPage() {
                         key={receiptInputKey}
                       />
                     </div>
+                    </>)} {/* end showDetails (Sekundärfelder) */}
                   </div>
                 </section>
                 )} {/* end canCreate */}
@@ -1560,8 +1728,8 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 font-medium">{e.supplierName}</td>
                               <td className="px-4 py-2.5">
                                 {(() => {
-                                  // Explizite Kategorie hat Vorrang, dann Konto-Ableitung, dann Sonstiges
-                                  const kat: WarenKategorie = e.kategorie ?? kategorieFromKonto(e.warenkonto);
+                                  // Explizite Kategorie hat Vorrang, dann Konto-Kategorie (Stammdaten vor Heuristik)
+                                  const kat: WarenKategorie = e.kategorie ?? kontoKategorie(e.warenkonto ?? '', warenkonten);
                                   return (
                                     <span className={cn(
                                       'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
@@ -1866,6 +2034,18 @@ export default function WarenrechnungenPage() {
                     </p>
                   )}
                 </div>
+
+                {/* ── Anomalie-Analyse (Lieferant/Konto/Woche/Monat) ───────── */}
+                {!rangeLoading && (
+                  <WarenAnalyseBlock
+                    entries={analysisEntries}
+                    revenueByDate={analysisRevenue}
+                    konten={warenkonten}
+                    zielPct={zielWkqPct}
+                    periodLabel={analyseRangeLabel}
+                    onOpenReceipt={openReceipt}
+                  />
+                )}
 
                 {/* ── KPI-Karten ──────────────────────────────────────────── */}
                 {!rangeLoading && (
@@ -2781,13 +2961,13 @@ export default function WarenrechnungenPage() {
                     onValueChange={v => setEditEntry(x => {
                       if (!x) return x;
                       const konto = v === '__none__' ? undefined : v;
-                      return { ...x, warenkonto: konto, kategorie: kategorieFromKonto(konto) };
+                      return { ...x, warenkonto: konto, kategorie: kontoKategorie(konto, warenkonten) };
                     })}
                   >
                     <SelectTrigger className="h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__none__">— kein Konto —</SelectItem>
-                      {WARENKONTO_LIST.map(k => (
+                      {warenkonten.map(k => (
                         <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -2850,13 +3030,13 @@ export default function WarenrechnungenPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Dialog: Lieferantenstamm ────────────────────────────────────────── */}
+      {/* ── Dialog: Stammdaten (Lieferanten + Warenkonten) ─────────────────── */}
       <Dialog open={showSupplierDialog} onOpenChange={setShowSupplierDialog}>
-        <DialogContent className="sm:max-w-md max-h-[80vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings2 className="h-4 w-4" />
-              Lieferantenstamm
+              Stammdaten · Lieferanten &amp; Warenkonten
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -2872,14 +3052,46 @@ export default function WarenrechnungenPage() {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">{suppliers.length} Lieferanten · {activeSuppliers.length} aktiv</p>
+            <p className="text-xs text-muted-foreground">
+              {suppliers.length} Lieferanten · {activeSuppliers.length} aktiv — Standard-Konto/-Kategorie füllen sich bei der Erfassung automatisch vor.
+            </p>
             <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
               {suppliers.map(s => (
                 <div key={s.id} className={cn(
-                  'flex items-center justify-between rounded-lg px-3 py-2 text-sm border transition-colors',
+                  'flex items-center gap-2 flex-wrap rounded-lg px-3 py-2 text-sm border transition-colors',
                   s.active ? 'bg-card border-border' : 'bg-muted/30 border-border/40',
                 )}>
-                  <span className={s.active ? 'font-medium' : 'text-muted-foreground/50 line-through text-xs'}>{s.name}</span>
+                  <span className={cn('min-w-[130px] flex-1', s.active ? 'font-medium' : 'text-muted-foreground/50 line-through text-xs')}>{s.name}</span>
+                  {/* Standard-Konto */}
+                  <Select
+                    value={s.defaultWarenkonto ?? '__none__'}
+                    onValueChange={v => handleSupplierDefaults(s, { defaultWarenkonto: v === '__none__' ? undefined : v })}
+                  >
+                    <SelectTrigger className="h-8 w-[170px] text-xs" data-testid={`supplier-default-konto-${s.id}`}>
+                      <SelectValue placeholder="Standard-Konto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— kein Standard —</SelectItem>
+                      {warenkonten.map(k => (
+                        <SelectItem key={k.value} value={k.value}>{k.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {/* Standard-Kategorie */}
+                  <Select
+                    value={s.defaultKategorie ?? '__none__'}
+                    onValueChange={v => handleSupplierDefaults(s, { defaultKategorie: v === '__none__' ? undefined : v as WarenKategorie })}
+                  >
+                    <SelectTrigger className="h-8 w-[120px] text-xs">
+                      <SelectValue placeholder="Kategorie" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— keine —</SelectItem>
+                      {WARE_KATEGORIEN.map(k => (
+                        <SelectItem key={k} value={k}>{k}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <button
                     className={cn(
                       'text-xs px-2.5 py-1 rounded-md border transition-colors',
@@ -2891,6 +3103,59 @@ export default function WarenrechnungenPage() {
                   </button>
                 </div>
               ))}
+            </div>
+
+            {/* ── Warenkonten verwalten ─────────────────────────────────────── */}
+            <div className="border-t border-border pt-3 space-y-2">
+              <h3 className="text-sm font-semibold">Warenkonten ({warenkonten.length})</h3>
+              <p className="text-xs text-muted-foreground">
+                Frei definierbare Liste pro Restaurant. Entfernte Konten verändern bestehende Buchungen nicht.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Nr. (z.B. 4010)"
+                  value={newKontoValue}
+                  onChange={e => setNewKontoValue(e.target.value)}
+                  className="h-9 text-sm w-[110px]"
+                />
+                <Input
+                  placeholder="Bezeichnung (z.B. Fleisch)"
+                  value={newKontoLabel}
+                  onChange={e => setNewKontoLabel(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddKonto()}
+                  className="h-9 text-sm flex-1"
+                />
+                <Button onClick={handleAddKonto} size="sm" className="h-9 px-3" disabled={!newKontoValue.trim()}>
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="space-y-1 max-h-[200px] overflow-y-auto pr-1">
+                {warenkonten.map(k => (
+                  <div key={k.value} className="flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm border border-border bg-card">
+                    <span className="text-xs font-medium flex-1">{k.label}</span>
+                    <Select
+                      value={k.kategorie ?? kategorieFromKonto(k.value)}
+                      onValueChange={v => handleSetKontoKategorie(k.value, v as WarenKategorie)}
+                    >
+                      <SelectTrigger className="h-7 w-[110px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {WARE_KATEGORIEN.map(kat => (
+                          <SelectItem key={kat} value={kat}>{kat}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <button
+                      className="text-xs px-2 py-0.5 rounded-md border border-border text-muted-foreground hover:bg-muted hover:text-destructive transition-colors"
+                      onClick={() => handleRemoveKonto(k.value)}
+                      title="Konto aus der Auswahl entfernen"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
           <DialogFooter>

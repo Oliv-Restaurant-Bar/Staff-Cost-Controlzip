@@ -10,7 +10,40 @@
  * geliefert — hier nur Zahlenlogik, keine IO.
  */
 
-import type { InvoiceEntry } from './waren-db';
+import { kontoKategorie, type WarenKategorie } from './warenkosten-quote';
+import type { InvoiceEntry, Warenkonto } from './waren-db';
+
+/**
+ * Effektive Kategorie-Anteile einer Rechnung (netto):
+ * - Split-Rechnung: je Split-Konto dessen Konto-Kategorie (explizit vor Heuristik).
+ * - Sonst: persistierte kategorie; fehlt sie (Altbestand/Import), Kategorie des
+ *   Warenkontos (explizite Konto-Kategorie vor kategorieFromKonto-Heuristik).
+ */
+export function kategorieShares(
+  e: InvoiceEntry, konten: Warenkonto[],
+): { kategorie: WarenKategorie; net: number }[] {
+  if (e.kontoSplits && e.kontoSplits.length > 0) {
+    return e.kontoSplits.map(s => ({
+      kategorie: kontoKategorie(s.warenkonto ?? '', konten),
+      net: Number.isFinite(s.amountNet) ? s.amountNet : 0,
+    }));
+  }
+  return [{
+    kategorie: e.kategorie ?? kontoKategorie(e.warenkonto ?? '', konten),
+    net: Number.isFinite(e.amountNet) ? e.amountNet : 0,
+  }];
+}
+
+/** Netto-Summe einer Kategorie über Rechnungen (effektive Kategorie, s. kategorieShares). */
+export function sumNetByKategorie(
+  invoices: InvoiceEntry[], kat: WarenKategorie, konten: Warenkonto[],
+): number {
+  let s = 0;
+  for (const e of invoices) {
+    for (const sh of kategorieShares(e, konten)) if (sh.kategorie === kat) s += sh.net;
+  }
+  return s;
+}
 
 export interface SupplierAggRow {
   supplierName: string;

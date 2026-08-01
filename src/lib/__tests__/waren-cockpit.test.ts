@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
-import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange } from '@/lib/waren-cockpit';
-import type { InvoiceEntry } from '@/lib/waren-db';
+import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange, kategorieShares, sumNetByKategorie } from '@/lib/waren-cockpit';
+import type { InvoiceEntry, Warenkonto } from '@/lib/waren-db';
 
 function inv(supplierName: string, amountNet: number, date = '2026-07-10'): InvoiceEntry {
   return {
@@ -10,6 +10,45 @@ function inv(supplierName: string, amountNet: number, date = '2026-07-10'): Invo
     createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z',
   };
 }
+
+describe('kategorieShares / sumNetByKategorie (effektive Kategorie)', () => {
+  const konten: Warenkonto[] = [
+    { value: '4000', label: '4000 – LM', kategorie: 'Food' },
+    { value: '9999', label: '9999 – Spezial', kategorie: 'Beverage' }, // explizit ≠ Heuristik
+  ];
+
+  it('persistierte kategorie hat Vorrang', () => {
+    const e = { ...inv('A', 100), kategorie: 'Beverage' as const, warenkonto: '4000' };
+    expect(kategorieShares(e, konten)).toEqual([{ kategorie: 'Beverage', net: 100 }]);
+  });
+
+  it('ohne kategorie: explizite Konto-Kategorie vor Nummern-Heuristik (Altbestand)', () => {
+    const e = { ...inv('A', 100), warenkonto: '9999' };
+    expect(kategorieShares(e, konten)[0].kategorie).toBe('Beverage');
+    // Konto nicht in Stammdaten → Heuristik (4000er = Food)
+    const e2 = { ...inv('A', 50), warenkonto: '4000' };
+    expect(kategorieShares(e2, [])[0].kategorie).toBe('Food');
+  });
+
+  it('Split-Rechnung: je Split-Konto dessen Kategorie', () => {
+    const e = { ...inv('A', 100), kontoSplits: [
+      { warenkonto: '4000', amountNet: 60, amountGross: 61 },
+      { warenkonto: '9999', amountNet: 40, amountGross: 41 },
+    ] };
+    expect(sumNetByKategorie([e], 'Food', konten)).toBe(60);
+    expect(sumNetByKategorie([e], 'Beverage', konten)).toBe(40);
+  });
+
+  it('sumNetByKategorie über mehrere Rechnungen', () => {
+    const list = [
+      { ...inv('A', 100), kategorie: 'Food' as const },
+      { ...inv('B', 30), warenkonto: '9999' },
+    ];
+    expect(sumNetByKategorie(list, 'Food', konten)).toBe(100);
+    expect(sumNetByKategorie(list, 'Beverage', konten)).toBe(30);
+    expect(sumNetByKategorie([], 'Food', konten)).toBe(0);
+  });
+});
 
 describe('waren-cockpit', () => {
   it('summiert Netto-Beträge', () => {
