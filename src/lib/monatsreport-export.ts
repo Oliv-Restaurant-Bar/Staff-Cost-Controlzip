@@ -140,17 +140,21 @@ export function buildMonatsreportWorkbook(
     // Felder je Granularität (identisch zur Bildschirm-Ansicht ReportTable).
     const c = mapRowForExport(row, granularity);
 
-    // countPax («Anzahl (Σ Personen · Anteil)») wird als Text geschrieben;
-    // count MIT Gäste-IN-Anteil ebenfalls («2'396 (17.2 %)»), sonst als Zahl.
+    // Darstellung wie am Bildschirm:
+    //  - VORJAHR: Anteil kompakt inline — countPax «8 (255 Pers. · 1.8 %)»,
+    //    count «1'630 (25.9 %)».
+    //  - IST: NUR Zahl bzw. «Anzahl (Σ Pers.)» OHNE % — der Ist-Anteil an
+    //    «Gäste IN» steht in der Δ%-Spalte (Anteil-Zeilen haben kein Budget-Δ).
     const isCountPax = row.fmt === 'countPax';
     const vjIsShareText = row.fmt === 'count' && c.vjShare !== null && c.vj !== null;
-    const istIsShareText = row.fmt === 'count' && c.istShare !== null && c.ist !== null;
     const vjOut = isCountPax ? countPaxText(c.vj, c.vjPax, c.vjShare)
       : vjIsShareText ? countShareText(c.vj, c.vjShare as number) : c.vj;
-    const istOut = isCountPax ? countPaxText(c.ist, c.istPax, c.istShare)
-      : istIsShareText ? countShareText(c.ist, c.istShare as number) : c.ist;
+    const istOut = isCountPax ? countPaxText(c.ist, c.istPax, null) : c.ist;
+    // Anteil-Zeilen: Δ%-Spalte trägt den Ist-Anteil (ohne Vorzeichen/Ampel).
+    const isShareRow = row.sharePct !== undefined;
+    const devOut = isShareRow ? c.istShare : c.dev;
 
-    const r = ws.addRow([row.label ?? '', c.budget, vjOut, istOut, c.dev]);
+    const r = ws.addRow([row.label ?? '', c.budget, vjOut, istOut, devOut]);
 
     const numFmt = row.fmt === 'count' || row.fmt === 'hours' ? FMT_COUNT
       : row.fmt === 'pct' ? FMT_PCT
@@ -159,7 +163,7 @@ export function buildMonatsreportWorkbook(
       const cell = r.getCell(col);
       // Text-Zellen (countPax bzw. count mit Anteil, Spalten 3/4) — kein Zahlenformat.
       const isText = (col === 3 && (isCountPax || vjIsShareText))
-        || (col === 4 && (isCountPax || istIsShareText));
+        || (col === 4 && isCountPax);
       if (!isText) cell.numFmt = numFmt;
       cell.alignment = { horizontal: 'right' };
     }
@@ -168,10 +172,11 @@ export function buildMonatsreportWorkbook(
       r.getCell(4).font = { color: { argb: 'FFC00000' }, bold: true };
     }
     // Δ%-Spalte (5): Kosten-Zeilen (deltaInverted) → über Budget (>0) = rot.
+    // Anteil-Zeilen: Ist-Anteil an «Gäste IN» — ohne Vorzeichen und ohne Ampel.
     const devCell = r.getCell(5);
-    devCell.numFmt = '+0.0" %";-0.0" %"';
+    devCell.numFmt = isShareRow ? '0.0" %"' : '+0.0" %";-0.0" %"';
     devCell.alignment = { horizontal: 'right' };
-    if (c.devGut !== null) {
+    if (!isShareRow && c.devGut !== null) {
       devCell.font = { color: { argb: c.devGut ? 'FF196B24' : 'FFC00000' } };
     }
     // Fett pro Zelle mergen — r.font = {bold} würde die gesetzten Zellfarben

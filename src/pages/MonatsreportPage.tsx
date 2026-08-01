@@ -353,10 +353,26 @@ function ReportTable({
                   ) : null}
                 </td>
                 <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>
-                  {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
-                  {row.deltaVsVj && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
+                  {row.sharePct ? (
+                    // Anteil-Zeilen (Reservierte Gäste / Gruppen ab N Pax): die
+                    // linke %-Spalte zeigt den IST-Anteil an «Gäste IN» — der
+                    // VJ-Anteil bleibt kompakt inline in der Vorjahresspalte.
+                    // Ohne Gäste-IN-Basis (null) bleibt das Feld leer.
+                    p.istShare !== null ? (
+                      <span data-testid={`share-${row.id}-${granularity}`}>
+                        {p.istShare.toFixed(1)} %
+                        <span className="block text-[9px] font-normal text-muted-foreground">Anteil Gäste IN</span>
+                      </span>
+                    ) : null
+                  ) : (
+                    <>
+                      {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
+                      {row.deltaVsVj && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
+                    </>
+                  )}
                 </td>
-                <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax, p.istShare)}</td>
+                {/* Ist-Zelle: nur Zahl bzw. «Anzahl (Σ Pers.)» — der Anteil steht links. */}
+                <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax, p.vjShare)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
               </tr>
