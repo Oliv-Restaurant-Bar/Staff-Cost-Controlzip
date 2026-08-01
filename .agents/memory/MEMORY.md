@@ -75,3 +75,4 @@
 - [Waren-Kontoklassen & Split](waren-kontoklassen.md) — WKQ nur Konten 4000–Grenze via nurWarenAnteil; ohne Konto = Warenkosten (Legacy); FIBU-Abgleich bewusst Gesamt-Total.
 - [Feedback-CSV-Import (Lunchgate)](feedback-csv-import.md) — Upsert-Key braucht Zeilen-Hash bei leerem Gast; Update = bestehende id wiederverwenden; ein Batch-Write + kv-keys-Undo-Snapshot.
 - [Supabase Edge Deploy via Management API](supabase-mgmt-api-deploy.md) — PAT frisch anfordern bei 401; Deploy per multipart /functions/deploy, verify_jwt in metadata (config.toml nur CLI); Ref aus .env.
+- [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.

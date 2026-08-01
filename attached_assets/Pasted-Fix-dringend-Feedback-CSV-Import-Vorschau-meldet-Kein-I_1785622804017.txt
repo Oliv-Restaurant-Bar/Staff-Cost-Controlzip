@@ -1,0 +1,18 @@
+Fix (dringend) — Feedback-CSV-Import „Vorschau" meldet „Kein Inhalt", obwohl Text eingefügt/Datei gewählt wurde (Oliv und Beaulieu)
+
+Symptom (auch in der echten App, nicht nur in der Vorschau): Auf der Rezensionen-Seite, Mandant Beaulieu, Rolle Administrator — man fügt CSV-Text ins „CSV einfügen"-Feld ein (oder wählt eine Datei), klickt „Vorschau", und es erscheint „Kein Inhalt: bitte zuerst den CSV-Text einfügen oder eine Datei auf das Feld ziehen". Es kommt nie eine Vorschau.
+
+Bitte den Fehler ZUERST selbst end-to-end reproduzieren (eingeloggt, echter App-Flow, nicht nur Unit-Tests) und dann beheben:
+1. Prüfen, ob der eingefügte Text tatsächlich in den State gelangt, den „Vorschau" liest. Häufige Ursache: das Textfeld ist „controlled", aber onChange/onPaste aktualisiert den State nicht (oder „Vorschau" liest eine andere Variable / einen veralteten Wert). Sicherstellen: Tippen UND Einfügen (paste) füllen denselben State, den die „Vorschau"-Funktion verwendet.
+2. Robustheit: Falls der State leer wirkt, als Fallback direkt den Wert aus dem Textarea-Ref (bzw. die gewählte Datei / den Drop-Inhalt) lesen, bevor „Kein Inhalt" gemeldet wird. Datei-Auswahl, Drag-&-Drop und Einfügen müssen ALLE denselben Verarbeitungspfad füllen.
+3. Die Guard-Bedingung „Kein Inhalt" so korrigieren, dass sie nur greift, wenn WIRKLICH kein Inhalt vorhanden ist (nicht bei vorhandenem, aber falsch ausgelesenem State).
+4. Mit diesem echten Testinhalt gegenprüfen (Semikolon-getrennt, mehrzeiliger Kommentar in Anführungszeichen):
+   "Publish Date";Pax;Guest;"Reservation Date";Average;Service;Kitchen;Atmosphere;Performance;Comment
+   31 Jul 2026 09:47;2;Testgast A;30 Jul 2026 18:30;1.0;1;1;1;1;
+   29 Jul 2026 14:36;2;Testgast B;29 Jul 2026 11:30;4.5;4;5;5;4;
+   29 Jul 2026 09:35;5;Testgast C;28 Jul 2026 18:30;3.8;2;5;4;4;"Kommentar mit
+   Zeilenumbruch"
+   Erwartung: „Vorschau" zeigt 3 neue Einträge mit Sterne-Verteilung (1×1★, 1×4★ [4.5→5? nein: 4.5 kaufmännisch →5], 1×4★ [3.8→4]) — bitte die tatsächliche Verteilung anzeigen; nach „Bestätigen" sind die 3 Bewertungen gespeichert.
+5. Denselben Fix auf den Reservations-Import (Foratable) anwenden, falls dort dieselbe State-/Guard-Logik verwendet wird.
+
+Abnahme: Nach dem Einfügen (oder Datei/Drop) zeigt „Vorschau" die erkannten Einträge; „Kein Inhalt" erscheint nur bei wirklich leerem Feld. Vom Agent bitte bestätigen lassen, dass ein echter Testimport bis „gespeichert" durchgelaufen ist (nicht nur Unit-Tests).

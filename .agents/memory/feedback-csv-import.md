@@ -11,3 +11,8 @@ description: Rezensions-Import in reviews_data — Upsert-Schlüssel, Idempotenz
 
 **Why:** Erneuter Import derselben Datei darf nichts duplizieren; anonymer Schlüssel ohne Hash war eine echte Kollisionsquelle.
 **How to apply:** Bei jedem weiteren Rezensions-/Feedback-Importpfad denselben Schlüssel- und Batch-Mechanismus nutzen, nie zeilenweise upserten.
+
+## Echtes Lunchgate-Datumsformat
+- Der reale Export liefert «31 Jul 2026 09:47» (Tag Monatsname EN/DE Jahr Uhrzeit), NICHT dd.MM.yyyy — parseFeedbackDate muss den Monatsnamen VOR dem Space-Split matchen, sonst werden alle Zeilen übersprungen («Keine gültigen Zeilen»).
+- Alle Datums-Pfade kalender-validieren (Date.UTC-Rückvergleich): 31 Feb/29 Feb im Nicht-Schaltjahr ⇒ null, nie stillschweigend verschobene Daten.
+- Eine «Kein Inhalt»-Meldung beim Nutzer kann in Wahrheit ein Parser-Fehler sein — Browser-Console-Logs ([Feedback-Import]-Diagnose) zuerst prüfen, bevor man die UI verdächtigt.

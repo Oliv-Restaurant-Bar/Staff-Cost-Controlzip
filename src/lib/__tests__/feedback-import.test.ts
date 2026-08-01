@@ -27,6 +27,21 @@ describe('parseFeedbackDate / roundToStars', () => {
     expect(parseFeedbackDate('2026-07-28 18:30')).toBe('2026-07-28');
     expect(parseFeedbackDate('quatsch')).toBeNull();
   });
+  it('echtes Lunchgate-Format «31 Jul 2026 09:47» (EN/DE Monatsnamen)', () => {
+    expect(parseFeedbackDate('31 Jul 2026 09:47')).toBe('2026-07-31');
+    expect(parseFeedbackDate('29 Jul 2026 14:36')).toBe('2026-07-29');
+    expect(parseFeedbackDate('1 Dec 2025')).toBe('2025-12-01');
+    expect(parseFeedbackDate('5 Mär 2026 12:00')).toBe('2026-03-05');
+    expect(parseFeedbackDate('5 Okt. 2026')).toBe('2026-10-05');
+    expect(parseFeedbackDate('31 Xyz 2026 09:47')).toBeNull();
+  });
+  it('kalender-validiert: 31 Feb / 29 Feb im Nicht-Schaltjahr ⇒ null; 29 Feb Schaltjahr OK', () => {
+    expect(parseFeedbackDate('31 Feb 2026')).toBeNull();
+    expect(parseFeedbackDate('29 Feb 2026')).toBeNull();   // 2026 kein Schaltjahr
+    expect(parseFeedbackDate('29 Feb 2028')).toBe('2028-02-29'); // Schaltjahr
+    expect(parseFeedbackDate('31.02.2026')).toBeNull();    // numerischer Pfad ebenfalls
+    expect(parseFeedbackDate('2026-02-31')).toBeNull();
+  });
   it('kaufmännisch: 4.5→5, 3.8→4, 2.3→2; 0/ungültig → null', () => {
     expect(roundToStars(4.5)).toBe(5);
     expect(roundToStars(3.8)).toBe(4);
@@ -141,5 +156,20 @@ describe('buildFeedbackPreview — Upsert (Ersetzen statt Duplikat)', () => {
     const p2 = buildFeedbackPreview(changed, existing, () => 'id-neu');
     expect(p2.toWrite[0].answered).toBe(true);
     expect(p2.toWrite[0].screenshotPath).toBe('t/x.jpg');
+  });
+});
+
+describe('parseFeedbackCsv — echter Lunchgate-Testinhalt (Datumsformat «31 Jul 2026 09:47»)', () => {
+  it('parst 3 Zeilen inkl. mehrzeiligem Kommentar; Sterne 1/5/4', () => {
+    const csv = '"Publish Date";Pax;Guest;"Reservation Date";Average;Service;Kitchen;Atmosphere;Performance;Comment\n'
+      + '31 Jul 2026 09:47;2;Testgast A;30 Jul 2026 18:30;1.0;1;1;1;1;\n'
+      + '29 Jul 2026 14:36;2;Testgast B;29 Jul 2026 11:30;4.5;4;5;5;4;\n'
+      + '29 Jul 2026 09:35;5;Testgast C;28 Jul 2026 18:30;3.8;2;5;4;4;"Kommentar mit\nZeilenumbruch"\n';
+    const p = parseFeedbackCsv(csv);
+    expect(p.failureReason).toBeNull();
+    expect(p.rows).toHaveLength(3);
+    expect(p.rows[0]).toMatchObject({ publishDate: '2026-07-31', visitDate: '2026-07-30', guest: 'Testgast A', stars: 1 });
+    expect(p.rows[1]).toMatchObject({ publishDate: '2026-07-29', stars: 5 }); // 4.5 kaufmännisch → 5
+    expect(p.rows[2]).toMatchObject({ publishDate: '2026-07-29', stars: 4, comment: 'Kommentar mit\nZeilenumbruch' });
   });
 });

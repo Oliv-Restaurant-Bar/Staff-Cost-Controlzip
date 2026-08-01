@@ -669,6 +669,12 @@ export interface MrRow {
    * Σ Personen der Gruppen ÷ Gäste IN. null = keine Gäste-IN-Basis (nie ÷ 0).
    */
   sharePct?: { month: number | null; week: number | null; vj: number | null; vjMonth: number | null };
+  /**
+   * Kleiner Hinweistext unter dem Ist-Anteil in der Δ%-Spalte. Default (UI):
+   * «Anteil Gäste IN». «Gäste Take Away» nutzt «Anteil aller Gäste», weil die
+   * Basis dort Gäste IN + Gäste TA ist (nicht nur Gäste IN).
+   */
+  shareHint?: string;
 }
 
 /** Kompakte WKQ-Angabe für die Inline-Anzeige bei «Warenkosten total». */
@@ -1369,10 +1375,21 @@ export async function ladeMonatsreport(
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte (1 Stück
     // = 1 TA-Gast). Woche = gewählte Woche, Monat = ganzer Monat (inkl. Zukunft).
     // VJ-Monat aus derselben Quelle (Jahr−1); VJ-Woche «—». Quelle fehlt → «—» (nie 0).
-    d('gaeste_take_away', 'Gäste Take Away', {
-      month: taMonth, week: taWeek,
-      vj: null, vjMonth: taVjMonth,
-    }, { fmt: 'count' }),
+    {
+      ...d('gaeste_take_away', 'Gäste Take Away', {
+        month: taMonth, week: taWeek,
+        vj: null, vjMonth: taVjMonth,
+      }, { fmt: 'count' }),
+      // Anteil an ALLEN Gästen: TA ÷ (Gäste IN + Gäste TA). Ohne Gäste-IN-Basis
+      // null (nie ÷ 0) — parallel zur umsatzbasierten Zeile «Take Away Anteil».
+      sharePct: {
+        month: anteilPct(taMonth, taMonth != null && mGaesteV != null ? mGaesteV + taMonth : null),
+        week: anteilPct(taWeek, taWeek != null && wGaesteV != null ? wGaesteV + taWeek : null),
+        vj: null,
+        vjMonth: anteilPct(taVjMonth, taVjMonth != null && vjGaesteV != null ? vjGaesteV + taVjMonth : null),
+      },
+      shareHint: 'Anteil aller Gäste',
+    },
     e(),
     // ── Block Durchschnitt ──
     // Durchschnittsverkauf = importierter Wert (Zeitraum-Spalte massgeblich),

@@ -157,6 +157,90 @@ export function detectTagesdatenTyp(rows: string[][]): TagesdatenTyp | null {
   return null;
 }
 
+/**
+ * Typ-Vorschlag aus dem DATEINAMEN («Anzahl Oliv 07.2026.xlsx» → gaeste).
+ * Nur Vorschlag — der Nutzer bestätigt den Typ immer aktiv in der UI.
+ */
+export function suggestTypFromFileName(fileName: string): TagesdatenTyp | null {
+  const n = fileName.toLowerCase();
+  if (/anzahl|g[äa]ste|gaeste|personen|pax/u.test(n)) return 'gaeste';
+  if (/marketing|maison/u.test(n)) return 'marketing';
+  if (/durchschnitt/u.test(n)) return 'durchschnitt';
+  if (/umsatz|revenue/u.test(n)) return 'umsatz';
+  return null;
+}
+
+/**
+ * Kombinierter Typ-VORSCHLAG (Dateiname vor Inhalt): Ein Dateiname mit
+ * «Anzahl»/«Gäste» schlägt IMMER gaeste vor — auch wenn die Inhalts-Erkennung
+ * die Werte für CHF hält (verhindert die stille Umsatz-Zuordnung einer
+ * Gästezählung ohne «P.»-Suffix). Kein automatisches Verbuchen: der Vorschlag
+ * füllt nur das Auswahlfeld vor, der Nutzer bestätigt aktiv.
+ */
+export function suggestTagesdatenTyp(fileName: string, rows: string[][]): TagesdatenTyp | null {
+  return suggestTypFromFileName(fileName) ?? detectTagesdatenTyp(rows);
+}
+
+/** Grobes Wertemuster der Datenzeilen: Personenzahlen vs. CHF-Beträge. */
+export type Wertemuster = 'anzahl' | 'chf' | null;
+
+/**
+ * Analysiert die Wertspalten (ab Spalte 3) aller Datenzeilen:
+ *   - «… P.»-Suffix irgendwo            → 'anzahl'
+ *   - «CHF»/«Fr.»-Präfix irgendwo       → 'chf'
+ *   - sonst: alle Werte ganzzahlig und ≤ 5000 → 'anzahl' (typische Tages-Kopfzahlen);
+ *            Dezimalwerte vorhanden          → 'chf';
+ *            unklar                          → null.
+ */
+export function analyzeWertemuster(rows: string[][]): Wertemuster {
+  let count = 0, integers = 0, decimals = 0, maxAbs = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!Array.isArray(row)) continue;
+    for (let c = 2; c < row.length; c++) {
+      const s = cellToString(row[c]).replace(/\u00A0/gu, ' ').trim();
+      if (!s) continue;
+      if (/\d\s*P\.?\s*$/iu.test(s)) return 'anzahl';
+      if (/^(?:chf|fr\.)/iu.test(s)) return 'chf';
+      const n = parseFloat(s.replace(/['’\s]/gu, '').replace(',', '.'));
+      if (!Number.isFinite(n)) continue;
+      count++;
+      maxAbs = Math.max(maxAbs, Math.abs(n));
+      if (Number.isInteger(n)) integers++; else decimals++;
+    }
+  }
+  if (count === 0) return null;
+  if (decimals > 0) return 'chf';
+  if (integers === count && maxAbs <= 5000) return 'anzahl';
+  return null;
+}
+
+/**
+ * Plausibilitäts-Riegel: Widerspricht das Wertemuster dem GEWÄHLTEN Typ,
+ * liefert dies einen Warntext (UI verlangt dann eine bewusste Bestätigung).
+ * Gäste-Werte dürfen NIE unbestätigt als Umsatz gespeichert werden.
+ */
+/**
+ * HARTER Riegel: Ein klares ANZAHL-Muster darf NIE als Umsatz gespeichert
+ * werden — auch nicht per Bestätigung (Spec: «dürfen NIE als Umsatz gespeichert
+ * werden»). Der Nutzer muss den Typ wechseln (z.B. auf Gäste/Anzahl Personen).
+ */
+export function istHartBlockiert(typ: TagesdatenTyp, muster: Wertemuster): boolean {
+  return typ === 'umsatz' && muster === 'anzahl';
+}
+
+export function wertemusterWarnung(typ: TagesdatenTyp, muster: Wertemuster): string | null {
+  if (muster == null) return null;
+  const chfTyp = typ === 'umsatz' || typ === 'marketing' || typ === 'durchschnitt';
+  if (chfTyp && muster === 'anzahl') {
+    return 'Die Werte sehen nach ANZAHL PERSONEN aus (ganze Zahlen im Personen-Bereich), gewählt ist aber ein CHF-Typ. Werte passen nicht zum gewählten Typ — bitte prüfen.';
+  }
+  if (typ === 'gaeste' && muster === 'chf') {
+    return 'Die Werte sehen nach CHF-BETRÄGEN aus (Dezimalstellen/CHF), gewählt ist aber «Gäste/Anzahl Personen». Werte passen nicht zum gewählten Typ — bitte prüfen.';
+  }
+  return null;
+}
+
 /** Liest die erste Tabelle einer Excel-Datei in ein rohes string[][] (Zeile 1 = Kopf). */
 export async function readFirstSheetRows(file: File): Promise<string[][]> {
   const buffer = await file.arrayBuffer();

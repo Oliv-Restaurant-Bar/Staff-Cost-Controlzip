@@ -9,7 +9,7 @@
  *
  * Fehlerdisziplin: leerer Text ⇒ sichtbare Meldung, nie stilles Nichtstun.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ClipboardPaste, Loader2 } from 'lucide-react';
@@ -29,8 +29,19 @@ export function CsvPasteBox({
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
+  // Fallback-Quelle: Sollte der kontrollierte State je leer wirken (z.B. durch
+  // Autofill/Extension-Einfügen ohne React-onChange), lesen wir den echten
+  // DOM-Wert aus dem Ref, BEVOR «Kein Inhalt» gemeldet wird.
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   async function submit(raw: string, sourceLabel: string) {
+    if (!raw.trim()) {
+      const domValue = textareaRef.current?.value ?? '';
+      if (domValue.trim()) {
+        setText(domValue); // State nachziehen
+        raw = domValue;
+      }
+    }
     if (!raw.trim()) {
       setHint('Kein Inhalt: bitte zuerst den CSV-Text einfügen oder eine Datei auf das Feld ziehen.');
       return;
@@ -47,6 +58,7 @@ export function CsvPasteBox({
   return (
     <div className="space-y-2">
       <Textarea
+        ref={textareaRef}
         value={text}
         onChange={e => { setText(e.target.value); if (hint) setHint(null); }}
         onDrop={e => {

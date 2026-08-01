@@ -56,6 +56,58 @@ export const loadGaesteDaily = (tk: KeyFn) => load(gaesteKey(tk));
 export const saveGaesteDaily = (tk: KeyFn, incoming: Record<string, number>) =>
   saveMerged(gaesteKey(tk), incoming);
 
+/**
+ * Dublettensicherer Gäste-Save mit MONATS-Scope: Innerhalb der importierten
+ * Monate («YYYY-MM») gilt die Datei 1:1 — bestehende Tage dieser Monate, die
+ * NICHT in der Datei sind (z.B. aus einem früheren Fehl-/Doppelimport), werden
+ * ENTFERNT; gleiche Tage werden ersetzt, nie addiert. Andere Monate bleiben
+ * unberührt (Merge wie gehabt).
+ */
+export async function saveGaesteDailyReplaceMonths(
+  tk: KeyFn,
+  incoming: Record<string, number>,
+  months: string[],
+): Promise<void> {
+  const key = gaesteKey(tk);
+  const remote = await kvGetStrict(key);
+  const base = (remote && typeof remote === 'object' && !Array.isArray(remote))
+    ? (remote as Record<string, number>)
+    : {};
+  const monthSet = new Set(months);
+  const kept = Object.fromEntries(
+    Object.entries(base).filter(([iso]) => !monthSet.has(iso.slice(0, 7))),
+  );
+  const merged = { ...kept, ...incoming };
+  localStorage.setItem(key, JSON.stringify(merged));
+  await kvSet(key, merged);
+}
+
+/** Diff-Vorschau «X neu · Y aktualisiert · Z unverändert (· W entfernt)». */
+export interface GaesteDiff { neu: number; aktualisiert: number; unveraendert: number; entfernt: string[] }
+
+/**
+ * Vergleicht den Import (1:1-Ersatz innerhalb seiner Monate) mit dem Bestand.
+ * `entfernt` = Bestands-Tage der betroffenen Monate, die die Datei nicht enthält.
+ */
+export function diffGaesteDaily(
+  prior: Record<string, number>,
+  incoming: Record<string, number>,
+  months: string[],
+): GaesteDiff {
+  let neu = 0, aktualisiert = 0, unveraendert = 0;
+  for (const [iso, val] of Object.entries(incoming)) {
+    const old = prior[iso];
+    if (old === undefined) neu++;
+    else if (old === val) unveraendert++;
+    else aktualisiert++;
+  }
+  const monthSet = new Set(months);
+  const entfernt = Object.keys(prior)
+    .filter(iso => monthSet.has(iso.slice(0, 7)) && incoming[iso] === undefined)
+    .sort();
+  return { neu, aktualisiert, unveraendert, entfernt };
+}
+
 // ── Durchschnittsverkauf ─────────────────────────────────────────────────────
 
 export const loadAvgCheckDaily   = (tk: KeyFn) => load(avgDailyKey(tk));

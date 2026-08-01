@@ -1,0 +1,16 @@
+Korrektur — „Gäste IN" = importierte Gästezählung (Anzahl Personen, dine-in), 1:1, dublettensicher (Oliv und Beaulieu)
+
+Dieser Befehl korrigiert die vorherige Gäste-IN-Logik. Klarstellung: Die Gastronovi-Datei „Anzahl … .xlsx" (Bezeichnung „Gesamt", Tageswerte = Personen, z. B. Juli-Summe 4'968) enthält die Gäste IM RESTAURANT (dine-in) = „Gäste IN".
+
+1. Quelle: „Gäste IN" (Tag/Woche/Monat) kommt AUSSCHLIESSLICH aus dem Gäste/Anzahl-Import, 1:1 übernommen.
+   - NICHT aus Umsatz ÷ Durchschnittsverkauf schätzen.
+   - NICHT als Umsatz verbuchen.
+   - NICHT mit „Gäste Take Away" verrechnen — die 4'968 sind direkt „Gäste IN"; Take Away bleibt eine separate Kennzahl aus ihrer eigenen Quelle.
+2. Import-Typ: Beim Tagesdaten-Import muss dieser Dateityp explizit als „Gäste/Anzahl" gewählt werden; er darf nie automatisch als Umsatz klassifiziert werden (Plausibilitäts-Riegel: ganzzahlige Personenwerte ≠ CHF-Umsatz).
+3. Dublettensicher (Upsert): Schlüssel = Mandant + Datum. Ein erneuter Import derselben Tage ERSETZT den Tageswert, addiert nie (behebt die aktuelle Verdopplung). Vorschau „X neu · Y aktualisiert · Z unverändert".
+4. Wide-Format lesen: Kopf „Bezeichnung", „Zeitraum", Tagesspalten „01.07." … „31.07."; Datenzeile „Gesamt"; Monat = Summe der Tageswerte.
+5. Bereinigung: den bisher falschen „Gäste IN"-Wert (aktuell 8'604 für Juli aus falscher Quelle/Doppelimport) verwerfen; nach Rückgängig des Fehl-Imports und Neuimport als „Gäste/Anzahl" muss „Gäste IN" für Juli 2026 = 4'968 zeigen.
+6. Abgeleitete Kennzahlen konsistent: „Umsatz pro Gast" = Netto-Umsatz ÷ Gäste IN; „Anteil Gäste IN" (Reservierte Gäste, Gruppen ab 20 Pax) rechnen mit dieser echten Zahl.
+7. Mandantengetrennt (Oliv/Beaulieu); Backup + „Letzter Import rückgängig machen" wie üblich.
+
+Abnahme: Nach Rückgängig des Fehl-Imports und Neuimport der Anzahl-Datei als „Gäste/Anzahl" zeigt „Gäste IN" Juli 2026 exakt 4'968 (dine-in), Take Away bleibt separat; ein zweifacher Import verdoppelt nichts; „Gäste IN" wird nie aus Umsatz geschätzt oder als Umsatz verbucht.

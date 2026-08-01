@@ -1,0 +1,15 @@
+Tagesdaten-Import (Gastronovi) — Datentyp explizit wählen statt Auto-Erkennung, Fehlklassifikation verhindern (Oliv und Beaulieu)
+
+Problem: Der Einheitsimport erkennt den Typ automatisch (Umsatz / Marketing / Gäste / Durchschnittsverkauf) und hat eine Gästezählung („Anzahl Oliv 07.2026.xlsx", Bezeichnung „Gesamt", Tageswerte ~100–260 Personen) fälschlich als Umsatz (CHF) verbucht. Das muss ausgeschlossen werden.
+
+1. Datentyp PFLICHT-WAHL durch den Nutzer: vor dem Import ein Auswahlfeld „Datentyp" mit klaren Optionen — Umsatz Ist, Umsatz Vorjahr, Gäste/Anzahl Personen, Marketing, Durchschnittsverkauf. Die Daten werden AUSSCHLIESSLICH in das gewählte Ziel geschrieben, nie in ein geratenes.
+2. Auto-Erkennung nur noch als VORSCHLAG: darf den Typ vorauswählen (z. B. anhand Dateiname „Anzahl…"/„Umsatz…" oder der Bezeichnung), aber der Nutzer bestätigt aktiv. Kein automatisches Verbuchen ohne bestätigten Typ.
+3. Vorschau zeigt klar das ZIEL vor dem Schreiben: „Wird gespeichert als: <Datentyp> · <Jahr> · <Zeitraum>" plus die Werte. So sieht man sofort, wohin die Daten gehen.
+4. Plausibilitäts-Riegel:
+   - Gäste-/Anzahl-Werte (ganze Zahlen, typischer Tagesbereich Personen, keine CHF-Dezimale) dürfen NIE als Umsatz gespeichert werden.
+   - Widerspricht das Wertemuster dem gewählten Typ (z. B. Typ „Umsatz", aber Werte sehen nach Anzahl aus – oder umgekehrt), erscheint eine deutliche Warnung „Werte passen nicht zum gewählten Typ – bitte prüfen", die eine bewusste Bestätigung verlangt.
+   - Dateiname/Bezeichnung mit „Anzahl"/„Gäste" → schlägt Typ „Gäste/Anzahl" vor und blockiert die stille Umsatz-Zuordnung.
+5. Wide-Format korrekt lesen: Kopf „Bezeichnung", „Zeitraum", dann Tagesspalten „01.07." … „31.07."; Datenzeile „Gesamt" mit Tageswerten. Zeitraum aus den Tagesspalten + gewähltem Jahr.
+6. Unverändert: Backup, Vorschau, „Letzter Import rückgängig machen", Mandantentrennung (Oliv/Beaulieu). 
+
+Abnahme: Die Datei „Anzahl Oliv 07.2026.xlsx" wird NICHT mehr als Umsatz erkannt; der Nutzer wählt „Gäste/Anzahl Personen", die Vorschau nennt das Ziel klar, und die 4'968 Personen landen bei den Gästezahlen — niemals im Umsatz. Bei falschem Typ kommt eine Warnung statt stiller Fehlbuchung.

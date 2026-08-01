@@ -6,7 +6,16 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, ArrowUp, ArrowDown, ListOrdered, RotateCcw, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, GripVertical, ListOrdered, RotateCcw, Check } from 'lucide-react';
+import {
+  DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
+  useSensor, useSensors, type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
+  sortableKeyboardCoordinates,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -154,6 +163,44 @@ type ReportGranularity = 'monat' | 'woche';
 const DRILLABLE_ROW_IDS = new Set(['reservierte_gaeste', 'gruppen_ab_20']);
 
 /**
+ * Sortierbare Datenzeile im «Zeilen anordnen»-Modus: Ziehgriff links, Zeile
+ * per Maus/Touch/Tastatur verschiebbar (dnd-kit: Esc bricht ab, Autoscroll am
+ * Rand ist eingebaut). Nur Hauptzeilen — Kinder folgen ihrer Eltern-Zeile.
+ */
+function SortableDataRow({ id, bold, children }: {
+  id: string; bold?: boolean; children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <tr
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(
+        'border-b last:border-0 bg-card hover:bg-muted/30',
+        bold && 'font-semibold',
+        // Gezogene Zeile: hervorgehoben + über den Nachbarn (Platzhalter-Effekt).
+        isDragging && 'relative z-10 opacity-80 shadow-lg ring-2 ring-primary/40 bg-muted/40',
+      )}
+      data-testid={`row-${id}`}
+    >
+      <td className="px-2 py-1.5">
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted cursor-grab active:cursor-grabbing touch-none"
+          aria-label="Zeile ziehen"
+          data-testid={`drag-handle-${id}`}
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+      </td>
+      {children}
+    </tr>
+  );
+}
+
+/**
  * DIESELBE Report-Tabelle für Monats- UND Wochensicht — nur andere Granularität.
  * Zieht je Granularität die passenden Felder aus derselben `MrRow`:
  *  - woche:  Budget = weekBudget, Vorjahr = vj (Woche), Ist = week
@@ -163,7 +210,7 @@ const DRILLABLE_ROW_IDS = new Set(['reservierte_gaeste', 'gruppen_ab_20']);
  */
 function ReportTable({
   rows, granularity, budgetSub, vjHeader = 'Vorjahr', vjSub, istHeader, istSub, testid,
-  editMode = false, onMove, onDrill,
+  editMode = false, onReorder, onDrill,
 }: {
   rows: MrRow[];
   granularity: ReportGranularity;
@@ -174,10 +221,10 @@ function ReportTable({
   istHeader: string;
   istSub?: string | null;
   testid: string;
-  /** Bearbeiten-Modus: Auf/Ab-Pfeile je Datenzeile. */
+  /** Bearbeiten-Modus («Zeilen anordnen»): Drag & Drop je Datenzeile. */
   editMode?: boolean;
-  /** Verschiebt die Zeile `id` um `dir` (-1 hoch, +1 runter). */
-  onMove?: (id: string, dir: -1 | 1) => void;
+  /** Persistiert die komplette neue Reihenfolge der Hauptzeilen-IDs. */
+  onReorder?: (ids: string[]) => void;
   /** Drilldown: Zeilen-IDs mit Detail-Liste (z.B. Reservationen) klickbar machen. */
   onDrill?: (id: string) => void;
 }) {
@@ -206,10 +253,26 @@ function ReportTable({
   // Im Bearbeiten-Modus nur Datenzeilen (Trenner ausblenden → eindeutige
   // Pfeile); Kinder sind dort ausgeblendet (sie folgen ihrer Eltern-Zeile).
   const shown = editMode ? mains.filter(r => r.type === 'data') : mains;
-  const dataCount = shown.filter(r => r.type === 'data').length;
-  let dataIdx = -1;
+  // Drag & Drop («Zeilen anordnen»): sortierbare Hauptzeilen-IDs in effektiver
+  // Reihenfolge. Pointer mit kleiner Distanz-Schwelle (Klicks bleiben Klicks),
+  // Touch mit Halte-Verzögerung (Scrollen bleibt möglich), Tastatur inklusive.
+  const sortIds = shown.filter(r => r.type === 'data' && r.id).map(r => r.id as string);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = sortIds.indexOf(String(active.id));
+    const to = sortIds.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    onReorder?.(arrayMove(sortIds, from, to));
+  };
   return (
     <div className="rounded-xl border bg-card shadow-sm overflow-x-auto">
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <table className="w-full text-sm" data-testid={testid}>
         <thead>
           <tr className="border-b bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
@@ -231,13 +294,11 @@ function ReportTable({
           </tr>
         </thead>
         <tbody>
+          <SortableContext items={sortIds} strategy={verticalListSortingStrategy}>
           {shown.map((row, i) => {
             if (row.type === 'empty') {
               return <tr key={`e${i}`}><td colSpan={editMode ? 6 : 5} className="h-3 bg-muted/20" /></tr>;
             }
-            dataIdx++;
-            const isFirst = dataIdx === 0;
-            const isLast = dataIdx === dataCount - 1;
             const p = pick(row);
             const children = row.id ? (childrenBy.get(row.id) ?? []) : [];
             const isOpen = !!row.id && expanded.has(row.id);
@@ -272,32 +333,10 @@ function ReportTable({
             // WKQ-Inline-Ampel (nur «Warenkosten total»): über Ziel = rot.
             const wkqGut = wkq?.pct != null && wkq.ziel != null ? wkq.pct <= wkq.ziel : null;
             const wkqDelta = wkq?.pct != null && wkq.ziel != null ? wkq.pct - wkq.ziel : null;
-            const parentTr = (
-              <tr key={row.id ?? `d${i}`} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')} data-testid={`row-${row.id ?? i}`}>
-                {editMode ? (
-                  <td className="px-2 py-1.5">
-                    <div className="flex items-center gap-0.5">
-                      <Button
-                        variant="ghost" size="icon" className="h-6 w-6"
-                        disabled={isFirst || !row.id}
-                        onClick={() => row.id && onMove?.(row.id, -1)}
-                        data-testid={`button-move-up-${row.id}`}
-                        aria-label="nach oben"
-                      >
-                        <ArrowUp className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost" size="icon" className="h-6 w-6"
-                        disabled={isLast || !row.id}
-                        onClick={() => row.id && onMove?.(row.id, 1)}
-                        data-testid={`button-move-down-${row.id}`}
-                        aria-label="nach unten"
-                      >
-                        <ArrowDown className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </td>
-                ) : null}
+            // Zellen der Hauptzeile (Label | Δ% | Ist | Vorjahr | Budget) — im
+            // «Zeilen anordnen»-Modus in einer sortierbaren Zeile mit Ziehgriff.
+            const rowCells = (
+              <>
                 <td className="px-3 py-1.5">
                   {children.length > 0 && !editMode ? (
                     <button
@@ -361,7 +400,7 @@ function ReportTable({
                     p.istShare !== null ? (
                       <span data-testid={`share-${row.id}-${granularity}`}>
                         {p.istShare.toFixed(1)} %
-                        <span className="block text-[9px] font-normal text-muted-foreground">Anteil Gäste IN</span>
+                        <span className="block text-[9px] font-normal text-muted-foreground">{row.shareHint ?? 'Anteil Gäste IN'}</span>
                       </span>
                     ) : null
                   ) : (
@@ -375,6 +414,17 @@ function ReportTable({
                 <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax, p.vjShare)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
+              </>
+            );
+            const parentTr = editMode && row.id ? (
+              // «Zeilen anordnen»: Ziehgriff links, Drag & Drop statt Pfeilen.
+              <SortableDataRow key={row.id} id={row.id} bold={row.bold}>
+                {rowCells}
+              </SortableDataRow>
+            ) : (
+              <tr key={row.id ?? `d${i}`} className={cn('border-b last:border-0 hover:bg-muted/30', row.bold && 'font-semibold')} data-testid={`row-${row.id ?? i}`}>
+                {editMode ? <td className="px-2 py-1.5" /> : null}
+                {rowCells}
               </tr>
             );
             if (children.length === 0 || editMode || !isOpen) return parentTr;
@@ -404,8 +454,10 @@ function ReportTable({
               </Fragment>
             );
           })}
+          </SortableContext>
         </tbody>
       </table>
+      </DndContext>
     </div>
   );
 }
@@ -521,14 +573,12 @@ export default function MonatsreportPage() {
     () => orderedRows.filter(r => r.type === 'data' && r.id && !r.childOf).map(r => r.id as string),
     [orderedRows],
   );
-  // Zeile verschieben: Reihenfolge neu berechnen und persistieren.
-  const moveRow = useCallback((id: string, dir: -1 | 1) => {
-    const idx = currentIds.indexOf(id);
-    if (idx < 0) return;
-    const to = idx + dir;
-    if (to < 0 || to >= currentIds.length) return;
-    const next = [...currentIds];
-    [next[idx], next[to]] = [next[to], next[idx]];
+  // Drag & Drop: komplette neue Hauptzeilen-Reihenfolge persistieren. Nur
+  // gültige, aktuell bekannte Haupt-IDs übernehmen (keine Kind-/Fremd-IDs).
+  const reorderRows = useCallback((ids: string[]) => {
+    const known = new Set(currentIds);
+    const next = ids.filter(id => known.has(id));
+    if (next.length !== currentIds.length) return; // defensiv: nichts verlieren
     saveOrder(next);
   }, [currentIds, saveOrder]);
 
@@ -712,7 +762,7 @@ export default function MonatsreportPage() {
                 istSub="bis heute"
                 testid="table-monatsuebersicht"
                 editMode={editRows}
-                onMove={moveRow}
+                onReorder={reorderRows}
                 onDrill={(id) => openDrill(id, 'monat')}
               />
             )}
@@ -799,7 +849,7 @@ export default function MonatsreportPage() {
                 istSub={wocheRange}
                 testid="table-wochenuebersicht"
                 editMode={editRows}
-                onMove={moveRow}
+                onReorder={reorderRows}
                 onDrill={(id) => openDrill(id, 'woche')}
               />
             )}

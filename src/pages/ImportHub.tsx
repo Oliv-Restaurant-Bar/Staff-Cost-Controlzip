@@ -92,9 +92,9 @@ import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
 import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
-import { saveGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
+import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, type GaesteDiff } from '@/lib/gaeste-store';
 import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
-import { detectTagesdatenTypFromFile, readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
+import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTagesdatenTyp, analyzeWertemuster, wertemusterWarnung, istHartBlockiert, type TagesdatenTyp } from '@/lib/tagesdaten-auto-import';
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
 import { parseGastronoviExcel, type GastronoviDayResult } from '@/lib/revenue-parser';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
@@ -2551,7 +2551,27 @@ interface TagesdatenPreview {
   tagessumme?: number;
   /** Ungültige Datumsspalten (z.B. «29.02.» im Nicht-Schaltjahr) — vom Import ausgeschlossen. */
   invalidDates?: string[];
+  /** Plausibilitäts-Warnung: Wertemuster widerspricht dem gewählten Typ. */
+  mismatch?: string;
+  /** Nur gaeste: Diff gegen den Bestand (dublettensicherer 1:1-Ersatz je Monat). */
+  gaesteDiff?: GaesteDiff;
+  /** Nur gaeste: betroffene Monate «YYYY-MM» (Datei ersetzt diese Monate 1:1). */
+  gaesteMonths?: string[];
 }
+
+/** UI-Auswahl «Datentyp» (Pflicht): Umsatz nach Ziel getrennt, Rest = TagesdatenTyp. */
+type TagesdatenTypWahl = 'umsatz-ist' | 'umsatz-vj' | 'gaeste' | 'marketing' | 'durchschnitt';
+
+const TYP_WAHL_LABEL: Record<TagesdatenTypWahl, string> = {
+  'umsatz-ist': 'Umsatz Ist',
+  'umsatz-vj': 'Umsatz Vorjahr',
+  gaeste: 'Gäste / Anzahl Personen',
+  marketing: 'Marketing',
+  durchschnitt: 'Durchschnittsverkauf',
+};
+
+const typWahlToTyp = (w: TagesdatenTypWahl): TagesdatenTyp =>
+  w === 'umsatz-ist' || w === 'umsatz-vj' ? 'umsatz' : w;
 
 function TagesdatenImportSection() {
   const { tenantId, tenantKey } = useTenant();
@@ -2561,6 +2581,10 @@ function TagesdatenImportSection() {
   const [preview, setPreview] = useState<TagesdatenPreview | null>(null);
   const [error, setError] = useState('');
   const [warn, setWarn] = useState('');
+  // Datentyp: PFLICHT-Wahl durch den Nutzer; Auto-Erkennung ist nur VORSCHLAG.
+  const [typWahl, setTypWahl] = useState<TagesdatenTypWahl | ''>('');
+  const [typVorschlag, setTypVorschlag] = useState<TagesdatenTypWahl | null>(null);
+  const [mismatchOk, setMismatchOk] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const yearOptions: number[] = [];
@@ -2578,7 +2602,26 @@ function TagesdatenImportSection() {
     setStatus('idle');
     setError('');
     setWarn('');
+    setTypWahl('');
+    setTypVorschlag(null);
+    setMismatchOk(false);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  /** Vorschlag (Dateiname vor Inhalt) berechnen und die Typ-Wahl VORbelegen. */
+  const suggestFor = async (f: File, selectedYear: number) => {
+    try {
+      const rows = await readFirstSheetRows(f);
+      const typ = suggestTagesdatenTyp(f.name, rows);
+      if (typ == null) { setTypVorschlag(null); return; }
+      const wahl: TagesdatenTypWahl = typ === 'umsatz'
+        ? (targetForYear(selectedYear, currentYear) === 'actual' ? 'umsatz-ist' : 'umsatz-vj')
+        : typ;
+      setTypVorschlag(wahl);
+      setTypWahl(wahl);
+    } catch {
+      setTypVorschlag(null);
+    }
   };
 
   const monthLabel = (ym: string) => {
@@ -2588,16 +2631,30 @@ function TagesdatenImportSection() {
 
   const handleParse = async () => {
     if (!file) return;
+    if (!typWahl) {
+      setError('Bitte zuerst den Datentyp wählen — ohne bestätigten Typ wird nichts importiert.');
+      setStatus('error');
+      return;
+    }
+    // Konsistenz Umsatz-Wahl ↔ Jahr: das Speicherziel folgt dem Jahr — eine
+    // widersprüchliche Wahl wird blockiert statt still umgebogen.
+    const target = targetForYear(year, currentYear);
+    if (typWahl === 'umsatz-ist' && target !== 'actual') {
+      setError(`«Umsatz Ist» gilt für das laufende Jahr (${currentYear}). Gewählt ist ${year} — bitte Jahr anpassen oder «Umsatz Vorjahr» wählen.`);
+      setStatus('error');
+      return;
+    }
+    if (typWahl === 'umsatz-vj' && target === 'actual') {
+      setError(`«Umsatz Vorjahr» braucht ein früheres Jahr. Gewählt ist ${year} (laufendes Jahr) — bitte Jahr anpassen oder «Umsatz Ist» wählen.`);
+      setStatus('error');
+      return;
+    }
     setStatus('parsing');
     setError('');
     setWarn('');
+    setMismatchOk(false);
     try {
-      const typ = await detectTagesdatenTypFromFile(file);
-      if (typ == null) {
-        setError('Dateityp nicht erkannt — nichts importiert. Bitte prüfe das Format (Zeile «Gesamt»/«Food»/«marketing»/«Durchschnitt» + Datumsspalten «TT.MM.»).');
-        setStatus('error');
-        return;
-      }
+      const typ = typWahlToTyp(typWahl);
 
       // Datumsspalten gegen echte Kalenderdaten validieren (29.02. nur in
       // Schaltjahren, 31.04. nie, …). Ungültige Spalten werden gelistet und vom
@@ -2706,11 +2763,33 @@ function TagesdatenImportSection() {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([month, value]) => ({ month, value }));
 
+      // Plausibilitäts-Riegel: Wertemuster gegen den GEWÄHLTEN Typ prüfen.
+      // ANZAHL-Muster als Umsatz = HARTER Block (keine Bestätigung möglich);
+      // andere Widersprüche verlangen eine bewusste Bestätigung in der Vorschau.
+      const musterJetzt = analyzeWertemuster(rawRows);
+      if (istHartBlockiert(typ, musterJetzt)) {
+        setError('Die Werte sehen nach ANZAHL PERSONEN aus (ganze Zahlen im Personen-Bereich) — sie dürfen NICHT als Umsatz gespeichert werden. Bitte Datentyp «Gäste / Anzahl Personen» wählen (oder die Datei prüfen).');
+        setStatus('error');
+        return;
+      }
+      const mismatch = wertemusterWarnung(typ, musterJetzt) ?? undefined;
+
+      // Gäste: Diff gegen den Bestand (dublettensicher — Ersatz je Mandant+Datum,
+      // Datei gilt 1:1 für ihre Monate; Alt-Tage dieser Monate werden entfernt).
+      let gaesteDiff: GaesteDiff | undefined;
+      let gaesteMonths: string[] | undefined;
+      if (typ === 'gaeste') {
+        gaesteMonths = [...new Set(dates.map(d => d.slice(0, 7)))].sort();
+        const prior = await loadGaesteDaily(tenantKey);
+        gaesteDiff = diffGaesteDaily(prior, daily, gaesteMonths);
+      }
+
       setPreview({
-        typ, year, daily, umsatzRows,
+        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths,
         dates, from: dates[0] ?? null, to: dates.at(-1) ?? null,
         monthTotals, zeitraum, tagessumme,
         invalidDates: invalidDates.length > 0 ? invalidDates : undefined,
+        mismatch,
       });
       setStatus('preview');
     } catch (e) {
@@ -2721,6 +2800,10 @@ function TagesdatenImportSection() {
 
   const handleConfirm = async () => {
     if (!preview) return;
+    if (preview.mismatch && !mismatchOk) {
+      toast.error('Werte passen nicht zum gewählten Typ — bitte zuerst die Warnung bestätigen.');
+      return;
+    }
     setStatus('saving');
     try {
       const { typ, daily, umsatzRows } = preview;
@@ -2733,10 +2816,19 @@ function TagesdatenImportSection() {
       let undoKvItems: KvKeyItem[] | undefined;
       try {
         if (typ === 'gaeste') {
+          // Snapshot aus dem FRISCHEN Bestand (nicht aus der Vorschau-Diff):
+          // ALLE Bestands-Tage der importierten Monate + alle Datei-Tage. So
+          // stellt Undo auch Tage wieder her, die erst NACH der Vorschau von
+          // anderer Seite dazukamen und vom 1:1-Monatsersatz entfernt würden.
           const prior = await loadGaesteDaily(tenantKey);
+          const months = new Set(preview.gaesteMonths ?? preview.dates.map(d => d.slice(0, 7)));
+          const affected = new Set<string>([
+            ...preview.dates,
+            ...Object.keys(prior).filter(d => months.has(d.slice(0, 7))),
+          ]);
           undoBlobs = [{
             key: tenantKey('gaeste-daily'),
-            entries: Object.fromEntries(preview.dates.map(d => [d, prior[d] ?? null])),
+            entries: Object.fromEntries([...affected].sort().map(d => [d, prior[d] ?? null])),
           }];
         } else if (typ === 'durchschnitt') {
           const priorDaily = await loadAvgCheckDaily(tenantKey);
@@ -2799,7 +2891,13 @@ function TagesdatenImportSection() {
       });
 
       if (typ === 'gaeste') {
-        await saveGaesteDaily(tenantKey, daily);
+        // 1:1-Ersatz je Monat (dublettensicher): gleiche Tage ersetzen, Alt-Tage
+        // der importierten Monate entfernen — nie addieren.
+        await saveGaesteDailyReplaceMonths(
+          tenantKey,
+          daily,
+          preview.gaesteMonths ?? [...new Set(preview.dates.map(d => d.slice(0, 7)))].sort(),
+        );
         void recordRun();
         toast.success(`Gäste gespeichert: ${preview.dates.length} Tage, ${fmtValueByTyp('gaeste', preview.tagessumme ?? 0)} gesamt`);
       } else if (typ === 'durchschnitt') {
@@ -2866,22 +2964,42 @@ function TagesdatenImportSection() {
       />
       <div className="rounded-lg border border-sky-200 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/10 p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
-          Lade einen Gastronovi-Tagesdaten-Export (Excel) hoch. Der Dateityp wird
-          <strong> automatisch erkannt</strong> (Umsatz, Marketing, Gäste oder Durchschnittsverkauf).
-          Massgeblich für die Datumszuordnung ist ausschliesslich das <strong>gewählte Jahr</strong>.
+          Lade einen Gastronovi-Tagesdaten-Export (Excel) hoch und wähle den
+          <strong> Datentyp</strong> (Pflicht). Die Auto-Erkennung macht nur einen
+          <strong> Vorschlag</strong> — gespeichert wird ausschliesslich in das von dir
+          gewählte Ziel. Massgeblich für die Datumszuordnung ist das <strong>gewählte Jahr</strong>.
           Vor dem Speichern siehst du eine <strong>Vorschau</strong>.
         </p>
 
         <div className="flex flex-wrap gap-2 items-end">
           <div className="space-y-1">
             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Jahr *</p>
-            <Select value={String(year)} onValueChange={v => { setYear(Number(v)); reset(); }}>
+            <Select value={String(year)} onValueChange={v => { setYear(Number(v)); setPreview(null); setStatus('idle'); setError(''); setWarn(''); setMismatchOk(false); }}>
               <SelectTrigger className="h-8 w-24 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {yearOptions.map(y => (
                   <SelectItem key={y} value={String(y)} className="text-xs">{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Datentyp *</p>
+            <Select
+              value={typWahl}
+              onValueChange={v => { setTypWahl(v as TagesdatenTypWahl); setPreview(null); setStatus('idle'); setError(''); setWarn(''); setMismatchOk(false); }}
+            >
+              <SelectTrigger className="h-8 w-48 text-xs" data-testid="tagesdaten-typ-select">
+                <SelectValue placeholder="Bitte wählen…" />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(TYP_WAHL_LABEL) as TagesdatenTypWahl[]).map(w => (
+                  <SelectItem key={w} value={w} className="text-xs">
+                    {TYP_WAHL_LABEL[w]}{typVorschlag === w ? ' (Vorschlag)' : ''}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -2895,7 +3013,11 @@ function TagesdatenImportSection() {
               accept=".xlsx,.xls"
               onChange={e => {
                 const f = e.target.files?.[0];
-                if (f) { setFile(f); setStatus('idle'); setPreview(null); setError(''); setWarn(''); }
+                if (f) {
+                  setFile(f); setStatus('idle'); setPreview(null); setError(''); setWarn('');
+                  setTypWahl(''); setTypVorschlag(null); setMismatchOk(false);
+                  void suggestFor(f, year);
+                }
               }}
               className="block w-full text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-sky-100 file:text-sky-700 dark:file:bg-sky-900/40 dark:file:text-sky-300 cursor-pointer"
             />
@@ -2938,6 +3060,15 @@ function TagesdatenImportSection() {
                   </Badge>
                 )}
               </div>
+              {/* Klar benanntes ZIEL vor dem Schreiben */}
+              <div
+                className="rounded border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950/30 px-2.5 py-1.5 text-xs font-medium text-sky-800 dark:text-sky-200"
+                data-testid="tagesdaten-ziel-banner"
+              >
+                Wird gespeichert als: {preview.typ === 'umsatz'
+                  ? (targetForYear(preview.year, currentYear) === 'actual' ? 'Umsatz Ist' : 'Umsatz Vorjahr')
+                  : TYP_LABEL[preview.typ]} · {preview.year} · {preview.from ? format(parseISO(preview.from), 'dd.MM.') : '–'} – {preview.to ? format(parseISO(preview.to), 'dd.MM.yyyy') : '–'}
+              </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                 <span className="text-muted-foreground">Jahr:</span>
                 <span className="font-medium">{preview.year}</span>
@@ -2953,6 +3084,14 @@ function TagesdatenImportSection() {
                   <>
                     <span className="text-muted-foreground">Tagessumme (massgeblich):</span>
                     <span className="font-medium">{fmtValueByTyp('gaeste', preview.tagessumme ?? 0)}</span>
+                  </>
+                )}
+                {preview.gaesteDiff && (
+                  <>
+                    <span className="text-muted-foreground">Gegen Bestand:</span>
+                    <span className="font-medium" data-testid="tagesdaten-gaeste-diff">
+                      {preview.gaesteDiff.neu} neu · {preview.gaesteDiff.aktualisiert} aktualisiert · {preview.gaesteDiff.unveraendert} unverändert
+                    </span>
                   </>
                 )}
               </div>
@@ -2978,6 +3117,39 @@ function TagesdatenImportSection() {
               {warn && (
                 <p className="text-[11px] text-amber-700 dark:text-amber-400">{warn}</p>
               )}
+
+              {/* 1:1-Monatsersatz: Alt-Tage der importierten Monate, die die Datei nicht enthält */}
+              {preview.gaesteDiff && preview.gaesteDiff.entfernt.length > 0 && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="tagesdaten-gaeste-entfernt">
+                  {preview.gaesteDiff.entfernt.length} bestehende{preview.gaesteDiff.entfernt.length === 1 ? 'r' : ''} Tag{preview.gaesteDiff.entfernt.length === 1 ? '' : 'e'} der importierten Monate
+                  {' '}({preview.gaesteDiff.entfernt.map(d => format(parseISO(d), 'dd.MM.')).join(', ')}) {preview.gaesteDiff.entfernt.length === 1 ? 'ist' : 'sind'} nicht in der Datei
+                  und {preview.gaesteDiff.entfernt.length === 1 ? 'wird' : 'werden'} entfernt (Datei gilt 1:1 — verhindert Doppelzählung; per «Rückgängig» wiederherstellbar).
+                </p>
+              )}
+
+              {/* Plausibilitäts-Riegel: Widerspruch Wertemuster ↔ gewählter Typ */}
+              {preview.mismatch && (
+                <div
+                  className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-2.5 py-2 space-y-1.5"
+                  data-testid="tagesdaten-mismatch-warnung"
+                >
+                  <p className="text-[11px] font-medium text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    {preview.mismatch}
+                  </p>
+                  <label className="flex items-start gap-2 text-[11px] text-amber-800 dark:text-amber-300 cursor-pointer">
+                    <Checkbox
+                      checked={mismatchOk}
+                      onCheckedChange={v => setMismatchOk(v === true)}
+                      className="mt-0.5"
+                      data-testid="tagesdaten-mismatch-bestaetigung"
+                    />
+                    <span>Ich habe die Werte geprüft und will sie bewusst als «{preview.typ === 'umsatz'
+                      ? (targetForYear(preview.year, currentYear) === 'actual' ? 'Umsatz Ist' : 'Umsatz Vorjahr')
+                      : TYP_LABEL[preview.typ]}» speichern.</span>
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2">
@@ -2985,7 +3157,7 @@ function TagesdatenImportSection() {
                 size="sm"
                 className="h-8 text-xs flex-1 gap-1.5 bg-sky-600 hover:bg-sky-700 text-white"
                 onClick={handleConfirm}
-                disabled={status === 'saving'}
+                disabled={status === 'saving' || (!!preview.mismatch && !mismatchOk)}
               >
                 {status === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                 {status === 'saving' ? 'Wird gespeichert…' : 'Importieren'}

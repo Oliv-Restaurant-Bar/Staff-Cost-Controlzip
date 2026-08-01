@@ -161,3 +161,65 @@ describe('isoFromDayMonth — Jahr-Zuordnung (Dropdown ist massgeblich)', () => 
     expect(formatInvalidDayMonth(' 29.02. ')).toBe('29.02.');
   });
 });
+
+// ── Pflicht-Typwahl: Vorschlag + Plausibilitäts-Riegel ──────────────────────
+import { suggestTypFromFileName, suggestTagesdatenTyp, analyzeWertemuster, wertemusterWarnung, istHartBlockiert } from '../tagesdaten-auto-import';
+
+describe('suggestTypFromFileName / suggestTagesdatenTyp', () => {
+  it('Dateiname «Anzahl …» schlägt gaeste vor — auch wenn der Inhalt wie Umsatz aussieht', () => {
+    // Gästezählung OHNE «P.»-Suffix (der Fehlklassifikations-Fall aus der Praxis)
+    const rows = [
+      ['Bezeichnung', 'Zeitraum', '01.07.', '02.07.', '03.07.'],
+      ['Gesamt', '4968', '166', '204', '259'],
+    ];
+    expect(detectTagesdatenTyp(rows)).toBe('umsatz'); // Inhalts-Erkennung irrt hier
+    expect(suggestTypFromFileName('Anzahl Oliv 07.2026.xlsx')).toBe('gaeste');
+    expect(suggestTagesdatenTyp('Anzahl Oliv 07.2026.xlsx', rows)).toBe('gaeste'); // Dateiname gewinnt
+  });
+  it('weitere Dateinamen-Muster', () => {
+    expect(suggestTypFromFileName('Umsatz Beaulieu 06.2026.xlsx')).toBe('umsatz');
+    expect(suggestTypFromFileName('Durchschnitt 07.2026.xlsx')).toBe('durchschnitt');
+    expect(suggestTypFromFileName('Maison Marketing.xlsx')).toBe('marketing');
+    expect(suggestTypFromFileName('irgendwas.xlsx')).toBeNull();
+  });
+});
+
+describe('analyzeWertemuster / wertemusterWarnung', () => {
+  const header = ['Bezeichnung', 'Zeitraum', '01.07.', '02.07.', '03.07.'];
+  it('ganze Zahlen im Personenbereich → anzahl; CHF-Typ dann mit Warnung', () => {
+    const rows = [header, ['Gesamt', '4968', '166', '204', '259']];
+    expect(analyzeWertemuster(rows)).toBe('anzahl');
+    expect(wertemusterWarnung('umsatz', 'anzahl')).toMatch(/passen nicht/);
+    expect(wertemusterWarnung('gaeste', 'anzahl')).toBeNull();
+  });
+  it('Dezimal-/CHF-Werte → chf; Typ gaeste dann mit Warnung', () => {
+    const rows = [header, ['Gesamt', "12'345.50", '1600.50', '1700.00', '1750.25']];
+    expect(analyzeWertemuster(rows)).toBe('chf');
+    expect(wertemusterWarnung('gaeste', 'chf')).toMatch(/passen nicht/);
+    expect(wertemusterWarnung('umsatz', 'chf')).toBeNull();
+  });
+  it('«P.»-Suffix → anzahl, CHF-Präfix → chf, leer → null (keine Warnung)', () => {
+    expect(analyzeWertemuster([header, ['Gesamt', '', '300 P.', '', '']])).toBe('anzahl');
+    expect(analyzeWertemuster([header, ['Gesamt', '', 'CHF 1600.00', '', '']])).toBe('chf');
+    expect(analyzeWertemuster([header])).toBeNull();
+    expect(wertemusterWarnung('umsatz', null)).toBeNull();
+  });
+});
+
+describe('istHartBlockiert — Anzahl-Muster NIE als Umsatz', () => {
+  it('umsatz + anzahl → harter Block; andere Kombinationen nur Warnung/kein Block', () => {
+    expect(istHartBlockiert('umsatz', 'anzahl')).toBe(true);
+    expect(istHartBlockiert('umsatz', 'chf')).toBe(false);
+    expect(istHartBlockiert('umsatz', null)).toBe(false);
+    expect(istHartBlockiert('gaeste', 'chf')).toBe(false);      // bestätigbar
+    expect(istHartBlockiert('marketing', 'anzahl')).toBe(false); // bestätigbar
+    expect(istHartBlockiert('durchschnitt', 'anzahl')).toBe(false);
+  });
+  it('der Praxisfall «Anzahl Oliv 07.2026.xlsx» (166/204/259) wird als Umsatz hart blockiert', () => {
+    const rows = [
+      ['Bezeichnung', 'Zeitraum', '01.07.', '02.07.', '03.07.'],
+      ['Gesamt', '4968', '166', '204', '259'],
+    ];
+    expect(istHartBlockiert('umsatz', analyzeWertemuster(rows))).toBe(true);
+  });
+});

@@ -82,18 +82,42 @@ export function parseCsvRecords(text: string, delimiter = ';'): string[][] {
 
 // ── Feld-Parser ───────────────────────────────────────────────────────────────
 
-/** Datum tolerant: dd.MM.yyyy / yyyy-MM-dd / dd.MM.yy, optional mit Uhrzeit. */
+/** Monatsnamen (EN + DE, 3+ Buchstaben) → 01–12 — Lunchgate exportiert «31 Jul 2026 09:47». */
+const MONTH_NAMES: Record<string, string> = {
+  jan: '01', feb: '02', mar: '03', mär: '03', mrz: '03', apr: '04',
+  may: '05', mai: '05', jun: '06', jul: '07', aug: '08',
+  sep: '09', oct: '10', okt: '10', nov: '11', dec: '12', dez: '12',
+};
+
+/** Kalender-gültiges yyyy-MM-dd bauen — «31 Feb» / «29 Feb» im Nicht-Schaltjahr ⇒ null. */
+function toIsoDate(y: string, mm: string, dd: string): string | null {
+  const yr = Number(y), mo = Number(mm), day = Number(dd);
+  const d = new Date(Date.UTC(yr, mo - 1, day));
+  if (d.getUTCFullYear() !== yr || d.getUTCMonth() !== mo - 1 || d.getUTCDate() !== day) return null;
+  return `${y}-${mm}-${dd}`;
+}
+
+/**
+ * Datum tolerant: dd.MM.yyyy / yyyy-MM-dd / dd.MM.yy sowie das ECHTE
+ * Lunchgate-Format «31 Jul 2026» (Monatsname EN/DE) — je optional mit Uhrzeit.
+ * Alle Pfade sind kalender-validiert (nie stillschweigend verschobene Daten).
+ */
 export function parseFeedbackDate(raw: string): string | null {
-  const s = raw.trim().split(/[ T]/)[0];
-  if (!s) return null;
+  const full = raw.trim();
+  if (!full) return null;
+  // «31 Jul 2026 09:47» — Monatsname VOR dem Split (das Format enthält Leerzeichen).
+  const mn = /^(\d{1,2})[ .]([A-Za-zÄÖÜäöü]{3,})\.? (\d{4})/.exec(full);
+  if (mn) {
+    const mm = MONTH_NAMES[mn[2].slice(0, 3).toLowerCase()];
+    return mm ? toIsoDate(mn[3], mm, mn[1].padStart(2, '0')) : null;
+  }
+  const s = full.split(/[ T]/)[0];
   let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  if (m) return toIsoDate(m[1], m[2], m[3]);
   m = /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/.exec(s);
   if (m) {
     const y = m[3].length === 2 ? `20${m[3]}` : m[3];
-    const mm = m[2].padStart(2, '0'), dd = m[1].padStart(2, '0');
-    if (Number(mm) < 1 || Number(mm) > 12 || Number(dd) < 1 || Number(dd) > 31) return null;
-    return `${y}-${mm}-${dd}`;
+    return toIsoDate(y, m[2].padStart(2, '0'), m[1].padStart(2, '0'));
   }
   return null;
 }
