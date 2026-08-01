@@ -113,3 +113,24 @@ describe('Wochentracking nach Sternen', () => {
     expect(sum.total).toBe(2);
   });
 });
+
+describe('countGoogleReviewsByStar', () => {
+  const mk = (date: string, stars: number, platform = 'Google', deleted = false) => ({
+    id: `${date}-${stars}-${platform}`, date, platform, stars, text: '',
+    answered: false, updatedAt: '2026-08-01T00:00:00Z', deleted,
+  });
+  it('zählt nur Google, richtige Sternzahl, im Datumsbereich, nicht gelöscht', async () => {
+    const { countGoogleReviewsByStar } = await import('@/lib/reviews-store');
+    const list = [
+      mk('2026-07-01', 5), mk('2026-07-31', 5), mk('2026-08-01', 5), // 3. ausserhalb
+      mk('2026-07-10', 5, 'google'),                                  // case-insensitiv
+      mk('2026-07-11', 5, 'TripAdvisor'),                             // andere Plattform
+      mk('2026-07-12', 3), mk('2026-07-13', 1),
+      mk('2026-07-14', 5, 'Google', true),                            // gelöscht
+    ];
+    expect(countGoogleReviewsByStar(list, '2026-07-01', '2026-07-31', 5)).toBe(3);
+    expect(countGoogleReviewsByStar(list, '2026-07-01', '2026-07-31', 3)).toBe(1);
+    expect(countGoogleReviewsByStar(list, '2026-07-01', '2026-07-31', 1)).toBe(1);
+    expect(countGoogleReviewsByStar([], '2026-07-01', '2026-07-31', 5)).toBe(0);
+  });
+});

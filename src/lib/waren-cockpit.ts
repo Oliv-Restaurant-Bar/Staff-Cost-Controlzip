@@ -29,6 +29,41 @@ export function monthDateRange(year: number, month: number): { from: string; to:
   return { from: `${year}-${mm}-01`, to: `${year}-${mm}-${String(lastDay).padStart(2, '0')}` };
 }
 
+/** Rechnungen im ISO-Datumsbereich [fromIso..toIso] (beide inklusiv). */
+export function filterInvoicesByRange(
+  invoices: InvoiceEntry[], fromIso: string, toIso: string,
+): InvoiceEntry[] {
+  return invoices.filter(e => e.date >= fromIso && e.date <= toIso);
+}
+
+/**
+ * Stabiler Zeilen-Slug aus dem Lieferantennamen (Basis der Cockpit-Zeilen-IDs,
+ * z.B. «Growa CC» → 'growa_cc'). Umlaute transliteriert, Rest → '_'.
+ */
+export function supplierSlug(name: string): string {
+  const s = name.trim().toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return s || 'unbenannt';
+}
+
+/**
+ * Kollisionssichere Zeilen-IDs für eine Lieferanten-Liste (Reihenfolge der
+ * Eingabe = Reihenfolge der Ausgabe). supplierSlug ist verlustbehaftet
+ * («Migros» und «MIGROS!» → 'migros'); bei Kollision bekommen weitere
+ * Lieferanten deterministisch ein Suffix ('migros', 'migros_2', 'migros_3' …),
+ * damit keine zwei Zeilen dieselbe ID teilen (applyRowOrder/React-Keys).
+ */
+export function supplierRowIds(names: string[]): string[] {
+  const used = new Map<string, number>();
+  return names.map(name => {
+    const base = supplierSlug(name);
+    const n = (used.get(base) ?? 0) + 1;
+    used.set(base, n);
+    return n === 1 ? base : `${base}_${n}`;
+  });
+}
+
 /** Netto-Total aller Rechnungen (CHF). */
 export function sumInvoicesNet(invoices: InvoiceEntry[]): number {
   return invoices.reduce((s, e) => s + (Number.isFinite(e.amountNet) ? e.amountNet : 0), 0);

@@ -1,0 +1,34 @@
+Warenrechnungen — Erfassung vereinfachen & beschleunigen, Analyse & Export erneuern (Oliv und Beaulieu)
+
+Ziel: Schnelle Erfassung mit den drei wichtigen Buchungsdimensionen Lieferant, Datum, Konto — plus eine Analyse, die ungewöhnlich hohe Kosten/Bestellungen sofort sichtbar macht (WKQ ist aktuell zu hoch).
+
+A. ERFASSUNG — schnell & schlank
+1. Kompaktes Schnell-Formular mit nur den nötigen Feldern in einer Zeile: Datum (Vorgabe heute), Lieferant (Suchbar-Dropdown, zuletzt genutzte zuoberst), Konto (Warenkonto, Pflichtfeld — Dropdown), Betrag CHF, MWST (Vorgabe inkl. 2.6 %). Speichern.
+2. Tempo-Funktionen: Nach dem Speichern bleiben Lieferant, Konto, MWST und Datum erhalten (Stapelerfassung mehrerer Rechnungen desselben Lieferanten); Fokus springt zurück auf Betrag; Enter = speichern. So lassen sich viele Rechnungen in Sekunden erfassen.
+3. Lieferanten-Vorgaben: Jeder Lieferant hat ein Standard-Konto und eine Standard-Kategorie (Food/Beverage/Sonstiges). Wählt man den Lieferanten, füllen sich Konto und Kategorie automatisch — nur bei Bedarf ändern.
+4. Sekundärfelder (Rechnungs-/Lieferscheinnummer, Bemerkung, Beleg/Screenshot, 2-Konten-Split) in einen ausklappbaren Bereich „Details" verschieben, damit die Standard-Erfassung minimal bleibt. Split (2 Konten) bleibt möglich, ist aber nicht im Weg.
+5. Direkt darunter die Liste der erfassten Rechnungen des Monats, inline editier-/löschbar.
+
+B. STAMMDATEN
+6. Lieferanten verwalten (Name, Standard-Konto, Standard-Kategorie, aktiv/inaktiv). Warenkonten verwalten (frei definierbare Liste, z. B. Fleisch, Fisch, Gemüse, Molkerei, Getränke, Wein, Non-Food). Beide pro Mandant.
+
+C. ANALYSE — Anomalien nachverfolgen (Kern)
+7. Umschaltbare Ansichten: nach Lieferant, nach Konto, nach Woche, nach Monat.
+8. Anomalie-Erkennung, deutlich hervorgehoben:
+   - Grösste Einzelrechnungen des Zeitraums (Top-Liste) — um ausreissende Bestellungen sofort zu finden.
+   - Lieferant/Konto/Woche, deren Kosten deutlich über dem eigenen Durchschnitt liegen (z. B. > +30 % vs. Schnitt der Vorwochen) → rot markiert.
+   - Wochen, deren WKQ über der Ziel-Quote liegt → rot; unter Ziel → grün.
+9. Drill-down: Klick auf einen Lieferanten / ein Konto / eine Woche zeigt die zugrunde liegenden Rechnungen (Datum, Betrag, Beleg).
+10. Kennzahlen oben: Warenkosten Total, WKQ (vs. Ziel, Ampel), Anteil Food/Beverage, Top-3-Kostentreiber, Δ zur Vorwoche/zum Vormonat.
+
+D. EXPORT — verbessert
+11. Excel-Export aller Buchungen: Datum, Lieferant, Konto, Kategorie, Betrag netto, MWST, Betrag brutto, Rechnungsnr., Bemerkung. Plus Summenblöcke: Total pro Lieferant, pro Konto und pro Woche.
+12. Formatierung: Beträge rechtsbündig, Schweizer Apostroph-Tausender, 2 Dezimalstellen (Rappen), WKQ als „xx.x %". Dateiname „Warenkosten_<Mandant>_<yyyy-MM>.xlsx".
+
+E. COCKPIT-KONSISTENZ
+13. Dieselben Buchungen speisen die Cockpit-Zeilen (Warenkosten pro Lieferant, Warenkosten total, WKQ). Eine einzige Datenbasis — keine Doppelerfassung.
+
+F. MANDANTEN & SICHERHEIT
+14. Strikt pro Restaurant (Oliv/Beaulieu) getrennt; Belege sicher/mandantengetrennt; Erfassen nur berechtigte Rollen, Gäste rein lesend. Bestehende Berechnungen (WKQ, Buchhaltungs-Abgleich) bleiben; nur Erfassung/Analyse/Export werden erneuert.
+
+Abnahme: Eine Rechnung ist mit Datum+Lieferant+Konto+Betrag in wenigen Sekunden erfasst (Lieferant füllt Konto/Kategorie vor, Enter speichert, Werte bleiben für die nächste). Die Analyse zeigt Top-Einzelrechnungen und markiert Lieferanten/Konten/Wochen mit ungewöhnlich hohen Kosten sowie Wochen über Ziel-WKQ. Der Excel-Export enthält alle Buchungen plus Summen pro Lieferant/Konto/Woche, sauber formatiert. Oliv und Beaulieu getrennt.

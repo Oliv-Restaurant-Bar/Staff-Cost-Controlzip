@@ -56,3 +56,30 @@ describe('waren-cockpit', () => {
     expect(wkqAmpel(null, 30)).toBeNull();
   });
 });
+
+describe('filterInvoicesByRange & supplierSlug', () => {
+  it('filtert inklusiv nach ISO-Datum', async () => {
+    const { filterInvoicesByRange } = await import('@/lib/waren-cockpit');
+    const list = [inv('A', 10, '2026-07-01'), inv('A', 20, '2026-07-15'), inv('A', 30, '2026-08-01')];
+    const got = filterInvoicesByRange(list, '2026-07-01', '2026-07-31');
+    expect(got.map(e => e.amountNet)).toEqual([10, 20]);
+    expect(filterInvoicesByRange(list, '2026-07-02', '2026-07-14')).toHaveLength(0);
+  });
+  it('supplierSlug: stabil, Umlaute, Sonderzeichen', async () => {
+    const { supplierSlug } = await import('@/lib/waren-cockpit');
+    expect(supplierSlug('Growa CC')).toBe('growa_cc');
+    expect(supplierSlug('Müller & Söhne AG')).toBe('mueller_soehne_ag');
+    expect(supplierSlug('  —  ')).toBe('unbenannt');
+    expect(supplierSlug('')).toBe('unbenannt');
+  });
+});
+
+describe('supplierRowIds (kollisionssicher)', () => {
+  it('vergibt deterministische Suffixe bei Slug-Kollision', async () => {
+    const { supplierRowIds } = await import('@/lib/waren-cockpit');
+    expect(supplierRowIds(['Migros', 'MIGROS!', 'Coop', 'migros']))
+      .toEqual(['migros', 'migros_2', 'coop', 'migros_3']);
+    expect(supplierRowIds([])).toEqual([]);
+    expect(supplierRowIds(['', ' '])).toEqual(['unbenannt', 'unbenannt_2']);
+  });
+});

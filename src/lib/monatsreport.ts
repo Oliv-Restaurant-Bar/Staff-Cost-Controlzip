@@ -44,6 +44,10 @@ import {
   istHoursForDates,
 } from '@/lib/bedarf-stunden-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
+import { fetchReviewsData, countGoogleReviewsByStar, type SingleReview } from '@/lib/reviews-store';
+import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
+import { filterInvoicesByRange, sumInvoicesNet, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
+import { loadZielWarenquote, DEFAULT_ZIEL_WARENQUOTE_PCT } from '@/lib/ziel-warenquote';
 
 type KeyFn = (key: string) => string;
 
@@ -526,6 +530,8 @@ export interface JahresvergleichRow {
   cur: number | null;
   /** YTD Vorjahr (pro rata), null = keine Quelle */
   vj: number | null;
+  /** Farb-Tönung der Werte (Rezensions-Zeilen: 5 grün, 1 rot, 3 neutral). */
+  tint?: 'green' | 'red';
 }
 
 export interface JahresvergleichDaten extends YtdWindow {
@@ -607,6 +613,11 @@ export interface MrRow {
   monthPax?: number | null;
   weekPax?: number | null;
   vjMonthPax?: number | null;
+  /**
+   * Farb-Tönung des Ist-Werts (Rezensions-Zeilen: 5 Sterne grün, 1 Stern rot,
+   * 3 Sterne neutral/ohne Tönung). Reine Anzeige, keine Δ-Logik.
+   */
+  tint?: 'green' | 'red';
 }
 
 export interface MonatsreportDaten {
@@ -814,6 +825,19 @@ export async function ladeMonatsreport(
   // erst gebaut (Anzeige/Export/Umsortier-Liste bleiben so konsistent).
   const taOffered = (await loadTakeAwayOffered(tenantKey, tenantId).catch(() => null))?.offered
     ?? (tenantId === 'oliv');
+
+  // Google-Rezensionen (Einzelerfassung, mandantengetrennt): Zählquelle der
+  // Zeilen «Google 5/3/1 Sterne». Ladefehler → null (Zeilen bleiben leer,
+  // nie 0 erfinden); geladener Blob → echte Anzahl (0 ist eine echte Aussage).
+  const reviewSingles: SingleReview[] | null =
+    await fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null);
+
+  // Warenkosten (erfasste Warenrechnungen, netto) + Ziel-WKQ: Basis der
+  // Lieferanten-/Total-/WKQ-Zeilen. Ladefehler → null (Zeilen bleiben leer).
+  const [warenInvoices, zielWkq] = await Promise.all([
+    loadMonthInvoices(tenantId, `${year}-${mm}`).catch(() => null as InvoiceEntry[] | null),
+    loadZielWarenquote(tenantId).then(b => b.pct).catch(() => DEFAULT_ZIEL_WARENQUOTE_PCT),
+  ]);
 
   const [
     gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth,
@@ -1068,7 +1092,7 @@ export async function ladeMonatsreport(
       week?: number | null; weekBudget?: number | null; monthBudget?: number | null; month?: number | null;
       monthPax?: number | null; weekPax?: number | null; vjMonthPax?: number | null;
     },
-    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean } = {},
+    opts: { fmt?: MrFormat; bold?: boolean; deltaInverted?: boolean; warnAbove?: number; deltaPp?: boolean; deltaVsVj?: boolean; tint?: 'green' | 'red' } = {},
   ): MrRow => ({
     type: 'data', id, label,
     budget: vals.budget ?? null, vj: vals.vj ?? null, vjMonth: vals.vjMonth ?? null,
@@ -1078,8 +1102,47 @@ export async function ladeMonatsreport(
     monthPax: vals.monthPax ?? null, weekPax: vals.weekPax ?? null, vjMonthPax: vals.vjMonthPax ?? null,
     fmt: opts.fmt ?? 'chf', bold: opts.bold,
     deltaInverted: opts.deltaInverted, warnAbove: opts.warnAbove,
-    deltaPp: opts.deltaPp, deltaVsVj: opts.deltaVsVj,
+    deltaPp: opts.deltaPp, deltaVsVj: opts.deltaVsVj, tint: opts.tint,
   });
+
+  /**
+   * Warenkosten-Zeilen: pro Lieferant (Top-Monatsbetrag zuerst) + Total + WKQ.
+   * Monat = alle Rechnungen des Monats, Woche = Rechnungen im geklemmten
+   * Wochenbereich. Leere Periode → null (nie 0); Ladefehler → keine
+   * Lieferanten-Zeilen und Total/WKQ leer.
+   */
+  function buildWarenRows(): MrRow[] {
+    const inv = warenInvoices;
+    const weekInv = inv && weekFrom && weekTo ? filterInvoicesByRange(inv, weekFrom, weekTo) : null;
+    const monthTotal = inv && inv.length > 0 ? r2(sumInvoicesNet(inv)) : null;
+    const weekTotal = weekInv && weekInv.length > 0 ? r2(sumInvoicesNet(weekInv)) : null;
+    const aggs = inv ? aggregateBySupplier(inv) : [];
+    // Kollisionssichere IDs («Migros» vs «MIGROS!» → 'migros'/'migros_2'),
+    // sonst überschreibt applyRowOrder eine der Zeilen (Map nach ID).
+    const ids = supplierRowIds(aggs.map(a => a.supplierName));
+    const supplierRows: MrRow[] = aggs.map((agg, i) => {
+      const wSum = weekInv
+        ? sumInvoicesNet(weekInv.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName))
+        : 0;
+      return d(`warenkosten_${ids[i]}`, `Warenkosten · ${agg.supplierName}`, {
+        month: r2(agg.totalNet),
+        week: wSum > 0 ? r2(wSum) : null,
+      }, { deltaInverted: true });
+    });
+    return [
+      ...supplierRows,
+      d('warenkosten_total', 'Warenkosten total', {
+        month: monthTotal, week: weekTotal,
+      }, { bold: true, deltaInverted: true }),
+      // WKQ = Warenkosten ÷ Netto-Umsatz; Budget-Spalte = Ziel-WKQ, Δ in
+      // Prozentpunkten mit Kosten-Ampel (über Ziel = rot) — wie die PKQ.
+      d('warenkostenquote', 'Warenkostenquote (WKQ)', {
+        month: monthTotal != null && mNetV != null && mNet > 0 ? r2((monthTotal / mNet) * 100) : null,
+        week: weekTotal != null && wNetV != null && wNet > 0 ? r2((weekTotal / wNet) * 100) : null,
+        budget: r2(zielWkq), weekBudget: r2(zielWkq), monthBudget: r2(zielWkq),
+      }, { fmt: 'pct', deltaPp: true }),
+    ];
+  }
 
   const mGrossV = N(mGross, mHatUmsatz);
   const mNetV = N(mNet, mHatUmsatz);
@@ -1259,6 +1322,27 @@ export async function ladeMonatsreport(
       vj: null,
       vjMonth: pkVj && vjNetV != null && vjNetV > 0 ? r2((pkVj.chf / vjNetV) * 100) : null,
     }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT, deltaPp: true }),
+    e(),
+    // ── Block Warenkosten (erfasste Warenrechnungen, netto) ────────────────
+    // Eine Zeile pro Lieferant (Top-Betrag des Monats zuerst) + Total + WKQ.
+    // Leere Perioden bleiben leer (nie 0 erfinden); Ladefehler → alles leer.
+    // Kosten-Logik (deltaInverted); WKQ mit Ziel-Quote als Budget und Δ in PP
+    // (über Ziel = rot, wie PKQ).
+    ...buildWarenRows(),
+    e(),
+    // ── Block Rezensionen (Google-Einzelerfassung) ──────────────────────────
+    // ANZAHL Rezensionen je Sternzahl: Monat = ganzer Monat, Woche = gewählte
+    // Woche. Kein Budget/Vorjahr (Quelle existiert erst seit der Einzel-
+    // erfassung) → Felder leer. Farbe: 5 grün, 1 rot, 3 neutral (tint).
+    ...([[5, 'google_5_sterne', 'Google 5 Sterne', 'green'],
+         [3, 'google_3_sterne', 'Google 3 Sterne', undefined],
+         [1, 'google_1_stern', 'Google 1 Stern', 'red']] as const).map(([star, id, label, tint]) =>
+      d(id, label, {
+        month: reviewSingles ? countGoogleReviewsByStar(reviewSingles, fromIso, toIso, star) : null,
+        week: reviewSingles && weekFrom && weekTo
+          ? countGoogleReviewsByStar(reviewSingles, weekFrom, weekTo, star) : null,
+      }, { fmt: 'count', tint }),
+    ),
   ];
 
   // Take-Away-Zeilen entfernen, wenn der Betrieb kein Take Away anbietet.
@@ -1283,6 +1367,8 @@ export interface WochenverlaufRow {
   values: (number | null)[];
   /** Vorjahreswerte je Woche (nur bei mitVorjahr), null = keine VJ-Quelle */
   vjValues?: (number | null)[];
+  /** Farb-Tönung der Werte (Rezensions-Zeilen: 5 grün, 1 rot, 3 neutral). */
+  tint?: 'green' | 'red';
 }
 
 export interface WochenverlaufDaten {
@@ -1629,6 +1715,72 @@ export async function ladeWochenverlauf(
 
   const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs);
 
+  // ── Google-Rezensionen je Woche (Anzahl pro Sternzahl, direkte KW-Vergleiche) ──
+  // Ladefehler → alle Spalten null (leer, nie 0 erfinden); geladener Blob →
+  // echte Anzahl je Wochenfenster. VJ-Spalte nur, wenn dort wirklich Rezensionen
+  // erfasst sind (>0) — die Quelle existiert erst seit der Einzelerfassung.
+  const reviewSingles: SingleReview[] | null =
+    await fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null);
+  for (const [star, label, tint] of [[5, 'Google 5 Sterne', 'green'],
+    [3, 'Google 3 Sterne', undefined], [1, 'Google 1 Stern', 'red']] as
+    [number, string, 'green' | 'red' | undefined][]) {
+    rows.push({
+      label, fmt: 'count', tint,
+      values: weeks.map(w =>
+        reviewSingles ? countGoogleReviewsByStar(reviewSingles, w.from, w.to, star) : null),
+      vjValues: vjWeeks
+        ? vjWeeks.map(w => {
+            if (!w || !reviewSingles) return null;
+            const n = countGoogleReviewsByStar(reviewSingles, w.from, w.to, star);
+            return n > 0 ? n : null;
+          })
+        : undefined,
+    });
+  }
+
+  // ── Warenkosten je Woche (erfasste Warenrechnungen, netto) ────────────────
+  // Eine Zeile pro Lieferant (Top-Gesamtbetrag zuerst) + Total + WKQ — so sind
+  // die KW-Spalten pro Lieferant direkt vergleichbar. Berührte Monate der
+  // Wochenfenster laden; Ladefehler ⇒ Zeilen bleiben leer (nie 0 erfinden).
+  const invMonths = new Set<string>();
+  for (const w of weeks) {
+    invMonths.add(w.from.slice(0, 7));
+    invMonths.add(w.to.slice(0, 7));
+  }
+  const invLists = await Promise.all([...invMonths].map(mk =>
+    loadMonthInvoices(tenantId, mk).catch(() => null as InvoiceEntry[] | null)));
+  // Alle Monate fehlgeschlagen → keine Datenbasis (leer); sonst Teilmenge nutzen.
+  const allInvoices: InvoiceEntry[] | null =
+    invLists.every(l => l === null) ? null : invLists.flatMap(l => l ?? []);
+  if (allInvoices) {
+    const weekInv = weeks.map(w => filterInvoicesByRange(allInvoices, w.from, w.to));
+    for (const agg of aggregateBySupplier(allInvoices)) {
+      rows.push({
+        label: `Warenkosten · ${agg.supplierName}`, fmt: 'chf',
+        values: weekInv.map(list => {
+          const s = sumInvoicesNet(list.filter(e2 => (e2.supplierName.trim() || '—') === agg.supplierName));
+          return s > 0 ? r2(s) : null;
+        }),
+      });
+    }
+    rows.push({
+      label: 'Warenkosten total', fmt: 'chf', bold: true,
+      values: weekInv.map(list => (list.length > 0 ? r2(sumInvoicesNet(list)) : null)),
+    });
+    // WKQ je Woche = Warenkosten ÷ Netto-Umsatz derselben Woche (Hauptlinie).
+    const netOf = (i: number): number | null => {
+      const a = mainAggs[i];
+      return a && a.hatUmsatz && a.net > 0 ? a.net : null;
+    };
+    rows.push({
+      label: 'Warenkostenquote (WKQ)', fmt: 'pct',
+      values: weekInv.map((list, i) => {
+        const net = netOf(i);
+        return list.length > 0 && net !== null ? r2((sumInvoicesNet(list) / net) * 100) : null;
+      }),
+    });
+  }
+
   return { weeks, vjWeeks, rows, partialWeekIndex };
 }
 
@@ -1762,9 +1914,11 @@ export async function ladeJahresvergleich(
   const avgVj = vjAvgCount > 0 ? r2(vjAvgSum / vjAvgCount) : null;
 
   // ── Gruppen ab 20 Pax (Foratable) — YTD-Zeitraum, VJ-Variante «—» statt 0 ──
-  const [gruppen20, gruppen20Vj] = await Promise.all([
+  const [gruppen20, gruppen20Vj, reviewSingles] = await Promise.all([
     countGroupsFrom20Pax(tenantId, curFrom, curTo),
     countGroupsFrom20PaxVj(tenantId, vjFrom, vjTo),
+    // Google-Rezensionen (Anzahl je Sternzahl) — Ladefehler → null (leer).
+    fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null as SingleReview[] | null),
   ]);
 
   // ── Zeilen bauen (cur | vj; Δ% berechnet die UI) ───────────────────────────
@@ -1794,6 +1948,18 @@ export async function ladeJahresvergleich(
       vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null },
     { label: 'Gruppen ab 20 Pax', fmt: 'count',
       cur: gruppen20, vj: gruppen20Vj },
+    // Google-Rezensionen (Anzahl je Sternzahl im Zeitraum). Ladefehler → leer;
+    // VJ nur wenn dort wirklich erfasst (>0) — Quelle existiert erst seit der
+    // Einzelerfassung, ein «0» im VJ wäre erfunden.
+    ...([[5, 'Google 5 Sterne', 'green'], [3, 'Google 3 Sterne', undefined],
+         [1, 'Google 1 Stern', 'red']] as [number, string, 'green' | 'red' | undefined][])
+      .map(([star, label, tint]): JahresvergleichRow => {
+        const cur = reviewSingles
+          ? countGoogleReviewsByStar(reviewSingles, curFrom, curTo, star) : null;
+        const vjN = reviewSingles
+          ? countGoogleReviewsByStar(reviewSingles, vjFrom, vjTo, star) : 0;
+        return { label, fmt: 'count', tint, cur, vj: vjN > 0 ? vjN : null };
+      }),
   ];
 
   return { ...win, rows, modus };

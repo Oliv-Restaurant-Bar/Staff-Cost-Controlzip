@@ -371,6 +371,28 @@ export function summarizeStarColumns(cols: WeekStarColumn[]): { counts: Record<S
   return { counts, total };
 }
 
+/**
+ * Zählt Google-Einzelrezensionen einer Sternzahl im ISO-Datumsbereich
+ * [fromIso..toIso] (beide inklusiv). Plattform-Vergleich case-insensitiv;
+ * gelöschte Einträge zählen nie. REIN & testbar (keine I/O).
+ */
+export function countGoogleReviewsByStar(
+  reviews: SingleReview[],
+  fromIso: string,
+  toIso: string,
+  star: number,
+): number {
+  let n = 0;
+  for (const r of reviews) {
+    if (r.deleted) continue;
+    if (r.platform.trim().toLowerCase() !== 'google') continue;
+    if (r.stars !== star) continue;
+    if (r.date < fromIso || r.date > toIso) continue;
+    n++;
+  }
+  return n;
+}
+
 export interface ReviewTrendPoint {
   month: string;
   /** Ø-Bewertung des Monats (über Plattformen nach newCount gewichtet, sonst ungewichtet) */
