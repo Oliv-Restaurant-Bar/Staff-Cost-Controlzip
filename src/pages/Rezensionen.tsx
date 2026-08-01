@@ -195,18 +195,30 @@ export default function Rezensionen() {
   const [importing, setImporting] = useState(false);
 
   async function handleImportFile(file: File) {
-    if (!canEdit || !data) return;
+    // NIE still abbrechen — jeder Abbruchgrund wird dem Nutzer gemeldet.
+    if (!canEdit) {
+      toast({ variant: 'destructive', title: 'Keine Berechtigung', description: 'Der Feedback-Import ist Administratoren/Geschäftsführung vorbehalten.' });
+      return;
+    }
+    if (!data) {
+      toast({ variant: 'destructive', title: 'Rezensionen noch nicht geladen', description: error ? `Laden fehlgeschlagen: ${error}` : 'Bitte warten, bis die Seite fertig geladen ist, und erneut versuchen.' });
+      return;
+    }
+    console.info('[Feedback-Import] Datei gewählt:', file.name, file.type || '(kein MIME)', `${file.size} Bytes`);
     try {
       const text = await file.text();
       const parse = parseFeedbackCsv(text);
       if (parse.failureReason) {
+        console.error('[Feedback-Import] Parser-Fehler:', parse.failureReason, parse.debug);
         toast({ variant: 'destructive', title: 'CSV konnte nicht gelesen werden', description: parse.failureReason });
         return;
       }
       // Vorschau (Upsert): Match über importKey — Ersetzen statt Duplikat.
       const preview = buildFeedbackPreview(parse.rows, data.singleReviews, () => newReviewId('fb'));
+      console.info('[Feedback-Import] Vorschau:', preview.neu, 'neu ·', preview.aktualisiert, 'aktualisiert ·', preview.unveraendert, 'unverändert');
       setImportState({ fileName: file.name, parse, preview });
     } catch (e) {
+      console.error('[Feedback-Import] Datei-Lesefehler:', e);
       toast({ variant: 'destructive', title: 'Datei konnte nicht gelesen werden', description: e instanceof Error ? e.message : String(e) });
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -366,14 +378,28 @@ export default function Rezensionen() {
                     (gleicher Schlüssel Publish Date + Gast + Reservationsdatum) werden ERSETZT.
                     Import in den aktiven Mandanten ({tenant.shortName}).
                   </p>
+                  {/* Nativer <label htmlFor>-Pfad: der Klick öffnet den Datei-Dialog
+                      GARANTIERT über den Browser selbst (kein programmatisches
+                      ref.click(), das je nach Browser/Iframe geblockt werden kann).
+                      accept enthält auch application/vnd.ms-excel — Windows
+                      registriert .csv oft mit diesem MIME-Typ, sonst wären die
+                      Dateien im Dialog ausgegraut. */}
                   <input
-                    ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden"
+                    ref={fileInputRef} id="feedback-csv-input" type="file"
+                    accept=".csv,text/csv,application/vnd.ms-excel" className="sr-only"
+                    disabled={importing}
                     data-testid="input-feedback-csv"
-                    onChange={e => { const f = e.target.files?.[0]; if (f) void handleImportFile(f); }}
+                    onChange={e => {
+                      const f = e.target.files?.[0];
+                      console.info('[Feedback-Import] onChange, Datei:', f ? f.name : '(keine)');
+                      if (f) void handleImportFile(f);
+                    }}
                   />
-                  <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing}
+                  <Button size="sm" variant="outline" asChild disabled={importing}
                     data-testid="button-feedback-import">
-                    <Upload className="h-3.5 w-3.5 mr-1.5" /> CSV-Datei wählen …
+                    <label htmlFor="feedback-csv-input" className="cursor-pointer">
+                      <Upload className="h-3.5 w-3.5 mr-1.5" /> CSV-Datei wählen …
+                    </label>
                   </Button>
                   <LastImportPanel
                     source="feedback-rezensionen"
