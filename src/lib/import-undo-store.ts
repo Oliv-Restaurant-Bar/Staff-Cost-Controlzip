@@ -31,7 +31,8 @@ export type ImportSourceKey =
   | 'vorjahr-kosten-buchhaltung'
   | 'personalkosten-vorjahr'
   | 'umsatz-vorjahr-jahr'
-  | 'tagesdaten-einheitsimport';
+  | 'tagesdaten-einheitsimport'
+  | 'feedback-rezensionen';
 
 export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'mirus-ist':                  'Ist-Stunden (MIRUS)',
@@ -42,6 +43,7 @@ export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'personalkosten-vorjahr':     'Personalkosten Vorjahr',
   'umsatz-vorjahr-jahr':        'Umsatz Vorjahr (Jahres-Excel)',
   'tagesdaten-einheitsimport':  'Tagesdaten-Einheitsimport',
+  'feedback-rezensionen':       'Feedback-Rezensionen (Lunchgate)',
 };
 
 /** Ein app_settings-Key mit seinem Zustand VOR dem Import (null = existierte nicht). */

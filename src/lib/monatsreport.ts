@@ -44,7 +44,32 @@ import {
   istHoursForDates,
 } from '@/lib/bedarf-stunden-utils';
 import { loadEmployees, loadScheduleForMonth, loadActualHoursForMonth } from '@/lib/supabase-db';
-import { fetchReviewsData, countGoogleReviewsByStar, type SingleReview } from '@/lib/reviews-store';
+import { fetchReviewsData, countReviewsByStar, type SingleReview } from '@/lib/reviews-store';
+import { FEEDBACK_PLATFORM } from '@/lib/feedback-import';
+
+/**
+ * Zeilendefinitionen der Rezensions-Blöcke: pro Plattform (Google, Lunchgate)
+ * ALLE fünf Sternstufen (5→1). Farbe: 5 grün, 1 rot, dazwischen neutral.
+ * IDs: google_5_sterne … google_1_stern (bestehende IDs bleiben stabil),
+ * lunchgate_5_sterne … lunchgate_1_stern.
+ */
+export function reviewStarRowDefs(): Array<{
+  platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined;
+}> {
+  const defs: Array<{ platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined }> = [];
+  for (const platform of ['Google', FEEDBACK_PLATFORM]) {
+    const slug = platform.toLowerCase();
+    for (const star of [5, 4, 3, 2, 1]) {
+      defs.push({
+        platform, star,
+        id: `${slug}_${star}_${star === 1 ? 'stern' : 'sterne'}`,
+        label: `${platform} ${star} ${star === 1 ? 'Stern' : 'Sterne'}`,
+        tint: star === 5 ? 'green' : star === 1 ? 'red' : undefined,
+      });
+    }
+  }
+  return defs;
+}
 import { loadMonthInvoices, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
 import { filterInvoicesByRange, sumInvoicesNet, sumNetByKategorie, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
 import { nurWarenAnteil, sumBetriebNet, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
@@ -1480,17 +1505,16 @@ export async function ladeMonatsreport(
     // (über Ziel = rot, wie PKQ).
     ...buildWarenRows(),
     e(),
-    // ── Block Rezensionen (Google-Einzelerfassung) ──────────────────────────
-    // ANZAHL Rezensionen je Sternzahl: Monat = ganzer Monat, Woche = gewählte
-    // Woche. Kein Budget/Vorjahr (Quelle existiert erst seit der Einzel-
-    // erfassung) → Felder leer. Farbe: 5 grün, 1 rot, 3 neutral (tint).
-    ...([[5, 'google_5_sterne', 'Google 5 Sterne', 'green'],
-         [3, 'google_3_sterne', 'Google 3 Sterne', undefined],
-         [1, 'google_1_stern', 'Google 1 Stern', 'red']] as const).map(([star, id, label, tint]) =>
+    // ── Block Rezensionen (Google-Erfassung + Lunchgate-Feedback-Import) ────
+    // Pro Plattform ALLE fünf Sternstufen (5/4/3/2/1): Monat = ganzer Monat,
+    // Woche = gewählte Woche. Kein Budget/Vorjahr (Quelle existiert erst seit
+    // der Einzelerfassung) → Felder leer. Farbe: 5 grün, 1 rot, sonst neutral.
+    // Google und Lunchgate strikt getrennt (Plattform-Filter, nie vermischt).
+    ...reviewStarRowDefs().map(({ platform, star, id, label, tint }) =>
       d(id, label, {
-        month: reviewSingles ? countGoogleReviewsByStar(reviewSingles, fromIso, toIso, star) : null,
+        month: reviewSingles ? countReviewsByStar(reviewSingles, platform, fromIso, toIso, star) : null,
         week: reviewSingles && weekFrom && weekTo
-          ? countGoogleReviewsByStar(reviewSingles, weekFrom, weekTo, star) : null,
+          ? countReviewsByStar(reviewSingles, platform, weekFrom, weekTo, star) : null,
       }, { fmt: 'count', tint }),
     ),
   ];
@@ -1877,23 +1901,21 @@ export async function ladeWochenverlauf(
 
   const rows = baueWochenverlaufRows(mainAggs, mainAus, vjAggs);
 
-  // ── Google-Rezensionen je Woche (Anzahl pro Sternzahl, direkte KW-Vergleiche) ──
+  // ── Rezensionen je Woche (ALLE Sternstufen 5–1, Google + Lunchgate) ────────
   // Ladefehler → alle Spalten null (leer, nie 0 erfinden); geladener Blob →
   // echte Anzahl je Wochenfenster. VJ-Spalte nur, wenn dort wirklich Rezensionen
   // erfasst sind (>0) — die Quelle existiert erst seit der Einzelerfassung.
   const reviewSingles: SingleReview[] | null =
     await fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null);
-  for (const [star, label, tint] of [[5, 'Google 5 Sterne', 'green'],
-    [3, 'Google 3 Sterne', undefined], [1, 'Google 1 Stern', 'red']] as
-    [number, string, 'green' | 'red' | undefined][]) {
+  for (const { platform, star, label, tint } of reviewStarRowDefs()) {
     rows.push({
       label, fmt: 'count', tint,
       values: weeks.map(w =>
-        reviewSingles ? countGoogleReviewsByStar(reviewSingles, w.from, w.to, star) : null),
+        reviewSingles ? countReviewsByStar(reviewSingles, platform, w.from, w.to, star) : null),
       vjValues: vjWeeks
         ? vjWeeks.map(w => {
             if (!w || !reviewSingles) return null;
-            const n = countGoogleReviewsByStar(reviewSingles, w.from, w.to, star);
+            const n = countReviewsByStar(reviewSingles, platform, w.from, w.to, star);
             return n > 0 ? n : null;
           })
         : undefined,
@@ -2147,18 +2169,16 @@ export async function ladeJahresvergleich(
       vj: vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null },
     { label: 'Gruppen ab 20 Pax', fmt: 'count',
       cur: gruppen20, vj: gruppen20Vj },
-    // Google-Rezensionen (Anzahl je Sternzahl im Zeitraum). Ladefehler → leer;
+    // Rezensionen (ALLE Sternstufen 5–1, Google + Lunchgate). Ladefehler → leer;
     // VJ nur wenn dort wirklich erfasst (>0) — Quelle existiert erst seit der
     // Einzelerfassung, ein «0» im VJ wäre erfunden.
-    ...([[5, 'Google 5 Sterne', 'green'], [3, 'Google 3 Sterne', undefined],
-         [1, 'Google 1 Stern', 'red']] as [number, string, 'green' | 'red' | undefined][])
-      .map(([star, label, tint]): JahresvergleichRow => {
-        const cur = reviewSingles
-          ? countGoogleReviewsByStar(reviewSingles, curFrom, curTo, star) : null;
-        const vjN = reviewSingles
-          ? countGoogleReviewsByStar(reviewSingles, vjFrom, vjTo, star) : 0;
-        return { label, fmt: 'count', tint, cur, vj: vjN > 0 ? vjN : null };
-      }),
+    ...reviewStarRowDefs().map(({ platform, star, label, tint }): JahresvergleichRow => {
+      const cur = reviewSingles
+        ? countReviewsByStar(reviewSingles, platform, curFrom, curTo, star) : null;
+      const vjN = reviewSingles
+        ? countReviewsByStar(reviewSingles, platform, vjFrom, vjTo, star) : 0;
+      return { label, fmt: 'count', tint, cur, vj: vjN > 0 ? vjN : null };
+    }),
   ];
 
   return { ...win, rows, modus };

@@ -10,9 +10,9 @@
  * - Mandantengetrennt (reviews_data:<tenant> + Storage tenant/…); Erfassen nur
  *   berechtigte Rollen, Gäste rein lesend.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
-import { Star, Loader2, Image as ImageIcon, Pencil, Trash2 } from 'lucide-react';
+import { Star, Loader2, Image as ImageIcon, Pencil, Trash2, Upload } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ReviewsWeeklyTracker } from '@/components/reviews/ReviewsWeeklyTracker';
@@ -25,11 +25,23 @@ import { useTenant } from '@/contexts/TenantContext';
 import {
   fetchReviewsData, upsertSingleReview, deleteSingleReview,
   uploadReviewScreenshot, getReviewScreenshotUrl, deleteReviewScreenshot,
-  newReviewId, type ReviewsData, type SingleReview,
+  newReviewId, upsertSingleReviews, fetchReviewsRawValue,
+  type ReviewsData, type SingleReview,
 } from '@/lib/reviews-store';
+import {
+  parseFeedbackCsv, buildFeedbackPreview, FEEDBACK_PLATFORM,
+  type FeedbackPreview, type FeedbackParseResult,
+} from '@/lib/feedback-import';
+import { recordImportRun } from '@/lib/import-undo-store';
+import { LastImportPanel } from '@/components/import-center/LastImportPanel';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 const PLATFORM = 'Google';
+/** Wählbare Plattformen der manuellen Erfassung (Import setzt Lunchgate fix). */
+const PLATFORMS = [PLATFORM, FEEDBACK_PLATFORM] as const;
 
 /** Anklickbare Sterne-Auswahl (1–5). */
 function StarPicker({ value, onChange, disabled }: {
@@ -78,6 +90,7 @@ function ScreenshotThumb({ tenantId, path }: { tenantId: string; path: string })
 interface FormState {
   id: string | null;          // null = neu
   date: string;               // yyyy-MM-dd
+  platform: string;           // Google | Lunchgate
   stars: number;              // 0 = noch nicht gewählt
   text: string;               // Bemerkung
   screenshotPath?: string;    // bestehender Screenshot (beim Editieren)
@@ -85,7 +98,7 @@ interface FormState {
 }
 
 const emptyForm = (): FormState => ({
-  id: null, date: format(new Date(), 'yyyy-MM-dd'), stars: 0, text: '', file: null,
+  id: null, date: format(new Date(), 'yyyy-MM-dd'), platform: PLATFORM, stars: 0, text: '', file: null,
 });
 
 export default function Rezensionen() {
@@ -131,9 +144,11 @@ export default function Rezensionen() {
       }
       const existing = form.id ? data?.singleReviews.find(r => r.id === form.id) : undefined;
       const review: SingleReview = {
+        // Import-Felder (visitDate/pax/avgExact/importKey/…) beim Editieren erhalten.
+        ...(existing ?? {}),
         id,
         date: form.date,
-        platform: PLATFORM,
+        platform: form.platform,
         stars: form.stars,
         text: form.text.trim(),
         answered: existing?.answered ?? false,
@@ -168,8 +183,75 @@ export default function Rezensionen() {
   }
 
   function startEdit(r: SingleReview) {
-    setForm({ id: r.id, date: r.date, stars: r.stars, text: r.text, screenshotPath: r.screenshotPath, file: null });
+    setForm({ id: r.id, date: r.date, platform: r.platform, stars: r.stars, text: r.text, screenshotPath: r.screenshotPath, file: null });
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  // ── Feedback-CSV-Import (Lunchgate): Datei → Vorschau → Bestätigen ─────────
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importState, setImportState] = useState<{
+    fileName: string; parse: FeedbackParseResult; preview: FeedbackPreview;
+  } | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  async function handleImportFile(file: File) {
+    if (!canEdit || !data) return;
+    try {
+      const text = await file.text();
+      const parse = parseFeedbackCsv(text);
+      if (parse.failureReason) {
+        toast({ variant: 'destructive', title: 'CSV konnte nicht gelesen werden', description: parse.failureReason });
+        return;
+      }
+      // Vorschau (Upsert): Match über importKey — Ersetzen statt Duplikat.
+      const preview = buildFeedbackPreview(parse.rows, data.singleReviews, () => newReviewId('fb'));
+      setImportState({ fileName: file.name, parse, preview });
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Datei konnte nicht gelesen werden', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleConfirmImport() {
+    if (!importState || importing || !canEdit) return;
+    const { preview, parse, fileName } = importState;
+    setImporting(true);
+    try {
+      // 1) Backup: kompletter reviews_data-Blob VOR dem Schreiben (inkl. Tombstones).
+      const prior = await fetchReviewsRawValue(tenantId);
+      // 2) Schreiben: EIN Batch-Upsert (neu + aktualisiert); unverändert bleibt unangetastet.
+      let next = data;
+      if (preview.toWrite.length > 0) {
+        next = await upsertSingleReviews(tenantId, preview.toWrite);
+        setData(next);
+      }
+      // 3) Protokoll + Undo-Snapshot — best effort, bricht den Import nie ab.
+      const dates = parse.rows.map(r => r.publishDate).sort();
+      try {
+        await recordImportRun(tenantId, {
+          source: 'feedback-rezensionen',
+          periodLabel: dates.length > 0 ? `${dates[0]} – ${dates[dates.length - 1]}` : '—',
+          itemCount: preview.toWrite.length,
+          itemLabel: 'Bewertungen',
+          fileName,
+          details: `${preview.neu} neu · ${preview.aktualisiert} aktualisiert · ${preview.unveraendert} unverändert`
+            + (parse.skipped.length > 0 ? ` · ${parse.skipped.length} übersprungen` : ''),
+          snapshot: { kind: 'kv-keys', items: [{ key: `reviews_data:${tenantId}`, value: prior }] },
+        });
+      } catch {
+        toast({ title: 'Hinweis', description: 'Import erfolgreich, aber das Protokoll konnte nicht gesichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.' });
+      }
+      toast({
+        title: 'Import abgeschlossen',
+        description: `${preview.neu} neu · ${preview.aktualisiert} aktualisiert · ${preview.unveraendert} unverändert`,
+      });
+      setImportState(null);
+    } catch (e) {
+      toast({ variant: 'destructive', title: 'Import fehlgeschlagen', description: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setImporting(false);
+    }
   }
 
   return (
@@ -201,11 +283,25 @@ export default function Rezensionen() {
               <Card data-testid="review-form">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">
-                    {form.id ? 'Rezension bearbeiten' : 'Neue Google-Rezension erfassen'}
+                    {form.id ? 'Rezension bearbeiten' : 'Neue Rezension erfassen'}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex flex-wrap items-end gap-4">
+                    <div className="space-y-1">
+                      <span className="text-xs font-medium text-muted-foreground block">Plattform</span>
+                      <div className="flex rounded-md border border-border overflow-hidden">
+                        {PLATFORMS.map(p => (
+                          <button key={p} type="button" disabled={saving}
+                            onClick={() => setForm(f => ({ ...f, platform: p }))}
+                            data-testid={`platform-${p.toLowerCase()}`}
+                            className={cn('px-3 h-9 text-xs font-medium transition-colors',
+                              form.platform === p ? 'bg-foreground text-background' : 'bg-card hover:bg-muted')}>
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <label className="space-y-1">
                       <span className="text-xs font-medium text-muted-foreground">Datum</span>
                       <Input
@@ -254,6 +350,83 @@ export default function Rezensionen() {
               </Card>
             )}
 
+            {/* ── Feedback-CSV-Import (Lunchgate) ─────────────────────────── */}
+            {canEdit && (
+              <Card data-testid="feedback-import-card">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Upload className="h-4 w-4" /> Feedback-CSV importieren (Lunchgate)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Format: «;»-getrennt, UTF-8 — Spalten «Publish Date», «Pax», «Guest», «Reservation Date»,
+                    «Average», «Service», «Kitchen», «Atmosphere», «Performance», «Comment».
+                    Erneuter Import derselben Datei legt nichts doppelt an: bestehende Bewertungen
+                    (gleicher Schlüssel Publish Date + Gast + Reservationsdatum) werden ERSETZT.
+                    Import in den aktiven Mandanten ({tenant.shortName}).
+                  </p>
+                  <input
+                    ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden"
+                    data-testid="input-feedback-csv"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) void handleImportFile(f); }}
+                  />
+                  <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={importing}
+                    data-testid="button-feedback-import">
+                    <Upload className="h-3.5 w-3.5 mr-1.5" /> CSV-Datei wählen …
+                  </Button>
+                  <LastImportPanel
+                    source="feedback-rezensionen"
+                    undoHint="Setzt die Rezensionen auf den Stand unmittelbar VOR dem letzten Feedback-Import zurück (inkl. allfälliger manueller Änderungen seither)."
+                  />
+                </CardContent>
+              </Card>
+            )}
+
+            {/* ── Import-Vorschau (Bestätigen vor dem Schreiben) ──────────── */}
+            <Dialog open={importState !== null} onOpenChange={o => { if (!o && !importing) setImportState(null); }}>
+              <DialogContent className="max-w-md" data-testid="feedback-import-preview">
+                <DialogHeader>
+                  <DialogTitle>Import-Vorschau — {importState?.fileName}</DialogTitle>
+                </DialogHeader>
+                {importState && (
+                  <div className="space-y-3 text-sm">
+                    <p className="font-semibold" data-testid="preview-counts">
+                      {importState.preview.neu} neu · {importState.preview.aktualisiert} aktualisiert · {importState.preview.unveraendert} unverändert
+                    </p>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Sterne-Verteilung (alle Zeilen der Datei)</p>
+                      {[5, 4, 3, 2, 1].map(s => (
+                        <div key={s} className="flex items-center gap-2 text-xs tabular-nums" data-testid={`preview-stars-${s}`}>
+                          <span className="w-14 text-amber-500">{'★'.repeat(s)}</span>
+                          <span>{importState.preview.starDist[s as 1 | 2 | 3 | 4 | 5]}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {importState.parse.skipped.length > 0 && (
+                      <p className="text-xs text-amber-700 dark:text-amber-400">
+                        {importState.parse.skipped.length} Zeile(n) übersprungen (z. B. ungültiges Datum/Average) —
+                        erste: Zeile {importState.parse.skipped[0].line}: {importState.parse.skipped[0].reason}
+                      </p>
+                    )}
+                    <p className="text-xs text-muted-foreground">
+                      Vor dem Schreiben wird ein Backup erstellt («Letzter Import rückgängig machen»).
+                      Plattform: {FEEDBACK_PLATFORM} · Mandant: {tenant.shortName}.
+                    </p>
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" size="sm" onClick={() => setImportState(null)} disabled={importing}>Abbrechen</Button>
+                  <Button size="sm" onClick={handleConfirmImport}
+                    disabled={importing || !importState || importState.preview.toWrite.length === 0}
+                    data-testid="button-confirm-import">
+                    {importing && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+                    {importState && importState.preview.toWrite.length === 0 ? 'Nichts zu schreiben' : 'Importieren'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             {/* ── Wochentracking (gleiche Ansicht wie im Cockpit) ─────────── */}
             <Card>
               <CardContent className="pt-4">
@@ -266,7 +439,7 @@ export default function Rezensionen() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">
                   Erfasste Rezensionen
-                  <span className="ml-2 text-xs font-normal text-muted-foreground">{sorted.length} Einträge · nur Google</span>
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">{sorted.length} Einträge · Google + {FEEDBACK_PLATFORM}</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -287,16 +460,28 @@ export default function Rezensionen() {
                       className="rounded-lg border border-border/70 p-3 flex flex-wrap items-start gap-x-4 gap-y-1.5 text-sm"
                       data-testid={`review-row-${r.id}`}>
                       <span className="font-mono text-xs text-muted-foreground pt-0.5">{r.date}</span>
-                      {/* Altbestand aus der früheren Mehr-Plattform-Erfassung kennzeichnen */}
-                      {r.platform !== PLATFORM && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap"
-                          data-testid={`review-alt-badge-${r.id}`}>
-                          Alt · {r.platform}
-                        </span>
-                      )}
+                      {/* Plattform immer kennzeichnen — Google und Lunchgate nie vermischen */}
+                      <span className={cn('text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap',
+                        r.platform === FEEDBACK_PLATFORM
+                          ? 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300'
+                          : 'bg-muted text-muted-foreground')}
+                        data-testid={`review-platform-badge-${r.id}`}>
+                        {r.platform}
+                      </span>
                       <span className="text-amber-500 font-semibold whitespace-nowrap" title={`${r.stars} von 5 Sternen`}>
                         {'★'.repeat(r.stars)}<span className="text-muted-foreground/40">{'★'.repeat(5 - r.stars)}</span>
                       </span>
+                      {r.author && <span className="text-xs text-muted-foreground pt-0.5" data-testid={`review-guest-${r.id}`}>{r.author}</span>}
+                      {r.avgExact != null && (
+                        <span className="text-xs text-muted-foreground pt-0.5 tabular-nums" title="Exakter Average aus dem Feedback-CSV">
+                          Ø {r.avgExact.toFixed(1)}
+                        </span>
+                      )}
+                      {r.visitDate && (
+                        <span className="text-xs text-muted-foreground pt-0.5" title="Besuchsdatum (Reservation Date)">
+                          Besuch {r.visitDate}{r.pax != null ? ` · ${r.pax} Pers.` : ''}
+                        </span>
+                      )}
                       {r.text && <p className="w-full text-muted-foreground">{r.text}</p>}
                       {/* Screenshots können PII enthalten (Namen/Avatare) → für Gast-Sessions ausgeblendet */}
                       {r.screenshotPath && !isGuest && <div className="w-full"><ScreenshotThumb tenantId={tenantId} path={r.screenshotPath} /></div>}

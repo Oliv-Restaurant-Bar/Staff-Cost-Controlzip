@@ -1,0 +1,24 @@
+Reservationen — CSV-Import (Foratable) dublettensicher, speist „Reservierte Gäste" & „Gruppen ab 20 Pax" (Oliv und Beaulieu)
+
+Ziel: Reservationen aus der Foratable-CSV importieren, ohne Duplikate bei wiederholtem Import, und daraus die Cockpit-Kennzahlen „Reservierte Gäste" und „Gruppen ab 20 Pax" speisen.
+
+A. CSV-IMPORT
+1. Neuer Import „Reservationen (Foratable)". Format fix: Trennzeichen „;", UTF-8 (mit BOM), mehrzeilige Felder in Anführungszeichen korrekt parsen. Spalten: Restaurant, Res.Nr., Personen, Zeit, Datum, Firma, Vorname, Nachname, Mobile, E-Mail, Status, „reserviert am", Kommentar, Notiz, Tisch, Auswahl, Gästeinformationen, Raum, Bereich.
+2. Pro Zeile eine Reservation: Datum (TT.MM.JJJJ) + Zeit, Personen (Anzahl), Name (Vorname/Nachname/Firma), Status, Bereich/Raum, Res.Nr.
+
+B. DUBLETTENSICHER (Upsert über Res.Nr.)
+3. Eindeutiger Schlüssel = Res.Nr. Wird dieselbe Res.Nr. erneut importiert, wird der bestehende Eintrag AKTUALISIERT/ersetzt — nie ein zweiter Eintrag. So ist ein wiederholter Import derselben (oder einer erweiterten) Datei idempotent.
+4. Vorschau vor dem Schreiben: „X neu · Y aktualisiert · Z unverändert", plus Backup und „Letzter Import rückgängig machen" wie bei den anderen Importen.
+
+C. KENNZAHLEN SPEISEN
+5. „Reservierte Gäste" (Periode) = Summe Personen der zählenden Reservationen pro Tag/Woche/Monat. Zählende Status konfigurierbar (z. B. „Abgeschlossen"/„Bestätigt" zählen, „Storniert"/„No-Show" nicht).
+6. „Gruppen ab 20 Pax" = Anzahl Reservationen mit Personen ≥ 20 in der Periode, plus Summe dieser Personen in Klammern (z. B. „3 (70)"). Schwelle 20 konfigurierbar.
+7. Konsistent in Monats-, Wochen- und Wochenverlaufs-Ansicht; „leer statt 0".
+
+D. SICHTBARKEIT
+8. Eine Reservations-Liste/Ansicht, in der die importierten Reservationen sichtbar sind (Datum, Zeit, Personen, Name, Status, Bereich) — und Klick auf die Kennzahl „Reservierte Gäste"/„Gruppen ab 20 Pax" öffnet den Drilldown zu den zugrunde liegenden Reservationen.
+
+E. MANDANT & SICHERHEIT
+9. Mandanten-Check über die Spalte „Restaurant" (z. B. „Restaurant Beaulieu") gegen den aktiven Mandanten — passt es nicht, Import stoppen mit klarer Meldung. Import geht in den aktiven Mandanten, strikt getrennt (Oliv/Beaulieu). Nur berechtigte Rollen.
+
+Abnahme: Die Reservations-CSV lässt sich unter Beaulieu importieren (Vorschau zeigt neu/aktualisiert/unverändert); „Reservierte Gäste" und „Gruppen ab 20 Pax" im Cockpit stimmen mit den Reservationen überein; ein erneuter Import derselben Datei legt nichts doppelt an; die Reservationsliste zeigt die Einträge; Mandanten-Check greift.

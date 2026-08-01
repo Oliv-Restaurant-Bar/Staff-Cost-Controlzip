@@ -44,6 +44,19 @@ export interface SingleReview {
   answered: boolean;
   /** Storage-Pfad des Screenshot im Bucket review-screenshots (tenant/…jpg), optional. */
   screenshotPath?: string;
+  // ── Felder aus dem Feedback-CSV-Import (Lunchgate) — alle optional ────────
+  /** Besuchsdatum (Reservation Date) yyyy-MM-dd. */
+  visitDate?: string;
+  /** Personenzahl (Pax) der Reservation. */
+  pax?: number;
+  /** Exakter Average aus dem CSV (Sterne = kaufmännisch gerundet). */
+  avgExact?: number;
+  /** Teilnoten (Service/Küche/Atmosphäre/Preis-Leistung), optional. */
+  subRatings?: { service?: number; kitchen?: number; atmosphere?: number; performance?: number };
+  /** Stabiler Upsert-Schlüssel des Imports (Publish Date + Guest + Reservation Date bzw. Zeilen-Hash). */
+  importKey?: string;
+  /** Herkunft: 'feedback_csv' = importiert (Lunchgate), sonst manuell. */
+  source?: 'feedback_csv';
   updatedAt: string; // ISO
   deleted?: boolean;
 }
@@ -188,6 +201,28 @@ export async function deleteMonthlyRow(tenantId: string, row: MonthlyReviewRow):
 /** Einzelrezension anlegen/aktualisieren. */
 export async function upsertSingleReview(tenantId: string, review: SingleReview): Promise<ReviewsData> {
   return persistMerged(tenantId, { singleReviews: [{ ...review, updatedAt: new Date().toISOString() }] });
+}
+
+/**
+ * MEHRERE Einzelrezensionen in EINEM Schreibvorgang anlegen/aktualisieren
+ * (Feedback-CSV-Import). Ein einziger CAS-Write für den ganzen Batch —
+ * idempotent, weil die IDs der bestehenden Einträge wiederverwendet werden.
+ */
+export async function upsertSingleReviews(tenantId: string, reviews: SingleReview[]): Promise<ReviewsData> {
+  const now = new Date().toISOString();
+  return persistMerged(tenantId, { singleReviews: reviews.map(r => ({ ...r, updatedAt: now })) });
+}
+
+/**
+ * Roh-Wert des reviews_data-Blobs (inkl. Tombstones/rev) für Import-Backups;
+ * null = Key existiert nicht. Wirft bei Lesefehler (nie leeren Zustand vortäuschen).
+ */
+export async function fetchReviewsRawValue(tenantId: string): Promise<unknown | null> {
+  const { appSettingsTable } = await import('@/lib/app-settings-table');
+  const { data, error } = await appSettingsTable()
+    .select('value').eq('key', storeKey(tenantId)).maybeSingle();
+  if (error) throw new Error(`Rezensionen konnten nicht geladen werden: ${error.message}`);
+  return data ? (data as { value: unknown }).value : null;
 }
 
 /** Einzelrezension löschen (Tombstone). */
@@ -382,10 +417,25 @@ export function countGoogleReviewsByStar(
   toIso: string,
   star: number,
 ): number {
+  return countReviewsByStar(reviews, 'google', fromIso, toIso, star);
+}
+
+/**
+ * Wie countGoogleReviewsByStar, aber für eine beliebige Plattform
+ * (case-insensitiv). Google und Lunchgate werden so NIE vermischt.
+ */
+export function countReviewsByStar(
+  reviews: SingleReview[],
+  platform: string,
+  fromIso: string,
+  toIso: string,
+  star: number,
+): number {
+  const p = platform.trim().toLowerCase();
   let n = 0;
   for (const r of reviews) {
     if (r.deleted) continue;
-    if (r.platform.trim().toLowerCase() !== 'google') continue;
+    if (r.platform.trim().toLowerCase() !== p) continue;
     if (r.stars !== star) continue;
     if (r.date < fromIso || r.date > toIso) continue;
     n++;
