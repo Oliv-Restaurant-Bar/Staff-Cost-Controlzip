@@ -742,23 +742,51 @@ function normalizeAccountNum(categoryId: string): number {
   return parseInt(s);
 }
 
+/**
+ * Effektive BPL-Kategorie eines Kontos: Ein EXAKTES Konto-Mapping
+ * (Stammdaten/Kontenzuordnung, custom oder default) überschreibt die reine
+ * Bereichszuordnung — z.B. 4701/4800 → Betriebskosten statt Wareneinsatz,
+ * 6611 Kost & Logis → Personalaufwand statt Werbung/Marketing.
+ * Bereichs-Treffer (matchType 'range') behalten die bisherige BPL-Bereichslogik.
+ */
+function bplCatForAccount(categoryId: string): string | undefined {
+  const s = (categoryId ?? '').trim();
+  const n = normalizeAccountNum(s);
+  if (isNaN(n)) return undefined;
+  let res = lookupAccount(s);
+  // 5-stellige Varianten (z.B. 47010): falls kein exaktes Mapping, auf die
+  // kanonischen ersten 4 Stellen zurückfallen (bestehende App-Konvention).
+  if (res.matchType !== 'exact' && s.length > 4) res = lookupAccount(s.slice(0, 4));
+  if (res.matchType === 'exact' && res.mapping) {
+    const b = PL_CAT_TO_BPL[res.mapping.plCategory];
+    if (b) return b;
+  }
+  for (const [catId, r] of Object.entries(BPL_CAT_RANGES)) {
+    if (n >= r[0] && n <= r[1]) return catId;
+  }
+  return undefined;
+}
+
+function sumCatFromCategories(
+  catId: string,
+  cats: { categoryId?: string; amount?: number }[] | undefined,
+): number {
+  return (cats ?? [])
+    .filter(c => bplCatForAccount(c.categoryId ?? '') === catId)
+    .reduce((s, c) => s + (c.amount ?? 0), 0);
+}
+
 function getCatActual(catId: string, rec: MonthlyFinancialRecord | undefined): number {
   if (!rec) return 0;
   if (catId === 'pl_revenue') {
     // Priorität 1: individuelle 3xxx-Konten aus expenseCategories (Sage-Import)
-    const r = BPL_CAT_RANGES['pl_revenue']; // [3000, 3999]
-    const fromExpCat = (rec.expenseCategories ?? [])
-      .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-      .reduce((s, c) => s + (c.amount ?? 0), 0);
+    const fromExpCat = sumCatFromCategories('pl_revenue', rec.expenseCategories);
     if (fromExpCat !== 0) return fromExpCat;
     // Priorität 2: revenueActual Direktfeld (manuelle Eingabe / Gastronovi)
     return rec.revenueActual ?? (rec as any).revenue ?? 0;
   }
-  const r = BPL_CAT_RANGES[catId];
-  if (!r) return 0;
-  return (rec.expenseCategories ?? [])
-    .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-    .reduce((s, c) => s + (c.amount ?? 0), 0);
+  if (!BPL_CAT_RANGES[catId] && !Object.values(PL_CAT_TO_BPL).includes(catId)) return 0;
+  return sumCatFromCategories(catId, rec.expenseCategories);
 }
 
 function getCatPY(
@@ -778,22 +806,13 @@ function getCatPY(
       const fromActual = prevRec.revenueActual ?? 0;
       if (fromActual !== 0) return fromActual;
     }
-    const r = BPL_CAT_RANGES[catId];
-    if (r) {
-      const fromActual = (prevRec.expenseCategories ?? [])
-        .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-        .reduce((s, c) => s + (c.amount ?? 0), 0);
-      if (fromActual !== 0) return fromActual;
-    }
+    const fromActual = sumCatFromCategories(catId, prevRec.expenseCategories);
+    if (fromActual !== 0) return fromActual;
   }
   // Fallback: PreviousYear-Felder im aktuellen Datensatz (manuell als "Vorjahr" importiert)
   if (!rec) return 0;
   if (catId === 'pl_revenue') return (rec as any).revenuePreviousYear ?? 0;
-  const r = BPL_CAT_RANGES[catId];
-  if (!r) return 0;
-  return (rec.expenseCategoriesPreviousYear ?? [])
-    .filter(c => { const n = normalizeAccountNum(c.categoryId ?? ''); return !isNaN(n) && n >= r[0] && n <= r[1]; })
-    .reduce((s, c) => s + (c.amount ?? 0), 0);
+  return sumCatFromCategories(catId, rec.expenseCategoriesPreviousYear);
 }
 
 function makeCell(actual: number, budget: number, prevYear: number, isExpense: boolean): BPLCell {

@@ -54,6 +54,8 @@ import {
 import { PLCategory, DepartmentHint } from '@/types/account-mapping';
 import { saveMonth, saveJournalEntries, loadJournalEntries, loadYear, syncJournalYearFromDB, upsertCostMonths, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import { recordImportRun } from '@/lib/import-undo-store';
+import { splitWarenJournal, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
+import { loadWarenkostenGrenze } from '@/lib/waren-db';
 import { useTenant } from '@/contexts/TenantContext';
 import { toast } from 'sonner';
 
@@ -821,6 +823,28 @@ export default function CSVImportPage() {
     syncJournalYearFromDB(year, tenantId);
   }, [year, tenantId]);
 
+  // Warenkosten-Grenze (pro Mandant, Standard 4090): Lieferanten-Journal
+  // enthält nur Buchungen auf Konten 4000–Grenze (Warenaufwand).
+  const [warenGrenze, setWarenGrenze] = useState(DEFAULT_WARENKOSTEN_GRENZE);
+  useEffect(() => {
+    let on = true;
+    loadWarenkostenGrenze(tenantId).then(g => { if (on) setWarenGrenze(g); });
+    return () => { on = false; };
+  }, [tenantId]);
+
+  // Journal-Split für die Vorschau: nur Waren-Buchungen (4000–Grenze) landen
+  // im Lieferanten-Journal; der Rest wird als Hinweis ausgewiesen.
+  const journalSplit = useMemo(
+    () => splitWarenJournal(parseResult?.journalEntries ?? [], warenGrenze),
+    [parseResult, warenGrenze],
+  );
+  const multiJournalDropped = useMemo(() => {
+    if (!multiParse) return 0;
+    let n = 0;
+    for (const es of multiParse.journalByMonth.values()) n += splitWarenJournal(es, warenGrenze).nichtWaren.length;
+    return n;
+  }, [multiParse, warenGrenze]);
+
   if (!isAdmin) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -1139,8 +1163,12 @@ export default function CSVImportPage() {
       // Ist-Daten und nur wenn geändert. VJ-Importe schreiben KEIN Journal.
       let journalMonths = 0;
       if (dataType === 'actual') {
+        const grenze = await loadWarenkostenGrenze(tenantId);
         for (const m of months) {
-          const entries = multiParse.journalByMonth.get(m) ?? [];
+          // Lieferanten-Journal: NUR Warenaufwand-Konten 4000–Grenze —
+          // Löhne/Gebühren/Verrechnungskonten fliessen nicht in den FIBU-Abgleich.
+          // Die ER-Kontobeträge (upsertCostMonths oben) bleiben vollständig.
+          const { waren: entries } = splitWarenJournal(multiParse.journalByMonth.get(m) ?? [], grenze);
           const prior = loadJournalEntries(targetYear, m, tenantId);
           if (JSON.stringify(prior) === JSON.stringify(entries)) continue;
           saveJournalEntries(targetYear, m, entries, 'replace', tenantId);
@@ -1377,8 +1405,22 @@ export default function CSVImportPage() {
         tenantKey(REPORTING_STORAGE_KEY),
       );
 
-      if (parseResult.journalEntries && parseResult.journalEntries.length > 0 && dataType === 'actual') {
-        saveJournalEntries(year, month, parseResult.journalEntries, importMode, tenantId);
+      if (dataType === 'actual') {
+        // Lieferanten-Journal: nur Warenaufwand-Konten 4000–Grenze (FIBU-Abgleich).
+        // Invariante gilt auch im Ergänzen-Modus: das BESTEHENDE Journal wird
+        // mitbereinigt (Alt-Buchungen auf Lohn-/Gebühren-Konten fliegen raus),
+        // und bei «replace» wird auch eine leere Waren-Liste geschrieben.
+        // ER-Kontobeträge (saveMonth oben) bleiben vollständig.
+        const grenze = await loadWarenkostenGrenze(tenantId);
+        const { waren } = splitWarenJournal(parseResult.journalEntries ?? [], grenze);
+        const priorClean = importMode === 'replace'
+          ? []
+          : splitWarenJournal(loadJournalEntries(year, month, tenantId), grenze).waren;
+        const final = [...priorClean, ...waren];
+        const prior = loadJournalEntries(year, month, tenantId);
+        if (JSON.stringify(prior) !== JSON.stringify(final)) {
+          saveJournalEntries(year, month, final, 'replace', tenantId);
+        }
       }
 
       // Import-Protokoll (Import-Center «Letzter Import» + Rückgängig) — best-effort.
@@ -1685,10 +1727,16 @@ export default function CSVImportPage() {
                 <CardContent className="pt-0">
                   <p className="text-xs text-muted-foreground mb-2">
                     Pro Monat werden die Konto-Werte (Netto = Soll − Haben) ersetzt — ein erneuter Import
-                    desselben Zeitraums verdoppelt nichts. Buchungszeilen werden als Journal pro Monat
-                    gespeichert (Basis für den Lieferanten-FIBU-Abgleich). Manuell erfasste Kategorien
-                    und andere Monatsdaten bleiben unberührt.
+                    desselben Zeitraums verdoppelt nichts. Buchungszeilen auf Warenaufwand-Konten
+                    (4000–{warenGrenze}) werden als Lieferanten-Journal pro Monat gespeichert (Basis für
+                    den FIBU-Abgleich). Manuell erfasste Kategorien und andere Monatsdaten bleiben unberührt.
                   </p>
+                  {multiJournalDropped > 0 && (
+                    <p className="text-xs text-muted-foreground mb-2">
+                      {multiJournalDropped} Nicht-Waren-Buchungen (Löhne/Gebühren/Verrechnungskonten)
+                      werden nicht ins Lieferanten-Journal übernommen — die ER-Kontobeträge bleiben vollständig.
+                    </p>
+                  )}
                   {/* Diff gegen den Bestand: Erkennung nach Zeitraum, nicht Dateiname */}
                   <div className="flex flex-wrap gap-2 mb-3 text-xs">
                     <Badge className="bg-green-100 text-green-800 border-green-200 font-normal">
@@ -1711,7 +1759,7 @@ export default function CSVImportPage() {
                         <TableHead className="text-right">Konten</TableHead>
                         <TableHead className="text-right">Aufwand (CHF)</TableHead>
                         <TableHead className="text-right">Ertrag (CHF)</TableHead>
-                        <TableHead className="text-right">Buchungen</TableHead>
+                        <TableHead className="text-right">Waren-Buchungen (Journal)</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -1736,7 +1784,7 @@ export default function CSVImportPage() {
                               {(t?.income ?? 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
-                              {multiParse.journalByMonth.get(m)?.length ?? 0}
+                              {splitWarenJournal(multiParse.journalByMonth.get(m) ?? [], warenGrenze).waren.length}
                             </TableCell>
                           </TableRow>
                         );
@@ -1852,14 +1900,21 @@ export default function CSVImportPage() {
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base">
-                      Lieferanten-Journal ({parseResult.journalEntries!.length} Buchungszeilen)
+                      Lieferanten-Journal ({journalSplit.waren.length} Waren-Buchungszeilen)
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0">
                     <p className="text-xs text-muted-foreground mb-2">
-                      Wird zusätzlich zu den Kontobeträgen gespeichert und speist den
-                      FIBU-Abgleich pro Lieferant (Warenrechnungen → Abgleich).
+                      Nur Buchungen auf Warenaufwand-Konten (4000–{warenGrenze}) — speist den
+                      FIBU-Abgleich pro Lieferant (Warenrechnungen → Abgleich). Die
+                      ER-Kontobeträge bleiben davon unberührt (alle Konten).
                     </p>
+                    {journalSplit.nichtWaren.length > 0 && (
+                      <p className="text-xs text-muted-foreground mb-2">
+                        {journalSplit.nichtWaren.length} Nicht-Waren-Buchungen (Löhne/Gebühren/Verrechnungskonten)
+                        werden nicht ins Lieferanten-Journal übernommen.
+                      </p>
+                    )}
                     <div className="max-h-48 overflow-y-auto">
                       <table className="w-full text-xs">
                         <thead>
@@ -1871,7 +1926,7 @@ export default function CSVImportPage() {
                         </thead>
                         <tbody>
                           {Object.entries(
-                            parseResult.journalEntries!.reduce<Record<string, { n: number; sum: number }>>((acc, e) => {
+                            journalSplit.waren.reduce<Record<string, { n: number; sum: number }>>((acc, e) => {
                               const k = e.text;
                               acc[k] = { n: (acc[k]?.n ?? 0) + 1, sum: (acc[k]?.sum ?? 0) + e.soll - e.haben };
                               return acc;

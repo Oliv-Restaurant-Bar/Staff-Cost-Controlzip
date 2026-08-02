@@ -369,8 +369,9 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
   { id: 'pli_kueche_wa',      categoryId: 'pl_goods_cost',      accountNumber: '4060', label: 'Küche Warenaufwand',              valueType: 'chf', sortOrder: 5 },
   { id: 'pli_kaffee_wa',      categoryId: 'pl_goods_cost',      accountNumber: '4070', label: 'Kaffee, Tee Warenaufwand',        valueType: 'chf', sortOrder: 6 },
   { id: 'pli_uebrig_wa',      categoryId: 'pl_goods_cost',      accountNumber: '4090', label: 'Übriger Handelswaren Aufwand',    valueType: 'chf', sortOrder: 7 },
-  { id: 'pli_betriebsmat',    categoryId: 'pl_goods_cost',      accountNumber: '4701', label: 'Betriebsmaterial Restauration',   valueType: 'chf', sortOrder: 8 },
-  { id: 'pli_gebinde_akt',    categoryId: 'pl_goods_cost',      accountNumber: '4800', label: 'Einkaufsabrechnungskonto Gebinde',valueType: 'chf', sortOrder: 9 },
+  // 4701/4800 sind BETRIEBSKOSTEN (nicht Wareneinsatz/WKQ) — Warenkosten = nur 4000–4090
+  { id: 'pli_betriebsmat',    categoryId: 'pl_other_op',        accountNumber: '4701', label: 'Betriebsmaterial Restauration',   valueType: 'chf', sortOrder: 3 },
+  { id: 'pli_gebinde_akt',    categoryId: 'pl_other_op',        accountNumber: '4800', label: 'Einkaufsabrechnungskonto Gebinde',valueType: 'chf', sortOrder: 4 },
   { id: 'pli_gebinde',        categoryId: 'pl_goods_cost',      accountNumber: '4801', label: 'Gebinde',                         valueType: 'chf', sortOrder: 10 },
 
   // ── Lohnaufwand ──────────────────────────────────────────────────────────────
@@ -423,7 +424,8 @@ export const DEFAULT_PL_LINE_ITEMS: Omit<BudgetPLLineItem, 'monthlyValues'>[] = 
 
   // ── Werbeaufwand ─────────────────────────────────────────────────────────────
   { id: 'pli_werbung',        categoryId: 'pl_marketing',       accountNumber: '6600', label: 'Werbeinserate',                   valueType: 'chf', sortOrder: 1 },
-  { id: 'pli_kost_logis',     categoryId: 'pl_marketing',       accountNumber: '6611', label: 'Kost & Logis',                    valueType: 'chf', sortOrder: 2 },
+  // 6611 Kost & Logis ist PERSONALAUFWAND (nicht Werbung/Marketing 6600–6699)
+  { id: 'pli_kost_logis',     categoryId: 'pl_personnel_other', accountNumber: '6611', label: 'Kost & Logis Personal',           valueType: 'chf', sortOrder: 4 },
   { id: 'pli_kundengesch',    categoryId: 'pl_marketing',       accountNumber: '6640', label: 'Kundengeschenke',                 valueType: 'chf', sortOrder: 3 },
 
   // ── Übriger Betriebsaufwand ───────────────────────────────────────────────────

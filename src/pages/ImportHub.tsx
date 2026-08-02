@@ -30,6 +30,8 @@ import { ManualEntryCard } from '@/components/GastronoviImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
+import { splitWarenJournal } from '@/lib/waren-klassen';
+import { loadWarenkostenGrenze } from '@/lib/waren-db';
 import { HoursCSVImportButton } from '@/components/HoursCSVImportButton';
 import { loadEmployees, saveActualHourEntry, upsertEmployee, seedBeaulieuEmployees, runBeaulieuHarteTest, seedBeaulieuBudget2026, type BeaulieuBudgetSeedResult, type BeaulieuBudgetVerifyRow } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
@@ -1353,9 +1355,14 @@ const AnnualCostImportSection = () => {
       const appliedFileMonths = [...result.byMonth.keys()]
         .filter(m => !modeResult.monthsSkipped.includes(m))
         .sort((a, b) => a - b);
+      // Lieferanten-Journal: NUR Warenaufwand-Konten 4000–Grenze (FIBU-Abgleich);
+      // Löhne/Gebühren/Verrechnungskonten fliessen nicht ins Journal.
+      // Die ER-Kontobeträge (replaceAnnualCostYear unten) bleiben vollständig.
+      const warenGrenze = await loadWarenkostenGrenze(tid);
       const journalTargets = new Map<number, ReturnType<typeof loadJournalEntries>>();
       for (const m of appliedFileMonths) {
-        journalTargets.set(m, (result.journalByMonth.get(m) ?? []) as ReturnType<typeof loadJournalEntries>);
+        const alle = (result.journalByMonth.get(m) ?? []) as ReturnType<typeof loadJournalEntries>;
+        journalTargets.set(m, splitWarenJournal(alle, warenGrenze).waren);
       }
       if (importMode === 'replace') {
         for (let m = 1; m <= 12; m++) {

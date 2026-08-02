@@ -666,6 +666,33 @@ function migrateObsoletePLItems(budget: BudgetYear): BudgetYear {
  * im Budget vorhanden sind. Fügt fehlende hinzu, ohne bestehende Daten zu
  * überschreiben. Wird automatisch beim Laden und nach der Reparatur ausgeführt.
  */
+/**
+ * Klassifikations-Korrektur (Kontenzuordnungs-Defaults):
+ *   4701/4800 = Betriebskosten (nicht Wareneinsatz), 6611 = Personalaufwand
+ *   (nicht Werbung/Marketing). Bestehende Budgets, deren Default-Positionen
+ *   noch in der ALTEN Kategorie stehen, werden beim Laden umgehängt —
+ *   Budgetwerte bleiben unverändert, nur die Kategorie wechselt.
+ *   Nur die bekannte alte Zuordnung wird korrigiert; hat der User die Position
+ *   manuell in eine andere Kategorie verschoben, bleibt das erhalten.
+ */
+const PL_ITEM_CATEGORY_FIXES: Array<{ id: string; from: string; to: string; label?: string }> = [
+  { id: 'pli_betriebsmat', from: 'pl_goods_cost', to: 'pl_other_op' },
+  { id: 'pli_gebinde_akt', from: 'pl_goods_cost', to: 'pl_other_op' },
+  { id: 'pli_kost_logis',  from: 'pl_marketing',  to: 'pl_personnel_other', label: 'Kost & Logis Personal' },
+];
+
+function migratePLItemCategories(budget: BudgetYear): BudgetYear {
+  const items = budget.plLineItems ?? [];
+  let changed = false;
+  const next = items.map(i => {
+    const fix = PL_ITEM_CATEGORY_FIXES.find(f => f.id === i.id && i.categoryId === f.from);
+    if (!fix) return i;
+    changed = true;
+    return { ...i, categoryId: fix.to, ...(fix.label ? { label: fix.label } : {}) };
+  });
+  return changed ? { ...budget, plLineItems: next } : budget;
+}
+
 function ensureDefaultPLItems(budget: BudgetYear): BudgetYear {
   const items = budget.plLineItems ?? [];
   const existingIds = new Set(items.map(i => i.id));
@@ -752,6 +779,7 @@ export function loadBudgetWithPL(year: number, storeKey: string = STORAGE_KEY): 
   budget = migrateObsoletePLItems(budget);
   budget = ensureDefaultPLCategories(budget);
   budget = ensureDefaultPLItems(budget);
+  budget = migratePLItemCategories(budget);
   budget = migrateSeedZeroValues2026(budget, storeKey);
   // Immer Sync: plLineItems → legacy positions (damit Dashboard/SollIst budget_revenue findet)
   budget = syncPLToLegacyPositions(budget);

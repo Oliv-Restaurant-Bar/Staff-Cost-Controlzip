@@ -15,6 +15,7 @@
  */
 
 import type { InvoiceEntry } from './waren-db';
+import { normalizeWarenKonto } from './warenaufwand-gruppierung';
 
 /**
  * Standard-Obergrenze der Warenkosten-Konten (4000–4090): alle
@@ -66,6 +67,39 @@ export function klassenAnteile(e: InvoiceEntry, grenze: number = DEFAULT_WARENKO
   if (kontoKlasse(e.warenkonto, grenze) === 'warenkosten') r.warenNet = net;
   else r.betriebNet = net;
   return r;
+}
+
+/**
+ * STRIKTE Prüfung fürs Lieferanten-Journal: nur numerische Konten 4000–Grenze.
+ * Anders als `kontoKlasse` gibt es hier KEINE Legacy-Regel — Buchungen ohne
+ * bzw. mit nicht-numerischem Konto gehören NICHT ins Lieferanten-Journal
+ * (5-stellige Konten werden auf die ersten 4 Stellen normalisiert).
+ */
+export function istWarenJournalKonto(
+  accountNumber: string | undefined,
+  grenze: number = DEFAULT_WARENKOSTEN_GRENZE,
+): boolean {
+  const n = normalizeWarenKonto(accountNumber);
+  return n !== null && n >= 4000 && n <= grenze;
+}
+
+/**
+ * Filtert Buchungszeilen fürs LIEFERANTEN-Journal (FIBU-Abgleich mit den
+ * Warenrechnungen): nur Warenaufwand-Konten 4000–Grenze. Löhne (5xxx),
+ * Betriebskosten (6xxx), 4701 Betriebsmaterial, 4800 Gebinde-Verrechnung und
+ * 4900 Warenvorrat fliessen NICHT ins Journal. Die Erfolgsrechnung/Konto-
+ * beträge bleiben davon unberührt (dort werden ALLE Konten gespeichert).
+ */
+export function splitWarenJournal<T extends { accountNumber?: string }>(
+  entries: T[],
+  grenze: number = DEFAULT_WARENKOSTEN_GRENZE,
+): { waren: T[]; nichtWaren: T[] } {
+  const waren: T[] = [];
+  const nichtWaren: T[] = [];
+  for (const e of entries) {
+    (istWarenJournalKonto(e.accountNumber, grenze) ? waren : nichtWaren).push(e);
+  }
+  return { waren, nichtWaren };
 }
 
 /** Netto-Summe der WARENKOSTEN-Anteile (Basis von «Warenkosten total» und WKQ). */
