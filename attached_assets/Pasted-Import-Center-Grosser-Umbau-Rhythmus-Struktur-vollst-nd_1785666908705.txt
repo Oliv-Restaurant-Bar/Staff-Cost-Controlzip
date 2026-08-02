@@ -1,0 +1,34 @@
+Import-Center — Grosser Umbau: Rhythmus-Struktur, „vollständig bis"-Übersicht, Jahr-Dropdown/Vorjahr dynamisch, Konsolidierung (Oliv und Beaulieu)
+
+Ziel: Ein klares, schlankes Import-Center für die wöchentliche Routine — auf einen Blick sehen, was fehlt und bis wann Daten da sind; weniger Kacheln; keine separaten Vorjahr-Importe.
+
+A. STRUKTUR (3 Blöcke statt vieler Kacheln)
+1. „Wöchentlich" (oben, prominent): Umsatz, Gäste/Anzahl, Durchschnittsverkauf, Take Away (Anteil/Gäste), MIRUS Ist-Stunden, Reservationen (Foratable), Rezensionen (Lunchgate/Google).
+2. „Monatlich": Kosten Buchhaltung; Warenrechnungen (laufend).
+3. „Einmalig / selten" (eingeklappt): Budget, Mitarbeiter-Stammdaten, Foratable Gästeexport (CRM), sowie das Nachtragen alter Jahre.
+
+B. ÜBERSICHT „VOLLSTÄNDIG BIS" (Kern)
+4. Oben ein Status „Cockpit-Bereitschaft": pro Wochenquelle eine Zeile „vollständig bis TT.MM.JJJJ" (= letztes Datum mit Daten), NICHT der Import-Zeitstempel.
+5. Ampel je Quelle: grün = Daten bis gestern vorhanden; orange = Rückstand (mit „es fehlen bis TT.MM."); grau = noch nie importiert. Kopfzeile fasst zusammen („Alle Wochenquellen aktuell bis TT.MM." bzw. „Rückstand bei: …"). Zeitstempel nur klein als Zusatz.
+6. Import direkt aus der Übersicht (Button je Zeile), ohne durch viele Kacheln zu navigieren.
+
+C. JAHR-DROPDOWN + DATEN PRO JAHR + VORJAHR DYNAMISCH
+7. Alle Kennzahlen werden mit ihrem Jahr gespeichert (nicht getrennt „aktuell"/„Vorjahr"). Bestehende Vorjahr-Daten migrieren, nichts verlieren.
+8. Jeder Datentyp hat EINEN Import mit Jahr-Dropdown (Standard = aktuelles Jahr). Andere Jahre einfach im Dropdown wählen.
+9. Cockpit „Vorjahr"-Spalte = dynamisch (Anzeigejahr − 1), liest die gespeicherten Daten dieses Jahres — z. B. 2027 zeigt 2026 automatisch als Vorjahr, ohne Neuimport.
+10. „Jahr abschliessen/festschreiben": ein abgeschlossenes Jahr ist schreibgeschützt (Badge „festgeschrieben"), Änderung nur über bewusstes „Entsperren" (Admin + Bestätigung).
+
+D. DUBLETTENERKENNUNG NACH DATEN/ZEITRAUM
+11. Doppel-Import-Schutz über den Daten-Schlüssel (Mandant + Datentyp + Datum/Zeitraum), NICHT nur über den Dateinamen. Gleicher Zeitraum erneut (auch aus anderer Datei) → Vorschau „Zeitraum bereits vorhanden" mit „X neu · Y aktualisiert (Wert ändert sich) · Z unverändert"; ersetzt statt addiert; abweichende Werte deutlich markiert; nie stilles Doppeln.
+
+E. KACHEL-KONSOLIDIERUNG
+12. „Vorjahr Kosten Buchhaltung" als Kachel entfernen; „ganzes Jahr auf einmal (Sage-Jahres-Kontoblatt)" als Option in den einheitlichen „Kosten Buchhaltung"-Import (mit Jahr-Dropdown).
+13. „Personalkosten Vorjahr" entfernen; ersetzen durch „Personalkosten je Jahr importieren" (Jahr-Dropdown) — nur für Jahre ohne automatische Berechnung; laufendes Jahr bleibt berechnet.
+14. „Budget 20xx …" → „Budget" mit Jahr-Dropdown (keine Jahreszahl im Namen).
+15. „Beaulieu Mitarbeiter" in „Einmalig / Stammdaten" verschieben.
+16. „Foratable Gästeexport" in „Selten / CRM" verschieben und kennzeichnen: befüllt das Gäste-CRM, ist KEINE Cockpit-Kennzahlen-Quelle.
+
+F. UNVERÄNDERT
+17. Bestehende Import-Logik dahinter bleibt: Vorschau-Pflicht, Upsert/Dublettensicherheit, Backup, „Letzter Import rückgängig machen", Plausibilitäts-Riegel (Anzahl ≠ Umsatz), Mandanten-Check (Oliv/Beaulieu strikt getrennt). Keine Daten verlieren bei der Migration.
+
+Abnahme: Import-Center zeigt drei Rhythmus-Blöcke; oben je Wochenquelle „vollständig bis TT.MM." mit Ampel + Gesamtstatus; ein Import je Datentyp mit Jahr-Dropdown (Standard aktuelles Jahr); Vorjahr-Spalte dynamisch (2026 erscheint 2027 automatisch); Take Away als Wochenquelle; Doppel-Import desselben Zeitraums verdoppelt nicht (auch bei anderem Dateinamen); keine separaten Vorjahr-Kacheln; abgeschlossene Jahre schreibgeschützt.

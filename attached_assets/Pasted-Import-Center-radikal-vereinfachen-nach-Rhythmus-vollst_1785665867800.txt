@@ -1,0 +1,23 @@
+Import-Center radikal vereinfachen — nach Rhythmus, „vollständig bis"-Übersicht, Vorjahr gesperrt (Oliv und Beaulieu)
+
+Ziel: Klarer Überblick für die wöchentliche Import-Routine; auf einen Blick sehen, was fehlt und bis wann Daten vorhanden sind.
+
+A. NEUE STRUKTUR (3 Blöcke statt vieler Kacheln)
+1. „Wöchentlich" (oben, prominent): Umsatz (Gastronovi), Gäste/Anzahl, Durchschnittsverkauf, MIRUS Ist-Stunden, Reservationen (Foratable), Rezensionen (Lunchgate/Google).
+2. „Monatlich": Ist-Kosten Buchhaltung; Warenrechnungen (laufend).
+3. „Einmalig / selten" (standardmässig eingeklappt): Vorjahr-Umsatz, Vorjahr-Kosten, Personalkosten-Vorjahr, Budget, Mitarbeiter-Stammdaten.
+
+B. ÜBERSICHT „VOLLSTÄNDIG BIS" (Kern)
+4. Oben eine Status-Übersicht „Cockpit-Bereitschaft": pro Wochenquelle eine Zeile mit „vollständig bis TT.MM.JJJJ" (= letztes Datum mit Daten), NICHT der Import-Zeitstempel.
+5. Ampel je Quelle: grün = Daten bis gestern vorhanden; orange = Rückstand (zeigt „es fehlen X Tage / bis TT.MM."); grau = noch nie importiert.
+6. Eine Kopfzeile fasst zusammen: „Alle Wochenquellen aktuell bis TT.MM." bzw. „Rückstand bei: <Quellen>". Zeitstempel „zuletzt importiert am" nur klein als Zusatz.
+
+C. VORJAHR ALS GESPERRTE HARDZAHLEN
+7. Vorjahr-Umsatz, Vorjahr-Kosten (Buchhaltung), Personalkosten-Vorjahr: einmal hochladen → als feste Hardzahlen speichern und danach SCHREIBGESCHÜTZT (Badge „gesperrt · festgeschrieben"). Kein erneuter Import/Überschreiben möglich.
+8. Änderung nur über bewusstes „Entsperren" (Admin, mit Bestätigung); danach optional neu importieren und wieder sperren. So keine versehentliche Änderung der Vergleichsbasis.
+
+D. WENIGER KLICKS
+9. Jede Quelle direkt aus der Übersicht importierbar (Button in der Zeile), ohne durch viele Kacheln zu navigieren. Bestehende Import-Logik (Vorschau, Upsert/dublettensicher, Backup, Rückgängig, Mandanten-Check) bleibt unverändert dahinter.
+10. Mandantengetrennt (Oliv/Beaulieu): die Übersicht zeigt den Stand des aktiven Mandanten.
+
+Abnahme: Das Import-Center zeigt oben je Wochenquelle „vollständig bis TT.MM." mit Ampel und einen Gesamtstatus; Vorjahr-Importe sind nach einmaligem Hochladen gesperrt und nur mit „Entsperren" änderbar; die drei Rhythmus-Blöcke ersetzen die vielen Einzelkacheln; Import funktioniert direkt aus der Übersicht.

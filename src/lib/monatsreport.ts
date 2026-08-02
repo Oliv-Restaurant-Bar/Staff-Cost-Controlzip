@@ -35,6 +35,8 @@ import { loadTakeAwayGuests } from '@/lib/takeaway-cockpit-metrics';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 import { loadVorjahresPersonalkosten } from '@/lib/vorjahres-personalkosten';
+import { computePLForMonth } from '@/lib/pl-engine';
+import { loadMonth as loadReportingMonth, STORAGE_KEY as REPORTING_STORAGE_KEY } from '@/lib/reporting-store';
 import { loadStaffingRequirements } from '@/lib/staffing-requirements-db';
 import { loadStaffingProfilesConfig } from '@/lib/staffing-profiles-db';
 import { loadPositions } from '@/lib/positions-db';
@@ -935,6 +937,28 @@ export async function ladeMonatsreport(
     loadActualHoursForMonth(new Date(year, month - 1, 1), tenantId).catch(() => null),
   ]);
 
+  // ── Vorjahr DYNAMISCH: Ist-Daten des Jahres −1 überlagern vj_daily ─────────
+  // Jahresbasierte Datenhaltung: die normalen Ist-Importe des Vorjahres
+  // (umsatz.ts-SSOT, dailyBudgets/maison) sind die BEVORZUGTE Vorjahres-Quelle
+  // — 2026er-Tagesimporte erscheinen 2027 automatisch als Vorjahr, ohne
+  // separaten VJ-Import. vj_daily bleibt Fallback (alte VJ-Importe, z.B. 2025).
+  // Semantik identisch zu vj_daily: brutto-Werte, Netto = brutto/VAT_STD.
+  const istAlsVjRecord = (date: string, tag: import('@/lib/umsatz').UmsatzTag): VjDayRecord => ({
+    date,
+    year: Number(date.slice(0, 4)),
+    actualRevenue: tag.gesamtBrutto,
+    ...(tag.foodBrutto > 0 ? { foodRevenue: tag.foodBrutto } : {}),
+    ...(tag.beverageBrutto > 0 ? { beverageRevenue: tag.beverageBrutto } : {}),
+    ...(tag.takeAwayBrutto > 0 ? { takeawayRevenue: tag.takeAwayBrutto } : {}),
+    source: 'ist_vorjahr_dynamisch',
+  });
+  try {
+    const vjIstTage = await ladeUmsatzTage(tenantId, vjFromIsoG, vjToIsoG);
+    for (const [date, tag] of vjIstTage) {
+      if (tag.gesamtBrutto > 0) vjDaily[date] = istAlsVjRecord(date, tag);
+    }
+  } catch { /* Ist-Vorjahr nicht ladbar → vj_daily-Fallback bleibt massgeblich */ }
+
   // ── Vorjahres-Woche: vj_daily der berührten Monate laden ───────────────────
   // Die VJ-Woche kann Monatsgrenzen überschreiten und einen anderen Monat als
   // vjMonth treffen (z.B. Wochenanfang KW am Monatsanfang). Alle berührten
@@ -950,6 +974,37 @@ export async function ladeMonatsreport(
         loadVjDailyMonth(y, m, tenantId).catch(() => ({} as Record<string, VjDayRecord>))),
     );
     for (const mp of maps) Object.assign(vjWocheDaily, mp);
+    // Auch hier: Ist-Daten des Vorjahres (umsatz.ts-SSOT) überlagern vj_daily —
+    // STRIKT nur die exakt gemappten VJ-Kalendertage (die geladene Datumsspanne
+    // kann Lücken der geklemmten Woche enthalten; fremde Tage nie überlagern).
+    try {
+      const vjDates = vjWochePaare.map(p => p.vj).sort();
+      const vjDateSet = new Set(vjDates);
+      const vjIstWoche = await ladeUmsatzTage(tenantId, vjDates[0], vjDates[vjDates.length - 1]);
+      for (const [date, tag] of vjIstWoche) {
+        if (vjDateSet.has(date) && tag.gesamtBrutto > 0) vjWocheDaily[date] = istAlsVjRecord(date, tag);
+      }
+    } catch { /* Fallback: vj_daily */ }
+  }
+
+  // ── Personalkosten Vorjahr DYNAMISCH ───────────────────────────────────────
+  // Bevorzugt Buchhaltungswert (vorjahres_personalkosten, nur Jahre < 2026).
+  // Fehlt er (z.B. Anzeige 2027 → VJ 2026), Fallback auf die Erfolgsrechnungs-
+  // Monatsdaten des Vorjahres: Löhne (personnel_wages) + Sozialleistungen
+  // (personnel_social) aus computePLForMonth — identische SSOT-Regel wie der
+  // ER-Abgleich (personnel_other bleibt bewusst aussen vor). Leer statt 0.
+  let pkVjEff: { chf: number; quelle: string } | null = pkVj;
+  if (!pkVjEff) {
+    try {
+      const recVj = loadReportingMonth(year - 1, month, tenantKey(REPORTING_STORAGE_KEY));
+      const plVj = computePLForMonth(recVj);
+      const cell = (id: string) => plVj.rows.find(r => r.def.id === id)?.values.actual;
+      const w = cell('personnel_wages');
+      const s = cell('personnel_social');
+      if (w !== undefined || s !== undefined) {
+        pkVjEff = { chf: (w ?? 0) + (s ?? 0), quelle: 'Erfolgsrechnung' };
+      }
+    } catch { /* keine ER-Daten → VJ-Personalkosten bleiben leer */ }
   }
 
   // ── Umsatz Ist aus der kanonischen Netto-Quelle (src/lib/umsatz.ts) ────────
@@ -1466,7 +1521,7 @@ export async function ladeMonatsreport(
       // Vorjahr NUR Monat: Buchhaltungswert (vorjahres_personalkosten,
       // ausschliesslich Jahre < 2026 ohne Dienstplan-Berechnung).
       // KEINE Verteilung auf Wochen → vj (Woche) bleibt leer.
-      vj: null, vjMonth: pkVj ? r2(pkVj.chf) : null,
+      vj: null, vjMonth: pkVjEff ? r2(pkVjEff.chf) : null,
     }, { bold: true, deltaInverted: true }),
     // PKQ: Budget = Ziel-PKQ (Budget-Personalkosten ÷ Budget-Umsatz, aus dem
     // Kern budgetZielQuote) in BEIDEN Sichten; Δ = Ist − Ziel in PROZENTPUNKTEN
@@ -1480,7 +1535,7 @@ export async function ladeMonatsreport(
       // PKQ Vorjahr (nur Monat) = Buchhaltungs-Personalkosten ÷ Netto-Umsatz
       // desselben VJ-Monats (vj_daily, Standard-MwSt-Netto).
       vj: null,
-      vjMonth: pkVj && vjNetV != null && vjNetV > 0 ? r2((pkVj.chf / vjNetV) * 100) : null,
+      vjMonth: pkVjEff && vjNetV != null && vjNetV > 0 ? r2((pkVjEff.chf / vjNetV) * 100) : null,
     }, { fmt: 'pct', warnAbove: OBERGRENZE_PKQ_PCT, deltaPp: true }),
     e(),
     // ── Block Warenkosten (erfasste Warenrechnungen, netto) ────────────────

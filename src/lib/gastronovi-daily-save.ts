@@ -66,10 +66,10 @@ export interface CommitGastronoviResult {
  * Vorjahres-Spalte automatisch aus Jahr−1 lesen kann. Bestehende vj_daily-Tage
  * anderer Zeiträume bleiben erhalten.
  *
- * JAHRES-SPERRE: Im previous_year-Modus wird VOR jedem Write die Jahres-Sperre
- * (prior-year-lock, exakt wie VjDailyImportSection) geprüft. Ist das Jahr
- * gesperrt, wird NICHTS geschrieben (weder dailyBudgets noch vj_daily) und
- * { blocked: true, lockedYear } zurückgegeben.
+ * JAHRES-SPERRE: Für JEDES Ziel wird VOR jedem Write die Jahres-Sperre
+ * (prior-year-lock = «Jahr abgeschlossen») für das Jahr der Daten geprüft.
+ * Ist das Jahr festgeschrieben, wird NICHTS geschrieben (weder dailyBudgets
+ * noch vj_daily) und { blocked: true, lockedYear } zurückgegeben.
  *
  * Gibt blocked-Flag, Anzahl geschriebener Tage, Datumsbereich und (falls
  * zutreffend) die Anzahl vj_daily-Upserts zurück.
@@ -80,8 +80,11 @@ export async function commitGastronoviDays(
   target: UmsatzImportTarget,
   opts: CommitGastronoviOptions = {},
 ): Promise<CommitGastronoviResult> {
-  // ── Jahres-Sperre prüfen (nur Vorjahr) — VOR jedem Write ──
-  if (target === 'previous_year' && rows.length > 0) {
+  // ── Jahres-Sperre prüfen (JEDES Ziel) — VOR jedem Write ──
+  // Jahresbasierte Datenhaltung: ein «abgeschlossenes» Jahr ist komplett
+  // schreibgeschützt — auch Ist-Importe in ein festgeschriebenes Jahr werden
+  // geblockt, nicht nur der Vorjahres-Pfad.
+  if (rows.length > 0) {
     const year = opts.year ?? parseInt(rows[0].date.slice(0, 4), 10);
     const lock = await getLockState(opts.tenantId ?? 'oliv', year);
     if (lock.locked) {

@@ -98,7 +98,8 @@ import { readFirstSheetRows, isoFromDayMonth, formatInvalidDayMonth, suggestTage
 import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save';
 import { parseGastronoviExcel, type GastronoviDayResult } from '@/lib/revenue-parser';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
-import { ImportGroupCards, IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
+import { IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
+import { CockpitReadinessCard, MonthlyBlockCard, RareBlockCard } from '@/components/import-center/RhythmOverview';
 import { visibleCategories } from '@/lib/import-center';
 
 const currentYear = new Date().getFullYear();
@@ -591,7 +592,7 @@ const JahresDatenstandCard = () => {
               <div className="pt-1">
                 <Button
                   variant="outline" size="sm" className="h-7 text-[11px]"
-                  onClick={() => openImportSection('vorjahr-kosten-buchhaltung')}
+                  onClick={() => openImportSection('ist-kosten-buchhaltung')}
                   data-testid="jd-link-sage-import"
                 >
                   Zum Sage-Jahresimport
@@ -903,18 +904,21 @@ const AnnualRevenueImportSection = () => {
     if (file) handleFile(file);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!result) return;
     const tid = tenantId ?? 'oliv';
 
-    // Lock-Check: Abbruch wenn Vorjahresdaten gesperrt sind
-    if (lockState.locked) {
+    // Lock-Check FRISCH beim Speichern (nie nur UI-State — eine zweite offene
+    // Ansicht oder ein zwischenzeitlich gesetzter Lock würde sonst umgangen).
+    setSaving(true);
+    const freshLock = await getLockState(tid, importYear);
+    if (freshLock.locked) {
+      setAnnualLockState(freshLock);
+      setSaving(false);
       console.warn(`[PRIOR-YEAR] import blocked: locked | tenant: ${tid} | year: ${importYear}`);
       toast.error(`VJ ${importYear} ist gesperrt. Bitte zuerst entsperren (nur Admin).`);
       return;
     }
-
-    setSaving(true);
     let saved = 0;
     // Vorjahresumsatz wird als revenuePreviousYear im Folgejahr gespeichert,
     // damit die P&L-Engine (pl-engine.ts) record.revenuePreviousYear korrekt liest.
@@ -965,6 +969,14 @@ const AnnualRevenueImportSection = () => {
       console.error('[PRIOR-YEAR] Import-Protokoll fehlgeschlagen:', err);
       toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
     });
+    // Hardzahlen-Prinzip: nach dem Hochladen automatisch festschreiben —
+    // Änderung nur noch über bewusstes «Entsperren» (Admin, mit Bestätigung).
+    void lockYear(tid, importYear, { source: 'annual_xlsx_import' })
+      .then(async ({ error: lockErr }) => {
+        if (lockErr) { toast.warning('Automatisches Sperren fehlgeschlagen: ' + lockErr); return; }
+        setAnnualLockState(await getLockState(tid, importYear));
+        toast.success(`VJ ${importYear} festgeschrieben — erneuter Import nur nach Entsperren`);
+      });
   };
 
   const handleAnnualLock = async () => {
@@ -983,6 +995,8 @@ const AnnualRevenueImportSection = () => {
 
   const handleAnnualUnlock = async () => {
     const tid = tenantId ?? 'oliv';
+    // Bewusste Bestätigung: die gesperrte Vergleichsbasis wird änderbar.
+    if (!window.confirm(`VJ ${importYear} wirklich entsperren? Die festgeschriebene Vergleichsbasis (Vorjahres-Hardzahlen) wird dadurch wieder änderbar.`)) return;
     setAnnualLockLoading(true);
     try {
       const { error } = await unlockYear(tid, importYear);
@@ -1178,6 +1192,16 @@ const AnnualCostImportSection = () => {
   // Konfliktmodus + Monatsauswahl (nur für Modus «selective»)
   const [importMode, setImportMode] = useState<AnnualCostImportMode>('replace');
   const [selectedMonths, setSelectedMonths] = useState<Set<number>>(new Set());
+  // Vorjahres-Hardzahlen-Sperre (gemeinsamer Jahres-Lock, wie Umsatz/Personal)
+  const [costLock, setCostLock] = useState<PriorYearLockState>({ locked: false });
+  const [costLockLoading, setCostLockLoading] = useState(false);
+
+  // Lock-Status laden, sobald das Zieljahr aus der Datei bekannt ist.
+  useEffect(() => {
+    const year = result?.detectedYear;
+    if (!year) { setCostLock({ locked: false }); return; }
+    getLockState(tenantId ?? 'oliv', year).then(setCostLock);
+  }, [result?.detectedYear, tenantId]);
 
   const registryKey  = tenantKey(ANNUAL_COST_IMPORTS_KEY);
   const reportingKey = tenantKey(REPORTING_STORAGE_KEY);
@@ -1296,6 +1320,13 @@ const AnnualCostImportSection = () => {
     setSaving(true);
     try {
       const year = result.detectedYear;
+      // Lock-Check FRISCH beim Speichern (UI-State kann veraltet sein).
+      const freshLock = await getLockState(tenantId ?? 'oliv', year);
+      if (freshLock.locked) {
+        setCostLock(freshLock);
+        toast.error(`VJ ${year} ist gesperrt (festgeschriebene Hardzahlen). Bitte zuerst entsperren (nur Admin).`);
+        return;
+      }
       // Undo-Snapshot VOR dem Schreiben: bisherige expenseCategories aller
       // Monate des Zieljahres, die der Import anfassen KÖNNTE (Datei-Kategorien
       // vorhanden ODER bestehende numerische Konten). null = Monat existierte nicht.
@@ -1364,6 +1395,16 @@ const AnnualCostImportSection = () => {
           ? ` — ${modeResult.monthsSkipped.length} Datei-Monat(e) wegen Modus übersprungen`
           : ''),
       );
+      // Hardzahlen-Prinzip: Vorjahres-Kosten nach dem Hochladen automatisch
+      // festschreiben — Änderung nur noch über bewusstes «Entsperren».
+      if (year < currentYear) {
+        void lockYear(tenantId ?? 'oliv', year, { source: 'annual_cost_xlsx_import' })
+          .then(async ({ error: lockErr }) => {
+            if (lockErr) { toast.warning('Automatisches Sperren fehlgeschlagen: ' + lockErr); return; }
+            setCostLock(await getLockState(tenantId ?? 'oliv', year));
+            toast.success(`VJ ${year} festgeschrieben — erneuter Import nur nach Entsperren`);
+          });
+      }
       const backup = await kvBackup;
       if (backup.failedMonths.length > 0) {
         const failed = backup.failedMonths;
@@ -1523,6 +1564,40 @@ const AnnualCostImportSection = () => {
         <div data-testid="annual-import-error" className="flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
           <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Vorjahres-Sperre: Hardzahlen festgeschrieben — Import blockiert. */}
+      {result && result.detectedYear !== null && costLock.locked && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-[11px]" data-testid="annual-cost-locked">
+          <Lock className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <span className="text-amber-800 dark:text-amber-300 flex-1">
+            <strong>VJ {result.detectedYear} gesperrt · festgeschrieben</strong> — Kosten-Import blockiert.
+            {costLock.lockedAt && <> Fixiert am {formatLockedAt(costLock.lockedAt)}.</>}
+          </span>
+          {isAdmin && (
+            <Button
+              size="sm" variant="outline"
+              className="h-6 px-2 text-[10px] gap-1 border-amber-400 text-amber-700 hover:bg-amber-100 dark:text-amber-300 dark:border-amber-600"
+              onClick={async () => {
+                if (!window.confirm(`VJ ${result.detectedYear} wirklich entsperren? Die festgeschriebene Vergleichsbasis (Vorjahres-Hardzahlen) wird dadurch wieder änderbar.`)) return;
+                setCostLockLoading(true);
+                try {
+                  const { error: lockErr } = await unlockYear(tenantId ?? 'oliv', result.detectedYear as number);
+                  if (lockErr) { toast.error('Entsperren fehlgeschlagen: ' + lockErr); return; }
+                  setCostLock({ locked: false });
+                  toast.success(`VJ ${result.detectedYear} entsperrt — Import wieder möglich`);
+                } finally {
+                  setCostLockLoading(false);
+                }
+              }}
+              disabled={costLockLoading}
+              data-testid="annual-cost-unlock"
+            >
+              {costLockLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <LockOpen className="h-3 w-3" />}
+              Entsperren
+            </Button>
+          )}
         </div>
       )}
 
@@ -2557,6 +2632,24 @@ interface TagesdatenPreview {
   gaesteDiff?: GaesteDiff;
   /** Nur gaeste: betroffene Monate «YYYY-MM» (Datei ersetzt diese Monate 1:1). */
   gaesteMonths?: string[];
+  /** ALLE Typen: Diff gegen den Bestand nach Daten-Schlüssel (Mandant+Typ+Datum) —
+      erkennt Doppel-Importe auch aus einer anderen Datei. undefined = Bestand nicht lesbar. */
+  datenDiff?: { neu: number; aktualisiert: number; unveraendert: number };
+  /** Tage, deren Wert sich beim Speichern ÄNDERT (Überschreiben sichtbar machen). */
+  geaendert?: Array<{ date: string; alt: number; neu: number }>;
+}
+
+/** Datums-Diff gegen den Bestand: neu / aktualisiert (Wert ändert sich) / unverändert. */
+function diffGegenBestand(prior: Record<string, number>, daily: Record<string, number>) {
+  let neu = 0, aktualisiert = 0, unveraendert = 0;
+  const geaendert: Array<{ date: string; alt: number; neu: number }> = [];
+  for (const d of Object.keys(daily).sort()) {
+    const alt = prior[d];
+    if (alt == null) neu++;
+    else if (Math.abs(alt - daily[d]) < 0.005) unveraendert++;
+    else { aktualisiert++; geaendert.push({ date: d, alt, neu: daily[d] }); }
+  }
+  return { datenDiff: { neu, aktualisiert, unveraendert }, geaendert };
 }
 
 /** UI-Auswahl «Datentyp» (Pflicht): Umsatz nach Ziel getrennt, Rest = TagesdatenTyp. */
@@ -2784,8 +2877,33 @@ function TagesdatenImportSection() {
         gaesteDiff = diffGaesteDaily(prior, daily, gaesteMonths);
       }
 
+      // ALLE Typen: Dublettenerkennung nach Daten-Schlüssel (Mandant+Typ+Datum) —
+      // greift auch, wenn derselbe Zeitraum aus einer ANDEREN Datei kommt.
+      // Save ersetzt je Tag (nie addieren); hier machen wir das Überschreiben sichtbar.
+      let datenDiff: TagesdatenPreview['datenDiff'];
+      let geaendert: TagesdatenPreview['geaendert'];
+      try {
+        let prior: Record<string, number> = {};
+        if (typ === 'gaeste') prior = await loadGaesteDaily(tenantKey);
+        else if (typ === 'marketing') prior = await loadMaisonDaily(tenantKey);
+        else if (typ === 'durchschnitt') prior = await loadAvgCheckDaily(tenantKey);
+        else {
+          // umsatz: Zielfeld hängt vom Jahr ab (Ist vs. Vorjahr)
+          const base = await loadDailyBudgetsBaseStrict(tenantKey('dailyBudgets'));
+          const field = targetForYear(year, currentYear) === 'actual' ? 'actualRevenue' : 'previousYearRevenue';
+          for (const [d, rec] of Object.entries(base)) {
+            const v = (rec as Record<string, unknown>)?.[field];
+            if (typeof v === 'number' && v > 0) prior[d] = v;
+          }
+        }
+        ({ datenDiff, geaendert } = diffGegenBestand(prior, daily));
+      } catch {
+        // Bestand nicht lesbar (KV-Fehler): kein Diff anzeigen, Import bleibt möglich.
+        datenDiff = undefined; geaendert = undefined;
+      }
+
       setPreview({
-        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths,
+        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths, datenDiff, geaendert,
         dates, from: dates[0] ?? null, to: dates.at(-1) ?? null,
         monthTotals, zeitraum, tagessumme,
         invalidDates: invalidDates.length > 0 ? invalidDates : undefined,
@@ -2807,6 +2925,21 @@ function TagesdatenImportSection() {
     setStatus('saving');
     try {
       const { typ, daily, umsatzRows } = preview;
+
+      // ── Jahres-Abschluss-Sperre (ALLE Typen) — FRISCH vor dem Schreiben ──
+      // Ein festgeschriebenes Jahr ist komplett schreibgeschützt: auch Gäste/
+      // Durchschnitt/Marketing-Importe in dieses Jahr werden geblockt (Umsatz
+      // wird zusätzlich in commitGastronoviDays geprüft — doppelte Sicherung).
+      const betroffeneJahre = [...new Set([preview.year, ...preview.dates.map(d => Number(d.slice(0, 4)))])];
+      for (const jahr of betroffeneJahre) {
+        const jLock = await getLockState(tenantId ?? 'oliv', jahr);
+        if (jLock.locked) {
+          setError(`Jahr ${jahr} ist abgeschlossen (festgeschrieben) — Import nicht ausgeführt. Entsperren: Import-Center «Jahre abschliessen» (nur Admin).`);
+          setStatus('error');
+          toast.error(`Jahr ${jahr} ist abgeschlossen — Import nicht ausgeführt.`);
+          return;
+        }
+      }
 
       // ── Undo-Snapshot VOR dem Schreiben (Import-Center «Rückgängig») ──
       // Pro Typ: Vorzustand der betroffenen Blob-Einträge (null = existierte
@@ -2924,8 +3057,8 @@ function TagesdatenImportSection() {
         const res = await commitGastronoviDays(storageKey, umsatzRows ?? [], target, { tenantId, year: preview.year });
         if (res.blocked) {
           setError(
-            `Jahr ${res.lockedYear ?? preview.year} ist gesperrt — Import nicht ausgeführt. ` +
-            `Zum Entsperren: Sektion «Vorjahres-Tagesumsatz» (nur Admin).`,
+            `Jahr ${res.lockedYear ?? preview.year} ist abgeschlossen (festgeschrieben) — Import nicht ausgeführt. ` +
+            `Entsperren: Import-Center «Jahre abschliessen» (nur Admin).`,
           );
           setStatus('error');
           toast.error(`Jahr ${res.lockedYear ?? preview.year} ist gesperrt — Import nicht ausgeführt.`);
@@ -3086,15 +3219,42 @@ function TagesdatenImportSection() {
                     <span className="font-medium">{fmtValueByTyp('gaeste', preview.tagessumme ?? 0)}</span>
                   </>
                 )}
-                {preview.gaesteDiff && (
+                {preview.datenDiff && (
                   <>
                     <span className="text-muted-foreground">Gegen Bestand:</span>
                     <span className="font-medium" data-testid="tagesdaten-gaeste-diff">
-                      {preview.gaesteDiff.neu} neu · {preview.gaesteDiff.aktualisiert} aktualisiert · {preview.gaesteDiff.unveraendert} unverändert
+                      {preview.datenDiff.neu} neu · {preview.datenDiff.aktualisiert} aktualisiert (Wert ändert sich) · {preview.datenDiff.unveraendert} unverändert
                     </span>
                   </>
                 )}
               </div>
+
+              {/* Dublettenerkennung nach Daten-Schlüssel: Zeitraum (teilweise) bereits vorhanden.
+                  Ersetzt statt addiert — Überschreiben wird deutlich markiert. */}
+              {preview.datenDiff && (preview.datenDiff.aktualisiert + preview.datenDiff.unveraendert) > 0 && (
+                <div
+                  className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-2.5 py-2 space-y-1"
+                  data-testid="tagesdaten-zeitraum-vorhanden"
+                >
+                  <p className="text-[11px] font-medium text-amber-800 dark:text-amber-300 flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    Zeitraum bereits vorhanden — {preview.datenDiff.neu} neu · {preview.datenDiff.aktualisiert} aktualisiert (Wert ändert sich) · {preview.datenDiff.unveraendert} unverändert.
+                    Bestehende Tage werden ersetzt, nie addiert.
+                  </p>
+                  {preview.geaendert && preview.geaendert.length > 0 && (
+                    <ul className="text-[11px] text-amber-800 dark:text-amber-300 tabular-nums pl-5 space-y-0.5" data-testid="tagesdaten-geaendert-liste">
+                      {preview.geaendert.slice(0, 8).map(g => (
+                        <li key={g.date}>
+                          {format(parseISO(g.date), 'dd.MM.')}: {fmtValueByTyp(preview.typ, g.alt)} → <strong>{fmtValueByTyp(preview.typ, g.neu)}</strong>
+                        </li>
+                      ))}
+                      {preview.geaendert.length > 8 && (
+                        <li>… und {preview.geaendert.length - 8} weitere Tage mit geändertem Wert</li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {/* Monatstotale je betroffenem Monat */}
               <div className="rounded border border-border/60 bg-muted/20 divide-y divide-border/50">
@@ -3189,6 +3349,11 @@ function ManualEntrySection() {
 function BeaulieuBudgetImportSection() {
   const [running, setRunning]   = useState(false);
   const [result, setResult]     = useState<BeaulieuBudgetSeedResult | null>(null);
+  // Jahr-Dropdown statt Jahreszahl im Kachel-Namen: für 2026 existiert der
+  // hinterlegte Excel-Seed (unverändert); andere Jahre werden im Budget-Modul
+  // gepflegt (kein separater Import pro Jahr — keine neue Kachel je Jahr).
+  const [budgetYear, setBudgetYear] = useState(2026);
+  const budgetYearOptions = Array.from({ length: currentYear + 1 - 2024 + 1 }, (_, i) => 2024 + i);
 
   const handleSeed = async () => {
     setRunning(true);
@@ -3213,22 +3378,53 @@ function BeaulieuBudgetImportSection() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Schreibt die Budgetwerte aus <strong>Budget Beaulieu 2026.xlsx</strong> fest in Supabase
-        (Schlüssel: <code className="text-xs bg-muted px-1 rounded">beaulieu:budget_v1</code>).
-        Nach dem Speichern wird automatisch ein Abgleich Excel ↔ Supabase durchgeführt.
-      </p>
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-muted-foreground whitespace-nowrap">Budget-Jahr:</label>
+        <Select value={String(budgetYear)} onValueChange={v => { setBudgetYear(Number(v)); setResult(null); }}>
+          <SelectTrigger className="h-7 text-xs w-28" data-testid="beaulieu-budget-year">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {budgetYearOptions.map(y => (
+              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-      <Button
-        onClick={handleSeed}
-        disabled={running}
-        className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
-      >
-        {running
-          ? <><Loader2 className="h-4 w-4 animate-spin" />Budget wird gespeichert + verifiziert…</>
-          : <><Database className="h-4 w-4" />Budget 2026 speichern + verifizieren</>
-        }
-      </Button>
+      {budgetYear === 2026 ? (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Schreibt die Budgetwerte aus <strong>Budget Beaulieu 2026.xlsx</strong> fest in Supabase
+            (Schlüssel: <code className="text-xs bg-muted px-1 rounded">beaulieu:budget_v1</code>).
+            Nach dem Speichern wird automatisch ein Abgleich Excel ↔ Supabase durchgeführt.
+          </p>
+
+          <Button
+            onClick={handleSeed}
+            disabled={running}
+            className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+          >
+            {running
+              ? <><Loader2 className="h-4 w-4 animate-spin" />Budget wird gespeichert + verifiziert…</>
+              : <><Database className="h-4 w-4" />Budget {budgetYear} speichern + verifizieren</>
+            }
+          </Button>
+        </>
+      ) : (
+        <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 space-y-2">
+          <p className="text-sm text-muted-foreground">
+            Für {budgetYear} liegt keine hinterlegte Excel-Vorlage vor — das Budget wird
+            direkt im <strong>Budget-Modul</strong> gepflegt (gleicher Speicher
+            <code className="text-xs bg-muted px-1 rounded ml-1">beaulieu:budget_v1</code>, pro Jahr).
+          </p>
+          <Link to="/budget">
+            <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5">
+              Zum Budget-Modul
+            </Button>
+          </Link>
+        </div>
+      )}
 
       {result && (
         <div className="space-y-3">
@@ -3333,14 +3529,18 @@ const AnnualPersonnelCostImportSection = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!result) return;
     const tid = tenantId ?? 'oliv';
-    if (lockState.locked) {
+    // Lock-Check FRISCH beim Speichern (nie nur UI-State).
+    setSaving(true);
+    const freshLock = await getLockState(tid, importYear);
+    if (freshLock.locked) {
+      setLockState(freshLock);
+      setSaving(false);
       toast.error(`VJ ${importYear} ist gesperrt. Bitte zuerst entsperren (nur Admin).`);
       return;
     }
-    setSaving(true);
     // personnelCostPreviousYear is stored in the *following* year's record,
     // so it appears in the P&L "Vorjahr" column for that year.
     const saveYear = importYear + 1;
@@ -3387,6 +3587,13 @@ const AnnualPersonnelCostImportSection = () => {
       console.error('[PRIOR-YEAR-COST] Import-Protokoll fehlgeschlagen:', err);
       toast.warning('Import-Protokoll konnte nicht gespeichert werden — «Rückgängig» ist für diesen Lauf nicht verfügbar.');
     });
+    // Hardzahlen-Prinzip: nach dem Hochladen automatisch festschreiben.
+    void lockYear(tid, importYear, { source: 'personnel_cost_xlsx_import' })
+      .then(async ({ error: lockErr }) => {
+        if (lockErr) { toast.warning('Automatisches Sperren fehlgeschlagen: ' + lockErr); return; }
+        setLockState(await getLockState(tid, importYear));
+        toast.success(`VJ ${importYear} festgeschrieben — erneuter Import nur nach Entsperren`);
+      });
   };
 
   const handleLock = async () => {
@@ -3404,6 +3611,7 @@ const AnnualPersonnelCostImportSection = () => {
 
   const handleUnlock = async () => {
     const tid = tenantId ?? 'oliv';
+    if (!window.confirm(`VJ ${importYear} wirklich entsperren? Die festgeschriebene Vergleichsbasis (Vorjahres-Hardzahlen) wird dadurch wieder änderbar.`)) return;
     setLockLoading(true);
     try {
       const { error: lockErr } = await unlockYear(tid, importYear);
@@ -3437,13 +3645,15 @@ const AnnualPersonnelCostImportSection = () => {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {[currentYear - 3, currentYear - 2, currentYear - 1, currentYear].map(y => (
+            {/* Nur Jahre OHNE automatische Berechnung: das laufende Jahr wird
+                aus Dienstplan/MIRUS berechnet und ist hier bewusst nicht wählbar. */}
+            {[currentYear - 4, currentYear - 3, currentYear - 2, currentYear - 1].map(y => (
               <SelectItem key={y} value={String(y)}>{y}</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <span className="text-[10px] text-muted-foreground">
-          → erscheint als Vorjahr-Spalte in P&L {importYear + 1}
+          → erscheint als Vorjahr-Spalte in P&L {importYear + 1} · {currentYear} wird automatisch berechnet
         </span>
         <Button
           size="sm" variant="outline"
@@ -3697,21 +3907,23 @@ const ImportHub = () => {
         <ImportTaskPrefillHint forTarget="maison" />
 
         {/* ── Import-Bereiche (Karten-Übersicht) ────────────────────────── */}
-        <ImportCenterGrid />
+        {/* Nicht-Admins: kompaktes Karten-Grid (Routen funktionieren ohne
+            die Admin-Sektionen). Admins sehen die 3 Rhythmus-Blöcke. */}
+        {!showAdminSections && <ImportCenterGrid />}
 
         {showAdminSections && (
         <>
-        {/* ── Die 4 Importarten-Gruppen (Status + „Import starten") ─────── */}
-        <ImportGroupCards />
+        {/* ── Block 1: Wöchentlich — «vollständig bis» je Quelle + Ampel ── */}
+        <CockpitReadinessCard />
 
-        {/* ── 0. Datenstand ─────────────────────────────────────────────── */}
-        <DatenstandCard />
+        {/* ── Block 2: Monatlich ────────────────────────────────────────── */}
+        <MonthlyBlockCard />
 
-        {/* ── 0b. Datenstand Vorjahr (je Jahr, Default 2024) ───────────── */}
+        {/* ── Block 3: Einmalig / selten (standardmässig eingeklappt) ───── */}
+        <RareBlockCard />
+
+        {/* ── Datenstand Vorjahr (je Jahr, Default 2024) ────────────────── */}
         <JahresDatenstandCard />
-
-        {/* ── 0c. Vollständigkeit Tagesdaten (Umsatz/Gäste/Durchschnitt) ─ */}
-        <VollstaendigkeitCard />
 
         {/* ── 1. Tagesdaten-Import (Auto-Typerkennung) ─────────────────── */}
         <Section
@@ -3781,24 +3993,29 @@ const ImportHub = () => {
         {/* ── 3b. Offene Stunden (geparkte MIRUS-Einträge) ──────────────── */}
         <OpenHoursSectionCard />
 
-        {/* ── 4. Ist Kosten Buchhaltung ──────────────────────────────────── */}
+        {/* ── 4. Kosten Buchhaltung (EIN Import: monatlich ODER ganzes Jahr) ── */}
+        {/* Der frühere separate «Vorjahr Kosten Buchhaltung»-Block ist hier als
+            Option «Ganzes Jahr auf einmal» integriert (Jahr-Dropdown in der
+            Option, Undo-Quellen und Speicherpfade unverändert). Der alte Anker
+            'vorjahr-kosten-buchhaltung' bleibt als Sprungziel bestehen. */}
         <Section
           id="ist-kosten-buchhaltung"
-          title="Ist Kosten Buchhaltung"
-          subtitle="Monatliche Kosten aus Buchhaltungssoftware importieren (laufendes Jahr)"
+          title="Kosten Buchhaltung"
+          subtitle="Kosten aus der Buchhaltung importieren — monatlich (laufend) oder ganzes Jahr auf einmal (Jahr-Dropdown)"
           icon={<BookOpen className="h-4 w-4" />}
           color="border-purple-400 dark:border-purple-600"
           badge="CSV / Excel"
           badgeColor="border-purple-300 text-purple-700 bg-purple-50 dark:bg-purple-950/20"
         >
           <div className="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/10 p-4 space-y-3">
+            <p className="text-xs font-semibold">Option A — Monatlich (laufend)</p>
             {/* Letzter Import + Rückgängig (Import erfolgt auf der Buchhaltungs-Import-Seite) */}
             <LastImportPanel
               source="ist-kosten-buchhaltung"
               undoHint="Zurückgesetzt wird der komplette Monats-Record (inkl. Buchungszeilen) auf den Stand vor dem Import. Existierte der Monat vorher nicht, wird er entfernt."
             />
             <p className="text-xs text-muted-foreground">
-              Importiere monatliche Buchhaltungskosten (laufendes Jahr) aus deinem Buchhaltungsprogramm.
+              Importiere monatliche Buchhaltungskosten aus deinem Buchhaltungsprogramm.
               Unterstützte Formate: Excel (Sage Kontoblatt), CSV, PDF.
             </p>
             <div className="text-[11px] text-muted-foreground/80 space-y-0.5">
@@ -3813,26 +4030,21 @@ const ImportHub = () => {
               </Button>
             </Link>
           </div>
+          <div id="vorjahr-kosten-buchhaltung" className="mt-3 rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-950/5 p-4 space-y-3">
+            <p className="text-xs font-semibold">Option B — Ganzes Jahr auf einmal (Sage-Jahres-Kontoblatt .xlsx)</p>
+            <p className="text-[11px] text-muted-foreground">
+              Ein Upload für alle 12 Monate eines Jahres — Jahr im Dropdown wählen
+              (typisch für Nachträge abgeschlossener Jahre).
+            </p>
+            <AnnualCostImportSection />
+          </div>
         </Section>
 
-        {/* ── 5. Vorjahr Kosten Buchhaltung ─────────────────────────────── */}
-        <Section
-          id="vorjahr-kosten-buchhaltung"
-          title="Vorjahr Kosten Buchhaltung"
-          subtitle="Sage-Jahres-Kontoblatt (.xlsx) mit einem Upload für alle 12 Monate importieren"
-          icon={<BookOpen className="h-4 w-4" />}
-          color="border-gray-400 dark:border-gray-600"
-          badge="Excel Jahresimport"
-          badgeColor="border-gray-300 text-gray-700 bg-gray-50 dark:bg-gray-950/20"
-        >
-          <AnnualCostImportSection />
-        </Section>
-
-        {/* ── 5b. Personalkosten Vorjahr ────────────────────────────────── */}
+        {/* ── 5. Personalkosten je Jahr ─────────────────────────────────── */}
         <Section
           id="personalkosten-vorjahr"
-          title="Personalkosten Vorjahr"
-          subtitle="Monatliche Personalkosten des Vorjahres hochladen — erscheinen als VJ-Spalte in der P&L"
+          title="Personalkosten je Jahr importieren"
+          subtitle="Monatliche Personalkosten für Jahre OHNE automatische Berechnung (Jahr-Dropdown) — das laufende Jahr wird berechnet, nicht importiert"
           icon={<TrendingUp className="h-4 w-4" />}
           color="border-orange-400 dark:border-orange-600"
           badge="Excel .xlsx"
@@ -3882,12 +4094,12 @@ const ImportHub = () => {
           </Section>
         )}
 
-        {/* ── Beaulieu: Budget 2026 hinterlegen ────────────────────────── */}
+        {/* ── Beaulieu: Budget hinterlegen (Jahr-Dropdown) ─────────────── */}
         {tenant.id === 'beaulieu' && (
           <Section
             id="beaulieu-budget"
-            title="Budget 2026 Beaulieu"
-            subtitle="Budgetwerte aus Excel fest in Supabase speichern (alle Module)"
+            title="Budget Beaulieu"
+            subtitle="Budgetwerte je Jahr hinterlegen (Jahr-Dropdown) — Werte fest in Supabase speichern"
             icon={<Database className="h-4 w-4" />}
             color="border-violet-400 dark:border-violet-600"
             badge="Beaulieu"

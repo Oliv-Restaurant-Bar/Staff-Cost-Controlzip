@@ -1192,9 +1192,13 @@ export default function WarenrechnungenPage() {
       };
     }
 
-    // Dublettencheck (Lieferant + Datum + Betrag bzw. gleiche Referenz) —
-    // warnen, nie blockieren: der Nutzer entscheidet.
-    const dublette = findeDublette(entries, {
+    // Dublettencheck nach DATEN-Schlüssel (Lieferant + Datum + Betrag bzw.
+    // gleiche Referenz) — warnen, nie blockieren: der Nutzer entscheidet.
+    // Immer gegen den Bestand des BELEG-Monats prüfen (nicht nur gegen den
+    // gerade angezeigten Monat — Datum kann in einem anderen Monat liegen).
+    let bestand = entries;
+    try { bestand = await loadMonthInvoices(tenantId, entry.date.slice(0, 7)); } catch { /* Fallback: angezeigter Monat */ }
+    const dublette = findeDublette(bestand, {
       supplierName: entry.supplierName, date: entry.date,
       amountGross: entry.amountGross, reference: entry.reference,
     });
