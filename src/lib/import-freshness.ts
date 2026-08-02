@@ -12,6 +12,8 @@
  *   umsatz        → KV tenantKey('dailyBudgets'), Tage mit actualRevenue>0
  *   gaeste        → KV tenantKey('gaeste-daily')
  *   avgcheck      → KV tenantKey('avgcheck-daily')
+ *   verkauf       → Tabelle product_sales (restaurant_id = Tenant, max sale_date;
+ *                   Take Away ist daraus ABGELEITET, keine eigene Quelle)
  *   mirus         → Tabelle actual_hours (Tenant via employee_id-Präfix b-*)
  *   reservationen → Tabelle reservation_records (reservation_date ≤ heute,
  *                   Zukunfts-Buchungen zählen nicht als «vollständig bis»)
@@ -32,7 +34,7 @@ import type { TenantId } from '@/contexts/TenantContext';
 // ── Typen ──────────────────────────────────────────────────────────────────
 
 export type WeeklySourceId =
-  | 'umsatz' | 'gaeste' | 'avgcheck' | 'takeaway' | 'mirus' | 'reservationen' | 'rezensionen';
+  | 'umsatz' | 'gaeste' | 'avgcheck' | 'verkauf' | 'mirus' | 'reservationen' | 'rezensionen';
 
 export interface WeeklySourceMeta {
   id: WeeklySourceId;
@@ -45,7 +47,10 @@ export const WEEKLY_SOURCES: WeeklySourceMeta[] = [
   { id: 'umsatz',        label: 'Umsatz (Gastronovi)',        toleranceDays: 1 },
   { id: 'gaeste',        label: 'Gäste / Anzahl',             toleranceDays: 1 },
   { id: 'avgcheck',      label: 'Durchschnittsverkauf',       toleranceDays: 1 },
-  { id: 'takeaway',      label: 'Take Away (Anteil/Gäste/Umsatz)',   toleranceDays: 1 },
+  // Take Away ist KEINE eigene Upload-Quelle — die Kennzahl wird aus Umsatz +
+  // Gäste + Verkaufsdaten ABGELEITET. Als Wochenquelle zählt der echte Upload:
+  // Verkaufsdaten/Sales (Gastronovi Artikel-Export; speist auch den TA-Split).
+  { id: 'verkauf',       label: 'Verkaufsdaten / Sales (Gastronovi Artikel)', toleranceDays: 1 },
   { id: 'mirus',         label: 'MIRUS Ist-Stunden',          toleranceDays: 1 },
   { id: 'reservationen', label: 'Reservationen (Foratable)',  toleranceDays: 1 },
   { id: 'rezensionen',   label: 'Rezensionen (Lunchgate/Google)', toleranceDays: 7 },
@@ -157,15 +162,19 @@ async function loadUmsatzUntil(tenantId: TenantId): Promise<string | null> {
   return maxDateKey(rec, v => Number((v as Record<string, unknown>)?.actualRevenue ?? 0) > 0);
 }
 
-/** Take Away kommt mit dem Umsatz-Import (Speisekarte) mit: Tag zählt, wenn der
-    Umsatz-Tag importiert ist UND das takeawayRevenue-Feld geschrieben wurde
-    (auch 0 ist gültig — «kein TA-Umsatz» ist ein Datenpunkt, kein Loch). */
-async function loadTakeawayUntil(tenantId: TenantId): Promise<string | null> {
-  const rec = await kvRecord(tenantKey(tenantId, 'dailyBudgets'));
-  return maxDateKey(rec, v => {
-    const r = v as Record<string, unknown>;
-    return Number(r?.actualRevenue ?? 0) > 0 && typeof r?.takeawayRevenue === 'number';
-  });
+/** Verkaufsdaten/Sales: letztes sale_date im product_sales-Import (Gastronovi
+    Artikel-Export), tenant-gefiltert und auf heute gedeckelt. */
+async function loadVerkaufUntil(tenantId: TenantId, todayIso: string): Promise<string | null> {
+  try {
+    const { data, error } = await fromUntyped('product_sales')
+      .select('sale_date')
+      .eq('restaurant_id', tenantId)
+      .lte('sale_date', todayIso)
+      .order('sale_date', { ascending: false })
+      .limit(1);
+    if (error || !data?.length) return null;
+    return data[0].sale_date?.slice(0, 10) ?? null;
+  } catch { return null; }
 }
 
 async function loadGaesteUntil(tenantId: TenantId): Promise<string | null> {
@@ -243,17 +252,17 @@ export async function loadWeeklyFreshness(
   tenantId: TenantId,
   todayIso: string,
 ): Promise<SourceFreshness[]> {
-  const [umsatz, gaeste, avg, takeaway, mirus, res, rez] = await Promise.all([
+  const [umsatz, gaeste, avg, verkauf, mirus, res, rez] = await Promise.all([
     loadUmsatzUntil(tenantId),
     loadGaesteUntil(tenantId),
     loadAvgCheckUntil(tenantId),
-    loadTakeawayUntil(tenantId),
+    loadVerkaufUntil(tenantId, todayIso),
     loadMirusUntil(tenantId, todayIso),
     loadReservationenUntil(tenantId, todayIso),
     loadRezensionenUntil(tenantId, todayIso),
   ]);
   const values: Record<WeeklySourceId, string | null> = {
-    umsatz, gaeste, avgcheck: avg, takeaway, mirus, reservationen: res, rezensionen: rez,
+    umsatz, gaeste, avgcheck: avg, verkauf, mirus, reservationen: res, rezensionen: rez,
   };
   return WEEKLY_SOURCES.map(meta => {
     const completeUntil = values[meta.id];

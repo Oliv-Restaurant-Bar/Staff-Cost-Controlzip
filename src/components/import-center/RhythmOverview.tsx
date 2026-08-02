@@ -47,7 +47,7 @@ const WEEKLY_ACTIONS: Record<WeeklySourceId, RowAction> = {
   umsatz:        { anchor: 'umsatz-ist' },
   gaeste:        { anchor: 'umsatz-ist' },
   avgcheck:      { anchor: 'umsatz-ist' },
-  takeaway:      { anchor: 'umsatz-ist' },
+  verkauf:       { route: '/sales-upload' },
   mirus:         { anchor: 'ist-stunden' },
   reservationen: { route: '/foratable-import' },
   rezensionen:   { route: '/rezensionen' },
