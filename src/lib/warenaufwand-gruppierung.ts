@@ -25,9 +25,10 @@ export type WarenaufwandGruppe = 'direct' | 'uebrig';
 export const WARENAUFWAND_DIRECT_MIN = 4000;
 export const WARENAUFWAND_DIRECT_MAX = 4070;
 
-/** Kontobereich Übriger Warenaufwand (inklusive Grenzen). */
+/** Kontobereich Übriger Warenaufwand (inklusive Grenzen). 4900 (Veränderung
+ *  Warenvorrat) gehört NICHT dazu — es ist eine eigene P&L-Zeile (cogs_lager). */
 export const WARENAUFWAND_UEBRIG_MIN = 4071;
-export const WARENAUFWAND_UEBRIG_MAX = 4900;
+export const WARENAUFWAND_UEBRIG_MAX = 4899;
 
 /** Anzeige-Labels der Zwischentotale (identisch in UI, PDF und Excel). */
 export const WARENAUFWAND_GRUPPE_LABEL: Record<WarenaufwandGruppe, string> = {

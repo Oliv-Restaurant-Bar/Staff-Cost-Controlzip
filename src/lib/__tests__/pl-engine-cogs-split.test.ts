@@ -69,9 +69,9 @@ describe('computePLForMonth — Warenaufwand-Zwischentotale (numerische Range-SS
     expect(res.dataQualityWarnings?.some(w => w.includes('4085'))).toBe(true);
   });
 
-  it('Konto ausserhalb 4000–4900: Kategorie-Fallback (kein Ummappen) + Warnung', () => {
+  it('Konto ausserhalb 4000–4899: Kategorie-Fallback (kein Ummappen) + Warnung', () => {
     // 3950 ist per Custom-Mapping dem Warenaufwand (cogs_other) zugeordnet,
-    // liegt aber numerisch ausserhalb 4000–4900 → Kategorie-Fallback + Warnung.
+    // liegt aber numerisch ausserhalb 4000–4899 → Kategorie-Fallback + Warnung.
     saveMappingCustom({
       accountNumber: '3950', accountName: 'Testkonto ausserhalb Range',
       plCategory: 'cogs_other', plSection: 'cogs', department: 'general',
@@ -86,7 +86,7 @@ describe('computePLForMonth — Warenaufwand-Zwischentotale (numerische Range-SS
       const res = computePLForMonth(rec);
       expect(rowValue(res, 'total_cogs_direct')?.actual ?? 0).toBe(0);
       expect(rowValue(res, 'total_cogs_uebrig')?.actual).toBe(150);
-      expect(res.dataQualityWarnings?.some(w => w.includes('3950') && w.includes('4000–4900'))).toBe(true);
+      expect(res.dataQualityWarnings?.some(w => w.includes('3950') && w.includes('4000–4899'))).toBe(true);
     } finally {
       deleteMappingCustom('3950');
     }

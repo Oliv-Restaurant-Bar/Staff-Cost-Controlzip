@@ -377,11 +377,11 @@ export default function WarenrechnungenPage() {
     if (tab !== 'abgleich') return;
     let alive = true;
     setJournal(null);
-    // MANDANTEN-SCHUTZ: das Buchungsjournal (sage_journal_v1_*) ist nicht
-    // mandanten-präfixiert und stammt aus der Oliv-Buchhaltung — für andere
-    // Mandanten NIE laden (sonst fremde Buchungen), immer degradierter Modus.
+    // MANDANTEN-SCHUTZ: Journal-Keys sind mandantenfähig (Oliv historisch ohne
+    // Präfix, Beaulieu mit `beaulieu:`-Präfix) — für unbekannte Mandanten
+    // NIE laden (sonst fremde Buchungen), dort degradierter Modus.
     if (!journalVerfuegbarFuerTenant(tenantId)) { setJournal([]); return; }
-    loadJournalEntriesFromDB(year, month)
+    loadJournalEntriesFromDB(year, month, tenantId)
       .then(e => { if (alive) setJournal(e); })
       .catch(() => { if (alive) setJournal([]); });
     return () => { alive = false; };

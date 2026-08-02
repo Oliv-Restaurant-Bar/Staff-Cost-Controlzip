@@ -249,7 +249,7 @@ export async function restoreReportingRecord(
   storeKey: string,
   monthId: string,
   record: MonthlyFinancialRecord | null,
-  journal?: { year: number; month: number; entries: SageJournalEntry[] },
+  journal?: { year: number; month: number; entries: SageJournalEntry[]; tenantId?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     const all = loadAll(storeKey);
@@ -265,7 +265,17 @@ export async function restoreReportingRecord(
         return { ok: false, error: 'Lokal zurückgesetzt, aber Supabase-Sicherung fehlgeschlagen — bitte erneut versuchen.' };
       }
     }
-    if (journal) saveJournalEntries(journal.year, journal.month, journal.entries, 'replace');
+    if (journal) {
+      try {
+        await saveJournalEntriesStrict(journal.year, journal.month, journal.entries, journal.tenantId ?? 'oliv');
+      } catch (err) {
+        return {
+          ok: false,
+          error: 'Monat wiederhergestellt, aber das Journal konnte nicht nach Supabase gesichert werden — bitte «Rückgängig» erneut versuchen. '
+            + (err instanceof Error ? err.message : String(err)),
+        };
+      }
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -534,6 +544,100 @@ export function replaceAnnualCostYear(
 }
 
 /**
+ * Upsert der numerischen Konto-Kategorien NUR für die übergebenen Monate
+ * (Mehrmonats-Import aus einem Kontoblatt, das nicht das ganze Jahr abdeckt).
+ *
+ * Unterschied zu replaceAnnualCostYear: Monate OHNE Daten in der Datei werden
+ * NICHT angefasst (kein Bereinigen anderer Monate). Innerhalb eines betroffenen
+ * Monats gilt Ersetzen: numerische Konto-Kategorien werden komplett durch die
+ * Datei ersetzt (idempotent, keine Verdoppelung), manuelle Kategorien und alle
+ * anderen Felder bleiben unberührt. Unveränderte Monate: kein Write.
+ */
+export function upsertCostMonths(
+  year: number,
+  categoriesByMonth: Map<number, ExpenseCategory[]>,
+  opts: { fileName?: string; note?: string; source?: ImportSource },
+  storeKey: string = STORAGE_KEY,
+): ReplaceAnnualCostResult {
+  const before = loadAll(storeKey);
+  const next: Record<string, MonthlyFinancialRecord> = { ...before };
+  const now = new Date().toISOString();
+  let monthsWritten = 0;
+  let monthsUnchanged = 0;
+  const touchedIds: string[] = [];
+
+  for (const [month, newCats] of categoriesByMonth.entries()) {
+    if (month < 1 || month > 12) continue;
+    const id = monthId(year, month);
+    const existing = next[id];
+    const hadNumeric = (existing?.expenseCategories ?? []).some(c => NUMERIC_ACCOUNT_RE.test(c.categoryId));
+    if (newCats.length === 0 && !hadNumeric) continue;
+
+    const rec = existing ?? createEmptyMonth(year, month);
+    const keptManual = (rec.expenseCategories ?? []).filter(c => !NUMERIC_ACCOUNT_RE.test(c.categoryId));
+
+    if (existing && sameCategorySet(existing.expenseCategories ?? [], [...keptManual, ...newCats])) {
+      monthsUnchanged++;
+      continue;
+    }
+
+    const importRecord: ImportRecord = {
+      importId: uuidv4(),
+      importedAt: now,
+      source: opts.source ?? 'annual_cost_import',
+      mode: 'replace',
+      fileName: opts.fileName,
+      note: opts.note ?? `Mehrmonats-Kontoblatt ${year}: Konto-Kategorien ersetzt`,
+      affectedFields: ['expenseCategories'],
+    };
+
+    next[id] = {
+      ...rec,
+      expenseCategories: [...keptManual, ...newCats],
+      imports: [...rec.imports, importRecord],
+      updatedAt: now,
+    };
+    touchedIds.push(id);
+    monthsWritten++;
+  }
+
+  assertYearScopedChanges(before, next, year);
+  saveAll(next, storeKey);
+
+  // KV-Backup SEQUENZIELL (gleiches Muster wie replaceAnnualCostYear).
+  const kvBackup = (async () => {
+    const failedMonths: string[] = [];
+    let lastError: unknown;
+    for (const id of touchedIds) {
+      try {
+        await safeUpsertReportingMonth(id, next[id], storeKey);
+      } catch (err) {
+        console.error('[REPORTING] upsertCostMonths: safeUpsertReportingMonth fehlgeschlagen', id, err);
+        failedMonths.push(id);
+        lastError = err;
+      }
+    }
+    if (failedMonths.length > 0) {
+      try {
+        const current = loadAll(storeKey);
+        for (const id of failedMonths) current[id] = next[id];
+        localStorage.setItem(storeKey, JSON.stringify(current));
+      } catch (err) {
+        console.error('[REPORTING] upsertCostMonths: lokales Re-Write fehlgeschlagen', err);
+      }
+      const retry = await retryReportingMonthsBackup(failedMonths, storeKey);
+      return {
+        failedMonths: retry.failedMonths,
+        lastError: retry.failedMonths.length > 0 ? (retry.lastError ?? lastError) : undefined,
+      };
+    }
+    return { failedMonths, lastError };
+  })();
+
+  return { monthsWritten, monthsCleared: 0, monthsUnchanged, kvBackup };
+}
+
+/**
  * Entfernt alle numerischen Konto-Kategorien eines Geschäftsjahres
  * (Lösch-Aktion der Import-Verwaltung). Manuelle Kategorien und
  * Direktfelder bleiben erhalten.
@@ -660,8 +764,14 @@ function mergeExpenseCategories(
 
 const JOURNAL_KEY = 'sage_journal_v1';
 
-function journalMonthKey(year: number, month: number): string {
-  return `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+/**
+ * Journal-Key, mandantenfähig: Oliv bleibt aus historischen Gründen OHNE
+ * Präfix (`sage_journal_v1_*`, alle Alt-Importe), andere Mandanten (Beaulieu)
+ * erhalten das übliche Tenant-Präfix (`beaulieu:sage_journal_v1_*`).
+ */
+function journalMonthKey(year: number, month: number, tenantId: string = 'oliv'): string {
+  const base = `${JOURNAL_KEY}_${year}_${String(month).padStart(2, '0')}`;
+  return tenantId === 'oliv' ? base : `${tenantId}:${base}`;
 }
 
 /**
@@ -673,13 +783,14 @@ export function saveJournalEntries(
   month: number,
   entries: SageJournalEntry[],
   mode: ImportMode = 'replace',
+  tenantId: string = 'oliv',
 ): void {
-  const key = journalMonthKey(year, month);
+  const key = journalMonthKey(year, month, tenantId);
   let final: SageJournalEntry[];
   if (mode === 'replace') {
     final = entries;
   } else {
-    final = [...loadJournalEntries(year, month), ...entries];
+    final = [...loadJournalEntries(year, month, tenantId), ...entries];
   }
   localStorage.setItem(key, JSON.stringify(final));
   // kvSetStrict statt kvSet: Backup-Fehler dürfen nie still verschluckt werden (T007).
@@ -704,10 +815,27 @@ export function saveJournalEntries(
 }
 
 /**
+ * Strikte Variante für Undo/Restore: schreibt localStorage UND wartet auf das
+ * Supabase-KV-Backup; wirft bei Backup-Fehlern (Aufrufer meldet dann Misserfolg,
+ * statt einen halb wiederhergestellten Zustand als Erfolg zu verbuchen).
+ */
+export async function saveJournalEntriesStrict(
+  year: number,
+  month: number,
+  entries: SageJournalEntry[],
+  tenantId: string = 'oliv',
+): Promise<void> {
+  const key = journalMonthKey(year, month, tenantId);
+  localStorage.setItem(key, JSON.stringify(entries));
+  await kvSetStrict(key, entries);
+  console.log(`[Journal] Strikt wiederhergestellt: ${key} (${entries.length} Einträge)`);
+}
+
+/**
  * Buchungszeilen für einen Monat aus localStorage laden (sync, sofort).
  */
-export function loadJournalEntries(year: number, month: number): SageJournalEntry[] {
-  const key = journalMonthKey(year, month);
+export function loadJournalEntries(year: number, month: number, tenantId: string = 'oliv'): SageJournalEntry[] {
+  const key = journalMonthKey(year, month, tenantId);
   try {
     return JSON.parse(localStorage.getItem(key) ?? '[]');
   } catch {
@@ -719,8 +847,8 @@ export function loadJournalEntries(year: number, month: number): SageJournalEntr
  * Buchungszeilen für einen Monat aus Supabase laden (async).
  * Führt einmalige Auto-Migration durch wenn Supabase leer ist aber localStorage Daten hat.
  */
-export async function loadJournalEntriesFromDB(year: number, month: number): Promise<SageJournalEntry[]> {
-  const key = journalMonthKey(year, month);
+export async function loadJournalEntriesFromDB(year: number, month: number, tenantId: string = 'oliv'): Promise<SageJournalEntry[]> {
+  const key = journalMonthKey(year, month, tenantId);
   try {
     const remote = await kvGet(key);
     if (remote !== null && Array.isArray(remote) && (remote as SageJournalEntry[]).length > 0) {
@@ -730,7 +858,7 @@ export async function loadJournalEntriesFromDB(year: number, month: number): Pro
       return entries;
     }
     // Supabase leer — localStorage prüfen und ggf. migrieren
-    const local = loadJournalEntries(year, month);
+    const local = loadJournalEntries(year, month, tenantId);
     if (local.length > 0) {
       console.log(`[Journal] Supabase leer – sync localStorage→Supabase: ${key} (${local.length} Einträge)`);
       kvSet(key, local).catch(err => console.error(`[Journal] Auto-Migration nach Supabase fehlgeschlagen: ${key}`, err));
@@ -740,17 +868,17 @@ export async function loadJournalEntriesFromDB(year: number, month: number): Pro
     return local;
   } catch (err) {
     console.error(`[Journal] loadJournalEntriesFromDB Fehler: ${key}`, err);
-    return loadJournalEntries(year, month);
+    return loadJournalEntries(year, month, tenantId);
   }
 }
 
 /**
  * Buchungszeilen für ein ganzes Jahr laden (alle 12 Monate, sync).
  */
-export function loadJournalYear(year: number): SageJournalEntry[] {
+export function loadJournalYear(year: number, tenantId: string = 'oliv'): SageJournalEntry[] {
   const all: SageJournalEntry[] = [];
   for (let m = 1; m <= 12; m++) {
-    all.push(...loadJournalEntries(year, m));
+    all.push(...loadJournalEntries(year, m, tenantId));
   }
   return all;
 }
@@ -759,9 +887,9 @@ export function loadJournalYear(year: number): SageJournalEntry[] {
  * Ganzes Journal-Jahr aus Supabase laden und in localStorage synchronisieren.
  * Für Auto-Migration beim Seitenaufruf.
  */
-export async function syncJournalYearFromDB(year: number): Promise<void> {
+export async function syncJournalYearFromDB(year: number, tenantId: string = 'oliv'): Promise<void> {
   for (let m = 1; m <= 12; m++) {
-    await loadJournalEntriesFromDB(year, m);
+    await loadJournalEntriesFromDB(year, m, tenantId);
   }
 }
 

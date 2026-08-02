@@ -54,11 +54,13 @@ export interface KvKeyItem { key: string; value: unknown | null }
 export type ImportRunSnapshot =
   /** Wiederherstellung ganzer app_settings-Keys (z. B. vj_daily:<date>). */
   | { kind: 'kv-keys'; items: KvKeyItem[] }
-  /** Einzelne Felder pro Reporting-Monat (null = Feld war nicht vorhanden). */
-  | { kind: 'reporting-fields'; storeKey: string; months: Array<{ monthId: string; fields: Record<string, unknown | null> }> }
+  /** Einzelne Felder pro Reporting-Monat (null = Feld war nicht vorhanden)
+   *  + optional Journal-Vorzustände pro Monat (Buchungszeilen). */
+  | { kind: 'reporting-fields'; storeKey: string; months: Array<{ monthId: string; fields: Record<string, unknown | null> }>;
+      journals?: Array<{ year: number; month: number; entries: unknown[]; tenantId?: string }> }
   /** Kompletter Reporting-Monatsrecord (null = Monat existierte nicht) + optional Journalzeilen. */
   | { kind: 'reporting-record'; storeKey: string; monthId: string; record: unknown | null;
-      journal?: { year: number; month: number; entries: unknown[] } }
+      journal?: { year: number; month: number; entries: unknown[]; tenantId?: string } }
   /** MIRUS: Verweis auf das dienstplan_ist_backup + Lauf-ID der geparkten Einträge. */
   | { kind: 'mirus-ist'; month: string; backupId: string; runId: string }
   /** Reservationen (Foratable): Vorzustand der betroffenen Res.Nr. in
@@ -284,13 +286,25 @@ export async function undoImportRun(tenantId: string, run: ImportRunEntry): Prom
     if (res.failedMonths.length > 0) {
       return { ok: false, message: `Rückgängig unvollständig: ${res.failedMonths.length} Monat(e) konnten nicht nach Supabase gesichert werden — bitte erneut versuchen.` };
     }
+    // Journal-Vorzustände wiederherstellen (strikt: Fehler → Undo als unvollständig melden)
+    if (snap.journals && snap.journals.length > 0) {
+      const { saveJournalEntriesStrict } = await import('@/lib/reporting-store');
+      for (const j of snap.journals) {
+        try {
+          await saveJournalEntriesStrict(j.year, j.month, j.entries as SageJournalEntry[], j.tenantId ?? 'oliv');
+        } catch (err) {
+          console.error('[IMPORT-UNDO] Journal-Wiederherstellung fehlgeschlagen:', j.year, j.month, err);
+          return { ok: false, message: `Rückgängig unvollständig: Buchungszeilen ${String(j.month).padStart(2, '0')}.${j.year} konnten nicht wiederhergestellt werden — bitte erneut versuchen.` };
+        }
+      }
+    }
     await markRunUndone(tenantId, run.id);
     return { ok: true, message: `${snap.months.length} Monat(e) auf den Stand vor dem Import zurückgesetzt.` };
   }
   if (snap.kind === 'reporting-record') {
     const res = await restoreReportingRecord(
       snap.storeKey, snap.monthId, snap.record as MonthlyFinancialRecord | null,
-      snap.journal as { year: number; month: number; entries: SageJournalEntry[] } | undefined,
+      snap.journal as { year: number; month: number; entries: SageJournalEntry[]; tenantId?: string } | undefined,
     );
     if (!res.ok) return { ok: false, message: res.error ?? 'Wiederherstellung fehlgeschlagen.' };
     await markRunUndone(tenantId, run.id);

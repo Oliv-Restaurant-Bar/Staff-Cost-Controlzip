@@ -85,6 +85,8 @@ const CATEGORY_TO_ROW: Record<string, string> = {
   beverage_cost:          'cogs_bev',
   wareneinsatz_diverses:  'cogs_other',
   warenaufwand_diverses:  'cogs_other',
+  veraenderung_warenvorrat: 'cogs_lager',
+  lagerveraenderung:        'cogs_lager',
   // Sozialleistungen
   sozialleistungen:       'personnel_social',
   ahv:                    'personnel_social',
@@ -197,11 +199,26 @@ export const PL_STRUCTURE: PLRowDef[] = [
     indent: 0, showPercent: false, valueRole: 'negative',
     computedFrom: { type: 'sum', rowIds: ['cogs_other'] },
   },
-  // Gesamtwarenaufwand (id bleibt `total_cogs` — alle Konsumenten referenzieren ihn per id).
+  // Wareneinkauf = direkter + übriger Warenaufwand, OHNE Lagerveränderung (4900).
+  // Basis der reinen Einkaufs-WKQ (financial-metrics: cogs_ratio).
   {
-    id: 'total_cogs', type: 'subtotal', label: 'Gesamtwarenaufwand',
+    id: 'total_cogs_einkauf', type: 'subtotal', label: 'Wareneinkauf (ohne Lagerveränderung)',
     indent: 0, showPercent: false, valueRole: 'negative',
     computedFrom: { type: 'sum', rowIds: ['total_cogs_direct', 'total_cogs_uebrig'] },
+  },
+  // Veränderung Warenvorrat (Konto 4900): Lagerveränderung, fliesst in den
+  // Wareneinsatz (WES), NICHT in den Wareneinkauf/die Einkaufs-WKQ.
+  {
+    id: 'cogs_lager', type: 'line', label: 'Veränderung Warenvorrat',
+    indent: 1, showPercent: false, valueRole: 'negative',
+    categoryIds: ['veraenderung_warenvorrat', 'lagerveraenderung'],
+  },
+  // Wareneinsatz inkl. Lagerveränderung (id bleibt `total_cogs` — alle
+  // Konsumenten referenzieren ihn per id; Wert unverändert = Einkauf + 4900).
+  {
+    id: 'total_cogs', type: 'subtotal', label: 'Wareneinsatz (inkl. Lagerveränderung)',
+    indent: 0, showPercent: false, valueRole: 'negative',
+    computedFrom: { type: 'sum', rowIds: ['total_cogs_einkauf', 'cogs_lager'] },
   },
   {
     id: 'gross_profit_1', type: 'result', label: 'Bruttogewinn 1',
@@ -719,7 +736,7 @@ export function computePLForMonth(
       if (!cogsWarnedAccounts.has(accountId)) {
         cogsWarnedAccounts.add(accountId);
         dataQualityWarnings.push(
-          `Konto ${accountId} ist dem Warenaufwand zugeordnet, liegt aber ausserhalb des Bereichs 4000–4900 — ` +
+          `Konto ${accountId} ist dem Warenaufwand zugeordnet, liegt aber ausserhalb des Bereichs 4000–4899 — ` +
           `Zwischentotal folgt der Kontenzuordnung (${catGroup === 'direct' ? 'Direkter' : 'Übriger'} Warenaufwand).`,
         );
       }

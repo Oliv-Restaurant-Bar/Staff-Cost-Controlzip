@@ -71,10 +71,11 @@
 - [Monats-Phasenresolver FIX/FLEX](month-wage-resolver.md) — Lohnart je Monat via wage-history-Phase (Monatserster), Split-Monate pro rata mit Pseudo-id `::flexsplit`; nie Stammsatz-contractType für Monatslogik.
 - [Dienstplan-Vorschläge («offene Punkte»)](schedule-proposals.md) — Vorschlag→Bestätigung; Konflikt-Recheck bei Bestätigung Pflicht; Entfernen löscht ganzen Tag → Stale-Schutz nötig.
 - [Import-Center Undo-Protokoll](import-center-undo.md) — Snapshot VOR dem Schreiben, nur neuester Lauf undo-bar; JEDER Undo-Pfad (auch MIRUS-Sonderweg) braucht den Stale-Check gegen das Remote-Protokoll.
-- [Waren-PDF-Erkennung & FIBU-Abgleich](waren-pdf-und-fibu-abgleich.md) — sage_journal ist nicht tenant-präfixiert → Oliv-only-Gate; Alias-Lernen nur per Opt-in-Checkbox; Ein-Token-Namen <4 Z. nie im Volltext matchen.
-- [Waren-Kontoklassen & Split](waren-kontoklassen.md) — WKQ nur Konten 4000–Grenze via nurWarenAnteil; ohne Konto = Warenkosten (Legacy); FIBU-Abgleich bewusst Gesamt-Total.
+- [Waren-PDF-Erkennung & FIBU-Abgleich](waren-pdf-und-fibu-abgleich.md) — Journal-Keys mandantenfähig (Oliv legacy-unpräfixiert, beaulieu:-Präfix); Sage-PDF-Parser mit Soll/Haben via Saldo-Bewegung; Alias-Lernen nur per Opt-in.
+- [Waren-Kontoklassen & Split](waren-kontoklassen.md) — WKQ = Konten 4000–Grenze (Default 4090) via nurWarenAnteil; 4900 Lagerveränderung = eigene Zeile cogs_lager (Einkauf vs. Wareneinsatz); FIBU-Abgleich bewusst Gesamt-Total.
 - [Feedback-CSV-Import (Lunchgate)](feedback-csv-import.md) — Upsert-Key braucht Zeilen-Hash bei leerem Gast; Update = bestehende id wiederverwenden; ein Batch-Write + kv-keys-Undo-Snapshot.
 - [Supabase Edge Deploy via Management API](supabase-mgmt-api-deploy.md) — PAT frisch anfordern bei 401; Deploy per multipart /functions/deploy, verify_jwt in metadata (config.toml nur CLI); Ref aus .env.
 - [Vorjahr-Hardzahlen-Lock](vorjahr-hardzahlen-lock.md) — EIN gemeinsamer Jahres-Lock für alle VJ-Importe; getLockState immer frisch im Save-Pfad awaiten, nie nur UI-State.
 - [Dynamisches Vorjahr aus Jahresdaten](vj-dynamisch-jahresdaten.md) — Monatsreport-VJ liest Ist-Daten Jahr−1 (umsatz-SSOT) vor vj_daily; PK-VJ-Fallback via computePLForMonth; Jahres-Lock gilt für ALLE Importe.
+- [Kontoblatt-Mehrmonatsimport](kontoblatt-mehrmonatsimport.md) — Jahres-/Periodendateien pro Konto+Monat gruppieren; Upsert nur Datei-Monate; Journal nur bei Ist; Undo inkl. Journal; Lock strict.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.

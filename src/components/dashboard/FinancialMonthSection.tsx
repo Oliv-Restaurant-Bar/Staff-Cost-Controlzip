@@ -51,8 +51,9 @@ interface TableRow {
 /** Zeilen der IST/Budget/Vorjahr-Tabelle (Reihenfolge = P&L-Struktur). */
 const TABLE_ROWS: TableRow[] = [
   { id: 'net_revenue',     label: 'Nettoumsatz',       kind: 'amount' },
-  { id: 'total_cogs',      label: 'Warenaufwand',      kind: 'amount' },
-  { id: 'cogs_ratio',      label: 'Warenkostenquote',  kind: 'ratio'  },
+  { id: 'total_cogs_einkauf', label: 'Wareneinkauf (ohne Lagerveränderung)', kind: 'amount' },
+  { id: 'total_cogs',      label: 'Wareneinsatz (inkl. Lagerveränderung)', kind: 'amount' },
+  { id: 'cogs_ratio',      label: 'Warenkostenquote (Einkauf)',  kind: 'ratio'  },
   { id: 'total_personnel', label: 'Personalkosten',    kind: 'amount' },
   { id: 'personnel_ratio', label: 'Personalquote',     kind: 'ratio'  },
   { id: 'ebitda',          label: 'EBITDA',            kind: 'amount' },

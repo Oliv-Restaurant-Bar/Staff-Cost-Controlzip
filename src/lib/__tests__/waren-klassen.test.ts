@@ -20,10 +20,13 @@ function inv(p: Partial<InvoiceEntry>): InvoiceEntry {
 }
 
 describe('kontoKlasse', () => {
-  it('4000–4070 = warenkosten, 4071+ und <4000 = betriebskosten (Standardgrenze)', () => {
+  it('4000–4090 = warenkosten, 4091+ (47xx/48xx) und <4000 = betriebskosten (Standardgrenze)', () => {
     expect(kontoKlasse('4000')).toBe('warenkosten');
-    expect(kontoKlasse('4070')).toBe('warenkosten');
-    expect(kontoKlasse('4071')).toBe('betriebskosten');
+    expect(kontoKlasse('4070')).toBe('warenkosten'); // Kaffee/Tee Warenaufwand
+    expect(kontoKlasse('4090')).toBe('warenkosten'); // Übriger Handelswaren Aufwand
+    expect(kontoKlasse('4091')).toBe('betriebskosten');
+    expect(kontoKlasse('4701')).toBe('betriebskosten'); // Betriebsmaterial
+    expect(kontoKlasse('4800')).toBe('betriebskosten'); // Gebinde
     expect(kontoKlasse('6040')).toBe('betriebskosten');
     expect(kontoKlasse('3000')).toBe('betriebskosten');
   });
@@ -41,14 +44,14 @@ describe('kontoKlasse', () => {
 describe('klassenAnteile / Summen', () => {
   it('Einzelkonto: ganzer Betrag in der Klasse des Kontos', () => {
     expect(klassenAnteile(inv({ warenkonto: '4000' }))).toEqual({ warenNet: 100, betriebNet: 0 });
-    expect(klassenAnteile(inv({ warenkonto: '4071' }))).toEqual({ warenNet: 0, betriebNet: 100 });
+    expect(klassenAnteile(inv({ warenkonto: '4701' }))).toEqual({ warenNet: 0, betriebNet: 100 });
   });
   it('Split: je Zeile klassiert, Summe = Rechnungsnetto (keine Doppelzählung)', () => {
     const e = inv({
       amountNet: 100,
       kontoSplits: [
         { warenkonto: '4000', amountNet: 60, amountGross: 64.86 },
-        { warenkonto: '4071', amountNet: 30, amountGross: 32.43 },
+        { warenkonto: '4701', amountNet: 30, amountGross: 32.43 },
         { warenkonto: '6040', amountNet: 10, amountGross: 10.81 },
       ],
     });
@@ -58,7 +61,7 @@ describe('klassenAnteile / Summen', () => {
     expect(a.warenNet + a.betriebNet).toBe(e.amountNet);
   });
   it('sumWarenNet/sumBetriebNet über Listen', () => {
-    const list = [inv({ warenkonto: '4000', amountNet: 50 }), inv({ warenkonto: '4071', amountNet: 20 })];
+    const list = [inv({ warenkonto: '4000', amountNet: 50 }), inv({ warenkonto: '4701', amountNet: 20 })];
     expect(sumWarenNet(list)).toBe(50);
     expect(sumBetriebNet(list)).toBe(20);
   });
@@ -68,7 +71,7 @@ describe('aggregateBySupplierKlassen', () => {
   it('Gesamt-Total über alle Konten + Aufschlüsselung, sortiert nach Gesamt', () => {
     const rows = aggregateBySupplierKlassen([
       inv({ supplierName: 'A', warenkonto: '4000', amountNet: 100 }),
-      inv({ supplierName: 'A', warenkonto: '4071', amountNet: 50 }),
+      inv({ supplierName: 'A', warenkonto: '4701', amountNet: 50 }),
       inv({ supplierName: 'B', warenkonto: '4020', amountNet: 120 }),
     ]);
     expect(rows[0]).toMatchObject({ supplierName: 'A', totalNet: 150, warenNet: 100, betriebNet: 50, count: 2 });
@@ -84,7 +87,7 @@ describe('nurWarenAnteil', () => {
         id: 'b', amountNet: 100, amountGross: 108.1,
         kontoSplits: [
           { warenkonto: '4000', amountNet: 70, amountGross: 75.67 },
-          { warenkonto: '4071', amountNet: 30, amountGross: 32.43 },
+          { warenkonto: '4701', amountNet: 30, amountGross: 32.43 },
         ],
       }),
       inv({ id: 'c', warenkonto: '4020', amountNet: 55 }),

@@ -59,6 +59,7 @@ import type { ParsedCSVRow, MatchedCSVRow } from '../csv-import-engine';
 import {
   replaceAnnualCostYear,
   removeAnnualCostYear,
+  upsertCostMonths,
   assertYearScopedChanges,
   loadMonth,
   saveMonth,
@@ -133,6 +134,21 @@ describe('parseAnnualSageKontoblattByMonth — echte Datei 2025', () => {
       expect(monthTotal(res.byMonth.get(m))).toBeGreaterThan(0);
     }
   });
+
+  it('liefert Journal pro Monat (Summe = bookingCount) und erkennt den Mandanten', async () => {
+    const res = await parseAnnualSageKontoblattByMonth(arrayBuf);
+    let journalTotal = 0;
+    for (let m = 1; m <= 12; m++) {
+      const j = res.journalByMonth.get(m) ?? [];
+      expect(j.length).toBeGreaterThan(0);
+      journalTotal += j.length;
+      // Journal-Netto = Konto-Netto des Monats
+      const jNet = j.reduce((s, e) => s + e.soll - e.haben, 0);
+      expect(jNet).toBeCloseTo(monthTotal(res.byMonth.get(m)), 2);
+    }
+    expect(journalTotal).toBe(res.bookingCount);
+    expect(res.detectedTenant).toBe('oliv');
+  });
 });
 
 // ─── B. Synthetische Fixtures ─────────────────────────────────────────────────
@@ -159,6 +175,32 @@ describe('parseAnnualSageKontoblattByMonth — synthetisch', () => {
     expect(monthTotal(res.byMonth.get(1))).toBe(500);
     expect(monthTotal(res.byMonth.get(2))).toBe(300);
     expect(res.byMonth.size).toBe(2);
+
+    // Journal pro Monat: Buchungszeilen mit Datum/Beleg/Text/Soll/Haben
+    expect(res.journalByMonth.get(1)).toHaveLength(1);
+    expect(res.journalByMonth.get(2)).toHaveLength(1);
+    const j1 = res.journalByMonth.get(1)![0];
+    expect(j1.date).toBe('15.01.25');
+    expect(j1.text).toBe('Einkauf A');
+    expect(j1.accountNumber).toBe('4000');
+    expect(j1.soll).toBe(500);
+    expect(j1.haben).toBe(0);
+    // Mandant aus Kopfzeile «Oliv Gastro AG»
+    expect(res.detectedTenant).toBe('oliv');
+    expect(res.detectedCompany).toContain('Oliv');
+  });
+
+  it('Beaulieu-Kopf → detectedTenant beaulieu', async () => {
+    const header = HEADER_25.map(r => [...r]);
+    header[0][5] = 'Café Beaulieu AG';
+    const buf = wbBuffer([
+      ...header,
+      [4000, null, null, 'Wareneinsatz Küche', null, null, null, null],
+      ['15.03.25', 1, null, 'Prodega', null, 1020, 100, null],
+      [null, null, null, 'Total Soll', null, null, 100, null],
+    ]);
+    const res = await parseAnnualSageKontoblattByMonth(buf);
+    expect(res.detectedTenant).toBe('beaulieu');
   });
 
   it('2024-Kontoblatt: Jahr 2024 aus dem Zeitraum-Kopf, kein stiller Fallback auf 2025', async () => {
@@ -486,6 +528,57 @@ describe('replaceAnnualCostYear', () => {
 });
 
 // ─── E. Jahresimport-Schreibschutz (T006/T007): fremde Jahre bitgenau erhalten ─
+
+describe('upsertCostMonths — Mehrmonats-Upsert ohne Clearing anderer Monate', () => {
+  const cat = (id: string, amount: number): ExpenseCategory => ({
+    categoryId: id, label: `Konto ${id}`, amount,
+  });
+
+  it('schreibt nur die übergebenen Monate; andere Monate bleiben unangetastet', () => {
+    // Bestand: numerische Kontodaten im März (nicht Teil der Datei)
+    replaceAnnualCostYear(2026, new Map([[3, [cat('4000', 111)]]]), {}, TEST_KEY);
+
+    const res = upsertCostMonths(2026, new Map([
+      [5, [cat('4000', 500)]],
+      [6, [cat('4000', 600)]],
+    ]), {}, TEST_KEY);
+
+    expect(res.monthsWritten).toBe(2);
+    expect(res.monthsCleared).toBe(0);
+    // März NICHT bereinigt (Unterschied zu replaceAnnualCostYear)
+    expect(loadMonth(2026, 3, TEST_KEY)?.expenseCategories?.[0]?.amount).toBe(111);
+    expect(loadMonth(2026, 5, TEST_KEY)?.expenseCategories?.[0]?.amount).toBe(500);
+    expect(loadMonth(2026, 6, TEST_KEY)?.expenseCategories?.[0]?.amount).toBe(600);
+  });
+
+  it('ist idempotent: identischer Zweitimport → monthsUnchanged, kein Doppel', () => {
+    const cats = new Map([[5, [cat('4000', 500)]]]);
+    upsertCostMonths(2026, cats, {}, TEST_KEY);
+    const before = loadMonth(2026, 5, TEST_KEY);
+    const res2 = upsertCostMonths(2026, cats, {}, TEST_KEY);
+    expect(res2.monthsWritten).toBe(0);
+    expect(res2.monthsUnchanged).toBe(1);
+    const after = loadMonth(2026, 5, TEST_KEY);
+    expect(after?.expenseCategories).toHaveLength(1);
+    expect(after?.updatedAt).toBe(before?.updatedAt);
+  });
+
+  it('ersetzt numerische Konten des Monats, behält manuelle Kategorien', () => {
+    const manual: ExpenseCategory = { categoryId: 'sonstiges', label: 'Manuell', amount: 42 };
+    saveMonth({ year: 2026, month: 5, expenseCategories: [manual, cat('4000', 1)] }, 'manual', 'update', undefined, TEST_KEY);
+    upsertCostMonths(2026, new Map([[5, [cat('4000', 500)]]]), {}, TEST_KEY);
+    const rec = loadMonth(2026, 5, TEST_KEY);
+    expect(rec?.expenseCategories?.find(c => c.categoryId === 'sonstiges')?.amount).toBe(42);
+    expect(rec?.expenseCategories?.find(c => c.categoryId === '4000')?.amount).toBe(500);
+    expect(rec?.expenseCategories).toHaveLength(2);
+  });
+
+  it('lässt fremde Jahre unberührt (assertYearScopedChanges aktiv)', () => {
+    replaceAnnualCostYear(2025, new Map([[7, [cat('4000', 77)]]]), {}, TEST_KEY);
+    upsertCostMonths(2026, new Map([[5, [cat('4000', 500)]]]), {}, TEST_KEY);
+    expect(loadMonth(2025, 7, TEST_KEY)?.expenseCategories?.[0]?.amount).toBe(77);
+  });
+});
 
 describe('Jahresimport-Schreibschutz — fremde Jahre bleiben bitgenau erhalten', () => {
   const cat = (id: string, label: string, amount: number): ExpenseCategory => ({

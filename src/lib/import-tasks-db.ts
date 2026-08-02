@@ -445,7 +445,10 @@ async function erfolgsrechnungCoverage(
   } catch {
     /* weiter mit Sage-Journal */
   }
-  const sageKey = `sage_journal_v1_${year}_${String(month).padStart(2, '0')}`;
+  // Journal-Key mandantenfähig: Oliv historisch OHNE Präfix, andere Mandanten
+  // (Beaulieu) mit Tenant-Präfix — gleiche Regel wie reporting-store.journalMonthKey.
+  const sageBase = `sage_journal_v1_${year}_${String(month).padStart(2, '0')}`;
+  const sageKey = ctx.tenantId === 'oliv' ? sageBase : `${ctx.tenantId}:${sageBase}`;
   try {
     const local = JSON.parse(localStorage.getItem(sageKey) ?? '[]');
     if (Array.isArray(local) && local.length > 0) return { monthDone: true };

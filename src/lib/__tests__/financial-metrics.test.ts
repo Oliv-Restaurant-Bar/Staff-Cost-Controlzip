@@ -68,11 +68,11 @@ const lookupStub = (acct: string) => {
 // ─── Registry-Struktur ────────────────────────────────────────────────────────
 
 describe('Registry-Struktur', () => {
-  it('enthält genau die 13 vorgegebenen IDs mit korrektem kind/unit', () => {
-    expect(FINANCIAL_METRIC_IDS).toHaveLength(13);
+  it('enthält genau die 14 vorgegebenen IDs mit korrektem kind/unit', () => {
+    expect(FINANCIAL_METRIC_IDS).toHaveLength(14);
     const amounts = FINANCIAL_METRIC_IDS.filter(id => FINANCIAL_METRICS[id].kind === 'amount');
     const ratios  = FINANCIAL_METRIC_IDS.filter(id => FINANCIAL_METRICS[id].kind === 'ratio');
-    expect(amounts).toHaveLength(9);
+    expect(amounts).toHaveLength(10);
     expect(ratios).toEqual(['cogs_ratio', 'personnel_ratio', 'ebitda_margin', 'ebit_margin']);
     for (const id of amounts) expect(FINANCIAL_METRICS[id].unit).toBe('CHF');
     for (const id of ratios)  expect(FINANCIAL_METRICS[id].unit).toBe('%');
@@ -98,11 +98,11 @@ describe('Registry-Struktur', () => {
     }
   });
 
-  it('getAllFinancialMetricDefinitions: alle 13, stabile Reihenfolge, keine Duplikate', () => {
+  it('getAllFinancialMetricDefinitions: alle 14, stabile Reihenfolge, keine Duplikate', () => {
     const defs = getAllFinancialMetricDefinitions();
-    expect(defs).toHaveLength(13);
+    expect(defs).toHaveLength(14);
     expect(defs.map(d => d.id)).toEqual(FINANCIAL_METRIC_IDS);
-    expect(new Set(defs.map(d => d.id)).size).toBe(13);
+    expect(new Set(defs.map(d => d.id)).size).toBe(14);
   });
 });
 

@@ -130,7 +130,7 @@ function ratioPct(numerator: number | null, denominator: number | null): number 
  * Test (1-Monats-Aggregat ≡ getFinancialMetricValues) abgesichert.
  */
 const RATIO_NUMERATOR_ROW: Partial<Record<FinancialMetricId, string>> = {
-  cogs_ratio:      'total_cogs',
+  cogs_ratio:      'total_cogs_einkauf',
   personnel_ratio: 'total_personnel',
   ebitda_margin:   'ebitda',
   ebit_margin:     'ebit',

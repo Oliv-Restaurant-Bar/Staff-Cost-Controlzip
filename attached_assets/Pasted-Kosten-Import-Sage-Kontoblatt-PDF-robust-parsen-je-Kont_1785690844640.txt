@@ -1,0 +1,24 @@
+Kosten-Import (Sage-Kontoblatt PDF) — robust parsen, je Konto + je Lieferant, speist Erfolgsrechnung, WKQ und FIBU-Abgleich (Oliv und Beaulieu)
+
+Ziel: Monatliche Sage-Kontoblatt-PDFs zuverlässig einlesen — pro Konto der Monatsbetrag und pro Lieferant die Detailbeträge — als Grundlage für Erfolgsrechnung, Warenkostenquote und den Lieferanten-FIBU-Abgleich.
+
+A. PDF-PARSER (Format fix, an echten Kontoblättern verankert)
+1. Kopf lesen: „Kontoblatt", Firmenname („Oliv Gastro AG" → Oliv, „Restaurant Beaulieu AG" → Beaulieu), Zeitraum „vom TT.MM.JJ bis TT.MM.JJ" → Monat + Jahr. Mehrseitig (z. B. 9 Seiten), Konten über Seitenumbrüche hinweg zusammenführen.
+2. Kontoblöcke: 4-stellige Kontonummer + Kontoname (z. B. „4060 Küche Warenaufwand"). Buchungszeilen: Datum, Belegnr. (Blg), Text (Lieferant/Beschreibung), Gegenkonto, Soll, Haben, Saldo; die oft darunter stehende Referenz-/Rechnungsnummer der Buchung zuordnen.
+3. „Total Soll"/„Total Haben" je Konto lesen. MONATSBETRAG je Konto = Total Soll − Total Haben (Periodenbewegung). Saldo/Saldo-Vortrag NICHT als Monatswert verwenden. Negative Bewegungen (Haben > Soll) korrekt als Minus. Zahlen mit Apostroph-Tausender.
+
+B. VERARBEITUNG
+4. Pro Konto den Monatsbetrag speichern → speist die Erfolgsrechnung (P&L je Konto/Bereich) und die Kosten-Kennzahlen im Cockpit.
+5. Pro Lieferant (aus der Text-Spalte, je Konto) die Beträge erfassen → das ist das Journal für den Lieferanten-FIBU-Abgleich. Matching mit den Warenrechnungs-Lieferanten über den bestehenden Alias-Mechanismus (reihenfolge-/schreibweisen-tolerant). Pro Mandant getrennt.
+6. Kontoklassen: Warenaufwand-Konten → Warenkosten (für WKQ); Personalaufwand (5xxx), Betriebsaufwand (6xxx) und Sonderkonten entsprechend P&L. Klassifikation je Konto konfigurierbar (siehe Rückfragen unten). „Veränderung Warenvorrat" (4900) fliesst in den Wareneinsatz (WES), nicht in die reine Waren-Einkaufsquote.
+
+C. SICHERHEIT & ABLAUF
+7. Mandanten-Check über den Firmennamen im Kopf; passt er nicht zum aktiven Mandanten → Import stoppen mit klarer Meldung.
+8. Vorschau vor dem Schreiben: erkannte Konten mit Monatsbetrag, Gesamtsumme, Zuordnung zur P&L, sowie Lieferanten-Detail; unsichere/negative Posten markiert. Plausibilität: Warnung, wenn Kontosummen nicht aufgehen.
+9. Upsert dublettensicher über Mandant + Konto + Monat/Jahr (erneuter Import desselben Monats ersetzt, verdoppelt nie — auch bei anderem Dateinamen). Backup + „Letzter Import rückgängig machen".
+10. Jahr-Dropdown/Jahr-Sperre wie bei den übrigen Importen (abgeschlossene Jahre schreibgeschützt).
+
+Abnahme (mit den echten Dateien):
+- „Kosten Oliv 06.2026.pdf" unter Oliv: Konten korrekt erkannt, Monatsbeträge = Soll−Haben (z. B. 4060 Küche 47'428.54; 4030 Bier 10'947.69; 5000 Löhne 60'453.80). Lieferanten je Konto sichtbar (Feldschlösschen, Terravigna …). Mandanten-Check greift.
+- „Kosten Beaulieu 06.2026.pdf" unter Beaulieu: 4000 Prodega netto 1'317.25 (Soll 16'163.35 − Haben 14'846.10), 6000 Mietzins 20'860.31 usw.; Beaulieu-Journal für den FIBU-Abgleich ist damit gefüllt.
+- Erneuter Import desselben Monats → „unverändert", keine Verdopplung. Erfolgsrechnung und WKQ nutzen die Monatsbeträge; FIBU-Abgleich vergleicht Warenrechnungen vs. Kontoblatt pro Lieferant.

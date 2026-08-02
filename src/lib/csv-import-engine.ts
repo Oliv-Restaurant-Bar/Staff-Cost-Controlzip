@@ -92,6 +92,7 @@ export const PL_CATEGORY_TO_ROW_ID: Partial<Record<PLCategory, string>> = {
   cogs_food:         'cogs_food',
   cogs_beverage:     'cogs_bev',
   cogs_other:        'cogs_other',
+  cogs_lager:        'cogs_lager',
   personnel_kitchen: 'personnel_wages',
   personnel_service: 'personnel_wages',
   personnel_admin:   'personnel_wages',

@@ -105,11 +105,12 @@ describe('buildWarenAbgleich — Degradation ohne Buchungszeilen', () => {
 });
 
 describe('journalVerfuegbarFuerTenant — Mandanten-Schutz', () => {
-  it('nur Oliv darf das (nicht mandanten-präfixierte) Journal nutzen', () => {
-    // sage_journal_v1_* stammt aus der Oliv-Buchhaltung; jeder andere Mandant
-    // muss in den degradierten Modus (sonst fremde Buchungen als eigene).
+  it('Oliv (Legacy-Keys ohne Präfix) und Beaulieu (tenant-präfixierte Keys) nutzen das Journal', () => {
+    // Journal-Keys sind mandantenfähig (reporting-store.journalMonthKey):
+    // Oliv historisch ohne Präfix, Beaulieu mit `beaulieu:`-Präfix.
+    // Unbekannte Mandanten bleiben im degradierten Modus.
     expect(journalVerfuegbarFuerTenant('oliv')).toBe(true);
-    expect(journalVerfuegbarFuerTenant('beaulieu')).toBe(false);
+    expect(journalVerfuegbarFuerTenant('beaulieu')).toBe(true);
     expect(journalVerfuegbarFuerTenant('irgendwas')).toBe(false);
   });
 });

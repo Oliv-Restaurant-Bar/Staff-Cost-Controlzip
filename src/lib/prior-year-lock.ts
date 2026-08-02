@@ -63,6 +63,24 @@ export async function getLockState(
   }
 }
 
+/**
+ * Strikte Lock-Prüfung für Schreibpfade: wirft bei Lesefehlern statt
+ * {locked:false} zurückzugeben (fail-closed). Nur ein erfolgreicher Read mit
+ * locked:false darf einen Import freigeben.
+ */
+export async function getLockStateStrict(
+  tenantId: string,
+  year: number,
+): Promise<PriorYearLockState> {
+  const { data, error } = await appSettingsTable()
+    .select('value')
+    .eq('key', lockKey(tenantId, year))
+    .maybeSingle();
+  if (error) throw new Error(`Jahres-Sperre konnte nicht geprüft werden: ${error.message}`);
+  if (!data) return { locked: false };
+  return (data.value as PriorYearLockState) ?? { locked: false };
+}
+
 export async function isLocked(tenantId: string, year: number): Promise<boolean> {
   const state = await getLockState(tenantId, year);
   return state.locked === true;

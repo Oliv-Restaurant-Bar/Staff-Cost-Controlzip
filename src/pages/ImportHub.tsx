@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import {
   getLockState,
+  getLockStateStrict,
   lockYear,
   unlockYear,
   formatLockedAt,
@@ -49,6 +50,8 @@ import {
   saveMonth,
   loadMonth,
   loadYear,
+  saveJournalEntries,
+  loadJournalEntries,
   replaceAnnualCostYear,
   removeAnnualCostYear,
   retryReportingMonthsBackup,
@@ -1295,6 +1298,13 @@ const AnnualCostImportSection = () => {
       if (res.failureReason) {
         // Uneindeutiges Jahr oder keine Buchungen → Import abbrechen, Grund anzeigen
         setError(res.failureReason);
+      } else if (res.detectedTenant && res.detectedTenant !== (tenantId ?? 'oliv')) {
+        // MANDANTEN-CHECK: Firma im Dateikopf muss zum aktiven Betrieb passen
+        const firma = res.detectedCompany ?? res.detectedTenant;
+        setError(
+          `Falscher Mandant: Die Datei stammt von «${firma}», aktiv ist aber «${tenantId ?? 'oliv'}». ` +
+          'Bitte oben den passenden Betrieb wählen und die Datei erneut hochladen.',
+        );
       } else {
         setResult(res);
       }
@@ -1320,8 +1330,15 @@ const AnnualCostImportSection = () => {
     setSaving(true);
     try {
       const year = result.detectedYear;
-      // Lock-Check FRISCH beim Speichern (UI-State kann veraltet sein).
-      const freshLock = await getLockState(tenantId ?? 'oliv', year);
+      // Lock-Check FRISCH + FAIL-CLOSED beim Speichern (UI-State kann veraltet
+      // sein; Lesefehler dürfen die Sperre nicht stillschweigend aushebeln).
+      let freshLock;
+      try {
+        freshLock = await getLockStateStrict(tenantId ?? 'oliv', year);
+      } catch (err) {
+        toast.error(`Jahres-Sperre konnte nicht geprüft werden — Import abgebrochen. (${err instanceof Error ? err.message : String(err)})`);
+        return;
+      }
       if (freshLock.locked) {
         setCostLock(freshLock);
         toast.error(`VJ ${year} ist gesperrt (festgeschriebene Hardzahlen). Bitte zuerst entsperren (nur Admin).`);
@@ -1330,7 +1347,26 @@ const AnnualCostImportSection = () => {
       // Undo-Snapshot VOR dem Schreiben: bisherige expenseCategories aller
       // Monate des Zieljahres, die der Import anfassen KÖNNTE (Datei-Kategorien
       // vorhanden ODER bestehende numerische Konten). null = Monat existierte nicht.
+      // Journal-Zielmonate: Datei-Monate, die der Modus wirklich anwendet;
+      // bei «replace» zusätzlich Journale dateiloser Monate leeren (Idempotenz FIBU-Abgleich).
+      const tid = tenantId ?? 'oliv';
+      const appliedFileMonths = [...result.byMonth.keys()]
+        .filter(m => !modeResult.monthsSkipped.includes(m))
+        .sort((a, b) => a - b);
+      const journalTargets = new Map<number, ReturnType<typeof loadJournalEntries>>();
+      for (const m of appliedFileMonths) {
+        journalTargets.set(m, (result.journalByMonth.get(m) ?? []) as ReturnType<typeof loadJournalEntries>);
+      }
+      if (importMode === 'replace') {
+        for (let m = 1; m <= 12; m++) {
+          if (!journalTargets.has(m) && loadJournalEntries(year, m, tid).length > 0) {
+            journalTargets.set(m, []);
+          }
+        }
+      }
+
       const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+      const undoJournals: Array<{ year: number; month: number; entries: unknown[]; tenantId?: string }> = [];
       try {
         const priorYearRecords = new Map(loadYear(year, reportingKey).map(r => [r.month, r]));
         for (let m = 1; m <= 12; m++) {
@@ -1344,6 +1380,10 @@ const AnnualCostImportSection = () => {
             fields: { expenseCategories: rec?.expenseCategories ? JSON.parse(JSON.stringify(rec.expenseCategories)) : null },
           });
         }
+        // Journal-Vorzustände aller Monate, deren Journal ersetzt/geleert wird
+        for (const m of [...journalTargets.keys()].sort((a, b) => a - b)) {
+          undoJournals.push({ year, month: m, entries: loadJournalEntries(year, m, tid), tenantId: tid });
+        }
       } catch (err) {
         console.warn('[ANNUAL-IMPORTS] Undo-Snapshot fehlgeschlagen (Import läuft weiter):', err);
       }
@@ -1353,6 +1393,15 @@ const AnnualCostImportSection = () => {
         { fileName },
         reportingKey,
       );
+      // Journal pro Monat ersetzen (Buchungszeilen → Lieferanten-FIBU-Abgleich);
+      // nur schreiben, wenn sich der Monat tatsächlich ändert.
+      let journalMonths = 0;
+      for (const [m, entries] of journalTargets.entries()) {
+        const prior = loadJournalEntries(year, m, tid);
+        if (JSON.stringify(prior) === JSON.stringify(entries)) continue;
+        saveJournalEntries(year, m, entries, 'replace', tid);
+        journalMonths++;
+      }
       await upsertAnnualCostImport(registryKey, {
         year,
         fileName,
@@ -1380,8 +1429,16 @@ const AnnualCostImportSection = () => {
           itemCount: monthsWritten + monthsCleared,
           itemLabel: 'Monate',
           fileName: fileName || undefined,
-          details: `${result.accountCount} Konten, ${result.bookingCount} Buchungen`,
-          ...(undoMonths.length > 0 ? { snapshot: { kind: 'reporting-fields', storeKey: reportingKey, months: undoMonths } } : {}),
+          details: `${result.accountCount} Konten, ${result.bookingCount} Buchungen` +
+            (journalMonths > 0 ? `, Journal in ${journalMonths} Monat(en) ersetzt` : ''),
+          ...(undoMonths.length > 0 ? {
+            snapshot: {
+              kind: 'reporting-fields' as const,
+              storeKey: reportingKey,
+              months: undoMonths,
+              ...(undoJournals.length > 0 ? { journals: undoJournals } : {}),
+            },
+          } : {}),
         });
       } catch (err) {
         console.error('[ANNUAL-IMPORTS] Import-Protokoll fehlgeschlagen:', err);

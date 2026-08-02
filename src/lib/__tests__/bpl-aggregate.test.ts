@@ -131,6 +131,7 @@ describe('aggregateFinancialMetricValues', () => {
     const pl = mkPL({
       net_revenue:     { actual: 100_000, budget: 110_000, prevYear: 90_000 },
       total_cogs:      { actual: 30_000, budget: 33_000, prevYear: 27_000 },
+      total_cogs_einkauf: { actual: 30_000, budget: 33_000, prevYear: 27_000 },
       total_personnel: { actual: 35_000, budget: 36_000, prevYear: 34_000 },
       ebitda:          { actual: 20_000, budget: 22_000, prevYear: 15_000 },
       ebit:            { actual: 15_000, budget: 17_000, prevYear: 10_000 },
@@ -157,17 +158,17 @@ describe('aggregateFinancialMetricValues', () => {
   it('Quoten: aus Rohsummen, nicht Durchschnitt der Monatsquoten', () => {
     // Monat 1: 30% Quote (30k/100k) · Monat 2: 50% Quote (10k/20k)
     // Rohsummen: 40k/120k = 33.33% (Durchschnitt der Quoten wäre 40%)
-    const m1 = mkPL({ net_revenue: { actual: 100_000 }, total_cogs: { actual: 30_000 } });
-    const m2 = mkPL({ net_revenue: { actual: 20_000 }, total_cogs: { actual: 10_000 } });
+    const m1 = mkPL({ net_revenue: { actual: 100_000 }, total_cogs_einkauf: { actual: 30_000 } });
+    const m2 = mkPL({ net_revenue: { actual: 20_000 }, total_cogs_einkauf: { actual: 10_000 } });
     const v = aggregateFinancialMetricValues('cogs_ratio', [m1, m2]);
     expect(v.actual).toBeCloseTo((40_000 / 120_000) * 100, 10);
   });
 
   it('Quoten: Nenner fehlt oder 0 ⇒ null (fehlend ≠ 0)', () => {
-    const noRev   = mkPL({ total_cogs: { actual: 5_000 } });
+    const noRev   = mkPL({ total_cogs_einkauf: { actual: 5_000 } });
     expect(aggregateFinancialMetricValues('cogs_ratio', [noRev]).actual).toBeNull();
 
-    const zeroRev = mkPL({ net_revenue: { actual: 0 }, total_cogs: { actual: 5_000 } });
+    const zeroRev = mkPL({ net_revenue: { actual: 0 }, total_cogs_einkauf: { actual: 5_000 } });
     expect(aggregateFinancialMetricValues('cogs_ratio', [zeroRev]).actual).toBeNull();
   });
 });

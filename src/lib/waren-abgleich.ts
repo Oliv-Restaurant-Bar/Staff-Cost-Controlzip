@@ -57,14 +57,15 @@ function buchungsBetrag(e: SageJournalEntry): number {
 }
 
 /**
- * MANDANTEN-SCHUTZ: Die Journal-KV-Schlüssel `sage_journal_v1_*` sind
- * historisch NICHT mandanten-präfixiert — alle bisherigen Importe stammen aus
- * der Oliv-Buchhaltung. Für jeden anderen Mandanten darf dieses Journal NICHT
- * verwendet werden (sonst würden fremde Buchungen als eigene angezeigt) →
- * dort immer degradierter Modus (nur Total-Vergleich).
+ * MANDANTEN-SCHUTZ: Die Journal-KV-Schlüssel sind mandantenfähig —
+ * Oliv historisch OHNE Präfix (`sage_journal_v1_*`, alle Alt-Importe stammen
+ * aus der Oliv-Buchhaltung), andere Mandanten mit Tenant-Präfix
+ * (`beaulieu:sage_journal_v1_*`, siehe reporting-store.journalMonthKey).
+ * Dadurch ist das Journal jetzt auch für Beaulieu nutzbar; unbekannte
+ * Mandanten bleiben im degradierten Modus (nur Total-Vergleich).
  */
 export function journalVerfuegbarFuerTenant(tenantId: string): boolean {
-  return tenantId === 'oliv';
+  return tenantId === 'oliv' || tenantId === 'beaulieu';
 }
 
 export interface AbgleichInput {

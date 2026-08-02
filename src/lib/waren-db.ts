@@ -148,7 +148,7 @@ export interface Warenkonto {
 // ─── Warenkosten-Grenze (Kontoklassen-Grenze, pro Mandant) ───────────────────
 //
 // Konten 4000–Grenze = Warenkosten (WKQ), darüber = Betriebskosten.
-// KV `waren_grenze_v1`; fehlend/ungültig → DEFAULT_WARENKOSTEN_GRENZE (4070).
+// KV `waren_grenze_v1`; fehlend/ungültig → DEFAULT_WARENKOSTEN_GRENZE (4090).
 
 export async function loadWarenkostenGrenze(tenantId: TenantId): Promise<number> {
   const { DEFAULT_WARENKOSTEN_GRENZE } = await import('./waren-klassen');

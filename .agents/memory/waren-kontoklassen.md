@@ -5,7 +5,9 @@ description: Warenkosten (4000–Grenze) vs. Betriebskosten Klassifikation, nurW
 
 # Kontoklassen bei Warenrechnungen
 
-**Regel:** Klasse ergibt sich NUR aus der Kontonummer: 4000–Grenze (Default 4070, KV `waren_grenze_v1`, tenantKey-präfixiert) = Warenkosten (zählen in WKQ); alles andere (>Grenze UND <4000, z.B. 6040) = Betriebskosten, NIE in der WKQ.
+**Regel:** Klasse ergibt sich NUR aus der Kontonummer: 4000–Grenze (Default 4090, KV `waren_grenze_v1`, tenantKey-präfixiert) = Warenkosten (zählen in WKQ); alles andere (>Grenze UND <4000, z.B. 4701 Betriebsmaterial, 6040) = Betriebskosten, NIE in der WKQ. Default gilt für beide Mandanten identisch; je Mandant in den Stammdaten änderbar.
+
+**4900 Veränderung Warenvorrat (Lagerveränderung):** eigene P&L-Kategorie/Zeile `cogs_lager` — NICHT «übriger Warenaufwand» (Range-Obergrenze übrig = 4899). P&L: `total_cogs_einkauf` = direkt+übrig (ohne 4900), `total_cogs` = Einkauf+Lager (Wareneinsatz, id unverändert für alle Konsumenten). Einkaufs-WKQ (`cogs_ratio`, auch bpl-aggregate) rechnet auf `total_cogs_einkauf`; Detailzerlegungen (Bank/Investor, PDF-Export) müssen `cogs_lager` mitführen, sonst summieren sichtbare Komponenten nicht aufs Total.
 **Legacy-Regel:** Rechnung/Zeile OHNE Konto oder mit nicht-numerischem Konto = Warenkosten — Altbestand darf die WKQ nicht verlassen.
 
 **nurWarenAnteil-Muster:** `computeWarenkostenTotals` kennt keine Splits. Deshalb wird an JEDER WKQ-/Warenkosten-total-Stelle die Eintragsliste vorab mit `nurWarenAnteil(list, grenze)` (waren-klassen.ts) reduziert (gemischte Splits anteilig, immutable, reine Betriebs-Rechnungen fallen weg). Betriebskosten separat via `sumBetriebNet`.

@@ -2,8 +2,8 @@
  * waren-klassen.ts — Kontoklassen für Warenrechnungen (pure, IO-frei)
  * ====================================================================
  * Klassifikation NACH KONTONUMMER:
- *   - Konten 4000 … Grenze (Standard 4070)  → WARENKOSTEN  (zählen in WKQ)
- *   - Konten > Grenze (z.B. 4071, 6040)     → BETRIEBSKOSTEN (NICHT in WKQ)
+ *   - Konten 4000 … Grenze (Standard 4090)  → WARENKOSTEN  (zählen in WKQ)
+ *   - Konten > Grenze (z.B. 4701, 6040)     → BETRIEBSKOSTEN (NICHT in WKQ)
  *   - Konten < 4000                          → BETRIEBSKOSTEN (kein Warenkonto)
  * Die Grenze ist pro Mandant konfigurierbar (waren-db: loadWarenkostenGrenze).
  *
@@ -16,8 +16,13 @@
 
 import type { InvoiceEntry } from './waren-db';
 
-/** Standard-Obergrenze der Warenkosten-Konten (4000–4070). */
-export const DEFAULT_WARENKOSTEN_GRENZE = 4070;
+/**
+ * Standard-Obergrenze der Warenkosten-Konten (4000–4090): alle
+ * «…Warenaufwand»-Konten inkl. 4070 Kaffee/Tee und 4090 Übriger Handelswaren.
+ * 4701 Betriebsmaterial und übrige 47xx/48xx = Betriebskosten (NICHT in der WKQ).
+ * Identisch für Oliv und Beaulieu; je Mandant in den Stammdaten anpassbar.
+ */
+export const DEFAULT_WARENKOSTEN_GRENZE = 4090;
 
 export type KontoKlasse = 'warenkosten' | 'betriebskosten';
 

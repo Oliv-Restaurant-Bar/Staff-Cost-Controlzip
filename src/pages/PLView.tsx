@@ -1918,7 +1918,7 @@ const AccountActionDialog = ({
   onRefresh: () => void;
   onOpenDrilldown: () => void;
 }) => {
-  const { tenantKey } = useTenant();
+  const { tenantId, tenantKey } = useTenant();
   const accountNum = row.itemAccountNumber ?? '';
   const result     = lookupAccount(accountNum);
   const mapping    = result.mapping;
@@ -1974,9 +1974,9 @@ const AccountActionDialog = ({
   // Buchungszeilen für dieses Konto laden
   const bookings = useMemo<SageJournalEntry[]>(() => {
     if (!accountNum) return [];
-    const all = loadJournalYear(year);
+    const all = loadJournalYear(year, tenantId);
     return all.filter(e => e.accountNumber === accountNum.padStart(4, '0'));
-  }, [accountNum, year]);
+  }, [accountNum, year, tenantId]);
 
   const handleToggleActive = () => {
     if (mapping) {
@@ -2667,8 +2667,8 @@ const PLViewPage = () => {
 
   // Sage Journal für das gewählte Jahr aus Supabase laden (auto-migration)
   useEffect(() => {
-    syncJournalYearFromDB(year).then(() => setRefreshKey(k => k + 1));
-  }, [year]);
+    syncJournalYearFromDB(year, tenantId).then(() => setRefreshKey(k => k + 1));
+  }, [year, tenantId]);
 
   // Daten laden & P&L berechnen
   const records = useMemo(() => loadYear(year, tenantKey(REPORTING_STORAGE_KEY)), [year, month, refreshKey, tenantId]);
