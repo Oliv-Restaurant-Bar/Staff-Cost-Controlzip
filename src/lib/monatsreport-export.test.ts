@@ -157,32 +157,32 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     expect(r.getCell(4).value).toBe('3 (70 Pers.)'); // Ist = month (monthPax)
   });
 
-  it('countPax MIT sharePct: Ist-Anteil in der Δ%-Spalte, VJ-Anteil inline', () => {
+  it('countPax MIT sharePct: Anteil als Unterzeile, Δ% = Veränderung vs. VJ', () => {
     const gruppen = row({
       label: 'Gruppen ab 20 Pax', fmt: 'countPax',
       month: 8, monthPax: 255, vjMonth: 2, vjMonthPax: 45,
       sharePct: { month: 1.8, week: null, vj: null, vjMonth: 2.4 },
     });
     const r = buildMonatsreportWorkbook([gruppen], 7, 'monat').worksheets[0].getRow(2);
-    expect(r.getCell(4).value).toBe('8 (255 Pers.)');          // Ist OHNE % inline
-    expect(r.getCell(3).value).toBe('2 (45 Pers. · 2.4 %)');   // VJ-Anteil bleibt inline
-    expect(r.getCell(5).value).toBe(1.8);                      // Ist-Anteil in Δ%-Spalte
-    expect(r.getCell(5).numFmt).toBe('0.0" %"');               // ohne Vorzeichen
+    expect(r.getCell(4).value).toBe('8 (255 Pers.)\n1.8 % Anteil Gäste IN'); // Pax in Klammern, Anteil Unterzeile
+    expect(r.getCell(3).value).toBe('2 (45 Pers.)\n2.4 %');                  // VJ-Anteil als Unterzeile
+    expect(r.getCell(5).value).toBeCloseTo(((8 - 2) / 2) * 100);             // Δ% = Veränderung vs. VJ
+    expect(r.getCell(5).numFmt).toBe('+0.0" %";-0.0" %"');                   // mit Vorzeichen wie übrige Zeilen
   });
 
-  it('count MIT sharePct: Ist numerisch + Anteil in Δ%-Spalte; VJ-Anteil inline als Text', () => {
+  it('count MIT sharePct: Anteil als Unterzeile (Ist mit Hinweis, VJ nur %); Δ% = vs. VJ', () => {
     const res = row({
       label: 'Reservierte Gäste', fmt: 'count',
       month: 2396, vjMonth: 2100,
       sharePct: { month: 17.2, week: null, vj: null, vjMonth: 25.9 },
     });
     const r = buildMonatsreportWorkbook([res], 7, 'monat').worksheets[0].getRow(2);
-    expect(r.getCell(4).value).toBe(2396);                     // Ist = nur Zahl
-    expect(r.getCell(3).value).toBe('2’100 (25.9 %)');         // VJ inline (de-CH U+2019)
-    expect(r.getCell(5).value).toBe(17.2);                     // Ist-Anteil in Δ%-Spalte
+    expect(r.getCell(4).value).toBe('2’396\n17.2 % Anteil Gäste IN'); // de-CH U+2019
+    expect(r.getCell(3).value).toBe('2’100\n25.9 %');
+    expect(r.getCell(5).value).toBeCloseTo(((2396 - 2100) / 2100) * 100);
   });
 
-  it('sharePct ohne Gäste-IN-Basis (null) lässt die Δ%-Spalte leer', () => {
+  it('sharePct ohne Gäste-IN-Basis (null): keine Anteil-Unterzeile, Zellen bleiben numerisch', () => {
     const res = row({
       label: 'Reservierte Gäste', fmt: 'count',
       month: 2396, vjMonth: 2100,
@@ -190,8 +190,9 @@ describe('buildMonatsreportWorkbook — leer statt 0', () => {
     });
     const r = buildMonatsreportWorkbook([res], 7, 'monat').worksheets[0].getRow(2);
     expect(r.getCell(4).value).toBe(2396);
-    expect(r.getCell(3).value).toBe(2100); // kein VJ-Anteil → Zahl bleibt Zahl
-    expect(r.getCell(5).value ?? null).toBeNull();
+    expect(r.getCell(3).value).toBe(2100); // kein Anteil → Zahl bleibt Zahl
+    // Δ% = Veränderung vs. VJ gibt es weiterhin (unabhängig vom Anteil).
+    expect(r.getCell(5).value).toBeCloseTo(((2396 - 2100) / 2100) * 100);
   });
 
   it('countPax zieht in der Wochensicht week/weekPax (Vorjahr-Woche leer)', () => {

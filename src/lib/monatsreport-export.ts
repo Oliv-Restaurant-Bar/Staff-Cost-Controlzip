@@ -48,8 +48,12 @@ export function mapRowForExport(row: MrRow, granularity: ExportGranularity): Exp
   const vj = granularity === 'monat' ? row.vjMonth : row.vj;
   const ist = granularity === 'monat' ? row.month : row.week;
   const devBudget = granularity === 'monat' ? row.monthBudget : row.weekBudget;
-  const dev = ist !== null && devBudget !== null && devBudget > 0
-    ? ((ist - devBudget) / devBudget) * 100 : null;
+  // Anteil-Zeilen (sharePct): Δ% = Veränderung Ist vs. Vorjahr (wie Bildschirm);
+  // übrige Zeilen: Δ% gegen das Budget. Nie durch 0 teilen.
+  const dev = row.sharePct
+    ? (ist !== null && vj !== null && vj > 0 ? ((ist - vj) / vj) * 100 : null)
+    : (ist !== null && devBudget !== null && devBudget > 0
+        ? ((ist - devBudget) / devBudget) * 100 : null);
   const istWarn = row.warnAbove != null && ist !== null && ist > row.warnAbove;
   // Kosten-Zeilen (deltaInverted): über Budget (dev>0) = schlecht/rot.
   const devGut = dev === null ? null : (row.deltaInverted ? dev <= 0 : dev >= 0);
@@ -87,16 +91,6 @@ function countPaxText(count: number | null, pax: number | null, share: number | 
   return share !== null && share !== undefined
     ? `${c} (${p} Pers. · ${share.toFixed(1)} %)`
     : `${c} (${p} Pers.)`;
-}
-
-/**
- * «Anzahl (Anteil %)»-Text für fmt='count' mit Gäste-IN-Anteil (reservierte
- * Gäste): «2'396 (17.2 %)». Nur genutzt, wenn ein Anteil vorhanden ist —
- * sonst bleibt die Zelle numerisch.
- */
-function countShareText(count: number | null, share: number): string {
-  if (count === null || count === undefined) return '';
-  return `${Math.round(count).toLocaleString('de-CH')} (${share.toFixed(1)} %)`;
 }
 
 /**
@@ -140,19 +134,31 @@ export function buildMonatsreportWorkbook(
     // Felder je Granularität (identisch zur Bildschirm-Ansicht ReportTable).
     const c = mapRowForExport(row, granularity);
 
-    // Darstellung wie am Bildschirm:
-    //  - VORJAHR: Anteil kompakt inline — countPax «8 (255 Pers. · 1.8 %)»,
-    //    count «1'630 (25.9 %)».
-    //  - IST: NUR Zahl bzw. «Anzahl (Σ Pers.)» OHNE % — der Ist-Anteil an
-    //    «Gäste IN» steht in der Δ%-Spalte (Anteil-Zeilen haben kein Budget-Δ).
+    // Darstellung wie am Bildschirm (Anteil-Zeilen):
+    //  - Zahl gross, Anteil als zweite Zeile in derselben Zelle — Ist z.B.
+    //    «1'735⏎18.3 % Anteil Gäste IN», Vorjahr «1'618⏎11.2 %».
+    //  - Gruppen (countPax): Personenzahl bleibt in Klammern bei der Zahl.
+    //  - Δ%-Spalte = Veränderung Ist vs. Vorjahr (c.dev, s. mapRowForExport).
+    //  - Ohne Basis (share=null) keine Anteil-Zeile.
     const isCountPax = row.fmt === 'countPax';
-    const vjIsShareText = row.fmt === 'count' && c.vjShare !== null && c.vj !== null;
-    const vjOut = isCountPax ? countPaxText(c.vj, c.vjPax, c.vjShare)
-      : vjIsShareText ? countShareText(c.vj, c.vjShare as number) : c.vj;
-    const istOut = isCountPax ? countPaxText(c.ist, c.istPax, null) : c.ist;
-    // Anteil-Zeilen: Δ%-Spalte trägt den Ist-Anteil (ohne Vorzeichen/Ampel).
     const isShareRow = row.sharePct !== undefined;
-    const devOut = isShareRow ? c.istShare : c.dev;
+    const shareLineIst = isShareRow && c.ist !== null && c.istShare !== null
+      ? `\n${c.istShare.toFixed(1)} % ${row.shareHint ?? 'Anteil Gäste IN'}` : '';
+    const shareLineVj = isShareRow && c.vj !== null && c.vjShare !== null
+      ? `\n${c.vjShare.toFixed(1)} %` : '';
+    const vjBase = isCountPax ? countPaxText(c.vj, c.vjPax, null)
+      : c.vj !== null ? Math.round(c.vj).toLocaleString('de-CH') : '';
+    const istBase = isCountPax ? countPaxText(c.ist, c.istPax, null)
+      : c.ist !== null ? Math.round(c.ist).toLocaleString('de-CH') : '';
+    // Nur bei vorhandenem Anteil wird die Zelle zum zweizeiligen Text — sonst
+    // bleibt sie numerisch (Zahlenformat/Filter in Excel intakt).
+    const vjIsShareText = isShareRow && shareLineVj !== '';
+    const istIsShareText = isShareRow && shareLineIst !== '';
+    const vjOut = isCountPax ? `${vjBase}${shareLineVj}`
+      : vjIsShareText ? `${vjBase}${shareLineVj}` : c.vj;
+    const istOut = isCountPax ? `${istBase}${shareLineIst}`
+      : istIsShareText ? `${istBase}${shareLineIst}` : c.ist;
+    const devOut = c.dev;
 
     const r = ws.addRow([row.label ?? '', c.budget, vjOut, istOut, devOut]);
 
@@ -163,20 +169,22 @@ export function buildMonatsreportWorkbook(
       const cell = r.getCell(col);
       // Text-Zellen (countPax bzw. count mit Anteil, Spalten 3/4) — kein Zahlenformat.
       const isText = (col === 3 && (isCountPax || vjIsShareText))
-        || (col === 4 && isCountPax);
+        || (col === 4 && (isCountPax || istIsShareText));
       if (!isText) cell.numFmt = numFmt;
-      cell.alignment = { horizontal: 'right' };
+      // Anteil-Unterzeile: zweizeilige Zelle → Zeilenumbruch aktivieren.
+      const wrap = (col === 3 && vjIsShareText) || (col === 4 && istIsShareText);
+      cell.alignment = { horizontal: 'right', ...(wrap ? { wrapText: true } : {}) };
     }
     // Schwellen-Rot (warnAbove, z.B. PKQ > 40 %) für den Ist-Wert (Spalte 4).
     if (c.istWarn) {
       r.getCell(4).font = { color: { argb: 'FFC00000' }, bold: true };
     }
     // Δ%-Spalte (5): Kosten-Zeilen (deltaInverted) → über Budget (>0) = rot.
-    // Anteil-Zeilen: Ist-Anteil an «Gäste IN» — ohne Vorzeichen und ohne Ampel.
+    // Anteil-Zeilen: Veränderung Ist vs. Vorjahr — grün/rot wie übrige Zeilen.
     const devCell = r.getCell(5);
-    devCell.numFmt = isShareRow ? '0.0" %"' : '+0.0" %";-0.0" %"';
+    devCell.numFmt = '+0.0" %";-0.0" %"';
     devCell.alignment = { horizontal: 'right' };
-    if (!isShareRow && c.devGut !== null) {
+    if (c.devGut !== null) {
       devCell.font = { color: { argb: c.devGut ? 'FF196B24' : 'FFC00000' } };
     }
     // Fett pro Zelle mergen — r.font = {bold} würde die gesetzten Zellfarben

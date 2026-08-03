@@ -122,23 +122,15 @@ function parseWeekValue(v: string): WeekSelection {
 const fmtNum = (v: number, dec = 2) =>
   v.toLocaleString('de-CH', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
-function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null, share?: number | null): string {
+function fmtCell(v: number | null, fmt: MrRow['fmt'], pax?: number | null): string {
   if (v === null || v === undefined) return '';
   if (fmt === 'countPax') {
     const n = fmtNum(v, 0);
-    // «8 (255 Pers. · 1.8 %)» — Anteil an Gäste IN nur wenn Basis vorhanden.
-    if (pax !== null && pax !== undefined) {
-      return share !== null && share !== undefined
-        ? `${n} (${fmtNum(pax, 0)} Pers. · ${share.toFixed(1)} %)`
-        : `${n} (${fmtNum(pax, 0)} Pers.)`;
-    }
+    // «8 (255 Pers.)» — der Anteil steht als Unterzeile in der Zelle, nie inline.
+    if (pax !== null && pax !== undefined) return `${n} (${fmtNum(pax, 0)} Pers.)`;
     return n;
   }
-  if (fmt === 'count' || fmt === 'hours') {
-    const n = fmtNum(v, 0);
-    // «2'396 (17.2 %)» — Anteil an Gäste IN (Basis = 100 %).
-    return share !== null && share !== undefined ? `${n} (${share.toFixed(1)} %)` : n;
-  }
+  if (fmt === 'count' || fmt === 'hours') return fmtNum(v, 0);
   if (fmt === 'pct') return `${v.toFixed(1)} %`;
   return fmtNum(v);
 }
@@ -314,7 +306,10 @@ function ReportTable({
             if (row.deltaPp) {
               dev = p.ist !== null && p.devBudget !== null ? p.ist - p.devBudget : null;
               inverted = true; // Quote über Ziel = rot
-            } else if (row.deltaVsVj) {
+            } else if (row.deltaVsVj || row.sharePct) {
+              // Anteil-Zeilen (sharePct): Δ% = Veränderung Ist vs. Vorjahr —
+              // konsistent mit den übrigen Kennzahlen; der Anteil selbst steht
+              // als dezente Unterzeile unter der Zahl (Ist + Vorjahr).
               dev = p.ist !== null && p.vj !== null && p.vj > 0
                 ? ((p.ist - p.vj) / p.vj) * 100 : null;
             } else {
@@ -392,27 +387,27 @@ function ReportTable({
                   ) : null}
                 </td>
                 <td className={cn('px-3 py-1.5 text-right tabular-nums text-xs', devClass)}>
-                  {row.sharePct ? (
-                    // Anteil-Zeilen (Reservierte Gäste / Gruppen ab N Pax): die
-                    // linke %-Spalte zeigt den IST-Anteil an «Gäste IN» — der
-                    // VJ-Anteil bleibt kompakt inline in der Vorjahresspalte.
-                    // Ohne Gäste-IN-Basis (null) bleibt das Feld leer.
-                    p.istShare !== null ? (
-                      <span data-testid={`share-${row.id}-${granularity}`}>
-                        {p.istShare.toFixed(1)} %
-                        <span className="block text-[9px] font-normal text-muted-foreground">{row.shareHint ?? 'Anteil Gäste IN'}</span>
-                      </span>
-                    ) : null
-                  ) : (
-                    <>
-                      {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
-                      {row.deltaVsVj && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
-                    </>
-                  )}
+                  {row.deltaPp ? fmtDevPp(dev) : fmtDev(dev)}
+                  {(row.deltaVsVj || row.sharePct) && dev !== null ? <span className="block text-[9px] font-normal text-muted-foreground">vs. VJ</span> : null}
                 </td>
-                {/* Ist-Zelle: nur Zahl bzw. «Anzahl (Σ Pers.)» — der Anteil steht links. */}
-                <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>{fmtCell(p.ist, row.fmt, p.istPax)}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.vj, row.fmt, p.vjPax, p.vjShare)}</td>
+                {/* Ist-Zelle: Zahl gross; bei Anteil-Zeilen der Anteil als dezente
+                    Unterzeile («18.3 % Anteil Gäste IN»). Ohne Basis kein Anteil. */}
+                <td className={cn('px-3 py-1.5 text-right tabular-nums', tintClass, warnClass)}>
+                  {fmtCell(p.ist, row.fmt, p.istPax)}
+                  {row.sharePct && p.ist !== null && p.istShare !== null ? (
+                    <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`share-${row.id}-${granularity}`}>
+                      {p.istShare.toFixed(1)} % {row.shareHint ?? 'Anteil Gäste IN'}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">
+                  {fmtCell(p.vj, row.fmt, p.vjPax)}
+                  {row.sharePct && p.vj !== null && p.vjShare !== null ? (
+                    <span className="block text-[10px] font-normal text-muted-foreground" data-testid={`share-vj-${row.id}-${granularity}`}>
+                      {p.vjShare.toFixed(1)} %
+                    </span>
+                  ) : null}
+                </td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtCell(p.budget, row.fmt)}</td>
               </>
             );
