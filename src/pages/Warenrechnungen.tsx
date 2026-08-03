@@ -52,6 +52,7 @@ import {
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
 import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
+import { BeaulieuPdfImport, LieferantenProfilEditor } from '@/components/waren/BeaulieuPdfImport';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
@@ -1404,7 +1405,11 @@ export default function WarenrechnungenPage() {
       const konto = sup.defaultWarenkonto ?? f.warenkonto;
       const kategorie = sup.defaultKategorie
         ?? (sup.defaultWarenkonto ? kontoKategorie(sup.defaultWarenkonto, warenkonten) : f.kategorie);
-      return { ...f, supplierName: sup.name, warenkonto: konto, kategorie };
+      return {
+        ...f, supplierName: sup.name, warenkonto: konto, kategorie,
+        // MwSt-Satz aus Lieferanten-Profil vorbefüllen (Beaulieu-PDF-Profile)
+        vatRate: sup.defaultVatRate !== undefined ? String(sup.defaultVatRate) : f.vatRate,
+      };
     });
     setSupplierPickerOpen(false);
     requestAnimationFrame(() => amountInputRef.current?.focus());
@@ -1697,6 +1702,12 @@ export default function WarenrechnungenPage() {
                     {/* ── Feldschlösschen PDF-Import (Lieferscheine · Monatsrechnung · Historie) ── */}
                     <FeldschloesschenImport tenantId={tenantId} suppliers={suppliers}
                       onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+
+                    {/* ── Lieferanten-PDF-Import über MWST-Nr-Profile (nur Beaulieu) ── */}
+                    {tenantId === 'beaulieu' && (
+                      <BeaulieuPdfImport tenantId={tenantId}
+                        onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+                    )}
 
                     {/* ── PDF-Erkennung: Rechnung hochladen → Felder vorfüllen ── */}
                     <div className="flex flex-wrap items-center gap-3">
@@ -3937,6 +3948,14 @@ export default function WarenrechnungenPage() {
               <h3 className="text-sm font-semibold mb-2">Markt → Lieferant (CSV-Import)</h3>
               <MarktLieferantenEditor tenantId={tenantId} canEdit={canEdit} />
             </div>
+
+            {/* ── Lieferanten-Profile für PDF-Erkennung (nur Beaulieu) ── */}
+            {tenantId === 'beaulieu' && (
+              <div className="border-t border-border/50 pt-4">
+                <h3 className="text-sm font-semibold mb-2">Lieferanten-Profile (PDF-Erkennung)</h3>
+                <LieferantenProfilEditor tenantId={tenantId} canEdit={canEdit} />
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSupplierDialog(false)}>Schliessen</Button>

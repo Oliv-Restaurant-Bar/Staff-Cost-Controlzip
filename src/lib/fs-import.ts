@@ -42,13 +42,25 @@ export async function kernImportiereFsRechnungen(
   tenantId: TenantId,
   lieferant: string,
   rechnungen: FsImportRechnung[],
-  opts?: { quelle?: 'monatsrechnung' },
+  opts?: {
+    quelle?: 'monatsrechnung';
+    /** Notiz-Präfix (Default «Feldschlösschen-PDF») — z.B. «Lieferanten-PDF». */
+    noteLabel?: string;
+    /** ID-Präfix (Default 'fs') — z.B. 'lpdf' für Profil-PDF-Importe. */
+    idPrefix?: string;
+    /** Zusätzliche Warengruppe→Konto-Zuordnungen (z.B. Profil-Kategorie→Konto). */
+    extraMapping?: Record<string, string>;
+    /** Fallback-Hauptkonto wenn keine Splits ableitbar (Default '4030'). */
+    defaultKonto?: string;
+  },
 ): Promise<FsImportErgebnis> {
   const [mappingRoh, historie, schwelle] = await Promise.all([
     loadWarengruppenMapping(tenantId), loadPreisHistorie(tenantId),
     loadPreisSchwelle(tenantId).catch(() => DEFAULT_PREIS_SCHWELLE),
   ]);
-  const mapping = mitFsDefaults(mappingRoh);
+  // extraMapping (Profil-Kategorie→Konto) hat Vorrang — daher VORNE einfügen.
+  const extraRegeln = Object.entries(opts?.extraMapping ?? {}).map(([gruppe, konto]) => ({ gruppe, konto }));
+  const mapping = [...extraRegeln, ...mitFsDefaults(mappingRoh)];
   let hist = historie;
   let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0;
   const alleAenderungen: PreisAenderung[] = [];
@@ -99,12 +111,12 @@ export async function kernImportiereFsRechnungen(
     );
     offen += positionen.filter(p => p.status === 'offen').length;
     const splits = kontoSplitsAusPositionen(positionen);
-    const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? '4030';
+    const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? opts?.defaultKonto ?? '4030';
     const aenderungen = berechnePreisAenderungen(r, lieferant, hist, schwelle);
     alleAenderungen.push(...aenderungen);
     hist = aktualisierePreisHistorie(hist, [r], lieferant);
     const jetzt = new Date().toISOString();
-    const id = vorhanden?.id ?? `fs-${r.rechnungsNr}-${Date.now()}-${neu}`;
+    const id = vorhanden?.id ?? `${opts?.idPrefix ?? 'fs'}-${r.rechnungsNr}-${Date.now()}-${neu}`;
     const entry: InvoiceEntry = {
       id,
       date: r.datum, // LIEFERDATUM — führend für Wochen-Analyse und Cockpit
@@ -114,9 +126,15 @@ export async function kernImportiereFsRechnungen(
       vatIncluded: false,
       vatRate: r.nettoTotal > 0 ? Math.round((r.mwstTotal / r.nettoTotal) * 1000) / 10 : 0,
       reference: r.rechnungsNr,
-      note: opts?.quelle === 'monatsrechnung'
-        ? `Aus Monatsrechnung übernommen (provisorisch) · ${r.positionen.length} Positionen`
-        : `Feldschlösschen-PDF · ${r.positionen.length} Positionen`,
+      note: (() => {
+        const label = opts?.noteLabel ?? 'Feldschlösschen-PDF';
+        // Synthetische Ganz-Rechnungs-Position (Stufe 1, preis 0) nicht zählen.
+        const echte = r.positionen.filter(p => p.artNr !== '' || p.preis > 0).length;
+        const basis = echte > 0 ? `${label} · ${echte} Positionen` : label;
+        return opts?.quelle === 'monatsrechnung'
+          ? `Aus Monatsrechnung übernommen (provisorisch) · ${r.positionen.length} Positionen`
+          : basis;
+      })(),
       ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
       kategorie: kategorieFromKonto(haupt),
       ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),

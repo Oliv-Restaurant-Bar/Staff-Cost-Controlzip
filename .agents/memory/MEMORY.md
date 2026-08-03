@@ -83,4 +83,5 @@
 - [Warenrechnungs-Import-Undo](waren-import-undo.md) — ein Slot je Mandant+Typ, vorher/nachher-Snapshots aller geschriebenen Keys, Undo verweigert bei Abweichung (kein CAS im KV).
 - [TG/Prodega Lieferanten-Trennung](waren-lieferanten-trennung.md) — Lieferant je Rechnung aus Markt-Spalte; docKey inkl. Markt; unbekannter Markt = «Lieferant offen», nie raten.
 - [Feldschlösschen PDF-Import](feldschloesschen-import.md) — MWST-Satz als hartes Kategorie-Signal, Sammelrechnung nur Kontrolle, Duplikat-Wache bei Anhang-Übernahme, Jahr-Lock frisch im Save-Pfad.
+- [Beaulieu Lieferanten-PDF-Profile](beaulieu-pdf-profile.md) — Erkennung via MWST-Nr; Vorschau führend (Stufe 2 nur bei deckender Summe); Regex-Fallen ST/QR-Zahlteil; Supplier-Sync nur als Batch.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.

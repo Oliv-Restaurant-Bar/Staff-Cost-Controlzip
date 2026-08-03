@@ -1,0 +1,295 @@
+            Faktura                     92051534
+            Datum                       30.06.2026
+
+
+
+                                                                                 Lieferadresse:
+             Restaurant Beaulieu AG                                              Restaurant Beaulieu AG, Bern
+             Erlachstrasse 3                                                     Erlachstrasse 3
+             3012 Bern                                                           3012 Bern
+
+
+
+
+            Regulierer:                 497154
+            Zahlungskonditionen:        30 Tage netto
+
+
+
+
+Art.-Nr.     Bezeichnung                                HK       Merkmal        geliefert   PE          Preis          Betrag       MwSt. PA
+
+Beleg-Nr.         53878917        vom    01.06.2026
+
+Kundenreferenz:
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             40    KG           6.65          266.00   2.60 %
+
+
+Subtotal                                                                                                               266.00
+
+
+
+Beleg-Nr.         53881846        vom    02.06.2026
+
+Kundenreferenz:   B-2026-00320
+
+300287       CDOR Weisser Nougat 2x2400ml              CH               3              1 KAR           40.95            40.95   2.60 %       N
+
+
+Subtotal                                                                                                                40.95
+
+
+
+Beleg-Nr.         53885611        vom    03.06.2026
+
+Kundenreferenz:   B-2026-00337
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             20    KG           6.65          133.00   2.60 %
+
+
+Subtotal                                                                                                               133.00
+
+
+
+Beleg-Nr.         53893394        vom    06.06.2026
+
+Kundenreferenz:   B-2026-00342
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             30    KG           6.65          199.50   2.60 %
+
+
+Subtotal                                                                                                               199.50
+
+
+
+
+     Gourmador Zollikofen, frigemo ag, Eichenweg 49, CH-3052 Zollikofen, Tel.+41 058 433 82 22,
+     info.zollikofen@gourmador.ch, www.gourmadorzollikofen.ch, IBAN CH69 0070 0114 8084 8579 4, CHE-105.959.488 MWST
+                                                                                                                          Seite 1    von 5
+            Faktura                     92051534
+            Datum                       30.06.2026
+            Rechnungsempfänger:         497154
+
+
+
+
+Art.-Nr.     Bezeichnung                                HK       Merkmal        geliefert   PE          Preis          Betrag       MwSt. PA
+
+Beleg-Nr.         53904455        vom    10.06.2026
+
+Kundenreferenz:
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             20    KG           6.65          133.00   2.60 %
+
+
+Subtotal                                                                                                               133.00
+
+
+
+Beleg-Nr.         53912305        vom    13.06.2026
+
+Kundenreferenz:
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             30    KG           6.65          199.50   2.60 %
+
+300285       CDOR Milchschokolade 2x2400ml             CH               3              1 KAR           37.05            37.05   2.60 %       N
+
+300293       CDOR Rhum Raisins 2x2400ml                CH               3              1 KAR           40.95            40.95   2.60 %       N
+
+300295       CDOR Vanille 2x2400ml                     CH               3              1 KAR           34.10            34.10   2.60 %       N
+
+
+Subtotal                                                                                                               311.60
+
+
+
+Beleg-Nr.         53923494        vom    17.06.2026
+
+Kundenreferenz:
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             30    KG           6.65          199.50   2.60 %
+
+300278       CDOR Caramel 2x2400ml                     CH               3              1 KAR           37.05            37.05   2.60 %       N
+
+300285       CDOR Milchschokolade 2x2400ml             CH               3              1 KAR           37.05            37.05   2.60 %       N
+
+300295       CDOR Vanille 2x2400ml                     CH               3              2 KAR           34.10            68.20   2.60 %       N
+
+
+Subtotal                                                                                                               341.80
+
+
+
+Beleg-Nr.         53926484        vom    18.06.2026
+
+Kundenreferenz:   B-2026-00388
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg     CH             1,2             30    KG           6.65          199.50   2.60 %
+
+
+Subtotal                                                                                                               199.50
+
+
+
+
+     Gourmador Zollikofen, frigemo ag, Eichenweg 49, CH-3052 Zollikofen, Tel.+41 058 433 82 22,
+     info.zollikofen@gourmador.ch, www.gourmadorzollikofen.ch, IBAN CH69 0070 0114 8084 8579 4, CHE-105.959.488 MWST
+                                                                                                                          Seite 2    von 5
+            Faktura                      92051534
+            Datum                        30.06.2026
+            Rechnungsempfänger:          497154
+
+
+
+
+Art.-Nr.     Bezeichnung                                HK       Merkmal        geliefert   PE          Preis          Betrag       MwSt. PA
+
+Beleg-Nr.         53933489        vom     20.06.2026
+
+Kundenreferenz:   B-2026-00399
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg      CH            1,2             30    KG           6.65          199.50   2.60 %
+
+
+Subtotal                                                                                                               199.50
+
+
+
+Beleg-Nr.         53943394        vom     24.06.2026
+
+Kundenreferenz:   B-2026-00406
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg      CH            1,2             40    KG           6.65          266.00   2.60 %
+
+300289       CDOR Pistache 2x2400ml                     CH              3              1 KAR           40.95            40.95   2.60 %       N
+
+300293       CDOR Rhum Raisins 2x2400ml                 CH              3              1 KAR           40.95            40.95   2.60 %       N
+
+301647       CDOR Sorbet Mango 2x2400ml                 FR            2,3              1 KAR           40.95            40.95   2.60 %       N
+
+300957       CDOR Sorbet Zitrone 2x2400ml               FR            2,3              1 KAR           34.10            34.10   2.60 %       N
+
+300295       CDOR Vanille 2x2400ml                      CH              3              1 KAR           34.10            34.10   2.60 %       N
+
+301581       CDOR Walnuss 2x2400ml                      FR              3              1 KAR           39.30            39.30   2.60 %       N
+
+
+Subtotal                                                                                                               496.35
+
+
+
+Beleg-Nr.         53954052        vom     27.06.2026
+
+Kundenreferenz:
+
+204316       FGO TK Bärner regiofrites SGA 4x2.5kg      CH            1,2             40    KG           6.65          266.00   2.60 %
+
+300281       CDOR Erdbeer 2x2400ml                      CH              3              1 KAR           37.05            37.05   2.60 %       N
+
+301648       CDOR Sorbet Himbeer 2x2400ml               FR            2,3              1 KAR           40.95            40.95   2.60 %       N
+
+301647       CDOR Sorbet Mango 2x2400ml                 FR            2,3              1 KAR           40.95            40.95   2.60 %       N
+
+300295       CDOR Vanille 2x2400ml                      CH              3              1 KAR           34.10            34.10   2.60 %       N
+
+301358       Petit Glacier Crème Café Arabic 2x2400ml   FR              3              1 KAR           40.95            40.95   2.60 %       N
+
+
+Subtotal                                                                                                               460.00
+
+
+
+Beleg-Nr.         53960393        vom     30.06.2026
+
+Kundenreferenz:
+
+300287       CDOR Weisser Nougat 2x2400ml               CH              3              1 KAR           40.95            40.95   2.60 %       N
+
+
+
+
+     Gourmador Zollikofen, frigemo ag, Eichenweg 49, CH-3052 Zollikofen, Tel.+41 058 433 82 22,
+     info.zollikofen@gourmador.ch, www.gourmadorzollikofen.ch, IBAN CH69 0070 0114 8084 8579 4, CHE-105.959.488 MWST
+                                                                                                                          Seite 3    von 5
+             Faktura                             92051534
+             Datum                               30.06.2026
+             Rechnungsempfänger:                 497154
+
+
+
+
+Art.-Nr.       Bezeichnung                                            HK        Merkmal           geliefert    PE              Preis       Betrag       MwSt. PA
+
+
+Subtotal                                                                                                                                    40.95
+
+
+
+                                                                 Total Warenwert                                               CHF       2'822.15
+
+                                                                 Total Gebindewert                                             CHF          0.00
+
+                                                                 Gesamtbetrag exkl. MwSt.                                      CHF       2'822.15
+
+                                                                 MwSt.                  2.60 % von 2'822.15                    CHF         73.38
+
+                                                                 Gesamtbetrag inkl. MwSt.                                      CHF       2'895.53
+
+
+
+
+Rekapitulation Sortiment                         Betrag         MwSt.           Betrag
+                                            exkl. MwSt.                    inkl. MwSt.
+20         Tiefkühlprodukte                    2'061.50         53.65          2'115.15
+
+30         Glace                                 760.65         19.73            780.38
+
+Total aller Warengruppen                       2'822.15         73.38          2'895.53
+
+
+
+
+Rekapitulation Gebinde                                    geliefert        retour         Saldo Faktura         Preis       Betrag
+
+
+
+
+Legende:
+
+PE Preis-Einheit, PA Preisarten: A=Aktion, G=Gratis, S=Spezialpreis, N=Nettopreis, L=Liquidation/Abräumer, M=Muster, V=Manueller Preis
+
+1-Suisse Garantie SGA, 2-Vegan ohne Zertif., 3-Lastwagentransport
+
+
+
+
+     Gourmador Zollikofen, frigemo ag, Eichenweg 49, CH-3052 Zollikofen, Tel.+41 058 433 82 22,
+     info.zollikofen@gourmador.ch, www.gourmadorzollikofen.ch, IBAN CH69 0070 0114 8084 8579 4, CHE-105.959.488 MWST
+                                                                                                                                              Seite 4    von 5
+Empfangsschein                           Zahlteil          Konto / Zahlbar an
+                                                           CH91 3070 0114 8084 8579 4
+Konto / Zahlbar an                                         frigemo AG
+CH91 3070 0114 8084 8579 4
+frigemo AG
+                                                           Route de Neuchâtel 49
+Route de Neuchâtel 49                                      2088 Cressier
+2088 Cressier
+
+                                                           Referenz
+Referenz
+98 86410 00049 71540 09205 15346                           98 86410 00049 71540 09205 15346
+
+Zahlbar durch
+Restaurant Beaulieu AG
+Erlachstrasse 3
+3012 Bern
+
+
+
+                                                           Zahlbar durch
+Währung     Betrag                       Währung Betrag    Restaurant Beaulieu AG
+CHF         2 895.53                     CHF    2 895.53   Erlachstrasse 3
+                                                           3012 Bern
+                         Annahmestelle
+

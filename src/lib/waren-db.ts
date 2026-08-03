@@ -37,6 +37,8 @@ export interface Supplier {
   defaultWarenkonto?: string;
   /** Standard-Kategorie (Food/Beverage/Sonstiges): füllt sich vor. */
   defaultKategorie?: WarenKategorie;
+  /** Üblicher MwSt-Satz in % (aus Lieferanten-Profil): füllt sich vor. */
+  defaultVatRate?: number;
 }
 
 /**
@@ -824,7 +826,7 @@ export async function saveMarktLieferantenMapping(tenantId: TenantId, mapping: i
 // Undo verweigert sauber, wenn der aktuelle Stand nicht mehr «nachher»
 // entspricht (zwischenzeitliche manuelle Edits werden nie überschrieben).
 
-export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie';
+export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie' | 'pdf_profil';
 
 export interface WarenImportSnapshot {
   /** supplier_invoices_YYYY-MM pro betroffenem Monat */

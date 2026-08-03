@@ -1,0 +1,72 @@
+                                                                   Restaurant Beaulieu AG
+                                                                   Erlachstrasse 3
+                                                                   3012 Bern
+
+
+
+
+Rechnung                                  1088741          Seite         1 / 2
+Rechnungsdatum    03.07.26                                 Kunden-Nr.             47597
+Auftragsnummer    440961                                   Ansprechpartner        Lengen Martin
+Lieferdatum       03.07.26                                 Lieferbedingung
+Kundenreferenz                                             Versandart             Liefer-Dienst
+Bestelldatum      01.07.26                                 Zahlungsbedingung      30 Tage netto
+Ihre Referenz                                              MWST-Nr.               CHE-362.510.257 MWST
+Sachbearbeitung   Yanick Roethlisberger                    Tour Nr.               300
+Pos. Artikel      Artikelbezeichnung                          Menge ME               Preis              Total
+1    55000724     Oliv, Espresso, Bohnen, 1 kg                 1.000 Karton         16.600        166.00 CHF
+                  10 x 1 kg
+                  Chargen Nummer 260528001 / 0
+2    55000725     Oliv, Lungo, Bohnen, 1 kg                    1.000 Karton         16.600        166.00 CHF
+                  10 x 1 kg
+                  Chargen Nummer 260206001 / 0
+3    50000352     Sera entkoffeiniert, gemahlen 5.20,          1.000 Karton          6.750         67.50 CHF
+                  250 g
+                  10 x 250 g
+                  Chargen Nummer 260528001 / 0
+
+
+
+
+Warenwert       Nettowert    MWST         MWST-Betrag       MWST-Total                                  Total
+399.50             399.50 2.60 %                   10.40            409.90                        409.90 CHF
+     Rechnung
+     Rechnungs-Nr.             1088741
+     Rechnungsdatum            03.07.26
+     Kunden-Nr.                47597
+     Kundenreferenz
+
+     Seite                     2/0
+
+
+
+
+  Zahlungsbedingung                  30 Tage netto
+  Zahlbar bis:                       02.08.26
+
+
+
+
+Empfangsschein                              Zahlteil            Konto / Zahlbar an
+
+Konto / Zahlbar an
+                                                                CH59 3000 0001 3000 7187 3
+CH59 3000 0001 3000 7187 3                                      Blaser Café AG
+Blaser Café AG                                                  Güterstrasse 4
+Güterstrasse 4                                                  3008 Bern
+3008 Bern
+
+Referenz                                                        Referenz
+00 00000 00000 47597 00108 87411                                00 00000 00000 47597 00108 87411
+Zahlbar durch
+                                                                Zusätzliche Informationen
+Restaurant Beaulieu AG
+Erlachstrasse 3                                                 //S1/10/1088741/11/260703/20//30//31/260703/32/2.60:
+3012 Bern                                                       10.40
+                                                                Zahlbar durch
+                                                                Restaurant Beaulieu AG
+Währung    Betrag                           Währung Betrag      Erlachstrasse 3
+CHF        409.90                           CHF        409.90   3012 Bern
+
+                     Annahmestelle
+
