@@ -6,7 +6,7 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageShell } from '@/components/layout/PageShell';
-import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, GripVertical, ListOrdered, RotateCcw, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, FileSpreadsheet, FileDown, CalendarDays, GitCompareArrows, Table2, ChartLine, GripVertical, ListOrdered, RotateCcw, Check, Info } from 'lucide-react';
 import {
   DndContext, closestCenter, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, type DragEndEvent,
@@ -328,6 +328,11 @@ function ReportTable({
             // WKQ-Inline-Ampel (nur «Warenkosten total»): über Ziel = rot.
             const wkqGut = wkq?.pct != null && wkq.ziel != null ? wkq.pct <= wkq.ziel : null;
             const wkqDelta = wkq?.pct != null && wkq.ziel != null ? wkq.pct - wkq.ziel : null;
+            // Transparenz «Netto Umsatz»: enthaltener Marketing-/Maison-Anteil
+            // der gewählten Periode (bereits eingerechnet, reine Anzeige).
+            const mkt = row.marketingNetto
+              ? (granularity === 'monat' ? row.marketingNetto.month : row.marketingNetto.week)
+              : null;
             // Zellen der Hauptzeile (Label | Δ% | Ist | Vorjahr | Budget) — im
             // «Zeilen anordnen»-Modus in einer sortierbaren Zeile mit Ziehgriff.
             const rowCells = (
@@ -359,6 +364,30 @@ function ReportTable({
                       {row.label}
                     </button>
                   ) : row.label}
+                  {row.id === 'netto_umsatz' && mkt !== null ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="ml-1 inline-flex align-middle text-muted-foreground hover:text-foreground"
+                          aria-label="Netto-Umsatz Zusammensetzung"
+                          data-testid={`info-netto-umsatz-${granularity}`}
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="max-w-[280px] text-xs">
+                        <p className="font-medium">Netto-Umsatz = MwSt-bereinigter Umsatz + Marketing/Maison</p>
+                        <p className="mt-1">
+                          Davon Marketing/Maison ({granularity === 'monat' ? 'Monat' : 'Woche'}):{' '}
+                          <span className="tabular-nums font-medium">
+                            CHF {mkt.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-muted-foreground">Betrag ist bereits im Netto-Umsatz enthalten (keine Doppelzählung).</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null}
                   {wkq ? (
                     <span className="block text-[11px] font-normal tabular-nums" data-testid={`wkq-inline-${granularity}`}>
                       {wkq.pct != null ? (

@@ -680,6 +680,14 @@ export interface MrRow {
    * Basis dort Gäste IN + Gäste TA ist (nicht nur Gäste IN).
    */
   shareHint?: string;
+  /**
+   * Transparenz «Netto Umsatz»: im ausgewiesenen Netto ENTHALTENER
+   * Marketing-/Maison-Anteil (CHF) je Spalte (Monat/Woche), summiert über
+   * exakt die gezählten Umsatz-Tage. null = Periode ohne Umsatz. Nur für
+   * die Anzeige (Tooltip) — der Betrag ist bereits im Netto eingerechnet,
+   * NIE zusätzlich addieren (Doppelzählung).
+   */
+  marketingNetto?: { month: number | null; week: number | null };
 }
 
 /** Kompakte WKQ-Angabe für die Inline-Anzeige bei «Warenkosten total». */
@@ -1020,6 +1028,10 @@ export async function ladeMonatsreport(
   // «Umsatz pro Gast»: Netto ÷ Gäste, aber NUR über Tage, die BEIDE Quellen
   // haben (Umsatz-Tag mit gesamtBrutto>0 UND gaesteDaily[date]>0).
   let pairedNet = 0, pairedGaeste = 0, wPairedNet = 0, wPairedGaeste = 0;
+  // Transparenz: im Netto-Umsatz enthaltener Marketing-/Maison-Anteil (CHF),
+  // exakt über dieselben gezählten Tage summiert wie mNet/wNet (kein zweiter
+  // Datenpfad → keine Abweichung zum ausgewiesenen Netto möglich).
+  let mMkt = 0, wMkt = 0;
   for (const date of istTage) {
     const tag = umsatzTage.get(date);
     if (!tag || tag.gesamtBrutto <= 0) continue;
@@ -1027,11 +1039,13 @@ export async function ladeMonatsreport(
     const split = foodBeverageSplit(tag);
     mGross += tag.gesamtBrutto; mTa += tag.takeAwayBrutto; mNet += netto;
     mFood += split.food; mBev += split.beverage;
+    mMkt += tag.marketingNetto;
     mHatUmsatz = true;
     const inWeek = !!(weekFrom && weekTo && date >= weekFrom && date <= weekTo);
     if (inWeek) {
       wGross += tag.gesamtBrutto; wTa += tag.takeAwayBrutto; wNet += netto;
       wFood += split.food; wBev += split.beverage;
+      wMkt += tag.marketingNetto;
       wHatUmsatz = true;
     }
     const g = gaesteDaily[date] ?? 0;
@@ -1394,11 +1408,17 @@ export async function ladeMonatsreport(
       monthBudget: budgetGross,
       vj: vwGrossV, vjMonth: vjGrossV,
     }, { bold: true }),
-    d('netto_umsatz', 'Netto Umsatz', {
-      month: mNetV, week: wNetV,
-      weekBudget: wBudget, budget: wBudget, monthBudget: budgetNetV,
-      vj: vwNetV, vjMonth: vjNetV,
-    }, { bold: true }),
+    {
+      ...d('netto_umsatz', 'Netto Umsatz', {
+        month: mNetV, week: wNetV,
+        weekBudget: wBudget, budget: wBudget, monthBudget: budgetNetV,
+        vj: vwNetV, vjMonth: vjNetV,
+      }, { bold: true }),
+      marketingNetto: {
+        month: mHatUmsatz ? r2(mMkt) : null,
+        week: weekFrom && wHatUmsatz ? r2(wMkt) : null,
+      },
+    },
     d('gaeste_in', 'Gäste IN', { month: mGaesteV, week: wGaesteV, vj: vwGaesteV, vjMonth: vjGaesteV }, { fmt: 'count' }),
     // Reservierte Gäste (Foratable): Σ Personen gezählter Reservationen. Woche =
     // gewählte Woche, Monat = ganzer Monat (inkl. Zukunft). VJ-Woche leer (keine
