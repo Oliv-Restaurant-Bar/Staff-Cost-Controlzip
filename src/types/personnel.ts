@@ -144,10 +144,13 @@ export interface DailyBudget {
   previousYearBeverage?: number;
 }
 
-// MWST rates for revenue calculation
+// MWST rates for revenue calculation — konfigurierbar über src/lib/mwst.ts
+// (KV-Key mwst_rates_v1, Defaults 8.1 % / 2.6 %). Live-Getter, damit alle
+// Konsumenten automatisch die konfigurierten Sätze verwenden.
+import { getMwstRates } from '@/lib/mwst';
 export const VAT_RATES = {
-  standard: 0.081, // 8.1% for regular revenue
-  takeaway: 0.026, // 2.6% for takeaway revenue
+  get standard(): number { return getMwstRates().standard; }, // Default 8.1 %
+  get takeaway(): number { return getMwstRates().takeaway; }, // Default 2.6 %
 };
 
 // Helper to convert gross to net revenue

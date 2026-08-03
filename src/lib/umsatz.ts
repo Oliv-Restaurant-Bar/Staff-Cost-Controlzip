@@ -41,11 +41,14 @@
  *     nettoUmsatz    = 232'269.95 ✓
  */
 import type { TenantId } from '@/contexts/TenantContext';
+import { mwstDivisorStandard, mwstDivisorTakeaway } from '@/lib/mwst';
 
 const r2 = (v: number): number => Math.round(v * 100) / 100;
 
+/** @deprecated Default-Divisoren — für Berechnungen mwstDivisorStandard()/mwstDivisorTakeaway() aus mwst.ts verwenden (konfigurierbar). */
 export const MWST_NORMAL = 1.081;
 export const MWST_TAKEAWAY = 1.026;
+export { mwstDivisorStandard, mwstDivisorTakeaway };
 
 // ── Tagesmodell ──────────────────────────────────────────────────────────────
 
@@ -71,8 +74,8 @@ export interface UmsatzTag {
  * Rappen-Drift aus Tagesrundungen.
  */
 export function nettoUmsatzTag(tag: UmsatzTag): number {
-  const takeAwayNetto = tag.takeAwayBrutto / MWST_TAKEAWAY;
-  const uebrigerNetto = (tag.gesamtBrutto - tag.takeAwayBrutto) / MWST_NORMAL;
+  const takeAwayNetto = tag.takeAwayBrutto / mwstDivisorTakeaway();
+  const uebrigerNetto = (tag.gesamtBrutto - tag.takeAwayBrutto) / mwstDivisorStandard();
   return takeAwayNetto + uebrigerNetto + tag.marketingNetto;
 }
 
@@ -90,8 +93,8 @@ export interface FoodBeverageSplit {
  */
 export function foodBeverageSplit(tag: UmsatzTag): FoodBeverageSplit {
   const netto = nettoUmsatzTag(tag);
-  const foodDirekt = tag.foodBrutto / MWST_NORMAL;
-  const bevDirekt = tag.beverageBrutto / MWST_NORMAL;
+  const foodDirekt = tag.foodBrutto / mwstDivisorStandard();
+  const bevDirekt = tag.beverageBrutto / mwstDivisorStandard();
   const basis = foodDirekt + bevDirekt;
   const foodAnteil = basis > 0 ? foodDirekt / basis : 0.5;
   const rest = netto - foodDirekt - bevDirekt;

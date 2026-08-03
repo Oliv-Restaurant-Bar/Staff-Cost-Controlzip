@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSyncStore } from "@/hooks/useSyncStore";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -93,6 +93,33 @@ const queryClient = new QueryClient();
 // ─── TenantLockEnforcer ──────────────────────────────────────────────────────
 // Sitzt innerhalb von AuthProvider und erzwingt den Tenant-Lock für
 // beaulieu_manager. Brücke zwischen AuthContext (innen) und TenantContext (außen).
+
+// ─── MwstRatesGate ───────────────────────────────────────────────────────────
+// Lädt die konfigurierbaren MwSt-Sätze (mwst_rates_v1) beim App-Start in den
+// Modul-Cache, BEVOR Berechnungs-Seiten rendern — sonst würden useMemo-basierte
+// Netto-Werte mit den Defaults gerechnet und erst bei einem späteren Re-Render
+// aktualisiert. Ladefehler/Timeout → Defaults 8.1 % / 2.6 % (nie blockierend).
+const MwstRatesGate = ({ children }: { children: ReactNode }) => {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    const done = () => { if (alive) setReady(true); };
+    const timeout = setTimeout(done, 2500); // KV langsam/offline → Defaults
+    import('@/lib/mwst')
+      .then(m => m.loadMwstRates())
+      .catch(() => undefined)
+      .finally(() => { clearTimeout(timeout); done(); });
+    return () => { alive = false; clearTimeout(timeout); };
+  }, []);
+  if (!ready) {
+    return (
+      <div className="flex items-center justify-center min-h-[40vh]">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+  return <>{children}</>;
+};
 
 const TenantLockEnforcer = () => {
   const { role } = useAuth();
@@ -238,6 +265,7 @@ const AppContent = () => {
           <TenantLockEnforcer />
           <div className="flex-1 min-h-0 overflow-auto" key={tenantId}>
           <ErrorBoundary label="Seite">
+          <MwstRatesGate>
           <Routes>
             {/* Routen mit Rollenprüfung */}
             {/* Startseite «Cockpit»: Admins + Beaulieu-GF → Monatsreport
@@ -452,6 +480,7 @@ const AppContent = () => {
 
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </MwstRatesGate>
           </ErrorBoundary>
           </div>
         </div>

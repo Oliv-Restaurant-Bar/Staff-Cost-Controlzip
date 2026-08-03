@@ -71,6 +71,37 @@ describe('buildVjTransferPlan', () => {
     expect(plan[5].grossTotal).toBe(100);
   });
 
+  it('TA-Split: Monat mit takeawayRevenue rechnet Netto mit 2.6 %/8.1 % und ist höher als pauschal', () => {
+    const vjDays: Record<string, VjDayRecord> = {
+      '2024-07-01': { date: '2024-07-01', year: 2024, actualRevenue: 10000, takeawayRevenue: 2000, source: 'vorjahr_import' },
+      '2024-07-02': { date: '2024-07-02', year: 2024, actualRevenue: 8000, takeawayRevenue: 1000, source: 'vorjahr_import' },
+    };
+    const plan = buildVjTransferPlan(2024, vjDays, []);
+    const jul = plan[6];
+    expect(jul.taSplit).toBe(true);
+    expect(jul.takeawayTotal).toBe(3000);
+    expect(jul.netTotal).toBeCloseTo(grossToNet(18000, 3000), 8);
+    // Abnahme: TA-Split-Netto > pauschal 8.1 % (TA nur 2.6 % MwSt)
+    expect(jul.netTotal).toBeGreaterThan(grossToNet(18000, 0));
+  });
+
+  it('Fallback transparent: Monat ohne TA-Daten → taSplit=false, Netto pauschal 8.1 %', () => {
+    const vjDays = Object.fromEntries([day('2024-08-01', 5000)]); // kein takeawayRevenue-Feld
+    const plan = buildVjTransferPlan(2024, vjDays, []);
+    const aug = plan[7];
+    expect(aug.taSplit).toBe(false);
+    expect(aug.takeawayTotal).toBe(0);
+    expect(aug.netTotal).toBeCloseTo(grossToNet(5000, 0), 8);
+  });
+
+  it('TA wird für die Netto-Rechnung nie grösser als der Gesamtbrutto', () => {
+    const vjDays: Record<string, VjDayRecord> = {
+      '2024-09-01': { date: '2024-09-01', year: 2024, actualRevenue: 100, takeawayRevenue: 500, source: 'vorjahr_import' },
+    };
+    const plan = buildVjTransferPlan(2024, vjDays, []);
+    expect(plan[8].netTotal).toBeCloseTo(grossToNet(100, 100), 8);
+  });
+
   it('erkennt Konflikte: bestehende grossRevenueManual ODER revenueActual', () => {
     const vjDays = Object.fromEntries([day('2024-01-05', 100), day('2024-02-05', 100), day('2024-03-05', 100)]);
     const existing = [

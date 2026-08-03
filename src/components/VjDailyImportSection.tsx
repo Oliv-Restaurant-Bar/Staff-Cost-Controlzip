@@ -521,7 +521,10 @@ export function VjDailyImportSection() {
           periodLabel: `Jahr ${year}`,
           itemCount: toTransfer.length,
           itemLabel: 'Monate',
-          details: `Umsatz aus Tagesdaten in die ER übernommen (${toTransfer.length} Monat(e), nur Ertragsseite)`
+          details: `Umsatz aus Tagesdaten in die ER übernommen (${toTransfer.length} Monat(e), nur Ertragsseite`
+            + (toTransfer.some(p => !p.taSplit)
+              ? `, ${toTransfer.filter(p => !p.taSplit).length} ohne TA-Split — 8.1 % pauschal)`
+              : ', Netto mit MwSt-Split TA 2.6 %/8.1 %)')
             + (snapshotOk ? '' : ' — ohne Undo-Snapshot'),
           ...(snapshotOk ? { snapshot: { kind: 'reporting-fields' as const, storeKey, months: undoMonths } } : {}),
         });
@@ -812,8 +815,9 @@ export function VjDailyImportSection() {
           />
           <p className="text-[10px] text-muted-foreground">
             Überträgt die Monatssummen der importierten Tageswerte als Umsatz in die Erfolgsrechnung:
-            Brutto = Summe der Tage, Netto = Brutto ÷ 1.081 (8.1 % MwSt, ohne Take-Away-Split).
-            Monate ohne Tageswerte werden nie angelegt. Eine Jahres-Sperre blockiert nur den
+            Brutto = Summe der Tage, Netto = MwSt-Split — Take Away ÷ 1.026 (2.6 %), übriger
+            Umsatz ÷ 1.081 (8.1 %). Monate ohne Take-Away-Daten werden pauschal mit 8.1 %
+            gerechnet und sichtbar gekennzeichnet. Monate ohne Tageswerte werden nie angelegt. Eine Jahres-Sperre blockiert nur den
             Tageswerte-Import — die Übernahme bleibt möglich.
           </p>
 
@@ -859,7 +863,28 @@ export function VjDailyImportSection() {
                             {p.transferable ? NUM.format(Math.round(p.grossTotal)) : '—'}
                           </td>
                           <td className="py-1 px-2 text-right tabular-nums">
-                            {p.transferable ? NUM.format(Math.round(p.netTotal)) : '—'}
+                            {p.transferable ? (
+                              <span className="inline-flex items-center gap-1 justify-end">
+                                {!p.taSplit ? (
+                                  <span
+                                    className="text-[9px] rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 px-1 py-px whitespace-nowrap"
+                                    title="Für diesen Monat liegen keine Take-Away-Daten vor — Netto pauschal mit 8.1 % gerechnet."
+                                    data-testid={`vj-transfer-pauschal-${p.month}`}
+                                  >
+                                    ohne TA-Split, 8.1 % pauschal
+                                  </span>
+                                ) : p.taDayCount < p.dayCount ? (
+                                  <span
+                                    className="text-[9px] rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 px-1 py-px whitespace-nowrap"
+                                    title={`Take-Away-Daten nur für ${p.taDayCount} von ${p.dayCount} Tagen — Tage ohne TA-Daten werden mit 8.1 % gerechnet.`}
+                                    data-testid={`vj-transfer-ta-partial-${p.month}`}
+                                  >
+                                    TA-Split unvollständig ({p.taDayCount}/{p.dayCount} Tage)
+                                  </span>
+                                ) : null}
+                                {NUM.format(Math.round(p.netTotal))}
+                              </span>
+                            ) : '—'}
                           </td>
                           <td className="py-1 px-2">
                             {!p.transferable ? (
@@ -942,7 +967,11 @@ export function VjDailyImportSection() {
                           <>, davon {conflictMonths.filter(p => overwriteMonths.has(p.month)).length} mit
                           bestehenden Umsatzwerten</>
                         )}).
-                        Nur die Umsatz-/Ertragszeile wird geändert — Kosten und alle anderen Werte
+                        {selected.some(p => !p.taSplit) && (
+                          <> {selected.filter(p => !p.taSplit).length} Monat(e) ohne Take-Away-Daten
+                          werden pauschal mit 8.1 % gerechnet (übrige mit MwSt-Split 2.6 %/8.1 %).</>
+                        )}
+                        {' '}Nur die Umsatz-/Ertragszeile wird geändert — Kosten und alle anderen Werte
                         bleiben unangetastet. Die Übernahme kann im Import-Center rückgängig gemacht werden.
                       </AlertDialogDescription>
                     </AlertDialogHeader>

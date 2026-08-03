@@ -7,11 +7,17 @@
  *
  * Fachliches Mapping (fixiert):
  *   grossRevenueManual = Σ Tagesbrutto des Monats (präziser Rohwert)
- *   revenueActual      = grossToNet(Σ Brutto, 0)  → ÷ 1.081 (Standard-MwSt)
- *   takeAwayGrossManual bleibt UNBERÜHRT (kein Take-Away-Split in vj_daily)
+ *   revenueActual      = MwSt-Split: Take-Away-Brutto ÷ 1.026 (2.6 %),
+ *                        übriger Umsatz ÷ 1.081 (8.1 %) — via grossToNet
+ *                        (Sätze konfigurierbar, mwst.ts).
+ *   Hat ein Monat KEINE Take-Away-Daten (kein Tag mit takeawayRevenue-Feld),
+ *   wird 8.1 % pauschal gerechnet und der Monat als taSplit=false markiert —
+ *   die UI kennzeichnet das sichtbar («ohne TA-Split, 8.1 % pauschal»).
+ *   Beaulieu hat kein Take Away → dort greift dadurch durchgehend 8.1 %.
+ *   takeAwayGrossManual bleibt UNBERÜHRT.
  *
- * grossToNet ist linear bei takeaway=0, daher ist grossToNet(Σ) identisch
- * mit Σ grossToNet(Tag) — dieselbe Basis wie computeMonthlyVjNet.
+ * grossToNet ist linear in beiden Anteilen, daher ist grossToNet(Σ, ΣTA)
+ * identisch mit Σ grossToNet(Tag, TA-Tag) — dieselbe Basis wie umsatz.ts.
  *
  * Grundsätze:
  *   - fehlend ≠ 0: Monate ohne Tageswerte (oder mit Summe 0) werden NIE
@@ -37,7 +43,13 @@ export interface VjTransferMonthPlan {
   dayCount: number;
   /** Σ Tagesbrutto (Rohwert, CHF inkl. MwSt) */
   grossTotal: number;
-  /** grossToNet(grossTotal, 0) — Rohwert (CHF exkl. MwSt) */
+  /** Σ Take-Away-Brutto des Monats (0 wenn keine TA-Daten) */
+  takeawayTotal: number;
+  /** true = mind. ein Tag des Monats hat Take-Away-Daten → Netto mit TA-Split (2.6 %/8.1 %); false = 8.1 % pauschal */
+  taSplit: boolean;
+  /** Anzahl Tage mit Take-Away-Daten (taDayCount < dayCount ⇒ Split unvollständig — Tage ohne Feld zählen als Standard-Umsatz) */
+  taDayCount: number;
+  /** Netto-Rohwert (CHF exkl. MwSt): grossToNet(grossTotal, takeawayTotal) bzw. pauschal bei taSplit=false */
   netTotal: number;
   /** true = Monat hat Tage UND Summe > 0 → Übernahme-Kandidat */
   transferable: boolean;
@@ -74,16 +86,22 @@ export function buildVjTransferPlan(
   existingMonths: Pick<MonthlyFinancialRecord, 'month' | 'grossRevenueManual' | 'revenueActual'>[],
 ): VjTransferMonthPlan[] {
   // Tageswerte pro Monat aggregieren — nur Schlüssel des Zieljahres
-  const byMonth = new Map<number, { dayCount: number; grossTotal: number }>();
+  const byMonth = new Map<number, { dayCount: number; grossTotal: number; takeawayTotal: number; taDayCount: number }>();
   for (const [date, rec] of Object.entries(vjDays)) {
     if (!date.startsWith(`${year}-`)) continue;
     const m = parseInt(date.slice(5, 7), 10);
     if (!(m >= 1 && m <= 12)) continue;
-    const agg = byMonth.get(m) ?? { dayCount: 0, grossTotal: 0 };
+    const agg = byMonth.get(m) ?? { dayCount: 0, grossTotal: 0, takeawayTotal: 0, taDayCount: 0 };
     agg.dayCount += 1;
     agg.grossTotal += typeof rec.actualRevenue === 'number' && isFinite(rec.actualRevenue)
       ? rec.actualRevenue
       : 0;
+    // Take-Away-Split: nur Tage mit vorhandenem, endlichem takeawayRevenue-Feld
+    // zählen als TA-Daten (alte Records ohne Feld = keine Aufteilung bekannt).
+    if (typeof rec.takeawayRevenue === 'number' && isFinite(rec.takeawayRevenue) && rec.takeawayRevenue >= 0) {
+      agg.taDayCount += 1;
+      agg.takeawayTotal += rec.takeawayRevenue;
+    }
     byMonth.set(m, agg);
   }
 
@@ -92,17 +110,23 @@ export function buildVjTransferPlan(
 
   return Array.from({ length: 12 }, (_, i) => {
     const month = i + 1;
-    const agg = byMonth.get(month) ?? { dayCount: 0, grossTotal: 0 };
+    const agg = byMonth.get(month) ?? { dayCount: 0, grossTotal: 0, takeawayTotal: 0, taDayCount: 0 };
     const existing = existingByMonth.get(month);
     const existingGross = existing?.grossRevenueManual;
     const existingNet   = existing?.revenueActual;
     const conflict = existingGross !== undefined || existingNet !== undefined;
+    // TA-Split nur wenn der Monat TA-Daten hat; TA nie grösser als Gesamt.
+    const taSplit = agg.taDayCount > 0;
+    const taForNet = taSplit ? Math.min(agg.takeawayTotal, agg.grossTotal) : 0;
     return {
       month,
       monthId: `${year}-${String(month).padStart(2, '0')}`,
       dayCount: agg.dayCount,
       grossTotal: agg.grossTotal,
-      netTotal: grossToNet(agg.grossTotal, 0),
+      takeawayTotal: agg.takeawayTotal,
+      taSplit,
+      taDayCount: agg.taDayCount,
+      netTotal: grossToNet(agg.grossTotal, taForNet),
       // fehlend ≠ 0: ohne Tage oder mit Summe 0 wird der Monat NIE angelegt
       transferable: agg.dayCount > 0 && agg.grossTotal > 0,
       conflict,

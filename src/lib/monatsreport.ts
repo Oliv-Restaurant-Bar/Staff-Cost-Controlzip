@@ -75,12 +75,13 @@ export function reviewStarRowDefs(): Array<{
 import { loadMonthInvoices, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
 import { filterInvoicesByRange, sumInvoicesNet, sumNetByKategorie, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
 import { nurWarenAnteil, sumBetriebNet, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
+import { mwstDivisorStandard } from '@/lib/mwst';
 import { loadWarenkonten, type Warenkonto } from '@/lib/waren-db';
 import { loadZielWarenquote, DEFAULT_ZIEL_WARENQUOTE_PCT } from '@/lib/ziel-warenquote';
 
 type KeyFn = (key: string) => string;
 
-const VAT_STD = 1.081;
+const VAT_STD = () => mwstDivisorStandard(); // konfigurierbar (mwst.ts, Default 8.1 %)
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const r2 = (v: number) => Math.round(v * 100) / 100;
 
@@ -942,7 +943,7 @@ export async function ladeMonatsreport(
   // (umsatz.ts-SSOT, dailyBudgets/maison) sind die BEVORZUGTE Vorjahres-Quelle
   // — 2026er-Tagesimporte erscheinen 2027 automatisch als Vorjahr, ohne
   // separaten VJ-Import. vj_daily bleibt Fallback (alte VJ-Importe, z.B. 2025).
-  // Semantik identisch zu vj_daily: brutto-Werte, Netto = brutto/VAT_STD.
+  // Semantik identisch zu vj_daily: brutto-Werte, Netto = brutto/VAT_STD().
   const istAlsVjRecord = (date: string, tag: import('@/lib/umsatz').UmsatzTag): VjDayRecord => ({
     date,
     year: Number(date.slice(0, 4)),
@@ -1098,7 +1099,7 @@ export async function ladeMonatsreport(
     if ((rec.takeawayRevenue ?? 0) > 0) { vjTa += rec.takeawayRevenue!; hatVjTa = true; }
     const gVj = gaesteDaily[date] ?? 0;
     if ((rec.actualRevenue ?? 0) > 0 && gVj > 0) {
-      vjPairedNet += rec.actualRevenue / VAT_STD; // Netto wie vjNetV (Standard-MwSt)
+      vjPairedNet += rec.actualRevenue / VAT_STD(); // Netto wie vjNetV (Standard-MwSt)
       vjPairedGaeste += gVj;
     }
   }
@@ -1123,7 +1124,7 @@ export async function ladeMonatsreport(
     const gVj = gaesteDaily[vj] ?? 0;
     if (gVj > 0) { vwGaeste += gVj; hatVwGaeste = true; }
     if (rec && (rec.actualRevenue ?? 0) > 0 && gVj > 0) {
-      vwPairedNet += rec.actualRevenue / VAT_STD; vwPairedGaeste += gVj;
+      vwPairedNet += rec.actualRevenue / VAT_STD(); vwPairedGaeste += gVj;
     }
     // Durchschnittsverkauf VJ-Woche: gäste-gewichtet, Fallback einfacher Mittel.
     const av = avgDaily[vj];
@@ -1132,7 +1133,7 @@ export async function ladeMonatsreport(
       vwAvgSimpleSum += av; vwAvgSimpleCount++;
     }
   }
-  const vwNet = vwGross / VAT_STD;
+  const vwNet = vwGross / VAT_STD();
 
   // ── Stunden-Stapel Bedarf → Dienstplan → Ist ───────────────────────────────
   // GEMEINSAME Helfer (bedarf-stunden-utils) — identische Semantik wie die
@@ -1330,11 +1331,11 @@ export async function ladeMonatsreport(
   const mNetV = N(mNet, mHatUmsatz);
   const wGrossV = weekFrom ? N(wGross, wHatUmsatz) : null;
   const wNetV = weekFrom ? N(wNet, wHatUmsatz) : null;
-  const budgetGross = hatBudget ? r2(budgetNet * VAT_STD) : null;
+  const budgetGross = hatBudget ? r2(budgetNet * VAT_STD()) : null;
   const budgetNetV = hatBudget ? r2(budgetNet) : null;
   const wBudget = hatBudget && weekFrom ? r2(wBudgetNet) : null;
   const vjGrossV = N(vjGross, hatVj);
-  const vjNetV = hatVj ? r2(vjGross / VAT_STD) : null;
+  const vjNetV = hatVj ? r2(vjGross / VAT_STD()) : null;
   const mGaesteV = N(mGaeste, hatGaeste);
   const wGaesteV = weekFrom ? N(wGaeste, hatWGaeste) : null;
   const vjGaesteV = N(vjGaeste, hatVjGaeste);
@@ -1348,8 +1349,8 @@ export async function ladeMonatsreport(
   const vwGrossV = hatVw && hatVwUmsatz ? r2(vwGross) : null;
   const vwNetV = hatVw && hatVwUmsatz ? r2(vwNet) : null;
   const vwGaesteV = hatVw && hatVwGaeste ? r2(vwGaeste) : null;
-  const vwFoodNet = hatVw && hatVwFood ? r2(vwFoodG / VAT_STD) : null;
-  const vwBevNet = hatVw && hatVwBev ? r2(vwBevG / VAT_STD) : null;
+  const vwFoodNet = hatVw && hatVwFood ? r2(vwFoodG / VAT_STD()) : null;
+  const vwBevNet = hatVw && hatVwBev ? r2(vwBevG / VAT_STD()) : null;
   // Durchschnittsverkauf VJ-Woche: gäste-gewichtet (Fallback einfacher Mittel).
   let vwAvg: number | null = null;
   if (hatVw) {
@@ -1370,8 +1371,8 @@ export async function ladeMonatsreport(
   // Take-Away-UMSATZ Vorjahres-Monat (CHF brutto) — Zähler des VJ-Anteils. «—» ohne TA-Quelle.
   const vjTaUmsatzM = hatVjTa && vjTa > 0 ? r2(vjTa) : null;
   const vjUpgM = vjPairedGaeste > 0 ? r2(vjPairedNet / vjPairedGaeste) : null;
-  const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD) : null;
-  const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD) : null;
+  const vjFoodNet = hatVjFood ? r2(vjFoodG / VAT_STD()) : null;
+  const vjBevNet = hatVjBev ? r2(vjBevG / VAT_STD()) : null;
 
   /** Anteil n ÷ basis in % — null ohne Basis oder Wert (nie durch 0 teilen). */
   const anteilPct = (n: number | null | undefined, basis: number | null): number | null =>
@@ -1383,8 +1384,8 @@ export async function ladeMonatsreport(
     // Vorjahr-Spalte = VJ-WOCHE. monthBudget trägt das Monatsbudget für die Monat-Δ%.
     d('brutto_umsatz', 'Brutto Umsatz', {
       month: mGrossV, week: wGrossV,
-      weekBudget: wBudget != null ? r2(wBudget * VAT_STD) : null,
-      budget: wBudget != null ? r2(wBudget * VAT_STD) : null,
+      weekBudget: wBudget != null ? r2(wBudget * VAT_STD()) : null,
+      budget: wBudget != null ? r2(wBudget * VAT_STD()) : null,
       monthBudget: budgetGross,
       vj: vwGrossV, vjMonth: vjGrossV,
     }, { bold: true }),
@@ -1638,7 +1639,7 @@ function emptyAgg(): WeekAgg {
 }
 
 /**
- * Vorjahres-Aggregat je Woche (vj_daily brutto → netto per VAT_STD, wie im
+ * Vorjahres-Aggregat je Woche (vj_daily brutto → netto per VAT_STD(), wie im
  * Monats-VJ-Zweig). Keine VJ-Quelle für Produktive Stunden/Produktivität.
  */
 interface VjWeekAgg {
@@ -1703,14 +1704,14 @@ async function aggregiereVjWochen(
     const a = aggs[wi];
     if (!a) continue;
     if ((rec.actualRevenue ?? 0) > 0) {
-      a.gross += rec.actualRevenue; a.net += rec.actualRevenue / VAT_STD; a.hatUmsatz = true;
+      a.gross += rec.actualRevenue; a.net += rec.actualRevenue / VAT_STD(); a.hatUmsatz = true;
     }
-    if ((rec.foodRevenue ?? 0) > 0) { a.food += rec.foodRevenue! / VAT_STD; a.hatFood = true; }
-    if ((rec.beverageRevenue ?? 0) > 0) { a.bev += rec.beverageRevenue! / VAT_STD; a.hatBev = true; }
+    if ((rec.foodRevenue ?? 0) > 0) { a.food += rec.foodRevenue! / VAT_STD(); a.hatFood = true; }
+    if ((rec.beverageRevenue ?? 0) > 0) { a.bev += rec.beverageRevenue! / VAT_STD(); a.hatBev = true; }
     if ((rec.takeawayRevenue ?? 0) > 0) { a.ta += rec.takeawayRevenue!; a.hatTa = true; }
     const g = gaesteDaily[date] ?? 0;
     if ((rec.actualRevenue ?? 0) > 0 && g > 0) {
-      a.pairedNet += rec.actualRevenue / VAT_STD; a.pairedGaeste += g;
+      a.pairedNet += rec.actualRevenue / VAT_STD(); a.pairedGaeste += g;
     }
   }
   for (const [date, n] of Object.entries(gaesteDaily)) {
@@ -2175,14 +2176,14 @@ export async function ladeJahresvergleich(
   for (const [date, rec] of Object.entries(vjDaily)) {
     if (date < vjFrom || date > vjTo) continue;
     if ((rec.actualRevenue ?? 0) > 0) {
-      vjGross += rec.actualRevenue; vjNet += rec.actualRevenue / VAT_STD; hatVj = true;
+      vjGross += rec.actualRevenue; vjNet += rec.actualRevenue / VAT_STD(); hatVj = true;
     }
-    if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue! / VAT_STD; hatVjFood = true; }
-    if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue! / VAT_STD; hatVjBev = true; }
+    if ((rec.foodRevenue ?? 0) > 0) { vjFoodG += rec.foodRevenue! / VAT_STD(); hatVjFood = true; }
+    if ((rec.beverageRevenue ?? 0) > 0) { vjBevG += rec.beverageRevenue! / VAT_STD(); hatVjBev = true; }
     if ((rec.takeawayRevenue ?? 0) > 0) { vjTaG += rec.takeawayRevenue!; hatVjTa = true; }
     const gVj = gaesteDaily[date] ?? 0;
     if ((rec.actualRevenue ?? 0) > 0 && gVj > 0) {
-      vjPairedNet += rec.actualRevenue / VAT_STD; vjPairedGaeste += gVj;
+      vjPairedNet += rec.actualRevenue / VAT_STD(); vjPairedGaeste += gVj;
     }
   }
   // Gäste VJ (volle Summe im VJ-Zeitraum).

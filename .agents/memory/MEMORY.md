@@ -61,6 +61,7 @@
 - [UI-Tests auf geteilter Dev-DB](ui-test-shared-db.md) — Dienstplan-UI-Tests nur in Zukunftswochen mit wirklich leeren Zellen; Tester editieren sonst echte Plandaten; Cleanup als Verify-Schritt.
 - [PostgREST unordered-query cap](postgrest-row-cap.md) — status/freshness queries need order-desc+limit or pagination; PostgREST caps ~1000 rows unordered, newest days silently drop.
 - [Partial vi.mock internal calls](partial-mock-internal-calls.md) — module-internal calls bypass mocks: mock wrapper exports too; collapsed MoreKpis: seed storageKey='1'; supabase-transitive libs need happy-dom.
+- [MwSt-Netto-Split (konfigurierbar)](mwst-netto-split.md) — nie festes ÷1.081; grossToNet/SSOT mit TA-Split, Sätze via mwst.ts (global, admin-gated, Gate beim App-Start).
 - [Netto-Umsatz SSOT](umsatz-ssot.md) — umsatz.ts einzige Netto-Quelle (ALLE Views); Quelle = MANUELLER Speisekarte-Import (dailyBudgets-KV) + maison-daily-Marketing, NIE gn_imports mischen; Mount-Loads brauchen store-synced-Retry.
 - [Monatsreport Quellen & Regeln](monatsreport-sources.md) — leer statt 0; Ist-Klemme; Gäste-Tagessumme massgeblich (kein Zeitraum-Abgleich); Umsatz/Gast nur über gepaarte Tage; KW-Auswahl braucht ISO-Wochenjahr.
 - [Personalkosten-SSOT](personalkosten-ssot.md) — alle PK-Ansichten nur via personalkosten.ts; Budget 106'400/35.5 %, PKQ nur personalquote(); State-Reset bei Monatswechsel; Rollen-Setzen via Mgmt-API-SQL.

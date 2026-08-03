@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 // Monatsübersicht read-only konsumiert) — hier KEINE eigene Zweitberechnung.
 import { getUmsatzRowStatus } from '@/lib/umsatzabstimmung-status';
 import { countVjDailyYear } from '@/lib/vj-daily-supabase';
-import { ladeUmsatzTage, MWST_TAKEAWAY, type UmsatzTag } from '@/lib/umsatz';
+import { ladeUmsatzTage, mwstDivisorTakeaway, type UmsatzTag } from '@/lib/umsatz';
 import { useTenant, type TenantId } from '@/contexts/TenantContext';
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
@@ -320,7 +320,7 @@ export function UmsatzAbstimmung({
 
               // Take Away Netto & MwSt — Netto über die kanonische Konstante
               // (MWST_TAKEAWAY aus umsatz.ts), keine eigene /1.026-Rechnung.
-              const taNet  = hasTakeAway ? (takeAway! / MWST_TAKEAWAY) : 0;
+              const taNet  = hasTakeAway ? (takeAway! / mwstDivisorTakeaway()) : 0;
               const taMwSt = hasTakeAway ? (takeAway! - taNet)         : 0;
 
               const status  = getUmsatzRowStatus(manual ?? undefined, daily);
@@ -461,7 +461,7 @@ export function UmsatzAbstimmung({
                   <span>
                     {fmt(totalTakeAway)}
                     <span className="block text-[10px] font-normal text-muted-foreground/50">
-                      Netto: {fmt(totalTakeAway / MWST_TAKEAWAY)}
+                      Netto: {fmt(totalTakeAway / mwstDivisorTakeaway())}
                     </span>
                   </span>
                 ) : '—'}

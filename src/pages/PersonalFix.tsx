@@ -3694,16 +3694,21 @@ export default function PersonalFixPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [flexByWeek, totalFixCost, daysInSelectedMonth, activeFixedEmployees]);
 
-  // ── Wochenweise Ist-Umsatz netto aus dailyBudgets (Brutto ÷ 1.081) ────────
+  // ── Wochenweise Ist-Umsatz netto aus dailyBudgets (MwSt-Split: TA 2.6 %,
+  // übriger Umsatz 8.1 % — via grossToNet; ohne TA-Daten = 8.1 % pauschal) ──
   // Fallback: Wenn keine Ist-Daten vorhanden, Budget-Umsatz pro rata verwenden.
   const weekActualNetRevenue = useMemo((): Record<string, number> => {
     const result: Record<string, number> = {};
     for (const w of flexByWeek) {
-      const gross = w.dates.reduce(
-        (sum, d) => sum + (monthlyRevenues[d]?.actualRevenue ?? 0), 0,
-      );
+      let gross = 0, net = 0;
+      for (const d of w.dates) {
+        const g = monthlyRevenues[d]?.actualRevenue ?? 0;
+        if (!(g > 0)) continue;
+        gross += g;
+        net += grossToNet(g, monthlyRevenues[d]?.takeawayRevenue ?? 0);
+      }
       if (gross > 0) {
-        result[w.weekKey] = gross / 1.081;
+        result[w.weekKey] = net;
       } else if (weekRevOverrides[w.weekKey] != null) {
         result[w.weekKey] = weekRevOverrides[w.weekKey];
       } else {

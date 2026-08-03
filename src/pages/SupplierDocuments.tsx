@@ -35,6 +35,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
+import { grossToNet } from '@/types/personnel';
 import {
   Truck, Plus, Trash2, Edit3, Info, AlertTriangle, ChevronDown,
   ShoppingCart, Package, Wine, ArrowUpDown, CheckCircle2, Scale,
@@ -340,7 +341,7 @@ function ForecastCard({
                 Kumulierter Ist-Umsatz (netto)
               </p>
               <span className="text-[10px] bg-emerald-100 dark:bg-emerald-900/50 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 px-1.5 py-px rounded font-mono">
-                Brutto ÷ 1.081
+                Netto (MwSt-Split 8.1 % / TA 2.6 %)
               </span>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -1434,7 +1435,8 @@ function SupplierMasterPanel({
 
 /**
  * Liest den kumulierten Ist-Umsatz (netto) aus dailyBudgets für einen Monat.
- * Brutto-Umsatz (actualRevenue) wird durch 1.081 geteilt (8.1% MwSt → netto).
+ * MwSt-Split via grossToNet: Take Away 2.6 %, übriger Umsatz 8.1 %
+ * (konfigurierbar; Tage ohne TA-Daten fallen automatisch auf 8.1 % pauschal).
  * Gibt null zurück wenn keine Daten vorhanden.
  */
 function readCumulativeNetRevenue(
@@ -1445,17 +1447,17 @@ function readCumulativeNetRevenue(
   try {
     const raw = localStorage.getItem(tkFn('dailyBudgets'));
     if (!raw) return null;
-    const all: Record<string, { actualRevenue?: number }> = JSON.parse(raw);
+    const all: Record<string, { actualRevenue?: number; takeawayRevenue?: number }> = JSON.parse(raw);
     const prefix = `${year}-${String(month).padStart(2, '0')}`;
     let total = 0;
     let hasData = false;
     for (const [dateKey, day] of Object.entries(all)) {
       if (dateKey.startsWith(prefix) && (day.actualRevenue ?? 0) > 0) {
-        total += day.actualRevenue!;
+        total += grossToNet(day.actualRevenue!, day.takeawayRevenue ?? 0);
         hasData = true;
       }
     }
-    return hasData ? total / 1.081 : null;
+    return hasData ? total : null;
   } catch {
     return null;
   }
