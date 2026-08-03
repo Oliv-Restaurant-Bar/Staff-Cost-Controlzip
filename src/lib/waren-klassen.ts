@@ -25,21 +25,37 @@ import { normalizeWarenKonto } from './warenaufwand-gruppierung';
  */
 export const DEFAULT_WARENKOSTEN_GRENZE = 4090;
 
-export type KontoKlasse = 'warenkosten' | 'betriebskosten';
+export type KontoKlasse = 'warenkosten' | 'betriebskosten' | 'neutral';
+
+/**
+ * Pseudo-Konto «Depot» (Pfand/Gebinde aus dem CSV-Positionsimport, MwSt-Code 0):
+ * NEUTRAL — zählt weder zu Warenkosten noch Betriebskosten (Depot gleicht sich
+ * über Rückgaben aus). Muss mit KONTO_LABEL_PFAND in waren-positionen.ts
+ * übereinstimmen (hier dupliziert, um Import-Zyklen zu vermeiden).
+ */
+export const PSEUDO_KONTO_PFAND = 'Depot';
+/**
+ * Pseudo-Konto «offen» (unbekannte Warengruppe, noch nicht zugeordnet):
+ * BEWUSSTE Policy — zählt bis zur Zuordnung als Warenkosten (wie die
+ * Legacy-Regel für kontolose Einträge), damit Totale/WKQ nicht absacken,
+ * nur weil eine Zuordnung noch fehlt. Muss KONTO_LABEL_OFFEN entsprechen.
+ */
+export const PSEUDO_KONTO_OFFEN = 'offen';
 
 /**
  * Klasse eines Kontos aus der Nummer. Kein/kein-numerisches Konto → warenkosten
- * (Legacy-Regel, siehe Kopfkommentar).
+ * (Legacy-Regel, siehe Kopfkommentar). Ausnahme: Pseudo-Konto «Depot» → neutral.
  */
 export function kontoKlasse(konto: string | undefined, grenze: number = DEFAULT_WARENKOSTEN_GRENZE): KontoKlasse {
+  if (konto === PSEUDO_KONTO_PFAND) return 'neutral';
   if (!konto) return 'warenkosten';
   const n = parseInt(konto, 10);
-  if (!Number.isFinite(n)) return 'warenkosten';
+  if (!Number.isFinite(n)) return 'warenkosten'; // inkl. «offen» — bewusste Policy, s.o.
   return n >= 4000 && n <= grenze ? 'warenkosten' : 'betriebskosten';
 }
 
 export function kontoKlasseLabel(k: KontoKlasse): string {
-  return k === 'warenkosten' ? 'Warenkosten' : 'Betriebskosten';
+  return k === 'warenkosten' ? 'Warenkosten' : k === 'neutral' ? 'Neutral (Depot)' : 'Betriebskosten';
 }
 
 export interface KlassenAnteile {
@@ -58,14 +74,17 @@ export function klassenAnteile(e: InvoiceEntry, grenze: number = DEFAULT_WARENKO
   if (e.kontoSplits && e.kontoSplits.length > 0) {
     for (const s of e.kontoSplits) {
       const net = Number.isFinite(s.amountNet) ? s.amountNet : 0;
-      if (kontoKlasse(s.warenkonto, grenze) === 'warenkosten') r.warenNet += net;
-      else r.betriebNet += net;
+      const kl = kontoKlasse(s.warenkonto, grenze);
+      if (kl === 'warenkosten') r.warenNet += net;
+      else if (kl === 'betriebskosten') r.betriebNet += net;
+      // 'neutral' (Depot/Pfand): weder Waren- noch Betriebskosten.
     }
     return r;
   }
   const net = Number.isFinite(e.amountNet) ? e.amountNet : 0;
-  if (kontoKlasse(e.warenkonto, grenze) === 'warenkosten') r.warenNet = net;
-  else r.betriebNet = net;
+  const kl = kontoKlasse(e.warenkonto, grenze);
+  if (kl === 'warenkosten') r.warenNet = net;
+  else if (kl === 'betriebskosten') r.betriebNet = net;
   return r;
 }
 

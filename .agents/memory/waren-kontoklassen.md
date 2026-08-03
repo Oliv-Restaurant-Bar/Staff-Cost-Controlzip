@@ -19,3 +19,10 @@ description: Warenkosten (4000–Grenze) vs. Betriebskosten Klassifikation, nurW
 - Analyse «nach Lieferant»: GESAMT-Total über ALLE Konten + Spalten «davon Waren/Betrieb» (`aggregateBySupplierKlassen`) — Anteil-Spalte hat Gesamt-Basis, Footer-Badge ist WKQ (anderer Nenner, beschriftet lassen).
 - FIBU-Abgleich pro Lieferant vergleicht bewusst das GESAMT-Total (ungefiltertes amountNet) — nur so stimmt der Kontoblatt-Vergleich. Nicht «fixen».
 - Erfassungsliste/cumNet/Tages-Charts zeigen bewusst Gesamtbeträge.
+
+## Warengruppen→Konto (CSV-Positionsimport, Aug 2026)
+- Zuordnungstabelle konfigurierbar: KV `waren_warengruppen_konten_v1` (tenantKey); Default in DEFAULT_WARENGRUPPEN_MAPPING (waren-positionen.ts). Unbekannte Gruppe = status 'offen' — NIE raten.
+- Positionen pro Rechnung persistiert: KV `waren_positionen_<YYYY-MM>_v1` = Record<invoiceId, GespeichertePosition[]>; manuelles Override via `manuell:true`.
+- **Re-Import muss Overrides mergen**: `uebernehmeManuelleKontierung` (Identität artNr bzw. normalisierte Bezeichnung); Splits IMMER aus gemergten Positionen ableiten (kontoSplitsAusPositionen), nie frisch aus Mapping.
+- Pseudo-Konten: 'Depot' (Pfand, MwSt-Code 0) → KontoKlasse 'neutral' (zählt NIRGENDS); 'offen' → bewusst Warenkosten bis Zuordnung (Policy dokumentiert in waren-klassen.ts).
+- Abgleich pro Konto: buildKontoAbgleich (waren-abgleich.ts) — gebucht = Σ Soll−Haben je accountNumber (führende Nullen tolerieren), diff null ohne Journalzeile (leer statt 0), nur-Journal-Zeilen via `relevanteKonten` begrenzen sonst flutet das Kontoblatt.

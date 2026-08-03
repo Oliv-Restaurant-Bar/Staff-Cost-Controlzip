@@ -1,9 +1,11 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest';
 import {
-  parseTransgourmetCsv, kontoFuerWarengruppe, kontoSplitsFuerRechnung,
+  parseTransgourmetCsv, kontoFuerPosition, kontoSplitsFuerRechnung,
+  kontoSplitsAusPositionen, positionenAusRechnung, offeneWarengruppen, uebernehmeManuelleKontierung,
   artikelKey, berechnePreisAenderungen, aktualisierePreisHistorie,
-  normalizePreisHistorie, normalizePreisSchwelle, DEFAULT_PREIS_SCHWELLE,
+  normalizePreisHistorie, normalizePreisSchwelle, normalizeWarengruppenMapping,
+  DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN,
   type ParsedCsvRechnung, type PreisHistorie,
 } from '@/lib/waren-positionen';
 
@@ -64,26 +66,76 @@ describe('docKey: gleiche Rechnungsnummer an verschiedenen Daten', () => {
   });
 });
 
-describe('Warengruppe → Konto', () => {
-  it('mappt bekannte Gruppen, Default 4000', () => {
-    expect(kontoFuerWarengruppe('Früchte + Gemüse')).toBe('4000');
-    expect(kontoFuerWarengruppe('Nonfood')).toBe('4060');
-    expect(kontoFuerWarengruppe('Getränke')).toBe('4020');
-    expect(kontoFuerWarengruppe('Tiefkühlprodukte')).toBe('4030');
-    expect(kontoFuerWarengruppe('Reinigung')).toBe('4050');
+describe('Warengruppe → Konto (konfigurierbares Mapping)', () => {
+  const M = DEFAULT_WARENGRUPPEN_MAPPING;
+  it('Vorbelegung gemäss Kontenplan; Pfand neutral; unbekannt = offen (nie raten)', () => {
+    expect(kontoFuerPosition({ warengruppe: 'Wein', mwstCode: 2 }, M)).toEqual({ konto: '4020', status: 'zugeordnet' });
+    expect(kontoFuerPosition({ warengruppe: 'Bier', mwstCode: 2 }, M).konto).toBe('4030');
+    expect(kontoFuerPosition({ warengruppe: 'Spirituosen', mwstCode: 2 }, M).konto).toBe('4040');
+    expect(kontoFuerPosition({ warengruppe: 'Getränke', mwstCode: 2 }, M).konto).toBe('4050');
+    expect(kontoFuerPosition({ warengruppe: 'Molkerei/Backwaren', mwstCode: 1 }, M).konto).toBe('4060');
+    expect(kontoFuerPosition({ warengruppe: 'Früchte + Gemüse', mwstCode: 1 }, M).konto).toBe('4060');
+    expect(kontoFuerPosition({ warengruppe: 'METZGEREI ', mwstCode: 1 }, M).konto).toBe('4060'); // case/trim-tolerant
+    expect(kontoFuerPosition({ warengruppe: 'Nonfood', mwstCode: 2 }, M).konto).toBe('4701');
+    // Pfand: MwSt-Code 0 schlägt jede Gruppe:
+    expect(kontoFuerPosition({ warengruppe: 'Früchte + Gemüse', mwstCode: 0 }, M)).toEqual({ konto: null, status: 'pfand' });
+    // Unbekannte Gruppe → offen, KEIN Default-Konto:
+    expect(kontoFuerPosition({ warengruppe: 'Tabakwaren', mwstCode: 1 }, M)).toEqual({ konto: null, status: 'offen' });
   });
 
-  it('kontoSplitsFuerRechnung aggregiert pro Konto', () => {
+  it('kontoSplitsFuerRechnung aggregiert pro Konto inkl. Depot/offen-Pseudo-Splits', () => {
     const csv = [HEADER,
       zeile('R1', '2026-07-01', 'Food', '1', 'A', 10, 100, 2.6, 1),
       zeile('R1', '2026-07-01', 'Nonfood', '2', 'B', 5, 50, 4.05, 2),
       zeile('R1', '2026-07-01', 'Metzgerei', '3', 'C', 20, 200, 5.2, 1),
+      zeile('R1', '2026-07-01', 'Früchte + Gemüse', '79', 'Ifco', 3.2, 6.4, 0, 0),
+      zeile('R1', '2026-07-01', 'Unbekannt XY', '9', 'D', 2, 8, 0.2, 1),
     ].join('\n');
     const r = parseTransgourmetCsv(csv).rechnungen[0];
-    const splits = kontoSplitsFuerRechnung(r);
-    expect(splits).toHaveLength(2);
-    expect(splits[0]).toMatchObject({ warenkonto: '4000', amountNet: 300 });
-    expect(splits[1]).toMatchObject({ warenkonto: '4060', amountNet: 50 });
+    const splits = kontoSplitsFuerRechnung(r, DEFAULT_WARENGRUPPEN_MAPPING);
+    expect(splits.find(s => s.warenkonto === '4060')?.amountNet).toBe(300);
+    expect(splits.find(s => s.warenkonto === '4701')?.amountNet).toBe(50);
+    expect(splits.find(s => s.warenkonto === KONTO_LABEL_PFAND)?.amountNet).toBe(6.4);
+    expect(splits.find(s => s.warenkonto === KONTO_LABEL_OFFEN)?.amountNet).toBe(8);
+    // Splits decken die volle Rechnungssumme ab (nichts verschwindet):
+    expect(splits.reduce((a, s) => a + s.amountNet, 0)).toBeCloseTo(r.nettoTotal, 2);
+    expect(offeneWarengruppen([r], DEFAULT_WARENGRUPPEN_MAPPING)).toEqual(['Unbekannt XY']);
+  });
+
+  it('positionenAusRechnung persistiert Kontierung; Override via kontoSplitsAusPositionen', () => {
+    const csv = [HEADER,
+      zeile('R1', '2026-07-01', 'Wein', '1', 'Barolo', 30, 60, 4.86, 2),
+      zeile('R1', '2026-07-01', 'Unbekannt', '2', 'X', 5, 5, 0.13, 1),
+    ].join('\n');
+    const r = parseTransgourmetCsv(csv).rechnungen[0];
+    const pos = positionenAusRechnung(r, DEFAULT_WARENGRUPPEN_MAPPING);
+    expect(pos[0]).toMatchObject({ konto: '4020', status: 'zugeordnet' });
+    expect(pos[1]).toMatchObject({ konto: null, status: 'offen' });
+    // Manuelles Override der offenen Position:
+    const korrigiert = pos.map((p, i) => i === 1 ? { ...p, konto: '4090', status: 'zugeordnet' as const, manuell: true } : p);
+    const splits = kontoSplitsAusPositionen(korrigiert);
+    expect(splits.map(s => s.warenkonto).sort()).toEqual(['4020', '4090']);
+  });
+
+  it('Re-Import übernimmt manuelle Overrides (Identität Art.-Nr. bzw. Bezeichnung)', () => {
+    const csv = [HEADER,
+      zeile('R1', '2026-07-01', 'Unbekannt', '77', 'Trüffelöl', 20, 40, 1.04, 1),
+      zeile('R1', '2026-07-01', 'Wein', '5', 'Barolo', 30, 60, 4.86, 2),
+    ].join('\n');
+    const r = parseTransgourmetCsv(csv).rechnungen[0];
+    const alt = positionenAusRechnung(r, DEFAULT_WARENGRUPPEN_MAPPING)
+      .map(p => p.artNr === '77' ? { ...p, konto: '4060', status: 'zugeordnet' as const, manuell: true } : p);
+    const neu = uebernehmeManuelleKontierung(positionenAusRechnung(r, DEFAULT_WARENGRUPPEN_MAPPING), alt);
+    expect(neu.find(p => p.artNr === '77')).toMatchObject({ konto: '4060', status: 'zugeordnet', manuell: true });
+    expect(neu.find(p => p.artNr === '5')).toMatchObject({ konto: '4020' }); // nicht-manuell folgt Mapping
+    // ohne Altbestand: unverändert
+    expect(uebernehmeManuelleKontierung(neu, undefined)).toBe(neu);
+  });
+
+  it('normalizeWarengruppenMapping tolerant, leer → Default', () => {
+    expect(normalizeWarengruppenMapping(null)).toBe(DEFAULT_WARENGRUPPEN_MAPPING);
+    expect(normalizeWarengruppenMapping([{ gruppe: 'TK', konto: '4060' }, { gruppe: '', konto: '1' }, 'x']))
+      .toEqual([{ gruppe: 'TK', konto: '4060' }]);
   });
 });
 

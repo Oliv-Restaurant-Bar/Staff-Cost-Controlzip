@@ -50,9 +50,11 @@ import {
   type Warenkonto,
 } from '@/lib/waren-db';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
-import { WarenCsvImport } from '@/components/waren/WarenCsvImport';
-import { loadPreisHinweise } from '@/lib/waren-db';
-import type { PreisAenderung } from '@/lib/waren-positionen';
+import { WarenCsvImport, WarengruppenKontenEditor } from '@/components/waren/WarenCsvImport';
+import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
+import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
+import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
+import { buildKontoAbgleich } from '@/lib/waren-abgleich';
 import {
   kontoKlasse, kontoKlasseLabel, sumBetriebNet, nurWarenAnteil,
   aggregateBySupplierKlassen, DEFAULT_WARENKOSTEN_GRENZE,
@@ -483,6 +485,13 @@ export default function WarenrechnungenPage() {
     });
   }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey]);
 
+  /** Abgleich PRO KONTO (ergänzend — Totale/WKQ unverändert). */
+  const kontoAbgleich = useMemo(() => {
+    if (tab !== 'abgleich') return [];
+    const kontoNamen = Object.fromEntries(warenkonten.map(k => [k.value, k.label]));
+    return buildKontoAbgleich({ invoices: entries, journal, kontoNamen, relevanteKonten: warenkonten.map(k => k.value) });
+  }, [tab, entries, journal, warenkonten]);
+
   // ─── Analyse: Zeitraum-Steuerung ──────────────────────────────────────────
   const [analyseMode, setAnalyseMode] = useState<AnalyseMode>('month');
   const [aYear,       setAYear]       = useState(today.getFullYear());
@@ -541,6 +550,42 @@ export default function WarenrechnungenPage() {
     catch { setPreisHinweise({}); }
   }, [tenantId, monthKey]);
   useEffect(() => { void ladePreisHinweise(); }, [ladePreisHinweise]);
+
+  // ── Rechnungspositionen des Monats (Konto pro Position, Drilldown/Override) ──
+  const [rechnungsPositionen, setRechnungsPositionen] = useState<PositionenProRechnung>({});
+  const [positionenDialog, setPositionenDialog] = useState<{ invoiceId: string; positionen: GespeichertePosition[] } | null>(null);
+  const ladePositionen = useCallback(async () => {
+    try { setRechnungsPositionen(await loadRechnungsPositionen(tenantId, monthKey)); }
+    catch { setRechnungsPositionen({}); }
+  }, [tenantId, monthKey]);
+  useEffect(() => { void ladePositionen(); }, [ladePositionen]);
+
+  /** Manuelles Konto-Override einer Position speichern + Rechnungs-Splits neu ableiten. */
+  const speicherePositionen = async (invoiceId: string, positionen: GespeichertePosition[]) => {
+    const entry = entries.find(e => e.id === invoiceId);
+    try {
+      const next = { ...rechnungsPositionen, [invoiceId]: positionen };
+      await saveRechnungsPositionen(tenantId, monthKey, next);
+      setRechnungsPositionen(next);
+      if (entry) {
+        const splits = kontoSplitsAusPositionen(positionen);
+        const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto;
+        const aktualisiert: InvoiceEntry = {
+          ...entry,
+          ...(splits.length > 1
+            ? { kontoSplits: splits, warenkonto: undefined }
+            : { warenkonto: splits[0]?.warenkonto, kontoSplits: undefined }),
+          ...(haupt ? { kategorie: kategorieFromKonto(haupt) } : {}),
+          updatedAt: new Date().toISOString(),
+        };
+        await saveInvoiceEntry(tenantId, aktualisiert);
+        await loadData();
+      }
+      toast.success('Kontierung gespeichert.');
+    } catch (e) {
+      toast.error(`Speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
 
   const loadAnalyseRange = useCallback(async () => {
     setRangeLoading(true);
@@ -1643,6 +1688,10 @@ export default function WarenrechnungenPage() {
                     <WarenCsvImport tenantId={tenantId} suppliers={suppliers}
                       onImported={() => { void loadData(); void ladePreisHinweise(); }} />
 
+                    {/* ── Feldschlösschen PDF-Import (Lieferscheine · Monatsrechnung · Historie) ── */}
+                    <FeldschloesschenImport tenantId={tenantId} suppliers={suppliers}
+                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+
                     {/* ── PDF-Erkennung: Rechnung hochladen → Felder vorfüllen ── */}
                     <div className="flex flex-wrap items-center gap-3">
                       <label className={cn(
@@ -2174,6 +2223,17 @@ export default function WarenrechnungenPage() {
                                       <AlertTriangle className="h-3 w-3" />
                                       <span className="text-[10px] tabular-nums">{preisHinweise[e.id].length}</span>
                                     </span>
+                                  )}
+                                  {(rechnungsPositionen[e.id]?.length ?? 0) > 0 && (
+                                    <button
+                                      type="button"
+                                      title={`${rechnungsPositionen[e.id].length} Positionen mit Konto anzeigen`}
+                                      data-testid={`positionen-open-${e.id}`}
+                                      className="text-primary hover:underline inline-flex items-center gap-0.5"
+                                      onClick={() => setPositionenDialog({ invoiceId: e.id, positionen: rechnungsPositionen[e.id].map(p => ({ ...p })) })}
+                                    >
+                                      <ClipboardList className="h-3 w-3" /> {rechnungsPositionen[e.id].length} Pos.
+                                    </button>
                                   )}
                                   {e.receiptPath && (
                                     <button
@@ -3455,6 +3515,53 @@ export default function WarenrechnungenPage() {
                   )}
                 </section>
 
+                {/* ── Abgleich PRO KONTO: erfasst je Warenkonto vs. Kontoblatt ── */}
+                <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="konto-abgleich">
+                  <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
+                    <Scale className="h-4 w-4" style={{ color: tenant.color }} />
+                    <h2 className="text-sm font-semibold">Abgleich pro Konto · {MONTHS_LONG[month - 1]} {year}</h2>
+                    <InfoTip text={<span>Erfasste Rechnungen (netto, je Konto aus Splits bzw. Einzelkonto) gegen die Kontoblatt-Buchungen desselben Kontos. <b>Ergänzend</b> zum Lieferanten-Abgleich — Totale und WKQ bleiben unverändert. «Depot» = Pfand/Gebinde (neutral), «offen» = Positionen ohne Konto-Zuordnung.</span>} />
+                  </div>
+                  {journal === null ? (
+                    <div className="px-5 py-6 text-sm text-muted-foreground flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Buchhaltungsdaten werden geladen…
+                    </div>
+                  ) : kontoAbgleich.length === 0 ? (
+                    <div className="px-5 py-6 text-sm text-muted-foreground">Keine erfassten Rechnungen und keine Buchungen in diesem Monat.</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border text-xs text-muted-foreground">
+                            <th className="text-left  px-4 py-2 font-medium">Konto</th>
+                            <th className="text-right px-4 py-2 font-medium">Erfasst (netto)</th>
+                            <th className="text-right px-4 py-2 font-medium">Gebucht (Kontoblatt)</th>
+                            <th className="text-right px-4 py-2 font-medium">Differenz</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {kontoAbgleich.map(z => (
+                            <tr key={z.konto} className="border-b border-border/40" data-testid={`konto-abgleich-${z.konto}`}>
+                              <td className="px-4 py-2">
+                                <span className="font-mono font-semibold">{z.konto}</span>
+                                {z.bezeichnung && <span className="text-xs text-muted-foreground ml-2">{z.bezeichnung}</span>}
+                              </td>
+                              <td className="px-4 py-2 text-right tabular-nums">{z.erfasst !== 0 ? `CHF ${fmtChf(z.erfasst)}` : <span className="opacity-40">—</span>}</td>
+                              <td className="px-4 py-2 text-right tabular-nums">{z.gebucht !== null ? `CHF ${fmtChf(z.gebucht)}` : <span className="opacity-40">—</span>}</td>
+                              <td className={cn('px-4 py-2 text-right tabular-nums font-medium',
+                                z.diff === null ? 'text-muted-foreground'
+                                  : Math.abs(z.diff) <= 10 ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-amber-600 dark:text-amber-400')}>
+                                {z.diff !== null ? `CHF ${fmtChf(z.diff)}` : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+
                 {/* ── Lieferanten-Zuordnung (Alias-Gruppen, mandantengetrennt) ── */}
                 <AliasGruppenVerwaltung
                   gruppen={aliasGruppen}
@@ -3805,10 +3912,103 @@ export default function WarenrechnungenPage() {
                 ))}
               </div>
             </div>
+
+            {/* ── Warengruppe → Konto (CSV-Positionsimport) ── */}
+            <div className="border-t border-border/50 pt-4">
+              <h3 className="text-sm font-semibold mb-2">Warengruppen → Konto (CSV-Import)</h3>
+              <WarengruppenKontenEditor tenantId={tenantId} canEdit={canEdit} />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowSupplierDialog(false)}>Schliessen</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Positionen einer Rechnung: Konto pro Position (manuell überschreibbar) ── */}
+      <Dialog open={positionenDialog !== null} onOpenChange={o => { if (!o) setPositionenDialog(null); }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base">Rechnungspositionen &amp; Kontierung</DialogTitle>
+          </DialogHeader>
+          {positionenDialog && (
+            <div className="space-y-3">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="text-left  px-2 py-1.5 font-medium">Artikel</th>
+                      <th className="text-left  px-2 py-1.5 font-medium">Warengruppe</th>
+                      <th className="text-right px-2 py-1.5 font-medium">Netto</th>
+                      <th className="text-left  px-2 py-1.5 font-medium">Konto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {positionenDialog.positionen.map((p, i) => (
+                      <tr key={i} className="border-b border-border/30">
+                        <td className="px-2 py-1 max-w-[220px] truncate" title={p.artNr ? `Art. ${p.artNr}` : undefined}>{p.bezeichnung}</td>
+                        <td className="px-2 py-1 text-muted-foreground">{p.status === 'pfand' ? 'Pfand/Gebinde' : p.warengruppe || '—'}</td>
+                        <td className="px-2 py-1 text-right tabular-nums">{fmtChf(p.positionspreis)}</td>
+                        <td className="px-2 py-1">
+                          <Select
+                            value={p.konto ?? (p.status === 'pfand' ? KONTO_LABEL_PFAND : KONTO_LABEL_OFFEN)}
+                            onValueChange={v => setPositionenDialog(d => d && ({
+                              ...d,
+                              positionen: d.positionen.map((x, xi) => xi === i
+                                ? {
+                                    ...x,
+                                    konto: v === KONTO_LABEL_PFAND || v === KONTO_LABEL_OFFEN ? null : v,
+                                    status: v === KONTO_LABEL_PFAND ? 'pfand' : v === KONTO_LABEL_OFFEN ? 'offen' : 'zugeordnet',
+                                    manuell: true,
+                                  }
+                                : x),
+                            }))}
+                            disabled={!canEdit}
+                          >
+                            <SelectTrigger className={cn('h-7 w-[190px] text-xs', p.status === 'offen' && 'border-amber-500/60 text-amber-700 dark:text-amber-400')}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {warenkonten.map(k => (
+                                <SelectItem key={k.value} value={k.value}>{k.value} · {k.label}</SelectItem>
+                              ))}
+                              <SelectItem value={KONTO_LABEL_PFAND}>Pfand/Depot (kein Warenkonto)</SelectItem>
+                              <SelectItem value={KONTO_LABEL_OFFEN}>Konto offen</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Summe je Konto */}
+              <div className="rounded border border-border/50 bg-muted/20 px-3 py-2 text-xs space-y-0.5" data-testid="positionen-konto-summen">
+                <p className="font-medium mb-1">Rechnungssumme je Konto (netto):</p>
+                {kontoSplitsAusPositionen(positionenDialog.positionen).map(s => (
+                  <p key={s.warenkonto} className="flex justify-between tabular-nums">
+                    <span className={cn('font-mono', s.warenkonto === KONTO_LABEL_OFFEN && 'text-amber-600 dark:text-amber-400')}>
+                      {s.warenkonto === KONTO_LABEL_PFAND ? 'Pfand/Depot' : s.warenkonto === KONTO_LABEL_OFFEN ? 'Konto offen' : s.warenkonto}
+                    </span>
+                    <span>CHF {fmtChf(s.amountNet)}</span>
+                  </p>
+                ))}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setPositionenDialog(null)}>Abbrechen</Button>
+                {canEdit && (
+                  <Button
+                    data-testid="positionen-speichern"
+                    onClick={async () => {
+                      const d = positionenDialog;
+                      setPositionenDialog(null);
+                      await speicherePositionen(d.invoiceId, d.positionen);
+                    }}
+                  >Kontierung speichern</Button>
+                )}
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

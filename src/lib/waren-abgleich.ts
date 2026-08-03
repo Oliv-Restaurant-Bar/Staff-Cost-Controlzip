@@ -215,6 +215,90 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   };
 }
 
+// ─── Abgleich PRO KONTO (erfasst je Warenkonto vs. Kontoblatt-Buchungen) ─────
+
+export interface KontoAbgleichZeile {
+  konto: string;                 // Kontonummer, z.B. '4020'
+  bezeichnung: string | null;    // Kontoname (aus Warenkonten-Stammdaten oder Journal)
+  erfasst: number;               // Σ netto aus Rechnungen (Splits/Einzelkonto)
+  gebucht: number | null;        // Σ Soll−Haben aus dem Journal — null wenn keine Buchungszeile
+  diff: number | null;           // erfasst − gebucht, null wenn gebucht null
+}
+
+/**
+ * Erfasste Rechnungen je Konto gegen das Kontoblatt (gleicher Monat, gleiches
+ * Konto). Rechnungen mit kontoSplits zählen pro Split, sonst voll aufs
+ * Einzelkonto; ohne Konto bzw. nicht-numerisch («Depot»/«offen») → eigene
+ * Zeile ohne Journal-Vergleich. Leere Seiten bleiben null (nie stille 0).
+ */
+export function buildKontoAbgleich(input: {
+  invoices: InvoiceEntry[];
+  journal: SageJournalEntry[] | null;
+  /** Kontonamen zur Anzeige (value→label), optional. */
+  kontoNamen?: Record<string, string>;
+  /**
+   * Konten, die auch OHNE erfasste Rechnungen (nur-Journal) erscheinen dürfen —
+   * typischerweise die konfigurierten Warenkonten. Ohne Angabe wird das ganze
+   * Kontoblatt gelistet (kann bei grossen FIBU-Exporten fluten).
+   */
+  relevanteKonten?: string[];
+}): KontoAbgleichZeile[] {
+  const erfasst = new Map<string, number>();
+  const add = (konto: string | undefined, net: number) => {
+    const k = (konto ?? '').trim() || 'ohne';
+    erfasst.set(k, (erfasst.get(k) ?? 0) + net);
+  };
+  for (const inv of input.invoices) {
+    if (inv.kontoSplits && inv.kontoSplits.length > 0) {
+      for (const s of inv.kontoSplits) add(s.warenkonto, s.amountNet);
+    } else {
+      add(inv.warenkonto, inv.amountNet);
+    }
+  }
+
+  const gebucht = new Map<string, { sum: number; name: string | null }>();
+  for (const e of input.journal ?? []) {
+    const k = String(e.accountNumber ?? '').replace(/^0+/, '').trim();
+    if (!k) continue;
+    const cur = gebucht.get(k) ?? { sum: 0, name: e.accountName ?? null };
+    cur.sum += buchungsBetrag(e);
+    if (!cur.name && e.accountName) cur.name = e.accountName;
+    gebucht.set(k, cur);
+  }
+
+  const istNumerisch = (k: string) => Number.isFinite(parseInt(k, 10)) && /^\d+$/.test(k);
+  const zeilen: KontoAbgleichZeile[] = [];
+  for (const [konto, sum] of erfasst) {
+    const numerisch = istNumerisch(konto);
+    const j = numerisch ? gebucht.get(konto.replace(/^0+/, '')) : undefined;
+    zeilen.push({
+      konto,
+      bezeichnung: input.kontoNamen?.[konto] ?? j?.name ?? null,
+      erfasst: Math.round(sum * 100) / 100,
+      gebucht: j ? Math.round(j.sum * 100) / 100 : null,
+      diff: j ? Math.round((sum - j.sum) * 100) / 100 : null,
+    });
+  }
+  // Konten, die NUR im Journal vorkommen (gebucht, aber nichts erfasst) —
+  // auf relevante Konten begrenzt, sonst flutet das ganze Kontoblatt die Sicht:
+  const relevant = input.relevanteKonten
+    ? new Set(input.relevanteKonten.map(k => k.replace(/^0+/, '').trim()))
+    : null;
+  for (const [konto, j] of gebucht) {
+    if (zeilen.some(z => z.konto.replace(/^0+/, '') === konto)) continue;
+    if (Math.abs(j.sum) < 0.005) continue;
+    if (relevant && !relevant.has(konto)) continue;
+    zeilen.push({
+      konto,
+      bezeichnung: input.kontoNamen?.[konto] ?? j.name,
+      erfasst: 0,
+      gebucht: Math.round(j.sum * 100) / 100,
+      diff: Math.round((0 - j.sum) * 100) / 100,
+    });
+  }
+  return zeilen.sort((a, b) => a.konto.localeCompare(b.konto, 'de-CH', { numeric: true }));
+}
+
 /**
  * Dublettencheck vor dem Speichern (Punkt 11): existiert im Monat bereits
  * eine Rechnung mit gleichem Lieferant + Datum + Betrag (± 5 Rp.) — bzw.

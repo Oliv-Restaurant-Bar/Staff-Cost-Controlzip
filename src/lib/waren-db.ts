@@ -318,6 +318,40 @@ export async function savePreisHinweise(
   await kvSet(tenantKey(tenantId, `waren_preishinweise_${monthKey}_v1`), hinweise);
 }
 
+// ─── Warengruppe → Konto (konfigurierbare Zuordnungstabelle, pro Mandant) ────
+
+export async function loadWarengruppenMapping(tenantId: TenantId): Promise<import('./waren-positionen').WarengruppenMapping> {
+  const { normalizeWarengruppenMapping, DEFAULT_WARENGRUPPEN_MAPPING } = await import('./waren-positionen');
+  try {
+    const raw = await kvGet(tenantKey(tenantId, 'waren_warengruppen_konten_v1'));
+    return raw === null || raw === undefined ? DEFAULT_WARENGRUPPEN_MAPPING : normalizeWarengruppenMapping(raw);
+  } catch {
+    const { DEFAULT_WARENGRUPPEN_MAPPING: def } = await import('./waren-positionen');
+    return def;
+  }
+}
+
+export async function saveWarengruppenMapping(tenantId: TenantId, mapping: import('./waren-positionen').WarengruppenMapping): Promise<void> {
+  await kvSet(tenantKey(tenantId, 'waren_warengruppen_konten_v1'), mapping);
+}
+
+// ─── Rechnungspositionen (pro Monat, Record<invoiceId, Positionen>) ──────────
+
+export async function loadRechnungsPositionen(
+  tenantId: TenantId, monthKey: string,
+): Promise<import('./waren-positionen').PositionenProRechnung> {
+  const { normalizePositionenProRechnung } = await import('./waren-positionen');
+  try { return normalizePositionenProRechnung(await kvGet(tenantKey(tenantId, `waren_positionen_${monthKey}_v1`))); }
+  catch { return {}; }
+}
+
+export async function saveRechnungsPositionen(
+  tenantId: TenantId, monthKey: string,
+  positionen: import('./waren-positionen').PositionenProRechnung,
+): Promise<void> {
+  await kvSet(tenantKey(tenantId, `waren_positionen_${monthKey}_v1`), positionen);
+}
+
 // ─── Auto-Match-Toleranz (CHF, pro Mandant, Default 10.00) ───────────────────
 
 export async function loadFibuMatchToleranz(tenantId: TenantId): Promise<number> {
@@ -687,4 +721,65 @@ export function computeMonthStats(
     revenueByDate,
     entryCount: entries.length,
   };
+}
+
+// ── Feldschlösschen-Historie (Teil C: Jahres-Import aus Sammelrechnungen) ────
+// Ein KV-Blob pro Jahr+Mandant: Record<SammelNr, FsHistorienEintrag> —
+// dublettensicher (Upsert auf Sammelrechnung-Nr). Jahr-Sperre separat, wird im
+// Save-Pfad IMMER frisch gelesen (nie nur UI-State).
+
+const fsHistorieKey = (tenantId: TenantId, jahr: string) => tenantKey(tenantId, `fs_historie_${jahr}_v1`);
+const fsHistorieLockKey = (tenantId: TenantId) => tenantKey(tenantId, 'fs_historie_lock_v1');
+
+export async function loadFsHistorie(
+  tenantId: TenantId, jahr: string,
+): Promise<Record<string, import('./feldschloesschen').FsHistorienEintrag>> {
+  try {
+    const raw = await kvGet(fsHistorieKey(tenantId, jahr));
+    return raw && typeof raw === 'object' && !Array.isArray(raw)
+      ? raw as Record<string, import('./feldschloesschen').FsHistorienEintrag>
+      : {};
+  } catch { return {}; }
+}
+
+/**
+ * Upsert je Sammelrechnung-Nr. Wirft, wenn das Jahr gesperrt ist — der Lock
+ * wird hier FRISCH gelesen (Vorjahr-Hardzahlen-Muster).
+ */
+export async function upsertFsHistorie(
+  tenantId: TenantId, jahr: string,
+  eintraege: Array<import('./feldschloesschen').FsHistorienEintrag>,
+): Promise<{ neu: number; ersetzt: number }> {
+  if (await isFsHistorieLocked(tenantId, jahr)) {
+    throw new Error(`Feldschlösschen-Historie ${jahr} ist gesperrt — Sperre zuerst aufheben.`);
+  }
+  const bestand = await loadFsHistorie(tenantId, jahr);
+  let neu = 0, ersetzt = 0;
+  for (const e of eintraege) {
+    if (!e.sammelNr) continue;
+    if (bestand[e.sammelNr]) ersetzt++; else neu++;
+    bestand[e.sammelNr] = e;
+  }
+  await kvSet(fsHistorieKey(tenantId, jahr), bestand);
+  return { neu, ersetzt };
+}
+
+export async function isFsHistorieLocked(tenantId: TenantId, jahr: string): Promise<boolean> {
+  try {
+    const raw = await kvGet(fsHistorieLockKey(tenantId));
+    return !!(raw && typeof raw === 'object' && (raw as Record<string, unknown>)[jahr] === true);
+  } catch (e) {
+    // Lesefehler ≠ entsperrt — im Zweifel blockieren
+    throw new Error(`Sperr-Status nicht lesbar: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+export async function setFsHistorieLock(tenantId: TenantId, jahr: string, locked: boolean): Promise<void> {
+  let cur: Record<string, boolean> = {};
+  try {
+    const raw = await kvGet(fsHistorieLockKey(tenantId));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) cur = raw as Record<string, boolean>;
+  } catch { /* Neuaufbau */ }
+  cur[jahr] = locked;
+  await kvSet(fsHistorieLockKey(tenantId), cur);
 }

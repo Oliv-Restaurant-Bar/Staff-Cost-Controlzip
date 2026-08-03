@@ -1,0 +1,33 @@
+AUFGABE: KORREKTUR der Warengruppe→Konto/Kategorie-Zuordnung im CSV-Rechnungsimport (Transgourmet/Prodega). Die aktuell eingebaute Zuordnung ist falsch und verfälscht die WKQ. Mandantengetrennt.
+
+PROBLEM: Aktuell mappt der Import u.a. "Nonfood -> 4060" (ein Warenkonto) und nutzt erfundene Warengruppen ("Tiefkühl", "Reinigung"). Dadurch werden Near-/Nonfood fälschlich als Warenkosten gezählt.
+
+RICHTIGE ZUORDNUNG — verwende AUSSCHLIESSLICH die echten Warengruppen aus der CSV-Spalte "Warengruppe":
+  WARENKOSTEN (zählt zur WKQ):
+   - Metzgerei              -> 4060 Küche Warenaufwand
+   - Früchte + Gemüse       -> 4060 Küche Warenaufwand
+   - Molkerei/Backwaren     -> 4060 Küche Warenaufwand
+   - Food                   -> 4060 Küche Warenaufwand
+   - Wein                   -> 4020 Wein Warenaufwand
+   - Bier                   -> 4030 Bier Warenaufwand
+   - Spirituosen            -> 4040 Spirituosen Warenaufwand
+   - Getränke               -> 4050 Mineral Warenaufwand
+  BETRIEBSKOSTEN (zählt NICHT zur WKQ):
+   - Nearfood               -> 4701 Betriebsmaterial
+   - Nonfood                -> 4701 Betriebsmaterial
+  NEUTRAL:
+   - Pfand/Gebinde (MwSt-Code 0, z.B. "Ifco LiftLock") -> kein Warenkonto (Depot)
+
+REGELN:
+1) Konten 4000–4090 = Warenkosten (WKQ). Konten ≥4091 (4701 …) = Betriebskosten (NICHT WKQ). Near-/Nonfood dürfen NIE in einem Warenkonto landen.
+2) Keine erfundenen Warengruppen. Kommt eine Warengruppe vor, die oben nicht steht, als "Konto offen" markieren und nachfragen — NICHT auf 4000 o.ä. raten.
+3) Zuordnungstabelle in den Einstellungen editierbar; obige Werte als Standard.
+4) Konto pro Position manuell überschreibbar; bei mehreren Warengruppen je Rechnung als Split, WKQ nur aus dem Warenkosten-Teil.
+
+VERIFIKATION mit der echten Datei (Oliv, Juni 2026, Transgourmet+Prodega) — die Vorschau MUSS ergeben:
+   - Warenkosten (4000–4090):        29'759.51
+   - Betriebskosten (Near-/Nonfood):  4'196.21
+   - Pfand/Gebinde:                      22.40
+   Wenn Nonfood/Nearfood korrekt in Betriebskosten stehen, stimmen diese Werte. Stehen sie im 4060, sind die Warenkosten fälschlich ~4'196 zu hoch.
+
+RAHMEN: mandantengetrennt, dublettensicher (Re-Import ersetzt), nie durch 0 teilen, leer statt 0. Bestehende Preisüberwachung nicht anfassen. Kurz zusammenfassen, welche Warengruppe auf welches Konto geht.

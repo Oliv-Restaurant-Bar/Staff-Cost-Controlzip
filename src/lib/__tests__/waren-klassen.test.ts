@@ -41,6 +41,22 @@ describe('kontoKlasse', () => {
   });
 });
 
+describe('Pseudo-Konten (CSV-Positionsimport)', () => {
+  it('«Depot» (Pfand) ist neutral, «offen» zählt bewusst als Warenkosten', () => {
+    expect(kontoKlasse('Depot')).toBe('neutral');
+    expect(kontoKlasse('offen')).toBe('warenkosten');
+    const e = inv({
+      amountNet: 100,
+      kontoSplits: [
+        { warenkonto: '4060', amountNet: 90, amountGross: 97.3 },
+        { warenkonto: 'Depot', amountNet: 6.4, amountGross: 6.4 },
+        { warenkonto: 'offen', amountNet: 3.6, amountGross: 3.9 },
+      ],
+    });
+    expect(klassenAnteile(e)).toEqual({ warenNet: 93.6, betriebNet: 0 }); // Depot fehlt bewusst
+  });
+});
+
 describe('klassenAnteile / Summen', () => {
   it('Einzelkonto: ganzer Betrag in der Klasse des Kontos', () => {
     expect(klassenAnteile(inv({ warenkonto: '4000' }))).toEqual({ warenNet: 100, betriebNet: 0 });

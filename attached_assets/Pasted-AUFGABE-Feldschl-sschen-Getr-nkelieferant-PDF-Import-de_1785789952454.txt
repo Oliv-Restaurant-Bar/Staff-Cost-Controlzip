@@ -1,0 +1,33 @@
+AUFGABE: Feldschlösschen (Getränkelieferant) — PDF-Import der Einzelrechnungen (→ Warenkosten), Monatsrechnung als Kontrolle, und einmaliger Historien-Import 2024/2025. Mandantengetrennt (zuerst Beaulieu; Struktur so, dass Oliv gleich funktioniert).
+
+DOKUMENTTYPEN AUTOMATISCH UNTERSCHEIDEN:
+- EINZELRECHNUNG / LIEFERSCHEIN: Kopf "Lieferschein", mit "Lieferung: <Nr>", "Lieferdatum", Positionsliste (Material, Bezeichnung, Einheit, Preis, Stk-Preis, Preis CHF, MWST Code), "Zwischentotal Warenwert", "Zwischentotal Leergut", "Total Lieferung".
+- MONATSRECHNUNG / SAMMELRECHNUNG: Kopf "Sammelrechnung: <Nr>", "Datum", "Endbetrag", Faktura-Liste (Faktura-Nr, Datum, Warenwert inkl. 8.1%/2.6%/0.0%, Endbetrag) und "Zusammenfassung MwSt" (Bier, Alkoholfreies Bier, Mineralwasser, Andere alk. freie Getränke, Spirituosen, Andere Güter, Leergut, Zu-/Abschläge).
+
+TEIL A — EINZELRECHNUNGEN (→ Warenkosten):
+1) Pro Lieferschein erfassen: Lieferant Feldschlösschen, Lieferung-Nr, Lieferdatum, alle Positionen (Bezeichnung, Menge/Einheit, Einzelpreis, Positionspreis, MWST-Code), Total netto, MwSt, Total Lieferung.
+2) MWST-Code: 3C = 8.1%, 4C = 2.6%, C0 = 0% (Leergut/Pfand).
+3) KATEGORIE/KONTO je Position (konfigurierbar), abgeleitet aus Getränkeart / Kategorie:
+   - Bier -> 4030 | Spirituosen -> 4040 | Alkoholfreies Bier, Mineralwasser, Andere alk. freie Getränke -> 4050 | Wein -> 4020
+   - Alles davon = WARENKOSTEN (zählt zur WKQ).
+   - "Andere Güter", "Zu-/Abschläge" (z.B. Logistikpauschale) -> Betriebskosten (NICHT WKQ).
+   - "Leergut"/Pfand (MWST-Code C0) -> neutral/Depot, weder Waren- noch Betriebskosten.
+4) Warenkosten der Lieferung = Warenwert der Getränkepositionen (netto), ohne Leergut/Logistik.
+5) Preisänderungs-Hinweis pro Material-Nr (Standard ±10% / min. 0.20 CHF), Pfand ausgenommen — wie bei Transgourmet.
+6) Dublettensicher: Upsert auf (Mandant + Lieferant + Lieferung-Nr). Gleiche Lieferung wird ersetzt, nie doppelt.
+
+TEIL B — MONATSRECHNUNG = KONTROLLE (kein Doppelzählen!):
+1) Beim Upload der Sammelrechnung NICHT als neue Warenkosten buchen. Stattdessen: Faktura-Liste auslesen (Faktura-Nr, Datum, Endbetrag).
+2) Jede Faktura gegen die erfassten Einzel-Lieferungen des Monats matchen — über Lieferdatum + Betrag (Toleranz 0.10 CHF für Rundung). (Faktura-Nr steht nicht auf dem Lieferschein, daher Datum+Betrag.)
+3) Ergebnis-Übersicht: "X von Y Rechnungen vorhanden · Summe erfasst CHF … / Monatsrechnung CHF …". Fehlende Fakturas rot markieren: "Lieferung fehlt — bitte Einzelrechnung nachtragen".
+4) Komfort: Fehlt eine Einzelrechnung, kann sie aus dem Anhang der Monatsrechnung (enthält die Lieferscheine) direkt übernommen werden — mit derselben Dublettensicherheit.
+5) Die "Zusammenfassung MwSt" der Monatsrechnung als Gegenprobe der Konto-/Kategorie-Summen (Bier/Spirituosen/… gegen erfasste Beträge).
+
+TEIL C — HISTORIEN-IMPORT 2024/2025 (einmalig, Beaulieu UND Oliv):
+1) Zip mit mehreren Sammelrechnungen einmalig hochladbar. Pro Sammelrechnung Kategorie-Summen (Bier/Spirituosen/Mineral/…) und, wo im PDF enthalten, Positionsdetails erfassen.
+2) Als Historie/Hardzahlen speichern, pro Jahr und Mandant; Jahr-Sperre; dublettensicher auf (Mandant + Sammelrechnung-Nr).
+3) Ziel: Lieferanten-Analyse über die Jahre — Volumen/Bestellwert pro Monat und Kategorie sowie Preisentwicklung je Material.
+
+RAHMEN: Streng mandantengetrennt (Beaulieu/Oliv). Alle Beträge netto exkl. MwSt für WKQ. Vorschau vor dem Schreiben (neu/aktualisiert/unverändert), Backup + Rückgängig. Nie durch 0 teilen, leer statt 0. Integriert in Warenrechnungen (Erfassung/Analyse), FIBU-Abgleich und Cockpit wie andere Lieferanten.
+
+KONTROLLWERT (Beaulieu, Juli 2026): Monatsrechnung 87786557 = Endbetrag 9'779.50, 7 Fakturas. Die Einzel-Lieferungen 17.07 (492.85), 24.07 (1'748.10), 31.07 (2'078.45) müssen als "vorhanden/gematcht" erkannt werden.

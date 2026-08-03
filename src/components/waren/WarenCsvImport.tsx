@@ -18,19 +18,112 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { AlertTriangle, FileSpreadsheet, Loader2, TrendingDown, TrendingUp, X } from 'lucide-react';
 import {
-  parseTransgourmetCsv, kontoSplitsFuerRechnung, berechnePreisAenderungen,
-  aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE,
-  type CsvParseErgebnis, type ParsedCsvRechnung, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
+  parseTransgourmetCsv, berechnePreisAenderungen,
+  aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING,
+  offeneWarengruppen, positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
+  type CsvParseErgebnis, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
+  type WarengruppenMapping,
 } from '@/lib/waren-positionen';
 import {
   loadMonthInvoices, saveInvoiceEntry, loadPreisHistorie, savePreisHistorie,
   loadPreisSchwelle, savePreisSchwelle, loadPreisHinweise, savePreisHinweise,
+  loadWarengruppenMapping, saveWarengruppenMapping, loadRechnungsPositionen, saveRechnungsPositionen,
   kategorieFromKonto, type InvoiceEntry, type Supplier,
 } from '@/lib/waren-db';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
 import type { TenantId } from '@/contexts/TenantContext';
 
 const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * Einstellungen-Editor «Warengruppe → Konto» (mandantengetrennt, KV-persistiert).
+ * Konten 4000–Grenze zählen zur WKQ, ≥4091 (z.B. 4701) sind Betriebskosten —
+ * die Klassifizierung übernimmt die bestehende Kontoklassen-Logik.
+ */
+export function WarengruppenKontenEditor({ tenantId, canEdit }: { tenantId: TenantId; canEdit: boolean }) {
+  const [mapping, setMapping] = useState<WarengruppenMapping | null>(null);
+  const [neuGruppe, setNeuGruppe] = useState('');
+  const [neuKonto, setNeuKonto] = useState('');
+  // Aktueller Stand als Ref (blur-Handler dürfen nie einen veralteten Render-Stand speichern)
+  const mappingRef = useRef<WarengruppenMapping | null>(null);
+  useEffect(() => { mappingRef.current = mapping; }, [mapping]);
+  // Serialisierte Save-Kette: kein paralleles Überschreiben bei schnellen Blur-Folgen
+  const saveKette = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    let alive = true;
+    loadWarengruppenMapping(tenantId).then(m => { if (alive) setMapping(m); })
+      .catch(() => { if (alive) setMapping(DEFAULT_WARENGRUPPEN_MAPPING); });
+    return () => { alive = false; };
+  }, [tenantId]);
+
+  const zeileGueltig = (r: { gruppe: string; konto: string }) =>
+    r.gruppe.trim().length > 0 && /^\d{4}$/.test(r.konto.trim());
+
+  /** Validiert + persistiert den AKTUELLEN Stand (aus Ref, nie Render-Closure). */
+  const speichernAktuell = () => {
+    const cur = mappingRef.current;
+    if (!cur) return;
+    if (!cur.every(zeileGueltig)) {
+      toast.error('Nicht gespeichert: Warengruppe darf nicht leer sein, Konto muss 4-stellig sein (z.B. 4060).');
+      return;
+    }
+    const next = cur.map(r => ({ gruppe: r.gruppe.trim(), konto: r.konto.trim() }));
+    saveKette.current = saveKette.current
+      .then(() => saveWarengruppenMapping(tenantId, next))
+      .catch(e => { toast.error(`Speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); });
+  };
+
+  const speichern = (next: WarengruppenMapping) => {
+    setMapping(next);
+    mappingRef.current = next;
+    speichernAktuell();
+  };
+
+  if (mapping === null) return <p className="text-xs text-muted-foreground">Lädt…</p>;
+  return (
+    <div className="space-y-2 text-xs" data-testid="warengruppen-konten-editor">
+      <p className="text-muted-foreground">
+        Kontierung der CSV-Positionen nach Warengruppe. Unbekannte Gruppen werden als
+        «Konto offen» markiert (nie geraten); Pfand/Gebinde (MwSt-Code 0) bleibt ohne Warenkonto.
+      </p>
+      <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
+        {mapping.map((r, i) => (
+          <div key={`${r.gruppe}-${i}`} className="flex items-center gap-2">
+            <Input value={r.gruppe} disabled={!canEdit} className="h-7 text-xs flex-1"
+              onChange={e => setMapping(m => m!.map((x, xi) => xi === i ? { ...x, gruppe: e.target.value } : x))}
+              onBlur={speichernAktuell} />
+            <span className="text-muted-foreground">→</span>
+            <Input value={r.konto} disabled={!canEdit} className="h-7 text-xs w-20 text-right tabular-nums"
+              onChange={e => setMapping(m => m!.map((x, xi) => xi === i ? { ...x, konto: e.target.value } : x))}
+              onBlur={speichernAktuell} />
+            {canEdit && (
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground"
+                onClick={() => speichern((mappingRef.current ?? mapping).filter((_, xi) => xi !== i))}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      {canEdit && (
+        <div className="flex items-center gap-2 pt-1 border-t border-border/40">
+          <Input placeholder="Warengruppe (z.B. Tiefkühl)" value={neuGruppe}
+            onChange={e => setNeuGruppe(e.target.value)} className="h-7 text-xs flex-1" data-testid="neu-warengruppe" />
+          <span className="text-muted-foreground">→</span>
+          <Input placeholder="Konto" value={neuKonto} onChange={e => setNeuKonto(e.target.value)}
+            className="h-7 text-xs w-20 text-right tabular-nums" data-testid="neu-warengruppe-konto" />
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+            disabled={!neuGruppe.trim() || !/^\d{4}$/.test(neuKonto.trim())}
+            onClick={() => {
+              speichern([...(mappingRef.current ?? mapping), { gruppe: neuGruppe.trim(), konto: neuKonto.trim() }]);
+              setNeuGruppe(''); setNeuKonto('');
+            }} data-testid="neu-warengruppe-add">Hinzufügen</Button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function WarenCsvImport({ tenantId, suppliers, onImported }: {
   tenantId: TenantId;
@@ -44,13 +137,14 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
   const [historie, setHistorie] = useState<PreisHistorie | null>(null);
   const [schwelle, setSchwelle] = useState<PreisSchwelle>(DEFAULT_PREIS_SCHWELLE);
   const [schwelleText, setSchwelleText] = useState({ pct: '10', minChf: '0.20' });
+  const [mapping, setMapping] = useState<WarengruppenMapping>(DEFAULT_WARENGRUPPEN_MAPPING);
   const geladen = useRef(false);
 
   useEffect(() => {
     if (geladen.current) return;
     geladen.current = true;
-    Promise.all([loadPreisHistorie(tenantId), loadPreisSchwelle(tenantId)]).then(([h, s]) => {
-      setHistorie(h); setSchwelle(s);
+    Promise.all([loadPreisHistorie(tenantId), loadPreisSchwelle(tenantId), loadWarengruppenMapping(tenantId)]).then(([h, s, m]) => {
+      setHistorie(h); setSchwelle(s); setMapping(m);
       setSchwelleText({ pct: String(s.pct), minChf: s.minChf.toFixed(2) });
     }).catch(() => setHistorie({}));
   }, [tenantId]);
@@ -106,6 +200,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     try {
       let ersetzt = 0, neu = 0;
       const hinweiseProMonat = new Map<string, Record<string, PreisAenderung[]>>();
+      const positionenProMonat = new Map<string, Record<string, ReturnType<typeof positionenAusRechnung>>>();
       for (const r of zuImportieren) {
         const month = r.datum.slice(0, 7);
         const bestand = await loadMonthInvoices(tenantId, month);
@@ -113,8 +208,19 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
           (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
           && e.date === r.datum // Portal-Nummern werden über Monate wiederverwendet
           && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase());
-        const splits = kontoSplitsFuerRechnung(r);
-        const haupt = splits[0]?.warenkonto ?? '4000';
+        // Positionen kontieren — bei Re-Import manuelle Overrides des Altbestands übernehmen.
+        let bestehendePos = positionenProMonat.get(month);
+        if (!bestehendePos) {
+          bestehendePos = { ...(await loadRechnungsPositionen(tenantId, month)) };
+          positionenProMonat.set(month, bestehendePos);
+        }
+        const positionen = uebernehmeManuelleKontierung(
+          positionenAusRechnung(r, mapping),
+          vorhanden ? bestehendePos[vorhanden.id] : undefined,
+        );
+        const splits = kontoSplitsAusPositionen(positionen);
+        // Hauptkonto = grösstes NUMERISCHES Konto (Pseudo-Splits «Depot»/«offen» nie als Kategorie-Quelle)
+        const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? '4060';
         const jetzt = new Date().toISOString();
         const id = vorhanden?.id ?? `csv-${r.rechnungsNr}-${Date.now()}`;
         const entry: InvoiceEntry = {
@@ -139,6 +245,14 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         const monat = hinweiseProMonat.get(month) ?? {};
         if (aen.length > 0) monat[id] = aen; else delete monat[id];
         hinweiseProMonat.set(month, monat);
+        // Positionen inkl. Kontierung persistieren (Re-Import ersetzt je Rechnung).
+        const posMonat = positionenProMonat.get(month) ?? {};
+        posMonat[id] = positionen;
+        positionenProMonat.set(month, posMonat);
+      }
+      for (const [month, neue] of positionenProMonat) {
+        const bestehend = await loadRechnungsPositionen(tenantId, month);
+        await saveRechnungsPositionen(tenantId, month, { ...bestehend, ...neue });
       }
       // Hinweise pro Monat mit Bestand mergen (Re-Import ersetzt je Rechnung).
       for (const [month, neue] of hinweiseProMonat) {
@@ -223,6 +337,19 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
               </label>
             ))}
           </div>
+
+          {/* Unbekannte Warengruppen — «Konto offen», nie raten */}
+          {(() => {
+            const offen = offeneWarengruppen(ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey)), mapping);
+            return offen.length > 0 ? (
+              <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400"
+                data-testid="konto-offen-hinweis">
+                <span className="font-medium">Konto offen ({offen.length}):</span> {offen.join(', ')} — Zuordnung
+                unter Einstellungen → «Warengruppen → Konto» ergänzen; betroffene Positionen werden bis dahin
+                als «offen» markiert (kein Konto geraten).
+              </div>
+            ) : null;
+          })()}
 
           {/* Preisänderungen — VOR dem Schreiben sichtbar */}
           {vorschau && (
