@@ -542,6 +542,7 @@ const JahresDatenstandCard = () => {
                   variant="outline" size="sm" className="h-7 text-[11px]"
                   onClick={() => openImportSection('vj-tagesumsatz')}
                   data-testid="jd-link-vj-import"
+                  title="Übernimmt die täglichen Umsätze des Jahres als Monats-Umsatz in die Erfolgsrechnung (Ertragsseite). Die Kostenseite bleibt unverändert."
                 >
                   Tagesimport &amp; ER-Übernahme
                 </Button>

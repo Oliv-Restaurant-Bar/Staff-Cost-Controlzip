@@ -26,6 +26,7 @@ import type { MonthlyFinancialRecord, SageJournalEntry } from '@/types/reporting
 export type ImportSourceKey =
   | 'mirus-ist'
   | 'vj-tagesumsatz'
+  | 'vj-er-uebernahme'
   | 'ist-kosten-buchhaltung'
   | 'kosten-vorjahr-monat'
   | 'vorjahr-kosten-buchhaltung'
@@ -38,6 +39,7 @@ export type ImportSourceKey =
 export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'mirus-ist':                  'Ist-Stunden (MIRUS)',
   'vj-tagesumsatz':             'Vorjahres-Tagesumsatz',
+  'vj-er-uebernahme':           'ER-Übernahme Umsatz (Tagesdaten)',
   'ist-kosten-buchhaltung':     'Ist Kosten Buchhaltung',
   'kosten-vorjahr-monat':       'Kosten Vorjahr (Monat)',
   'vorjahr-kosten-buchhaltung': 'Vorjahr Kosten Buchhaltung (Jahr)',

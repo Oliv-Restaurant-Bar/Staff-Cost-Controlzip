@@ -38,6 +38,10 @@ import {
   type VjDayRecord,
 } from '@/lib/vj-daily-supabase';
 import { recordImportRun, type KvKeyItem } from '@/lib/import-undo-store';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { LastImportPanel } from '@/components/import-center/LastImportPanel';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -287,6 +291,8 @@ export function VjDailyImportSection() {
   const [overwriteMonths,  setOverwriteMonths]  = useState<Set<number>>(new Set());
   const [transferring,     setTransferring]     = useState(false);
   const [transferDone,     setTransferDone]     = useState<string | null>(null);
+  // Bestätigungsdialog vor der ER-Übernahme (explizite Zustimmung vor Überschreiben)
+  const [confirmOpen,      setConfirmOpen]      = useState(false);
 
   // Beim Laden: Datenzähler + Lock-Status laden
   useEffect(() => {
@@ -298,6 +304,7 @@ export function VjDailyImportSection() {
     setTransferError(null);
     setTransferDone(null);
     setOverwriteMonths(new Set());
+    setConfirmOpen(false);
   }, [year, tenantId]);
 
   const handleFile = async (file: File) => {
@@ -466,6 +473,29 @@ export function VjDailyImportSection() {
     setTransferring(true);
     try {
       const storeKey = tenantKey(REPORTING_STORAGE_KEY);
+
+      // Undo-Snapshot VOR dem Schreiben: nur die Umsatzfelder der Ziel-Monate
+      // (grossRevenueManual/revenueActual) — Rückgängig stellt exakt diese
+      // Felder wieder her, Kosten & übrige Monatsdaten sind nie betroffen.
+      const undoMonths: Array<{ monthId: string; fields: Record<string, unknown | null> }> = [];
+      let snapshotOk = false;
+      try {
+        const existing = new Map(loadYear(year, storeKey).map(r => [r.month, r]));
+        for (const p of toTransfer) {
+          const rec = existing.get(p.month);
+          undoMonths.push({
+            monthId: p.monthId,
+            fields: {
+              grossRevenueManual: rec?.grossRevenueManual ?? null,
+              revenueActual: rec?.revenueActual ?? null,
+            },
+          });
+        }
+        snapshotOk = undoMonths.length === toTransfer.length;
+      } catch (err) {
+        console.warn('[VJ-TRANSFER] Undo-Snapshot fehlgeschlagen (Übernahme läuft weiter):', err);
+      }
+
       const monthIds: string[] = [];
       for (const p of toTransfer) {
         saveMonth(
@@ -480,6 +510,29 @@ export function VjDailyImportSection() {
         );
         monthIds.push(p.monthId);
       }
+      // Import-Protokoll (Import-Historie + Rückgängig): Fehler sichtbar melden —
+      // nie stillschweigend «rückgängig möglich» behaupten. Ohne vollständigen
+      // Snapshot wird KEIN Undo-fähiger Lauf geschrieben (leerer Snapshot würde
+      // ein «erfolgreiches» Undo vortäuschen, das nichts wiederherstellt).
+      let undoAvailable = false;
+      try {
+        await recordImportRun(tenantId ?? 'oliv', {
+          source: 'vj-er-uebernahme',
+          periodLabel: `Jahr ${year}`,
+          itemCount: toTransfer.length,
+          itemLabel: 'Monate',
+          details: `Umsatz aus Tagesdaten in die ER übernommen (${toTransfer.length} Monat(e), nur Ertragsseite)`
+            + (snapshotOk ? '' : ' — ohne Undo-Snapshot'),
+          ...(snapshotOk ? { snapshot: { kind: 'reporting-fields' as const, storeKey, months: undoMonths } } : {}),
+        });
+        undoAvailable = snapshotOk;
+      } catch (err) {
+        console.error('[VJ-TRANSFER] Import-Protokoll fehlgeschlagen:', err);
+      }
+      if (!undoAvailable) {
+        toast.warning('Übernahme ausgeführt, aber ohne Rückgängig-Protokoll — Undo im Import-Center ist für diesen Lauf nicht verfügbar.');
+      }
+
       const skippedConflicts = transferPlan.filter(p => p.transferable && p.conflict && !overwriteMonths.has(p.month)).length;
       setTransferDone(
         `${toTransfer.length} Monat(e) in die Erfolgsrechnung übernommen` +
@@ -752,6 +805,11 @@ export function VjDailyImportSection() {
               Übernahme prüfen
             </Button>
           </div>
+          {/* Letzte ER-Übernahme + Rückgängig (stellt nur die Umsatzfelder wieder her) */}
+          <LastImportPanel
+            source="vj-er-uebernahme"
+            undoHint="Zurückgesetzt werden nur die Umsatzfelder (Brutto/Netto) der übernommenen ER-Monate — Kosten und alle anderen Monatsdaten sind nicht betroffen."
+          />
           <p className="text-[10px] text-muted-foreground">
             Überträgt die Monatssummen der importierten Tageswerte als Umsatz in die Erfolgsrechnung:
             Brutto = Summe der Tage, Netto = Brutto ÷ 1.081 (8.1 % MwSt, ohne Take-Away-Split).
@@ -853,9 +911,10 @@ export function VjDailyImportSection() {
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm" className="h-8 text-xs gap-1.5"
-                    onClick={handleTransferConfirm}
+                    onClick={() => setConfirmOpen(true)}
                     disabled={transferring || selected.length === 0}
                     data-testid="vj-transfer-confirm"
+                    title="Übernimmt die täglichen Umsätze des Jahres als Monats-Umsatz in die Erfolgsrechnung (Ertragsseite). Die Kostenseite bleibt unverändert."
                   >
                     {transferring
                       ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Wird übernommen…</>
@@ -863,12 +922,41 @@ export function VjDailyImportSection() {
                   </Button>
                   <Button
                     size="sm" variant="outline" className="h-8 text-xs"
-                    onClick={() => { setTransferPlan(null); setOverwriteMonths(new Set()); }}
+                    onClick={() => { setTransferPlan(null); setOverwriteMonths(new Set()); setConfirmOpen(false); }}
                     disabled={transferring}
                   >
                     Abbrechen
                   </Button>
                 </div>
+
+                {/* Bestätigung vor dem Schreiben: nur Umsatzseite der ER */}
+                <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                  <AlertDialogContent data-testid="vj-transfer-confirm-dialog">
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Umsatz {year} aus den Tagesdaten in die Erfolgsrechnung übernehmen?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Bestehende ER-Umsätze dieses Jahres werden ersetzt ({selected.length}/12 Monate
+                        {conflictMonths.filter(p => overwriteMonths.has(p.month)).length > 0 && (
+                          <>, davon {conflictMonths.filter(p => overwriteMonths.has(p.month)).length} mit
+                          bestehenden Umsatzwerten</>
+                        )}).
+                        Nur die Umsatz-/Ertragszeile wird geändert — Kosten und alle anderen Werte
+                        bleiben unangetastet. Die Übernahme kann im Import-Center rückgängig gemacht werden.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel data-testid="vj-transfer-dialog-cancel">Abbrechen</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => { setConfirmOpen(false); void handleTransferConfirm(); }}
+                        data-testid="vj-transfer-dialog-confirm"
+                      >
+                        Bestätigen
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             );
           })()}
