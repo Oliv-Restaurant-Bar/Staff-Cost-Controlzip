@@ -2212,6 +2212,13 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 text-xs text-muted-foreground">
                                 <span className="inline-flex items-center gap-1.5">
                                   {e.reference ?? (!e.receiptPath && <span className="opacity-30">–</span>)}
+                                  {e.quelle === 'monatsrechnung' && (
+                                    <span className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-500/10 px-1.5 py-px text-[10px] text-amber-700 dark:text-amber-400"
+                                      title="Aus der Monatsrechnung übernommen (provisorisch) — der echte Lieferschein ersetzt diesen Eintrag beim Import."
+                                      data-testid={`badge-monatsrechnung-${e.id}`}>
+                                      aus Monatsrechnung
+                                    </span>
+                                  )}
                                   {(preisHinweise[e.id]?.length ?? 0) > 0 && (
                                     <span
                                       className={cn('inline-flex items-center gap-0.5 cursor-help',

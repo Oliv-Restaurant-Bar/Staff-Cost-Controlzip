@@ -67,6 +67,13 @@ export interface InvoiceEntry {
   kategorie?: WarenKategorie;
   /** Optionaler Beleg/Screenshot im privaten Storage-Bucket `waren-belege` (Pfad `<tenantId>/<id>.<ext>`). */
   receiptPath?: string;
+  /**
+   * Herkunft «aus Monatsrechnung» (provisorisch): Lieferung wurde aus den
+   * Anhang-Seiten der Monats-/Sammelrechnung übernommen, weil der echte
+   * Lieferschein fehlte. Wird der Lieferschein später hochgeladen, ersetzt er
+   * diesen Eintrag (Lieferschein ist führend). Fehlt das Feld = regulär erfasst.
+   */
+  quelle?: 'monatsrechnung';
   createdAt: string;
   updatedAt: string;
 }
@@ -484,6 +491,16 @@ export async function saveInvoiceEntry(
     console.log(`[WAREN] entry saved: id=${entry.id} date=${entry.date} supplier=${entry.supplierName} net=${entry.amountNet.toFixed(2)} gross=${entry.amountGross.toFixed(2)}`);
   }
   await kvSet(key, existing);
+}
+
+/** Ganzen Monatsbestand in einem Schreibvorgang ersetzen (Import-Pipelines). */
+export async function saveMonthInvoices(
+  tenantId: TenantId,
+  month: string, // YYYY-MM
+  entries: InvoiceEntry[],
+): Promise<void> {
+  await kvSet(invoicesKey(tenantId, month), entries);
+  console.log(`[WAREN] month saved: ${month} (${entries.length} entries) tenant="${tenantId}"`);
 }
 
 export async function deleteInvoiceEntry(

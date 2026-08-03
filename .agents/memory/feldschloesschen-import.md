@@ -12,3 +12,9 @@ description: Parser-/Import-Regeln für Feldschlösschen Lieferschein-, Sammelre
 
 **Why:** Review fand Doppelbuchungs-Risiko bei der Anhang-Übernahme (Faktura «fehlt» trotz naher bestehender Rechnung); Kontrollwerte: Lieferschein 17.07.2026 = 492.85, Juni-Sammelrechnung 87749870 = 9'723.00 / 5 Fakturas exakt.
 **How to apply:** Bei jeder Änderung an FS-Parser/Import zuerst `src/lib/__tests__/feldschloesschen.test.ts` (node-Pragma) laufen lassen und gegen die /attached_assets-PDF-Kontrollwerte verifizieren.
+
+## Lieferschein führend / Jahres-ZIP (Aug 2026)
+- Kern-Pipeline in `fs-import.ts` (`kernImportiereFsRechnungen`): per-Monat-Caches, EIN KV-Write pro Monat — Pflicht für jahresgrosse Läufe.
+- Jahres-ZIP bucht jetzt ALLE eingebetteten Anhang-Lieferscheine als Warenkosten (Lieferdatum!) + Preis-Historie + fs_historie; EIN Undo (typ fs_historie) über Monate+Historie+Jahre; Jahr-Sperre vor jedem Schreiben frisch prüfen.
+- Anhang-Übernahme aus Monatsrechnung setzt `InvoiceEntry.quelle='monatsrechnung'` (provisorisch, Badge). Echter Lieferschein ersetzt nahe provisorische Einträge (gleiche Referenz ODER ±7 Tage/±0.10) auch über Monatsgrenzen — dabei IMMER Positionen UND Preis-Hinweise des alten Eintrags löschen (Waisen-Bug, vom Review gefunden); Undo-Snapshot inkl. Nachbarmonate.
+- Regressionstests: `src/lib/__tests__/fs-import.test.ts` (KV-Mock; Monatsgrenzen-Ersetzung ohne Waisen).

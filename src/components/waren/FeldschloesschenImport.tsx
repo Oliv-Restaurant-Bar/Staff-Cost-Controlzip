@@ -7,15 +7,19 @@
  *   Zu-/Abschläge→4701 Betriebskosten, Leergut→Depot neutral). Preisüberwachung
  *   pro Material-Nr (gleiche Mechanik wie Transgourmet). Dublettensicher:
  *   Lieferant + Lieferung-Nr + Datum ersetzt den bestehenden Eintrag.
- * Teil B — Sammelrechnung = KONTROLLE (bucht NIE selbst): Fakturas werden über
- *   Datum (±7 Tage) + Betrag (±0.10) gegen die erfassten Einzel-Lieferungen
- *   gematcht; fehlende rot mit Komfort-Übernahme aus den eingebetteten
- *   Rechnungs-Seiten; «Zusammenfassung MwSt.» als Kategorien-Gegenprobe.
- * Teil C — Historie (ZIP mit Sammelrechnungen 2024/2025): pro Jahr+Mandant als
- *   Hardzahlen (Kategorien/Monat + Materialpreise), dublettensicher auf
- *   Sammelrechnung-Nr, Jahr-Sperre (im Save-Pfad frisch geprüft).
+ * Teil B — Sammelrechnung = KONTROLLE (bucht NIE von selbst): Fakturas werden
+ *   über Datum (±7 Tage) + Betrag (±0.10) gegen die erfassten Einzel-Lieferungen
+ *   gematcht; VORHANDENE werden nie angefasst, FEHLENDE können aus den
+ *   eingebetteten Rechnungs-Seiten übernommen werden — gekennzeichnet
+ *   quelle='monatsrechnung' (provisorisch). Lädt man den echten Lieferschein
+ *   später hoch, ersetzt er die provisorische Version (Lieferschein führend).
+ * Teil C — Jahres-ZIP (Sammelrechnungen 2024/2025/…): bucht ALLE eingebetteten
+ *   Lieferscheine mit ihrem Lieferdatum als Warenkosten (inkl. Preis-Historie)
+ *   UND speichert die Monats-Zusammenfassungen als Historie; Upsert auf
+ *   Lieferant+Lieferung-Nr+Datum (ersetzt, dupliziert nie); Jahr-Sperre wird
+ *   frisch im Save-Pfad geprüft.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -25,23 +29,22 @@ import { reconstructGnPdfLines } from '@/lib/gn-pdf-lines';
 import {
   toFsZeilen, detectFsPdfTyp, istFeldschloesschenPdf,
   parseFsLieferschein, parseFsSammelrechnung, fsLieferscheinAlsRechnung,
-  fsAnhangAlsRechnung, matchFakturen, kategorienGegenprobe, mitFsDefaults, findeNaheRechnung,
+  fsAnhangAlsRechnung, matchFakturen, kategorienGegenprobe, findeNaheRechnung,
   sammelrechnungZuHistorie,
   type FsLieferschein, type FsSammelrechnung, type FakturaAbgleich,
 } from '@/lib/feldschloesschen';
 import {
   berechnePreisAenderungen, aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE,
-  positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
   type ParsedCsvRechnung, type PreisAenderung,
 } from '@/lib/waren-positionen';
 import {
-  loadMonthInvoices, saveInvoiceEntry, loadPreisHistorie, savePreisHistorie,
-  loadPreisSchwelle, loadPreisHinweise, savePreisHinweise, loadWarengruppenMapping,
-  loadRechnungsPositionen, saveRechnungsPositionen, kategorieFromKonto,
+  loadMonthInvoices, loadPreisHistorie,
+  loadPreisSchwelle, loadRechnungsPositionen,
   loadFsHistorie, upsertFsHistorie, isFsHistorieLocked, setFsHistorieLock,
   erstelleWarenImportSnapshot, saveWarenImportUndo,
   type InvoiceEntry, type Supplier,
 } from '@/lib/waren-db';
+import { kernImportiereFsRechnungen } from '@/lib/fs-import';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { FsHistorienEintrag } from '@/lib/feldschloesschen';
@@ -68,7 +71,8 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   const [abgleich, setAbgleich] = useState<FakturaAbgleich | null>(null);
   const [monatsInvoices, setMonatsInvoices] = useState<InvoiceEntry[]>([]);
   const [uebernommen, setUebernommen] = useState<Set<string>>(new Set());
-  const [histVorschau, setHistVorschau] = useState<FsHistorienEintrag[] | null>(null);
+  /** Jahres-ZIP: geparste Sammelrechnungen — bucht Warenkosten UND Historie. */
+  const [zipVorschau, setZipVorschau] = useState<FsSammelrechnung[] | null>(null);
   const [histAnalyse, setHistAnalyse] = useState<{ jahr: string; eintraege: FsHistorienEintrag[]; locked: boolean } | null>(null);
   const [analyseJahr, setAnalyseJahr] = useState(String(new Date().getFullYear() - 1));
   const [undoRefresh, setUndoRefresh] = useState(0);
@@ -79,68 +83,27 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   );
 
   // ── Gemeinsame Import-Pipeline (Lieferschein & Anhang-Übernahme) ──────────
+  // Kern in src/lib/fs-import.ts (testbar); hier nur die gebundene Variante.
+  const kernImportiereRechnungen = (
+    rechnungen: Array<{ r: ParsedCsvRechnung; nettoOffiziell?: number | null; bruttoOffiziell?: number | null }>,
+    opts?: { quelle?: 'monatsrechnung' },
+  ) => kernImportiereFsRechnungen(tenantId, lieferant, rechnungen, opts);
+
+  /** Wie kern…, aber mit eigenem Undo-Datensatz (Typ «fs»). */
   const importiereRechnungen = async (
     rechnungen: Array<{ r: ParsedCsvRechnung; nettoOffiziell?: number | null; bruttoOffiziell?: number | null }>,
     undoLabel = 'Feldschlösschen-PDF',
+    opts?: { quelle?: 'monatsrechnung' },
   ) => {
-    // Undo-Snapshot VOR dem Schreiben: alle betroffenen Monate + Preis-Historie.
-    const monate = [...new Set(rechnungen.map(({ r }) => r.datum.slice(0, 7)))];
+    // Undo-Snapshot VOR dem Schreiben: betroffene Monate (±Nachbarmonate wegen
+    // möglicher Ersetzung provisorischer Einträge) + Preis-Historie.
+    const monate = [...new Set(rechnungen.flatMap(({ r }) => {
+      const d = new Date(`${r.datum}T00:00:00Z`);
+      const m = (off: number) => { const x = new Date(d); x.setUTCMonth(x.getUTCMonth() + off); return x.toISOString().slice(0, 7); };
+      return [m(-1), m(0), m(1)];
+    }))];
     const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
-    const [mappingRoh, historie, schwelle] = await Promise.all([
-      loadWarengruppenMapping(tenantId), loadPreisHistorie(tenantId),
-      loadPreisSchwelle(tenantId).catch(() => DEFAULT_PREIS_SCHWELLE),
-    ]);
-    const mapping = mitFsDefaults(mappingRoh);
-    let hist = historie;
-    let neu = 0, ersetzt = 0, offen = 0;
-    const alleAenderungen: PreisAenderung[] = [];
-    for (const { r, nettoOffiziell, bruttoOffiziell } of rechnungen) {
-      const month = r.datum.slice(0, 7);
-      const bestand = await loadMonthInvoices(tenantId, month);
-      const vorhanden = bestand.find(e =>
-        (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-        && e.date === r.datum
-        && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase());
-      const bestehendePos = await loadRechnungsPositionen(tenantId, month);
-      const positionen = uebernehmeManuelleKontierung(
-        positionenAusRechnung(r, mapping),
-        vorhanden ? bestehendePos[vorhanden.id] : undefined,
-      );
-      offen += positionen.filter(p => p.status === 'offen').length;
-      const splits = kontoSplitsAusPositionen(positionen);
-      const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? '4030';
-      const aenderungen = berechnePreisAenderungen(r, lieferant, hist, schwelle);
-      alleAenderungen.push(...aenderungen);
-      hist = aktualisierePreisHistorie(hist, [r], lieferant);
-      const jetzt = new Date().toISOString();
-      const id = vorhanden?.id ?? `fs-${r.rechnungsNr}-${Date.now()}`;
-      const entry: InvoiceEntry = {
-        id,
-        date: r.datum,
-        supplierName: lieferant,
-        amountGross: bruttoOffiziell ?? r.bruttoTotal,
-        amountNet: nettoOffiziell ?? r.nettoTotal,
-        vatIncluded: false,
-        vatRate: r.nettoTotal > 0 ? Math.round((r.mwstTotal / r.nettoTotal) * 1000) / 10 : 0,
-        reference: r.rechnungsNr,
-        note: `Feldschlösschen-PDF · ${r.positionen.length} Positionen`,
-        ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
-        kategorie: kategorieFromKonto(haupt),
-        ...(vorhanden?.receiptPath ? { receiptPath: vorhanden.receiptPath } : {}),
-        createdAt: vorhanden?.createdAt ?? jetzt,
-        updatedAt: jetzt,
-      };
-      await saveInvoiceEntry(tenantId, entry);
-      if (vorhanden) ersetzt++; else neu++;
-      const posMonat = await loadRechnungsPositionen(tenantId, month);
-      await saveRechnungsPositionen(tenantId, month, { ...posMonat, [id]: positionen });
-      if (aenderungen.length > 0) {
-        const hinweise = await loadPreisHinweise(tenantId, month);
-        await savePreisHinweise(tenantId, month, { ...hinweise, [id]: aenderungen });
-      }
-    }
-    await savePreisHistorie(tenantId, hist);
-    // Undo-Datensatz (nur der letzte Import ist rückgängig machbar).
+    const res = await kernImportiereRechnungen(rechnungen, opts);
     const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
     await saveWarenImportUndo(tenantId, {
       typ: 'fs', zeitpunkt: new Date().toISOString(),
@@ -148,7 +111,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       vorher, nachher,
     });
     setUndoRefresh(x => x + 1);
-    return { neu, ersetzt, offen, preisAenderungen: alleAenderungen.length };
+    return res;
   };
 
   // ── Datei-Handling: PDFs (Lieferschein/Sammelrechnung) oder ZIP (Historie) ─
@@ -161,7 +124,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
 
       if (zips.length > 0) {
         const { default: JSZip } = await import('jszip');
-        const eintraege: FsHistorienEintrag[] = [];
+        const sammelListe: FsSammelrechnung[] = [];
         const fehler: string[] = [];
         for (const zf of zips) {
           const zip = await JSZip.loadAsync(await zf.arrayBuffer());
@@ -173,15 +136,15 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
               if (detectFsPdfTyp(zeilen) !== 'sammelrechnung') { fehler.push(`${name}: keine Sammelrechnung`); continue; }
               const s = parseFsSammelrechnung(zeilen);
               if (s.failureReason) { fehler.push(`${name}: ${s.failureReason}`); continue; }
-              eintraege.push(sammelrechnungZuHistorie(s));
+              sammelListe.push(s);
             } catch (e) {
               fehler.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
             }
           }
         }
         if (fehler.length > 0) toast.error(`${fehler.length} Datei(en) übersprungen: ${fehler[0]}`);
-        if (eintraege.length === 0) { toast.error('Keine Sammelrechnungen im ZIP erkannt.'); return; }
-        setHistVorschau(eintraege.sort((a, b) => a.datum.localeCompare(b.datum)));
+        if (sammelListe.length === 0) { toast.error('Keine Sammelrechnungen im ZIP erkannt.'); return; }
+        setZipVorschau(sammelListe.sort((a, b) => a.datum.localeCompare(b.datum)));
         setLieferscheine(null); setSammel(null);
         return;
       }
@@ -218,13 +181,51 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         setMonatsInvoices(invoices);
         setAbgleich(matchFakturen(neueSammel.fakturen, invoices));
       }
-      setHistVorschau(null);
+      setZipVorschau(null);
     } catch (e) {
       toast.error(`Lesen fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setBusy(false);
     }
   };
+
+  // ── Teil 1: Preisüberwachung in der Lieferschein-Vorschau ─────────────────
+  // Gleiche Mechanik wie Transgourmet: pro Material-Nr gegen die gespeicherte
+  // Preis-Historie; Pfand/Leergut (MWST-Code C0) ist ausgenommen (im Berechner).
+  const [preisVorschau, setPreisVorschau] = useState<PreisAenderung[] | null>(null);
+  const [preisFilter, setPreisFilter] = useState<'erhoehung' | 'senkung' | 'klein' | 'alle'>('erhoehung');
+  useEffect(() => {
+    let aktiv = true;
+    if (!lieferscheine || lieferscheine.length === 0) { setPreisVorschau(null); return; }
+    void (async () => {
+      try {
+        const [historie, schwelle] = await Promise.all([
+          loadPreisHistorie(tenantId),
+          loadPreisSchwelle(tenantId).catch(() => DEFAULT_PREIS_SCHWELLE),
+        ]);
+        let hist = historie;
+        const alle: PreisAenderung[] = [];
+        for (const ls of [...lieferscheine].sort((a, b) => a.lieferdatum.localeCompare(b.lieferdatum))) {
+          const r = fsLieferscheinAlsRechnung(ls);
+          alle.push(...berechnePreisAenderungen(r, lieferant, hist, schwelle));
+          hist = aktualisierePreisHistorie(hist, [r], lieferant);
+        }
+        if (aktiv) setPreisVorschau(alle);
+      } catch { if (aktiv) setPreisVorschau(null); }
+    })();
+    return () => { aktiv = false; };
+  }, [lieferscheine, tenantId, lieferant]);
+
+  const preisGefiltert = useMemo(() => {
+    if (!preisVorschau) return [];
+    const pct = (a: PreisAenderung) => a.diffPct ?? 0;
+    switch (preisFilter) {
+      case 'erhoehung': return preisVorschau.filter(a => a.stark && a.erhoehung).sort((a, b) => pct(b) - pct(a));
+      case 'senkung': return preisVorschau.filter(a => a.stark && !a.erhoehung).sort((a, b) => pct(a) - pct(b));
+      case 'klein': return preisVorschau.filter(a => !a.stark).sort((a, b) => Math.abs(pct(b)) - Math.abs(pct(a)));
+      case 'alle': return [...preisVorschau].sort((a, b) => Math.abs(pct(b)) - Math.abs(pct(a)));
+    }
+  }, [preisVorschau, preisFilter]);
 
   // ── Teil A: ausgewählte Lieferscheine importieren ─────────────────────────
   const importiereLieferscheine = async () => {
@@ -276,8 +277,12 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         toast.error(`Nicht übernommen (mögliches Duplikat — bitte manuell prüfen): ${blockiert.join(' · ')}`, { duration: 12000 });
       }
       if (zuImportieren.length === 0) return;
-      const res = await importiereRechnungen(zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a) })), 'Feldschlösschen-Anhang-Übernahme');
-      toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferschein(e) übernommen${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
+      const res = await importiereRechnungen(
+        zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a) })),
+        'Monatsrechnung: fehlende Lieferungen ergänzt',
+        { quelle: 'monatsrechnung' },
+      );
+      toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferung(en) aus der Monatsrechnung ergänzt (provisorisch — echter Lieferschein ersetzt sie später)${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
       setUebernommen(prev => new Set([...prev, fakturaNr]));
       // Abgleich mit frischem Bestand aktualisieren
       const monate = [...new Set(sammel.fakturen.map(f => f.datum.slice(0, 7)).filter(Boolean))];
@@ -293,33 +298,51 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
     }
   };
 
-  // ── Teil C: Historie speichern / Analyse ──────────────────────────────────
-  const speichereHistorie = async () => {
-    if (!histVorschau) return;
+  // ── Teil C: Jahres-ZIP importieren (Warenkosten + Preis-Historie + Historie) ─
+  const importiereZip = async () => {
+    if (!zipVorschau) return;
+    // Alle Lieferungen aus den eingebetteten Lieferschein-Seiten — mit LIEFERDATUM.
+    const lieferungen = zipVorschau.flatMap(s => s.anhangLieferscheine.filter(a => a.positionen.length > 0));
+    const histEintraege = zipVorschau.map(sammelrechnungZuHistorie);
+    if (lieferungen.length === 0 && histEintraege.length === 0) return;
     setBusy(true);
     try {
       const proJahr = new Map<string, FsHistorienEintrag[]>();
-      for (const e of histVorschau) {
-        const jahr = e.datum.slice(0, 4);
-        proJahr.set(jahr, [...(proJahr.get(jahr) ?? []), e]);
+      for (const e of histEintraege) proJahr.set(e.datum.slice(0, 4), [...(proJahr.get(e.datum.slice(0, 4)) ?? []), e]);
+      const jahre = [...new Set([...proJahr.keys(), ...lieferungen.map(l => l.datum.slice(0, 4))])].sort();
+      // Jahr-Sperre VOR jedem Schreiben frisch prüfen (gilt auch für die Warenkosten-Buchung).
+      for (const j of jahre) {
+        if (await isFsHistorieLocked(tenantId, j)) {
+          toast.error(`Jahr ${j} ist gesperrt (abgeschlossen) — Import abgebrochen, nichts geschrieben.`);
+          return;
+        }
       }
-      // Undo-Snapshot VOR dem Schreiben: alle betroffenen Historien-Jahre.
-      const jahre = [...proJahr.keys()];
-      const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [], jahre });
+      // EIN Undo-Datensatz für alles: betroffene Monate + Preis-Historie + Historien-Jahre.
+      const monate = [...new Set(lieferungen.map(l => l.datum.slice(0, 7)))];
+      const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true, jahre });
+      const res = lieferungen.length > 0
+        ? await kernImportiereRechnungen(lieferungen.map(a => ({ r: fsAnhangAlsRechnung(a) })))
+        : { neu: 0, ersetzt: 0, offen: 0, provisorischErsetzt: 0, preisAenderungen: 0, monate: [] as string[] };
       const teile: string[] = [];
       for (const [jahr, eintraege] of proJahr) {
-        const res = await upsertFsHistorie(tenantId, jahr, eintraege); // Lock wird im Save-Pfad frisch geprüft
-        teile.push(`${jahr}: ${res.neu} neu${res.ersetzt > 0 ? `, ${res.ersetzt} ersetzt` : ''}`);
+        const hres = await upsertFsHistorie(tenantId, jahr, eintraege); // Lock wird im Save-Pfad erneut geprüft
+        teile.push(`${jahr}: ${hres.neu + hres.ersetzt} Monatsrechnungen`);
       }
-      const nachher = await erstelleWarenImportSnapshot(tenantId, { monate: [], jahre });
+      const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true, jahre });
       await saveWarenImportUndo(tenantId, {
         typ: 'fs_historie', zeitpunkt: new Date().toISOString(),
-        label: `Historien-ZIP (${jahre.join(', ')})`, anzahlRechnungen: histVorschau.length,
+        label: `Jahres-ZIP (${jahre.join(', ')})`, anzahlRechnungen: lieferungen.length,
         vorher, nachher,
       });
       setUndoRefresh(x => x + 1);
-      toast.success(`Historie gespeichert — ${teile.join(' · ')}`);
-      setHistVorschau(null);
+      toast.success(
+        `Jahres-Import: ${res.neu} Lieferung${res.neu === 1 ? '' : 'en'} gebucht${res.ersetzt > 0 ? `, ${res.ersetzt} ersetzt` : ''}`
+        + `${res.preisAenderungen > 0 ? ` · ${res.preisAenderungen} Preisänderungen` : ''}`
+        + ` · Historie ${teile.join(' · ')}`,
+        { duration: 10000 },
+      );
+      setZipVorschau(null);
+      onImported();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
     } finally {
@@ -434,7 +457,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
 
       <WarenImportUndoButton tenantId={tenantId} typ="fs" refresh={undoRefresh} onUndone={onImported} />
       <WarenImportUndoButton tenantId={tenantId} typ="fs_historie" refresh={undoRefresh}
-        onUndone={() => { setHistAnalyse(null); setHistVorschau(null); }} />
+        onUndone={() => { setHistAnalyse(null); setZipVorschau(null); onImported(); }} />
 
       {/* ── Teil A: Lieferschein-Vorschau ── */}
       {lieferscheine && lieferscheine.length > 0 && (
@@ -470,6 +493,44 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
               );
             })}
           </div>
+          {/* Preisüberwachung — VOR dem Schreiben sichtbar, gefiltert nach Relevanz */}
+          {preisVorschau && preisVorschau.length > 0 && (() => {
+            const erh = preisVorschau.filter(a => a.stark && a.erhoehung).length;
+            const senk = preisVorschau.filter(a => a.stark && !a.erhoehung).length;
+            const klein = preisVorschau.filter(a => !a.stark).length;
+            const filterBtn = (id: typeof preisFilter, text: string) => (
+              <button key={id} type="button" onClick={() => setPreisFilter(id)}
+                className={cn('rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                  preisFilter === id ? 'bg-foreground text-background border-foreground font-medium' : 'border-border text-muted-foreground hover:bg-muted/40')}
+                data-testid={`fs-preisfilter-${id}`}>
+                {text}
+              </button>
+            );
+            return (
+              <div className="border-t border-border/40 pt-2 space-y-1" data-testid="fs-preis-vorschau">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-muted-foreground mr-1">Preisänderungen ({preisVorschau.length})</span>
+                  {filterBtn('erhoehung', `Erhöhungen (${erh})`)}
+                  {filterBtn('senkung', `Senkungen (${senk})`)}
+                  {filterBtn('klein', `kleine (${klein})`)}
+                  {filterBtn('alle', 'alle')}
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-0.5">
+                  {preisGefiltert.map(a => (
+                    <div key={a.key} className={cn('flex items-center gap-2 tabular-nums px-1 py-0.5 rounded',
+                      a.stark && (a.erhoehung ? 'bg-red-500/10 text-red-700 dark:text-red-300' : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'))}>
+                      <span className="w-16 text-muted-foreground">{a.artNr}</span>
+                      <span className="flex-1 truncate" title={a.artikel}>{a.artikel}</span>
+                      <span className="w-32 text-right">CHF {fmt(a.alt)} → {fmt(a.neu)}</span>
+                      <span className="w-16 text-right font-medium">{a.diffPct === null ? '—' : `${a.diffPct > 0 ? '+' : ''}${a.diffPct.toFixed(1)} %`}</span>
+                      <span className="w-20 text-right text-muted-foreground">seit {fmtDatumCH(a.seit)}</span>
+                    </div>
+                  ))}
+                  {preisGefiltert.length === 0 && <div className="text-muted-foreground px-1">Keine Einträge in diesem Filter.</div>}
+                </div>
+              </div>
+            );
+          })()}
           <div className="flex justify-end">
             <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || ausgewaehlt.size === 0}
               onClick={() => void importiereLieferscheine()} data-testid="fs-liefer-import">
@@ -492,13 +553,18 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
               {abgleich.vorhanden === abgleich.gesamt ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
               {abgleich.vorhanden} von {abgleich.gesamt} Lieferungen erfasst
             </span>
+            <span className="text-[11px] text-muted-foreground tabular-nums" data-testid="fs-sammel-zaehler">
+              bereits vorhanden, unverändert: {abgleich.vorhanden} · aus Monatsrechnung ergänzbar (fehlen): {abgleich.gesamt - abgleich.vorhanden}
+            </span>
             <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]"
               onClick={() => { setSammel(null); setAbgleich(null); setGegenprobeZeilen(null); }}>
               <X className="h-3 w-3 mr-0.5" /> Schliessen
             </Button>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Die Monatsrechnung dient NUR der Kontrolle — sie wird nie zusätzlich gebucht. Fehlende Lieferungen können aus den im PDF enthaltenen Rechnungs-Seiten übernommen werden.
+            Die Monatsrechnung dient NUR der Kontrolle — vorhandene Lieferungen werden NIE angefasst. Fehlende können aus den
+            eingebetteten Rechnungs-Seiten übernommen werden (gekennzeichnet «aus Monatsrechnung», provisorisch); lädst du den
+            echten Lieferschein später hoch, ersetzt er die provisorische Version.
           </p>
           <div className="space-y-0.5">
             {abgleich.matches.map(m => (
@@ -555,34 +621,48 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         </div>
       )}
 
-      {/* ── Teil C: Historie-Vorschau (ZIP) ── */}
-      {histVorschau && (
+      {/* ── Teil C: Jahres-ZIP-Vorschau (bucht Warenkosten + Historie) ── */}
+      {zipVorschau && (() => {
+        const lieferungen = zipVorschau.flatMap(s => s.anhangLieferscheine.filter(a => a.positionen.length > 0));
+        const ohnePositionen = zipVorschau.reduce((a, s) => a + s.anhangLieferscheine.filter(x => x.positionen.length === 0).length, 0);
+        const jahre = [...new Set([...zipVorschau.map(s => s.datum.slice(0, 4)), ...lieferungen.map(l => l.datum.slice(0, 4))])].sort();
+        return (
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs space-y-2" data-testid="fs-historie-vorschau">
           <div className="flex items-center gap-3">
-            <span className="font-medium">{histVorschau.length} Sammelrechnung{histVorschau.length === 1 ? '' : 'en'} aus ZIP (Vorschau)</span>
-            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => setHistVorschau(null)}>
+            <span className="font-medium">
+              Jahres-ZIP {jahre.join(', ')} · {zipVorschau.length} Sammelrechnung{zipVorschau.length === 1 ? '' : 'en'} · {lieferungen.length} Lieferungen (Vorschau)
+            </span>
+            <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => setZipVorschau(null)}>
               <X className="h-3 w-3 mr-0.5" /> Verwerfen
             </Button>
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            Bucht alle Lieferungen mit ihrem LIEFERDATUM aus den eingebetteten Lieferschein-Seiten (Warenkosten + Preis-Historie)
+            und speichert die Monats-Zusammenfassungen für die Analyse. Erneuter Upload ersetzt, dupliziert nie.
+            {ohnePositionen > 0 && ` ${ohnePositionen} Lieferung(en) ohne Positions-Seiten werden übersprungen.`}
+          </p>
           <div className="max-h-48 overflow-y-auto space-y-0.5">
-            {histVorschau.map(e => (
-              <div key={e.sammelNr} className="flex items-center gap-2 tabular-nums px-1 py-0.5">
-                <span className="w-20">{fmtDatumCH(e.datum)}</span>
-                <span className="w-28">Nr. {e.sammelNr}</span>
-                <span className="text-muted-foreground">{e.fakturaAnzahl} Fakturas · {Object.keys(e.kategorien).length} Kategorien</span>
-                <span className="ml-auto">CHF {e.endbetrag !== null ? fmt(e.endbetrag) : '—'}</span>
+            {zipVorschau.map(s => (
+              <div key={s.nr} className="flex items-center gap-2 tabular-nums px-1 py-0.5">
+                <span className="w-20">{fmtDatumCH(s.datum)}</span>
+                <span className="w-28">Nr. {s.nr}</span>
+                <span className="text-muted-foreground">
+                  {s.fakturen.length} Fakturas · {s.anhangLieferscheine.filter(a => a.positionen.length > 0).length} Lieferungen mit Positionen
+                </span>
+                <span className="ml-auto">CHF {s.endbetrag !== null ? fmt(s.endbetrag) : '—'}</span>
               </div>
             ))}
           </div>
           <div className="flex justify-end">
-            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy} onClick={() => void speichereHistorie()}
-              data-testid="fs-historie-speichern">
+            <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || (lieferungen.length === 0 && zipVorschau.length === 0)}
+              onClick={() => void importiereZip()} data-testid="fs-historie-speichern">
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-              Historie speichern (dublettensicher, pro Jahr)
+              Jahr importieren: {lieferungen.length} Lieferungen buchen + Historie speichern
             </Button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ── Teil C: Analyse ── */}
       {histAnalyse && (
