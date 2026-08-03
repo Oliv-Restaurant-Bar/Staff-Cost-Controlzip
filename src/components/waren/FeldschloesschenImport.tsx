@@ -39,11 +39,13 @@ import {
   loadPreisSchwelle, loadPreisHinweise, savePreisHinweise, loadWarengruppenMapping,
   loadRechnungsPositionen, saveRechnungsPositionen, kategorieFromKonto,
   loadFsHistorie, upsertFsHistorie, isFsHistorieLocked, setFsHistorieLock,
+  erstelleWarenImportSnapshot, saveWarenImportUndo,
   type InvoiceEntry, type Supplier,
 } from '@/lib/waren-db';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { FsHistorienEintrag } from '@/lib/feldschloesschen';
+import { WarenImportUndoButton } from '@/components/waren/WarenCsvImport';
 
 const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -69,6 +71,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   const [histVorschau, setHistVorschau] = useState<FsHistorienEintrag[] | null>(null);
   const [histAnalyse, setHistAnalyse] = useState<{ jahr: string; eintraege: FsHistorienEintrag[]; locked: boolean } | null>(null);
   const [analyseJahr, setAnalyseJahr] = useState(String(new Date().getFullYear() - 1));
+  const [undoRefresh, setUndoRefresh] = useState(0);
 
   const lieferant = useMemo(
     () => suppliers.find(s => /feldschl/i.test(s.name))?.name ?? 'Feldschlösschen',
@@ -78,7 +81,11 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   // ── Gemeinsame Import-Pipeline (Lieferschein & Anhang-Übernahme) ──────────
   const importiereRechnungen = async (
     rechnungen: Array<{ r: ParsedCsvRechnung; nettoOffiziell?: number | null; bruttoOffiziell?: number | null }>,
+    undoLabel = 'Feldschlösschen-PDF',
   ) => {
+    // Undo-Snapshot VOR dem Schreiben: alle betroffenen Monate + Preis-Historie.
+    const monate = [...new Set(rechnungen.map(({ r }) => r.datum.slice(0, 7)))];
+    const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
     const [mappingRoh, historie, schwelle] = await Promise.all([
       loadWarengruppenMapping(tenantId), loadPreisHistorie(tenantId),
       loadPreisSchwelle(tenantId).catch(() => DEFAULT_PREIS_SCHWELLE),
@@ -133,6 +140,14 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       }
     }
     await savePreisHistorie(tenantId, hist);
+    // Undo-Datensatz (nur der letzte Import ist rückgängig machbar).
+    const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
+    await saveWarenImportUndo(tenantId, {
+      typ: 'fs', zeitpunkt: new Date().toISOString(),
+      label: undoLabel, anzahlRechnungen: rechnungen.length,
+      vorher, nachher,
+    });
+    setUndoRefresh(x => x + 1);
     return { neu, ersetzt, offen, preisAenderungen: alleAenderungen.length };
   };
 
@@ -222,7 +237,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         r: fsLieferscheinAlsRechnung(ls),
         nettoOffiziell: ls.totalNetto,
         bruttoOffiziell: ls.totalLieferung,
-      })));
+      })), 'Feldschlösschen-Lieferscheine');
       toast.success(`${res.neu} Lieferung${res.neu === 1 ? '' : 'en'} importiert${res.ersetzt > 0 ? `, ${res.ersetzt} ersetzt` : ''}`
         + `${res.preisAenderungen > 0 ? ` · ${res.preisAenderungen} Preisänderungen` : ''}`
         + `${res.offen > 0 ? ` · ${res.offen} Positionen «Konto offen»` : ''}`);
@@ -261,7 +276,7 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         toast.error(`Nicht übernommen (mögliches Duplikat — bitte manuell prüfen): ${blockiert.join(' · ')}`, { duration: 12000 });
       }
       if (zuImportieren.length === 0) return;
-      const res = await importiereRechnungen(zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a) })));
+      const res = await importiereRechnungen(zuImportieren.map(a => ({ r: fsAnhangAlsRechnung(a) })), 'Feldschlösschen-Anhang-Übernahme');
       toast.success(`Faktura ${fakturaNr}: ${res.neu + res.ersetzt} Lieferschein(e) übernommen${res.offen > 0 ? ` · ${res.offen} «Konto offen»` : ''}`);
       setUebernommen(prev => new Set([...prev, fakturaNr]));
       // Abgleich mit frischem Bestand aktualisieren
@@ -288,11 +303,21 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
         const jahr = e.datum.slice(0, 4);
         proJahr.set(jahr, [...(proJahr.get(jahr) ?? []), e]);
       }
+      // Undo-Snapshot VOR dem Schreiben: alle betroffenen Historien-Jahre.
+      const jahre = [...proJahr.keys()];
+      const vorher = await erstelleWarenImportSnapshot(tenantId, { monate: [], jahre });
       const teile: string[] = [];
       for (const [jahr, eintraege] of proJahr) {
         const res = await upsertFsHistorie(tenantId, jahr, eintraege); // Lock wird im Save-Pfad frisch geprüft
         teile.push(`${jahr}: ${res.neu} neu${res.ersetzt > 0 ? `, ${res.ersetzt} ersetzt` : ''}`);
       }
+      const nachher = await erstelleWarenImportSnapshot(tenantId, { monate: [], jahre });
+      await saveWarenImportUndo(tenantId, {
+        typ: 'fs_historie', zeitpunkt: new Date().toISOString(),
+        label: `Historien-ZIP (${jahre.join(', ')})`, anzahlRechnungen: histVorschau.length,
+        vorher, nachher,
+      });
+      setUndoRefresh(x => x + 1);
       toast.success(`Historie gespeichert — ${teile.join(' · ')}`);
       setHistVorschau(null);
     } catch (e) {
@@ -406,6 +431,10 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
           </span>
         )}
       </div>
+
+      <WarenImportUndoButton tenantId={tenantId} typ="fs" refresh={undoRefresh} onUndone={onImported} />
+      <WarenImportUndoButton tenantId={tenantId} typ="fs_historie" refresh={undoRefresh}
+        onUndone={() => { setHistAnalyse(null); setHistVorschau(null); }} />
 
       {/* ── Teil A: Lieferschein-Vorschau ── */}
       {lieferscheine && lieferscheine.length > 0 && (

@@ -80,6 +80,7 @@
 - [Dynamisches Vorjahr aus Jahresdaten](vj-dynamisch-jahresdaten.md) — Monatsreport-VJ liest Ist-Daten Jahr−1 (umsatz-SSOT) vor vj_daily; PK-VJ-Fallback via computePLForMonth; Jahres-Lock gilt für ALLE Importe.
 - [Kontoblatt-Mehrmonatsimport](kontoblatt-mehrmonatsimport.md) — Jahres-/Periodendateien pro Konto+Monat gruppieren; Upsert nur Datei-Monate; Journal nur bei Ist; Undo inkl. Journal; Lock strict.
 - [Verkaufsdaten F/B-Jahresimport](verkaufsdaten-import.md) — explizite 0 ist ein Tageswert (nie `>0`-Filter); vj_daily-Merge-Basis strikt lesen, sonst actualRevenue-Clobber.
+- [Warenrechnungs-Import-Undo](waren-import-undo.md) — ein Slot je Mandant+Typ, vorher/nachher-Snapshots aller geschriebenen Keys, Undo verweigert bei Abweichung (kein CAS im KV).
 - [TG/Prodega Lieferanten-Trennung](waren-lieferanten-trennung.md) — Lieferant je Rechnung aus Markt-Spalte; docKey inkl. Markt; unbekannter Markt = «Lieferant offen», nie raten.
 - [Feldschlösschen PDF-Import](feldschloesschen-import.md) — MWST-Satz als hartes Kategorie-Signal, Sammelrechnung nur Kontrolle, Duplikat-Wache bei Anhang-Übernahme, Jahr-Lock frisch im Save-Pfad.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.

@@ -30,12 +30,55 @@ import {
   loadPreisSchwelle, savePreisSchwelle, loadPreisHinweise, savePreisHinweise,
   loadWarengruppenMapping, saveWarengruppenMapping, loadRechnungsPositionen, saveRechnungsPositionen,
   loadMarktLieferantenMapping, saveMarktLieferantenMapping,
-  kategorieFromKonto, type InvoiceEntry, type Supplier,
+  erstelleWarenImportSnapshot, saveWarenImportUndo, loadWarenImportUndo, undoWarenImport,
+  kategorieFromKonto, type InvoiceEntry, type Supplier, type WarenImportTyp,
 } from '@/lib/waren-db';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
 import type { TenantId } from '@/contexts/TenantContext';
 
 const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * «Letzter Import rückgängig machen» — pro Mandant und Import-Typ genau ein Slot.
+ * Zeigt Typ, Zeitpunkt und Anzahl Rechnungen des rückgängig machbaren Imports.
+ * Konfliktschutz und Jahr-Sperre werden in undoWarenImport (Datenschicht) geprüft.
+ */
+export function WarenImportUndoButton({ tenantId, typ, refresh, onUndone }: {
+  tenantId: TenantId; typ: WarenImportTyp; refresh: number; onUndone: () => void;
+}) {
+  const [rec, setRec] = useState<Awaited<ReturnType<typeof loadWarenImportUndo>>>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    loadWarenImportUndo(tenantId, typ).then(r => { if (alive) setRec(r); });
+    return () => { alive = false; };
+  }, [tenantId, typ, refresh]);
+  if (!rec) return null;
+  const zeit = new Date(rec.zeitpunkt).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return (
+    <div className="flex items-center gap-2 text-xs border border-border/50 rounded-md px-2 py-1.5 bg-muted/20" data-testid={`waren-undo-${typ}`}>
+      <span className="text-muted-foreground truncate">
+        Letzter Import: <span className="text-foreground">{rec.label}</span> · {zeit} · {rec.anzahlRechnungen} Rechnung{rec.anzahlRechnungen === 1 ? '' : 'en'}
+      </span>
+      <Button size="sm" variant="outline" className="h-6 px-2 text-[11px] shrink-0" disabled={busy}
+        data-testid={`waren-undo-button-${typ}`}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const r = await undoWarenImport(tenantId, typ);
+            toast.success(`Import rückgängig gemacht: ${r.label} (${r.anzahlRechnungen} Rechnung${r.anzahlRechnungen === 1 ? '' : 'en'}) — Stand vor dem Import wiederhergestellt.`);
+            setRec(null);
+            onUndone();
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e));
+          } finally { setBusy(false); }
+        }}>
+        {busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+        Letzter Import rückgängig machen
+      </Button>
+    </div>
+  );
+}
 
 /**
  * Einstellungen-Editor «Warengruppe → Konto» (mandantengetrennt, KV-persistiert).
@@ -218,6 +261,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
   // Offene Märkte: Eingabefelder für die Sofort-Zuordnung (Markt → Lieferant)
   const [marktZuordnung, setMarktZuordnung] = useState<Record<string, string>>({});
   const [preisFilter, setPreisFilter] = useState<'erhoehung' | 'senkung' | 'klein' | 'alle'>('erhoehung');
+  const [undoRefresh, setUndoRefresh] = useState(0);
   const geladen = useRef(false);
 
   useEffect(() => {
@@ -300,6 +344,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     if (zuImportieren.length === 0) return;
     setBusy(true);
     try {
+      // Undo-Snapshot VOR dem Schreiben: alle betroffenen Monate + Preis-Historie.
+      const monate = [...new Set(zuImportieren.map(r => r.datum.slice(0, 7)))];
+      const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
       let ersetzt = 0, neu = 0;
       const hinweiseProMonat = new Map<string, Record<string, PreisAenderung[]>>();
       const positionenProMonat = new Map<string, Record<string, ReturnType<typeof positionenAusRechnung>>>();
@@ -364,6 +411,14 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
       }
       await savePreisHistorie(tenantId, vorschau.histNachImport);
       setHistorie(vorschau.histNachImport);
+      // Undo-Datensatz (nur der letzte Import ist rückgängig machbar).
+      const nachher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
+      await saveWarenImportUndo(tenantId, {
+        typ: 'csv', zeitpunkt: new Date().toISOString(),
+        label: 'CSV Transgourmet/Prodega', anzahlRechnungen: zuImportieren.length,
+        vorher, nachher,
+      });
+      setUndoRefresh(x => x + 1);
       toast.success(`${neu} Rechnung${neu === 1 ? '' : 'en'} importiert${ersetzt > 0 ? `, ${ersetzt} ersetzt` : ''} · ${vorschau.alle.length} Preisänderung${vorschau.alle.length === 1 ? '' : 'en'}.`);
       setErgebnis(null);
       onImported();
@@ -404,6 +459,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
             onBlur={speichereSchwelle} className="h-6 w-14 px-1 text-[11px] text-right tabular-nums" data-testid="preis-schwelle-chf" />
         </span>
       </div>
+
+      <WarenImportUndoButton tenantId={tenantId} typ="csv" refresh={undoRefresh}
+        onUndone={() => { setHistorie(null); geladen.current = false; void loadPreisHistorie(tenantId).then(setHistorie).finally(() => { geladen.current = true; }); onImported(); }} />
 
       {ergebnis && ergebnis.rechnungen.length > 0 && (
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs space-y-3" data-testid="csv-import-vorschau">

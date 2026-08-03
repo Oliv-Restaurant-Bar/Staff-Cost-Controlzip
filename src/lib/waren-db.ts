@@ -800,3 +800,146 @@ export async function loadMarktLieferantenMapping(tenantId: TenantId): Promise<i
 export async function saveMarktLieferantenMapping(tenantId: TenantId, mapping: import('./waren-positionen').MarktLieferantenMapping): Promise<void> {
   await kvSet(tenantKey(tenantId, 'waren_markt_lieferanten_v1'), mapping);
 }
+
+// ─── «Letzter Import rückgängig machen» (Warenrechnungs-Importe) ─────────────
+// Pro Mandant und Import-Typ genau EIN Undo-Slot (der jeweils letzte Import).
+// Snapshot VOR dem Schreiben (vorher) + NACH dem Schreiben (nachher):
+// Undo verweigert sauber, wenn der aktuelle Stand nicht mehr «nachher»
+// entspricht (zwischenzeitliche manuelle Edits werden nie überschrieben).
+
+export type WarenImportTyp = 'csv' | 'fs' | 'fs_historie';
+
+export interface WarenImportSnapshot {
+  /** supplier_invoices_YYYY-MM pro betroffenem Monat */
+  invoicesProMonat: Record<string, InvoiceEntry[]>;
+  /** waren_positionen_<monat>_v1 pro betroffenem Monat */
+  positionenProMonat: Record<string, unknown>;
+  /** waren_preishinweise_<monat>_v1 pro betroffenem Monat */
+  hinweiseProMonat: Record<string, unknown>;
+  /** waren_preishistorie_v1 (nur wenn der Import sie verändert) */
+  preisHistorie?: unknown;
+  /** fs_historie_<jahr>_v1 pro betroffenem Jahr (nur Historien-Import) */
+  fsHistorieProJahr?: Record<string, unknown>;
+}
+
+export interface WarenImportUndoRecord {
+  typ: WarenImportTyp;
+  zeitpunkt: string;        // ISO
+  label: string;            // z.B. «CSV Transgourmet/Prodega»
+  anzahlRechnungen: number;
+  vorher: WarenImportSnapshot;
+  nachher: WarenImportSnapshot;
+}
+
+const importUndoKey = (tenantId: TenantId, typ: WarenImportTyp) =>
+  tenantKey(tenantId, `waren_import_undo_${typ}_v1`);
+const preisHistorieRawKey = (tenantId: TenantId) => tenantKey(tenantId, 'waren_preishistorie_v1');
+
+/** Liest den betroffenen Datenbestand (Monate/Jahre) frisch aus dem KV. */
+export async function erstelleWarenImportSnapshot(
+  tenantId: TenantId,
+  scope: { monate: string[]; mitPreisHistorie?: boolean; jahre?: string[] },
+): Promise<WarenImportSnapshot> {
+  const snap: WarenImportSnapshot = { invoicesProMonat: {}, positionenProMonat: {}, hinweiseProMonat: {} };
+  for (const m of [...new Set(scope.monate)]) {
+    snap.invoicesProMonat[m] = await loadMonthInvoices(tenantId, m);
+    snap.positionenProMonat[m] = (await kvGet(tenantKey(tenantId, `waren_positionen_${m}_v1`))) ?? null;
+    snap.hinweiseProMonat[m] = (await kvGet(tenantKey(tenantId, `waren_preishinweise_${m}_v1`))) ?? null;
+  }
+  if (scope.mitPreisHistorie) snap.preisHistorie = (await kvGet(preisHistorieRawKey(tenantId))) ?? null;
+  if (scope.jahre && scope.jahre.length > 0) {
+    snap.fsHistorieProJahr = {};
+    for (const j of [...new Set(scope.jahre)]) {
+      snap.fsHistorieProJahr[j] = (await kvGet(fsHistorieKey(tenantId, j))) ?? null;
+    }
+  }
+  return snap;
+}
+
+export async function saveWarenImportUndo(tenantId: TenantId, record: WarenImportUndoRecord): Promise<void> {
+  await kvSet(importUndoKey(tenantId, record.typ), record);
+}
+
+export async function loadWarenImportUndo(tenantId: TenantId, typ: WarenImportTyp): Promise<WarenImportUndoRecord | null> {
+  try {
+    const raw = await kvGet(importUndoKey(tenantId, typ));
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as WarenImportUndoRecord;
+    return r.vorher && r.nachher && r.zeitpunkt ? r : null;
+  } catch { return null; }
+}
+
+/** Stabiler Vergleich (Schlüssel sortiert), damit Property-Reihenfolge nie zählt. */
+function stabileSerialisierung(v: unknown): string {
+  const sortiere = (x: unknown): unknown => {
+    if (Array.isArray(x)) return x.map(sortiere);
+    if (x && typeof x === 'object') {
+      return Object.fromEntries(Object.keys(x as Record<string, unknown>).sort()
+        .map(k => [k, sortiere((x as Record<string, unknown>)[k])]));
+    }
+    return x;
+  };
+  return JSON.stringify(sortiere(v ?? null));
+}
+
+/**
+ * Macht den letzten Import dieses Typs rückgängig — stellt EXAKT den Stand vor
+ * dem Import wieder her. Wirft mit klarer Meldung wenn:
+ * - kein Undo-Datensatz existiert,
+ * - der Bestand seit dem Import manuell verändert wurde (Konfliktschutz),
+ * - ein betroffenes Historien-Jahr gesperrt ist (Jahr-Sperre bleibt aktiv).
+ */
+export async function undoWarenImport(tenantId: TenantId, typ: WarenImportTyp): Promise<WarenImportUndoRecord> {
+  const rec = await loadWarenImportUndo(tenantId, typ);
+  if (!rec) throw new Error('Kein rückgängig machbarer Import vorhanden.');
+
+  const jahre = rec.nachher.fsHistorieProJahr ? Object.keys(rec.nachher.fsHistorieProJahr) : [];
+  // Jahr-Sperre IM Undo-Pfad frisch prüfen (nie nur UI-State)
+  for (const j of jahre) {
+    if (await isFsHistorieLocked(tenantId, j)) {
+      throw new Error(`Historie ${j} ist gesperrt — Undo nicht möglich, Sperre zuerst aufheben.`);
+    }
+  }
+
+  // Konfliktschutz: aktueller Stand muss dem Stand DIREKT NACH dem Import entsprechen.
+  const aktuell = await erstelleWarenImportSnapshot(tenantId, {
+    monate: Object.keys(rec.nachher.invoicesProMonat),
+    mitPreisHistorie: rec.nachher.preisHistorie !== undefined,
+    jahre,
+  });
+  if (stabileSerialisierung(aktuell) !== stabileSerialisierung(rec.nachher)) {
+    throw new Error('Seit dem Import wurde manuell geändert — Undo verweigert, damit nichts überschrieben wird. Bitte manuell korrigieren.');
+  }
+
+  // Doppel-Undo-Wache (z.B. zwei Tabs): Slot frisch nachlesen — muss noch
+  // exakt DERSELBE Import sein. Bekannte Grenze: der KV-Store bietet kein
+  // echtes Compare-and-Swap; ein Schreibkonflikt im Millisekunden-Fenster
+  // zwischen Prüfung und Restore ist theoretisch möglich (wie bei den übrigen
+  // Undo-Pfaden dieser App, Import-Center-Protokoll).
+  const slotFrisch = await loadWarenImportUndo(tenantId, typ);
+  if (!slotFrisch || slotFrisch.zeitpunkt !== rec.zeitpunkt || slotFrisch.typ !== rec.typ) {
+    throw new Error('Undo-Datensatz wurde zwischenzeitlich ersetzt oder bereits verwendet — Undo abgebrochen.');
+  }
+
+  // Stand VOR dem Import zurückschreiben.
+  for (const [m, invoices] of Object.entries(rec.vorher.invoicesProMonat)) {
+    await kvSet(invoicesKey(tenantId, m), invoices);
+  }
+  for (const [m, pos] of Object.entries(rec.vorher.positionenProMonat)) {
+    await kvSet(tenantKey(tenantId, `waren_positionen_${m}_v1`), pos ?? {});
+  }
+  for (const [m, hin] of Object.entries(rec.vorher.hinweiseProMonat)) {
+    await kvSet(tenantKey(tenantId, `waren_preishinweise_${m}_v1`), hin ?? {});
+  }
+  if (rec.vorher.preisHistorie !== undefined) {
+    await kvSet(preisHistorieRawKey(tenantId), rec.vorher.preisHistorie ?? {});
+  }
+  if (rec.vorher.fsHistorieProJahr) {
+    for (const [j, blob] of Object.entries(rec.vorher.fsHistorieProJahr)) {
+      await kvSet(fsHistorieKey(tenantId, j), blob ?? {});
+    }
+  }
+  // Slot leeren — nur der JEWEILS LETZTE Import ist rückgängig machbar.
+  await kvSet(importUndoKey(tenantId, typ), null);
+  return rec;
+}

@@ -1,0 +1,31 @@
+AUFGABE: Warenrechnungen — (1) Preisüberwachung bei Feldschlösschen, (2) Historien-Import pro Jahr als EINE Datei für Feldschlösschen und Transgourmet/Prodega, (3) laufender Betrieb ab Aug 2026: Lieferscheine sind führend, Monatsrechnung füllt nur Lücken. Mandantengetrennt.
+
+GRUNDSATZ: Lieferscheine (mit Lieferdatum) sind die primäre, führende Quelle für die Warenkosten — das Lieferdatum ist entscheidend für die Wochen-Kostenanalyse und das Cockpit. Die Monatsrechnung überschreibt Lieferscheine NIE.
+
+TEIL 1 — PREISÜBERWACHUNG FELDSCHLÖSSCHEN:
+- Preisentwicklung pro (Mandant + Lieferant Feldschlösschen + Material-Nr.), identisch zur Transgourmet-Logik: Vergleich Einzelpreis pro Einheit, Schwelle ±10 % / min. 0.20 CHF, Pfand/Leergut (MWST-Code C0) ausgenommen. Gilt für ALLE Feldschlösschen-Import-Wege (Lieferschein, Monatsrechnung, Historie). Hinweise in Vorschau und an der Position; Filter wie bei Transgourmet (Erhöhungen ≥ Schwelle zuerst).
+
+TEIL 2 — HISTORIEN-IMPORT PRO JAHR (eine Datei, alles auf einmal), für Feldschlösschen UND Transgourmet/Prodega:
+1) Transgourmet/Prodega: eine Jahres-CSV (Kundenportal) pro Jahr — importiert alle Rechnungen des Jahres auf einmal; Lieferant-Trennung BGH→Transgourmet / Bern,Moosseedorf→Prodega.
+2) Feldschlösschen: ein Jahres-ZIP mit allen Sammelrechnungen des Jahres — importiert alle Lieferungen auf einmal. Positionen UND Lieferdatum aus den in den Sammelrechnungen eingebetteten Lieferscheinen übernehmen (nicht nur die Faktura-Summen), damit die Wochen-Analyse auch historisch stimmt.
+3) Für 2024, 2025 und Jan–Juni 2026. Bucht Warenkosten + baut Preis-Historie + speist die Lieferanten-Analyse (Volumen/Preisentwicklung über die Jahre).
+4) KEINE Einzel-Lieferschein-Uploads für die Vergangenheit nötig.
+5) Historische Jahre als abgeschlossen markierbar (Jahr-Sperre); dublettensicher: Upsert auf (Mandant + Lieferant + Lieferung-/Rechnungs-Nr + Datum). Erneuter Jahres-Upload ersetzt, dupliziert nie.
+
+TEIL 3 — LAUFENDER BETRIEB AB AUGUST 2026:
+1) Jederzeit hochladbar: Einzel-Lieferscheine UND/ODER die Monats-/Sammelrechnung.
+2) LIEFERSCHEINE = führend: buchen die Warenkosten mit ihrem Lieferdatum. Erneuter Upload desselben Lieferscheins = Upsert (ersetzt dieselbe Lieferung-Nr, nie doppelt).
+3) MONATSRECHNUNG = Kontrolle + Lückenfüller, NIE Überschreiben:
+   a) Vollständigkeits-Check: "X von Y Lieferungen erfasst"; jede Faktura gegen vorhandene Lieferscheine matchen (Datum ±7 Tage / Betrag ±0.10, inkl. Bündelung mehrerer Lieferscheine pro Faktura).
+   b) Ist eine Lieferung bereits als Lieferschein vorhanden: NICHT anfassen, nur als "vorhanden/gematcht" markieren. Lieferschein und sein Lieferdatum bleiben unverändert.
+   c) Fehlt eine Lieferung (kein Lieferschein vorhanden): NUR DANN aus der Monatsrechnung übernehmen — mit den eingebetteten Lieferschein-Positionen UND dem Lieferdatum aus diesen Seiten (nicht das Rechnungsdatum). Diese übernommenen Lieferungen als "aus Monatsrechnung" kennzeichnen (provisorisch).
+   d) Wird später der echte Lieferschein einer solchen "aus Monatsrechnung"-Lieferung hochgeladen, ersetzt der Lieferschein die provisorische Version (Lieferschein ist genauer/führend).
+4) VORSCHAU informiert klar: "neu (Lieferschein): N · aus Monatsrechnung ergänzt (fehlten): M · bereits vorhanden, unverändert: K". Nichts wird überschrieben ausser ein Lieferschein ersetzt eine provisorische Monatsrechnungs-Lieferung. Erst nach Bestätigung schreiben.
+
+RAHMEN:
+- Streng mandantengetrennt. Alle Beträge netto exkl. MwSt für WKQ; Konto-Zuordnung wie definiert (Bier 4030 / Spirituosen 4040 / Wein 4020 / alkoholfrei+Mineral 4050 / Küche 4060 / Nearfood+Nonfood 4701 / Pfand neutral).
+- Jede Lieferung trägt ihr Lieferdatum → Wochen-Kostenanalyse und Cockpit rechnen auf dem Lieferdatum.
+- Vorschau vor jedem Schreiben + "Letzter Import rückgängig machen" (Backup-Snapshot).
+- Nie durch 0 teilen, leer statt 0.
+
+Kurz zusammenfassen: wie der Jahres-Import läuft, und wie die Vorschau "aus Monatsrechnung ergänzt" vs. "bereits vorhanden" anzeigt.
