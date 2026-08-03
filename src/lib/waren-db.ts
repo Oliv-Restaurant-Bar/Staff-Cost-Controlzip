@@ -273,6 +273,51 @@ export async function saveFibuMatchState(
   console.log(`[WAREN] fibu-matches saved: ${state.gruppen.length} groups (${monthKey}, tenant "${tenantId}")`);
 }
 
+// ─── Preisüberwachung: Historie, Schwelle, Hinweise (mandantengetrennt) ──────
+//
+// - `waren_preishistorie_v1`: letzter Einzelpreis pro (Lieferant+Artikel).
+// - `waren_preis_schwelle_v1`: { pct, minChf } (Default 10 % / 0.20 CHF).
+// - `waren_preishinweise_<YYYY-MM>_v1`: Record<invoiceId, PreisAenderung[]>
+//   (Hinweis-Icons an den Rechnungen; rein informativ, nie werfen beim Lesen).
+
+export async function loadPreisHistorie(tenantId: TenantId): Promise<import('./waren-positionen').PreisHistorie> {
+  const { normalizePreisHistorie } = await import('./waren-positionen');
+  try { return normalizePreisHistorie(await kvGet(tenantKey(tenantId, 'waren_preishistorie_v1'))); }
+  catch { return {}; }
+}
+
+export async function savePreisHistorie(tenantId: TenantId, historie: import('./waren-positionen').PreisHistorie): Promise<void> {
+  await kvSet(tenantKey(tenantId, 'waren_preishistorie_v1'), historie);
+}
+
+export async function loadPreisSchwelle(tenantId: TenantId): Promise<import('./waren-positionen').PreisSchwelle> {
+  const { normalizePreisSchwelle, DEFAULT_PREIS_SCHWELLE } = await import('./waren-positionen');
+  try {
+    const raw = await kvGet(tenantKey(tenantId, 'waren_preis_schwelle_v1'));
+    return raw === null || raw === undefined ? DEFAULT_PREIS_SCHWELLE : normalizePreisSchwelle(raw);
+  } catch { return DEFAULT_PREIS_SCHWELLE; }
+}
+
+export async function savePreisSchwelle(tenantId: TenantId, schwelle: import('./waren-positionen').PreisSchwelle): Promise<void> {
+  await kvSet(tenantKey(tenantId, 'waren_preis_schwelle_v1'), schwelle);
+}
+
+export async function loadPreisHinweise(
+  tenantId: TenantId, monthKey: string,
+): Promise<Record<string, import('./waren-positionen').PreisAenderung[]>> {
+  try {
+    const raw = await kvGet(tenantKey(tenantId, `waren_preishinweise_${monthKey}_v1`));
+    return raw && typeof raw === 'object' ? raw as Record<string, import('./waren-positionen').PreisAenderung[]> : {};
+  } catch { return {}; }
+}
+
+export async function savePreisHinweise(
+  tenantId: TenantId, monthKey: string,
+  hinweise: Record<string, import('./waren-positionen').PreisAenderung[]>,
+): Promise<void> {
+  await kvSet(tenantKey(tenantId, `waren_preishinweise_${monthKey}_v1`), hinweise);
+}
+
 // ─── Auto-Match-Toleranz (CHF, pro Mandant, Default 10.00) ───────────────────
 
 export async function loadFibuMatchToleranz(tenantId: TenantId): Promise<number> {

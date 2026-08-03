@@ -25,3 +25,8 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 - Manuell aufgelöste Matches sperren ihre Mitglieder dauerhaft für den Auto-Lauf (gesperrt-Liste im Match-Blob); ein neues manuelles Match entsperrt sie wieder.
 - Auto-Lauf darf erst NACH dem Laden des gespeicherten Match-Zustands starten, sonst matcht er gegen leeren State und dupliziert.
 - Toleranz (Default CHF 10) ist mandantenweit persistiert und steuert auch die grüne Ampel.
+
+## Transgourmet/Prodega CSV-Positionsimport & Preisüberwachung
+- Portal-CSVs verwenden Rechnungsnummern über Monate wieder (z.B. "58") — Dokument-Identität ist IMMER rechnungsNr+Datum (docKey), nie die Nummer allein; gilt für Gruppierung, Dubletten und Preis-Historie-Quelle.
+- Preisüberwachung: Einzelpreis (Spalte "Preis", netto) pro Mandant+Lieferant+Art.-Nr. (Fallback normalisierter Name, ohne beides kein Hinweis); Pfand = MwSt-Code 0 ausgenommen; Mindest-CHF-Differenz gegen Rundungsalarme; Re-Import desselben Dokuments vergleicht nicht neu, ersetzt nur.
+- **Why:** Doppel-/Korrektur-Importe dürfen die Historie nicht verfälschen und keine Schein-Preisänderungen melden.

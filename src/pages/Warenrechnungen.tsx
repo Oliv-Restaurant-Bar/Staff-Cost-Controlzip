@@ -50,6 +50,9 @@ import {
   type Warenkonto,
 } from '@/lib/waren-db';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
+import { WarenCsvImport } from '@/components/waren/WarenCsvImport';
+import { loadPreisHinweise } from '@/lib/waren-db';
+import type { PreisAenderung } from '@/lib/waren-positionen';
 import {
   kontoKlasse, kontoKlasseLabel, sumBetriebNet, nurWarenAnteil,
   aggregateBySupplierKlassen, DEFAULT_WARENKOSTEN_GRENZE,
@@ -111,7 +114,7 @@ import {
   ShoppingCart, Plus, Minus, Pencil, Trash2, Settings2, ChevronLeft, ChevronRight,
   TrendingUp, AlertCircle, CheckCircle2, Package, BarChart3, ClipboardList, ShieldCheck,
   Filter, X, Receipt, Download, Paperclip, ChevronsUpDown, Check, ChevronDown,
-  ScanSearch, Loader2, Scale, ChevronRight as ChevronRightSmall,
+  ScanSearch, Loader2, Scale, ChevronRight as ChevronRightSmall, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -530,6 +533,14 @@ export default function WarenrechnungenPage() {
   }, [tenantId, monthKey]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // ── Preisänderungs-Hinweise des Monats (Icon + Tooltip an der Rechnung) ──
+  const [preisHinweise, setPreisHinweise] = useState<Record<string, PreisAenderung[]>>({});
+  const ladePreisHinweise = useCallback(async () => {
+    try { setPreisHinweise(await loadPreisHinweise(tenantId, monthKey)); }
+    catch { setPreisHinweise({}); }
+  }, [tenantId, monthKey]);
+  useEffect(() => { void ladePreisHinweise(); }, [ladePreisHinweise]);
 
   const loadAnalyseRange = useCallback(async () => {
     setRangeLoading(true);
@@ -1628,6 +1639,10 @@ export default function WarenrechnungenPage() {
                   </div>
                   <div className="px-5 py-4 space-y-4">
 
+                    {/* ── CSV-Positionsimport (Transgourmet/Prodega) mit Preisüberwachung ── */}
+                    <WarenCsvImport tenantId={tenantId} suppliers={suppliers}
+                      onImported={() => { void loadData(); void ladePreisHinweise(); }} />
+
                     {/* ── PDF-Erkennung: Rechnung hochladen → Felder vorfüllen ── */}
                     <div className="flex flex-wrap items-center gap-3">
                       <label className={cn(
@@ -2142,6 +2157,24 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 text-xs text-muted-foreground">
                                 <span className="inline-flex items-center gap-1.5">
                                   {e.reference ?? (!e.receiptPath && <span className="opacity-30">–</span>)}
+                                  {(preisHinweise[e.id]?.length ?? 0) > 0 && (
+                                    <span
+                                      className={cn('inline-flex items-center gap-0.5 cursor-help',
+                                        preisHinweise[e.id].some(a => a.stark && a.erhoehung)
+                                          ? 'text-red-600 dark:text-red-400'
+                                          : preisHinweise[e.id].some(a => a.stark)
+                                            ? 'text-amber-600 dark:text-amber-400'
+                                            : 'text-muted-foreground')}
+                                      title={preisHinweise[e.id].map(a =>
+                                        `${a.artikel}: CHF ${fmtChf(a.alt)} → CHF ${fmtChf(a.neu)}`
+                                        + `${a.diffPct !== null ? ` (${a.diffPct > 0 ? '+' : ''}${a.diffPct.toFixed(1)} %)` : ''}`
+                                        + ` · seit ${fmtDatumCH(a.seit)}`).join('\n')}
+                                      data-testid={`preis-hinweis-${e.id}`}
+                                    >
+                                      <AlertTriangle className="h-3 w-3" />
+                                      <span className="text-[10px] tabular-nums">{preisHinweise[e.id].length}</span>
+                                    </span>
+                                  )}
                                   {e.receiptPath && (
                                     <button
                                       type="button" title="Beleg öffnen" data-testid={`receipt-open-${e.id}`}
