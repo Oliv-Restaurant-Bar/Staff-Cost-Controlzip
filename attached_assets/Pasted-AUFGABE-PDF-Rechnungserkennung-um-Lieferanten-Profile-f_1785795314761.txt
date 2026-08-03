@@ -1,0 +1,45 @@
+AUFGABE: PDF-Rechnungserkennung um Lieferanten-Profile für Beaulieu erweitern + manuelle Erfassung nutzt dieselben Profile. Mandant BEAULIEU. Baut auf dem bestehenden Button "PDF-Rechnung erkennen (Lieferant, Datum, Betrag)" auf.
+
+ERKENNUNG PRO LIEFERANT über die MWST-Nr. (zuverlässigster Schlüssel; Name als Fallback). Profil-Tabelle (editierbar in Einstellungen), so vorbelegt — Konto an Beaulieu-Kontenplan anpassbar:
+  MWST-Nr             Lieferant                Kategorie        Standard-Konto
+  CHE-219.630.115     Obrist (Schenk Suisse)   Wein             4020
+  CHE-116.319.519     Rutishauser-DiVino       Wein             4020
+  CHE-108.008.709     Terravigna               Wein             4020
+  CHE-106.963.475     Metzgerei Spahni         Fleisch          4060
+  CHE-112.839.932     Fideco                   Fleisch          4060
+  CHE-105.959.488     Gourmador (frigemo)      TK/Gemüse        4060
+  CHE-472.136.586     Bäckerei Bohnenblust     Backwaren        4060
+  CHE-107.918.916     Gasser                   Food/Convenience 4060
+  CHE-362.510.257     Blaser Café              Kaffee           4070
+  (keine MWST-Nr)     Hof am Stutz             Eier             4060   (Erkennung über Name/IBAN)
+
+STUFE 1 — Kopf-Erkennung (alle Lieferanten sofort):
+1) Aus jedem PDF erkennen: Lieferant (via MWST-Nr), Rechnungs-Nr, Rechnungsdatum, Netto-Total (exkl. MwSt), MwSt-Betrag/Satz.
+2) Buchen als Warenrechnung (Mandant Beaulieu) mit dem Standard-Konto des Lieferanten → Warenkosten (bzw. Kategorie). Beträge netto für WKQ.
+3) Lieferdatum: wenn ein Liefer-/LS-Datum im PDF steht, dieses nehmen; sonst Rechnungsdatum. Wichtig für die Wochen-Analyse.
+
+STUFE 2 — Positionen & Lieferdatum je Lieferung (wo das Layout es hergibt, pro Lieferant verfeinerbar):
+4) Sammelrechnungen mit mehreren Lieferungen (Spahni: "LS-Nr … vom …"; Fideco: "LIEFERSCHEIN … VOM …"; Gasser: "LS-Nr/LS-Datum"; Bohnenblust: "Lieferschein Nr … vom …"): pro Lieferung mit deren LS-Datum erfassen, Positionen (Artikel, Menge, Einzelpreis, Betrag) übernehmen.
+5) Einzel-Lieferscheine (Terravigna: "Lieferungsnr. … vom …", pro Bestellung ein Lieferschein): Positionen + Lieferdatum übernehmen.
+6) Wo Positionen erkannt werden: Preisüberwachung pro Artikel-Nr (Schwelle ±10 % / min. 0.20 CHF), gleiche Mechanik wie Transgourmet/Feldschlösschen.
+
+MANUELLE ERFASSUNG:
+7) Die manuelle Erfassungszeile nutzt dieselben Profile: Lieferant wählen → Standard-Konto/Kategorie und MwSt-Satz vorbefüllt (überschreibbar). Für Lieferanten ohne PDF oder Kleinbelege.
+
+RAHMEN:
+- Mandant BEAULIEU (getrennt von Oliv). Unbekannte MWST-Nr/Lieferant = "Lieferant offen", nachfragen statt raten; direkt in der Vorschau zuordenbar (MWST-Nr → Lieferant/Konto), gilt dann dauerhaft.
+- Dublettensicher: Upsert auf (Mandant + Lieferant + Rechnungs-Nr + Datum). Re-Import ersetzt, dupliziert nie.
+- Vorschau vor dem Schreiben + Undo (bestehender Import-Undo). Nie durch 0 teilen, leer statt 0.
+- Erscheinen in Erfassung/Analyse/Cockpit/FIBU-Abgleich wie andere Lieferanten.
+
+KONTROLLWERTE (Beaulieu, aus den Beispiel-PDFs), Vorschau muss ergeben:
+  - Metzgerei Spahni Rg 8646158: netto 3'796.25 / MwSt 98.70 (2.6%)
+  - Fideco Rg 5356149:           netto 3'416.45 / MwSt 88.85 (2.6%)
+  - Gourmador Faktura 92051534:  netto 2'822.15 / MwSt 73.38 (2.6%)
+  - Terravigna Rg 211343:        netto 2'339.69 / MwSt 189.51 (8.1%)
+  - Obrist Rg 326269:            netto 415.20 / MwSt 33.63 (8.1%)
+  - Rutishauser Rg 91091909:     netto 584.40 / MwSt 47.34 (8.1%)
+  - Bohnenblust Rg 49415:        netto 823.37 / MwSt 21.41 (2.6%)
+  - Hof am Stutz Rg 1063:        netto 148.50 (0%)
+
+Bitte kurz zusammenfassen: welche Lieferanten erkannt werden und wie ich ein Profil/Konto anpasse.
