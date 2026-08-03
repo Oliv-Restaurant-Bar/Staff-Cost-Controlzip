@@ -33,6 +33,7 @@ export type ImportSourceKey =
   | 'personalkosten-vorjahr'
   | 'umsatz-vorjahr-jahr'
   | 'tagesdaten-einheitsimport'
+  | 'verkaufsdaten-food-beverage'
   | 'feedback-rezensionen'
   | 'reservationen-foratable';
 
@@ -46,6 +47,7 @@ export const IMPORT_SOURCE_LABEL: Record<ImportSourceKey, string> = {
   'personalkosten-vorjahr':     'Personalkosten Vorjahr',
   'umsatz-vorjahr-jahr':        'Umsatz Vorjahr (Jahres-Excel)',
   'tagesdaten-einheitsimport':  'Tagesdaten-Einheitsimport',
+  'verkaufsdaten-food-beverage': 'Verkaufsdaten Food/Beverage (Jahr)',
   'feedback-rezensionen':       'Feedback-Rezensionen (Lunchgate)',
   'reservationen-foratable':    'Reservationen (Foratable)',
 };

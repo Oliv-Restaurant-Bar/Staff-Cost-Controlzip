@@ -28,10 +28,12 @@ import {
 } from '@/lib/personalkosten';
 import { loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly } from '@/lib/gaeste-store';
 import { loadVjDailyMonth, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { istAlsVjRecord } from '@/lib/vj-overlay';
 import { loadReservationCounting, DEFAULT_RESERVATION_COUNTING } from '@/lib/reservation-cockpit-settings';
 import { loadTakeAwayOffered, filterTakeAwayRows } from '@/lib/takeaway-offered-settings';
 import { loadReservationMetrics } from '@/lib/reservation-cockpit-metrics';
 import { loadTakeAwayGuests } from '@/lib/takeaway-cockpit-metrics';
+import { loadTaGaesteDaily, sumTaGaesteRange } from '@/lib/ta-gaeste-store';
 import type { TenantId } from '@/contexts/TenantContext';
 import type { SocialCostRates } from '@/lib/social-costs';
 import { loadVorjahresPersonalkosten } from '@/lib/vorjahres-personalkosten';
@@ -887,6 +889,18 @@ export async function ladeMonatsreport(
   const taOffered = (await loadTakeAwayOffered(tenantKey, tenantId).catch(() => null))?.offered
     ?? (tenantId === 'oliv');
 
+  // «Gäste Take Away»: PRIMÄR aus dem ta-gaeste-daily-Store (Artikel-Anzahl-
+  // Import, alle Jahre inkl. Vorjahre); Zeiträume ohne gelieferte Tage fallen
+  // auf die product_sales-Berechnung zurück (bestehende Pipeline).
+  const taGaesteDaily = taOffered
+    ? await loadTaGaesteDaily(tenantKey).catch(() => ({} as Record<string, number>))
+    : {};
+  const taGuestsCombined = async (from: string, to: string): Promise<number | null> => {
+    const fromStore = sumTaGaesteRange(taGaesteDaily, from, to);
+    if (fromStore !== null) return fromStore;
+    return loadTakeAwayGuests(tenantId, from, to).catch(() => null);
+  };
+
   // Google-Rezensionen (Einzelerfassung, mandantengetrennt): Zählquelle der
   // Zeilen «Google 5/3/1 Sterne». Ladefehler → null (Zeilen bleiben leer,
   // nie 0 erfinden); geladener Blob → echte Anzahl (0 ist eine echte Aussage).
@@ -921,9 +935,9 @@ export async function ladeMonatsreport(
     // Gäste Take Away (Produktanalyse): Σ Stückzahlen aller TA-Produkte, GANZER
     // Monat bzw. gewählte Woche (ungeklemmt, future-capable). VJ-Monat = gleicher
     // Monat Jahr−1 aus derselben Quelle (fehlt → «—»); VJ-Woche bleibt «—».
-    taOffered ? loadTakeAwayGuests(tenantId, fromIso, toIso).catch(() => null) : Promise.resolve(null),
-    taOffered ? loadTakeAwayGuests(tenantId, resWeekFrom, resWeekTo).catch(() => null) : Promise.resolve(null),
-    taOffered ? loadTakeAwayGuests(tenantId, vjFromIsoG, vjToIsoG).catch(() => null) : Promise.resolve(null),
+    taOffered ? taGuestsCombined(fromIso, toIso) : Promise.resolve(null),
+    taOffered ? taGuestsCombined(resWeekFrom, resWeekTo) : Promise.resolve(null),
+    taOffered ? taGuestsCombined(vjFromIsoG, vjToIsoG) : Promise.resolve(null),
     ladePersonalkostenDaten(year, month, tenantId, tenantKey, rates).catch(() => null),
     // Vorjahres-Personalkosten aus der BUCHHALTUNG (nur Jahre < 2026, nur Monat)
     loadVorjahresPersonalkosten(tenantId, year - 1, month).catch(() => null),
@@ -944,19 +958,10 @@ export async function ladeMonatsreport(
   // — 2026er-Tagesimporte erscheinen 2027 automatisch als Vorjahr, ohne
   // separaten VJ-Import. vj_daily bleibt Fallback (alte VJ-Importe, z.B. 2025).
   // Semantik identisch zu vj_daily: brutto-Werte, Netto = brutto/VAT_STD().
-  const istAlsVjRecord = (date: string, tag: import('@/lib/umsatz').UmsatzTag): VjDayRecord => ({
-    date,
-    year: Number(date.slice(0, 4)),
-    actualRevenue: tag.gesamtBrutto,
-    ...(tag.foodBrutto > 0 ? { foodRevenue: tag.foodBrutto } : {}),
-    ...(tag.beverageBrutto > 0 ? { beverageRevenue: tag.beverageBrutto } : {}),
-    ...(tag.takeAwayBrutto > 0 ? { takeawayRevenue: tag.takeAwayBrutto } : {}),
-    source: 'ist_vorjahr_dynamisch',
-  });
   try {
     const vjIstTage = await ladeUmsatzTage(tenantId, vjFromIsoG, vjToIsoG);
     for (const [date, tag] of vjIstTage) {
-      if (tag.gesamtBrutto > 0) vjDaily[date] = istAlsVjRecord(date, tag);
+      if (tag.gesamtBrutto > 0) vjDaily[date] = istAlsVjRecord(date, tag, vjDaily[date]);
     }
   } catch { /* Ist-Vorjahr nicht ladbar → vj_daily-Fallback bleibt massgeblich */ }
 
@@ -983,7 +988,7 @@ export async function ladeMonatsreport(
       const vjDateSet = new Set(vjDates);
       const vjIstWoche = await ladeUmsatzTage(tenantId, vjDates[0], vjDates[vjDates.length - 1]);
       for (const [date, tag] of vjIstWoche) {
-        if (vjDateSet.has(date) && tag.gesamtBrutto > 0) vjWocheDaily[date] = istAlsVjRecord(date, tag);
+        if (vjDateSet.has(date) && tag.gesamtBrutto > 0) vjWocheDaily[date] = istAlsVjRecord(date, tag, vjWocheDaily[date]);
       }
     } catch { /* Fallback: vj_daily */ }
   }

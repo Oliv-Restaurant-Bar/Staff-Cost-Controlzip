@@ -217,6 +217,29 @@ export async function loadVjDailyYear(
   }
 }
 
+/**
+ * STRIKTE Variante für Schreibpfade (Merge-Basis): Lesefehler werfen statt
+ * leer zurückzugeben — sonst würde ein Merge auf falscher Basis bestehende
+ * Records (inkl. actualRevenue) überschreiben. Nie im UI-Lesepfad verwenden.
+ */
+export async function loadVjDailyYearStrict(
+  year:      number,
+  tenantId?: string,
+): Promise<Record<string, VjDayRecord>> {
+  const prefix = `${tenantPrefix(tenantId)}${year}-`;
+  const { data, error } = await appSettingsTable()
+    .select('key, value')
+    .like('key', `${prefix}%`);
+  if (error) throw new Error(`vj_daily-Bestand ${year} nicht lesbar: ${error.message}`);
+  const result: Record<string, VjDayRecord> = {};
+  for (const row of (data ?? []) as Array<{ key: string; value: unknown }>) {
+    const rec  = row.value as VjDayRecord;
+    const date = row.key.replace(tenantPrefix(tenantId), '');
+    result[date] = { ...rec, date };
+  }
+  return result;
+}
+
 // ── Status: Prüfen ob VJ-Daten vorhanden ──────────────────────────────────────
 
 /**

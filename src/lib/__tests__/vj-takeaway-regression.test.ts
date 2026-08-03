@@ -20,6 +20,10 @@ vi.mock('../app-settings-table', () => ({
       upserted.push(...rows);
       return { error: null };
     }),
+    // Strikte Merge-Basis-Leser (loadVjDailyYearStrict): leerer Bestand.
+    select: vi.fn(() => ({
+      like: vi.fn(async () => ({ data: [], error: null })),
+    })),
   }),
 }));
 
@@ -58,10 +62,19 @@ describe('V1 — commitGastronoviDays(previous_year) schreibt takeawayRevenue in
     expect(byDate['vj_daily:2025-07-02'].takeawayRevenue).toBe(1100);
   });
 
-  it('takeAway === 0 → Feld wird NICHT gesetzt (rückwärtskompatibel)', async () => {
-    await commitGastronoviDays('dailyBudgets', [day('2025-07-03', 9000, 6000, 3000, 0)], 'previous_year', { tenantId: 'oliv', year: 2025 });
+  it('explizite takeAway-0 wird als echter Tageswert gesetzt; ohne TA-Zeile bleibt das Feld weg', async () => {
+    // Datei OHNE Take-Away-Zeile: Feld weggelassen → nicht geliefert.
+    await commitGastronoviDays('dailyBudgets', [
+      { date: '2025-07-03', total: 9000, food: 6000, beverage: 3000, currency: 'CHF' },
+    ], 'previous_year', { tenantId: 'oliv', year: 2025 });
     const rec = upserted[0].value as unknown as VjDayRecord;
     expect('takeawayRevenue' in rec).toBe(false);
+
+    // Datei MIT Take-Away-Zeile, Tageswert explizit 0 → Feld = 0 (echter Wert).
+    upserted.length = 0;
+    await commitGastronoviDays('dailyBudgets', [day('2025-07-04', 9000, 6000, 3000, 0)], 'previous_year', { tenantId: 'oliv', year: 2025 });
+    const rec0 = upserted[0].value as unknown as VjDayRecord;
+    expect(rec0.takeawayRevenue).toBe(0);
   });
 });
 

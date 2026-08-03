@@ -79,4 +79,5 @@
 - [Vorjahr-Hardzahlen-Lock](vorjahr-hardzahlen-lock.md) — EIN gemeinsamer Jahres-Lock für alle VJ-Importe; getLockState immer frisch im Save-Pfad awaiten, nie nur UI-State.
 - [Dynamisches Vorjahr aus Jahresdaten](vj-dynamisch-jahresdaten.md) — Monatsreport-VJ liest Ist-Daten Jahr−1 (umsatz-SSOT) vor vj_daily; PK-VJ-Fallback via computePLForMonth; Jahres-Lock gilt für ALLE Importe.
 - [Kontoblatt-Mehrmonatsimport](kontoblatt-mehrmonatsimport.md) — Jahres-/Periodendateien pro Konto+Monat gruppieren; Upsert nur Datei-Monate; Journal nur bei Ist; Undo inkl. Journal; Lock strict.
+- [Verkaufsdaten F/B-Jahresimport](verkaufsdaten-import.md) — explizite 0 ist ein Tageswert (nie `>0`-Filter); vj_daily-Merge-Basis strikt lesen, sonst actualRevenue-Clobber.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.

@@ -23,7 +23,7 @@
  */
 
 import type { GastronoviDayResult } from '@/lib/revenue-parser';
-import { upsertVjDailyBatch, type VjDayRecord } from '@/lib/vj-daily-supabase';
+import { upsertVjDailyBatch, loadVjDailyYearStrict, type VjDayRecord } from '@/lib/vj-daily-supabase';
 import { getLockState } from '@/lib/prior-year-lock';
 
 export type UmsatzImportTarget = 'actual' | 'previous_year';
@@ -105,9 +105,36 @@ export async function commitGastronoviDays(
 
   for (const r of rows) {
     updates[r.date] = { [field]: r.total, [foodKey]: r.food, [bevKey]: r.beverage };
-    // Take-Away-Anteil (brutto) nur für Ist-Umsätze — Basis der Netto-Berechnung (2.6 % MwSt).
-    if (target === 'actual') updates[r.date].takeawayRevenue = r.takeAway;
+    // Take-Away-Brutto pro Tag — Basis des präzisen Netto-MwSt-Splits (2.6 %/8.1 %).
+    // Für BEIDE Ziele schreiben: auch vergangene Jahre brauchen den Split für
+    // ihre Ist-Ansichten und fürs dynamische Vorjahr (Jahr + 1).
+    // NUR wenn die Datei eine Take-Away-Zeile hat (undefined = nicht geliefert
+    // → bestehende Werte nie überschreiben; explizite 0 = echter Tageswert).
+    if (r.takeAway !== undefined) updates[r.date].takeawayRevenue = r.takeAway;
+    // Vorjahres-Import: die Kategorie-Felder zusätzlich als actual* schreiben —
+    // dailyBudgets ist nach echtem Datum organisiert, d.h. actualFood/actual-
+    // Beverage eines 2025er-Tages SIND die Ist-Werte 2025 (Cockpit-Zeilen
+    // Food/Beverage) und die Quelle des dynamischen Vorjahres in 2026.
+    // Nur bei Wert > 0 (0 hier = Zeile fehlt/leer — bestehende Werte anderer
+    // Importe, z.B. Verkaufsdaten Food/Beverage, nie mit 0 clobbern).
+    // actualRevenue wird bewusst NICHT angefasst (bleibt Sache der Ist-Importe).
+    if (target === 'previous_year') {
+      if (r.food > 0) updates[r.date].actualFood = r.food;
+      if (r.beverage > 0) updates[r.date].actualBeverage = r.beverage;
+    }
     count++;
+  }
+
+  // ── Vorjahr: vj_daily-Merge-Basis STRIKT lesen — VOR dem ERSTEN Write ──────
+  // upsertVjDailyBatch ersetzt den ganzen Record eines Tages. Damit ein Import
+  // ohne Food/Beverage/Take-Away-Zeilen bestehende Kategorie-Werte (z.B. aus
+  // dem Verkaufsdaten-Import) nicht auslöscht, wird der Bestand des Jahres
+  // feldweise gemerged. Lesefehler wirft → Abbruch OHNE jegliche Writes
+  // (weder dailyBudgets noch vj_daily), nie stillschweigend leer mergen.
+  let vjBase: Record<string, VjDayRecord> = {};
+  if (target === 'previous_year' && rows.length > 0) {
+    const vjYear = opts.year ?? parseInt(rows[0].date.slice(0, 4), 10);
+    vjBase = await loadVjDailyYearStrict(vjYear, opts.tenantId);
   }
 
   if (count > 0) {
@@ -120,18 +147,21 @@ export async function commitGastronoviDays(
     // Format/Key-Schema exakt wie VjDailyImportSection. year je Tag aus dem
     // ISO-Datum abgeleitet (die Datei deckt genau das gewählte Jahr ab).
     const records: VjDayRecord[] = rows.map(r => {
+      const prev = vjBase[r.date];
       const rec: VjDayRecord = {
+        ...(prev ?? {}),
         date:          r.date,
         year:          parseInt(r.date.slice(0, 4), 10),
         actualRevenue: r.total,
         source:        'vorjahr_import',
       };
+      // Feldweiser Merge: nur liefern, was die Datei tatsächlich enthält —
+      // fehlende Kategorien behalten den bestehenden Wert (aus ...prev).
       if (r.food > 0)     rec.foodRevenue     = r.food;
       if (r.beverage > 0) rec.beverageRevenue = r.beverage;
-      // Take-Away-Anteil (brutto) auch fürs Vorjahr übernehmen — Quelle der
-      // Vorjahr-Spalte «Take Away Anteil» im Monatsreport. Nur setzen wenn >0
-      // (rückwärtskompatibel: alte Records ohne Feld bleiben gültig).
-      if (r.takeAway > 0) rec.takeawayRevenue = r.takeAway;
+      // Take Away: undefined = Zeile fehlt → Bestand behalten; sonst ist der
+      // Dateiwert massgeblich (auch explizite 0 ersetzt einen alten Wert).
+      if (r.takeAway !== undefined) rec.takeawayRevenue = r.takeAway;
       return rec;
     });
     const { upserted } = await upsertVjDailyBatch(records, opts.tenantId);

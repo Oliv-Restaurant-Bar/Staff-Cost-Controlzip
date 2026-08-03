@@ -14,3 +14,10 @@ description: Ein Upload mit Auto-Typerkennung (Gäste/Durchschnitt/Umsatz/Market
 - prior-year-lock (getLockState) wird zentral in commitGastronoviDays geprüft (blocked ⇒ gar keine Writes). Auch die manuelle Tageserfassung (ManualEntryCard) geht im previous_year-Fall über commitGastronoviDays — jeden neuen Vorjahres-Schreibpfad dort anbinden, sonst SSOT-Divergenz.
 - Datentyp ist PFLICHT-WAHL des Nutzers (Select umsatz-ist/umsatz-vj/gaeste/marketing/durchschnitt); Auto-Erkennung + Dateiname («Anzahl/Gäste/Pax»→gaeste, gewinnt vor Inhalt) sind NUR Vorschlag. **Why:** eine Gästezählung ohne «P.»-Suffix («Anzahl Oliv 07.2026.xlsx», ganze Zahlen) wurde von der Inhalts-Erkennung als Umsatz verbucht.
 - Plausibilitäts-Riegel via analyzeWertemuster: umsatz+anzahl-Muster = HARTER Block (istHartBlockiert, keine Bestätigung möglich); andere Widersprüche (gaeste+chf etc.) verlangen eine Pflicht-Checkbox in der Vorschau. Umsatz-Wahl muss zum Jahr passen (umsatz-ist ⇔ laufendes Jahr), sonst Block vor dem Parsen.
+
+## Gruppierungszeilen & Vorjahres-Kategorien (Aug 2026)
+- `GastronoviDayResult.takeAway` ist OPTIONAL: `undefined` = Datei ohne Take-Away-Zeile («nicht geliefert» → bestehende takeawayRevenue nie überschreiben), `0` = Zeile vorhanden, echter Tageswert (ersetzt Bestand). Konsumenten müssen auf `!== undefined` prüfen.
+- `commitGastronoviDays(previous_year)` schreibt zusätzlich `actualFood`/`actualBeverage` (nur >0) + `takeawayRevenue` in dailyBudgets — vergangenes Jahr = Ist dieses Jahres + Quelle des dynamischen Vorjahrs; `actualRevenue` bleibt unangetastet.
+- **Why:** `upsertVjDailyBatch` ersetzt den GANZEN Record pro Tag → vj_daily-Bestand des Jahres MUSS vor dem ersten Write strikt gelesen (`loadVjDailyYearStrict`, Fehler = Abbruch ohne Writes) und feldweise gemerged werden, sonst löscht ein Import ohne Kategorienzeilen bestehende Food/Bev/TA-Werte.
+- Monatsreport-Overlay `istAlsVjRecord` merged feldweise mit dem vj_daily-Record des Tages (Monat + Woche) — Ist-Überlagerung darf vorhandene Kategorien nie verdecken.
+- Jahres-Lock blockiert ALLE Ziele (auch actual) — Test, der das Gegenteil erwartet, ist veraltet.

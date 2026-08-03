@@ -555,7 +555,8 @@ export function GastronoviImportSection() {
 
       updates[r.date] = { [field]: r.total, [foodKey]: r.food, [bevKey]: r.beverage };
       // Take-Away-Anteil (brutto) nur für Ist-Umsätze — Basis der Netto-Berechnung (2.6 % MwSt).
-      if (target === 'actual') updates[r.date].takeawayRevenue = r.takeAway;
+      // undefined = Datei ohne Take-Away-Zeile → bestehenden Wert nie überschreiben.
+      if (target === 'actual' && r.takeAway !== undefined) updates[r.date].takeawayRevenue = r.takeAway;
       count++;
     }
 

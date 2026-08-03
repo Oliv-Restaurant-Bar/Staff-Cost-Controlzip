@@ -24,6 +24,7 @@ export interface MonthImportRow {
   revenue: number;      // CHF-Summe aus "Gesamt"-Zeile
   food: number;         // Food (Speisen)
   beverage: number;     // Beverage (Getränke)
+  takeAway: number;     // Take Away (brutto, 2.6 % MwSt) — 0 wenn Zeile fehlt (z.B. Beaulieu)
   discounts: number;    // Rabatte (negativ → als positiver Betrag)
 }
 
@@ -218,11 +219,13 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
   const gesamtRow   = findRow(['gesamt', 'total', 'umsatz gesamt', 'umsatz netto', 'netto umsatz']);
   const foodRow     = findRow(['food', 'speisen', 'essen', 'küche']);
   const beverageRow = findRow(['beverage', 'getränke', 'drinks']);
+  const takeAwayRow = findRow(['take away', 'takeaway', 'take-away']);
   const discountRow = findRow(['rabatt', 'discount', 'nachlass']);
 
   debugParts.push(`Gesamt-Zeile: ${gesamtRow ? String((gesamtRow as unknown[])[0]) : 'NICHT GEFUNDEN'}`);
   if (foodRow)     debugParts.push(`Food-Zeile: ${String((foodRow as unknown[])[0])}`);
   if (beverageRow) debugParts.push(`Beverage-Zeile: ${String((beverageRow as unknown[])[0])}`);
+  if (takeAwayRow) debugParts.push(`Take-Away-Zeile: ${String((takeAwayRow as unknown[])[0])}`);
 
   if (!gesamtRow) {
     const rowLabels = data.slice(0, 15).map(r => String((r as unknown[])[0])).filter(Boolean).join(', ');
@@ -240,12 +243,14 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
     let revenue = 0;
     let food = 0;
     let beverage = 0;
+    let takeAway = 0;
     let discounts = 0;
 
     for (const col of cols) {
       revenue   += parseCHFValue((gesamtRow as unknown[])[col]);
       food      += foodRow     ? parseCHFValue((foodRow as unknown[])[col])     : 0;
       beverage  += beverageRow ? parseCHFValue((beverageRow as unknown[])[col]) : 0;
+      takeAway  += takeAwayRow ? parseCHFValue((takeAwayRow as unknown[])[col]) : 0;
       discounts += discountRow ? Math.abs(parseCHFValue((discountRow as unknown[])[col])) : 0;
     }
 
@@ -254,6 +259,7 @@ export async function parseAnnualRevenueXLSX(file: File): Promise<AnnualImportRe
       revenue:   Math.round(revenue   * 100) / 100,
       food:      Math.round(food      * 100) / 100,
       beverage:  Math.round(beverage  * 100) / 100,
+      takeAway:  Math.round(takeAway  * 100) / 100,
       discounts: Math.round(discounts * 100) / 100,
     });
     yearTotal += revenue;

@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import { format, parseISO, differenceInDays, differenceInCalendarMonths, endOfMonth } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { VjDailyImportSection } from '@/components/VjDailyImportSection';
+import { VerkaufsdatenImportSection } from '@/components/VerkaufsdatenImportSection';
 import { ManualEntryCard } from '@/components/GastronoviImportSection';
 import { ActualHoursImportButton } from '@/components/ActualHoursImportButton';
 import { LastImportPanel } from '@/components/import-center/LastImportPanel';
@@ -1123,6 +1124,10 @@ const AnnualRevenueImportSection = () => {
           <p className="text-xs text-muted-foreground">
             <strong>{result.months.filter(r => r.revenue > 0).length}</strong> Monate erkannt
             aus <em>{fileName}</em>
+            {result.months.some(r => r.takeAway > 0) && result.yearTotal > 0 && (
+              <> — Take Away {fmt(result.months.reduce((s, r) => s + r.takeAway, 0))} von {fmt(result.yearTotal)}
+                {' '}({(result.months.reduce((s, r) => s + r.takeAway, 0) / result.yearTotal * 100).toFixed(1)} %)</>
+            )}
           </p>
           <div className="rounded border text-[11px] overflow-hidden">
             <table className="w-full">
@@ -4014,6 +4019,19 @@ const ImportHub = () => {
           badgeColor="border-slate-300 text-slate-700 bg-slate-50 dark:bg-slate-950/20"
         >
           <ManualEntrySection />
+        </Section>
+
+        {/* ── 1c. Verkaufsdaten Food/Beverage (Jahr) ───────────────────── */}
+        <Section
+          id="verkaufsdaten-food-beverage"
+          title="Verkaufsdaten Food/Beverage"
+          subtitle="Gastronovi-Artikel-Exporte pro Jahr (Food/Beverage, Umsatz + Anzahl) — speist Cockpit Food/Beverage inkl. Vorjahr"
+          icon={<TrendingUp className="h-4 w-4" />}
+          color="border-lime-400 dark:border-lime-600"
+          badge="Tab-getrennt, 4 Dateien/Jahr"
+          badgeColor="border-lime-300 text-lime-700 bg-lime-50 dark:bg-lime-950/20"
+        >
+          <VerkaufsdatenImportSection />
         </Section>
 
         {/* ── 2. Umsatz Vorjahr ─────────────────────────────────────────── */}

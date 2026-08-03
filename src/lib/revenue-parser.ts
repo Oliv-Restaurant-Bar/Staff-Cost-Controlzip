@@ -728,8 +728,11 @@ export interface GastronoviDayResult {
   /** Voller Tagesumsatz brutto aus der «Gesamt»-Zeile (inkl. Take Away, nach
    *  Rabatten). Fallback: Summe der Kategoriezeilen, wenn keine Gesamt-Zeile. */
   total: number;
-  /** Take-Away-Anteil brutto aus der separaten «Take Away»-Zeile (Teil von total). */
-  takeAway: number;
+  /** Take-Away-Anteil brutto aus der separaten «Take Away»-Zeile (Teil von total).
+   *  undefined = die Datei enthält KEINE Take-Away-Zeile («nicht geliefert») —
+   *  bestehende takeawayRevenue-Werte dürfen dann NICHT überschrieben werden.
+   *  0 = Zeile vorhanden, Tageswert explizit null. */
+  takeAway?: number;
   currency: 'CHF' | 'EUR';
 }
 
@@ -808,6 +811,10 @@ export const parseGastronoviExcel = async (
         // Die Tageszellen des Exports summieren NICHT immer exakt auf dieses
         // Total — die Tageswerte werden deshalb proportional darauf abgeglichen.
         let zGesamt = 0, zTakeAway = 0, zFood = 0, zBeverage = 0;
+        // Präsenz der Take-Away-Zeile: fehlt sie in der Datei, ist takeAway
+        // «nicht geliefert» (undefined) statt explizite 0 — Konsumenten dürfen
+        // bestehende Take-Away-Werte dann nicht überschreiben.
+        let hasTakeAwayRow = false;
 
         dateColumns.forEach(({ date }) => {
           foodMap[date]      = 0;
@@ -826,6 +833,7 @@ export const parseGastronoviExcel = async (
           const label = String(row[0]).trim().toLowerCase();
           const isTakeAway = label.includes('take away') || label.includes('take-away')
             || label.includes('takeaway') || label.includes('ausser haus') || label.includes('außer haus');
+          if (isTakeAway) hasTakeAwayRow = true;
           const isGesamt   = !isTakeAway && (label.includes('gesamt') || label.includes('total'));
           const isFood     = label.includes('food') || label.includes('speisen');
           const isBeverage = label.includes('beverage') || label.includes('getränke');
@@ -884,7 +892,9 @@ export const parseGastronoviExcel = async (
             food:     Math.round(food     * 100) / 100,
             beverage: Math.round(beverage * 100) / 100,
             total,
-            takeAway: Math.round((takeAwayMap[date] ?? 0) * 100) / 100,
+            ...(hasTakeAwayRow
+              ? { takeAway: Math.round((takeAwayMap[date] ?? 0) * 100) / 100 }
+              : {}),
             currency: currencyMap[date] ?? 'CHF',
           };
         }).filter(r => r.total !== 0);
@@ -922,12 +932,14 @@ export const parseGastronoviExcel = async (
           }
         };
         adjustSeries(r => r.total,    (r, v) => { r.total    = v; }, zGesamt);
-        adjustSeries(r => r.takeAway, (r, v) => { r.takeAway = v; }, zTakeAway);
+        if (hasTakeAwayRow) adjustSeries(r => r.takeAway ?? 0, (r, v) => { r.takeAway = v; }, zTakeAway);
         adjustSeries(r => r.food,     (r, v) => { r.food     = v; }, zFood);
         adjustSeries(r => r.beverage, (r, v) => { r.beverage = v; }, zBeverage);
 
         // Datenqualitäts-Guard: Take Away ist Teilmenge von Gesamt.
-        for (const r of results) r.takeAway = Math.min(r.takeAway, r.total);
+        for (const r of results) {
+          if (r.takeAway !== undefined) r.takeAway = Math.min(r.takeAway, r.total);
+        }
 
         resolve(results);
       } catch (err) {
