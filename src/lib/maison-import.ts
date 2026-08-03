@@ -2,8 +2,11 @@
  * maison-import.ts — XLSX-Import für Marketing-Tagesumsätze
  * ===========================================================
  * Liest einen GastronoVi-/POS-Export und extrahiert Tagesbeträge
- * ausschliesslich aus Zeilen mit der Bezeichnung "marketing" oder "Marketing".
- * Andere Zeilen (z.B. "Maison", "Rabatte") werden ignoriert.
+ * ausschliesslich aus Zeilen, deren Bezeichnung «marketing» ENTHÄLT —
+ * case-insensitive, inkl. Tippvarianten («Marketing», «marketing@»,
+ * «Marketing influencerin Tanja»). NICHT gezählt werden «Maison»,
+ * «Rabatte», «Mitarbeiter Rabatt», «Gutschein», «Sponsoring» und
+ * Einzelnamen/Bewirtungen (enthalten das Wort «marketing» nicht).
  *
  * Format:
  *   Zeile 1: Bezeichnung | Zeitraum | 01.05. | 02.05. | …
@@ -21,7 +24,15 @@ export interface MaisonImportResult {
   daysWithData: number;
 }
 
-const MAISON_LABELS = new Set(['marketing']);
+/**
+ * Verbindliche Marketing-Erkennung: Bezeichnung enthält «marketing»
+ * (case-insensitive). Deckt «Marketing», «marketing@», «Marketing
+ * influencerin Tanja» ab; «Maison»/«Rabatte»/«Gutschein»/«Sponsoring»/
+ * Namenszeilen matchen nie.
+ */
+export function isMarketingLabel(label: string): boolean {
+  return /marketing/i.test(label);
+}
 
 /** Zellwert robust in Text wandeln (auch RichText-/Formel-Zellen). */
 function cellToString(val: ExcelJS.CellValue): string {
@@ -70,10 +81,11 @@ export async function parseMaisonXlsx(
 
   ws.eachRow({ includeEmpty: false }, (row, rowIndex) => {
     if (rowIndex === 1) return;
-    // Case-insensitive: «Marketing» UND «marketing» zählen BEIDE
-    // (NBSP-/RichText-tolerant); Maison/Rabatte/Namens-Zeilen nie.
+    // Case-insensitive Substring-Match (NBSP-/RichText-tolerant):
+    // «Marketing», «marketing@», «Marketing influencerin Tanja» zählen;
+    // Maison/Rabatte/Gutschein/Sponsoring/Namens-Zeilen nie.
     const label = cellToString(row.getCell(1).value).replace(/\u00A0/g, ' ').trim();
-    if (!MAISON_LABELS.has(label.toLowerCase())) return;
+    if (!isMarketingLabel(label)) return;
 
     rowsFound.push(label);
     dateCols.forEach(({ col, day, month }) => {

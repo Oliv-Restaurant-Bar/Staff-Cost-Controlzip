@@ -75,7 +75,16 @@ export type ImportRunSnapshot =
   /** Einzelne EINTRÄGE innerhalb von KV-Blobs (z. B. dailyBudgets, gaeste-daily):
    *  pro Blob-Key eine Map Eintrag→Vorzustand (null = Eintrag existierte nicht).
    *  Optional zusätzlich ganze KV-Keys (kvItems, z. B. vj_daily:<date>). */
-  | { kind: 'kv-blob-entries'; blobs: Array<{ key: string; entries: Record<string, unknown | null> }>;
+  | { kind: 'kv-blob-entries'; blobs: Array<{
+        key: string;
+        entries: Record<string, unknown | null>;
+        /** Optionaler Konfliktschutz: erwarteter Zustand der betroffenen
+         *  Einträge DIREKT NACH dem Import (null = Eintrag wurde entfernt).
+         *  Weicht der aktuelle Remote-Stand ab (späterer manueller Edit /
+         *  anderer Writer), wird der Undo VERWEIGERT statt Änderungen zu
+         *  überschreiben. */
+        expected?: Record<string, unknown | null>;
+      }>;
       kvItems?: KvKeyItem[] };
 
 export interface ImportRunEntry {
@@ -231,9 +240,27 @@ async function restoreKvKeys(items: KvKeyItem[]): Promise<void> {
  * null = Eintrag existierte vor dem Import nicht → wird entfernt.
  */
 async function restoreKvBlobEntries(
-  blobs: Array<{ key: string; entries: Record<string, unknown | null> }>,
+  blobs: Array<{ key: string; entries: Record<string, unknown | null>; expected?: Record<string, unknown | null> }>,
 ): Promise<number> {
   let restored = 0;
+  // Konfliktprüfung ZUERST über ALLE Blobs (kein Teil-Undo bei Konflikt).
+  for (const blob of blobs) {
+    if (!blob.expected) continue;
+    const remote = await kvGetStrict(blob.key);
+    const base: Record<string, unknown> =
+      (remote && typeof remote === 'object' && !Array.isArray(remote))
+        ? (remote as Record<string, unknown>)
+        : {};
+    for (const [entryKey, exp] of Object.entries(blob.expected)) {
+      const cur = base[entryKey] ?? null;
+      const same = exp === null ? cur === null : JSON.stringify(cur) === JSON.stringify(exp);
+      if (!same) {
+        throw new Error(
+          `Konflikt: «${entryKey}» wurde seit dem Import verändert (manuell oder durch einen anderen Import) — Rückgängig abgebrochen, nichts geändert.`,
+        );
+      }
+    }
+  }
   for (const blob of blobs) {
     const remote = await kvGetStrict(blob.key);
     const base: Record<string, unknown> =
@@ -279,7 +306,13 @@ export async function undoImportRun(tenantId: string, run: ImportRunEntry): Prom
     return { ok: true, message: `${snap.items.length} Einträge auf den Stand vor dem Import zurückgesetzt.` };
   }
   if (snap.kind === 'kv-blob-entries') {
-    const restored = await restoreKvBlobEntries(snap.blobs);
+    let restored: number;
+    try {
+      restored = await restoreKvBlobEntries(snap.blobs);
+    } catch (err) {
+      // Konflikt oder KV-Fehler: NICHTS wurde geändert — Lauf bleibt undo-bar.
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
     if (snap.kvItems && snap.kvItems.length > 0) await restoreKvKeys(snap.kvItems);
     await markRunUndone(tenantId, run.id);
     try { window.dispatchEvent(new Event('supabase-kv-synced')); } catch { /* noop */ }

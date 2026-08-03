@@ -96,7 +96,7 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { parseMaisonXlsx } from '@/lib/maison-import';
-import { saveMaisonDaily, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
+import { saveMaisonDailyReplaceYears, saveMaisonEnabled, getMaisonEnabledSync, loadMaisonDaily } from '@/lib/maison-store';
 import { parseGaesteXlsx, parseDurchschnittXlsx } from '@/lib/gaeste-import';
 import { saveGaesteDailyReplaceMonths, diffGaesteDaily, saveAvgCheck, loadGaesteDaily, loadAvgCheckDaily, loadAvgCheckMonthly, type GaesteDiff } from '@/lib/gaeste-store';
 import { ladeUmsatzTage, summiereUmsatz, type UmsatzTag } from '@/lib/umsatz';
@@ -2702,6 +2702,14 @@ interface TagesdatenPreview {
   gaesteDiff?: GaesteDiff;
   /** Nur gaeste: betroffene Monate «YYYY-MM» (Datei ersetzt diese Monate 1:1). */
   gaesteMonths?: string[];
+  /** Nur marketing: betroffene Jahre — die Datei ist massgebliche Quelle und
+      ERSETZT alle Marketing-Tageswerte dieser Jahre (Alt-Tage werden entfernt). */
+  marketingYears?: number[];
+  /** Nur marketing: Bestands-Tage der betroffenen Jahre, die NICHT in der Datei
+      stehen und beim Speichern entfernt werden. */
+  marketingEntfernt?: string[];
+  /** Nur marketing: neues Jahrestotal je betroffenem Jahr NACH dem Import. */
+  marketingJahrTotals?: { year: number; total: number }[];
   /** ALLE Typen: Diff gegen den Bestand nach Daten-Schlüssel (Mandant+Typ+Datum) —
       erkennt Doppel-Importe auch aus einer anderen Datei. undefined = Bestand nicht lesbar. */
   datenDiff?: { neu: number; aktualisiert: number; unveraendert: number };
@@ -2947,6 +2955,31 @@ function TagesdatenImportSection() {
         gaesteDiff = diffGaesteDaily(prior, daily, gaesteMonths);
       }
 
+      // Marketing: Datei = massgebliche Quelle → JAHRES-Ersatz. Bestands-Tage
+      // der Datei-Jahre, die nicht in der Datei stehen, werden entfernt;
+      // Jahrestotal NACH Import = Summe der Datei-Tage je Jahr.
+      let marketingYears: number[] | undefined;
+      let marketingEntfernt: string[] | undefined;
+      let marketingJahrTotals: { year: number; total: number }[] | undefined;
+      if (typ === 'marketing') {
+        marketingYears = [...new Set(dates.map(d => Number(d.slice(0, 4))))].sort();
+        const yearSet = new Set(marketingYears.map(String));
+        try {
+          const prior = await loadMaisonDaily(tenantKey);
+          marketingEntfernt = Object.keys(prior)
+            .filter(d => yearSet.has(d.slice(0, 4)) && daily[d] == null)
+            .sort();
+        } catch { marketingEntfernt = undefined; }
+        const perYear = new Map<number, number>();
+        for (const d of dates) {
+          const y = Number(d.slice(0, 4));
+          perYear.set(y, (perYear.get(y) ?? 0) + daily[d]);
+        }
+        marketingJahrTotals = [...perYear.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([y, t]) => ({ year: y, total: Math.round(t * 100) / 100 }));
+      }
+
       // ALLE Typen: Dublettenerkennung nach Daten-Schlüssel (Mandant+Typ+Datum) —
       // greift auch, wenn derselbe Zeitraum aus einer ANDEREN Datei kommt.
       // Save ersetzt je Tag (nie addieren); hier machen wir das Überschreiben sichtbar.
@@ -2973,7 +3006,8 @@ function TagesdatenImportSection() {
       }
 
       setPreview({
-        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths, datenDiff, geaendert,
+        typ, year, daily, umsatzRows, gaesteDiff, gaesteMonths,
+        marketingYears, marketingEntfernt, marketingJahrTotals, datenDiff, geaendert,
         dates, from: dates[0] ?? null, to: dates.at(-1) ?? null,
         monthTotals, zeitraum, tagessumme,
         invalidDates: invalidDates.length > 0 ? invalidDates : undefined,
@@ -3015,7 +3049,7 @@ function TagesdatenImportSection() {
       // Pro Typ: Vorzustand der betroffenen Blob-Einträge (null = existierte
       // nicht → Undo entfernt den Eintrag). Best-effort: schlägt der Snapshot
       // fehl, läuft der Import weiter — nur ohne Undo-Möglichkeit.
-      let undoBlobs: Array<{ key: string; entries: Record<string, unknown | null> }> | null = null;
+      let undoBlobs: Array<{ key: string; entries: Record<string, unknown | null>; expected?: Record<string, unknown | null> }> | null = null;
       let undoKvItems: KvKeyItem[] | undefined;
       try {
         if (typ === 'gaeste') {
@@ -3048,10 +3082,22 @@ function TagesdatenImportSection() {
             });
           }
         } else if (typ === 'marketing') {
+          // Snapshot aus dem FRISCHEN Bestand: ALLE Bestands-Tage der
+          // betroffenen JAHRE + alle Datei-Tage — der Jahres-Ersatz entfernt
+          // auch Alt-Tage, die nicht in der Datei stehen; Undo stellt sie wieder her.
           const prior = await loadMaisonDaily(tenantKey);
+          const years = new Set((preview.marketingYears ?? [...new Set(preview.dates.map(d => Number(d.slice(0, 4))))]).map(String));
+          const affected = new Set<string>([
+            ...preview.dates,
+            ...Object.keys(prior).filter(d => years.has(d.slice(0, 4))),
+          ]);
+          // Konfliktschutz: erwarteter Zustand NACH dem Import (Datei-Tage =
+          // Datei-Wert, entfernte Alt-Tage = null). Wird der Blob danach von
+          // anderer Seite verändert, verweigert Undo statt zu überschreiben.
           undoBlobs = [{
             key: tenantKey('maison-daily'),
-            entries: Object.fromEntries(preview.dates.map(d => [d, prior[d] ?? null])),
+            entries: Object.fromEntries([...affected].sort().map(d => [d, prior[d] ?? null])),
+            expected: Object.fromEntries([...affected].sort().map(d => [d, daily[d] ?? null])),
           }];
         } else {
           // umsatz: ganze Tages-Objekte aus der merged dailyBudgets-Basis
@@ -3113,11 +3159,18 @@ function TagesdatenImportSection() {
         void recordRun();
         toast.success(`Durchschnittsverkauf gespeichert: ${preview.dates.length} Tage`);
       } else if (typ === 'marketing') {
-        await saveMaisonDaily(tenantKey, daily);
+        // Jahres-Ersatz (Datei = massgebliche Quelle): gleiche Tage ersetzen,
+        // Alt-Tage der Datei-Jahre entfernen — nie addieren. Andere Jahre
+        // bleiben unberührt. Strikte Merge-Basis: KV-Lesefehler → kein Write.
+        await saveMaisonDailyReplaceYears(
+          tenantKey,
+          preview.marketingYears ?? [...new Set(preview.dates.map(d => Number(d.slice(0, 4))))].sort(),
+          daily,
+        );
         if (!getMaisonEnabledSync(tenantKey)) await saveMaisonEnabled(tenantKey, true);
         void recordRun();
         const total = preview.monthTotals.reduce((s, m) => s + m.value, 0);
-        toast.success(`Marketing-Umsatz gespeichert: ${preview.dates.length} Tage, CHF ${total.toLocaleString('de-CH', { maximumFractionDigits: 0 })}`);
+        toast.success(`Marketing-Umsatz gespeichert: ${preview.dates.length} Tage, CHF ${total.toLocaleString('de-CH', { maximumFractionDigits: 0 })} — Jahre ${(preview.marketingYears ?? []).join(', ')} ersetzt`);
       } else {
         // umsatz — Modus anhand gewähltem Jahr (Ist vs. Vorjahr)
         const target = targetForYear(preview.year, currentYear);
@@ -3354,6 +3407,26 @@ function TagesdatenImportSection() {
                   {preview.gaesteDiff.entfernt.length} bestehende{preview.gaesteDiff.entfernt.length === 1 ? 'r' : ''} Tag{preview.gaesteDiff.entfernt.length === 1 ? '' : 'e'} der importierten Monate
                   {' '}({preview.gaesteDiff.entfernt.map(d => format(parseISO(d), 'dd.MM.')).join(', ')}) {preview.gaesteDiff.entfernt.length === 1 ? 'ist' : 'sind'} nicht in der Datei
                   und {preview.gaesteDiff.entfernt.length === 1 ? 'wird' : 'werden'} entfernt (Datei gilt 1:1 — verhindert Doppelzählung; per «Rückgängig» wiederherstellbar).
+                </p>
+              )}
+
+              {/* Marketing-Jahresersatz: Alt-Tage der Datei-Jahre, die die Datei nicht enthält */}
+              {preview.typ === 'marketing' && preview.marketingEntfernt && preview.marketingEntfernt.length > 0 && (
+                <p className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="tagesdaten-marketing-entfernt">
+                  {preview.marketingEntfernt.length} bestehende{preview.marketingEntfernt.length === 1 ? 'r' : ''} Marketing-Tag{preview.marketingEntfernt.length === 1 ? '' : 'e'} der Jahre {(preview.marketingYears ?? []).join(', ')}
+                  {' '}({preview.marketingEntfernt.slice(0, 12).map(d => format(parseISO(d), 'dd.MM.yy')).join(', ')}{preview.marketingEntfernt.length > 12 ? ` … +${preview.marketingEntfernt.length - 12}` : ''})
+                  {' '}{preview.marketingEntfernt.length === 1 ? 'ist' : 'sind'} nicht in der Datei und {preview.marketingEntfernt.length === 1 ? 'wird' : 'werden'} entfernt
+                  (Datei = massgebliche Quelle, ersetzt die Jahre komplett; per «Rückgängig» wiederherstellbar).
+                </p>
+              )}
+              {/* Marketing: neues Jahrestotal NACH dem Import */}
+              {preview.typ === 'marketing' && preview.marketingJahrTotals && preview.marketingJahrTotals.length > 0 && (
+                <p className="text-xs" data-testid="tagesdaten-marketing-jahrestotal">
+                  {preview.marketingJahrTotals.map(({ year: y, total }) => (
+                    <span key={y} className="mr-3">
+                      Neues Jahrestotal {y}: <strong className="tabular-nums">CHF {total.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                    </span>
+                  ))}
                 </p>
               )}
 
