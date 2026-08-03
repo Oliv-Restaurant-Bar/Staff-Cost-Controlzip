@@ -19,7 +19,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadMonthInvoices, type InvoiceEntry } from '@/lib/waren-db';
+import { loadMonthInvoices, loadAliasGruppen, type InvoiceEntry } from '@/lib/waren-db';
+import { applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange } from '@/lib/waren-cockpit';
 import {
   loadZielWarenquote, saveZielWarenquote, normalizeZielWarenquotePct,
@@ -96,8 +97,21 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
     return () => { alive = false; };
   }, [tenantId]);
 
+  // Lieferanten-Alias-Gruppen (mandantengetrennt): nur für die Lieferanten-
+  // Gruppierung — Totale/WKQ bleiben unverändert.
+  const [aliasGruppen, setAliasGruppen] = useState<AliasGruppe[]>([]);
+  useEffect(() => {
+    let alive = true;
+    setAliasGruppen([]);
+    loadAliasGruppen(tenantId).then(g => { if (alive) setAliasGruppen(g); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [tenantId]);
+
   const totalNet = useMemo(() => (invoices ? sumInvoicesNet(invoices) : 0), [invoices]);
-  const supplierRows = useMemo(() => (invoices ? aggregateBySupplier(invoices) : []), [invoices]);
+  const supplierRows = useMemo(
+    () => (invoices ? aggregateBySupplier(applyAliasGruppen(invoices, aliasGruppen)) : []),
+    [invoices, aliasGruppen],
+  );
   const wkq = warenkostenquote(totalNet, umsatzNet ?? 0);
   const ampel = wkqAmpel(wkq, zielPct);
   const buchhaltung = useMemo(() => buchhaltungCogs(tenantId, year, month), [tenantId, year, month]);

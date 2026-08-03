@@ -1,0 +1,29 @@
+AUFGABE: Warenrechnungen FIBU-Abgleich — automatisches Matching (Toleranz CHF 10.00) zwischen "Erfasste Rechnungen" und "Buchungen", plus manuelles Nachbearbeiten. Mandantengetrennt (Oliv/Beaulieu).
+
+TEIL 1 (falls noch offen) — Datum "Erfasste Rechnungen" auf dd.mm.yyyy (03.06.2026) wie bei "Buchungen".
+
+TEIL 2 — AUTOMATISCHES Matching (Primärschritt):
+1) Beim Öffnen eines Lieferanten matcht das System erfasste Rechnungen ↔ Buchungen automatisch, wenn die Summen innerhalb der Toleranz übereinstimmen.
+2) TOLERANZ = CHF 10.00 (absolute Differenz der gematchten Summen). Standardwert 10.00, aber als Einstellung änderbar.
+3) N:M erlaubt: nicht nur 1:1, sondern auch mehrere Rechnungen → eine Buchung, mehrere Buchungen → eine Rechnung, und Kombinationen. Priorität der Auto-Zuordnung:
+   a) exakte 1:1 innerhalb Toleranz zuerst,
+   b) dann kleine Kombinationen (mehrere Rechnungen, deren Summe ≈ eine Buchung, bzw. umgekehrt) innerhalb Toleranz,
+   c) Datum/Nähe als Tiebreaker, wenn mehrere Kombinationen passen.
+4) Nur EINDEUTIGE Auto-Matches setzen. Wenn mehrere gleich gute Kombinationen möglich sind (mehrdeutig), NICHT automatisch matchen — offen lassen für manuell.
+5) Auto-gematchte Gruppen werden GRÜN markiert, mit kleinem Tag "auto". Bei Rest-Differenz innerhalb Toleranz (>0 aber ≤10) Häkchen grün, Differenzbetrag klein daneben anzeigen.
+
+TEIL 3 — MANUELL nachbearbeiten (Rest + Korrekturen):
+1) Jedes Match (auch ein Auto-Match) lässt sich per "Match aufheben" wieder lösen → Zeilen werden neutral.
+2) Ich kann Rechnungen/Buchungen manuell auswählen (N:M) und zu einer Gruppe matchen; live Summen + Differenz anzeigen (0/≤10 = grün, sonst gelb/rot). Manuelle Matches mit Tag "manuell".
+3) Manuell getrennte/neu zugeordnete Matches haben Vorrang und werden NICHT durch einen erneuten Auto-Lauf überschrieben (manuelle Entscheidung bleibt stehen).
+
+ÜBERSICHT & SPEICHERN:
+- Pro Lieferant: "gematcht X von Y Rechnungen · A von B Buchungen · noch offen: erfasst CHF … / Buchhaltung CHF …". Der offene Rest = echte ungeklärte Differenz.
+- Button "Auto-Match neu ausführen" (matcht nur noch Ungematchtes, lässt manuelle Matches unberührt).
+- Matches persistiert, mandantengetrennt, pro Lieferant und Monat; bleiben nach Reload erhalten. Kombinierbar mit den Lieferanten-Alias-Gruppen (Prodega/Transgourmet zusammen).
+
+RAHMEN:
+- Rein zuordnend/visuell: keine Beträge verändern/umbuchen.
+- Streng mandantengetrennt. Nie durch 0 teilen, leer statt 0. Speichern/Undo über bestehende Pfade.
+
+Bitte kurz zusammenfassen: wie Auto-Match läuft, wie ich die Toleranz ändere, wie ich manuell auflöse/neu zuordne.

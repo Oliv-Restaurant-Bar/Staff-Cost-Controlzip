@@ -1,0 +1,29 @@
+AUFGABE: Warenrechnungen FIBU-Abgleich — automatisches Matching (Toleranz CHF 10.00) zwischen "Erfasste Rechnungen" und "Buchungen", plus manuelles Nachbearbeiten. Mandantengetrennt (Oliv/Beaulieu).
+
+TEIL 1 — Datum "Erfasste Rechnungen" auf dd.mm.yyyy (03.06.2026) wie bei "Buchungen".
+
+TEIL 2 — AUTOMATISCHES Matching (Primärschritt):
+1) Beim Öffnen eines Lieferanten matcht das System erfasste Rechnungen ↔ Buchungen automatisch, wenn die Summen innerhalb der Toleranz übereinstimmen.
+2) TOLERANZ = CHF 10.00 (absolute Differenz der gematchten Summen). Standardwert 10.00, als Einstellung änderbar.
+3) N:M erlaubt: 1:1, mehrere Rechnungen → eine Buchung, mehrere Buchungen → eine Rechnung, und Kombinationen. Priorität:
+   a) exakte 1:1 innerhalb Toleranz zuerst,
+   b) dann kleine Kombinationen (Summe mehrerer Rechnungen ≈ eine Buchung bzw. umgekehrt) innerhalb Toleranz,
+   c) Datum/Nähe als Tiebreaker bei mehreren passenden Kombinationen.
+4) Nur EINDEUTIGE Auto-Matches setzen. Mehrdeutige (mehrere gleich gute Kombinationen) NICHT automatisch matchen — offen lassen für manuell.
+5) Auto-gematchte Gruppen GRÜN markiert, Tag "auto". Rest-Differenz ≤10 = grün, Differenzbetrag klein daneben.
+
+TEIL 3 — MANUELL nachbearbeiten (Rest + Korrekturen):
+1) Jedes Match (auch Auto) per "Match aufheben" wieder lösen → Zeilen neutral.
+2) Rechnungen/Buchungen manuell auswählen (N:M) und matchen; live Summen + Differenz (0/≤10 = grün, sonst gelb/rot). Manuelle Matches mit Tag "manuell".
+3) Manuell getrennte/neu zugeordnete Matches haben VORRANG und werden bei einem erneuten Auto-Lauf NICHT überschrieben.
+
+ÜBERSICHT & SPEICHERN:
+- Pro Lieferant: "gematcht X von Y Rechnungen · A von B Buchungen · noch offen: erfasst CHF … / Buchhaltung CHF …". Offener Rest = echte ungeklärte Differenz.
+- Button "Auto-Match neu ausführen" (matcht nur Ungematchtes, lässt manuelle Matches unberührt).
+- Matches persistiert, mandantengetrennt, pro Lieferant und Monat; bleiben nach Reload erhalten. Kombinierbar mit den Lieferanten-Alias-Gruppen (Prodega/Transgourmet zusammen).
+
+RAHMEN:
+- Rein zuordnend/visuell: keine Beträge verändern/umbuchen.
+- Streng mandantengetrennt. Nie durch 0 teilen, leer statt 0. Speichern/Undo über bestehende Pfade.
+
+Bitte kurz zusammenfassen: wie Auto-Match läuft, wie ich die Toleranz ändere, wie ich manuell auflöse/neu zuordne.

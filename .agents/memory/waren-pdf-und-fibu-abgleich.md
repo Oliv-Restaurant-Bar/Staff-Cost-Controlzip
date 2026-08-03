@@ -10,3 +10,18 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 - **Lieferanten-Volltext-Matching** (`findSupplierInText`): Kern-Tokens ohne Rechtsformen (STOP_TOKENS), Ein-Token-Namen < 4 Zeichen nie matchen, bei Gleichstand kein Match (mehrdeutig = unzugeordnet).
 - OCR: tesseract.js lazy-import nur wenn pdfjs-Text < 40 Zeichen (Scan); Fehler → `ocrFehler`, nie throw — UI fällt auf manuelle Erfassung zurück, PDF bleibt Beleg.
 - `page.render({ canvasContext, viewport })` — kein `canvas`-Property (pdfjs-Typen).
+
+## Lieferanten-Alias-Gruppen (Anzeige-Gruppierung)
+- KV `waren_alias_gruppen_v1` (tenantKey), Form `{groups:[...]}` — «Key fehlt» ≠ «leer gespeichert»: nur bei fehlendem Key erhält Beaulieu Defaults (Prodega/Transgourmet, Gourmador/Frigemo); kein Write-on-Read.
+- Kanonisierung IMMER via `applyAliasGruppen`/`buildAliasResolver` (waren-alias-gruppen.ts, normalizeSupplierKey-basiert) an der Ladestelle der Rechnungsliste — nie Beträge/Daten ändern, nur supplierName-Merge.
+- FIBU-Abgleich: erfasst+gebucht pro Gruppe summiert, Journal matcht auch Gruppen-Aliasse; `mitglieder`-Breakdown nur bei echter Zusammenführung. Drilldown-/Detail-Filter müssen Original-Namen via Resolver vergleichen (entries behalten Original-Namen).
+
+## Manuelles FIBU-Matching (Drilldown)
+- Match-Gruppen sind rein zuordnend (IDs/Schlüssel, nie Beträge); Buchungen ohne stabile ID → deterministischer Schlüssel aus Feldern + Duplikat-Index in Anzeige-Reihenfolge; verschwundene Schlüssel werden ignoriert, nie «repariert».
+- Optimistische KV-Saves in schneller Folge: IMMER serialisieren + funktional auf Ref-Stand mutieren; Rollback nur auf den Vorzustand der fehlgeschlagenen Mutation; Erfolgs-UI (Toast/Auswahl leeren) erst nach bestätigtem Save.
+
+## Auto-Match (FIBU-Abgleich)
+- Auto-Match nur eindeutige Treffer; Datumsnähe ist BEWUSST Tiebreaker bei gleicher Differenz (Produktentscheid des Users, Spez. 3c) — Reviewer-Einwand dagegen wurde bewusst nicht umgesetzt.
+- Manuell aufgelöste Matches sperren ihre Mitglieder dauerhaft für den Auto-Lauf (gesperrt-Liste im Match-Blob); ein neues manuelles Match entsperrt sie wieder.
+- Auto-Lauf darf erst NACH dem Laden des gespeicherten Match-Zustands starten, sonst matcht er gegen leeren State und dupliziert.
+- Toleranz (Default CHF 10) ist mandantenweit persistiert und steuert auch die grüne Ampel.

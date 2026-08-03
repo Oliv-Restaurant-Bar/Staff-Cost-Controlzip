@@ -210,6 +210,86 @@ export async function saveSupplierAlias(
   console.log(`[WAREN] Alias gespeichert: "${aliasKey}" → "${supplierName}" (${tenantId})`);
 }
 
+// ─── Lieferanten-Alias-Gruppen (FIBU-Abgleich/Analyse-Gruppierung) ───────────
+//
+// KV `waren_alias_gruppen_v1` — { groups: AliasGruppe[] }. WICHTIG:
+// «noch nie gespeichert» (Key fehlt) ≠ «leer gespeichert»: nur im ersten Fall
+// erhält Beaulieu die Standard-Gruppen (Prodega/Transgourmet, Gourmador/
+// Frigemo); ein gespeicherter Stand (auch []) gewinnt immer.
+
+function aliasGruppenKey(tenantId: TenantId): string {
+  return tenantKey(tenantId, 'waren_alias_gruppen_v1');
+}
+
+export async function loadAliasGruppen(
+  tenantId: TenantId,
+): Promise<import('./waren-alias-gruppen').AliasGruppe[]> {
+  const { normalizeAliasGruppen, DEFAULT_ALIAS_GRUPPEN_BEAULIEU } = await import('./waren-alias-gruppen');
+  try {
+    const raw = await kvGet(aliasGruppenKey(tenantId));
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && 'groups' in (raw as object)) {
+      return normalizeAliasGruppen((raw as { groups: unknown }).groups);
+    }
+  } catch { /* Lesefehler → wie fehlend behandeln (nur Anzeige-Gruppierung) */ }
+  return tenantId === 'beaulieu' ? DEFAULT_ALIAS_GRUPPEN_BEAULIEU : [];
+}
+
+export async function saveAliasGruppen(
+  tenantId: TenantId,
+  gruppen: import('./waren-alias-gruppen').AliasGruppe[],
+): Promise<void> {
+  await kvSet(aliasGruppenKey(tenantId), { groups: gruppen });
+  console.log(`[WAREN] alias-gruppen saved: ${gruppen.length} groups for tenant "${tenantId}"`);
+}
+
+// ─── Manuelle/automatische FIBU-Matches (Rechnungen ↔ Buchungen, pro Monat) ──
+//
+// KV `waren_fibu_matches_<YYYY-MM>_v1` — { gruppen: FibuMatchGruppe[],
+// gesperrt: {invoiceIds, buchungKeys} }. Rein zuordnend/visuell (keine
+// Betragsänderung), mandantengetrennt. Alt-Blobs ohne `gesperrt` laden sauber.
+
+function fibuMatchesKey(tenantId: TenantId, monthKey: string): string {
+  return tenantKey(tenantId, `waren_fibu_matches_${monthKey}_v1`);
+}
+
+export async function loadFibuMatchState(
+  tenantId: TenantId,
+  monthKey: string,
+): Promise<import('./waren-fibu-matches').FibuMatchState> {
+  const { normalizeFibuMatchState, LEERER_MATCH_STATE } = await import('./waren-fibu-matches');
+  try {
+    return normalizeFibuMatchState(await kvGet(fibuMatchesKey(tenantId, monthKey)));
+  } catch {
+    return LEERER_MATCH_STATE; // Lesefehler → keine Markierungen (nie werfen, rein visuell)
+  }
+}
+
+export async function saveFibuMatchState(
+  tenantId: TenantId,
+  monthKey: string,
+  state: import('./waren-fibu-matches').FibuMatchState,
+): Promise<void> {
+  await kvSet(fibuMatchesKey(tenantId, monthKey), state);
+  console.log(`[WAREN] fibu-matches saved: ${state.gruppen.length} groups (${monthKey}, tenant "${tenantId}")`);
+}
+
+// ─── Auto-Match-Toleranz (CHF, pro Mandant, Default 10.00) ───────────────────
+
+export async function loadFibuMatchToleranz(tenantId: TenantId): Promise<number> {
+  const { DEFAULT_FIBU_MATCH_TOLERANZ } = await import('./waren-fibu-matches');
+  try {
+    const raw = await kvGet(tenantKey(tenantId, 'waren_fibu_toleranz_v1'));
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FIBU_MATCH_TOLERANZ;
+  } catch {
+    return DEFAULT_FIBU_MATCH_TOLERANZ;
+  }
+}
+
+export async function saveFibuMatchToleranz(tenantId: TenantId, toleranz: number): Promise<void> {
+  await kvSet(tenantKey(tenantId, 'waren_fibu_toleranz_v1'), toleranz);
+}
+
 // ─── Zuletzt genutzte Lieferanten (nur Sortier-Komfort, localStorage) ────────
 
 const RECENT_SUPPLIERS_MAX = 8;

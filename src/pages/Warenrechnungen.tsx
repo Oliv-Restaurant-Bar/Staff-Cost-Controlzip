@@ -37,6 +37,12 @@ import {
   rememberRecentSupplier,
   loadSupplierAliases,
   saveSupplierAlias,
+  loadAliasGruppen,
+  saveAliasGruppen,
+  loadFibuMatchState,
+  saveFibuMatchState,
+  loadFibuMatchToleranz,
+  saveFibuMatchToleranz,
   type Supplier,
   type InvoiceEntry,
   type KontoSplit,
@@ -63,6 +69,12 @@ import {
   normalizeSupplierKey, type ErkannteRechnung,
 } from '@/lib/waren-pdf-erkennung';
 import { buildWarenAbgleich, findeDublette, journalVerfuegbarFuerTenant, type WarenAbgleich } from '@/lib/waren-abgleich';
+import { buildAliasResolver, applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
+import {
+  buchungKeysMitIndex, buchungBetrag, fmtDatumCH, matchAmpel, lieferantMatchStat,
+  autoMatchVorschlaege, LEERER_MATCH_STATE, DEFAULT_FIBU_MATCH_TOLERANZ,
+  type FibuMatchGruppe, type FibuMatchState,
+} from '@/lib/waren-fibu-matches';
 import type { SageJournalEntry } from '@/types/reporting';
 import { computePLForMonth } from '@/lib/pl-engine';
 import { HintBox } from '@/components/ui/hint-box';
@@ -356,6 +368,7 @@ export default function WarenrechnungenPage() {
     loadWarenkonten(tenantId).then(setWarenkonten).catch(() => setWarenkonten(WARENKONTO_LIST));
     loadZielWarenquote(tenantId).then(b => setZielWkqPct(b.pct)).catch(() => {});
     loadSupplierAliases(tenantId).then(setAliases).catch(() => setAliases({}));
+    loadAliasGruppen(tenantId).then(setAliasGruppen).catch(() => setAliasGruppen([]));
     loadWarenkostenGrenze(tenantId)
       .then(g => { setWarenGrenze(g); setGrenzeInput(String(g)); })
       .catch(() => { setWarenGrenze(DEFAULT_WARENKOSTEN_GRENZE); setGrenzeInput(String(DEFAULT_WARENKOSTEN_GRENZE)); });
@@ -369,6 +382,63 @@ export default function WarenrechnungenPage() {
   // Alias-Lernen nur mit EXPLIZITER Zustimmung: die erkannte Schreibweise kann
   // auch eine Adress-/Kopfzeile sein — nie automatisch dauerhaft zuordnen.
   const [aliasLernen,    setAliasLernen]    = useState(false);
+
+  // ─── Lieferanten-Alias-Gruppen (mandantengetrennt, reine Anzeige-Gruppierung) ──
+  const [aliasGruppen,   setAliasGruppen]   = useState<AliasGruppe[]>([]);
+  const aliasResolver = useMemo(() => buildAliasResolver(aliasGruppen), [aliasGruppen]);
+
+  // ─── FIBU-Matches auto/manuell (Rechnungen ↔ Buchungen, pro Mandant+Monat) ─
+  const [fibuState, setFibuState] = useState<FibuMatchState>(LEERER_MATCH_STATE);
+  const [fibuGeladen, setFibuGeladen] = useState(false); // Auto-Match erst NACH dem Load
+  const [fibuToleranz, setFibuToleranz] = useState<number>(DEFAULT_FIBU_MATCH_TOLERANZ);
+  const fibuMonthKey = `${year}-${String(month).padStart(2, '0')}`;
+  useEffect(() => {
+    if (tab !== 'abgleich') return;
+    let alive = true;
+    setFibuState(LEERER_MATCH_STATE);
+    setFibuGeladen(false);
+    Promise.all([
+      loadFibuMatchState(tenantId, fibuMonthKey),
+      loadFibuMatchToleranz(tenantId),
+    ]).then(([st, tol]) => {
+      if (!alive) return;
+      setFibuState(st); setFibuToleranz(tol); setFibuGeladen(true);
+    }).catch(() => { if (alive) setFibuGeladen(true); });
+    return () => { alive = false; };
+  }, [tab, tenantId, fibuMonthKey]);
+  // Saves sind SERIALISIERT und arbeiten funktional auf dem jeweils
+  // aktuellsten Stand (Ref) — schnelle Folge-Mutationen können sich so nicht
+  // gegenseitig überschreiben; Rollback betrifft nur die fehlgeschlagene
+  // Mutation. Rückgabe: true = persistiert (erst dann Erfolgs-UI).
+  const fibuStateRef = useRef<FibuMatchState>(LEERER_MATCH_STATE);
+  useEffect(() => { fibuStateRef.current = fibuState; }, [fibuState]);
+  const fibuSaveChain = useRef<Promise<unknown>>(Promise.resolve());
+  const persistFibuState = useCallback(
+    (mutate: (cur: FibuMatchState) => FibuMatchState): Promise<boolean> => {
+      const run = fibuSaveChain.current.then(async (): Promise<boolean> => {
+        const prev = fibuStateRef.current;
+        const next = mutate(prev);
+        if (next === prev) return true; // No-op (z.B. Auto-Lauf ohne Treffer) — kein Save
+        fibuStateRef.current = next;
+        setFibuState(next); // optimistisch — bei Fehler nur diese Mutation zurückrollen
+        try {
+          await saveFibuMatchState(tenantId, fibuMonthKey, next);
+          return true;
+        } catch (e) {
+          fibuStateRef.current = prev;
+          setFibuState(prev);
+          toast.error(`Match speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+          return false;
+        }
+      });
+      fibuSaveChain.current = run.catch(() => undefined);
+      return run;
+    }, [tenantId, fibuMonthKey]);
+  const speichereToleranz = useCallback(async (tol: number) => {
+    setFibuToleranz(tol);
+    try { await saveFibuMatchToleranz(tenantId, tol); }
+    catch (e) { toast.error(`Toleranz speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
+  }, [tenantId]);
 
   // ─── FIBU-Abgleich pro Lieferant ──────────────────────────────────────────
   const [journal,        setJournal]        = useState<SageJournalEntry[] | null>(null);
@@ -406,8 +476,9 @@ export default function WarenrechnungenPage() {
       supplierNames: suppliers.map(s => s.name),
       aliases,
       buchhaltungTotal,
+      aliasGruppen,
     });
-  }, [tab, journal, entries, warenkonten, suppliers, aliases, year, month, tenantKey]);
+  }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey]);
 
   // ─── Analyse: Zeitraum-Steuerung ──────────────────────────────────────────
   const [analyseMode, setAnalyseMode] = useState<AnalyseMode>('month');
@@ -868,7 +939,9 @@ export default function WarenrechnungenPage() {
   // Aufschlüsselung «davon Warenkosten / davon Betriebskosten».
   const analyseSuppliers = useMemo(() => {
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
-    const list = analysisEntries.filter(x => x.date <= effectiveTo);
+    // Alias-Gruppen: gleiche Zusammenführung wie im FIBU-Abgleich (nur Namen,
+    // Beträge/Totale unverändert).
+    const list = applyAliasGruppen(analysisEntries.filter(x => x.date <= effectiveTo), aliasGruppen);
     const grossByName: Record<string, number> = {};
     for (const e of list) {
       grossByName[(e.supplierName || '—').trim() || '—'] =
@@ -878,16 +951,18 @@ export default function WarenrechnungenPage() {
       name: r.supplierName, net: r.totalNet, gross: grossByName[r.supplierName] ?? 0,
       waren: r.warenNet, betrieb: r.betriebNet,
     }));
-  }, [analysisEntries, analyseDates, todayStr, warenGrenze]);
+  }, [analysisEntries, analyseDates, todayStr, warenGrenze, aliasGruppen]);
 
   // Einzel-Rechnungen des gefilterten Lieferanten im gewählten Zeitraum
   const supplierDetailEntries = useMemo(() => {
     if (!supplierFilter) return [];
     const effectiveTo = analyseDates.to > todayStr ? todayStr : analyseDates.to;
+    // Filter über den kanonischen Namen — bei Alias-Gruppen zählen alle
+    // Original-Namen der Gruppe zum gefilterten Lieferanten.
     return analysisEntries
-      .filter(e => e.supplierName === supplierFilter && e.date <= effectiveTo)
+      .filter(e => aliasResolver(e.supplierName) === supplierFilter && e.date <= effectiveTo)
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [analysisEntries, supplierFilter, analyseDates, todayStr]);
+  }, [analysisEntries, supplierFilter, analyseDates, todayStr, aliasResolver]);
 
   // Summen für den gefilterten Lieferanten
   const supplierFilterTotals = useMemo(() => {
@@ -2343,7 +2418,7 @@ export default function WarenrechnungenPage() {
                 {/* ── Anomalie-Analyse (Lieferant/Konto/Woche/Monat) ───────── */}
                 {!rangeLoading && (
                   <WarenAnalyseBlock
-                    entries={analysisEntries}
+                    entries={applyAliasGruppen(analysisEntries, aliasGruppen)}
                     revenueByDate={analysisRevenue}
                     konten={warenkonten}
                     zielPct={zielWkqPct}
@@ -3294,28 +3369,31 @@ export default function WarenrechnungenPage() {
                                 {offen && kannDrilldown && (
                                   <tr className="border-b border-border/40 bg-muted/10">
                                     <td colSpan={5} className="px-4 py-3">
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                                        <div>
-                                          <p className="font-medium mb-1.5">Erfasste Rechnungen ({z.anzahlRechnungen})</p>
-                                          {entries.filter(e => e.supplierName === z.lieferant).map(e => (
-                                            <p key={e.id} className="flex justify-between gap-2 py-0.5 border-b border-border/30 last:border-0 tabular-nums">
-                                              <span>{e.date}{e.reference ? ` · ${e.reference}` : ''}</span>
-                                              <span>CHF {fmtChf(e.amountNet)}</span>
+                                      {/* Transparenz Alias-Gruppe: Original-Namen und Beträge je Alias */}
+                                      {z.mitglieder && z.mitglieder.length > 0 && (
+                                        <div className="mb-3 rounded border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid={`abgleich-gruppe-${z.lieferant}`}>
+                                          <p className="font-medium mb-1">Zusammengeführte Gruppe — Original-Namen:</p>
+                                          {z.mitglieder.map(mg => (
+                                            <p key={mg.name} className="flex justify-between gap-3 tabular-nums py-0.5">
+                                              <span>{mg.name}</span>
+                                              <span className="text-muted-foreground">
+                                                Erfasst: {mg.erfasst !== null ? `CHF ${fmtChf(mg.erfasst)}` : '—'}
+                                                {' · '}Buchhaltung: {mg.gebucht !== null ? `CHF ${fmtChf(mg.gebucht)}` : '—'}
+                                              </span>
                                             </p>
                                           ))}
-                                          {z.anzahlRechnungen === 0 && <p className="text-muted-foreground">keine</p>}
                                         </div>
-                                        <div>
-                                          <p className="font-medium mb-1.5">Buchungen ({z.anzahlBuchungen})</p>
-                                          {z.buchungen.map((b, bi) => (
-                                            <p key={bi} className="flex justify-between gap-2 py-0.5 border-b border-border/30 last:border-0 tabular-nums">
-                                              <span className="truncate max-w-[260px]" title={b.text}>{b.date} · {b.text}</span>
-                                              <span>CHF {fmtChf((b.soll ?? 0) - (b.haben ?? 0))}</span>
-                                            </p>
-                                          ))}
-                                          {z.anzahlBuchungen === 0 && <p className="text-muted-foreground">keine</p>}
-                                        </div>
-                                      </div>
+                                      )}
+                                      <FibuMatchBereich
+                                        lieferant={z.lieferant}
+                                        invoices={entries.filter(e => aliasResolver(e.supplierName) === z.lieferant)}
+                                        buchungen={z.buchungen}
+                                        state={fibuState}
+                                        stateGeladen={fibuGeladen}
+                                        toleranz={fibuToleranz}
+                                        onToleranzChange={speichereToleranz}
+                                        onMutate={persistFibuState}
+                                      />
                                     </td>
                                   </tr>
                                 )}
@@ -3343,6 +3421,20 @@ export default function WarenrechnungenPage() {
                     </div>
                   )}
                 </section>
+
+                {/* ── Lieferanten-Zuordnung (Alias-Gruppen, mandantengetrennt) ── */}
+                <AliasGruppenVerwaltung
+                  gruppen={aliasGruppen}
+                  onSave={async (next) => {
+                    try {
+                      await saveAliasGruppen(tenantId, next);
+                      setAliasGruppen(next);
+                      toast.success('Lieferanten-Zuordnung gespeichert.');
+                    } catch (e) {
+                      toast.error(`Speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+                    }
+                  }}
+                />
               </div>
             )}
 
@@ -3687,6 +3779,381 @@ export default function WarenrechnungenPage() {
         </DialogContent>
       </Dialog>
 
+    </div>
+  );
+}
+
+// ── Lieferanten-Zuordnung: Alias-Gruppen-Verwaltung (mandantengetrennt) ──────
+//
+// Pro kanonischem Lieferanten (Gruppenname) mehrere Namens-Aliasse —
+// Erfassungs- UND Buchhaltungs-Schreibweisen. Reine Anzeige-/Abgleich-
+// Gruppierung: Rechnungen und Buchungen bleiben unverändert gespeichert.
+function AliasGruppenVerwaltung({
+  gruppen, onSave,
+}: {
+  gruppen: AliasGruppe[];
+  onSave: (next: AliasGruppe[]) => Promise<void>;
+}) {
+  const [offen, setOffen] = useState(false);
+  const [draft, setDraft] = useState<Array<{ id: string; name: string; aliasesText: string }>>([]);
+  const [busy,  setBusy]  = useState(false);
+
+  // Draft bei Öffnen/Änderung des gespeicherten Stands neu initialisieren.
+  useEffect(() => {
+    setDraft(gruppen.map(g => ({ id: g.id, name: g.name, aliasesText: g.aliases.join(', ') })));
+  }, [gruppen, offen]);
+
+  const speichern = async () => {
+    const next: AliasGruppe[] = [];
+    for (const d of draft) {
+      const name = d.name.trim();
+      const aliases = d.aliasesText.split(',').map(a => a.trim()).filter(Boolean);
+      if (!name && aliases.length === 0) continue; // leere Zeile still verwerfen
+      if (!name || aliases.length === 0) {
+        toast.error('Jede Gruppe braucht einen Gruppennamen UND mindestens einen Alias.');
+        return;
+      }
+      next.push({ id: d.id, name, aliases });
+    }
+    setBusy(true);
+    try { await onSave(next); } finally { setBusy(false); }
+  };
+
+  return (
+    <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="alias-gruppen-verwaltung">
+      <button
+        type="button"
+        className="w-full px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2 text-left"
+        onClick={() => setOffen(o => !o)}
+      >
+        <Settings2 className="h-4 w-4 text-muted-foreground" />
+        <h2 className="text-sm font-semibold">Lieferanten-Zuordnung (Alias-Gruppen)</h2>
+        <span className="text-xs text-muted-foreground">{gruppen.length} Gruppe{gruppen.length === 1 ? '' : 'n'}</span>
+        {offen ? <ChevronDown className="h-4 w-4 ml-auto text-muted-foreground" /> : <ChevronRightSmall className="h-4 w-4 ml-auto text-muted-foreground" />}
+      </button>
+      {offen && (
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Unterschiedliche Namen aus Erfassung und Buchhaltung werden als EIN Lieferant
+            zusammengeführt (nur Anzeige/Abgleich — Rechnungen und Buchungen bleiben unverändert).
+            Aliasse kommagetrennt eingeben, z.B. «Prodega, Transgourmet».
+          </p>
+          {draft.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">Keine Gruppen definiert.</p>
+          )}
+          {draft.map((d, i) => (
+            <div key={d.id} className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+              <Input
+                value={d.name}
+                placeholder="Gruppenname (z.B. Prodega / Transgourmet)"
+                onChange={e => setDraft(ds => ds.map((x, xi) => xi === i ? { ...x, name: e.target.value } : x))}
+                className="h-8 text-xs sm:w-64"
+                data-testid={`alias-gruppe-name-${i}`}
+              />
+              <Input
+                value={d.aliasesText}
+                placeholder="Aliasse, kommagetrennt (z.B. Prodega, Transgourmet)"
+                onChange={e => setDraft(ds => ds.map((x, xi) => xi === i ? { ...x, aliasesText: e.target.value } : x))}
+                className="h-8 text-xs flex-1"
+                data-testid={`alias-gruppe-aliases-${i}`}
+              />
+              <Button
+                variant="ghost" size="sm" className="h-8 px-2 text-red-600"
+                onClick={() => setDraft(ds => ds.filter((_, xi) => xi !== i))}
+                title="Gruppe löschen"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              variant="outline" size="sm" className="h-8 text-xs"
+              onClick={() => setDraft(ds => [...ds, { id: `grp-${Date.now()}-${ds.length}`, name: '', aliasesText: '' }])}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" /> Gruppe hinzufügen
+            </Button>
+            <Button size="sm" className="h-8 text-xs" onClick={speichern} disabled={busy} data-testid="alias-gruppen-speichern">
+              {busy ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : null} Speichern
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── FIBU-Abgleich-Drilldown: manuelles Matching Rechnungen ↔ Buchungen ───────
+//
+// N:M-Match-Gruppen (mehrere Rechnungen ↔ mehrere Buchungen), rein zuordnend/
+// visuell — keine Beträge werden verändert. Gematchte Zeilen grün mit
+// Gruppen-Nummer; Auswahl zeigt live Summen + Differenz-Ampel. Persistiert
+// pro Mandant und Monat (waren_fibu_matches_<YYYY-MM>_v1).
+function FibuMatchBereich({
+  lieferant, invoices, buchungen, state, stateGeladen, toleranz, onToleranzChange, onMutate,
+}: {
+  lieferant: string;
+  invoices: InvoiceEntry[];
+  buchungen: SageJournalEntry[];
+  state: FibuMatchState;
+  /** true = gespeicherter Zustand ist geladen (Auto-Match erst danach). */
+  stateGeladen: boolean;
+  /** Auto-Match-Toleranz (CHF, pro Mandant). */
+  toleranz: number;
+  onToleranzChange: (tol: number) => Promise<void>;
+  /** Funktionale, serialisierte Mutation; true = erfolgreich persistiert. */
+  onMutate: (mutate: (cur: FibuMatchState) => FibuMatchState) => Promise<boolean>;
+}) {
+  const gruppen = state.gruppen;
+  const [selInv,  setSelInv]  = useState<Set<string>>(new Set());
+  const [selBuch, setSelBuch] = useState<Set<string>>(new Set());
+  const [tolText, setTolText] = useState<string>(String(toleranz));
+  useEffect(() => { setTolText(String(toleranz)); }, [toleranz]);
+
+  // Buchungs-Schlüssel mit Duplikat-Index (Anzeige-Reihenfolge).
+  const buchKeys = useMemo(() => buchungKeysMitIndex(buchungen), [buchungen]);
+
+  // ── Auto-Match beim Öffnen (nur Ungematchtes + Ungesperrtes; eindeutige
+  // Treffer; No-op wenn nichts gefunden). Läuft erneut via Button. ──
+  const autoLauf = useCallback((zeigeToast: boolean) => {
+    void onMutate(cur => {
+      const neue = autoMatchVorschlaege({ invoices, buchungen, keys: buchKeys, state: cur, toleranz });
+      if (neue.length === 0) {
+        if (zeigeToast) toast.info('Keine eindeutigen Auto-Matches gefunden — Rest bitte manuell zuordnen.');
+        return cur; // No-op → kein Save
+      }
+      if (zeigeToast) toast.success(`${neue.length} Auto-Match${neue.length === 1 ? '' : 'es'} gesetzt.`);
+      return { ...cur, gruppen: [...cur.gruppen, ...neue] };
+    });
+  }, [onMutate, invoices, buchungen, buchKeys, toleranz]);
+  const autoGestartet = useRef(false);
+  useEffect(() => {
+    if (!stateGeladen || autoGestartet.current) return;
+    autoGestartet.current = true;
+    autoLauf(false); // beim Öffnen still (kein Toast-Spam)
+  }, [stateGeladen, autoLauf]);
+
+  // Nur Gruppen, die diesen Lieferanten berühren; Nummerierung 1..n lokal.
+  const invIdSet = useMemo(() => new Set(invoices.map(i => i.id)), [invoices]);
+  const buchKeySet = useMemo(() => new Set(buchKeys), [buchKeys]);
+  const lokaleGruppen = useMemo(
+    () => gruppen.filter(g =>
+      g.invoiceIds.some(id => invIdSet.has(id)) || g.buchungKeys.some(k => buchKeySet.has(k))),
+    [gruppen, invIdSet, buchKeySet],
+  );
+  const gruppeNrByInv  = useMemo(() => {
+    const m = new Map<string, number>();
+    lokaleGruppen.forEach((g, i) => g.invoiceIds.forEach(id => m.set(id, i + 1)));
+    return m;
+  }, [lokaleGruppen]);
+  const gruppeNrByKey = useMemo(() => {
+    const m = new Map<string, number>();
+    lokaleGruppen.forEach((g, i) => g.buchungKeys.forEach(k => m.set(k, i + 1)));
+    return m;
+  }, [lokaleGruppen]);
+
+  // Übersicht: gematcht X von Y · offen erfasst/gebucht.
+  const stat = useMemo(
+    () => lieferantMatchStat(invoices, buchungen, buchKeys, lokaleGruppen),
+    [invoices, buchungen, buchKeys, lokaleGruppen],
+  );
+
+  // Live-Summen der aktuellen Auswahl.
+  const selSummen = useMemo(() => {
+    const erfasst = invoices.filter(i => selInv.has(i.id)).reduce((s, i) => s + i.amountNet, 0);
+    let gebucht = 0;
+    buchungen.forEach((b, i) => { if (selBuch.has(buchKeys[i])) gebucht += buchungBetrag(b); });
+    return { erfasst, gebucht, diff: gebucht - erfasst, ampel: matchAmpel(erfasst, gebucht, toleranz) };
+  }, [invoices, buchungen, buchKeys, selInv, selBuch, toleranz]);
+
+  const toggle = (set: Set<string>, val: string, apply: (s: Set<string>) => void) => {
+    const next = new Set(set);
+    if (next.has(val)) next.delete(val); else next.add(val);
+    apply(next);
+  };
+
+  const matchen = async () => {
+    if (selInv.size === 0 || selBuch.size === 0) return;
+    const neue: FibuMatchGruppe = {
+      id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      invoiceIds: [...selInv],
+      buchungKeys: [...selBuch],
+      herkunft: 'manuell',
+    };
+    const ok = await onMutate(cur => ({
+      gruppen: [...cur.gruppen, neue],
+      // Manuelles Match entsperrt seine Mitglieder wieder (neue Entscheidung).
+      gesperrt: {
+        invoiceIds: cur.gesperrt.invoiceIds.filter(id => !neue.invoiceIds.includes(id)),
+        buchungKeys: cur.gesperrt.buchungKeys.filter(k => !neue.buchungKeys.includes(k)),
+      },
+    }));
+    if (ok) {
+      setSelInv(new Set()); setSelBuch(new Set());
+      toast.success('Match gespeichert.');
+    } // Fehler-Toast kommt aus dem Persist-Pfad; Auswahl bleibt erhalten
+  };
+
+  const aufheben = async (gruppeId: string) => {
+    const ok = await onMutate(cur => {
+      const g = cur.gruppen.find(x => x.id === gruppeId);
+      if (!g) return cur;
+      return {
+        gruppen: cur.gruppen.filter(x => x.id !== gruppeId),
+        // Manuell aufgelöste Mitglieder sperren: der Auto-Lauf fasst sie NIE
+        // wieder an — manuelle Entscheidung bleibt stehen (manuelles Matchen
+        // bleibt möglich und entsperrt wieder).
+        gesperrt: {
+          invoiceIds: [...new Set([...cur.gesperrt.invoiceIds, ...g.invoiceIds])],
+          buchungKeys: [...new Set([...cur.gesperrt.buchungKeys, ...g.buchungKeys])],
+        },
+      };
+    });
+    if (ok) toast.success('Match aufgehoben — wird nicht mehr automatisch gematcht.');
+  };
+
+  const ampelText = { gruen: 'text-emerald-600 dark:text-emerald-400', gelb: 'text-amber-600 dark:text-amber-400', rot: 'text-red-600 dark:text-red-400' } as const;
+  const auswahlAktiv = selInv.size > 0 || selBuch.size > 0;
+
+  return (
+    <div className="space-y-3">
+      {/* Übersicht: Match-Fortschritt + offener Rest (= ungeklärte Differenz) */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground" data-testid={`match-stat-${lieferant}`}>
+        <span>gematcht <b className="text-foreground">{stat.matchedInvoices} von {stat.totalInvoices}</b> Rechnungen · <b className="text-foreground">{stat.matchedBuchungen} von {stat.totalBuchungen}</b> Buchungen</span>
+        <span>noch offen: erfasst {stat.totalInvoices - stat.matchedInvoices > 0 ? `CHF ${fmtChf(stat.offenErfasst)}` : '—'} / Buchhaltung {stat.totalBuchungen - stat.matchedBuchungen > 0 ? `CHF ${fmtChf(stat.offenGebucht)}` : '—'}</span>
+        <span className="ml-auto inline-flex items-center gap-2">
+          <span className="inline-flex items-center gap-1">
+            Toleranz CHF
+            <Input
+              value={tolText}
+              onChange={e => setTolText(e.target.value)}
+              onBlur={() => {
+                const n = Number(tolText.replace(',', '.'));
+                if (Number.isFinite(n) && n >= 0 && n !== toleranz) void onToleranzChange(n);
+                else setTolText(String(toleranz));
+              }}
+              className="h-6 w-16 px-1.5 text-[11px] text-right tabular-nums"
+              data-testid={`match-toleranz-${lieferant}`}
+            />
+          </span>
+          <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+            onClick={() => autoLauf(true)} data-testid={`automatch-button-${lieferant}`}>
+            Auto-Match neu ausführen
+          </Button>
+        </span>
+      </div>
+
+      {/* Auswahl-Leiste: Live-Summen + Matchen */}
+      {auswahlAktiv && (
+        <div className="flex flex-wrap items-center gap-3 rounded border border-border/60 bg-muted/20 px-3 py-2 text-xs" data-testid={`match-auswahl-${lieferant}`}>
+          <span className="tabular-nums">Auswahl: {selInv.size} Rechnung{selInv.size === 1 ? '' : 'en'} CHF {fmtChf(selSummen.erfasst)} · {selBuch.size} Buchung{selBuch.size === 1 ? '' : 'en'} CHF {fmtChf(selSummen.gebucht)}</span>
+          <span className={cn('tabular-nums font-medium', ampelText[selSummen.ampel])}>
+            Differenz: CHF {fmtChf(selSummen.diff)}
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { setSelInv(new Set()); setSelBuch(new Set()); }}>
+              Auswahl leeren
+            </Button>
+            <Button size="sm" className="h-7 px-3 text-xs" onClick={matchen}
+              disabled={selInv.size === 0 || selBuch.size === 0}
+              data-testid={`match-button-${lieferant}`}>
+              <Check className="h-3.5 w-3.5 mr-1" /> Matchen
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        {/* Erfasste Rechnungen */}
+        <div>
+          <p className="font-medium mb-1.5">Erfasste Rechnungen ({invoices.length})</p>
+          {invoices.map(e => {
+            const nr = gruppeNrByInv.get(e.id);
+            const gematcht = nr !== undefined;
+            return (
+              <label key={e.id}
+                className={cn('flex items-center gap-2 py-0.5 border-b border-border/30 last:border-0 tabular-nums',
+                  gematcht ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded px-1 -mx-1' : 'cursor-pointer hover:bg-muted/20')}>
+                {gematcht ? (
+                  <span className="inline-flex items-center gap-1 shrink-0">
+                    <Check className="h-3.5 w-3.5" />
+                    <span className="text-[10px] rounded bg-emerald-500/20 px-1">#{nr}</span>
+                  </span>
+                ) : (
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600 shrink-0"
+                    checked={selInv.has(e.id)}
+                    onChange={() => toggle(selInv, e.id, setSelInv)}
+                    data-testid={`match-inv-${e.id}`} />
+                )}
+                <span className="flex-1">{fmtDatumCH(e.date)}{e.reference ? ` · ${e.reference}` : ''}</span>
+                <span>CHF {fmtChf(e.amountNet)}</span>
+              </label>
+            );
+          })}
+          {invoices.length === 0 && <p className="text-muted-foreground">keine</p>}
+        </div>
+        {/* Buchungen */}
+        <div>
+          <p className="font-medium mb-1.5">Buchungen ({buchungen.length})</p>
+          {buchungen.map((b, bi) => {
+            const key = buchKeys[bi];
+            const nr = gruppeNrByKey.get(key);
+            const gematcht = nr !== undefined;
+            return (
+              <label key={key}
+                className={cn('flex items-center gap-2 py-0.5 border-b border-border/30 last:border-0 tabular-nums',
+                  gematcht ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded px-1 -mx-1' : 'cursor-pointer hover:bg-muted/20')}>
+                {gematcht ? (
+                  <span className="inline-flex items-center gap-1 shrink-0">
+                    <Check className="h-3.5 w-3.5" />
+                    <span className="text-[10px] rounded bg-emerald-500/20 px-1">#{nr}</span>
+                  </span>
+                ) : (
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600 shrink-0"
+                    checked={selBuch.has(key)}
+                    onChange={() => toggle(selBuch, key, setSelBuch)} />
+                )}
+                <span className="flex-1 truncate max-w-[260px]" title={b.text}>{b.date} · {b.text}</span>
+                <span>CHF {fmtChf(buchungBetrag(b))}</span>
+              </label>
+            );
+          })}
+          {buchungen.length === 0 && <p className="text-muted-foreground">keine</p>}
+        </div>
+      </div>
+
+      {/* Match-Gruppen dieses Lieferanten: Summen + Aufheben */}
+      {lokaleGruppen.length > 0 && (
+        <div className="space-y-1 border-t border-border/40 pt-2">
+          {lokaleGruppen.map((g, i) => {
+            const erfasst = invoices.filter(x => g.invoiceIds.includes(x.id)).reduce((s, x) => s + x.amountNet, 0);
+            let gebucht = 0;
+            buchungen.forEach((b, bi) => { if (g.buchungKeys.includes(buchKeys[bi])) gebucht += buchungBetrag(b); });
+            const ampel = matchAmpel(erfasst, gebucht, toleranz);
+            const diffAbs = Math.abs(gebucht - erfasst);
+            return (
+              <div key={g.id} className="flex flex-wrap items-center gap-2 text-[11px] tabular-nums">
+                <span className="rounded bg-emerald-500/20 px-1 text-emerald-700 dark:text-emerald-400">#{i + 1}</span>
+                <span className={cn('rounded px-1 text-[10px] uppercase tracking-wide',
+                  g.herkunft === 'auto' ? 'bg-sky-500/15 text-sky-700 dark:text-sky-400' : 'bg-muted text-muted-foreground')}>
+                  {g.herkunft === 'auto' ? 'auto' : 'manuell'}
+                </span>
+                <span>{g.invoiceIds.filter(id => invIdSet.has(id)).length} Rechnung(en) CHF {fmtChf(erfasst)} ↔ {g.buchungKeys.filter(k => buchKeySet.has(k)).length} Buchung(en) CHF {fmtChf(gebucht)}</span>
+                {/* Rest-Differenz: 0 = nur grünes Häkchen; >0 innerhalb Toleranz = grün mit Betrag */}
+                {diffAbs < 0.005
+                  ? <Check className={cn('h-3 w-3', ampelText.gruen)} />
+                  : <span className={cn('font-medium inline-flex items-center gap-0.5', ampelText[ampel])}>
+                      {ampel === 'gruen' && <Check className="h-3 w-3" />}Diff CHF {fmtChf(gebucht - erfasst)}
+                    </span>}
+                <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-muted-foreground"
+                  onClick={() => aufheben(g.id)} data-testid={`match-aufheben-${g.id}`}>
+                  <X className="h-3 w-3 mr-0.5" /> Match aufheben
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

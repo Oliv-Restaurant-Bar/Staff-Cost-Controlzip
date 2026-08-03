@@ -56,12 +56,17 @@ import { FEEDBACK_PLATFORM } from '@/lib/feedback-import';
  * ALLE fünf Sternstufen (5→1). Farbe: 5 grün, 1 rot, dazwischen neutral.
  * IDs: google_5_sterne … google_1_stern (bestehende IDs bleiben stabil),
  * lunchgate_5_sterne … lunchgate_1_stern.
+ *
+ * MANDANTENGETRENNT: Lunchgate existiert nur bei Beaulieu — bei Oliv werden
+ * die Lunchgate-Zeilen komplett weggelassen (Anzeige UND Export laufen über
+ * dieselben Zeilendefinitionen). Google/übrige Plattformen überall.
  */
-export function reviewStarRowDefs(): Array<{
+export function reviewStarRowDefs(tenantId: TenantId): Array<{
   platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined;
 }> {
   const defs: Array<{ platform: string; star: number; id: string; label: string; tint: 'green' | 'red' | undefined }> = [];
-  for (const platform of ['Google', FEEDBACK_PLATFORM]) {
+  const platforms = tenantId === 'beaulieu' ? ['Google', FEEDBACK_PLATFORM] : ['Google'];
+  for (const platform of platforms) {
     const slug = platform.toLowerCase();
     for (const star of [5, 4, 3, 2, 1]) {
       defs.push({
@@ -74,7 +79,8 @@ export function reviewStarRowDefs(): Array<{
   }
   return defs;
 }
-import { loadMonthInvoices, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
+import { loadMonthInvoices, loadWarenkostenGrenze, loadAliasGruppen, type InvoiceEntry } from '@/lib/waren-db';
+import { applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import { filterInvoicesByRange, sumInvoicesNet, sumNetByKategorie, aggregateBySupplier, supplierRowIds } from '@/lib/waren-cockpit';
 import { nurWarenAnteil, sumBetriebNet, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
 import { mwstDivisorStandard } from '@/lib/mwst';
@@ -917,12 +923,16 @@ export async function ladeMonatsreport(
 
   // Warenkosten (erfasste Warenrechnungen, netto) + Ziel-WKQ: Basis der
   // Lieferanten-/Total-/WKQ-Zeilen. Ladefehler → null (Zeilen bleiben leer).
-  const [warenInvoices, zielWkq, warenKonten, warenGrenze] = await Promise.all([
+  const [warenInvoicesRaw, zielWkq, warenKonten, warenGrenze, warenAliasGruppen] = await Promise.all([
     loadMonthInvoices(tenantId, `${year}-${mm}`).catch(() => null as InvoiceEntry[] | null),
     loadZielWarenquote(tenantId).then(b => b.pct).catch(() => DEFAULT_ZIEL_WARENQUOTE_PCT),
     loadWarenkonten(tenantId).catch(() => [] as Warenkonto[]),
     loadWarenkostenGrenze(tenantId).catch(() => DEFAULT_WARENKOSTEN_GRENZE),
+    loadAliasGruppen(tenantId).catch(() => [] as AliasGruppe[]),
   ]);
+  // Lieferanten-Alias-Gruppen: Namen kanonisieren (reine Anzeige-Gruppierung,
+  // Beträge/Totale unverändert) — wirkt auf alle Lieferanten-Zeilen/Exporte.
+  const warenInvoices = warenInvoicesRaw ? applyAliasGruppen(warenInvoicesRaw, warenAliasGruppen) : null;
 
   const [
     gaesteDaily, avgDaily, avgMonthly, vjDaily, resMonth, resWeek, resVjMonth,
@@ -1576,7 +1586,7 @@ export async function ladeMonatsreport(
     // Woche = gewählte Woche. Kein Budget/Vorjahr (Quelle existiert erst seit
     // der Einzelerfassung) → Felder leer. Farbe: 5 grün, 1 rot, sonst neutral.
     // Google und Lunchgate strikt getrennt (Plattform-Filter, nie vermischt).
-    ...reviewStarRowDefs().map(({ platform, star, id, label, tint }) =>
+    ...reviewStarRowDefs(tenantId).map(({ platform, star, id, label, tint }) =>
       d(id, label, {
         month: reviewSingles ? countReviewsByStar(reviewSingles, platform, fromIso, toIso, star) : null,
         week: reviewSingles && weekFrom && weekTo
@@ -1998,7 +2008,7 @@ export async function ladeWochenverlauf(
   // erfasst sind (>0) — die Quelle existiert erst seit der Einzelerfassung.
   const reviewSingles: SingleReview[] | null =
     await fetchReviewsData(tenantId).then(d => d.singleReviews).catch(() => null);
-  for (const { platform, star, label, tint } of reviewStarRowDefs()) {
+  for (const { platform, star, label, tint } of reviewStarRowDefs(tenantId)) {
     rows.push({
       label, fmt: 'count', tint,
       values: weeks.map(w =>
@@ -2025,8 +2035,10 @@ export async function ladeWochenverlauf(
   const invLists = await Promise.all([...invMonths].map(mk =>
     loadMonthInvoices(tenantId, mk).catch(() => null as InvoiceEntry[] | null)));
   // Alle Monate fehlgeschlagen → keine Datenbasis (leer); sonst Teilmenge nutzen.
+  // Alias-Gruppen: Lieferanten-Namen kanonisieren (wie Monats-Cockpit/Abgleich).
+  const wvAliasGruppen = await loadAliasGruppen(tenantId).catch(() => [] as AliasGruppe[]);
   const allInvoices: InvoiceEntry[] | null =
-    invLists.every(l => l === null) ? null : invLists.flatMap(l => l ?? []);
+    invLists.every(l => l === null) ? null : applyAliasGruppen(invLists.flatMap(l => l ?? []), wvAliasGruppen);
   if (allInvoices) {
     // Kontoklassen: Total/WKQ/Lieferanten nur Warenkosten-Anteile (4000–Grenze);
     // Betriebskosten-Anteile separat als eigene Zeile (nie in der WKQ).
@@ -2269,7 +2281,7 @@ export async function ladeJahresvergleich(
     // Rezensionen (ALLE Sternstufen 5–1, Google + Lunchgate). Ladefehler → leer;
     // VJ nur wenn dort wirklich erfasst (>0) — Quelle existiert erst seit der
     // Einzelerfassung, ein «0» im VJ wäre erfunden.
-    ...reviewStarRowDefs().map(({ platform, star, label, tint }): JahresvergleichRow => {
+    ...reviewStarRowDefs(tenantId).map(({ platform, star, label, tint }): JahresvergleichRow => {
       const cur = reviewSingles
         ? countReviewsByStar(reviewSingles, platform, curFrom, curTo, star) : null;
       const vjN = reviewSingles

@@ -16,6 +16,7 @@
 import type { InvoiceEntry } from '@/lib/waren-db';
 import type { SageJournalEntry } from '@/types/reporting';
 import { findSupplierInText, type SupplierAliasMap } from '@/lib/waren-pdf-erkennung';
+import { buildAliasResolver, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 
 export type AbgleichStatus =
   | 'ok'            // beide Quellen, Differenz unter Schwelle
@@ -35,6 +36,12 @@ export interface AbgleichZeile {
   anzahlBuchungen: number;
   /** Zugeordnete Buchungszeilen (Drilldown, leer im degradierten Modus). */
   buchungen: SageJournalEntry[];
+  /**
+   * Transparenz bei Alias-Gruppen: Original-Namen mit ihren Beträgen
+   * (Erfasst/Buchhaltung je Alias). Nur gesetzt, wenn die Zeile aus einer
+   * Alias-Gruppe zusammengeführt wurde.
+   */
+  mitglieder?: Array<{ name: string; erfasst: number | null; gebucht: number | null }>;
 }
 
 export interface WarenAbgleich {
@@ -80,18 +87,36 @@ export interface AbgleichInput {
   buchhaltungTotal: number | null;
   /** Rote Markierung ab dieser absoluten Differenz (CHF). Default 50. */
   schwelleChf?: number;
+  /**
+   * Alias-Gruppen (mandantengetrennt): Erfasst UND Buchhaltung werden pro
+   * kanonischem Gruppennamen über alle Aliasse SUMMIERT und in EINER Zeile
+   * gezeigt. Reine Anzeige-/Abgleich-Gruppierung — Beträge unverändert.
+   */
+  aliasGruppen?: AliasGruppe[];
 }
 
 export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   const schwelle = input.schwelleChf ?? 50;
+  // Alias-Gruppen: Namen beider Quellen auf den kanonischen Gruppennamen
+  // abbilden; Original-Namen je Zeile für die Transparenz mitführen.
+  const resolve = buildAliasResolver(input.aliasGruppen ?? []);
+  const originaleErfasst = new Map<string, Map<string, number>>(); // kanonisch → Original → Summe
+  const originaleGebucht = new Map<string, Map<string, number>>();
+  const addOriginal = (m: Map<string, Map<string, number>>, canon: string, orig: string, betrag: number) => {
+    const inner = m.get(canon) ?? new Map<string, number>();
+    inner.set(orig, (inner.get(orig) ?? 0) + betrag);
+    m.set(canon, inner);
+  };
 
-  // ── erfasst je Lieferant ──
+  // ── erfasst je Lieferant (kanonisiert) ──
   const erfasstMap = new Map<string, { sum: number; count: number }>();
   for (const inv of input.invoices) {
-    const cur = erfasstMap.get(inv.supplierName) ?? { sum: 0, count: 0 };
+    const canon = resolve(inv.supplierName);
+    const cur = erfasstMap.get(canon) ?? { sum: 0, count: 0 };
     cur.sum += inv.amountNet;
     cur.count += 1;
-    erfasstMap.set(inv.supplierName, cur);
+    erfasstMap.set(canon, cur);
+    addOriginal(originaleErfasst, canon, inv.supplierName, inv.amountNet);
   }
   const erfasstTotal = [...erfasstMap.values()].reduce((a, v) => a + v.sum, 0);
 
@@ -121,13 +146,19 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
   // ── Buchungen je Lieferant zuordnen (Buchungstext ↔ Name/Alias) ──
   const gebuchtMap = new Map<string, { sum: number; entries: SageJournalEntry[] }>();
   const nichtZugeordnet: SageJournalEntry[] = [];
+  // Buchungstexte auch gegen die Gruppen-Aliasse matchen (Buchhaltungs-Namen
+  // wie «Frigemo» existieren u.U. nicht als erfasste Lieferanten).
+  const gruppenAliasNamen = (input.aliasGruppen ?? []).flatMap(g => [...g.aliases, g.name]);
+  const matchNamen = [...new Set([...input.supplierNames, ...gruppenAliasNamen])];
   for (const e of warenBuchungen) {
-    const hit = findSupplierInText(e.text ?? '', input.supplierNames, input.aliases);
+    const hit = findSupplierInText(e.text ?? '', matchNamen, input.aliases);
     if (hit) {
-      const cur = gebuchtMap.get(hit) ?? { sum: 0, entries: [] };
+      const canon = resolve(hit);
+      const cur = gebuchtMap.get(canon) ?? { sum: 0, entries: [] };
       cur.sum += buchungsBetrag(e);
       cur.entries.push(e);
-      gebuchtMap.set(hit, cur);
+      gebuchtMap.set(canon, cur);
+      addOriginal(originaleGebucht, canon, hit, buchungsBetrag(e));
     } else {
       nichtZugeordnet.push(e);
     }
@@ -150,6 +181,20 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
     } else {
       status = 'nur-gebucht';
     }
+    // Transparenz: Original-Namen nur ausweisen, wenn wirklich zusammengeführt
+    // wurde (mehr als ein Original-Name oder Name ≠ Gruppenname).
+    const origNamen = new Set<string>([
+      ...(originaleErfasst.get(name)?.keys() ?? []),
+      ...(originaleGebucht.get(name)?.keys() ?? []),
+    ]);
+    const zusammengefuehrt = origNamen.size > 1 || (origNamen.size === 1 && [...origNamen][0] !== name);
+    const mitglieder = zusammengefuehrt
+      ? [...origNamen].map(orig => ({
+          name: orig,
+          erfasst: originaleErfasst.get(name)?.get(orig) ?? null,
+          gebucht: originaleGebucht.get(name)?.get(orig) ?? null,
+        })).sort((a, b) => Math.max(b.erfasst ?? 0, b.gebucht ?? 0) - Math.max(a.erfasst ?? 0, a.gebucht ?? 0))
+      : undefined;
     return {
       lieferant: name,
       erfasst: erf?.sum ?? null,
@@ -159,6 +204,7 @@ export function buildWarenAbgleich(input: AbgleichInput): WarenAbgleich {
       anzahlRechnungen: erf?.count ?? 0,
       anzahlBuchungen: geb?.entries.length ?? 0,
       buchungen: geb?.entries ?? [],
+      ...(mitglieder ? { mitglieder } : {}),
     };
   }).sort((a, b) => Math.max(b.erfasst ?? 0, b.gebucht ?? 0) - Math.max(a.erfasst ?? 0, a.gebucht ?? 0));
 

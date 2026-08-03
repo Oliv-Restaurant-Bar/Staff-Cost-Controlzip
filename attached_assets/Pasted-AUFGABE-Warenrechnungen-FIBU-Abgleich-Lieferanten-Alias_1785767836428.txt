@@ -1,0 +1,23 @@
+AUFGABE: Warenrechnungen FIBU-Abgleich — Lieferanten-Alias/Gruppierung, damit unterschiedliche Namen in Erfassung und Buchhaltung als EIN Lieferant abgeglichen werden. Mandantengetrennt (Oliv/Beaulieu).
+
+PROBLEM: Im FIBU-Abgleich erscheinen Lieferanten doppelt/verschoben, weil Erfassung und Buchhaltung unterschiedliche Namen verwenden. Beispiele (Beaulieu, Juni 2026):
+- "Prodega" (Buchhaltung 16'163.35) und "Transgourmet" (Erfasst 16'031.71) = derselbe Lieferant → grosse gegenläufige Scheindifferenzen (+14'075 / −17'351).
+- "Gourmador" (Erfasst 2'822.15, keine Buchung) und "Frigemo" (Buchhaltung 2'822.15, nicht erfasst) = derselbe Lieferant.
+
+LÖSUNG — Alias-Gruppen (nicht in den Kosten aufsplitten):
+1) Neue Verwaltung "Lieferanten-Zuordnung": pro Mandant kann ich einem kanonischen Lieferanten mehrere Namens-Aliasse zuordnen — sowohl Erfassungs-Namen als auch Buchhaltungs-/Kontonamen.
+2) Im FIBU-Abgleich werden "Erfasst" und "Buchhaltung" pro kanonischem Lieferanten über alle zugeordneten Aliasse SUMMIERT und in EINER Zeile gezeigt. Differenz/Status dann auf Basis der zusammengeführten Summen.
+3) Vorbelegen (Beaulieu):
+   - Gruppe "Prodega / Transgourmet" = Aliasse: Prodega, Transgourmet
+   - Gruppe "Gourmador / Frigemo" = Aliasse: Gourmador, Frigemo
+   (Ich muss diese Gruppen nachträglich bearbeiten/ergänzen/löschen können.)
+4) Transparenz: In der zusammengeführten Zeile per Aufklappen/Tooltip zeigen, welche Original-Namen und Beträge (Erfasst/Buchhaltung je Alias) enthalten sind — damit nachvollziehbar bleibt, was gruppiert wurde.
+5) Reine Anzeige-/Abgleich-Gruppierung: die einzelnen Warenrechnungen und Buchungen bleiben unverändert gespeichert. Es werden KEINE Kosten umgebucht oder Beträge verändert.
+
+RAHMEN:
+- Streng mandantengetrennt: Alias-Gruppen von Oliv und Beaulieu getrennt. (Prodega/Transgourmet-Gruppe bei Beaulieu anlegen; bei Oliv nur, wenn ich es dort auch setze.)
+- Wirkt in FIBU-Abgleich UND in der Analyse/Lieferanten-Journal-Ansicht konsistent (überall wo nach Lieferant gruppiert wird).
+- Warenkostenquote/Totale ändern sich dadurch NICHT (nur die Zuordnung der Namen), nur die Differenz-Scheinwerte verschwinden.
+- Nie durch 0 teilen, leer statt 0.
+
+Bitte kurz zusammenfassen, welche Alias-Gruppen angelegt wurden und wie ich neue anlege.
