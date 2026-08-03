@@ -50,7 +50,7 @@ import {
   type Warenkonto,
 } from '@/lib/waren-db';
 import { WarenAnalyseBlock } from '@/components/waren/WarenAnalyse';
-import { WarenCsvImport, WarengruppenKontenEditor } from '@/components/waren/WarenCsvImport';
+import { WarenCsvImport, WarengruppenKontenEditor, MarktLieferantenEditor } from '@/components/waren/WarenCsvImport';
 import { FeldschloesschenImport } from '@/components/waren/FeldschloesschenImport';
 import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } from '@/lib/waren-db';
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
@@ -3923,6 +3923,12 @@ export default function WarenrechnungenPage() {
             <div className="border-t border-border/50 pt-4">
               <h3 className="text-sm font-semibold mb-2">Warengruppen → Konto (CSV-Import)</h3>
               <WarengruppenKontenEditor tenantId={tenantId} canEdit={canEdit} />
+            </div>
+
+            {/* ── Markt → Lieferant (CSV-Import: Transgourmet/Prodega getrennt) ── */}
+            <div className="border-t border-border/50 pt-4">
+              <h3 className="text-sm font-semibold mb-2">Markt → Lieferant (CSV-Import)</h3>
+              <MarktLieferantenEditor tenantId={tenantId} canEdit={canEdit} />
             </div>
           </div>
           <DialogFooter>

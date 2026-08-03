@@ -32,9 +32,10 @@ export interface WarenPosition {
 
 export interface ParsedCsvRechnung {
   /**
-   * Stabiler Dokumentschlüssel `rechnungsNr|datum` — Portal-Exporte
-   * verwenden Rechnungsnummern (z.B. "58") über Monate hinweg wieder;
-   * Gruppierung/Auswahl/Historie MÜSSEN daher Nummer+Datum kombinieren.
+   * Stabiler Dokumentschlüssel `rechnungsNr|datum|markt` — Portal-Exporte
+   * verwenden Rechnungsnummern (z.B. "58") über Monate hinweg wieder, und
+   * dieselbe Nummer kann am selben Tag in mehreren Märkten (BGH vs. Prodega)
+   * auftreten; Gruppierung/Auswahl/Historie kombinieren daher alle drei.
    */
   docKey: string;
   rechnungsNr: string;
@@ -95,10 +96,14 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
     const datum = (c[iDat] ?? '').trim();
     const bez = (c[iBez] ?? '').trim();
     if (!rechnungsNr || !/^\d{4}-\d{2}-\d{2}$/.test(datum) || !bez) { verworfen++; continue; }
-    const docKey = `${rechnungsNr}|${datum}`;
+    const markt = (c[iMarkt] ?? '').trim();
+    // Markt gehört zur Dokument-Identität: kurze Portal-Rechnungsnummern können
+    // am selben Tag in MEHREREN Märkten (Transgourmet BGH vs. Prodega) vorkommen —
+    // ohne Markt im Schlüssel würden fremde Positionen zusammengemischt.
+    const docKey = `${rechnungsNr}|${datum}|${markt.toLowerCase()}`;
     let r = proRechnung.get(docKey);
     if (!r) {
-      r = { docKey, rechnungsNr, datum, markt: (c[iMarkt] ?? '').trim(), positionen: [], nettoTotal: 0, mwstTotal: 0, bruttoTotal: 0 };
+      r = { docKey, rechnungsNr, datum, markt, positionen: [], nettoTotal: 0, mwstTotal: 0, bruttoTotal: 0 };
       proRechnung.set(docKey, r);
     }
     const pos: WarenPosition = {
@@ -462,4 +467,56 @@ export function normalizePreisSchwelle(raw: unknown): PreisSchwelle {
     pct: Number.isFinite(pct) && pct >= 0 ? pct : DEFAULT_PREIS_SCHWELLE.pct,
     minChf: Number.isFinite(minChf) && minChf >= 0 ? minChf : DEFAULT_PREIS_SCHWELLE.minChf,
   };
+}
+
+// ─── Markt → Lieferant (Transgourmet/Prodega getrennt, konfigurierbar) ───────
+// Der Portal-Export mischt Rechnungen mehrerer Märkte in einer Datei. Der
+// Lieferant wird pro Rechnung aus der Spalte «Markt» abgeleitet: BGH ist der
+// Transgourmet-Abholmarkt, alle Prodega-Märkte (Bern, Moosseedorf, …) gehören
+// zu Prodega. Unbekannte Märkte werden NIE geraten → «Lieferant offen».
+
+export type MarktLieferantenMapping = Array<{ markt: string; lieferant: string }>;
+
+export const DEFAULT_MARKT_LIEFERANTEN: MarktLieferantenMapping = [
+  { markt: 'BGH', lieferant: 'Transgourmet' },
+  { markt: 'Bern', lieferant: 'Prodega' },
+  { markt: 'Moosseedorf', lieferant: 'Prodega' },
+];
+
+export function normalizeMarktLieferantenMapping(raw: unknown): MarktLieferantenMapping {
+  if (!Array.isArray(raw)) return DEFAULT_MARKT_LIEFERANTEN;
+  const out: MarktLieferantenMapping = [];
+  for (const r of raw) {
+    if (!r || typeof r !== 'object') continue;
+    const markt = String((r as Record<string, unknown>).markt ?? '').trim();
+    const lieferant = String((r as Record<string, unknown>).lieferant ?? '').trim();
+    if (markt && lieferant) out.push({ markt, lieferant });
+  }
+  return out.length > 0 ? out : DEFAULT_MARKT_LIEFERANTEN;
+}
+
+/** Lieferant für einen Markt-Wert; null = nicht zugeordnet («Lieferant offen»). */
+export function lieferantFuerMarkt(markt: string, mapping: MarktLieferantenMapping): string | null {
+  const m = markt.trim().toLowerCase();
+  if (!m) return null;
+  return mapping.find(r => r.markt.trim().toLowerCase() === m)?.lieferant ?? null;
+}
+
+/**
+ * Plausibilitäts-Warnung Markt ↔ Rechnungsnummer: BGH/Transgourmet nutzt
+ * 8-stellige Nummern (6xxxxxxx), Prodega-Märkte kurze (1–4-stellig).
+ * Bei Widerspruch GEWINNT der Markt — aber mit Warnung (kein Blocker).
+ */
+export function marktNummernWarnung(lieferant: string | null, rechnungsNr: string): string | null {
+  if (!lieferant) return null;
+  const nr = rechnungsNr.trim();
+  const istLang = /^6\d{7}$/.test(nr);
+  const istKurz = /^\d{1,4}$/.test(nr);
+  if (/transgourmet/i.test(lieferant) && istKurz) {
+    return `Rechnungsnr. ${nr} sieht nach Prodega aus (kurz) — Markt sagt Transgourmet. Markt gewinnt, bitte prüfen.`;
+  }
+  if (/prodega/i.test(lieferant) && istLang) {
+    return `Rechnungsnr. ${nr} sieht nach Transgourmet aus (8-stellig) — Markt sagt Prodega. Markt gewinnt, bitte prüfen.`;
+  }
+  return null;
 }

@@ -783,3 +783,20 @@ export async function setFsHistorieLock(tenantId: TenantId, jahr: string, locked
   cur[jahr] = locked;
   await kvSet(fsHistorieLockKey(tenantId), cur);
 }
+
+// ─── Markt → Lieferant (CSV-Import Transgourmet/Prodega, pro Mandant) ────────
+
+export async function loadMarktLieferantenMapping(tenantId: TenantId): Promise<import('./waren-positionen').MarktLieferantenMapping> {
+  const { normalizeMarktLieferantenMapping, DEFAULT_MARKT_LIEFERANTEN } = await import('./waren-positionen');
+  try {
+    const raw = await kvGet(tenantKey(tenantId, 'waren_markt_lieferanten_v1'));
+    return raw === null || raw === undefined ? DEFAULT_MARKT_LIEFERANTEN : normalizeMarktLieferantenMapping(raw);
+  } catch {
+    const { DEFAULT_MARKT_LIEFERANTEN: def } = await import('./waren-positionen');
+    return def;
+  }
+}
+
+export async function saveMarktLieferantenMapping(tenantId: TenantId, mapping: import('./waren-positionen').MarktLieferantenMapping): Promise<void> {
+  await kvSet(tenantKey(tenantId, 'waren_markt_lieferanten_v1'), mapping);
+}

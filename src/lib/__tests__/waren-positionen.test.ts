@@ -6,6 +6,7 @@ import {
   artikelKey, berechnePreisAenderungen, aktualisierePreisHistorie,
   normalizePreisHistorie, normalizePreisSchwelle, normalizeWarengruppenMapping,
   DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN,
+  DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, normalizeMarktLieferantenMapping,
   type ParsedCsvRechnung, type PreisHistorie,
 } from '@/lib/waren-positionen';
 
@@ -53,14 +54,14 @@ describe('docKey: gleiche Rechnungsnummer an verschiedenen Daten', () => {
     ].join('\n');
     const res = parseTransgourmetCsv(csv);
     expect(res.rechnungen).toHaveLength(2);
-    expect(res.rechnungen.map(r => r.docKey)).toEqual(['58|2026-02-21', '58|2026-07-15']);
+    expect(res.rechnungen.map(r => r.docKey)).toEqual(['58|2026-02-21|bgh', '58|2026-07-15|bgh']);
     // Historie: getrennte Dokumente vergleichen normal (kein Re-Import-Skip):
     let h = aktualisierePreisHistorie({}, [res.rechnungen[0]], 'TG');
     const aen = berechnePreisAenderungen(res.rechnungen[1], 'TG', h);
     expect(aen).toHaveLength(1); // 10 → 12 = +20 %
     expect(aen[0].stark).toBe(true);
     h = aktualisierePreisHistorie(h, [res.rechnungen[1]], 'TG');
-    expect(h['tg|nr:1']).toMatchObject({ preis: 12, rechnungsNr: '58|2026-07-15' });
+    expect(h['tg|nr:1']).toMatchObject({ preis: 12, rechnungsNr: '58|2026-07-15|bgh' });
     // Echter Re-Import desselben Dokuments → kein Vergleich:
     expect(berechnePreisAenderungen(res.rechnungen[1], 'TG', h)).toHaveLength(0);
   });
@@ -171,7 +172,7 @@ describe('berechnePreisAenderungen', () => {
 
   it('Pfand (MwSt-Code 0) ausgenommen; Re-Import derselben Rechnung vergleicht nicht', () => {
     expect(berechnePreisAenderungen(rechnung('R9', '2026-07-31', 99, 0), 'TG', hist)).toHaveLength(0);
-    const histSelbe: PreisHistorie = { 'tg|nr:002066': { ...hist['tg|nr:002066'], rechnungsNr: 'R9|2026-07-31' } };
+    const histSelbe: PreisHistorie = { 'tg|nr:002066': { ...hist['tg|nr:002066'], rechnungsNr: 'R9|2026-07-31|bgh' } };
     expect(berechnePreisAenderungen(rechnung('R9', '2026-07-31', 99), 'TG', histSelbe)).toHaveLength(0);
   });
 
@@ -198,7 +199,7 @@ describe('aktualisierePreisHistorie', () => {
   it('Re-Import derselben Rechnung ERSETZT den Eintrag (verfälscht nicht)', () => {
     let h = aktualisierePreisHistorie({}, [r('A', '2026-07-01', 2.0)], 'TG');
     h = aktualisierePreisHistorie(h, [r('A', '2026-07-01', 2.2)], 'TG'); // korrigierte Datei
-    expect(h['tg|nr:111']).toMatchObject({ preis: 2.2, rechnungsNr: 'A|2026-07-01' });
+    expect(h['tg|nr:111']).toMatchObject({ preis: 2.2, rechnungsNr: 'A|2026-07-01|bgh' });
   });
 });
 
@@ -210,5 +211,53 @@ describe('normalize', () => {
     expect(normalizePreisSchwelle({})).toEqual(DEFAULT_PREIS_SCHWELLE);
     expect(normalizePreisSchwelle({ pct: 5, minChf: 0.5 })).toEqual({ pct: 5, minChf: 0.5 });
     expect(normalizePreisSchwelle({ pct: -1 })).toEqual(DEFAULT_PREIS_SCHWELLE);
+  });
+});
+
+describe('Markt → Lieferant (Transgourmet/Prodega getrennt)', () => {
+  it('Default-Zuordnung: BGH→Transgourmet, Bern/Moosseedorf→Prodega, case-insensitiv', () => {
+    expect(lieferantFuerMarkt('BGH', DEFAULT_MARKT_LIEFERANTEN)).toBe('Transgourmet');
+    expect(lieferantFuerMarkt('bern', DEFAULT_MARKT_LIEFERANTEN)).toBe('Prodega');
+    expect(lieferantFuerMarkt(' Moosseedorf ', DEFAULT_MARKT_LIEFERANTEN)).toBe('Prodega');
+  });
+  it('unbekannter oder leerer Markt ⇒ null (Lieferant offen, nie raten)', () => {
+    expect(lieferantFuerMarkt('Zürich', DEFAULT_MARKT_LIEFERANTEN)).toBeNull();
+    expect(lieferantFuerMarkt('', DEFAULT_MARKT_LIEFERANTEN)).toBeNull();
+  });
+  it('normalize: kaputte Daten ⇒ Defaults, gültige Zeilen bleiben', () => {
+    expect(normalizeMarktLieferantenMapping(null)).toEqual(DEFAULT_MARKT_LIEFERANTEN);
+    expect(normalizeMarktLieferantenMapping([{ markt: 'X', lieferant: 'Y' }, { markt: '', lieferant: 'Z' }]))
+      .toEqual([{ markt: 'X', lieferant: 'Y' }]);
+  });
+  it('Nummern-Plausibilität: Widerspruch warnt, Markt gewinnt (kein Blocker)', () => {
+    expect(marktNummernWarnung('Transgourmet', '58')).toMatch(/prüfen/);
+    expect(marktNummernWarnung('Prodega', '61234567')).toMatch(/prüfen/);
+    expect(marktNummernWarnung('Transgourmet', '61234567')).toBeNull();
+    expect(marktNummernWarnung('Prodega', '58')).toBeNull();
+    expect(marktNummernWarnung(null, '58')).toBeNull();
+  });
+});
+
+describe('Markt in der Dokument-Identität (Cross-Markt-Kollision)', () => {
+  it('gleiche Rechnungsnummer + Datum in BGH und Bern ⇒ ZWEI getrennte Rechnungen', () => {
+    const zeileMitMarkt = (markt: string, bez: string, pos: number) =>
+      `90032154;58;2026-07-31;${markt};Metzgerei;10;002066;1;;kg;${bez};10;${pos};0.81;123;0;0;1;;`;
+    const csv = [HEADER, zeileMitMarkt('BGH', 'TG-Artikel', 100), zeileMitMarkt('Bern', 'Prodega-Artikel', 40)].join('\n');
+    const res = parseTransgourmetCsv(csv);
+    expect(res.rechnungen).toHaveLength(2);
+    const tg = res.rechnungen.find(r => r.markt === 'BGH')!;
+    const pr = res.rechnungen.find(r => r.markt === 'Bern')!;
+    expect(tg.docKey).not.toBe(pr.docKey);
+    expect(tg.nettoTotal).toBeCloseTo(100, 2);
+    expect(pr.nettoTotal).toBeCloseTo(40, 2);
+    expect(tg.positionen.map(p => p.bezeichnung)).toEqual(['TG-Artikel']);
+    expect(pr.positionen.map(p => p.bezeichnung)).toEqual(['Prodega-Artikel']);
+    // getrennte Preis-Historien pro abgeleitetem Lieferant
+    let hist: PreisHistorie = {};
+    hist = aktualisierePreisHistorie(hist, [tg], 'Transgourmet');
+    hist = aktualisierePreisHistorie(hist, [pr], 'Prodega');
+    const keys = Object.keys(hist);
+    expect(keys.some(k => k.startsWith('transgourmet|'))).toBe(true);
+    expect(keys.some(k => k.startsWith('prodega|'))).toBe(true);
   });
 });

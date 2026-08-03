@@ -21,13 +21,15 @@ import {
   parseTransgourmetCsv, berechnePreisAenderungen,
   aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING,
   offeneWarengruppen, positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
+  DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung,
   type CsvParseErgebnis, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
-  type WarengruppenMapping,
+  type WarengruppenMapping, type MarktLieferantenMapping,
 } from '@/lib/waren-positionen';
 import {
   loadMonthInvoices, saveInvoiceEntry, loadPreisHistorie, savePreisHistorie,
   loadPreisSchwelle, savePreisSchwelle, loadPreisHinweise, savePreisHinweise,
   loadWarengruppenMapping, saveWarengruppenMapping, loadRechnungsPositionen, saveRechnungsPositionen,
+  loadMarktLieferantenMapping, saveMarktLieferantenMapping,
   kategorieFromKonto, type InvoiceEntry, type Supplier,
 } from '@/lib/waren-db';
 import { fmtDatumCH } from '@/lib/waren-fibu-matches';
@@ -125,6 +127,81 @@ export function WarengruppenKontenEditor({ tenantId, canEdit }: { tenantId: Tena
   );
 }
 
+/**
+ * Einstellungen-Editor «Markt → Lieferant» (CSV-Import, mandantengetrennt).
+ * Standard: BGH → Transgourmet, Bern/Moosseedorf → Prodega. Unbekannte Märkte
+ * werden beim Import als «Lieferant offen» blockiert, nie geraten.
+ */
+export function MarktLieferantenEditor({ tenantId, canEdit }: { tenantId: TenantId; canEdit: boolean }) {
+  const [mapping, setMapping] = useState<MarktLieferantenMapping | null>(null);
+  const [neuMarkt, setNeuMarkt] = useState('');
+  const [neuLieferant, setNeuLieferant] = useState('');
+  const mappingRef = useRef<MarktLieferantenMapping | null>(null);
+  useEffect(() => { mappingRef.current = mapping; }, [mapping]);
+  const saveKette = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => {
+    let alive = true;
+    loadMarktLieferantenMapping(tenantId).then(m => { if (alive) setMapping(m); })
+      .catch(() => { if (alive) setMapping(DEFAULT_MARKT_LIEFERANTEN); });
+    return () => { alive = false; };
+  }, [tenantId]);
+
+  const speichern = (neu: MarktLieferantenMapping) => {
+    setMapping(neu);
+    mappingRef.current = neu;
+    saveKette.current = saveKette.current.then(async () => {
+      const cur = mappingRef.current;
+      if (!cur || !cur.every(r => r.markt.trim() && r.lieferant.trim())) return;
+      try { await saveMarktLieferantenMapping(tenantId, cur); }
+      catch (e) { toast.error(`Speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
+    });
+  };
+
+  if (!mapping) return <div className="text-xs text-muted-foreground">Lädt…</div>;
+  return (
+    <div className="space-y-1.5 text-xs" data-testid="markt-lieferanten-editor">
+      <p className="text-muted-foreground">
+        Lieferant pro Rechnung aus der Markt-Spalte des Portal-Exports — Transgourmet und Prodega erscheinen getrennt in Erfassung, Analyse und FIBU-Abgleich (Alias-Gruppe bleibt dort als Option).
+      </p>
+      <div className="space-y-1">
+        {mapping.map((r, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <Input value={r.markt} disabled={!canEdit}
+              onChange={e => speichern(mapping.map((x, xi) => xi === i ? { ...x, markt: e.target.value } : x))}
+              className="h-7 text-xs w-36" data-testid={`markt-${i}`} />
+            <span className="text-muted-foreground">→</span>
+            <Input value={r.lieferant} disabled={!canEdit}
+              onChange={e => speichern(mapping.map((x, xi) => xi === i ? { ...x, lieferant: e.target.value } : x))}
+              className="h-7 text-xs flex-1" data-testid={`markt-lieferant-${i}`} />
+            {canEdit && (
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground"
+                onClick={() => speichern((mappingRef.current ?? mapping).filter((_, xi) => xi !== i))}>
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      {canEdit && (
+        <div className="flex items-center gap-2 pt-1 border-t border-border/40">
+          <Input placeholder="Markt (z.B. Zürich)" value={neuMarkt}
+            onChange={e => setNeuMarkt(e.target.value)} className="h-7 text-xs w-36" data-testid="neu-markt" />
+          <span className="text-muted-foreground">→</span>
+          <Input placeholder="Lieferant" value={neuLieferant} onChange={e => setNeuLieferant(e.target.value)}
+            className="h-7 text-xs flex-1" data-testid="neu-markt-lieferant" />
+          <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+            disabled={!neuMarkt.trim() || !neuLieferant.trim()}
+            onClick={() => {
+              speichern([...(mappingRef.current ?? mapping), { markt: neuMarkt.trim(), lieferant: neuLieferant.trim() }]);
+              setNeuMarkt(''); setNeuLieferant('');
+            }} data-testid="neu-markt-add">Hinzufügen</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WarenCsvImport({ tenantId, suppliers, onImported }: {
   tenantId: TenantId;
   suppliers: Supplier[];
@@ -133,18 +210,24 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
   const [busy, setBusy] = useState(false);
   const [ergebnis, setErgebnis] = useState<CsvParseErgebnis | null>(null);
   const [ausgewaehlt, setAusgewaehlt] = useState<Set<string>>(new Set());
-  const [lieferant, setLieferant] = useState('');
   const [historie, setHistorie] = useState<PreisHistorie | null>(null);
   const [schwelle, setSchwelle] = useState<PreisSchwelle>(DEFAULT_PREIS_SCHWELLE);
   const [schwelleText, setSchwelleText] = useState({ pct: '10', minChf: '0.20' });
   const [mapping, setMapping] = useState<WarengruppenMapping>(DEFAULT_WARENGRUPPEN_MAPPING);
+  const [marktMap, setMarktMap] = useState<MarktLieferantenMapping>(DEFAULT_MARKT_LIEFERANTEN);
+  // Offene Märkte: Eingabefelder für die Sofort-Zuordnung (Markt → Lieferant)
+  const [marktZuordnung, setMarktZuordnung] = useState<Record<string, string>>({});
+  const [preisFilter, setPreisFilter] = useState<'erhoehung' | 'senkung' | 'klein' | 'alle'>('erhoehung');
   const geladen = useRef(false);
 
   useEffect(() => {
     if (geladen.current) return;
     geladen.current = true;
-    Promise.all([loadPreisHistorie(tenantId), loadPreisSchwelle(tenantId), loadWarengruppenMapping(tenantId)]).then(([h, s, m]) => {
-      setHistorie(h); setSchwelle(s); setMapping(m);
+    Promise.all([
+      loadPreisHistorie(tenantId), loadPreisSchwelle(tenantId), loadWarengruppenMapping(tenantId),
+      loadMarktLieferantenMapping(tenantId),
+    ]).then(([h, s, m, mm]) => {
+      setHistorie(h); setSchwelle(s); setMapping(m); setMarktMap(mm);
       setSchwelleText({ pct: String(s.pct), minChf: s.minChf.toFixed(2) });
     }).catch(() => setHistorie({}));
   }, [tenantId]);
@@ -155,29 +238,33 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     const res = parseTransgourmetCsv(text);
     setErgebnis(res);
     setAusgewaehlt(new Set(res.rechnungen.map(r => r.docKey)));
-    if (!lieferant) {
-      const bekannt = suppliers.find(s => /transgourmet|prodega/i.test(s.name));
-      setLieferant(bekannt?.name ?? 'Transgourmet');
-    }
+    setMarktZuordnung({});
     if (res.failureReason) toast.error(res.failureReason);
   };
 
+  /** Lieferant pro Rechnung aus der Markt-Spalte; null = «Lieferant offen». */
+  const lieferantFuer = (markt: string) => lieferantFuerMarkt(markt, marktMap);
+
   // Preisänderungen je Rechnung — sequenziell gegen die fortgeschriebene
   // Historie (Datei-interne Änderungen werden ebenfalls erkannt).
+  // Preis-Historie ist pro LIEFERANT geführt → getrennte Verläufe TG/Prodega.
   const vorschau = useMemo(() => {
-    if (!ergebnis || historie === null || !lieferant.trim()) return null;
+    if (!ergebnis || historie === null) return null;
     let hist = historie;
     const proRechnung = new Map<string, PreisAenderung[]>();
     const alle: PreisAenderung[] = [];
     for (const r of ergebnis.rechnungen) {
       if (!ausgewaehlt.has(r.docKey)) continue;
-      const aen = berechnePreisAenderungen(r, lieferant, hist, schwelle);
+      const lf = lieferantFuer(r.markt);
+      if (!lf) continue; // «Lieferant offen» — wird nicht importiert, nicht bewertet
+      const aen = berechnePreisAenderungen(r, lf, hist, schwelle);
       proRechnung.set(r.docKey, aen);
       alle.push(...aen);
-      hist = aktualisierePreisHistorie(hist, [r], lieferant);
+      hist = aktualisierePreisHistorie(hist, [r], lf);
     }
     return { proRechnung, alle, histNachImport: hist };
-  }, [ergebnis, historie, lieferant, ausgewaehlt, schwelle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ergebnis, historie, ausgewaehlt, schwelle, marktMap]);
 
   const speichereSchwelle = async () => {
     const pct = Number(schwelleText.pct.replace(',', '.'));
@@ -192,9 +279,24 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     catch (e) { toast.error(`Schwelle speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
   };
 
+  /** Offenen Markt einem Lieferanten zuordnen (persistiert, sofort wirksam). */
+  const ordneMarktZu = async (markt: string) => {
+    const lf = (marktZuordnung[markt] ?? '').trim();
+    if (!lf) return;
+    const neu = [...marktMap.filter(r => r.markt.trim().toLowerCase() !== markt.trim().toLowerCase()), { markt, lieferant: lf }];
+    setMarktMap(neu);
+    try { await saveMarktLieferantenMapping(tenantId, neu); toast.success(`Markt «${markt}» → ${lf} gespeichert.`); }
+    catch (e) { toast.error(`Zuordnung speichern fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`); }
+  };
+
   const importieren = async () => {
-    if (!ergebnis || !vorschau || !lieferant.trim()) return;
-    const zuImportieren = ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey));
+    if (!ergebnis || !vorschau) return;
+    // Rechnungen ohne Lieferanten-Zuordnung («Lieferant offen») werden NIE importiert.
+    const zuImportieren = ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey) && lieferantFuer(r.markt) !== null);
+    const offen = ergebnis.rechnungen.filter(r => ausgewaehlt.has(r.docKey) && lieferantFuer(r.markt) === null);
+    if (offen.length > 0) {
+      toast.error(`${offen.length} Rechnung${offen.length === 1 ? '' : 'en'} mit unbekanntem Markt übersprungen — bitte Markt zuordnen.`);
+    }
     if (zuImportieren.length === 0) return;
     setBusy(true);
     try {
@@ -202,6 +304,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
       const hinweiseProMonat = new Map<string, Record<string, PreisAenderung[]>>();
       const positionenProMonat = new Map<string, Record<string, ReturnType<typeof positionenAusRechnung>>>();
       for (const r of zuImportieren) {
+        const lieferant = lieferantFuer(r.markt)!; // oben gefiltert
         const month = r.datum.slice(0, 7);
         const bestand = await loadMonthInvoices(tenantId, month);
         const vorhanden = bestand.find(e =>
@@ -306,37 +409,72 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         <div className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs space-y-3" data-testid="csv-import-vorschau">
           <div className="flex flex-wrap items-center gap-3">
             <span className="font-medium">{ergebnis.rechnungen.length} Rechnungen · {ergebnis.debug.zeilenVerwendet} Positionen</span>
-            <span className="inline-flex items-center gap-1">
-              Lieferant:
-              <Input value={lieferant} onChange={e => setLieferant(e.target.value)} list="csv-lieferanten"
-                className="h-6 w-40 px-1.5 text-[11px]" data-testid="csv-lieferant" />
-              <datalist id="csv-lieferanten">
-                {suppliers.filter(s => s.active).map(s => <option key={s.id} value={s.name} />)}
-              </datalist>
-            </span>
+            <span className="text-muted-foreground">Lieferant je Rechnung aus der Markt-Spalte (BGH → Transgourmet, Prodega-Märkte → Prodega)</span>
             <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-[11px]" onClick={() => setErgebnis(null)}>
               <X className="h-3 w-3 mr-0.5" /> Verwerfen
             </Button>
           </div>
 
-          {/* Rechnungsliste */}
+          {/* Rechnungsliste — Lieferant pro Rechnung aus Markt abgeleitet */}
           <div className="max-h-48 overflow-y-auto space-y-0.5">
-            {ergebnis.rechnungen.map(r => (
-              <label key={r.docKey} className="flex items-center gap-2 tabular-nums cursor-pointer hover:bg-muted/40 rounded px-1 py-0.5">
-                <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600"
-                  checked={ausgewaehlt.has(r.docKey)} onChange={() => toggleRechnung(r.docKey)} />
-                <span className="w-20">{fmtDatumCH(r.datum)}</span>
-                <span className="w-24 truncate" title={r.rechnungsNr}>Nr. {r.rechnungsNr}</span>
-                <span className="text-muted-foreground">{r.positionen.length} Pos.</span>
-                <span className="ml-auto">CHF {fmt(r.nettoTotal)} netto</span>
-                {(vorschau?.proRechnung.get(r.docKey)?.length ?? 0) > 0 && (
-                  <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5">
-                    <AlertTriangle className="h-3 w-3" />{vorschau!.proRechnung.get(r.docKey)!.length}
-                  </span>
-                )}
-              </label>
-            ))}
+            {ergebnis.rechnungen.map(r => {
+              const lf = lieferantFuer(r.markt);
+              const warnung = marktNummernWarnung(lf, r.rechnungsNr);
+              return (
+                <label key={r.docKey} className="flex items-center gap-2 tabular-nums cursor-pointer hover:bg-muted/40 rounded px-1 py-0.5">
+                  <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600"
+                    checked={ausgewaehlt.has(r.docKey)} onChange={() => toggleRechnung(r.docKey)} />
+                  <span className="w-20">{fmtDatumCH(r.datum)}</span>
+                  <span className="w-24 truncate" title={r.rechnungsNr}>Nr. {r.rechnungsNr}</span>
+                  <span className="w-24 truncate text-muted-foreground" title={`Markt: ${r.markt || '—'}`}>{r.markt || '— Markt fehlt'}</span>
+                  {lf ? (
+                    <span className={cn('font-medium', /prodega/i.test(lf) ? 'text-sky-700 dark:text-sky-400' : 'text-emerald-700 dark:text-emerald-400')}>{lf}</span>
+                  ) : (
+                    <span className="text-red-600 dark:text-red-400 font-medium">Lieferant offen</span>
+                  )}
+                  {warnung && (
+                    <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5" title={warnung}>
+                      <AlertTriangle className="h-3 w-3" /> Nr./Markt?
+                    </span>
+                  )}
+                  <span className="text-muted-foreground">{r.positionen.length} Pos.</span>
+                  <span className="ml-auto">CHF {fmt(r.nettoTotal)} netto</span>
+                  {(vorschau?.proRechnung.get(r.docKey)?.length ?? 0) > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5">
+                      <AlertTriangle className="h-3 w-3" />{vorschau!.proRechnung.get(r.docKey)!.length}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
           </div>
+
+          {/* Unbekannte Märkte — «Lieferant offen», Zuordnung direkt hier speichern */}
+          {(() => {
+            const offeneMaerkte = [...new Set(ergebnis.rechnungen.map(r => r.markt.trim()).filter(m => m && lieferantFuer(m) === null))];
+            return offeneMaerkte.length > 0 ? (
+              <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-2 space-y-1.5" data-testid="markt-offen-hinweis">
+                <p className="text-red-700 dark:text-red-400 font-medium">
+                  Unbekannte Märkte ({offeneMaerkte.length}) — betroffene Rechnungen werden NICHT importiert, bis der Lieferant zugeordnet ist:
+                </p>
+                {offeneMaerkte.map(m => (
+                  <div key={m} className="flex items-center gap-2">
+                    <span className="w-28 truncate">Markt «{m}» →</span>
+                    <Input value={marktZuordnung[m] ?? ''} list="markt-lieferanten"
+                      onChange={e => setMarktZuordnung(z => ({ ...z, [m]: e.target.value }))}
+                      placeholder="Lieferant (z.B. Prodega)" className="h-6 w-44 px-1.5 text-[11px]"
+                      data-testid={`markt-zuordnung-${m}`} />
+                    <Button size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                      disabled={!(marktZuordnung[m] ?? '').trim()} onClick={() => void ordneMarktZu(m)}>Zuordnen</Button>
+                  </div>
+                ))}
+                <datalist id="markt-lieferanten">
+                  {suppliers.filter(s => s.active).map(s => <option key={s.id} value={s.name} />)}
+                  <option value="Transgourmet" /><option value="Prodega" />
+                </datalist>
+              </div>
+            ) : null;
+          })()}
 
           {/* Unbekannte Warengruppen — «Konto offen», nie raten */}
           {(() => {
@@ -351,13 +489,35 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
             ) : null;
           })()}
 
-          {/* Preisänderungen — VOR dem Schreiben sichtbar */}
-          {vorschau && (
+          {/* Preisänderungen — VOR dem Schreiben sichtbar, gefiltert nach Relevanz */}
+          {vorschau && (() => {
+            // Schwelle = die eingestellte Warn-Schwelle (a.stark); kein zweiter Wert.
+            const erhoehungen = vorschau.alle.filter(a => a.stark && a.erhoehung)
+              .sort((a, b) => (b.diffPct ?? 0) - (a.diffPct ?? 0)); // grösste %-Erhöhung zuerst
+            const senkungen = vorschau.alle.filter(a => a.stark && !a.erhoehung);
+            const kleine = vorschau.alle.filter(a => !a.stark);
+            const sichtbar = preisFilter === 'erhoehung' ? erhoehungen
+              : preisFilter === 'senkung' ? senkungen
+                : preisFilter === 'klein' ? kleine : vorschau.alle;
+            const filterBtn = (id: typeof preisFilter, text: string) => (
+              <button type="button" key={id}
+                className={cn('px-2 py-0.5 rounded-full border text-[11px] transition-colors',
+                  preisFilter === id ? 'bg-foreground text-background border-foreground font-medium' : 'border-border text-muted-foreground hover:bg-muted/40')}
+                onClick={() => setPreisFilter(id)} data-testid={`preisfilter-${id}`}>{text}</button>
+            );
+            return (
             <div className="border-t border-border/40 pt-2 space-y-1" data-testid="preisaenderungen-liste">
-              <p className="font-medium">Preisänderungen ({vorschau.alle.length})</p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <p className="font-medium mr-1">Preisänderungen ({vorschau.alle.length})</p>
+                {filterBtn('erhoehung', `Erhöhungen ≥${schwelle.pct} %: ${erhoehungen.length}`)}
+                {filterBtn('senkung', `Senkungen ≥${schwelle.pct} %: ${senkungen.length}`)}
+                {filterBtn('klein', `kleine (<${schwelle.pct} %): ${kleine.length}`)}
+                {filterBtn('alle', `alle: ${vorschau.alle.length}`)}
+              </div>
               {vorschau.alle.length === 0 && <p className="text-muted-foreground">Keine Preisänderungen gegenüber der letzten Erfassung.</p>}
+              {vorschau.alle.length > 0 && sichtbar.length === 0 && <p className="text-muted-foreground">Keine Einträge in diesem Filter.</p>}
               <div className="max-h-56 overflow-y-auto space-y-0.5">
-                {vorschau.alle.map((a, i) => (
+                {sichtbar.map((a, i) => (
                   <div key={`${a.key}-${i}`} className={cn('flex flex-wrap items-center gap-2 tabular-nums rounded px-1.5 py-0.5',
                     a.stark && a.erhoehung ? 'bg-red-500/10 text-red-700 dark:text-red-400 font-medium'
                       : a.stark ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
@@ -371,9 +531,10 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
                 ))}
               </div>
             </div>
-          )}
+            );
+          })()}
 
-          <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || ausgewaehlt.size === 0 || !lieferant.trim()}
+          <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || ausgewaehlt.size === 0}
             onClick={importieren} data-testid="csv-import-button">
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
             {ausgewaehlt.size} Rechnung{ausgewaehlt.size === 1 ? '' : 'en'} importieren
