@@ -103,7 +103,7 @@ import { computeDayPlanHints, type DayPlanHints } from '@/lib/staffing-day-hints
 import { computeCdsCheck, computeKitchenColdCheck, dynamicPositionOverrides } from '@/lib/staffing-check-utils';
 import { DEFAULT_SEASON, type StaffingSeason } from '@/lib/staffing-requirements-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
-import { resolveActiveProfileForDate, buildEffectiveRequirements } from '@/lib/staffing-profiles-utils';
+import { resolveActiveProfileForDate, buildEffectiveRequirements, cdsRuleForSeason } from '@/lib/staffing-profiles-utils';
 import { useUgEventDays } from '@/hooks/useUgEventDays';
 import { useQuickTimes } from '@/hooks/useQuickTimes';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
@@ -1349,7 +1349,7 @@ const SchedulePlanner = () => {
         weekday,
         departments: comparisonDepartments,
         preferredKeysById: dynamicPositionOverrides(
-          computeCdsCheck(plannedIds, staffingProfilesConfig.cdsPriority ?? [], weekday),
+          computeCdsCheck(plannedIds, cdsRuleForSeason(staffingProfilesConfig, staffingSeason).cdsPriority, weekday, cdsRuleForSeason(staffingProfilesConfig, staffingSeason)),
           computeKitchenColdCheck(plannedIds, staffingProfilesConfig.kitchenCold),
         ),
       });
@@ -1379,7 +1379,8 @@ const SchedulePlanner = () => {
         eventOpen: ugEventDays.has(dateStr),
       });
       const plannedIds = planned.map((p) => p.id);
-      const cds = computeCdsCheck(plannedIds, staffingProfilesConfig.cdsPriority ?? [], weekday);
+      const cdsRule = cdsRuleForSeason(staffingProfilesConfig, staffingSeason);
+      const cds = computeCdsCheck(plannedIds, cdsRule.cdsPriority, weekday, cdsRule);
       const cold = computeKitchenColdCheck(plannedIds, staffingProfilesConfig.kitchenCold);
       const hints = computeDayPlanHints({
         positions: staffingPositions,
@@ -5794,7 +5795,7 @@ const SchedulePlanner = () => {
         season={staffingSeason}
         onSeasonChange={setStaffingSeason}
         profiles={staffingProfilesConfig.profiles}
-        cdsPriority={staffingProfilesConfig.cdsPriority}
+        profilesConfig={staffingProfilesConfig}
         kitchenCold={staffingProfilesConfig.kitchenCold}
       />
 

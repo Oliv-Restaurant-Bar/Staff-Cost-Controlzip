@@ -90,11 +90,23 @@ export interface CdsCheckResult {
  */
 export const GASTGEBER_WEEKDAYS: readonly number[] = [4, 5, 6];
 
+/** Konfigurierbare Teile der Gastgeber-Regel (Default = bisheriges Verhalten). */
+export interface CdsRuleOptions {
+  /** ISO-Wochentage der Gastgeber/GF-Rolle (Default GASTGEBER_WEEKDAYS Do–Sa). */
+  gastgeberWeekdays?: readonly number[];
+  /**
+   * true (Default) = zweite Priorität wird nur Gastgeber/GF, wenn die ERSTE
+   * Priorität als CdS geplant ist. false = zweite Priorität wird Gastgeber/GF,
+   * sobald sie geplant und nicht selbst CdS ist.
+   */
+  gastgeberRequiresFirstPlanned?: boolean;
+}
+
 /**
  * Genau 1 CdS pro Tag: die am Tag GEPLANTE Person mit höchster Priorität.
- * Ist die erstpriorisierte Person geplant, wird die zweitpriorisierte (falls
- * ebenfalls geplant) Gastgeber/GF — aber NUR an den GASTGEBER_WEEKDAYS
- * (Do/Fr/Sa); an anderen Tagen bleibt sie in ihrer normalen Rolle.
+ * Gastgeber/GF = zweitpriorisierte Person an den konfigurierten Wochentagen
+ * (Default Do/Fr/Sa), gemäss Bedingung (siehe CdsRuleOptions); an anderen
+ * Tagen bleibt sie in ihrer normalen Rolle.
  * Nachfolgende Prioritäten bleiben immer in ihrer normalen Rolle.
  * Leere Prioritätsliste ⇒ Regel nicht konfiguriert (ok, keine Warnung).
  * `weekday` weglassen ⇒ Gastgeber-Zuweisung wie bisher (jeden Tag).
@@ -103,17 +115,23 @@ export function computeCdsCheck(
   plannedEmployeeIds: readonly string[],
   cdsPriority: readonly string[],
   weekday?: number,
+  rule?: CdsRuleOptions,
 ): CdsCheckResult {
   if (cdsPriority.length === 0) {
     return { activeCdsId: null, gastgeberId: null, ok: true, warning: null };
   }
   const planned = new Set(plannedEmployeeIds);
   const activeCdsId = cdsPriority.find((id) => planned.has(id)) ?? null;
-  const gastgeberDay = weekday === undefined || GASTGEBER_WEEKDAYS.includes(weekday);
+  const weekdays = rule?.gastgeberWeekdays ?? GASTGEBER_WEEKDAYS;
+  const requireFirst = rule?.gastgeberRequiresFirstPlanned !== false;
+  const gastgeberDay = weekday === undefined || weekdays.includes(weekday);
   let gastgeberId: string | null = null;
-  if (gastgeberDay && activeCdsId !== null && activeCdsId === cdsPriority[0] && cdsPriority.length > 1) {
+  if (gastgeberDay && activeCdsId !== null && cdsPriority.length > 1) {
     const second = cdsPriority[1];
-    if (planned.has(second)) gastgeberId = second;
+    const eligible = requireFirst
+      ? activeCdsId === cdsPriority[0]        // Bedingung: erste Priorität ist CdS
+      : second !== activeCdsId;               // ohne Bedingung: nur nicht selbst CdS
+    if (eligible && planned.has(second)) gastgeberId = second;
   }
   return {
     activeCdsId,
@@ -287,15 +305,17 @@ export function computeDayCheck(args: {
   season: StaffingSeason;
   weekday: number;
   cdsPriority: readonly string[];
+  /** Konfigurierbare Gastgeber-Regel (Wochentage/Bedingung); Default wie bisher. */
+  cdsRule?: CdsRuleOptions;
   /** Küchen-Stationsregel Kalte Küche/Sushi (optional, analog CdS). */
   kitchenCold?: KitchenColdRule | null;
 }): DayCheckResult {
-  const { requirements, plannedEmployees, season, weekday, cdsPriority, kitchenCold } = args;
+  const { requirements, plannedEmployees, season, weekday, cdsPriority, cdsRule, kitchenCold } = args;
   const shifts = shiftsForScope(requirements, season, weekday);
 
   // ── CdS + Kalte Küche/Sushi (alle produktiv geplanten Personen des Tages) ──
   const plannedIds = plannedEmployees.map((e) => e.id);
-  const cds = computeCdsCheck(plannedIds, cdsPriority, weekday);
+  const cds = computeCdsCheck(plannedIds, cdsPriority, weekday, cdsRule);
   const cold = computeKitchenColdCheck(plannedIds, kitchenCold);
 
   if (shifts.length === 0) {

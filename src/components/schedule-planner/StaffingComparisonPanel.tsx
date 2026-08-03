@@ -35,8 +35,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import type { KitchenColdRule } from '@/lib/staffing-profiles-utils';
-import { buildEffectiveRequirements, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
+import type { KitchenColdRule, StaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
+import { buildEffectiveRequirements, cdsRuleForSeason, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
 import { useUgEventDays } from '@/hooks/useUgEventDays';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -77,8 +77,12 @@ interface StaffingComparisonPanelProps {
   onSeasonChange?: (season: StaffingSeason) => void;
   /** Dynamische Profil-Liste (aus der Profil-Konfiguration); ohne = SEASONS. */
   profiles?: { key: string; label: string }[];
-  /** CdS-Prioritätsliste (Mitarbeiter-IDs) für die Chef-de-Service-Warnung. */
-  cdsPriority?: string[];
+  /**
+   * Massgebliche Profil-Konfiguration der aufrufenden Seite (CdS-/Gastgeber-
+   * Regel, UG-Zuschlag …). Ohne Prop fällt das Panel auf den eigenen Hook
+   * zurück (Legacy-Aufrufer).
+   */
+  profilesConfig?: StaffingProfilesConfig;
   /** Küchen-Stationsregel Kalte Küche/Sushi (dynamisch, analog CdS). */
   kitchenCold?: KitchenColdRule | null;
 }
@@ -235,12 +239,14 @@ export function StaffingComparisonPanel({
   season: seasonProp,
   onSeasonChange,
   profiles,
-  cdsPriority,
+  profilesConfig: profilesConfigProp,
   kitchenCold,
 }: StaffingComparisonPanelProps) {
   const { positions, loading: posLoading } = usePositions();
   const { requirements, loading: reqLoading } = useStaffingRequirements();
-  const { config: profilesConfig } = useStaffingProfiles();
+  const { config: hookProfilesConfig } = useStaffingProfiles();
+  // Massgeblich ist die Konfiguration der Seite; Hook nur als Legacy-Rückfall.
+  const profilesConfig = profilesConfigProp ?? hookProfilesConfig;
   const { eventDays, toggle: toggleEventDay } = useUgEventDays();
   const { isGuest } = usePermissions();
 
@@ -267,10 +273,14 @@ export function StaffingComparisonPanel({
   );
   const surchargeActive = ugSurchargeApplies({ config: profilesConfig, season, weekday, eventOpen });
 
-  // Chef-de-Service-Regel (nur wenn eine Prioritätsliste konfiguriert ist).
+  // Chef-de-Service-Regel — profil-spezifisch aus der massgeblichen Config.
+  const cdsRule = useMemo(
+    () => cdsRuleForSeason(profilesConfig, season),
+    [profilesConfig, season],
+  );
   const cdsCheck = useMemo(
-    () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsPriority ?? [], weekday),
-    [plannedEmployees, cdsPriority, weekday],
+    () => computeCdsCheck(plannedEmployees.map((p) => p.id), cdsRule.cdsPriority, weekday, cdsRule),
+    [plannedEmployees, cdsRule, weekday],
   );
   // Küchen-Stationsregel Kalte Küche/Sushi (nur wenn eine Regel konfiguriert ist).
   const kitchenColdCheck = useMemo(
@@ -411,7 +421,7 @@ export function StaffingComparisonPanel({
           </div>
 
           {/* Chef-de-Service-Regel (Warnung bzw. aktiver CdS) */}
-          {(cdsPriority?.length ?? 0) > 0 && (
+          {cdsRule.cdsPriority.length > 0 && (
             <div
               data-testid="staffing-cds-status"
               className={cn(

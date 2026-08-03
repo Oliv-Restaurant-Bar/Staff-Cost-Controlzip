@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 
 import type { Position } from '@/types/positions';
 import type { StaffingRequirement } from '@/types/staffing';
-import { buildWeekOverview, isEveningShift, buildCellSaveDrafts, EVENING_START_MINUTES } from '@/lib/staffing-week-utils';
+import { buildWeekOverview, isEveningShift, buildCellSaveDrafts, ruleFallbackHeadcount, EVENING_START_MINUTES } from '@/lib/staffing-week-utils';
 import { defaultStaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
 
 const POSITIONS: Position[] = [
@@ -226,5 +226,89 @@ describe('buildCellSaveDrafts', () => {
     });
     expect(untouched.find((x) => x.positionKey === 'service' && x.shiftStart === '18:00')!.meta)
       .toMatchObject({ dayHeadcount: 4 });
+  });
+});
+
+describe('ruleFallbackHeadcount (Regelwert regelbasierter Positionen)', () => {
+  const cfg = defaultStaffingProfilesConfig('oliv');
+
+  it('CdS: 1 sobald Prioritätenliste konfiguriert, sonst null', () => {
+    expect(ruleFallbackHeadcount('chef_de_service', 2, cfg)).toBe(1);
+    expect(ruleFallbackHeadcount('chef_de_service', 2, { ...cfg, cdsPriority: [] })).toBeNull();
+  });
+
+  it('Gastgeber/GF: 1 an Do–Sa, 0 an So–Mi, null ohne zweite Priorität', () => {
+    expect(ruleFallbackHeadcount('gastgeber_gf', 4, cfg)).toBe(1);
+    expect(ruleFallbackHeadcount('gastgeber_gf', 6, cfg)).toBe(1);
+    expect(ruleFallbackHeadcount('gastgeber_gf', 1, cfg)).toBe(0);
+    expect(ruleFallbackHeadcount('gastgeber_gf', 7, cfg)).toBe(0);
+    expect(ruleFallbackHeadcount('gastgeber_gf', 5, { ...cfg, cdsPriority: ['nur-eine'] })).toBeNull();
+  });
+
+  it('Kalte Küche/Sushi: 1 mit Küchen-Regel, null ohne', () => {
+    expect(ruleFallbackHeadcount('kalte_kueche', 3, cfg)).toBe(cfg.kitchenCold ? 1 : null);
+    expect(ruleFallbackHeadcount('sushi', 3, { ...cfg, kitchenCold: null })).toBeNull();
+    expect(ruleFallbackHeadcount('service', 3, cfg)).toBeNull();
+  });
+});
+
+describe('Manuelle Übersteuerung regelbasierter Zellen (Zellen-Speichern)', () => {
+  it('Eintrag setzt Zeilen für gastgeber_gf; Zelle leeren entfernt sie wieder (Regel greift)', () => {
+    // Übersteuern: leerer Bestand → ein Block Do 17–23 × 1.
+    const set = buildCellSaveDrafts({
+      existing: [req({ positionKey: 'service', weekday: 4 })],
+      season: 'standard', weekday: 4, positionKey: 'gastgeber_gf', part: 'day',
+      partDrafts: [{ shiftStart: '17:00', shiftEnd: '23:00', requiredCount: 1 }],
+    });
+    expect(set.filter((d) => d.positionKey === 'gastgeber_gf')).toHaveLength(1);
+    expect(set.filter((d) => d.positionKey === 'service')).toHaveLength(1); // verbatim erhalten
+
+    // Leeren: bestehende Übersteuerung + keine neuen Blöcke → Zeilen weg.
+    const cleared = buildCellSaveDrafts({
+      existing: [
+        req({ positionKey: 'gastgeber_gf', weekday: 4, shiftStart: '17:00', shiftEnd: '23:00' }),
+        req({ positionKey: 'service', weekday: 4 }),
+      ],
+      season: 'standard', weekday: 4, positionKey: 'gastgeber_gf', part: 'day',
+      partDrafts: [], dayHeadcount: null,
+    });
+    expect(cleared.filter((d) => d.positionKey === 'gastgeber_gf')).toHaveLength(0);
+    expect(cleared.filter((d) => d.positionKey === 'service')).toHaveLength(1);
+  });
+});
+
+describe('Regelbasierte Positionen erscheinen IMMER in der Wochenübersicht', () => {
+  const cfg = defaultStaffingProfilesConfig('oliv');
+  const posWithRule: Position[] = [
+    ...POSITIONS,
+    { id: '3', key: 'gastgeber_gf', name: 'Gastgeber/GF', department: 'service', departmentGroup: null, sortOrder: 2, active: true },
+  ] as unknown as Position[];
+
+  it('ohne Zeilen: Zeile vorhanden, alle Zellen leer, Totale unverändert', () => {
+    const ov = buildWeekOverview({
+      positions: posWithRule,
+      requirements: [req({ positionKey: 'service', weekday: 1 })],
+      config: cfg, season: 'standard',
+    });
+    const rows = ov.groups.flatMap((g) => g.areas.flatMap((a) => a.positions));
+    const gg = rows.find((r) => r.positionKey === 'gastgeber_gf');
+    expect(gg).toBeDefined();
+    expect(Object.keys(gg!.cells)).toHaveLength(0); // leer = Regel greift
+    // Nicht-regelbasierte Position ohne Bedarf bleibt ausgeblendet.
+    expect(rows.find((r) => r.positionKey === 'kueche')).toBeUndefined();
+    // Regelwert fliesst NIE in die Totale ein.
+    expect(ov.totals[4].persons).toBe(0);
+  });
+
+  it('mit Übersteuerung: Zelle gefüllt und in den Totalen enthalten', () => {
+    const ov = buildWeekOverview({
+      positions: posWithRule,
+      requirements: [req({ positionKey: 'gastgeber_gf', weekday: 4, shiftStart: '17:00', shiftEnd: '23:00' })],
+      config: cfg, season: 'standard',
+    });
+    const gg = ov.groups.flatMap((g) => g.areas.flatMap((a) => a.positions))
+      .find((r) => r.positionKey === 'gastgeber_gf');
+    expect(gg?.cells[4]?.headcount).toBe(1);
+    expect(ov.totals[4].persons).toBe(1);
   });
 });

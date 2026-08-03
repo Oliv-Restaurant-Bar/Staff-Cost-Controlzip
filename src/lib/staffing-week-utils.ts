@@ -18,6 +18,7 @@ import { timeToMinutes, buildRequirementMatrix } from '@/lib/staffing-requiremen
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import {
   buildEffectiveRequirements,
+  cdsRuleForSeason,
   type StaffingProfilesConfig,
 } from '@/lib/staffing-profiles-utils';
 
@@ -83,6 +84,44 @@ export function computeWeekCell(
   cell.headcount = explicit != null ? explicit + ugExtra : Math.max(cell.mittag, cell.abend);
   cell.headcountExplicit = explicit != null;
   return cell;
+}
+
+/**
+ * Positions-Keys mit dynamischer Besetzungs-Regel (CdS-Prioritätenliste bzw.
+ * Küchen-Regel). Diese Positionen erscheinen in der Wochenmatrix IMMER
+ * (auch ohne hinterlegte Zeilen), damit sie manuell übersteuert werden können;
+ * ohne Übersteuerung bleibt die Zelle leer («–», Regel greift).
+ */
+export const RULE_BASED_POSITION_KEYS: readonly string[] =
+  ['chef_de_service', 'gastgeber_gf', 'kalte_kueche', 'sushi'];
+
+/**
+ * Indikativer REGELWERT (Kopfzahl) einer regelbasierten Position an einem
+ * Wochentag — was die Regel ohne manuelle Übersteuerung ergeben würde.
+ * null = Regel nicht konfiguriert. Die konkrete Tagesbesetzung hängt zusätzlich
+ * vom Dienstplan ab (z.B. schwacher Küchentag), daher «wäre». Reine Anzeige-
+ * Hilfe (Tooltip/Hinweis) — fliesst NIE in Totale/Bedarfsstunden ein.
+ */
+export function ruleFallbackHeadcount(
+  positionKey: string,
+  weekday: number,
+  config: StaffingProfilesConfig,
+  /** Angezeigtes Profil — Regel wird pro Profil aufgelöst (Default 'standard'). */
+  season: StaffingSeason | string = 'standard',
+): number | null {
+  const rule = cdsRuleForSeason(config, season);
+  switch (positionKey) {
+    case 'chef_de_service':
+      return rule.cdsPriority.length > 0 ? 1 : null;
+    case 'gastgeber_gf':
+      if (rule.cdsPriority.length < 2) return null;
+      return rule.gastgeberWeekdays.includes(weekday) ? 1 : 0;
+    case 'kalte_kueche':
+    case 'sushi':
+      return config.kitchenCold ? 1 : null;
+    default:
+      return null;
+  }
 }
 
 export interface WeekPositionRow {
@@ -251,8 +290,11 @@ export function buildWeekOverview(args: {
       const rows: WeekPositionRow[] = [];
       for (const pr of area.positions) {
         const cells = cellsByPosition.get(pr.position.key);
-        if (!cells || Object.keys(cells).length === 0) continue;
-        rows.push({ positionKey: pr.position.key, positionName: pr.position.name, cells });
+        // Regelbasierte Positionen erscheinen IMMER (leere Zellen = Regel
+        // greift, per Klick übersteuerbar); andere nur mit Bedarf.
+        if ((!cells || Object.keys(cells).length === 0)
+          && !RULE_BASED_POSITION_KEYS.includes(pr.position.key)) continue;
+        rows.push({ positionKey: pr.position.key, positionName: pr.position.name, cells: cells ?? {} });
       }
       if (rows.length > 0) areas.push({ area: area.area, positions: rows });
     }

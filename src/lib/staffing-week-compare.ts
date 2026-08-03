@@ -21,6 +21,7 @@ import type { DaySchedule, ActualHourEntry } from '@/lib/supabase-db';
 import { isoWeekdayOf, istHoursForDate } from '@/lib/bedarf-stunden-utils';
 import {
   buildEffectiveRequirements,
+  cdsRuleForSeason,
   resolveActiveProfileForDate,
   type StaffingProfilesConfig,
 } from '@/lib/staffing-profiles-utils';
@@ -123,7 +124,8 @@ export function buildWeekCompare(args: {
     });
     const planned = buildPlannedEmployees(employees, scheduleData, positions, dateStr);
     const plannedIds = planned.map((p) => p.id);
-    const cds = computeCdsCheck(plannedIds, config.cdsPriority ?? [], weekday);
+    const cdsRule = cdsRuleForSeason(config, season);
+    const cds = computeCdsCheck(plannedIds, cdsRule.cdsPriority, weekday, cdsRule);
     const cold = computeKitchenColdCheck(plannedIds, config.kitchenCold);
     const hints = computeDayPlanHints({
       positions,

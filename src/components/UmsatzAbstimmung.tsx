@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { saveMonth } from '@/lib/reporting-store';
+import { saveMonth, clearManualUmsatzField } from '@/lib/reporting-store';
+import { getLockStateStrict } from '@/lib/prior-year-lock';
+import { toast } from 'sonner';
 import type { MonthlyFinancialRecord } from '@/types/reporting';
 import { MONTH_NAMES_DE } from '@/types/reporting';
 import { cn } from '@/lib/utils';
@@ -98,6 +100,9 @@ export function UmsatzAbstimmung({
   year, months, storeKey, onRefresh,
 }: UmsatzAbstimmungProps) {
   const { tenantId } = useTenant();
+  // Beaulieu: Abstimmung NUR «Bruttoumsatz (manuell)» vs «Summe Tage» —
+  // keine Take-Away-Spalte (Header, Zellen, Total, Fusszeile). Oliv unverändert.
+  const isBeaulieu = tenantId === 'beaulieu';
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [saving,  setSaving]  = useState<Record<string, boolean>>({});
   // Leeres Jahr: Tabelle erst nach explizitem Klick zeigen (kein irreführender
@@ -156,23 +161,39 @@ export function UmsatzAbstimmung({
     const saveKey = `${month}:${field}`;
     setSaving(s => ({ ...s, [saveKey]: true }));
     try {
-      saveMonth(
-        {
-          year,
-          month,
-          ...(field === 'gross'    ? { grossRevenueManual:  val } : {}),
-          ...(field === 'takeAway' ? { takeAwayGrossManual: val } : {}),
-        },
-        'manual_entry',
-        'update',
-        { note: field === 'gross' ? 'Bruttoumsatz manuell' : 'Take Away Bruttoumsatz manuell' },
-        storeKey,
-      );
+      // Vorjahre sind KEINE Read-only-Hardzahlen für die manuelle Abstimmung —
+      // nur ein ausdrücklich festgeschriebenes Jahr blockiert, mit klarer
+      // Meldung. Lock IMMER frisch vor dem Write prüfen (fail-closed).
+      if (year < new Date().getFullYear()) {
+        try {
+          const lock = await getLockStateStrict(tenantId, year);
+          if (lock.locked) {
+            toast.error(`Jahr ${year} ist festgeschrieben — zum Bearbeiten zuerst entsperren (Import-Center → Vorjahres-Sperre).`);
+            return;
+          }
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Jahres-Sperre konnte nicht geprüft werden — nicht gespeichert.');
+          return;
+        }
+      }
+      const recField = field === 'gross' ? 'grossRevenueManual' as const : 'takeAwayGrossManual' as const;
+      if (val === undefined) {
+        // Leeres Feld = kein Wert (nie 0 erzwingen): Feld explizit löschen.
+        clearManualUmsatzField(year, month, recField, storeKey);
+      } else {
+        saveMonth(
+          { year, month, [recField]: val },
+          'manual_entry',
+          'update',
+          { note: field === 'gross' ? 'Bruttoumsatz manuell' : 'Take Away Bruttoumsatz manuell' },
+          storeKey,
+        );
+      }
       onRefresh();
     } finally {
       setSaving(s => { const n = { ...s }; delete n[saveKey]; return n; });
     }
-  }, [editing, months, year, storeKey, onRefresh]);
+  }, [editing, months, year, storeKey, onRefresh, tenantId]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, month: number, field: EditField) => {
     const key = editKey(month, field);
@@ -213,7 +234,7 @@ export function UmsatzAbstimmung({
             <li className="flex items-start gap-2">
               <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/50 flex-shrink-0" />
               <span>
-                <strong>Manuelle Monatswerte</strong> (Bruttoumsatz / Take-Away) — hier unten erfassbar
+                <strong>Manuelle Monatswerte</strong> ({isBeaulieu ? 'Bruttoumsatz' : 'Bruttoumsatz / Take-Away'}) — hier unten erfassbar
               </span>
             </li>
             <li className="flex items-start gap-2">
@@ -278,12 +299,13 @@ export function UmsatzAbstimmung({
           Monatsabstimmung Umsatz {year}
         </CardTitle>
         <p className="text-[11px] text-muted-foreground mt-0.5">
-          Bruttoumsatz (exkl. Maison) und Take-Away-Umsatz (2.6 % MwSt) manuell eingeben
-          und mit den Gastronovi-Tageswerten abgleichen. Differenz soll 0 sein.
+          {isBeaulieu
+            ? 'Bruttoumsatz manuell eingeben und mit den Gastronovi-Tageswerten abgleichen. Differenz soll 0 sein.'
+            : 'Bruttoumsatz (exkl. Maison) und Take-Away-Umsatz (2.6 % MwSt) manuell eingeben und mit den Gastronovi-Tageswerten abgleichen. Differenz soll 0 sein.'}
         </p>
       </CardHeader>
       <CardContent className="pt-0 overflow-x-auto">
-        <table className="w-full text-xs border-collapse min-w-[620px]">
+        <table className={cn('w-full text-xs border-collapse', isBeaulieu ? 'min-w-[500px]' : 'min-w-[620px]')}>
           <thead>
             <tr className="border-b-2 border-border text-muted-foreground">
               <th className="text-left py-2 px-2 font-semibold min-w-[68px]">Monat</th>
@@ -291,10 +313,12 @@ export function UmsatzAbstimmung({
                 Bruttoumsatz
                 <span className="block text-[10px] font-normal">manuell, exkl. Maison</span>
               </th>
-              <th className="text-right py-2 px-2 font-semibold min-w-[130px] text-orange-700 dark:text-orange-400">
-                Take Away
-                <span className="block text-[10px] font-normal">Brutto inkl. 2.6 % MwSt</span>
-              </th>
+              {!isBeaulieu && (
+                <th className="text-right py-2 px-2 font-semibold min-w-[130px] text-orange-700 dark:text-orange-400">
+                  Take Away
+                  <span className="block text-[10px] font-normal">Brutto inkl. 2.6 % MwSt</span>
+                </th>
+              )}
               <th className="text-right py-2 px-2 font-semibold min-w-[120px] text-violet-700 dark:text-violet-400">
                 Summe Tage
                 <span className="block text-[10px] font-normal">Gastronovi Z-Bericht, Brutto</span>
@@ -337,16 +361,11 @@ export function UmsatzAbstimmung({
               const grossInput = isEditingGross ? editing[grossKey] : (hasManual   ? fmt(manual!)   : '');
               const taInput    = isEditingTA    ? editing[taKey]    : (hasTakeAway ? fmt(takeAway!) : '');
 
-              if (!hasManual && !hasTakeAway && !hasDaily) {
-                return (
-                  <tr key={m.month} className="border-b border-border/30 opacity-40">
-                    <td className="py-1.5 px-2 font-medium">{MONTH_NAMES_DE[m.month]}</td>
-                    <td colSpan={5} className="py-1.5 px-2 text-center text-muted-foreground/50 italic">
-                      keine Daten
-                    </td>
-                  </tr>
-                );
-              }
+              // WICHTIG: Auch Monate ohne jede Datenquelle bleiben EDITIERBAR
+              // (manuelle Ersterfassung, insb. Vorjahre) — kein «keine Daten»-
+              // Platzhalter mehr, der die Eingabe blockiert. Leere Monate sind
+              // nur optisch gedimmt.
+              const emptyRow = !hasManual && !hasTakeAway && !hasDaily;
 
               return (
                 <tr
@@ -354,6 +373,7 @@ export function UmsatzAbstimmung({
                   className={cn(
                     'border-b border-border/40 hover:bg-muted/20',
                     idx % 2 === 1 && 'bg-muted/10',
+                    emptyRow && 'opacity-60',
                   )}
                 >
                   <td className="py-1.5 px-2 font-medium">{MONTH_NAMES_DE[m.month]}</td>
@@ -380,7 +400,8 @@ export function UmsatzAbstimmung({
                     />
                   </td>
 
-                  {/* Take Away – editierbar */}
+                  {/* Take Away – editierbar (nur Oliv; Beaulieu ohne Take-Away-Spalte) */}
+                  {!isBeaulieu && (
                   <td className="py-1 px-2">
                     <input
                       type="text"
@@ -406,6 +427,7 @@ export function UmsatzAbstimmung({
                       </span>
                     )}
                   </td>
+                  )}
 
                   {/* Summe Tage Brutto = System-/gn-Tageswerte (ladeUmsatzTage) */}
                   <td className={cn(
@@ -456,16 +478,18 @@ export function UmsatzAbstimmung({
               <td className="py-2 px-2 text-right font-mono text-xs">
                 {totalManual > 0 ? fmt(totalManual) : '—'}
               </td>
-              <td className="py-2 px-2 text-right font-mono text-xs text-orange-700 dark:text-orange-400">
-                {totalTakeAway > 0 ? (
-                  <span>
-                    {fmt(totalTakeAway)}
-                    <span className="block text-[10px] font-normal text-muted-foreground/50">
-                      Netto: {fmt(totalTakeAway / mwstDivisorTakeaway())}
+              {!isBeaulieu && (
+                <td className="py-2 px-2 text-right font-mono text-xs text-orange-700 dark:text-orange-400">
+                  {totalTakeAway > 0 ? (
+                    <span>
+                      {fmt(totalTakeAway)}
+                      <span className="block text-[10px] font-normal text-muted-foreground/50">
+                        Netto: {fmt(totalTakeAway / mwstDivisorTakeaway())}
+                      </span>
                     </span>
-                  </span>
-                ) : '—'}
-              </td>
+                  ) : '—'}
+                </td>
+              )}
               <td className="py-2 px-2 text-right font-mono text-xs text-violet-700 dark:text-violet-400">
                 {totalDaily > 0 ? fmt(totalDaily) : '—'}
               </td>
@@ -484,8 +508,10 @@ export function UmsatzAbstimmung({
         </table>
 
         <div className="mt-2.5 px-1 flex flex-col gap-0.5 text-[10px] text-muted-foreground/60">
-          <span><strong>Bruttoumsatz (manuell):</strong> Gesamtumsatz des Monats, exkl. Maison/Marketing, inkl. MwSt. Klick in Zelle zum Eingeben.</span>
-          <span><strong>Take Away:</strong> Bruttoumsatz Takeaway, inkl. 2.6 % MwSt. Netto und MwSt-Betrag werden automatisch berechnet (÷ 1.026).</span>
+          <span><strong>Bruttoumsatz (manuell):</strong> Gesamtumsatz des Monats{isBeaulieu ? '' : ', exkl. Maison/Marketing'}, inkl. MwSt. Klick in Zelle zum Eingeben — in allen Jahren, auch Vorjahren. Leeres Feld = kein Wert.</span>
+          {!isBeaulieu && (
+            <span><strong>Take Away:</strong> Bruttoumsatz Takeaway, inkl. 2.6 % MwSt. Netto und MwSt-Betrag werden automatisch berechnet (÷ 1.026).</span>
+          )}
           <span><strong>Summe Tage:</strong> Automatisch — Brutto-Summe der Gastronovi Tages-Z-Berichte des Monats (kanonische Umsatzquelle, Replace-Semantik). Tage ohne Import werden nicht als 0 gewertet.</span>
           <span><strong>Differenz:</strong> Manuell minus Summe Tage — Ziel: 0. Grün &lt; 1 %, Gelb = 1–3 %, Rot &gt; 3 %.</span>
         </div>

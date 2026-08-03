@@ -28,3 +28,8 @@ Die Monatsabstimmung Umsatz (`UmsatzAbstimmung.tsx`) entscheidet «keine Abstimm
 # KV-Backup kann teilweise fehlschlagen
 
 Beleg 2026-07: Beaulieu-Registry `annualCostImports_v1` sagt monthsWithData=12, aber `beaulieu:reporting_v1` in Supabase hatte nur 8 × 2025-Monate (05/07/09/11 fehlten). localStorage des Import-Geräts hat alle 12; andere Geräte laden aus KV → Monate «fehlen». Sequenzielles Monats-Backup kann partiell scheitern; Registry-Zähler ≠ KV-Bestand.
+
+# UA-Editierbarkeit & Mandanten-Layout
+- Alle 12 Monatszeilen sind IMMER editierbar (kein «keine Daten»-Platzhalter); Beaulieu blendet die Take-Away-Spalte komplett aus (`isBeaulieu` in UmsatzAbstimmung.tsx), Oliv unverändert.
+- Vorjahres-Writes prüfen den prior-year-lock FRISCH via getLockStateStrict (fail-closed, Toast «festgeschrieben — zuerst entsperren»); Leeren eines Felds = clearManualUmsatzField (löscht Feld + Import-Protokoll), da saveMonth-update undefined ignoriert.
+- ImportSource kennt KEIN 'manual_entry' — neue Schreibpfade 'manual' verwenden (Alt-Aufruf in UA ist Baseline-tsc-Fehler).

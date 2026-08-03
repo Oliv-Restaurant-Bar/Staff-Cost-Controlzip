@@ -82,19 +82,72 @@ export interface KitchenColdRule {
   minHotCooks: number;
 }
 
+/**
+ * Konfigurierbare CdS-/Gastgeber-GF-Regel (pro Profil übersteuerbar):
+ *  - cdsPriority: Prioritätsreihenfolge (erste Priorität = CdS, wenn geplant).
+ *  - gastgeberWeekdays: ISO-Wochentage, an denen die Gastgeber/GF-Rolle greift
+ *    (Default Do–Sa).
+ *  - gastgeberRequiresFirstPlanned: Bedingung «zweite Priorität wird nur
+ *    Gastgeber/GF, wenn die ERSTE Priorität als CdS geplant ist» (Default an).
+ *    Aus = die zweite Priorität wird Gastgeber/GF, sobald sie geplant und
+ *    nicht selbst CdS ist.
+ */
+export interface CdsGastgeberRule {
+  cdsPriority: string[];
+  gastgeberWeekdays: number[];
+  gastgeberRequiresFirstPlanned: boolean;
+}
+
+/** Teil-Übersteuerung der CdS-/Gastgeber-Regel für EIN Profil (Saison-Key). */
+export type CdsRuleOverride = Partial<CdsGastgeberRule>;
+
 export interface StaffingProfilesConfig {
   profiles: StaffingProfile[];
   /**
    * Chef-de-Service-Prioritätsliste: Mitarbeiter-IDs, höchste Priorität zuerst.
-   * Default Oliv: Artin > Mendim > Ibrahim.
+   * Default Oliv: Artin > Mendim > Ibrahim. (Globale Basis der Regel;
+   * pro Profil übersteuerbar via cdsRuleBySeason.)
    */
   cdsPriority: string[];
+  /**
+   * ISO-Wochentage, an denen die Gastgeber/GF-Rolle vorgesehen ist
+   * (Default [4,5,6] = Do–Sa). Globale Basis; pro Profil übersteuerbar.
+   */
+  gastgeberWeekdays: number[];
+  /** Bedingung der Gastgeber-Regel (siehe CdsGastgeberRule). Default true. */
+  gastgeberRequiresFirstPlanned: boolean;
+  /**
+   * Profil-spezifische Übersteuerungen der CdS-/Gastgeber-Regel je
+   * Saison-Key ('standard' | 'winter' | custom). Fehlende Felder fallen auf
+   * die globale Basis zurück. Auflösung: cdsRuleForSeason().
+   */
+  cdsRuleBySeason: Record<string, CdsRuleOverride>;
   /** Umsatzbudget je ISO-Wochentag (1=Mo … 7=So), CHF. Kontextanzeige. */
   revenueBudgetByWeekday: Record<number, number>;
   /** UG-Zuschlag (additiv auf Standard). */
   ugSurcharge: UgSurcharge;
   /** Küchen-Stationsregel Kalte Küche/Sushi (null = nicht konfiguriert). */
   kitchenCold: KitchenColdRule | null;
+}
+
+/**
+ * Löst die effektive CdS-/Gastgeber-Regel für ein Profil (Saison) auf:
+ * feld-weise Profil-Übersteuerung → sonst 'standard'-Übersteuerung (für
+ * abgeleitete/custom Profile) → sonst globale Basis.
+ */
+export function cdsRuleForSeason(
+  config: StaffingProfilesConfig,
+  season: StaffingSeason | string,
+): CdsGastgeberRule {
+  const own = config.cdsRuleBySeason?.[season] ?? {};
+  const std = season !== 'standard' ? (config.cdsRuleBySeason?.['standard'] ?? {}) : {};
+  return {
+    cdsPriority: own.cdsPriority ?? std.cdsPriority ?? config.cdsPriority ?? [],
+    gastgeberWeekdays: own.gastgeberWeekdays ?? std.gastgeberWeekdays ?? config.gastgeberWeekdays ?? [4, 5, 6],
+    gastgeberRequiresFirstPlanned:
+      own.gastgeberRequiresFirstPlanned ?? std.gastgeberRequiresFirstPlanned
+      ?? config.gastgeberRequiresFirstPlanned ?? true,
+  };
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -151,6 +204,9 @@ export function defaultStaffingProfilesConfig(tenantId: string): StaffingProfile
     cdsPriority: isOliv
       ? [...OLIV_CDS_PRIORITY]
       : tenantId === 'beaulieu' ? [...BEAULIEU_CDS_PRIORITY] : [],
+    gastgeberWeekdays: [4, 5, 6],
+    gastgeberRequiresFirstPlanned: true,
+    cdsRuleBySeason: {},
     revenueBudgetByWeekday: isOliv ? { ...OLIV_REVENUE_BUDGET } : {},
     ugSurcharge: isOliv
       ? { enabled: true, entries: OLIV_UG_SURCHARGE.entries.map((e) => ({ ...e })), weekdays: [...OLIV_UG_SURCHARGE.weekdays] }
@@ -262,9 +318,33 @@ export function normalizeStaffingProfilesConfig(
     }
   }
 
+  const weekdayList = (v: unknown, fallback: number[]): number[] =>
+    Array.isArray(v)
+      ? [...new Set(v.filter((w): w is number => Number.isInteger(w) && (w as number) >= 1 && (w as number) <= 7))].sort((a, b) => a - b)
+      : fallback;
+  const idList = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '') : undefined;
+  const ruleBySeason: Record<string, CdsRuleOverride> = {};
+  if (r.cdsRuleBySeason && typeof r.cdsRuleBySeason === 'object') {
+    for (const [k, v] of Object.entries(r.cdsRuleBySeason as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const o = v as Record<string, unknown>;
+      const entry: CdsRuleOverride = {};
+      const prio = idList(o.cdsPriority);
+      if (prio !== undefined) entry.cdsPriority = prio;
+      if (Array.isArray(o.gastgeberWeekdays)) entry.gastgeberWeekdays = weekdayList(o.gastgeberWeekdays, []);
+      if (typeof o.gastgeberRequiresFirstPlanned === 'boolean') entry.gastgeberRequiresFirstPlanned = o.gastgeberRequiresFirstPlanned;
+      if (Object.keys(entry).length > 0) ruleBySeason[k] = entry;
+    }
+  }
+
   return {
     profiles: [...byKey.values()],
     cdsPriority: cds,
+    gastgeberWeekdays: weekdayList(r.gastgeberWeekdays, def.gastgeberWeekdays),
+    gastgeberRequiresFirstPlanned:
+      typeof r.gastgeberRequiresFirstPlanned === 'boolean' ? r.gastgeberRequiresFirstPlanned : def.gastgeberRequiresFirstPlanned,
+    cdsRuleBySeason: ruleBySeason,
     revenueBudgetByWeekday: budget,
     ugSurcharge: normSurcharge(r.ugSurcharge, def.ugSurcharge),
     // 'kitchenCold' fehlt in alten Blobs → Mandanten-Default ergänzen.

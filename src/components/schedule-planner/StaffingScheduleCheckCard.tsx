@@ -39,6 +39,7 @@ import {
 } from '@/lib/staffing-check-utils';
 import {
   buildEffectiveRequirements,
+  cdsRuleForSeason,
   defaultStaffingProfilesConfig,
   ugSurchargeApplies,
   type StaffingProfilesConfig,
@@ -180,7 +181,7 @@ export function StaffingScheduleCheckCard({
   const preferredKeysById = useMemo(() => {
     const ids = plannedEmployees.map((p) => p.id);
     return dynamicPositionOverrides(
-      computeCdsCheck(ids, config.cdsPriority ?? [], dateWeekday),
+      computeCdsCheck(ids, cdsRuleForSeason(config, season).cdsPriority, dateWeekday, cdsRuleForSeason(config, season)),
       computeKitchenColdCheck(ids, config.kitchenCold),
     );
   }, [plannedEmployees, config, dateWeekday]);
@@ -220,7 +221,8 @@ export function StaffingScheduleCheckCard({
       plannedEmployees: plannedEx,
       season,
       weekday: dateWeekday,
-      cdsPriority: config.cdsPriority,
+      cdsPriority: cdsRuleForSeason(config, season).cdsPriority,
+      cdsRule: cdsRuleForSeason(config, season),
       kitchenCold: config.kitchenCold,
     });
   }, [employees, plannedEmployees, positions, effectiveRequirements, season, dateWeekday, config]);

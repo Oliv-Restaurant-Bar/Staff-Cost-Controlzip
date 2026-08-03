@@ -24,3 +24,8 @@ mitgeben, sonst weichen die Zahlen vom Panel ab. **Nie** zu countPlanned je
 Zeile zurückkehren (Mehrfachzählung war der ursprüngliche Bug).
 Personalbedarf-Seite: Standard-Ansicht «Ganze Woche» (staffing-week-utils,
 Mittag/Abend-Grenze 16:00); Editor nur in der Tagesansicht.
+
+## CdS-/Gastgeber-Regel ist konfigurierbar (pro Profil)
+- Regel-Auflösung NUR via `cdsRuleForSeason(config, season)` (Prio-Liste, Gastgeber-Wochentage, Bedingung); Fallback-Kette Profil-Override → standard-Override → globale Felder. Nie mehr `config.cdsPriority` direkt lesen.
+- **Why:** direkte Leser divergieren, sobald ein Profil (Winter/UG) eigene Regeln hat; Dialog spiegelt die STANDARD-Regel in die Legacy-Felder (`cdsPriority` etc.) nur für alte Blobs/Leser.
+- **How to apply:** neue Konsumenten der CdS/Gastgeber-Regel resolven pro angezeigtem/aufgelöstem Profil; regelbasierte Bedarfs-Zellen: Übersteuerung = vorhandene requirement-Zeilen im Daten-Profil (RAW, nie effektive/UG-Zeilen); Regelwert nur Anzeige (`ruleFallbackHeadcount`, nie in Totalen).

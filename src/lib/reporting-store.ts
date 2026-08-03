@@ -76,6 +76,41 @@ export function loadYear(year: number, storeKey: string = STORAGE_KEY): MonthlyF
 }
 
 /**
+ * Manuelles Abstimmungsfeld eines Monats LÖSCHEN (leeres Feld = kein Wert,
+ * nie 0 erzwingen). Nur für die manuellen Umsatzabstimmungs-Felder gedacht;
+ * schreibt wie saveMonth ein Import-Protokoll und sichert per Monats-Upsert.
+ * No-op, wenn der Monat nicht existiert oder das Feld bereits leer ist.
+ */
+export function clearManualUmsatzField(
+  year: number,
+  month: number,
+  field: 'grossRevenueManual' | 'takeAwayGrossManual',
+  storeKey: string = STORAGE_KEY,
+): void {
+  const all = loadAll(storeKey);
+  const id  = monthId(year, month);
+  const existing = all[id];
+  if (!existing || existing[field] === undefined) return;
+
+  const saved: MonthlyFinancialRecord = { ...existing };
+  delete saved[field];
+  saved.imports = [...saved.imports, {
+    importId:   uuidv4(),
+    importedAt: new Date().toISOString(),
+    source:     'manual',
+    mode:       'update',
+    note:       field === 'grossRevenueManual' ? 'Bruttoumsatz manuell gelöscht' : 'Take Away manuell gelöscht',
+    affectedFields: [field],
+  }];
+  saved.updatedAt = new Date().toISOString();
+  all[id] = saved;
+  saveAll(all, storeKey);
+  safeUpsertReportingMonth(id, saved, storeKey).catch(err => {
+    console.error('[REPORTING] clearManualUmsatzField: safeUpsertReportingMonth fehlgeschlagen', err);
+  });
+}
+
+/**
  * Einzelnen Monat laden.
  * Gibt einen leeren Datensatz zurück, wenn noch keine Daten vorhanden.
  */

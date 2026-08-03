@@ -304,3 +304,35 @@ describe('worstAmpel', () => {
     expect(worstAmpel([])).toBe('gruen');
   });
 });
+
+describe('computeCdsCheck: konfigurierbare Gastgeber-Regel (CdsRuleOptions)', () => {
+  const prio = ['first', 'second', 'third'];
+
+  it('konfigurierte Wochentage übersteuern Do–Sa (Mi als Gastgeber-Tag)', () => {
+    const r = computeCdsCheck(['first', 'second'], prio, 3, { gastgeberWeekdays: [3] });
+    expect(r.gastgeberId).toBe('second');
+    // Do ist dann KEIN Gastgeber-Tag mehr.
+    expect(computeCdsCheck(['first', 'second'], prio, 4, { gastgeberWeekdays: [3] }).gastgeberId).toBeNull();
+  });
+
+  it('Bedingung an (Default): ohne erste Priorität kein Gastgeber', () => {
+    const r = computeCdsCheck(['second', 'third'], prio, 5);
+    expect(r.activeCdsId).toBe('second');
+    expect(r.gastgeberId).toBeNull();
+  });
+
+  it('Bedingung aus: zweite Priorität wird Gastgeber, wenn nicht selbst CdS', () => {
+    // second ist selbst CdS → kein Gastgeber.
+    expect(computeCdsCheck(['second'], prio, 5, { gastgeberRequiresFirstPlanned: false }).gastgeberId).toBeNull();
+    // third ist CdS, second geplant → second Gastgeber. (erste fehlt!)
+    const r = computeCdsCheck(['third', 'second'], prio, 5, { gastgeberRequiresFirstPlanned: false });
+    expect(r.activeCdsId).toBe('second');
+    // second ist CdS → nicht gleichzeitig Gastgeber.
+    expect(r.gastgeberId).toBeNull();
+  });
+
+  it('Bedingung aus, erste geplant: wie bisher second = Gastgeber', () => {
+    const r = computeCdsCheck(['first', 'second'], prio, 5, { gastgeberRequiresFirstPlanned: false });
+    expect(r).toMatchObject({ activeCdsId: 'first', gastgeberId: 'second' });
+  });
+});

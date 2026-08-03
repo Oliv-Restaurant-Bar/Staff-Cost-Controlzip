@@ -1,0 +1,26 @@
+AUFGABE: Personalbedarf — regelbasierte Zellen (z.B. Gastgeber/GF via CdS-Prioritätenliste) einerseits sauber über die Regel konfigurierbar machen, andererseits manuelle Einzel-Übersteuerung als Ausnahme erlauben. Mandantengetrennt (Oliv/Beaulieu).
+
+GRUNDSATZ (Rangordnung): Regel = Standard und führend. Manuelle Übersteuerung = nur Ausnahme für einzelne Zellen. Ohne manuelle Eingabe gilt immer die Regel.
+
+TEIL A — Regel sauber konfigurierbar (der Normalfall):
+1) Über "UG konfigurieren" muss die CdS-Prioritätenliste / Gastgeber/GF-Regel vollständig einstellbar sein:
+   - an welchen Wochentagen Gastgeber/GF greift,
+   - die Prioritätsreihenfolge (erste/zweite Priorität) und die Bedingung ("zweite Priorität greift nur, wenn erste geplant ist"),
+   - pro Profil (Standard / Winter/UG) getrennt.
+2) Änderungen an der Regel wirken konsistent über ALLE Wochen (nicht nur die aktuelle) und aktualisieren sofort Wochen-/Tages-Totale und "Kopfzahl/Stunden Plan vs. Bedarf".
+3) Transparenz: Im Tooltip einer regelbasierten Zelle weiter anzeigen, WORAUS sich der Wert ergibt (Regel + Priorität), damit klar ist, warum sie leer oder gesetzt ist.
+
+TEIL B — Manuelle Übersteuerung als Ausnahme:
+1) Jede regelbasierte Zelle wird manuell editierbar — auch wenn sie leer ("–") ist.
+2) Trägt der Benutzer einen Wert ein, hat dieser VORRANG vor der Regel (Einzel-Übersteuerung, nur diese Zelle).
+3) Leert der Benutzer das Feld wieder, greift automatisch wieder der Regelwert (kein 0 erzwingen — leer = "Regel greift").
+4) Optisch: manuell übersteuerte Zellen markieren (kleiner Punkt/Stift-Icon). Tooltip dann: "Manuell übersteuert (Regelwert wäre: X). Feld leeren = zurück zur Regel."
+5) Der berechnete Regelwert bleibt im Hintergrund erhalten, damit jederzeit sichtbar ist, was die Regel ergäbe, und man zurück kann.
+
+RAHMEN (für A und B):
+- Mandantengetrennt speichern (Oliv/Beaulieu), pro Profil (Standard/Winter/UG) und pro Zeitraum korrekt zugeordnet.
+- Manuelle Werte in Wochen-/Tages-Totale und "Plan vs. Bedarf" (Kopfzahl UND Stunden) korrekt einrechnen.
+- Speichern / Festsetzen / Verwerfen wie bisher; manuelle Übersteuerungen sind Teil des Speicher- und Undo-Stands. "Verwerfen" nimmt die Übersteuerungen der Sitzung sauber zurück.
+- Reihenfolge der Auflösung pro Zelle: (1) manuelle Übersteuerung, sonst (2) Regelwert, sonst (3) leer.
+
+Bitte nur den Personalbedarf-Editor betreffen, sonst nichts ändern. Kurz zusammenfassen, was an der Gastgeber/GF-Regel jetzt konfigurierbar ist.

@@ -135,6 +135,20 @@ export default function Personalbedarf() {
   const [periodMode, setPeriodMode] = useState<'week' | 'month'>('week');
   /** Pop-up «UG konfigurieren». */
   const [ugDialogOpen, setUgDialogOpen] = useState(false);
+  /**
+   * Mitarbeiterliste für die CdS-Prioritätenliste im Dialog — unabhängig vom
+   * (nur in der Wochenansicht geladenen) weekData, damit die Regel auch aus
+   * der Tagesansicht heraus konfigurierbar ist.
+   */
+  const [dialogEmployees, setDialogEmployees] = useState<Employee[]>([]);
+  useEffect(() => {
+    if (!ugDialogOpen) return;
+    let cancelled = false;
+    loadEmployees(tenantId)
+      .then((emps) => { if (!cancelled) setDialogEmployees(emps ?? []); })
+      .catch(() => { /* best-effort: weekData-Rückfall unten */ });
+    return () => { cancelled = true; };
+  }, [ugDialogOpen, tenantId]);
   /** Positions-Pop-up: Mitarbeiter zuordnen/entfernen (SSOT Personalstamm). */
   const [positionDialog, setPositionDialog] = useState<{ key: string; name: string } | null>(null);
   /** Zell-Detail «Bedarf vs. Planung» (Position × Tag, read-only). */
@@ -961,6 +975,7 @@ export default function Personalbedarf() {
         onOpenChange={setUgDialogOpen}
         config={profilesConfig}
         positions={positions}
+        employees={dialogEmployees.length > 0 ? dialogEmployees : (weekData?.employees ?? [])}
         onSave={async (next) => {
           // Frisch laden und NUR die UG-relevanten Teile mergen — parallel
           // geänderte Config-Teile (CdS-Priorität, Locks, Budget …) dürfen
@@ -978,9 +993,14 @@ export default function Personalbedarf() {
                 ? { ...p, activeFrom: winterNext.activeFrom, activeTo: winterNext.activeTo }
                 : p,
             ),
+            // CdS-/Gastgeber-Regel (im selben Dialog konfiguriert) mitschreiben.
+            cdsRuleBySeason: next.cdsRuleBySeason,
+            cdsPriority: next.cdsPriority,
+            gastgeberWeekdays: next.gastgeberWeekdays,
+            gastgeberRequiresFirstPlanned: next.gastgeberRequiresFirstPlanned,
           };
           await saveProfilesConfig(merged);
-          toast.success('UG-Zuschlag gespeichert — wirkt sofort auf den effektiven Bedarf.');
+          toast.success('Konfiguration gespeichert — wirkt sofort auf Bedarf und Regel-Prüfungen.');
         }}
       />
 

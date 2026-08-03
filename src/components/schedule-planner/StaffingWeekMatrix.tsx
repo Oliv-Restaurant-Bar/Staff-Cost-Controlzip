@@ -13,7 +13,7 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import type { Position } from '@/types/positions';
 import type { StaffingRequirement, StaffingSeason } from '@/types/staffing';
 import type { StaffingProfilesConfig } from '@/lib/staffing-profiles-utils';
-import { buildWeekOverview, isEveningShift, explicitDayHeadcount, type WeekCell } from '@/lib/staffing-week-utils';
+import { buildWeekOverview, isEveningShift, explicitDayHeadcount, ruleFallbackHeadcount, type WeekCell } from '@/lib/staffing-week-utils';
 import { diffToBedarf } from '@/lib/bedarf-stunden-utils';
 import { nettoSegmentMinutes } from '@/lib/staffing-check-utils';
 import {
@@ -37,19 +37,25 @@ import { cn } from '@/lib/utils';
 export type WeekCellMode = 'persons' | 'hours';
 
 /**
- * Regelbasierte Positionen: Besetzung wird durch dynamische Regeln bestimmt —
- * keine direkte Zahl-Übersteuerung aus der Wochenansicht (Regel bleibt führend).
+ * Regelbasierte Positionen: Besetzung wird standardmässig durch dynamische
+ * Regeln bestimmt. Ein manueller Eintrag in der Zelle ÜBERSTEUERT die Regel
+ * (Vorrang); wird die Zelle wieder geleert (alle Blöcke entfernen), greift
+ * automatisch wieder die Regel — der Regelwert bleibt im Hintergrund erhalten.
  */
 export const RULE_BASED_POSITION_HINTS: Record<string, string> = {
   chef_de_service:
-    'Regelbasiert: Der Chef de Service wird über die Prioritätenliste bestimmt (höchste geplante Priorität übernimmt). Die Regel bleibt führend — hier keine direkte Übersteuerung.',
+    'Regelbasiert: Der Chef de Service wird über die Prioritätenliste bestimmt (höchste geplante Priorität übernimmt).',
   gastgeber_gf:
-    'Regelbasiert: Gastgeber/GF ergibt sich aus der CdS-Prioritätenliste (zweite Priorität an Do–Sa, wenn die erste geplant ist). Die Regel bleibt führend — hier keine direkte Übersteuerung.',
+    'Regelbasiert: Gastgeber/GF ergibt sich aus der CdS-Prioritätenliste (zweite Priorität an den konfigurierten Wochentagen; Regel unter «UG konfigurieren» einstellbar).',
   kalte_kueche:
-    'Regelbasiert: Kalte Küche wird über die Küchen-Regel besetzt (Stamm-Besetzung zuerst, sonst Vertretung ab genügend Herd-Köchen). Die Regel bleibt führend — hier keine direkte Übersteuerung.',
+    'Regelbasiert: Kalte Küche wird über die Küchen-Regel besetzt (Stamm-Besetzung zuerst, sonst Vertretung ab genügend Herd-Köchen).',
   sushi:
-    'Regelbasiert: Sushi wird über die Küchen-Regel besetzt (Stamm-Besetzung zuerst, sonst Vertretung ab genügend Herd-Köchen). Die Regel bleibt führend — hier keine direkte Übersteuerung.',
+    'Regelbasiert: Sushi wird über die Küchen-Regel besetzt (Stamm-Besetzung zuerst, sonst Vertretung ab genügend Herd-Köchen).',
 };
+
+/** Anzeige des Regelwerts im Tooltip/Hinweis («1», «0» oder «nicht konfiguriert»). */
+const ruleValueLabel = (v: number | null): string =>
+  v == null ? 'nicht konfiguriert' : String(v);
 
 /** Netto-Stunden (ArG-Pausenstaffel) der Blöcke einer Zellen-Hälfte. */
 function partNettoHours(cell: WeekCell | undefined, part: 'mittag' | 'abend'): number {
@@ -234,7 +240,7 @@ function CellEditPanel({
 
 /** Zelle mit Klick-Editor (Popover) + Stift-Hinweis; read-only nur Anzeige. */
 function EditableCell({
-  cell, mode, positionKey, positionName, weekday, rawShifts, sourceLabel, onSaveCell,
+  cell, mode, positionKey, positionName, weekday, rawShifts, sourceLabel, config, season, onSaveCell,
 }: {
   cell: WeekCell | undefined;
   mode: WeekCellMode;
@@ -243,35 +249,50 @@ function EditableCell({
   weekday: number;
   rawShifts: StaffingRequirement[];
   sourceLabel: string;
+  config: StaffingProfilesConfig;
+  /** Angezeigtes Profil — für die profil-spezifische Regel-Auflösung. */
+  season: StaffingSeason;
   onSaveCell: (positionKey: string, weekday: number, part: 'mittag' | 'abend' | 'day', shifts: ShiftDraft[], dayHeadcount?: number | null) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const ruleHint = RULE_BASED_POSITION_HINTS[positionKey] ?? null;
+  // Manuelle Übersteuerung = es sind Soll-Blöcke hinterlegt (regelbasierte
+  // Positionen haben ohne Übersteuerung KEINE Zeilen im Profil).
+  const overridden = !!ruleHint && rawShifts.length > 0;
+  const ruleValue = ruleHint ? ruleFallbackHeadcount(positionKey, weekday, config, season) : null;
+  const title = overridden
+    ? `Manuell übersteuert (Regelwert wäre: ${ruleValueLabel(ruleValue)}). Feld leeren = zurück zur Regel.\n${dayCellTitle(cell)}`
+    : ruleHint
+      ? `${ruleHint}\nRegelwert wäre: ${ruleValueLabel(ruleValue)}. Ein manueller Eintrag hat Vorrang vor der Regel.`
+      : (dayCellTitle(cell) || 'Zelle bearbeiten');
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
           className="group relative w-full rounded px-0.5 py-0.5 hover:bg-muted/70"
-          title={dayCellTitle(cell) || 'Zelle bearbeiten'}
+          title={title}
           data-testid={`week-cell-btn-${positionKey}-${weekday}`}
         >
           <CellValue cell={cell} mode={mode} />
+          {overridden && (
+            <span
+              className="pointer-events-none absolute -left-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500"
+              data-testid={`week-cell-override-${positionKey}-${weekday}`}
+            />
+          )}
           <Pencil className="pointer-events-none absolute -right-0.5 -top-0.5 h-2.5 w-2.5 text-muted-foreground/0 group-hover:text-muted-foreground/70" />
         </button>
       </PopoverTrigger>
       <PopoverContent align="center" className="w-auto max-w-[22rem] p-3">
-        {ruleHint ? (
-          <div className="space-y-1.5 max-w-[18rem]">
-            <p className="text-xs font-semibold">{positionName} · {weekdayLabel(weekday)}</p>
-            {rawShifts.length > 0 && (
-              <p className="text-[11px] text-muted-foreground">
-                Hinterlegt: {rawShifts.map((s) => `${s.shiftStart}–${s.shiftEnd} × ${s.requiredCount}`).join(', ')}
-              </p>
-            )}
-            <p className="text-[11px] text-muted-foreground">{ruleHint}</p>
-          </div>
-        ) : (
+        <div className="space-y-2">
+          {ruleHint && (
+            <p className="max-w-[20rem] rounded bg-muted/60 p-1.5 text-[11px] text-muted-foreground" data-testid={`rule-note-${positionKey}-${weekday}`}>
+              {overridden
+                ? <>Manuell übersteuert (Regelwert wäre: {ruleValueLabel(ruleValue)}). Alle Blöcke entfernen und speichern = zurück zur Regel.</>
+                : <>{ruleHint} Regelwert wäre: {ruleValueLabel(ruleValue)}. Ein Eintrag hier hat VORRANG vor der Regel; leer = Regel greift.</>}
+            </p>
+          )}
           <CellEditPanel
             positionKey={positionKey}
             positionName={positionName}
@@ -281,7 +302,7 @@ function EditableCell({
             onSaveCell={onSaveCell}
             onClose={() => setOpen(false)}
           />
-        )}
+        </div>
       </PopoverContent>
     </Popover>
   );
@@ -372,11 +393,19 @@ export function StaffingWeekMatrix({
 
   /** Dezente Summenspalten-Optik (links abgesetzt, leicht hinterlegt). */
   const totalColClass = 'border-l-2 border-border/70 bg-muted/30';
-  /** RAW-Zeilen (ohne UG-Zuschlag/Ableitung) einer Position an einem Wochentag. */
+  /**
+   * RAW-Zeilen (ohne UG-Zuschlag/Ableitung) einer Position an einem Wochentag —
+   * Basis für Editor UND Übersteuerungs-Marker (auch read-only): nur echte
+   * gespeicherte Zeilen des Daten-Profils zählen als manuelle Übersteuerung,
+   * nie effektive/synthetische Zeilen (UG-Zuschlag, Ableitung Winter/UG).
+   */
   const rawShiftsFor = (positionKey: string, weekday: number): StaffingRequirement[] =>
-    canEdit
-      ? shiftsForScope(requirements, editSeason!, weekday).filter((r) => r.positionKey === positionKey)
+    editSeason
+      ? shiftsForScope(requirements, editSeason, weekday).filter((r) => r.positionKey === positionKey)
       : [];
+  /** Manuelle Übersteuerung einer regelbasierten Position (RAW-Zeilen vorhanden). */
+  const isOverridden = (positionKey: string, weekday: number): boolean =>
+    !!RULE_BASED_POSITION_HINTS[positionKey] && rawShiftsFor(positionKey, weekday).length > 0;
 
   if (!overview.hasAny) {
     return (
@@ -457,10 +486,19 @@ export function StaffingWeekMatrix({
                                 cell={row.cells[w.value]} mode={cellMode}
                                 positionKey={row.positionKey} positionName={row.positionName}
                                 weekday={w.value} rawShifts={rawShiftsFor(row.positionKey, w.value)}
-                                sourceLabel={sourceLabel ?? ''} onSaveCell={onSaveCell!}
+                                sourceLabel={sourceLabel ?? ''} config={config} season={season} onSaveCell={onSaveCell!}
                               />
                             ) : (
-                              <CellValue cell={row.cells[w.value]} mode={cellMode} />
+                              <span className="relative inline-block px-0.5">
+                                <CellValue cell={row.cells[w.value]} mode={cellMode} />
+                                {isOverridden(row.positionKey, w.value) && (
+                                  <span
+                                    className="pointer-events-none absolute -left-1 -top-0.5 h-1.5 w-1.5 rounded-full bg-amber-500"
+                                    title="Manuell übersteuert — Regel greift wieder, sobald die Zelle geleert wird."
+                                    data-testid={`week-cell-override-${row.positionKey}-${w.value}`}
+                                  />
+                                )}
+                              </span>
                             )}
                           </td>
                         ))}
@@ -556,7 +594,7 @@ export function StaffingWeekMatrix({
           und im Bearbeitungs-Panel. «Personal total» = Summe der Kopfzahlen;
           Kopfzahl automatisch max(Mittag, Abend), pro Zelle explizit übersteuerbar.{' '}
           {canEdit
-            ? 'Klick auf eine Zelle öffnet das Bearbeitungs-Panel (schreibt ins aktive Profil); regelbasierte Positionen zeigen nur den Regel-Hinweis.'
+            ? 'Klick auf eine Zelle öffnet das Bearbeitungs-Panel (schreibt ins aktive Profil). Regelbasierte Positionen (CdS, Gastgeber/GF, Kalte Küche, Sushi) sind ebenfalls übersteuerbar: ein manueller Eintrag hat Vorrang (oranger Punkt), Zelle leeren = Regel greift wieder.'
             : 'Bearbeiten in der Tagesansicht (Klick auf einen Wochentag).'}
         </p>
         {hoursStack && (

@@ -14,6 +14,7 @@ import {
   ugSurchargeApplies,
   dataSeasonForProfile,
   buildEffectiveRequirements,
+  cdsRuleForSeason,
 } from '@/lib/staffing-profiles-utils';
 
 describe('Defaults', () => {
@@ -216,5 +217,59 @@ describe('Lock + Slug', () => {
     expect(profileKeyFromLabel('Sommerfest 2026')).toBe('profil_sommerfest_2026');
     expect(profileKeyFromLabel('Ostern/Brunch')).toBe('profil_ostern_brunch');
     expect(profileKeyFromLabel('   ')).toBe('');
+  });
+});
+
+describe('CdS-/Gastgeber-Regel: Defaults, Normalisierung, Auflösung pro Profil', () => {
+  it('Defaults: Do–Sa, Bedingung an, keine Profil-Übersteuerungen', () => {
+    const c = defaultStaffingProfilesConfig('oliv');
+    expect(c.gastgeberWeekdays).toEqual([4, 5, 6]);
+    expect(c.gastgeberRequiresFirstPlanned).toBe(true);
+    expect(c.cdsRuleBySeason).toEqual({});
+  });
+
+  it('normalize: alte Blobs ohne Regel-Felder → Defaults (rückwärtskompatibel)', () => {
+    const c = normalizeStaffingProfilesConfig({ cdsPriority: ['a', 'b'] }, 'oliv');
+    expect(c.gastgeberWeekdays).toEqual([4, 5, 6]);
+    expect(c.gastgeberRequiresFirstPlanned).toBe(true);
+    expect(cdsRuleForSeason(c, 'standard').cdsPriority).toEqual(['a', 'b']);
+  });
+
+  it('normalize: gespeicherte Profil-Übersteuerungen werden gelesen und bereinigt', () => {
+    const c = normalizeStaffingProfilesConfig({
+      cdsPriority: ['a', 'b'],
+      gastgeberWeekdays: [5, 6, 99, 5],
+      gastgeberRequiresFirstPlanned: false,
+      cdsRuleBySeason: {
+        winter: { cdsPriority: ['x', '', 'y'], gastgeberWeekdays: [7], gastgeberRequiresFirstPlanned: true },
+        kaputt: 'nix',
+      },
+    }, 'oliv');
+    expect(c.gastgeberWeekdays).toEqual([5, 6]);
+    expect(c.gastgeberRequiresFirstPlanned).toBe(false);
+    expect(c.cdsRuleBySeason.winter).toEqual({
+      cdsPriority: ['x', 'y'], gastgeberWeekdays: [7], gastgeberRequiresFirstPlanned: true,
+    });
+    expect(c.cdsRuleBySeason.kaputt).toBeUndefined();
+  });
+
+  it('cdsRuleForSeason: Profil-Override > standard-Override > globale Basis', () => {
+    const base = defaultStaffingProfilesConfig('oliv');
+    const c = {
+      ...base,
+      cdsPriority: ['g1', 'g2'],
+      cdsRuleBySeason: {
+        standard: { cdsPriority: ['s1', 's2'] },
+        winter: { gastgeberWeekdays: [5, 6] },
+      },
+    };
+    // winter: eigene Wochentage, Priorität fällt auf standard-Override zurück.
+    expect(cdsRuleForSeason(c, 'winter')).toEqual({
+      cdsPriority: ['s1', 's2'], gastgeberWeekdays: [5, 6], gastgeberRequiresFirstPlanned: true,
+    });
+    // standard: eigene Priorität, Wochentage aus globaler Basis.
+    expect(cdsRuleForSeason(c, 'standard').gastgeberWeekdays).toEqual([4, 5, 6]);
+    // unbekanntes Custom-Profil: fällt auf standard-Override zurück.
+    expect(cdsRuleForSeason(c, 'sommer').cdsPriority).toEqual(['s1', 's2']);
   });
 });
