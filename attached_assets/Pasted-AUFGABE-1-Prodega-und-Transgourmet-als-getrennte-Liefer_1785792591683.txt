@@ -1,0 +1,23 @@
+AUFGABE: (1) Prodega und Transgourmet als getrennte Lieferanten erkennen; (2) Preisänderungs-Liste mit Filtern. Mandantengetrennt.
+
+TEIL 1 — Lieferanten-Trennung beim CSV-Import (Transgourmet/Prodega-Portal):
+1) Lieferant pro Rechnung aus der Spalte "Markt" ableiten (konfigurierbare Markt→Lieferant-Zuordnung):
+   - Markt = "BGH"                       -> Transgourmet
+   - Markt = "Bern", "Moosseedorf" (Prodega-Märkte / alles ausser BGH) -> Prodega
+2) Zur Absicherung: BGH-Rechnungen haben 8-stellige Rechnungsnummern (6xxxxxxx), Prodega-Märkte kurze (1–4-stellig). Wenn Markt und Nummernlänge widersprechen: Markt gewinnt, aber Warnung anzeigen.
+3) Damit erscheinen Transgourmet und Prodega als GETRENNTE Lieferanten in Erfassung, Analyse, Cockpit und FIBU-Abgleich — mit je eigenem Volumen/Preisverlauf.
+4) Neue Markt-Werte, die nicht zugeordnet sind: als "Lieferant offen" markieren und nachfragen, nicht raten. Zuordnung in den Einstellungen editierbar.
+5) Die bestehende Alias-Gruppe (Prodega/Transgourmet) NICHT löschen — sie bleibt nur als optionales Werkzeug im FIBU-Abgleich verfügbar, weil die Buchhaltung teils gemischt bucht. Standard-Ansicht = getrennt.
+6) Dublettensicher: Upsert weiterhin auf (Mandant + Lieferant + Rechnungsnummer). Wichtig: kurze Prodega-Nummern werden über Monate wiederverwendet — daher Schlüssel inkl. Datum, damit nichts fälschlich überschrieben wird.
+
+TEIL 2 — Preisänderungs-Liste filtern:
+1) Über der Liste "Preisänderungen (N)" Filter-Umschalter:
+   - "Erhöhungen ≥ Schwelle" (Standard-Ansicht, Schwelle = die eingestellten 10 %)
+   - "Senkungen ≥ Schwelle"
+   - "kleine Änderungen (< Schwelle)"
+   - "alle"
+2) Standard: nur Erhöhungen ≥ 10 % anzeigen (das ist das Relevante); der Rest ist eingeklappt und per Filter aufrufbar. Zähler je Filter anzeigen (z.B. "Erhöhungen ≥10 %: 42").
+3) Schwelle = die bereits eingestellte Warn-Schwelle (10 % / min. 0.20 CHF), kein zweiter Wert.
+4) Sortierung innerhalb Erhöhungen: grösste %-Erhöhung zuerst.
+
+RAHMEN: mandantengetrennt, keine Beträge/WKQ ändern (nur Lieferanten-Zuordnung und Anzeige). Kurz zusammenfassen, wie Markt→Lieferant eingestellt wird und wie die Filter funktionieren.

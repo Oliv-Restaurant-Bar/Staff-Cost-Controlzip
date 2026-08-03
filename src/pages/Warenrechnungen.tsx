@@ -273,16 +273,22 @@ const KpiBox = ({
     ok:      'bg-emerald-500',
     muted:   'bg-muted-foreground/30',
   };
+  // Betrag skaliert mit der Kachelbreite (Container-Query-Einheiten) UND der
+  // Zeichenlänge: tabellarische Ziffern sind ~0.6em breit, also passt eine
+  // Zeile der Länge n bei ≤ (100cqw − Padding) / (0.6·n). clamp() hält die
+  // Grösse zwischen 0.8rem und 1.5rem (= text-2xl) — nie Overflow, auch bei
+  // 7-stelligen Beträgen oder schmalen Spalten. overflow-hidden als Sicherheitsnetz.
+  const fontSize = `clamp(0.8rem, calc((100cqw - 2rem) / ${Math.max(6, value.length) * 0.62}), 1.5rem)`;
   return (
-    <div className={cn('rounded-xl border p-4 flex flex-col gap-1 min-h-[96px]', bg[variant])}>
-      <div className="flex items-center gap-1.5">
+    <div className={cn('rounded-xl border p-4 flex flex-col gap-1 min-h-[96px] min-w-0 overflow-hidden [container-type:inline-size]', bg[variant])}>
+      <div className="flex items-center gap-1.5 min-w-0">
         <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', dot[variant])} />
-        {Icon && <Icon className="h-3.5 w-3.5 text-muted-foreground" />}
-        <p className="text-xs text-muted-foreground font-medium leading-tight">{label}</p>
+        {Icon && <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />}
+        <p className="text-xs text-muted-foreground font-medium leading-tight truncate">{label}</p>
       </div>
-      <p className={cn('text-2xl font-bold tabular-nums leading-none mt-0.5', vc[variant])}>{value}</p>
-      {sub && <p className="text-xs text-muted-foreground leading-tight">{sub}</p>}
-      {sub2 && <p className="text-[11px] text-muted-foreground/60 leading-tight">{sub2}</p>}
+      <p className={cn('font-bold tabular-nums leading-none mt-0.5 whitespace-nowrap', vc[variant])} style={{ fontSize }}>{value}</p>
+      {sub && <p className="text-xs text-muted-foreground leading-tight truncate" title={sub}>{sub}</p>}
+      {sub2 && <p className="text-[11px] text-muted-foreground/60 leading-tight truncate" title={sub2}>{sub2}</p>}
     </div>
   );
 };
