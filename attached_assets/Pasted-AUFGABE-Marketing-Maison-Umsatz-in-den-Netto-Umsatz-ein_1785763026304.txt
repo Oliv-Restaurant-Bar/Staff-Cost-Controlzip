@@ -1,0 +1,36 @@
+AUFGABE: Marketing-/Maison-Umsatz in den Netto-Umsatz einrechnen (mandantengetrennt Oliv & Beaulieu)
+
+KONTEXT / IST-ZUSTAND:
+- Der aktuelle Netto-Umsatz liegt nur ~1 % unter dem Brutto-Umsatz (Beispiel Juli 2026 Oliv: Brutto 262'774.60 / Netto 260'174.53). Er ist also NICHT der MwSt-bereinigte Wert, sondern Brutto abzüglich Rabatte/Korrekturen.
+- Es gibt zusätzlich einen Umsatzbestandteil "Marketing" bzw. "Maison" (interner Kanal / Haus-Konsumation). Dieser ist AKTUELL NICHT im Netto-Umsatz enthalten.
+
+WAS DU MACHEN SOLLST:
+1) Rechne den Marketing-/Maison-Umsatz zum Netto-Umsatz DAZU:
+      Netto-Umsatz (neu) = bisheriger Netto-Umsatz + Marketing-/Maison-Umsatz
+   - Gilt für beide Mandanten getrennt (Oliv und Beaulieu), niemals mandantenübergreifend mischen.
+   - Gilt für alle Jahre gleich (aktuelles Jahr UND Vorjahr über das Jahr-Dropdown), damit Ist- und Vorjahresvergleich konsistent bleiben.
+
+2) Quelle des Marketing-/Maison-Umsatzes:
+   - Nimm den Wert aus der bereits vorhandenen Marketing-/Maison-Umsatz-Grösse (die frühere Menü-Umschaltung "in Betriebsertrag eingerechnet" bezog sich genau auf diesen Wert).
+   - Falls für einen Monat kein Marketing-Wert vorhanden ist: als 0 behandeln (also Netto = Netto), NICHT den ganzen Netto-Umsatz leeren. "leer statt 0" gilt nur für die Anzeige, in der Berechnung ist fehlend = 0.
+
+3) Folgekennzahlen automatisch nachziehen (alle rechnen auf dem NEUEN Netto-Umsatz):
+   - Warenkostenquote (WKQ) = Warenkosten / Netto-Umsatz (neu)
+   - Personalkostenquote (PKQ) = Personalkosten / Netto-Umsatz (neu)
+   - Umsatz pro Gast, Durchschnittsverkauf, Produktivität etc. – überall wo bisher der Netto-Umsatz verwendet wird, den neuen Wert nehmen.
+   - Nie durch 0 teilen: wenn Netto-Umsatz = 0, Quote leer lassen statt Fehler/0.
+
+4) TRANSPARENZ (wichtig, damit ich es nachvollziehen kann):
+   - Zeige im Cockpit beim Netto-Umsatz einen kleinen Info-Tooltip / Hinweis:
+        "Netto-Umsatz = Brutto − Rabatte + Marketing/Maison"
+   - Im Detail/Aufschlüsselung soll ersichtlich sein, wie viel Marketing/Maison zugerechnet wurde (eigene kleine Zeile oder Tooltip mit dem CHF-Betrag).
+
+5) KEINE Doppelzählung:
+   - Stelle sicher, dass Marketing/Maison nicht bereits irgendwo im bisherigen Netto steckt. Falls doch, nur EINMAL zählen. Vor dem Schreiben kurz prüfen und im Vorschau-Text ausweisen.
+
+VORGEHEN:
+- Erst eine VORSCHAU zeigen: pro Mandant und Jahr den alten Netto, den zugerechneten Marketing-Betrag und den neuen Netto ("vorher → nachher"), plus die neuen WKQ/PKQ. Erst nach meiner Bestätigung fest übernehmen.
+- Backup vor dem Schreiben + "Letzter Vorgang rückgängig machen".
+- Dublettensicher: derselbe Monat/Zeitraum wird ersetzt, nie doppelt addiert.
+
+BITTE NICHTS ANDERES ANFASSEN ausser der Netto-Umsatz-Berechnung und den davon abhängigen Quoten.
