@@ -85,9 +85,12 @@ export interface InvoiceEntry {
    * 'monatsrechnung' + final=true: massgebliche finale Buchung aus der
    * Monatsrechnung. Ohne final (Alt-Daten): provisorischer Lückenfüller.
    * 'auftragsbestaetigung': provisorisch (AB gilt als Lieferschein, Terravigna).
+   * 'fibu_uebernahme': provisorisch aus dem Warenkosten-/FIBU-Abgleich
+   * übernommene Buchung (keine erfasste Rechnung vorhanden) — eine spätere
+   * Monatsrechnung/Lieferschein darf die Werte noch finalisieren/ergänzen.
    * Fehlt das Feld = regulär/Lieferschein erfasst (provisorisch im Dual-Modell).
    */
-  quelle?: 'monatsrechnung' | 'auftragsbestaetigung';
+  quelle?: 'monatsrechnung' | 'auftragsbestaetigung' | 'fibu_uebernahme';
   /** true = durch die massgebliche Monatsrechnung finalisiert; spätere
    *  Lieferschein-/AB-Uploads dürfen diese Werte NICHT mehr verschlechtern. */
   final?: boolean;

@@ -57,6 +57,10 @@ import { loadPreisHinweise, loadRechnungsPositionen, saveRechnungsPositionen } f
 import { kontoSplitsAusPositionen, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN, type PreisAenderung, type GespeichertePosition, type PositionenProRechnung } from '@/lib/waren-positionen';
 import { buildKontoAbgleich } from '@/lib/waren-abgleich';
 import {
+  buildUebernahmeKandidaten, kandidatToDraft, findeDublette as findeFibuDublette, draftToInvoiceEntry,
+  type UebernahmeDraft,
+} from '@/lib/waren-fibu-uebernahme';
+import {
   kontoKlasse, kontoKlasseLabel, sumBetriebNet, nurWarenAnteil,
   aggregateBySupplierKlassen, DEFAULT_WARENKOSTEN_GRENZE,
 } from '@/lib/waren-klassen';
@@ -498,6 +502,21 @@ export default function WarenrechnungenPage() {
     });
   }, [tab, journal, entries, warenkonten, suppliers, aliases, aliasGruppen, year, month, tenantKey]);
 
+  // ─── FIBU-Übernahme: Buchungen ohne erfasste Rechnung übernehmen ──────────
+  // Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet, minus bereits
+  // gematchte Buchungen. Erst nach dem Match-Load rechnen (sonst Flackern).
+  const uebernahmeKandidaten = useMemo(
+    () => (fibuGeladen ? buildUebernahmeKandidaten(abgleich, fibuState) : []),
+    [abgleich, fibuState, fibuGeladen],
+  );
+  const uebernahmeSumme = useMemo(
+    () => uebernahmeKandidaten.reduce((s, k) => s + k.betrag, 0),
+    [uebernahmeKandidaten],
+  );
+  /** Vorschau-Dialog: editierbare Entwürfe (null = geschlossen). */
+  const [uebernahmeDrafts, setUebernahmeDrafts] = useState<UebernahmeDraft[] | null>(null);
+  const [uebernahmeSaving, setUebernahmeSaving] = useState(false);
+
   /** Abgleich PRO KONTO (ergänzend — Totale/WKQ unverändert). */
   const kontoAbgleich = useMemo(() => {
     if (tab !== 'abgleich') return [];
@@ -522,6 +541,8 @@ export default function WarenrechnungenPage() {
 
   // ─── Erfassung: Lieferanten-Filter ────────────────────────────────────────
   const [erfassungSupplierFilter, setErfassungSupplierFilter] = useState<string>(''); // '' = alle
+  /** Nur aus dem FIBU-Abgleich übernommene Rechnungen zeigen (Rückgängig-Pfad). */
+  const [nurFibuUebernahmen, setNurFibuUebernahmen] = useState(false);
 
   // ─── Analyse: Lieferanten-Filter ──────────────────────────────────────────
   const [supplierFilter, setSupplierFilter] = useState<string>(''); // '' = alle
@@ -555,6 +576,79 @@ export default function WarenrechnungenPage() {
   }, [tenantId, monthKey]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const openUebernahme = useCallback((keys: string[]) => {
+    const drafts = uebernahmeKandidaten
+      .filter(k => keys.includes(k.key))
+      .map(kandidatToDraft);
+    if (drafts.length === 0) { toast.info('Keine übernehmbaren Buchungen.'); return; }
+    setUebernahmeDrafts(drafts);
+  }, [uebernahmeKandidaten]);
+
+  const handleUebernahmeSpeichern = useCallback(async () => {
+    if (!uebernahmeDrafts || uebernahmeSaving) return;
+    if (!canCreate) { toast.error('Keine Berechtigung zum Erstellen von Einträgen.'); return; }
+    // Validierung + Dubletten-Sperre (gegen die AKTUELL erfassten Rechnungen)
+    const fehler: string[] = [];
+    for (const d of uebernahmeDrafts) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d.date)) fehler.push(`${d.supplierName || d.kandidat.text}: ungültiges Datum`);
+      if (!d.supplierName.trim()) fehler.push(`${d.kandidat.text}: Lieferant fehlt`);
+      if (findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, entries)) {
+        fehler.push(`${d.supplierName}: Dublette (gleicher Lieferant/Datum/Betrag bereits erfasst)`);
+      }
+    }
+    if (fehler.length > 0) { toast.error(fehler.join(' · ')); return; }
+    setUebernahmeSaving(true);
+    try {
+      const angelegt: { id: string; buchungKey: string; name: string }[] = [];
+      for (const d of uebernahmeDrafts) {
+        const inv = draftToInvoiceEntry(d, generateId(), new Date().toISOString());
+        await saveInvoiceEntry(tenantId, inv);
+        angelegt.push({ id: inv.id, buchungKey: d.kandidat.key, name: inv.supplierName });
+      }
+      // Buchung ↔ neue Rechnung als manuellen FIBU-Match verknüpfen: die Zeile
+      // wird dadurch sofort als zugeordnet geführt und verschwindet aus der
+      // Kandidatenliste (auch wenn der Buchungstext den Lieferanten nicht
+      // enthält). Rechnungen sind zu diesem Zeitpunkt bereits geschrieben —
+      // deshalb bei Fehlschlag EINMAL erneut versuchen und danach explizit
+      // warnen (die Kandidatenzeile bleibt sichtbar, ist aber durch die
+      // Dubletten-Wache gegen doppelte Übernahme gesperrt).
+      const mutate = (cur: FibuMatchState): FibuMatchState => {
+        const vorhanden = new Set(cur.gruppen.flatMap(g => g.buchungKeys));
+        const neue = angelegt.filter(a => !vorhanden.has(a.buchungKey));
+        if (neue.length === 0) return cur;
+        return {
+          ...cur,
+          gruppen: [
+            ...cur.gruppen,
+            ...neue.map(a => ({
+              id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              invoiceIds: [a.id],
+              buchungKeys: [a.buchungKey],
+              herkunft: 'manuell' as const,
+            })),
+          ],
+        };
+      };
+      let ok = await persistFibuState(mutate);
+      if (!ok) ok = await persistFibuState(mutate); // ein Retry (Idempotent dank vorhanden-Check)
+      await loadData(); // Abgleich/WKQ rechnen über entries automatisch neu
+      setUebernahmeDrafts(null);
+      if (ok) {
+        toast.success(`${angelegt.length} Rechnung${angelegt.length === 1 ? '' : 'en'} aus FIBU übernommen`);
+      } else {
+        toast.error(
+          `${angelegt.length} Rechnung${angelegt.length === 1 ? '' : 'en'} angelegt, aber die Verknüpfung zur Buchung konnte nicht gespeichert werden. ` +
+          'Die Buchung bleibt in der Liste (gegen Doppel-Übernahme gesperrt) — bitte im Lieferanten-Drilldown manuell zuordnen.',
+        );
+      }
+      console.log(`[WAREN] fibu-uebernahme: ${angelegt.map(a => a.name).join(', ')}`);
+    } catch (e) {
+      toast.error(`Übernahme fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUebernahmeSaving(false);
+    }
+  }, [uebernahmeDrafts, uebernahmeSaving, canCreate, entries, tenantId, persistFibuState, loadData]);
 
   // ── Preisänderungs-Hinweise des Monats (Icon + Tooltip an der Rechnung) ──
   const [preisHinweise, setPreisHinweise] = useState<Record<string, PreisAenderung[]>>({});
@@ -707,10 +801,11 @@ export default function WarenrechnungenPage() {
 
   // Gefilterte Einträge für Erfassung-Tab (nach Lieferant)
   const filteredEntries = useMemo(() => {
-    const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+    let sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
+    if (nurFibuUebernahmen) sorted = sorted.filter(e => e.quelle === 'fibu_uebernahme');
     if (!erfassungSupplierFilter) return sorted;
     return sorted.filter(e => e.supplierName === erfassungSupplierFilter);
-  }, [entries, erfassungSupplierFilter]);
+  }, [entries, erfassungSupplierFilter, nurFibuUebernahmen]);
 
   const filteredTotalNet   = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountNet, 0),   [filteredEntries]);
   const filteredTotalGross = useMemo(() => filteredEntries.reduce((s, e) => s + e.amountGross, 0), [filteredEntries]);
@@ -2165,8 +2260,21 @@ export default function WarenrechnungenPage() {
                             </button>
                           )}
                         </div>
+                        <button
+                          onClick={() => setNurFibuUebernahmen(v => !v)}
+                          className={cn(
+                            'h-7 rounded-md border px-2 text-xs transition-colors',
+                            nurFibuUebernahmen
+                              ? 'border-sky-400/60 bg-sky-500/10 text-sky-700 dark:text-sky-400'
+                              : 'border-border bg-background text-muted-foreground hover:text-foreground',
+                          )}
+                          title="Nur aus dem FIBU-Abgleich übernommene Rechnungen zeigen (zum Prüfen/Rückgängigmachen)"
+                          data-testid="filter-fibu-uebernahmen"
+                        >
+                          FIBU-Übernahmen
+                        </button>
                         <span className="text-xs text-muted-foreground">
-                          {erfassungSupplierFilter
+                          {(erfassungSupplierFilter || nurFibuUebernahmen)
                             ? `${filteredEntries.length} von ${entries.length} Einträgen · CHF ${fmtChf(filteredTotalNet)} netto`
                             : `${entries.length} Einträge · CHF ${fmtChf(stats.totalNet)} netto`}
                         </span>
@@ -2229,6 +2337,13 @@ export default function WarenrechnungenPage() {
                               <td className="px-4 py-2.5 text-xs text-muted-foreground">
                                 <span className="inline-flex items-center gap-1.5">
                                   {e.reference ?? (!e.receiptPath && <span className="opacity-30">–</span>)}
+                                  {e.quelle === 'fibu_uebernahme' && (
+                                    <span className="inline-flex items-center rounded-full border border-sky-400/50 bg-sky-500/10 px-1.5 py-px text-[10px] text-sky-700 dark:text-sky-400"
+                                      title="Aus dem FIBU-Abgleich übernommen (provisorisch) — Betrag exakt wie gebucht; Monatsrechnung/Lieferschein kann die Werte noch finalisieren."
+                                      data-testid={`badge-fibu-${e.id}`}>
+                                      FIBU-Übernahme
+                                    </span>
+                                  )}
                                   {e.quelle === 'monatsrechnung' && (
                                     <span className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-500/10 px-1.5 py-px text-[10px] text-amber-700 dark:text-amber-400"
                                       title="Aus der Monatsrechnung übernommen (provisorisch) — der echte Lieferschein ersetzt diesen Eintrag beim Import."
@@ -3546,6 +3661,87 @@ export default function WarenrechnungenPage() {
                   )}
                 </section>
 
+                {/* ── FIBU-Übernahme: gebucht, aber nicht erfasst ─────────────── */}
+                {abgleich !== null && abgleich.mode === 'lieferanten' && fibuGeladen && (
+                  <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="fibu-uebernahme">
+                    <div className="px-5 py-3 border-b border-border bg-muted/20 flex flex-wrap items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <h2 className="text-sm font-semibold">In der Buchhaltung, aber nicht erfasst</h2>
+                      <InfoTip text={<span>Warenkonto-Buchungen ohne zugeordnete erfasste Rechnung (Status «nur gebucht» + Buchungen ohne Lieferanten-Zuordnung). Per <b>Übernehmen</b> wird daraus eine provisorische Warenrechnung (Herkunft «FIBU-Übernahme», Betrag exakt wie gebucht) — mit Vorschau vor dem Schreiben, dublettensicher. Eine spätere Monatsrechnung/ein Lieferschein kann die Werte noch finalisieren.</span>} />
+                      <div className="ml-auto flex items-center gap-3">
+                        <span className="text-xs text-muted-foreground tabular-nums" data-testid="fibu-uebernahme-summe">
+                          {uebernahmeKandidaten.length} Buchung{uebernahmeKandidaten.length === 1 ? '' : 'en'} · CHF {fmtChf(uebernahmeSumme)}
+                        </span>
+                        {canCreate && uebernahmeKandidaten.length > 1 && (
+                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                            onClick={() => openUebernahme(uebernahmeKandidaten.map(k => k.key))}
+                            data-testid="fibu-uebernahme-alle">
+                            Alle übernehmen…
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {uebernahmeKandidaten.length === 0 ? (
+                      <div className="px-5 py-4 text-sm text-muted-foreground">
+                        Keine offenen Buchungen — alle Warenkonto-Buchungen sind einer erfassten Rechnung zugeordnet.
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-[11px] text-muted-foreground border-b border-border/50">
+                              <th className="px-4 py-2 text-left font-medium">Datum</th>
+                              <th className="px-4 py-2 text-left font-medium">Lieferant / Buchungstext</th>
+                              <th className="px-4 py-2 text-left font-medium">Konto</th>
+                              <th className="px-4 py-2 text-right font-medium">Betrag (netto)</th>
+                              <th className="px-4 py-2 text-left font-medium">Beleg</th>
+                              <th className="px-4 py-2" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {uebernahmeKandidaten.map(k => {
+                              const dublette = findeFibuDublette(
+                                { date: k.datumIso ?? '', supplierName: k.lieferant ?? k.text, betrag: k.betrag }, entries);
+                              return (
+                                <tr key={k.key} className="border-b border-border/30 hover:bg-muted/20">
+                                  <td className="px-4 py-2 tabular-nums whitespace-nowrap">{k.datum}</td>
+                                  <td className="px-4 py-2">
+                                    {k.lieferant
+                                      ? <span className="font-medium">{k.lieferant}</span>
+                                      : <span>{k.text}</span>}
+                                    {k.lieferant && k.text !== k.lieferant && (
+                                      <span className="block text-[11px] text-muted-foreground">{k.text}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                                    {k.accountNumber}{k.accountName ? ` · ${k.accountName}` : ''}
+                                  </td>
+                                  <td className="px-4 py-2 text-right tabular-nums">{fmtChf(k.betrag)}</td>
+                                  <td className="px-4 py-2 text-xs text-muted-foreground">{k.belegNr ?? '–'}</td>
+                                  <td className="px-4 py-2 text-right">
+                                    {dublette ? (
+                                      <Badge variant="outline" className="text-[10px] border-red-400/50 text-red-600"
+                                        title={`Bereits erfasst: ${dublette.supplierName} · ${dublette.date} · CHF ${fmtChf(dublette.amountNet)}`}>
+                                        Dublette
+                                      </Badge>
+                                    ) : canCreate ? (
+                                      <Button size="sm" variant="outline" className="h-7 text-xs"
+                                        onClick={() => openUebernahme([k.key])}
+                                        data-testid={`fibu-uebernehmen-${k.key}`}>
+                                        Übernehmen…
+                                      </Button>
+                                    ) : null}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                )}
+
                 {/* ── Abgleich PRO KONTO: erfasst je Warenkonto vs. Kontoblatt ── */}
                 <section className="bg-card border border-border rounded-xl overflow-hidden" data-testid="konto-abgleich">
                   <div className="px-5 py-3 border-b border-border bg-muted/20 flex items-center gap-2">
@@ -3776,6 +3972,104 @@ export default function WarenrechnungenPage() {
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setShowEditDialog(false)}>Abbrechen</Button>
             <Button onClick={handleEditSave} disabled={saving}>{saving ? 'Speichern…' : 'Speichern'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog: FIBU-Übernahme Vorschau (vor dem Schreiben) ────────────── */}
+      <Dialog open={uebernahmeDrafts !== null} onOpenChange={o => { if (!o && !uebernahmeSaving) setUebernahmeDrafts(null); }}>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="fibu-uebernahme-dialog">
+          <DialogHeader>
+            <DialogTitle>Aus FIBU übernehmen — Vorschau</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Es wird noch nichts geschrieben. Prüfe/korrigiere Lieferant, Konto, Kategorie und MwSt —
+            der <b>Betrag entspricht exakt der Buchung</b> und wird nicht verändert. Die Rechnung wird
+            provisorisch angelegt (Herkunft «FIBU-Übernahme») und ist danach normal editier-/löschbar.
+          </p>
+          <div className="space-y-4">
+            {(uebernahmeDrafts ?? []).map((d, i) => {
+              const dublette = findeFibuDublette({ ...d, betrag: d.kandidat.betrag }, entries);
+              const upd = (patch: Partial<UebernahmeDraft>) =>
+                setUebernahmeDrafts(ds => ds ? ds.map((x, j) => j === i ? { ...x, ...patch } : x) : ds);
+              return (
+                <div key={d.kandidat.key} className={cn('rounded-lg border p-3 space-y-2', dublette ? 'border-red-400/60 bg-red-500/5' : 'border-border')}>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span className="tabular-nums">{d.kandidat.datum} · Konto {d.kandidat.accountNumber}{d.kandidat.accountName ? ` (${d.kandidat.accountName})` : ''}</span>
+                    <span className="font-semibold text-foreground tabular-nums">CHF {fmtChf(d.kandidat.betrag)} netto</span>
+                  </div>
+                  {dublette && (
+                    <p className="text-xs text-red-600 font-medium">
+                      Dublette: {dublette.supplierName} · {dublette.date} · CHF {fmtChf(dublette.amountNet)} ist bereits erfasst — Übernahme gesperrt.
+                    </p>
+                  )}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Lieferant</Label>
+                      <Input value={d.supplierName} onChange={e => upd({ supplierName: e.target.value })}
+                        className="h-8 text-sm" data-testid={`uebernahme-lieferant-${i}`} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Datum</Label>
+                      <Input type="date" value={d.date} onChange={e => upd({ date: e.target.value })} className="h-8 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Warenkonto</Label>
+                      <Select value={d.warenkonto} onValueChange={v => upd({
+                        warenkonto: v, kategorie: kategorieFromKonto(v),
+                        vatRate: kategorieFromKonto(v) === 'Beverage' ? 8.1 : 2.6,
+                      })}>
+                        <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {warenkonten.map(k => <SelectItem key={k.value} value={k.value}>{k.value} · {k.label}</SelectItem>)}
+                          {!warenkonten.some(k => k.value === d.warenkonto) && (
+                            <SelectItem value={d.warenkonto}>{d.warenkonto} · {d.kandidat.accountName}</SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Kategorie</Label>
+                        <Select value={d.kategorie} onValueChange={v => upd({ kategorie: v as UebernahmeDraft['kategorie'] })}>
+                          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Food">Food</SelectItem>
+                            <SelectItem value="Beverage">Beverage</SelectItem>
+                            <SelectItem value="Sonstiges">Sonstiges</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">MwSt %</Label>
+                        <Select value={String(d.vatRate)} onValueChange={v => upd({ vatRate: Number(v) })}>
+                          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="2.6">2.6</SelectItem>
+                            <SelectItem value="8.1">8.1</SelectItem>
+                            <SelectItem value="0">0</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Referenz / Beleg</Label>
+                      <Input value={d.reference} onChange={e => upd({ reference: e.target.value })} className="h-8 text-sm" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Bemerkung</Label>
+                      <Input value={d.note} onChange={e => upd({ note: e.target.value })} className="h-8 text-sm" />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" disabled={uebernahmeSaving} onClick={() => setUebernahmeDrafts(null)}>Abbrechen</Button>
+            <Button onClick={handleUebernahmeSpeichern} disabled={uebernahmeSaving} data-testid="uebernahme-speichern">
+              {uebernahmeSaving ? 'Übernehmen…' : `${(uebernahmeDrafts ?? []).length} Rechnung${(uebernahmeDrafts ?? []).length === 1 ? '' : 'en'} übernehmen`}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

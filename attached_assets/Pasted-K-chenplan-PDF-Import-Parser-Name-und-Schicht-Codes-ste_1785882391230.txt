@@ -1,0 +1,17 @@
+Küchenplan-PDF-Import, Parser: Name und Schicht-Codes stehen auf leicht versetzten Text-Zeilen → oberste Mitarbeiterzeile und die Arbeitsschichten von Ferien-Mitarbeitern gehen verloren.
+
+Diagnose (August-PDF, per Koordinaten verifiziert): Im PDF liegen Mitarbeiter-NAME und seine SCHICHT-Codes nicht immer auf derselben Text-Grundlinie — sie sind ~3 px vertikal versetzt, Richtung uneinheitlich. Die blau/kursiv gesetzten „FE=Ferien"-Zellen sitzen auf der NAMENS-Grundlinie, die normalen Codes (A/B/E/O1/O2) auf der Nachbar-Grundlinie. Weil die Zeilen in feste y-Raster (roundGrid 4 px) gruppiert werden, wird jeder solche Mitarbeiter in ZWEI Zeilen zerlegt: eine mit Name (+ ggf. Ferien-Codes), eine namenlose mit den Arbeits-Codes. Die namenlose Arbeitszeile wird via `nameItems.length === 0 → continue` verworfen.
+Folgen: Mejdi (oberste Zeile, Name y≈174 / Schichten y≈177) fällt ganz raus (nur 10 statt 11 erkannt). Miro: W1–W3 A-Schichten auf namenloser Zeile, Name nur mit W4-Ferien → nur Ferien, 0 Arbeit. Michele: Name mit W2–W3-Ferien, W1+W4-Arbeit auf namenloser Zeile → nur Ferien, 0 Arbeit.
+
+Fix: Zeilen nicht in feste y-Buckets zwingen, sondern zu Mitarbeiter-BÄNDERN clustern:
+1. Namens-Anker bestimmen (Text links der ersten Tagesspalte, kein Code/keine Zahl).
+2. Jedem Namen ALLE Schicht-Zellen zuordnen, deren y innerhalb des Bandes bis zum nächsten Namen liegt (Name-Zeile + ihre 1–2 versetzten Code-Unterzeilen, typ. Name_y ± ~8 px) — egal ob Arbeits- oder Ferien-Code.
+3. Den obersten Mitarbeiter (erste Datenzeile direkt unter dem Datum-/Wochentag-Headerband) explizit einschliessen — die Name/Schicht-Trennung oben darf ihn nicht verschlucken, das Header-Skip darf seine Zeile nicht mitnehmen.
+4. Namenlose Code-Zeilen NIE still verwerfen: dem nächstgelegenen Namen zuordnen oder als Warnung melden — nie Schichten verlieren.
+
+Kontrollwerte nach dem Fix (August 03.–30.08.2026): 11 Mitarbeitende erkannt (inkl. Mejdi).
+- Mejdi: 24 Tage A + 4 F (Mo–Sa = A, So = F, jede Woche).
+- Miro: W1–W3 je 5× A + 2× F, W4 Ferien → ~15 Arbeitstage, NICHT 0.
+- Michele: W1 B,B,A,A,A,A + W4 gleich, W2–W3 Ferien → ~12 Arbeitstage, NICHT 0.
+- Deti: O2-Frühschichten unverändert korrekt.
+Test mit diesem PDF: detectedNames.length === 11 und Mejdi/Miro/Michele haben > 0 Arbeitseinträge. Vorschau, Ersetzen statt Addieren und Rückgängig bleiben unverändert.

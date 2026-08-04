@@ -30,3 +30,8 @@ description: PDF-Erkennung (pdfjs+tesseract lazy), Alias-Lernen nur mit Opt-in, 
 - Portal-CSVs verwenden Rechnungsnummern über Monate wieder (z.B. "58") — Dokument-Identität ist IMMER rechnungsNr+Datum (docKey), nie die Nummer allein; gilt für Gruppierung, Dubletten und Preis-Historie-Quelle.
 - Preisüberwachung: Einzelpreis (Spalte "Preis", netto) pro Mandant+Lieferant+Art.-Nr. (Fallback normalisierter Name, ohne beides kein Hinweis); Pfand = MwSt-Code 0 ausgenommen; Mindest-CHF-Differenz gegen Rundungsalarme; Re-Import desselben Dokuments vergleicht nicht neu, ersetzt nur.
 - **Why:** Doppel-/Korrektur-Importe dürfen die Historie nicht verfälschen und keine Schein-Preisänderungen melden.
+
+## FIBU-Übernahme (Buchung → provisorische Rechnung)
+- Kandidaten = 'nur-gebucht'-Zeilen + nichtZugeordnet MINUS bereits gematchte Buchungen; Schlüssel MÜSSEN `buchungKeysMitIndex` (`…#0/#1`) sein — derselbe Schlüsselraum wie das Match-Drilldown, sonst entfernt ein Match auf eine von zwei identischen Buchungen beide (bare Alt-Keys defensiv als `#0` lesen).
+- Übernahme schreibt InvoiceEntry mit `quelle:'fibu_uebernahme'`, `final:false`, `vatIncluded:false`, Betrag exakt Soll−Haben; danach manuelle FIBU-Match-Gruppe (invoiceId↔indizierter Key) via serialisiertem persistFibuState — bei Fehlschlag 1 idempotenter Retry + explizite Warnung (Dubletten-Wache verhindert Doppel-Übernahme).
+- Jeder Schreibpfad im Abgleich-Tab braucht das `canCreate`-Gate — der Tab ist auch für Nur-Leser sichtbar.
