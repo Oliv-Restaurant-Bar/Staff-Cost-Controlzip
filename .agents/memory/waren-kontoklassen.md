@@ -29,3 +29,8 @@ description: Warenkosten (4000–Grenze) vs. Betriebskosten Klassifikation, nurW
 
 ## WKQ-Kategorie: Konto autoritativ (Aug 2026)
 kategorieFromKonto = FIBU-identisches Schema: Beverage {4020,4030,4040,4050}, Food = ALLE übrigen Konten 4000–Grenze (inkl. 4060/4070/4090); das alte operative Mapping (4030=Tiefkühl→Food, nur 4000/4020/4030) ist abgeschafft. `kategorieOf`/`kategorieShares`: das KONTO überstimmt eine gespeicherte kategorie (Import-Altlasten «Sonstiges» auf 4060 etc. zählen wieder in die WKQ); kontolos/'offen' ohne kategorie → Food (Legacy = Warenkosten, muss in Quote); Depot/ausserhalb Range → Sonstiges, kategorie zählt nicht. Invariante: relevantNet(nurWarenAnteil-Liste) == sumWarenNet. ALLE Food/Bev-Konsumenten (Warenrechnungen, Cockpit, Kennzahlen-Bericht, TagesControlling, Analyse) müssen die zentralen Helfer nutzen — nie rohe e.kategorie summieren; Cockpit-Total/WKQ zusätzlich nurWarenAnteil-filtern.
+
+## Konto-Normalisierung (5-stellig)
+- ALLE WKQ-/Klassen-Pfade normalisieren Konten wie `normalizeWarenKonto`: 3–5 Ziffern, 5-stellig → erste 4 (`40201`→4020). `warenkosten-quote.normalisiereKontoNummer` (bewusst lokal dupliziert, Import-Zyklus) + `kontoKlasse` via normalizeWarenKonto. Nie roher `parseInt`.
+- Wochen-WKQ/Analyse-KPIs (`waren-analyse`): immer split-bewusste Basis `computeWarenkostenTotals(nurWarenAnteil(list,grenze)).relevantNet` — nie rohes amountNet.
+- Unkontierte (kein numerisches Konto, nicht Depot) zählen als Warenkosten; `zaehleUnkontierte()` + sichtbarer Amber-Hinweis in Cockpit/Analyse (Quote nie still unscharf).

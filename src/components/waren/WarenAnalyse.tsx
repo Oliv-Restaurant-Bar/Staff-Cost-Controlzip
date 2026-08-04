@@ -36,10 +36,12 @@ interface Props {
   konten: Warenkonto[];
   zielPct: number;
   periodLabel: string;
+  /** Kontoklassen-Grenze (4000–Grenze = Warenkosten) — gleiche Basis wie die Haupt-WKQ. */
+  warenGrenze?: number;
   onOpenReceipt?: (path: string) => void;
 }
 
-export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, periodLabel, onOpenReceipt }: Props) {
+export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, periodLabel, warenGrenze, onOpenReceipt }: Props) {
   const [dim, setDim] = useState<AnalyseDim>('supplier');
   const [drill, setDrill] = useState<string | null>(null);
 
@@ -47,17 +49,19 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
     () => flagAnomalies(groupTotals(entries, dim, konten), entries, dim),
     [entries, dim, konten],
   );
-  const kpis = useMemo(() => analyseKpis(entries), [entries]);
+  const kpis = useMemo(() => analyseKpis(entries, warenGrenze), [entries, warenGrenze]);
   const tops = useMemo(() => topInvoices(entries, 8), [entries]);
   const wkqRows = useMemo(
-    () => wochenWkq(entries, revenueByDate, zielPct),
-    [entries, revenueByDate, zielPct],
+    () => wochenWkq(entries, revenueByDate, zielPct, warenGrenze),
+    [entries, revenueByDate, zielPct, warenGrenze],
   );
   const totalRevenue = useMemo(
     () => Object.values(revenueByDate).reduce((s, v) => s + (Number.isFinite(v) && v > 0 ? v : 0), 0),
     [revenueByDate],
   );
-  const gesamtWkq = totalRevenue > 0 && kpis.totalNet > 0 ? (kpis.totalNet / totalRevenue) * 100 : null;
+  // WKQ auf der relevanten Basis (Food+Beverage, split-bewusst) — identisch
+  // zur Haupt-WKQ, NIE das rohe Total (das enthält Betrieb/Pfand/Sonstiges).
+  const gesamtWkq = totalRevenue > 0 && kpis.relevantNet > 0 ? (kpis.relevantNet / totalRevenue) * 100 : null;
   const foodWkq = totalRevenue > 0 && kpis.foodNet > 0 ? (kpis.foodNet / totalRevenue) * 100 : null;
   const bevWkq = totalRevenue > 0 && kpis.beverageNet > 0 ? (kpis.beverageNet / totalRevenue) * 100 : null;
   /** Quote einer Zeile auf den Perioden-Umsatz (nie durch 0 teilen). */
@@ -120,6 +124,12 @@ export function WarenAnalyseBlock({ entries, revenueByDate, konten, zielPct, per
               : gesamtWkq > zielPct ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400')}>
             {gesamtWkq === null ? '–' : `${gesamtWkq.toFixed(1)} %`}
           </div>
+          {kpis.unkontiert > 0 && (
+            <div className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1" data-testid="wkq-unkontiert-hinweis">
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              enthält {kpis.unkontiert} unkontierte Position{kpis.unkontiert === 1 ? '' : 'en'}
+            </div>
+          )}
         </div>
         <div>
           <div className="text-muted-foreground">Anteil Food / Beverage</div>

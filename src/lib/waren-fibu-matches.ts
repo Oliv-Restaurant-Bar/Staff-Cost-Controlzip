@@ -269,6 +269,31 @@ export interface LieferantMatchStat {
 }
 
 /**
+ * Match-State gegen die noch existierenden Rechnungs-IDs bereinigen (pur):
+ * verwaiste invoiceIds aus Gruppen und Sperrliste entfernen. Eine Match-
+ * Gruppe braucht BEIDE Seiten — bleibt keine Rechnung ODER keine Buchung
+ * übrig, wird die ganze Gruppe entfernt (die Gegenseite erscheint danach
+ * korrekt als «offen» statt fälschlich «gematcht»). Die Sperrliste wird nur
+ * um verwaiste Invoice-IDs bereinigt (Buchungs-Sperren bleiben stehen).
+ */
+export function bereinigeMatchState(
+  state: FibuMatchState,
+  gueltigeInvoiceIds: ReadonlySet<string>,
+): { state: FibuMatchState; geaendert: boolean } {
+  const gruppen = state.gruppen
+    .map(g => ({ ...g, invoiceIds: g.invoiceIds.filter(id => gueltigeInvoiceIds.has(id)) }))
+    .filter(g => g.invoiceIds.length > 0 && g.buchungKeys.length > 0);
+  const gesperrtInv = state.gesperrt.invoiceIds.filter(id => gueltigeInvoiceIds.has(id));
+  const geaendert = gruppen.length !== state.gruppen.length
+    || gesperrtInv.length !== state.gesperrt.invoiceIds.length
+    || gruppen.some((g, i) => g.invoiceIds.length !== state.gruppen[i].invoiceIds.length);
+  return {
+    state: { gruppen, gesperrt: { ...state.gesperrt, invoiceIds: gesperrtInv } },
+    geaendert,
+  };
+}
+
+/**
  * Übersicht je Lieferant: wie viel ist gematcht, was ist noch offen.
  * `invoices`/`buchungen` sind die im Drilldown angezeigten Listen des
  * (ggf. alias-gruppierten) Lieferanten; `keys` = buchungKeysMitIndex(buchungen).

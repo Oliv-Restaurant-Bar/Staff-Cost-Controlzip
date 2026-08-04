@@ -212,3 +212,52 @@ describe('kernImportiereFsRechnungen', () => {
     expect(aug.filter(e => e.reference === 'L-5')).toHaveLength(1);
   });
 });
+
+describe('Matcher-Reihenfolge: exakte Referenz VOR Datum+Betrag (zwei Pässe)', () => {
+  it('Monatsrechnung ersetzt den REFERENZ-Treffer, nicht den früheren Datum/Betrag-Kandidaten', async () => {
+    // Zwei provisorische Lieferungen: gleicher Tag, gleicher Betrag, andere Referenzen
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('287001', '2026-07-10', 30) },
+      { r: rechnung('287002', '2026-07-10', 30) },
+    ]);
+    const vorher = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    const e2 = vorher.find(e => e.reference === '287002')!;
+    // Monatsrechnung nennt exakt 287002 — trotz identischem Datum/Betrag von 287001
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT,
+      [{ r: rechnung('287002', '2026-07-10', 30) }], { quelle: 'monatsrechnung' });
+    expect(res.ueberschrieben).toBe(1);
+    const nach = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    const final = nach.find(e => e.final === true)!;
+    expect(final.id).toBe(e2.id);
+    expect(nach.find(e => e.reference === '287001')!.final).toBeUndefined();
+  });
+});
+
+describe('AB→Rechnung ohne gemeinsame Referenz (Terravigna)', () => {
+  it('ersetzt GENAU EINE provisorische AB im Fenster mit gelockerter Toleranz (1 %)', async () => {
+    // AB provisorisch: brutto 324.30 (preis 30)
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT,
+      [{ r: rechnung('AB-145095', '2026-07-28', 30) }], { quelle: 'auftragsbestaetigung' });
+    // Rechnungs-Lieferung: andere Referenz, +2 Tage, Betrag weicht ~0.32 ab (>0.10, <1 %)
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT,
+      [{ r: rechnung('287319', '2026-07-30', 30.03) }],
+      { quelle: 'monatsrechnung', ersatzFensterTage: 3 });
+    expect(res.ueberschrieben).toBe(1);
+    const nach = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(nach).toHaveLength(1);
+    expect(nach[0].final).toBe(true);
+  });
+
+  it('bei MEHREREN AB-Kandidaten wird NIE geraten — Neu-Buchung, ABs bleiben', async () => {
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [
+      { r: rechnung('AB-1', '2026-07-28', 30) },
+      { r: rechnung('AB-2', '2026-07-28', 30) },
+    ], { quelle: 'auftragsbestaetigung' });
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT,
+      [{ r: rechnung('287400', '2026-07-30', 30.03) }],
+      { quelle: 'monatsrechnung', ersatzFensterTage: 3 });
+    expect(res.ueberschrieben).toBe(0);
+    expect(res.neu).toBe(1);
+    expect(kv.get('supplier_invoices_2026-07') as InvoiceEntry[]).toHaveLength(3);
+  });
+});

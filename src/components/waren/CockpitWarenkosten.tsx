@@ -21,6 +21,7 @@ import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
 import { loadMonthInvoices, loadAliasGruppen, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
 import { nurWarenAnteil, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
+import { zaehleUnkontierte } from '@/lib/warenkosten-quote';
 import { applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange } from '@/lib/waren-cockpit';
 import {
@@ -123,6 +124,9 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
     [invoices, warenGrenze],
   );
   const totalNet = useMemo(() => (warenInvoices ? sumInvoicesNet(warenInvoices) : 0), [warenInvoices]);
+  // Transparenz: unkontierte Einträge/Splits zählen als Warenkosten mit —
+  // solange N > 0 ist die WKQ unscharf und wird sichtbar gekennzeichnet.
+  const unkontiert = useMemo(() => (invoices ? zaehleUnkontierte(invoices) : 0), [invoices]);
   const supplierRows = useMemo(
     () => (warenInvoices ? aggregateBySupplier(applyAliasGruppen(warenInvoices, aliasGruppen)) : []),
     [warenInvoices, aliasGruppen],
@@ -167,6 +171,12 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
             </>
           ) : (
             <span className="text-sm text-muted-foreground" title="Kein Netto-Umsatz für den Monat importiert">—</span>
+          )}
+          {unkontiert > 0 && (
+            <span className="text-[11px] text-amber-600 dark:text-amber-400" data-testid="wk-unkontiert-hinweis"
+              title="Positionen ohne Warenkonto zählen bis zur Kontierung als Warenkosten — die Quote ist entsprechend unscharf.">
+              enthält {unkontiert} unkontierte Position{unkontiert === 1 ? '' : 'en'}
+            </span>
           )}
         </span>
         <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="wk-ziel">

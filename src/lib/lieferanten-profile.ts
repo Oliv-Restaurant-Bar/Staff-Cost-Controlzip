@@ -120,19 +120,43 @@ export async function saveLieferantenProfile(tenantId: TenantId, profile: Liefer
  */
 export async function lerneProfil(
   tenantId: TenantId,
-  zuordnung: { mwstNr: string; name: string; konto: string; kategorie: string; mwstSatz?: number },
+  zuordnung: {
+    mwstNr: string; name: string; konto: string; kategorie: string; mwstSatz?: number;
+    /** Erkennungs-Tokens/IBAN für die PDF-Wiedererkennung OHNE MWST-Nr. */
+    erkennungTokens?: string[]; iban?: string;
+  },
 ): Promise<LieferantenProfil[]> {
   const nr = normalisiereMwstNr(zuordnung.mwstNr);
   const alle = await loadLieferantenProfile(tenantId);
   const vorhanden = alle.find(p => p.mwstNr === nr && nr !== '')
     ?? alle.find(p => p.name.trim().toLowerCase() === zuordnung.name.trim().toLowerCase());
+  // OHNE MWST-Nr muss das Profil per Name-Token/IBAN wiedererkennbar sein,
+  // sonst legt jeder Re-Import denselben Lieferanten neu an (Duplikate).
+  // Tokens: signifikante Namens-Wörter (≥3 Zeichen, lowercase) — alle müssen
+  // im PDF-Text vorkommen (findeProfilImText). Lernen ist KUMULATIV: ein Undo
+  // des Imports entfernt gelernte Profile bewusst NICHT.
+  const autoTokens = nr === '' && !zuordnung.erkennungTokens
+    ? zuordnung.name.toLowerCase().split(/[^a-zäöüéèà0-9]+/i).filter(t => t.length >= 3)
+    : undefined;
+  const extra = {
+    ...(zuordnung.mwstSatz !== undefined ? { mwstSatz: zuordnung.mwstSatz } : {}),
+    ...(zuordnung.iban ? { iban: zuordnung.iban } : {}),
+  };
+  const tokens = zuordnung.erkennungTokens ?? autoTokens;
   let next: LieferantenProfil[];
   if (vorhanden) {
     next = alle.map(p => p.id === vorhanden.id
-      ? { ...p, mwstNr: nr || p.mwstNr, name: zuordnung.name, konto: zuordnung.konto, kategorie: zuordnung.kategorie, ...(zuordnung.mwstSatz !== undefined ? { mwstSatz: zuordnung.mwstSatz } : {}) }
+      ? {
+        ...p, mwstNr: nr || p.mwstNr, name: zuordnung.name, konto: zuordnung.konto, kategorie: zuordnung.kategorie, ...extra,
+        // bestehende Tokens/IBAN nie wegwerfen — nur ergänzen, wenn leer
+        ...(tokens && tokens.length > 0 && !(p.erkennungTokens?.length) ? { erkennungTokens: tokens } : {}),
+      }
       : p);
   } else {
-    next = [...alle, { id: `p-${nr || Date.now()}`, name: zuordnung.name, mwstNr: nr, kategorie: zuordnung.kategorie, konto: zuordnung.konto, ...(zuordnung.mwstSatz !== undefined ? { mwstSatz: zuordnung.mwstSatz } : {}) }];
+    next = [...alle, {
+      id: `p-${nr || Date.now()}`, name: zuordnung.name, mwstNr: nr, kategorie: zuordnung.kategorie, konto: zuordnung.konto, ...extra,
+      ...(tokens && tokens.length > 0 ? { erkennungTokens: tokens } : {}),
+    }];
   }
   await saveLieferantenProfile(tenantId, next);
   return next;

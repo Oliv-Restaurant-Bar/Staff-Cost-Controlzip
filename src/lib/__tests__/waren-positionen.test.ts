@@ -372,3 +372,32 @@ describe('findeCsvBestandsTreffer (Markt im Dedup-Schlüssel)', () => {
     expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-15', markt: 'BGH' }, 'Transgourmet')).toBeUndefined();
   });
 });
+
+describe('robustes Zahlen-Parsing + MwSt-Code (D1)', () => {
+  const roh = (posPreis: string, code: string) =>
+    `90032154;R9;2026-07-31;BGH;Metzgerei;10;002066;1;;kg;Entrecote;45.05;${posPreis};6.89;123;0;0;${code};;`;
+
+  it('Apostroph-Tausender werden korrekt geparst', () => {
+    const res = parseTransgourmetCsv([HEADER, roh("1'234.50", '1')].join('\n'));
+    expect(res.rechnungen[0].positionen[0].positionspreis).toBeCloseTo(1234.5, 2);
+    expect(res.debug.zahlenfehler).toBeUndefined();
+  });
+
+  it('unlesbarer Betrag wird als 0 übernommen UND gemeldet (nie still)', () => {
+    const res = parseTransgourmetCsv([HEADER, roh('abc', '1')].join('\n'));
+    expect(res.rechnungen[0].positionen[0].positionspreis).toBe(0);
+    expect(res.debug.zahlenfehler?.length).toBe(1);
+    expect(res.debug.zahlenfehler?.[0]).toContain('Positionspreis');
+  });
+
+  it('Buchstaben-MwSt-Code «C1» ist KEIN Pfand (Ziffer zählt), «C0» ist Pfand, unbekannt → offen', () => {
+    const res = parseTransgourmetCsv([HEADER, roh('265.16', 'C1'), roh('265.16', 'C0').replace(';R9;', ';R8;'), roh('265.16', '??').replace(';R9;', ';R7;')].join('\n'));
+    const posOf = (nr: string) => res.rechnungen.find(r => r.rechnungsNr === nr)!.positionen[0];
+    expect(posOf('R9').mwstCode).toBe(1);
+    expect(kontoFuerPosition(posOf('R9'), DEFAULT_WARENGRUPPEN_MAPPING).status).toBe('zugeordnet');
+    expect(posOf('R8').mwstCode).toBe(0);
+    expect(kontoFuerPosition(posOf('R8'), DEFAULT_WARENGRUPPEN_MAPPING).status).toBe('pfand');
+    expect(posOf('R7').mwstCode).toBe(-1);
+    expect(kontoFuerPosition(posOf('R7'), DEFAULT_WARENGRUPPEN_MAPPING).status).not.toBe('pfand');
+  });
+});

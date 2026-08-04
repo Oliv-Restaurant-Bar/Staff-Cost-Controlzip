@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buchungKey, buchungKeysMitIndex, buchungBetrag, fmtDatumCH,
   matchAmpel, lieferantMatchStat, normalizeFibuMatches, normalizeFibuMatchState,
-  autoMatchVorschlaege, LEERER_MATCH_STATE,
+  autoMatchVorschlaege, LEERER_MATCH_STATE, bereinigeMatchState,
   type FibuMatchGruppe, type FibuMatchState,
 } from '@/lib/waren-fibu-matches';
 import type { InvoiceEntry } from '@/lib/waren-db';
@@ -181,5 +181,35 @@ describe('buchungBetrag', () => {
   it('Soll − Haben', () => {
     expect(buchungBetrag({ soll: 100, haben: 20 } as SageJournalEntry)).toBe(80);
     expect(buchungBetrag({} as SageJournalEntry)).toBe(0);
+  });
+});
+
+describe('bereinigeMatchState (C1: Cleanup nach Löschen/Undo)', () => {
+  const state = (): FibuMatchState => ({
+    gruppen: [
+      { id: 'g1', invoiceIds: ['a', 'b'], buchungKeys: ['k1'] },
+      { id: 'g2', invoiceIds: ['c'], buchungKeys: ['k2'] },
+      { id: 'g3', invoiceIds: ['d'], buchungKeys: [] }, // beschädigt: keine Buchungsseite
+    ],
+    gesperrt: { invoiceIds: ['a', 'x'], buchungKeys: ['k9'] },
+  });
+
+  it('entfernt verwaiste invoiceIds; Gruppen ohne Rechnungs- ODER Buchungsseite fliegen raus', () => {
+    const { state: s, geaendert } = bereinigeMatchState(state(), new Set(['a', 'd']));
+    expect(geaendert).toBe(true);
+    // g1 behält 'a', verliert 'b'; g2 verliert letzte Rechnung → weg; g3 ohne buchungKeys → weg
+    expect(s.gruppen.map(g => g.id)).toEqual(['g1']);
+    expect(s.gruppen[0].invoiceIds).toEqual(['a']);
+    // Sperrliste: 'x' verwaist → raus; Buchungs-Sperren bleiben
+    expect(s.gesperrt.invoiceIds).toEqual(['a']);
+    expect(s.gesperrt.buchungKeys).toEqual(['k9']);
+  });
+
+  it('unverändert, wenn alle IDs gültig sind (kein unnötiger Save)', () => {
+    const voll = state();
+    voll.gruppen = voll.gruppen.slice(0, 2); // ohne die beschädigte g3
+    voll.gesperrt.invoiceIds = ['a']; // 'x' wäre verwaist
+    const { geaendert } = bereinigeMatchState(voll, new Set(['a', 'b', 'c']));
+    expect(geaendert).toBe(false);
   });
 });

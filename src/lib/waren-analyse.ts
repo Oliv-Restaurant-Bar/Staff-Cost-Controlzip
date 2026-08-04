@@ -7,7 +7,10 @@
  */
 
 import type { InvoiceEntry, Warenkonto } from './waren-db';
-import { kategorieOf } from './warenkosten-quote';
+import {
+  kategorieOf, computeWarenkostenTotals, zaehleUnkontierte, WARENKOSTEN_GRENZE_DEFAULT,
+} from './warenkosten-quote';
+import { nurWarenAnteil } from './waren-klassen';
 
 export type AnalyseDim = 'supplier' | 'konto' | 'week' | 'month';
 
@@ -199,11 +202,19 @@ export function wochenWkq(
   entries: InvoiceEntry[],
   revenueByDate: Record<string, number>,
   zielPct: number,
+  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
 ): WochenWkqRow[] {
-  const waren = new Map<string, number>();
+  // DIESELBE Basis wie die Haupt-WKQ: split-bewusster Waren-Anteil
+  // (nurWarenAnteil) + relevantNet (Food/Beverage) — NIE das rohe volle
+  // Rechnungsnetto (das enthielte Betriebskosten/Pfand/Sonstiges).
+  const proWoche = new Map<string, InvoiceEntry[]>();
   for (const e of entries) {
     const wk = isoWeekKeyOf(e.date);
-    waren.set(wk, (waren.get(wk) ?? 0) + e.amountNet);
+    (proWoche.get(wk) ?? proWoche.set(wk, []).get(wk)!).push(e);
+  }
+  const waren = new Map<string, number>();
+  for (const [wk, list] of proWoche) {
+    waren.set(wk, computeWarenkostenTotals(nurWarenAnteil(list, grenze), grenze).relevantNet);
   }
   const umsatz = new Map<string, number>();
   for (const [date, rev] of Object.entries(revenueByDate)) {
@@ -233,27 +244,32 @@ export interface AnalyseKpis {
   totalNet: number;
   foodNet: number;
   beverageNet: number;
+  /** WKQ-Basis (Food+Beverage, split-bewusst) — identisch zur Haupt-WKQ. */
+  relevantNet: number;
+  /** Unkontierte Einträge/Splits, die als Warenkosten mitzählen (Transparenz). */
+  unkontiert: number;
   /** Anteil Food/Beverage am Total in % (null wenn Total 0). */
   foodSharePct: number | null;
   beverageSharePct: number | null;
   top3: { label: string; totalNet: number }[];
 }
 
-export function analyseKpis(entries: InvoiceEntry[]): AnalyseKpis {
-  let total = 0, food = 0, bev = 0;
-  for (const e of entries) {
-    total += e.amountNet;
-    // Effektive Kategorie (Konto autoritativ) statt roher gespeicherter
-    // e.kategorie — sonst weichen Analyse-Food/Bev von der WKQ-Basis ab.
-    const kat = kategorieOf(e);
-    if (kat === 'Food') food += e.amountNet;
-    else if (kat === 'Beverage') bev += e.amountNet;
-  }
+export function analyseKpis(
+  entries: InvoiceEntry[],
+  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
+): AnalyseKpis {
+  const total = entries.reduce((s, e) => s + e.amountNet, 0);
+  // WKQ-Basis wie überall: split-bewusster Waren-Anteil, Food/Bev via
+  // kategorieOf (Konto autoritativ) — nie rohes Rechnungsnetto.
+  const totals = computeWarenkostenTotals(nurWarenAnteil(entries, grenze), grenze);
+  const food = totals.foodNet, bev = totals.beverageNet;
   const top3 = groupTotals(entries, 'supplier').slice(0, 3)
     .map(r => ({ label: r.key, totalNet: r.totalNet }));
   const r2 = (x: number) => Math.round(x * 100) / 100;
   return {
     totalNet: r2(total), foodNet: r2(food), beverageNet: r2(bev),
+    relevantNet: r2(totals.relevantNet),
+    unkontiert: zaehleUnkontierte(entries),
     foodSharePct: total > 0 ? Math.round((food / total) * 1000) / 10 : null,
     beverageSharePct: total > 0 ? Math.round((bev / total) * 1000) / 10 : null,
     top3,

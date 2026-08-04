@@ -322,13 +322,17 @@ export function KüchenplanImportDialog({
         const ds: DaySchedule = {};
         if (row.mapped.start && row.mapped.end) {
           ds.früh = { start: row.mapped.start, end: row.mapped.end };
+          // Explizite Pause aus dem Code-Mapping (ersetzt die Automatik).
+          if (row.mapped.breakMinutes !== undefined) ds.fruehBreakMinutes = row.mapped.breakMinutes;
         }
         if (row.mapped.start2 && row.mapped.end2) {
           ds.spät = { start: row.mapped.start2, end: row.mapped.end2 };
         }
         if (ds.früh || ds.spät) delta[cellKey] = ds;
-      } else if (row.mapped.type === 'vacation' || row.mapped.type === 'absence') {
-        delta[cellKey] = { früh: null, frühAbsence: row.code };
+      } else {
+        // Frei/Ferien/Abwesenheit = KEINE Schicht: Zelle wird geleert
+        // (bestehende Plan-Schichten des Zeitraums werden ERSETZT, 0 Stunden).
+        delta[cellKey] = {};
       }
     }
 
@@ -799,6 +803,35 @@ export function KüchenplanImportDialog({
                     Datum pro Zeile direkt editierbar — Klick auf das Datumsfeld zum Korrigieren.
                   </AlertDescription>
                 </Alert>
+
+                {/* Pro-Mitarbeiter-Zusammenfassung: Plan-Stunden + Arbeitstage */}
+                {previewRows.length > 0 && (
+                  <div className="rounded-md border p-2" data-testid="kuechenplan-summary">
+                    <div className="text-xs font-semibold text-muted-foreground mb-1.5">
+                      Zusammenfassung pro Mitarbeiter (Zeitraum)
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1">
+                      {Object.values(
+                        previewRows.reduce<Record<string, { name: string; hours: number; days: number }>>((acc, r) => {
+                          const k = r.employee.id;
+                          if (!acc[k]) acc[k] = { name: getEmployeeDisplayName(r.employee), hours: 0, days: 0 };
+                          if (r.mapped.type === 'work' && r.hours > 0) {
+                            acc[k].hours += r.hours;
+                            acc[k].days += 1;
+                          }
+                          return acc;
+                        }, {}),
+                      ).sort((a, b) => a.name.localeCompare(b.name)).map(s => (
+                        <div key={s.name} className="flex justify-between text-xs gap-2">
+                          <span className="truncate">{s.name}</span>
+                          <span className="text-muted-foreground whitespace-nowrap font-medium">
+                            {s.hours.toFixed(1).replace(/\.0$/, '')} h · {s.days} Tage
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {conflictRows.length > 0 && (
                   <Alert className="border-red-200 bg-red-50 dark:bg-red-900/20">

@@ -2546,6 +2546,7 @@ export default function WarenrechnungenPage() {
                     konten={warenkonten}
                     zielPct={zielWkqPct}
                     periodLabel={analyseRangeLabel}
+                    warenGrenze={warenGrenze}
                     onOpenReceipt={openReceipt}
                   />
                 )}

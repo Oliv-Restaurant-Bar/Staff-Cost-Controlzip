@@ -33,3 +33,7 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 
 ## Modus-Wahl (Aug 2026)
 - `dokumenttyp` aus dem PDF-Inhalt gewinnt; nur bei null greift die Heuristik `belegart==='rechnung' && lieferungen.length>1` → monatsrechnung. Anzahl LS-Blöcke allein entscheidet NIE.
+
+## Profil-Lernen ohne MWST-Nr
+- `lerneProfil` leitet ohne MWST-Nr automatisch Namens-Tokens ab (lowercase, Wörter ≥3 Zeichen) → `findeProfilImText` erkennt den Lieferanten beim Re-Import; bestehende Tokens/IBAN nie überschreiben. Lernen ist KUMULATIV — Import-Undo rollt Profile bewusst nicht zurück.
+- AB→Rechnung (Terravigna): Dokumente tragen KEINE gemeinsame Referenz (Rechnung nennt die AB-Nr. nicht). fs-import ersetzt eine provisorische AB nur bei GENAU EINEM Kandidaten im Fenster (Toleranz max(0.10, 1 % Brutto)); Matcher generell in zwei Pässen: exakte Referenz VOR Datum+Betrag.

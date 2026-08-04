@@ -294,6 +294,12 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     setMarktZuordnung({});
     setKontoOverrides({}); setAufgeklappt(new Set());
     if (res.failureReason) toast.error(res.failureReason);
+    // Unlesbare Zahlenwerte NIE still als 0 durchwinken — sichtbar melden.
+    if (res.debug.zahlenfehler?.length) {
+      toast.warning(`${res.debug.zahlenfehler.length} Zahlenwert(e) unlesbar — als 0 übernommen. Beträge bitte prüfen.`, {
+        description: res.debug.zahlenfehler.slice(0, 3).join(' · '),
+      });
+    }
   };
 
   /** Lieferant pro Rechnung aus der Markt-Spalte; null = «Lieferant offen». */

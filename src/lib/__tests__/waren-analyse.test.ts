@@ -141,3 +141,32 @@ describe('Export: Summenblöcke & Dateiname', () => {
     expect(data.fileName).toBe('Warenkosten_Oliv_2026-07.xlsx');
   });
 });
+
+describe('wochenWkq: split-bewusste WKQ-Basis (A1)', () => {
+  it('Betriebskosten-Konto fliesst NICHT in die Wochen-WKQ, Warenkonto schon', () => {
+    const list = [
+      inv({ date: '2026-07-27', amountNet: 100, warenkonto: '4020' }),
+      inv({ date: '2026-07-27', amountNet: 50, warenkonto: '4500' }), // Betrieb
+      inv({ date: '2026-07-28', amountNet: 30, warenkonto: 'Depot' }), // neutral
+    ];
+    const rows = wochenWkq(list, { '2026-07-27': 500, '2026-07-28': 500 }, 30);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].warenNet).toBeCloseTo(100, 2);
+    expect(rows[0].wkqPct).toBeCloseTo(10, 2);
+  });
+});
+
+describe('analyseKpis: relevantNet + unkontiert (A1/A2)', () => {
+  it('relevantNet = Food+Beverage (Konto autoritativ), unkontierte werden gezählt', () => {
+    const list = [
+      inv({ date: '2026-07-01', amountNet: 100, warenkonto: '4000' }), // Food
+      inv({ date: '2026-07-01', amountNet: 40, warenkonto: '4030' }), // Beverage
+      inv({ date: '2026-07-02', amountNet: 25, warenkonto: '4500' }), // Betrieb → nicht relevant
+      inv({ date: '2026-07-03', amountNet: 10 }), // unkontiert → zählt als Food + Hinweis
+    ];
+    const k = analyseKpis(list);
+    expect(k.relevantNet).toBeCloseTo(150, 2);
+    expect(k.unkontiert).toBe(1);
+    expect(k.totalNet).toBeCloseTo(175, 2);
+  });
+});

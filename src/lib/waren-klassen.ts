@@ -49,8 +49,10 @@ export const PSEUDO_KONTO_OFFEN = 'offen';
 export function kontoKlasse(konto: string | undefined, grenze: number = DEFAULT_WARENKOSTEN_GRENZE): KontoKlasse {
   if (konto === PSEUDO_KONTO_PFAND) return 'neutral';
   if (!konto) return 'warenkosten';
-  const n = parseInt(konto, 10);
-  if (!Number.isFinite(n)) return 'warenkosten'; // inkl. «offen» — bewusste Policy, s.o.
+  // Konsistent zu istWarenJournalKonto: 5-stellige Konten über die ersten
+  // 4 Stellen klassifizieren (normalizeWarenKonto), nie roher parseInt.
+  const n = normalizeWarenKonto(konto);
+  if (n === null) return 'warenkosten'; // inkl. «offen» — bewusste Policy, s.o.
   return n >= 4000 && n <= grenze ? 'warenkosten' : 'betriebskosten';
 }
 

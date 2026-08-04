@@ -23,7 +23,9 @@
  *   MS = 0      Mutterschaft
  */
 
-const STORAGE_KEY = 'schicht_code_mapping_v3';
+// v4: Alias-Codes (Ae/Ba/Be/KO/MI) + explizite Pausenminuten je Code —
+// Key-Bump, damit alte gespeicherte Mappings die neuen Defaults nicht verdecken.
+const STORAGE_KEY = 'schicht_code_mapping_v4';
 
 export type SchichtType = 'work' | 'vacation' | 'absence' | 'off';
 
@@ -41,6 +43,8 @@ export interface SchichtCodeEntry {
   start2?: string;
   /** Ende der 2. Schicht bei Splitschichten (HH:mm). */
   end2?: string;
+  /** Explizite Pause der 1. Schicht in Minuten (ersetzt die Automatik). */
+  breakMinutes?: number;
 }
 
 /** Gibt die definierten Planstunden zurück (immer aus dem hours-Feld). */
@@ -52,19 +56,24 @@ export const DEFAULT_MAPPING: SchichtCodeEntry[] = [
   // ── Arbeitsschichten ───────────────────────────────────────────────────────
   // A = Splitschicht Früh+Spät: 10:00–14:00 / 17:30–23:00
   { code: 'A',  label: 'Früh/Spät (Split)', type: 'work', hours: 8.0,  start: '10:00', end: '14:00', start2: '17:30', end2: '23:00' },
-  { code: 'B',  label: 'Schicht B',         type: 'work', hours: 9.0,  start: '11:30', end: '21:30' },
-  { code: 'C',  label: 'Schicht C',         type: 'work', hours: 3.5,  start: '10:00', end: '14:00' },
-  { code: 'O2', label: 'Offen 2',           type: 'work', hours: 4.25, start: '07:00', end: '11:30' },
-  { code: 'D',  label: 'Abend',             type: 'work', hours: 5.0,  start: '18:00', end: '23:30' },
-  { code: 'E',  label: 'Spät',              type: 'work', hours: 8.5,  start: '14:00', end: '23:00' },
+  { code: 'Ae', label: 'wie A (Split)',     type: 'work', hours: 8.0,  start: '10:00', end: '14:00', start2: '17:30', end2: '23:00' },
+  { code: 'B',  label: 'Schicht B',         type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
+  { code: 'Ba', label: 'wie B',             type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
+  { code: 'Be', label: 'wie B',             type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
+  { code: 'C',  label: 'Schicht C',         type: 'work', hours: 3.5,  start: '10:00', end: '14:00', breakMinutes: 30 },
+  { code: 'O2', label: 'Offen 2',           type: 'work', hours: 4.25, start: '07:00', end: '11:30', breakMinutes: 15 },
+  { code: 'D',  label: 'Abend',             type: 'work', hours: 5.0,  start: '18:00', end: '23:30', breakMinutes: 30 },
+  { code: 'E',  label: 'Spät',              type: 'work', hours: 8.5,  start: '14:00', end: '23:00', breakMinutes: 30 },
   // Splitschicht O1: früh-Slot 11:00–14:00, spät-Slot 18:00–23:30
   { code: 'O1', label: 'Offen 1 (Split)',   type: 'work', hours: 8.5,  start: '11:00', end: '14:00', start2: '18:00', end2: '23:30' },
-  // ── Abwesenheiten / Frei ───────────────────────────────────────────────────
+  // ── Abwesenheiten / Frei (KEINE Schicht → Zelle wird geleert, 0 Planstunden) ─
   { code: 'F',  label: 'Frei',              type: 'off',      hours: 0 },
   { code: 'FE', label: 'Ferien',            type: 'vacation', hours: 0 },
   { code: 'FT', label: 'Feiertag',          type: 'vacation', hours: 0 },
   { code: 'K',  label: 'Krank',             type: 'absence',  hours: 0 },
+  { code: 'KO', label: 'Krank/Abwesend',    type: 'absence',  hours: 0 },
   { code: 'M',  label: 'Militär',           type: 'absence',  hours: 0 },
+  { code: 'MI', label: 'Militär',           type: 'absence',  hours: 0 },
   { code: 'FW', label: 'Feuerwehr',         type: 'absence',  hours: 0 },
   { code: 'MS', label: 'Mutterschaft',      type: 'absence',  hours: 0 },
 ];

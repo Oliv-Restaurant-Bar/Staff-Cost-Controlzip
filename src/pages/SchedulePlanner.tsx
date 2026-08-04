@@ -31,7 +31,7 @@ import {
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, CalendarClock, TriangleAlert, LogOut, User, ClipboardPaste, Wand2, Loader2, Pin, PinOff, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Download, Upload, Save, ChevronLeft, ChevronRight, ChevronDown, Users, Clock, AlertTriangle, CheckCircle, Copy, Printer, Calendar, CalendarDays, Eye, EyeOff, Euro, Lock, Home, Settings, Pencil, Trash2, CalendarOff, Lightbulb, BookOpen, Target, LayoutGrid, CalendarX2, Zap, MoreVertical, ArrowUpDown, Search, X, FileBarChart2, PanelLeftClose, Menu, UserPlus, CalendarClock, TriangleAlert, LogOut, User, ClipboardPaste, Wand2, Loader2, Pin, PinOff, ShieldCheck, RefreshCw } from 'lucide-react';
 import { useRef } from 'react';
 import { Employee, Department } from '@/types/personnel';
 import { resolveZielwert, saveZielwert, loadZielwerte, ZielwertDepartment } from '@/lib/zielwerte-store';
@@ -329,6 +329,9 @@ const SchedulePlanner = () => {
   const [exportInitialFormat, setExportInitialFormat] = useState<'excel' | 'pdf'>('excel');
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [küchenplanImportOpen, setKüchenplanImportOpen] = useState(false);
+  const [küchenplanUndoAvailable, setKüchenplanUndoAvailable] = useState<boolean>(() => {
+    try { return !!localStorage.getItem(tenantKey('kuechenplan_import_undo_v1')); } catch { return false; }
+  });
   const [pendingImportResult, setPendingImportResult] = useState<{
     scheduleData: Record<string, DaySchedule>;
     newEmployees: Employee[];
@@ -2383,21 +2386,60 @@ const SchedulePlanner = () => {
   };
 
   const handleKüchenplanImport = (delta: Record<string, DaySchedule>, count: number) => {
-    setScheduleData(prev => {
-      const merged = { ...prev };
-      for (const [key, ds] of Object.entries(delta)) {
-        merged[key] = { ...(merged[key] || {}), ...ds };
-        // Persist each entry to Supabase
-        const date = key.slice(-10);
-        const empId = key.slice(0, -11);
-        saveScheduleEntry(empId, date, merged[key]);
-      }
-      const monthKey = format(currentMonth, 'yyyy-MM');
-      localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
-      window.dispatchEvent(new CustomEvent('schedule-updated'));
-      return merged;
-    });
-    toast.success(`Küchenplan importiert: ${count} Einträge übernommen`);
+    // ERSETZEN statt mergen: jede importierte Zelle wird komplett überschrieben
+    // (leere DaySchedule = Zelle leeren → 0 Planstunden). Vorher Backup für Undo.
+    const merged = { ...scheduleDataRef.current };
+    const backup: Record<string, DaySchedule | null> = {};
+    for (const [key, ds] of Object.entries(delta)) {
+      backup[key] = merged[key] ? { ...merged[key] } : null;
+      const isEmpty = !ds.früh && !ds.spät && !ds.frühAbsence && !ds.spätAbsence;
+      if (isEmpty) delete merged[key]; else merged[key] = ds;
+      const date = key.slice(-10);
+      const empId = key.slice(0, -11);
+      saveScheduleEntry(empId, date, isEmpty ? null : ds);
+    }
+    try {
+      localStorage.setItem(
+        tenantKey('kuechenplan_import_undo_v1'),
+        JSON.stringify({ createdAt: new Date().toISOString(), backup }),
+      );
+      setKüchenplanUndoAvailable(true);
+    } catch {}
+    scheduleDataRef.current = merged;
+    setScheduleData(merged);
+    const monthKey = format(currentMonth, 'yyyy-MM');
+    localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
+    window.dispatchEvent(new CustomEvent('schedule-updated'));
+    toast.success(`Küchenplan importiert: ${count} Einträge übernommen (Rückgängig im ⋮-Menü)`);
+  };
+
+  const handleKüchenplanUndo = () => {
+    let payload: { backup: Record<string, DaySchedule | null> } | null = null;
+    try {
+      const raw = localStorage.getItem(tenantKey('kuechenplan_import_undo_v1'));
+      if (raw) payload = JSON.parse(raw);
+    } catch {}
+    if (!payload || !payload.backup) {
+      toast.error('Kein Küchenplan-Import-Backup vorhanden');
+      return;
+    }
+    const merged = { ...scheduleDataRef.current };
+    let restored = 0;
+    for (const [key, prev] of Object.entries(payload.backup)) {
+      const date = key.slice(-10);
+      const empId = key.slice(0, -11);
+      if (prev) merged[key] = prev; else delete merged[key];
+      saveScheduleEntry(empId, date, prev ?? null);
+      restored++;
+    }
+    scheduleDataRef.current = merged;
+    setScheduleData(merged);
+    const monthKey = format(currentMonth, 'yyyy-MM');
+    localStorage.setItem(tenantKey(`schedule-v2-${monthKey}`), JSON.stringify(merged));
+    localStorage.removeItem(tenantKey('kuechenplan_import_undo_v1'));
+    setKüchenplanUndoAvailable(false);
+    window.dispatchEvent(new CustomEvent('schedule-updated'));
+    toast.success(`Küchenplan-Import rückgängig gemacht: ${restored} Zellen wiederhergestellt`);
   };
 
   const handleConfirmImport = (overrides: NameMatchOverride[]) => {
@@ -3475,6 +3517,12 @@ const SchedulePlanner = () => {
                     <FileText className="h-4 w-4 mr-2 text-orange-500" />
                     Küchenplan PDF importieren
                   </DropdownMenuItem>
+                  {küchenplanUndoAvailable && (
+                    <DropdownMenuItem onClick={handleKüchenplanUndo}>
+                      <RefreshCw className="h-4 w-4 mr-2 text-orange-500" />
+                      Küchenplan-Import rückgängig
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem onClick={handleExportTemplate}>
                     <FileSpreadsheet className="h-4 w-4 mr-2" />
                     Export Excel (.xlsx)

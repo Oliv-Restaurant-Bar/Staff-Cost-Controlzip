@@ -297,6 +297,31 @@ export async function saveFibuMatchState(
   console.log(`[WAREN] fibu-matches saved: ${state.gruppen.length} groups (${monthKey}, tenant "${tenantId}")`);
 }
 
+/**
+ * FIBU-Match-Zuordnungen eines Monats gegen die noch existierenden
+ * Rechnungs-IDs bereinigen: verwaiste invoiceIds aus Gruppen/Sperrliste
+ * entfernen, Gruppen ohne Rechnungsseite droppen. Sonst zeigt der
+ * FIBU-Abgleich «gematcht» für gelöschte Rechnungen und verbirgt echte
+ * Differenzen. Best-effort (rein visuell — wirft nie); buchungKeys können
+ * hier nicht validiert werden (FIBU-Journal ist eine andere Quelle).
+ */
+export async function bereinigeFibuMatchesFuerMonat(
+  tenantId: TenantId,
+  month: string,
+  gueltigeInvoiceIds: ReadonlySet<string>,
+): Promise<void> {
+  try {
+    const state = await loadFibuMatchState(tenantId, month);
+    const { bereinigeMatchState } = await import('./waren-fibu-matches');
+    const { state: bereinigt, geaendert } = bereinigeMatchState(state, gueltigeInvoiceIds);
+    if (!geaendert) return;
+    await saveFibuMatchState(tenantId, month, bereinigt);
+    console.log(`[WAREN] fibu-matches bereinigt (${month}, tenant "${tenantId}")`);
+  } catch (e) {
+    console.warn('[WAREN] fibu-match-Bereinigung fehlgeschlagen (nicht kritisch):', e);
+  }
+}
+
 // ─── Preisüberwachung: Historie, Schwelle, Hinweise (mandantengetrennt) ──────
 //
 // - `waren_preishistorie_v1`: letzter Einzelpreis pro (Lieferant+Artikel).
@@ -548,6 +573,8 @@ export async function deleteInvoiceEntry(
   const filtered = existing.filter(e => e.id !== entryId);
   await kvSet(key, filtered);
   console.log(`[WAREN] entry deleted: id=${entryId} date=${date} tenant="${tenantId}"`);
+  // FIBU-Match-Zuordnungen des Monats mitbereinigen (sonst «gematcht»-Leiche).
+  await bereinigeFibuMatchesFuerMonat(tenantId, month, new Set(filtered.map(e => e.id)));
 }
 
 // ─── Tagesumsatz aus dailyBudgets ─────────────────────────────────────────────
@@ -975,6 +1002,11 @@ export async function undoWarenImport(tenantId: TenantId, typ: WarenImportTyp): 
   // Stand VOR dem Import zurückschreiben.
   for (const [m, invoices] of Object.entries(rec.vorher.invoicesProMonat)) {
     await kvSet(invoicesKey(tenantId, m), invoices);
+    // FIBU-Match-Zuordnungen gegen den wiederhergestellten Stand bereinigen —
+    // Matches auf Rechnungs-IDs, die es nach dem Undo nicht mehr gibt, würden
+    // im FIBU-Abgleich fälschlich «gematcht» anzeigen. (Matches selbst sind
+    // bewusst NICHT im Snapshot — rein visuell, kumulativ.)
+    await bereinigeFibuMatchesFuerMonat(tenantId, m, new Set((invoices ?? []).map(e => e.id)));
   }
   for (const [m, pos] of Object.entries(rec.vorher.positionenProMonat)) {
     await kvSet(tenantKey(tenantId, `waren_positionen_${m}_v1`), pos ?? {});

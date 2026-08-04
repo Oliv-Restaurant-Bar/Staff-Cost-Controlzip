@@ -10,3 +10,6 @@ description: «Letzter Import rückgängig machen» für CSV-TG/Prodega-, Feldsc
 
 **Why:** KV-Store hat kein Compare-and-Swap; Konfliktschutz ist read-then-write mit Stale-Checks (gleiche bekannte Grenze wie Import-Center-/Budget-Undo). Millisekunden-Fenster zwischen Prüfung und Restore bleibt theoretisch offen.
 **How to apply:** Jeder neue Warenrechnungs-Import-Pfad muss vorher/nachher-Snapshots über ALLE Keys machen, die er schreibt — sonst verweigert der Konfliktschutz fälschlich oder restauriert unvollständig. Tests: waren-import-undo.test.ts (In-Memory-KV-Mock).
+
+## FIBU-Match-Cleanup bei Löschen/Undo
+- `deleteInvoiceEntry` und `undoWarenImport` bereinigen den Monats-Match-State via purem `bereinigeMatchState` (waren-fibu-matches): verwaiste invoiceIds raus, Gruppen brauchen BEIDE Seiten (invoiceIds UND buchungKeys nicht leer), sonst droppen; Sperrliste nur invoice-seitig bereinigen. Best-effort, wirft nie.

@@ -44,7 +44,7 @@ export type WarenKategorie = 'Food' | 'Beverage' | 'Sonstiges';
  * dupliziert, damit diese Lib import-frei/pur bleibt (kein Zyklus über
  * waren-db, das kategorieFromKonto re-exportiert).
  */
-const WARENKOSTEN_GRENZE_DEFAULT = 4090;
+export const WARENKOSTEN_GRENZE_DEFAULT = 4090;
 
 /** Beverage-Konten des (FIBU-identischen) Kontenplans. */
 const BEVERAGE_KONTEN = new Set([4020, 4030, 4040, 4050]);
@@ -62,10 +62,22 @@ export function kategorieFromKonto(
   konto: string | undefined,
   grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
 ): WarenKategorie {
-  if (!konto) return 'Sonstiges';
-  const n = parseInt(konto, 10);
-  if (!Number.isFinite(n) || n < 4000 || n > grenze) return 'Sonstiges';
+  const n = normalisiereKontoNummer(konto);
+  if (n === null || n < 4000 || n > grenze) return 'Sonstiges';
   return BEVERAGE_KONTEN.has(n) ? 'Beverage' : 'Food';
+}
+
+/**
+ * Konto-Nummer normalisieren — konsistent zu `normalizeWarenKonto` /
+ * `istWarenJournalKonto` (waren-klassen): 3–5 zusammenhängende Ziffern;
+ * 5-stellige Konten (z.B. «40201») zählen mit den ersten 4 Stellen (4020).
+ * (Bewusst lokal dupliziert — Import-Zyklus, siehe Kopfkommentar.)
+ */
+export function normalisiereKontoNummer(konto: string | undefined): number | null {
+  const s = (konto ?? '').trim();
+  if (!/^\d{3,5}$/.test(s)) return null;
+  const n = parseInt(s.length === 5 ? s.slice(0, 4) : s, 10);
+  return Number.isFinite(n) ? n : null;
 }
 
 /** Minimal-Form eines Rechnungseintrags für die Quoten-Berechnung. */
@@ -96,11 +108,34 @@ export function kategorieOf(
   if (vomKonto !== 'Sonstiges') return vomKonto; // Warenkonto → autoritativ
   const konto = entry.warenkonto;
   if (konto === 'Depot') return 'Sonstiges'; // Pfand: neutral, nie in Quote
-  if (!konto || !Number.isFinite(parseInt(konto, 10))) {
+  if (normalisiereKontoNummer(konto) === null) {
     // Legacy-/Pseudo-Konto («offen»): zählt als Warenkosten → in die Quote.
     return entry.kategorie ?? 'Food';
   }
   return 'Sonstiges'; // numerisch, aber ausserhalb 4000–Grenze
+}
+
+/**
+ * Anzahl UNKONTIERTER Warenkosten-Mitglieder (Transparenz für die WKQ):
+ * Einträge/Splits ohne numerisches Warenkonto («offen»/leer, nicht Depot)
+ * zählen per Legacy-Regel als Warenkosten — die Quote ist bis zur Kontierung
+ * unscharf und muss das sichtbar ausweisen (nie still verfälschen).
+ */
+export function zaehleUnkontierte(
+  entries: Array<WarenkostenEntryInput & { splits?: Array<{ warenkonto: string }> }>,
+): number {
+  let n = 0;
+  for (const e of entries) {
+    if (e.splits && e.splits.length > 0) {
+      n += e.splits.filter(s =>
+        s.warenkonto !== 'Depot' && normalisiereKontoNummer(s.warenkonto) === null).length;
+      continue;
+    }
+    const konto = e.warenkonto;
+    if (konto === 'Depot') continue;
+    if (normalisiereKontoNummer(konto) === null) n++;
+  }
+  return n;
 }
 
 /**

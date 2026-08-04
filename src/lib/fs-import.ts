@@ -129,14 +129,43 @@ export async function kernImportiereFsRechnungen(
       const refMatch = (e: InvoiceEntry) =>
         r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase();
       if (!vorhanden) {
+        // ZWEI PÄSSE: erst exakte Referenz über ALLE Nachbarmonate, DANN erst
+        // der Datum+Betrag-Fallback (wie monatsrechnung-abgleich). Ein OR im
+        // selben Pass könnte bei zwei Lieferungen gleichen Tags/Betrags einen
+        // Datum-Treffer VOR dem exakten Referenz-Treffer finden und die
+        // Identitäten vertauschen.
+        aussen:
+        for (const pass of ['ref', 'fallback'] as const) {
+          for (const nm of nachbarMonate(r.datum)) {
+            const nb = (await holeMonat(nm)).bestand;
+            const m = nb.find(e => !vergeben.has(e.id)
+              && e.supplierName.trim().toLowerCase() === lief
+              && (pass === 'ref'
+                ? refMatch(e)
+                : (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
+            if (m) { vorhanden = m; vorhandenMonat = nm; break aussen; }
+          }
+        }
+      }
+      // AB→Rechnung-Sonderfall (z.B. Terravigna): die Dokumente tragen KEINE
+      // gemeinsame Referenz (Rechnung nennt die AB-Nr. nicht). Bleibt die
+      // Lieferung ohne Treffer, darf sie GENAU EINE provisorische AB-Buchung
+      // im Datumsfenster ersetzen — mit gelockerter Betragstoleranz
+      // (max(0.10, 1 % vom Brutto)); bei MEHREREN Kandidaten wird NIE geraten
+      // (dann normale Neu-Buchung, die AB bleibt sichtbar zur Prüfung).
+      if (!vorhanden && fenster > 0) {
+        const tol = Math.max(0.10, Math.round(brutto) * 0.01);
+        const kandidaten: Array<{ e: InvoiceEntry; nm: string }> = [];
         for (const nm of nachbarMonate(r.datum)) {
           const nb = (await holeMonat(nm)).bestand;
-          const m = nb.find(e => !vergeben.has(e.id)
-            && e.supplierName.trim().toLowerCase() === lief
-            && (refMatch(e)
-              || (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
-          if (m) { vorhanden = m; vorhandenMonat = nm; break; }
+          for (const e of nb) {
+            if (!vergeben.has(e.id) && istProv(e) && e.quelle === 'auftragsbestaetigung'
+              && e.supplierName.trim().toLowerCase() === lief
+              && tageDiff(e.date, r.datum) <= fenster
+              && Math.abs(e.amountGross - brutto) <= tol) kandidaten.push({ e, nm });
+          }
         }
+        if (kandidaten.length === 1) { vorhanden = kandidaten[0].e; vorhandenMonat = kandidaten[0].nm; }
       }
       // FINAL-WACHE: eine bereits finalisierte Buchung wird von einer weiteren
       // Monatsrechnung NUR bei exakter Referenz (= dieselbe Lieferung, idem-
@@ -160,14 +189,20 @@ export async function kernImportiereFsRechnungen(
       if (!vorhanden && !opts?.quelle) {
         const brutto = bruttoOffiziell ?? r.bruttoTotal;
         const fenster = opts?.ersatzFensterTage ?? 7;
-        for (const nm of nachbarMonate(r.datum)) {
-          const nb = (await holeMonat(nm)).bestand;
-          const kandidat = nb.find(e => !vergeben.has(e.id)
-            && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung')
-            && e.supplierName.trim().toLowerCase() === lief
-            && ((e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-              || (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
-          if (kandidat) { vorhanden = kandidat; vorhandenMonat = nm; provisorischErsetzt++; break; }
+        // Auch hier: exakte Referenz VOR dem Datum+Betrag-Fallback (nie im
+        // selben Pass mischen — sonst Identitätstausch bei gleichen Beträgen).
+        aussen2:
+        for (const pass of ['ref', 'fallback'] as const) {
+          for (const nm of nachbarMonate(r.datum)) {
+            const nb = (await holeMonat(nm)).bestand;
+            const kandidat = nb.find(e => !vergeben.has(e.id)
+              && istProv(e) && (e.quelle === 'monatsrechnung' || e.quelle === 'auftragsbestaetigung')
+              && e.supplierName.trim().toLowerCase() === lief
+              && (pass === 'ref'
+                ? r.rechnungsNr.trim() !== '' && (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
+                : (tageDiff(e.date, r.datum) <= fenster && Math.abs(e.amountGross - brutto) <= 0.10)));
+            if (kandidat) { vorhanden = kandidat; vorhandenMonat = nm; provisorischErsetzt++; break aussen2; }
+          }
         }
         // FINALE Buchung derselben Lieferung (Referenz, Monate ±1)? Dann ist
         // sie bereits finalisiert — Lieferschein überspringen («bereits final»).

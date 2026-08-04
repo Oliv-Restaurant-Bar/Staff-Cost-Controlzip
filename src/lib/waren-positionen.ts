@@ -56,15 +56,38 @@ export interface CsvParseErgebnis {
     zeilenVerworfen: number;
     spalten: string[];
     beispielZeile?: string;
+    /** Unparsebare Zahlenwerte (als 0 übernommen) — MUSS dem User gemeldet werden. */
+    zahlenfehler?: string[];
   };
 }
 
 const PFLICHT_SPALTEN = ['Rechnungsnummer', 'Datum', 'Artikelbezeichnung', 'Preis', 'Positionspreis'];
 
-function parseNum(s: string | undefined): number {
-  if (s === undefined || s.trim() === '') return 0;
-  const n = Number(s.replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+/**
+ * Robuste Betrags-Zahl (zentrale parseAmount-Logik): Apostroph-/Leerzeichen-
+ * Tausender, Komma ODER Punkt als Dezimaltrenner. `null` = unparsebar —
+ * der Aufrufer MELDET das (debug.zahlenfehler), nie still 0.
+ */
+function parseNumStrict(s: string | undefined): number | null {
+  if (s === undefined || s.trim() === '') return 0; // leer = kein Wert (0 ist ok)
+  let t = s.trim().replace(/[’'\u00A0 ]/g, '');
+  if (t.includes(',') && t.includes('.')) t = t.replace(/,/g, ''); // 1,234.56
+  else t = t.replace(',', '.');
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * MwSt-Code: numerisch («0», «1», «2») oder Buchstabencode («C0», «C1») —
+ * die Ziffer zählt. 0 = Pfand/Gebinde. Unbekannte/unlesbare Codes → -1
+ * (NIE fälschlich als Pfand neutralisieren; Kontierung fällt auf
+ * Warengruppe/«offen» zurück).
+ */
+function parseMwstCode(s: string | undefined): number {
+  const t = (s ?? '').trim();
+  if (t === '') return -1;
+  const m = /^[A-Za-z]?(\d{1,2})$/.exec(t);
+  return m ? parseInt(m[1], 10) : -1;
 }
 
 export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
@@ -89,6 +112,7 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
     iPos = idx('Positionspreis'), iMwst = idx('MwSt'), iCode = idx('MwSt. Code');
 
   const proRechnung = new Map<string, ParsedCsvRechnung>();
+  const zahlenfehler: string[] = [];
   let verwendet = 0, verworfen = 0;
   for (let z = 1; z < zeilen.length; z++) {
     const c = zeilen[z].split(';');
@@ -106,16 +130,25 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
       r = { docKey, rechnungsNr, datum, markt, positionen: [], nettoTotal: 0, mwstTotal: 0, bruttoTotal: 0 };
       proRechnung.set(docKey, r);
     }
+    const num = (roh: string | undefined, feld: string): number => {
+      const n = parseNumStrict(roh);
+      if (n === null) {
+        if (zahlenfehler.length < 20) zahlenfehler.push(`Zeile ${z + 1} (${bez}): ${feld} «${roh}» unlesbar — als 0 übernommen`);
+        else if (zahlenfehler.length === 20) zahlenfehler.push('… weitere Zahlenfehler unterdrückt');
+        return 0;
+      }
+      return n;
+    };
     const pos: WarenPosition = {
       artNr: (c[iArt] ?? '').trim(),
       bezeichnung: bez,
       warengruppe: iGrp >= 0 ? (c[iGrp] ?? '').trim() : '',
-      menge: parseNum(c[iMenge]),
+      menge: num(c[iMenge], 'Menge'),
       einheit: iEinh >= 0 ? (c[iEinh] ?? '').trim() : '',
-      preis: parseNum(c[iPreis]),
-      positionspreis: parseNum(c[iPos]),
-      mwstBetrag: iMwst >= 0 ? parseNum(c[iMwst]) : 0,
-      mwstCode: iCode >= 0 ? parseNum(c[iCode]) : -1,
+      preis: num(c[iPreis], 'Preis'),
+      positionspreis: num(c[iPos], 'Positionspreis'),
+      mwstBetrag: iMwst >= 0 ? num(c[iMwst], 'MwSt') : 0,
+      mwstCode: iCode >= 0 ? parseMwstCode(c[iCode]) : -1,
     };
     r.positionen.push(pos);
     r.nettoTotal += pos.positionspreis;
@@ -131,7 +164,10 @@ export function parseTransgourmetCsv(text: string): CsvParseErgebnis {
   return {
     rechnungen,
     failureReason: rechnungen.length === 0 ? 'Keine gültigen Positionszeilen gefunden (Rechnungsnummer/Datum/Artikel fehlen).' : null,
-    debug: { ...debugBasis, zeilenVerwendet: verwendet, zeilenVerworfen: verworfen },
+    debug: {
+      ...debugBasis, zeilenVerwendet: verwendet, zeilenVerworfen: verworfen,
+      ...(zahlenfehler.length > 0 ? { zahlenfehler } : {}),
+    },
   };
 }
 
