@@ -66,6 +66,7 @@ import {
   markZberichtInboxImported, markZberichtInboxIgnored,
 } from '@/lib/zbericht-inbox-db';
 import type { ZberichtInboxRow } from '@/lib/zbericht-inbox-db';
+import { runZberichtAutoImport, autoImportSummary, isZberichtRowClaimable } from '@/lib/zbericht-auto-import';
 
 import {
   mergeGnTagesQuellen, summarizeGnPeriode, BONS_BERECHNET_TOOLTIP,
@@ -196,6 +197,11 @@ export default function GastronoviZBerichtPage() {
   const [inboxBusy,      setInboxBusy]      = useState<string | null>(null);
   /** Inbox-Zeile, aus der der aktuelle Wizard-Durchlauf stammt (→ nach Save markieren). */
   const [activeInboxId,  setActiveInboxId]  = useState<string | null>(null);
+  /** Auto-Import läuft (Seiten-Öffnung oder Button «Jetzt alle importieren»). */
+  const [autoRunning,    setAutoRunning]    = useState(false);
+  const [autoProgress,   setAutoProgress]   = useState<{ done: number; total: number } | null>(null);
+  /** Pro Mandant nur EIN Auto-Lauf je Seitenbesuch (kein Loop bei Fehlern). */
+  const autoRanForTenant = useRef<string | null>(null);
 
   // Gäste & Bonanalyse State (bis zu 3 KPI-PDFs gleichzeitig)
   const [kpiFiles,       setKpiFiles]       = useState<KpiFileEntry[]>([]);
@@ -324,6 +330,45 @@ export default function GastronoviZBerichtPage() {
     });
     return () => { cancelled = true; };
   }, [tenantId]);
+
+  /**
+   * Auto-Import: alle pending-PDFs des Mandanten automatisch verarbeiten
+   * (bestehender Weg parseGnZBerichtPdf → saveGnImport). Fehler eines PDFs
+   * blockieren nie den Rest (Zeile → status 'error' mit Grund).
+   */
+  const runAutoImport = useCallback(async (rows: ZberichtInboxRow[]) => {
+    const pendingRows = rows.filter(isZberichtRowClaimable);
+    if (pendingRows.length === 0 || autoRunning) return;
+    setAutoRunning(true);
+    setAutoProgress({ done: 0, total: pendingRows.length });
+    try {
+      const result = await runZberichtAutoImport(tenantId, pendingRows,
+        (done, total) => setAutoProgress({ done, total }));
+      const summary = autoImportSummary(result);
+      if (result.errorCount > 0 || result.skippedCount > 0) toast.warning(summary, { duration: 10000 });
+      else if (result.importedCount > 0 || result.duplicateCount > 0) toast.success(summary);
+      if (result.importedCount > 0) {
+        void loadHistory();
+        // Manuelle Tagesabschluss-Korrekturen NIE stillschweigend überschreiben —
+        // derselbe Konfliktdialog wie beim manuellen Import.
+        void checkTagesabschlussConflicts(result.importedDays);
+      }
+    } finally {
+      setAutoRunning(false);
+      setAutoProgress(null);
+      void refreshInbox();
+    }
+  }, [tenantId, autoRunning, loadHistory, refreshInbox]); // eslint-disable-line react-hooks/exhaustive-deps -- checkTagesabschlussConflicts ist stabil (useCallback[tenantId])
+
+  // Beim Öffnen der Seite (bzw. Mandantenwechsel) einmalig automatisch importieren.
+  useEffect(() => {
+    if (isGuest) return; // Gäste importieren nie
+    if (autoRanForTenant.current === tenantId) return;
+    if (inboxRows.some(r => isZberichtRowClaimable(r))) {
+      autoRanForTenant.current = tenantId;
+      void runAutoImport(inboxRows);
+    }
+  }, [inboxRows, tenantId, isGuest, runAutoImport]);
 
   /**
    * Eingang importieren: PDF per signierter URL laden und in den BESTEHENDEN
@@ -1064,9 +1109,38 @@ export default function GastronoviZBerichtPage() {
           {/* ── E-Mail-Eingang: per Webhook eingegangene Z-Bericht-PDFs ──── */}
           {importType === 'zbericht' && inboxAvailable && (inboxRows.length > 0 || inboxError) && (
             <div className="rounded-lg border p-4 space-y-3" data-testid="section-zbericht-inbox">
-              <p className="text-sm font-semibold flex items-center gap-2">
-                <Mail className="h-4 w-4 text-muted-foreground" />
-                Aus E-Mail eingegangen (ausstehend)
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <p className="text-sm font-semibold flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-muted-foreground" />
+                  Aus E-Mail eingegangen
+                  {inboxRows.filter(r => r.status === 'pending' || r.status === 'processing').length > 0 && (
+                    <span className="rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 px-2 py-0.5 text-xs font-medium"
+                      data-testid="badge-inbox-pending">
+                      Pending: {inboxRows.filter(r => r.status === 'pending' || r.status === 'processing').length}
+                    </span>
+                  )}
+                  {inboxRows.filter(r => r.status === 'error').length > 0 && (
+                    <span className="rounded-full bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 px-2 py-0.5 text-xs font-medium"
+                      data-testid="badge-inbox-error">
+                      Prüfung nötig: {inboxRows.filter(r => r.status === 'error').length}
+                    </span>
+                  )}
+                </p>
+                {!isGuest && inboxRows.some(r => isZberichtRowClaimable(r)) && (
+                  <button onClick={() => void runAutoImport(inboxRows)}
+                    disabled={autoRunning || inboxBusy !== null}
+                    className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+                    data-testid="button-inbox-import-all">
+                    {autoRunning && <Loader2 className="h-3 w-3 animate-spin" />}
+                    {autoRunning && autoProgress
+                      ? `Importiere… ${autoProgress.done}/${autoProgress.total}`
+                      : 'Jetzt alle importieren'}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Ausstehende Z-Berichte werden beim Öffnen der Seite automatisch importiert.
+                Nur eindeutige Tagesberichte laufen automatisch — alles andere landet hier zur manuellen Prüfung.
               </p>
               {inboxError && (
                 <div className="flex items-start gap-2 rounded border border-red-200 bg-red-50 dark:bg-red-950/20 p-2.5 text-xs text-red-700 dark:text-red-400" data-testid="text-inbox-error">
@@ -1091,18 +1165,25 @@ export default function GastronoviZBerichtPage() {
                     <p className="text-xs text-muted-foreground">
                       Eingegangen am {fdatetime(row.received_at)}
                     </p>
+                    {row.status === 'error' && (
+                      <p className="text-xs text-red-700 dark:text-red-400 flex items-start gap-1 mt-0.5"
+                        data-testid={`text-inbox-error-reason-${row.id}`}>
+                        <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                        {row.error_message ?? 'Automatischer Import fehlgeschlagen — manuell prüfen.'}
+                      </p>
+                    )}
                   </div>
                   {!isGuest && (
                     <div className="flex gap-2 shrink-0">
                       <button onClick={() => void handleImportFromInbox(row)}
-                        disabled={inboxBusy !== null}
+                        disabled={inboxBusy !== null || autoRunning}
                         className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
                         data-testid={`button-inbox-import-${row.id}`}>
                         {inboxBusy === row.id && <Loader2 className="h-3 w-3 animate-spin" />}
                         Importieren
                       </button>
                       <button onClick={() => void handleIgnoreInbox(row)}
-                        disabled={inboxBusy !== null}
+                        disabled={inboxBusy !== null || autoRunning}
                         className="px-3 py-1.5 text-xs rounded border hover:bg-muted disabled:opacity-50"
                         data-testid={`button-inbox-ignore-${row.id}`}>
                         Ignorieren

@@ -105,6 +105,7 @@ import { commitGastronoviDays, targetForYear } from '@/lib/gastronovi-daily-save
 import { parseGastronoviExcel, type GastronoviDayResult } from '@/lib/revenue-parser';
 import { type UnlesbareZelle } from '@/lib/tagesdaten-zahlen';
 import { ImportCenterGrid } from '@/components/import-center/ImportCenterGrid';
+import ZberichtInboxCard from '@/components/ZberichtInboxCard';
 import { IMPORT_SECTION_OPEN_EVENT } from '@/components/import-center/ImportGroupCards';
 import { CockpitReadinessCard, MonthlyBlockCard, RareBlockCard } from '@/components/import-center/RhythmOverview';
 import { visibleCategories } from '@/lib/import-center';
@@ -4090,6 +4091,9 @@ const ImportHub = () => {
 
         {showAdminSections && (
         <>
+        {/* ── Z-Bericht E-Mail-Eingang: Auto-Import + Status (gut sichtbar) ── */}
+        <ZberichtInboxCard />
+
         {/* ── Block 1: Wöchentlich — «vollständig bis» je Quelle + Ampel ── */}
         <CockpitReadinessCard />
 
