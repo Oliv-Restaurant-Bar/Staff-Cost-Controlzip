@@ -114,9 +114,17 @@ export function mitFsDefaults(mapping: WarengruppenMapping): WarengruppenMapping
   return [...mapping, ...DEFAULT_FS_KATEGORIEN_MAPPING.filter(r => !vorhanden.has(r.gruppe.toLowerCase()))];
 }
 
-const SPIRITUOSEN_RX = /grappa|vodka|wodka|\bgin\b|whisk|\brum\b|likör|liqueur|aperitif|bitter|campari|aperol|tequila|amaretto|cognac|armagnac|calvados|ouzo|sambuca|limoncello|vermouth|vermut|kirsch\b|träsch|williamine|absinth|baileys|jägermeister|ramazzotti|averna|fernet|cynar|martini|spirituose/i;
+const SPIRITUOSEN_RX = /grappa|vodka|wodka|\bgin\b|whisk|\brum\b|likör|liqueur|aperitif|bitter|campari|aperol|tequila|amaretto|cognac|armagnac|calvados|ouzo|sambuca|limoncello|vermouth|vermut|kirsch\b|träsch|williamine|absinth|baileys|jägermeister|ramazzotti|averna|fernet|cynar|martini|spirituose|brand\b|obstbrand|zwetschgen|aprikosen|vieille prune/i;
 const WEIN_RX = /\bwein\b|prosecco|champagn|spumante|cava\b|riesling|merlot|pinot|chardonnay(?!.*grappa)|sauvignon|chasselas|dôle|federweiss|rosé\b|rioja|barolo|chianti|primitivo|amarone/i;
-const BIER_RX = /bier|lager\b|weisse|weizen|\bipa\b|stout|zwickel|amber\b|panach|spez\b|moscht|apfelwein|cidre|cider|bulk|tanksystem|feldschlösschen|valaisanne|gurten\b|cardinal|carlsberg|1664|grimbergen|hürlimann|eichhof|schneider\b/i;
+// Moscht/Cider gehört laut FGG-Monatsrechnung («Zusammenfassung MwSt.») zu
+// «Andere alk. freie Getränke» (auch die 8.1%-Variante), NICHT zu Bier.
+const CIDER_RX = /moscht|apfelwein|cidre|cider/i;
+const BIER_RX = /bier|lager\b|weisse|weizen|\bipa\b|stout|zwickel|amber\b|panach|spez\b|bulk|tanksystem|feldschlösschen|valaisanne|gurten\b|cardinal|carlsberg|1664|grimbergen|hürlimann|eichhof|schneider\b/i;
+/** Alkohol-Volumenprozent ≥15 in der Bezeichnung («40% 1X0,70») ⇒ Spirituose. */
+function hatSpirituosenProzent(b: string): boolean {
+  const m = b.match(/\b(\d{1,2}(?:\.\d)?)\s?%/);
+  return m !== null && Number(m[1]) >= 15;
+}
 const MINERAL_RX = /arkina|rhäzünser(?!.*(citro|premix))|valser|henniez|aproz|eptinger|passugger|san pellegrino|acqua panna|evian|vittel|mineralwasser|\bmit co2\b|\bohne co2\b/i;
 
 /**
@@ -129,7 +137,7 @@ export function fsKategorie(bezeichnung: string, mwstSatz: number): FsKategorie 
   const b = bezeichnung;
   if (mwstSatz === 2.6) {
     if (SPIRITUOSEN_RX.test(b)) return 'Andere alk. freie Getränke'; // alkoholfreie Aperitifs etc.
-    if (/alk\.?\s*frei|alkoholfrei/i.test(b) && BIER_RX.test(b)) return 'Alkoholfreies Bier';
+    if (CIDER_RX.test(b)) return 'Andere alk. freie Getränke';       // Moscht/Cider (auch alk.frei) lt. FGG
     if (BIER_RX.test(b)) return 'Alkoholfreies Bier';
     if (MINERAL_RX.test(b)) return 'Mineralwasser';
     return 'Andere alk. freie Getränke';
@@ -137,7 +145,10 @@ export function fsKategorie(bezeichnung: string, mwstSatz: number): FsKategorie 
   // 8.1% — alkoholisch oder Nicht-Getränk:
   if (SPIRITUOSEN_RX.test(b)) return 'Spirituosen';
   if (WEIN_RX.test(b)) return 'Wein';
+  if (CIDER_RX.test(b)) return 'Andere alk. freie Getränke'; // SuureMoscht 8.1% lt. FGG NICHT Bier
   if (BIER_RX.test(b)) return 'Bier';
+  if (hatSpirituosenProzent(b)) return 'Spirituosen'; // Obstbrände etc. («40% 1X0,70»)
+  if (/logistikpauschale|\bpauschale\b/i.test(b)) return 'Zu-/Abschläge';
   if (/gas\b|protadur|innenhüllen|co2.*flasche|kohlensäure|zapf|reinig|schlauch|becher|glas\b|gläser|karton|pos-|promo/i.test(b)) {
     return 'Andere Güter';
   }
@@ -173,6 +184,38 @@ function fsWarengruppe(bezeichnung: string, satz: number): string {
   return kat === 'Leergut' ? 'Leergut' : (kat ?? '');
 }
 
+/**
+ * VEG-Einweg-Glasgebühren zählt FGG in der «Zusammenfassung MwSt.» zur
+ * WARENkategorie (nicht zu Zu-/Abschlägen): 2.6% ⇒ alkoholfreie Getränke,
+ * 8.1% ⇒ Spirituosen/Wein-EW-Flaschen (heuristisch Spirituosen).
+ * Logistikpauschalen etc. bleiben «Zu-/Abschläge».
+ */
+function gebuehrWarengruppe(bezeichnung: string, satz: number): string {
+  if (/^veg\b/i.test(bezeichnung.trim())) {
+    return satz === 2.6 ? 'Andere alk. freie Getränke' : 'Spirituosen';
+  }
+  return 'Zu-/Abschläge';
+}
+
+/**
+ * Nachklassifizierung pro Artikel-Nr: Zeilen mit abgeschnittener Bezeichnung
+ * («24X0,33 (AKTION)») übernehmen die Warengruppe der aussagekräftigsten
+ * (längsten) Bezeichnung derselben Artikel-Nr im selben Dokument.
+ */
+function nachklassifiziereProArtikel(positionen: WarenPosition[]): void {
+  const best = new Map<string, { len: number; wg: string }>();
+  for (const p of positionen) {
+    if (!p.artNr || p.mwstCode === 0 || !p.warengruppe || p.warengruppe === 'Leergut') continue;
+    const cur = best.get(p.artNr);
+    if (!cur || p.bezeichnung.length > cur.len) best.set(p.artNr, { len: p.bezeichnung.length, wg: p.warengruppe });
+  }
+  for (const p of positionen) {
+    if (!p.artNr || p.mwstCode === 0 || p.warengruppe === 'Leergut') continue;
+    const b = best.get(p.artNr);
+    if (b && b.wg && p.bezeichnung.length < b.len) p.warengruppe = b.wg;
+  }
+}
+
 export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
   const out: FsLieferschein = {
     lieferungNr: '', lieferdatum: '', auftrag: '', positionen: [],
@@ -182,6 +225,7 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
   };
 
   let sektion: 'kopf' | 'positionen' | 'leergut' | 'ladung' | 'konditionen' | 'ende' = 'kopf';
+  let pendingBez = '';
   for (let i = 0; i < zeilen.length; i++) {
     const z = zeilen[i];
     const k = z.kompakt;
@@ -222,7 +266,9 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
         const stkPreis = parseChf(z.cells[z.cells.length - 5] ?? '');
         const inh = parseChf(z.cells[z.cells.length - 6] ?? '');
         const einh = z.cells[z.cells.length - 7] ?? '';
-        const bez = z.cells.slice(matIdx + 1, z.cells.length - 7).join(' ').trim();
+        const bez = [pendingBez, z.cells.slice(matIdx + 1, z.cells.length - 7).join(' ').trim()]
+          .join(' ').replace(/\s+/g, ' ').trim();
+        pendingBez = '';
         if (preis !== null) {
           const satz = mc.satz;
           out.positionen.push({
@@ -236,11 +282,26 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
           continue;
         }
       }
-      // Folgezeile (umgebrochene Bezeichnung) → an letzte Position anhängen
-      if (out.positionen.length > 0 && z.cells.length > 0 && !/^KD-|^Material/i.test(z.cells[0])) {
-        const p = out.positionen[out.positionen.length - 1];
-        p.bezeichnung = `${p.bezeichnung} ${z.text}`.replace(/\s+/g, ' ').trim();
-        p.warengruppe = fsWarengruppe(p.bezeichnung, MWST_CODE_MAP[p.mwstCode === 0 ? 'C0' : p.mwstCode === 2 ? '4C' : '3C'].satz);
+      // Folgezeile (umgebrochene Bezeichnung): steht direkt DANACH eine
+      // Materialzeile, ist dies deren Bezeichnungs-ANFANG → pendingBez;
+      // sonst an die letzte Position anhängen.
+      if (z.cells.length > 0 && !/^KD-|^Material/i.test(z.cells[0])) {
+        const naechste = zeilen[i + 1];
+        // Verpackungs-Suffixe («TAP7 Harass 20X0,50», «1X20,00») gehören zur
+        // VORHERIGEN Position; reine Markentexte VOR einer Materialzeile sind
+        // deren Bezeichnungs-ANFANG.
+        const istVerpackungsSuffix = /\d+X\d/i.test(z.text) || /^\d/.test(z.text.trim());
+        const naechsteIstMaterial = naechste !== undefined
+          && MWST_CODE_MAP[naechste.cells[naechste.cells.length - 1] ?? ''] !== undefined
+          && naechste.cells.findIndex(c => /^\d{5,6}$/.test(c)) >= 0
+          && naechste.cells.findIndex(c => /^\d{5,6}$/.test(c)) <= 1;
+        if (naechsteIstMaterial && !istVerpackungsSuffix) {
+          pendingBez = `${pendingBez} ${z.text}`.replace(/\s+/g, ' ').trim();
+        } else if (out.positionen.length > 0) {
+          const p = out.positionen[out.positionen.length - 1];
+          p.bezeichnung = `${p.bezeichnung} ${z.text}`.replace(/\s+/g, ' ').trim();
+          p.warengruppe = fsWarengruppe(p.bezeichnung, MWST_CODE_MAP[p.mwstCode === 0 ? 'C0' : p.mwstCode === 2 ? '4C' : '3C'].satz);
+        }
       }
       continue;
     }
@@ -267,7 +328,7 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
       if (mc && preis !== null && z.cells.length >= 3) {
         const bez = z.cells.slice(0, z.cells.length - 2).join(' ').trim();
         out.positionen.push({
-          artNr: '', bezeichnung: bez, warengruppe: 'Zu-/Abschläge',
+          artNr: '', bezeichnung: bez, warengruppe: gebuehrWarengruppe(bez, mc.satz),
           menge: 1, einheit: '', preis: preis,
           positionspreis: preis, mwstBetrag: Math.round(preis * mc.satz) / 100, mwstCode: mc.code,
         });
@@ -276,6 +337,7 @@ export function parseFsLieferschein(zeilen: FsZeile[]): FsLieferschein {
     }
   }
 
+  nachklassifiziereProArtikel(out.positionen);
   if (!out.lieferungNr) out.failureReason = 'Keine «Lieferung: <Nr>» gefunden — ist das ein Feldschlösschen-Lieferschein?';
   else if (!out.lieferdatum) out.failureReason = 'Kein Lieferdatum gefunden.';
   else if (out.debug.positionszeilen === 0) out.failureReason = 'Keine Positionszeilen erkannt (Layout unbekannt?).';
@@ -471,9 +533,10 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
         const wert = parseChf(z.cells[z.cells.length - 2] ?? '');
         if (pct && wert !== null) {
           const satz = Number(pct[1]);
+          const bezZa = z.cells.slice(0, z.cells.length - 4).join(' ').trim();
           aktLs.positionen.push({
-            artNr: '', bezeichnung: z.cells.slice(0, z.cells.length - 4).join(' ').trim(),
-            warengruppe: 'Zu-/Abschläge', menge: 1, einheit: '', preis: wert,
+            artNr: '', bezeichnung: bezZa,
+            warengruppe: gebuehrWarengruppe(bezZa, satz), menge: 1, einheit: '', preis: wert,
             positionspreis: wert, mwstBetrag: Math.round(wert * satz * 10) / 1000,
             mwstCode: satz === 2.6 ? 2 : 1,
           });
@@ -496,9 +559,10 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
         const satz = Number(feePct[1]);
         const wert = parseChf(z.cells[z.cells.length - 2] ?? '');
         if (wert !== null) {
+          const bezGeb = z.cells.slice(0, z.cells.length - 4).join(' ').trim() || 'Gebühr';
           aktLs.positionen.push({
-            artNr: '', bezeichnung: z.cells.slice(0, z.cells.length - 4).join(' ').trim() || 'Gebühr',
-            warengruppe: 'Zu-/Abschläge', menge: 1, einheit: '', preis: wert,
+            artNr: '', bezeichnung: bezGeb,
+            warengruppe: gebuehrWarengruppe(bezGeb, satz), menge: 1, einheit: '', preis: wert,
             positionspreis: wert, mwstBetrag: Math.round(wert * satz * 10) / 1000,
             mwstCode: satz === 0 ? 0 : satz === 2.6 ? 2 : 1,
           });
@@ -531,9 +595,19 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
         continue;
       }
       // reine Textzeile (umgebrochene Bezeichnung — kann VOR oder NACH der Zahlzeile stehen)
-      if (z.cells.length > 0 && !/^(material|auftrag|warenempfänger|zu-\/abschläge|mehrwertsteuer|endbetrag|datum\/beleg|restaurantbeaulieu|feldschlösschen|ch-4310|\*fürpfand|ohneihren|zahlungsbedingung)/.test(k)
+      if (z.cells.length > 0 && !/^(material|auftrag|warenempfänger|zu-\/abschläge|mehrwertsteuer|endbetrag|datum\/beleg|restaurantbeaulieu|feldschlösschengetränke|ch-4310|\*fürpfand|ohneihren|zahlungsbedingung)/.test(k)
           && z.cells.every(c => parseChf(c) === null || c.length > 12)) {
-        if (aktLs.positionen.length > 0 && pendingText === '') {
+        // Steht direkt DANACH eine Materialzeile, ist dies deren umgebrochener
+        // Bezeichnungs-ANFANG («Feldschlösschen Weizenfrisch alkoholfrei» vor
+        // «20257 | 24X0,33 | …») → pendingText, NICHT an die letzte Position.
+        const naechste = zeilen[i + 1];
+        const istVerpackungsSuffix = /\d+X\d/i.test(z.text) || /^\d/.test(z.text.trim());
+        const naechsteIstMaterial = naechste !== undefined
+          && /^\d{5,6}$/.test(naechste.cells[0] ?? '')
+          && naechste.cells.findIndex(c => /^\d{1,2}\.\d%$/.test(c)) >= 3;
+        if (naechsteIstMaterial && !istVerpackungsSuffix) {
+          pendingText = `${pendingText} ${z.text}`.replace(/\s+/g, ' ').trim();
+        } else if (aktLs.positionen.length > 0 && pendingText === '') {
           const p = aktLs.positionen[aktLs.positionen.length - 1];
           // Heuristik: kurz nach einer Position → gehört zur letzten Bezeichnung
           p.bezeichnung = `${p.bezeichnung} ${z.text}`.replace(/\s+/g, ' ').trim();
@@ -569,6 +643,10 @@ export function parseFsSammelrechnung(zeilen: FsZeile[]): FsSammelrechnung {
       });
     }
   }
+
+  // Nachklassifizierung über ALLE Anhang-Positionen (dokumentweit: Zeilen mit
+  // abgeschnittener Bezeichnung erben die Kategorie derselben Artikel-Nr).
+  nachklassifiziereProArtikel(out.anhangLieferscheine.flatMap(a => a.positionen));
 
   if (!out.nr) out.failureReason = 'Keine «Sammelrechnung: <Nr>» gefunden.';
   else if (out.fakturen.length === 0) out.failureReason = 'Keine Faktura-Zeilen erkannt.';

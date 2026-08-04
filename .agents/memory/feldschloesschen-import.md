@@ -18,3 +18,12 @@ description: Parser-/Import-Regeln für Feldschlösschen Lieferschein-, Sammelre
 - Jahres-ZIP bucht jetzt ALLE eingebetteten Anhang-Lieferscheine als Warenkosten (Lieferdatum!) + Preis-Historie + fs_historie; EIN Undo (typ fs_historie) über Monate+Historie+Jahre; Jahr-Sperre vor jedem Schreiben frisch prüfen.
 - Anhang-Übernahme aus Monatsrechnung setzt `InvoiceEntry.quelle='monatsrechnung'` (provisorisch, Badge). Echter Lieferschein ersetzt nahe provisorische Einträge (gleiche Referenz ODER ±7 Tage/±0.10) auch über Monatsgrenzen — dabei IMMER Positionen UND Preis-Hinweise des alten Eintrags löschen (Waisen-Bug, vom Review gefunden); Undo-Snapshot inkl. Nachbarmonate.
 - Regressionstests: `src/lib/__tests__/fs-import.test.ts` (KV-Mock; Monatsgrenzen-Ersetzung ohne Waisen).
+
+## Kategorie-Aufteilung folgt der FGG-«Zusammenfassung MwSt.» (massgeblich)
+- Moscht/Cider (CIDER_RX) ist NIE Bier — auch die 8.1%-Variante zählt FGG zu «Andere alk. freie Getränke».
+- Obstbrände: Keyword (`brand\b` etc.) plus Alkohol-%-Signal ≥15 in der Bezeichnung ⇒ Spirituosen; Bier mit tiefem % (5.2%) bleibt Bier.
+- VEG-Einweg-Glasgebühren zählt FGG zur WARENkategorie (2.6% ⇒ Andere alk. freie, 8.1% ⇒ Spirituosen heuristisch); nur Logistikpauschalen sind «Zu-/Abschläge».
+- Umgebrochene Bezeichnungen: Markentext-Zeilen stehen VOR ihrer Materialzeile (Weizenfrisch-Fall) ⇒ pendingText/pendingBez mit Verpackungs-Suffix-Heuristik (/\d+X\d/ ⇒ gehört zur VORHERIGEN Position). Kopfzeilen-Filter darf nur `feldschlösschengetränke` (Absender) ausschliessen, nicht jedes «Feldschlösschen …» (Markennamen!).
+- Post-Pass `nachklassifiziereProArtikel`: abgeschnittene Bezeichnungen («24X0,33 (AKTION)») erben die Warengruppe der längsten Bezeichnung derselben Artikel-Nr im Dokument.
+- **Why:** Juli 2026 Beaulieu: «Erfasst» wich pro Kategorie ab (Bier +87, AF-Bier −230, Spirituosen −118 …), Gesamtsumme stimmte. Nach den Regeln: alle Kategorien Diff 0.00; Leergut −0.09 = neutrale Rundungsdifferenz-Position (gewollt).
+- **How to apply:** Klassifizierung nie an der Gesamtsumme validieren, sondern per Kategorien-Gegenprobe gegen die Zusammenfassung MwSt. Nur warengruppe/bezeichnung ändern, nie positionspreis (Matching/Beträge bleiben unangetastet). Alte gespeicherte Positionen werden erst durch erneuten Upload der Monatsrechnung finalisiert.

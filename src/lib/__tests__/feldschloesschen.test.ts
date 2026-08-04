@@ -122,6 +122,35 @@ describe('fsKategorie', () => {
   it('rät NIE: unbekannte 8.1%-Position ⇒ null (Konto offen)', () => {
     expect(fsKategorie('Völlig unbekannter Artikel XYZ', 8.1)).toBeNull();
   });
+  it('folgt der FGG-Zusammenfassung: Moscht/Cider ≠ Bier, Obstbrände = Spirituosen, Pauschalen = Zu-/Abschläge', () => {
+    // SuureMoscht/Apfelwein (auch 8.1%) zählt FGG zu «Andere alk. freie Getränke»
+    expect(fsKategorie('Ramseier SuureMoscht Apfelwein naturtrüb 12X0,49', 8.1)).toBe('Andere alk. freie Getränke');
+    expect(fsKategorie('Ramseier SuureMoscht alk.frei Bügelflasche', 2.6)).toBe('Andere alk. freie Getränke');
+    // Obstbrände: Keyword oder Alkohol-% ≥ 15 in der Bezeichnung
+    expect(fsKategorie('Morand Abricot Aprikosenbrand 40% 1X0,70', 8.1)).toBe('Spirituosen');
+    expect(fsKategorie('1X0,70 40%', 8.1)).toBe('Spirituosen');
+    // Bier mit tiefem Alkohol-% bleibt Bier
+    expect(fsKategorie('Valaisanne Lager 5.2% Fass', 8.1)).toBe('Bier');
+    expect(fsKategorie('Logistikpauschale', 8.1)).toBe('Zu-/Abschläge');
+  });
+});
+
+describe('umgebrochene Bezeichnungen (Markenzeile VOR der Materialzeile)', () => {
+  it('Markentext vor einer Materialzeile gehört zur NÄCHSTEN Position; Verpackungs-Suffix zur vorherigen', () => {
+    const ls = parseFsLieferschein(zeilen([
+      [1, 'Lieferschein'],
+      [1, 'Lieferdatum: | 17.07.2026'],
+      [1, 'Lieferung: | 479000001'],
+      [1, '10450 | Feldschlösschen Alkoholfrei Lager | CRT | 24 | 1.49 | 1 | 1 | 35.76 | 4C'],
+      [1, 'Harass 24X0,33'],
+      [1, 'Feldschlösschen Weizenfrisch alkoholfrei'],
+      [1, '20257 | 24X0,33 | CRT | 24 | 1.60 | 3 | 3 | 115.20 | 4C'],
+      [1, 'Zwischentotal Warenwert | 150.96'],
+    ]));
+    expect(ls.positionen[0].bezeichnung).toContain('Harass 24X0,33'); // Suffix → vorherige
+    expect(ls.positionen[1].bezeichnung).toContain('Weizenfrisch');   // Marke → nächste
+    expect(ls.positionen[1].warengruppe).toBe('Alkoholfreies Bier');
+  });
 });
 
 describe('parseFsLieferschein', () => {
@@ -137,14 +166,19 @@ describe('parseFsLieferschein', () => {
     expect(ls.totalLieferung).toBe(161.58);
   });
   it('liest Positionen inkl. KD-Spalte, Folgezeilen, Leergut & Konditionen', () => {
-    const waren = ls.positionen.filter(p => p.mwstCode !== 0 && p.warengruppe !== 'Zu-/Abschläge');
+    const waren = ls.positionen.filter(p => p.mwstCode !== 0 && p.artNr !== '');
     expect(waren.map(p => p.artNr)).toEqual(['10030', '10450', '10500', '27692', '10041']);
     expect(waren[0].bezeichnung).toContain('TAP7 Harass'); // Folgezeile angehängt
     expect(waren.reduce((a, p) => a + p.positionspreis, 0)).toBeCloseTo(226.14, 2);
     const leergut = ls.positionen.filter(p => p.mwstCode === 0);
     expect(leergut.reduce((a, p) => a + p.positionspreis, 0)).toBeCloseTo(-95, 2);
+    // Konditionen: Logistikpauschale bleibt Zu-/Abschläge; VEG-Glasgebühr zählt
+    // lt. FGG-Zusammenfassung zur Warenkategorie (hier 8.1% ⇒ Spirituosen).
+    const gebuehren = ls.positionen.filter(p => p.artNr === '' && p.mwstCode !== 0);
+    expect(gebuehren.reduce((a, p) => a + p.positionspreis, 0)).toBeCloseTo(15.36, 2);
     const zab = ls.positionen.filter(p => p.warengruppe === 'Zu-/Abschläge');
-    expect(zab.reduce((a, p) => a + p.positionspreis, 0)).toBeCloseTo(15.36, 2);
+    expect(zab.reduce((a, p) => a + p.positionspreis, 0)).toBeCloseTo(15.00, 2);
+    expect(ls.positionen.find(p => /^VEG/.test(p.bezeichnung))?.warengruppe).toBe('Spirituosen');
   });
   it('Netto-Summe aller Positionen = Total netto Lieferung', () => {
     const r = fsLieferscheinAlsRechnung(ls);
