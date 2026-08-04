@@ -15,7 +15,6 @@
 import { KPI_CATALOG, type KpiId } from './kpi-catalog';
 import {
   DEFAULT_HEUTE_WIDGET_IDS,
-  HEUTE_WIDGET_DEFS,
   isHeuteWidgetId,
   type HeuteWidgetId,
 } from './start-widgets';
@@ -62,13 +61,6 @@ export function normalizeStartPrefs(raw: unknown): StartPrefs {
     kpiCards: kpiCards.length > 0 ? kpiCards : defaults.kpiCards,
     heuteWidgets: heuteWidgets.length > 0 ? heuteWidgets : defaults.heuteWidgets,
   };
-}
-
-/** Gast-Sicht: gast-verborgene Widgets aus der Auswahl filtern (nie anbieten). */
-export function filterWidgetsForGuest(ids: readonly HeuteWidgetId[], isGuest: boolean): HeuteWidgetId[] {
-  if (!isGuest) return [...ids];
-  const hidden = new Set(HEUTE_WIDGET_DEFS.filter((d) => d.guestHidden).map((d) => d.id));
-  return ids.filter((id) => !hidden.has(id));
 }
 
 /** Element in einer Liste um delta Positionen verschieben (immutable, Grenzen geklemmt). */

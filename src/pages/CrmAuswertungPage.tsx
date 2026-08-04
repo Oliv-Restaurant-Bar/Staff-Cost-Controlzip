@@ -14,7 +14,7 @@
  *  G) Klassischer Report (einklappbar): Kennzahlen, Status, beste Zeiten.
  *
  * Datenschutz: Reservationen enthalten PII — Zugriff nur für eingeloggte Admins
- * (`isAdmin && !isGuest`), gegatet auf Route-Guard UND in beiden Lade-Effekten.
+ * (`isAdmin`), gegatet auf Route-Guard UND in beiden Lade-Effekten.
  * Liest ausschliesslich aus bestehenden Tabellen — keine Migration, keine
  * Schreibzugriffe, keine Änderung an Import-/CRM-Logik. Zahlen aus der zentralen
  * Logik (reservation-dashboard.ts / foratable-future.ts) — Single Source of Truth.
@@ -151,14 +151,11 @@ function todayIso(): string {
 
 export default function CrmAuswertungPage() {
   const { tenantId, tenant } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // usePermissions().isAdmin schliesst Gast-Sessions ein — hier explizit
-  // ausschliessen (read-only Gäste-Links dürfen keine Reservations-/PII-Daten
-  // abfragen). Wird sowohl im Route-Guard als auch in beiden Lade-Effekten geprüft.
-  const canView = isAdmin && !isGuest;
+  const canView = isAdmin;
 
   const [today] = useState(todayIso);
 

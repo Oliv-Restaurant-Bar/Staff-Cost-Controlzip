@@ -14,9 +14,8 @@
  * ausschliesslich die eigenen Cockpit-Blobs: Einstellungen, Inventur-Häkchen
  * und manuelle Kontroll-Erledigungen (Union-Merge + Tombstones + Dirty-Check).
  *
- * Zugriff: nur Admin und KEINE Gast-Session (isAdmin && !isGuest). Das Gate
- * greift auf dem Render-Pfad (Navigate) UND in den Lade-Effekten (kein Fetch
- * für Gäste), zusätzlich zur Route-Guard in App.tsx.
+ * Zugriff: nur Admin (isAdmin). Das Gate greift auf dem Render-Pfad (Navigate)
+ * UND in den Lade-Effekten, zusätzlich zur Route-Guard in App.tsx.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -25,7 +24,6 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { ClipboardCheck, RefreshCw, Loader2, Settings2, Table2, ShieldCheck } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useTenant } from '@/contexts/TenantContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -69,10 +67,9 @@ import { CockpitDetailDrawer } from '@/components/import-cockpit/CockpitDetailDr
 
 export default function ImportCockpitPage() {
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { tenantId, tenantKey, tenant } = useTenant();
   const { toast } = useToast();
-  const allowed = isAdmin && !isGuest;
+  const allowed = isAdmin;
 
   const [signals, setSignals] = useState<Record<CockpitSourceId, CockpitSignal> | null>(null);
   const [loading, setLoading] = useState(true);

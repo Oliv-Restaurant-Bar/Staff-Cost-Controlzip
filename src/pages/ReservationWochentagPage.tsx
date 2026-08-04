@@ -331,7 +331,7 @@ function WeekdayCard({ h, metric, maxValue }: {
 
 export default function ReservationWochentagPage() {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -391,15 +391,15 @@ export default function ReservationWochentagPage() {
 
   // Tabellen-Existenz EINMALIG prüfen.
   useEffect(() => {
-    if (!isAdmin || isGuest) return;
+    if (!isAdmin) return;
     let alive = true;
     void checkReservationTablesExist().then((ok) => { if (alive) setTablesOk(ok); });
     return () => { alive = false; };
-  }, [isAdmin, isGuest]);
+  }, [isAdmin]);
 
   // Reservationen für den gewählten Zeitraum laden (mandantengefiltert).
   useEffect(() => {
-    if (!isAdmin || isGuest) { setLoading(false); return; }
+    if (!isAdmin) { setLoading(false); return; }
     if (tablesOk === null) return;            // auf Tabellen-Prüfung warten
     if (tablesOk === false) { setRows([]); setLoading(false); return; }
     if (rangeInvalid) { setRows([]); setLoading(false); return; }
@@ -409,7 +409,7 @@ export default function ReservationWochentagPage() {
       if (alive) { setRows(data); setLoading(false); }
     });
     return () => { alive = false; };
-  }, [tenantId, isAdmin, isGuest, tablesOk, from, to, rangeInvalid]);
+  }, [tenantId, isAdmin, tablesOk, from, to, rangeInvalid]);
 
   // ── Berechnungen ─────────────────────────────────────────────────────────────
   // Schulferien-Perioden (Kanton Bern) für Jahr + Ferienart; leer wenn kein
@@ -746,7 +746,7 @@ export default function ReservationWochentagPage() {
     }
   }, [seasonMode, selectedSeasonIds, holidayMode, ferienart, preset, from, to, scope, year, metric, searchParams, setSearchParams]);
 
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const hasData = agg.totalReservations > 0;
   const yearRelevant = holidayMode || SEASON_PRESETS.includes(preset);

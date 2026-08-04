@@ -10,14 +10,12 @@ import { PlanDisplayProvider } from "@/contexts/PlanDisplayContext";
 import { MaisonProvider } from "@/contexts/MaisonContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { StichtagProvider } from "@/contexts/StichtagContext";
-import { GuestSessionProvider, GUEST_SESSION_KEY } from "@/contexts/GuestSessionContext";
 import { TenantProvider } from "@/contexts/TenantContext";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useTenant } from "@/contexts/TenantContext";
 import { LoginPage } from "@/components/LoginPage";
 import { RequireAdmin } from "@/components/RequireAdmin";
-import { GuestBanner } from "@/components/GuestBanner";
 import { Loader2 } from "lucide-react";
 import { AppNav } from "@/components/AppNav";
 import Dashboard from "./pages/Dashboard";
@@ -57,7 +55,6 @@ import AbsenzKostenPage from "./pages/AbsenzKosten";
 import ArtikelPage from "./pages/Artikel";
 import WesAnalysePage from "./pages/WesAnalyse";
 import ArtikelTrackingPage from "./pages/ArtikelTracking";
-import GuestAccess from "./pages/GuestAccess";
 import VerkaufsDashboard from "./pages/VerkaufsDashboard";
 import SalesUpload from "./pages/SalesUpload";
 import ProduktAnalyse from "./pages/ProduktAnalyse";
@@ -72,8 +69,6 @@ import MirusParserTest from "./pages/MirusParserTest";
 import MirusExcelTest from "./pages/MirusExcelTest";
 import MirusImportPreview from "./pages/MirusImportPreview";
 import MirusReview from "./pages/MirusReview";
-import StaffSchedulePage from "./pages/StaffSchedulePage";
-import TimesheetConfirmationPage from "./pages/TimesheetConfirmationPage";
 import EmployeeIntegrityPanel from "./pages/EmployeeIntegrityPanel";
 import UmsatzAbstimmungPage from "./pages/UmsatzAbstimmungPage";
 import TagesabschluessePage from "./pages/TagesabschluessePage";
@@ -207,27 +202,18 @@ const AppContent = () => {
   // Daten aus Supabase nach localStorage synchronisieren (einmalig nach Login)
   useSyncStore(!!user);
 
-  // Check for valid guest session
-  const hasGuestSession = (() => {
-    try {
-      const raw = sessionStorage.getItem(GUEST_SESSION_KEY);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw);
-      return parsed.expiresAt > Date.now();
-    } catch { return false; }
-  })();
 
   useEffect(() => {
     if (user) {
       sessionStorage.setItem('dashboard_unlocked', 'true');
       sessionStorage.setItem('settings_unlocked', 'true');
       sessionStorage.setItem('salary_columns_unlocked', 'true');
-    } else if (!hasGuestSession) {
+    } else {
       sessionStorage.removeItem('dashboard_unlocked');
       sessionStorage.removeItem('settings_unlocked');
       sessionStorage.removeItem('salary_columns_unlocked');
     }
-  }, [user, hasGuestSession]);
+  }, [user]);
 
   if (loading) {
     return (
@@ -237,7 +223,7 @@ const AppContent = () => {
     );
   }
 
-  if (!user && !hasGuestSession) {
+  if (!user) {
     return <LoginPage />;
   }
 
@@ -255,7 +241,6 @@ const AppContent = () => {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
-      <GuestBanner />
       <div className="flex flex-1 min-h-0">
         <AppNav />
 
@@ -306,19 +291,19 @@ const AppContent = () => {
             {/* Personaleintritt (digitaler L-GAV-Eintrittsprozess):
                 PII-/Schreibfläche — Admin OHNE Gäste + beaulieu_manager */}
             <Route path="/personaleintritt"
-              element={<RequireAdmin path="/personaleintritt" allowGuest={false} allowBeaulieu><PersonaleintrittListe /></RequireAdmin>}
+              element={<RequireAdmin path="/personaleintritt" allowBeaulieu><PersonaleintrittListe /></RequireAdmin>}
             />
             <Route path="/personaleintritt/neu"
-              element={<RequireAdmin path="/personaleintritt/neu" allowGuest={false} allowBeaulieu><PersonaleintrittNeu /></RequireAdmin>}
+              element={<RequireAdmin path="/personaleintritt/neu" allowBeaulieu><PersonaleintrittNeu /></RequireAdmin>}
             />
             <Route path="/personaleintritt/:id"
-              element={<RequireAdmin path="/personaleintritt/:id" allowGuest={false} allowBeaulieu><PersonaleintrittDetail /></RequireAdmin>}
+              element={<RequireAdmin path="/personaleintritt/:id" allowBeaulieu><PersonaleintrittDetail /></RequireAdmin>}
             />
 
             {/* Betriebe-Verwaltung (Datensätze für Verträge/SEM/Dossier):
                 NUR Admin OHNE Gäste — kein beaulieu_manager */}
             <Route path="/betriebe"
-              element={<RequireAdmin path="/betriebe" allowGuest={false}><Betriebe /></RequireAdmin>}
+              element={<RequireAdmin path="/betriebe"><Betriebe /></RequireAdmin>}
             />
 
             {/* Positionsverwaltung: nur Admin */}
@@ -349,20 +334,20 @@ const AppContent = () => {
               element={<RequireAdmin path="/erfolgsrechnung"><PLViewPage /></RequireAdmin>}
             />
             {/* Rezensionen (manuelle Bewertungs-Kennzahlen): Admin inkl. Gast-Lesezugriff
-                + beaulieu_manager; Editieren gated die Seite selbst (isAdmin && !isGuest || beaulieu_manager). */}
+                + beaulieu_manager; Editieren gated die Seite selbst (isAdmin || beaulieu_manager). */}
             <Route path="/rezensionen"
               element={<RequireAdmin path="/rezensionen" allowBeaulieu><Rezensionen /></RequireAdmin>}
             />
             {/* Import-Flächen (Schreibaktionen): nur Admin, keine Gast-Sessions */}
             <Route path="/csv-import"
-              element={<RequireAdmin path="/csv-import" allowGuest={false}><CSVImportPage /></RequireAdmin>}
+              element={<RequireAdmin path="/csv-import"><CSVImportPage /></RequireAdmin>}
             />
             <Route path="/import"
               element={<ImportHub />}
             />
             {/* Import-Cockpit: read-only Frische-/Fälligkeits-Übersicht — nur Admin, keine Gäste */}
             <Route path="/import-cockpit"
-              element={isAdmin && !hasGuestSession ? <ImportCockpitPage /> : <Navigate to="/" replace />}
+              element={isAdmin ? <ImportCockpitPage /> : <Navigate to="/" replace />}
             />
             <Route path="/lieferanten"
               element={<SupplierDocumentsPage />}
@@ -382,10 +367,10 @@ const AppContent = () => {
             />
             {/* Integritäts-/Admin-Werkzeuge: nur Admin, keine Gast-Sessions */}
             <Route path="/integrity-test"
-              element={<RequireAdmin path="/integrity-test" allowGuest={false}><DataIntegrityTest /></RequireAdmin>}
+              element={<RequireAdmin path="/integrity-test"><DataIntegrityTest /></RequireAdmin>}
             />
             <Route path="/employee-integrity"
-              element={<RequireAdmin path="/employee-integrity" allowGuest={false} redirectTo="/personal"><EmployeeIntegrityPanel /></RequireAdmin>}
+              element={<RequireAdmin path="/employee-integrity" redirectTo="/personal"><EmployeeIntegrityPanel /></RequireAdmin>}
             />
             <Route path="/umsatzabstimmung"
               element={<RequireAdmin path="/umsatzabstimmung"><UmsatzAbstimmungPage /></RequireAdmin>}
@@ -397,36 +382,36 @@ const AppContent = () => {
               element={<RequireAdmin path="/op-liste"><OpListePage /></RequireAdmin>}
             />
             <Route path="/gastronovi-import"
-              element={<RequireAdmin path="/gastronovi-import" allowGuest={false}><GastronoviZBerichtPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gastronovi-import"><GastronoviZBerichtPage /></RequireAdmin>}
             />
             <Route path="/foratable-import"
-              element={<RequireAdmin path="/foratable-import" allowGuest={false}><ForatableImportPage /></RequireAdmin>}
+              element={<RequireAdmin path="/foratable-import"><ForatableImportPage /></RequireAdmin>}
             />
             <Route path="/reservationen-import" element={<Navigate to="/foratable-import" replace />} />
             <Route path="/gaeste-import" element={<Navigate to="/foratable-import?tab=gaeste" replace />} />
             <Route path="/foratable-report" element={<Navigate to="/gaeste/auswertung" replace />} />
             {/* Gäste-CRM (PII): nur Admin UND keine Gast-Session — spiegelt die
-                seiteninternen Gates (isAdmin && !isGuest) als Route-Guard */}
+                seiteninternen Gates (isAdmin) als Route-Guard */}
             <Route path="/gaeste"
-              element={<RequireAdmin path="/gaeste" allowGuest={false}><GaesteCrmPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste"><GaesteCrmPage /></RequireAdmin>}
             />
             <Route path="/gaeste/auswertung"
-              element={<RequireAdmin path="/gaeste/auswertung" allowGuest={false}><CrmAuswertungPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/auswertung"><CrmAuswertungPage /></RequireAdmin>}
             />
             <Route path="/gaeste/analyse"
-              element={<RequireAdmin path="/gaeste/analyse" allowGuest={false}><ReservationAnalysePage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/analyse"><ReservationAnalysePage /></RequireAdmin>}
             />
             <Route path="/gaeste/wochentag"
-              element={<RequireAdmin path="/gaeste/wochentag" allowGuest={false}><ReservationWochentagPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/wochentag"><ReservationWochentagPage /></RequireAdmin>}
             />
             <Route path="/gaeste/vorjahr"
-              element={<RequireAdmin path="/gaeste/vorjahr" allowGuest={false}><ReservationVorjahrPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/vorjahr"><ReservationVorjahrPage /></RequireAdmin>}
             />
             <Route path="/gaeste/duplikate"
-              element={<RequireAdmin path="/gaeste/duplikate" allowGuest={false}><GaesteDuplikatePage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/duplikate"><GaesteDuplikatePage /></RequireAdmin>}
             />
             <Route path="/gaeste/:guestId"
-              element={<RequireAdmin path="/gaeste/:guestId" allowGuest={false}><GaesteDetailPage /></RequireAdmin>}
+              element={<RequireAdmin path="/gaeste/:guestId"><GaesteDetailPage /></RequireAdmin>}
             />
             <Route path="/produkte"
               element={<ProdukteSeite />}
@@ -516,7 +501,6 @@ const App = () => {
         <RevenueDisplayProvider>
         <MaisonProvider>
           <PlanDisplayProvider>
-            <GuestSessionProvider>
               <Sonner />
               <AuthProvider>
                 <LogoutStateBridge />
@@ -527,16 +511,12 @@ const App = () => {
                     {/* Personaleintritt Phase 2: Mitarbeiter füllt per Einladungs-Token aus
                         (Edge Function personaleintritt-public, kein direkter DB-Zugriff) */}
                     <Route path="/e/:token" element={<MitarbeiterEintritt />} />
-                    <Route path="/staff-schedule/:token" element={<StaffSchedulePage />} />
-                    <Route path="/timesheet-confirmation/:token" element={<TimesheetConfirmationPage />} />
-                    <Route path="/gast" element={<GuestAccess />} />
 
                     {/* ── Alle anderen Routen → Auth-Check ── */}
                     <Route path="/*" element={<AppContent />} />
                   </Routes>
                 </BrowserRouter>
               </AuthProvider>
-            </GuestSessionProvider>
           </PlanDisplayProvider>
         </MaisonProvider>
         </RevenueDisplayProvider>

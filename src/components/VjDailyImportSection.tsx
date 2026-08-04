@@ -299,7 +299,7 @@ const currentYear = new Date().getFullYear();
 
 export function VjDailyImportSection() {
   const { tenantId, tenantKey } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
   const fileRef   = useRef<HTMLInputElement>(null);
   const [year,    setYear]    = useState(currentYear - 1);
   const [parsing, setParsing] = useState(false);
@@ -867,7 +867,7 @@ export function VjDailyImportSection() {
       )}
 
       {/* Übernahme in die Erfolgsrechnung ────────────────────────────────── */}
-      {isAdmin && !isGuest && (
+      {isAdmin && (
         <div className="border-t border-border pt-3 space-y-2" data-testid="vj-transfer-section">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-[11px] font-medium text-muted-foreground">

@@ -53,7 +53,6 @@ const baseProps = {
   todayInLoadedMonth: true,
   canSeeRevenue: true,
   canSeeCosts: true,
-  isGuest: false,
   overview: readyOverview as StartOverviewState | null,
 };
 
@@ -120,14 +119,7 @@ describe('OperationalDaySection — Rollen-/Gast-Gating (D010 4)', () => {
     expect(screen.queryByTestId('op-kpi-aufgaben')).toBeNull();
   });
 
-  it('Gast-Session: Status-/Aufgaben-Karten sind NICHT klickbar (kein button)', () => {
-    renderSection({ isGuest: true });
-    expect(screen.getByTestId('op-kpi-reservationen').tagName).not.toBe('BUTTON');
-    expect(screen.getByTestId('op-kpi-tagesabschluss').tagName).not.toBe('BUTTON');
-    expect(screen.getByTestId('op-kpi-aufgaben').tagName).not.toBe('BUTTON');
-  });
-
-  it('Nicht-Gast: dieselben Karten sind klickbare Deep-Links (button)', () => {
+  it('Status-/Aufgaben-Karten sind klickbare Deep-Links (button)', () => {
     renderSection();
     expect(screen.getByTestId('op-kpi-reservationen').tagName).toBe('BUTTON');
     expect(screen.getByTestId('op-kpi-tagesabschluss').tagName).toBe('BUTTON');

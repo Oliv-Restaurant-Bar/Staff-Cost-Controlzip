@@ -215,9 +215,8 @@ export function MonthlyBlockCard() {
 
 export function RareBlockCard() {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
-  // Schreib-Aktion: Gäste haben isAdmin=true (Read-only-Demo) → hart ausschliessen.
-  const darfAbschliessen = isAdmin && !isGuest;
+  const { isAdmin } = usePermissions();
+  const darfAbschliessen = isAdmin;
   const [open, setOpen] = useState(false);
   // Jahres-Abschluss (prior_year_locked:<tenant>:<jahr>): EIN gemeinsamer Lock
   // pro Jahr — ein abgeschlossenes Jahr ist in ALLEN Import-Pfaden

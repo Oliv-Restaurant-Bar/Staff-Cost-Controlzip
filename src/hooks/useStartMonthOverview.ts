@@ -69,7 +69,6 @@ function readUmsatzSummary(
 
 export function useStartMonthOverview(
   enabled: boolean,
-  isGuest: boolean,
 ): {
   period: MonthPeriod;
   setPeriod: (p: MonthPeriod) => void;
@@ -99,7 +98,6 @@ export function useStartMonthOverview(
           tasks: null,
           completions: null,
           umsatzabstimmung: umsatz,
-          isGuest,
         }),
       });
       return;
@@ -119,7 +117,6 @@ export function useStartMonthOverview(
         tasks,
         completions: summarizeTypeCompletion(tasks, todayIso),
         umsatzabstimmung: umsatz,
-        isGuest,
       });
     };
 
@@ -143,7 +140,7 @@ export function useStartMonthOverview(
         message: e instanceof Error ? e.message : 'Monatsübersicht konnte nicht geladen werden.',
       });
     }
-  }, [tenantId, tenantKey, period, isGuest]);
+  }, [tenantId, tenantKey, period]);
 
   useEffect(() => {
     if (enabled) void load();

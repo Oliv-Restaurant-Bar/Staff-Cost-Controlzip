@@ -284,8 +284,6 @@ export interface NextAction {
   urgencyLabel: string;
   /** Deep-Link zur bestehenden Arbeitsfläche (bestehende Routen + advisory Params). */
   href: string;
-  /** true = Aktion führt auf eine Schreib-/Import- oder gastgesperrte Fläche. */
-  guestHidden: boolean;
 }
 
 /** Ton je Urgenz — kompatibel zu tones.ts, ohne UI-Import (Modul bleibt rein). */
@@ -331,8 +329,6 @@ export interface NextActionsInput {
   typeCompletions: readonly TypeCompletion[];
   /** Statuskarten der Startseite (für Prüf-Aktionen Tagesabschluss/Dienstplan). */
   cards: readonly StartCard[];
-  /** Gast-Session: Schreib-/Import-Aktionen ausblenden. */
-  isGuest: boolean;
   max?: number;
 }
 
@@ -364,7 +360,6 @@ export function buildNextActions(input: NextActionsInput): NextAction[] {
         urgency: 'error',
         urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.error,
         href: '/import-cockpit',
-        guestHidden: true, // Import-Checkliste ist für Gast-Sessions gesperrt
       });
       continue;
     }
@@ -386,7 +381,6 @@ export function buildNextActions(input: NextActionsInput): NextAction[] {
       urgency,
       urgencyLabel: due.dueLabel ?? NEXT_ACTION_URGENCY_FALLBACK_LABEL[urgency],
       href: buildImportTarget(task).href,
-      guestHidden: true, // Import-/Schreibflächen — nicht für Gast-Sessions
     });
   }
 
@@ -400,7 +394,6 @@ export function buildNextActions(input: NextActionsInput): NextAction[] {
       urgency: 'check',
       urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.check,
       href: tagesabschluss.route,
-      guestHidden: true, // Bestätigen = Schreibaktion
     });
   }
   const dienstplan = input.cards.find((c) => c.id === 'dienstplan');
@@ -412,7 +405,6 @@ export function buildNextActions(input: NextActionsInput): NextAction[] {
       urgency: 'check',
       urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.check,
       href: dienstplan.route,
-      guestHidden: false, // Dienstplan ist für Gäste lesend zugänglich
     });
   } else if (dienstplan?.status === 'due_soon') {
     // 3. Bald fällig — nur anhängen, nie offene Aufgaben verdrängen (Kappung unten).
@@ -423,11 +415,10 @@ export function buildNextActions(input: NextActionsInput): NextAction[] {
       urgency: 'due_soon',
       urgencyLabel: NEXT_ACTION_URGENCY_FALLBACK_LABEL.due_soon,
       href: dienstplan.route,
-      guestHidden: false,
     });
   }
 
-  return actions.filter((a) => !input.isGuest || !a.guestHidden).slice(0, max);
+  return actions.slice(0, max);
 }
 
 // ─── Datenstand-Zeilen (kompakt, aus der Typ-Zusammenfassung) ────────────────
@@ -450,8 +441,6 @@ export interface DatenstandRow {
 export interface DatenstandRowOptions {
   /** Monats-Kontext für die Deep-Links (advisory Prefill: Jahr/Monat). */
   period?: { year: number; month: number };
-  /** Gast-Session: Import-/Schreibflächen nie verlinken. */
-  isGuest?: boolean;
 }
 
 /** Ton je Typ-Status — identische Semantik wie die Checklisten-Zusammenfassung. */
@@ -472,7 +461,7 @@ function rowHref(
   status: TypeCompletion['status'],
   opts: DatenstandRowOptions,
 ): string | null {
-  if (opts.isGuest || !opts.period) return null;
+  if (!opts.period) return null;
   if (status === 'error') return '/import-cockpit';
   return buildImportTarget(buildFullMonthTask(type, opts.period)).href;
 }
@@ -557,8 +546,6 @@ export interface MonthOverviewInput {
   completions: readonly TypeCompletion[] | null;
   /** Umsatzabstimmungs-Kurzstatus (read-only aus bestehender Logik, T507); optional. */
   umsatzabstimmung?: UmsatzMonthSummary | null;
-  /** Gast-Session: keine Aktionen/Links anzeigen. */
-  isGuest: boolean;
 }
 
 /** Jüngster lastImportAt der eigenen Aufgaben, formatiert (dd.MM.yyyy) oder null. */
@@ -582,7 +569,7 @@ function latestImportLabel(own: readonly ImportTask[]): string | null {
  *  - fehlend ≠ 0: ohne Aufgaben/„nicht fällig" gibt es keinen „0 von …"-Text.
  */
 export function buildMonthOverviewRows(input: MonthOverviewInput): MonthOverviewRow[] {
-  const opts: DatenstandRowOptions = { period: input.period, isGuest: input.isGuest };
+  const opts: DatenstandRowOptions = { period: input.period };
   const rows: MonthOverviewRow[] = [];
 
   for (const def of TASK_TYPE_DEFS) {
@@ -675,9 +662,7 @@ export function buildMonthOverviewRows(input: MonthOverviewInput): MonthOverview
       progress: null,
       text: input.umsatzabstimmung.text,
       lastImport: null,
-      href: input.isGuest
-        ? null
-        : `/umsatzabstimmung?year=${input.period.year}&month=${input.period.month}`,
+      href: `/umsatzabstimmung?year=${input.period.year}&month=${input.period.month}`,
     });
   }
 

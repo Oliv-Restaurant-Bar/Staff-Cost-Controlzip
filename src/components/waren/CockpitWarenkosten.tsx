@@ -65,8 +65,8 @@ function vorjahrWkq(tenantId: TenantId, year: number, month: number): number | n
 
 export function CockpitWarenkosten({ year, month }: { year: number; month: number }) {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
-  const canEditZiel = (isAdmin && !isGuest) || isBeaulieuManager;
+  const { isAdmin, isBeaulieuManager } = usePermissions();
+  const canEditZiel = isAdmin || isBeaulieuManager;
 
   const monthKey = `${year}-${String(month).padStart(2, '0')}`;
   const [invoices, setInvoices] = useState<InvoiceEntry[] | null>(null);

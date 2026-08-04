@@ -14,7 +14,6 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -91,12 +90,11 @@ function statusFor(cat: ImportCategory, map: ImportStatusMap, loading: boolean):
 export function ImportCenterGrid() {
   const { tenantId } = useTenant();
   const { isAdmin, isBeaulieuManager, isBeaulieuViewer } = usePermissions();
-  const { isGuest } = useGuestSession();
   const [statuses, setStatuses] = useState<ImportStatusMap>({});
   const [loading, setLoading] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const cats = visibleCategories({ isAdmin, isGuest, isBeaulieuManager, isBeaulieuViewer });
+  const cats = visibleCategories({ isAdmin, isBeaulieuManager, isBeaulieuViewer });
   // Only fetch the status sources the VISIBLE cards actually need — a role that
   // cannot see a Foratable/Gastronovi/Produktumsatz card must not trigger that
   // source's metadata read. Stable string key avoids an effect refetch loop.

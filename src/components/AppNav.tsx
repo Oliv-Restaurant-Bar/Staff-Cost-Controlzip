@@ -34,7 +34,7 @@ import {
   Package, Users,
   Settings, Inbox,
   LogOut, ChefHat, Utensils, ShieldCheck,
-  Contact, Eye, Table2, Activity,
+  Contact, Table2, Activity,
   Wallet, BarChart2, BarChart3, ShoppingCart, TrendingUp,
   Menu, ClipboardCheck, ShieldAlert, Scale, GitMerge,
   Tags, ClipboardList, FileText, ChevronDown, UserPlus, Building2, Star,
@@ -43,7 +43,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useRevenueDisplay } from '@/contexts/RevenueDisplayContext';
 import { Button } from '@/components/ui/button';
 import { useTenant } from '@/contexts/TenantContext';
@@ -61,8 +60,6 @@ interface NavItem {
   beaulieuAllowed?: boolean;
   /** Auch für beaulieu_viewer sichtbar machen (parallel zu beaulieuAllowed). */
   beaulieuViewerAllowed?: boolean;
-  /** Für Gast-Sessions ausblenden, obwohl isAdmin für Gäste true ist. */
-  hideForGuest?: boolean;
   /**
    * Sekundärer Menüpunkt: erscheint pro Gruppe hinter einem „Mehr"-Toggle
    * (standardmässig eingeklappt), um die Navigation zu entlasten. Klappt
@@ -178,7 +175,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: UserPlus,
         adminOnly: true,
         beaulieuAllowed: true,
-        hideForGuest: true,
       },
     ],
   },
@@ -260,15 +256,12 @@ export const NAV_GROUPS: NavGroup[] = [
     groupLabel: 'Gäste',
     adminOnly: true,
     items: [
-      // Gäste-PII: alle Foratable-Seiten leiten Gast-Sessions um (isAdmin && !isGuest)
-      // → Menüpunkte für Gäste komplett ausblenden (keine toten Links, kein PII-Hinweis).
       {
         path: '/gaeste',
         label: 'Gäste CRM',
         shortLabel: 'Gäste',
         icon: Contact,
         adminOnly: true,
-        hideForGuest: true,
       },
       {
         path: '/gaeste/auswertung',
@@ -276,7 +269,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Reserv.',
         icon: BarChart3,
         adminOnly: true,
-        hideForGuest: true,
       },
       {
         path: '/gaeste/analyse',
@@ -284,7 +276,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Analyse',
         icon: TrendingUp,
         adminOnly: true,
-        hideForGuest: true,
       },
       {
         path: '/rezensionen',
@@ -293,7 +284,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Star,
         adminOnly: true,
         beaulieuAllowed: true,
-        // bewusst KEIN hideForGuest: keine PII, Gäste sehen rein lesend
       },
     ],
   },
@@ -311,7 +301,6 @@ export const NAV_GROUPS: NavGroup[] = [
         // Gäste sind ausgeschlossen (Import = Schreibaktion, Seite leitet Gäste ohnehin um).
         beaulieuAllowed: true,
         beaulieuViewerAllowed: true,
-        hideForGuest: true,
       },
     ],
   },
@@ -325,7 +314,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Betriebe',
         icon: Building2,
         adminOnly: true,
-        hideForGuest: true,
       },
       {
         path: '/employee-integrity',
@@ -340,7 +328,6 @@ export const NAV_GROUPS: NavGroup[] = [
         shortLabel: 'Duplikate',
         icon: GitMerge,
         adminOnly: true,
-        hideForGuest: true,
       },
       {
         path: '/verkauf-dashboard',
@@ -610,7 +597,6 @@ export const AppSidebar = () => {
   const location = useLocation();
   const { user, signOut } = useAuth();
   const { role, isAdmin, isManager, isBeaulieuManager, isBeaulieuViewer, allowedDepartment, canAccessModule } = usePermissions();
-  const { isGuest, guestMinutesLeft, clearGuestSession } = useGuestSession();
 
   const { tenant } = useTenant();
 
@@ -619,25 +605,19 @@ export const AppSidebar = () => {
   if (isSchedulePlannerRoute) return null;
 
   const roleConfig = ROLE_CONFIG[role as keyof typeof ROLE_CONFIG] ?? ROLE_CONFIG.admin;
-  const RoleIcon = isGuest ? Eye : roleConfig.Icon;
+  const RoleIcon = roleConfig.Icon;
 
   const emailShort = user?.email
     ? user.email.length > 22 ? user.email.slice(0, 22) + '…' : user.email
     : '';
 
-  const guestH = Math.floor(guestMinutesLeft / 60);
-  const guestM = guestMinutesLeft % 60;
-  const guestLabel = guestH > 0 ? `${guestH}h ${guestM}min` : `${guestMinutesLeft} Min.`;
-
   function isItemVisible(item: NavItem): boolean {
-    // Gast-Sessions: explizit markierte Items (z.B. Import-Center) ausblenden, obwohl isAdmin(Gast)=true
-    if (item.hideForGuest && isGuest) return false;
-    // adminOnly items: sichtbar für admin/guest, oder für beaulieu_manager/-viewer wenn erlaubt
-    if (item.adminOnly && !isAdmin && !isGuest) {
+    // adminOnly items: sichtbar für admin, oder für beaulieu_manager/-viewer wenn erlaubt
+    if (item.adminOnly && !isAdmin) {
       if (!(isBeaulieuManager && item.beaulieuAllowed) && !(isBeaulieuViewer && item.beaulieuViewerAllowed)) return false;
     }
     // module-based items: canAccessModule (beaulieu_manager korrekt abgedeckt)
-    if (item.module && !canAccessModule(item.module) && !isGuest) return false;
+    if (item.module && !canAccessModule(item.module)) return false;
     return true;
   }
 
@@ -722,47 +702,34 @@ export const AppSidebar = () => {
 
       {/* Rolle + Abmelden */}
       <div className="border-t border-border px-3 py-3 space-y-2">
-        {isGuest ? (
-          <div className="flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/30 dark:text-violet-300 dark:border-violet-700">
-            <Eye className="h-3.5 w-3.5 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-bold">Gast-Zugang</p>
-              <p className="text-[10px] opacity-80 font-normal">Nur Lesen · {guestLabel}</p>
-            </div>
+        <div className={cn('flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold', roleConfig.color)}>
+          <RoleIcon className="h-3.5 w-3.5 flex-shrink-0" />
+          <div className="min-w-0">
+            <p className="font-bold truncate">{roleConfig.label}</p>
+            {isManager && allowedDepartment !== 'all' && (
+              <p className="text-[10px] opacity-80 font-normal">
+                {allowedDepartment === 'service' ? 'Service' : 'Küche'}
+              </p>
+            )}
+            {isAdmin && <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>}
+            {isBeaulieuManager && (
+              <p className="text-[10px] opacity-80 font-normal">Beaulieu · gesperrt</p>
+            )}
           </div>
-        ) : (
-          <div className={cn('flex items-center gap-2 rounded-md px-2.5 py-2 border text-xs font-semibold', roleConfig.color)}>
-            <RoleIcon className="h-3.5 w-3.5 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-bold truncate">{roleConfig.label}</p>
-              {isManager && allowedDepartment !== 'all' && (
-                <p className="text-[10px] opacity-80 font-normal">
-                  {allowedDepartment === 'service' ? 'Service' : 'Küche'}
-                </p>
-              )}
-              {isAdmin && <p className="text-[10px] opacity-80 font-normal">Alle Abteilungen</p>}
-              {isBeaulieuManager && (
-                <p className="text-[10px] opacity-80 font-normal">Beaulieu · gesperrt</p>
-              )}
-            </div>
-          </div>
-        )}
+        </div>
 
-        {emailShort && !isGuest && (
+        {emailShort && (
           <p className="text-[10px] text-muted-foreground px-1 truncate">{emailShort}</p>
         )}
 
         <Button
           variant="outline"
           size="sm"
-          onClick={isGuest
-            ? () => { clearGuestSession(); window.location.href = '/gast'; }
-            : () => { signOut(); }
-          }
+          onClick={() => { signOut(); }}
           className="w-full h-8 text-xs text-destructive border-destructive/30 hover:bg-destructive/10 justify-start gap-2"
         >
           <LogOut className="h-3.5 w-3.5" />
-          {isGuest ? 'Sitzung beenden' : 'Abmelden'}
+          Abmelden
         </Button>
       </div>
     </aside>
@@ -778,7 +745,6 @@ export const AppBottomNav = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { isAdmin, isBeaulieuManager, isBeaulieuViewer, canAccessModule } = usePermissions();
-  const { isGuest } = useGuestSession();
 
   const { tenant } = useTenant();
   const { user, signOut } = useAuth();
@@ -789,11 +755,10 @@ export const AppBottomNav = () => {
   useEffect(() => { setOpen(false); }, [location.pathname]);
 
   function isItemVisible(item: NavItem): boolean {
-    if (item.hideForGuest && isGuest) return false;
-    if (item.adminOnly && !isAdmin && !isGuest) {
+    if (item.adminOnly && !isAdmin) {
       if (!(isBeaulieuManager && item.beaulieuAllowed) && !(isBeaulieuViewer && item.beaulieuViewerAllowed)) return false;
     }
-    if (item.module && !canAccessModule(item.module) && !isGuest) return false;
+    if (item.module && !canAccessModule(item.module)) return false;
     return true;
   }
 

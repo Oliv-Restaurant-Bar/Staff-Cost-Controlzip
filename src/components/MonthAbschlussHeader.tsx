@@ -2,14 +2,14 @@ import { useState, useCallback } from 'react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
-  Lock, LockOpen, Flag, CheckCircle2, MessageSquare, Clock,
-  FileText, Users, Loader2, AlertTriangle, Archive,
+  Lock, LockOpen, Flag, Clock,
+  FileText, Loader2, AlertTriangle, Archive,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
-import { MONTH_NAMES_DE, type TimesheetConfirmation, type EmployeeRequest, type EmployeeTimeBalance } from '@/lib/timesheet-store';
+import { MONTH_NAMES_DE, type EmployeeTimeBalance } from '@/lib/timesheet-store';
 import {
   upsertMonthStatus, saveMonthSnapshot,
   type MonthStatusRecord,
@@ -30,8 +30,6 @@ interface Props {
   year:                number;
   month:               number;
   employees:           EmployeeLookup[];
-  confirmations:       TimesheetConfirmation[];
-  requests:            EmployeeRequest[];
   monthStatuses:       Record<string, MonthStatusRecord>;
   istMap:              Record<string, number>;
   balances:            Record<string, EmployeeTimeBalance>;
@@ -58,9 +56,6 @@ function fmtDatetime(iso: string) {
 
 interface StatusCounts {
   draft:         number;
-  released:      number;
-  question_open: number;
-  confirmed:     number;
   finalized:     number;
   archived:      number;
 }
@@ -68,31 +63,14 @@ interface StatusCounts {
 function computeStatusCounts(
   employees:     EmployeeLookup[],
   monthStatuses: Record<string, MonthStatusRecord>,
-  confirmations: TimesheetConfirmation[],
-  requests:      EmployeeRequest[],
 ): StatusCounts {
-  const confMap = Object.fromEntries(confirmations.map(c => [c.employee_id, c]));
-  const openReqEmpIds = new Set(
-    requests
-      .filter(r => r.status === 'open' || r.status === 'in_review')
-      .map(r => r.employee_id),
-  );
-
-  const counts: StatusCounts = { draft: 0, released: 0, question_open: 0, confirmed: 0, finalized: 0, archived: 0 };
+  const counts: StatusCounts = { draft: 0, finalized: 0, archived: 0 };
 
   for (const emp of employees) {
-    const ms   = monthStatuses[emp.id];
-    const conf = confMap[emp.id];
+    const ms = monthStatuses[emp.id];
 
-    if (ms?.status === 'finalized') { counts.finalized++;     continue; }
-    if (ms?.status === 'archived')  { counts.archived++;      continue; }
-
-    if (openReqEmpIds.has(emp.id))              { counts.question_open++; continue; }
-    if (conf?.status === 'confirmed')            { counts.confirmed++;     continue; }
-    if (conf?.status === 'question_open' || conf?.status === 'rejected') {
-      counts.question_open++; continue;
-    }
-    if (conf) { counts.released++; continue; }
+    if (ms?.status === 'finalized') { counts.finalized++; continue; }
+    if (ms?.status === 'archived')  { counts.archived++;  continue; }
     counts.draft++;
   }
 
@@ -102,11 +80,10 @@ function computeStatusCounts(
 // ─── Komponente ───────────────────────────────────────────────────────────────
 
 export default function MonthAbschlussHeader({
-  tenantId, year, month, employees, confirmations, requests,
+  tenantId, year, month, employees,
   monthStatuses, istMap, balances, userEmail, onChanged, excludedEmployeeIds,
 }: Props) {
   const [showDialog, setShowDialog]               = useState(false);
-  const [overrideUnconfirmed, setOverrideUnconfirmed] = useState(false);
   const [finalizing, setFinalizing]               = useState(false);
   const [unlocking, setUnlocking]                 = useState(false);
 
@@ -117,12 +94,9 @@ export default function MonthAbschlussHeader({
   const excludedCount = excludedEmployeeIds.size;
 
   // Berechnungen (nur aktive Mitarbeiter)
-  const counts    = computeStatusCounts(activeEmps, monthStatuses, confirmations, requests);
-  const confMap   = Object.fromEntries(confirmations.map(c => [c.employee_id, c]));
+  const counts    = computeStatusCounts(activeEmps, monthStatuses);
 
   const isAllFinalized    = activeEmps.length > 0 && counts.finalized === activeEmps.length;
-  const openRequestCount  = requests.filter(r => r.status === 'open' || r.status === 'in_review').length;
-  const unconfirmedCount  = activeEmps.filter(e => confMap[e.id]?.status !== 'confirmed').length;
   const latestFinalizedAt = isAllFinalized
     ? Object.values(monthStatuses)
         .filter(s => s.status === 'finalized' && s.finalized_at)
@@ -143,11 +117,10 @@ export default function MonthAbschlussHeader({
       finalized_at:       now,
       finalized_by:       userEmail,
       employee_count:     activeEmps.length,
-      confirmed_count:    activeEmps.filter(e => confMap[e.id]?.status === 'confirmed').length,
+      confirmed_count:    0,
       total_ist_hours:    Math.round(activeEmps.reduce((s, e) => s + (istMap[e.id] ?? 0), 0) * 10) / 10,
-      open_request_count: openRequestCount,
+      open_request_count: 0,
       employees: activeEmps.map(e => {
-        const conf = confMap[e.id];
         const soll = sollHoursForMonth(e.weekly_hours, year, month);
         const ist  = istMap[e.id] ?? 0;
         return {
@@ -159,9 +132,9 @@ export default function MonthAbschlussHeader({
           diff_hours:          Math.round((ist - soll) * 10) / 10,
           vacation_balance:    balances[e.id]?.vacation_balance_hours        ?? null,
           holiday_balance:     balances[e.id]?.public_holiday_balance_hours  ?? null,
-          confirmation_status: conf?.status ?? null,
-          confirmed_at:        conf?.confirmed_at ?? null,
-          employee_comment:    conf?.employee_comment ?? null,
+          confirmation_status: null,
+          confirmed_at:        null,
+          employee_comment:    null,
         };
       }),
     };
@@ -169,10 +142,6 @@ export default function MonthAbschlussHeader({
 
   // Finalisierungs-Handler (nur aktive Mitarbeiter werden finalisiert)
   async function handleFinalize() {
-    if (openRequestCount > 0) {
-      toast.error(`${openRequestCount} offene Rückfragen müssen zuerst bearbeitet werden`);
-      return;
-    }
     setFinalizing(true);
     try {
       const snapshot = buildSnapshot();
@@ -182,7 +151,6 @@ export default function MonthAbschlussHeader({
       );
       toast.success(`${MONTH_NAMES_DE[month - 1]} ${year} finalisiert und gesperrt`);
       setShowDialog(false);
-      setOverrideUnconfirmed(false);
       onChanged();
     } catch (err) {
       console.error('[MonthAbschlussHeader] finalize:', err);
@@ -203,7 +171,7 @@ export default function MonthAbschlussHeader({
     setUnlocking(true);
     try {
       await Promise.all(
-        activeEmps.map(e => upsertMonthStatus(tenantId, e.id, year, month, 'confirmed', userEmail)),
+        activeEmps.map(e => upsertMonthStatus(tenantId, e.id, year, month, 'draft', userEmail)),
       );
       toast.success('Monat entsperrt');
       onChanged();
@@ -215,7 +183,7 @@ export default function MonthAbschlussHeader({
     }
   }
 
-  const canFinalize = openRequestCount === 0 && (unconfirmedCount === 0 || overrideUnconfirmed);
+  const canFinalize = true;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -263,16 +231,9 @@ export default function MonthAbschlussHeader({
   // Status-Pill Konfiguration
   const PILLS = [
     { key: 'draft',         label: 'Entwurf',     count: counts.draft,         color: 'text-muted-foreground bg-muted border-border',                                                         icon: <FileText     className="h-3 w-3" /> },
-    { key: 'released',      label: 'Freigegeben', count: counts.released,      color: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800', icon: <Users        className="h-3 w-3" /> },
-    { key: 'question_open', label: 'Rückfrage',   count: counts.question_open, color: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800', icon: <MessageSquare className="h-3 w-3" /> },
-    { key: 'confirmed',     label: 'Bestätigt',   count: counts.confirmed,     color: 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800', icon: <CheckCircle2 className="h-3 w-3" /> },
     { key: 'finalized',     label: 'Finalisiert', count: counts.finalized,     color: 'text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/20 border-teal-200 dark:border-teal-800', icon: <Lock         className="h-3 w-3" /> },
   ] as const;
   const excludedPillColor = 'text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800/40 border-zinc-200 dark:border-zinc-700';
-
-  const blockReason = openRequestCount > 0
-    ? `${openRequestCount} offene Rückfragen müssen zuerst bearbeitet werden`
-    : null;
 
   return (
     <>
@@ -307,12 +268,10 @@ export default function MonthAbschlussHeader({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => { setShowDialog(true); setOverrideUnconfirmed(false); }}
-          disabled={!!blockReason}
-          title={blockReason ?? undefined}
+          onClick={() => setShowDialog(true)}
           className={cn(
             'h-8 gap-1.5 shrink-0',
-            !blockReason && 'border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/20',
+            'border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/20',
           )}
         >
           <Flag className="h-3.5 w-3.5" />Monat finalisieren
@@ -346,68 +305,16 @@ export default function MonthAbschlussHeader({
                   <strong className="text-zinc-400">{excludedCount}</strong>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Bestätigt</span>
-                <strong className="text-emerald-600 dark:text-emerald-400">{activeEmps.length - unconfirmedCount}</strong>
-              </div>
-              {unconfirmedCount > 0 && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Nicht bestätigt</span>
-                  <strong className="text-amber-600 dark:text-amber-400">{unconfirmedCount}</strong>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Offene Rückfragen</span>
-                <strong className={openRequestCount > 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'}>
-                  {openRequestCount}
-                </strong>
-              </div>
             </div>
 
-            {/* Blocker: Offene Rückfragen */}
-            {openRequestCount > 0 && (
-              <div className="flex items-start gap-2 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-3 py-2.5 text-sm text-red-700 dark:text-red-400">
-                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                <span>
-                  Es gibt <strong>{openRequestCount} offene Rückfragen</strong>.
-                  Diese müssen zuerst bearbeitet werden, bevor der Monat finalisiert werden kann.
-                </span>
-              </div>
-            )}
-
-            {/* Warnung: nicht bestätigt */}
-            {openRequestCount === 0 && unconfirmedCount > 0 && (
-              <div className="space-y-2">
-                <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-3 py-2.5 text-sm text-amber-700 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>
-                    <strong>{unconfirmedCount} Mitarbeiter</strong> haben das Arbeitszeitblatt noch nicht bestätigt.
-                  </span>
-                </div>
-                <label className="flex items-start gap-2.5 px-1 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={overrideUnconfirmed}
-                    onChange={e => setOverrideUnconfirmed(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-border accent-teal-600"
-                  />
-                  <span className="text-muted-foreground">
-                    Trotzdem finalisieren — ich bestätige, dass alle Stunden korrekt sind
-                  </span>
-                </label>
-              </div>
-            )}
-
             {/* Snapshot-Hinweis */}
-            {!blockReason && (
-              <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                <Archive className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                <span>
-                  Beim Finalisieren wird ein vollständiger Snapshot (Stunden, Salden, Bestätigungsstatus,
-                  Änderungsverlauf) für die PDF-Archivierung gespeichert.
-                </span>
-              </div>
-            )}
+            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Archive className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                Beim Finalisieren wird ein vollständiger Snapshot (Stunden, Salden,
+                Änderungsverlauf) für die PDF-Archivierung gespeichert.
+              </span>
+            </div>
           </div>
 
           <DialogFooter>

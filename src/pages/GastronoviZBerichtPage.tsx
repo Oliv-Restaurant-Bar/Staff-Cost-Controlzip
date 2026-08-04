@@ -167,7 +167,7 @@ const VALIDATION_TONES: Record<GnValidationStatus, string> = {
 
 export default function GastronoviZBerichtPage() {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
 
   if (!isAdmin) return <Navigate to="/" replace />;
 
@@ -362,13 +362,12 @@ export default function GastronoviZBerichtPage() {
 
   // Beim Öffnen der Seite (bzw. Mandantenwechsel) einmalig automatisch importieren.
   useEffect(() => {
-    if (isGuest) return; // Gäste importieren nie
     if (autoRanForTenant.current === tenantId) return;
     if (inboxRows.some(r => isZberichtRowClaimable(r))) {
       autoRanForTenant.current = tenantId;
       void runAutoImport(inboxRows);
     }
-  }, [inboxRows, tenantId, isGuest, runAutoImport]);
+  }, [inboxRows, tenantId, runAutoImport]);
 
   /**
    * Eingang importieren: PDF per signierter URL laden und in den BESTEHENDEN
@@ -1126,7 +1125,7 @@ export default function GastronoviZBerichtPage() {
                     </span>
                   )}
                 </p>
-                {!isGuest && inboxRows.some(r => isZberichtRowClaimable(r)) && (
+                {inboxRows.some(r => isZberichtRowClaimable(r)) && (
                   <button onClick={() => void runAutoImport(inboxRows)}
                     disabled={autoRunning || inboxBusy !== null}
                     className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
@@ -1173,23 +1172,21 @@ export default function GastronoviZBerichtPage() {
                       </p>
                     )}
                   </div>
-                  {!isGuest && (
-                    <div className="flex gap-2 shrink-0">
-                      <button onClick={() => void handleImportFromInbox(row)}
-                        disabled={inboxBusy !== null || autoRunning}
-                        className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
-                        data-testid={`button-inbox-import-${row.id}`}>
-                        {inboxBusy === row.id && <Loader2 className="h-3 w-3 animate-spin" />}
-                        Importieren
-                      </button>
-                      <button onClick={() => void handleIgnoreInbox(row)}
-                        disabled={inboxBusy !== null || autoRunning}
-                        className="px-3 py-1.5 text-xs rounded border hover:bg-muted disabled:opacity-50"
-                        data-testid={`button-inbox-ignore-${row.id}`}>
-                        Ignorieren
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => void handleImportFromInbox(row)}
+                      disabled={inboxBusy !== null || autoRunning}
+                      className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5"
+                      data-testid={`button-inbox-import-${row.id}`}>
+                      {inboxBusy === row.id && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Importieren
+                    </button>
+                    <button onClick={() => void handleIgnoreInbox(row)}
+                      disabled={inboxBusy !== null || autoRunning}
+                      className="px-3 py-1.5 text-xs rounded border hover:bg-muted disabled:opacity-50"
+                      data-testid={`button-inbox-ignore-${row.id}`}>
+                      Ignorieren
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

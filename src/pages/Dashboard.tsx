@@ -29,7 +29,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useTenant } from '@/contexts/TenantContext';
-import { GuestLinkGenerator } from '@/components/GuestLinkGenerator';
 import { useBudgetMonth } from '@/hooks/useBudgetMonth';
 import { getDailyBudgetMap } from '@/lib/budget-day';
 import { loadMonth, calcAnnualSummary } from '@/lib/reporting-store';
@@ -51,7 +50,6 @@ import { HeuteWichtigBannerView } from '@/components/HeuteWichtigBanner';
 import { FinancialMonthSection } from '@/components/dashboard/FinancialMonthSection';
 import { OperationalDaySection } from '@/components/dashboard/OperationalDaySection';
 import { useStartOverview } from '@/hooks/useStartOverview';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { WesMarginWidget } from '@/components/WesMarginWidget';
 import { resolveZielwert } from '@/lib/zielwerte-store';
 import { useFinancialMonthInput } from '@/hooks/useFinancialMonthInput';
@@ -236,8 +234,7 @@ const Dashboard = () => {
   const { showNetRevenue } = useRevenueDisplay();
   const { rates: socialCostRates } = useSocialCostRates();
   const { tenantId, tenantKey, tenant } = useTenant();
-  const { isGuest } = useGuestSession();
-  // EIN gemeinsamer Overview-Fetch für Banner + Operativen Tagesstand (nur Admin inkl. Gast).
+  // EIN gemeinsamer Overview-Fetch für Banner + Operativen Tagesstand (nur Admin).
   const { state: overviewState } = useStartOverview(isAdmin);
   const { maisonExclude } = useMaison();
   const maisonOn = getMaisonEnabledSync(tenantKey);
@@ -1038,7 +1035,6 @@ const Dashboard = () => {
               )}
               {isAdmin && (
                 <>
-                  <GuestLinkGenerator />
                   <Link to="/import">
                     <Button variant="outline" size="sm" className="h-8">
                       <Upload className="h-3.5 w-3.5 mr-1.5" />
@@ -1135,7 +1131,6 @@ const Dashboard = () => {
               todayInLoadedMonth={todayInLoadedMonth}
               canSeeRevenue={isAdmin}
               canSeeCosts={canSeePersonnelCostTotals}
-              isGuest={isGuest}
               overview={isAdmin ? overviewState : null}
             />
 

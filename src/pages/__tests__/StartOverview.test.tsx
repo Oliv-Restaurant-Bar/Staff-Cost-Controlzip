@@ -30,7 +30,6 @@ import type { FinancialMetricValues } from '@/lib/financial-metrics';
 
 const mockState: { value: StartOverviewState } = { value: { status: 'loading' } };
 const mockPerms = { isAdmin: true };
-const mockGuest = { isGuest: false };
 
 const EMPTY_VALUES: FinancialMetricValues = { actual: null, budget: null, priorYear: null };
 /** Kontrollierbare Registry-Werte je Kennzahl (Default: alles fehlend). */
@@ -53,9 +52,6 @@ vi.mock('@/hooks/useStartOverview', () => ({
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => mockPerms,
 }));
-vi.mock('@/contexts/GuestSessionContext', () => ({
-  useGuestSession: () => mockGuest,
-}));
 vi.mock('@/hooks/useCockpitFinancials', () => ({
   useCockpitFinancials: () => mockFin.value,
 }));
@@ -67,7 +63,7 @@ vi.mock('@/hooks/useStartPrefs', async () => {
     START_PREFS_UPDATED_EVENT: 'start-prefs-updated',
     useStartPrefs: () => ({
       prefs: defaultStartPrefs(),
-      canCustomize: !mockGuest.isGuest,
+      canCustomize: true,
       savePrefs: vi.fn(),
     }),
   };
@@ -204,7 +200,6 @@ function digits(text: string | null | undefined): string {
 
 afterEach(() => {
   cleanup();
-  mockGuest.isGuest = false;
   mockState.value = { status: 'loading' };
   mockFin.value = defaultFin();
   mockMetricValues.value = {};
@@ -282,7 +277,7 @@ describe('StartOverview — Management-KPIs (NUR Registry)', () => {
     expect(screen.getByTestId('mgmt-kpi-ebitda-actual').textContent).toBe('—');
   });
 
-  it('Drilldown-Links: Monat als ?monat=; Gast ohne Links auf gast-gesperrte Routen (Gäste-CRM)', () => {
+  it('Drilldown-Links: Monat als ?monat=; Gäste-CRM bleibt verlinkt', () => {
     mockState.value = ready();
     mockFin.value = { ...defaultFin(), financialInput: {} as CockpitFinancials['financialInput'] };
     renderPage();
@@ -290,12 +285,6 @@ describe('StartOverview — Management-KPIs (NUR Registry)', () => {
     const umsatzLink = screen.getByTestId('mgmt-kpi-row-umsatz').querySelector('a');
     expect(umsatzLink!.getAttribute('href')).toBe(`/erfolgsrechnung?monat=${monat}`);
     expect(screen.getByTestId('mgmt-kpi-row-gaeste').querySelector('a')).toBeTruthy();
-    cleanup();
-    mockGuest.isGuest = true;
-    renderPage();
-    // Gast = read-only Admin: Erfolgsrechnung bleibt verlinkt, Gäste-CRM (PII) NICHT.
-    expect(screen.getByTestId('mgmt-kpi-row-umsatz').querySelector('a')).toBeTruthy();
-    expect(screen.getByTestId('mgmt-kpi-row-gaeste').querySelector('a')).toBeNull();
   });
 });
 
@@ -332,13 +321,12 @@ describe('StartOverview — Risiken (Warncenter)', () => {
     expect(screen.getByTestId('warncenter-item-kpi-warenquote').textContent).toContain('Warenquote 34.2 %');
   });
 
-  it('offener Import → oranger Eintrag; Gast ohne Link', () => {
-    mockGuest.isGuest = true;
+  it('offener Import → oranger Eintrag mit Link', () => {
     mockState.value = ready({ todayTasks: [OPEN_TASK], typeCompletions: OPEN_COMPLETIONS });
     renderPage();
     const item = screen.getByTestId('warncenter-item-import-zbericht');
     expect(item.textContent).toContain('Z-Bericht');
-    expect(item.querySelector('a')).toBeNull();
+    expect(item.querySelector('a')).toBeTruthy();
   });
 });
 
@@ -389,14 +377,6 @@ describe('StartOverview — Als Nächstes', () => {
     expect(link.getAttribute('href')).toBe('/gastronovi-import?from=2026-07-10&to=2026-07-10&scope=day');
     expect(screen.queryByTestId('start-next-empty')).toBeNull();
   });
-
-  it('(16) Gast-Session: Import-Aktion wird nicht angezeigt (read-only, keine Bearbeitung)', () => {
-    mockGuest.isGuest = true;
-    mockState.value = ready({ todayTasks: [OPEN_TASK], typeCompletions: OPEN_COMPLETIONS });
-    renderPage();
-    expect(screen.queryByTestId('start-next-task-zbericht')).toBeNull();
-    expect(screen.getByTestId('start-next-empty')).toBeTruthy();
-  });
 });
 
 describe('StartOverview — Datenstand', () => {
@@ -413,14 +393,10 @@ describe('StartOverview — Datenstand', () => {
     expect(screen.getByTestId('start-datenstand-erfolgsrechnung').textContent).toContain('Noch nicht fällig');
   });
 
-  it('Admin sieht den Link zur Import-Checkliste, Gast NICHT (gesperrte Fläche)', () => {
+  it('Admin sieht den Link zur Import-Checkliste', () => {
     mockState.value = ready();
     renderPage();
     expect(screen.getByRole('link', { name: /Import-Checkliste öffnen/ })).toBeTruthy();
-    cleanup();
-    mockGuest.isGuest = true;
-    renderPage();
-    expect(screen.queryByRole('link', { name: /Import-Checkliste öffnen/ })).toBeNull();
   });
 
   it('(14) Teilfehler: coverageError → sichtbarer Hinweis mit Retry, Karten bleiben, roter Risiken-Eintrag', () => {
@@ -450,7 +426,7 @@ describe('StartOverview — Zustände', () => {
   });
 });
 
-describe('StartOverview — Schnellaktionen & Gast-Gating', () => {
+describe('StartOverview — Schnellaktionen', () => {
   it('Admin sieht alle 4 Schnellaktionen', () => {
     mockState.value = ready();
     renderPage();
@@ -459,25 +435,5 @@ describe('StartOverview — Schnellaktionen & Gast-Gating', () => {
     expect(actions.textContent).toContain('Tagesabschluss erfassen');
     expect(actions.textContent).toContain('Reservationen ansehen');
     expect(actions.textContent).toContain('Dienstplan öffnen');
-  });
-
-  it('Gast-Session sieht NUR den Dienstplan-Link (keine Schreib-/PII-Aktionen)', () => {
-    mockGuest.isGuest = true;
-    mockState.value = ready();
-    renderPage();
-    const actions = screen.getByTestId('start-actions');
-    expect(actions.textContent).not.toContain('Umsatz importieren');
-    expect(actions.textContent).not.toContain('Tagesabschluss erfassen');
-    expect(actions.textContent).not.toContain('Reservationen ansehen');
-    expect(actions.textContent).toContain('Dienstplan öffnen');
-  });
-
-  it('Gast-Session: kein „Öffnen"-Link auf Import-Karten (Umsatz/Reservationen), wohl aber auf Dienstplan', () => {
-    mockGuest.isGuest = true;
-    mockState.value = ready();
-    renderPage();
-    expect(screen.getByTestId('start-card-umsatz').textContent).not.toContain('Öffnen');
-    expect(screen.getByTestId('start-card-reservationen').textContent).not.toContain('Öffnen');
-    expect(screen.getByTestId('start-card-dienstplan').textContent).toContain('Öffnen');
   });
 });

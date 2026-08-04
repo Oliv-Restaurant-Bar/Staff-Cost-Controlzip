@@ -105,8 +105,6 @@ export interface KpiDefinition {
   /** Ebene 3: bestehende Detail-/Beleg-Ebene. */
   detailRoute: string | null;
   detailLabel: string | null;
-  /** Drilldown enthält PII/Schreibflächen → Gast-Sessions ohne Link. */
-  guestHiddenRoutes?: string[];
   /** Delegation an die Financial-Metrics-Registry (P&L-KPIs). */
   registryId?: FinancialMetricId;
   /** Budget-/VJ-Spalten fachlich vorhanden? (Registry-KPIs: ja) */
@@ -460,7 +458,6 @@ export const KPI_CATALOG: ReadonlyArray<KpiDefinition> = [
     analyseLabel: 'Gäste & Reservationen',
     detailRoute: '/gaeste',
     detailLabel: 'Gäste-CRM',
-    guestHiddenRoutes: ['/gaeste', '/gaeste/auswertung'],
     hatBudgetVj: false,
     export: { geschaeftsleitung: true, bank: false, investoren: false },
     istKarte: false,

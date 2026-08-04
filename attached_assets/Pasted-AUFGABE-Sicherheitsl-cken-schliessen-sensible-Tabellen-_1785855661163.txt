@@ -1,0 +1,19 @@
+AUFGABE: Sicherheitslücken schliessen — sensible Tabellen für die anon-Rolle sperren. NICHT den Token-Bestätigungs-Flow der Mitarbeiter zerstören.
+
+HINTERGRUND: Mehrere Tabellen sind über den öffentlichen anon-Key (im JS-Bundle) les-/änderbar. Zu beheben:
+
+1) employee_wages (Löhne): anon-SELECT-Policy + Grants entfernen. Policies nur noch TO authenticated; REVOKE ALL ON employee_wages FROM anon. (Ref: 20260508_employee_wages_fix_rls.sql)
+
+2) employee_timesheet_confirmations: direkte anon-Tabellenrechte entfernen (REVOKE SELECT, UPDATE FROM anon; anon-Policies mit USING(true) entfernen/auf authenticated bzw. service_role einschränken).
+   WICHTIG: Der Token-Flow (Mitarbeiter öffnet Bestätigungs-Link OHNE Login) muss weiter funktionieren — dieser läuft über die SECURITY-DEFINER-RPC (get_confirmation_page_data o.ä.). Der öffentliche Zugriff darf NUR noch über diese token-scoped RPC gehen, nie über direktes Tabellen-SELECT/UPDATE. Bestätigen/Ablehnen ebenfalls über eine token-geprüfte RPC statt direktem anon-UPDATE.
+
+3) gn_person_imports, gn_person_metrics, gn_analysis_imports, gn_analysis_metrics: RLS aktivieren + REVOKE ALL FROM anon + Policies nur TO authenticated — exakt dasselbe Muster wie im Fix 20260619_gn_rls_fix.sql (diese Tabellen wurden dort vergessen).
+
+4) Boot-Rolle: In AuthContext die Default-Rolle NICHT 'admin' setzen (null/'pending'); loading erst nach loadUserRole beenden, sodass PII-Lade-Effekte (Gäste/Detailseiten) nicht im Boot-Fenster mit isAdmin=true feuern.
+
+VORGEHEN:
+- Als neue Migration(en) umsetzen (DDL läuft manuell im Supabase SQL-Editor — gib mir das SQL klar zum Ausführen).
+- Nach der Änderung EMPIRISCH prüfen: anon-SELECT auf employee_wages / timesheet_confirmations / gn_person_metrics muss 0 Zeilen bzw. „permission denied" liefern; der Token-Bestätigungs-Flow und die normalen (eingeloggten) Ansichten müssen weiter funktionieren.
+- KEINE anderen Tabellen anfassen, die bereits korrekt gesichert sind (CRM/Reservations/OP sind ok).
+
+Bitte zusammenfassen: welche Policies/Grants geändert wurden und wie der Token-Flow jetzt läuft.

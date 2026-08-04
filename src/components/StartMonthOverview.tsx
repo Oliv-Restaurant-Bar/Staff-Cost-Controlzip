@@ -73,12 +73,10 @@ function RowContent({ row }: { row: MonthOverviewRow }) {
 
 export function StartMonthOverview({
   enabled,
-  isGuest,
 }: {
   enabled: boolean;
-  isGuest: boolean;
 }) {
-  const { period, setPeriod, shiftBy, state } = useStartMonthOverview(enabled, isGuest);
+  const { period, setPeriod, shiftBy, state } = useStartMonthOverview(enabled);
 
   const currentYear = new Date().getFullYear();
   // Jahresfenster wie in der Umsatzabstimmung (aktuelles Jahr −2) — plus das

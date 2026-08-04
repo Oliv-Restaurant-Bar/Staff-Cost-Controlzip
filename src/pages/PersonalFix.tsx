@@ -2111,7 +2111,7 @@ function FlexBreakdownModal({ target, onClose }: {
 // ── Hauptseite ────────────────────────────────────────────────────────────────
 
 export default function PersonalFixPage() {
-  const { isAdmin, isGuest, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
+  const { isAdmin, isBeaulieuManager, canEditEmployees, canSeeHourlyWages, canSeePersonnelCostTotals } = usePermissions();
   const { tenantId, tenantKey } = useTenant();
   const { maisonExclude } = useMaison();
   const { rates: socialCostRates } = useSocialCostRates();

@@ -81,14 +81,14 @@ const OK_CARDS: StartCard[] = [
 ];
 
 /** SSoT-Kette einmal ausführen und Input für buildNextActions bauen. */
-function derive(cov: MonthCoverage, cards: StartCard[] = OK_CARDS, isGuest = false): {
+function derive(cov: MonthCoverage, cards: StartCard[] = OK_CARDS): {
   input: NextActionsInput;
   todayTasks: PrioritizedTask[];
 } {
   const tasks = buildImportTasks(PERIOD, cov, SETTINGS);
   const todayTasks = getTodayTasks(tasks, TODAY);
   const typeCompletions = summarizeTypeCompletion(tasks, TODAY);
-  return { input: { todayTasks, typeCompletions, cards, isGuest }, todayTasks };
+  return { input: { todayTasks, typeCompletions, cards }, todayTasks };
 }
 
 // ─── Formatierung fehlender Tage ─────────────────────────────────────────────
@@ -191,25 +191,6 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
     expect(action.reason).toBe('Fehlend: 03.–05.07., 08.07. + 4 weitere');
   });
 
-  it('(6)/(16) Gast-Session: Import-/Schreibaktionen werden herausgefiltert', () => {
-    const cards: StartCard[] = OK_CARDS.map((c) =>
-      c.id === 'dienstplan'
-        ? { ...c, status: 'action' as const, statusLabel: 'Handlungsbedarf', detail: 'Plan endet am 14.07.2026' }
-        : c.id === 'tagesabschluss'
-          ? { ...c, status: 'action' as const, statusLabel: 'Handlungsbedarf', detail: 'Gestern noch nicht bestätigt' }
-          : c,
-    );
-    const { input } = derive(
-      coverage({ zbericht: { coveredDays: daysExcept([10]) } }),
-      cards,
-      true,
-    );
-    const actions = buildNextActions(input);
-    // Import (zbericht) + Tagesabschluss (Schreibaktion) gefiltert; Dienstplan bleibt (lesend erlaubt).
-    expect(actions.map((a) => a.id)).toEqual(['card-dienstplan']);
-    expect(actions[0].title).toBe('Dienstplan ergänzen');
-  });
-
   it('(14) Teilfehler: Fehler-Typ verweist auf die Checkliste, andere Typen bleiben sichtbar', () => {
     const { input } = derive(
       coverage({
@@ -221,7 +202,6 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
     expect(actions[0].id).toBe('task-zbericht');
     expect(actions[0].urgency).toBe('error');
     expect(actions[0].href).toBe('/import-cockpit');
-    expect(actions[0].guestHidden).toBe(true);
     expect(actions[0].reason).not.toContain('Supabase'); // kein Technik-Jargon
     expect(actions.some((a) => a.id === 'task-gaeste_bon')).toBe(true);
   });
@@ -241,7 +221,7 @@ describe('buildNextActions — über die echte Engine-Kette', () => {
       { task: mkTask('gaeste_bon', '2026-07-14'), due: { urgency: 'today', dueLabel: 'Heute erledigen', daysOverdue: 0 } },
       { task: mkTask('zbericht', '2026-07-10'), due: { urgency: 'overdue', dueLabel: '4 Tage überfällig', daysOverdue: 4 } },
     ];
-    const actions = buildNextActions({ todayTasks, typeCompletions: [], cards: OK_CARDS, isGuest: false });
+    const actions = buildNextActions({ todayTasks, typeCompletions: [], cards: OK_CARDS });
     expect(actions.map((a) => a.id)).toEqual(['task-gaeste_bon', 'task-zbericht']);
   });
 

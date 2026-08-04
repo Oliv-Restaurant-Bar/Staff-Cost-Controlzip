@@ -28,12 +28,9 @@ export type ImportCategoryId =
 
 /**
  * Minimal role context (subset of usePermissions) for card visibility.
- * NOTE: usePermissions().isAdmin is TRUE for guest sessions too, so `isGuest`
- * is carried separately and every predicate excludes guests explicitly.
  */
 export interface ImportAccessContext {
   isAdmin: boolean;
-  isGuest: boolean;
   isBeaulieuManager: boolean;
   isBeaulieuViewer: boolean;
 }
@@ -56,13 +53,12 @@ export interface ImportCategory {
   canAccess: (ctx: ImportAccessContext) => boolean;
 }
 
-// Guests (isAdmin=true at the hook level) must NEVER see an import launcher → exclude first.
-const adminOnly = (c: ImportAccessContext): boolean => c.isAdmin && !c.isGuest;
+const adminOnly = (c: ImportAccessContext): boolean => c.isAdmin;
 const adminOrBeaulieu = (c: ImportAccessContext): boolean =>
-  !c.isGuest && (c.isAdmin || c.isBeaulieuManager);
+  c.isAdmin || c.isBeaulieuManager;
 // Warenrechnungen: mirrors canAccessModule('warenrechnungen') = admin | beaulieu_manager | beaulieu_viewer
 const warenAccess = (c: ImportAccessContext): boolean =>
-  !c.isGuest && (c.isAdmin || c.isBeaulieuManager || c.isBeaulieuViewer);
+  c.isAdmin || c.isBeaulieuManager || c.isBeaulieuViewer;
 
 /**
  * The 9 import categories, in the order requested for the Import Center.

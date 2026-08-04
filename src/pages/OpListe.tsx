@@ -2,7 +2,7 @@
  * OP-Liste Kreditoren (Phase 1) — Übersicht + Vergleich zweier Stichtage.
  * ─────────────────────────────────────────────────────────────────────────────
  * Admin-only (doppelt gegated: Route-Guard in App.tsx + hier Guard VOR dem
- * Lade-Effekt). Gäste (isGuest) sehen alles rein lesend (kein Import).
+ * Lade-Effekt).
  * Daten: creditor_op_imports / creditor_op_items via src/lib/op-liste-db.ts.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -46,7 +46,7 @@ function toCompareItems(items: OpItemRecord[]): OpCompareItem[] {
 }
 
 export default function OpListe() {
-  const { isAdmin, isBeaulieuManager, isGuest } = usePermissions();
+  const { isAdmin, isBeaulieuManager } = usePermissions();
   const { tenantId } = useTenant();
 
   const [imports, setImports] = useState<OpImportRecord[]>([]);
@@ -150,11 +150,9 @@ export default function OpListe() {
                 </SelectContent>
               </Select>
             )}
-            {!isGuest && (
-              <Button size="sm" className="h-8 text-xs" onClick={() => setImportOpen(true)} data-testid="op-import-button">
-                <FileUp className="h-3.5 w-3.5 mr-1" /> PDF importieren
-              </Button>
-            )}
+            <Button size="sm" className="h-8 text-xs" onClick={() => setImportOpen(true)} data-testid="op-import-button">
+              <FileUp className="h-3.5 w-3.5 mr-1" /> PDF importieren
+            </Button>
           </div>
         </div>
       </header>
@@ -186,7 +184,7 @@ export default function OpListe() {
           <div className="rounded-lg border border-border bg-card p-8 text-center text-xs text-muted-foreground" data-testid="op-empty">
             <Scale className="h-6 w-6 mx-auto mb-2 opacity-50" />
             <p>Noch keine OP-Liste importiert.</p>
-            {!isGuest && <p className="mt-1">Mit „PDF importieren" die erste Kreditoren-OP-Liste hochladen.</p>}
+            <p className="mt-1">Mit „PDF importieren" die erste Kreditoren-OP-Liste hochladen.</p>
           </div>
         )}
 

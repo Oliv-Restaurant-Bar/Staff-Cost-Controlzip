@@ -1,6 +1,6 @@
 ---
 name: E2E-Verifikation hinter Supabase-Login
-description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Test-Admin per Self-Signup, Gast-Token client-seitig)
+description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Test-Admin per Self-Signup)
 ---
 
 # E2E-Verifikation hinter Supabase-Login
@@ -10,7 +10,7 @@ description: Wie visuelle Browser-Checks hinter der Anmeldung möglich sind (Tes
 **Wie Zugang schaffen (verifiziert):**
 - Supabase-Self-Signup ist AKTIV und E-Mail-Bestätigung DEAKTIVIERT → `auth.signUp` liefert sofort eine Session.
 - RLS erlaubt authenticated Self-Upsert auf `user_profiles` (AuthContext macht das selbst) → frisch angelegter User kann sich `role: 'admin'` setzen. Nach dem Test Rolle wieder herabstufen (z. B. `kueche_manager`) — Konto per Anon-Key nicht löschbar, User informieren.
-- Gast-Zugang ist rein CLIENT-seitig: Token `{exp, hash}` = base64-JSON, hash = sha256 des frei wählbaren Passworts → `/gast?t=…` ohne Server-Secret generierbar. Aber: Gäste sehen keine `isAdmin && !isGuest`-Flächen (Import-Center-Adminblöcke etc.) — für Admin-UX unbrauchbar.
+- Gast-Zugang existiert seit 2026-08-06 nicht mehr (Feature komplett entfernt); Verifikation nur noch via Test-Admin-Self-Signup.
 
 **Stolperfallen:**
 - `user_profiles` hat die Spalten `id` (= auth-User-ID), `email`, `role` — KEIN `user_id`. Rollen-Upsert also `{ id, email, role }` mit `onConflict: 'id'`, sonst «Could not find the 'user_id' column».

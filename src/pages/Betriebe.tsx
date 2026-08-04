@@ -111,8 +111,8 @@ function patchFromForm(f: BetriebForm): BetriebPatch {
 // ─── Seite ───────────────────────────────────────────────────────────────────
 
 export default function Betriebe() {
-  const { isAdmin, isGuest } = usePermissions();
-  const canManage = isAdmin && !isGuest;
+  const { isAdmin } = usePermissions();
+  const canManage = isAdmin;
 
   const [betriebe, setBetriebe] = useState<BetriebRecord[]>([]);
   const [loading, setLoading] = useState(true);

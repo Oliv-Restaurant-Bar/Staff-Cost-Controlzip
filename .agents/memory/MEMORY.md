@@ -10,7 +10,6 @@
 - [budget_v1 KV-Backup Merge](budget-kv-backup.md) — Budget-Blobs nur per Jahr-Merge mit Aktions-Kontext sichern; kvGetStrict für Merge-Basen (Lesefehler ≠ leer); keine Jahr-Tombstones (bekannte Grenze).
 - [KV merge-on-save tombstones](kv-merge-tombstones.md) — hard-deleted keys in union-merged blobs resurrect from the remote KV; every remove path needs a tombstone (deleted+updatedAt) + reader filters.
 - [Detail-page state reset on :id change](detail-page-state-reset.md) — `/:id` pages are reused across param changes; reset fetched-record state at top of load() AND in catch, or the previous record leaks (cross-guest PII).
-- [Admin gate excludes guests (read+write)](admin-write-gate-guest-session.md) — isAdmin = isAdminUser || isGuest; admin-only PII/write pages must gate isAdmin && !isGuest on BOTH route guard AND data-fetch effect.
 - [Vitest environments](vitest-node-environment.md) — pure logic: `node` pragma; component tests: `happy-dom` (jsdom→canvas/libuuid crash); multi-suite runs OOM → split.
 - [Reservation CRM visit metrics & PII gating](reservation-crm-metrics.md) — never mix all-status first/last_seen_at with completed-only visit counts; guest PII is admin-gated in UI, not DB RLS.
 - [Foratable Res.Nr. je Restaurant](reservation-resnr-namespace.md) — Res.Nr. nur pro Restaurant eindeutig; oliv/beaulieu-Kollisionen sind KEINE Duplikate; Check via restaurant_name↔restaurant_id.
@@ -86,4 +85,5 @@
 - [Beaulieu Lieferanten-PDF-Profile](beaulieu-pdf-profile.md) — Erkennung via MWST-Nr; Vorschau führend (Stufe 2 nur bei deckender Summe); Regex-Fallen ST/QR-Zahlteil; Supplier-Sync nur als Batch.
 - [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang Pfand>Artikel>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.
+- [Vollständiger anon-Lockdown](anon-lockdown.md) — 0 anon-Grants/Policies auf Tabellen; Gast-Feature & Stundenbestätigung entfernt; einzige anon-Restflächen: Onboarding-Token-RPCs + onboarding-docs-Upload.
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.

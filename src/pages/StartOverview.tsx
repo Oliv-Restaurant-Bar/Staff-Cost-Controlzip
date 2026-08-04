@@ -30,8 +30,6 @@
  * erreichbar (bewusste Entscheidung dieser UX-Runde, keine Doppel-Statuslogik).
  *
  * STRIKT READ-ONLY (Daten via useStartOverview + useCockpitFinancials).
- * Gast-Sessions (isGuest) sehen die Seite (PII-freie Aggregate), aber keine
- * schreib-orientierten Aktionen/Links auf gastgesperrte Flächen.
  */
 
 import { useMemo, useState } from 'react';
@@ -65,7 +63,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useStartOverview } from '@/hooks/useStartOverview';
 import { useCockpitFinancials } from '@/hooks/useCockpitFinancials';
 import { useHeuteWidgets } from '@/hooks/useHeuteWidgets';
@@ -84,7 +81,7 @@ import {
   type NextAction,
   type StartCardStatus,
 } from '@/lib/start-overview-utils';
-import { filterWidgetsForGuest, moveItem } from '@/lib/start-prefs';
+import { moveItem } from '@/lib/start-prefs';
 import {
   buildKreditorenWidget,
   buildOffeneImporteWidget,
@@ -129,9 +126,6 @@ const TONE_BADGE: Record<'warn' | 'critical' | 'info', string> = {
   warn: STATUS_BADGE.due_soon,
   info: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800',
 };
-
-/** Import-/Schreibseiten, deren „Öffnen"-Link Gast-Sessions nicht angeboten wird. */
-const GUEST_HIDDEN_CARD_ROUTES = new Set(['/gastronovi-import', '/foratable-import']);
 
 /**
  * Einheitliche «Heute»-Widget-Karte:
@@ -210,17 +204,13 @@ function NextActionRow({ action }: { action: NextAction }) {
 
 export default function StartOverviewPage() {
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { state, refresh } = useStartOverview(isAdmin);
   // Finanz-/Umsatzdaten des laufenden Monats — read-only, Registry-Wiring.
   const fin = useCockpitFinancials(isAdmin);
 
-  // ── «Heute»-Widgets (personalisierbar; Gast = Defaults ohne Import-Widgets) ──
+  // ── «Heute»-Widgets (personalisierbar) ──
   const { prefs, canCustomize, savePrefs } = useStartPrefs();
-  const visibleWidgetIds = useMemo(
-    () => filterWidgetsForGuest(prefs.heuteWidgets, isGuest),
-    [prefs.heuteWidgets, isGuest],
-  );
+  const visibleWidgetIds = prefs.heuteWidgets;
   const widgetData = useHeuteWidgets(isAdmin, visibleWidgetIds);
 
   const [widgetsOpen, setWidgetsOpen] = useState(false);
@@ -228,7 +218,7 @@ export default function StartOverviewPage() {
   const [widgetsError, setWidgetsError] = useState<string | null>(null);
 
   const openWidgetsDialog = () => {
-    setDraftWidgets(filterWidgetsForGuest(prefs.heuteWidgets, isGuest));
+    setDraftWidgets([...prefs.heuteWidgets]);
     setWidgetsError(null);
     setWidgetsOpen(true);
   };
@@ -249,28 +239,24 @@ export default function StartOverviewPage() {
     description: string;
     route: string;
     icon: React.FC<{ className?: string }>;
-    hidden?: boolean;
   }> = [
     {
       label: 'Umsatz importieren',
       description: 'Gastronovi Z-Bericht hochladen',
       route: '/gastronovi-import',
       icon: Upload,
-      hidden: isGuest, // Schreibaktion — nicht für Gast-Sessions
     },
     {
       label: 'Tagesabschluss erfassen',
       description: 'Tagesabschlüsse prüfen und bestätigen',
       route: '/tagesabschluesse',
       icon: ClipboardCheck,
-      hidden: isGuest, // Schreibaktion — nicht für Gast-Sessions
     },
     {
       label: 'Reservationen ansehen',
       description: 'Gäste-CRM und Reservationen',
       route: '/gaeste',
       icon: Contact,
-      hidden: isGuest, // PII-Seite — für Gäste gesperrt
     },
     {
       label: 'Dienstplan öffnen',
@@ -279,7 +265,7 @@ export default function StartOverviewPage() {
       icon: CalendarClock,
     },
   ];
-  const visibleActions = quickActions.filter((a) => !a.hidden);
+  const visibleActions = quickActions;
 
   // Reine Ableitungen aus dem SSoT-Aufgabenstand (keine eigene Statuslogik).
   const nextActions =
@@ -288,7 +274,6 @@ export default function StartOverviewPage() {
           todayTasks: state.todayTasks,
           typeCompletions: state.typeCompletions,
           cards: state.data.cards,
-          isGuest,
         })
       : null;
   // Datenstand zeigt IMMER den aktuellen Monat (useStartOverview lädt dessen
@@ -298,7 +283,6 @@ export default function StartOverviewPage() {
     state.status === 'ready' && state.typeCompletions
       ? buildDatenstandRows(state.typeCompletions, {
           period: { year: now.getFullYear(), month: now.getMonth() + 1 },
-          isGuest,
         })
       : null;
 
@@ -352,11 +336,7 @@ export default function StartOverviewPage() {
               case 'dienstplan':
               case 'tagesabschluss': {
                 const card = state.data.cards.find((c) => c.id === id);
-                return card
-                  ? widgetFromStartCard(card, {
-                      hideRoute: isGuest && GUEST_HIDDEN_CARD_ROUTES.has(card.route),
-                    })
-                  : null;
+                return card ? widgetFromStartCard(card) : null;
               }
               case 'offene_importe':
                 return buildOffeneImporteWidget(state.typeCompletions, state.coverageError);
@@ -364,7 +344,6 @@ export default function StartOverviewPage() {
                 return buildReservationenHeuteWidget(
                   widgetData.reservationenHeute.data,
                   widgetData.reservationenHeute.error,
-                  isGuest,
                 );
               case 'personalausfaelle':
                 return buildPersonalausfaelleWidget(
@@ -448,7 +427,7 @@ export default function StartOverviewPage() {
           (Registry-KPIs: EIN computePLForMonth; operative KPIs: bestehende
           Quellen). Ersetzt den früheren CockpitFinanzBlock — dessen 5 Finanz-
           zeilen sind Teil des Katalogs (keine Doppel-Anzeige). */}
-      <ManagementKpiSection enabled={isAdmin} isGuest={isGuest} />
+      <ManagementKpiSection enabled={isAdmin} />
 
       {/* 2.+3. Heute + Risiken nebeneinander (Desktop) */}
       <div className="grid gap-6 xl:grid-cols-2">
@@ -484,7 +463,7 @@ export default function StartOverviewPage() {
           )}
         </section>
 
-        <WarnCenter result={warnResult} isGuest={isGuest} />
+        <WarnCenter result={warnResult} />
       </div>
 
       {/* 4.+5. Diese Woche + Datenstand nebeneinander (Desktop) */}
@@ -494,7 +473,6 @@ export default function StartOverviewPage() {
           weekRevenue={week.revenue}
           dienstplanDetail={dienstplanDetail}
           openImports={openImports}
-          isGuest={isGuest}
         />
 
         <section aria-labelledby="start-datenstand" className="space-y-2">
@@ -502,14 +480,12 @@ export default function StartOverviewPage() {
             <h2 id="start-datenstand" className="text-base font-semibold">
               Datenstand
             </h2>
-            {!isGuest && (
-              <Link
-                to="/import-cockpit"
-                className="text-sm font-medium text-primary inline-flex items-center gap-1 hover:underline"
-              >
-                Import-Checkliste öffnen <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
-            )}
+            <Link
+              to="/import-cockpit"
+              className="text-sm font-medium text-primary inline-flex items-center gap-1 hover:underline"
+            >
+              Import-Checkliste öffnen <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
           {state.status !== 'ready' && (
             <p className="text-sm text-muted-foreground">Datenstand erscheint nach dem Laden.</p>
@@ -693,7 +669,7 @@ export default function StartOverviewPage() {
             })}
             <div className="pt-1">
               {HEUTE_WIDGET_DEFS.filter(
-                (d) => !draftWidgets.includes(d.id) && !(isGuest && d.guestHidden),
+                (d) => !draftWidgets.includes(d.id),
               ).map((def) => (
                 <div key={def.id} className="flex items-center gap-2 px-2 py-1">
                   <Checkbox

@@ -1350,32 +1350,6 @@ export async function loadActualHourEntriesForMonth(
 // ─── Re-Import: prüfen + löschen ──────────────────────────────────────────────
 
 /**
- * Gibt die IDs aller bestätigten Mitarbeiter (status = 'confirmed') für den Monat zurück.
- * Wird vor dem Re-Import aufgerufen um bestätigte Arbeitszeitblätter zu schützen.
- */
-export async function checkConfirmedEmployees(
-  employeeIds: string[],
-  year: number,
-  month: number,
-): Promise<Set<string>> {
-  if (!employeeIds.length) return new Set();
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('employee_timesheet_confirmations')
-      .select('employee_id')
-      .in('employee_id', employeeIds)
-      .eq('year', year)
-      .eq('month', month)
-      .eq('status', 'confirmed');
-    if (error) return new Set();
-    return new Set((data ?? []).map((r: { employee_id: string }) => r.employee_id));
-  } catch {
-    return new Set();
-  }
-}
-
-/**
  * Prüft ob für die angegebenen Mitarbeiter im Monat bereits actual_hours-Daten existieren.
  * Wird vor dem Import aufgerufen um Re-Import zu erkennen.
  */
@@ -1584,22 +1558,16 @@ export interface OnboardingPublicEmployee {
   iban?: string;
 }
 
-/** Mitarbeiter anhand des Onboarding-Tokens laden (ohne Login) */
+/**
+ * Mitarbeiter anhand des Onboarding-Tokens laden (ohne Login).
+ * Läuft über die token-geprüfte SECURITY-DEFINER-RPC — direkte anon-Reads
+ * auf employees sind seit 20260805_anon_full_lockdown.sql gesperrt.
+ */
 export async function findEmployeeByToken(token: string): Promise<OnboardingPublicEmployee | null> {
   try {
-    const { data, error } = await supabase
-      .from('employees')
-      .select(`
-        id, name, department, onboarding_status,
-        position_title, contract_start, contract_type,
-        birth_date, nationality, permit_type, marital_status,
-        spouse_employed, spouse_lives_in_switzerland,
-        phone, email,
-        address_street, address_zip, address_city,
-        ahv_number, iban
-      `)
-      .eq('onboarding_token', token)
-      .single();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .rpc('get_onboarding_employee_by_token', { p_token: token });
 
     if (error || !data) {
       console.warn('[findEmployeeByToken] not found or error:', error?.message);
@@ -1634,13 +1602,11 @@ export async function findEmployeeByToken(token: string): Promise<OnboardingPubl
   }
 }
 
-/** Onboarding-Status auf in_progress setzen (Link wurde geöffnet) */
-export async function markOnboardingInProgress(employeeId: string): Promise<void> {
+/** Onboarding-Status auf in_progress setzen (Link wurde geöffnet) — via Token-RPC */
+export async function markOnboardingInProgress(token: string): Promise<void> {
   try {
-    await supabase
-      .from('employees')
-      .update({ onboarding_status: 'in_progress' })
-      .eq('id', employeeId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).rpc('mark_onboarding_in_progress_by_token', { p_token: token });
   } catch (e) {
     console.error('[markOnboardingInProgress] exception:', e);
   }
@@ -1648,7 +1614,7 @@ export async function markOnboardingInProgress(employeeId: string): Promise<void
 
 /** Onboarding-Daten speichern und Status auf completed setzen */
 export async function submitOnboardingData(
-  employeeId: string,
+  token: string,
   formData: {
     birthDate?: string;
     nationality?: string;
@@ -1667,29 +1633,17 @@ export async function submitOnboardingData(
   documents: OnboardingDoc[]
 ): Promise<boolean> {
   try {
-    const { error } = await supabase
-      .from('employees')
-      .update({
-        birth_date:                  formData.birthDate        || null,
-        nationality:                 formData.nationality      || null,
-        phone:                       formData.phone            || null,
-        email:                       formData.email            || null,
-        address_street:              formData.addressStreet    || null,
-        address_zip:                 formData.addressZip       || null,
-        address_city:                formData.addressCity      || null,
-        ahv_number:                  formData.ahvNumber        || null,
-        iban:                        formData.iban             || null,
-        permit_type:                 formData.permitType       || null,
-        marital_status:              formData.maritalStatus    || null,
-        spouse_employed:             formData.spouseEmployed   ?? null,
-        spouse_lives_in_switzerland: formData.spouseLivesInSwitzerland ?? null,
-        onboarding_documents:        documents.length > 0 ? JSON.stringify(documents) : null,
-        onboarding_status:           'completed',
-      })
-      .eq('id', employeeId);
+    // Token-geprüfte SECURITY-DEFINER-RPC (anon-UPDATE auf employees gesperrt).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any)
+      .rpc('submit_onboarding_by_token', {
+        p_token:     token,
+        p_data:      formData,
+        p_documents: documents.length > 0 ? documents : null,
+      });
 
-    if (error) {
-      console.error('[submitOnboardingData] error:', error);
+    if (error || !data?.ok) {
+      console.error('[submitOnboardingData] error:', error ?? data?.reason);
       return false;
     }
     return true;
@@ -1721,22 +1675,23 @@ export async function createOnboardingSubmission(data: {
   formData: Record<string, unknown>;
 }): Promise<{ id: string | null; error: string | null }> {
   try {
-    const id = crypto.randomUUID();
-    const { error } = await supabase.from('onboarding_submissions').insert({
-      id,
-      name:      data.name,
-      form_data: data.formData,
-    });
+    // SECURITY-DEFINER-RPC — direkter anon-INSERT ist gesperrt (20260805).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rpcData, error } = await (supabase as any)
+      .rpc('create_onboarding_submission_public', {
+        p_name:      data.name,
+        p_form_data: data.formData,
+      });
 
-    if (error) {
-      const isPermissionError = error.code === '42501' || error.code === '42000';
-      const msg = isPermissionError
-        ? `BERECHTIGUNG: Anon-INSERT auf onboarding_submissions ist blockiert. Führen Sie die SQL-Migration im Supabase SQL-Editor aus (GRANT INSERT ON TABLE public.onboarding_submissions TO anon). [${error.code}]`
-        : `[${error.code}] ${error.message}${error.details ? ' · ' + error.details : ''}${error.hint ? ' (Hint: ' + error.hint + ')' : ''}`;
-      console.error('[createOnboardingSubmission] Supabase-Fehler:', error);
+    if (error || !rpcData?.ok) {
+      const msg = error
+        ? `[${error.code}] ${error.message}${error.details ? ' · ' + error.details : ''}${error.hint ? ' (Hint: ' + error.hint + ')' : ''}`
+        : String(rpcData?.reason ?? 'unbekannter Fehler');
+      console.error('[createOnboardingSubmission] Supabase-Fehler:', error ?? rpcData);
       return { id: null, error: msg };
     }
 
+    const id = rpcData.id as string;
     console.log('[createOnboardingSubmission] Gespeichert, id=', id);
     return { id, error: null };
   } catch (e: unknown) {
@@ -2737,71 +2692,6 @@ export async function saveManualDayCorrection(params: {
     const msg = String(e);
     console.error('[supabase-db] saveManualDayCorrection exception:', e);
     return { ok: false, error: msg };
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Schedule Change Log + Publication Snapshots
-// Tabellen: schedule_change_log, schedule_publication_snapshots
-// Migration: supabase/migrations/20260529_schedule_change_log.sql
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface ScheduleChangeLogEntry {
-  tenant_id:   string;
-  employee_id: string;
-  date:        string;   // 'yyyy-MM-dd'
-  department:  string | null;
-  field_name:  string;
-  old_value:   string | null;
-  new_value:   string | null;
-  changed_by:  string;
-  change_type: 'first_publish' | 'update_after_publish';
-  note?:       string;
-  revision:    number;
-}
-
-/**
- * Schreibt mehrere Änderungseinträge in schedule_change_log.
- * Fehler werden geloggt aber nicht weitergeworfen (non-blocking).
- */
-export async function insertScheduleChangeLogs(
-  entries: ScheduleChangeLogEntry[],
-): Promise<void> {
-  if (entries.length === 0) return;
-  const { error } = await supabase
-    .from('schedule_change_log')
-    .insert(entries);
-  if (error) {
-    console.error('[supabase-db] insertScheduleChangeLogs error:', error.message, error.code);
-  } else {
-    console.log(`[supabase-db] insertScheduleChangeLogs OK — ${entries.length} rows`);
-  }
-}
-
-export interface SchedulePublicationSnapshot {
-  tenant_id:     string;
-  year:          number;
-  month:         number;
-  department:    string;
-  published_by:  string;
-  revision:      number;
-  snapshot_json: Record<string, unknown>;
-}
-
-/**
- * Speichert einen vollständigen Publikations-Snapshot in schedule_publication_snapshots.
- * Fehler werden geloggt aber nicht weitergeworfen (non-blocking).
- */
-export async function insertSchedulePublicationSnapshot(
-  snap: SchedulePublicationSnapshot,
-): Promise<void> {
-  const { error } = await supabase
-    .from('schedule_publication_snapshots')
-    .insert(snap);
-  if (error) {
-    console.error('[supabase-db] insertSchedulePublicationSnapshot error:', error.message, error.code);
-  } else {
-    console.log(`[supabase-db] insertSchedulePublicationSnapshot OK — ${snap.tenant_id} ${snap.year}-${String(snap.month).padStart(2, '0')} dept=${snap.department} rev=${snap.revision}`);
   }
 }
 

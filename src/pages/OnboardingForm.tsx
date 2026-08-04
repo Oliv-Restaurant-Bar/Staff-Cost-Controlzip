@@ -154,7 +154,7 @@ export default function OnboardingForm() {
         iban:                    emp.iban          ?? '',
       });
       if (emp.onboardingStatus !== 'in_progress') {
-        await markOnboardingInProgress(emp.id);
+        await markOnboardingInProgress(token);
       }
       setPhase('form');
     })();
@@ -277,11 +277,11 @@ export default function OnboardingForm() {
 
   // ── Submit: EXISTING employee onboarding ──────────────────────────────────
   const handleSubmitExisting = async () => {
-    if (!employee) return;
+    if (!employee || !token) return;
     setSubmitting(true);
     setErrorMsg('');
     const docs = await uploadFiles(employee.id);
-    const ok = await submitOnboardingData(employee.id, {
+    const ok = await submitOnboardingData(token, {
       ...formData,
       spouseEmployed:           toBool(formData.spouseEmployed),
       spouseLivesInSwitzerland: toBool(formData.spouseLivesInSwitzerland),

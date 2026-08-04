@@ -104,9 +104,9 @@ const emptyForm = (): FormState => ({
 
 export default function Rezensionen() {
   const { tenantId, tenant } = useTenant();
-  const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
+  const { isAdmin, isBeaulieuManager } = usePermissions();
   const { toast } = useToast();
-  const canEdit = (isAdmin && !isGuest) || isBeaulieuManager;
+  const canEdit = isAdmin || isBeaulieuManager;
 
   const [data, setData] = useState<ReviewsData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -546,8 +546,7 @@ export default function Rezensionen() {
                         </span>
                       )}
                       {r.text && <p className="w-full text-muted-foreground">{r.text}</p>}
-                      {/* Screenshots können PII enthalten (Namen/Avatare) → für Gast-Sessions ausgeblendet */}
-                      {r.screenshotPath && !isGuest && <div className="w-full"><ScreenshotThumb tenantId={tenantId} path={r.screenshotPath} /></div>}
+                      {r.screenshotPath && <div className="w-full"><ScreenshotThumb tenantId={tenantId} path={r.screenshotPath} /></div>}
                       {canEdit && (
                         <span className="ml-auto whitespace-nowrap -mt-1">
                           <Button size="icon" variant="ghost" className="h-6 w-6"

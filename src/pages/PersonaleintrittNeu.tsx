@@ -71,10 +71,10 @@ const MODUS_LABELS: Record<LohnModus, string> = {
 
 export default function PersonaleintrittNeu() {
   const navigate = useNavigate();
-  const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
+  const { isAdmin, isBeaulieuManager } = usePermissions();
   const { user } = useAuth();
   const { tenantId, setTenant } = useTenant();
-  const canManage = (isAdmin && !isGuest) || isBeaulieuManager;
+  const canManage = isAdmin || isBeaulieuManager;
 
   // ── Mindestlohn-Tabelle laden (gated, read-only) ──────────────────────────
   const [minLoehne, setMinLoehne] = useState<MindestlohnEintrag[] | null>(null);

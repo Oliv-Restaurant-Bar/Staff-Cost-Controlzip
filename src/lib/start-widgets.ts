@@ -41,8 +41,6 @@ export interface HeuteWidgetDef {
   title: string;
   /** Kurzbeschreibung für den Anpassen-Dialog. */
   beschreibung: string;
-  /** true = für Gast-Sessions nie anbieten (Import-/gastgesperrte Flächen). */
-  guestHidden?: boolean;
 }
 
 export const HEUTE_WIDGET_DEFS: readonly HeuteWidgetDef[] = [
@@ -50,7 +48,7 @@ export const HEUTE_WIDGET_DEFS: readonly HeuteWidgetDef[] = [
   { id: 'reservationen', title: 'Reservationen', beschreibung: 'Frische des Reservations-Imports (Foratable)' },
   { id: 'dienstplan', title: 'Dienstplan', beschreibung: 'Planungshorizont des Dienstplans' },
   { id: 'tagesabschluss', title: 'Tagesabschluss', beschreibung: 'Bestätigung des gestrigen Tagesabschlusses' },
-  { id: 'offene_importe', title: 'Offene Importe', beschreibung: 'Anzahl offener Importtypen im laufenden Monat', guestHidden: true },
+  { id: 'offene_importe', title: 'Offene Importe', beschreibung: 'Anzahl offener Importtypen im laufenden Monat' },
   { id: 'reservationen_heute', title: 'Reservationen heute', beschreibung: 'Anzahl Reservationen und Personen für heute' },
   { id: 'personalausfaelle', title: 'Abwesenheiten heute', beschreibung: 'Abwesenheiten im heutigen Dienstplan' },
   { id: 'warenrechnungen', title: 'Warenrechnungen', beschreibung: 'Erfasste Warenrechnungen im laufenden Monat' },
@@ -147,7 +145,6 @@ export interface ReservationenHeuteData {
 export function buildReservationenHeuteWidget(
   data: ReservationenHeuteData | null,
   error: string | null,
-  isGuest: boolean,
 ): HeuteWidgetView {
   const base: HeuteWidgetView = {
     id: 'reservationen_heute',
@@ -156,7 +153,7 @@ export function buildReservationenHeuteWidget(
     statusLabel: null,
     value: null,
     detail: '',
-    route: isGuest ? null : '/gaeste', // Gäste-CRM ist gastgesperrt
+    route: '/gaeste',
   };
   if (!data) {
     return { ...base, value: DASH, detail: 'Reservationen konnten nicht geladen werden', error: error ?? undefined };

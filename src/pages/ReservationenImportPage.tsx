@@ -50,9 +50,9 @@ export default function ReservationenImportPage(
   { embedded = false, onImported }: { embedded?: boolean; onImported?: () => void } = {},
 ) {
   const { tenantId } = useTenant();
-  const { isAdmin, isGuest } = usePermissions();
+  const { isAdmin } = usePermissions();
 
-  if (!isAdmin || isGuest) return <Navigate to="/" replace />;
+  if (!isAdmin) return <Navigate to="/" replace />;
 
   const [tab, setTab] = useState<Tab>('import');
   const [step, setStep] = useState<WizardStep>('upload');

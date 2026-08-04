@@ -16,7 +16,7 @@ import { emptyTagesabschlussBlob } from '@/lib/tagesabschluss';
 import { emptyAdyenBlob } from '@/lib/adyen-abstimmung';
 
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ isAdmin: true, isGuest: false, isBeaulieuManager: false }),
+  usePermissions: () => ({ isAdmin: true, isBeaulieuManager: false }),
 }));
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { email: 'admin@oliv.ch' } }),

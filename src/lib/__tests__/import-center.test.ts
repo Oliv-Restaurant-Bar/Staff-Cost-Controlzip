@@ -26,12 +26,10 @@ const KNOWN_ROUTES = new Set([
   '/budget',
 ]);
 
-const admin: ImportAccessContext = { isAdmin: true, isGuest: false, isBeaulieuManager: false, isBeaulieuViewer: false };
-// Guest sessions report isAdmin=true at the hook level but must see NO import launcher.
-const guest: ImportAccessContext = { isAdmin: true, isGuest: true, isBeaulieuManager: false, isBeaulieuViewer: false };
-const beaulieuMgr: ImportAccessContext = { isAdmin: false, isGuest: false, isBeaulieuManager: true, isBeaulieuViewer: false };
-const beaulieuViewer: ImportAccessContext = { isAdmin: false, isGuest: false, isBeaulieuManager: false, isBeaulieuViewer: true };
-const noneCtx: ImportAccessContext = { isAdmin: false, isGuest: false, isBeaulieuManager: false, isBeaulieuViewer: false };
+const admin: ImportAccessContext = { isAdmin: true, isBeaulieuManager: false, isBeaulieuViewer: false };
+const beaulieuMgr: ImportAccessContext = { isAdmin: false, isBeaulieuManager: true, isBeaulieuViewer: false };
+const beaulieuViewer: ImportAccessContext = { isAdmin: false, isBeaulieuManager: false, isBeaulieuViewer: true };
+const noneCtx: ImportAccessContext = { isAdmin: false, isBeaulieuManager: false, isBeaulieuViewer: false };
 
 describe('IMPORT_CATEGORIES descriptors', () => {
   it('has exactly the 9 expected categories in order', () => {
@@ -84,10 +82,6 @@ describe('IMPORT_CATEGORIES descriptors', () => {
 });
 
 describe('visibleCategories — permission filtering mirrors real guards', () => {
-  it('guest sessions see NOTHING (isAdmin=true but isGuest) — no import launcher for guests', () => {
-    expect(visibleCategories(guest)).toHaveLength(0);
-  });
-
   it('admin sees all 9', () => {
     expect(visibleCategories(admin)).toHaveLength(9);
   });

@@ -87,7 +87,7 @@ function emptyDraft(dept: Department, sortOrder: number, departmentGroup: string
 }
 
 export default function Positionen() {
-  const { canAccessModule, isGuest } = usePermissions();
+  const { canAccessModule } = usePermissions();
   const { positions, loading, error, save, remove, seed, reload, applyDefaults } = usePositions();
   const { tenantId } = useTenant();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -133,8 +133,6 @@ export default function Positionen() {
   if (!canAccessModule('positionen')) {
     return <Navigate to="/personal" replace />;
   }
-
-  const readOnly = isGuest;
 
   const openNew = (dept: Department, areaKey: string) => {
     const inDept = positions.filter((p) => p.department === dept);
@@ -235,7 +233,7 @@ export default function Positionen() {
           <LayoutGrid className="h-5 w-5 text-violet-600" />
           <h1 className="text-lg font-semibold">Positionen</h1>
         </div>
-        {!readOnly && positions.length > 0 && tab === 'stammdaten' && (
+        {positions.length > 0 && tab === 'stammdaten' && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button size="sm" variant="outline" className="gap-1" disabled={busy}>
@@ -276,7 +274,6 @@ export default function Positionen() {
           <PositionMatrix
             positions={positions}
             tenantId={tenantId}
-            readOnly={readOnly}
             dynamicHintFor={staticDynamicRuleHint}
           />
         </TabsContent>
@@ -303,11 +300,9 @@ export default function Positionen() {
             <p className="text-sm text-muted-foreground">
               Noch keine Positionen vorhanden.
             </p>
-            {!readOnly && (
-              <Button onClick={handleSeed} disabled={busy} className="gap-1">
-                <Sparkles className="h-4 w-4" /> Standard-Positionen anlegen
-              </Button>
-            )}
+            <Button onClick={handleSeed} disabled={busy} className="gap-1">
+              <Sparkles className="h-4 w-4" /> Standard-Positionen anlegen
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -337,7 +332,7 @@ export default function Positionen() {
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {areaName}
                     </h3>
-                    {!readOnly && group.area && (
+                    {group.area && (
                       <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs" onClick={() => openNew(dept, group.area!.key)}>
                         <Plus className="h-3.5 w-3.5" /> Position
                       </Button>
@@ -364,22 +359,20 @@ export default function Positionen() {
                             </div>
                             <span className="text-[10px] text-muted-foreground font-mono">{p.key}</span>
                           </div>
-                          {!readOnly && (
-                            <div className="flex items-center gap-0.5 shrink-0">
-                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === 0} onClick={() => move(group.positions, idx, -1)} title="Nach oben">
-                                <ArrowUp className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === group.positions.length - 1} onClick={() => move(group.positions, idx, 1)} title="Nach unten">
-                                <ArrowDown className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(p)} title="Bearbeiten">
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button size="icon" variant="ghost" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(p)} title="Löschen">
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
-                          )}
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === 0} onClick={() => move(group.positions, idx, -1)} title="Nach oben">
+                              <ArrowUp className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" disabled={idx === group.positions.length - 1} onClick={() => move(group.positions, idx, 1)} title="Nach unten">
+                              <ArrowDown className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(p)} title="Bearbeiten">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-red-600 hover:text-red-700" onClick={() => handleDelete(p)} title="Löschen">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </li>
                       ))}
                     </ul>

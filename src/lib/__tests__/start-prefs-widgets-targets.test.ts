@@ -16,14 +16,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   defaultStartPrefs,
-  filterWidgetsForGuest,
   moveItem,
   normalizeStartPrefs,
   MAX_KPI_CARDS,
 } from '../start-prefs';
 import {
   DEFAULT_HEUTE_WIDGET_IDS,
-  HEUTE_WIDGET_DEFS,
   buildKreditorenWidget,
   buildOffeneImporteWidget,
   buildPersonalausfaelleWidget,
@@ -64,14 +62,6 @@ describe('start-prefs — Normalisierung & Defaults', () => {
     expect(normalizeStartPrefs(null)).toEqual(defaultStartPrefs());
     expect(normalizeStartPrefs({ kpiCards: [], heuteWidgets: [] })).toEqual(defaultStartPrefs());
     expect(normalizeStartPrefs({ kpiCards: ['nur-quatsch'] }).kpiCards).toEqual(defaultStartPrefs().kpiCards);
-  });
-
-  it('Gast-Filter entfernt gastgesperrte Widgets, sonst unverändert', () => {
-    const all = HEUTE_WIDGET_DEFS.map((d) => d.id);
-    const guest = filterWidgetsForGuest(all, true);
-    expect(guest).not.toContain('offene_importe');
-    expect(guest).toContain('reservationen_heute');
-    expect(filterWidgetsForGuest(all, false)).toEqual(all);
   });
 
   it('moveItem verschiebt immutable und klemmt an den Grenzen', () => {
@@ -120,13 +110,12 @@ describe('start-widgets — Builder-Invarianten (fehlend ≠ 0)', () => {
     expect(w.detail).toContain('1 ohne Status');
   });
 
-  it('Reservationen heute: PII-frei, Gast ohne CRM-Link; Ladefehler sichtbar', () => {
-    const admin = buildReservationenHeuteWidget({ count: 3, persons: 11 }, null, false);
+  it('Reservationen heute: PII-frei mit CRM-Link; Ladefehler sichtbar', () => {
+    const admin = buildReservationenHeuteWidget({ count: 3, persons: 11 }, null);
     expect(admin.value).toBe('3');
     expect(admin.detail).toContain('11 Personen');
     expect(admin.route).toBe('/gaeste');
-    expect(buildReservationenHeuteWidget({ count: 3, persons: null }, null, true).route).toBeNull();
-    const err = buildReservationenHeuteWidget(null, 'DB weg', false);
+    const err = buildReservationenHeuteWidget(null, 'DB weg');
     expect(err.value).toBe('—');
     expect(err.error).toBe('DB weg');
   });

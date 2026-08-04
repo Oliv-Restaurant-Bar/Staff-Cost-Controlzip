@@ -14,7 +14,6 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
-import { usePermissions } from '@/hooks/usePermissions';
 import type { TenantId } from '@/contexts/TenantContext';
 import { parseAdyenPaymentsCsv } from '@/lib/adyen-csv-parser';
 import {
@@ -47,9 +46,7 @@ interface AdyenAbgleichSectionProps {
 }
 
 export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionProps) {
-  const { isGuest } = usePermissions();
   const { user } = useAuth();
-  const readOnly = isGuest;
   // Audit-Benutzer für Bestätigungs-Stempel (gemeinsamer Store mit
   // Tagesabschlüsse — dieselbe Kennung wie dort).
   const currentUser = user?.email ?? 'unbekannt';
@@ -125,7 +122,6 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
   // ── Import ──────────────────────────────────────────────────────────────────
 
   const handleFile = useCallback(async (file: File) => {
-    if (readOnly) return;
     setImporting(true);
     setImportError(null);
     try {
@@ -174,7 +170,7 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
       setImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [readOnly, tenantId, persist, year, isDayClosed]);
+  }, [tenantId, persist, year, isDayClosed]);
 
   // ── Mutationen ──────────────────────────────────────────────────────────────
 
@@ -183,24 +179,24 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
   // (gemeinsame Bestätigungen) auf derselben Seite.
 
   const handleOverride = useCallback((fieldKey: string, originalValue: number, corrected: number | null, comment: string) => {
-    if (readOnly || rejectLocked(fieldKey.split(':')[0])) return;
+    if (rejectLocked(fieldKey.split(':')[0])) return;
     void persist(setOverride(loadAdyenAbstimmungLocal(tenantId), fieldKey, originalValue, corrected, comment, new Date().toISOString()));
-  }, [readOnly, rejectLocked, tenantId, persist]);
+  }, [rejectLocked, tenantId, persist]);
 
   const handleComment = useCallback((fieldKey: string, text: string) => {
-    if (readOnly || rejectLocked(fieldKey.split(':')[0])) return;
+    if (rejectLocked(fieldKey.split(':')[0])) return;
     void persist(setComment(loadAdyenAbstimmungLocal(tenantId), fieldKey, text, new Date().toISOString()));
-  }, [readOnly, rejectLocked, tenantId, persist]);
+  }, [rejectLocked, tenantId, persist]);
 
   const handleConfirm = useCallback((date: string, confirmation: DayConfirmationInput) => {
-    if (readOnly || rejectLocked(date)) return;
+    if (rejectLocked(date)) return;
     // Audit-Stempel + Dirty-Check zentral in applyDayConfirmation:
     // keine fachliche Änderung ⇒ kein Write.
     const cur = loadAdyenAbstimmungLocal(tenantId);
     const next = applyDayConfirmation(cur, date, confirmation, currentUser, new Date().toISOString());
     if (next === cur) return;
     void persist(next);
-  }, [readOnly, rejectLocked, tenantId, currentUser, persist]);
+  }, [rejectLocked, tenantId, currentUser, persist]);
 
   // ── Tagesliste des Monats ───────────────────────────────────────────────────
 
@@ -249,7 +245,7 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
               className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) void handleFile(f); }}
             />
-            <Button size="sm" className="h-7 text-xs" disabled={readOnly || importing}
+            <Button size="sm" className="h-7 text-xs" disabled={importing}
               onClick={() => fileInputRef.current?.click()}>
               <Upload className="h-3.5 w-3.5 mr-1" />
               {importing ? 'Importiere…' : 'Adyen-CSV importieren'}
@@ -274,7 +270,7 @@ export function AdyenAbgleichSection({ tenantId, year }: AdyenAbgleichSectionPro
           <div className="overflow-x-auto">
             <AdyenDayTable
               days={days}
-              disabled={readOnly}
+              disabled={false}
               onOverride={handleOverride}
               onComment={handleComment}
               onConfirm={handleConfirm}

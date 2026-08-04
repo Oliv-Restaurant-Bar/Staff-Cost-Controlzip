@@ -1,0 +1,25 @@
+AUFGABE: Vollständiger anon-Sperr-Durchlauf — KEINE Tabelle darf für die anon-Rolle (öffentlicher Key) les- oder änderbar sein. Zwei definierte Ausnahmen minimal erhalten. DDL als Migration zum manuellen Ausführen liefern.
+
+ZIEL: Ohne Login (anon) ist KEIN Datenzugriff möglich — nicht lesen, nicht schreiben. Eingeloggte Nutzer bleiben unverändert.
+
+SCHRITT 1 — BESTANDSAUFNAHME:
+- Liste ALLE Tabellen mit ihrem RLS-Status und allen Grants/Policies für die Rolle `anon` (aus information_schema/pg_policies). Markiere jede Tabelle, bei der anon SELECT/INSERT/UPDATE/DELETE hat ODER RLS deaktiviert ist.
+
+SCHRITT 2 — FLÄCHENDECKEND SPERREN (Standard für ALLE Tabellen mit Daten):
+- RLS aktivieren (ENABLE ROW LEVEL SECURITY) auf jeder Tabelle.
+- REVOKE ALL PRIVILEGES ON <tabelle> FROM anon (auch Sequenzen/Views wo nötig).
+- Alle Policies mit `TO anon` oder ohne `TO` (=PUBLIC) entfernen; nur Policies `TO authenticated` behalten/anlegen (authenticated-only, wie im bestehenden Muster guest_crm_profiles / creditor_op / 20260619_gn_rls_fix).
+- Besonders sicherstellen (die bekannten Lücken): employee_wages, employee_timesheet_confirmations, gn_person_imports, gn_person_metrics, gn_analysis_imports, gn_analysis_metrics, alle gn_*, actual_hour_entries — plus alles, was Schritt 1 zusätzlich findet.
+
+SCHRITT 3 — DIE ZWEI ERLAUBTEN AUSNAHMEN (minimal, ohne PII):
+a) GAST-FREIGABEN (passwortgeschützt, read-only): Ermittle GENAU, welche Daten eine Gast-Session ohne Login liest. Erlaube anon NUR diesen minimalen, read-only, PII-freien Zugriff (z.B. app_settings key LIKE 'published-schedule:%' — SELECT only). Prüfe, dass darüber keine Löhne/PII/Finanzdetails erreichbar sind.
+b) MITARBEITER-TOKEN-BESTÄTIGUNG: Zugriff ausschliesslich über die token-scoped SECURITY-DEFINER-RPC (Seite laden + bestätigen/ablehnen). KEIN direktes anon-SELECT/UPDATE auf employee_timesheet_confirmations.
+
+SCHRITT 4 — BOOT-ROLLE:
+- AuthContext: Default-Rolle NICHT 'admin' (null/'pending'); loading erst nach loadUserRole beenden, damit PII-Lade-Effekte nicht im Boot-Fenster mit isAdmin=true feuern.
+
+SCHRITT 5 — VERIFIKATION (empirisch, im Bericht zeigen):
+- Mit dem anon-Key testen: SELECT auf employee_wages, employee_timesheet_confirmations, gn_person_metrics, gn_analysis_metrics, reservation_records, budgets, reporting-Tabellen → muss „permission denied" bzw. 0 Zeilen liefern. INSERT/UPDATE als anon → muss scheitern.
+- Positiv-Test: passwortgeschützte Gast-Freigabe funktioniert weiterhin (sieht nur ihre erlaubten, PII-freien Inhalte); Mitarbeiter-Token-Bestätigung funktioniert; normale eingeloggte Nutzer sehen/bearbeiten alles wie bisher.
+
+RAHMEN: Als sequenzielle Migration(en) fürs manuelle Ausführen im Supabase SQL-Editor aufbereiten. Bereits korrekt gesicherte Tabellen nicht verschlechtern. Zusammenfassen: Tabelle-für-Tabelle vorher→nachher (anon-Zugriff), und wie die zwei Ausnahmen jetzt laufen.

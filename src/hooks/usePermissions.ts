@@ -49,7 +49,6 @@
  */
 
 import { useAuth } from './useAuth';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import type { UserRole } from '@/contexts/AuthContext';
 
 // ─── Konfigurations-Konstante ─────────────────────────────────────────────────
@@ -90,8 +89,6 @@ export interface Permissions {
   // ── Rolle ────────────────────────────────────────────────
   role: UserRole;
   isAdmin: boolean;
-  /** Gast-Session (Read-only-Demo). isAdmin ist für Gäste TRUE → sensible PII-Seiten mit `isAdmin && !isGuest` gaten. */
-  isGuest: boolean;
   isManager: boolean;
   isBeaulieuManager: boolean;
   /** Beaulieu-Leser: Vollzugriff auf Warenrechnungen (view + export), kein Schreiben */
@@ -147,12 +144,9 @@ export const usePermissions = (): Permissions => {
     isBeaulieuManager: isBeaulieuMgr,
     isBeaulieuViewer: isBeaulieuViewerRaw,
   } = useAuth();
-  const { isGuest } = useGuestSession();
+  const isAdmin = isAdminUser;
 
-  // Gäste erhalten vollständige Admin-Rechte (Lese-Zugriff)
-  const isAdmin = isAdminUser || isGuest;
-
-  const isManager = isServiceManager || isKuecheManager || isGuest;
+  const isManager = isServiceManager || isKuecheManager;
   const isBeaulieuManager = isBeaulieuMgr;
   const isBeaulieuViewer  = isBeaulieuViewerRaw;
 
@@ -225,7 +219,6 @@ export const usePermissions = (): Permissions => {
     // Rolle
     role,
     isAdmin,
-    isGuest,
     isManager,
     isBeaulieuManager,
     isBeaulieuViewer,

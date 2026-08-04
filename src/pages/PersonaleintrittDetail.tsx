@@ -87,10 +87,10 @@ const MIRUS_ERLAUBT: PersonaleintrittStatus[] = ['geprueft', 'vertrag_gesendet',
 export default function PersonaleintrittDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
+  const { isAdmin, isBeaulieuManager } = usePermissions();
   const { user } = useAuth();
   const { tenantId } = useTenant();
-  const canManage = (isAdmin && !isGuest) || isBeaulieuManager;
+  const canManage = isAdmin || isBeaulieuManager;
 
   const [record, setRecord] = useState<PersonaleintrittRecord | null>(null);
   const [loading, setLoading] = useState(true);

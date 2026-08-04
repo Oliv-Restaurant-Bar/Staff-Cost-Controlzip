@@ -16,11 +16,9 @@ import { cn } from '@/lib/utils';
 
 export function WarnCenter({
   result,
-  isGuest,
 }: {
   /** Warnliste aus buildExecutiveWarnings — null solange nicht geladen. */
   result: ExecutiveWarningsResult | null;
-  isGuest: boolean;
 }) {
   return (
     <section aria-labelledby="cockpit-risiken" className="space-y-2" data-testid="warncenter">
@@ -67,14 +65,14 @@ export function WarnCenter({
                       />
                       <span className="min-w-0">{w.text}</span>
                     </span>
-                    {!isGuest && w.route && (
+                    {w.route && (
                       <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
                     )}
                   </>
                 );
                 return (
                   <li key={w.id} data-testid={`warncenter-item-${w.id}`}>
-                    {!isGuest && w.route ? (
+                    {w.route ? (
                       <Link
                         to={w.route}
                         className={cn(

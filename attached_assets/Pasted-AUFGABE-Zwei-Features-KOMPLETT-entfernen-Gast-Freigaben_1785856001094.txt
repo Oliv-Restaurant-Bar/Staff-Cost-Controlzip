@@ -1,0 +1,27 @@
+AUFGABE: Zwei Features KOMPLETT entfernen (Gast-Freigaben + Mitarbeiter-Stundenbestätigung) und danach die anon-Rolle OHNE Ausnahmen vollständig aussperren. DDL als Migration zum manuellen Ausführen.
+
+TEIL A — GAST-FREIGABEN / GASTGEBER-LINK ENTFERNEN:
+- Alle Gast-Session-Funktionen entfernen: passwortgeschützte read-only Freigaben, published-schedule-Links, zugehörige Routen, UI-Buttons/Dialoge und Logik.
+- Auth vereinfachen: `isAdmin = isAdminUser || isGuest` → nur noch `isAdminUser`. Alle `isGuest`/`!isGuest`-Gates entfernen (Guest-Konzept existiert nicht mehr).
+- Anon-Policy für app_settings (key LIKE 'published-schedule:%') und alle zugehörigen anon-Grants entfernen.
+- Keine toten Referenzen/Routen zurücklassen.
+
+TEIL B — MITARBEITER-STUNDENBESTÄTIGUNG ENTFERNEN:
+- Bestätigungs-Seite/-Route, Token-Erzeugung, Bestätigen/Ablehnen-Flow und die zugehörigen SECURITY-DEFINER-RPCs (z.B. get_confirmation_page_data) entfernen.
+- Alle anon-Rechte auf employee_timesheet_confirmations entfernen. Tabelle vorerst behalten (Daten nicht löschen), aber ohne jeden anon-Zugriff; Hinweis, dass sie bei Bedarf später gedroppt werden kann.
+
+TEIL C — ANON KOMPLETT AUSSPERREN (jetzt OHNE Ausnahmen):
+- Bestandsaufnahme: alle Tabellen/Views/Sequenzen mit anon-Grants oder deaktivierter RLS auflisten.
+- Für JEDE Tabelle mit Daten: RLS aktivieren, REVOKE ALL PRIVILEGES … FROM anon, alle Policies `TO anon`/ohne `TO` entfernen, nur `TO authenticated` behalten/anlegen.
+- Ergebnis: NULL anon-Grants und NULL anon-Policies im ganzen Schema. Bekannte Lücken explizit abdecken: employee_wages, employee_timesheet_confirmations, gn_person_*, gn_analysis_*, alle gn_*, actual_hour_entries + alles aus der Bestandsaufnahme.
+
+TEIL D — BOOT-ROLLE:
+- AuthContext: Default-Rolle NICHT 'admin' (null/'pending'); loading erst nach loadUserRole beenden.
+
+TEIL E — VERIFIKATION (empirisch, im Bericht zeigen):
+- Mit dem anon-Key: SELECT/INSERT/UPDATE/DELETE auf employee_wages, employee_timesheet_confirmations, gn_person_metrics, gn_analysis_metrics, reservation_records, budgets, reporting, app_settings → ALLES muss „permission denied" bzw. 0 Zeilen liefern.
+- Liste aller verbleibenden anon-Grants/Policies → muss LEER sein.
+- Gast-Link-Routen → nicht mehr erreichbar; Stundenbestätigungs-Seite → entfernt.
+- Eingeloggte Nutzer (admin & übrige Rollen) sehen/bearbeiten alles wie bisher; keine kaputten Routen/Aufrufe.
+
+RAHMEN: Als sequenzielle Migration(en) fürs manuelle Ausführen aufbereiten, plus die Code-Änderungen (Feature-Entfernung). Zusammenfassen: was entfernt wurde, und die Vorher→Nachher-Liste der anon-Zugriffe (Ziel: 0).

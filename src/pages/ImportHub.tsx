@@ -3,7 +3,6 @@ import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ImportTaskPrefillHint } from '@/components/ImportTaskPrefillHint';
 import { OpenHoursSection, useOpenParkedCount } from '@/components/import-center/OpenHoursSection';
 import { usePermissions } from '@/hooks/usePermissions';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useTenant } from '@/contexts/TenantContext';
 import {
   Upload, TrendingUp, Clock, BookOpen, ArrowLeft,
@@ -1186,7 +1185,6 @@ const MONTH_LABELS = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Ok
 const AnnualCostImportSection = () => {
   const { tenantId, tenantKey } = useTenant();
   const { isAdmin } = usePermissions();
-  const { isGuest } = useGuestSession();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parsing, setParsing]     = useState(false);
   const [result, setResult]       = useState<AnnualKostenResult | null>(null);
@@ -2033,8 +2031,8 @@ const AnnualCostImportSection = () => {
         </div>
       )}
 
-      {/* ── Backup-Prüfung & Nachsicherung (E): nur Admin, nie Gast, nur auf Klick ── */}
-      {isAdmin && !isGuest && (
+      {/* ── Backup-Prüfung & Nachsicherung (E): nur Admin, nur auf Klick ── */}
+      {isAdmin && (
         <div className="space-y-2 pt-1" data-testid="reporting-backup-check">
           <div className="flex items-center gap-2">
             <p className="text-[11px] font-medium text-muted-foreground">Supabase-Backup der Erfolgsrechnung</p>
@@ -4015,7 +4013,6 @@ const PREFILL_TARGET_ANCHORS: Record<string, string> = {
 
 const ImportHub = () => {
   const { isAdmin, isBeaulieuManager, isBeaulieuViewer } = usePermissions();
-  const { isGuest } = useGuestSession();
   const { tenant } = useTenant();
   const [searchParams] = useSearchParams();
 
@@ -4031,14 +4028,14 @@ const ImportHub = () => {
     return () => clearTimeout(t);
   }, [searchParams]);
   // Single source of truth: the page is reachable iff the role can see ≥1 import card
-  // (same visibleCategories() the grid uses). Guests get 0 cards → redirected; Beaulieu-GF
-  // gets its route cards; Beaulieu-Viewer gets Warenrechnungen only; admin gets all 9.
-  if (visibleCategories({ isAdmin, isGuest, isBeaulieuManager, isBeaulieuViewer }).length === 0) {
+  // (same visibleCategories() the grid uses). Beaulieu-GF gets its route cards;
+  // Beaulieu-Viewer gets Warenrechnungen only; admin gets all 9.
+  if (visibleCategories({ isAdmin, isBeaulieuManager, isBeaulieuViewer }).length === 0) {
     return <Navigate to="/personal" replace />;
   }
   // The inline import sections below the card grid are admin-only tools; non-admins
   // (Beaulieu) see ONLY the card grid — their route cards navigate to the real pages.
-  const showAdminSections = isAdmin && !isGuest;
+  const showAdminSections = isAdmin;
 
   return (
     <div className="min-h-screen bg-background">

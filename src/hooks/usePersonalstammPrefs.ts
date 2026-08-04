@@ -11,7 +11,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import { useAuth } from '@/hooks/useAuth';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import {
   defaultPersonalstammPrefs,
   normalizePersonalstammPrefs,
@@ -26,19 +25,17 @@ export function usePersonalstammPrefs(): {
 } {
   const { tenantKey } = useTenant();
   const { user } = useAuth();
-  const { isGuest } = useGuestSession();
 
   const storageKey = tenantKey(`${PERSONALSTAMM_PREFS_KEY}_${user?.id ?? 'anon'}`);
 
   const read = useCallback((): PersonalstammPrefs => {
-    if (isGuest) return defaultPersonalstammPrefs();
     try {
       const raw = localStorage.getItem(storageKey);
       return raw ? normalizePersonalstammPrefs(JSON.parse(raw)) : defaultPersonalstammPrefs();
     } catch {
       return defaultPersonalstammPrefs();
     }
-  }, [storageKey, isGuest]);
+  }, [storageKey]);
 
   const [prefs, setPrefs] = useState<PersonalstammPrefs>(read);
 
@@ -49,7 +46,6 @@ export function usePersonalstammPrefs(): {
 
   const savePrefs = useCallback(
     (patch: Partial<PersonalstammPrefs>) => {
-      if (isGuest) return; // Gast-Sessions sind rein lesend.
       const next = normalizePersonalstammPrefs({ ...read(), ...patch });
       try {
         localStorage.setItem(storageKey, JSON.stringify(next));
@@ -58,7 +54,7 @@ export function usePersonalstammPrefs(): {
       }
       setPrefs(next);
     },
-    [isGuest, read, storageKey],
+    [read, storageKey],
   );
 
   return { prefs, savePrefs };

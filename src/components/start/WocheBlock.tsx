@@ -30,7 +30,6 @@ export function WocheBlock({
   weekRevenue,
   dienstplanDetail,
   openImports,
-  isGuest,
 }: {
   /** Anzeige-Label, z. B. «KW 29 · 13.–19.07.». */
   weekLabel: string;
@@ -40,7 +39,6 @@ export function WocheBlock({
   dienstplanDetail: string | null;
   /** Anzahl offener/fehlerhafter Importtypen — null = Datenstand unbekannt. */
   openImports: number | null;
-  isGuest: boolean;
 }) {
   const rows: Array<{ id: string; label: string; value: string; route: string | null }> = [
     {
@@ -82,7 +80,7 @@ export function WocheBlock({
                   <span className="text-muted-foreground">{row.label}</span>
                   <span className="flex items-center gap-2 font-medium tabular-nums">
                     {row.value}
-                    {!isGuest && row.route && (
+                    {row.route && (
                       <ArrowRight className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
                     )}
                   </span>
@@ -90,7 +88,7 @@ export function WocheBlock({
               );
               return (
                 <li key={row.id} data-testid={`woche-${row.id}`}>
-                  {!isGuest && row.route ? (
+                  {row.route ? (
                     <Link
                       to={row.route}
                       className={`${rowClass} transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset`}

@@ -39,7 +39,6 @@ import type { KitchenColdRule, StaffingProfilesConfig } from '@/lib/staffing-pro
 import { buildEffectiveRequirements, cdsRuleForSeason, ugSurchargeApplies } from '@/lib/staffing-profiles-utils';
 import { useStaffingProfiles } from '@/hooks/useStaffingProfiles';
 import { useUgEventDays } from '@/hooks/useUgEventDays';
-import { usePermissions } from '@/hooks/usePermissions';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   StaffingKpiCards,
@@ -248,7 +247,6 @@ export function StaffingComparisonPanel({
   // Massgeblich ist die Konfiguration der Seite; Hook nur als Legacy-Rückfall.
   const profilesConfig = profilesConfigProp ?? hookProfilesConfig;
   const { eventDays, toggle: toggleEventDay } = useUgEventDays();
-  const { isGuest } = usePermissions();
 
   const [selectedDate, setSelectedDate] = useState<Date>(initialDate ?? new Date());
   const [internalSeason, setInternalSeason] = useState<StaffingSeason>(DEFAULT_SEASON);
@@ -407,7 +405,6 @@ export function StaffingComparisonPanel({
             <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
               <Checkbox
                 checked={eventOpen}
-                disabled={isGuest}
                 onCheckedChange={() => toggleEventDay(dateStr)}
                 data-testid="ug-event-toggle-panel"
               />

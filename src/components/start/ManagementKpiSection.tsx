@@ -145,12 +145,9 @@ function buildMonthOptions(now: Date): { key: string; label: string }[] {
 
 export function ManagementKpiSection({
   enabled,
-  isGuest,
 }: {
   /** Nur für Admin-Sessions laden (Route ist admin-gated; doppelt hält besser). */
   enabled: boolean;
-  /** Gast-Sessions: rein lesend, keine gesperrten Links/Exporte/Kommentare. */
-  isGuest: boolean;
 }) {
   const { tenantId } = useTenant();
   const navigate = useNavigate();
@@ -289,9 +286,8 @@ export function ManagementKpiSection({
     }
   };
 
-  /** Gast-Sessions: gesperrte Zielrouten weder verlinken noch klickbar machen. */
-  const routeAllowed = (def: KpiDefinition, route: string | undefined): route is string =>
-    !!route && !(isGuest && (def.guestHiddenRoutes ?? []).includes(route));
+  const routeAllowed = (_def: KpiDefinition, route: string | undefined): route is string =>
+    !!route;
 
   /** Drilldown-Ziel inkl. gewähltem Monats-Kontext (?monat=YYYY-MM bzw. ?year=). */
   const drilldownUrl = (route: string) => buildKpiDrilldownUrl(route, selYear, selMonth);
@@ -355,35 +351,34 @@ export function ManagementKpiSection({
             <BookOpen className="mr-1.5 h-4 w-4" />
             Definitionen
           </Button>
-          {!isGuest && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" disabled={exporting} data-testid="mgmt-kpi-export-btn">
-                  {exporting ? (
-                    <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Download className="mr-1.5 h-4 w-4" />
-                  )}
-                  Export
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Excel</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => void runExport('excel', 'geschaeftsleitung')}>
-                  Geschäftsleitung (alle KPIs + Kommentare)
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void runExport('excel', 'bank')}>Bank</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void runExport('excel', 'investoren')}>Investoren</DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>PDF</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => void runExport('pdf', 'geschaeftsleitung')}>
-                  Geschäftsleitung (alle KPIs + Kommentare)
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void runExport('pdf', 'bank')}>Bank</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => void runExport('pdf', 'investoren')}>Investoren</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" disabled={exporting} data-testid="mgmt-kpi-export-btn">
+                {exporting ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="mr-1.5 h-4 w-4" />
+                )}
+                Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Excel</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => void runExport('excel', 'geschaeftsleitung')}>
+                Geschäftsleitung (alle KPIs + Kommentare)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void runExport('excel', 'bank')}>Bank</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void runExport('excel', 'investoren')}>Investoren</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>PDF</DropdownMenuLabel>
+              <DropdownMenuItem onClick={() => void runExport('pdf', 'geschaeftsleitung')}>
+                Geschäftsleitung (alle KPIs + Kommentare)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void runExport('pdf', 'bank')}>Bank</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void runExport('pdf', 'investoren')}>Investoren</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
         </div>
       </div>
 
@@ -515,17 +510,15 @@ export function ManagementKpiSection({
                             {comment.text}
                           </span>
                         )}
-                        {!isGuest && (
-                          <button
-                            type="button"
-                            onClick={() => openComment(def)}
-                            className="text-muted-foreground transition-colors hover:text-primary"
-                            aria-label={`Kommentar zu ${def.name}`}
-                            data-testid={`mgmt-kpi-comment-btn-${def.id}`}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          onClick={() => openComment(def)}
+                          className="text-muted-foreground transition-colors hover:text-primary"
+                          aria-label={`Kommentar zu ${def.name}`}
+                          data-testid={`mgmt-kpi-comment-btn-${def.id}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>

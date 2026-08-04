@@ -45,7 +45,6 @@ import {
   type StaffingProfilesConfig,
 } from '@/lib/staffing-profiles-utils';
 import { useUgEventDays } from '@/hooks/useUgEventDays';
-import { usePermissions } from '@/hooks/usePermissions';
 import { Checkbox } from '@/components/ui/checkbox';
 import { StaffingDayCheck } from '@/components/schedule-planner/StaffingDayCheck';
 import {
@@ -98,7 +97,6 @@ export function StaffingScheduleCheckCard({
   dateOverride,
 }: StaffingScheduleCheckCardProps) {
   const { tenantId } = useTenant();
-  const { isGuest } = usePermissions();
   const { eventDays, toggle: toggleEventDay } = useUgEventDays();
 
   const [dateStr, setDateStr] = useState<string>(() =>
@@ -263,7 +261,6 @@ export function StaffingScheduleCheckCard({
           <label className="flex items-center gap-1.5 pb-1.5 text-xs cursor-pointer select-none">
             <Checkbox
               checked={eventOpen}
-              disabled={isGuest}
               onCheckedChange={() => toggleEventDay(dateStr)}
               data-testid="ug-event-toggle"
             />

@@ -14,7 +14,7 @@ vi.mock('@/contexts/TenantContext', () => ({
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ isAdmin: true, isGuest: false }),
+  usePermissions: () => ({ isAdmin: true }),
 }));
 
 const navigateMock = vi.fn();

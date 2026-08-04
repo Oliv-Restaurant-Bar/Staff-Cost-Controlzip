@@ -7,11 +7,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import {
-  ClipboardCheck, ChevronLeft, ChevronRight, Copy, Link,
-  CheckCircle2, XCircle, Clock, AlertCircle, RefreshCw, Trash2,
+  ClipboardCheck, ChevronLeft, ChevronRight,
+  CheckCircle2, XCircle, RefreshCw,
   Users, Check, Upload, FileSpreadsheet, AlertTriangle, X, Info,
   History, UserPlus, SkipForward, Undo2, ShieldCheck, Lock,
-  MessageSquare, SendHorizontal, CheckCheck, LockOpen,
   BanIcon, UserCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -33,14 +32,10 @@ import {
 import {
   matchEmployeeByName, saveNameMappingsBatch, loadNameMappings,
 } from '@/lib/mirus-name-mapping-store';
-import { saveActualHourEntry, saveActualHourEntries, saveActualDayAnnotations, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, checkConfirmedEmployees, getLockedDatesForMonth, getManualEditCountsForMonth, logTimesheetChange } from '@/lib/supabase-db';
+import { saveActualHourEntry, saveActualHourEntries, saveActualDayAnnotations, upsertEmployee, checkExistingMonthData, deleteMonthDataForEmployees, getLockedDatesForMonth, getManualEditCountsForMonth, logTimesheetChange } from '@/lib/supabase-db';
 import type { Employee as PersonnelEmployee } from '@/types/personnel';
 import {
-  getConfirmationsForMonth,
-  createOrGetConfirmation,
-  deleteConfirmation,
   getActualHoursBatch,
-  timesheetPublicUrl,
   MONTH_NAMES_DE,
   saveImportHistory,
   getImportHistoryForMonth,
@@ -49,15 +44,8 @@ import {
   getEmployeeTimeBalancesForMonth,
   loadDienstplanHoursForMonth,
   parseMirusHoursString,
-  type TimesheetConfirmation,
-  type TimesheetStatus,
   type ImportHistoryEntry,
   type EmployeeTimeBalance,
-  getRequestsForMonth,
-  updateRequestStatus,
-  markMonthSent,
-  finalizeTimesheet,
-  type EmployeeRequest,
 } from '@/lib/timesheet-store';
 import ExclusionDialog, { type ExclusionDialogMode } from '@/components/ExclusionDialog';
 import {
@@ -91,10 +79,9 @@ type MatchStatus = 'matched' | 'manual' | 'conflict' | 'unresolved' | 'new_emplo
 
 /**
  * null            = noch nicht geprüft oder erster Import (kein Re-Import)
- * 'free'          = kann ersetzt werden (offene / abgelehnte / keine Bestätigung)
- * 'protected_confirmed' = Arbeitszeitblatt bereits bestätigt → wird NICHT überschrieben
+ * 'free'          = kann ersetzt werden (Re-Import überschreibt)
  */
-type ProtectionStatus = null | 'free' | 'protected_confirmed';
+type ProtectionStatus = null | 'free';
 
 interface ImportPreviewRow {
   mirusName: string;
@@ -128,7 +115,6 @@ interface NewEmployeeFormData {
 
 interface RowData {
   employee: Employee;
-  confirmation: TimesheetConfirmation | null;
   istHours: number;
   dienstplanHours: number;
   sollHours: number;
@@ -163,28 +149,6 @@ function fmtDiff(diff: number) {
 }
 function fmtDatetime(iso: string) {
   return new Date(iso).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
-}
-
-// ─── Status-Badge (Bestätigungen) ─────────────────────────────────────────────
-
-const STATUS_META: Record<TimesheetStatus, { label: string; color: string; icon: React.ReactNode }> = {
-  open:         { label: 'Offen',         color: 'text-muted-foreground bg-muted',                                           icon: <Clock className="h-3 w-3" /> },
-  link_created: { label: 'Link erstellt', color: 'text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-950/40',         icon: <Link className="h-3 w-3" /> },
-  sent:         { label: 'Gesendet',      color: 'text-purple-700 bg-purple-50 dark:text-purple-300 dark:bg-purple-950/40', icon: <Link className="h-3 w-3" /> },
-  confirmed:    { label: 'Bestätigt',     color: 'text-emerald-700 bg-emerald-50 dark:text-emerald-300 dark:bg-emerald-950/40', icon: <CheckCircle2 className="h-3 w-3" /> },
-  rejected:     { label: 'Rückfrage',     color: 'text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-950/40',             icon: <XCircle className="h-3 w-3" /> },
-  expired:      { label: 'Abgelaufen',    color: 'text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',     icon: <AlertCircle className="h-3 w-3" /> },
-  question_open:{ label: 'Rückfrage offen', color: 'text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/40',  icon: <MessageSquare className="h-3 w-3" /> },
-  finalized:    { label: 'Final',           color: 'text-teal-700 bg-teal-50 dark:text-teal-300 dark:bg-teal-950/40',      icon: <CheckCheck className="h-3 w-3" /> },
-};
-
-function StatusBadge({ status }: { status: TimesheetStatus }) {
-  const m = STATUS_META[status];
-  return (
-    <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium', m.color)}>
-      {m.icon}{m.label}
-    </span>
-  );
 }
 
 // ─── Match-Badge (Import) ──────────────────────────────────────────────────────
@@ -224,16 +188,13 @@ export default function ArbeitszeitblaetterPage() {
   // ── Daten ─────────────────────────────────────────────────────────────────
 
   const [employees, setEmployees]           = useState<Employee[]>([]);
-  const [confirmations, setConfirmations]   = useState<TimesheetConfirmation[]>([]);
   const [istMap, setIstMap]                 = useState<Record<string, number>>({});
   const [dienstplanMap, setDienstplanMap]   = useState<Record<string, number>>({});
   const [balances, setBalances]             = useState<Record<string, EmployeeTimeBalance>>({});
   const [importHistory, setImportHistory]   = useState<ImportHistoryEntry | null>(null);
   const [importHistoryList, setImportHistoryList] = useState<ImportHistoryEntry[]>([]);
   const [loading, setLoading]               = useState(true);
-  const [generating, setGenerating]         = useState<string | null>(null);
   const [allEmps, setAllEmps]               = useState<PersonnelEmployee[]>([]);
-  const [requests, setRequests]            = useState<EmployeeRequest[]>([]);
   const [monthStatuses, setMonthStatuses]  = useState<Record<string, MonthStatusRecord>>({});
 
   // ── Import-State ──────────────────────────────────────────────────────────
@@ -257,7 +218,6 @@ export default function ArbeitszeitblaetterPage() {
   /** Anzahl bereits vorhandener Einträge (für Warnung) */
   const [existingDataCount, setExistingDataCount] = useState(0);
   /** IDs bestätigter Mitarbeiter für diesen Monat (geschützt, werden nicht überschrieben) */
-  const [confirmedProtectedIds, setConfirmedProtectedIds] = useState<Set<string>>(new Set());
   /** Resultat der Lösch-Operation beim Re-Import */
   const [reimportDeleteResult, setReimportDeleteResult] = useState<{
     deletedHours: number; deletedBlocks: number; deletedBalances: number;
@@ -316,27 +276,23 @@ export default function ArbeitszeitblaetterPage() {
       setAllEmps(all as unknown as PersonnelEmployee[]);
 
       const empIds = filtered.map(e => e.id);
-      const [confs, hours, dienstplan, bals, history, historyAll, editCounts, reqs, excls, incls] = await Promise.all([
-        getConfirmationsForMonth(tenantId, year, month),
+      const [hours, dienstplan, bals, history, historyAll, editCounts, excls, incls] = await Promise.all([
         getActualHoursBatch(empIds, year, month),
         loadDienstplanHoursForMonth(empIds, year, month),
         getEmployeeTimeBalancesForMonth(tenantId, year, month),
         getImportHistoryForMonth(tenantId, year, month),
         getImportHistoryAll(tenantId, 30),
         getManualEditCountsForMonth(empIds, year, month),
-        getRequestsForMonth(tenantId, year, month),
         getExclusionsForTenant(tenantId),
         getInclusionsForMonth(tenantId, year, month),
       ]);
 
-      setConfirmations(confs);
       setIstMap(hours);
       setDienstplanMap(dienstplan);
       setBalances(bals);
       setImportHistory(history);
       setImportHistoryList(historyAll);
       setManualEditCounts(editCounts);
-      setRequests(reqs);
       setExclusions(excls);
       setInclusions(incls);
       const mStatuses = await getMonthStatuses(tenantId, year, month);
@@ -356,7 +312,6 @@ export default function ArbeitszeitblaetterPage() {
 
   if (!isAdmin) { navigate('/'); return null; }
 
-  const confMap = Object.fromEntries(confirmations.map(c => [c.employee_id, c]));
   const departments = ['all', ...Array.from(new Set(employees.map(e => e.department).filter(Boolean)))];
   const excludedIds = new Set(
     employees.filter(e => isExcludedForMonth(e.id, year, month, exclusions, inclusions)).map(e => e.id),
@@ -367,7 +322,6 @@ export default function ArbeitszeitblaetterPage() {
     .filter(e => deptFilter === 'all' || e.department === deptFilter)
     .map(e => ({
       employee:        e,
-      confirmation:    confMap[e.id] ?? null,
       istHours:        istMap[e.id]        ?? 0,
       dienstplanHours: dienstplanMap[e.id] ?? 0,
       sollHours:       e.weekly_hours ? sollHoursForMonth(e.weekly_hours, year, month) : 0,
@@ -384,13 +338,8 @@ export default function ArbeitszeitblaetterPage() {
       : rows.filter(r => !excludedIds.has(r.employee.id));
   const activeRows = rows.filter(r => !excludedIds.has(r.employee.id));
   const stats = {
-    total:        activeRows.length,
-    confirmed:    activeRows.filter(r => r.confirmation?.status === 'confirmed').length,
-    questionOpen: activeRows.filter(r => r.confirmation?.status === 'question_open').length,
-    rejected:     activeRows.filter(r => r.confirmation?.status === 'rejected').length,
-    pending:      activeRows.filter(r => !r.confirmation || r.confirmation.status === 'open').length,
+    total: activeRows.length,
   };
-  const openRequestCount = requests.filter(r => r.status === 'open' || r.status === 'in_review').length;
   const isMonthFinalizedAll = activeEmployees.length > 0
     && activeEmployees.every(e => monthStatuses[e.id]?.status === 'finalized');
 
@@ -401,7 +350,6 @@ export default function ArbeitszeitblaetterPage() {
         if (!emp) return null;
         return {
           employee:        emp,
-          confirmation:    confMap[emp.id]    ?? null,
           istHours:        istMap[emp.id]     ?? 0,
           dienstplanHours: dienstplanMap[emp.id] ?? 0,
           sollHours:       emp.weekly_hours ? sollHoursForMonth(emp.weekly_hours, year, month) : 0,
@@ -422,7 +370,6 @@ export default function ArbeitszeitblaetterPage() {
     skipped:     importRows.filter(r => r.matchStatus === 'skipped').length,
     conflict:    importRows.filter(r => r.matchStatus === 'conflict').length,
     unresolved:  importRows.filter(r => r.matchStatus === 'unresolved').length,
-    protected:   importRows.filter(r => r.protectionStatus === 'protected_confirmed').length,
     totalDays:   importRows.filter(r => r.employee && r.matchStatus !== 'skipped')
                            .reduce((s, r) => s + r.dayCount, 0),
   };
@@ -435,68 +382,6 @@ export default function ArbeitszeitblaetterPage() {
 
   function prevMonth() { if (month === 1) { setYear(y => y - 1); setMonth(12); } else setMonth(m => m - 1); }
   function nextMonth() { if (month === 12) { setYear(y => y + 1); setMonth(1); }  else setMonth(m => m + 1); }
-
-  // ── Confirmation-Aktionen ─────────────────────────────────────────────────
-
-  async function handleGenerateLink(emp: Employee) {
-    if (isMonthFinalizedAll) {
-      toast.error('Monat ist finalisiert — kein neuer Link möglich');
-      return;
-    }
-    setGenerating(emp.id);
-    try {
-      const conf = await createOrGetConfirmation(tenantId, emp.id, year, month);
-      const url  = timesheetPublicUrl(conf.token);
-      // Clipboard-Fehler (z.B. kein HTTPS oder Permission denied) separat behandeln
-      try {
-        await navigator.clipboard.writeText(url);
-        toast.success(`Link für ${emp.name} kopiert`);
-      } catch {
-        // Clipboard nicht verfügbar — Link trotzdem anzeigen
-        toast.info(`Link generiert (Clipboard nicht verfügbar): ${url}`, { duration: 8000 });
-      }
-      await loadData();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[TIMESHEET] handleGenerateLink Fehler:', {
-        employee_id: emp.id,
-        employee:    emp.name,
-        month, year, tenantId,
-        error: msg,
-      });
-      toast.error(`Link konnte nicht generiert werden: ${msg}`, { duration: 8000 });
-    } finally {
-      setGenerating(null);
-    }
-  }
-
-  async function handleCopyLink(conf: TimesheetConfirmation) {
-    await navigator.clipboard.writeText(timesheetPublicUrl(conf.token));
-    toast.success('Link kopiert');
-  }
-
-  async function handleDelete(conf: TimesheetConfirmation, empName: string) {
-    if (!confirm(`Bestätigung für ${empName} löschen? Der Link wird ungültig.`)) return;
-    try { await deleteConfirmation(conf.id); toast.success('Gelöscht'); await loadData(); }
-    catch { toast.error('Fehler beim Löschen'); }
-  }
-
-  // ── Freigabe: Monat zur Mitarbeiterprüfung freigeben ──────────────────────
-
-  async function handleMarkMonthSent() {
-    if (isMonthFinalizedAll) { toast.error('Monat ist finalisiert und gesperrt — Freigabe nicht möglich'); return; }
-    if (!activeEmployees.length) { toast.error('Keine aktiven Mitarbeiter im Monat'); return; }
-    if (!confirm(`${activeEmployees.length} Mitarbeiter für ${MONTH_NAMES_DE[month - 1]} ${year} zur Mitarbeiterprüfung freigeben?${excludedIds.size > 0 ? ` (${excludedIds.size} ausgeschlossen, werden übersprungen)` : ''}`)) return;
-    try {
-      const empIds = activeEmployees.map(e => e.id);
-      const result = await markMonthSent(tenantId, year, month, empIds);
-      toast.success(`Monat freigegeben: ${result.created} neue Links erstellt, ${result.updated} aktualisiert`);
-      await loadData();
-    } catch (err) {
-      console.error('[TIMESHEET] markMonthSent error', err);
-      toast.error('Fehler beim Freigeben');
-    }
-  }
 
   // ── Ausschluss-Handler ────────────────────────────────────────────────────
 
@@ -535,72 +420,6 @@ export default function ArbeitszeitblaetterPage() {
       console.error('[EXCLUSION] include:', err);
       toast.error('Fehler beim Einschliessen');
       throw err;
-    }
-  }
-
-  // ── Rückfragen: Admin-Aktionen ────────────────────────────────────────────
-
-  async function handleResolveRequest(req: EmployeeRequest) {
-    try {
-      await updateRequestStatus(req.id, 'resolved', 'Erledigt', user?.email ?? null);
-      toast.success('Rückfrage als erledigt markiert');
-      await loadData();
-    } catch { toast.error('Fehler beim Aktualisieren'); }
-  }
-
-  async function handleRejectRequest(req: EmployeeRequest) {
-    try {
-      await updateRequestStatus(req.id, 'rejected', 'Abgelehnt', user?.email ?? null);
-      toast.success('Rückfrage abgelehnt');
-      await loadData();
-    } catch { toast.error('Fehler beim Aktualisieren'); }
-  }
-
-  async function handleApplyChange(req: EmployeeRequest) {
-    if (!req.date) { toast.error('Kein Datum angegeben'); return; }
-    const emp = employees.find(e => e.id === req.employee_id);
-    if (!confirm(`Korrektur für ${emp?.name ?? req.employee_id} am ${req.date} übernehmen und Eintrag sperren?`)) return;
-    try {
-      const { data: existing } = await supabase
-        .from('actual_hours')
-        .select('hours, start_time, end_time, absence_type')
-        .eq('employee_id', req.employee_id)
-        .eq('date', req.date)
-        .maybeSingle();
-
-      const hourResult = await saveActualHourEntry(req.employee_id, req.date, {
-        hours:       req.requested_hours       ?? (existing?.hours ?? 0),
-        start:       req.requested_start_time  ?? existing?.start_time  ?? undefined,
-        end:         req.requested_end_time    ?? existing?.end_time    ?? undefined,
-        absenceType: existing?.absence_type ?? undefined,
-      });
-      if (!hourResult.ok) { toast.error(`Fehler: ${hourResult.error}`); return; }
-
-      await supabase.from('actual_hours')
-        .update({ manually_edited: true, is_locked: true })
-        .eq('employee_id', req.employee_id)
-        .eq('date', req.date);
-
-      await logTimesheetChange({
-        employeeId: req.employee_id,
-        date:       req.date,
-        year:       req.year,
-        month:      req.month,
-        tableName:  'actual_hours',
-        fieldName:  'hours',
-        oldValue:   existing?.hours != null ? String(existing.hours) : null,
-        newValue:   req.requested_hours != null ? String(req.requested_hours) : null,
-        changeType: 'admin_apply_employee_request',
-        reason:     `Admin übernimmt Mitarbeiterantrag: ${req.message ?? ''}`.trim(),
-        changedBy:  user?.email ?? null,
-      });
-
-      await updateRequestStatus(req.id, 'resolved', 'Korrektur übernommen', user?.email ?? null);
-      toast.success('Korrektur übernommen und Eintrag gesperrt');
-      await loadData();
-    } catch (err) {
-      console.error('[handleApplyChange]', err);
-      toast.error('Fehler beim Übernehmen der Korrektur');
     }
   }
 
@@ -760,10 +579,9 @@ export default function ArbeitszeitblaetterPage() {
         const checkYear  = detectedYear  ?? year;
         const checkMonth = detectedMonth ?? month;
 
-        // Parallel: existierende Daten + bestätigte MA + manuelle Änderungen prüfen
-        const [{ exists, count }, confirmedIds, manualCounts] = await Promise.all([
+        // Parallel: existierende Daten + manuelle Änderungen prüfen
+        const [{ exists, count }, manualCounts] = await Promise.all([
           checkExistingMonthData(matchedIds, checkYear, checkMonth),
-          checkConfirmedEmployees(matchedIds, checkYear, checkMonth),
           getManualEditCountsForMonth(matchedIds, checkYear, checkMonth),
         ]);
 
@@ -773,22 +591,16 @@ export default function ArbeitszeitblaetterPage() {
 
         setIsReimport(exists);
         setExistingDataCount(count);
-        setConfirmedProtectedIds(confirmedIds);
 
         // Schutzstatus je Zeile setzen
         enrichedRows = rows.map(r => {
           if (!r.employee || r.matchStatus === 'skipped') return r;
-          const ps: ProtectionStatus = !exists
-            ? null
-            : confirmedIds.has(r.employee.id)
-              ? 'protected_confirmed'
-              : 'free';
+          const ps: ProtectionStatus = !exists ? null : 'free';
           return { ...r, protectionStatus: ps };
         });
       } else {
         setIsReimport(false);
         setExistingDataCount(0);
-        setConfirmedProtectedIds(new Set());
       }
       setReimportDeleteResult(null);
       setImportRows(enrichedRows);
@@ -918,12 +730,12 @@ export default function ArbeitszeitblaetterPage() {
     setImportRunning(true);
     const errors: string[] = [];
     let importedCount = 0, skippedCount = 0, createdCount = 0, manualCount = 0;
-    let totalDeleted = 0, skippedConfirmedCount = 0;
+    let totalDeleted = 0;
 
-    // Re-Import: nur freie (nicht bestätigte) MAs löschen + reimportieren
+    // Re-Import: Daten der gematchten MAs löschen + reimportieren
     if (isReimport) {
       const freeIds = importRows
-        .filter(r => r.employee && r.matchStatus !== 'skipped' && r.protectionStatus !== 'protected_confirmed')
+        .filter(r => r.employee && r.matchStatus !== 'skipped')
         .map(r => r.employee!.id);
       if (freeIds.length > 0) {
         // skipLocked = true (behalten) oder false (überschreiben) — je nach Admin-Wahl
@@ -940,7 +752,7 @@ export default function ArbeitszeitblaetterPage() {
     const lockedDatesMap: Record<string, Set<string>> = {};
     {
       const idsToCheck = importRows
-        .filter(r => r.employee && r.matchStatus !== 'skipped' && r.protectionStatus !== 'protected_confirmed')
+        .filter(r => r.employee && r.matchStatus !== 'skipped')
         .map(r => r.employee!.id);
       await Promise.all(idsToCheck.map(async id => {
         lockedDatesMap[id] = await getLockedDatesForMonth(id, year, month);
@@ -950,12 +762,6 @@ export default function ArbeitszeitblaetterPage() {
     for (const row of importRows) {
       if (row.matchStatus === 'skipped') { skippedCount++; continue; }
       if (!row.employee) continue;
-      // Bestätigte Mitarbeiter überspringen — Daten bleiben unverändert
-      if (row.protectionStatus === 'protected_confirmed') {
-        skippedConfirmedCount++;
-        skippedCount++;
-        continue;
-      }
       if (row.matchStatus === 'new_employee') createdCount++;
       if (row.matchStatus === 'manual') manualCount++;
 
@@ -1139,8 +945,6 @@ export default function ArbeitszeitblaetterPage() {
       } : null,
       isReimport,
       deletedCount:          totalDeleted,
-      protectedCount:        skippedConfirmedCount,
-      skippedConfirmedCount,
       skippedManualCount:    0,
     });
 
@@ -1152,7 +956,6 @@ export default function ArbeitszeitblaetterPage() {
     setQualityFields([]);
     setIsReimport(false);
     setExistingDataCount(0);
-    setConfirmedProtectedIds(new Set());
     setReimportDeleteResult(null);
 
     if (errors.length === 0) {
@@ -1196,11 +999,6 @@ export default function ArbeitszeitblaetterPage() {
               <span className="px-3 text-sm font-medium min-w-[130px] text-center">{MONTH_NAMES_DE[month - 1]} {year}</span>
               <button onClick={nextMonth} className="px-2 h-full hover:bg-muted rounded-r-md transition-colors"><ChevronRight className="h-4 w-4" /></button>
             </div>
-            {isAdmin && !isMonthFinalizedAll && (
-              <Button variant="outline" size="sm" onClick={handleMarkMonthSent} className="h-8 gap-1.5 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/20">
-                <SendHorizontal className="h-3.5 w-3.5" />Monat freigeben
-              </Button>
-            )}
             {isAdmin && isMonthFinalizedAll && (
               <span className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium rounded-md border border-teal-300 dark:border-teal-700 bg-teal-50 dark:bg-teal-950/20 text-teal-700 dark:text-teal-400">
                 <Lock className="h-3.5 w-3.5" />Finalisiert
@@ -1250,7 +1048,6 @@ export default function ArbeitszeitblaetterPage() {
           vacationTaken={selectedRow.vacationTaken}
           holidayBalance={selectedRow.holidayBalance}
           holidayTaken={selectedRow.holidayTaken}
-          confirmation={selectedRow.confirmation}
           year={year}
           month={month}
           onBack={() => setSelectedEmployeeId(null)}
@@ -1261,9 +1058,6 @@ export default function ArbeitszeitblaetterPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: 'Gesamt',     value: stats.total,                                color: 'text-foreground',                                  Icon: Users },
-            { label: 'Bestätigt', value: stats.confirmed,                             color: 'text-emerald-600 dark:text-emerald-400',           Icon: CheckCircle2 },
-            { label: 'Rückfragen', value: stats.questionOpen + stats.rejected + openRequestCount, color: 'text-amber-600 dark:text-amber-400',  Icon: MessageSquare },
-            { label: 'Ausstehend', value: stats.pending,                              color: 'text-muted-foreground',                            Icon: Clock },
           ].map(s => (
             <div key={s.label} className="bg-card border border-border rounded-lg p-3 flex items-center gap-3">
               <s.Icon className={cn('h-5 w-5 shrink-0', s.color)} />
@@ -1371,25 +1165,20 @@ export default function ArbeitszeitblaetterPage() {
                     <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Ferien</th>
                     <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Feiertage</th>
                     <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                    <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden xl:table-cell">Letzte Aktion</th>
                     <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wide">Aktionen</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
                   {displayedRows.map(row => {
-                    const { employee: emp, confirmation: conf, istHours, dienstplanHours, sollHours, vacationBalance, holidayBalance } = row;
+                    const { employee: emp, istHours, dienstplanHours, sollHours, vacationBalance, holidayBalance } = row;
                     const isExcluded = excludedIds.has(emp.id);
                     const diff = istHours - sollHours;
                     const planDeviation = dienstplanHours > 0 && istHours > 0 ? Math.abs(dienstplanHours - istHours) : 0;
                     const hasPlanWarning = planDeviation > 2;
-                    const status = conf?.status ?? 'open';
-                    const lastAction = conf?.confirmed_at ?? conf?.rejected_at ?? conf?.updated_at ?? null;
                     return (
                       <tr key={emp.id} className={cn('hover:bg-muted/30 transition-colors',
                         isExcluded && 'opacity-50 bg-zinc-50/50 dark:bg-zinc-900/20',
                         !isExcluded && hasPlanWarning && 'bg-amber-50/40 dark:bg-amber-950/10',
-                        !isExcluded && !hasPlanWarning && status === 'confirmed' && 'bg-emerald-50/30 dark:bg-emerald-950/10',
-                        !isExcluded && !hasPlanWarning && status === 'rejected'  && 'bg-red-50/30 dark:bg-red-950/10',
                       )}>
                         <td className="px-4 py-2 font-medium text-sm">
                           <div className="flex items-center gap-1.5">
@@ -1456,24 +1245,21 @@ export default function ArbeitszeitblaetterPage() {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex flex-col gap-1">
-                            {isExcluded ? (
+                            {isExcluded && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 dark:bg-zinc-800/60 text-zinc-500 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700">
                                 <BanIcon className="h-2.5 w-2.5" />Ausgeschlossen
                               </span>
-                            ) : (
-                              <StatusBadge status={status} />
                             )}
                             {monthStatuses[emp.id]?.status === 'finalized' && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-teal-50 dark:bg-teal-950/20 text-teal-700 dark:text-teal-400 border border-teal-200 dark:border-teal-800">
                                 <Lock className="h-2.5 w-2.5" />Final
                               </span>
                             )}
-                            {!isExcluded && status === 'rejected' && conf?.employee_comment && (
-                              <p className="text-[10px] text-red-600 dark:text-red-400 max-w-[180px] truncate" title={conf.employee_comment}>„{conf.employee_comment}"</p>
+                            {!isExcluded && monthStatuses[emp.id]?.status !== 'finalized' && (
+                              <span className="text-[10px] text-muted-foreground">–</span>
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground hidden xl:table-cell">{lastAction ? fmtDatetime(lastAction) : '–'}</td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-1 justify-end">
                             {/* Ausschluss / Einschluss-Button */}
@@ -1489,22 +1275,6 @@ export default function ArbeitszeitblaetterPage() {
                             >
                               {isExcluded ? <UserCheck className="h-3.5 w-3.5" /> : <BanIcon className="h-3.5 w-3.5" />}
                             </button>
-                            {conf ? (
-                              <>
-                                <button onClick={() => handleCopyLink(conf)} title="Link kopieren" className="h-7 w-7 flex items-center justify-center rounded border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"><Copy className="h-3.5 w-3.5" /></button>
-                                <button onClick={() => handleGenerateLink(emp)} disabled={generating === emp.id || isExcluded} title={isExcluded ? 'Ausgeschlossen — kein neuer Link' : 'Link neu generieren'} className="h-7 w-7 flex items-center justify-center rounded border border-border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"><RefreshCw className={cn('h-3.5 w-3.5', generating === emp.id && 'animate-spin')} /></button>
-                                <button onClick={() => handleDelete(conf, emp.name)} title="Löschen" className="h-7 w-7 flex items-center justify-center rounded border border-red-200 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors text-red-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
-                              </>
-                            ) : (
-                              <button
-                                onClick={() => !isExcluded && handleGenerateLink(emp)}
-                                disabled={generating === emp.id || isExcluded}
-                                title={isExcluded ? 'Dieser Mitarbeiter ist für diesen Monat ausgeschlossen.' : undefined}
-                                className="h-7 px-2.5 flex items-center gap-1 text-[11px] font-medium rounded border border-primary text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                              >
-                                {generating === emp.id ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Link className="h-3 w-3" />}Link generieren
-                              </button>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -1525,103 +1295,12 @@ export default function ArbeitszeitblaetterPage() {
           <span className="flex items-center gap-1 text-blue-500">■ Ferien/Feiertage = Mirus Abschluss-Saldo</span>
         </div>
 
-        {/* Offene Rückfragen */}
-        {openRequestCount > 0 && (() => {
-          const openReqs = requests.filter(r => r.status === 'open' || r.status === 'in_review');
-          return (
-            <div className="bg-card border border-amber-200 dark:border-amber-800 rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 flex items-center gap-2">
-                <MessageSquare className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                <h3 className="text-sm font-semibold">Offene Rückfragen</h3>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-700">
-                  {openReqs.length}
-                </span>
-              </div>
-              <div className="divide-y divide-border">
-                {openReqs.map(req => {
-                  const emp      = employees.find(e => e.id === req.employee_id);
-                  const empName  = emp?.name ?? req.employee_id;
-                  const isCorr   = req.request_type === 'correction_request';
-                  const d        = req.date ? new Date(req.date + 'T00:00:00') : null;
-                  const dateLabel = d
-                    ? d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' })
-                    : 'Allgemein';
-                  return (
-                    <div key={req.id} className="px-4 py-3 space-y-2">
-                      <div className="flex items-start gap-3 flex-wrap">
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-sm">{empName}</span>
-                            <span className="text-xs text-muted-foreground">{dateLabel}</span>
-                            <span className={cn(
-                              'text-[10px] px-1.5 py-0.5 rounded-full font-medium border',
-                              isCorr
-                                ? 'bg-blue-50 dark:bg-blue-950/20 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800'
-                                : 'bg-muted text-muted-foreground border-border',
-                            )}>
-                              {isCorr ? 'Korrektur' : 'Rückfrage'}
-                            </span>
-                            {req.category && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground border border-border capitalize">
-                                {req.category}
-                              </span>
-                            )}
-                          </div>
-                          {req.message && (
-                            <p className="text-sm text-muted-foreground leading-snug">{req.message}</p>
-                          )}
-                          {isCorr && (req.requested_hours != null || req.requested_start_time) && (
-                            <div className="inline-flex items-center gap-2 text-xs text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/20 rounded px-2.5 py-1 border border-blue-200 dark:border-blue-800">
-                              <span className="font-medium">Korrekturwunsch:</span>
-                              {req.requested_start_time && (
-                                <span>{req.requested_start_time.slice(0, 5)} – {req.requested_end_time?.slice(0, 5) ?? '?'}</span>
-                              )}
-                              {req.requested_hours != null && (
-                                <span className="font-bold">{req.requested_hours.toFixed(1)} h</span>
-                              )}
-                            </div>
-                          )}
-                          <p className="text-[10px] text-muted-foreground/60">{fmtDatetime(req.created_at)}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 flex-wrap">
-                        <button
-                          onClick={() => handleResolveRequest(req)}
-                          className="h-7 px-3 text-[11px] font-medium rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 dark:bg-emerald-950/20 dark:hover:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 transition-colors"
-                        >
-                          <CheckCheck className="h-3 w-3 inline mr-1" />Erledigen
-                        </button>
-                        <button
-                          onClick={() => handleRejectRequest(req)}
-                          className="h-7 px-3 text-[11px] font-medium rounded-md bg-red-50 hover:bg-red-100 text-red-700 dark:bg-red-950/20 dark:hover:bg-red-950/40 dark:text-red-400 border border-red-200 dark:border-red-800 transition-colors"
-                        >
-                          <XCircle className="h-3 w-3 inline mr-1" />Ablehnen
-                        </button>
-                        {isCorr && req.date && (req.requested_hours != null || req.requested_start_time) && (
-                          <button
-                            onClick={() => handleApplyChange(req)}
-                            className="h-7 px-3 text-[11px] font-medium rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/20 dark:hover:bg-blue-950/40 dark:text-blue-400 border border-blue-200 dark:border-blue-800 transition-colors"
-                          >
-                            <CheckCircle2 className="h-3 w-3 inline mr-1" />Änderung übernehmen
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })()}
-
         {/* Monatsabschluss-Header: Statusübersicht + Finalisierung */}
         <MonthAbschlussHeader
           tenantId={tenantId}
           year={year}
           month={month}
           employees={employees}
-          confirmations={confirmations}
-          requests={requests}
           monthStatuses={monthStatuses}
           istMap={istMap}
           balances={balances}
@@ -1778,7 +1457,7 @@ export default function ArbeitszeitblaetterPage() {
                 {/* Datei-Info */}
                 <div className="flex items-center gap-3 text-xs flex-wrap">
                   <span className="font-medium">{importFileName}</span>
-                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setConfirmedProtectedIds(new Set()); setReimportDeleteResult(null); setMonthManualEditCount(0); setManualOverwriteMode('keep'); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
+                  <button onClick={() => { setImportRows([]); setImportMonthMismatch(null); setImportMonthOverride(false); setParseStats(null); setIsReimport(false); setExistingDataCount(0); setReimportDeleteResult(null); setMonthManualEditCount(0); setManualOverwriteMode('keep'); }} className="flex items-center gap-1 text-muted-foreground hover:text-foreground ml-auto">
                     <X className="h-3.5 w-3.5" />Neue Datei
                   </button>
                 </div>
@@ -1796,19 +1475,10 @@ export default function ArbeitszeitblaetterPage() {
                           <div className="text-amber-700 dark:text-amber-400 leading-relaxed">
                             Für <strong>{MONTH_NAMES_DE[month - 1]} {year}</strong> existieren bereits{' '}
                             <strong>{existingDataCount}</strong> importierte Arbeitstag{existingDataCount !== 1 ? 'e' : ''}.
-                            Der neue Import ersetzt nur <strong>offene, nicht bestätigte</strong> Daten.
-                            Bestätigte oder geschützte Mitarbeiter bleiben unverändert.
+                            Der neue Import ersetzt die bestehenden Daten der gematchten Mitarbeiter.
                           </div>
-                          {confirmedProtectedIds.size > 0 && (
-                            <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400 font-medium">
-                              <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
-                              <span>
-                                <strong>{confirmedProtectedIds.size}</strong> Mitarbeiter mit bestätigtem Arbeitszeitblatt — werden übersprungen
-                              </span>
-                            </div>
-                          )}
                           <div className="text-amber-600/80 dark:text-amber-500/80">
-                            Gelöscht werden (nur offene MAs): <code className="font-mono text-[11px]">actual_hours</code>,{' '}
+                            Gelöscht werden: <code className="font-mono text-[11px]">actual_hours</code>,{' '}
                             <code className="font-mono text-[11px]">actual_hour_entries</code>,{' '}
                             <code className="font-mono text-[11px]">employee_time_balances</code> — nur Quelle: <code className="font-mono text-[11px]">mirus_import</code>
                           </div>
@@ -1977,7 +1647,6 @@ export default function ArbeitszeitblaetterPage() {
                             row.matchStatus === 'skipped'              && 'opacity-50',
                             row.matchStatus === 'conflict'             && 'bg-amber-50/30 dark:bg-amber-950/10',
                             row.matchStatus === 'unresolved'           && 'bg-red-50/20 dark:bg-red-950/10',
-                            row.protectionStatus === 'protected_confirmed' && 'bg-blue-50/40 dark:bg-blue-950/15',
                           )}>
                             {/* Mirus-Name */}
                             <td className="px-3 py-2 font-mono text-muted-foreground max-w-[110px]">
@@ -2013,12 +1682,7 @@ export default function ArbeitszeitblaetterPage() {
 
                             {/* Status-Badge */}
                             <td className="px-3 py-2 text-center">
-                              {row.protectionStatus === 'protected_confirmed'
-                                ? <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                                    <ShieldCheck className="h-3 w-3" />geschützt
-                                  </span>
-                                : <MatchBadge status={row.matchStatus} />
-                              }
+                              <MatchBadge status={row.matchStatus} />
                             </td>
 
                             {/* Statistiken */}

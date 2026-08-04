@@ -29,7 +29,7 @@ const SETTINGS = defaultImportSettings();
 function rowsFor(
   period: MonthPeriod,
   coverage: MonthCoverage,
-  opts: { isGuest?: boolean; umsatz?: { status: 'ok'; text: string } } = {},
+  opts: { umsatz?: { status: 'ok'; text: string } } = {},
 ) {
   const tasks = buildImportTasks(
     { year: period.year, month: period.month, today: TODAY },
@@ -41,7 +41,6 @@ function rowsFor(
     tasks,
     completions: summarizeTypeCompletion(tasks, TODAY),
     umsatzabstimmung: opts.umsatz ?? null,
-    isGuest: opts.isGuest ?? false,
   });
 }
 
@@ -118,7 +117,6 @@ describe('T511 — Zeilen aus dem SSoT-Aufgabenstand', () => {
       tasks: null,
       completions: null,
       umsatzabstimmung: null,
-      isGuest: false,
     });
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) {
@@ -209,14 +207,5 @@ describe('T511 — Zeilen aus dem SSoT-Aufgabenstand', () => {
     const u = rows.find((r) => r.type === 'umsatzabstimmung')!;
     expect(u.href).toBe('/umsatzabstimmung?year=2024&month=3');
     expect(u.tone).toBe('good');
-  });
-
-  it('Gast-Session: keine Zeile der Monatsübersicht ist verlinkt', () => {
-    const rows = rowsFor(
-      { year: 2026, month: 6 },
-      { zbericht: { coveredDays: allDays(2026, 6) } },
-      { isGuest: true, umsatz: { status: 'ok', text: 'Abgestimmt (Differenz < 1 %)' } },
-    );
-    expect(rows.every((r) => r.href === null)).toBe(true);
   });
 });

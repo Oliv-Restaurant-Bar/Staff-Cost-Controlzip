@@ -13,7 +13,7 @@ import { render, cleanup, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { OpImportRecord, OpItemRecord } from '@/types/op-liste';
 
-const mockPerms = { isAdmin: true, isBeaulieuManager: false, isGuest: false };
+const mockPerms = { isAdmin: true, isBeaulieuManager: false };
 const mockDb = {
   loadOpImports: vi.fn(),
   loadOpItems: vi.fn(),
@@ -107,7 +107,6 @@ afterEach(() => {
   vi.clearAllMocks();
   mockPerms.isAdmin = true;
   mockPerms.isBeaulieuManager = false;
-  mockPerms.isGuest = false;
 });
 
 describe('OpListe — Zustände', () => {
@@ -131,13 +130,6 @@ describe('OpListe — Zustände', () => {
     expect(await screen.findByTestId('op-empty')).toBeTruthy();
   });
 
-  it('Gäste sehen keinen Import-Button', async () => {
-    mockPerms.isGuest = true;
-    setupDb();
-    renderPage();
-    await screen.findByTestId('op-empty');
-    expect(screen.queryByTestId('op-import-button')).toBeNull();
-  });
 });
 
 describe('OpListe — Übersicht & Vergleich', () => {

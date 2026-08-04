@@ -26,7 +26,7 @@ vi.mock('@/components/umsatzabstimmung/AdyenAbgleichSection', () => ({
   AdyenAbgleichSection: () => <div data-testid="adyen-section" />,
 }));
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ isAdmin: true, isBeaulieuManager: false, isGuest: false }),
+  usePermissions: () => ({ isAdmin: true, isBeaulieuManager: false }),
 }));
 vi.mock('@/contexts/TenantContext', () => ({
   useTenant: () => ({ tenantId: 'oliv', tenantKey: (k: string) => k }),

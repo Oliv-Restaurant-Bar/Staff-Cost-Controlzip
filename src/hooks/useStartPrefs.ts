@@ -13,7 +13,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import { useAuth } from '@/hooks/useAuth';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import {
   defaultStartPrefs,
   normalizeStartPrefs,
@@ -33,19 +32,17 @@ export function useStartPrefs(): {
 } {
   const { tenantKey } = useTenant();
   const { user } = useAuth();
-  const { isGuest } = useGuestSession();
 
   const storageKey = tenantKey(`${START_PREFS_KEY}_${user?.id ?? 'anon'}`);
 
   const read = useCallback((): StartPrefs => {
-    if (isGuest) return defaultStartPrefs();
     try {
       const raw = localStorage.getItem(storageKey);
       return raw ? normalizeStartPrefs(JSON.parse(raw)) : defaultStartPrefs();
     } catch {
       return defaultStartPrefs();
     }
-  }, [storageKey, isGuest]);
+  }, [storageKey]);
 
   const [prefs, setPrefs] = useState<StartPrefs>(read);
 
@@ -59,7 +56,6 @@ export function useStartPrefs(): {
 
   const savePrefs = useCallback(
     (patch: Partial<StartPrefs>) => {
-      if (isGuest) return; // Gast-Sessions sind rein lesend.
       const next = normalizeStartPrefs({ ...read(), ...patch });
       try {
         localStorage.setItem(storageKey, JSON.stringify(next));
@@ -69,8 +65,8 @@ export function useStartPrefs(): {
       setPrefs(next);
       window.dispatchEvent(new Event(START_PREFS_UPDATED_EVENT));
     },
-    [isGuest, read, storageKey],
+    [read, storageKey],
   );
 
-  return { prefs, canCustomize: !isGuest, savePrefs };
+  return { prefs, canCustomize: true, savePrefs };
 }

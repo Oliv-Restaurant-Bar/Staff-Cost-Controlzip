@@ -45,9 +45,9 @@ function displayName(r: PersonaleintrittRecord): string {
 
 export default function PersonaleintrittListe() {
   const navigate = useNavigate();
-  const { isAdmin, isGuest, isBeaulieuManager } = usePermissions();
+  const { isAdmin, isBeaulieuManager } = usePermissions();
   const { tenantId } = useTenant();
-  const canManage = (isAdmin && !isGuest) || isBeaulieuManager;
+  const canManage = isAdmin || isBeaulieuManager;
 
   const [records, setRecords] = useState<PersonaleintrittRecord[]>([]);
   const [loading, setLoading] = useState(true);

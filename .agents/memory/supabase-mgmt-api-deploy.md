@@ -14,3 +14,6 @@ description: How to deploy edge functions + set function secrets without CLI; PA
 - Webhook-Secrets, die der User extern (n8n) braucht: nie in den Chat drucken; in gitignorete Datei `.local/…` legen und den User auf die Datei verweisen.
 
 **Why:** Alles empirisch verifiziert beim gastronovi-inbound-Deploy; CLI ist im Replit-Env nicht eingeloggt, DDL bleibt per Projekt-Konvention manuell im SQL-Editor.
+
+## DDL via Management-API (Update Aug 2026)
+- `POST https://api.supabase.com/v1/projects/{ref}/database/query` mit `{"query":"<SQL>"}` führt DDL live aus (201) — funktioniert mit `SUPABASE_ACCESS_TOKEN`. Migrationen können so direkt angewendet UND danach empirisch per anon-/authenticated-curl verifiziert werden; SQL-Datei trotzdem in supabase/migrations/ ablegen.

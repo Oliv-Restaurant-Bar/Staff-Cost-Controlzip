@@ -30,7 +30,6 @@ function completion(
 function rowFor(type: ImportTaskType, status: TypeCompletion['status'] = 'open') {
   const rows = buildDatenstandRows([completion(type, status)], {
     period: PERIOD,
-    isGuest: false,
   });
   return rows[0];
 }
@@ -97,7 +96,7 @@ describe('T510 — Interaktivität und Gating', () => {
   it('jede Zeile trägt den href selbst (ganze Zeile interaktiv, kein Sub-Button)', () => {
     const rows = buildDatenstandRows(
       TASK_TYPE_DEFS.map((d) => completion(d.type, 'open')),
-      { period: PERIOD, isGuest: false },
+      { period: PERIOD },
     );
     for (const row of rows) {
       expect(row.href).toBeTruthy();
@@ -114,14 +113,6 @@ describe('T510 — Interaktivität und Gating', () => {
     expect(rowFor('zbericht', 'error').href).toBe('/import-cockpit');
   });
 
-  it('Gast-Session: keine Zeile ist verlinkt (Import-/Schreibflächen gesperrt)', () => {
-    const rows = buildDatenstandRows(
-      TASK_TYPE_DEFS.map((d) => completion(d.type, 'open')),
-      { period: PERIOD, isGuest: true },
-    );
-    expect(rows.every((r) => r.href === null)).toBe(true);
-  });
-
   it('ohne Monats-Kontext gibt es keine Links (nie geratene Ziel-Params)', () => {
     const rows = buildDatenstandRows([completion('zbericht')], {});
     expect(rows[0].href).toBeNull();
@@ -130,7 +121,6 @@ describe('T510 — Interaktivität und Gating', () => {
   it('Ziel-Params übernehmen exakt den übergebenen Monat (Dezember → 12/31.12.)', () => {
     const rows = buildDatenstandRows([completion('zbericht')], {
       period: { year: 2024, month: 12 },
-      isGuest: false,
     });
     expect(rows[0].href).toContain('from=2024-12-01');
     expect(rows[0].href).toContain('to=2024-12-31');
@@ -149,7 +139,7 @@ describe('T510 — Interaktivität und Gating', () => {
     expect(() =>
       buildDatenstandRows(
         TASK_TYPE_DEFS.map((d) => completion(d.type, 'open')),
-        { period: PERIOD, isGuest: false },
+        { period: PERIOD },
       ),
     ).not.toThrow();
     expect(typeof globalThis.localStorage).toBe('undefined');

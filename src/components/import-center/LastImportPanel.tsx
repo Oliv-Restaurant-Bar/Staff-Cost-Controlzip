@@ -21,7 +21,6 @@ import { format } from 'date-fns';
 import { de } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { useTenant, TENANTS } from '@/contexts/TenantContext';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import {
   fetchRunsForSource, undoImportRun, IMPORT_UNDO_LOG_EVENT, IMPORT_SOURCE_LABEL,
   type ImportRunEntry, type ImportSourceKey, type UndoResult,
@@ -41,7 +40,6 @@ const fmtTs = (iso: string) => {
 export function LastImportPanel({ source, undoHint }: Props) {
   const { tenantId } = useTenant();
   const tenantName = TENANTS[tenantId].name;
-  const { isGuest } = useGuestSession();
   const [runs, setRuns] = useState<ImportRunEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -64,7 +62,7 @@ export function LastImportPanel({ source, undoHint }: Props) {
   const latest = runs[0];
   if (!latest && !loadError) return null; // noch nie importiert → nichts anzeigen
 
-  const undoable = !!latest && !latest.undone && !!latest.snapshot && !isGuest;
+  const undoable = !!latest && !latest.undone && !!latest.snapshot;
 
   const handleUndo = async () => {
     if (!latest?.snapshot) return;

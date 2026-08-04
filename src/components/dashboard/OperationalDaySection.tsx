@@ -52,7 +52,6 @@ export function OperationalDaySection({
   todayInLoadedMonth,
   canSeeRevenue,
   canSeeCosts,
-  isGuest,
   overview,
 }: {
   /** Anzeige-Label des heutigen Tags, z. B. „Mittwoch, 15. Juli 2026". */
@@ -71,7 +70,6 @@ export function OperationalDaySection({
   todayInLoadedMonth: boolean;
   canSeeRevenue: boolean;
   canSeeCosts: boolean;
-  isGuest: boolean;
   /** Status aus useStartOverview (Admin) — null = für diese Rolle nicht geladen. */
   overview: StartOverviewState | null;
 }) {
@@ -131,7 +129,7 @@ export function OperationalDaySection({
             value={statusValue(reservationen)}
             tone={statusTone(reservationen)}
             sub={statusSub(reservationen)}
-            onClick={reservationen && !isGuest ? () => navigate(reservationen.route) : undefined}
+            onClick={reservationen ? () => navigate(reservationen.route) : undefined}
             data-testid="op-kpi-reservationen"
           />
         )}
@@ -164,7 +162,7 @@ export function OperationalDaySection({
             value={statusValue(tagesabschluss)}
             tone={statusTone(tagesabschluss)}
             sub={statusSub(tagesabschluss)}
-            onClick={!isGuest ? () => navigate('/tagesabschluesse') : undefined}
+            onClick={() => navigate('/tagesabschluesse')}
             data-testid="op-kpi-tagesabschluss"
           />
         )}
@@ -185,7 +183,7 @@ export function OperationalDaySection({
               : ready?.coverageError ? 'Aufgabenstand nicht verfügbar'
               : 'Import & Kontrollen heute'
             }
-            onClick={!isGuest ? () => navigate('/import') : undefined}
+            onClick={() => navigate('/import')}
             data-testid="op-kpi-aufgaben"
           />
         )}

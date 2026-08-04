@@ -3,8 +3,7 @@
  * D010 — RequireAdmin: zentraler Route-Guard für admin-only Flächen.
  *
  * Fixiert: (1) Admin sieht Admin-Bereiche, (2/3) eingeschränkte Rollen werden
- * beim direkten URL-Aufruf umgeleitet (5), (4) Gast-Sessions dürfen lesen
- * (allowGuest), aber PII-/Schreibflächen (allowGuest=false) bleiben zu,
+ * beim direkten URL-Aufruf umgeleitet (5),
  * (16) beaulieu_manager nur wo explizit erlaubt (allowBeaulieu).
  */
 
@@ -14,7 +13,6 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 const perms = {
   isAdmin: false,
-  isGuest: false,
   isBeaulieuManager: false,
 };
 
@@ -24,7 +22,7 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 import { RequireAdmin } from '@/components/RequireAdmin';
 
-const renderGuarded = (opts: { allowGuest?: boolean; allowBeaulieu?: boolean; redirectTo?: string } = {}) =>
+const renderGuarded = (opts: { allowBeaulieu?: boolean; redirectTo?: string } = {}) =>
   render(
     <MemoryRouter initialEntries={['/geschuetzt']}>
       <Routes>
@@ -44,7 +42,6 @@ const renderGuarded = (opts: { allowGuest?: boolean; allowBeaulieu?: boolean; re
 
 const setPerms = (over: Partial<typeof perms>) => {
   perms.isAdmin = false;
-  perms.isGuest = false;
   perms.isBeaulieuManager = false;
   Object.assign(perms, over);
 };
@@ -61,19 +58,6 @@ describe('RequireAdmin — Route-Guard (D010 1–5, 16)', () => {
   it('(2/3/5) eingeschränkte Rolle (kein Admin-Flag): direkter URL-Aufruf → Redirect auf /', () => {
     setPerms({});
     renderGuarded();
-    expect(screen.queryByTestId('ziel')).toBeNull();
-    expect(screen.getByTestId('startseite')).toBeTruthy();
-  });
-
-  it('(4) Gast-Session (isAdmin schliesst Gäste ein) darf lesen, wenn allowGuest', () => {
-    setPerms({ isAdmin: true, isGuest: true });
-    renderGuarded({ allowGuest: true });
-    expect(screen.getByTestId('ziel')).toBeTruthy();
-  });
-
-  it('(4) Gast-Session wird bei allowGuest=false (PII-/Schreibfläche) umgeleitet', () => {
-    setPerms({ isAdmin: true, isGuest: true });
-    renderGuarded({ allowGuest: false });
     expect(screen.queryByTestId('ziel')).toBeNull();
     expect(screen.getByTestId('startseite')).toBeTruthy();
   });

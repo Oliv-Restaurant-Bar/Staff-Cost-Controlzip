@@ -112,7 +112,7 @@ function serializeEdits(edits: EditsMap): string {
 }
 
 export default function Personalbedarf() {
-  const { canAccessModule, isGuest } = usePermissions();
+  const { canAccessModule } = usePermissions();
   const { tenantId } = useTenant();
   const { positions, loading: posLoading, error: posError } = usePositions();
   const { requirements, loading: reqLoading, error: reqError, saveScope } = useStaffingRequirements();
@@ -328,7 +328,7 @@ export default function Personalbedarf() {
   const derived = !!activeProfile?.baseKey;
   /** Saison, deren Zeilen die Matrix zeigt (Winter/UG → Standard-Zeilen). */
   const matrixSeason = dataSeasonForProfile(profilesConfig, season);
-  const readOnly = isGuest || locked || derived;
+  const readOnly = locked || derived;
   const loading = posLoading || reqLoading;
 
   // ── Profil-Verwaltung ───────────────────────────────────────────────────────
@@ -629,30 +629,26 @@ export default function Personalbedarf() {
           <h1 className="text-lg font-semibold">Personalbedarf</h1>
         </div>
         <div className="flex items-center gap-2">
-          {!isGuest && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1"
-              onClick={() => setUgDialogOpen(true)}
-              data-testid="button-ug-config"
-              title="UG-Zuschlag konfigurieren (Saison, Wochentage, Positionen)"
-            >
-              <Settings2 className="h-4 w-4" /> UG konfigurieren
-            </Button>
-          )}
-          {!isGuest && (
-            <Button
-              size="sm"
-              variant={locked ? 'secondary' : 'outline'}
-              className="gap-1"
-              onClick={handleToggleLock}
-              title={locked ? 'Profil wieder bearbeitbar machen' : 'Profil gegen versehentliches Ändern sperren'}
-            >
-              {locked ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
-              {locked ? 'Entsperren' : 'Festsetzen'}
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1"
+            onClick={() => setUgDialogOpen(true)}
+            data-testid="button-ug-config"
+            title="UG-Zuschlag konfigurieren (Saison, Wochentage, Positionen)"
+          >
+            <Settings2 className="h-4 w-4" /> UG konfigurieren
+          </Button>
+          <Button
+            size="sm"
+            variant={locked ? 'secondary' : 'outline'}
+            className="gap-1"
+            onClick={handleToggleLock}
+            title={locked ? 'Profil wieder bearbeitbar machen' : 'Profil gegen versehentliches Ändern sperren'}
+          >
+            {locked ? <Unlock className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+            {locked ? 'Entsperren' : 'Festsetzen'}
+          </Button>
           {!readOnly && (
             <>
               <Button size="sm" variant="ghost" className="gap-1" onClick={handleReset} disabled={!dirty || busy}>
@@ -691,11 +687,9 @@ export default function Personalbedarf() {
               {p.label}
             </Button>
           ))}
-          {!isGuest && (
-            <Button type="button" size="sm" variant="ghost" className="gap-1 h-7 px-2 text-xs" onClick={handleAddProfile}>
-              <Plus className="h-3.5 w-3.5" /> Neues Profil
-            </Button>
-          )}
+          <Button type="button" size="sm" variant="ghost" className="gap-1 h-7 px-2 text-xs" onClick={handleAddProfile}>
+            <Plus className="h-3.5 w-3.5" /> Neues Profil
+          </Button>
         </div>
         <div className="hidden sm:block h-5 border-l border-border/60" aria-hidden="true" />
         {/* Ansicht */}
@@ -824,7 +818,6 @@ export default function Personalbedarf() {
               <Input
                 type="date"
                 value={activeProfile.activeFrom ? `2026-${activeProfile.activeFrom}` : ''}
-                disabled={isGuest}
                 onChange={(e) => handleRangeChange('activeFrom', e.target.value)}
                 className="h-8 w-[10.5rem] text-sm"
               />
@@ -834,7 +827,6 @@ export default function Personalbedarf() {
               <Input
                 type="date"
                 value={activeProfile.activeTo ? `2026-${activeProfile.activeTo}` : ''}
-                disabled={isGuest}
                 onChange={(e) => handleRangeChange('activeTo', e.target.value)}
                 className="h-8 w-[10.5rem] text-sm"
               />
@@ -1018,7 +1010,6 @@ export default function Personalbedarf() {
         employees={weekData?.employees ?? []}
         dynamicRuleHint={cellDialog ? dynamicRuleHintFor(cellDialog.positionKey, profilesConfig) : null}
         tenantId={tenantId}
-        readOnly={isGuest}
         conflictFor={conflictForCellDate}
         openProposals={openProposals}
         onProposalsChanged={() => setProposalsVersion((v) => v + 1)}
@@ -1031,7 +1022,6 @@ export default function Personalbedarf() {
         positionKey={positionDialog?.key ?? null}
         positionName={positionDialog?.name ?? ''}
         tenantId={tenantId}
-        readOnly={isGuest}
         dynamicRuleHint={positionDialog ? dynamicRuleHintFor(positionDialog.key, profilesConfig) : null}
       />
 

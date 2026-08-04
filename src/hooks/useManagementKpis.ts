@@ -19,7 +19,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTenant } from '@/contexts/TenantContext';
 import { useAuth } from '@/hooks/useAuth';
-import { useGuestSession } from '@/contexts/GuestSessionContext';
 import { useCockpitFinancials } from '@/hooks/useCockpitFinancials';
 import { getGuestsForPeriod, getAvgReceiptForPeriod, type GuestPeriodResult, type AvgReceiptResult } from '@/lib/gn-personen-db';
 import { loadProductCosts, loadProdukteData } from '@/lib/produkte-store';
@@ -66,7 +65,6 @@ export function useManagementKpis(
 ): ManagementKpisResult {
   const { tenantId } = useTenant();
   const { user } = useAuth();
-  const { isGuest } = useGuestSession();
   const fin = useCockpitFinancials(enabled, { year, month });
 
   const monthKey = `${year}-${pad2(month)}`;
@@ -189,9 +187,6 @@ export function useManagementKpis(
   }, [enabled, tenantId]);
 
   const saveComment = useCallback(async (kpiId: string, text: string) => {
-    // Harter Schreib-Guard (UI blendet die Aktion für Gäste bereits aus):
-    // Gast-Sessions sind rein lesend — nie in KV/localStorage schreiben.
-    if (isGuest) throw new Error('Gast-Sitzungen können keine Kommentare speichern.');
     const current = loadKpiCommentsLocal(tenantId);
     const result = applyKpiComment(
       current,
@@ -204,7 +199,7 @@ export function useManagementKpis(
     if (!result.changed) return; // Dirty-Check: identisch ⇒ kein Write.
     setComments(result.blob);
     await saveKpiComments(tenantId, result.blob);
-  }, [isGuest, tenantId, monthKey, user?.email]);
+  }, [tenantId, monthKey, user?.email]);
 
   // ── Eigene Zielwerte (kpi_targets_v1) — gleiches Muster wie Kommentare ────
   const [targets, setTargets] = useState<KpiTargetsBlob>({});
@@ -221,8 +216,6 @@ export function useManagementKpis(
   }, [enabled, tenantId]);
 
   const saveTarget = useCallback(async (kpiId: string, value: number | null) => {
-    // Harter Schreib-Guard: Gast-Sessions sind rein lesend.
-    if (isGuest) throw new Error('Gast-Sitzungen können keine Zielwerte speichern.');
     const current = loadKpiTargetsLocal(tenantId);
     const result = applyKpiTarget(
       current,
@@ -234,7 +227,7 @@ export function useManagementKpis(
     if (!result.changed) return; // Dirty-Check: identisch ⇒ kein Write.
     setTargets(result.blob);
     await saveKpiTargets(tenantId, result.blob);
-  }, [isGuest, tenantId, user?.email]);
+  }, [tenantId, user?.email]);
 
   const input = useMemo<KpiCatalogInput>(() => ({
     financialInput: fin.financialInput,

@@ -19,10 +19,10 @@ import {
 import { usePermissions } from '@/hooks/usePermissions';
 
 export function MwstRatesCard() {
-  // Globale (mandantenübergreifende) Einstellung → nur echte Admins dürfen
-  // sie sehen/ändern (isAdmin ist für Gäste true → isGuest ausschliessen;
-  // beaulieu_manager hat Settings-Zugriff, darf aber keine Oliv-Sätze ändern).
-  const { isAdmin, isGuest } = usePermissions();
+  // Globale (mandantenübergreifende) Einstellung → nur Admins dürfen
+  // sie sehen/ändern (beaulieu_manager hat Settings-Zugriff, darf aber keine
+  // Oliv-Sätze ändern).
+  const { isAdmin } = usePermissions();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [stdPct, setStdPct] = useState('');
@@ -69,7 +69,7 @@ export function MwstRatesCard() {
 
   const current = getMwstRates();
 
-  if (!isAdmin || isGuest) return null;
+  if (!isAdmin) return null;
 
   return (
     <Card className="mb-6" data-testid="mwst-rates-card">
