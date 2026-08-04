@@ -33,7 +33,7 @@ import { Employee } from '@/types/personnel';
 import { DaySchedule } from './ScheduleGrid';
 import { parseKüchenplanPDF, ParsedKüchenplan } from '@/lib/küchenplan-pdf-parser';
 import {
-  loadSchichtCodeMapping, saveSchichtCodeMapping, getMappingForCode,
+  loadSchichtCodeMapping, saveSchichtCodeMapping, getMappingForCode, normalizeSchichtCode,
   SchichtCodeEntry, computeHours,
 } from '@/lib/schicht-code-mapping-store';
 import { matchEmployeeByName } from '@/lib/mirus-name-mapping-store';
@@ -85,6 +85,7 @@ const TYPE_LABELS: Record<string, string> = {
   vacation: 'Ferien',
   absence: 'Abwesenheit',
   off: 'Frei',
+  unknown: 'unbekannt',
 };
 
 const TYPE_COLORS: Record<string, string> = {
@@ -92,6 +93,7 @@ const TYPE_COLORS: Record<string, string> = {
   vacation: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
   absence: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
   off: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  unknown: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
 };
 
 /** Baut eine Map origDate → resolvedDate unter Berücksichtigung von Monats-Rollover. */
@@ -205,13 +207,16 @@ export function KüchenplanImportDialog({
       });
       setNameMatches(matches);
 
-      // Add any new codes to the mapping
-      const currentCodes = codeMapping.map(e => e.code.toUpperCase());
+      // Unbekannte Codes ergänzen — NIE mit stillem Arbeits-Default:
+      // rot als «unbekannt» (0 Std, ohne Zeiten), der Nutzer muss aktiv zuweisen.
+      const known = (c: string) => getMappingForCode(c, codeMapping) !== null;
       const newEntries: SchichtCodeEntry[] = [];
+      const seen = new Set<string>();
       for (const code of result.detectedCodes) {
-        if (!currentCodes.includes(code.toUpperCase())) {
-          newEntries.push({ code, label: code, type: 'work', hours: 0, start: '07:00', end: '15:30' });
-        }
+        const norm = normalizeSchichtCode(code);
+        if (known(code) || seen.has(norm)) continue;
+        seen.add(norm);
+        newEntries.push({ code, label: 'unbekannt', type: 'unknown', hours: 0 });
       }
       if (newEntries.length > 0) {
         setCodeMapping(prev => [...prev, ...newEntries]);
@@ -240,12 +245,11 @@ export function KüchenplanImportDialog({
 
   const detectedCodesInMapping = parsed
     ? codeMapping.filter(e =>
-        parsed.detectedCodes.some(c => c.toUpperCase() === e.code.toUpperCase()))
+        parsed.detectedCodes.some(c => normalizeSchichtCode(c) === normalizeSchichtCode(e.code)))
     : [];
 
   const unmappedCodes = parsed
-    ? parsed.detectedCodes.filter(c =>
-        !codeMapping.some(e => e.code.toUpperCase() === c.toUpperCase()))
+    ? parsed.detectedCodes.filter(c => getMappingForCode(c, codeMapping) === null)
     : [];
 
   const updateCodeEntry = (idx: number, patch: Partial<SchichtCodeEntry>) => {
@@ -329,6 +333,9 @@ export function KüchenplanImportDialog({
           ds.spät = { start: row.mapped.start2, end: row.mapped.end2 };
         }
         if (ds.früh || ds.spät) delta[cellKey] = ds;
+      } else if (row.mapped.type === 'unknown') {
+        // Unbekannter Code: NIE schreiben — der Nutzer muss ihn erst zuweisen.
+        continue;
       } else {
         // Frei/Ferien/Abwesenheit = KEINE Schicht: Zelle wird geleert
         // (bestehende Plan-Schichten des Zeitraums werden ERSETZT, 0 Stunden).
@@ -573,7 +580,7 @@ export function KüchenplanImportDialog({
                       {codeMapping
                         .map((entry, globalIdx) => ({ entry, globalIdx }))
                         .filter(({ entry }) =>
-                          parsed.detectedCodes.some(c => c.toUpperCase() === entry.code.toUpperCase()),
+                          parsed.detectedCodes.some(c => normalizeSchichtCode(c) === normalizeSchichtCode(entry.code)),
                         )
                         .map(({ entry, globalIdx }) => (
                           <tr key={entry.code} className="bg-white dark:bg-card">
@@ -675,6 +682,7 @@ export function KüchenplanImportDialog({
                                   <SelectItem value="vacation">Ferien</SelectItem>
                                   <SelectItem value="absence">Abwesenheit</SelectItem>
                                   <SelectItem value="off">Frei</SelectItem>
+                                  <SelectItem value="unknown" className="text-red-600">unbekannt</SelectItem>
                                 </SelectContent>
                               </Select>
                             </td>

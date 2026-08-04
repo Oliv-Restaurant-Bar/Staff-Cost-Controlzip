@@ -277,6 +277,16 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
 
     for (let i = dataStart; i < rows.length; i++) {
       const row = rows[i];
+
+      // ── Legenden-Block: ab «DIENSTE LEGENDE» ist Schluss ──────────────────
+      // Alles darunter (Zeit-Texte, Pausen-Angaben, Abkürzungs-Erklärungen wie
+      // «KO= Kompensation») ist nur Nachschlagetabelle und erzeugt NIE Codes.
+      const rowText = row.items.map(it => it.text).join(' ');
+      if (/LEGENDE/i.test(rowText)) {
+        logs.push(`Legenden-Block ab y=${row.y} erkannt — Raster-Parsing beendet`);
+        break;
+      }
+
       if (row.items.length < 2) continue;
 
       const nameItems = row.items.filter(it => it.x < firstDayX - colGap * 0.3);
@@ -298,8 +308,9 @@ export async function parseKüchenplanPDF(file: File): Promise<ParsedKüchenplan
         if (day === null) continue;
         const date = dayToDate.get(day);
         if (!date) continue;
-        const code = si.text.trim();
-        if (!code || code === ' ') continue;
+        // Normalisieren: Leerzeichen entfernen («B a»→«Ba»), trailing «=» strippen («FE=»→«FE»)
+        const code = si.text.replace(/\s+/g, '').replace(/=+$/, '');
+        if (!code) continue;
         codesSet.add(code);
         entries.push({ rawName, date, code });
       }

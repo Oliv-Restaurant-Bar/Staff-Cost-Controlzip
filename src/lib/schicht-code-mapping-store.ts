@@ -27,7 +27,22 @@
 // Key-Bump, damit alte gespeicherte Mappings die neuen Defaults nicht verdecken.
 const STORAGE_KEY = 'schicht_code_mapping_v4';
 
-export type SchichtType = 'work' | 'vacation' | 'absence' | 'off';
+export type SchichtType = 'work' | 'vacation' | 'absence' | 'off' | 'unknown';
+
+/**
+ * Code normalisieren für den Abgleich: Grossbuchstaben, alle Leerzeichen
+ * entfernen («B a» → «BA»), trailing «=» strippen («FE=» → «FE»).
+ */
+export function normalizeSchichtCode(code: string): string {
+  return code.toUpperCase().replace(/\s+/g, '').replace(/=+$/, '');
+}
+
+/** Varianten → Basisschicht (übernehmen Zeiten/Stunden von A bzw. B). */
+export const SCHICHT_CODE_VARIANTS: Record<string, string> = {
+  AE: 'A',
+  BA: 'B',
+  BE: 'B',
+};
 
 export interface SchichtCodeEntry {
   code: string;
@@ -56,10 +71,10 @@ export const DEFAULT_MAPPING: SchichtCodeEntry[] = [
   // ── Arbeitsschichten ───────────────────────────────────────────────────────
   // A = Splitschicht Früh+Spät: 10:00–14:00 / 17:30–23:00
   { code: 'A',  label: 'Früh/Spät (Split)', type: 'work', hours: 8.0,  start: '10:00', end: '14:00', start2: '17:30', end2: '23:00' },
-  { code: 'Ae', label: 'wie A (Split)',     type: 'work', hours: 8.0,  start: '10:00', end: '14:00', start2: '17:30', end2: '23:00' },
+  { code: 'Ae', label: 'Variante von A',    type: 'work', hours: 8.0,  start: '10:00', end: '14:00', start2: '17:30', end2: '23:00' },
   { code: 'B',  label: 'Schicht B',         type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
-  { code: 'Ba', label: 'wie B',             type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
-  { code: 'Be', label: 'wie B',             type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
+  { code: 'Ba', label: 'Variante von B',    type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
+  { code: 'Be', label: 'Variante von B',    type: 'work', hours: 9.0,  start: '11:30', end: '21:30', breakMinutes: 60 },
   { code: 'C',  label: 'Schicht C',         type: 'work', hours: 3.5,  start: '10:00', end: '14:00', breakMinutes: 30 },
   { code: 'O2', label: 'Offen 2',           type: 'work', hours: 4.25, start: '07:00', end: '11:30', breakMinutes: 15 },
   { code: 'D',  label: 'Abend',             type: 'work', hours: 5.0,  start: '18:00', end: '23:30', breakMinutes: 30 },
@@ -95,10 +110,18 @@ export function getMappingForCode(
   code: string,
   mapping: SchichtCodeEntry[],
 ): SchichtCodeEntry | null {
-  const upper = code.trim().toUpperCase();
-  return (
-    mapping.find(e => e.code.toUpperCase() === upper) ??
-    DEFAULT_MAPPING.find(e => e.code.toUpperCase() === upper) ??
-    null
-  );
+  const norm = normalizeSchichtCode(code);
+  const find = (c: string) =>
+    mapping.find(e => normalizeSchichtCode(e.code) === c) ??
+    DEFAULT_MAPPING.find(e => normalizeSchichtCode(e.code) === c) ??
+    null;
+  const direct = find(norm);
+  if (direct) return direct;
+  // Variante (AE/BA/BE) → Basisschicht mit Kennzeichnung
+  const base = SCHICHT_CODE_VARIANTS[norm];
+  if (base) {
+    const baseEntry = find(base);
+    if (baseEntry) return { ...baseEntry, code, label: `Variante von ${base}` };
+  }
+  return null;
 }

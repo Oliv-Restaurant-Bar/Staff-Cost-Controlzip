@@ -1,0 +1,14 @@
+Der PDF-Parser für den Küchenplan-Import hat drei Fehler im Schritt „2. Code-Mapping". Bitte behebe alle, dublettensicher, mandantengetrennt, mit Vorschau vor Schreiben und Rückgängig-Möglichkeit. Der Import ersetzt den Zielmonat (fügt nicht hinzu).
+
+Fehler 1 — Legende wird als Codes eingelesen (Hauptfehler):
+Der Parser darf Schichtcodes AUSSCHLIESSLICH aus den Tages-Zellen des Mitarbeiter-Rasters ziehen, NICHT aus dem Legenden-Block. Alles ab der Zeile mit „DIENSTE LEGENDE" (inkl. der Zeit-Texte wie „10:00 bis 14:00 / 17:30 bis 23:00", „18:00 bis 23:30", „PAUSE 30MIN", „PAUSE 1H", „PAUSE 15 MIN", „07.00 BIS 11.30", „14", „bis 23", „FREEI" und der Abkürzungs-Erklärungen „KO= Kompensation", „MI= Militär", „FW=Freiwunsch", „MS = Mutterschaft", „FE= Ferien") wird NUR als Nachschlagetabelle für Zeiten und Bezeichnungen verwendet und erzeugt selbst KEINE eigenen Code-Zeilen. Ergebnis: Die Mapping-Liste enthält nur noch Codes, die tatsächlich in mindestens einer Raster-Zelle vorkommen.
+
+Fehler 2 — Code-Normalisierung + Varianten A/B:
+Vor dem Abgleich jeden Code normalisieren: in Grossbuchstaben, alle Leerzeichen entfernen („B a"→„BA"), trailing „=" strippen („FE="→„FE"). Dann Varianten auf die Basisschicht mappen: AE → A, BA → B, BE → B — sie übernehmen die Zeiten und Stunden von A bzw. B, mit Kennzeichnung „Variante von A/B" in der Bezeichnung.
+
+Fehler 3 — Abwesenheits-Codes nie als „Arbeit":
+Diese Codes sind Typ „Frei/Abwesenheit", 0 Std, ohne Zeiten (leere Dienstplan-Zelle): F (Frei), FE (Ferien), K (Krank), FW (Freiwunsch), MI (Militär), MS (Mutterschaft), KO (Kompensation), FT (Feiertag). Niemals Default 07:00–15:30/Arbeit.
+
+Zusätzlich — kein stiller Falsch-Default: Ein wirklich unbekannter Code (nicht in Legende, nicht Abwesenheit) wird rot als „unbekannt" markiert mit 0 Std, statt automatisch 07:00–15:30/Arbeit anzunehmen — der Nutzer muss ihn aktiv zuweisen, damit nie falsche Stunden gebucht werden.
+
+Nach dem Fix bei diesem August-PDF müssen im Mapping genau diese Codes übrig bleiben: A, B, E, O1, O2 (Arbeit, mit Legenden-Zeiten), F und FE (Abwesenheit, 0h), sowie Ae→A, Ba→B, Be→B. Kein Legenden-Müll, keine 0h-Arbeitszeilen.
