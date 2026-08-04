@@ -21,3 +21,12 @@ description: Regeln & Ausnahmen nach dem flächendeckenden anon-Sperr-Durchlauf;
 - Zielzustand verifiziert: 0 anon-Tabellen-Grants, 0 anon-Policies. Einzige anon-Restflächen: token-geprüfte Onboarding-RPCs + Storage-INSERT onboarding-docs.
 - Tabellen employee_timesheet_confirmations / timesheet_employee_requests existieren noch (Daten, authenticated-only) — bei Bedarf droppbar.
 - Mirus-Re-Import schützt NICHT mehr über Bestätigungs-Status; Schutz = Monats-Finalisierung (timesheet_month_status) + Tages-Locks. Unlock setzt Status 'draft'.
+
+
+## Update 2026-08-07 — Onboarding-per-Link entfernt, anon = 0 überall
+- Route /onboarding/:token, OnboardingForm, Selbst-Anmeldungs-UI im Personalstamm und alle Onboarding-Client-APIs in supabase-db sind gelöscht. Neue MA nur noch eingeloggt im Personalstamm.
+- Migration 20260807_remove_onboarding_public_flow.sql (live): 6 Funktionen gedroppt (4 Onboarding-RPCs, activate_onboarding_submission, get_token_access), Storage-anon-Policy «Anon upload onboarding docs» weg, DO-Loops entziehen anon/PUBLIC-EXECUTE auf ALLEN public-Funktionen (authenticated explizit gegranted) + ALTER DEFAULT PRIVILEGES.
+- Verifiziert: anon_grants=0, anon_policies=0 (public+storage), anon_exec=0; REST/RPC/Storage mit anon-Key überall denied. KEINE gewollte anon-Ausnahme mehr.
+- get_token_access ist gedroppt: useSupabaseSchedule hat kein Token-Plumbing mehr (canEdit/isAdmin fix true, Hook nur hinter Login); generierte types.ts enthält noch die alte Signatur (harmlos, beim nächsten Type-Regen weg).
+- Öffentlich bleibt NUR /e/:token (Personaleintritt Phase 2) über die Edge Function personaleintritt-public (Service-Role, kein anon-DB-Zugriff).
+- Tabellen onboarding_submissions + onboarding-docs-Bucket existieren noch (authenticated-only, Alt-Daten).

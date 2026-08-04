@@ -85,5 +85,5 @@
 - [Beaulieu Lieferanten-PDF-Profile](beaulieu-pdf-profile.md) — Erkennung via MWST-Nr; Vorschau führend (Stufe 2 nur bei deckender Summe); Regex-Fallen ST/QR-Zahlteil; Supplier-Sync nur als Batch.
 - [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang Pfand>Artikel>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.
-- [Vollständiger anon-Lockdown](anon-lockdown.md) — 0 anon-Grants/Policies auf Tabellen; Gast-Feature & Stundenbestätigung entfernt; einzige anon-Restflächen: Onboarding-Token-RPCs + onboarding-docs-Upload.
+- [Vollständiger anon-Lockdown](anon-lockdown.md) — anon = 0 Grants/0 Policies/0 EXECUTE im ganzen Schema; Gast, Stundenbestätigung UND Onboarding-per-Link entfernt; einziger öffentlicher Flow: /e/:token via Edge Function (Service-Role).
 - [Z-Bericht-Inbox Auto-Import](zbericht-inbox-auto-import.md) — atomarer pending→processing-Claim VOR dem Save (Cross-Tab), UNIQUE-Checksummen-Backstop, nur Tagesimporte automatisch, Overlap ⇒ error.

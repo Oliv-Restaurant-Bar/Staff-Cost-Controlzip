@@ -43,7 +43,6 @@ import Settings from "./pages/Settings";
 import DepartmentSchedule from "./pages/DepartmentSchedule";
 import DepartmentPlannerWrapper from "./pages/DepartmentPlannerWrapper";
 import NotFound from "./pages/NotFound";
-import OnboardingForm from "./pages/OnboardingForm";
 import ImportHub from "./pages/ImportHub";
 import ImportCockpitPage from "./pages/ImportCockpitPage";
 import PersonalFixPage from "./pages/PersonalFix";
@@ -507,7 +506,6 @@ const App = () => {
                 <BrowserRouter>
                   <Routes>
                     {/* ── Öffentliche Routen — kein Login erforderlich ── */}
-                    <Route path="/onboarding/:token" element={<OnboardingForm />} />
                     {/* Personaleintritt Phase 2: Mitarbeiter füllt per Einladungs-Token aus
                         (Edge Function personaleintritt-public, kein direkter DB-Zugriff) */}
                     <Route path="/e/:token" element={<MitarbeiterEintritt />} />

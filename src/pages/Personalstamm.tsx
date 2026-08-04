@@ -42,7 +42,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Info, Calculator, UserCheck, ChevronDown,
   Building, Phone, Mail, MapPin, CreditCard, Shield,
-  Briefcase, Calendar, Clock, Link as LinkIcon,
+  Briefcase, Calendar, Clock,
   Paperclip, FileCheck, FileClock, FileSignature,
   Download, RefreshCw, History, Archive, UserPlus, Euro,
 } from 'lucide-react';
@@ -63,10 +63,8 @@ import {
 } from '@/lib/position-utils';
 import { PositionIcon } from '@/components/PositionIcon';
 import {
-  loadEmployees, upsertEmployee, deleteEmployee, activateEmployee, archiveEmployee,
-  loadOnboardingSubmissions, deleteOnboardingSubmission, activateSubmissionAsEmployee,
+  loadEmployees, upsertEmployee, deleteEmployee, archiveEmployee,
   runPersonalstammE2ETest, loadAllBeaulieuIds,
-  OnboardingSubmission,
 } from '@/lib/supabase-db';
 import type { HarteTestResult } from '@/lib/supabase-db';
 import { Employee, EmploymentType, Department } from '@/types/personnel';
@@ -350,13 +348,6 @@ const Personalstamm = () => {
     timestamp: string;
   } | null>(null);
 
-  // ── Selbst-Anmeldungen (onboarding_submissions Tabelle) ───────────────────
-  const [submissions, setSubmissions]                 = useState<OnboardingSubmission[]>([]);
-  const [selectedSubmission, setSelectedSubmission]   = useState<OnboardingSubmission | null>(null);
-  const [submissionsDbReady, setSubmissionsDbReady]   = useState<boolean | null>(null);
-  const [submissionsPermissionError, setSubmissionsPermissionError] = useState(false);
-  const [anonInsertBlocked, setAnonInsertBlocked]     = useState(false);
-  const [employeeStatusMissing, setEmployeeStatusMissing] = useState(false);
 
   // ── Filter ─────────────────────────────────────────────────────────────────
   const [search, setSearch]               = useState('');
@@ -519,18 +510,6 @@ const Personalstamm = () => {
       }
       setLocalData(local);
 
-      // Submissions laden (nur für Admin)
-      if (isAdminRef.current) {
-        console.log('[Personalstamm] loading onboarding submissions (admin)');
-        const { data: subs, tableExists, permissionError, anonInsertBlocked: aib, employeeStatusMissing: esm } = await loadOnboardingSubmissions();
-        console.log('[Personalstamm] submissions result:', { count: subs.length, tableExists, permissionError });
-        setSubmissions(subs);
-        setSubmissionsDbReady(tableExists);
-        setSubmissionsPermissionError(permissionError);
-        setAnonInsertBlocked(aib);
-        setEmployeeStatusMissing(esm);
-      }
-
       console.log('[Personalstamm] load() complete — calling setLoading(false)');
       setLoading(false);
       } catch (err) {
@@ -625,19 +604,17 @@ const Personalstamm = () => {
   const handleSelectRow = (id: string) => {
     const emp = employees.find(e => e.id === id);
     if (!emp) return;
-    setSelectedSubmission(null);
     selectEmployee(emp);
   };
 
   /** Detail geöffnet? Steuert adaptives Layout (Liste voll/breit vs. schmal). */
-  const detailOpen = !!(selectedId || editData || selectedSubmission);
+  const detailOpen = !!(selectedId || editData);
 
   /** Detail schliessen (Desktop-X / Escape): zurück zur vollen Listenansicht. */
   const closeDetail = () => {
     setSelectedId(null);
     setEditData(null);
     setEditMode(false);
-    setSelectedSubmission(null);
     setShowMobile('list');
   };
 
@@ -670,47 +647,6 @@ const Personalstamm = () => {
     setEditActive(local.active);
     setEditNoTimeTracking(local.no_time_tracking_required ?? false);
     setEditMode(false);
-  };
-
-  // ── Submission Aktivieren / Ablehnen (gemeinsame Handler) ─────────────────
-  const handleActivateSubmission = async (sub: OnboardingSubmission) => {
-    const { id: newId, errorMessage } = await activateSubmissionAsEmployee(sub);
-
-    if (errorMessage || !newId) {
-      const msg = errorMessage ?? 'Unbekannter Fehler';
-      console.error('[handleActivateSubmission] Fehler:', msg);
-      toast.error(`Aktivierung fehlgeschlagen: ${msg}`, { duration: 10000 });
-      return;
-    }
-
-    // Submission aus lokalem State entfernen, neuen Mitarbeiter laden
-    setSubmissions(prev => prev.filter(s => s.id !== sub.id));
-    setSelectedSubmission(null);
-
-    // Einfacher Mitarbeiter-Stub für sofortige UI-Anzeige (vollständig nach Reload)
-    const stub: Employee = {
-      id:             newId,
-      name:           sub.name,
-      department:     'service',
-      employmentType: ((sub.formData.preferredEmploymentType as string) || 'aushilfe') as EmploymentType,
-      hourlyWage:     0,
-      weeklyHours:    0,
-    };
-    setEmployees(prev => [...prev, stub]);
-    setSelectedId(newId);
-    toast.success(`${sub.name} wurde als Mitarbeiter angelegt!`);
-  };
-
-  const handleRejectSubmission = async (sub: OnboardingSubmission) => {
-    if (!window.confirm(`Anmeldung von ${sub.name} wirklich ablehnen und löschen?`)) return;
-    const ok = await deleteOnboardingSubmission(sub.id);
-    if (ok) {
-      setSubmissions(prev => prev.filter(s => s.id !== sub.id));
-      if (selectedSubmission?.id === sub.id) setSelectedSubmission(null);
-      toast.success(`Anmeldung von ${sub.name} abgelehnt.`);
-    } else {
-      toast.error('Ablehnen fehlgeschlagen.');
-    }
   };
 
   // ── System-Check Handler ───────────────────────────────────────────────────
@@ -1077,25 +1013,6 @@ const Personalstamm = () => {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {canEditEmployees && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
-                onClick={() => {
-                  const link = `${window.location.origin}/onboarding/new`;
-                  navigator.clipboard.writeText(link).then(() => toast.success('Anmelde-Link kopiert!'));
-                }}
-              >
-                <LinkIcon className="h-3.5 w-3.5 mr-1" />
-                Anmelde-Link
-                {(pendingEmployees.length + submissions.length) > 0 && (
-                  <span className="ml-1.5 bg-amber-500 text-white rounded-full text-[10px] px-1.5 py-0 leading-4 font-bold">
-                    {pendingEmployees.length + submissions.length}
-                  </span>
-                )}
-              </Button>
-            )}
             {canEditWages && (
               <Button
                 variant="outline"
@@ -1316,99 +1233,6 @@ const Personalstamm = () => {
         </div>
       </div>
 
-      {/* ── DB-Setup Banner ──────────────────────────────────────────────────── */}
-      {isAdmin && (() => {
-        const needsTableSetup   = submissionsDbReady === false;
-        const needsGrantFix     = (submissionsPermissionError || anonInsertBlocked) && !needsTableSetup;
-        const needsStatusColumn = employeeStatusMissing;
-        const hasAnyIssue       = needsTableSetup || needsGrantFix || needsStatusColumn;
-        if (!hasAnyIssue) return null;
-
-        // Build a single SQL block covering everything still needed
-        const sqlParts: string[] = [];
-
-        if (needsTableSetup) {
-          sqlParts.push(`-- 1. Anmeldungs-Tabelle erstellen
-CREATE TABLE IF NOT EXISTS public.onboarding_submissions (
-  id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  submitted_at TIMESTAMPTZ  NOT NULL DEFAULT now(),
-  name         TEXT         NOT NULL,
-  form_data    JSONB        NOT NULL DEFAULT '{}'::jsonb
-);`);
-        }
-
-        if (needsTableSetup || needsGrantFix) {
-          sqlParts.push(`-- ${needsTableSetup ? '2' : '1'}. Zugriffsrechte & RLS für Anmeldungen
-GRANT SELECT, INSERT, DELETE ON TABLE public.onboarding_submissions TO authenticated;
-GRANT INSERT ON TABLE public.onboarding_submissions TO anon;
-ALTER TABLE public.onboarding_submissions ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "anon_insert"  ON public.onboarding_submissions;
-CREATE POLICY "anon_insert"  ON public.onboarding_submissions FOR INSERT TO anon, authenticated WITH CHECK (true);
-DROP POLICY IF EXISTS "auth_select"  ON public.onboarding_submissions;
-CREATE POLICY "auth_select"  ON public.onboarding_submissions FOR SELECT TO authenticated USING (true);
-DROP POLICY IF EXISTS "auth_delete"  ON public.onboarding_submissions;
-CREATE POLICY "auth_delete"  ON public.onboarding_submissions FOR DELETE TO authenticated USING (true);`);
-        }
-
-        if (needsStatusColumn) {
-          const n = sqlParts.length + 1;
-          sqlParts.push(`-- ${n}. Mitarbeiterstatus-Spalte hinzufügen (Selbst-Anmeldung)
-ALTER TABLE public.employees
-  ADD COLUMN IF NOT EXISTS employee_status VARCHAR DEFAULT 'active'
-  CHECK (employee_status IN ('active', 'pending_review'));
-DROP POLICY IF EXISTS "Anon self-register new employee" ON public.employees;
-CREATE POLICY "Anon self-register new employee"
-  ON public.employees FOR INSERT TO anon
-  WITH CHECK (employee_status = 'pending_review');`);
-        }
-
-        const sql = sqlParts.join('\n\n');
-        const issues: string[] = [];
-        if (needsTableSetup)   issues.push('Anmeldungs-Tabelle fehlt');
-        if (needsGrantFix)     issues.push('Anon-Zugriffsrechte (GRANT) fehlen');
-        if (needsStatusColumn) issues.push('Spalte employee_status fehlt');
-
-        return (
-          <div className="bg-red-50 border-b border-red-200 px-4 py-3 max-w-7xl w-full mx-auto">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="h-4 w-4 text-red-600 mt-0.5 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-red-900">
-                  Einmaliges Datenbank-Setup erforderlich
-                </p>
-                <p className="text-xs text-red-700 mt-0.5">
-                  Ausstehend: {issues.join(' · ')}.{' '}
-                  Führen Sie das folgende SQL einmalig im{' '}
-                  <a href="https://supabase.com/dashboard/project/ajflrvuzmkfspsxkdyfe/sql/new"
-                     target="_blank" rel="noreferrer"
-                     className="underline font-semibold text-red-800">
-                    Supabase SQL-Editor ↗
-                  </a>{' '}
-                  aus, dann die Seite neu laden:
-                </p>
-                <div className="mt-2 relative">
-                  <pre className="text-[10px] bg-slate-900 text-green-300 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">
-                    {sql}
-                  </pre>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="absolute top-2 right-2 h-6 text-[10px] bg-white/10 border-white/20 text-green-300 hover:bg-white/20"
-                    onClick={() => {
-                      navigator.clipboard.writeText(sql);
-                      toast.success('SQL in Zwischenablage kopiert!');
-                    }}
-                  >
-                    Kopieren
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-
       {/* ── Duplikat-Warnung ─────────────────────────────────────────────────── */}
       {canManageAllEmployees && (() => {
         // Find all employee names that appear more than once (case-insensitive)
@@ -1469,96 +1293,6 @@ CREATE POLICY "Anon self-register new employee"
         );
       })()}
 
-      {/* ── Ausstehende Anmeldungen (vollbreite Kartenansicht) ──────────────── */}
-      {canManageAllEmployees && submissions.length > 0 && (
-        <div className="flex-shrink-0 border-b border-amber-200 bg-amber-50 overflow-y-auto" style={{ maxHeight: '320px' }}>
-          <div className="max-w-7xl mx-auto px-4 py-3">
-            <div className="flex items-center gap-2 mb-3">
-              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-              <h2 className="text-sm font-semibold text-amber-800">Ausstehende Anmeldungen</h2>
-              <span className="bg-amber-500 text-white text-[11px] font-bold rounded-full px-2 py-0.5 leading-none">
-                {submissions.length}
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {submissions.map(sub => {
-                const fd = sub.formData;
-                const permitType     = (fd.permitType as string)    || null;
-                const maritalStatus  = (fd.maritalStatus as string) || null;
-                const hasDocuments   = fd.documents != null && typeof fd.documents === 'object' && Object.keys(fd.documents as object).length > 0;
-                const dateStr = new Date(sub.submittedAt).toLocaleString('de-CH', {
-                  day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-                });
-                const permitLabel: Record<string, string> = {
-                  CH: 'Schweizer/in', C: 'Ausweis C', B: 'Ausweis B',
-                  L: 'Ausweis L', G: 'Grenzgänger G', other: 'Anderer',
-                };
-                const maritalLabel: Record<string, string> = {
-                  single: 'Ledig', married: 'Verheiratet', divorced: 'Geschieden',
-                  widowed: 'Verwitwet', partnership: 'Eingetr. Partnerschaft',
-                };
-                return (
-                  <div key={sub.id} className="bg-white border border-amber-200 rounded-lg p-4 flex flex-col gap-3 shadow-sm">
-                    {/* Name + Datum */}
-                    <div className="flex items-start gap-2.5">
-                      <div className="w-9 h-9 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-bold text-sm">
-                        {sub.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800 leading-snug truncate">{sub.name}</p>
-                        <p className="text-[11px] text-amber-700 mt-0.5">{dateStr}</p>
-                      </div>
-                    </div>
-
-                    {/* Badges: Aufenthalt, Zivilstand, Dokumente */}
-                    <div className="flex flex-wrap gap-1.5">
-                      {permitType && (
-                        <span className="text-[11px] bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-0.5">
-                          {permitLabel[permitType] ?? permitType}
-                        </span>
-                      )}
-                      {maritalStatus && (
-                        <span className="text-[11px] bg-slate-50 text-slate-600 border border-slate-200 rounded px-2 py-0.5">
-                          {maritalLabel[maritalStatus] ?? maritalStatus}
-                        </span>
-                      )}
-                      {hasDocuments && (
-                        <span className="text-[11px] bg-green-50 text-green-700 border border-green-200 rounded px-2 py-0.5 flex items-center gap-1">
-                          <FileText className="h-3 w-3 shrink-0" />
-                          Dokumente
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Aktions-Buttons */}
-                    <div className="flex gap-2 mt-auto">
-                      <Button size="sm" variant="outline"
-                        className="flex-1 h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                        onClick={() => handleRejectSubmission(sub)}>
-                        Ablehnen
-                      </Button>
-                      <Button size="sm"
-                        className="flex-1 h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                        onClick={() => handleActivateSubmission(sub)}>
-                        <CheckCircle2 className="h-3 w-3 mr-1 shrink-0" />
-                        Übernehmen
-                      </Button>
-                    </div>
-
-                    {/* Detail-Link */}
-                    <button
-                      className="text-[11px] text-amber-600 hover:text-amber-800 underline text-left -mt-1"
-                      onClick={() => { setSelectedSubmission(sub); setSelectedId(null); setEditMode(false); setShowMobile('detail'); }}>
-                      Vollständige Daten anzeigen →
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Haupt-Layout: Liste + Detail */}
       <div className="flex-1 flex max-w-7xl w-full mx-auto overflow-hidden" style={{ minHeight: 0 }}>
 
@@ -1591,7 +1325,7 @@ CREATE POLICY "Anon self-register new employee"
                       return (
                         <li key={emp.id}>
                           <button
-                            onClick={() => { selectEmployee(emp); setSelectedSubmission(null); }}
+                            onClick={() => { selectEmployee(emp); }}
                             className={cn(
                               'w-full text-left px-4 py-3 hover:bg-amber-50/60 transition-colors flex items-center gap-3',
                               isSelected && 'bg-amber-100/60 border-l-2 border-amber-500',
@@ -1678,83 +1412,7 @@ CREATE POLICY "Anon self-register new employee"
               <X className="h-4 w-4" />
             </Button>
           </div>
-          {selectedSubmission && !selectedId && !editData ? (
-            /* ── Submission-Detail-Panel ─────────────────────────────────── */
-            <div className="max-w-2xl mx-auto p-6 space-y-5">
-              {/* Zurück-Button (Mobile) */}
-              <Button variant="ghost" size="sm" className="md:hidden -ml-1 mb-1 h-8 text-xs"
-                onClick={() => { setSelectedSubmission(null); setShowMobile('list'); }}>
-                <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Zurück
-              </Button>
-
-              {/* Header Banner */}
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start justify-between gap-3 flex-wrap">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-amber-200 flex items-center justify-center shrink-0 text-amber-800 font-bold text-lg">
-                    {selectedSubmission.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-base font-bold text-amber-900">{selectedSubmission.name}</p>
-                    <p className="text-xs text-amber-700 mt-0.5">
-                      Selbst-Anmeldung vom {new Date(selectedSubmission.submittedAt).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <Button size="sm" variant="outline"
-                    className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                    onClick={() => handleRejectSubmission(selectedSubmission)}>
-                    Ablehnen
-                  </Button>
-                  <Button size="sm"
-                    className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                    onClick={() => handleActivateSubmission(selectedSubmission)}>
-                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                    Als Mitarbeiter anlegen
-                  </Button>
-                </div>
-              </div>
-
-              {/* Eingereichte Daten (read-only) */}
-              {(() => {
-                const fd = selectedSubmission.formData;
-                const rows: [string, string][] = [
-                  ['Gewünschte Stelle',      (fd.desiredPosition as string)      || '—'],
-                  ['Gewünschter Start',       (fd.desiredStartDate as string)     || '—'],
-                  ['Anstellungsart',          (fd.preferredEmploymentType as string) || '—'],
-                  ['Geburtsdatum',            (fd.birthDate as string)             || '—'],
-                  ['Nationalität',            (fd.nationality as string)           || '—'],
-                  ['Aufenthaltsstatus',        (fd.permitType as string)            || '—'],
-                  ['Zivilstand',              (fd.maritalStatus as string)         || '—'],
-                  ['Telefon',                 (fd.phone as string)                 || '—'],
-                  ['E-Mail',                  (fd.email as string)                 || '—'],
-                  ['Strasse',                 (fd.addressStreet as string)         || '—'],
-                  ['PLZ / Ort',               `${(fd.addressZip as string) || ''} ${(fd.addressCity as string) || ''}`.trim() || '—'],
-                  ['AHV-Nummer',              (fd.ahvNumber as string)             || '—'],
-                  ['IBAN',                    (fd.iban as string)                  || '—'],
-                ].filter(([, v]) => v !== '—');
-                return (
-                  <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
-                      <p className="text-xs font-semibold text-slate-700">Eingereichte Daten (schreibgeschützt)</p>
-                    </div>
-                    <dl className="divide-y divide-slate-100">
-                      {rows.map(([label, value]) => (
-                        <div key={label} className="grid grid-cols-2 px-4 py-2.5 text-sm">
-                          <dt className="text-slate-500 text-xs font-medium">{label}</dt>
-                          <dd className="text-slate-900 text-xs">{value}</dd>
-                        </div>
-                      ))}
-                      {rows.length === 0 && (
-                        <div className="px-4 py-4 text-xs text-slate-400 text-center">Keine Angaben übermittelt.</div>
-                      )}
-                    </dl>
-                  </div>
-                );
-              })()}
-            </div>
-
-          ) : (
+          {(
             <div className="max-w-2xl mx-auto p-5 space-y-5 pb-20">
 
               {/* Mobile: zurück zur Liste */}
@@ -1766,64 +1424,6 @@ CREATE POLICY "Anon self-register new employee"
               >
                 <ArrowLeft className="h-3.5 w-3.5 mr-1" /> Zurück
               </Button>
-
-              {/* ── Aktivierungs-Banner für neue Selbst-Anmeldungen ── */}
-              {!editMode && selectedEmp?.employeeStatus === 'pending_review' && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start justify-between gap-3 flex-wrap">
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center shrink-0 mt-0.5">
-                      <AlertTriangle className="h-4 w-4 text-amber-700" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-amber-900">Neue Selbst-Anmeldung</p>
-                      <p className="text-xs text-amber-700 mt-0.5">
-                        Bitte interne Felder prüfen und ergänzen, dann Mitarbeiter aktivieren.
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 text-xs border-red-200 text-red-600 hover:bg-red-50"
-                      onClick={async () => {
-                        if (!selectedEmp) return;
-                        if (!window.confirm(`Anmeldung von ${selectedEmp.name} wirklich ablehnen und löschen?`)) return;
-                        await deleteEmployee(selectedEmp.id);
-                        setEmployees(prev => prev.filter(e => e.id !== selectedEmp.id));
-                        setSelectedId(null);
-                        toast.success(`Anmeldung von ${selectedEmp.name} abgelehnt.`);
-                      }}
-                    >
-                      Ablehnen
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="h-8 text-xs bg-green-600 hover:bg-green-700 text-white"
-                      disabled={employeeStatusMissing}
-                      title={employeeStatusMissing ? 'Migration erforderlich – siehe Setup-Banner oben' : undefined}
-                      onClick={async () => {
-                        if (!selectedEmp) return;
-                        if (employeeStatusMissing) {
-                          toast.error('Datenbank-Migration fehlt. Bitte das SQL im roten Banner oben ausführen.');
-                          return;
-                        }
-                        const ok = await activateEmployee(selectedEmp.id);
-                        if (ok) {
-                          const updated = { ...selectedEmp, employeeStatus: 'active' as const };
-                          setEmployees(prev => prev.map(e => e.id === updated.id ? updated : e));
-                          toast.success(`${selectedEmp.name} wurde aktiviert!`);
-                        } else {
-                          toast.error('Aktivierung fehlgeschlagen. Bitte nochmals versuchen.');
-                        }
-                      }}
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5 mr-1" />
-                      Aktivieren
-                    </Button>
-                  </div>
-                </div>
-              )}
 
               {/* Kopfzeile */}
               <div className="flex items-start justify-between gap-3 flex-wrap">
