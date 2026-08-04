@@ -165,6 +165,36 @@ export const DEFAULT_WARENGRUPPEN_MAPPING: WarengruppenMapping = [
 
 const normGruppe = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
 
+// ─── Artikel → Konto (gelernte Einzel-Zuordnungen, pro Mandant) ──────────────
+
+/**
+ * In der Import-Vorschau manuell gesetzte Kontierungen werden pro Artikel
+ * GEMERKT: Key = artikelKey(lieferant, p) (Art.-Nr. bevorzugt, sonst Name),
+ * Wert = Kontonummer. Gilt beim nächsten Import automatisch. Vorrang:
+ * Pfand (MwSt-Code 0) > Artikel-Zuordnung > Warengruppen-Tabelle.
+ */
+export type ArtikelKontenMapping = Record<string, string>;
+
+export function normalizeArtikelKonten(raw: unknown): ArtikelKontenMapping {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: ArtikelKontenMapping = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string' && /^\d{4}$/.test(v.trim()) && k.trim()) out[k] = v.trim();
+  }
+  return out;
+}
+
+/** Konto-Auswahl für die Vorschau-Bearbeitung (Kontenplan Restaurant). */
+export const KONTO_OPTIONEN: Array<{ konto: string; label: string }> = [
+  { konto: '4000', label: '4000 Lebensmittel' },
+  { konto: '4020', label: '4020 Wein' },
+  { konto: '4030', label: '4030 Bier' },
+  { konto: '4040', label: '4040 Spirituosen' },
+  { konto: '4050', label: '4050 Getränke ohne Alkohol' },
+  { konto: '4060', label: '4060 Lebensmittel (Frische)' },
+  { konto: '4701', label: '4701 Betriebskosten (Nearfood/Nonfood)' },
+];
+
 /** Positions-Kontierung: zugeordnet / Pfand (neutral, kein Warenkonto) / offen (unbekannte Gruppe — NIE raten). */
 export type PositionsKontoStatus = 'zugeordnet' | 'pfand' | 'offen';
 export interface PositionsKonto {
@@ -183,6 +213,24 @@ export function kontoFuerPosition(
     if (regel && regel.konto.trim()) return { konto: regel.konto.trim(), status: 'zugeordnet' };
   }
   return { konto: null, status: 'offen' }; // unbekannt → nachfragen, nicht raten
+}
+
+/**
+ * Kontierung inkl. gelernter Artikel-Zuordnungen (Vorrang: Pfand > Artikel >
+ * Warengruppe). `manuell` markiert Artikel-Treffer, damit die Auto-Zuordnung
+ * sie später nicht mehr anfasst.
+ */
+export function kontoFuerPositionMitArtikel(
+  lieferant: string,
+  p: Pick<WarenPosition, 'warengruppe' | 'mwstCode' | 'artNr' | 'bezeichnung'>,
+  mapping: WarengruppenMapping,
+  artikelKonten?: ArtikelKontenMapping,
+): PositionsKonto & { manuell?: boolean } {
+  if (p.mwstCode === 0) return { konto: null, status: 'pfand' };
+  const key = artikelKey(lieferant, p);
+  const artikel = key ? artikelKonten?.[key] : undefined;
+  if (artikel) return { konto: artikel, status: 'zugeordnet', manuell: true };
+  return kontoFuerPosition(p, mapping);
 }
 
 /** Anzeige-Labels für nicht kontierte Positionen in Splits/Exporten. */
@@ -261,14 +309,22 @@ export interface GespeichertePosition {
 /** Record<invoiceId, Positionen> — pro Monat persistiert. */
 export type PositionenProRechnung = Record<string, GespeichertePosition[]>;
 
-export function positionenAusRechnung(r: ParsedCsvRechnung, mapping: WarengruppenMapping): GespeichertePosition[] {
+export function positionenAusRechnung(
+  r: ParsedCsvRechnung,
+  mapping: WarengruppenMapping,
+  /** Gelernte Artikel-Zuordnungen des Lieferanten (haben Vorrang vor der Warengruppen-Tabelle). */
+  artikel?: { lieferant: string; konten: ArtikelKontenMapping },
+): GespeichertePosition[] {
   return r.positionen.map(p => {
-    const pk = kontoFuerPosition(p, mapping);
+    const pk = artikel
+      ? kontoFuerPositionMitArtikel(artikel.lieferant, p, mapping, artikel.konten)
+      : kontoFuerPosition(p, mapping);
     return {
       artNr: p.artNr, bezeichnung: p.bezeichnung, warengruppe: p.warengruppe,
       menge: p.menge, einheit: p.einheit, preis: p.preis,
       positionspreis: p.positionspreis, mwstBetrag: p.mwstBetrag, mwstCode: p.mwstCode,
       konto: pk.konto, status: pk.status,
+      ...('manuell' in pk && pk.manuell ? { manuell: true } : {}),
     };
   });
 }
@@ -309,6 +365,9 @@ export function uebernehmeManuelleKontierung(
   for (const p of alt) if (p.manuell) manuelle.set(posKey(p), p);
   if (manuelle.size === 0) return neu;
   return neu.map(p => {
+    // Bereits manuell kontierte NEUE Positionen (Artikel-Zuordnung/Vorschau-
+    // Override) behalten ihre Wahl — die ist aktueller als der Altbestand.
+    if (p.manuell) return p;
     const m = manuelle.get(posKey(p));
     return m ? { ...p, konto: m.konto, status: m.status, manuell: true } : p;
   });

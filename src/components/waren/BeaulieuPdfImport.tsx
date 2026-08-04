@@ -31,7 +31,15 @@ import {
   erstelleWarenImportSnapshot, saveWarenImportUndo,
 } from '@/lib/waren-db';
 import { WarenImportUndoButton } from '@/components/waren/WarenCsvImport';
-import type { ParsedCsvRechnung } from '@/lib/waren-positionen';
+import {
+  PositionenKontierungListe, effektiveArtikelKonten, offeneAnzahl,
+} from '@/components/waren/PositionenKontierungVorschau';
+import { loadWarengruppenMapping, loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
+import {
+  DEFAULT_WARENGRUPPEN_MAPPING,
+  type ArtikelKontenMapping, type ParsedCsvRechnung, type WarengruppenMapping,
+} from '@/lib/waren-positionen';
+import { AlertTriangle } from 'lucide-react';
 import type { TenantId } from '@/contexts/TenantContext';
 
 interface VorschauZeile {
@@ -71,10 +79,19 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
   const [zeilen, setZeilen] = useState<VorschauZeile[]>([]);
   const [busy, setBusy] = useState(false);
   const [undoRefresh, setUndoRefresh] = useState(0);
+  // Positions-Kontierung direkt in der Vorschau: Warengruppen-Tabelle des
+  // Mandanten, gelernte Artikel-Zuordnungen + Overrides dieser Sitzung.
+  const [wgMapping, setWgMapping] = useState<WarengruppenMapping>(DEFAULT_WARENGRUPPEN_MAPPING);
+  const [artikelKonten, setArtikelKonten] = useState<ArtikelKontenMapping>({});
+  const [kontoOverrides, setKontoOverrides] = useState<ArtikelKontenMapping>({});
+  const [aufgeklappt, setAufgeklappt] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     let alive = true;
     loadLieferantenProfile(tenantId).then(p => { if (alive) setProfile(p); });
+    Promise.all([loadWarengruppenMapping(tenantId), loadArtikelKonten(tenantId)])
+      .then(([m, ak]) => { if (alive) { setWgMapping(m); setArtikelKonten(ak); } })
+      .catch(() => { /* Defaults bleiben */ });
     return () => { alive = false; };
   }, [tenantId]);
 
@@ -220,7 +237,10 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         // gebucht (quelle='auftragsbestaetigung'); die Rechnung ersetzt sie später.
         const istAbZeile = row.ergebnis.belegart === 'auftragsbestaetigung' && profil.abAlsLieferschein === true;
         const quelle = istMr ? 'monatsrechnung' as const : istAbZeile ? 'auftragsbestaetigung' as const : undefined;
-        const key = quelle ? `${profil.id}|${quelle}` : profil.id;
+        // Konto gehört in den Gruppen-Schlüssel: Zeilen desselben Lieferanten mit
+        // unterschiedlich editiertem Konto laufen als getrennte Kern-Aufrufe —
+        // die Vorschau (row.konto) entspricht so exakt der Buchung (extraMapping).
+        const key = `${profil.id}|${konto}${quelle ? `|${quelle}` : ''}`;
         const eintrag = proProfil.get(key) ?? { profil: { ...profil, konto }, rechnungen: [], quelle };
         if (istMr) {
           // MASSGEBLICH: ALLE Lieferungen der Monatsrechnung werden gebucht —
@@ -279,6 +299,13 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         proProfil.set(key, eintrag);
       }
 
+      // In der Vorschau gesetzte Kontierungen MERKEN (Artikel→Konto, pro Mandant)
+      // — die Kern-Pipeline lädt die Tabelle und wendet sie sofort an.
+      if (Object.keys(kontoOverrides).length > 0) {
+        await saveArtikelKonten(tenantId, kontoOverrides);
+        setArtikelKonten(a => effektiveArtikelKonten(a, kontoOverrides));
+        setKontoOverrides({});
+      }
       // Snapshot VOR dem Schreiben: alle betroffenen Monate ±1 + Preis-Historie.
       const monate = new Set<string>();
       for (const { rechnungen } of proProfil.values()) {
@@ -456,6 +483,47 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                   </label>
                 </div>
 
+                {/* Positions-Kontierung: «⚠ N offen» anklickbar → Liste mit Konto-Dropdown */}
+                {!istOffen && erg.positionenErkannt && (() => {
+                  const profil = profilById.get(row.lieferant);
+                  if (!profil) return null;
+                  // Profil-Kategorie→Konto wie beim Import (extraMapping) VORNE einfügen.
+                  const rowMapping: WarengruppenMapping = [
+                    ...(profil.kategorie && (row.konto || profil.konto)
+                      ? [{ gruppe: profil.kategorie, konto: (row.konto || profil.konto).trim() }] : []),
+                    ...wgMapping,
+                  ];
+                  const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+                  const allePos = erg.lieferungen.flatMap(l => l.positionen);
+                  const offenAnz = offeneAnzahl(profil.name, allePos, rowMapping, effektiv);
+                  const auf = aufgeklappt.has(i);
+                  return (
+                    <div className="border-t border-border/40 pt-1.5 space-y-1">
+                      <button type="button"
+                        className={`inline-flex items-center gap-1 text-[11px] rounded px-1 hover:underline ${
+                          offenAnz > 0 ? 'text-amber-600 font-medium' : 'text-muted-foreground'}`}
+                        title={offenAnz > 0 ? `${offenAnz} Position(en) ohne Konto — klicken zum Zuordnen` : 'Positionen anzeigen/kontieren'}
+                        onClick={() => setAufgeklappt(prev => {
+                          const next = new Set(prev);
+                          if (next.has(i)) next.delete(i); else next.add(i);
+                          return next;
+                        })}
+                        data-testid={`beaulieu-pdf-offen-${i}`}>
+                        {offenAnz > 0 && <AlertTriangle className="h-3 w-3" />}
+                        {offenAnz > 0
+                          ? `${offenAnz} Position${offenAnz === 1 ? '' : 'en'} offen — Konto direkt zuordnen`
+                          : `${allePos.length} Positionen anzeigen/kontieren`}
+                      </button>
+                      {auf && (
+                        <PositionenKontierungListe lieferant={profil.name} positionen={allePos}
+                          mapping={rowMapping} artikelKonten={effektiv}
+                          onKonto={(key, konto) => setKontoOverrides(o => ({ ...o, [key]: konto }))}
+                          testidPrefix={`beaulieu-pdf-${i}`} />
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {istOffen && (
                   <div className="flex flex-wrap items-end gap-2 text-xs border-t border-border/40 pt-2">
                     <label className="space-y-0.5">
@@ -528,6 +596,25 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
               {bereit.length} Rechnung{bereit.length === 1 ? '' : 'en'} importieren
             </Button>
             {offen > 0 && <span className="text-[11px] text-amber-600">{offen} noch nicht importierbar (Zuordnung/Datum/Betrag fehlt)</span>}
+            {(() => {
+              const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+              const offenPos = bereit.reduce((s, row) => {
+                const profil = profilById.get(row.lieferant);
+                if (!profil || !row.ergebnis.positionenErkannt) return s;
+                const rowMapping: WarengruppenMapping = [
+                  ...(profil.kategorie && (row.konto || profil.konto)
+                    ? [{ gruppe: profil.kategorie, konto: (row.konto || profil.konto).trim() }] : []),
+                  ...wgMapping,
+                ];
+                return s + offeneAnzahl(profil.name, row.ergebnis.lieferungen.flatMap(l => l.positionen), rowMapping, effektiv);
+              }, 0);
+              return offenPos > 0 ? (
+                <span className="text-[11px] text-amber-600 inline-flex items-center gap-1" data-testid="beaulieu-pdf-offen-total">
+                  <AlertTriangle className="h-3 w-3" />
+                  {offenPos} Position{offenPos === 1 ? '' : 'en'} noch ohne Konto — Import möglich (provisorisch als Warenkosten)
+                </span>
+              ) : null;
+            })()}
             {gesperrt > 0 && <span className="text-[11px] text-destructive">{gesperrt} Beleg{gesperrt === 1 ? '' : 'e'} gesperrt (keine Rechnung — wird nicht gebucht)</span>}
             <Button size="sm" variant="ghost" className="text-xs" onClick={() => setZeilen([])}>Vorschau leeren</Button>
           </div>

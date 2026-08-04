@@ -17,7 +17,7 @@
  */
 import {
   loadMonthInvoices, saveMonthInvoices, loadPreisHistorie, savePreisHistorie,
-  loadPreisSchwelle, loadPreisHinweise, savePreisHinweise, loadWarengruppenMapping,
+  loadPreisSchwelle, loadPreisHinweise, savePreisHinweise, loadWarengruppenMapping, loadArtikelKonten,
   loadRechnungsPositionen, saveRechnungsPositionen, kategorieFromKonto,
   type InvoiceEntry,
 } from '@/lib/waren-db';
@@ -73,9 +73,10 @@ export async function kernImportiereFsRechnungen(
     defaultKonto?: string;
   },
 ): Promise<FsImportErgebnis> {
-  const [mappingRoh, historie, schwelle] = await Promise.all([
+  const [mappingRoh, historie, schwelle, artikelKonten] = await Promise.all([
     loadWarengruppenMapping(tenantId), loadPreisHistorie(tenantId),
     loadPreisSchwelle(tenantId).catch(() => DEFAULT_PREIS_SCHWELLE),
+    loadArtikelKonten(tenantId),
   ]);
   // extraMapping (Profil-Kategorie→Konto) hat Vorrang — daher VORNE einfügen.
   const extraRegeln = Object.entries(opts?.extraMapping ?? {}).map(([gruppe, konto]) => ({ gruppe, konto }));
@@ -184,7 +185,7 @@ export async function kernImportiereFsRechnungen(
     }
     if (vorhanden) vergeben.add(vorhanden.id);
     const positionen = uebernehmeManuelleKontierung(
-      positionenAusRechnung(r, mapping),
+      positionenAusRechnung(r, mapping, { lieferant, konten: artikelKonten }),
       vorhanden ? posCache.get(vorhandenMonat)?.[vorhanden.id] : undefined,
     );
     offen += positionen.filter(p => p.status === 'offen').length;

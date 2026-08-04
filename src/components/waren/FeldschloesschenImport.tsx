@@ -35,8 +35,14 @@ import {
 } from '@/lib/feldschloesschen';
 import {
   berechnePreisAenderungen, aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE,
-  type ParsedCsvRechnung, type PreisAenderung,
+  DEFAULT_WARENGRUPPEN_MAPPING,
+  type ArtikelKontenMapping, type ParsedCsvRechnung, type PreisAenderung, type WarengruppenMapping,
 } from '@/lib/waren-positionen';
+import { mitFsDefaults } from '@/lib/feldschloesschen';
+import {
+  PositionenKontierungListe, effektiveArtikelKonten, offeneAnzahl,
+} from '@/components/waren/PositionenKontierungVorschau';
+import { loadWarengruppenMapping, loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
 import {
   loadMonthInvoices, loadPreisHistorie,
   loadPreisSchwelle, loadRechnungsPositionen,
@@ -76,6 +82,20 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
   const [histAnalyse, setHistAnalyse] = useState<{ jahr: string; eintraege: FsHistorienEintrag[]; locked: boolean } | null>(null);
   const [analyseJahr, setAnalyseJahr] = useState(String(new Date().getFullYear() - 1));
   const [undoRefresh, setUndoRefresh] = useState(0);
+  // Positions-Kontierung direkt in der Vorschau (Teil A): Warengruppen-Tabelle
+  // (inkl. FS-Defaults), gelernte Artikel-Zuordnungen + Overrides dieser Sitzung.
+  const [fsMapping, setFsMapping] = useState<WarengruppenMapping>(mitFsDefaults(DEFAULT_WARENGRUPPEN_MAPPING));
+  const [artikelKonten, setArtikelKonten] = useState<ArtikelKontenMapping>({});
+  const [kontoOverrides, setKontoOverrides] = useState<ArtikelKontenMapping>({});
+  const [aufgeklappt, setAufgeklappt] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([loadWarengruppenMapping(tenantId), loadArtikelKonten(tenantId)])
+      .then(([m, ak]) => { if (alive) { setFsMapping(mitFsDefaults(m)); setArtikelKonten(ak); } })
+      .catch(() => { /* Defaults bleiben */ });
+    return () => { alive = false; };
+  }, [tenantId]);
 
   const lieferant = useMemo(
     () => suppliers.find(s => /feldschl/i.test(s.name))?.name ?? 'Feldschlösschen',
@@ -84,10 +104,19 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
 
   // ── Gemeinsame Import-Pipeline (Lieferschein & Anhang-Übernahme) ──────────
   // Kern in src/lib/fs-import.ts (testbar); hier nur die gebundene Variante.
-  const kernImportiereRechnungen = (
+  const kernImportiereRechnungen = async (
     rechnungen: Array<{ r: ParsedCsvRechnung; nettoOffiziell?: number | null; bruttoOffiziell?: number | null }>,
     opts?: { quelle?: 'monatsrechnung' },
-  ) => kernImportiereFsRechnungen(tenantId, lieferant, rechnungen, opts);
+  ) => {
+    // In der Vorschau gesetzte Kontierungen MERKEN (Artikel→Konto, pro Mandant)
+    // — der Kern lädt die Tabelle und wendet sie in diesem Import bereits an.
+    if (Object.keys(kontoOverrides).length > 0) {
+      await saveArtikelKonten(tenantId, kontoOverrides);
+      setArtikelKonten(a => effektiveArtikelKonten(a, kontoOverrides));
+      setKontoOverrides({});
+    }
+    return kernImportiereFsRechnungen(tenantId, lieferant, rechnungen, opts);
+  };
 
   /** Wie kern…, aber mit eigenem Undo-Datensatz (Typ «fs»). */
   const importiereRechnungen = async (
@@ -470,26 +499,44 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
           </div>
           <div className="max-h-48 overflow-y-auto space-y-0.5">
             {lieferscheine.map(ls => {
-              const offen = ls.positionen.filter(p => p.mwstCode !== 0 && p.warengruppe === '').length;
+              const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+              const offen = offeneAnzahl(lieferant, ls.positionen, fsMapping, effektiv);
+              const auf = aufgeklappt.has(ls.lieferungNr);
+              const toggleAuf = () => setAufgeklappt(prev => {
+                const next = new Set(prev);
+                if (next.has(ls.lieferungNr)) next.delete(ls.lieferungNr); else next.add(ls.lieferungNr);
+                return next;
+              });
               return (
-                <label key={ls.lieferungNr} className="flex items-center gap-2 tabular-nums cursor-pointer hover:bg-muted/40 rounded px-1 py-0.5">
-                  <input type="checkbox" className="h-3.5 w-3.5 accent-amber-600"
-                    checked={ausgewaehlt.has(ls.lieferungNr)}
-                    onChange={() => setAusgewaehlt(prev => {
-                      const next = new Set(prev);
-                      if (next.has(ls.lieferungNr)) next.delete(ls.lieferungNr); else next.add(ls.lieferungNr);
-                      return next;
-                    })} />
-                  <span className="w-20">{fmtDatumCH(ls.lieferdatum)}</span>
-                  <span className="w-28 truncate">Lieferung {ls.lieferungNr}</span>
-                  <span className="text-muted-foreground">{ls.positionen.length} Pos.</span>
-                  {offen > 0 && (
-                    <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5">
-                      <AlertTriangle className="h-3 w-3" />{offen} offen
-                    </span>
+                <div key={ls.lieferungNr}>
+                  <label className="flex items-center gap-2 tabular-nums cursor-pointer hover:bg-muted/40 rounded px-1 py-0.5">
+                    <input type="checkbox" className="h-3.5 w-3.5 accent-amber-600"
+                      checked={ausgewaehlt.has(ls.lieferungNr)}
+                      onChange={() => setAusgewaehlt(prev => {
+                        const next = new Set(prev);
+                        if (next.has(ls.lieferungNr)) next.delete(ls.lieferungNr); else next.add(ls.lieferungNr);
+                        return next;
+                      })} />
+                    <span className="w-20">{fmtDatumCH(ls.lieferdatum)}</span>
+                    <span className="w-28 truncate">Lieferung {ls.lieferungNr}</span>
+                    <button type="button"
+                      className={cn('inline-flex items-center gap-0.5 rounded px-1 hover:underline',
+                        offen > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-muted-foreground')}
+                      title={offen > 0 ? `${offen} Position(en) ohne Konto — klicken zum Zuordnen` : 'Positionen anzeigen/kontieren'}
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); toggleAuf(); }}
+                      data-testid={`fs-offen-${ls.lieferungNr}`}>
+                      {offen > 0 && <AlertTriangle className="h-3 w-3" />}
+                      {offen > 0 ? `${offen} offen` : `${ls.positionen.length} Pos.`}
+                    </button>
+                    <span className="ml-auto">CHF {ls.totalLieferung !== null ? fmt(ls.totalLieferung) : '—'}</span>
+                  </label>
+                  {auf && (
+                    <PositionenKontierungListe lieferant={lieferant} positionen={ls.positionen}
+                      mapping={fsMapping} artikelKonten={effektiv}
+                      onKonto={(key, konto) => setKontoOverrides(o => ({ ...o, [key]: konto }))}
+                      testidPrefix={`fs-${ls.lieferungNr}`} />
                   )}
-                  <span className="ml-auto">CHF {ls.totalLieferung !== null ? fmt(ls.totalLieferung) : '—'}</span>
-                </label>
+                </div>
               );
             })}
           </div>
@@ -531,7 +578,19 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
               </div>
             );
           })()}
-          <div className="flex justify-end">
+          <div className="flex items-center justify-end gap-2">
+            {(() => {
+              const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+              const offenTotal = lieferscheine
+                .filter(ls => ausgewaehlt.has(ls.lieferungNr))
+                .reduce((s, ls) => s + offeneAnzahl(lieferant, ls.positionen, fsMapping, effektiv), 0);
+              return offenTotal > 0 ? (
+                <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1" data-testid="fs-offen-total">
+                  <AlertTriangle className="h-3 w-3" />
+                  {offenTotal} Position{offenTotal === 1 ? '' : 'en'} noch ohne Konto — Import möglich (provisorisch als Warenkosten)
+                </span>
+              ) : null;
+            })()}
             <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || ausgewaehlt.size === 0}
               onClick={() => void importiereLieferscheine()} data-testid="fs-liefer-import">
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
@@ -567,30 +626,64 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
             «aus Monatsrechnung»); ein späterer Lieferschein-Upload derselben Lieferung wird als «bereits final» übersprungen.
           </p>
           <div className="space-y-0.5">
-            {abgleich.matches.map(m => (
-              <div key={m.faktura.nr} className={cn('flex items-center gap-2 tabular-nums rounded px-1 py-0.5',
-                m.status === 'fehlt' && 'bg-red-500/10 text-red-700 dark:text-red-300')}
-                data-testid={`fs-faktura-${m.faktura.nr}`}>
-                <span className="w-24">Faktura {m.faktura.nr}</span>
-                <span className="w-20">{fmtDatumCH(m.faktura.datum)}</span>
-                <span className="w-24 text-right">CHF {fmt(m.faktura.endbetrag)}</span>
-                {m.status === 'vorhanden' ? (
-                  <span className="text-emerald-600 inline-flex items-center gap-1">
-                    <CheckCircle2 className="h-3 w-3" /> erfasst ({m.invoiceIds.length} Rechnung{m.invoiceIds.length === 1 ? '' : 'en'})
-                  </span>
-                ) : uebernommen.has(m.faktura.nr) ? (
-                  <span className="text-muted-foreground">übernommen — Abgleich aktualisiert…</span>
-                ) : (
-                  <>
-                    <span>fehlt</span>
-                    <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-[11px]" disabled={busy}
-                      onClick={() => void uebernehmeFaktura(m.faktura.nr)} data-testid={`fs-uebernehmen-${m.faktura.nr}`}>
-                      Aus Monatsrechnung übernehmen
-                    </Button>
-                  </>
+            {abgleich.matches.map(m => {
+              // Positionen der eingebetteten Rechnungs-Seiten dieser Faktura
+              // (für fehlende Fakturas direkt in der Vorschau kontierbar).
+              const anhangPos = m.status === 'fehlt'
+                ? (sammel.anhangLieferscheine ?? []).filter(a => a.fakturaNr === m.faktura.nr).flatMap(a => a.positionen)
+                : [];
+              const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+              const offen = offeneAnzahl(lieferant, anhangPos, fsMapping, effektiv);
+              const auf = aufgeklappt.has(`mr-${m.faktura.nr}`);
+              return (
+              <div key={m.faktura.nr}>
+                <div className={cn('flex items-center gap-2 tabular-nums rounded px-1 py-0.5',
+                  m.status === 'fehlt' && 'bg-red-500/10 text-red-700 dark:text-red-300')}
+                  data-testid={`fs-faktura-${m.faktura.nr}`}>
+                  <span className="w-24">Faktura {m.faktura.nr}</span>
+                  <span className="w-20">{fmtDatumCH(m.faktura.datum)}</span>
+                  <span className="w-24 text-right">CHF {fmt(m.faktura.endbetrag)}</span>
+                  {m.status === 'vorhanden' ? (
+                    <span className="text-emerald-600 inline-flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> erfasst ({m.invoiceIds.length} Rechnung{m.invoiceIds.length === 1 ? '' : 'en'})
+                    </span>
+                  ) : uebernommen.has(m.faktura.nr) ? (
+                    <span className="text-muted-foreground">übernommen — Abgleich aktualisiert…</span>
+                  ) : (
+                    <>
+                      <span>fehlt</span>
+                      {anhangPos.length > 0 && (
+                        <button type="button"
+                          className={cn('inline-flex items-center gap-0.5 rounded px-1 hover:underline',
+                            offen > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-muted-foreground')}
+                          title={offen > 0 ? `${offen} Position(en) ohne Konto — klicken zum Zuordnen` : 'Positionen anzeigen/kontieren'}
+                          onClick={() => setAufgeklappt(prev => {
+                            const next = new Set(prev);
+                            const k = `mr-${m.faktura.nr}`;
+                            if (next.has(k)) next.delete(k); else next.add(k);
+                            return next;
+                          })}
+                          data-testid={`fs-mr-offen-${m.faktura.nr}`}>
+                          {offen > 0 && <AlertTriangle className="h-3 w-3" />}
+                          {offen > 0 ? `${offen} offen` : `${anhangPos.length} Pos.`}
+                        </button>
+                      )}
+                      <Button size="sm" variant="outline" className="ml-auto h-6 px-2 text-[11px]" disabled={busy}
+                        onClick={() => void uebernehmeFaktura(m.faktura.nr)} data-testid={`fs-uebernehmen-${m.faktura.nr}`}>
+                        Aus Monatsrechnung übernehmen
+                      </Button>
+                    </>
+                  )}
+                </div>
+                {auf && anhangPos.length > 0 && (
+                  <PositionenKontierungListe lieferant={lieferant} positionen={anhangPos}
+                    mapping={fsMapping} artikelKonten={effektiv}
+                    onKonto={(key, konto) => setKontoOverrides(o => ({ ...o, [key]: konto }))}
+                    testidPrefix={`fs-mr-${m.faktura.nr}`} />
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
           <div className="flex items-center gap-3 text-[11px] text-muted-foreground border-t border-border/40 pt-2">
             <span>Σ erfasst (gematcht): CHF {fmt(abgleich.summeErfasst)}</span>

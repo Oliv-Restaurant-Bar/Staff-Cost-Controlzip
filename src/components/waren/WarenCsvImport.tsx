@@ -22,9 +22,13 @@ import {
   aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING,
   offeneWarengruppen, positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
   DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung,
-  type CsvParseErgebnis, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
+  type ArtikelKontenMapping, type CsvParseErgebnis, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
   type WarengruppenMapping, type MarktLieferantenMapping,
 } from '@/lib/waren-positionen';
+import {
+  PositionenKontierungListe, effektiveArtikelKonten, offeneAnzahl,
+} from '@/components/waren/PositionenKontierungVorschau';
+import { loadArtikelKonten, saveArtikelKonten } from '@/lib/waren-db';
 import {
   loadMonthInvoices, saveInvoiceEntry, loadPreisHistorie, savePreisHistorie,
   loadPreisSchwelle, savePreisSchwelle, loadPreisHinweise, savePreisHinweise,
@@ -262,6 +266,11 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
   const [marktZuordnung, setMarktZuordnung] = useState<Record<string, string>>({});
   const [preisFilter, setPreisFilter] = useState<'erhoehung' | 'senkung' | 'klein' | 'alle'>('erhoehung');
   const [undoRefresh, setUndoRefresh] = useState(0);
+  // Positions-Kontierung direkt in der Vorschau: gelernte Artikel-Zuordnungen
+  // + Overrides dieser Sitzung (werden beim Import gemerkt), aufgeklappte Rechnungen.
+  const [artikelKonten, setArtikelKonten] = useState<ArtikelKontenMapping>({});
+  const [kontoOverrides, setKontoOverrides] = useState<ArtikelKontenMapping>({});
+  const [aufgeklappt, setAufgeklappt] = useState<Set<string>>(new Set());
   const geladen = useRef(false);
 
   useEffect(() => {
@@ -269,9 +278,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     geladen.current = true;
     Promise.all([
       loadPreisHistorie(tenantId), loadPreisSchwelle(tenantId), loadWarengruppenMapping(tenantId),
-      loadMarktLieferantenMapping(tenantId),
-    ]).then(([h, s, m, mm]) => {
-      setHistorie(h); setSchwelle(s); setMapping(m); setMarktMap(mm);
+      loadMarktLieferantenMapping(tenantId), loadArtikelKonten(tenantId),
+    ]).then(([h, s, m, mm, ak]) => {
+      setHistorie(h); setSchwelle(s); setMapping(m); setMarktMap(mm); setArtikelKonten(ak);
       setSchwelleText({ pct: String(s.pct), minChf: s.minChf.toFixed(2) });
     }).catch(() => setHistorie({}));
   }, [tenantId]);
@@ -283,6 +292,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     setErgebnis(res);
     setAusgewaehlt(new Set(res.rechnungen.map(r => r.docKey)));
     setMarktZuordnung({});
+    setKontoOverrides({}); setAufgeklappt(new Set());
     if (res.failureReason) toast.error(res.failureReason);
   };
 
@@ -344,6 +354,13 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
     if (zuImportieren.length === 0) return;
     setBusy(true);
     try {
+      // In der Vorschau gesetzte Kontierungen MERKEN (Artikel→Konto, pro Mandant)
+      // — gilt sofort für diesen Import und automatisch für künftige Importe.
+      const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+      if (Object.keys(kontoOverrides).length > 0) {
+        await saveArtikelKonten(tenantId, kontoOverrides);
+        setArtikelKonten(effektiv); setKontoOverrides({});
+      }
       // Undo-Snapshot VOR dem Schreiben: alle betroffenen Monate + Preis-Historie.
       const monate = [...new Set(zuImportieren.map(r => r.datum.slice(0, 7)))];
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true });
@@ -365,7 +382,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
           positionenProMonat.set(month, bestehendePos);
         }
         const positionen = uebernehmeManuelleKontierung(
-          positionenAusRechnung(r, mapping),
+          positionenAusRechnung(r, mapping, { lieferant, konten: effektiv }),
           vorhanden ? bestehendePos[vorhanden.id] : undefined,
         );
         const splits = kontoSplitsAusPositionen(positionen);
@@ -478,31 +495,58 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
             {ergebnis.rechnungen.map(r => {
               const lf = lieferantFuer(r.markt);
               const warnung = marktNummernWarnung(lf, r.rechnungsNr);
+              const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+              const offen = lf ? offeneAnzahl(lf, r.positionen, mapping, effektiv) : 0;
+              const auf = aufgeklappt.has(r.docKey);
+              const toggleAuf = () => setAufgeklappt(prev => {
+                const next = new Set(prev);
+                if (next.has(r.docKey)) next.delete(r.docKey); else next.add(r.docKey);
+                return next;
+              });
               return (
-                <label key={r.docKey} className="flex items-center gap-2 tabular-nums cursor-pointer hover:bg-muted/40 rounded px-1 py-0.5">
-                  <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600"
-                    checked={ausgewaehlt.has(r.docKey)} onChange={() => toggleRechnung(r.docKey)} />
-                  <span className="w-20">{fmtDatumCH(r.datum)}</span>
-                  <span className="w-24 truncate" title={r.rechnungsNr}>Nr. {r.rechnungsNr}</span>
-                  <span className="w-24 truncate text-muted-foreground" title={`Markt: ${r.markt || '—'}`}>{r.markt || '— Markt fehlt'}</span>
-                  {lf ? (
-                    <span className={cn('font-medium', /prodega/i.test(lf) ? 'text-sky-700 dark:text-sky-400' : 'text-emerald-700 dark:text-emerald-400')}>{lf}</span>
-                  ) : (
-                    <span className="text-red-600 dark:text-red-400 font-medium">Lieferant offen</span>
+                <div key={r.docKey}>
+                  <label className="flex items-center gap-2 tabular-nums cursor-pointer hover:bg-muted/40 rounded px-1 py-0.5">
+                    <input type="checkbox" className="h-3.5 w-3.5 accent-emerald-600"
+                      checked={ausgewaehlt.has(r.docKey)} onChange={() => toggleRechnung(r.docKey)} />
+                    <span className="w-20">{fmtDatumCH(r.datum)}</span>
+                    <span className="w-24 truncate" title={r.rechnungsNr}>Nr. {r.rechnungsNr}</span>
+                    <span className="w-24 truncate text-muted-foreground" title={`Markt: ${r.markt || '—'}`}>{r.markt || '— Markt fehlt'}</span>
+                    {lf ? (
+                      <span className={cn('font-medium', /prodega/i.test(lf) ? 'text-sky-700 dark:text-sky-400' : 'text-emerald-700 dark:text-emerald-400')}>{lf}</span>
+                    ) : (
+                      <span className="text-red-600 dark:text-red-400 font-medium">Lieferant offen</span>
+                    )}
+                    {warnung && (
+                      <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5" title={warnung}>
+                        <AlertTriangle className="h-3 w-3" /> Nr./Markt?
+                      </span>
+                    )}
+                    {lf && (
+                      <button type="button"
+                        className={cn('inline-flex items-center gap-0.5 rounded px-1 hover:underline',
+                          offen > 0 ? 'text-amber-600 dark:text-amber-400 font-medium' : 'text-muted-foreground')}
+                        title={offen > 0 ? `${offen} Position(en) ohne Konto — klicken zum Zuordnen` : 'Positionen anzeigen/kontieren'}
+                        onClick={e => { e.preventDefault(); e.stopPropagation(); toggleAuf(); }}
+                        data-testid={`csv-offen-${r.docKey}`}>
+                        {offen > 0 && <AlertTriangle className="h-3 w-3" />}
+                        {offen > 0 ? `${offen} offen` : `${r.positionen.length} Pos.`}
+                      </button>
+                    )}
+                    {!lf && <span className="text-muted-foreground">{r.positionen.length} Pos.</span>}
+                    <span className="ml-auto">CHF {fmt(r.nettoTotal)} netto</span>
+                    {(vorschau?.proRechnung.get(r.docKey)?.length ?? 0) > 0 && (
+                      <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5">
+                        <AlertTriangle className="h-3 w-3" />{vorschau!.proRechnung.get(r.docKey)!.length}
+                      </span>
+                    )}
+                  </label>
+                  {auf && lf && (
+                    <PositionenKontierungListe lieferant={lf} positionen={r.positionen}
+                      mapping={mapping} artikelKonten={effektiv}
+                      onKonto={(key, konto) => setKontoOverrides(o => ({ ...o, [key]: konto }))}
+                      testidPrefix={`csv-${r.docKey}`} />
                   )}
-                  {warnung && (
-                    <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5" title={warnung}>
-                      <AlertTriangle className="h-3 w-3" /> Nr./Markt?
-                    </span>
-                  )}
-                  <span className="text-muted-foreground">{r.positionen.length} Pos.</span>
-                  <span className="ml-auto">CHF {fmt(r.nettoTotal)} netto</span>
-                  {(vorschau?.proRechnung.get(r.docKey)?.length ?? 0) > 0 && (
-                    <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-0.5">
-                      <AlertTriangle className="h-3 w-3" />{vorschau!.proRechnung.get(r.docKey)!.length}
-                    </span>
-                  )}
-                </label>
+                </div>
               );
             })}
           </div>
@@ -540,9 +584,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
             return offen.length > 0 ? (
               <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400"
                 data-testid="konto-offen-hinweis">
-                <span className="font-medium">Konto offen ({offen.length}):</span> {offen.join(', ')} — Zuordnung
-                unter Einstellungen → «Warengruppen → Konto» ergänzen; betroffene Positionen werden bis dahin
-                als «offen» markiert (kein Konto geraten).
+                <span className="font-medium">Konto offen ({offen.length}):</span> {offen.join(', ')} — «⚠ offen»
+                bei der Rechnung anklicken und das Konto direkt in der Positionsliste wählen (wird für den
+                Artikel gemerkt), oder die Warengruppe unter Einstellungen → «Warengruppen → Konto» zuordnen.
               </div>
             ) : null;
           })()}
@@ -592,11 +636,27 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
             );
           })()}
 
-          <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || ausgewaehlt.size === 0}
-            onClick={importieren} data-testid="csv-import-button">
-            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
-            {ausgewaehlt.size} Rechnung{ausgewaehlt.size === 1 ? '' : 'en'} importieren
-          </Button>
+          {(() => {
+            const effektiv = effektiveArtikelKonten(artikelKonten, kontoOverrides);
+            const offenTotal = ergebnis.rechnungen
+              .filter(r => ausgewaehlt.has(r.docKey) && lieferantFuer(r.markt) !== null)
+              .reduce((s, r) => s + offeneAnzahl(lieferantFuer(r.markt)!, r.positionen, mapping, effektiv), 0);
+            return (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" className="h-7 px-3 text-xs" disabled={busy || ausgewaehlt.size === 0}
+                  onClick={importieren} data-testid="csv-import-button">
+                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                  {ausgewaehlt.size} Rechnung{ausgewaehlt.size === 1 ? '' : 'en'} importieren
+                </Button>
+                {offenTotal > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400 inline-flex items-center gap-1" data-testid="csv-offen-total">
+                    <AlertTriangle className="h-3 w-3" />
+                    {offenTotal} Position{offenTotal === 1 ? '' : 'en'} noch ohne Konto — Import möglich (provisorisch als Warenkosten)
+                  </span>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>

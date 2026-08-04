@@ -349,6 +349,23 @@ export async function saveWarengruppenMapping(tenantId: TenantId, mapping: impor
   await kvSet(tenantKey(tenantId, 'waren_warengruppen_konten_v1'), mapping);
 }
 
+// ─── Artikel → Konto (in der Vorschau gelernte Zuordnungen, pro Mandant) ─────
+
+export async function loadArtikelKonten(tenantId: TenantId): Promise<import('./waren-positionen').ArtikelKontenMapping> {
+  const { normalizeArtikelKonten } = await import('./waren-positionen');
+  try { return normalizeArtikelKonten(await kvGet(tenantKey(tenantId, 'waren_artikel_konten_v1'))); }
+  catch { return {}; }
+}
+
+/** Merge-Save: bestehende Zuordnungen bleiben, neue/gesetzte überschreiben. */
+export async function saveArtikelKonten(
+  tenantId: TenantId, neue: import('./waren-positionen').ArtikelKontenMapping,
+): Promise<void> {
+  if (Object.keys(neue).length === 0) return;
+  const bestehend = await loadArtikelKonten(tenantId);
+  await kvSet(tenantKey(tenantId, 'waren_artikel_konten_v1'), { ...bestehend, ...neue });
+}
+
 // ─── Rechnungspositionen (pro Monat, Record<invoiceId, Positionen>) ──────────
 
 export async function loadRechnungsPositionen(

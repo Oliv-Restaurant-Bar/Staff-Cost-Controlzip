@@ -84,4 +84,5 @@
 - [TG/Prodega Lieferanten-Trennung](waren-lieferanten-trennung.md) — Lieferant je Rechnung aus Markt-Spalte; docKey inkl. Markt; unbekannter Markt = «Lieferant offen», nie raten.
 - [Feldschlösschen PDF-Import](feldschloesschen-import.md) — MWST-Satz als hartes Kategorie-Signal, Sammelrechnung nur Kontrolle, Duplikat-Wache bei Anhang-Übernahme, Jahr-Lock frisch im Save-Pfad.
 - [Beaulieu Lieferanten-PDF-Profile](beaulieu-pdf-profile.md) — Erkennung via MWST-Nr; Vorschau führend (Stufe 2 nur bei deckender Summe); Regex-Fallen ST/QR-Zahlteil; Supplier-Sync nur als Batch.
+- [Artikel→Konto-Zuordnungen (Import-Vorschau)](waren-artikel-konten.md) — Vorrang Pfand>Artikel>Warengruppe; Overrides vor Kern speichern; Beaulieu-Gruppenschlüssel braucht das Konto.
 - [Gäste IN Quelle & 1:1-Monatsersatz](gaeste-in-import.md) — gaeste-daily ist alleinige Quelle (nie schätzen/TA-mischen); Import ersetzt Monate 1:1; nur neuester Undo-Snapshot überlebt — Doppel-Import killt Wiederherstellung.

@@ -4,6 +4,7 @@ import {
   parseTransgourmetCsv, kontoFuerPosition, kontoSplitsFuerRechnung,
   kontoSplitsAusPositionen, positionenAusRechnung, offeneWarengruppen, uebernehmeManuelleKontierung,
   artikelKey, berechnePreisAenderungen, aktualisierePreisHistorie, istGebuehrenPosition,
+  kontoFuerPositionMitArtikel, normalizeArtikelKonten,
   normalizePreisHistorie, normalizePreisSchwelle, normalizeWarengruppenMapping,
   DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN,
   DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, normalizeMarktLieferantenMapping,
@@ -137,6 +138,57 @@ describe('Warengruppe → Konto (konfigurierbares Mapping)', () => {
     expect(normalizeWarengruppenMapping(null)).toBe(DEFAULT_WARENGRUPPEN_MAPPING);
     expect(normalizeWarengruppenMapping([{ gruppe: 'TK', konto: '4060' }, { gruppe: '', konto: '1' }, 'x']))
       .toEqual([{ gruppe: 'TK', konto: '4060' }]);
+  });
+});
+
+describe('Artikel → Konto (in der Vorschau gelernte Zuordnungen)', () => {
+  const M = DEFAULT_WARENGRUPPEN_MAPPING;
+
+  it('Vorrang: Pfand > Artikel > Warengruppe; Artikel-Treffer sind manuell', () => {
+    const konten = { 'tg|nr:77': '4050', 'tg|name:ifco liftlock': '4701' };
+    // Artikel-Zuordnung schlägt die Warengruppen-Tabelle (Wein 4020 → 4050):
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Wein', mwstCode: 2, artNr: '77', bezeichnung: 'X' }, M, konten))
+      .toEqual({ konto: '4050', status: 'zugeordnet', manuell: true });
+    // Pfand (MwSt-Code 0) ist NIE überschreibbar:
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Wein', mwstCode: 0, artNr: '77', bezeichnung: 'X' }, M, konten))
+      .toEqual({ konto: null, status: 'pfand' });
+    // Ohne Artikel-Treffer: normale Warengruppen-Zuordnung bzw. offen:
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Wein', mwstCode: 2, artNr: '99', bezeichnung: 'Y' }, M, konten).konto).toBe('4020');
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '99', bezeichnung: 'Y' }, M, konten).status).toBe('offen');
+    // Name-Fallback ohne Art.-Nr. (case-/whitespace-tolerant):
+    expect(kontoFuerPositionMitArtikel('TG', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '', bezeichnung: ' IFCO  LiftLock ' }, M, konten).konto).toBe('4701');
+    // Anderer Lieferant: Zuordnung gilt NICHT (mandanten-/lieferantengetrennt):
+    expect(kontoFuerPositionMitArtikel('Prodega', { warengruppe: 'Unbekannt', mwstCode: 1, artNr: '77', bezeichnung: 'X' }, M, konten).status).toBe('offen');
+  });
+
+  it('positionenAusRechnung wendet Artikel-Zuordnungen an (manuell markiert)', () => {
+    const csv = [HEADER,
+      zeile('R1', '2026-07-01', 'Unbekannt', '77', 'Trüffelöl', 20, 40, 1.04, 1),
+      zeile('R1', '2026-07-01', 'Wein', '5', 'Barolo', 30, 60, 4.86, 2),
+    ].join('\n');
+    const r = parseTransgourmetCsv(csv).rechnungen[0];
+    const pos = positionenAusRechnung(r, M, { lieferant: 'TG', konten: { 'tg|nr:77': '4060' } });
+    expect(pos.find(p => p.artNr === '77')).toMatchObject({ konto: '4060', status: 'zugeordnet', manuell: true });
+    expect(pos.find(p => p.artNr === '5')).toMatchObject({ konto: '4020' });
+    expect(pos.find(p => p.artNr === '5')?.manuell).toBeUndefined();
+  });
+
+  it('neue Artikel-Zuordnung gewinnt gegen alten manuellen Bestand (Re-Import)', () => {
+    const csv = [HEADER, zeile('R1', '2026-07-01', 'Unbekannt', '77', 'Trüffelöl', 20, 40, 1.04, 1)].join('\n');
+    const r = parseTransgourmetCsv(csv).rechnungen[0];
+    const alt = positionenAusRechnung(r, M).map(p => ({ ...p, konto: '4090', status: 'zugeordnet' as const, manuell: true }));
+    // Neue Wahl in der Vorschau (Artikel-Tabelle) ist aktueller als der Altbestand:
+    const neu = uebernehmeManuelleKontierung(positionenAusRechnung(r, M, { lieferant: 'TG', konten: { 'tg|nr:77': '4060' } }), alt);
+    expect(neu[0]).toMatchObject({ konto: '4060', manuell: true });
+    // Ohne neue Artikel-Zuordnung bleibt der alte manuelle Override führend:
+    const neu2 = uebernehmeManuelleKontierung(positionenAusRechnung(r, M), alt);
+    expect(neu2[0]).toMatchObject({ konto: '4090', manuell: true });
+  });
+
+  it('normalizeArtikelKonten: nur 4-stellige Konten, sonst verwerfen', () => {
+    expect(normalizeArtikelKonten(null)).toEqual({});
+    expect(normalizeArtikelKonten({ 'tg|nr:1': '4060', 'tg|nr:2': 'abc', 'tg|nr:3': '', '': '4060', 'tg|nr:4': ' 4701 ' }))
+      .toEqual({ 'tg|nr:1': '4060', 'tg|nr:4': '4701' });
   });
 });
 
