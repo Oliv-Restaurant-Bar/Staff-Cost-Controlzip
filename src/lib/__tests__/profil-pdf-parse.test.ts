@@ -47,6 +47,23 @@ describe('Kontrollwerte Stufe 1 (Kopf)', () => {
     expect(r.mwst).toBe(98.7);
     expect(r.mwstSatz).toBe(2.6);
   });
+  it('Belegart-Sperre: Terravigna Auftragsbestätigung 145095 wird NIE gebucht', () => {
+    const r = parse('terravigna-ab-145095.txt');
+    expect(r.belegart).toBe('auftragsbestaetigung');
+    expect(r.profil?.id).toBe('terravigna');
+    expect(r.rechnungsNr).toBe('145095');
+    expect(r.netto).toBe(828.39);
+    expect(r.hinweise[0]).toContain('Auftragsbestätigung 145095');
+    expect(r.hinweise[0]).toContain('wird nicht gebucht');
+  });
+  it('Belegart: echte Rechnungen bleiben «rechnung» (alle Fixtures)', () => {
+    for (const f of ['spahni-8646158.txt', 'fideco-5356149.txt', 'terravigna-211343.txt',
+      'gourmador-92051534.txt', 'bohnenblust-49415.txt', 'gasser-f0122084.txt',
+      'obrist-326269.txt', 'rutishauser-91091909.txt', 'blaser-1088741.txt',
+      'hofamstutz-1063.txt', 'spahni-ls-5210840.txt']) {
+      expect(parse(f).belegart, f).toBe('rechnung');
+    }
+  });
   it('Spahni Einzel-Lieferschein 5210840: netto 284.90 / MwSt 7.40 (2.6%), Lieferdatum 04.08.26', () => {
     const r = parse('spahni-ls-5210840.txt');
     expect(r.profil?.id).toBe('spahni');

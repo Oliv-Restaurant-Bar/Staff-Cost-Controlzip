@@ -35,8 +35,33 @@ export interface ProfilPdfErgebnis {
   lieferungen: ParsedCsvRechnung[];
   /** true = echte Positionen erkannt (Preisüberwachung möglich). */
   positionenErkannt: boolean;
+  /** Belegart-Sperre (gilt für ALLE Lieferanten): nur 'rechnung' ist buchbar.
+   *  Auftragsbestätigungen/Offerten/Bestellungen werden erkannt, NIE gebucht. */
+  belegart: 'rechnung' | 'auftragsbestaetigung' | 'offerte' | 'bestellung';
   hinweise: string[];
 }
+
+/** Belegart aus der Belegüberschrift: «Rechnung» vs «(Verkauf) Auftrags-
+ *  bestätigung» / «Offerte»/«Angebot» / «Bestellung». Ein expliziter
+ *  Rechnungs-Kopf («Rechnung <Nr>» o.ä.) gewinnt immer — Zahlungs-/Fusstexte
+ *  dürfen die Sperre nicht auslösen. */
+export function erkenneBelegart(text: string): ProfilPdfErgebnis['belegart'] {
+  const hatRechnungsKopf =
+    /(?:^|\n)[^\n]{0,60}\bRECHNUNG(?:\b|\s*[:.]|s?-?\s*(?:Nr|nummer))/i.test(text) ||
+    /\bRechnung\s+(?:Nr\.?\s*)?\d{3,}/i.test(text) ||
+    /\bFaktura\b/i.test(text);
+  if (hatRechnungsKopf) return 'rechnung';
+  if (/Auftragsbest(?:ä|ae)tigung/i.test(text)) return 'auftragsbestaetigung';
+  if (/\b(?:Offerte|Angebot)\b/i.test(text)) return 'offerte';
+  if (/(?:^|\n)\s*(?:Verkauf\s+)?Bestellung\b/i.test(text)) return 'bestellung';
+  return 'rechnung';
+}
+
+const BELEGART_LABEL: Record<Exclude<ProfilPdfErgebnis['belegart'], 'rechnung'>, string> = {
+  auftragsbestaetigung: 'Auftragsbestätigung',
+  offerte: 'Offerte/Angebot',
+  bestellung: 'Bestellung',
+};
 
 // ─── Zahlen / Daten ───────────────────────────────────────────────────────────
 
@@ -410,6 +435,7 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
   const lines = text.split('\n');
   const { profil, mwstNrn } = findeProfilImText(text, profile);
   const hinweise: string[] = [];
+  const belegart = erkenneBelegart(text);
   const kopfFn = profil ? KOPF_PARSER[profil.id] : undefined;
   const kopf = kopfFn ? kopfFn(text, lines) : generischerKopf(text);
   let { netto, mwst } = kopf;
@@ -435,18 +461,28 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
   let lieferdatum = kopf.lieferdatum;
   if (!lieferdatum && positionenErkannt && lieferungen.length === 1) lieferdatum = lieferungen[0].datum;
 
-  if (!profil) hinweise.push('Lieferant nicht erkannt — bitte in der Vorschau zuordnen (wird dauerhaft gespeichert).');
-  if (netto === null) hinweise.push('Netto-Betrag nicht erkannt — bitte in der Vorschau erfassen.');
-  if (!kopf.rechnungsNr) hinweise.push('Rechnungs-Nr nicht erkannt.');
-  if (!kopf.rechnungsdatum) hinweise.push('Rechnungsdatum nicht erkannt.');
+  // Belegart-Sperre: Nicht-Rechnungen werden NIE gebucht — Beleg-Nr für die
+  // Meldung trotzdem ermitteln (z.B. «Auftragsbestätigung 145095»).
+  let rechnungsNr = kopf.rechnungsNr;
+  if (belegart !== 'rechnung') {
+    rechnungsNr = rechnungsNr
+      ?? suche(text, [/(?:Auftragsbest(?:ä|ae)tigung|Offerte|Angebot|Bestellung)\s*(?:Nr\.?\s*)?:?\s*(\d{3,12})/i]);
+    hinweise.length = 0;
+    hinweise.push(`${BELEGART_LABEL[belegart]} ${rechnungsNr ?? ''} — keine Rechnung, wird nicht gebucht`.replace(/\s+—/, ' —'));
+  } else {
+    if (!profil) hinweise.push('Lieferant nicht erkannt — bitte in der Vorschau zuordnen (wird dauerhaft gespeichert).');
+    if (netto === null) hinweise.push('Netto-Betrag nicht erkannt — bitte in der Vorschau erfassen.');
+    if (!kopf.rechnungsNr) hinweise.push('Rechnungs-Nr nicht erkannt.');
+    if (!kopf.rechnungsdatum) hinweise.push('Rechnungsdatum nicht erkannt.');
+  }
 
   return {
     profil, mwstNrn,
-    rechnungsNr: kopf.rechnungsNr,
+    rechnungsNr,
     rechnungsdatum: kopf.rechnungsdatum,
     lieferdatum,
     netto, mwst, mwstSatz,
     brutto: netto !== null && mwst !== null ? rundung2(netto + mwst) : null,
-    lieferungen, positionenErkannt, hinweise,
+    lieferungen, positionenErkannt, belegart, hinweise,
   };
 }

@@ -1,0 +1,22 @@
+AUFGABE: Terravigna (Wein, Beaulieu) — Dual-Modell wie Fideco/Spahni, plus (1) Auftragsbestätigungen NIE buchen, (2) mehrere Rechnungen pro Monat, (3) Backfill Jan–Juli 2026 nach Lieferdatum. Mandant Beaulieu.
+
+PROFIL Terravigna: Kategorie Wein, Konto 4020, MwSt 8.1 %, Belegtyp "Dual", Stufe 2 (Positionen).
+
+LIEFERUNGEN & LIEFERDATUM:
+1) Rechnungen listen Lieferungen als "Lieferungsnr. <Nr> vom <Datum>:" mit Positionen darunter. Jede Lieferung mit ihrem Lieferdatum buchen (Warenkosten), Identität = Lieferungsnr.
+2) Mehrere Rechnungen pro Monat sind normal (verschiedene Kunden-/Beleg-Nr, z.B. 211343/Kd 50955 und 211363/Kd 51457) — beide gehören zu Terravigna/Beaulieu. Kein Zusammenfassen, kein Doppel: Dedup über die Lieferungsnr (eindeutig je Lieferung, unabhängig von Kunden-Nr).
+
+WICHTIG — BELEGART-SPERRE (gilt generell für alle Lieferanten):
+3) Nur echte RECHNUNGEN buchen. Dokumente vom Typ "Auftragsbestätigung", "Offerte"/"Angebot" oder reine "Bestellung" werden ERKANNT und NICHT gebucht — mit klarer Meldung in der Vorschau: "Auftragsbestätigung <Nr> — keine Rechnung, wird nicht gebucht". (Beispiel: Terravigna Auftragsbestätigung 145095, netto 828.39 → nicht buchen.)
+4) Erkennung über die Belegüberschrift ("Rechnung" vs "Auftragsbestätigung"/"Verkauf Auftragsbestätigung").
+
+BACKFILL JAN–JULI 2026:
+5) Mehrere Monats-Rechnungen aufs Mal hochladbar (Terravigna Jan–Juli 2026). Jede bucht ihre Lieferungen auf das jeweilige Lieferdatum → die Monate Jan–Juli werden rückwirkend gefüllt, für Vergleichswerte ab August.
+6) Dublettensicher (Lieferungsnr), Vorschau vor Schreiben (je Rechnung: Lieferungen, Summe netto), bestehender Import-Undo.
+
+KONTROLLWERTE (Beaulieu):
+   - Rechnung 211343: 4 Lieferungen, netto 2'339.69 / MwSt 189.51 (8.1%)
+   - Rechnung 211363: 7 Lieferungen (Summe netto in Vorschau prüfen), Kunden-Nr 51457
+   - Auftragsbestätigung 145095: netto 828.39 → NICHT gebucht (nur Hinweis)
+
+Kurz zusammenfassen: dass Auftragsbestätigungen nie gebucht werden und wie der Jan–Juli-Backfill nach Lieferdatum läuft.

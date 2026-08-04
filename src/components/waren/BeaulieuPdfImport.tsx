@@ -172,13 +172,17 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
     }
   }
 
+  // Belegart-Sperre: Auftragsbestätigungen/Offerten/Bestellungen sind NIE buchbar.
   const bereit = zeilen.filter(z => z.lieferant !== ''
+    && z.ergebnis.belegart === 'rechnung'
     && (z.modus === 'monatsrechnung'
       // Monatsrechnung: nur importierbar, wenn der Abgleich Lücken gefunden hat.
       ? (z.abgleich?.fehlt ?? 0) > 0
       : (z.datum !== '' && num(z.netto) !== null)));
-  const offen = zeilen.filter(z => z.lieferant === ''
-    || (z.modus !== 'monatsrechnung' && (z.datum === '' || num(z.netto) === null))).length;
+  const offen = zeilen.filter(z => z.ergebnis.belegart === 'rechnung'
+    && (z.lieferant === ''
+      || (z.modus !== 'monatsrechnung' && (z.datum === '' || num(z.netto) === null)))).length;
+  const gesperrt = zeilen.filter(z => z.ergebnis.belegart !== 'rechnung').length;
 
   async function handleImport() {
     if (bereit.length === 0) { toast.error('Keine importierbaren Rechnungen (Lieferant/Datum/Netto fehlen).'); return; }
@@ -315,7 +319,30 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
         <div className="space-y-2" data-testid="beaulieu-pdf-vorschau">
           {zeilen.map((row, i) => {
             const erg = row.ergebnis;
-            const istOffen = row.lieferant === '';
+            const istGesperrt = erg.belegart !== 'rechnung';
+            const istOffen = !istGesperrt && row.lieferant === '';
+            if (istGesperrt) {
+              // Belegart-Sperre: erkannt, aber NIE buchbar — nur Hinweis.
+              return (
+                <div key={`${row.fileName}-${i}`}
+                  className="rounded-md border border-destructive/50 bg-destructive/5 p-2 space-y-1"
+                  data-testid={`beaulieu-pdf-gesperrt-${i}`}>
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-medium truncate max-w-[220px]" title={row.fileName}>{row.fileName}</span>
+                    <span className="text-destructive font-medium">{erg.hinweise[0] ?? 'Keine Rechnung — wird nicht gebucht'}</span>
+                    <button className="ml-auto text-muted-foreground hover:text-destructive"
+                      onClick={() => setZeilen(z => z.filter((_, idx) => idx !== i))} title="Zeile entfernen">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  {erg.netto !== null && (
+                    <div className="text-[11px] text-muted-foreground">
+                      Erkannt: {erg.profil?.name ?? 'Lieferant unbekannt'} · netto CHF {erg.netto.toFixed(2)} — wird ignoriert.
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <div key={`${row.fileName}-${i}`}
                 className={`rounded-md border p-2 space-y-2 ${istOffen ? 'border-amber-500/60 bg-amber-500/5' : 'border-border/50'}`}>
@@ -453,6 +480,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
               {bereit.length} Rechnung{bereit.length === 1 ? '' : 'en'} importieren
             </Button>
             {offen > 0 && <span className="text-[11px] text-amber-600">{offen} noch nicht importierbar (Zuordnung/Datum/Betrag fehlt)</span>}
+            {gesperrt > 0 && <span className="text-[11px] text-destructive">{gesperrt} Beleg{gesperrt === 1 ? '' : 'e'} gesperrt (keine Rechnung — wird nicht gebucht)</span>}
             <Button size="sm" variant="ghost" className="text-xs" onClick={() => setZeilen([])}>Vorschau leeren</Button>
           </div>
         </div>
