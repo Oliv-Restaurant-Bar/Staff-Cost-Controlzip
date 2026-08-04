@@ -19,26 +19,23 @@ import {
 } from './tagesabschluss';
 
 /**
- * Spalten: Datum · Umsatz · Zahlungsarten (Bar, Karten, TWINT, KK Adyen,
- * Debitoren, Gutscheine) · Bargeld Soll · Barausgaben · Einzahlung Bank ·
- * Kassensaldo · Differenz · Kommentar. Die Zahlungsarten kommen aus DENSELBEN
- * Zeilen wie die Bildschirm-Tabelle (buildTagesabschlussRows auf Basis
- * loadGnDayClosingsForMonth, pro Mandant) — Effektivwerte, null = leer,
- * nie 0 bei fehlendem Z-Bericht.
+ * Spalten: Datum · Umsatz · Bargeld · Kreditkarten (ALLE elektronischen
+ * Kartenzahlungen in EINER Spalte) · Debitoren · Barausgaben · Gutscheine ·
+ * Bargeld Soll · Kassensaldo · Differenz · Kommentar. Die Zahlungsarten
+ * kommen aus DENSELBEN Zeilen wie die Bildschirm-Tabelle
+ * (buildTagesabschlussRows auf Basis loadGnDayClosingsForMonth, pro
+ * Mandant) — Effektivwerte, null = leer, nie 0 bei fehlendem Z-Bericht.
  */
 export const TAGESABSCHLUSS_EXCEL_HEADERS = [
   'Datum',
   'Umsatz',
-  'Bar (Z-Bericht)',
-  'Karten (Z-Bericht)',
-  'TWINT (Z-Bericht)',
-  'KK Adyen',
+  'Bargeld',
+  'Kreditkarten',
   'Debitoren',
+  'Barausgaben',
   'Verkaufte Gutscheine',
   'Eingelöste Gutscheine',
   'Bargeld Soll',
-  'Barausgaben',
-  'Einzahlung Bank',
   'Kassensaldo Soll',
   'Kassendifferenz',
   'Kommentar',
@@ -60,15 +57,16 @@ function round2(n: number): number {
 }
 
 /**
- * „KK Adyen" mit der Doppelsemantik der Übersichts-Spalte: bei karten-Override
- * der EFFEKTIVE Z-KK-Wert (karten + TWINT), sonst das Adyen-Import-Total
- * (effektiv inkl. Adyen-Overrides). null = weder Override noch Adyen-Import.
+ * „Kreditkarten": ALLE elektronischen Kartenzahlungen in EINER Spalte —
+ * Karten + TWINT aus dem Z-Bericht (Effektivwerte inkl. Korrekturen).
+ * Liefert der Z-Bericht keine Kartenwerte, greift das Adyen-Import-Total
+ * als Fallback (NIE additiv zu den Z-Werten — das wäre eine Doppelzählung,
+ * Adyen ist die Abgleichs-Sicht derselben Zahlungen). null = keine Quelle.
  */
-export function excelKkAdyenValue(row: TagesabschlussRow): number | null {
-  if (row.cells.karten.source === 'corrected') {
-    if (row.cells.karten.value === null && row.cells.twint.value === null) return null;
-    return round2((row.cells.karten.value ?? 0) + (row.cells.twint.value ?? 0));
-  }
+export function excelKreditkartenValue(row: TagesabschlussRow): number | null {
+  const karten = row.cells.karten.value;
+  const twint = row.cells.twint.value;
+  if (karten !== null || twint !== null) return round2((karten ?? 0) + (twint ?? 0));
   return row.adyenTotal;
 }
 
@@ -133,15 +131,12 @@ export function buildTagesabschlussExcelData(month: TagesabschlussMonth): Tagesa
       // Zahlungsarten — Effektivwerte derselben Zellen wie die Übersicht;
       // fehlt der Z-Bericht, sind die Werte null (leere Zelle, nie 0).
       row.cells.bar.value,
-      row.cells.karten.value,
-      row.cells.twint.value,
-      excelKkAdyenValue(row),
+      excelKreditkartenValue(row),
       row.cells.rechnung.value,
+      row.barausgabenTotal !== 0 || row.expenseCount > 0 ? round2(row.barausgabenTotal) : null,
       row.cells.gutscheinVerkauft.value,
       row.cells.gutscheinEingeloest.value,
       row.bargeldSoll,
-      row.barausgabenTotal !== 0 || row.expenseCount > 0 ? round2(row.barausgabenTotal) : null,
-      row.cells.einzahlungBank.value,
       excelKassensaldoValue(row),
       row.cashDiff,
       excelKommentar(row),
@@ -149,10 +144,10 @@ export function buildTagesabschlussExcelData(month: TagesabschlussMonth): Tagesa
   }
   const totalsRow: TagesabschlussExcelCell[] = [
     'Total',
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map(i => sumColumn(rows, i)),
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map(i => sumColumn(rows, i)),
     // Kassensaldo ist ein fortlaufender Bestand — Total = Monatsend-Saldo.
     month.endSaldo,
-    sumColumn(rows, 13),
+    sumColumn(rows, 10),
     null,
   ];
   return { header: [...TAGESABSCHLUSS_EXCEL_HEADERS], rows, totalsRow };
