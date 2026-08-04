@@ -14,7 +14,7 @@ vi.mock('@/lib/supabase-kv', () => ({
 }));
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseProfilPdf, parseBetrag, parseDatumCH } from '@/lib/profil-pdf-parse';
+import { parseProfilPdf, parseBetrag, parseDatumCH, erkenneDokumenttyp, erkenneBelegart } from '@/lib/profil-pdf-parse';
 import { DEFAULT_PROFILE_BEAULIEU, findeProfilImText } from '@/lib/lieferanten-profile';
 
 const fx = (name: string) =>
@@ -198,5 +198,49 @@ describe('Erkennung', () => {
     const r = parseProfilPdf('Rechnung Nr. 1234 vom 01.07.2026\nCHE-999.888.777 MWST\nTotal CHF 100.00', P);
     expect(r.profil).toBeNull();
     expect(r.mwstNrn).toContain('999888777');
+  });
+});
+
+describe('erkenneDokumenttyp (inhaltsbasiert, Dual-Lieferanten)', () => {
+  it('Sammel-/Monatsrechnung im Kopf → monatsrechnung (auch mit nur 1 Lieferung)', () => {
+    expect(erkenneDokumenttyp('Spahni AG\nSammelrechnung Nr. 4711\n...', 'rechnung')).toBe('monatsrechnung');
+    expect(erkenneDokumenttyp('Fideco\nMonatsrechnung Juni 2026\n...', 'rechnung')).toBe('monatsrechnung');
+  });
+  it('Lieferschein-Überschrift → lieferschein (auch bei mehreren LS-Nr-Blöcken)', () => {
+    expect(erkenneDokumenttyp('Gasser Getränke\nLieferschein\nLS-Nr. 111 vom 01.06.26\nLS-Nr. 112 vom 02.06.26', 'rechnung')).toBe('lieferschein');
+  });
+  it('Nicht-Rechnung (AB/Offerte/Bestellung) → lieferschein (provisorisch)', () => {
+    expect(erkenneDokumenttyp('Terravigna\nAuftragsbestätigung 99\n...', 'auftragsbestaetigung')).toBe('lieferschein');
+  });
+  it('kein Kopf-Signal → null (Aufrufer nutzt Zusatzsignale)', () => {
+    expect(erkenneDokumenttyp('Spahni AG\nRechnung Nr. 123\nLS-Nr. 1 vom 01.06.26\nLS-Nr. 2 vom 02.06.26', 'rechnung')).toBe(null);
+  });
+  it('«LS-Nr…» / «Liefersch./Kd.-Nr.» sind KEINE Lieferschein-Überschrift', () => {
+    expect(erkenneDokumenttyp('Rechnung 55\nLiefersch./Kd.-Nr. : 123 / XBEA\n...', 'rechnung')).toBe(null);
+  });
+  it('Fusstext ausserhalb der Kopfzone bestimmt den Typ nicht', () => {
+    const fuss = Array.from({ length: 40 }, (_, i) => `Zeile ${i}`).join('\n') + '\nSammelrechnung folgt separat';
+    expect(erkenneDokumenttyp(`Rechnung 1\n${fuss}`, 'rechnung')).toBe(null);
+  });
+});
+
+describe('erkenneBelegart: Kopfzone entscheidet', () => {
+  it('AB-Überschrift + «Rechnung» nur im Fuss-/Zahltext bleibt AB (provisorisch)', () => {
+    const fuss = Array.from({ length: 30 }, (_, i) => `Zeile ${i}`).join('\n');
+    const text = `Terravigna\nAuftragsbestätigung Nr. 99\n${fuss}\nDie Rechnung Nr. 123456 folgt per Monatsende.`;
+    expect(erkenneBelegart(text)).toBe('auftragsbestaetigung');
+  });
+  it('Rechnungs-Kopf gewinnt weiterhin in der Kopfzone', () => {
+    expect(erkenneBelegart('Spahni AG\nRechnung Nr. 4711\n...')).toBe('rechnung');
+  });
+  it('ohne Kopf-Signal zählt der Gesamttext (Sperre bleibt erhalten)', () => {
+    const kopf = Array.from({ length: 30 }, (_, i) => `Kopfzeile ${i}`).join('\n');
+    expect(erkenneBelegart(`${kopf}\nVerkauf Auftragsbestätigung 77`)).toBe('auftragsbestaetigung');
+  });
+});
+
+describe('erkenneDokumenttyp: Kombiform «Sammel-/Monatsrechnung»', () => {
+  it('Slash-Kombiform im Kopf → monatsrechnung', () => {
+    expect(erkenneDokumenttyp('Fideco\nSammel-/Monatsrechnung Juni\n...', 'rechnung')).toBe('monatsrechnung');
   });
 });

@@ -349,8 +349,10 @@ export function FeldschloesschenImport({ tenantId, suppliers, onImported }: {
       // EIN Undo-Datensatz für alles: betroffene Monate + Preis-Historie + Historien-Jahre.
       const monate = [...new Set(lieferungen.map(l => l.datum.slice(0, 7)))];
       const vorher = await erstelleWarenImportSnapshot(tenantId, { monate, mitPreisHistorie: true, jahre });
+      // Sammelrechnungs-Lieferungen sind MASSGEBLICH (Monatsrechnung, final)
+      // — nie als einfache provisorische Lieferscheine buchen.
       const res = lieferungen.length > 0
-        ? await kernImportiereRechnungen(lieferungen.map(a => ({ r: fsAnhangAlsRechnung(a) })))
+        ? await kernImportiereRechnungen(lieferungen.map(a => ({ r: fsAnhangAlsRechnung(a) })), { quelle: 'monatsrechnung' })
         : { neu: 0, ersetzt: 0, offen: 0, provisorischErsetzt: 0, preisAenderungen: 0, monate: [] as string[], bereitsFinal: 0, ueberschrieben: 0 };
       const teile: string[] = [];
       for (const [jahr, eintraege] of proJahr) {

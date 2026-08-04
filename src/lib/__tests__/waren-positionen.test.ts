@@ -9,6 +9,7 @@ import {
   DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING, KONTO_LABEL_PFAND, KONTO_LABEL_OFFEN,
   DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, normalizeMarktLieferantenMapping,
   type ParsedCsvRechnung, type PreisHistorie,
+  findeCsvBestandsTreffer,
 } from '@/lib/waren-positionen';
 
 const HEADER = 'Kundennummer;Rechnungsnummer;Datum;Markt;Warengruppe;Position;Art. Nr.;Menge;Gewicht;Einheit;Artikelbezeichnung;Preis;Positionspreis;MwSt;EAN;Pfand;Aktion;MwSt. Code;Detailrichtpreis;';
@@ -350,5 +351,24 @@ describe('Markt in der Dokument-Identität (Cross-Markt-Kollision)', () => {
     const keys = Object.keys(hist);
     expect(keys.some(k => k.startsWith('transgourmet|'))).toBe(true);
     expect(keys.some(k => k.startsWith('prodega|'))).toBe(true);
+  });
+});
+
+describe('findeCsvBestandsTreffer (Markt im Dedup-Schlüssel)', () => {
+  const alt = { id: 'a', reference: '58', date: '2026-06-15', supplierName: 'Prodega' } as {
+    id: string; reference?: string; date: string; supplierName: string; markt?: string;
+  };
+  it('Alt-Eintrag ohne markt matcht tolerant (erster Import setzt den Markt)', () => {
+    expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-15', markt: 'Bern' }, 'Prodega')?.id).toBe('a');
+  });
+  it('zweiter Markt desselben Tags matcht den Bern-Eintrag NICHT (keine Überschreibung)', () => {
+    const bern = { ...alt, markt: 'Bern' };
+    expect(findeCsvBestandsTreffer([bern], { rechnungsNr: '58', datum: '2026-06-15', markt: 'Moosseedorf' }, 'Prodega')).toBeUndefined();
+    // Re-Import desselben Markts trifft weiterhin
+    expect(findeCsvBestandsTreffer([bern], { rechnungsNr: '58', datum: '2026-06-15', markt: 'bern' }, 'Prodega')?.id).toBe('a');
+  });
+  it('anderes Datum oder anderer Lieferant matcht nie', () => {
+    expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-16', markt: 'Bern' }, 'Prodega')).toBeUndefined();
+    expect(findeCsvBestandsTreffer([alt], { rechnungsNr: '58', datum: '2026-06-15', markt: 'BGH' }, 'Transgourmet')).toBeUndefined();
   });
 });

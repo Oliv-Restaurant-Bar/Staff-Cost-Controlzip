@@ -291,7 +291,12 @@ export async function saveGnImport(
         cancellation_total: parsed.stornoTotal || null,
         receipts_count:     parsed.bonCount || null,
         avg_receipt:        parsed.avgBon || null,
-        status:             'active',
+        // NIE direkt 'active': erst am Schluss aktivieren. Die partiellen
+        // UNIQUE-Indizes (Checksumme 20260804b, Voll-Tagesbericht 20260808)
+        // gelten nur für status='active' — die Aktivierung wirkt so als
+        // atomarer CAS gegen nebenläufige Importe desselben Tags (zwei Tabs,
+        // verschiedene PDFs): der zweite scheitert hart statt doppelt aktiv.
+        status:             'pending',
         raw_csv_json:       parsed as unknown,
         checksum:           parsed.checksum || null,
         // report_type NUR bei erweiterten Berichten mitschicken: Standard-
@@ -479,6 +484,38 @@ export async function saveGnImport(
       }
     }
 
+    // Aktivierung als letzter Schritt (atomarer CAS über die partiellen
+    // UNIQUE-Indizes): schlägt sie fehl — z.B. weil ein NEBENLÄUFIGER Import
+    // denselben Voll-Tagesbericht bereits aktiviert hat —, wird vollständig
+    // zurückgerollt (ersetzte Importe reaktivieren, neuen Import löschen) und
+    // ein klarer «Prüfung nötig»-Fehler gemeldet. Nie zwei aktive Tagesberichte.
+    const { data: actData, error: actErr } = await (supabase as any)
+      .from('gn_imports')
+      .update({ status: 'active' })
+      .eq('id', importId)
+      .eq('status', 'pending')
+      .select('id');
+    if (actErr || !actData || actData.length === 0) {
+      const rollbackErrors: string[] = [];
+      for (const id of (overlapIds ?? [])) {
+        const { error: rbErr } = await (supabase as any)
+          .from('gn_imports').update({ status: 'active' }).eq('id', id).eq('status', 'replaced');
+        if (rbErr) rollbackErrors.push(`${id}: ${rbErr.message ?? String(rbErr)}`);
+      }
+      const { error: delErr } = await (supabase as any)
+        .from('gn_imports').update({ status: 'deleted' }).eq('id', importId);
+      if (delErr) rollbackErrors.push(`neuer Import ${importId}: ${delErr.message ?? String(delErr)}`);
+      const ursache = actErr?.message ?? 'Aktivierung hat 0 Zeilen betroffen';
+      const konflikt = /gn_imports_tenant_(?:fullday|checksum)_active_uniq|duplicate key/i.test(ursache)
+        ? 'Für diesen Tag wurde soeben ein anderer Tagesbericht aktiviert (Nebenläufigkeit) — Überschneidung, bitte manuell prüfen. '
+        : '';
+      return {
+        importId: '',
+        error: `${konflikt}Aktivierung fehlgeschlagen: ${ursache}`
+          + (rollbackErrors.length > 0 ? ` Rollback unvollständig — bitte Daten manuell prüfen: ${rollbackErrors.join('; ')}` : ''),
+      };
+    }
+
     return { importId, error: null };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -661,11 +698,54 @@ export async function loadGnRevenueForYear(
 
 // ── GN-Tagesumsatz für Zeitraum (für gemeinsame Tagesanalyse) ────────────────
 
+// ── Zentrale Tagesimport-Auswahl (nie doppelt zählen) ────────────────────────
+
+export interface GnTagesImportRow {
+  id: string;
+  period_from: string | null;
+  period_to: string | null;
+  cost_center?: string | null;
+  imported_at?: string | null;
+}
+
+/**
+ * SSOT für die Auswahl aktiver TAGES-Importe (period_from === period_to):
+ * Ein Tag zählt NIE doppelt.
+ * - Existiert ein VOLL-Tagesbericht (ohne Kostenstelle), gilt NUR der jüngste
+ *   (imported_at) — er deckt den ganzen Tag ab; Kostenstellen-Teilberichte
+ *   desselben Tags werden dann ignoriert (sonst doppelter Umsatz).
+ * - Sonst: pro Kostenstelle der jüngste Import; verschiedene Kostenstellen
+ *   desselben Tags werden zusammen verwendet (Teilberichte, Summe erlaubt).
+ * Alle Tages-Leser (Tagesabschluss, Zahlungsarten, Tagesumsatz) nutzen diese
+ * Auswahl — nie direkt alle aktiven Importe summieren.
+ */
+export function waehleAktiveTagesImporte<T extends GnTagesImportRow>(rows: T[]): T[] {
+  const tagesRows = rows.filter(r => !!r.period_from && r.period_from === r.period_to);
+  const juengster = (a: T | undefined, b: T): T =>
+    !a || (b.imported_at ?? '') >= (a.imported_at ?? '') ? b : a;
+  const proTag = new Map<string, Map<string, T>>(); // Tag → Kostenstelle → jüngster
+  const vollTag = new Map<string, T>();             // Tag → jüngster Voll-Tagesbericht
+  for (const r of tagesRows) {
+    const cc = (r.cost_center ?? '').trim().toLowerCase();
+    if (!cc) { vollTag.set(r.period_from!, juengster(vollTag.get(r.period_from!), r)); continue; }
+    const m = proTag.get(r.period_from!) ?? new Map<string, T>();
+    m.set(cc, juengster(m.get(cc), r));
+    proTag.set(r.period_from!, m);
+  }
+  const ausgewaehlt: T[] = [];
+  for (const tag of new Set([...vollTag.keys(), ...proTag.keys()])) {
+    const voll = vollTag.get(tag);
+    if (voll) ausgewaehlt.push(voll); // Vollbericht deckt den ganzen Tag ab
+    else ausgewaehlt.push(...(proTag.get(tag)?.values() ?? []));
+  }
+  return ausgewaehlt;
+}
+
 /**
  * Bruttoumsatz pro Geschäftstag aus aktiven Tages-Z-Berichten
  * (aggregation_level 'day').  Mehrtages-/Periodenberichte werden bewusst
- * NICHT auf Tage verteilt.  Bei mehreren aktiven Tagesimporten für dasselbe
- * Datum gewinnt der zuletzt importierte (Replace-Semantik der Importe).
+ * NICHT auf Tage verteilt.  Auswahl via waehleAktiveTagesImporte: jüngster
+ * Voll-Tagesbericht exklusiv, sonst Summe der jüngsten je Kostenstelle.
  */
 export async function loadGnDailyGrossRevenue(
   restaurantId: string,
@@ -676,19 +756,19 @@ export async function loadGnDailyGrossRevenue(
   try {
     const { data } = await (supabase as any)
       .from('gn_imports')
-      .select('period_from, gross_revenue, imported_at')
+      .select('id, period_from, period_to, cost_center, imported_at, gross_revenue')
       .eq('restaurant_id', restaurantId)
       .eq('status', 'active')
       .eq('aggregation_level', 'day')
       .gte('period_from', fromIso)
       .lte('period_from', toIso)
-      .not('gross_revenue', 'is', null)
-      .order('imported_at', { ascending: true });
+      .not('gross_revenue', 'is', null);
 
-    for (const row of (data ?? []) as Array<{ period_from: string; gross_revenue: number }>) {
-      if (!row.period_from) continue;
+    type Row = GnTagesImportRow & { gross_revenue: number | null };
+    for (const row of waehleAktiveTagesImporte((data ?? []) as Row[])) {
       if (typeof row.gross_revenue !== 'number' || !(row.gross_revenue > 0)) continue;
-      result.set(row.period_from, row.gross_revenue); // später importierte überschreiben
+      const alt = result.get(row.period_from!) ?? 0;
+      result.set(row.period_from!, Math.round((alt + row.gross_revenue) * 100) / 100);
     }
     return result;
   } catch {
@@ -787,16 +867,16 @@ export async function loadGnPaymentMethodsForMonth(
 
     const { data: imports } = await (supabase as any)
       .from('gn_imports')
-      .select('id, period_from, period_to')
+      .select('id, period_from, period_to, cost_center, imported_at')
       .eq('restaurant_id', restaurantId)
       .eq('status', 'active')
       .gte('period_from', from)
       .lte('period_from', to);
 
+    // Nie doppelt zählen: gleiche Auswahl wie Tagesabschluss/Tagesumsatz.
     const dayByImport = new Map<string, string>();
-    for (const row of (imports ?? []) as Array<{ id: string; period_from: string | null; period_to: string | null }>) {
-      if (!row.period_from || row.period_from !== row.period_to) continue; // nur Tagesimporte
-      dayByImport.set(row.id, row.period_from);
+    for (const row of waehleAktiveTagesImporte((imports ?? []) as GnTagesImportRow[])) {
+      dayByImport.set(row.id, row.period_from!);
     }
     if (dayByImport.size === 0) return {};
 
@@ -829,8 +909,10 @@ export async function loadGnPaymentMethodsForMonth(
 /**
  * Liefert die kompletten Z-Bericht-Tagesdaten eines Monats für die
  * Tagesabschluss-Übersicht (read-only, KEIN raw_csv_json).
- * NUR Tages-Importe (period_from === period_to); mehrere aktive Tages-Importe
- * desselben Tags (z. B. Kostenstellen) werden defensiv SUMMIERT.
+ * NUR Tages-Importe (period_from === period_to). Ein Tag zählt NIE doppelt:
+ * bei konkurrierenden Voll-Tagesberichten (ohne Kostenstelle) gilt nur der
+ * jüngste; verschiedene Kostenstellen desselben Tags werden summiert
+ * (Teilberichte), pro Kostenstelle ebenfalls nur der jüngste Import.
  */
 export async function loadGnDayClosingsForMonth(
   restaurantId: string,
@@ -845,21 +927,20 @@ export async function loadGnDayClosingsForMonth(
 
     const { data: imports } = await (supabase as any)
       .from('gn_imports')
-      .select('id, period_from, period_to, gross_revenue, net_revenue')
+      .select('id, period_from, period_to, gross_revenue, net_revenue, cost_center, imported_at')
       .eq('restaurant_id', restaurantId)
       .eq('status', 'active')
       .gte('period_from', from)
       .lte('period_from', to);
 
+    type ImpRow = GnTagesImportRow & { gross_revenue: number | null; net_revenue: number | null };
+    const ausgewaehlt = waehleAktiveTagesImporte((imports ?? []) as ImpRow[]);
+
     const dayByImport = new Map<string, string>();
     const result: Record<string, GnDayClosing> = {};
-    for (const row of (imports ?? []) as Array<{
-      id: string; period_from: string | null; period_to: string | null;
-      gross_revenue: number | null; net_revenue: number | null;
-    }>) {
-      if (!row.period_from || row.period_from !== row.period_to) continue; // nur Tagesimporte
-      dayByImport.set(row.id, row.period_from);
-      const day = (result[row.period_from] ??= {
+    for (const row of ausgewaehlt) {
+      dayByImport.set(row.id, row.period_from!);
+      const day = (result[row.period_from!] ??= {
         date: row.period_from,
         grossRevenue: null,
         netRevenue: null,

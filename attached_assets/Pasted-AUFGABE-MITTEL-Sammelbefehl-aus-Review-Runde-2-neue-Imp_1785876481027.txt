@@ -1,0 +1,23 @@
+AUFGABE: MITTEL-Sammelbefehl aus Review-Runde 2 (neue Importer). Für JEDEN Punkt prüfen, ob nach den KRITISCH-Fixes noch relevant; nur beheben, wenn offen; berichten „behoben / war schon ok / durch KRITISCH-Fix abgedeckt". Mandantengetrennt, leer statt 0, nie durch 0, Tests grün.
+
+A) WKQ-KONSISTENZ (eine einzige Logik)
+A1) Wochen-WKQ in waren-analyse.ts (:197-205) und alle Analyse-/Cockpit-WKQ-Pfade nutzen DIESELBE Basis wie die korrigierte Haupt-WKQ (relevantNetOf/nurWarenAnteil, split-bewusst) — nicht das rohe volle Rechnungsnetto (inkl. Betrieb/Pfand/Sonstiges). Ergebnis: überall identische WKQ-Zahl.
+A2) „offen"-Positionen (unkontiert): Die WKQ-Anzeige kennzeichnet sie sichtbar (z.B. „enthält N unkontierte Positionen", Hinweis-Icon), damit die Quote nicht still verfälscht ist. Bis zur Kontierung weiterhin als Warenkosten zählen ist ok, aber transparent machen.
+A3) kontoKlasse/kategorieFromKonto: 5-stellige Konten über normalizeWarenKonto (erste 4 Stellen) statt parseInt klassifizieren — konsistent zu istWarenJournalKonto.
+
+B) PDF-ERKENNUNG / DUAL-ROBUSTHEIT
+B1) Belegart-Sperre (Auftragsbestätigung/Offerte/Bestellung nie buchen, ausser Terravigna) NUR in der Belegkopf-Zone prüfen (profil-pdf-parse.ts:49-57), nicht im Volltext. „Faktura folgt separat" / „ersetzt Rechnung Nr. X" im Fusstext darf eine AB NICHT zur Rechnung machen. (Falls durch den Belegtyp-KRITISCH-Fix schon erledigt: melden.)
+B2) fs-import Kern-Matcher (:133-137): erst exakte Referenz prüfen, DANN Datum+Betrag-Fallback (wie in monatsrechnung-abgleich.ts) — damit bei zwei Lieferungen gleichen Tags/Betrags (Spahni 2×) keine Identitäten vertauscht werden. Vorschau und Schreibpfad müssen dieselbe Reihenfolge nutzen.
+B3) Terravigna AB→Rechnung: über eine gemeinsame stabile Referenz (Lieferungs-/Auftragsnr.) verknüpfen statt allein Datum+Betrag ±0.10 — sonst bleibt bei Betragsabweichung >0.10 die provisorische AB als Doppelbuchung liegen.
+
+C) UNDO-VOLLSTÄNDIGKEIT / DUBLETTEN
+C1) FIBU-Match-Zuordnungen (waren_fibu_matches_<Monat>) beim Undo UND beim Löschen einer Rechnung bereinigen: Mitglieder mit nicht mehr existierenden invoiceIds/buchungKeys entfernen, leere Gruppen droppen (waren-db.ts undo/deleteInvoiceEntry). Sonst zeigt der FIBU-Abgleich „gematcht" und verbirgt echte Differenzen. Optional Matches in den Undo-Snapshot aufnehmen.
+C2) Manuell in der Vorschau gesetzten Lieferant (ohne MWST-Nr) beim Buchen als Profil lernen (per Name/IBAN), damit ein Re-Import ihn wiedererkennt → keine Duplikate. Gelernte Artikel→Konto-Regeln/Profile beim Undo entweder wiederherstellen ODER klar dokumentieren, dass Lernen kumulativ ist.
+
+D) PARSER-ROBUSTHEIT
+D1) waren-positionen.ts: parseNum (:64) auf die zentrale parseAmount-Logik umstellen (Apostroph-Tausender, Komma ODER Punkt, Leerzeichen); unparsebare Werte MELDEN, nie still 0. MwSt-Code (:118): Pfand/Depot nur bei echtem numerischem 0 erkennen; Buchstabencodes (z.B. „C1") parsen/whitelisten, sonst „offen" — nie fälschlich als Pfand neutralisieren.
+
+E) MANDANTEN-RLS (grösser — konditional, NICHT brechen)
+E1) Tenant-scoped RLS auf zbericht_inbox, gn_* und den Storage-Bucket zbericht-inbox, sodass eingeloggte Nutzer nur ihren eigenen Mandanten (Oliv/Beaulieu) lesen/ändern. NUR scharf schalten, wenn eine verlässliche User→Mandant-Zuordnung existiert (JWT-Claim oder Zuordnungstabelle). Falls nicht: NICHT umsetzen, sondern mir berichten, was dafür nötig wäre (damit der eingeloggte Zugriff nicht bricht). Der anon-Zugang ist bereits zu — hier geht es nur um die Trennung UNTER eingeloggten Rollen.
+
+Am Ende: Liste je Punkt „behoben / war schon ok / durch KRITISCH-Fix abgedeckt / bewusst nicht (Grund)", plus was verändert wurde.

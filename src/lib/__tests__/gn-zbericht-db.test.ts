@@ -38,7 +38,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: () => makeBuilder() },
 }));
 
-import { checkOverlappingImports } from '@/lib/gn-zbericht-db';
+import { checkOverlappingImports , waehleAktiveTagesImporte } from '@/lib/gn-zbericht-db';
 
 const row = (id: string, cc: string | null) => ({
   id, file_name: id, period_from: '2026-06-01', period_to: '2026-06-01',
@@ -70,5 +70,30 @@ describe('checkOverlappingImports — Kostenstellen-Filter', () => {
     _rows = [row('a', 'Restaurant Oliv'), row('b', 'Restaurant Beaulieu')];
     const out = await checkOverlappingImports('oliv', '2026-06-01', '2026-06-01', undefined, '  restaurant oliv ');
     expect(out.map(o => o.id)).toEqual(['a']);
+  });
+});
+
+describe('waehleAktiveTagesImporte (nie doppelt zählen)', () => {
+  const row = (id: string, tag: string, cc: string | null, at: string) =>
+    ({ id, period_from: tag, period_to: tag, cost_center: cc, imported_at: at });
+  it('zwei konkurrierende Voll-Tagesberichte → nur der jüngste', () => {
+    const sel = waehleAktiveTagesImporte([row('a', '2026-08-01', null, '2026-08-02T08:00Z'), row('b', '2026-08-01', '', '2026-08-02T09:00Z')]);
+    expect(sel.map(r => r.id)).toEqual(['b']);
+  });
+  it('verschiedene Kostenstellen desselben Tags werden zusammen verwendet', () => {
+    const sel = waehleAktiveTagesImporte([row('a', '2026-08-01', 'Oliv', '1'), row('b', '2026-08-01', 'Beaulieu', '2')]);
+    expect(sel.map(r => r.id).sort()).toEqual(['a', 'b']);
+  });
+  it('gleiche Kostenstelle doppelt → nur der jüngste', () => {
+    const sel = waehleAktiveTagesImporte([row('a', '2026-08-01', 'Oliv', '1'), row('b', '2026-08-01', 'oliv ', '2')]);
+    expect(sel.map(r => r.id)).toEqual(['b']);
+  });
+  it('Voll-Tagesbericht deckt den Tag ab — Kostenstellen-Teilberichte fallen weg', () => {
+    const sel = waehleAktiveTagesImporte([row('a', '2026-08-01', 'Oliv', '1'), row('v', '2026-08-01', null, '2'), row('b', '2026-08-01', 'Beaulieu', '3')]);
+    expect(sel.map(r => r.id)).toEqual(['v']);
+  });
+  it('Perioden-Importe werden ignoriert', () => {
+    const sel = waehleAktiveTagesImporte([{ id: 'p', period_from: '2026-08-01', period_to: '2026-08-31', cost_center: null, imported_at: '1' }]);
+    expect(sel).toEqual([]);
   });
 });

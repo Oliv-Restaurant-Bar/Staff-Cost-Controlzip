@@ -11,3 +11,8 @@ description: Auto-Import der per Webhook eingegangenen Z-Bericht-PDFs — Claim-
 - **Fehlerpfade:** terminale Datei-Probleme ⇒ 'error' (kein Auto-Retry, manuelle Prüfung); transiente Fehler (Download, Status-Update) ⇒ Claim released, bleibt pending für den nächsten Lauf. Ein PDF blockiert nie den Batch.
 - Tagesabschluss-Schutz: nach Auto-Import denselben Konfliktdialog wie beim manuellen Import ausführen (manuelle Korrekturen nie still überschreiben).
 - **Why:** Review-FAIL wegen Doppel-Save-Race zweier Tabs; status-gefilterte Updates NACH dem Save reichen nicht — der Claim muss VOR Download/Parse/Save stehen.
+
+## Voll-Tages-Unique + CAS-Aktivierung + Leser-SSOT (Aug 2026)
+- Partieller UNIQUE-Index `gn_imports_tenant_fullday_active_uniq` (restaurant_id, period_from; nur active, period_from=period_to, cost_center leer) — live angewendet; verhindert zwei aktive Voll-Tagesberichte hart.
+- saveGnImport: INSERT mit status='pending', Aktivierung (pending→active, .select-CAS) als LETZTER Schritt; scheitert sie → Rollback (replaced reaktivieren, neuen deleted) + «Überschneidung … manuell prüfen». Leser filtern active — pending ist unsichtbar.
+- Tagesimport-Auswahl SSOT `waehleAktiveTagesImporte`: Voll-Tagesbericht (cc leer) exklusiv-jüngster, sonst jüngster je Kostenstelle (Summe über cc erlaubt). NUTZEN: loadGnDayClosingsForMonth, loadGnPaymentMethodsForMonth, loadGnDailyGrossRevenue — nie direkt alle aktiven Importe summieren.

@@ -577,6 +577,29 @@ export function normalizeMarktLieferantenMapping(raw: unknown): MarktLieferanten
   return out.length > 0 ? out : DEFAULT_MARKT_LIEFERANTEN;
 }
 
+/**
+ * Bestandstreffer für den CSV-Re-Import (Upsert-Schlüssel):
+ * Lieferant + Rechnungs-Nr + Datum + MARKT — konsistent zum docKey.
+ * Bern und Moosseedorf mappen beide auf «Prodega»; zwei echte Rechnungen mit
+ * gleicher kurzer Portal-Nr. am selben Tag dürfen sich NIE überschreiben.
+ * Alt-Einträge OHNE markt werden tolerant gematcht (bekommen den Markt beim
+ * Update gesetzt — der zweite Markt desselben Tags legt danach neu an).
+ */
+export function findeCsvBestandsTreffer<T extends {
+  reference?: string; date: string; supplierName: string; markt?: string;
+}>(
+  bestand: T[],
+  r: { rechnungsNr: string; datum: string; markt: string },
+  lieferant: string,
+): T | undefined {
+  const marktNorm = r.markt.trim().toLowerCase();
+  return bestand.find(e =>
+    (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
+    && e.date === r.datum // Portal-Nummern werden über Monate wiederverwendet
+    && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase()
+    && (e.markt == null || e.markt.trim().toLowerCase() === marktNorm));
+}
+
 /** Lieferant für einen Markt-Wert; null = nicht zugeordnet («Lieferant offen»). */
 export function lieferantFuerMarkt(markt: string, mapping: MarktLieferantenMapping): string | null {
   const m = markt.trim().toLowerCase();

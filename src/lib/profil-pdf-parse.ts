@@ -38,6 +38,15 @@ export interface ProfilPdfErgebnis {
   /** Belegart-Sperre (gilt für ALLE Lieferanten): nur 'rechnung' ist buchbar.
    *  Auftragsbestätigungen/Offerten/Bestellungen werden erkannt, NIE gebucht. */
   belegart: 'rechnung' | 'auftragsbestaetigung' | 'offerte' | 'bestellung';
+  /**
+   * INHALTSBASIERTER Dokumenttyp für Dual-Lieferanten (Belegüberschrift):
+   * 'monatsrechnung' = «Sammelrechnung»/«Monatsrechnung» im Kopf (massgeblich/
+   * final), 'lieferschein' = «Lieferschein»-Überschrift bzw. AB/Offerte/
+   * Bestellung (provisorisch), null = kein eindeutiges Signal — dann darf der
+   * Aufrufer `lieferungen.length` NUR als Zusatzsignal zusammen mit
+   * belegart==='rechnung' verwenden, nie allein.
+   */
+  dokumenttyp: 'monatsrechnung' | 'lieferschein' | null;
   hinweise: string[];
 }
 
@@ -46,15 +55,48 @@ export interface ProfilPdfErgebnis {
  *  Rechnungs-Kopf («Rechnung <Nr>» o.ä.) gewinnt immer — Zahlungs-/Fusstexte
  *  dürfen die Sperre nicht auslösen. */
 export function erkenneBelegart(text: string): ProfilPdfErgebnis['belegart'] {
-  const hatRechnungsKopf =
-    /(?:^|\n)[^\n]{0,60}\bRECHNUNG(?:\b|\s*[:.]|s?-?\s*(?:Nr|nummer))/i.test(text) ||
-    /\bRechnung\s+(?:Nr\.?\s*)?\d{3,}/i.test(text) ||
-    /\bFaktura\b/i.test(text);
-  if (hatRechnungsKopf) return 'rechnung';
-  if (/Auftragsbest(?:ä|ae)tigung/i.test(text)) return 'auftragsbestaetigung';
-  if (/\b(?:Offerte|Angebot)\b/i.test(text)) return 'offerte';
-  if (/(?:^|\n)\s*(?:Verkauf\s+)?Bestellung\b/i.test(text)) return 'bestellung';
-  return 'rechnung';
+  const bewerte = (t: string): ProfilPdfErgebnis['belegart'] | null => {
+    const hatRechnungsKopf =
+      /(?:^|\n)[^\n]{0,60}\bRECHNUNG(?:\b|\s*[:.]|s?-?\s*(?:Nr|nummer))/i.test(t) ||
+      /\bRechnung\s+(?:Nr\.?\s*)?\d{3,}/i.test(t) ||
+      /\bFaktura\b/i.test(t);
+    if (hatRechnungsKopf) return 'rechnung';
+    if (/Auftragsbest(?:ä|ae)tigung/i.test(t)) return 'auftragsbestaetigung';
+    if (/\b(?:Offerte|Angebot)\b/i.test(t)) return 'offerte';
+    if (/(?:^|\n)\s*(?:Verkauf\s+)?Bestellung\b/i.test(t)) return 'bestellung';
+    return null;
+  };
+  // KOPFZONE zuerst: die Belegüberschrift entscheidet. Eine AB/Offerte mit
+  // «Rechnung» nur im Fuss-/Zahltext darf NICHT als Rechnung buchbar werden.
+  // Ohne jedes Kopf-Signal (Layout-Sonderfälle) zählt der Gesamttext wie bisher.
+  return bewerte(kopfzone(text)) ?? bewerte(text) ?? 'rechnung';
+}
+
+/**
+ * Dokumenttyp aus der Belegüberschrift/Kopfzone (erste Zeilen des PDFs):
+ * «Sammelrechnung»/«Monatsrechnung» → Monatsrechnung (final); eine
+ * «Lieferschein»-ÜBERSCHRIFT (nicht «LS-Nr. …»-Blockmarker!) bzw. eine
+ * Nicht-Rechnung (AB/Offerte/Bestellung) → provisorischer Lieferschein.
+ * Kein Signal → null (Aufrufer entscheidet mit Zusatzsignalen).
+ */
+/** Kopfzone: die ersten ~25 nicht-leeren Zeilen (Belegüberschrift steht oben;
+ *  Fusstexte/Zahlteil dürfen Typ/Belegart nicht bestimmen). */
+function kopfzone(text: string): string {
+  return text.split('\n').map(z => z.trim()).filter(Boolean).slice(0, 25).join('\n');
+}
+
+export function erkenneDokumenttyp(
+  text: string,
+  belegart: ProfilPdfErgebnis['belegart'],
+): ProfilPdfErgebnis['dokumenttyp'] {
+  const kopf = kopfzone(text);
+  // Auch Kombiformen wie «Sammel-/Monatsrechnung» oder «Sammel- bzw. Monatsrechnung».
+  if (/\b(?:Sammel|Monats)-?(?:\s*\/\s*|\s)?(?:Monats-?\s?)?rechnung\b/i.test(kopf)) return 'monatsrechnung';
+  if (belegart !== 'rechnung') return 'lieferschein';
+  // «Lieferschein» als eigenständige Überschrift (Zeilenanfang, kein «LS-Nr.»
+  // und keine Kombis wie «Liefersch./Kd.-Nr.» aus Positionszeilen).
+  if (/(?:^|\n)\s*Lieferschein\b(?!\s*[\/.])/i.test(kopf) && !/\bRechnung\b/i.test(kopf)) return 'lieferschein';
+  return null;
 }
 
 const BELEGART_LABEL: Record<Exclude<ProfilPdfErgebnis['belegart'], 'rechnung'>, string> = {
@@ -490,6 +532,8 @@ export function parseProfilPdf(text: string, profile: LieferantenProfil[]): Prof
     lieferdatum,
     netto, mwst, mwstSatz,
     brutto: netto !== null && mwst !== null ? rundung2(netto + mwst) : null,
-    lieferungen, positionenErkannt, belegart, hinweise,
+    lieferungen, positionenErkannt, belegart,
+    dokumenttyp: erkenneDokumenttyp(text, belegart),
+    hinweise,
   };
 }

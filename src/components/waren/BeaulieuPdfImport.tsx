@@ -115,12 +115,19 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           }
           const text = reconstructGnPdfLines(extract.pages).map(l => l.text).join('\n');
           const erg = parseProfilPdf(text, aktuelleProfile);
-          // Dual-Lieferant: PDF mit MEHREREN Lieferungen = Monatsrechnung
-          // (MASSGEBLICH — überschreibt provisorische Buchungen final),
-          // genau eine Lieferung = Einzel-Lieferschein (provisorisch).
+          // Dual-Lieferant: Dokumenttyp INHALTSBASIERT (Belegüberschrift).
+          // «Sammelrechnung/Monatsrechnung» = massgeblich/final — auch mit nur
+          // EINER Lieferung. «Lieferschein»/AB/Offerte = provisorisch — auch
+          // wenn er in mehrere «LS-Nr…vom»-Blöcke zerfällt. Ohne eindeutiges
+          // Kopf-Signal ist lieferungen.length>1 nur ZUSAMMEN mit
+          // belegart==='rechnung' ein Monatsrechnungs-Indiz, nie allein.
           const istDual = erg.profil?.belegtyp === 'dual';
           const modus: VorschauZeile['modus'] =
-            istDual && erg.positionenErkannt && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein';
+            istDual && erg.positionenErkannt
+              ? (erg.dokumenttyp === 'monatsrechnung' ? 'monatsrechnung'
+                : erg.dokumenttyp === 'lieferschein' ? 'lieferschein'
+                : (erg.belegart === 'rechnung' && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein'))
+              : 'lieferschein';
           const abgleich = modus === 'monatsrechnung' && erg.profil
             ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen,
                 erg.profil.abAlsLieferschein ? 3 : 0)

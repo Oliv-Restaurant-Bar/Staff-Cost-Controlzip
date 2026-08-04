@@ -30,3 +30,6 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 - Manuell-Heuristik: match.id beginnt NICHT mit `fs-`/`lpdf-` ⇒ manuell erfasst; UI verlangt Bestätigungs-Checkbox; Bestätigung an Fingerprint (id|date|amountGross sortiert) gebunden — jede Abweichung bricht Import ab.
 - MR-Altdaten ohne final-Flag = weiterhin provisorisch (rückwärtskompatibel).
 - Feldschlösschen-Grenze: gebündelte Fakturas (Teilmengen-Match) werden NICHT 1:1 überschrieben, nur bestätigt; Lückenfüller sind final.
+
+## Modus-Wahl (Aug 2026)
+- `dokumenttyp` aus dem PDF-Inhalt gewinnt; nur bei null greift die Heuristik `belegart==='rechnung' && lieferungen.length>1` → monatsrechnung. Anzahl LS-Blöcke allein entscheidet NIE.

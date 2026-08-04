@@ -21,7 +21,7 @@ import {
   parseTransgourmetCsv, berechnePreisAenderungen,
   aktualisierePreisHistorie, DEFAULT_PREIS_SCHWELLE, DEFAULT_WARENGRUPPEN_MAPPING,
   offeneWarengruppen, positionenAusRechnung, kontoSplitsAusPositionen, uebernehmeManuelleKontierung,
-  DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung,
+  DEFAULT_MARKT_LIEFERANTEN, lieferantFuerMarkt, marktNummernWarnung, findeCsvBestandsTreffer,
   type ArtikelKontenMapping, type CsvParseErgebnis, type PreisAenderung, type PreisHistorie, type PreisSchwelle,
   type WarengruppenMapping, type MarktLieferantenMapping,
 } from '@/lib/waren-positionen';
@@ -371,10 +371,10 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         const lieferant = lieferantFuer(r.markt)!; // oben gefiltert
         const month = r.datum.slice(0, 7);
         const bestand = await loadMonthInvoices(tenantId, month);
-        const vorhanden = bestand.find(e =>
-          (e.reference ?? '').trim().toLowerCase() === r.rechnungsNr.toLowerCase()
-          && e.date === r.datum // Portal-Nummern werden über Monate wiederverwendet
-          && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase());
+        // Dedup-Schlüssel inkl. MARKT (SSOT: findeCsvBestandsTreffer) — zwei
+        // Prodega-Märkte mit gleicher Nr. am selben Tag überschreiben sich nie.
+        const marktNorm = (r.markt ?? '').trim().toLowerCase();
+        const vorhanden = findeCsvBestandsTreffer(bestand, r, lieferant);
         // Positionen kontieren — bei Re-Import manuelle Overrides des Altbestands übernehmen.
         let bestehendePos = positionenProMonat.get(month);
         if (!bestehendePos) {
@@ -389,7 +389,9 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
         // Hauptkonto = grösstes NUMERISCHES Konto (Pseudo-Splits «Depot»/«offen» nie als Kategorie-Quelle)
         const haupt = splits.find(s => /^\d+$/.test(s.warenkonto))?.warenkonto ?? splits[0]?.warenkonto ?? '4060';
         const jetzt = new Date().toISOString();
-        const id = vorhanden?.id ?? `csv-${r.rechnungsNr}-${Date.now()}`;
+        // ID-Suffix mit Markt: zwei Märkte mit gleicher Nr. im selben Lauf
+        // dürfen nie dieselbe ID erwischen (Date.now() allein wäre riskant).
+        const id = vorhanden?.id ?? `csv-${r.rechnungsNr}-${marktNorm || 'x'}-${Date.now()}`;
         const entry: InvoiceEntry = {
           id,
           date: r.datum,
@@ -399,6 +401,7 @@ export function WarenCsvImport({ tenantId, suppliers, onImported }: {
           vatIncluded: false,
           vatRate: r.nettoTotal > 0 ? Math.round((r.mwstTotal / r.nettoTotal) * 1000) / 10 : 0,
           reference: r.rechnungsNr,
+          ...(r.markt.trim() ? { markt: r.markt.trim() } : {}),
           note: `CSV-Import ${r.markt ? `(${r.markt}) ` : ''}· ${r.positionen.length} Positionen`,
           ...(splits.length > 1 ? { kontoSplits: splits } : { warenkonto: haupt }),
           kategorie: kategorieFromKonto(haupt),

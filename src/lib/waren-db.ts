@@ -61,6 +61,15 @@ export interface InvoiceEntry {
   vatIncluded: boolean;  // true = Eingabe war Brutto, false = Netto
   vatRate: number;       // z.B. 8.1 oder 2.6
   reference?: string;    // Rechnungs- oder Lieferscheinnummer
+  /**
+   * Abhol-/Markt-Standort aus dem CSV-Positionsimport (z.B. «Bern»,
+   * «Moosseedorf»). Teil des Dedup-Schlüssels beim Re-Import: kurze
+   * Portal-Rechnungsnummern können am selben Tag in ZWEI Märkten desselben
+   * Lieferanten (Prodega) vorkommen — ohne markt würden sich die beiden
+   * echten Rechnungen still überschreiben. Alt-Einträge ohne markt werden
+   * tolerant gematcht (kein Fehl-Merge, siehe WarenCsvImport).
+   */
+  markt?: string;
   note?: string;
   /** Optionales Warenkonto (einfache Zuweisung, kein Split) */
   warenkonto?: string;

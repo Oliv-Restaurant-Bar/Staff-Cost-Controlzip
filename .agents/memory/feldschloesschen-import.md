@@ -27,3 +27,8 @@ description: Parser-/Import-Regeln für Feldschlösschen Lieferschein-, Sammelre
 - Post-Pass `nachklassifiziereProArtikel`: abgeschnittene Bezeichnungen («24X0,33 (AKTION)») erben die Warengruppe der längsten Bezeichnung derselben Artikel-Nr im Dokument.
 - **Why:** Juli 2026 Beaulieu: «Erfasst» wich pro Kategorie ab (Bier +87, AF-Bier −230, Spirituosen −118 …), Gesamtsumme stimmte. Nach den Regeln: alle Kategorien Diff 0.00; Leergut −0.09 = neutrale Rundungsdifferenz-Position (gewollt).
 - **How to apply:** Klassifizierung nie an der Gesamtsumme validieren, sondern per Kategorien-Gegenprobe gegen die Zusammenfassung MwSt. Nur warengruppe/bezeichnung ändern, nie positionspreis (Matching/Beträge bleiben unangetastet). Alte gespeicherte Positionen werden erst durch erneuten Upload der Monatsrechnung finalisiert.
+
+## Belegtyp inhaltsbasiert + ZIP final (Aug 2026)
+- `erkenneDokumenttyp(text, belegart)` (profil-pdf-parse.ts): Kopfzone = erste 25 nicht-leere Zeilen; «Sammel-/Monatsrechnung» → monatsrechnung; Nicht-Rechnung (AB/Offerte/Bestellung) → lieferschein; «Lieferschein»-Überschrift ohne «Rechnung» im Kopf → lieferschein; sonst null.
+- `erkenneBelegart` prüft ebenfalls Kopfzone ZUERST (AB-Kopf + «Rechnung» im Fusstext bleibt AB); ohne Kopf-Signal zählt der Gesamttext.
+- Jahres-ZIP-Import bucht Anhang-Lieferungen mit `quelle:'monatsrechnung'` (final, ersetzt provisorische).

@@ -10,3 +10,8 @@ description: Markt→Lieferant-Ableitung pro Rechnung, docKey-Identität, «Lief
 
 **Why:** Rechnungsnummern-Wiederverwendung + gemischte Portal-Exporte; Duplikat-Upsert-Schlüssel bleibt Mandant+Lieferant+Referenz+Datum.
 **How to apply:** Bei Änderungen an parseTransgourmetCsv/Import-Pfad die Cross-Markt-Kollisions-Tests in waren-positionen.test.ts beachten.
+
+## Markt im Dedup-Schlüssel (Aug 2026)
+- Bestands-Upsert beim CSV-Import matcht Lieferant+Nr+Datum+MARKT (SSOT `findeCsvBestandsTreffer` in waren-positionen.ts); InvoiceEntry hat optionales Feld `markt`.
+- **Why:** Bern & Moosseedorf mappen beide auf «Prodega»; gleiche kurze Portal-Nr. am selben Tag überschrieb sonst die andere Markt-Rechnung.
+- Alt-Einträge ohne markt matchen tolerant und bekommen den Markt beim Update; der zweite Markt desselben Tags legt danach neu an. ID-Fallback enthält den Markt (keine Date.now()-Kollision).
