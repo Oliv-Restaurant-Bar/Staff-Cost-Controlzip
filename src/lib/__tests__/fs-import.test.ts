@@ -72,6 +72,33 @@ describe('kernImportiereFsRechnungen', () => {
     expect(aug[0].reference).toBe('77123');
   });
 
+  it('Monatsrechnung überschreibt NIE eine echte Buchung (gleiche Referenz+Datum)', async () => {
+    // 1) echter Einzel-Lieferschein
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-42', '2026-07-10', 30) }]);
+    const echt = (kv.get('supplier_invoices_2026-07') as InvoiceEntry[])[0];
+    expect(echt.quelle).toBeUndefined();
+    // 2) Monatsrechnung mit derselben Lieferung (abweichender Preis)
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-42', '2026-07-10', 99) }], { quelle: 'monatsrechnung' });
+    expect(res.uebersprungen).toBe(1);
+    expect(res.neu + res.ersetzt).toBe(0);
+    // Buchung unverändert: nicht provisorisch, alter Betrag, gleiche ID
+    const nach = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(nach).toHaveLength(1);
+    expect(nach[0].id).toBe(echt.id);
+    expect(nach[0].quelle).toBeUndefined();
+    expect(nach[0].amountNet).toBe(echt.amountNet);
+  });
+
+  it('erneute Monatsrechnung aktualisiert die EIGENE provisorische Buchung (Upsert, kein Doppel)', async () => {
+    await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-77', '2026-07-12', 30) }], { quelle: 'monatsrechnung' });
+    const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-77', '2026-07-12', 31) }], { quelle: 'monatsrechnung' });
+    expect(res.ersetzt).toBe(1);
+    expect(res.uebersprungen).toBe(0);
+    const monat = kv.get('supplier_invoices_2026-07') as InvoiceEntry[];
+    expect(monat).toHaveLength(1);
+    expect(monat[0].quelle).toBe('monatsrechnung');
+  });
+
   it('ersetzt provisorisch auch bei abweichender Referenz via ±7 Tage/±0.10', async () => {
     await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('FAKT-9', '2026-07-29', 30) }], { quelle: 'monatsrechnung' });
     const res = await kernImportiereFsRechnungen(TENANT, LIEFERANT, [{ r: rechnung('LS-555', '2026-08-02', 30) }]);

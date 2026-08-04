@@ -12,3 +12,9 @@ description: PDF-Rechnungserkennung über MWST-Nr-Profile für Mandant beaulieu 
 - **Vorschau ist führend:** Stufe-2-Lieferungen werden nur gebucht, wenn Positionssumme = editiertes Netto (±0.05) UND Datum/Rechnungs-Nr unverändert; sonst Kopf-Buchung mit den User-Korrekturen. Nie stumm Roh-Parsdaten importieren.
 - Undo-Typ `pdf_profil` (eigener Slot), Snapshot Monate ±1 + Preishistorie.
 - Supplier-Sync (defaultWarenkonto/-Kategorie/-VatRate) als EIN Batch nach dem Import — nie pro Profil parallel (Read-Modify-Write-Race auf Supplier-Liste). Profil-Editor-Saves über Promise-Queue serialisieren.
+
+## Dual-Lieferanten (Belegtyp)
+- Profil-Feld `belegtyp`: 'dual' (Fideco/Spahni/Gasser/Bohnenblust; FS hat eigenen Import) | 'monatsrechnung' | 'einzelrechnung' (Default). Dual = FS-Modell: Lieferschein führend, Monatsrechnung Kontrolle+Lückenfüller.
+- Erkennung: dual + Stufe 2 + >1 Lieferung ⇒ Monatsrechnung (pro Zeile umschaltbar). Abgleich in `monatsrechnung-abgleich.ts`: exakt LS-Nr (Monate ±1), sonst Datum+Brutto ±0.10; jede Bestandsbuchung deckt max. EINE Lieferung.
+- **Doppelte Absicherung gegen Überschreiben echter Buchungen:** (1) Abgleich wird UNMITTELBAR vor dem Schreiben frisch gerechnet — bei Abweichung Abbruch; (2) Kern-Wache: quelle='monatsrechnung' + vorhandener nicht-provisorischer Treffer ⇒ `uebersprungen`, nie ersetzen. Nur eigene provisorische MR-Einträge sind upsert-bar.
+- Monatsrechnung bucht NIE ihren Gesamtbetrag; nur fehlende Lieferungen als provisorisch (`quelle:'monatsrechnung'`), Gruppierungsschlüssel `profilId|mr` hält MR- und LS-Buchungen im selben Import getrennt.

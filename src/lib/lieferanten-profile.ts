@@ -19,6 +19,15 @@ export const EIGENE_MWST_NRN = ['336566594'];
 /** Parser-Strategie für Stufe 2 (Positionen + Lieferdatum je Lieferung). */
 export type ProfilParser = 'spahni' | 'fideco' | 'terravigna';
 
+/**
+ * Belegtyp des Lieferanten:
+ * - 'dual': Einzel-Lieferscheine + Monatsrechnung (Feldschlösschen-Modell —
+ *   Lieferschein führend, Monatsrechnung = Kontrolle + Lückenfüller).
+ * - 'monatsrechnung': nur Monats-/Sammelrechnung (eine Buchung pro Rechnung).
+ * - 'einzelrechnung': nur Einzelrechnungen (Default).
+ */
+export type ProfilBelegtyp = 'dual' | 'monatsrechnung' | 'einzelrechnung';
+
 export interface LieferantenProfil {
   /** Stabile ID (Default-Profile: Kurzname; gelernte: `p-<mwstNr>`). */
   id: string;
@@ -38,6 +47,8 @@ export interface LieferantenProfil {
   iban?: string;
   /** Stufe-2-Parser (Positionen je Lieferung), wo das Layout es hergibt. */
   parser?: ProfilParser;
+  /** Belegtyp (Default 'einzelrechnung'); 'dual' = Lieferschein führend. */
+  belegtyp?: ProfilBelegtyp;
 }
 
 /** Vorbelegung gemäss Aufgabe — Konto in den Einstellungen anpassbar. */
@@ -45,11 +56,11 @@ export const DEFAULT_PROFILE_BEAULIEU: LieferantenProfil[] = [
   { id: 'obrist',      name: 'Obrist (Schenk Suisse)',  mwstNr: '219630115', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
   { id: 'rutishauser', name: 'Rutishauser-DiVino',      mwstNr: '116319519', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1 },
   { id: 'terravigna',  name: 'Terravigna',              mwstNr: '108008709', kategorie: 'Wein',             konto: '4020', mwstSatz: 8.1, parser: 'terravigna' },
-  { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni' },
-  { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco' },
+  { id: 'spahni',      name: 'Metzgerei Spahni',        mwstNr: '106963475', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'spahni', belegtyp: 'dual' },
+  { id: 'fideco',      name: 'Fideco',                  mwstNr: '112839932', kategorie: 'Fleisch',          konto: '4060', mwstSatz: 2.6, parser: 'fideco', belegtyp: 'dual' },
   { id: 'gourmador',   name: 'Gourmador (frigemo)',     mwstNr: '105959488', kategorie: 'TK/Gemüse',        konto: '4060', mwstSatz: 2.6 },
-  { id: 'bohnenblust', name: 'Bäckerei Bohnenblust',    mwstNr: '472136586', kategorie: 'Backwaren',        konto: '4060', mwstSatz: 2.6 },
-  { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6 },
+  { id: 'bohnenblust', name: 'Bäckerei Bohnenblust',    mwstNr: '472136586', kategorie: 'Backwaren',        konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
+  { id: 'gasser',      name: 'Gasser',                  mwstNr: '107918916', kategorie: 'Food/Convenience', konto: '4060', mwstSatz: 2.6, belegtyp: 'dual' },
   { id: 'blaser',      name: 'Blaser Café',             mwstNr: '362510257', kategorie: 'Kaffee',           konto: '4070', mwstSatz: 2.6 },
   { id: 'hofamstutz',  name: 'Hof am Stutz',            mwstNr: '',          kategorie: 'Eier',             konto: '4060', mwstSatz: 0,
     erkennungTokens: ['hof am stutz'], iban: 'CH3830129016376058001' },

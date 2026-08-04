@@ -20,9 +20,10 @@ import { reconstructGnPdfLines } from '@/lib/gn-pdf-lines';
 import { parseProfilPdf, type ProfilPdfErgebnis } from '@/lib/profil-pdf-parse';
 import {
   loadLieferantenProfile, saveLieferantenProfile, lerneProfil, normalisiereMwstNr,
-  type LieferantenProfil,
+  type LieferantenProfil, type ProfilBelegtyp,
 } from '@/lib/lieferanten-profile';
 import { kernImportiereFsRechnungen, type FsImportRechnung } from '@/lib/fs-import';
+import { abgleicheMonatsrechnung, type MonatsrechnungAbgleich } from '@/lib/monatsrechnung-abgleich';
 import {
   loadSuppliers, saveSuppliers, kategorieFromKonto,
   erstelleWarenImportSnapshot, saveWarenImportUndo,
@@ -45,6 +46,10 @@ interface VorschauZeile {
   neuName: string;
   neuKonto: string;
   neuKategorie: string;
+  /** Dual-Lieferanten: Rolle dieses PDFs (Lieferschein führend vs. Kontrolle). */
+  modus: 'lieferschein' | 'monatsrechnung';
+  /** Abgleich (nur modus='monatsrechnung'): vorhanden vs. fehlt. */
+  abgleich?: MonatsrechnungAbgleich;
 }
 
 function num(s: string): number | null {
@@ -88,7 +93,17 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           }
           const text = reconstructGnPdfLines(extract.pages).map(l => l.text).join('\n');
           const erg = parseProfilPdf(text, aktuelleProfile);
+          // Dual-Lieferant (Feldschlösschen-Modell): PDF mit MEHREREN
+          // Lieferungen = Monatsrechnung (Kontrolle + Lückenfüller),
+          // genau eine Lieferung = Einzel-Lieferschein (führend).
+          const istDual = erg.profil?.belegtyp === 'dual';
+          const modus: VorschauZeile['modus'] =
+            istDual && erg.positionenErkannt && erg.lieferungen.length > 1 ? 'monatsrechnung' : 'lieferschein';
+          const abgleich = modus === 'monatsrechnung' && erg.profil
+            ? await abgleicheMonatsrechnung(tenantId, erg.profil.name, erg.lieferungen)
+            : undefined;
           neu.push({
+            modus, abgleich,
             fileName: f.name, ergebnis: erg,
             lieferant: erg.profil?.id ?? '',
             konto: erg.profil?.konto ?? '',
@@ -157,22 +172,49 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
     }
   }
 
-  const bereit = zeilen.filter(z => z.lieferant !== '' && z.datum && num(z.netto) !== null);
-  const offen = zeilen.length - bereit.length;
+  const bereit = zeilen.filter(z => z.lieferant !== ''
+    && (z.modus === 'monatsrechnung'
+      // Monatsrechnung: nur importierbar, wenn der Abgleich Lücken gefunden hat.
+      ? (z.abgleich?.fehlt ?? 0) > 0
+      : (z.datum !== '' && num(z.netto) !== null)));
+  const offen = zeilen.filter(z => z.lieferant === ''
+    || (z.modus !== 'monatsrechnung' && (z.datum === '' || num(z.netto) === null))).length;
 
   async function handleImport() {
     if (bereit.length === 0) { toast.error('Keine importierbaren Rechnungen (Lieferant/Datum/Netto fehlen).'); return; }
     setBusy(true);
     try {
-      // Buchungen pro Profil sammeln (Kern-Pipeline arbeitet je Lieferant).
-      const proProfil = new Map<string, { profil: LieferantenProfil; rechnungen: FsImportRechnung[] }>();
+      // Buchungen pro Profil UND Quelle sammeln (Monatsrechnungs-Lückenfüller
+      // laufen als eigener Kern-Aufruf mit quelle='monatsrechnung').
+      const proProfil = new Map<string, { profil: LieferantenProfil; rechnungen: FsImportRechnung[]; monatsrechnung: boolean }>();
       for (const row of bereit) {
         const profil = profilById.get(row.lieferant);
         if (!profil) continue;
         const konto = row.konto.trim() || profil.konto;
-        const netto = num(row.netto)!;
+        const netto = num(row.netto) ?? 0;
         const mwst = num(row.mwst) ?? 0;
-        const eintrag = proProfil.get(profil.id) ?? { profil: { ...profil, konto }, rechnungen: [] };
+        const istMr = row.modus === 'monatsrechnung';
+        const key = istMr ? `${profil.id}|mr` : profil.id;
+        const eintrag = proProfil.get(key) ?? { profil: { ...profil, konto }, rechnungen: [], monatsrechnung: istMr };
+        if (istMr) {
+          // Dual-Modell: Monatsrechnung = Kontrolle + Lückenfüller. NUR die
+          // fehlenden Lieferungen werden (provisorisch) gebucht — vorhandene
+          // bleiben unangetastet, der Gesamtbetrag wird NIE zusätzlich gebucht.
+          // Abgleich UNMITTELBAR vor dem Schreiben frisch rechnen (Vorschau
+          // kann veraltet sein, z.B. wenn inzwischen Lieferscheine erfasst
+          // wurden) — weicht er ab, abbrechen und neu anzeigen.
+          const frisch = await abgleicheMonatsrechnung(tenantId, profil.name, row.ergebnis.lieferungen);
+          if (row.abgleich && frisch.fehlt !== row.abgleich.fehlt) {
+            patch(zeilen.indexOf(row), { abgleich: frisch });
+            toast.warning(`${row.fileName}: Der Abgleich hat sich geändert (inzwischen erfasste Lieferungen) — bitte neu prüfen. Nichts importiert.`);
+            return;
+          }
+          for (const e of frisch.eintraege) {
+            if (e.status === 'fehlt') eintrag.rechnungen.push({ r: e.lieferung });
+          }
+          proProfil.set(key, eintrag);
+          continue;
+        }
         // Stufe-2-Lieferungen NUR wenn sie die freigegebene Vorschau exakt
         // decken: Positionssumme = editiertes Netto (±0.05) und Datum
         // unverändert. Sonst gilt die geprüfte Kopf-Buchung (Korrekturen des
@@ -202,7 +244,7 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
           void satz;
           eintrag.rechnungen.push({ r, nettoOffiziell: netto, bruttoOffiziell: R2(netto + mwst) });
         }
-        proProfil.set(profil.id, eintrag);
+        proProfil.set(key, eintrag);
       }
 
       // Snapshot VOR dem Schreiben: alle betroffenen Monate ±1 + Preis-Historie.
@@ -220,14 +262,16 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
 
       let neu = 0, ersetzt = 0, aenderungen = 0;
       const lieferanten: string[] = [];
-      for (const { profil, rechnungen } of proProfil.values()) {
+      for (const { profil, rechnungen, monatsrechnung } of proProfil.values()) {
+        if (rechnungen.length === 0) continue;
         const erg = await kernImportiereFsRechnungen(tenantId, profil.name, rechnungen, {
           noteLabel: 'Lieferanten-PDF', idPrefix: 'lpdf',
           extraMapping: { [profil.kategorie]: profil.konto },
           defaultKonto: profil.konto,
+          ...(monatsrechnung ? { quelle: 'monatsrechnung' as const } : {}),
         });
         neu += erg.neu; ersetzt += erg.ersetzt; aenderungen += erg.preisAenderungen;
-        lieferanten.push(profil.name);
+        if (!lieferanten.includes(profil.name)) lieferanten.push(profil.name);
       }
       await syncSuppliers([...proProfil.values()].map(x => x.profil));
 
@@ -280,10 +324,31 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                   {istOffen
                     ? <span className="text-amber-600 font-medium">Lieferant offen{erg.mwstNrn[0] ? ` · CHE-${erg.mwstNrn[0]}` : ''}</span>
                     : <span className="text-muted-foreground">
-                        {erg.positionenErkannt
+                        {row.modus === 'monatsrechnung'
+                          ? `Monatsrechnung (Kontrolle + Lückenfüller) · ${erg.lieferungen.length} Lieferungen`
+                          : erg.positionenErkannt
                           ? `${erg.lieferungen.length} Lieferung${erg.lieferungen.length === 1 ? '' : 'en'} · ${erg.lieferungen.reduce((s, l) => s + l.positionen.length, 0)} Positionen`
                           : 'Kopf-Buchung (ohne Positionen)'}
                       </span>}
+                  {!istOffen && profilById.get(row.lieferant)?.belegtyp === 'dual' && erg.positionenErkannt && (
+                    <Select value={row.modus}
+                      onValueChange={async v => {
+                        const modus = v as VorschauZeile['modus'];
+                        if (modus === 'monatsrechnung' && !row.abgleich) {
+                          const p = profilById.get(row.lieferant);
+                          const abgleich = p ? await abgleicheMonatsrechnung(tenantId, p.name, erg.lieferungen) : undefined;
+                          patch(i, { modus, abgleich });
+                        } else patch(i, { modus });
+                      }}>
+                      <SelectTrigger className="h-6 w-auto text-[11px]" data-testid={`beaulieu-pdf-modus-${i}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="lieferschein">Einzel-Lieferschein(e) — führend</SelectItem>
+                        <SelectItem value="monatsrechnung">Monatsrechnung — Kontrolle + Lückenfüller</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
                   <button className="ml-auto text-muted-foreground hover:text-destructive"
                     onClick={() => setZeilen(z => z.filter((_, idx) => idx !== i))} title="Zeile entfernen">
                     <X className="h-3.5 w-3.5" />
@@ -351,7 +416,28 @@ export function BeaulieuPdfImport({ tenantId, onImported }: {
                   </div>
                 )}
 
-                {erg.hinweise.length > 0 && (
+                {row.modus === 'monatsrechnung' && row.abgleich && (
+                  <div className="text-[11px] border-t border-border/40 pt-2 space-y-1"
+                    data-testid={`beaulieu-pdf-abgleich-${i}`}>
+                    <div className={row.abgleich.fehlt === 0 ? 'text-emerald-600 font-medium' : 'text-foreground font-medium'}>
+                      bereits vorhanden, unverändert: {row.abgleich.vorhanden} · aus Monatsrechnung
+                      ergänzt (fehlten): {row.abgleich.fehlt} · Summe erfasst
+                      CHF {row.abgleich.summeErfasst.toFixed(2)} / Monatsrechnung
+                      CHF {row.abgleich.summeMonatsrechnung.toFixed(2)}
+                    </div>
+                    {row.abgleich.fehlt === 0 && (
+                      <div className="text-emerald-600">Vollständig — die Monatsrechnung bucht nichts zusätzlich.</div>
+                    )}
+                    {row.abgleich.eintraege.filter(e => e.status === 'fehlt').map((e, j) => (
+                      <div key={j} className="text-amber-600">
+                        · Lieferung {e.lieferung.rechnungsNr} vom {e.lieferung.datum.split('-').reverse().join('.')} fehlte
+                        — wird ergänzt (provisorisch; echter Lieferschein ersetzt sie später)
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {erg.hinweise.length > 0 && row.modus !== 'monatsrechnung' && (
                   <div className="text-[11px] text-amber-600 space-y-0.5">
                     {erg.hinweise.map((h, j) => <div key={j}>· {h}</div>)}
                   </div>
@@ -396,11 +482,11 @@ export function LieferantenProfilEditor({ tenantId, canEdit }: { tenantId: Tenan
 
   return (
     <div className="space-y-1.5" data-testid="lieferanten-profil-editor">
-      <div className="grid grid-cols-[1fr_110px_110px_70px_60px_24px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
-        <span>Lieferant</span><span>MWST-Nr</span><span>Kategorie</span><span>Konto</span><span>MwSt %</span><span />
+      <div className="grid grid-cols-[1fr_110px_110px_70px_60px_150px_24px] gap-1.5 text-[11px] text-muted-foreground px-0.5">
+        <span>Lieferant</span><span>MWST-Nr</span><span>Kategorie</span><span>Konto</span><span>MwSt %</span><span>Belegtyp</span><span />
       </div>
       {profile.map(p => (
-        <div key={p.id} className="grid grid-cols-[1fr_110px_110px_70px_60px_24px] gap-1.5 items-center">
+        <div key={p.id} className="grid grid-cols-[1fr_110px_110px_70px_60px_150px_24px] gap-1.5 items-center">
           <Input className="h-7 text-xs" value={p.name} disabled={!canEdit}
             onChange={e => save(profile.map(x => x.id === p.id ? { ...x, name: e.target.value } : x))} />
           <Input className="h-7 text-xs" value={p.mwstNr} disabled={!canEdit} placeholder="—"
@@ -414,6 +500,17 @@ export function LieferantenProfilEditor({ tenantId, canEdit }: { tenantId: Tenan
               const v = e.target.value.trim() === '' ? undefined : Number(e.target.value.replace(',', '.'));
               save(profile.map(x => x.id === p.id ? { ...x, mwstSatz: Number.isFinite(v as number) ? v : undefined } : x));
             }} />
+          <Select value={p.belegtyp ?? 'einzelrechnung'} disabled={!canEdit}
+            onValueChange={v => save(profile.map(x => x.id === p.id ? { ...x, belegtyp: v as ProfilBelegtyp } : x))}>
+            <SelectTrigger className="h-7 text-[11px]" data-testid={`profil-belegtyp-${p.id}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="dual">Lieferscheine + Monatsrechnung</SelectItem>
+              <SelectItem value="monatsrechnung">nur Monats-/Sammelrechnung</SelectItem>
+              <SelectItem value="einzelrechnung">nur Einzelrechnung</SelectItem>
+            </SelectContent>
+          </Select>
           {canEdit && p.id.startsWith('p-') ? (
             <button className="text-muted-foreground hover:text-destructive" title="Gelerntes Profil entfernen"
               onClick={() => save(profile.filter(x => x.id !== p.id))}>

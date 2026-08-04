@@ -36,6 +36,9 @@ export interface FsImportErgebnis {
   provisorischErsetzt: number;
   preisAenderungen: number;
   monate: string[];
+  /** Nur quelle='monatsrechnung': übersprungen, weil bereits eine ECHTE
+   *  (nicht-provisorische) Buchung existiert — die wird NIE überschrieben. */
+  uebersprungen: number;
 }
 
 export async function kernImportiereFsRechnungen(
@@ -62,7 +65,7 @@ export async function kernImportiereFsRechnungen(
   const extraRegeln = Object.entries(opts?.extraMapping ?? {}).map(([gruppe, konto]) => ({ gruppe, konto }));
   const mapping = [...extraRegeln, ...mitFsDefaults(mappingRoh)];
   let hist = historie;
-  let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0;
+  let neu = 0, ersetzt = 0, offen = 0, provisorischErsetzt = 0, uebersprungen = 0;
   const alleAenderungen: PreisAenderung[] = [];
   // Per-Monat-Caches: einmal lesen, am Ende einmal schreiben.
   const bestandCache = new Map<string, InvoiceEntry[]>();
@@ -93,6 +96,13 @@ export async function kernImportiereFsRechnungen(
       && e.date === r.datum
       && e.supplierName.trim().toLowerCase() === lieferant.trim().toLowerCase());
     let vorhandenMonat = month;
+    // Monatsrechnung = Kontrolle + Lückenfüller: eine ECHTE (nicht-provisorische)
+    // Buchung wird NIE überschrieben — nur eigene provisorische Einträge dürfen
+    // per Upsert aktualisiert werden (z.B. erneuter Upload derselben Monatsrechnung).
+    if (opts?.quelle === 'monatsrechnung' && vorhanden && vorhanden.quelle !== 'monatsrechnung') {
+      uebersprungen++;
+      continue;
+    }
     // Lieferschein ersetzt eine nahe provisorische Monatsrechnungs-Lieferung.
     if (!vorhanden && opts?.quelle !== 'monatsrechnung') {
       const brutto = bruttoOffiziell ?? r.bruttoTotal;
@@ -166,5 +176,5 @@ export async function kernImportiereFsRechnungen(
     await savePreisHinweise(tenantId, m, hinweisCache.get(m)!);
   }
   await savePreisHistorie(tenantId, hist);
-  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert] };
+  return { neu, ersetzt, offen, provisorischErsetzt, preisAenderungen: alleAenderungen.length, monate: [...geaendert], uebersprungen };
 }

@@ -1,0 +1,27 @@
+AUFGABE: Fideco (und weitere Lieferanten mit Einzel-Lieferscheinen + Monatsrechnung) auf das Feldschlösschen-Modell umstellen: Lieferscheine führend, Monatsrechnung = Kontrolle + Lückenfüller. Mandant Beaulieu.
+
+NEUER LIEFERANTEN-SCHALTER "Belegtyp" (pro Lieferant, in den Profilen einstellbar):
+- "Einzel-Lieferscheine + Monatsrechnung" (Dual) — z.B. Fideco, Metzgerei Spahni, Gasser, Bohnenblust, Feldschlösschen
+- "nur Monatsrechnung/Sammelrechnung"
+- "nur Einzelrechnung"
+Fideco = Dual.
+
+VERHALTEN BEI DUAL-LIEFERANTEN (wie Feldschlösschen):
+1) EINZEL-LIEFERSCHEIN (PDF-Import ODER manuelle Erfassung) = FÜHREND:
+   - bucht Warenkosten mit seinem Lieferdatum; Positionen bei Stufe-2-Lieferanten (Fideco/Spahni).
+   - Identität der Lieferung = Lieferschein-Nr (LS-Nr). Erneuter Upload derselben LS-Nr = Upsert (ersetzt, nie doppelt).
+2) MONATSRECHNUNG (listet alle Lieferungen mit LS-Nr + LS-Datum) = KONTROLLE + LÜCKENFÜLLER, NIE Überschreiben:
+   a) Vollständigkeitskontrolle: jede LS-Nr der Monatsrechnung gegen die erfassten Lieferscheine matchen — exakt über LS-Nr, sonst Datum+Betrag (±0.10).
+   b) Bereits vorhanden → unverändert lassen (Lieferschein + Lieferdatum bleiben).
+   c) Fehlt → aus der Monatsrechnung ergänzen: Positionen + Lieferdatum aus der LS-Zeile übernehmen, als "aus Monatsrechnung ergänzt (provisorisch)" markieren, mit KLAREM HINWEIS "Lieferung <LS-Nr> vom <Datum> fehlte — ergänzt".
+   d) Wird später der echte Einzel-Lieferschein hochgeladen, ersetzt er die provisorische Version.
+3) VORSCHAU: "bereits vorhanden, unverändert: K · aus Monatsrechnung ergänzt (fehlten): M · Summe erfasst CHF … / Monatsrechnung CHF …". Die Monatsrechnung bucht selbst nie den Gesamtbetrag zusätzlich.
+
+RAHMEN:
+- Mandant Beaulieu, streng getrennt. Konto/Kategorie via Profil (Fideco = 4060 Fleisch/Warenkosten, 2.6%).
+- Preisüberwachung pro Artikel-Nr (Stufe 2).
+- Vorschau vor Schreiben + bestehender Import-Undo. Nie durch 0 teilen, leer statt 0.
+
+KONTROLLWERT (Beaulieu, Fideco Rg 5365875 vom 31.07.26 als Monatsrechnung): 15 Lieferungen (01.07.–30.07.), Netto 5'900.30 / MwSt 153.40 (2.6%) / Total 6'053.70. Lädst du zuerst einzelne Lieferscheine und dann diese Monatsrechnung, müssen vorhandene als "bereits vorhanden" und der Rest als "ergänzt" erscheinen — kein Doppel.
+
+Kurz zusammenfassen: welche Lieferanten auf "Dual" stehen und wie die Monatsrechnung fehlende Lieferungen markiert.
