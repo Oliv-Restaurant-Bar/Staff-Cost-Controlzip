@@ -7,6 +7,7 @@
  */
 
 import type { InvoiceEntry, Warenkonto } from './waren-db';
+import { kategorieOf } from './warenkosten-quote';
 
 export type AnalyseDim = 'supplier' | 'konto' | 'week' | 'month';
 
@@ -242,8 +243,11 @@ export function analyseKpis(entries: InvoiceEntry[]): AnalyseKpis {
   let total = 0, food = 0, bev = 0;
   for (const e of entries) {
     total += e.amountNet;
-    if (e.kategorie === 'Food') food += e.amountNet;
-    else if (e.kategorie === 'Beverage') bev += e.amountNet;
+    // Effektive Kategorie (Konto autoritativ) statt roher gespeicherter
+    // e.kategorie — sonst weichen Analyse-Food/Bev von der WKQ-Basis ab.
+    const kat = kategorieOf(e);
+    if (kat === 'Food') food += e.amountNet;
+    else if (kat === 'Beverage') bev += e.amountNet;
   }
   const top3 = groupTotals(entries, 'supplier').slice(0, 3)
     .map(r => ({ label: r.key, totalNet: r.totalNet }));

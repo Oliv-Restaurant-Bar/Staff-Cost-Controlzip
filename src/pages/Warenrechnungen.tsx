@@ -195,7 +195,7 @@ function fmtPct(val: number): string {
  * Single Source of Truth: `nurWarenAnteil` + `computeWarenkostenTotals`.
  */
 function relevantNetOf(list: InvoiceEntry[], grenze: number): number {
-  return computeWarenkostenTotals(nurWarenAnteil(list, grenze)).relevantNet;
+  return computeWarenkostenTotals(nurWarenAnteil(list, grenze), grenze).relevantNet;
 }
 function generateId(): string {
   return `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -689,7 +689,7 @@ export default function WarenrechnungenPage() {
   const stats = useMemo(() => computeMonthStats(entries, revenueByDate), [entries, revenueByDate]);
   // Kategorisierte Monatssummen (Food/Beverage/Sonstiges) – Basis der Quote.
   // Kontoklassen: nur Warenkosten-Anteile (4000–Grenze); Betriebskosten separat.
-  const monthTotals = useMemo(() => computeWarenkostenTotals(nurWarenAnteil(entries, warenGrenze)), [entries, warenGrenze]);
+  const monthTotals = useMemo(() => computeWarenkostenTotals(nurWarenAnteil(entries, warenGrenze), warenGrenze), [entries, warenGrenze]);
   const monthBetrieb = useMemo(() => sumBetriebNet(entries, warenGrenze), [entries, warenGrenze]);
 
   const totalRevenue = useMemo(
@@ -940,7 +940,7 @@ export default function WarenrechnungenPage() {
     const periodEntries = analysisEntries.filter(e => e.date <= effectiveTo);
     // Kontoklassen: Warenkosten-Anteile (4000–Grenze) für Total/Quote;
     // Betriebskosten-Anteile (> Grenze) separat — NIE in der WKQ.
-    const totals = computeWarenkostenTotals(nurWarenAnteil(periodEntries, warenGrenze));
+    const totals = computeWarenkostenTotals(nurWarenAnteil(periodEntries, warenGrenze), warenGrenze);
     const betriebCost  = sumBetriebNet(periodEntries, warenGrenze);
     const totalCost    = totals.totalNet;     // Warenkosten inkl. Sonstiges – Gesamtanzeige
     const relevantCost = totals.relevantNet;  // Food+Beverage – alleinige Quotenbasis

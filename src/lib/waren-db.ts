@@ -17,13 +17,14 @@ import type { TenantId } from '@/contexts/TenantContext';
 import {
   type WarenKategorie,
   kategorieFromKonto,
+  kategorieOf,
   kontoKategorie,
 } from './warenkosten-quote';
 
 // WarenKategorie + kategorieFromKonto leben zentral in `warenkosten-quote`
 // (reine, IO-freie Lib = Single Source of Truth). Re-Export aus Kompatibilität,
 // damit bestehende Importe aus `@/lib/waren-db` weiter funktionieren.
-export { kategorieFromKonto, kontoKategorie };
+export { kategorieFromKonto, kategorieOf, kontoKategorie };
 export type { WarenKategorie };
 
 // ─── Typen ────────────────────────────────────────────────────────────────────

@@ -1,0 +1,17 @@
+AUFGABE: KRITISCH — Warenkostenquote zählt fälschlich nur „Food+Beverage" (altes Konto-Schema) → 4060/4040/4050 fallen raus. WKQ muss ALLE Warenkosten (4000–Grenze) umfassen. Mandantengetrennt.
+
+PROBLEM: Die angezeigte WKQ nutzt relevantNet = Food + Beverage (warenkosten-quote.ts). Die Kategorie kommt aus kategorieFromKonto (:44), das noch das alte operative Schema kennt (nur 4000/4030→Food, 4020→Beverage, Rest→Sonstiges). Da die Warengruppen jetzt auf FIBU-Konten mappen (Küche/Food→4060, Spirituosen→4040, Getränke/Mineral→4050), landen diese in „Sonstiges" und fehlen in der WKQ. Beim Import wird zudem kategorie:'Sonstiges' gespeichert (WarenCsvImport.tsx:404).
+
+FIX (Ziel: WKQ-Basis = die vollen Warenkosten 4000–Grenze; Food/Beverage nur als korrekte Aufschlüsselung):
+1) kategorieFromKonto an das aktuelle Konto-Schema angleichen:
+   - Food:     4000 (Lebensmittel), 4060 (Küche), 4070 (Kaffee/Tee)
+   - Beverage: 4020 (Wein), 4030 (Bier), 4040 (Spirituosen), 4050 (Mineral/Getränke)
+   - 4090 (Handelswaren): zählt zu den Warenkosten — als Food (oder eigene, aber IN der Quote).
+   - Nur echte Nicht-Warenkonten (≥ Grenze/4701 usw.) bleiben ausserhalb (die sind ohnehin schon Betriebskosten via kontoKlasse und nicht in nurWarenAnteil).
+2) Sicherstellen, dass relevantNet (Food+Beverage) nach nurWarenAnteil GLEICH der Warenkosten-Summe (sumWarenNet) ist — keine Warenkosten-Position fällt mehr in „Sonstiges". Alternativ die WKQ-Basis direkt auf sumWarenNet (kontoKlasse, 4000–Grenze) umstellen und Food/Beverage nur als Aufschlüsselung führen. Beide Wege müssen dieselbe Zahl ergeben.
+3) Beim Import gespeicherte kategorie an die neue Zuordnung anpassen (bzw. WKQ konsequent aus dem Konto ableiten, nicht aus einer alten gespeicherten kategorie).
+4) Konsistenz: die Wochen-WKQ in der Analyse (waren-analyse.ts) und die Cockpit-WKQ (waren-cockpit.ts) MÜSSEN dieselbe Logik/Basis nutzen — eine einzige WKQ-Zahl, keine zweite abweichende.
+
+KONTROLLWERT (Oliv, Juni 2026, Transgourmet+Prodega): WKQ-Basis (relevantNet) muss = Warenkosten total = 29'759.51 sein (Near-/Nonfood 4'196.21 bleiben ausgeschlossen, Pfand 22.40 neutral). Vorher zählten fälschlich fast nur Wein+Bier.
+
+Bitte zusammenfassen: welche Konten jetzt Food/Beverage sind und dass relevantNet = sumWarenNet für Warenkosten-Konten gilt.

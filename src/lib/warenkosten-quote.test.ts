@@ -16,26 +16,44 @@ function entry(p: Partial<WarenkostenEntryInput> & { id: string; amountNet: numb
   return { ...p };
 }
 
-describe('kategorieFromKonto (operatives Konto-Mapping)', () => {
-  it('mappt 4000/4030 → Food, 4020 → Beverage, Rest → Sonstiges', () => {
-    expect(kategorieFromKonto('4000')).toBe('Food');
-    expect(kategorieFromKonto('4030')).toBe('Food');
-    expect(kategorieFromKonto('4020')).toBe('Beverage');
-    expect(kategorieFromKonto('4060')).toBe('Sonstiges');
+describe('kategorieFromKonto (FIBU-identisches Konto-Schema, 4000–Grenze)', () => {
+  it('Food = 4000/4060/4070/4090 (und übrige Warenkonten), Beverage = 4020/4030/4040/4050', () => {
+    expect(kategorieFromKonto('4000')).toBe('Food');      // Lebensmittel
+    expect(kategorieFromKonto('4060')).toBe('Food');      // Küche
+    expect(kategorieFromKonto('4070')).toBe('Food');      // Kaffee/Tee
+    expect(kategorieFromKonto('4090')).toBe('Food');      // Handelswaren — IN der Quote
+    expect(kategorieFromKonto('4020')).toBe('Beverage');  // Wein
+    expect(kategorieFromKonto('4030')).toBe('Beverage');  // Bier
+    expect(kategorieFromKonto('4040')).toBe('Beverage');  // Spirituosen
+    expect(kategorieFromKonto('4050')).toBe('Beverage');  // Mineral/Getränke
+  });
+  it('ausserhalb 4000–Grenze bzw. ohne Konto → Sonstiges (nie in der Quote)', () => {
+    expect(kategorieFromKonto('4701')).toBe('Sonstiges'); // Betriebsmaterial
     expect(kategorieFromKonto('6040')).toBe('Sonstiges');
+    expect(kategorieFromKonto('3999')).toBe('Sonstiges');
     expect(kategorieFromKonto(undefined)).toBe('Sonstiges');
+  });
+  it('respektiert eine abweichende Grenze', () => {
+    expect(kategorieFromKonto('4110', 4120)).toBe('Food');
+    expect(kategorieFromKonto('4110', 4090)).toBe('Sonstiges');
   });
 });
 
-describe('kategorieOf', () => {
-  it('explizite Kategorie hat Vorrang vor Konto-Ableitung', () => {
-    expect(kategorieOf(entry({ id: 'a', amountNet: 10, kategorie: 'Beverage', warenkonto: '4000' }))).toBe('Beverage');
+describe('kategorieOf (Konto autoritativ)', () => {
+  it('Warenkonto überstimmt eine alt gespeicherte kategorie (Import-«Sonstiges»-Bug)', () => {
+    expect(kategorieOf(entry({ id: 'a', amountNet: 10, kategorie: 'Sonstiges', warenkonto: '4060' }))).toBe('Food');
+    expect(kategorieOf(entry({ id: 'b', amountNet: 10, kategorie: 'Food', warenkonto: '4040' }))).toBe('Beverage');
   });
-  it('fällt auf Konto-Ableitung zurück, wenn keine Kategorie gesetzt', () => {
-    expect(kategorieOf(entry({ id: 'a', amountNet: 10, warenkonto: '4020' }))).toBe('Beverage');
+  it('ohne ableitbares Konto zählt die gespeicherte Kategorie', () => {
+    expect(kategorieOf(entry({ id: 'a', amountNet: 10, kategorie: 'Beverage' }))).toBe('Beverage');
   });
-  it('Default Sonstiges ohne Kategorie und ohne Konto', () => {
-    expect(kategorieOf(entry({ id: 'a', amountNet: 10 }))).toBe('Sonstiges');
+  it('kontolos/Pseudo-Konto «offen» ohne Kategorie → Food (zählt als Warenkosten in die Quote)', () => {
+    expect(kategorieOf(entry({ id: 'a', amountNet: 10 }))).toBe('Food');
+    expect(kategorieOf(entry({ id: 'b', amountNet: 10, warenkonto: 'offen' }))).toBe('Food');
+  });
+  it('Depot (Pfand) und Betriebskosten-Konten bleiben Sonstiges — auch mit gespeicherter Kategorie', () => {
+    expect(kategorieOf(entry({ id: 'a', amountNet: 10, warenkonto: 'Depot', kategorie: 'Food' }))).toBe('Sonstiges');
+    expect(kategorieOf(entry({ id: 'b', amountNet: 10, warenkonto: '4701', kategorie: 'Food' }))).toBe('Sonstiges');
   });
 });
 
@@ -53,7 +71,7 @@ describe('computeWarenkostenTotals', () => {
     entry({ id: 'f2', amountNet: 50, kategorie: 'Food' }),
     entry({ id: 'b1', amountNet: 40, kategorie: 'Beverage' }),
     entry({ id: 's1', amountNet: 30, kategorie: 'Sonstiges' }),
-    entry({ id: 's2', amountNet: 20 }), // default Sonstiges
+    entry({ id: 's2', amountNet: 20, warenkonto: '4701' }), // Betriebskosten → Sonstiges
   ];
 
   it('summiert je Kategorie korrekt', () => {
@@ -187,5 +205,26 @@ describe('erVergleichStatusLabel', () => {
     expect(erVergleichStatusLabel('warn')).toBe('geringe Abweichung');
     expect(erVergleichStatusLabel('critical')).toBe('auffällige Abweichung');
     expect(erVergleichStatusLabel('none')).toBe('Keine Erfolgsrechnung');
+  });
+});
+
+describe('Invariante: relevantNet == sumWarenNet (nach nurWarenAnteil)', () => {
+  it('alle Warenkosten-Konten 4000–Grenze landen in Food/Beverage — nichts fällt in Sonstiges', () => {
+    // Kontrollszenario wie Transgourmet/Prodega: gemischte Konten inkl.
+    // 4040/4050/4060, die früher fälschlich in «Sonstiges» fielen.
+    const waren: WarenkostenEntryInput[] = [
+      entry({ id: '1', amountNet: 10000, warenkonto: '4060', kategorie: 'Sonstiges' }), // Küche (Import-Altlast)
+      entry({ id: '2', amountNet: 8000, warenkonto: '4000' }),
+      entry({ id: '3', amountNet: 5000, warenkonto: '4050', kategorie: 'Sonstiges' }),  // Mineral
+      entry({ id: '4', amountNet: 4000, warenkonto: '4040' }),                          // Spirituosen
+      entry({ id: '5', amountNet: 2000, warenkonto: '4020' }),
+      entry({ id: '6', amountNet: 759.51, warenkonto: '4090' }),                        // Handelswaren
+    ];
+    const t = computeWarenkostenTotals(waren);
+    const sumWarenNet = waren.reduce((s, e) => s + e.amountNet, 0);
+    expect(t.relevantNet).toBeCloseTo(sumWarenNet, 6);
+    expect(t.sonstigeNet).toBe(0);
+    expect(t.foodNet).toBeCloseTo(18759.51, 6);
+    expect(t.beverageNet).toBeCloseTo(11000, 6);
   });
 });

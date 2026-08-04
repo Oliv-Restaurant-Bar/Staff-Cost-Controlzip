@@ -17,9 +17,13 @@ describe('kategorieShares / sumNetByKategorie (effektive Kategorie)', () => {
     { value: '9999', label: '9999 – Spezial', kategorie: 'Beverage' }, // explizit ≠ Heuristik
   ];
 
-  it('persistierte kategorie hat Vorrang', () => {
+  it('Konto ist autoritativ — persistierte kategorie zählt nur ohne ableitbares Konto', () => {
+    // Warenkonto 4000 → Food, auch wenn (alt) 'Beverage' gespeichert wurde.
     const e = { ...inv('A', 100), kategorie: 'Beverage' as const, warenkonto: '4000' };
-    expect(kategorieShares(e, konten)).toEqual([{ kategorie: 'Beverage', net: 100 }]);
+    expect(kategorieShares(e, konten)).toEqual([{ kategorie: 'Food', net: 100 }]);
+    // Ohne Konto: gespeicherte kategorie bleibt massgeblich.
+    const e2 = { ...inv('B', 50), kategorie: 'Beverage' as const };
+    expect(kategorieShares(e2, konten)).toEqual([{ kategorie: 'Beverage', net: 50 }]);
   });
 
   it('ohne kategorie: explizite Konto-Kategorie vor Nummern-Heuristik (Altbestand)', () => {

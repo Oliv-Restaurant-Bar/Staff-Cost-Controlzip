@@ -13,11 +13,17 @@
  * Rundung: Diese Lib rundet NICHT. Aufrufer runden erst bei Anzeige/Export
  * (CHF auf 2 Stellen, Prozent auf 1 Stelle).
  *
- * Kontenplan-Warnung (NIE quer-mappen):
- *   - Operative Seite (erfasste Rechnungen): Kategorie = entry.kategorie ??
- *     kategorieFromKonto(entry.warenkonto). Das operative Konto-Mapping
- *     (4030 → Food/Tiefkühl) ist BEWUSST anders als der FIBU-Kontenplan
- *     (4030 = Bier → Beverage). Beide Welten dürfen nicht vermischt werden.
+ * Kontenplan (seit Aug 2026 EIN Schema, identisch zum FIBU-Kontenplan):
+ *   - Warenkosten = Konten 4000–Grenze (Default 4090, s. waren-klassen).
+ *     Food:     4000 Lebensmittel, 4060 Küche, 4070 Kaffee/Tee, 4090
+ *               Handelswaren sowie alle übrigen Konten im Warenbereich.
+ *     Beverage: 4020 Wein, 4030 Bier, 4040 Spirituosen, 4050 Mineral/Getränke.
+ *   - Das KONTO ist autoritativ: liegt ein Warenkonto (4000–Grenze) vor,
+ *     wird die Kategorie IMMER daraus abgeleitet — eine (alt) gespeicherte
+ *     `kategorie` zählt nur noch für Einträge OHNE ableitbares Konto.
+ *     Invariante: relevantNet (Food+Beverage) über eine mit nurWarenAnteil
+ *     gefilterte Liste == sumWarenNet — keine Warenkosten-Position fällt
+ *     mehr in «Sonstiges».
  *   - FIBU-/Erfolgsrechnungs-Seite: ausschliesslich über die Reporting-/
  *     pl-engine-Kategorisierung (cogs_food / cogs_bev / cogs_other).
  *
@@ -33,20 +39,33 @@
 export type WarenKategorie = 'Food' | 'Beverage' | 'Sonstiges';
 
 /**
- * Leitet die WarenKategorie automatisch vom OPERATIVEN Warenkonto ab
- * (Fallback-Hilfe). Die explizit gespeicherte `kategorie` hat immer Vorrang.
- *
- * Operatives Mapping (NICHT der FIBU-Kontenplan):
- *   4000 (Lebensmittel), 4030 (Tiefkühl) → Food
- *   4020 (Getränke)                       → Beverage
- *   alle anderen                          → Sonstiges
+ * Default-Obergrenze der Warenkosten-Konten. MUSS mit
+ * DEFAULT_WARENKOSTEN_GRENZE (waren-klassen.ts) übereinstimmen — hier
+ * dupliziert, damit diese Lib import-frei/pur bleibt (kein Zyklus über
+ * waren-db, das kategorieFromKonto re-exportiert).
  */
-export function kategorieFromKonto(konto: string | undefined): WarenKategorie {
+const WARENKOSTEN_GRENZE_DEFAULT = 4090;
+
+/** Beverage-Konten des (FIBU-identischen) Kontenplans. */
+const BEVERAGE_KONTEN = new Set([4020, 4030, 4040, 4050]);
+
+/**
+ * Leitet die WarenKategorie vom Warenkonto ab (Kontenplan = FIBU-Schema):
+ *   Beverage: 4020 Wein, 4030 Bier, 4040 Spirituosen, 4050 Mineral/Getränke
+ *   Food:     ALLE übrigen Konten 4000–Grenze (4000 Lebensmittel, 4060 Küche,
+ *             4070 Kaffee/Tee, 4090 Handelswaren, …) — damit fällt KEIN
+ *             Warenkosten-Konto aus der Quote.
+ *   Sonstiges: kein/nicht-numerisches Konto oder ausserhalb 4000–Grenze
+ *              (Betriebskosten wie 4701/6040 — nie in der WKQ).
+ */
+export function kategorieFromKonto(
+  konto: string | undefined,
+  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
+): WarenKategorie {
   if (!konto) return 'Sonstiges';
   const n = parseInt(konto, 10);
-  if (n === 4000 || n === 4030) return 'Food';
-  if (n === 4020)               return 'Beverage';
-  return 'Sonstiges';
+  if (!Number.isFinite(n) || n < 4000 || n > grenze) return 'Sonstiges';
+  return BEVERAGE_KONTEN.has(n) ? 'Beverage' : 'Food';
 }
 
 /** Minimal-Form eines Rechnungseintrags für die Quoten-Berechnung. */
@@ -58,11 +77,30 @@ export interface WarenkostenEntryInput {
 }
 
 /**
- * Effektive Kategorie eines Eintrags: explizite Kategorie hat Vorrang,
- * sonst Ableitung aus dem Warenkonto, sonst Sonstiges.
+ * Effektive Kategorie eines Eintrags — das KONTO ist autoritativ:
+ *   1. Warenkonto 4000–Grenze → Kategorie IMMER aus dem Konto (eine alt
+ *      gespeicherte `kategorie` — z.B. «Sonstiges» aus früheren Importen —
+ *      kann keine Warenkosten mehr aus der Quote drängen).
+ *   2. Kein Konto ODER nicht-numerisches Pseudo-Konto («offen», nicht
+ *      «Depot»): gespeicherte kategorie; fehlt sie → 'Food'. Diese Einträge
+ *      zählen per Legacy-Regel (waren-klassen.kontoKlasse) als Warenkosten
+ *      und dürfen deshalb nicht in «Sonstiges» (ausserhalb der Quote) landen.
+ *   3. Numerisches Konto ausserhalb 4000–Grenze (Betriebskosten) oder
+ *      «Depot» (neutral) → 'Sonstiges', gespeicherte kategorie zählt nicht.
  */
-export function kategorieOf(entry: WarenkostenEntryInput): WarenKategorie {
-  return entry.kategorie ?? kategorieFromKonto(entry.warenkonto);
+export function kategorieOf(
+  entry: WarenkostenEntryInput,
+  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
+): WarenKategorie {
+  const vomKonto = kategorieFromKonto(entry.warenkonto, grenze);
+  if (vomKonto !== 'Sonstiges') return vomKonto; // Warenkonto → autoritativ
+  const konto = entry.warenkonto;
+  if (konto === 'Depot') return 'Sonstiges'; // Pfand: neutral, nie in Quote
+  if (!konto || !Number.isFinite(parseInt(konto, 10))) {
+    // Legacy-/Pseudo-Konto («offen»): zählt als Warenkosten → in die Quote.
+    return entry.kategorie ?? 'Food';
+  }
+  return 'Sonstiges'; // numerisch, aber ausserhalb 4000–Grenze
 }
 
 /**
@@ -72,8 +110,9 @@ export function kategorieOf(entry: WarenkostenEntryInput): WarenKategorie {
 export function kontoKategorie(
   value: string,
   konten: { value: string; kategorie?: WarenKategorie }[],
+  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
 ): WarenKategorie {
-  return konten.find(k => k.value === value)?.kategorie ?? kategorieFromKonto(value);
+  return konten.find(k => k.value === value)?.kategorie ?? kategorieFromKonto(value, grenze);
 }
 
 /** Gehört die Kategorie in die Warenkostenquote? (Food/Beverage = ja) */
@@ -108,6 +147,7 @@ export interface WarenkostenTotals {
  */
 export function computeWarenkostenTotals(
   entries: WarenkostenEntryInput[],
+  grenze: number = WARENKOSTEN_GRENZE_DEFAULT,
 ): WarenkostenTotals {
   let foodNet = 0;
   let beverageNet = 0;
@@ -115,7 +155,7 @@ export function computeWarenkostenTotals(
   const perEntry: WarenkostenPerEntry[] = [];
 
   for (const e of entries) {
-    const kategorie = kategorieOf(e);
+    const kategorie = kategorieOf(e, grenze);
     const net = e.amountNet ?? 0;
     if (kategorie === 'Food') foodNet += net;
     else if (kategorie === 'Beverage') beverageNet += net;

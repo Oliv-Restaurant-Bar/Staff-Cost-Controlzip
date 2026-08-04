@@ -39,7 +39,7 @@ import { safeUpsertDailyBudgets } from '@/lib/supabase-kv';
 import {
   ladeUmsatzTage, nettoUmsatzTag, foodBeverageSplit, type UmsatzTag,
 } from '@/lib/umsatz';
-import { loadMonthInvoices, kategorieFromKonto, type WarenKategorie } from '@/lib/waren-db';
+import { loadMonthInvoices, kategorieFromKonto, kategorieOf, type WarenKategorie } from '@/lib/waren-db';
 import { calculateDayNetHours } from '@/hooks/useShiftConfig';
 import {
   loadScheduleForMonth,
@@ -258,9 +258,10 @@ function addToBucket(bucket: WarenkostenDay, kat: WarenKategorie, net: number, g
  * Lädt echte Warenkosten (Tageswerte) aus den manuell erfassten
  * Lieferantenrechnungen (waren-db: supplier_invoice_entries).
  *
- * Kategorie-Quelle (Priorität):
+ * Kategorie-Quelle (Priorität, Konto autoritativ — wie kategorieOf):
  *   1. kontoSplits → jeder Split einzeln via kategorieFromKonto(split.warenkonto)
- *   2. Einzel-Rechnung → e.kategorie (explizit gespeichert), Fallback auf kategorieFromKonto(warenkonto)
+ *   2. Einzel-Rechnung → kategorieFromKonto(warenkonto); nur wenn das Konto
+ *      keine Food/Beverage-Zuordnung liefert, zählt die gespeicherte e.kategorie
  *
  * Rückgabe: Map { 'yyyy-MM-dd' → WarenkostenDay (Food/Bev/Total, netto+brutto) }
  */
@@ -281,8 +282,9 @@ async function loadWarenkostenMap(
           addToBucket(map[e.date], kat, split.amountNet, split.amountGross);
         }
       } else {
-        // Einfache Rechnung: explizite Kategorie hat Vorrang, dann Konto-Ableitung
-        const kat: WarenKategorie = e.kategorie ?? kategorieFromKonto(e.warenkonto);
+        // Einfache Rechnung: zentrale effektive Kategorie (Konto autoritativ,
+        // Legacy-/kontolose Einträge zählen als Warenkosten) — identisch zur WKQ.
+        const kat: WarenKategorie = kategorieOf(e);
         addToBucket(map[e.date], kat, e.amountNet, e.amountGross);
       }
     }

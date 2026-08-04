@@ -19,7 +19,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useTenant } from '@/contexts/TenantContext';
 import { usePermissions } from '@/hooks/usePermissions';
-import { loadMonthInvoices, loadAliasGruppen, type InvoiceEntry } from '@/lib/waren-db';
+import { loadMonthInvoices, loadAliasGruppen, loadWarenkostenGrenze, type InvoiceEntry } from '@/lib/waren-db';
+import { nurWarenAnteil, DEFAULT_WARENKOSTEN_GRENZE } from '@/lib/waren-klassen';
 import { applyAliasGruppen, type AliasGruppe } from '@/lib/waren-alias-gruppen';
 import { aggregateBySupplier, sumInvoicesNet, warenkostenquote, wkqAmpel, monthDateRange } from '@/lib/waren-cockpit';
 import {
@@ -107,10 +108,24 @@ export function CockpitWarenkosten({ year, month }: { year: number; month: numbe
     return () => { alive = false; };
   }, [tenantId]);
 
-  const totalNet = useMemo(() => (invoices ? sumInvoicesNet(invoices) : 0), [invoices]);
+  // Kontoklassen: Total/WKQ/Lieferanten-Zeilen nur aus Warenkosten-Anteilen
+  // (4000–Grenze) — Betriebskosten-/Depot-Anteile fliessen NIE in die WKQ
+  // (gleiche Basis wie Warenrechnungen-Seite und Monatsreport).
+  const [warenGrenze, setWarenGrenze] = useState<number>(DEFAULT_WARENKOSTEN_GRENZE);
+  useEffect(() => {
+    let alive = true;
+    setWarenGrenze(DEFAULT_WARENKOSTEN_GRENZE);
+    loadWarenkostenGrenze(tenantId).then(g => { if (alive) setWarenGrenze(g); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [tenantId]);
+  const warenInvoices = useMemo(
+    () => (invoices ? nurWarenAnteil(invoices, warenGrenze) : null),
+    [invoices, warenGrenze],
+  );
+  const totalNet = useMemo(() => (warenInvoices ? sumInvoicesNet(warenInvoices) : 0), [warenInvoices]);
   const supplierRows = useMemo(
-    () => (invoices ? aggregateBySupplier(applyAliasGruppen(invoices, aliasGruppen)) : []),
-    [invoices, aliasGruppen],
+    () => (warenInvoices ? aggregateBySupplier(applyAliasGruppen(warenInvoices, aliasGruppen)) : []),
+    [warenInvoices, aliasGruppen],
   );
   const wkq = warenkostenquote(totalNet, umsatzNet ?? 0);
   const ampel = wkqAmpel(wkq, zielPct);

@@ -34,6 +34,7 @@ import type { Tone } from '@/components/ui/tones';
 import { useTenant } from '@/contexts/TenantContext';
 import { grossToNet } from '@/types/personnel';
 import { loadMonthInvoices } from '@/lib/waren-db';
+import { sumNetByKategorie } from '@/lib/waren-cockpit';
 import { getGuestsForPeriod, getAvgReceiptForPeriod, getPersonDayValues } from '@/lib/gn-personen-db';
 import { getAverageCheckDayValues } from '@/lib/gn-average-check-db';
 import { loadGnHourlyRevenueByDay } from '@/lib/gn-zbericht-db';
@@ -454,14 +455,16 @@ export default function KennzahlenBerichtPage() {
         // Fenster/Peak zentral definiert, negative Werte bleiben.
         const zeit = analyzeGnZeitabschnitte(mergeGnStundenwerte([...hourlyByDay.values()]));
 
-        const warenFood  = allInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
-        const warenBev   = allInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
-        const warenSonst = allInv.filter(i => i.kategorie === 'Sonstiges').reduce((s, i) => s + (i.amountNet ?? 0), 0);
+        // Effektive Kategorie (Konto autoritativ, Splits je Zeile) statt roher
+        // gespeicherter i.kategorie — gleiche Basis wie WKQ/Cockpit/Analyse.
+        const warenFood  = sumNetByKategorie(allInv, 'Food', []);
+        const warenBev   = sumNetByKategorie(allInv, 'Beverage', []);
+        const warenSonst = sumNetByKategorie(allInv, 'Sonstiges', []);
 
         const weekInv    = allInv.filter(inv => { try { return !isBefore(parseISO(inv.date), weekFromDate); } catch { return false; } });
-        const wWarenFood  = weekInv.filter(i => i.kategorie === 'Food').reduce((s, i) => s + (i.amountNet ?? 0), 0);
-        const wWarenBev   = weekInv.filter(i => i.kategorie === 'Beverage').reduce((s, i) => s + (i.amountNet ?? 0), 0);
-        const wWarenSonst = weekInv.filter(i => i.kategorie === 'Sonstiges').reduce((s, i) => s + (i.amountNet ?? 0), 0);
+        const wWarenFood  = sumNetByKategorie(weekInv, 'Food', []);
+        const wWarenBev   = sumNetByKategorie(weekInv, 'Beverage', []);
+        const wWarenSonst = sumNetByKategorie(weekInv, 'Sonstiges', []);
 
         const supplierMap: Record<string, number> = {};
         for (const inv of allInv) {

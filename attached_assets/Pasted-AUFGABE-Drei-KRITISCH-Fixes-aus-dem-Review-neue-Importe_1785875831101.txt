@@ -1,0 +1,27 @@
+AUFGABE: Drei KRITISCH-Fixes aus dem Review (neue Importer). Mandantengetrennt, leer statt 0, nie durch 0. Jeden Fix gegen ein echtes Szenario prüfen.
+
+════════ FIX 1 — PRODEGA-MARKT-DEDUP (stille Überschreibung) ════════
+PROBLEM: Der Parser trennt Rechnungen über docKey = Nr|Datum|Markt, der Upsert-Schlüssel lässt den Markt aber fallen (nur Referenz+Datum+Lieferant). Bern UND Moosseedorf mappen beide auf „Prodega" → zwei echte Rechnungen mit gleicher kurzer Nr. am selben Tag überschreiben sich.
+FIX:
+- Feld `markt` in InvoiceEntry aufnehmen und beim Import persistieren.
+- Dedup-/Upsert-Schlüssel um `markt` erweitern: (Mandant + Lieferant + Rechnungs-Nr + Datum + Markt) — konsistent zum docKey.
+- Bestehende Einträge ohne markt tolerant behandeln (kein Fehl-Merge).
+VERIFIKATION: Zwei Prodega-Rechnungen Nr. „58", gleiches Datum, einmal Markt Bern, einmal Moosseedorf → beide bleiben erhalten (keine Überschreibung), beide korrekt in Warenkosten.
+
+════════ FIX 2 — FELDSCHLÖSSCHEN/DUAL: BELEGTYP INHALTSBASIERT ════════
+PROBLEM: Bei den Profil-Dual-Lieferanten (Spahni, Fideco, Gasser, Bohnenblust, Terravigna) entscheidet nur `lieferungen.length > 1`, ob final überschrieben wird — nicht der Belegtyp.
+FIX:
+- Dokumenttyp INHALTSBASIERT bestimmen (Belegüberschrift/Kopfzone): „Sammelrechnung/Monatsrechnung" → Monatsrechnung (massgeblich/final); „Lieferschein" bzw. „Auftragsbestätigung/Offerte/Bestellung" → provisorisch. `lieferungen.length` nur als Zusatzsignal, nie als alleiniges Kriterium.
+- Folgefälle absichern: Monatsrechnung mit nur 1 Lieferung wird trotzdem final; ein Lieferschein, der in mehrere „LS-Nr…vom"-Blöcke zerfällt, wird NICHT fälschlich als Monatsrechnung final gebucht.
+- Zugehörig (gleiche Logik): Der Jahres-ZIP-Import (FeldschloesschenImport) muss die Sammelrechnungs-Lieferungen mit quelle:'monatsrechnung' buchen (final), nicht als einfache Lieferscheine.
+VERIFIKATION: Monatsrechnung mit 1 Faktura → final, überschreibt provisorische Lieferung. Mehrblock-Lieferschein → bleibt provisorisch, spätere echte Monatsrechnung finalisiert korrekt (kein „bereits final"-Fehlblock).
+
+════════ FIX 3 — Z-BERICHT: DOPPELTER TAGESUMSATZ BEI NEBENLÄUFIGKEIT ════════
+PROBLEM: Der Checksum-Backstop schützt nur gegen identischen Inhalt. Zwei verschiedene PDFs desselben Geschäftstags (Standard + erweitert / Korrektur) aus zwei Tabs → beide Overlap-Checks laufen vor dem INSERT → beide schreiben status='active'. loadGnDayClosingsForMonth SUMMIERT sie → Tagesumsatz doppelt.
+FIX:
+- Overlap-Prüfung + INSERT je (restaurant_id, period_from) serialisieren (Postgres Advisory-Lock ODER Auto-Import pro Mandant single-flight statt per-row). Mehrere Kostenstellen desselben Tags bleiben erlaubt, aber NICHT zwei konkurrierende Voll-Tagesberichte.
+- Zweiter Tagesbericht desselben Tags → wie im Einzel-Tab-Fall als „Prüfung nötig" (Überschneidung), nie automatisch zusätzlich aktiv.
+- Leser-Konsistenz: loadGnDayClosingsForMonth darf einen Tag NIE doppelt zählen — pro (restaurant_id, Tag) genau EINEN aktiven Import verwenden, konsistent zu loadGnDailyGrossRevenue (kein SUMMIEREN zweier aktiver Tagesberichte).
+VERIFIKATION: Zwei verschiedene PDFs für denselben Tag (auch parallel/zwei Tabs) → nur einer wird aktiv, der andere „Prüfung nötig"; Tagesabschluss zeigt den Umsatz EINFACH, nie doppelt.
+
+Am Ende: je Fix kurz „umgesetzt + wie verifiziert". Tests grün halten.

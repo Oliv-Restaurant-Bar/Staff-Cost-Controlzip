@@ -28,8 +28,11 @@ export function kategorieShares(
       net: Number.isFinite(s.amountNet) ? s.amountNet : 0,
     }));
   }
+  // Konto autoritativ (wie kategorieOf): liefert das Konto Food/Beverage,
+  // zählt eine alt gespeicherte kategorie («Sonstiges» aus Importen) nicht.
+  const vomKonto = kontoKategorie(e.warenkonto ?? '', konten);
   return [{
-    kategorie: e.kategorie ?? kontoKategorie(e.warenkonto ?? '', konten),
+    kategorie: vomKonto !== 'Sonstiges' ? vomKonto : (e.kategorie ?? vomKonto),
     net: Number.isFinite(e.amountNet) ? e.amountNet : 0,
   }];
 }
